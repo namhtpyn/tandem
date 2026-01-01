@@ -97,15 +97,17 @@ fi
 # cited (header,hash) for revertish commits. NUL-delimited records MUST go
 # through process substitution: $( ) strips NUL bytes and would collapse the
 # delimiter-less read.
-declare -A SHA2IDX=() # sha -> index (cited-hash lookup)
-declare -a SUBJ_OF=() REVT_OF=() HDR_OF=() CITED_OF=() CANCELED=()
+declare -a SUBJ_OF=() SUBJ_TRIM=() REVT_OF=() HDR_OF=() CITED_OF=() SHAS=()
 n=0
 while IFS= read -r -d '' rec || [ -n "$rec" ]; do
   sha=${rec%%$'\x01'*}
-  raw=${rec#*$'\x01'}
-  # parser trimNewLines strips leading CR/LF before header extraction; the
-  # gpg filter drops leading 'gpg:'-prefixed lines. Mirror both so the
-  # subject matches the analyzer's parsed header exactly.
+  raw0=${rec#*$'\x01'}
+  # HEADER extraction view: the parser's trimNewLines strips leading CR/LF
+  # and its gpg filter drops leading 'gpg:'-prefixed lines BEFORE header
+  # extraction. REVERT detection, however, anchors revertPattern at the
+  # ORIGINAL input start (round-6 oracle: a hidden '\nrevert …' prefix is
+  # NOT revertish). Keep both views.
+  raw="$raw0"
   while [ -n "$raw" ]; do
     case "$raw" in
       $'\n'* | $'\r'*) raw="${raw:1}" ;;
@@ -123,12 +125,19 @@ while IFS= read -r -d '' rec || [ -n "$rec" ]; do
   done
   # analyzer drops commits whose whole message is whitespace-only
   [ -z "$(printf '%s' "$raw" | tr -d '[:space:]')" ] && continue
+  # the parsed header keeps LEADING whitespace: headerPattern anchors ^\w* at
+  # position 0 of the first line, so ' fix: x' parses to NO type — the
+  # verdict grep must see the untrimmed first line (trailing trim is
+  # verdict-neutral). The cancel comparison trims both sides (isMatch).
   subj=$(printf '%s' "$raw" | head -1)
-  subj="${subj#"${subj%%[![:space:]]*}"}"
   subj="${subj%"${subj##*[![:space:]]}"}"
+  SUBJ_TRIM[$n]="${subj#"${subj%%[![:space:]]*}"}"
+  SUBJ_TRIM[$n]="${SUBJ_TRIM[$n]%${SUBJ_TRIM[$n]##*[![:space:]]}}"
   SHAS[$n]="$sha"
   REVT_OF[$n]=0
-  # revertish: the ANGULAR preset's effective revertPattern
+  # revertish: the ANGULAR preset's effective revertPattern, anchored at the
+  # ORIGINAL untrimmed input start (raw0 — a hidden '\nrevert …' prefix is
+  # NOT revertish, round-6 oracle)
   # /^(?:Revert|revert:)\s"?([\s\S]+?)"?\s*This reverts commit (\w{7,40})\b/i
   # (the repo's parserOpts override header patterns but NOT revertPattern —
   # load-parser-config merges {...angular.parser, ...parserOpts}):
@@ -142,8 +151,8 @@ while IFS= read -r -d '' rec || [ -n "$rec" ]; do
   #   trailing quote + trailing whitespace, trimmed (isMatch trims both
   #   sides). No valid occurrence => NOT revertish (a lone 6-char cite or a
   #   unicode-digit token never matches the pattern).
-  rest="$raw"
-  pfx=$(printf '%s' "${raw:0:8}" | tr 'A-Z' 'a-z')
+  rest="$raw0"
+  pfx=$(printf '%s' "${raw0:0:8}" | tr 'A-Z' 'a-z')
   case "$pfx" in
     revert:*) off=7 ;;
     revert*) off=6 ;;
@@ -165,7 +174,10 @@ while IFS= read -r -d '' rec || [ -n "$rec" ]; do
       # present; group1 runs from there (>=1 char)
       rest="${rest#\"}" # greedy leading "? eats ONE quote if present (no-op otherwise)
       # occurrence offsets (bytes = chars under LC_ALL=C), left to right
-      tpf=$(mktemp "${TMPDIR:-/tmp}/tpf.XXXXXX")
+      tpf=$(mktemp "${TMPDIR:-/tmp}/tpf.XXXXXX") || {
+        echo "train-preflight: cannot create a temp file (TMPDIR=${TMPDIR:-/tmp})" >&2
+        exit 2
+      }
       printf '%s' "$rest" | grep -abo 'This reverts commit ' > "$tpf" 2>/dev/null || true
       while IFS=: read -r o _; do
         [ -n "$o" ] || continue
@@ -210,7 +222,7 @@ for ((i = 0; i < n; i++)); do
   m=-1
   for ((h = 0; h < ${#HELD[@]}; h++)); do
     j=${HELD[$h]}
-    if [ "${REVT_OF[$j]}" = "1" ] && [ "${HDR_OF[$j]}" = "${SUBJ_OF[$i]}" ] && [ "${CITED_OF[$j]}" = "${SHAS[$i]}" ]; then
+    if [ "${REVT_OF[$j]}" = "1" ] && [ "${HDR_OF[$j]}" = "${SUBJ_TRIM[$i]}" ] && [ "${CITED_OF[$j]}" = "${SHAS[$i]}" ]; then
       m=$h
       break
     fi
