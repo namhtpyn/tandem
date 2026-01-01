@@ -103,12 +103,30 @@ n=0
 while IFS= read -r -d '' rec || [ -n "$rec" ]; do
   sha=${rec%%$'\x01'*}
   raw=${rec#*$'\x01'}
+  # parser trimNewLines strips leading CR/LF before header extraction; the
+  # gpg filter drops leading 'gpg:'-prefixed lines. Mirror both so the
+  # subject matches the analyzer's parsed header exactly.
+  while [ -n "$raw" ]; do
+    case "$raw" in
+      $'\n'* | $'\r'*) raw="${raw:1}" ;;
+      *) break ;;
+    esac
+  done
+  while :; do
+    case "$raw" in
+      [[:space:]]*'gpg:'* | 'gpg:'*)
+        stripped="${raw#*$'\n'}"
+        if [ "$stripped" = "$raw" ]; then raw=""; else raw="$stripped"; fi # gpg-only last line: drop it
+        ;;
+      *) break ;;
+    esac
+  done
   # analyzer drops commits whose whole message is whitespace-only
   [ -z "$(printf '%s' "$raw" | tr -d '[:space:]')" ] && continue
   subj=$(printf '%s' "$raw" | head -1)
   subj="${subj#"${subj%%[![:space:]]*}"}"
   subj="${subj%"${subj##*[![:space:]]}"}"
-  SHA2IDX["$sha"]=$n
+  SHAS[$n]="$sha"
   REVT_OF[$n]=0
   # revertish: the ANGULAR preset's effective revertPattern
   # /^(?:Revert|revert:)\s"?([\s\S]+?)"?\s*This reverts commit (\w{7,40})\b/i
@@ -134,15 +152,17 @@ while IFS= read -r -d '' rec || [ -n "$rec" ]; do
   REVT_OF[$n]=0
   if [ "$off" -gt 0 ]; then
     tail="${raw:$off}"
+    rest=""
     sep=0
     case "$tail" in
-      [[:space:]]*) sep=1 ;;
-      $'\xc2\xa0'* | $'\xe2\x80\x80'* | $'\xe2\x80\x81'* | $'\xe2\x80\x82'* | $'\xe2\x80\x83'* | $'\xe2\x80\x84'* | $'\xe2\x80\x85'* | $'\xe2\x80\x86'* | $'\xe2\x80\x87'* | $'\xe2\x80\x88'* | $'\xe2\x80\x89'* | $'\xe2\x80\x8a'* | $'\xe2\x80\xa8'* | $'\xe2\x80\xa9'* | $'\xe2\x80\xaf'* | $'\xe2\x81\x9f'* | $'\xe3\x80\x80'* | $'\xef\xbb\xbf'*) sep=1 ;;
+      [[:space:]]*) rest="${tail:1}"; sep=1 ;;
+      $'\xc2\xa0'*) rest="${tail:2}"; sep=1 ;;
+      $'\xe1\x9a\x80'* | $'\xe2\x80\x80'* | $'\xe2\x80\x81'* | $'\xe2\x80\x82'* | $'\xe2\x80\x83'* | $'\xe2\x80\x84'* | $'\xe2\x80\x85'* | $'\xe2\x80\x86'* | $'\xe2\x80\x87'* | $'\xe2\x80\x88'* | $'\xe2\x80\x89'* | $'\xe2\x80\x8a'* | $'\xe2\x80\xa8'* | $'\xe2\x80\xa9'* | $'\xe2\x80\xaf'* | $'\xe2\x81\x9f'* | $'\xe3\x80\x80'* | $'\xef\xbb\xbf'*) rest="${tail:3}"; sep=1 ;;
     esac
     if [ "$sep" = "1" ]; then
-      # span start: skip the ONE JS-\s char, then the greedy leading "? eats
-      # ONE quote if present; group1 runs from there (>=1 char)
-      rest="${tail:1}"
+      # span start: the ONE JS-\s char was consumed whole (multi-byte seqs
+      # stripped entire), then the greedy leading "? eats ONE quote if
+      # present; group1 runs from there (>=1 char)
       rest="${rest#\"}" # greedy leading "? eats ONE quote if present (no-op otherwise)
       # occurrence offsets (bytes = chars under LC_ALL=C), left to right
       tpf=$(mktemp "${TMPDIR:-/tmp}/tpf.XXXXXX")
@@ -151,7 +171,10 @@ while IFS= read -r -d '' rec || [ -n "$rec" ]; do
         [ -n "$o" ] || continue
         [ "$o" -ge 1 ] || continue # group1 >= 1 char
         t="${rest:$((o + 20))}"
-        run=$(printf '%s' "$t" | grep -o '^[A-Za-z0-9_]*' | head -1)
+        # \w{7,40} must start EXACTLY at o+20: maximal leading word-run of t
+        # itself (a grep -o '^…' would read past line 1 and bind a run from a
+        # later line); >40 never binds (every k<=40 ends inside the run)
+        run="${t%%[!A-Za-z0-9_]*}"
         l=${#run}
         if [ "$l" -ge 7 ] && [ "$l" -le 40 ]; then
           REVT_OF[$n]=1
@@ -159,6 +182,8 @@ while IFS= read -r -d '' rec || [ -n "$rec" ]; do
           hdr="${hdr%"${hdr##*[![:space:]]}"}"
           hdr="${hdr%\"}"
           hdr="${hdr%"${hdr%%[![:space:]]*}"}"
+          # isMatch trims BOTH sides of the compared header
+          hdr="${hdr#"${hdr%%[![:space:]]*}"}"
           hdr="${hdr%"${hdr##*[![:space:]]}"}"
           HDR_OF[$n]="$hdr"
           CITED_OF[$n]="$run"
@@ -171,33 +196,55 @@ while IFS= read -r -d '' rec || [ -n "$rec" ]; do
   SUBJ_OF[$n]="$subj"
   n=$((n + 1))
 done < <(git -C "$REPO" log --format='%x00%H%x01%B' "$BASE_REF..$HEAD_REF")
-# Pass 2 — revert-pair cancellation: a revertish commit whose cited
-# (header, EXACT hash) matches a range commit drops BOTH from the set.
+# Pass 2 — the REAL filter (conventional-commits-filter RevertedCommitsFilter)
+# is a STREAMING hold/match machine over newest-first log order — NOT
+# order-independent: a held revert cancels only a commit that arrives AFTER
+# it (a target newer than its revert is emitted BEFORE the revert is held and
+# both then analyze independently). Held commits flush (and analyze normally)
+# when the last held revert cancels or at range end.
+HELD=()
+NHOLDREV=0
 PAIRS=0
-for ((j = 0; j < n; j++)); do
-  [ "${REVT_OF[$j]}" = "1" ] || continue
-  t="${CITED_OF[$j]}"
-  [ -n "$t" ] || continue
-  ti="${SHA2IDX[$t]:-}"
-  if [ -n "$ti" ] && [ "${SUBJ_OF[$ti]}" = "${HDR_OF[$j]}" ] && [ "${CANCELED[$j]:-0}" = "0" ] && [ "${CANCELED[$ti]:-0}" = "0" ]; then
-    CANCELED[$j]=1
-    CANCELED[$ti]=1
+declare -a YIELDED=()
+for ((i = 0; i < n; i++)); do
+  m=-1
+  for ((h = 0; h < ${#HELD[@]}; h++)); do
+    j=${HELD[$h]}
+    if [ "${REVT_OF[$j]}" = "1" ] && [ "${HDR_OF[$j]}" = "${SUBJ_OF[$i]}" ] && [ "${CITED_OF[$j]}" = "${SHAS[$i]}" ]; then
+      m=$h
+      break
+    fi
+  done
+  if [ "$m" -ge 0 ]; then
+    HELD=("${HELD[@]:0:$m}" "${HELD[@]:$((m + 1))}")
+    NHOLDREV=$((NHOLDREV - 1))
     PAIRS=$((PAIRS + 1))
+    continue
+  fi
+  if [ "${REVT_OF[$i]}" = "1" ]; then
+    HELD+=("$i")
+    NHOLDREV=$((NHOLDREV + 1))
+    continue
+  fi
+  if [ "$NHOLDREV" -gt 0 ]; then
+    HELD+=("$i")
+    continue
+  fi
+  YIELDED+=("$i")
+  if [ "${#HELD[@]}" -gt 0 ]; then
+    YIELDED+=("${HELD[@]}")
+    HELD=()
   fi
 done
-# Pass 3 — releasable verdict over the analyzed set (non-canceled commits)
+[ "${#HELD[@]}" -gt 0 ] && YIELDED+=("${HELD[@]}")
+# Pass 3 — releasable verdict over the analyzed set (emitted commits)
 CAND=""
-for ((j = 0; j < n; j++)); do
-  [ "${CANCELED[$j]:-0}" = "1" ] && continue
-  CAND+="${SUBJ_OF[$j]}"$'\n'
+REVERT_PATCH=""
+for i in "${YIELDED[@]}"; do
+  [ "${REVT_OF[$i]}" = "1" ] && REVERT_PATCH+="${SUBJ_OF[$i]}"$'\n'
+  CAND+="${SUBJ_OF[$i]}"$'\n'
 done
 RELEASABLE=$(printf '%s' "$CAND" | LC_ALL=C grep -E '^(fix|feat|perf|revert|FIX|FEAT)(\([A-Za-z0-9_$@.+*/ -]*\))?!?: |^[A-Za-z0-9_]*(\([A-Za-z0-9_$@.*/ -]*\))?!: ' || true)
-REVERT_PATCH=""
-for ((j = 0; j < n; j++)); do
-  [ "${REVT_OF[$j]}" = "1" ] || continue
-  [ "${CANCELED[$j]:-0}" = "1" ] && continue
-  REVERT_PATCH+="${SUBJ_OF[$j]}"$'\n'
-done
 if [ -n "$RELEASABLE" ]; then
   printf '%s\n' "$RELEASABLE" | sed '/^$/d'
   exit 0
