@@ -40,6 +40,7 @@
 # (TANDEM_TRAIN_BASE/HEAD), skips the origin guard, and prints a TEST-MODE
 # marker on stderr so a rehearsal is never mistaken for a production clean.
 set -u
+export LC_ALL=C # byte-exact string ops + ASCII [[:space:]]/[[:alnum:]] + the greps below
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [ -n "${TANDEM_TRAIN_REPO:-}" ] && REPO="$TANDEM_TRAIN_REPO"
 BASE_REF="refs/remotes/origin/main"
@@ -109,32 +110,64 @@ while IFS= read -r -d '' rec || [ -n "$rec" ]; do
   subj="${subj%"${subj##*[![:space:]]}"}"
   SHA2IDX["$sha"]=$n
   REVT_OF[$n]=0
-  case "$raw" in
-    Revert[[:space:]]* | revert:[[:space:]]*)
-      if printf '%s' "$raw" | LC_ALL=C grep -q 'This reverts commit [[:alnum:]_$]'; then
-        REVT_OF[$n]=1
-        # cited header text: strip prefix + ONE opening quote, cut at the
-        # FIRST 'This reverts commit', strip ONE closing quote, trim —
-        # mirrors the non-greedy revertPattern capture (no unescaping, sed
-        # cannot span the multi-line raw)
-        rest="$raw"
-        case "$raw" in
-          revert:[[:space:]]*) rest="${raw#revert:}" ;;
-          *) rest="${raw#Revert}" ;;
-        esac
-        rest="${rest#"${rest%%[![:space:]]*}"}"
-        rest="${rest#\"}"
-        hdr="${rest%%This reverts commit*}"
-        hdr="${hdr%"${hdr##*[![:space:]]}"}"
-        hdr="${hdr%\"}"
-        hdr="${hdr%"${hdr%%[![:space:]]*}"}"
-        hdr="${hdr%"${hdr##*[![:space:]]}"}"
-        cited=$(printf '%s' "$raw" | LC_ALL=C grep -o 'This reverts commit [[:alnum:]_$]*' | head -1 | LC_ALL=C sed 's/^This reverts commit //')
-        HDR_OF[$n]="$hdr"
-        CITED_OF[$n]="$cited"
-      fi
-      ;;
+  # revertish: the ANGULAR preset's effective revertPattern
+  # /^(?:Revert|revert:)\s"?([\s\S]+?)"?\s*This reverts commit (\w{7,40})\b/i
+  # (the repo's parserOpts override header patterns but NOT revertPattern —
+  # load-parser-config merges {...angular.parser, ...parserOpts}):
+  #   prefix 'revert:'/'revert' CASE-INSENSITIVE + ONE JS-\s char (NBSP and
+  #   the unicode width family included); group1 is ONE-OR-MORE lazy chars —
+  #   the chosen occurrence is the FIRST 'This reverts commit ' phrase at
+  #   least 1 char after the opening optional-quote whose following token is
+  #   7-40 ASCII word chars ([A-Za-z0-9_], JS \w — no $) with a word boundary
+  #   after (a >40-char run NEVER binds: every k<=40 ends inside the run);
+  #   cited hash = that token; quoted header text = the span, minus ONE
+  #   trailing quote + trailing whitespace, trimmed (isMatch trims both
+  #   sides). No valid occurrence => NOT revertish (a lone 6-char cite or a
+  #   unicode-digit token never matches the pattern).
+  rest="$raw"
+  pfx=$(printf '%s' "${raw:0:8}" | tr 'A-Z' 'a-z')
+  case "$pfx" in
+    revert:*) off=7 ;;
+    revert*) off=6 ;;
+    *) off=0 ;;
   esac
+  REVT_OF[$n]=0
+  if [ "$off" -gt 0 ]; then
+    tail="${raw:$off}"
+    sep=0
+    case "$tail" in
+      [[:space:]]*) sep=1 ;;
+      $'\xc2\xa0'* | $'\xe2\x80\x80'* | $'\xe2\x80\x81'* | $'\xe2\x80\x82'* | $'\xe2\x80\x83'* | $'\xe2\x80\x84'* | $'\xe2\x80\x85'* | $'\xe2\x80\x86'* | $'\xe2\x80\x87'* | $'\xe2\x80\x88'* | $'\xe2\x80\x89'* | $'\xe2\x80\x8a'* | $'\xe2\x80\xa8'* | $'\xe2\x80\xa9'* | $'\xe2\x80\xaf'* | $'\xe2\x81\x9f'* | $'\xe3\x80\x80'* | $'\xef\xbb\xbf'*) sep=1 ;;
+    esac
+    if [ "$sep" = "1" ]; then
+      # span start: skip the ONE JS-\s char, then the greedy leading "? eats
+      # ONE quote if present; group1 runs from there (>=1 char)
+      rest="${tail:1}"
+      rest="${rest#\"}" # greedy leading "? eats ONE quote if present (no-op otherwise)
+      # occurrence offsets (bytes = chars under LC_ALL=C), left to right
+      tpf=$(mktemp "${TMPDIR:-/tmp}/tpf.XXXXXX")
+      printf '%s' "$rest" | grep -abo 'This reverts commit ' > "$tpf" 2>/dev/null || true
+      while IFS=: read -r o _; do
+        [ -n "$o" ] || continue
+        [ "$o" -ge 1 ] || continue # group1 >= 1 char
+        t="${rest:$((o + 20))}"
+        run=$(printf '%s' "$t" | grep -o '^[A-Za-z0-9_]*' | head -1)
+        l=${#run}
+        if [ "$l" -ge 7 ] && [ "$l" -le 40 ]; then
+          REVT_OF[$n]=1
+          hdr="${rest:0:$o}"
+          hdr="${hdr%"${hdr##*[![:space:]]}"}"
+          hdr="${hdr%\"}"
+          hdr="${hdr%"${hdr%%[![:space:]]*}"}"
+          hdr="${hdr%"${hdr##*[![:space:]]}"}"
+          HDR_OF[$n]="$hdr"
+          CITED_OF[$n]="$run"
+          break
+        fi
+      done < "$tpf"
+      rm -f "$tpf"
+    fi
+  fi
   SUBJ_OF[$n]="$subj"
   n=$((n + 1))
 done < <(git -C "$REPO" log --format='%x00%H%x01%B' "$BASE_REF..$HEAD_REF")
