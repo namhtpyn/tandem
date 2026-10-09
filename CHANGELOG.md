@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/namhtpyn/tandem/compare/v1.0.0...v1.0.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **ci:** generate .nuxt types via postinstall before typecheck ([b7211f3](https://github.com/namhtpyn/tandem/commit/b7211f3c4c7d3a303876ca8ea5460b1fe7951554))
+
 # 1.0.0 (2026-10-09)
 
 
