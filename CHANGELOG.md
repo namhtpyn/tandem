@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/namhtpyn/tandem/compare/v1.0.2...v1.1.0) (2026-10-09)
+
+
+### Features
+
+* **m2:** environments as oRPC v2 live procedures + realtime admin UI ([59dd0a5](https://github.com/namhtpyn/tandem/commit/59dd0a5ad6fcb207e7b86f694fc2225567f3f9eb))
+
 ## [1.0.2](https://github.com/namhtpyn/tandem/compare/v1.0.1...v1.0.2) (2026-10-09)
 
 
