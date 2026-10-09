@@ -16,7 +16,7 @@ export default defineConfig({
   webServer: process.env.TANDEM_E2E_NO_SERVER
     ? undefined
     : {
-        command: 'PORT=4100 DATABASE_URL=postgresql://tandem:tandem@127.0.0.1:55432/tandem_e2e bun .output/server/index.mjs',
+        command: `PORT=4100 DATABASE_URL=${process.env.TANDEM_E2E_DATABASE_URL || 'postgresql://tandem:tandem@127.0.0.1:55432/tandem_e2e'} bun .output/server/index.mjs`,
         url: 'http://localhost:4100/health/live',
         reuseExistingServer: !process.env.CI,
         timeout: 30_000,

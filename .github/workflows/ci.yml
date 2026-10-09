@@ -35,7 +35,10 @@ jobs:
       - run: bun run typecheck
       - run: bun run build
       - run: bun run test:coverage
+      - name: Create e2e database
+        run: docker exec ${{ job.services.postgres.id }} psql -U tandem -d tandem_test -c 'create database tandem_e2e owner tandem'
       - run: bunx playwright install --with-deps chromium
       - run: bun run test:e2e
         env:
           TANDEM_E2E_URL: http://localhost:4100
+          TANDEM_E2E_DATABASE_URL: postgresql://tandem:tandem@127.0.0.1:5432/tandem_e2e
