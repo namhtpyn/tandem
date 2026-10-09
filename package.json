@@ -1,0 +1,63 @@
+{
+  "name": "tandem",
+  "version": "0.0.0",
+  "description": "Company workspace where human and AI employees work together \u2014 SSH environments run the Hermes agent as the task runner.",
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "start": "bun .output/server/index.mjs",
+    "typecheck": "bunx vue-tsc --noEmit -p tsconfig.json",
+    "db:generate": "drizzle-kit generate",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
+  },
+  "dependencies": {
+    "@better-auth/drizzle-adapter": "1.7.7",
+    "@nuxt/fonts": "0.14.0",
+    "@nuxt/icon": "2.5.1",
+    "@nuxt/ui": "4.11.3",
+    "better-auth": "1.7.7",
+    "drizzle-orm": "1.0.0-rc.4",
+    "nuxt": "4.6.0",
+    "postgres": "3.4.7",
+    "zod": "4.6.5"
+  },
+  "engines": {
+    "bun": ">=1.1"
+  },
+  "devDependencies": {
+    "@dxup/nuxt": "0.5.10",
+    "@nuxt/test-utils": "4.3.3",
+    "@playwright/test": "1.64.0",
+    "@semantic-release/changelog": "6.0.3",
+    "@semantic-release/git": "10.0.1",
+    "@types/node": "26.6.4",
+    "@vitest/browser": "5.0.3",
+    "@vitest/coverage-v8": "5.0.3",
+    "@vue/test-utils": "^2.5.1",
+    "bun-types": "1.4.2",
+    "drizzle-kit": "1.0.0-rc.4",
+    "happy-dom": "^20.14.6",
+    "semantic-release": "24.2.3",
+    "typescript": "npm:typescript-native-bridge@6.0.3-bridge.18.tsgo.7.0.2",
+    "typescript-native-bridge": "6.0.3-bridge.18.tsgo.7.0.2",
+    "vitest": "5.0.3",
+    "vue-tsc": "3.3.12"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/namhtpyn/tandem.git"
+  },
+  "author": "namhtpyn",
+  "license": "MIT",
+  "packageManager": "bun@1.4.2",
+  "overrides": {
+    "esbuild": "0.25.12",
+    "typescript": "$typescript"
+  }
+}

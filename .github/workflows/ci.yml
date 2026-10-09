@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: tandem
+          POSTGRES_PASSWORD: tandem
+          POSTGRES_DB: tandem_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tandem"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://tandem:tandem@127.0.0.1:5432/tandem_test
+      TANDEM_TEST_DATABASE_URL: postgresql://tandem:tandem@127.0.0.1:5432/tandem_test
+      BETTER_AUTH_SECRET: ci-secret-not-for-prod
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run build
+      - run: bun run test:coverage
+      - run: bunx playwright install --with-deps chromium
+      - run: bun run test:e2e
+        env:
+          TANDEM_E2E_URL: http://localhost:4100

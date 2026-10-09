@@ -1,0 +1,53 @@
+{
+  "branches": [
+    "main"
+  ],
+  "plugins": [
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        "parserOpts": {
+          "headerPattern": "^(\\w*)(?:\\(([\\w$@.+\\-*/ ]*)\\))?!?: (.*)$",
+          "breakingHeaderPattern": "^(\\w*)(?:\\(([\\w$@.\\-*/ ]*)\\))?!: (.*)$",
+          "headerCorrespondence": [
+            "type",
+            "scope",
+            "subject"
+          ]
+        }
+      }
+    ],
+    [
+      "@semantic-release/release-notes-generator",
+      {
+        "parserOpts": {
+          "headerPattern": "^(\\w*)(?:\\(([\\w$@.+\\-*/ ]*)\\))?!?: (.*)$",
+          "breakingHeaderPattern": "^(\\w*)(?:\\(([\\w$@.\\-*/ ]*)\\))?!: (.*)$",
+          "headerCorrespondence": [
+            "type",
+            "scope",
+            "subject"
+          ]
+        }
+      }
+    ],
+    "@semantic-release/changelog",
+    "@semantic-release/git",
+    [
+      "@semantic-release/github",
+      {
+        "labels": false,
+        "successComment": false,
+        "parserOpts": {
+          "headerPattern": "^(\\w*)(?:\\(([\\w$@.+\\-*/ ]*)\\))?!?: (.*)$",
+          "breakingHeaderPattern": "^(\\w*)(?:\\(([\\w$@.\\-*/ ]*)\\))?!: (.*)$",
+          "headerCorrespondence": [
+            "type",
+            "scope",
+            "subject"
+          ]
+        }
+      }
+    ]
+  ]
+}
