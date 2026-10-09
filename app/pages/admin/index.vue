@@ -6,7 +6,7 @@
   <div class="space-y-6">
     <div>
       <h2 class="text-lg font-semibold text-zinc-900 dark:text-white">Overview</h2>
-      <p class="text-sm text-zinc-500">Company workspace — foundation milestone. Environments, employees, and tasks arrive in the next milestones.</p>
+      <p class="text-sm text-zinc-500">Company workspace — humans and AI employees, one hierarchy.</p>
     </div>
 
     <div class="grid gap-4 sm:grid-cols-3">
@@ -17,7 +17,7 @@
           </div>
           <div>
             <p class="text-sm font-medium text-zinc-900 dark:text-white">Environments</p>
-            <p class="text-xs text-zinc-400">SSH targets that run Hermes — M2</p>
+            <p class="text-xs text-zinc-400">SSH targets that run Hermes</p>
           </div>
         </div>
       </UCard>

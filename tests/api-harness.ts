@@ -62,6 +62,7 @@ class FakeNodeReq {
   headers: Record<string, string | string[] | undefined>
   url: string
   method: string
+  body?: unknown
   private chunks: Buffer[]
   private listeners: Record<string, Array<(...a: unknown[]) => void>> = {}
   private pumped = false
@@ -69,6 +70,7 @@ class FakeNodeReq {
     this.headers = headers
     this.url = url as string
     this.method = method
+    this.body = body
     this.chunks = body === undefined ? [] : [Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))]
   }
   on(ev: string, fn: (...a: unknown[]) => void) { (this.listeners[ev] ??= []).push(fn); this.kick(); return this }
@@ -110,12 +112,26 @@ export function makeEvent(req: FakeReq) {
     on: () => {},
     once: () => {},
   }
-  return createEvent(nodeReq as never, nodeRes as never)
+  const event = createEvent(nodeReq as never, nodeRes as never)
+  // [id] routes: nitro populates context.params from the matched route; emulate
+  // by extracting the trailing uuid segment from the url.
+  const m = /\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(req.url ?? '')
+  if (m) {
+    ;(event.context as Record<string, unknown>).params = { id: m[1] }
+  }
+  return event
 }
 
 export async function call(modPath: string, req: FakeReq) {
   const mod = await import(modPath)
   const event = makeEvent(req)
+  ;(event.node.req as unknown as Record<symbol, unknown>)[Symbol.for('h3ParsedBody')] = req.body ?? {}
   const result = await (mod.default as (e: unknown) => unknown)(event)
   return { result, event }
+}
+
+// Seed h3 router params for [id]-style routes: derive `id` from the url tail.
+export function withRouterParam(event: { context: Record<string, unknown> }, params: Record<string, string>) {
+  event.context.params = params
+  return event
 }

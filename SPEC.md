@@ -15,7 +15,7 @@ Remote-only: the agent never runs on the Tandem server itself.
 | id | scope | status |
 |---|---|---|
 | M1 | foundation: schema, auth, settings, health, admin shell, boot migrations + admin seed | shipped |
-| M2 | environments CRUD, SSH probe | planned |
+| M2 | environments: oRPC v2 live API, realtime admin UI, SSH probe (Bun Shell) | shipped |
 | M3 | employees (human/AI, title, managerId, org view | planned |
 | M4 | tasks CRUD, assignee, status | planned |
 | M5 | runner: per-env serial queue, SSH one-shot Hermes, stream capture | planned |
@@ -56,6 +56,49 @@ ssh -p <port> <user>@<host> hermes chat -q --query-file - --format stream-json
 - `oidcEnabled = providers.length > 0`
 - invariant: disabling password login with no OIDC provider configured is rejected 400
 
+## API law (M2+)
+
+All domain APIs are **oRPC v2** procedures mounted at `/rpc` (RPCHandler,
+Fetch adapter). REST remains only for auth, settings/OIDC admin, health, and
+auth-config/session/version endpoints. Rules:
+
+- every mutating procedure publishes to the in-process change bus
+  (`server/utils/change-bus.ts`, MemoryPublisher) after commit
+- list endpoints are **live generators**: initial snapshot, then re-emitted
+  snapshots on matching change events, streamed to clients as SSE
+  (`text/event-stream`) — the UI never polls or invalidates
+- session context: lazy `getSession()` from better-auth per request (cookie
+  headers forwarded); `UNAUTHORIZED` (401) for anonymous calls via middleware
+- procedure errors map to oRPC codes: `CONFLICT` 409 duplicate name,
+  `NOT_FOUND` 404, `BAD_REQUEST` 400 schema violations
+- input validation: zod `strictObject` everywhere (unknown keys rejected)
+- wire format: POST `/rpc/<path>`, body `{ "json": <input> }`,
+  `content-type: application/json`; responses `{ "json": <result> }`
+
+### Environments procedures
+
+| procedure | input | result |
+|---|---|---|
+| `environments.live` | — | live snapshot stream of all environments |
+| `environments.create` | `{name,host,port?,username}` | created row |
+| `environments.update` | `{id,name,host,port?,username}` | updated row |
+| `environments.remove` | `{id}` | `{ok:true}` |
+| `environments.probe` | `{id}` | `{ok,detail,durationMs}` |
+
+- names unique (409 on clash, including rename onto another row)
+- probe: BatchMode ssh (`StrictHostKeyChecking=accept-new`, ConnectTimeout 5),
+  marker `tandem-probe-ok`; Bun Shell first, node `child_process` fallback for
+  non-bun runtimes; `TANDEM_SSH_TIMEOUT_MS` overrides the 10s kill timer
+
+### Realtime client
+
+- `app/plugins/orpc.ts`: typed client; browser → `RPCLink('/rpc')`; SSR →
+  in-process link (no HTTP hop) registered on `globalThis`
+- `app/plugins/vue-query.ts`: TanStack Query; client-side
+  `refetchOnMount: 'always'` re-opens SSE streams after hydration
+- pages use `liveOptions()` live queries; mutations flow through the same
+  client; every connected tab updates from the change bus
+
 ## Settings API
 
 - `GET /api/settings` → `{ disablePasswordLogin: boolean }` (session required)
@@ -94,6 +137,7 @@ ssh -p <port> <user>@<host> hermes chat -q --query-file - --format stream-json
 | GET/PUT | `/api/settings` | session | auth settings |
 | GET/PUT | `/api/oidc` | session | OIDC registry |
 | GET | `/api/version` | none | build version |
+| POST | `/rpc/**` | session (oRPC middleware) | oRPC v2 procedures (see API law) |
 | GET | `/` | none | 302 → `/admin` |
 
 ## Testing contract

@@ -56,6 +56,7 @@ async function logout() {
 
 const nav = [
   { label: 'Overview', icon: 'i-lucide-layout-dashboard', to: '/admin' },
+  { label: 'Environments', icon: 'i-lucide-server', to: '/admin/environments' },
   { label: 'Settings', icon: 'i-lucide-settings', to: '/admin/settings' },
 ]
 </script>

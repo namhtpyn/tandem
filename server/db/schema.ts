@@ -54,6 +54,18 @@ export const verification = pgTable('tandem_verification', {
 
 // ---------- Tandem tables ----------
 
+// SSH targets that run the Hermes agent (M2). The runner (M5) will execute
+// `ssh -p <port> <username>@<host> hermes chat …` against these.
+export const environments = pgTable('tandem_environments', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  host: text('host').notNull(),
+  port: text('port').notNull().default('22'), // keep as text: leading-zero-free numeric string, validated by zod
+  username: text('username').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
 // runtime key/value settings (oidc providers JSON, flags, …)
 export const settings = pgTable('tandem_settings', {
   key: text('key').primaryKey(),
@@ -64,7 +76,7 @@ export const settings = pgTable('tandem_settings', {
 // ---------- relations ----------
 
 export const relations = defineRelations(
-  { user, session, account, verification, settings },
+  { user, session, account, verification, settings, environments },
   (helpers) => ({
     user: {
       sessions: helpers.many.session({ from: helpers.user.id, to: helpers.session.userId }),
@@ -78,6 +90,7 @@ export const relations = defineRelations(
     },
     verification: {},
     settings: {},
+    environments: {},
   }),
 )
 

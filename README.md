@@ -19,7 +19,13 @@ filled by agents you already run yourself.
 - **Health** — split readiness (`/health/ready`: Postgres + migrations) and liveness (`/health/live`: always 200)
 
 Stack: Nuxt 4 + Nitro, Nuxt UI v4, better-auth, drizzle + postgres.js,
-bun-only toolchain. Postgres is the only backing service.
+**oRPC v2** (live queries over SSE), TanStack Query, VueUse, es-toolkit,
+type-fest. bun-only toolchain (Bun Shell for all subprocess). Postgres is the
+only backing service.
+
+**Realtime everywhere**: domain data flows through oRPC live procedures at
+`/rpc` — the admin UI subscribes to snapshot streams and updates in every
+open tab the moment anything changes. No polling, no manual refresh.
 
 ## Quick start (Docker)
 
@@ -72,7 +78,7 @@ Docs: [SPEC.md](SPEC.md) · [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
 ## Roadmap
 
 - M1 — foundation: auth, settings, health, admin shell ✅
-- M2 — environments CRUD + SSH probe
+- M2 — environments: oRPC live API + realtime admin UI + SSH probe ✅
 - M3 — employees + org chart
 - M4 — tasks
 - M5 — runner (SSH + Hermes stream capture)

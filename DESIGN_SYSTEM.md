@@ -76,3 +76,12 @@ export default defineAppConfig({
 - Every icon-only control carries an `aria-label`.
 - Form fields use `UFormField` labels (real `<label>` association).
 - Color is never the only signal (badges also carry text).
+
+## Realtime indicators (M2+)
+
+- Live data pages carry a pulsing emerald dot + `live` label next to the page
+  title (`animate-ping` outer, solid inner, `size-1.5`)
+- Probe results render as `UBadge` `success`/`error` subtle, `sm`, followed by
+  the detail line in `text-xs text-zinc-400` truncated with a `:title` tooltip
+- Tables are snapshots of a stream: no skeletons after first load — the rows
+  swap in place when the SSE snapshot lands
