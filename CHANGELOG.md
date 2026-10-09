@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/namhtpyn/tandem/compare/v1.0.1...v1.0.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* **ci:** e2e against the CI postgres service database ([fafe13a](https://github.com/namhtpyn/tandem/commit/fafe13a9828bede8865f0c69995fd8953c77298f))
+
 ## [1.0.1](https://github.com/namhtpyn/tandem/compare/v1.0.0...v1.0.1) (2026-10-09)
 
 
