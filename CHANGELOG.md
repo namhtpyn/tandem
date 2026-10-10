@@ -1,3 +1,10 @@
+## [1.8.1](https://github.com/namhtpyn/tandem/compare/v1.8.0...v1.8.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **vault:** match page layout pattern of other pages ([d428c7d](https://github.com/namhtpyn/tandem/commit/d428c7d5a8c7bee28c4448627ae314c9ac962d7a))
+
 # [1.8.0](https://github.com/namhtpyn/tandem/compare/v1.7.0...v1.8.0) (2026-10-10)
 
 
