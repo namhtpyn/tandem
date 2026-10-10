@@ -84,15 +84,17 @@ function kindIcon(): string {
       <template #leading>
         <UDashboardSidebarCollapse />
       </template>
-      <template #trailing>
-        <UButton icon="i-lucide-history" variant="ghost" color="neutral" aria-label="Audit log" @click="auditOpen = true" />
-        <UButton icon="i-lucide-plus" size="sm" @click="openEditor()">New secret</UButton>
-      </template>
     </UDashboardNavbar>
-
     <div class="space-y-6 p-6 lg:p-8">
-      <UAlert icon="i-lucide-shield-check" color="primary" variant="subtle" title="Write-only secrets"
-        description="Values are encrypted (AES-256-GCM) and can be replaced, but never displayed again after saving." />
+    <div class="flex flex-wrap items-end justify-between gap-2">
+      <div>
+        <p class="text-sm text-zinc-500">Encrypted secrets for SSH keys and API tokens — write-only, never displayed again</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <UButton icon="i-lucide-history" variant="ghost" color="neutral" aria-label="Audit log" @click="auditOpen = true" />
+        <UButton icon="i-lucide-plus" label="New secret" @click="openEditor()" />
+      </div>
+    </div>
 
       <!-- Mobile: stacked cards -->
       <div v-if="rows.length" class="space-y-3 md:hidden">
