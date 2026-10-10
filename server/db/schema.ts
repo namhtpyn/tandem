@@ -119,8 +119,8 @@ export const settings = pgTable('tandem_settings', {
 // consumers (M5 SSH runner) import vault-crypto and decrypt.
 export const vaultSecrets = pgTable('tandem_vault_secrets', {
   id: text('id').primaryKey(),
-  name: text('name').notNull().unique(),
-  kind: text('kind').notNull().default('generic'),
+  name: text('name').notNull(),
+  description: text('description').notNull().default(''),
   ciphertext: text('ciphertext').notNull(), // v1:<b64 iv>:<b64 tag>:<b64 ct>
   lastFour: text('last_four').notNull().default(''), // display hint only
   createdBy: text('created_by').notNull().references(() => user.id, { onDelete: 'cascade' }),

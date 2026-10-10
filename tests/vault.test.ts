@@ -44,8 +44,8 @@ async function userFactory(id: string): Promise<string> {
 }
 
 /** factory: a persisted secret via the API; returns the API row */
-async function secretFactory(name: string, value = 'super-secret-value', kind = 'generic') {
-  return await callProc('vault.create', { name, value, kind })
+async function secretFactory(name: string, value = 'super-secret-value', description = '') {
+  return await callProc('vault.create', { name, value, description })
 }
 
 beforeEach(async () => {
@@ -127,27 +127,30 @@ describe('vault API', () => {
     expect(decryptSecret(raw[0]!.ciphertext)).toBe('correct-horse-battery')
   })
 
-  it('create conflicts on duplicate name', async () => {
-    await secretFactory('dup')
-    await expect(callProc('vault.create', { name: 'dup', value: 'x' })).rejects.toThrowError(/already exists/)
+  it('allows duplicate names (non-unique by design)', async () => {
+    const a = await callProc('vault.create', { name: 'dup', value: 'x', description: 'first' })
+    const b = await callProc('vault.create', { name: 'dup', value: 'y', description: 'second' })
+    expect(a.id).not.toBe(b.id)
+    expect(a.description).toBe('first')
+    expect(b.description).toBe('second')
   })
 
   it('update replaces the value and rotates the envelope', async () => {
     const { db } = await dbm()
     const { vaultSecrets } = await schema()
     const created = await secretFactory('rotate-me', 'old-value-123')
-    await callProc('vault.update', { id: created.id, name: 'rotate-me', kind: 'generic', value: 'new-value-456' })
+    await callProc('vault.update', { id: created.id, name: 'rotate-me', description: 'rotated note', value: 'new-value-456' })
     const raw = await db.select().from(vaultSecrets)
     expect(decryptSecret(raw[0]!.ciphertext)).toBe('new-value-456')
     expect(raw[0]!.lastFour).toBe('-456')
     expect(raw[0]!.ciphertext).not.toBe((await db.select().from(vaultSecrets)).toString())
   })
 
-  it('update to a clashing name conflicts; missing id 404s', async () => {
-    await secretFactory('keep-name')
-    const other = await secretFactory('other-name')
-    await expect(callProc('vault.update', { id: other.id, name: 'keep-name', kind: 'generic', value: 'v' })).rejects.toThrowError(/already exists/)
-    await expect(callProc('vault.update', { id: 'missing', name: 'x', kind: 'generic', value: 'v' })).rejects.toThrowError(/not found/)
+  it('update persists description; missing id 404s', async () => {
+    const secret = await secretFactory('desc-test')
+    const updated = await callProc('vault.update', { id: secret.id, name: 'desc-test', description: 'new note', value: 'v2' })
+    expect(updated.description).toBe('new note')
+    await expect(callProc('vault.update', { id: 'missing', name: 'x', description: '', value: 'v' })).rejects.toThrowError(/not found/)
   })
 
   it('remove deletes the secret and leaves a tombstone audit row', async () => {
@@ -168,7 +171,7 @@ describe('vault API', () => {
   it('audit records every action with actor and newest-first order', async () => {
     const a = await secretFactory('first')
     await secretFactory('second')
-    await callProc('vault.update', { id: a.id, name: 'first', kind: 'generic', value: 'rotated' })
+    await callProc('vault.update', { id: a.id, name: 'first', description: '', value: 'rotated' })
     const audit = await callProc('vault.audit')
     expect(audit.map((r: any) => r.action)).toEqual(['update', 'create', 'create'])
     expect(audit.every((r: any) => r.actorId === 'u1')).toBe(true)
@@ -181,7 +184,7 @@ describe('vault API', () => {
     // create as u2
     const { router } = await import('../server/utils/orpc')
     const node = (router as any).vault.create['~orpc']
-    const row = await node.handler({ input: { name: 'u2-secret', value: 'v', kind: 'generic' }, context: { ...(await ctx({ id: 'u2', name: 'B', email: 'b@x', role: 'admin' })), session: { user: { id: 'u2', name: 'B', email: 'b@x', role: 'admin' } } }, signal: new AbortController().signal })
+    const row = await node.handler({ input: { name: 'u2-secret', value: 'v', description: '' }, context: { ...(await ctx({ id: 'u2', name: 'B', email: 'b@x', role: 'admin' })), session: { user: { id: 'u2', name: 'B', email: 'b@x', role: 'admin' } } }, signal: new AbortController().signal })
     await db.delete(user).where(eq(user.id, 'u2'))
     const remaining = await db.select().from(vaultSecrets)
     expect(remaining).toHaveLength(0)
@@ -198,7 +201,7 @@ describe('vault API', () => {
     const { router } = await import('../server/utils/orpc')
     const node = (router as any).vault.create['~orpc']
     const context = buildAnonContext()
-    const res = await node.handler({ input: { name: 'x', value: 'y', kind: 'generic' }, context, signal: new AbortController().signal }).catch(e => e)
+    const res = await node.handler({ input: { name: 'x', value: 'y', description: '' }, context, signal: new AbortController().signal }).catch(e => e)
     expect(String(res?.message ?? res)).toMatch(/authentication required|Cannot read|session/)
   })
 })

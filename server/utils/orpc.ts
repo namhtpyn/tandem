@@ -58,7 +58,7 @@ function toVaultRow(r: typeof vaultSecretsTable.$inferSelect): VaultSecretRow {
   return {
     id: r.id,
     name: r.name,
-    kind: r.kind,
+    description: r.description,
     lastFour: r.lastFour,
     createdBy: r.createdBy,
     createdAt: r.createdAt.toISOString(),
@@ -523,18 +523,14 @@ export const router = os.router({
     create: protectedProcedure
       .input(z.strictObject({
         name: z.string().min(1).max(100),
-        kind: z.string().min(1).max(50).default('generic'),
+        description: z.string().max(500).default(''),
         value: z.string().min(1).max(64_000),
       }))
       .handler(async ({ input, context }) => {
-        const clash = await db.select({ id: vaultSecretsTable.id }).from(vaultSecretsTable).where(eq(vaultSecretsTable.name, input.name))
-        if (clash.length > 0) {
-          throw new ORPCError('CONFLICT', { message: `secret "${input.name}" already exists` })
-        }
         const inserted = await db.insert(vaultSecretsTable).values({
           id: crypto.randomUUID(),
           name: input.name,
-          kind: input.kind,
+          description: input.description,
           ciphertext: encryptSecret(input.value),
           lastFour: lastFourHint(input.value),
           createdBy: context.session.user.id,
@@ -555,15 +551,11 @@ export const router = os.router({
       .input(z.strictObject({
         id: z.string().min(1),
         name: z.string().min(1).max(100),
-        kind: z.string().min(1).max(50).default('generic'),
+        description: z.string().max(500).default(''),
         value: z.string().min(1).max(64_000),
       }))
       .handler(async ({ input, context }) => {
         const { id, value, ...meta } = input
-        const clash = await db.select({ id: vaultSecretsTable.id }).from(vaultSecretsTable).where(eq(vaultSecretsTable.name, meta.name))
-        if (clash.some((c: { id: string }) => c.id !== id)) {
-          throw new ORPCError('CONFLICT', { message: `secret "${meta.name}" already exists` })
-        }
         const updated = await db.update(vaultSecretsTable)
           .set({ ...meta, ciphertext: encryptSecret(value), lastFour: lastFourHint(value), updatedAt: new Date() })
           .where(eq(vaultSecretsTable.id, id)).returning()

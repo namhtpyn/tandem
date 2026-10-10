@@ -17,14 +17,12 @@ const busy = ref(false)
 const editorOpen = ref(false)
 const isEdit = ref(false)
 const editingId = ref<string | null>(null)
-const form = ref({ name: '', kind: 'generic', value: '' })
+const form = ref({ name: '', description: '', value: '' })
 const formError = ref<string | null>(null)
 const showValue = ref(false)
 
 const auditOpen = ref(false)
 const confirmingRow = computed(() => rows.value.find(r => r.id === confirming.value) ?? null)
-
-const kindOptions = ['generic', 'ssh-key', 'api-token', 'password']
 
 const invalidateAudit = () => { void auditQuery.refetch() }
 const createMutation = useMutation({ ...$orpc.vault.create.mutationOptions(), onSuccess: invalidateAudit })
@@ -37,11 +35,11 @@ function openEditor(row?: VaultSecretRow) {
   if (row) {
     isEdit.value = true
     editingId.value = row.id
-    form.value = { name: row.name, kind: row.kind, value: '' }
+form.value = { name: row.name, description: row.description, value: '' }
   } else {
     isEdit.value = false
     editingId.value = null
-    form.value = { name: '', kind: 'generic', value: '' }
+form.value = { name: '', description: '', value: '' }
   }
   editorOpen.value = true
 }
@@ -53,9 +51,9 @@ async function save() {
   busy.value = true
   try {
     if (isEdit.value && editingId.value) {
-      await updateMutation.mutateAsync({ id: editingId.value, name: form.value.name.trim(), kind: form.value.kind, value: form.value.value })
+      await updateMutation.mutateAsync({ id: editingId.value, name: form.value.name.trim(), description: form.value.description.trim(), value: form.value.value })
     } else {
-      await createMutation.mutateAsync({ name: form.value.name.trim(), kind: form.value.kind, value: form.value.value })
+      await createMutation.mutateAsync({ name: form.value.name.trim(), description: form.value.description.trim(), value: form.value.value })
     }
     editorOpen.value = false
   } catch (e: any) {
@@ -75,10 +73,7 @@ async function reallyRemove(row: VaultSecretRow) {
   try { await removeMutation.mutateAsync({ id: row.id }) } finally { busy.value = false }
 }
 
-function kindIcon(kind: string): string {
-  if (kind === 'ssh-key') return 'i-lucide-key-round'
-  if (kind === 'api-token') return 'i-lucide-plug'
-  if (kind === 'password') return 'i-lucide-lock'
+function kindIcon(): string {
   return 'i-lucide-shield'
 }
 </script>
@@ -107,8 +102,8 @@ function kindIcon(kind: string): string {
               <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
               <p class="mt-1 font-mono text-xs text-zinc-400">•••• {{ row.lastFour }}</p>
             </div>
-            <UBadge color="neutral" variant="subtle" size="sm" :icon="kindIcon(row.kind)">{{ row.kind }}</UBadge>
           </div>
+          <p v-if="row.description" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ row.description }}</p>
           <div class="mt-3 flex justify-end gap-1">
             <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Replace secret" :disabled="busy" @click="openEditor(row)" />
             <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete secret" :disabled="busy" @click="askRemove(row)" />
@@ -120,13 +115,13 @@ function kindIcon(kind: string): string {
       <UCard v-if="rows.length" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
         <UTable :data="rows" :columns="[
           { accessorKey: 'name', header: 'Name' },
-          { accessorKey: 'kind', header: 'Kind' },
+          { accessorKey: 'description', header: 'Description' },
           { accessorKey: 'lastFour', header: 'Value' },
           { accessorKey: 'updatedAt', header: 'Updated' },
           { id: 'actions', header: '' },
         ]">
-          <template #kind-cell="{ row }">
-            <UBadge color="neutral" variant="subtle" size="sm" :icon="kindIcon(row.original.kind)">{{ row.original.kind }}</UBadge>
+          <template #description-cell="{ row }">
+            <span class="text-xs text-zinc-500 dark:text-zinc-400">{{ row.original.description || '—' }}</span>
           </template>
           <template #lastFour-cell="{ row }">
             <span class="font-mono text-xs text-zinc-400">•••• {{ row.original.lastFour }}</span>
@@ -161,8 +156,8 @@ function kindIcon(kind: string): string {
           <UFormField label="Name" hint="unique" :error="formError && !form.name ? formError : undefined">
             <UInput v-model="form.name" placeholder="ssh-prod-key" class="w-full" :disabled="busy" />
           </UFormField>
-          <UFormField label="Kind">
-            <USelect v-model="form.kind" :items="kindOptions" class="w-full" :disabled="busy" />
+          <UFormField label="Description" hint="optional note">
+            <UTextarea v-model="form.description" placeholder="What is this secret for?" :rows="2" class="w-full" :disabled="busy" />
           </UFormField>
           <UFormField label="Value" :hint="isEdit ? 'replaces the stored value' : 'encrypted, never shown again'"
             :error="formError && formError !== 'Name is required' ? formError : undefined">

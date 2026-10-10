@@ -41,7 +41,7 @@ export interface ApiKeyRow {
 export interface VaultSecretRow {
   id: string
   name: string
-  kind: string
+  description: string
   /** display hint — last 4 chars of the plaintext, nothing more */
   lastFour: string
   createdBy: string

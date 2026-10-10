@@ -44,7 +44,7 @@ beforeEach(async () => {
 
 describe('environment secret linkage', () => {
   it('create accepts secretId and returns it in rows', async () => {
-    const secret = await callProc('vault.create', { name: 'env-key', value: 'PRIVATE KEY MATERIAL', kind: 'ssh-key' })
+    const secret = await callProc('vault.create', { name: 'env-key', value: 'PRIVATE KEY MATERIAL', description: 'ssh key' })
     const env = await callProc('environments.create', { name: 'box', host: '127.0.0.1', port: '22', username: 'u', secretId: secret.id })
     expect(env.secretId).toBe(secret.id)
     const iter = await callProc('environments.live')
@@ -67,7 +67,7 @@ describe('environment secret linkage', () => {
     const env = await callProc('environments.create', { name: 'box', host: 'h', port: '22', username: 'u' })
     await expect(callProc('environments.update', { id: env.id, name: 'box', host: 'h', port: '22', username: 'u', secretId: 'missing' }))
       .rejects.toThrowError(/linked secret not found/)
-    const secret = await callProc('vault.create', { name: 'k1', value: 'v1', kind: 'ssh-key' })
+    const secret = await callProc('vault.create', { name: 'k1', value: 'v1', description: 'ssh key' })
     const linked = await callProc('environments.update', { id: env.id, name: 'box', host: 'h', port: '22', username: 'u', secretId: secret.id })
     expect(linked.secretId).toBe(secret.id)
     const unlinked = await callProc('environments.update', { id: env.id, name: 'box', host: 'h', port: '22', username: 'u', secretId: null })
@@ -75,7 +75,7 @@ describe('environment secret linkage', () => {
   })
 
   it('deleting the secret set-nulls the environment link (no dangling FK)', async () => {
-    const secret = await callProc('vault.create', { name: 'doomed-key', value: 'v', kind: 'ssh-key' })
+    const secret = await callProc('vault.create', { name: 'doomed-key', value: 'v', description: 'ssh key' })
     const env = await callProc('environments.create', { name: 'box', host: 'h', port: '22', username: 'u', secretId: secret.id })
     await callProc('vault.remove', { id: secret.id })
     const { db } = await dbm()
@@ -86,7 +86,7 @@ describe('environment secret linkage', () => {
   })
 
   it('probe with a linked secret decrypts server-side and audits the use', async () => {
-    const secret = await callProc('vault.create', { name: 'probe-key', value: 'not-a-real-key', kind: 'ssh-key' })
+    const secret = await callProc('vault.create', { name: 'probe-key', value: 'not-a-real-key', description: 'ssh key' })
     const env = await callProc('environments.create', { name: 'probe-box', host: '127.0.0.1', port: '59999', username: 'u', secretId: secret.id })
     // port 59999: nothing listens -> probe fails fast, but the KEY was
     // decrypted + audited BEFORE the ssh attempt
@@ -104,7 +104,7 @@ describe('environment secret linkage', () => {
     // the secret row bypassing the app (audit FK cascades; env FK set-null is a
     // POSTGRES rule — bypass by dropping the constraint in this throwaway DB)
     const { postgres } = await import('./helpers/pg')
-    const secret = await callProc('vault.create', { name: 'ghost-key', value: 'v', kind: 'ssh-key' })
+    const secret = await callProc('vault.create', { name: 'ghost-key', value: 'v', description: 'ssh key' })
     const env = await callProc('environments.create', { name: 'dangling', host: '127.0.0.1', port: '59999', username: 'u', secretId: secret.id })
     await postgres.unsafe('alter table tandem_environments drop constraint tandem_environments_secret_id_tandem_vault_secrets_id_fkey')
     await postgres.unsafe('delete from tandem_vault_secrets where id = $1', [secret.id])
