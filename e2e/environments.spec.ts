@@ -1,15 +1,7 @@
 import { expect, test } from '@playwright/test'
+import { login } from './helpers/login'
 
 // M2: environments — live CRUD over oRPC /rpc, SSE realtime, probe.
-
-async function login(page: import('@playwright/test').Page) {
-  await page.goto('/admin')
-  await page.getByPlaceholder('you@example.com').fill('admin@tandem.local')
-  await page.getByLabel('Password').fill('tandem-admin')
-  await page.getByRole('button', { name: 'Sign in' }).click()
-  await page.waitForURL(/admin/)
-  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
-}
 
 test('environment CRUD round-trip on the live page', async ({ page }) => {
   const suffix = Date.now().toString(36)
