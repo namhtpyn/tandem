@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/namhtpyn/tandem/compare/v1.9.0...v1.10.0) (2026-10-10)
+
+
+### Features
+
+* **employees:** AI harness selector + executable override ([fbfd92a](https://github.com/namhtpyn/tandem/commit/fbfd92a36e408d5d9d7981fdade5fc7b15503a9a))
+
 # [1.9.0](https://github.com/namhtpyn/tandem/compare/v1.8.1...v1.9.0) (2026-10-10)
 
 
