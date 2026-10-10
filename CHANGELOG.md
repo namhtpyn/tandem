@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/namhtpyn/tandem/compare/v1.2.0...v1.3.0) (2026-10-10)
+
+
+### Features
+
+* **auth:** end-to-end type inference for the role additionalField ([ea93164](https://github.com/namhtpyn/tandem/commit/ea93164fdf039365aa2f8dab9d160591ffaca82d))
+
 # [1.2.0](https://github.com/namhtpyn/tandem/compare/v1.1.2...v1.2.0) (2026-10-10)
 
 
