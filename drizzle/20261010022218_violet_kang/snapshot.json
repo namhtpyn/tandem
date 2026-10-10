@@ -1,20 +1,11 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "86949059-5fb9-45c4-99c2-280c20b7e730",
+  "id": "ff0ee4bc-b1b7-43d5-ba66-65e08f4df4af",
   "prevIds": [
     "3121b2bb-b5e0-41f6-8b34-e628f6f094b8"
   ],
   "ddl": [
-    {
-      "values": [
-        "human",
-        "ai"
-      ],
-      "name": "tandem_employee_kind",
-      "entityType": "enums",
-      "schema": "public"
-    },
     {
       "isRlsEnabled": false,
       "name": "tandem_account",
@@ -36,12 +27,6 @@
     {
       "isRlsEnabled": false,
       "name": "tandem_employee_supervisors",
-      "entityType": "tables",
-      "schema": "public"
-    },
-    {
-      "isRlsEnabled": false,
-      "name": "tandem_employees",
       "entityType": "tables",
       "schema": "public"
     },
@@ -236,7 +221,7 @@
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": "now()",
+      "default": null,
       "generated": null,
       "identity": null,
       "name": "updated_at",
@@ -252,7 +237,7 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "employee_id",
+      "name": "user_id",
       "entityType": "columns",
       "schema": "public",
       "table": "tandem_ai_employees"
@@ -338,7 +323,7 @@
     {
       "type": "text",
       "typeSchema": null,
-      "notNull": true,
+      "notNull": false,
       "dimensions": 0,
       "default": null,
       "generated": null,
@@ -357,6 +342,19 @@
       "generated": null,
       "identity": null,
       "name": "start",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "tandem_apikey"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reference_id",
       "entityType": "columns",
       "schema": "public",
       "table": "tandem_apikey"
@@ -388,20 +386,7 @@
       "table": "tandem_apikey"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "reference_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
-    },
-    {
-      "type": "text",
+      "type": "integer",
       "typeSchema": null,
       "notNull": false,
       "dimensions": 0,
@@ -414,7 +399,7 @@
       "table": "tandem_apikey"
     },
     {
-      "type": "text",
+      "type": "integer",
       "typeSchema": null,
       "notNull": false,
       "dimensions": 0,
@@ -442,7 +427,7 @@
     {
       "type": "boolean",
       "typeSchema": null,
-      "notNull": true,
+      "notNull": false,
       "dimensions": 0,
       "default": "true",
       "generated": null,
@@ -457,7 +442,7 @@
       "typeSchema": null,
       "notNull": false,
       "dimensions": 0,
-      "default": null,
+      "default": "true",
       "generated": null,
       "identity": null,
       "name": "rate_limit_enabled",
@@ -466,11 +451,11 @@
       "table": "tandem_apikey"
     },
     {
-      "type": "text",
+      "type": "integer",
       "typeSchema": null,
       "notNull": false,
       "dimensions": 0,
-      "default": null,
+      "default": "86400000",
       "generated": null,
       "identity": null,
       "name": "rate_limit_time_window",
@@ -479,11 +464,11 @@
       "table": "tandem_apikey"
     },
     {
-      "type": "text",
+      "type": "integer",
       "typeSchema": null,
       "notNull": false,
       "dimensions": 0,
-      "default": null,
+      "default": "10",
       "generated": null,
       "identity": null,
       "name": "rate_limit_max",
@@ -492,11 +477,11 @@
       "table": "tandem_apikey"
     },
     {
-      "type": "text",
+      "type": "integer",
       "typeSchema": null,
       "notNull": false,
       "dimensions": 0,
-      "default": null,
+      "default": "0",
       "generated": null,
       "identity": null,
       "name": "request_count",
@@ -505,7 +490,7 @@
       "table": "tandem_apikey"
     },
     {
-      "type": "text",
+      "type": "integer",
       "typeSchema": null,
       "notNull": false,
       "dimensions": 0,
@@ -544,6 +529,32 @@
       "table": "tandem_apikey"
     },
     {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "tandem_apikey"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "tandem_apikey"
+    },
+    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -565,32 +576,6 @@
       "generated": null,
       "identity": null,
       "name": "metadata",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "updated_at",
       "entityType": "columns",
       "schema": "public",
       "table": "tandem_apikey"
@@ -620,84 +605,6 @@
       "entityType": "columns",
       "schema": "public",
       "table": "tandem_employee_supervisors"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_employees"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "user_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_employees"
-    },
-    {
-      "type": "tandem_employee_kind",
-      "typeSchema": "public",
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "kind",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_employees"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "title",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_employees"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_employees"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_employees"
     },
     {
       "type": "text",
@@ -847,7 +754,7 @@
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": "now()",
+      "default": null,
       "generated": null,
       "identity": null,
       "name": "updated_at",
@@ -977,7 +884,7 @@
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": "true",
+      "default": "false",
       "generated": null,
       "identity": null,
       "name": "email_verified",
@@ -1027,12 +934,25 @@
     {
       "type": "text",
       "typeSchema": null,
-      "notNull": true,
+      "notNull": false,
       "dimensions": 0,
       "default": "'viewer'",
       "generated": null,
       "identity": null,
       "name": "role",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "tandem_user"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": "''",
+      "generated": null,
+      "identity": null,
+      "name": "title",
       "entityType": "columns",
       "schema": "public",
       "table": "tandem_user"
@@ -1092,9 +1012,9 @@
     {
       "type": "timestamp with time zone",
       "typeSchema": null,
-      "notNull": false,
+      "notNull": true,
       "dimensions": 0,
-      "default": null,
+      "default": "now()",
       "generated": null,
       "identity": null,
       "name": "created_at",
@@ -1105,15 +1025,57 @@
     {
       "type": "timestamp with time zone",
       "typeSchema": null,
-      "notNull": false,
+      "notNull": true,
       "dimensions": 0,
-      "default": null,
+      "default": "now()",
       "generated": null,
       "identity": null,
       "name": "updated_at",
       "entityType": "columns",
       "schema": "public",
       "table": "tandem_verification"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "user_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "account_userId_idx",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "tandem_account"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "config_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "apikey_configId_idx",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "tandem_apikey"
     },
     {
       "nameExplicit": true,
@@ -1131,7 +1093,28 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "tandem_apikey_reference_id_idx",
+      "name": "apikey_referenceId_idx",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "tandem_apikey"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "apikey_key_idx",
       "entityType": "indexes",
       "schema": "public",
       "table": "tandem_apikey"
@@ -1158,6 +1141,48 @@
       "table": "tandem_employee_supervisors"
     },
     {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "user_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "session_userId_idx",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "tandem_session"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "identifier",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "verification_identifier_idx",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "tandem_verification"
+    },
+    {
       "nameExplicit": false,
       "columns": [
         "user_id"
@@ -1177,16 +1202,16 @@
     {
       "nameExplicit": false,
       "columns": [
-        "employee_id"
+        "user_id"
       ],
       "schemaTo": "public",
-      "tableTo": "tandem_employees",
+      "tableTo": "tandem_user",
       "columnsTo": [
         "id"
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_ai_employees_employee_id_tandem_employees_id_fkey",
+      "name": "tandem_ai_employees_user_id_tandem_user_id_fkey",
       "entityType": "fks",
       "schema": "public",
       "table": "tandem_ai_employees"
@@ -1231,13 +1256,13 @@
         "employee_id"
       ],
       "schemaTo": "public",
-      "tableTo": "tandem_employees",
+      "tableTo": "tandem_user",
       "columnsTo": [
         "id"
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_employee_supervisors_aWDitLooJc7l_fkey",
+      "name": "tandem_employee_supervisors_employee_id_tandem_user_id_fkey",
       "entityType": "fks",
       "schema": "public",
       "table": "tandem_employee_supervisors"
@@ -1248,33 +1273,16 @@
         "supervisor_id"
       ],
       "schemaTo": "public",
-      "tableTo": "tandem_employees",
-      "columnsTo": [
-        "id"
-      ],
-      "onUpdate": "NO ACTION",
-      "onDelete": "CASCADE",
-      "name": "tandem_employee_supervisors_Ub2loIR30PZL_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_employee_supervisors"
-    },
-    {
-      "nameExplicit": false,
-      "columns": [
-        "user_id"
-      ],
-      "schemaTo": "public",
       "tableTo": "tandem_user",
       "columnsTo": [
         "id"
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_employees_user_id_tandem_user_id_fkey",
+      "name": "tandem_employee_supervisors_supervisor_id_tandem_user_id_fkey",
       "entityType": "fks",
       "schema": "public",
-      "table": "tandem_employees"
+      "table": "tandem_employee_supervisors"
     },
     {
       "nameExplicit": false,
@@ -1316,7 +1324,7 @@
     },
     {
       "columns": [
-        "employee_id"
+        "user_id"
       ],
       "nameExplicit": false,
       "name": "tandem_ai_employees_pkey",
@@ -1332,16 +1340,6 @@
       "name": "tandem_apikey_pkey",
       "schema": "public",
       "table": "tandem_apikey",
-      "entityType": "pks"
-    },
-    {
-      "columns": [
-        "id"
-      ],
-      "nameExplicit": false,
-      "name": "tandem_employees_pkey",
-      "schema": "public",
-      "table": "tandem_employees",
       "entityType": "pks"
     },
     {
@@ -1393,17 +1391,6 @@
       "schema": "public",
       "table": "tandem_verification",
       "entityType": "pks"
-    },
-    {
-      "nameExplicit": false,
-      "columns": [
-        "user_id"
-      ],
-      "nullsNotDistinct": false,
-      "name": "tandem_employees_user_id_key",
-      "schema": "public",
-      "table": "tandem_employees",
-      "entityType": "uniques"
     },
     {
       "nameExplicit": false,

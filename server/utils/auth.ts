@@ -88,6 +88,9 @@ async function buildAuth(): Promise<Auth> {
         // union type (docs: type: ["user", "admin"]) — inferred end-to-end;
         // input:false = server-owned, users can't self-promote
         role: { type: ['admin', 'employee', 'viewer'] as const, required: false, defaultValue: 'viewer', input: false },
+        // employment title rides the identity row; AI-ness is derived from
+        // the tandem_ai_employees extension row, never a user column
+        title: { type: 'string', required: false, defaultValue: '', input: false },
       },
     },
     emailAndPassword: {

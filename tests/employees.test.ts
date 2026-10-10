@@ -83,12 +83,13 @@ describe('employees.create', () => {
   it('creates a human employee + login user, no key', async () => {
     const out = await callProc('employees.create', { name: 'H', email: 'h@tandem.local', kind: 'human', title: 'T', supervisorIds: [] })
     expect(out.apiKey).toBeUndefined()
-    const { employees, user } = await schema()
+    const { user } = await schema()
     const { db } = await dbm()
-    const emp = await db.select().from(employees)
-    expect(emp).toHaveLength(1)
-    expect(emp[0]!.kind).toBe('human')
     const users = await db.select().from(user)
+    expect(users).toHaveLength(1)
+    // human = NO extension row
+    const { aiEmployees } = await schema()
+    expect(await db.select().from(aiEmployees)).toHaveLength(0)
     expect(users[0]!.role).toBe('employee')
     expect(users[0]!.email).toBe('h@tandem.local')
   })

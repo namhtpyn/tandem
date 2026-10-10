@@ -1,7 +1,7 @@
 {
   "name": "tandem",
   "version": "0.0.0",
-  "description": "Company workspace where human and AI employees work together — SSH environments run the Hermes agent as the task runner.",
+  "description": "Company workspace where human and AI employees work together \u2014 SSH environments run the Hermes agent as the task runner.",
   "type": "module",
   "scripts": {
     "dev": "nuxt dev",
@@ -15,7 +15,8 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "postinstall": "nuxt prepare"
+    "postinstall": "nuxt prepare",
+    "gen:auth": "python3 scripts/splice-auth-schema.py"
   },
   "dependencies": {
     "@better-auth/api-key": "^1.7.7",

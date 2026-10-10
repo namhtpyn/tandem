@@ -15,7 +15,7 @@ export interface EmployeeRow {
   name: string
   email: string
   kind: 'human' | 'ai'
-  title: string
+  title: string | null
   supervisorIds: string[]
   /** ai only */
   environmentId: string | null
@@ -27,7 +27,7 @@ export interface EmployeeRow {
 
 export interface ApiKeyRow {
   id: string
-  name: string
+  name: string | null
   start: string | null
   prefix: string | null
   /** only set once, at creation */

@@ -1,4 +1,37 @@
-// Drizzle rc (Relations v2) over Postgres.
+import re, subprocess
+
+r = subprocess.run(['bunx', 'auth', 'generate', '--config', 'scripts/auth.config.ts', '--output', '/tmp/tandem-auth-schema.ts', '-y'], capture_output=True, text=True)
+assert r.returncode == 0, r.stderr[-400:]
+gen = open('/tmp/tandem-auth-schema.ts').read()
+
+# keep only the table definitions (drop imports + relations part)
+tables = re.findall(r'export const (\w+) = pgTable\("(\w+)"(.*?)\n\]\);', gen, flags=re.S)
+out = []
+for name, tbl, body in tables:
+    out.append(f'export const {name} = pgTable(\'tandem_{name}\'{body.rstrip()}\n]);' if body.rstrip().endswith('}, (table) => [') else None)
+# simpler: manual assembly per table below
+def table(name, body):
+    return f"export const {name} = pgTable('tandem_{name}', {{{body}}})\n"
+
+# Extract each table's column block with the generator's own text, normalized:
+def grab(name):
+    m = re.search(rf'export const {name} = pgTable\("\w+", \{{(.*?)\}}(, \(table\) => \[(.*?)\])?\);', gen, flags=re.S)
+    if not m:
+        raise SystemExit(f'missing {name}')
+    cols = m.group(1)
+    idx = m.group(3) or ''
+    cols = re.sub(r'\t+', '', cols)
+    cols = re.sub(r'\n {2,}', '\n  ', cols).strip()
+    cols = cols.replace('"', "'")
+    cols = re.sub(r"timestamp\('([a-z_]+)'\)", r"timestamp('\1', { withTimezone: true })", cols)
+    cols = re.sub(r"timestamp\('([a-z_]+)', \{ withTimezone: true \}\)\.defaultNow\(\)\.notNull\(\)\.\$onUpdate\(\(\) => /\* @__PURE__ \*/ new Date\(\)\)\.notNull\(\)",
+                  r"timestamp('\1', { withTimezone: true }).notNull().defaultNow()", cols)
+    cols = re.sub(r"timestamp\('([a-z_]+)', \{ withTimezone: true \}\)\.\$onUpdate\(\(\) => /\* @__PURE__ \*/ new Date\(\)\)\.notNull\(\)",
+                  r"timestamp('\1', { withTimezone: true }).notNull()", cols)
+    idx = idx.replace('"', "'").strip()
+    return cols, idx
+
+header = '''// Drizzle rc (Relations v2) over Postgres.
 // Auth tables (tandem_user/session/account/verification/apikey) are GENERATED
 // by the better-auth CLI — regenerate with `bun run gen:auth`; never edit by
 // hand. Domain tables below are hand-owned.
@@ -6,93 +39,28 @@ import { pgTable, text, timestamp, boolean, integer, index, primaryKey, check } 
 import { sql } from 'drizzle-orm'
 import { defineRelations } from 'drizzle-orm'
 
-// >>> BEGIN GENERATED better-auth tables (bun run gen:auth) — do not edit by hand
-export const user = pgTable('tandem_user', {
-  id: text('id').primaryKey(),
-name: text('name').notNull(),
- email: text('email').notNull().unique(),
- emailVerified: boolean('email_verified').default(false).notNull(),
- image: text('image'),
- createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
- updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().$onUpdate(() => /* @__PURE__ */ new Date()).notNull(),
- role: text('role', { enum: ['admin', 'employee', 'viewer'] }).default('viewer'),
- title: text('title').default(''),
-})
+'''
 
-export const session = pgTable('tandem_session', {
-  id: text('id').primaryKey(),
-expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
- token: text('token').notNull().unique(),
- createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
- updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
- ipAddress: text('ip_address'),
- userAgent: text('user_agent'),
- userId: text('user_id').notNull().references(()=> user.id, { onDelete: 'cascade' }),
-}, (t) => [
-  index('session_userId_idx').on(t.userId),
-])
+parts = [header, '// >>> BEGIN GENERATED better-auth tables (bun run gen:auth) — do not edit by hand\n']
+# FK + cascade additions for tandem semantics
+EXTRA = {
+    'apikey': {
+        'insert_after': "referenceId: text('reference_id').notNull(),",
+        'replace_with': "referenceId: text('reference_id').notNull().references(() => user.id, { onDelete: 'cascade' }),",
+    },
+}
+for name in ['user', 'session', 'account', 'verification', 'apikey']:
+    cols, idx = grab(name)
+    if name == 'apikey':
+        cols = cols.replace("referenceId: text('reference_id').notNull(),",
+                            "referenceId: text('reference_id').notNull().references(() => user.id, { onDelete: 'cascade' }),")
+    if idx:
+        parts.append(f"export const {name} = pgTable('tandem_{name}', {{\n  {cols},\n}}, (t) => [\n  {idx},\n])\n\n")
+    else:
+        parts.append(f"export const {name} = pgTable('tandem_{name}', {{\n  {cols},\n}})\n\n")
+parts.append('// <<< END GENERATED better-auth tables\n\n')
 
-export const account = pgTable('tandem_account', {
-  id: text('id').primaryKey(),
-accountId: text('account_id').notNull(),
- providerId: text('provider_id').notNull(),
- userId: text('user_id').notNull().references(()=> user.id, { onDelete: 'cascade' }),
- accessToken: text('access_token'),
- refreshToken: text('refresh_token'),
- idToken: text('id_token'),
- accessTokenExpiresAt: timestamp('access_token_expires_at', { withTimezone: true }),
- refreshTokenExpiresAt: timestamp('refresh_token_expires_at', { withTimezone: true }),
- scope: text('scope'),
- password: text('password'),
- createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
- updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
-}, (t) => [
-  index('account_userId_idx').on(t.userId),
-])
-
-export const verification = pgTable('tandem_verification', {
-  id: text('id').primaryKey(),
-identifier: text('identifier').notNull(),
- value: text('value').notNull(),
- expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
- createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
- updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().$onUpdate(() => /* @__PURE__ */ new Date()).notNull(),
-}, (t) => [
-  index('verification_identifier_idx').on(t.identifier),
-])
-
-export const apikey = pgTable('tandem_apikey', {
-  id: text('id').primaryKey(),
-configId: text('config_id').default('default').notNull(),
- name: text('name'),
- start: text('start'),
- referenceId: text('reference_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
- prefix: text('prefix'),
- key: text('key').notNull(),
- refillInterval: integer('refill_interval'),
- refillAmount: integer('refill_amount'),
- lastRefillAt: timestamp('last_refill_at', { withTimezone: true }),
- enabled: boolean('enabled').default(true),
- rateLimitEnabled: boolean('rate_limit_enabled').default(true),
- rateLimitTimeWindow: integer('rate_limit_time_window').default(86400000),
- rateLimitMax: integer('rate_limit_max').default(10),
- requestCount: integer('request_count').default(0),
- remaining: integer('remaining'),
- lastRequest: timestamp('last_request', { withTimezone: true }),
- expiresAt: timestamp('expires_at', { withTimezone: true }),
- createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
- updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
- permissions: text('permissions'),
- metadata: text('metadata'),
-}, (t) => [
-  index('apikey_configId_idx').on(t.configId),
-  index('apikey_referenceId_idx').on(t.referenceId),
-  index('apikey_key_idx').on(t.key),
-])
-
-// <<< END GENERATED better-auth tables
-
-// ---------- Tandem domain tables (hand-owned) ----------
+domain = '''// ---------- Tandem domain tables (hand-owned) ----------
 
 // SSH targets that run the Hermes agent (M2).
 export const environments = pgTable('tandem_environments', {
@@ -176,3 +144,7 @@ export const authSchema = {
   verification,
   apikey,
 }
+'''
+parts.append(domain)
+open('server/db/schema.ts', 'w').write(''.join(parts))
+print('schema.ts rewritten from generated + domain')
