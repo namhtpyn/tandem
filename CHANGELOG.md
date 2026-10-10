@@ -1,3 +1,10 @@
+## [1.4.2](https://github.com/namhtpyn/tandem/compare/v1.4.1...v1.4.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* **ui:** delete confirmations + last-admin/self-delete guards + modal/footer/key-callout fixes ([ba2c378](https://github.com/namhtpyn/tandem/commit/ba2c37815230736870c13b15f087c607b1270104))
+
 ## [1.4.1](https://github.com/namhtpyn/tandem/compare/v1.4.0...v1.4.1) (2026-10-10)
 
 
