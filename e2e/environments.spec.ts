@@ -4,11 +4,11 @@ import { expect, test } from '@playwright/test'
 
 async function login(page: import('@playwright/test').Page) {
   await page.goto('/admin')
-  await page.getByPlaceholder('you@company.com').fill('admin@tandem.local')
-  await page.getByPlaceholder('••••••••').fill('tandem-admin')
+  await page.getByPlaceholder('you@example.com').fill('admin@tandem.local')
+  await page.getByLabel('Password').fill('tandem-admin')
   await page.getByRole('button', { name: 'Sign in' }).click()
   await page.waitForURL(/admin/)
-  await expect(page.getByText('Overview')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
 }
 
 test('environment CRUD round-trip on the live page', async ({ page }) => {
@@ -20,6 +20,7 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
   await page.getByRole('button', { name: 'New environment' }).first().click()
   await page.getByPlaceholder('ct112-tandem').fill('e2e-box')
   await page.getByPlaceholder('192.168.3.108').fill('127.0.0.1')
+  await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByText('e2e-box')).toBeVisible({ timeout: 15_000 })
   await expect(page.getByText(/tandem@127\.0\.0\.1:22/)).toBeVisible()
@@ -28,6 +29,7 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
   await page.getByRole('button', { name: 'New environment' }).first().click()
   await page.getByPlaceholder('ct112-tandem').fill('e2e-box')
   await page.getByPlaceholder('192.168.3.108').fill('10.0.0.1')
+  await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByText(/already exists/i)).toBeVisible()
   await page.getByRole('button', { name: 'Cancel' }).click()
@@ -61,6 +63,7 @@ test('live table updates from another tab via SSE', async ({ context, page }) =>
   await other.getByRole('button', { name: 'New environment' }).first().click()
   await other.getByPlaceholder('ct112-tandem').fill('sse-ghost')
   await other.getByPlaceholder('192.168.3.108').fill('127.0.0.1')
+  await other.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
   await other.getByRole('button', { name: 'Save' }).click()
   await expect(other.getByText('sse-ghost')).toBeVisible({ timeout: 15_000 })
 
