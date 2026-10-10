@@ -13,7 +13,7 @@ export async function login(page: import('@playwright/test').Page) {
   await page.waitForLoadState('networkidle')
   await page.getByPlaceholder('you@example.com').fill('admin@tandem.local')
   await page.getByLabel('Password').fill('tandem-admin')
-  await page.getByRole('button', { name: 'Sign in' }).click()
+  await page.getByRole('button', { name: 'Sign in', exact: true }).first().click()
   await page.waitForURL((url) => !url.pathname.includes('login'))
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
 }

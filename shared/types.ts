@@ -7,6 +7,8 @@ export interface EnvironmentRow {
   username: string
   /** optional vault secret used for SSH auth (never the value itself) */
   secretId: string | null
+  /** how the linked secret is used */
+  secretUsage: 'ssh-key' | 'password'
   createdAt: string
   updatedAt: string
 }

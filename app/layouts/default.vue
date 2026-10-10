@@ -55,10 +55,10 @@ async function logout() {
 }
 
 const nav = [
-  { label: 'Overview', icon: 'i-lucide-layout-dashboard', to: '/admin' },
+  { label: 'Overview', icon: 'i-lucide-layout-dashboard', to: '/' },
+  { label: 'Vault', icon: 'i-lucide-shield', to: '/vault' },
   { label: 'Environments', icon: 'i-lucide-server', to: '/environments' },
   { label: 'Employees', icon: 'i-lucide-users', to: '/employees' },
-  { label: 'Vault', icon: 'i-lucide-shield', to: '/vault' },
   { label: 'Settings', icon: 'i-lucide-settings', to: '/settings' },
 ]
 </script>

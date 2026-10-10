@@ -9,6 +9,7 @@ export const environmentInput = z.strictObject({
     .default('22'),
   username: z.string().min(1).max(64),
   secretId: z.string().min(1).nullable().default(null),
+  secretUsage: z.enum(['ssh-key', 'password']).default('ssh-key'),
 })
 
 export type EnvironmentInput = z.infer<typeof environmentInput>

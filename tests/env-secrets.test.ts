@@ -53,9 +53,28 @@ describe('environment secret linkage', () => {
     await iter.return?.()
   })
 
-  it('secretId defaults to null when omitted', async () => {
+  it('secretId defaults to null when omitted; secretUsage defaults to ssh-key', async () => {
     const env = await callProc('environments.create', { name: 'nosecret', host: '127.0.0.1', port: '22', username: 'u' })
     expect(env.secretId).toBeNull()
+    expect(env.secretUsage).toBe('ssh-key')
+  })
+
+  it('persists secretUsage=password and can switch back', async () => {
+    const secret = await callProc('vault.create', { name: 'pw-key', value: 'hunter2', description: '' })
+    const env = await callProc('environments.create', { name: 'pw-box', host: '127.0.0.1', port: '59999', username: 'u', secretId: secret.id, secretUsage: 'password' })
+    expect(env.secretUsage).toBe('password')
+    const back = await callProc('environments.update', { id: env.id, name: 'pw-box', host: '127.0.0.1', port: '59999', username: 'u', secretId: secret.id, secretUsage: 'ssh-key' })
+    expect(back.secretUsage).toBe('ssh-key')
+  })
+
+  it('password-mode probe uses askpass path and audits the use', async () => {
+    const secret = await callProc('vault.create', { name: 'pw-probe', value: 's3cret-pw', description: '' })
+    const env = await callProc('environments.create', { name: 'pw-probe-box', host: '127.0.0.1', port: '59999', username: 'u', secretId: secret.id, secretUsage: 'password' })
+    const result = await callProc('environments.probe', { id: env.id })
+    expect(result.ok).toBe(false) // dead port, but the password path ran
+    const audit = await callProc('vault.audit')
+    const use = audit.find((r: any) => r.action === 'use' && r.secretName === 'pw-probe')
+    expect(use).toBeDefined()
   })
 
   it('create with unknown secretId 404s', async () => {

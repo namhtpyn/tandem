@@ -49,6 +49,7 @@ function toRow(r: typeof environmentsTable.$inferSelect): EnvironmentRow {
     port: r.port,
     username: r.username,
     secretId: r.secretId,
+    secretUsage: r.secretUsage as 'ssh-key' | 'password',
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   }
@@ -483,11 +484,13 @@ export const router = os.router({
         }
         // Linked vault secret: decrypt server-side (never exposed) and audit the use.
         let privateKey: string | undefined
+        let usage: 'ssh-key' | 'password' = 'ssh-key'
         if (env.secretId) {
           const secretRows = await db.select().from(vaultSecretsTable).where(eq(vaultSecretsTable.id, env.secretId))
           const secret = secretRows[0]
           if (secret) {
             privateKey = decryptSecret(secret.ciphertext)
+            usage = env.secretUsage === 'password' ? 'password' : 'ssh-key'
             await db.insert(vaultAuditTable).values({
               id: crypto.randomUUID(),
               secretId: secret.id,
@@ -498,7 +501,7 @@ export const router = os.router({
           }
         }
         const started = Date.now()
-        const result = await probeSsh(env.host, env.port, env.username, privateKey)
+        const result = await probeSsh(env.host, env.port, env.username, privateKey, usage)
         return { ...result, durationMs: Date.now() - started }
       }),
   },

@@ -21,7 +21,7 @@ const secretNameById = computed(() => new Map(secrets.value.map(s => [s.id, s.na
 
 const editorOpen = ref(false)
 const editingId = ref<string | null>(null)
-const form = reactive({ name: '', host: '', port: '22', username: '', secretId: '__none__' })
+const form = reactive({ name: '', host: '', port: '22', username: '', secretId: '__none__', secretUsage: 'ssh-key' as 'ssh-key' | 'password' })
 const busy = ref(false)
 const message = ref('')
 const probingId = ref<string | null>(null)
@@ -53,6 +53,7 @@ function openEditor(row?: EnvironmentRow) {
   form.port = row?.port ?? '22'
   form.username = row?.username ?? ''
   form.secretId = row?.secretId ?? '__none__'
+  form.secretUsage = row?.secretUsage ?? 'ssh-key'
   message.value = ''
   editorOpen.value = true
 }
@@ -61,7 +62,7 @@ async function save() {
   busy.value = true
   message.value = ''
   try {
-    const payload = { ...form, secretId: form.secretId === '__none__' ? null : form.secretId }
+    const payload = { ...form, secretId: form.secretId === '__none__' ? null : form.secretId, secretUsage: form.secretId === '__none__' ? 'ssh-key' : form.secretUsage }
     if (editingId.value) {
       await updateMutation.mutateAsync({ id: editingId.value, ...payload })
     }
@@ -237,8 +238,18 @@ async function probe(row: EnvironmentRow) {
           <UFormField label="Username" name="username" hint="Key auth only — the runner never uses passwords">
             <UInput v-model="form.username" icon="i-lucide-user" placeholder="tandem" class="w-full" required />
           </UFormField>
-          <UFormField label="SSH key" name="secretId" hint="from vault">
+          <UFormField label="Secret" name="secretId" hint="from vault">
             <USelect v-model="form.secretId" :items="secretOptions" icon="i-lucide-key-round" class="w-full" />
+          </UFormField>
+          <UFormField v-if="form.secretId !== '__none__'" label="Use secret as" name="secretUsage">
+            <URadioGroup
+              v-model="form.secretUsage"
+              :items="[
+                { label: 'SSH key (identity file)', value: 'ssh-key' },
+                { label: 'Password', value: 'password' },
+              ]"
+              :disabled="busy"
+            />
           </UFormField>
           <p v-if="message" class="text-sm text-error">{{ message }}</p>
           <div class="flex justify-end gap-2 pt-2">

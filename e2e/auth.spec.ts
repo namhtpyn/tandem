@@ -2,6 +2,7 @@
 // Runs against a built server (bun .output/server/index.mjs) on :4100 with its
 // own database tandem_e2e.
 import { expect, test } from '@playwright/test'
+import { login } from './helpers/login'
 
 /** POST an oRPC live procedure, read the FIRST SSE data event, abort the
  * stream. Never await the full body — live streams never end. */
@@ -72,12 +73,8 @@ test.describe('auth flow', () => {
   })
 
   test('admin login lands on the dashboard and shows the session', async ({ page }) => {
-    await page.goto('/')
-    await page.getByLabel(/email/i).fill('admin@tandem.local')
-    await page.getByLabel(/password/i).fill('tandem-admin')
-    await page.getByRole('button', { name: /sign in/i }).click()
-    // dashboard shell appears: user chip (avatar initials + name + role) replaces the login card
-    await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible({ timeout: 15_000 })
+    // hydration-safe login (raw fill+click races Vue hydration under load)
+    await login(page)
     await expect(page.getByText('admin', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: /sign in/i })).toHaveCount(0)
   })
@@ -98,12 +95,8 @@ test.describe('authenticated settings', () => {
   test.use({ storageState: undefined })
 
   test('signed-in admin can read settings and manage OIDC providers', async ({ page, request }) => {
-    // sign in via UI to get the session cookie in the browser context
-    await page.goto('/')
-    await page.getByLabel(/email/i).fill('admin@tandem.local')
-    await page.getByLabel(/password/i).fill('tandem-admin')
-    await page.getByRole('button', { name: /sign in/i }).click()
-    await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible({ timeout: 15_000 })
+    // sign in via UI (hydration-safe) to get the session cookie in the browser context
+    await login(page)
 
     const cookies = await page.context().cookies()
     const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ')
