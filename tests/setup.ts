@@ -1,3 +1,7 @@
-// vitest setup: point the app's db module at the test database BEFORE import.
-process.env.DATABASE_URL = process.env.TANDEM_TEST_DATABASE_URL || 'postgresql://tandem:tandem@127.0.0.1:55432/tandem_test'
+// vitest worker setup: the suite-scoped Postgres URL is injected by
+// tests/global-setup.ts (own container locally; CI service container via env).
+if (!process.env.TANDEM_TEST_DATABASE_URL) {
+  throw new Error('TANDEM_TEST_DATABASE_URL missing — global-setup did not run')
+}
+process.env.DATABASE_URL = process.env.TANDEM_TEST_DATABASE_URL
 process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET || 'test-secret-not-for-prod'

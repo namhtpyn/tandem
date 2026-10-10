@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config'
+import { loadEnv } from 'vite'
 
 export default defineConfig({
   define: {
@@ -6,6 +7,7 @@ export default defineConfig({
     'import.meta.server': 'false',
   },
   test: {
+    globalSetup: ['./tests/global-setup.ts'],
     setupFiles: ['./tests/setup.ts'],
     include: ['tests/**/*.test.ts'], // e2e/ belongs to Playwright, not vitest
 
