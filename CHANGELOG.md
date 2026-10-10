@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/namhtpyn/tandem/compare/v1.4.3...v1.5.0) (2026-10-10)
+
+
+### Features
+
+* **ui:** mobile-first shell + root routes (no /admin prefix) ([82e8d15](https://github.com/namhtpyn/tandem/commit/82e8d1544098528c2b71628385fb4bc3a8126076))
+
 ## [1.4.3](https://github.com/namhtpyn/tandem/compare/v1.4.2...v1.4.3) (2026-10-10)
 
 
