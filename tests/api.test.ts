@@ -105,13 +105,13 @@ describe('auth.configLive (oRPC, public)', () => {
   }
 
   it('shows password-only defaults', async () => {
-    expect(await firstSnapshot()).toEqual({ passwordEnabled: true, oidcEnabled: false, providers: [] })
+    expect(await firstSnapshot()).toEqual({ passwordEnabled: true, oidcEnabled: false, providers: [], companyName: 'Tandem' })
   })
 
   it('lists stored providers without secrets', async () => {
     const { saveOidcProviders } = await import('../server/utils/oidc')
     await saveOidcProviders([{ id: 'p1', label: 'SSO', issuer: 'https://sso.example.com', clientId: 'cid', clientSecret: 'shh' }])
-    expect(await firstSnapshot()).toEqual({ passwordEnabled: true, oidcEnabled: true, providers: [{ id: 'p1', label: 'SSO' }] })
+    expect(await firstSnapshot()).toEqual({ passwordEnabled: true, oidcEnabled: true, providers: [{ id: 'p1', label: 'SSO' }], companyName: 'Tandem' })
   })
 })
 

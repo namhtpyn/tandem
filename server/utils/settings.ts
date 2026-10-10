@@ -21,9 +21,11 @@ export async function deleteSetting(key: string): Promise<void> {
 
 export interface AppSettings {
   disablePasswordLogin: boolean
+  companyName: string
 }
 
 export async function getSettings(): Promise<AppSettings> {
   const v = await getSetting('disablePasswordLogin')
-  return { disablePasswordLogin: v === 'true' }
+  const name = await getSetting('companyName')
+  return { disablePasswordLogin: v === 'true', companyName: name?.trim() || 'Tandem' }
 }

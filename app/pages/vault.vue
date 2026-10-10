@@ -155,15 +155,20 @@ function kindIcon(): string {
     <UModal v-model:open="editorOpen" :title="isEdit ? 'Replace secret' : 'New secret'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
       <template #body>
         <div class="space-y-4">
-          <UFormField label="Name" hint="unique" :error="formError && !form.name ? formError : undefined">
-            <UInput v-model="form.name" placeholder="ssh-prod-key" class="w-full" :disabled="busy" />
+          <UFormField label="Name" :error="formError && !form.name ? formError : undefined">
+            <template #hint><FormHint text="unique" /></template>
+            <UInput v-model="form.name" placeholder="Secret name" class="w-full" :disabled="busy" />
           </UFormField>
-          <UFormField label="Description" hint="optional note">
-            <UTextarea v-model="form.description" placeholder="What is this secret for?" :rows="2" class="w-full" :disabled="busy" />
+          <UFormField label="Description">
+            <template #hint><FormHint text="optional note" /></template>
+            <UTextarea v-model="form.description" placeholder="Description (optional)" :rows="2" class="w-full" :disabled="busy" />
           </UFormField>
-          <UFormField label="Value" :hint="isEdit ? 'replaces the stored value' : 'encrypted, never shown again'"
+          <UFormField label="Value"
             :error="formError && formError !== 'Name is required' ? formError : undefined">
-            <UInput v-model="form.value" :type="showValue ? 'text' : 'password'" placeholder="secret value"
+            <template #hint>
+              <FormHint :text="isEdit ? 'replaces the stored value' : 'encrypted, never shown again'" />
+            </template>
+            <UInput v-model="form.value" :type="showValue ? 'text' : 'password'" placeholder="Secret value"
               class="w-full" :disabled="busy" autocomplete="off"
               :ui="{ trailing: 'pe-1' }">
               <template #trailing>

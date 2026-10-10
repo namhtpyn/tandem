@@ -15,17 +15,17 @@ test('human employee CRUD round-trip on the live page', async ({ page }) => {
 
   // create human
   await page.getByRole('button', { name: 'New employee' }).first().click()
-  await page.getByPlaceholder('Jane Doe').fill(name)
-  await page.getByPlaceholder('jane@company.com').fill(email)
+  await page.getByPlaceholder('Full name').fill(name)
+  await page.getByPlaceholder('name@company.com').fill(email)
   await page.getByRole('radio', { name: /Human/ }).check()
-  await page.getByPlaceholder('Senior Engineer').fill('E2E Tester')
+  await page.getByPlaceholder('Job title').fill('E2E Tester')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.locator('tr:visible', { hasText: name })).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('tr:visible', { hasText: email })).toBeVisible()
 
   // edit title
   await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Edit employee' }).click()
-  await page.getByPlaceholder('Senior Engineer').fill('Promoted Tester')
+  await page.getByPlaceholder('Job title').fill('Promoted Tester')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.locator('tr', { hasText: name }).getByText('Promoted Tester')).toBeVisible({ timeout: 15_000 })
 
@@ -44,8 +44,8 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   await login(page)
   await page.getByRole('link', { name: /Environments/ }).first().click()
   await page.getByRole('button', { name: 'New environment' }).first().click()
-  await page.getByPlaceholder('ct112-tandem').fill(envName)
-  await page.getByPlaceholder('192.168.3.108').fill('127.0.0.1')
+  await page.getByPlaceholder('Environment name').fill(envName)
+  await page.getByPlaceholder('Hostname or IP').fill('127.0.0.1')
   await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.locator('tr', { hasText: envName }).first()).toBeVisible({ timeout: 15_000 })
@@ -55,10 +55,10 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   const email = `e2e-bot-${suffix}@tandem.local`
   await page.getByRole('link', { name: /Employees/ }).click()
   await page.getByRole('button', { name: 'New employee' }).first().click()
-  await page.getByPlaceholder('Jane Doe').fill(name)
-  await page.getByPlaceholder('jane@company.com').fill(email)
+  await page.getByPlaceholder('Full name').fill(name)
+  await page.getByPlaceholder('name@company.com').fill(email)
   await page.getByRole('radio', { name: /AI agent/ }).check()
-  await page.getByPlaceholder('Senior Engineer').fill('Review Bot')
+  await page.getByPlaceholder('Job title').fill('Review Bot')
   // AI REQUIRES an environment — pick the one created above
   await page.getByRole('button', { name: 'Environment', exact: true }).click()
   await page.getByRole('option', { name: envName }).click()
@@ -110,20 +110,20 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   // create the supervisor
   const supName = `E2E Sup ${suffix}`
   await page.getByRole('button', { name: 'New employee' }).first().click()
-  await page.getByPlaceholder('Jane Doe').fill(supName)
-  await page.getByPlaceholder('jane@company.com').fill(`e2e-sup-${suffix}@tandem.local`)
+  await page.getByPlaceholder('Full name').fill(supName)
+  await page.getByPlaceholder('name@company.com').fill(`e2e-sup-${suffix}@tandem.local`)
   await page.getByRole('radio', { name: /Human/ }).check()
-  await page.getByPlaceholder('Senior Engineer').fill('Boss')
+  await page.getByPlaceholder('Job title').fill('Boss')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.locator('tr:visible', { hasText: supName })).toBeVisible({ timeout: 15_000 })
 
   // create the report with supervisor assigned
   const subName = `E2E Sub ${suffix}`
   await page.getByRole('button', { name: 'New employee' }).first().click()
-  await page.getByPlaceholder('Jane Doe').fill(subName)
-  await page.getByPlaceholder('jane@company.com').fill(`e2e-sub-${suffix}@tandem.local`)
+  await page.getByPlaceholder('Full name').fill(subName)
+  await page.getByPlaceholder('name@company.com').fill(`e2e-sub-${suffix}@tandem.local`)
   await page.getByRole('radio', { name: /Human/ }).check()
-  await page.getByPlaceholder('Senior Engineer').fill('Report')
+  await page.getByPlaceholder('Job title').fill('Report')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.locator('tr:visible', { hasText: subName })).toBeVisible({ timeout: 15_000 })
 

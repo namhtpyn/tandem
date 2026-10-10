@@ -4,6 +4,7 @@
 const session = useAppSession()
 const authConfig = useAuthConfigState()
 const appVersion = useAppVersion()
+const companyName = computed(() => authConfig.value?.companyName?.trim() || 'Tandem')
 const { refreshSession } = useSessionRefreshing()
 const { $authClient } = useNuxtApp()
 const toast = useToast()
@@ -72,7 +73,7 @@ const nav = [
           <div class="flex size-12 items-center justify-center rounded-2xl bg-primary shadow-sm">
             <UIcon name="i-lucide-users" class="size-6 text-inverted" />
           </div>
-          <h1 class="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">Tandem</h1>
+          <h1 class="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">{{ companyName }}</h1>
           <p class="text-sm text-zinc-500">Humans and AI employees, one workspace</p>
         </div>
 
@@ -108,10 +109,10 @@ const nav = [
               <UIcon name="i-lucide-users" class="size-5 text-primary" />
             </div>
             <div v-if="!collapsed" class="flex min-w-0 flex-col">
-              <span class="truncate text-sm font-semibold leading-tight text-zinc-900 dark:text-white">Tandem
+              <span class="truncate text-sm font-semibold leading-tight text-zinc-900 dark:text-white">{{ companyName }}
                 <span class="font-mono text-[10px] font-normal text-zinc-400">v{{ appVersion }}</span>
               </span>
-              <span class="text-xs leading-tight text-zinc-400">company workspace</span>
+              <span class="text-xs leading-tight text-zinc-400">{{ companyName.toLowerCase() === 'tandem' ? 'company workspace' : 'workspace' }}</span>
             </div>
           </NuxtLink>
         </template>

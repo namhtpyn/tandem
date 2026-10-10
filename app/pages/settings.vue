@@ -11,18 +11,39 @@ interface OidcProviderRow {
   secretSet: boolean
 }
 
-const { $orpc } = useNuxtApp()
+const { $orpc, $client } = useNuxtApp()
 
 const oidcLive = useQuery(($orpc as any).oidc.live.liveOptions())
+
 const settingsLive = useQuery(($orpc as any).settings.live.liveOptions())
 
 const providers = computed<OidcProviderRow[]>(() => ((unref(oidcLive.data) ?? []) as Array<{ id: string, label: string, issuer: string, clientId: string, hasSecret: boolean }>)
   .map(p => ({ id: p.id, label: p.label, issuer: p.issuer, clientId: p.clientId, secretSet: p.hasSecret })))
 
 const disablePasswordLogin = ref(false)
+const companyName = ref('Tandem')
 watch(() => unref(settingsLive.data), (d) => {
-  if (d) disablePasswordLogin.value = (d as { disablePasswordLogin: boolean }).disablePasswordLogin
+  if (d) {
+    const v = d as { disablePasswordLogin: boolean, companyName?: string }
+    disablePasswordLogin.value = v.disablePasswordLogin
+    companyName.value = v.companyName?.trim() || 'Tandem'
+  }
 }, { immediate: true })
+
+const savingName = ref(false)
+const nameMessage = ref('')
+async function saveCompanyName() {
+  savingName.value = true
+  nameMessage.value = ''
+  try {
+    await ($client as any).settings.update({ companyName: companyName.value })
+    nameMessage.value = 'Saved'
+  } catch (e: any) {
+    nameMessage.value = e?.message ?? 'Save failed'
+  } finally {
+    savingName.value = false
+  }
+}
 
 const busy = ref(false)
 const message = ref('')
@@ -65,7 +86,7 @@ async function saveProvider() {
       clientId: form.clientId,
       ...(form.clientSecret ? { clientSecret: form.clientSecret } : {}),
     })
-    await ($orpc as any).oidc.replace({ providers: list2 })
+    await ($client as any).oidc.replace({ providers: list2 })
     editorOpen.value = false
   }
   catch (e) {
@@ -80,13 +101,13 @@ async function removeProvider(row: OidcProviderRow) {
   const list = providers.value
     .filter(p => p.id !== row.id)
     .map(p => ({ id: p.id, label: p.label, issuer: p.issuer, clientId: p.clientId }))
-  await ($orpc as any).oidc.replace({ providers: list })
+  await ($client as any).oidc.replace({ providers: list })
 }
 
 async function savePasswordPolicy() {
   busy.value = true
   try {
-    await ($orpc as any).settings.update({ disablePasswordLogin: disablePasswordLogin.value })
+    await ($client as any).settings.update({ disablePasswordLogin: disablePasswordLogin.value })
     message.value = 'Saved'
   }
   catch (e) {
@@ -107,8 +128,25 @@ async function savePasswordPolicy() {
     </UDashboardNavbar>
     <div class="space-y-6 p-6 lg:p-8">
     <div>
-            <p class="text-sm text-zinc-500">Authentication for this Tandem instance</p>
+            <p class="text-sm text-zinc-500">General and authentication for this workspace</p>
     </div>
+
+    <UCard :ui="{ root: 'shadow-sm' }">
+      <template #header>
+        <div class="flex items-center gap-2">
+          <UIcon name="i-lucide-building-2" class="size-4 text-zinc-400" />
+          <h3 class="text-sm font-semibold text-zinc-900 dark:text-white">General</h3>
+        </div>
+      </template>
+      <UForm :state="{ companyName }" class="flex flex-wrap items-end gap-3" @submit="saveCompanyName">
+        <UFormField label="Company name" name="companyName" class="min-w-56 flex-1">
+          <template #hint><FormHint text="Shown in the sidebar and on the login screen" /></template>
+          <UInput v-model="companyName" icon="i-lucide-building-2" placeholder="Company name" class="w-full" :disabled="savingName" />
+        </UFormField>
+        <UButton type="submit" icon="i-lucide-save" :loading="savingName">Save</UButton>
+        <span v-if="nameMessage" class="pb-2 text-xs" :class="nameMessage === 'Saved' ? 'text-success' : 'text-error'">{{ nameMessage }}</span>
+      </UForm>
+    </UCard>
 
     <UCard :ui="{ root: 'shadow-sm' }">
       <template #header>
@@ -170,16 +208,16 @@ async function savePasswordPolicy() {
       <template #body>
         <UForm :state="form" class="space-y-4" @submit="saveProvider">
           <UFormField name="label" label="Name" required help="Shown on the login button">
-            <UInput v-model="form.label" icon="i-lucide-tag" class="w-full" placeholder="Corporate SSO" />
+            <UInput v-model="form.label" icon="i-lucide-tag" class="w-full" placeholder="Display name" />
           </UFormField>
           <UFormField name="issuer" label="Issuer URL" required>
-            <UInput v-model="form.issuer" icon="i-lucide-globe" class="w-full" placeholder="https://issuer.example.com" />
+            <UInput v-model="form.issuer" icon="i-lucide-globe" class="w-full" placeholder="https://issuer-url" />
           </UFormField>
           <UFormField name="clientId" label="Client ID" required>
-            <UInput v-model="form.clientId" class="w-full" />
+            <UInput v-model="form.clientId" class="w-full" placeholder="Client ID" />
           </UFormField>
           <UFormField name="secret" :label="editingId ? 'Client secret (blank = keep stored)' : 'Client secret'" :required="!editingId">
-            <UInput v-model="form.clientSecret" type="password" icon="i-lucide-key-round" class="w-full" placeholder="••••••••" />
+            <UInput v-model="form.clientSecret" type="password" icon="i-lucide-key-round" class="w-full" placeholder="Client secret" />
           </UFormField>
           <div class="flex justify-end gap-2">
             <UButton type="button" variant="ghost" color="neutral" label="Cancel" @click="editorOpen = false" />

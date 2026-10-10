@@ -87,11 +87,13 @@ export const router = os.router({
     /** public auth capabilities for the login screen (live) */
     configLive: base.handler(() => liveGenerator(['settings', 'oidc'], async () => {
       const { resolveAuthPolicy } = await import('./auth')
-      const p = await resolveAuthPolicy()
+      const { getSettings } = await import('./settings')
+      const [p, s] = await Promise.all([resolveAuthPolicy(), getSettings()])
       return {
         passwordEnabled: p.passwordEnabled,
         oidcEnabled: p.oidcEnabled,
         providers: p.oidcProviders.map(x => ({ id: x.id, label: x.label })),
+        companyName: s.companyName,
       }
     })),
 
@@ -111,7 +113,7 @@ export const router = os.router({
 
     /** update settings (strict input) */
     update: protectedProcedure
-      .input(z.strictObject({ disablePasswordLogin: z.boolean().optional() }))
+      .input(z.strictObject({ disablePasswordLogin: z.boolean().optional(), companyName: z.string().min(1).max(60).optional() }))
       .handler(async ({ input }) => {
         const { setSetting } = await import('./settings')
         const { rebuildAuth } = await import('./auth')
@@ -124,6 +126,9 @@ export const router = os.router({
         }
         if (input.disablePasswordLogin !== undefined) {
           await setSetting('disablePasswordLogin', input.disablePasswordLogin ? 'true' : 'false')
+        }
+        if (input.companyName !== undefined) {
+          await setSetting('companyName', input.companyName.trim())
         }
         await rebuildAuth()
         await publishChange('settings', 'update')

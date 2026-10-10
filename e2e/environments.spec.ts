@@ -46,8 +46,8 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
 
   // create
   await page.getByRole('button', { name: 'New environment' }).first().click()
-  await page.getByPlaceholder('ct112-tandem').fill(rowName)
-  await page.getByPlaceholder('192.168.3.108').fill('127.0.0.1')
+  await page.getByPlaceholder('Environment name').fill(rowName)
+  await page.getByPlaceholder('Hostname or IP').fill('127.0.0.1')
   await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.locator('tr:visible', { hasText: rowName })).toBeVisible({ timeout: 15_000 })
@@ -55,8 +55,8 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
 
   // duplicate name -> conflict surfaced (single error node: page one is hidden while modal open)
   await page.getByRole('button', { name: 'New environment' }).first().click()
-  await page.getByPlaceholder('ct112-tandem').fill(rowName)
-  await page.getByPlaceholder('192.168.3.108').fill('10.0.0.1')
+  await page.getByPlaceholder('Environment name').fill(rowName)
+  await page.getByPlaceholder('Hostname or IP').fill('10.0.0.1')
   await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByText(/already exists/i)).toBeVisible()
@@ -65,7 +65,7 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
   // edit host (scoped to this row — leftover rows from other specs exist)
   const row = page.locator('tr', { hasText: rowName })
   await row.getByRole('button', { name: 'Edit environment' }).click()
-  await page.getByPlaceholder('192.168.3.108').fill('10.9.8.7')
+  await page.getByPlaceholder('Hostname or IP').fill('10.9.8.7')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.locator('tr:visible', { hasText: rowName }).locator('span:visible', { hasText: '10.9.8.7' })).toBeVisible({ timeout: 15_000 })
 
@@ -93,8 +93,8 @@ test('live table updates from another tab via SSE', async ({ context, page }) =>
 
   // create from the other tab; first tab must update without reload
   await other.getByRole('button', { name: 'New environment' }).first().click()
-  await other.getByPlaceholder('ct112-tandem').fill(rowName)
-  await other.getByPlaceholder('192.168.3.108').fill('127.0.0.1')
+  await other.getByPlaceholder('Environment name').fill(rowName)
+  await other.getByPlaceholder('Hostname or IP').fill('127.0.0.1')
   await other.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
   await other.getByRole('button', { name: 'Save' }).click()
   await expect(other.locator('tr', { hasText: rowName })).toBeVisible({ timeout: 15_000 })

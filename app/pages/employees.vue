@@ -323,10 +323,11 @@ const columns = [
         <div class="max-h-[55dvh] overflow-y-auto px-4 sm:px-6">
         <UForm :state="form" class="space-y-4" @submit="save">
           <UFormField label="Name" name="name">
-            <UInput v-model="form.name" icon="i-lucide-user" placeholder="Jane Doe" class="w-full" required />
+            <UInput v-model="form.name" icon="i-lucide-user" placeholder="Full name" class="w-full" required />
           </UFormField>
-          <UFormField v-if="!isEdit" label="Email (login)" name="email" hint="Humans sign in with it; AI employees authenticate by API key">
-            <UInput v-model="form.email" icon="i-lucide-at-sign" placeholder="jane@company.com" class="w-full" required />
+          <UFormField v-if="!isEdit" label="Email (login)" name="email">
+            <template #hint><FormHint text="Humans sign in with it; AI employees authenticate by API key" /></template>
+            <UInput v-model="form.email" icon="i-lucide-at-sign" placeholder="name@company.com" class="w-full" required />
           </UFormField>
           <UFormField v-if="!isEdit" label="Kind" name="kind">
             <URadioGroup
@@ -344,31 +345,35 @@ const columns = [
               {{ editingIsAi ? 'AI agent (immutable)' : 'Human (immutable)' }}
             </UBadge>
           </UFormField>
-          <UFormField label="Title" name="title" hint="Place in the company, e.g. Senior Engineer">
-            <UInput v-model="form.title" icon="i-lucide-briefcase" placeholder="Senior Engineer" class="w-full" required />
+          <UFormField label="Title" name="title">
+            <template #hint><FormHint text="Place in the company, e.g. Senior Engineer" /></template>
+            <UInput v-model="form.title" icon="i-lucide-briefcase" placeholder="Job title" class="w-full" required />
           </UFormField>
-          <UFormField label="Supervisors" name="supervisorIds" hint="Many-to-many — an employee can report to several">
+          <UFormField label="Supervisors" name="supervisorIds">
+            <template #hint><FormHint text="Many-to-many — an employee can report to several" /></template>
             <USelectMenu
               v-model="form.supervisorIds"
               :items="supervisorItems"
               multiple
               value-key="value"
-              placeholder="None"
+              placeholder="No supervisors"
               class="w-full"
             />
           </UFormField>
           <template v-if="showAiFields">
-            <UFormField label="Environment" name="environmentId" hint="SSH target this agent runs on">
+            <UFormField label="Environment" name="environmentId">
+            <template #hint><FormHint text="SSH target this agent runs on" /></template>
               <USelectMenu
                 v-model="form.environmentId"
                 :items="environmentItems"
                 value-key="value"
-                placeholder="Select environment"
+                placeholder="Select an environment"
                 class="w-full"
               />
             </UFormField>
-            <UFormField label="Instructions" name="instructions" hint="System prompt for this agent">
-              <UTextarea v-model="form.instructions" :rows="4" placeholder="You are a code reviewer…" class="w-full" />
+            <UFormField label="Instructions" name="instructions">
+            <template #hint><FormHint text="System prompt for this agent" /></template>
+              <UTextarea v-model="form.instructions" :rows="4" placeholder="Custom instructions for this agent…" class="w-full" />
             </UFormField>
           </template>
           <UAlert

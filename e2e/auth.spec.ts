@@ -87,7 +87,7 @@ test.describe('auth flow', () => {
   test('auth.configLive is public and password-only by default', async ({ request }) => {
     // SSE stream: read the FIRST data event, then abort — never await the body
     const body = await readFirstSseData(request, '/rpc/auth/configLive')
-    expect(body).toEqual({ passwordEnabled: true, oidcEnabled: false, providers: [] })
+    expect(body).toEqual({ passwordEnabled: true, oidcEnabled: false, providers: [], companyName: 'Tandem' })
   })
 })
 
@@ -104,7 +104,7 @@ test.describe('authenticated settings', () => {
     try {
       // settings via oRPC with the browser cookie (SSE: first event only)
       const settings = await readFirstSseData(request, '/rpc/settings/live', cookieHeader)
-      expect(settings).toEqual({ disablePasswordLogin: false })
+      expect(settings).toEqual({ disablePasswordLogin: false, companyName: 'Tandem' })
 
       // add an OIDC provider via oRPC
       const put = await request.post('/rpc/oidc/replace', {

@@ -226,19 +226,22 @@ async function probe(row: EnvironmentRow) {
     <UModal v-model:open="editorOpen" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }" :title="editingId ? 'Edit environment' : 'New environment'">
       <template #body>
         <UForm :state="form" class="space-y-4" @submit="save">
-          <UFormField label="Name" name="name" hint="Unique label, e.g. ct112-tandem">
-            <UInput v-model="form.name" icon="i-lucide-tag" placeholder="ct112-tandem" class="w-full" required />
+          <UFormField label="Name" name="name">
+            <template #hint><FormHint text="Unique label, e.g. ct112-tandem" /></template>
+            <UInput v-model="form.name" icon="i-lucide-tag" placeholder="Environment name" class="w-full" required />
           </UFormField>
           <UFormField label="Host" name="host">
-            <UInput v-model="form.host" icon="i-lucide-server" placeholder="192.168.3.108" class="w-full" required />
+            <UInput v-model="form.host" icon="i-lucide-server" placeholder="Hostname or IP" class="w-full" required />
           </UFormField>
           <UFormField label="Port" name="port">
-            <UInput v-model="form.port" icon="i-lucide-network" placeholder="22" class="w-full" required />
+            <UInput v-model="form.port" icon="i-lucide-network" placeholder="Port" class="w-full" required />
           </UFormField>
-          <UFormField label="Username" name="username" hint="Key auth only — the runner never uses passwords">
-            <UInput v-model="form.username" icon="i-lucide-user" placeholder="tandem" class="w-full" required />
+          <UFormField label="Username" name="username">
+            <template #hint><FormHint text="Key auth only — the runner never uses passwords" /></template>
+            <UInput v-model="form.username" icon="i-lucide-user" placeholder="SSH username" class="w-full" required />
           </UFormField>
-          <UFormField label="Secret" name="secretId" hint="from vault">
+          <UFormField label="Secret" name="secretId">
+            <template #hint><FormHint text="from vault" /></template>
             <USelect v-model="form.secretId" :items="secretOptions" icon="i-lucide-key-round" class="w-full" />
           </UFormField>
           <UFormField v-if="form.secretId !== '__none__'" label="Use secret as" name="secretUsage">

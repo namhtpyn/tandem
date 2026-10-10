@@ -28,12 +28,36 @@ describe('settings store', () => {
     expect(await getSetting('k3')).toBeNull()
   })
 
-  it('getSettings defaults disablePasswordLogin false', async () => {
-    expect(await getSettings()).toEqual({ disablePasswordLogin: false })
+  it('getSettings defaults disablePasswordLogin false + companyName Tandem', async () => {
+    expect(await getSettings()).toEqual({ disablePasswordLogin: false, companyName: 'Tandem' })
   })
 
   it('getSettings reflects a stored true flag', async () => {
     await setSetting('disablePasswordLogin', 'true')
-    expect(await getSettings()).toEqual({ disablePasswordLogin: true })
+    expect(await getSettings()).toEqual({ disablePasswordLogin: true, companyName: 'Tandem' })
+  })
+
+  it('companyName round-trips via setSetting and trims on read', async () => {
+    await setSetting('companyName', '  Ultranomic  ')
+    const s = await getSettings()
+    expect(s.companyName).toBe('Ultranomic')
+  })
+
+  it('companyName undefined in update leaves the stored value untouched', async () => {
+    const { buildServerContext, router } = await import('../server/utils/orpc')
+    await setSetting('companyName', 'Kept Name')
+    const ctx = buildServerContext(new Headers())
+    ;(ctx as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({ user: { id: 'u1', name: 'A', email: 'a@x', role: 'admin' } })
+    const node = (router as any).settings.update['~orpc']
+    await node.handler({ input: { disablePasswordLogin: false }, context: { ...ctx, session: { user: { id: 'u1', name: 'A', email: 'a@x', role: 'admin' } } }, signal: new AbortController().signal })
+    expect((await getSettings()).companyName).toBe('Kept Name')
+    // and with a value present it persists (trims)
+    await node.handler({ input: { companyName: '  New Name  ' }, context: { ...ctx, session: { user: { id: 'u1', name: 'A', email: 'a@x', role: 'admin' } } }, signal: new AbortController().signal })
+    expect((await getSettings()).companyName).toBe('New Name')
+  })
+
+  it('blank companyName falls back to Tandem', async () => {
+    await setSetting('companyName', '   ')
+    expect((await getSettings()).companyName).toBe('Tandem')
   })
 })
