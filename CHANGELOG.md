@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/namhtpyn/tandem/compare/v1.1.2...v1.2.0) (2026-10-10)
+
+
+### Features
+
+* **m3:** employees, many-to-many supervision, AI extension, API keys ([b673fe2](https://github.com/namhtpyn/tandem/commit/b673fe2c273bb1c2e99d67e9f4df43d29b9f4283))
+
 ## [1.1.2](https://github.com/namhtpyn/tandem/compare/v1.1.1...v1.1.2) (2026-10-10)
 
 
