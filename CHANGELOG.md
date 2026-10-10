@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/namhtpyn/tandem/compare/v1.4.0...v1.4.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **e2e:** row-scoped environments selectors + AI-spec teardown — suites are order-independent ([5ae6031](https://github.com/namhtpyn/tandem/commit/5ae6031a320447fb63a14bda2ed48aa7b180537f))
+
 # [1.4.0](https://github.com/namhtpyn/tandem/compare/v1.3.0...v1.4.0) (2026-10-10)
 
 
