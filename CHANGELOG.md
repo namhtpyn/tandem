@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/namhtpyn/tandem/compare/v1.6.0...v1.7.0) (2026-10-10)
+
+
+### Features
+
+* **environments:** link SSH key from vault for server-side auth ([f7a7b1e](https://github.com/namhtpyn/tandem/commit/f7a7b1e5fdd22374af45fb011d75e524d298897d))
+
 # [1.6.0](https://github.com/namhtpyn/tandem/compare/v1.5.0...v1.6.0) (2026-10-10)
 
 
