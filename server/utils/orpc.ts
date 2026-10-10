@@ -294,6 +294,7 @@ export const router = os.router({
       .input(z.strictObject({
         id: z.string().min(1),
         name: z.string().min(1).max(100),
+        email: z.string().email().optional(),
         title: z.string().min(1).max(100),
         supervisorIds: z.array(z.string().min(1)).max(20),
         environmentId: z.string().min(1).nullable().optional(),
@@ -362,7 +363,13 @@ export const router = os.router({
           }
           await db.update(aiEmployeesTable).set(patch).where(eq(aiEmployeesTable.userId, aiRow.userId))
         }
-        await db.update(userTable).set({ name: input.name, title: input.title, updatedAt: new Date() }).where(eq(userTable.id, input.id))
+        if (input.email !== undefined && input.email !== emp.email) {
+          const clash = await db.select({ id: userTable.id }).from(userTable).where(eq(userTable.email, input.email))
+          if (clash.length > 0) {
+            throw new ORPCError('CONFLICT', { message: `user ${input.email} already exists` })
+          }
+        }
+        await db.update(userTable).set({ name: input.name, title: input.title, ...(input.email !== undefined ? { email: input.email } : {}), updatedAt: new Date() }).where(eq(userTable.id, input.id))
         await db.delete(supervisorsTable).where(eq(supervisorsTable.employeeId, input.id))
         if (input.supervisorIds.length > 0) {
           await db.insert(supervisorsTable).values(input.supervisorIds.map(s => ({ employeeId: input.id, supervisorId: s })))

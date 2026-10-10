@@ -413,6 +413,18 @@ describe('AI harness + executable', () => {
     expect(row.harness).toBe('hermes')
   })
 
+  it('update changes email; duplicate rejected with CONFLICT', async () => {
+    await callProc('employees.create', { name: 'Email A', email: 'ea@tandem.local', kind: 'human', title: 'T', supervisorIds: [] })
+    await callProc('employees.create', { name: 'Email B', email: 'eb@tandem.local', kind: 'human', title: 'T', supervisorIds: [] })
+    const { user } = await schema()
+    const { db } = await dbm()
+    const a = (await db.select().from(user).where(eq(user.email, 'ea@tandem.local')))[0]!
+    await callProc('employees.update', { id: a.id, name: 'Email A', email: 'ea2@tandem.local', title: 'T', supervisorIds: [] })
+    expect((await db.select().from(user).where(eq(user.id, a.id)))[0]!.email).toBe('ea2@tandem.local')
+    // eb already owns it
+    await expect(callProc('employees.update', { id: a.id, name: 'Email A', email: 'eb@tandem.local', title: 'T', supervisorIds: [] })).rejects.toMatchObject({ code: 'CONFLICT' })
+  })
+
   it('human create rejects harness/executable', async () => {
     await expect(callProc('employees.create', { name: 'No Harness', email: 'nh@tandem.local', kind: 'human', title: 'T', supervisorIds: [], harness: 'hermes', executable: 'x' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })

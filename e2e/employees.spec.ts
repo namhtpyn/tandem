@@ -23,11 +23,13 @@ test('human employee CRUD round-trip on the live page', async ({ page }) => {
   await expect(page.locator('tr:visible', { hasText: name })).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('tr:visible', { hasText: email })).toBeVisible()
 
-  // edit title
+  // edit title + email
   await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Edit employee' }).click()
   await page.getByPlaceholder('Job title').fill('Promoted Tester')
+  await page.getByPlaceholder('name@company.com').fill(`renamed-${suffix}@tandem.local`)
   await page.getByRole('button', { name: /Save|Create employee/ }).click()
   await expect(page.locator('tr', { hasText: name }).getByText('Promoted Tester')).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('tr', { hasText: name }).getByText(`renamed-${suffix}@tandem.local`)).toBeVisible({ timeout: 15_000 })
 
   // delete requires CONFIRMATION now: trash opens a dialog, not instant delete
   await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Delete employee' }).click()

@@ -95,6 +95,7 @@ async function save() {
       await updateMutation.mutateAsync({
         id: editingId.value,
         name: form.name,
+        email: form.email,
         title: form.title,
         supervisorIds: form.supervisorIds,
         ...(showAiFields.value && form.environmentId ? { environmentId: form.environmentId } : {}),
@@ -336,7 +337,7 @@ const columns = [
           <UFormField label="Name" name="name">
             <UInput v-model="form.name" icon="i-lucide-user" placeholder="Full name" class="w-full" required />
           </UFormField>
-          <UFormField v-if="!isEdit" label="Email (login)" name="email">
+          <UFormField label="Email (login)" name="email">
             <template #hint><FormHint text="Humans sign in with it; AI employees authenticate by API key" /></template>
             <UInput v-model="form.email" icon="i-lucide-at-sign" placeholder="name@company.com" class="w-full" required />
           </UFormField>
