@@ -13,7 +13,7 @@ import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from 
 import type { ApiKeyRow, EmployeeRow, EnvironmentRow } from '../../shared/types'
 
 export interface ServerContext extends RequestHeadersHandlerPluginContext {
-  getSession: () => Promise<{ user: { id: string, name: string, email: string, role: string } } | null>
+  getSession: () => Promise<{ user: { id: string, name: string, email: string, role: 'admin' | 'employee' | 'viewer' } } | null>
 }
 
 const base = os.$context<ServerContext>()
@@ -458,7 +458,7 @@ export const router = os.router({
 })
 
 interface AuthSessionPayload {
-  user: { id: string, name: string, email: string, role: string }
+  user: { id: string, name: string, email: string, role: 'admin' | 'employee' | 'viewer' }
 }
 
 export function buildServerContext(headers: Headers | undefined): ServerContext {
@@ -476,12 +476,17 @@ export function buildServerContext(headers: Headers | undefined): ServerContext 
         cached = null
         return null
       }
+      const rawRole = session.user.role ?? 'viewer'
+      // DB column is text; the additionalField union guards writes, this
+      // guard keeps reads honest
+      const role: 'admin' | 'employee' | 'viewer'
+        = rawRole === 'admin' || rawRole === 'employee' ? rawRole : 'viewer'
       cached = {
         user: {
           id: session.user.id,
           name: session.user.name,
           email: session.user.email,
-          role: session.user.role ?? 'viewer',
+          role,
         },
       }
       return cached

@@ -85,7 +85,9 @@ async function buildAuth(): Promise<Auth> {
     },
     user: {
       additionalFields: {
-        role: { type: 'string', defaultValue: 'viewer', input: false },
+        // union type (docs: type: ["user", "admin"]) — inferred end-to-end;
+        // input:false = server-owned, users can't self-promote
+        role: { type: ['admin', 'employee', 'viewer'] as const, required: false, defaultValue: 'viewer', input: false },
       },
     },
     emailAndPassword: {
