@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/namhtpyn/tandem/compare/v1.3.0...v1.4.0) (2026-10-10)
+
+
+### Features
+
+* **m3:** employees UI — live org table, editor, AI keys drawer ([389c288](https://github.com/namhtpyn/tandem/commit/389c288ac376deddc6d29b28846f96c029093568))
+
 # [1.3.0](https://github.com/namhtpyn/tandem/compare/v1.2.0...v1.3.0) (2026-10-10)
 
 
