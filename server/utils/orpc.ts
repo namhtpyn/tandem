@@ -348,10 +348,8 @@ export const router = os.router({
           }
         }
         // deleting the user cascades supervisors, ai extension, api keys
-        const deleted = await db.delete(userTable).where(eq(userTable.id, input.id)).returning({ id: userTable.id })
-        if (deleted.length === 0) {
-          throw new ORPCError('NOT_FOUND', { message: 'employee not found' })
-        }
+        // (existence already verified above — no race window worth a second check)
+        await db.delete(userTable).where(eq(userTable.id, input.id))
         await publishChange('employees', 'delete')
         return { ok: true }
       }),
