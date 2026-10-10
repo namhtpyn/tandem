@@ -33,6 +33,19 @@ export interface EmployeeRow {
   updatedAt: string
 }
 
+export interface TaskRow {
+  id: string
+  title: string
+  description: string
+  status: 'todo' | 'doing' | 'done'
+  assigneeId: string | null
+  assigneeName: string | null
+  assigneeKind: 'human' | 'ai' | null
+  createdBy: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 export interface ApiKeyRow {
   id: string
   name: string | null

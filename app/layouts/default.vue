@@ -60,6 +60,7 @@ const nav = [
   { label: 'Vault', icon: 'i-lucide-shield', to: '/vault' },
   { label: 'Environments', icon: 'i-lucide-server', to: '/environments' },
   { label: 'Employees', icon: 'i-lucide-users', to: '/employees' },
+  { label: 'Tasks', icon: 'i-lucide-list-todo', to: '/tasks' },
   { label: 'Settings', icon: 'i-lucide-settings', to: '/settings' },
 ]
 </script>

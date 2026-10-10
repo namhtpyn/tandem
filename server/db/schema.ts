@@ -169,10 +169,27 @@ export const aiEmployees = pgTable('tandem_ai_employees', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+// Tasks: work items assigned to employees (human or AI). AI assignees get
+// dispatched to their environment by the runner (M5).
+export const tasks = pgTable('tandem_tasks', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  description: text('description').notNull().default(''),
+  // todo | doing | done
+  status: text('status').notNull().default('todo'),
+  assigneeId: text('assignee_id').references(() => user.id, { onDelete: 'set null' }),
+  createdBy: text('created_by').references(() => user.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('tandem_tasks_assignee_idx').on(t.assigneeId),
+  index('tandem_tasks_status_idx').on(t.status),
+])
+
 // ---------- relations ----------
 
 export const relations = defineRelations(
-  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit },
+  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, tasks },
   (helpers) => ({
     user: {
       sessions: helpers.many.session({ from: helpers.user.id, to: helpers.session.userId }),
