@@ -8,16 +8,9 @@ export const environmentInput = z.strictObject({
     .refine(p => Number.parseInt(p, 10) <= 65535, 'port must be 1-65535')
     .default('22'),
   username: z.string().min(1).max(64),
+  secretId: z.string().min(1).nullable().default(null),
 })
 
 export type EnvironmentInput = z.infer<typeof environmentInput>
 
-export interface EnvironmentRow {
-  id: string
-  name: string
-  host: string
-  port: string
-  username: string
-  createdAt: string
-  updatedAt: string
-}
+

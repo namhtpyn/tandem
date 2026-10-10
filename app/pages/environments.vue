@@ -2,7 +2,7 @@
 // Environments (LIVE): oRPC live query — the table is a streaming snapshot;
 // mutations go through oRPC and every client (this tab or another) updates
 // instantly via the change bus + SSE.
-import type { EnvironmentRow } from '~/../shared/types'
+import type { EnvironmentRow, VaultSecretRow } from '~/../shared/types'
 import { useQuery, useMutation } from '@tanstack/vue-query'
 
 const { $orpc } = useNuxtApp()
@@ -10,9 +10,18 @@ const { $orpc } = useNuxtApp()
 const liveQuery = useQuery(($orpc as any).environments.live.liveOptions())
 const rows = computed<EnvironmentRow[]>(() => (unref(liveQuery.data) ?? []) as EnvironmentRow[])
 
+// vault secrets for the SSH key picker (metadata only)
+const secretsQuery = useQuery<VaultSecretRow[]>(($orpc as any).vault.live.liveOptions())
+const secrets = computed<VaultSecretRow[]>(() => (unref(secretsQuery.data) ?? []) as VaultSecretRow[])
+const secretOptions = computed(() => [
+  { label: 'No key (agent default)', value: '__none__' },
+  ...secrets.value.map(s => ({ label: `${s.name} (•••• ${s.lastFour})`, value: s.id })),
+])
+const secretNameById = computed(() => new Map(secrets.value.map(s => [s.id, s.name])))
+
 const editorOpen = ref(false)
 const editingId = ref<string | null>(null)
-const form = reactive({ name: '', host: '', port: '22', username: '' })
+const form = reactive({ name: '', host: '', port: '22', username: '', secretId: '__none__' })
 const busy = ref(false)
 const message = ref('')
 const probingId = ref<string | null>(null)
@@ -43,6 +52,7 @@ function openEditor(row?: EnvironmentRow) {
   form.host = row?.host ?? ''
   form.port = row?.port ?? '22'
   form.username = row?.username ?? ''
+  form.secretId = row?.secretId ?? '__none__'
   message.value = ''
   editorOpen.value = true
 }
@@ -51,11 +61,12 @@ async function save() {
   busy.value = true
   message.value = ''
   try {
+    const payload = { ...form, secretId: form.secretId === '__none__' ? null : form.secretId }
     if (editingId.value) {
-      await updateMutation.mutateAsync({ id: editingId.value, ...form })
+      await updateMutation.mutateAsync({ id: editingId.value, ...payload })
     }
     else {
-      await createMutation.mutateAsync({ ...form })
+      await createMutation.mutateAsync(payload)
     }
     editorOpen.value = false
   }
@@ -225,6 +236,9 @@ async function probe(row: EnvironmentRow) {
           </UFormField>
           <UFormField label="Username" name="username" hint="Key auth only — the runner never uses passwords">
             <UInput v-model="form.username" icon="i-lucide-user" placeholder="tandem" class="w-full" required />
+          </UFormField>
+          <UFormField label="SSH key" name="secretId" hint="from vault">
+            <USelect v-model="form.secretId" :items="secretOptions" icon="i-lucide-key-round" class="w-full" />
           </UFormField>
           <p v-if="message" class="text-sm text-error">{{ message }}</p>
           <div class="flex justify-end gap-2 pt-2">

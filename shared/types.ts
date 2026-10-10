@@ -5,6 +5,8 @@ export interface EnvironmentRow {
   host: string
   port: string
   username: string
+  /** optional vault secret used for SSH auth (never the value itself) */
+  secretId: string | null
   createdAt: string
   updatedAt: string
 }

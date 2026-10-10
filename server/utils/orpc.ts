@@ -10,7 +10,7 @@ import { aiEmployees as aiEmployeesTable, apikey as apikeyTable, employeeSupervi
 import { environmentInput } from './environments'
 import { probeSsh } from './ssh-probe'
 import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from './change-bus'
-import { encryptSecret, lastFourHint } from './vault-crypto'
+import { decryptSecret, encryptSecret, lastFourHint } from './vault-crypto'
 import type { ApiKeyRow, EmployeeRow, EnvironmentRow, VaultAuditRow, VaultSecretRow } from '../../shared/types'
 
 export interface ServerContext extends RequestHeadersHandlerPluginContext {
@@ -48,6 +48,7 @@ function toRow(r: typeof environmentsTable.$inferSelect): EnvironmentRow {
     host: r.host,
     port: r.port,
     username: r.username,
+    secretId: r.secretId,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   }
@@ -428,6 +429,12 @@ export const router = os.router({
         if (clash.length > 0) {
           throw new ORPCError('CONFLICT', { message: `environment "${input.name}" already exists` })
         }
+        if (input.secretId) {
+          const secret = await db.select({ id: vaultSecretsTable.id }).from(vaultSecretsTable).where(eq(vaultSecretsTable.id, input.secretId))
+          if (secret.length === 0) {
+            throw new ORPCError('NOT_FOUND', { message: 'linked secret not found' })
+          }
+        }
         const inserted = await db.insert(environmentsTable).values({ id: crypto.randomUUID(), ...input }).returning()
         await publishChange('environments', 'create')
         return toRow(inserted[0]!)
@@ -440,6 +447,12 @@ export const router = os.router({
         const clash = await db.select({ id: environmentsTable.id }).from(environmentsTable).where(eq(environmentsTable.name, data.name))
         if (clash.some((c: { id: string }) => c.id !== id)) {
           throw new ORPCError('CONFLICT', { message: `environment "${data.name}" already exists` })
+        }
+        if (data.secretId) {
+          const secret = await db.select({ id: vaultSecretsTable.id }).from(vaultSecretsTable).where(eq(vaultSecretsTable.id, data.secretId))
+          if (secret.length === 0) {
+            throw new ORPCError('NOT_FOUND', { message: 'linked secret not found' })
+          }
         }
         const updated = await db.update(environmentsTable).set({ ...data, updatedAt: new Date() }).where(eq(environmentsTable.id, id)).returning()
         if (updated.length === 0) {
@@ -462,14 +475,30 @@ export const router = os.router({
 
     probe: protectedProcedure
       .input(z.strictObject({ id: z.string().min(1) }))
-      .handler(async ({ input }) => {
+      .handler(async ({ input, context }) => {
         const rows = await db.select().from(environmentsTable).where(eq(environmentsTable.id, input.id))
         const env = rows[0]
         if (!env) {
           throw new ORPCError('NOT_FOUND', { message: 'environment not found' })
         }
+        // Linked vault secret: decrypt server-side (never exposed) and audit the use.
+        let privateKey: string | undefined
+        if (env.secretId) {
+          const secretRows = await db.select().from(vaultSecretsTable).where(eq(vaultSecretsTable.id, env.secretId))
+          const secret = secretRows[0]
+          if (secret) {
+            privateKey = decryptSecret(secret.ciphertext)
+            await db.insert(vaultAuditTable).values({
+              id: crypto.randomUUID(),
+              secretId: secret.id,
+              secretName: secret.name,
+              action: 'use',
+              actorId: context.session.user.id,
+            })
+          }
+        }
         const started = Date.now()
-        const result = await probeSsh(env.host, env.port, env.username)
+        const result = await probeSsh(env.host, env.port, env.username, privateKey)
         return { ...result, durationMs: Date.now() - started }
       }),
   },

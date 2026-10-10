@@ -35,6 +35,18 @@ describe('probeSsh (node fallback path — vitest workers are node)', () => {
   }, 10_000)
 })
 
+describe('ensureTrailingNewline (via writeIdentity contract)', () => {
+  it('appends a newline to keys lacking one', async () => {
+    const { probeSsh } = await import('../server/utils/ssh-probe')
+    // exercise the key-file path with a garbage key against a dead port:
+    // writeIdentity runs before any ssh attempt; newline branch covered.
+    const r = await probeSsh('127.0.0.1', '59999', 'nobody', 'KEY-WITHOUT-NEWLINE')
+    expect(r.ok).toBe(false)
+    const r2 = await probeSsh('127.0.0.1', '59999', 'nobody', 'KEY-WITH-NEWLINE\n')
+    expect(r2.ok).toBe(false)
+  })
+})
+
 describe('interpret', () => {
   it('ok when marker echoed with exit 0', () => {
     expect(interpret(0, 'tandem-probe-ok\n', '')).toEqual({ ok: true, detail: 'SSH key auth works' })

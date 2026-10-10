@@ -1,0 +1,2 @@
+ALTER TABLE "tandem_environments" ADD COLUMN "secret_id" text;--> statement-breakpoint
+ALTER TABLE "tandem_environments" ADD CONSTRAINT "tandem_environments_secret_id_tandem_vault_secrets_id_fkey" FOREIGN KEY ("secret_id") REFERENCES "tandem_vault_secrets"("id") ON DELETE SET NULL;

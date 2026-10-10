@@ -101,6 +101,8 @@ export const environments = pgTable('tandem_environments', {
   host: text('host').notNull(),
   port: text('port').notNull().default('22'),
   username: text('username').notNull(),
+  // optional vault secret (kind=ssh-key) used for SSH auth by probe + runner
+  secretId: text('secret_id').references(() => vaultSecrets.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })

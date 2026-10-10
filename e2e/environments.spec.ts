@@ -3,6 +3,40 @@ import { login } from './helpers/login'
 
 // M2: environments — live CRUD over oRPC /rpc, SSE realtime, probe.
 
+test('environment links a vault secret and shows it in the row', async ({ page }) => {
+  await login(page)
+  // create a secret first
+  await page.goto('/vault')
+  const secName = `e2e-env-key-${process.pid}-${Date.now().toString(36)}`
+  await page.getByRole('button', { name: 'New secret' }).first().click()
+  await page.getByRole('textbox', { name: 'Name' }).fill(secName)
+  await page.getByRole('textbox', { name: 'Value' }).fill('e2e-key-material')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.locator('tr:visible', { hasText: secName })).toBeVisible({ timeout: 15_000 })
+
+  // create an environment linked to it
+  await page.goto('/environments')
+  const envName = `e2e-secret-box-${process.pid}-${Date.now().toString(36)}`
+  await page.getByRole('button', { name: 'New environment' }).first().click()
+  await page.getByRole('textbox', { name: 'Name', exact: true }).fill(envName)
+  await page.getByRole('textbox', { name: 'Host' }).fill('10.9.8.7')
+  await page.getByRole('textbox', { name: 'Username' }).fill('tandem')
+  await page.getByLabel('SSH key').click()
+  await page.getByRole('option', { name: new RegExp(secName) }).click()
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.locator('tr:visible', { hasText: envName })).toBeVisible({ timeout: 15_000 })
+
+  // edit shows the linked key preselected
+  await page.locator('tr:visible', { hasText: envName }).getByRole('button', { name: 'Edit environment' }).click()
+  await expect(page.getByLabel('SSH key')).toContainText(secName.slice(0, 20))
+  await page.keyboard.press('Escape')
+
+  // cleanup env
+  await page.locator('tr:visible', { hasText: envName }).getByRole('button', { name: 'Delete environment' }).click()
+  await page.getByRole('button', { name: 'Delete', exact: true }).click()
+  await expect(page.locator('tr:visible', { hasText: envName })).toHaveCount(0, { timeout: 15_000 })
+})
+
 test('environment CRUD round-trip on the live page', async ({ page }) => {
   const suffix = Date.now().toString(36)
   const rowName = `e2e-box-${suffix}`
