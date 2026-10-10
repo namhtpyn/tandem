@@ -1,3 +1,11 @@
+## [1.10.1](https://github.com/namhtpyn/tandem/compare/v1.10.0...v1.10.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **docker:** install openssh-client in the runtime image ([4699f9e](https://github.com/namhtpyn/tandem/commit/4699f9ef73b3f981fb14254b0cc176413ce400cc))
+* **ui:** modal actions in footer slot everywhere + auth method dropdown on environments ([279701a](https://github.com/namhtpyn/tandem/commit/279701a22a777a0cadc6bc64cdc590d0cd843457))
+
 # [1.10.0](https://github.com/namhtpyn/tandem/compare/v1.9.0...v1.10.0) (2026-10-10)
 
 
