@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/namhtpyn/tandem/compare/v1.1.0...v1.1.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **ssr:** consume only the first configLive snapshot in app shell ([a9480f5](https://github.com/namhtpyn/tandem/commit/a9480f5cab21f7f94a257d0c0b407c8257f471f7))
+
 # [1.1.0](https://github.com/namhtpyn/tandem/compare/v1.0.2...v1.1.0) (2026-10-09)
 
 
