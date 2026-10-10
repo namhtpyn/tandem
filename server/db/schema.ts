@@ -155,6 +155,30 @@ export const employeeSupervisors = pgTable('tandem_employee_supervisors', {
   index('tandem_employee_supervisors_supervisor_idx').on(t.supervisorId),
 ])
 
+// Model providers: curated catalog of OpenAI/Anthropic-compatible endpoints.
+// API keys are NEVER stored here — per-agent in the vault (fleet law).
+export const modelProviders = pgTable('tandem_model_providers', {
+  id: text('id').primaryKey(),
+  label: text('label').notNull(),
+  baseUrl: text('base_url').notNull(),
+  // 'openai' | 'anthropic'
+  apiStyle: text('api_style').notNull().default('openai'),
+  extraHeaders: text('extra_headers'),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// Models per provider — the agent editor's model dropdown.
+export const models = pgTable('tandem_models', {
+  id: text('id').primaryKey(),
+  providerId: text('provider_id').notNull().references(() => modelProviders.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('tandem_models_provider_idx').on(t.providerId),
+])
+
 // AI extension (1:1 with user): row existence marks the employee as an AI
 // agent; absence = human employee. No kind column anywhere.
 export const aiEmployees = pgTable('tandem_ai_employees', {
@@ -165,6 +189,10 @@ export const aiEmployees = pgTable('tandem_ai_employees', {
   harness: text('harness').notNull().default('hermes'),
   // executable name used on the environment when dispatching (default 'hermes')
   executable: text('executable').notNull().default('hermes'),
+  // model access: provider + model (catalog tables) + vault-held API key
+  providerId: text('provider_id').references(() => modelProviders.id, { onDelete: 'set null' }),
+  modelId: text('model_id').references(() => models.id, { onDelete: 'set null' }),
+  apiKeySecretId: text('api_key_secret_id').references(() => vaultSecrets.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
@@ -189,7 +217,7 @@ export const tasks = pgTable('tandem_tasks', {
 // ---------- relations ----------
 
 export const relations = defineRelations(
-  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, tasks },
+  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, tasks, modelProviders, models },
   (helpers) => ({
     user: {
       sessions: helpers.many.session({ from: helpers.user.id, to: helpers.session.userId }),

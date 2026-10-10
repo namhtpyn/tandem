@@ -37,6 +37,9 @@ const form = reactive({
   instructions: '',
   harness: 'hermes' as 'hermes',
   executable: '',
+  providerId: '__none__' as string,
+  modelId: '' as string,
+  apiKeySecretId: '__none__' as string,
 })
 const busy = ref(false)
 const message = ref('')
@@ -67,6 +70,17 @@ const supervisorItems = computed(() =>
     .map(r => ({ label: r.name, value: r.id })),
 )
 
+const providersLive = useQuery(($orpc as any).providers.live.liveOptions())
+const modelProviders = computed(() => (unref(providersLive.data) ?? []) as Array<{ id: string, label: string, modelNames: string[], apiStyle: 'openai' | 'anthropic' }>)
+const secretsLive = useQuery(($orpc as any).vault.live.liveOptions())
+const secretItems = computed(() => [
+  { label: 'No API key', value: '__none__' },
+  ...((unref(secretsLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>).map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })),
+])
+const modelItems = computed(() => {
+  const prov = modelProviders.value.find(p => p.id === form.providerId)
+  return (prov?.modelNames ?? []).map(m => ({ label: m, value: m }))
+})
 const environmentItems = computed(() =>
   environments.value.map(e => ({ label: e.name, value: e.id })),
 )
@@ -82,6 +96,9 @@ function openEditor(row?: EmployeeRow) {
   form.instructions = row?.instructions ?? ''
   form.harness = (row?.harness as 'hermes') ?? 'hermes'
   form.executable = row?.executable && row.executable !== 'hermes' ? row.executable : ''
+  form.providerId = row?.providerId ?? '__none__'
+  form.modelId = row?.modelId ?? ''
+  form.apiKeySecretId = row?.apiKeySecretId ?? '__none__'
   message.value = ''
   mintedKey.value = ''
   editorOpen.value = true
@@ -102,6 +119,9 @@ async function save() {
         ...(showAiFields.value ? { instructions: form.instructions } : {}),
         ...(showAiFields.value ? { harness: form.harness } : {}),
         ...(showAiFields.value && form.executable.trim() ? { executable: form.executable.trim() } : {}),
+        ...(showAiFields.value ? { providerId: form.providerId === '__none__' ? null : form.providerId } : {}),
+        ...(showAiFields.value ? { modelId: form.modelId || null } : {}),
+        ...(showAiFields.value ? { apiKeySecretId: form.apiKeySecretId === '__none__' ? null : form.apiKeySecretId } : {}),
       })
     }
     else {
@@ -116,6 +136,9 @@ async function save() {
           instructions: form.instructions,
           harness: form.harness,
           ...(form.executable.trim() ? { executable: form.executable.trim() } : {}),
+          providerId: form.providerId === '__none__' ? null : form.providerId,
+          modelId: form.modelId || null,
+          apiKeySecretId: form.apiKeySecretId === '__none__' ? null : form.apiKeySecretId,
         } : {}),
       })
       // the API key returns ONCE — surface it before the modal closes
@@ -399,6 +422,39 @@ const columns = [
                 v-model="form.executable"
                 icon="i-lucide-terminal"
                 placeholder="hermes (default)"
+                class="w-full"
+              />
+            </UFormField>
+            <UFormField label="Provider" name="providerId">
+              <template #hint><FormHint text="Model endpoint this agent uses" /></template>
+              <USelect
+                v-model="form.providerId"
+                :items="[{ label: 'No provider', value: '__none__' }, ...modelProviders.map(p => ({ label: p.label, value: p.id }))]"
+                value-key="value"
+                icon="i-lucide-plug"
+                placeholder="Select a provider"
+                class="w-full"
+              />
+            </UFormField>
+            <UFormField v-if="modelItems.length" label="Model" name="modelId">
+              <template #hint><FormHint text="From the provider's catalog" /></template>
+              <USelect
+                v-model="form.modelId"
+                :items="modelItems"
+                value-key="value"
+                icon="i-lucide-cpu"
+                placeholder="Select a model"
+                class="w-full"
+              />
+            </UFormField>
+            <UFormField label="API key" name="apiKeySecretId">
+              <template #hint><FormHint text="Vault secret holding the key (per-agent, injected per run)" /></template>
+              <USelect
+                v-model="form.apiKeySecretId"
+                :items="secretItems"
+                value-key="value"
+                icon="i-lucide-key-round"
+                placeholder="No API key"
                 class="w-full"
               />
             </UFormField>

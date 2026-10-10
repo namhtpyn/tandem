@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { ORPCError, os } from '@orpc/server'
 import type { RequestHeadersHandlerPluginContext } from '@orpc/server/plugins'
 import { db } from '../db'
-import { aiEmployees as aiEmployeesTable, apikey as apikeyTable, employeeSupervisors as supervisorsTable, environments as environmentsTable, tasks as tasksTable, user as userTable, vaultSecrets as vaultSecretsTable, vaultAudit as vaultAuditTable } from '../db/schema'
+import { aiEmployees as aiEmployeesTable, apikey as apikeyTable, employeeSupervisors as supervisorsTable, environments as environmentsTable, models as modelsTable, modelProviders as modelProvidersTable, tasks as tasksTable, user as userTable, vaultSecrets as vaultSecretsTable, vaultAudit as vaultAuditTable } from '../db/schema'
 import { environmentInput } from './environments'
 import { probeSsh } from './ssh-probe'
 import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from './change-bus'
@@ -186,6 +186,104 @@ export const router = os.router({
   },
 
 
+  providers: {
+    /** live model-provider catalog with model names */
+    live: protectedProcedure.handler(() => liveGenerator(['providers'], async () => {
+      const { listModelProviders } = await import('./model-providers')
+      return await listModelProviders()
+    })),
+
+    /** replace ONE provider (upsert by id) with its model list */
+    save: protectedProcedure
+      .input(z.strictObject({
+        id: z.string().min(1).max(64).optional(),
+        label: z.string().min(1).max(64),
+        baseUrl: z.string().url(),
+        apiStyle: z.enum(['openai', 'anthropic']),
+        extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
+        notes: z.string().max(500).optional(),
+        modelNames: z.array(z.string().min(1).max(200)).max(100).default([]),
+      }))
+      .handler(async ({ input }) => {
+        const { modelProviderInputSchema } = await import('./model-providers')
+        modelProviderInputSchema.parse(input)
+        const id = input.id?.trim() || crypto.randomUUID()
+        const now = new Date()
+        const values = {
+          id,
+          label: input.label,
+          baseUrl: input.baseUrl,
+          apiStyle: input.apiStyle,
+          extraHeaders: input.extraHeaders ? JSON.stringify(input.extraHeaders) : null,
+          notes: input.notes ?? null,
+          updatedAt: now,
+        }
+        await db.insert(modelProvidersTable).values(values)
+          .onConflictDoUpdate({ target: modelProvidersTable.id, set: { label: values.label, baseUrl: values.baseUrl, apiStyle: values.apiStyle, extraHeaders: values.extraHeaders, notes: values.notes, updatedAt: now } })
+        // model list = full replace for this provider
+        await db.delete(modelsTable).where(eq(modelsTable.providerId, id))
+        const names = [...new Set(input.modelNames)]
+        if (names.length > 0) {
+          await db.insert(modelsTable).values(names.map(n => ({ id: crypto.randomUUID(), providerId: id, name: n })))
+        }
+        await publishChange('providers', 'update')
+        return { id }
+      }),
+
+    /** fetch the live model catalog from a provider endpoint.
+     *  Key is TRANSIENT — used for this one request, never stored or logged. */
+    fetchModels: protectedProcedure
+      .input(z.strictObject({
+        baseUrl: z.string().url(),
+        apiStyle: z.enum(['openai', 'anthropic']),
+        key: z.string().min(1).max(400).optional(),
+        extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
+      }))
+      .handler(async ({ input }): Promise<{ models: string[] }> => {
+        const url = input.apiStyle === 'anthropic'
+          ? `${input.baseUrl.replace(/\/$/, '')}/v1/models`
+          : `${input.baseUrl.replace(/\/$/, '')}/models`
+        const headers: Record<string, string> = { ...input.extraHeaders }
+        if (input.key) {
+          if (input.apiStyle === 'anthropic') {
+            headers['x-api-key'] = input.key
+            headers['anthropic-version'] = headers['anthropic-version'] ?? '2023-06-01'
+          }
+          else {
+            headers.Authorization = `Bearer ${input.key}`
+          }
+        }
+        let data: unknown
+        try {
+          const res = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) })
+          if (!res.ok) {
+            throw new ORPCError('BAD_REQUEST', { message: `endpoint returned ${res.status}` })
+          }
+          data = await res.json()
+        }
+        catch (e) {
+          if (e instanceof ORPCError) throw e
+          throw new ORPCError('BAD_REQUEST', { message: 'could not reach the endpoint' })
+        }
+        const list = (data as { data?: Array<{ id?: string }> })?.data
+        const models = Array.isArray(list) ? list.map(m => m.id).filter((m): m is string => typeof m === 'string' && m.length > 0) : []
+        return { models: [...new Set(models)].sort() }
+      }),
+
+    /** delete a provider (blocked while AI employees use it) */
+    remove: protectedProcedure
+      .input(z.strictObject({ id: z.string().min(1) }))
+      .handler(async ({ input }) => {
+        const { providerInUse } = await import('./model-providers')
+        if (await providerInUse(input.id)) {
+          throw new ORPCError('BAD_REQUEST', { message: 'provider is in use by AI employees' })
+        }
+        await db.delete(modelProvidersTable).where(eq(modelProvidersTable.id, input.id))
+        await publishChange('providers', 'update')
+        return { ok: true }
+      }),
+  },
+
   tasks: {
     /** live list — tasks with assignee info, newest first */
     live: protectedProcedure.handler(() => liveGenerator(['tasks'], async (): Promise<TaskRow[]> => {
@@ -297,6 +395,9 @@ export const router = os.router({
           environmentId: ai?.environmentId ?? null,
           harness: ai?.harness ?? null,
           executable: ai?.executable ?? null,
+          providerId: ai?.providerId ?? null,
+          modelId: ai?.modelId ?? null,
+          apiKeySecretId: ai?.apiKeySecretId ?? null,
           instructions: ai?.instructions ?? null,
           createdAt: r.createdAt.toISOString(),
           updatedAt: r.updatedAt.toISOString(),
@@ -317,6 +418,9 @@ export const router = os.router({
         instructions: z.string().max(10_000).optional(),
         harness: z.enum(['hermes']).optional(),
         executable: z.string().min(1).max(60).optional(),
+        providerId: z.string().min(1).nullable().optional(),
+        modelId: z.string().min(1).nullable().optional(),
+        apiKeySecretId: z.string().min(1).nullable().optional(),
       }))
       .handler(async ({ input, context }) => {
         // AI employees REQUIRE an environment
@@ -361,12 +465,27 @@ export const router = os.router({
         }
         let apiKey: string | undefined
         if (input.kind === 'ai') {
+          if (input.apiKeySecretId) {
+            const sec = await db.select({ id: vaultSecretsTable.id }).from(vaultSecretsTable).where(eq(vaultSecretsTable.id, input.apiKeySecretId))
+            if (sec.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'api key secret not found' })
+          }
+          if (input.providerId) {
+            const prov = await db.select({ id: modelProvidersTable.id }).from(modelProvidersTable).where(eq(modelProvidersTable.id, input.providerId))
+            if (prov.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'provider does not exist' })
+          }
+          if (input.modelId) {
+            const m = await db.select({ id: modelsTable.id }).from(modelsTable).where(eq(modelsTable.id, input.modelId))
+            if (m.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'model does not exist' })
+          }
           await db.insert(aiEmployeesTable).values({
             userId,
             environmentId: input.environmentId!,
             instructions: input.instructions ?? '',
             harness: input.harness ?? 'hermes',
             executable: input.executable?.trim() || 'hermes',
+            providerId: input.providerId ?? null,
+            modelId: input.modelId ?? null,
+            apiKeySecretId: input.apiKeySecretId ?? null,
           })
           const { getAuth } = await import('./auth')
           const auth = await getAuth()
@@ -388,6 +507,9 @@ export const router = os.router({
         instructions: z.string().max(10_000).nullable().optional(),
         harness: z.enum(['hermes']).optional(),
         executable: z.string().min(1).max(60).nullable().optional(),
+        providerId: z.string().min(1).nullable().optional(),
+        modelId: z.string().min(1).nullable().optional(),
+        apiKeySecretId: z.string().min(1).nullable().optional(),
       }))
       .handler(async ({ input }) => {
         const rows = await db.select().from(userTable).where(eq(userTable.id, input.id))
@@ -430,8 +552,8 @@ export const router = os.router({
           stack.push(...(graph.get(cur) ?? []))
         }
         // AI fields — only when this employee IS an AI (extension row exists)
-        if (aiRow && (input.environmentId !== undefined || input.instructions !== undefined || input.harness !== undefined || input.executable !== undefined)) {
-          const patch: { environmentId?: string, instructions?: string, harness?: string, executable?: string, updatedAt: Date } = { updatedAt: new Date() }
+        if (aiRow && (input.environmentId !== undefined || input.instructions !== undefined || input.harness !== undefined || input.executable !== undefined || input.providerId !== undefined || input.modelId !== undefined || input.apiKeySecretId !== undefined)) {
+          const patch: { environmentId?: string, instructions?: string, harness?: string, executable?: string, providerId?: string | null, modelId?: string | null, apiKeySecretId?: string | null, updatedAt: Date } = { updatedAt: new Date() }
           if (input.environmentId !== undefined && input.environmentId !== null) {
             const env = await db.select({ id: environmentsTable.id }).from(environmentsTable).where(eq(environmentsTable.id, input.environmentId))
             if (env.length === 0) {
@@ -447,6 +569,29 @@ export const router = os.router({
           }
           if (input.executable !== undefined && input.executable !== null) {
             patch.executable = input.executable.trim() || 'hermes'
+          }
+          if (input.providerId !== undefined) {
+            if (input.providerId !== null) {
+              const provs = await db.select({ id: modelProvidersTable.id }).from(modelProvidersTable).where(eq(modelProvidersTable.id, input.providerId))
+              if (provs.length === 0) {
+                throw new ORPCError('BAD_REQUEST', { message: 'provider does not exist' })
+              }
+            }
+            patch.providerId = input.providerId
+          }
+          if (input.modelId !== undefined) {
+            if (input.modelId !== null) {
+              const m = await db.select({ id: modelsTable.id }).from(modelsTable).where(eq(modelsTable.id, input.modelId))
+              if (m.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'model does not exist' })
+            }
+            patch.modelId = input.modelId
+          }
+          if (input.apiKeySecretId !== undefined) {
+            if (input.apiKeySecretId !== null) {
+              const s = await db.select({ id: vaultSecretsTable.id }).from(vaultSecretsTable).where(eq(vaultSecretsTable.id, input.apiKeySecretId))
+              if (s.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'api key secret not found' })
+            }
+            patch.apiKeySecretId = input.apiKeySecretId
           }
           await db.update(aiEmployeesTable).set(patch).where(eq(aiEmployeesTable.userId, aiRow.userId))
         }

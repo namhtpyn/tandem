@@ -29,6 +29,12 @@ export interface EmployeeRow {
   harness: string | null
   /** ai only — executable name on the environment when dispatching (default 'hermes') */
   executable: string | null
+  /** ai only — model provider registry id */
+  providerId: string | null
+  /** ai only — model catalog id */
+  modelId: string | null
+  /** ai only — vault secret holding the API key */
+  apiKeySecretId: string | null
   createdAt: string
   updatedAt: string
 }

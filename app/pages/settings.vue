@@ -14,6 +14,89 @@ interface OidcProviderRow {
 const { $orpc, $client } = useNuxtApp()
 
 const oidcLive = useQuery(($orpc as any).oidc.live.liveOptions())
+const providersLive = useQuery(($orpc as any).providers.live.liveOptions())
+const mProvList = computed(() => (unref(providersLive.data) ?? []) as Array<{ id: string, label: string, baseUrl: string, apiStyle: 'openai' | 'anthropic', extraHeaders: Record<string, string> | null, notes: string | null, modelNames: string[] }>)
+const mProvEditorOpen = ref(false)
+const mProvEditingId = ref<string | null>(null)
+const mProvForm = reactive({ label: '', baseUrl: '', apiStyle: 'openai' as 'openai' | 'anthropic', extraHeaders: '', notes: '', modelNames: '' })
+const mProvBusy = ref(false)
+const mProvMessage = ref('')
+
+function openMProvEditor(row?: { id: string, label: string, baseUrl: string, apiStyle: 'openai' | 'anthropic', extraHeaders: Record<string, string> | null, notes: string | null, modelNames: string[] }) {
+  mProvEditingId.value = row?.id ?? null
+  mProvForm.label = row?.label ?? ''
+  mProvForm.baseUrl = row?.baseUrl ?? ''
+  mProvForm.apiStyle = row?.apiStyle ?? 'openai'
+  mProvForm.extraHeaders = row?.extraHeaders ? Object.entries(row.extraHeaders).map(([k, v]) => `${k}: ${v}`).join('\n') : ''
+  mProvForm.notes = row?.notes ?? ''
+  mProvForm.modelNames = row?.modelNames?.join('\n') ?? ''
+  mProvMessage.value = ''
+  mProvEditorOpen.value = true
+}
+
+async function saveMProv() {
+  mProvBusy.value = true
+  mProvMessage.value = ''
+  try {
+    const headers = mProvForm.extraHeaders.trim()
+      ? Object.fromEntries(mProvForm.extraHeaders.split('\n').map(l => l.split(':').map(p => p.trim())).filter(p => p.length === 2).map(p => [p[0]!, p[1]!]))
+      : undefined
+    await ($client as any).providers.save({
+      ...(mProvEditingId.value ? { id: mProvEditingId.value } : {}),
+      label: mProvForm.label,
+      baseUrl: mProvForm.baseUrl,
+      apiStyle: mProvForm.apiStyle,
+      ...(headers && Object.keys(headers).length ? { extraHeaders: headers } : {}),
+      ...(mProvForm.notes ? { notes: mProvForm.notes } : {}),
+      modelNames: mProvForm.modelNames.split('\n').map(l => l.trim()).filter(Boolean),
+    })
+    mProvEditorOpen.value = false
+  }
+  catch (e) {
+    mProvMessage.value = e instanceof Error ? e.message : 'save failed'
+  }
+  finally {
+    mProvBusy.value = false
+  }
+}
+
+const provSyncKey = ref('')
+const provSyncing = ref(false)
+async function syncModels() {
+  provSyncing.value = true
+  mProvMessage.value = ''
+  try {
+    const res = await ($client as any).providers.fetchModels({
+      baseUrl: mProvForm.baseUrl,
+      apiStyle: mProvForm.apiStyle,
+      ...(provSyncKey.value.trim() ? { key: provSyncKey.value.trim() } : {}),
+      ...(mProvForm.extraHeaders.trim() ? { extraHeaders: Object.fromEntries(mProvForm.extraHeaders.split('\n').map(l => l.split(':').map(p => p.trim())).filter(p => p.length === 2).map(p => [p[0]!, p[1]!])) } : {}),
+    })
+    if (res.models?.length) mProvForm.modelNames = res.models.join('\n')
+    else mProvMessage.value = 'Endpoint returned no models'
+    provSyncKey.value = ''
+  }
+  catch (e) {
+    mProvMessage.value = e instanceof Error ? e.message : 'sync failed'
+  }
+  finally {
+    provSyncing.value = false
+  }
+}
+
+async function removeMProv(id: string) {
+  mProvBusy.value = true
+  mProvMessage.value = ''
+  try {
+    await ($client as any).providers.remove({ id })
+  }
+  catch (e) {
+    mProvMessage.value = e instanceof Error ? e.message : 'delete failed'
+  }
+  finally {
+    mProvBusy.value = false
+  }
+}
 
 const settingsLive = useQuery(($orpc as any).settings.live.liveOptions())
 
@@ -151,6 +234,54 @@ async function savePasswordPolicy() {
     <UCard :ui="{ root: 'shadow-sm' }">
       <template #header>
         <div class="flex items-center gap-2">
+          <UIcon name="i-lucide-cpu" class="size-4 text-zinc-400" />
+          <h3 class="text-sm font-semibold text-zinc-900 dark:text-white">Model providers</h3>
+        </div>
+      </template>
+      <div class="space-y-5">
+        <div>
+          <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-zinc-400">Catalog</h4>
+            <UButton icon="i-lucide-plus" size="sm" label="Add provider" @click="openMProvEditor()" />
+          </div>
+          <template v-if="mProvList.length">
+            <UCard :ui="{ root: 'shadow-sm', body: 'p-0 sm:p-0' }">
+              <UTable :data="mProvList" :columns="[
+                { accessorKey: 'label', header: 'Provider' },
+                { accessorKey: 'models', header: 'Models' },
+                { accessorKey: 'actions', header: '' },
+              ]">
+                <template #label-cell="{ row }">
+                  <div class="min-w-0">
+                    <p class="truncate font-medium text-zinc-900 dark:text-white">{{ row.original.label }}</p>
+                    <p class="truncate font-mono text-xs text-zinc-400">{{ row.original.baseUrl }}</p>
+                  </div>
+                </template>
+                <template #models-cell="{ row }">
+                  <div class="flex flex-wrap gap-1">
+                    <UBadge v-for="m in row.original.modelNames.slice(0, 4)" :key="m" color="neutral" variant="subtle" size="sm">{{ m }}</UBadge>
+                    <UBadge v-if="row.original.modelNames.length > 4" color="neutral" variant="subtle" size="sm">+{{ row.original.modelNames.length - 4 }}</UBadge>
+                    <UBadge :color="row.original.apiStyle === 'anthropic' ? 'warning' : 'primary'" variant="subtle" size="sm">{{ row.original.apiStyle }}</UBadge>
+                  </div>
+                </template>
+                <template #actions-cell="{ row }">
+                  <div class="flex justify-end gap-1">
+                    <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit provider" @click="openMProvEditor(row.original)" />
+                    <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Delete provider" :loading="mProvBusy" @click="removeMProv(row.original.id)" />
+                  </div>
+                </template>
+              </UTable>
+            </UCard>
+            <p v-if="mProvMessage" class="mt-2 text-xs text-error">{{ mProvMessage }}</p>
+          </template>
+          <p v-else class="py-4 text-center text-sm text-zinc-500">No providers yet.</p>
+        </div>
+      </div>
+    </UCard>
+
+    <UCard :ui="{ root: 'shadow-sm' }">
+      <template #header>
+        <div class="flex items-center gap-2">
           <UIcon name="i-lucide-key-round" class="size-4 text-zinc-400" />
           <h3 class="text-sm font-semibold text-zinc-900 dark:text-white">Authentication</h3>
         </div>
@@ -196,9 +327,9 @@ async function savePasswordPolicy() {
               <UBadge v-if="!disablePasswordLogin" color="success" variant="subtle" size="sm">Enabled</UBadge>
               <UBadge v-else color="warning" variant="subtle" size="sm">Disabled — SSO only</UBadge>
             </p>
-            <p class="text-xs text-zinc-400">{{ providers.length === 0 ? 'Cannot be disabled until an OIDC provider is configured.' : 'Turn off to require single sign-on.' }}</p>
+            <p class="text-xs text-zinc-400">{{ mProvList.length === 0 ? 'Cannot be disabled until an OIDC provider is configured.' : 'Turn off to require single sign-on.' }}</p>
           </div>
-          <USwitch :model-value="!disablePasswordLogin" :disabled="providers.length === 0" @update:model-value="async (v: boolean) => { disablePasswordLogin = !v; await savePasswordPolicy() }" />
+          <USwitch :model-value="!disablePasswordLogin" :disabled="mProvList.length === 0" @update:model-value="async (v: boolean) => { disablePasswordLogin = !v; await savePasswordPolicy() }" />
         </div>
       </div>
     </UCard>
@@ -231,5 +362,45 @@ async function savePasswordPolicy() {
 
     <p v-if="message" class="text-xs text-zinc-400">{{ message }}</p>
   </div>
+    <!-- model provider editor -->
+    <UModal v-model:open="mProvEditorOpen" :title="mProvEditingId ? 'Edit provider' : 'Add provider'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
+      <template #body>
+        <UForm id="provider-editor-form" :state="mProvForm" class="space-y-4" @submit="saveMProv">
+          <UFormField label="Label" name="label">
+            <UInput v-model="mProvForm.label" icon="i-lucide-tag" placeholder="Provider name" class="w-full" required />
+          </UFormField>
+          <UFormField label="Base URL" name="baseUrl">
+            <template #hint><FormHint text="OpenAI- or Anthropic-compatible endpoint root" /></template>
+            <UInput v-model="mProvForm.baseUrl" icon="i-lucide-globe" placeholder="https://api.example.com/v1" class="w-full" required />
+          </UFormField>
+          <UFormField label="API style" name="apiStyle">
+            <template #hint><FormHint text="Wire protocol the endpoint speaks" /></template>
+            <USelect v-model="mProvForm.apiStyle" :items="[{ label: 'OpenAI-compatible', value: 'openai' }, { label: 'Anthropic messages', value: 'anthropic' }]" value-key="value" icon="i-lucide-plug" class="w-full" />
+          </UFormField>
+          <UFormField label="Models" name="modelNames">
+            <template #hint><FormHint text="One model name per line — the agent's model dropdown" /></template>
+            <div class="mb-2 flex flex-wrap items-end gap-2">
+              <UInput v-model="provSyncKey" type="password" icon="i-lucide-key-round" placeholder="API key for sync (optional, never stored)" class="min-w-48 flex-1" :disabled="provSyncing" />
+              <UButton icon="i-lucide-refresh-cw" size="sm" :loading="provSyncing" :disabled="!mProvForm.baseUrl" @click="syncModels">Sync from endpoint</UButton>
+            </div>
+            <UTextarea v-model="mProvForm.modelNames" placeholder="model-name&#10;another-model" :rows="4" class="w-full" />
+          </UFormField>
+          <UFormField label="Extra headers" name="extraHeaders">
+            <template #hint><FormHint text="Optional, one 'Name: value' per line" /></template>
+            <UTextarea v-model="mProvForm.extraHeaders" placeholder="HTTP-Referer: https://tandem.local" :rows="2" class="w-full" />
+          </UFormField>
+          <UFormField label="Notes" name="notes">
+            <UInput v-model="mProvForm.notes" icon="i-lucide-notebook-pen" placeholder="Where keys live, budgets…" class="w-full" />
+          </UFormField>
+          <p v-if="mProvMessage" class="text-sm text-error">{{ mProvMessage }}</p>
+        </UForm>
+      </template>
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton variant="ghost" color="neutral" label="Cancel" :disabled="mProvBusy" @click="mProvEditorOpen = false" />
+          <UButton type="submit" :loading="mProvBusy" :label="mProvEditingId ? 'Save changes' : 'Add provider'" form="provider-editor-form" />
+        </div>
+      </template>
+    </UModal>
   </UDashboardPanel>
 </template>
