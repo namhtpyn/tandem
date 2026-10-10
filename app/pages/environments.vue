@@ -106,20 +106,49 @@ async function probe(row: EnvironmentRow) {
 </script>
 
 <template>
-  <div class="space-y-6 p-6 lg:p-8">
+  <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
+    <UDashboardNavbar title="Environments">
+      <template #leading>
+        <UDashboardSidebarCollapse />
+      </template>
+    </UDashboardNavbar>
+    <div class="space-y-6 p-6 lg:p-8">
     <div class="flex flex-wrap items-end justify-between gap-2">
       <div>
-        <h2 class="text-lg font-semibold text-zinc-900 dark:text-white">Environments
-          <span class="ml-1 inline-flex items-center gap-1 align-middle text-xs font-normal text-zinc-400"><span class="relative flex size-1.5"><span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" /><span class="relative inline-flex size-1.5 rounded-full bg-emerald-500" /></span>live</span>
-        </h2>
-        <p class="text-sm text-zinc-500">SSH targets that run the Hermes agent</p>
+                <p class="text-sm text-zinc-500">SSH targets that run the Hermes agent</p>
       </div>
       <UButton icon="i-lucide-plus" label="New environment" @click="openEditor()" />
     </div>
 
     <p v-if="message && !editorOpen" class="text-sm text-error">{{ message }}</p>
 
-    <UCard v-if="rows.length" :ui="{ root: 'shadow-sm', body: 'p-0 sm:p-0' }">
+    <!-- Mobile: stacked cards -->
+    <div v-if="rows.length" class="space-y-3 md:hidden">
+      <UCard v-for="row in rows" :key="row.id" :ui="{ root: 'shadow-sm' }">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0">
+            <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
+            <p class="truncate font-mono text-xs text-zinc-400">{{ row.username }}@{{ row.host }}:{{ row.port }}</p>
+          </div>
+          <div class="flex flex-col items-end gap-1">
+            <UBadge v-if="probeResults[row.id]" :color="probeResults[row.id]!.ok ? 'success' : 'error'" variant="subtle" size="sm">
+              {{ probeResults[row.id]!.ok ? 'ok' : 'failed' }}
+            </UBadge>
+          </div>
+        </div>
+        <p v-if="probeResults[row.id]" class="mt-1 truncate text-xs text-zinc-400" :title="probeResults[row.id]!.detail">
+          {{ probeResults[row.id]!.detail }} · {{ probeResults[row.id]!.durationMs }}ms
+        </p>
+        <div class="mt-3 flex justify-end gap-1">
+          <UButton icon="i-lucide-plug-zap" variant="ghost" color="neutral" size="sm" aria-label="Test connection" :loading="probingId === row.id" :disabled="busy || probingId !== null" @click="probe(row)" />
+          <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit environment" :disabled="busy" @click="openEditor(row)" />
+          <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete environment" :disabled="busy" @click="askRemove(row)" />
+        </div>
+      </UCard>
+    </div>
+
+    <!-- Desktop: table -->
+    <UCard v-if="rows.length" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
       <UTable :data="rows" :columns="columns">
         <template #name-cell="{ row }">
           <span class="text-sm font-medium text-zinc-900 dark:text-white">{{ row.original.name }}</span>
@@ -156,8 +185,9 @@ async function probe(row: EnvironmentRow) {
             <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete environment" :disabled="busy" @click="askRemove(row.original)" />
           </div>
         </template>
-      </UTable>
+            </UTable>
     </UCard>
+
     <UCard v-else :ui="{ root: 'shadow-sm' }">
       <div class="flex flex-col items-center gap-2 py-8 text-center">
         <UIcon name="i-lucide-server" class="size-8 text-zinc-300" />
@@ -181,7 +211,7 @@ async function probe(row: EnvironmentRow) {
       </template>
     </UModal>
 
-    <UModal v-model:open="editorOpen" :title="editingId ? 'Edit environment' : 'New environment'">
+    <UModal v-model:open="editorOpen" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }" :title="editingId ? 'Edit environment' : 'New environment'">
       <template #body>
         <UForm :state="form" class="space-y-4" @submit="save">
           <UFormField label="Name" name="name" hint="Unique label, e.g. ct112-tandem">
@@ -205,4 +235,5 @@ async function probe(row: EnvironmentRow) {
       </template>
     </UModal>
   </div>
+  </UDashboardPanel>
 </template>

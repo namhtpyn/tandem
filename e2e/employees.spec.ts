@@ -20,17 +20,17 @@ test('human employee CRUD round-trip on the live page', async ({ page }) => {
   await page.getByRole('radio', { name: /Human/ }).check()
   await page.getByPlaceholder('Senior Engineer').fill('E2E Tester')
   await page.getByRole('button', { name: 'Save' }).click()
-  await expect(page.locator('tr', { hasText: name })).toBeVisible({ timeout: 15_000 })
-  await expect(page.locator('tr', { hasText: email })).toBeVisible()
+  await expect(page.locator('tr:visible', { hasText: name })).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('tr:visible', { hasText: email })).toBeVisible()
 
   // edit title
-  await page.locator('tr', { hasText: name }).getByRole('button', { name: 'Edit employee' }).click()
+  await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Edit employee' }).click()
   await page.getByPlaceholder('Senior Engineer').fill('Promoted Tester')
   await page.getByRole('button', { name: 'Save' }).click()
-  await expect(page.getByText('Promoted Tester').first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('tr', { hasText: name }).getByText('Promoted Tester')).toBeVisible({ timeout: 15_000 })
 
   // delete requires CONFIRMATION now: trash opens a dialog, not instant delete
-  await page.locator('tr', { hasText: name }).getByRole('button', { name: 'Delete employee' }).click()
+  await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Delete employee' }).click()
   await expect(page.getByRole('dialog').getByText(/permanently/i)).toBeVisible()
   await expect(page.locator('tr', { hasText: name })).toBeVisible() // still there pre-confirm
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
@@ -48,7 +48,7 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   await page.getByPlaceholder('192.168.3.108').fill('127.0.0.1')
   await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
   await page.getByRole('button', { name: 'Save' }).click()
-  await expect(page.getByText(envName).first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('tr', { hasText: envName }).first()).toBeVisible({ timeout: 15_000 })
 
   // create AI employee
   const name = `E2E Bot ${suffix}`
@@ -66,16 +66,16 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   // minted key surfaces once
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 })
   await page.getByRole('button', { name: /Done — I saved the key/ }).click()
-  await expect(page.getByText(name).first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('tr:visible', { hasText: name })).toBeVisible({ timeout: 15_000 })
 
   // edit: kind immutable badge, no kind radio
-  await page.locator('tr', { hasText: name }).getByRole('button', { name: 'Edit employee' }).click()
+  await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Edit employee' }).click()
   await expect(page.getByText(/immutable/i).first()).toBeVisible()
   await expect(page.getByRole('radio', { name: /AI agent/ })).toHaveCount(0)
   await page.getByRole('button', { name: 'Cancel' }).click()
 
   // keys drawer: list + mint + revoke
-  await page.locator('tr', { hasText: name }).getByRole('button', { name: 'API keys' }).click()
+  await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'API keys' }).click()
   await expect(page.getByText(/ai-key/).first()).toBeVisible({ timeout: 15_000 })
   await page.getByRole('button', { name: 'Mint new key' }).click()
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 })
@@ -92,11 +92,11 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   // other suites' unscoped selectors; keep the DB tidy)
   await page.keyboard.press('Escape')
   await page.getByRole('link', { name: /Employees/ }).first().click()
-  await page.locator('tr', { hasText: name }).getByRole('button', { name: 'Delete employee' }).click()
+  await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Delete employee' }).click()
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
   await expect(page.locator('tr', { hasText: name })).toHaveCount(0, { timeout: 15_000 })
   await page.getByRole('link', { name: /Environments/ }).first().click()
-  await page.locator('tr', { hasText: envName }).getByRole('button', { name: 'Delete environment' }).click()
+  await page.locator('tr:visible', { hasText: envName }).getByRole('button', { name: 'Delete environment' }).click()
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
   await expect(page.locator('tr', { hasText: envName })).toHaveCount(0, { timeout: 15_000 })
 })
@@ -115,7 +115,7 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   await page.getByRole('radio', { name: /Human/ }).check()
   await page.getByPlaceholder('Senior Engineer').fill('Boss')
   await page.getByRole('button', { name: 'Save' }).click()
-  await expect(page.getByText(supName).first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('tr:visible', { hasText: supName })).toBeVisible({ timeout: 15_000 })
 
   // create the report with supervisor assigned
   const subName = `E2E Sub ${suffix}`
@@ -125,10 +125,10 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   await page.getByRole('radio', { name: /Human/ }).check()
   await page.getByPlaceholder('Senior Engineer').fill('Report')
   await page.getByRole('button', { name: 'Save' }).click()
-  await expect(page.getByText(subName).first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('tr:visible', { hasText: subName })).toBeVisible({ timeout: 15_000 })
 
   // edit the report: pick the supervisor in the multi-select
-  await page.locator('tr', { hasText: subName }).getByRole('button', { name: 'Edit employee' }).click()
+  await page.locator('tr:visible', { hasText: subName }).getByRole('button', { name: 'Edit employee' }).click()
   await page.getByRole('button', { name: 'Supervisors', exact: true }).click()
   await page.getByRole('option', { name: supName }).click()
   await page.keyboard.press('Escape')
@@ -139,10 +139,10 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   await expect(row.getByText(supName, { exact: true })).toBeVisible({ timeout: 15_000 })
 
   // cleanup both rows (with confirmation)
-  await page.locator('tr', { hasText: subName }).getByRole('button', { name: 'Delete employee' }).click()
+  await page.locator('tr:visible', { hasText: subName }).getByRole('button', { name: 'Delete employee' }).click()
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
   await expect(page.locator('tr', { hasText: subName })).toHaveCount(0, { timeout: 15_000 })
-  await page.locator('tr', { hasText: supName }).getByRole('button', { name: 'Delete employee' }).click()
+  await page.locator('tr:visible', { hasText: supName }).getByRole('button', { name: 'Delete employee' }).click()
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
   await expect(page.locator('tr', { hasText: supName })).toHaveCount(0, { timeout: 15_000 })
 })

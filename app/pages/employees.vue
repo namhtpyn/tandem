@@ -212,20 +212,56 @@ const columns = [
 </script>
 
 <template>
-  <div class="space-y-6 p-6 lg:p-8">
+  <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
+    <UDashboardNavbar title="Employees">
+      <template #leading>
+        <UDashboardSidebarCollapse />
+      </template>
+    </UDashboardNavbar>
+    <div class="space-y-6 p-6 lg:p-8">
     <div class="flex flex-wrap items-end justify-between gap-2">
       <div>
-        <h2 class="text-lg font-semibold text-zinc-900 dark:text-white">Employees
-          <span class="ml-1 inline-flex items-center gap-1 align-middle text-xs font-normal text-zinc-400"><span class="relative flex size-1.5"><span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" /><span class="relative inline-flex size-1.5 rounded-full bg-emerald-500" /></span>live</span>
-        </h2>
-        <p class="text-sm text-zinc-500">Humans and AI agents, one hierarchy — every employee is a login</p>
+                <p class="text-sm text-zinc-500">Humans and AI agents, one hierarchy — every employee is a login</p>
       </div>
       <UButton icon="i-lucide-plus" label="New employee" @click="openEditor()" />
     </div>
 
     <p v-if="message && !editorOpen" class="text-sm text-error">{{ message }}</p>
 
-    <UCard v-if="rows.length" :ui="{ root: 'shadow-sm', body: 'p-0 sm:p-0' }">
+    <!-- Mobile: stacked cards -->
+    <div v-if="rows.length" class="space-y-3 md:hidden">
+      <UCard v-for="row in rows" :key="row.id" :ui="{ root: 'shadow-sm' }">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0">
+            <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
+            <p class="truncate font-mono text-xs text-zinc-400">{{ row.email }}</p>
+            <p v-if="row.title" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ row.title }}</p>
+          </div>
+          <UBadge :color="row.kind === 'ai' ? 'primary' : 'neutral'" variant="subtle" size="sm" :icon="row.kind === 'ai' ? 'i-lucide-bot' : 'i-lucide-user'">
+            {{ row.kind }}
+          </UBadge>
+        </div>
+        <div v-if="row.supervisorIds.length || (row.kind === 'ai' && row.environmentId)" class="mt-2 flex flex-wrap gap-1">
+          <UBadge v-for="sid in row.supervisorIds" :key="sid" color="neutral" variant="soft" size="sm">
+            {{ byId.get(sid)?.name ?? sid.slice(0, 8) }}
+          </UBadge>
+          <UBadge v-if="row.kind === 'ai' && row.environmentId" color="info" variant="soft" size="sm" icon="i-lucide-server">
+            {{ envName(row.environmentId) }}
+          </UBadge>
+        </div>
+        <div class="mt-3 flex justify-end gap-1">
+          <UButton
+            v-if="row.kind === 'ai'" icon="i-lucide-key-round" variant="ghost" color="neutral" size="sm"
+            aria-label="API keys" :disabled="busy" @click="openKeys(row)"
+          />
+          <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit employee" :disabled="busy" @click="openEditor(row)" />
+          <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete employee" :disabled="busy" @click="askRemove(row)" />
+        </div>
+      </UCard>
+    </div>
+
+    <!-- Desktop: table -->
+    <UCard v-if="rows.length" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
       <UTable :data="rows" :columns="columns">
         <template #name-cell="{ row }">
           <div class="flex items-center gap-2">
@@ -271,8 +307,9 @@ const columns = [
             <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete employee" :disabled="busy" @click="askRemove(row.original)" />
           </div>
         </template>
-      </UTable>
+            </UTable>
     </UCard>
+
     <UCard v-else :ui="{ root: 'shadow-sm' }">
       <div class="flex flex-col items-center gap-2 py-8 text-center">
         <UIcon name="i-lucide-users" class="size-8 text-zinc-300" />
@@ -281,7 +318,7 @@ const columns = [
       </div>
     </UCard>
 
-    <UModal v-model:open="editorOpen" :title="isEdit ? 'Edit employee' : 'New employee'" :ui="{ content: 'max-h-[calc(100dvh-4rem)]' }">
+    <UModal v-model:open="editorOpen" :title="isEdit ? 'Edit employee' : 'New employee'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
       <template #body>
         <div class="max-h-[55dvh] overflow-y-auto px-4 sm:px-6">
         <UForm :state="form" class="space-y-4" @submit="save">
@@ -423,4 +460,5 @@ const columns = [
       </template>
     </UModal>
   </div>
+  </UDashboardPanel>
 </template>

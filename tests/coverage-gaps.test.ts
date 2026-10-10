@@ -1,4 +1,4 @@
-// Remaining coverage: root redirect, ready-get catch path, db index branches,
+// Remaining coverage: ready-get catch path, db index branches,
 // boot log line, auth after-hook. This file closes the final gaps.
 import { describe, expect, it, beforeEach } from 'vitest'
 import './api-harness'
@@ -9,14 +9,6 @@ import { call } from './api-harness'
 beforeEach(async () => {
   await resetSchema()
   await applyMigrations()
-})
-
-describe('GET / (root redirect)', () => {
-  it('redirects to /admin with 302', async () => {
-    const { event } = await call('../server/routes/index.get.ts', { method: 'GET', url: '/' })
-    const res = event.node.res as unknown as { statusCode: number }
-    expect(res.statusCode).toBe(302)
-  })
 })
 
 describe('GET /health/ready failure path', () => {

@@ -39,7 +39,7 @@ async function oidcLogin(providerId: string) {
   try {
     const res = await $fetch<{ url: string }>('/auth/sign-in/social', {
       method: 'POST',
-      body: { provider: providerId, callbackURL: '/admin' },
+      body: { provider: providerId, callbackURL: '/' },
     })
     if (res?.url) window.location.href = res.url
     else throw new Error('no authorization url returned')
@@ -56,9 +56,9 @@ async function logout() {
 
 const nav = [
   { label: 'Overview', icon: 'i-lucide-layout-dashboard', to: '/admin' },
-  { label: 'Environments', icon: 'i-lucide-server', to: '/admin/environments' },
-  { label: 'Employees', icon: 'i-lucide-users', to: '/admin/employees' },
-  { label: 'Settings', icon: 'i-lucide-settings', to: '/admin/settings' },
+  { label: 'Environments', icon: 'i-lucide-server', to: '/environments' },
+  { label: 'Employees', icon: 'i-lucide-users', to: '/employees' },
+  { label: 'Settings', icon: 'i-lucide-settings', to: '/settings' },
 ]
 </script>
 
@@ -102,7 +102,7 @@ const nav = [
     <UDashboardGroup v-else unit="rem">
       <UDashboardSidebar id="tandem-sidebar" :min-size="14" :default-size="16" :max-size="22" collapsible resizable>
         <template #header="{ collapsed }">
-          <NuxtLink to="/admin" class="flex items-center gap-2.5 min-w-0">
+          <NuxtLink to="/" class="flex items-center gap-2.5 min-w-0">
             <div class="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10">
               <UIcon name="i-lucide-users" class="size-5 text-primary" />
             </div>

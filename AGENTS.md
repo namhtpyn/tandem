@@ -22,6 +22,12 @@ browser, navigating and interacting like a human user:**
 3. **Cover the human path**: login → navigate → create → edit → delete → error
    cases (duplicate names, invalid input) → empty states → realtime updates
    where applicable.
+3a. **MOBILE FIRST — non-negotiable.** The UI is designed for phones first:
+   every manual pass and every e2e visual check must run at a mobile viewport
+   (e.g. 390x844) BEFORE desktop. Tables must collapse to card/stacked layouts
+   on small screens (no horizontal scroll), modals must be bottom-sheet-like
+   and reachable, tap targets ≥ 44px. A feature is not done until it works on
+   a phone-width screen.
 4. **js() is read-only**: page text/DOM may be READ via js for verification
    (asserting state after an action), but never to PERFORM actions.
 5. **Then update the e2e suite accordingly**: encode what the manual pass taught
@@ -36,6 +42,14 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
 
 ## Standing engineering laws
 
+- **MOBILE FIRST — the UI is designed for phones.** Every screen is built and
+  verified at a mobile viewport (390x844) before desktop: tables collapse to
+  cards/stacked layouts (no horizontal scrolling), modals are reachable and
+  bottom-sheet-like, tap targets ≥ 44px. Manual QA and e2e must include a
+  mobile-viewport pass for every feature.
+- **No /admin path prefix.** Pages live at the root: `/` (overview),
+  `/environments`, `/employees`, `/settings`. Never introduce route prefixes
+  without an explicit user decision.
 - **oRPC v2 app-wide.** Only `/auth/**` (better-auth protocol) and `/health/*`
   (infra probes) may be plain REST. Everything else is an oRPC procedure.
 - **Everything realtime.** Live queries + SSE change-bus; every screen reflects

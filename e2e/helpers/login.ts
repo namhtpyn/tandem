@@ -5,7 +5,7 @@ import { expect } from '@playwright/test'
 // (page reloads, credentials lost, test flakes). Waiting for the app's
 // hydration marker removes the race for every spec.
 export async function login(page: import('@playwright/test').Page) {
-  await page.goto('/admin')
+  await page.goto('/')
   // hydration marker: Nuxt sets __NUXT__ / data-nuxt attrs; the reliable
   // signal is the auth/session oRPC POST firing on app mount — instead of
   // sniffing internals we simply require the form to be interactive by
@@ -14,7 +14,7 @@ export async function login(page: import('@playwright/test').Page) {
   await page.getByPlaceholder('you@example.com').fill('admin@tandem.local')
   await page.getByLabel('Password').fill('tandem-admin')
   await page.getByRole('button', { name: 'Sign in' }).click()
-  await page.waitForURL(/admin/)
+  await page.waitForURL((url) => !url.pathname.includes('login'))
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
 }
 

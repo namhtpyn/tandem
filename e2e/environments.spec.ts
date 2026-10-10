@@ -16,8 +16,8 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
   await page.getByPlaceholder('192.168.3.108').fill('127.0.0.1')
   await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
   await page.getByRole('button', { name: 'Save' }).click()
-  await expect(page.getByText(rowName)).toBeVisible({ timeout: 15_000 })
-  await expect(page.getByText(/tandem@127\.0\.0\.1:22/).first()).toBeVisible()
+  await expect(page.locator('tr:visible', { hasText: rowName })).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('tr:visible', { hasText: rowName }).locator('span:visible', { hasText: '127.0.0.1' })).toBeVisible()
 
   // duplicate name -> conflict surfaced (single error node: page one is hidden while modal open)
   await page.getByRole('button', { name: 'New environment' }).first().click()
@@ -33,14 +33,14 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
   await row.getByRole('button', { name: 'Edit environment' }).click()
   await page.getByPlaceholder('192.168.3.108').fill('10.9.8.7')
   await page.getByRole('button', { name: 'Save' }).click()
-  await expect(page.getByText(/tandem@10\.9\.8\.7:22/).first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('tr:visible', { hasText: rowName }).locator('span:visible', { hasText: '10.9.8.7' })).toBeVisible({ timeout: 15_000 })
 
   // probe (refused port -> failed badge with detail), scoped to the row
   await row.getByRole('button', { name: 'Test connection' }).click()
-  await expect(page.getByText('failed').first()).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('tr:visible', { hasText: rowName }).getByText('failed')).toBeVisible({ timeout: 20_000 })
 
   // delete requires confirmation, scoped to this row
-  await page.locator('tr', { hasText: rowName }).getByRole('button', { name: 'Delete environment' }).click()
+  await page.locator('tr:visible', { hasText: rowName }).getByRole('button', { name: 'Delete environment' }).click()
   await expect(page.getByRole('heading', { name: 'Delete environment' })).toBeVisible()
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
   await expect(page.locator('tr', { hasText: rowName })).toHaveCount(0, { timeout: 15_000 })
@@ -54,7 +54,7 @@ test('live table updates from another tab via SSE', async ({ context, page }) =>
   await expect(page.getByRole('heading', { name: /Environments/ })).toBeVisible()
 
   const other = await context.newPage()
-  await other.goto('/admin/environments')
+  await other.goto('/environments')
   await expect(other.getByRole('heading', { name: /Environments/ })).toBeVisible()
 
   // create from the other tab; first tab must update without reload
@@ -63,12 +63,12 @@ test('live table updates from another tab via SSE', async ({ context, page }) =>
   await other.getByPlaceholder('192.168.3.108').fill('127.0.0.1')
   await other.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
   await other.getByRole('button', { name: 'Save' }).click()
-  await expect(other.getByText(rowName)).toBeVisible({ timeout: 15_000 })
+  await expect(other.locator('tr', { hasText: rowName })).toBeVisible({ timeout: 15_000 })
 
-  await expect(page.getByText(rowName)).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('tr:visible', { hasText: rowName })).toBeVisible({ timeout: 15_000 })
 
   // cleanup (scoped to this row, with confirmation)
-  await page.locator('tr', { hasText: rowName }).getByRole('button', { name: 'Delete environment' }).click()
+  await page.locator('tr:visible', { hasText: rowName }).getByRole('button', { name: 'Delete environment' }).click()
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
   await expect(page.locator('tr', { hasText: rowName })).toHaveCount(0, { timeout: 15_000 })
   await other.close()

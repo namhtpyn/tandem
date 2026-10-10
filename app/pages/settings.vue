@@ -99,10 +99,15 @@ async function savePasswordPolicy() {
 </script>
 
 <template>
-  <div class="space-y-6 p-6 lg:p-8">
+  <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
+    <UDashboardNavbar title="Settings">
+      <template #leading>
+        <UDashboardSidebarCollapse />
+      </template>
+    </UDashboardNavbar>
+    <div class="space-y-6 p-6 lg:p-8">
     <div>
-      <h2 class="text-lg font-semibold text-zinc-900 dark:text-white">Settings</h2>
-      <p class="text-sm text-zinc-500">Authentication for this Tandem instance</p>
+            <p class="text-sm text-zinc-500">Authentication for this Tandem instance</p>
     </div>
 
     <UCard :ui="{ root: 'shadow-sm' }">
@@ -186,4 +191,5 @@ async function savePasswordPolicy() {
 
     <p v-if="message" class="text-xs text-zinc-400">{{ message }}</p>
   </div>
+  </UDashboardPanel>
 </template>

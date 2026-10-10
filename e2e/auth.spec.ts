@@ -52,18 +52,18 @@ test.describe('health', () => {
 })
 
 test.describe('auth flow', () => {
-  test('root redirects to /admin', async ({ page }) => {
+  test('root serves the app', async ({ page }) => {
     await page.goto('/')
-    await expect(page).toHaveURL(/\/admin/)
+    await expect(page).toHaveURL(/\/$/)
   })
 
   test('admin page shows the login form before authentication', async ({ page }) => {
-    await page.goto('/admin')
+    await page.goto('/')
     await expect(page.getByRole('button', { name: /sign in/i })).toBeVisible()
   })
 
   test('wrong password is rejected', async ({ page }) => {
-    await page.goto('/admin')
+    await page.goto('/')
     await page.getByLabel(/email/i).fill('admin@tandem.local')
     await page.getByLabel(/password/i).fill('not-the-password')
     await page.getByRole('button', { name: /sign in/i }).click()
@@ -72,7 +72,7 @@ test.describe('auth flow', () => {
   })
 
   test('admin login lands on the dashboard and shows the session', async ({ page }) => {
-    await page.goto('/admin')
+    await page.goto('/')
     await page.getByLabel(/email/i).fill('admin@tandem.local')
     await page.getByLabel(/password/i).fill('tandem-admin')
     await page.getByRole('button', { name: /sign in/i }).click()
@@ -99,7 +99,7 @@ test.describe('authenticated settings', () => {
 
   test('signed-in admin can read settings and manage OIDC providers', async ({ page, request }) => {
     // sign in via UI to get the session cookie in the browser context
-    await page.goto('/admin')
+    await page.goto('/')
     await page.getByLabel(/email/i).fill('admin@tandem.local')
     await page.getByLabel(/password/i).fill('tandem-admin')
     await page.getByRole('button', { name: /sign in/i }).click()

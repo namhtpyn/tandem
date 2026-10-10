@@ -3,10 +3,15 @@
 </script>
 
 <template>
-  <div class="space-y-6 p-6 lg:p-8">
+  <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
+    <UDashboardNavbar title="Overview">
+      <template #leading>
+        <UDashboardSidebarCollapse />
+      </template>
+    </UDashboardNavbar>
+    <div class="space-y-6 p-6 lg:p-8">
     <div>
-      <h2 class="text-lg font-semibold text-zinc-900 dark:text-white">Overview</h2>
-      <p class="text-sm text-zinc-500">Company workspace — humans and AI employees, one hierarchy.</p>
+            <p class="text-sm text-zinc-500">Company workspace — humans and AI employees, one hierarchy.</p>
     </div>
 
     <div class="grid gap-4 sm:grid-cols-3">
@@ -45,4 +50,5 @@
       </UCard>
     </div>
   </div>
+  </UDashboardPanel>
 </template>
