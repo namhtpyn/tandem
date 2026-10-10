@@ -39,6 +39,21 @@ const form = reactive({
 const busy = ref(false)
 const message = ref('')
 const mintedKey = ref('')
+const copied = ref(false)
+
+async function copyKey(key: string) {
+  try {
+    await navigator.clipboard.writeText(key)
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 2000)
+  }
+  catch { /* clipboard unavailable — manual selection still possible */ }
+}
+const pendingDelete = ref<EmployeeRow | null>(null)
+const deleteOpen = computed({
+  get: () => pendingDelete.value !== null,
+  set: (v: boolean) => { if (!v) pendingDelete.value = null },
+})
 
 const isEdit = computed(() => editingId.value !== null)
 const editingIsAi = computed(() => (editingId.value ? byId.value.get(editingId.value)?.kind === 'ai' : false))
@@ -104,13 +119,19 @@ async function save() {
   }
 }
 
-async function remove(row: EmployeeRow) {
+function askRemove(row: EmployeeRow) {
+  pendingDelete.value = row
+}
+
+async function remove() {
+  if (!pendingDelete.value) return
   busy.value = true
-  message.value = ''
   try {
-    await removeMutation.mutateAsync({ id: row.id })
+    await removeMutation.mutateAsync({ id: pendingDelete.value.id })
+    pendingDelete.value = null
   }
   catch (e) {
+    pendingDelete.value = null
     message.value = e instanceof Error ? e.message : 'delete failed'
   }
   finally {
@@ -191,7 +212,7 @@ const columns = [
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-6 p-6 lg:p-8">
     <div class="flex flex-wrap items-end justify-between gap-2">
       <div>
         <h2 class="text-lg font-semibold text-zinc-900 dark:text-white">Employees
@@ -247,7 +268,7 @@ const columns = [
               @click="openKeys(row.original)"
             />
             <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit employee" :disabled="busy" @click="openEditor(row.original)" />
-            <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete employee" :disabled="busy" @click="remove(row.original)" />
+            <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete employee" :disabled="busy" @click="askRemove(row.original)" />
           </div>
         </template>
       </UTable>
@@ -260,8 +281,9 @@ const columns = [
       </div>
     </UCard>
 
-    <UModal v-model:open="editorOpen" :title="isEdit ? 'Edit employee' : 'New employee'">
+    <UModal v-model:open="editorOpen" :title="isEdit ? 'Edit employee' : 'New employee'" :ui="{ content: 'max-h-[calc(100dvh-4rem)]' }">
       <template #body>
+        <div class="max-h-[55dvh] overflow-y-auto px-4 sm:px-6">
         <UForm :state="form" class="space-y-4" @submit="save">
           <UFormField label="Name" name="name">
             <UInput v-model="form.name" icon="i-lucide-user" placeholder="Jane Doe" class="w-full" required />
@@ -312,17 +334,54 @@ const columns = [
               <UTextarea v-model="form.instructions" :rows="4" placeholder="You are a code reviewer…" class="w-full" />
             </UFormField>
           </template>
-          <p v-if="message" class="text-sm text-error">{{ message }}</p>
-          <div v-if="mintedKey" class="rounded-md border border-amber-300/50 bg-amber-50 p-3 dark:bg-amber-950/30">
-            <p class="text-xs font-medium text-amber-700 dark:text-amber-300">API key — shown once, store it now</p>
-            <p class="mt-1 break-all font-mono text-xs text-amber-900 dark:text-amber-100">{{ mintedKey }}</p>
-            <UButton class="mt-2" size="xs" color="neutral" variant="soft" label="Done — I saved the key" @click="editorOpen = false" />
+          <UAlert
+            v-if="message"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            :title="message"
+            :ui="{ title: 'text-sm' }"
+          />
+          <div v-if="mintedKey" class="rounded-lg border-2 border-amber-400/70 bg-amber-50 p-4 dark:bg-amber-950/40">
+            <p class="flex items-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-200">
+              <UIcon name="i-lucide-key-round" class="size-4" />
+              API key created — shown only once
+            </p>
+            <p class="mt-1 text-xs text-amber-700 dark:text-amber-300">Copy it now; it cannot be retrieved later.</p>
+            <div class="mt-3 flex items-center gap-2">
+              <code class="flex-1 break-all rounded-md bg-white/70 px-2.5 py-2 font-mono text-sm text-amber-900 dark:bg-black/30 dark:text-amber-100">{{ mintedKey }}</code>
+              <UButton
+                :icon="copied ? 'i-lucide-check' : 'i-lucide-copy'"
+                :color="copied ? 'success' : 'neutral'"
+                variant="soft"
+                size="sm"
+                :label="copied ? 'Copied' : 'Copy'"
+                @click="copyKey(mintedKey)"
+              />
+            </div>
+            <UButton class="mt-3" size="sm" color="primary" variant="solid" label="Done — I saved the key" @click="editorOpen = false" />
           </div>
-          <div v-else class="flex justify-end gap-2 pt-2">
+          <div v-else class="sticky bottom-0 -mx-4 mt-2 flex justify-end gap-2 border-t border-zinc-200 bg-white/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 dark:border-zinc-800 dark:bg-zinc-950/95">
             <UButton variant="ghost" color="neutral" label="Cancel" @click="editorOpen = false" />
             <UButton type="submit" :loading="busy" label="Save" />
           </div>
         </UForm>
+        </div>
+      </template>
+    </UModal>
+
+    <UModal v-model:open="deleteOpen" title="Delete employee" :ui="{ content: 'max-w-sm' }">
+      <template #body>
+        <div class="space-y-4">
+          <p class="text-sm text-zinc-600 dark:text-zinc-300">
+            Delete <span class="font-semibold text-zinc-900 dark:text-white">{{ pendingDelete?.name }}</span>
+            ({{ pendingDelete?.email }})? Their login, supervision links, API keys{{ pendingDelete?.kind === 'ai' ? ', and AI extension' : '' }} are removed permanently.
+          </p>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingDelete = null" />
+            <UButton icon="i-lucide-trash-2" color="error" label="Delete" :loading="busy" @click="remove" />
+          </div>
+        </div>
       </template>
     </UModal>
 
@@ -330,9 +389,22 @@ const columns = [
       <template #body>
         <div class="space-y-3">
           <p v-if="keysMessage" class="text-sm text-error">{{ keysMessage }}</p>
-          <div v-if="freshKey" class="rounded-md border border-amber-300/50 bg-amber-50 p-3 dark:bg-amber-950/30">
-            <p class="text-xs font-medium text-amber-700 dark:text-amber-300">New key — shown once, store it now</p>
-            <p class="mt-1 break-all font-mono text-xs text-amber-900 dark:text-amber-100">{{ freshKey }}</p>
+          <div v-if="freshKey" class="rounded-lg border-2 border-amber-400/70 bg-amber-50 p-4 dark:bg-amber-950/40">
+            <p class="flex items-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-200">
+              <UIcon name="i-lucide-key-round" class="size-4" />
+              New key — shown only once
+            </p>
+            <div class="mt-3 flex items-center gap-2">
+              <code class="flex-1 break-all rounded-md bg-white/70 px-2.5 py-2 font-mono text-sm text-amber-900 dark:bg-black/30 dark:text-amber-100">{{ freshKey }}</code>
+              <UButton
+                :icon="copied ? 'i-lucide-check' : 'i-lucide-copy'"
+                :color="copied ? 'success' : 'neutral'"
+                variant="soft"
+                size="sm"
+                :label="copied ? 'Copied' : 'Copy'"
+                @click="copyKey(freshKey)"
+              />
+            </div>
           </div>
           <div v-if="keys.length" class="divide-y divide-zinc-200 dark:divide-zinc-800">
             <div v-for="k in keys" :key="k.id" class="flex items-center justify-between gap-2 py-2">

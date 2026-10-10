@@ -278,6 +278,35 @@ describe('employees.remove', () => {
     expect(await db.select().from(user)).toHaveLength(0)
   })
 
+  it('refuses self-deletion', async () => {
+    const { router } = await import('../server/utils/orpc')
+    const { db } = await dbm()
+    const { user } = await schema()
+    await db.insert(user).values({ id: 'u1', name: 'Sess', email: 'sess@tandem.local', role: 'viewer' })
+    // call the handler with a session present (as requireSession middleware provides)
+    const node = (router as any).employees.remove['~orpc']
+    await expect(node.handler({
+      input: { id: 'u1' },
+      context: { ...(await ctx()), session: { user: { id: 'u1', name: 'Sess', email: 'sess@tandem.local', role: 'viewer' } } },
+      signal: new AbortController().signal,
+    })).rejects.toThrow(/own account/i)
+    expect(await db.select().from(user)).toHaveLength(1) // nothing deleted
+  })
+
+  it('refuses deleting the last admin', async () => {
+    // seed a second employee (non-admin); the ONLY admin is the session admin's row.
+    // Create an admin user directly, delete the OTHER admin? Simpler: make the target an admin with no other admins.
+    const { db } = await dbm()
+    const { user } = await schema()
+    // promote Self to admin, then delete the original admin while Self is... admin too (2 admins = allowed).
+    // For the guard: single-admin case. Remove the second user; target = the only admin.
+    await db.insert(user).values({ id: 'only-admin', name: 'OA', email: 'oa@tandem.local', role: 'admin' })
+    await expect(callProc('employees.remove', { id: 'only-admin' })).rejects.toThrow(/last admin/i)
+    // now add another admin -> deletion allowed
+    await db.insert(user).values({ id: 'admin-2', name: 'A2', email: 'a2@tandem.local', role: 'admin' })
+    await expect(callProc('employees.remove', { id: 'only-admin' })).resolves.toMatchObject({ ok: true })
+  })
+
   it('404s on unknown id', async () => {
     await expect(callProc('employees.remove', { id: 'ghost' })).rejects.toThrow(/not found/i)
   })

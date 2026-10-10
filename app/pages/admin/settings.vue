@@ -99,7 +99,7 @@ async function savePasswordPolicy() {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-6 p-6 lg:p-8">
     <div>
       <h2 class="text-lg font-semibold text-zinc-900 dark:text-white">Settings</h2>
       <p class="text-sm text-zinc-500">Authentication for this Tandem instance</p>
@@ -149,10 +149,13 @@ async function savePasswordPolicy() {
 
         <div class="flex items-center justify-between gap-4">
           <div>
-            <p class="text-sm font-medium text-zinc-900 dark:text-white">Password login</p>
-            <p class="text-xs text-zinc-400">Disabling requires at least one fully-configured OIDC provider.</p>
+            <p class="text-sm font-medium text-zinc-900 dark:text-white">Password login
+              <UBadge v-if="!disablePasswordLogin" color="success" variant="subtle" size="sm">Enabled</UBadge>
+              <UBadge v-else color="warning" variant="subtle" size="sm">Disabled — SSO only</UBadge>
+            </p>
+            <p class="text-xs text-zinc-400">{{ providers.length === 0 ? 'Cannot be disabled until an OIDC provider is configured.' : 'Turn off to require single sign-on.' }}</p>
           </div>
-          <USwitch :model-value="disablePasswordLogin" :disabled="providers.length === 0" @update:model-value="async (v: boolean) => { disablePasswordLogin = v; await savePasswordPolicy() }" />
+          <USwitch :model-value="!disablePasswordLogin" :disabled="providers.length === 0" @update:model-value="async (v: boolean) => { disablePasswordLogin = !v; await savePasswordPolicy() }" />
         </div>
       </div>
     </UCard>

@@ -39,21 +39,23 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
   await row.getByRole('button', { name: 'Test connection' }).click()
   await expect(page.getByText('failed').first()).toBeVisible({ timeout: 20_000 })
 
-  // delete (scoped to this row)
+  // delete requires confirmation, scoped to this row
   await page.locator('tr', { hasText: rowName }).getByRole('button', { name: 'Delete environment' }).click()
-  await expect(page.getByText(rowName)).toHaveCount(0, { timeout: 15_000 })
+  await expect(page.getByRole('heading', { name: 'Delete environment' })).toBeVisible()
+  await page.getByRole('button', { name: 'Delete', exact: true }).click()
+  await expect(page.locator('tr', { hasText: rowName })).toHaveCount(0, { timeout: 15_000 })
 })
 
 test('live table updates from another tab via SSE', async ({ context, page }) => {
   const suffix = Date.now().toString(36)
   const rowName = `sse-ghost-${suffix}`
   await login(page)
-  await page.getByRole('link', { name: /Environments/ }).click()
-  await expect(page.getByText('No environments yet')).toBeVisible()
+  await page.getByRole('link', { name: /Environments/ }).first().click()
+  await expect(page.getByRole('heading', { name: /Environments/ })).toBeVisible()
 
   const other = await context.newPage()
   await other.goto('/admin/environments')
-  await expect(other.getByText('No environments yet')).toBeVisible()
+  await expect(other.getByRole('heading', { name: /Environments/ })).toBeVisible()
 
   // create from the other tab; first tab must update without reload
   await other.getByRole('button', { name: 'New environment' }).first().click()
@@ -65,9 +67,10 @@ test('live table updates from another tab via SSE', async ({ context, page }) =>
 
   await expect(page.getByText(rowName)).toBeVisible({ timeout: 15_000 })
 
-  // cleanup (scoped to this row)
+  // cleanup (scoped to this row, with confirmation)
   await page.locator('tr', { hasText: rowName }).getByRole('button', { name: 'Delete environment' }).click()
-  await expect(page.getByText(rowName)).toHaveCount(0, { timeout: 15_000 })
+  await page.getByRole('button', { name: 'Delete', exact: true }).click()
+  await expect(page.locator('tr', { hasText: rowName })).toHaveCount(0, { timeout: 15_000 })
   await other.close()
 })
 

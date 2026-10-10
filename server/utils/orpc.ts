@@ -330,7 +330,23 @@ export const router = os.router({
 
     remove: protectedProcedure
       .input(z.strictObject({ id: z.string().min(1) }))
-      .handler(async ({ input }) => {
+      .handler(async ({ input, context }) => {
+        // guard: cannot delete yourself (session may be absent in raw handler tests)
+        const selfId = (context as { session?: { user?: { id?: string } } }).session?.user?.id
+        if (selfId && selfId === input.id) {
+          throw new ORPCError('BAD_REQUEST', { message: 'you cannot delete your own account' })
+        }
+        // guard: cannot delete the last admin (workspace lockout)
+        const target = (await db.select({ id: userTable.id, role: userTable.role }).from(userTable).where(eq(userTable.id, input.id)))[0]
+        if (!target) {
+          throw new ORPCError('NOT_FOUND', { message: 'employee not found' })
+        }
+        if (target.role === 'admin') {
+          const admins = await db.select({ id: userTable.id }).from(userTable).where(eq(userTable.role, 'admin'))
+          if (admins.length <= 1) {
+            throw new ORPCError('BAD_REQUEST', { message: 'cannot delete the last admin' })
+          }
+        }
         // deleting the user cascades supervisors, ai extension, api keys
         const deleted = await db.delete(userTable).where(eq(userTable.id, input.id)).returning({ id: userTable.id })
         if (deleted.length === 0) {

@@ -71,9 +71,7 @@ const nav = [
           <div class="flex size-12 items-center justify-center rounded-2xl bg-primary shadow-sm">
             <UIcon name="i-lucide-users" class="size-6 text-inverted" />
           </div>
-          <h1 class="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">Tandem
-            <span class="font-mono align-middle text-xs font-normal text-zinc-400">v{{ appVersion }}</span>
-          </h1>
+          <h1 class="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">Tandem</h1>
           <p class="text-sm text-zinc-500">Humans and AI employees, one workspace</p>
         </div>
 

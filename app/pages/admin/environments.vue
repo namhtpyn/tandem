@@ -16,6 +16,11 @@ const form = reactive({ name: '', host: '', port: '22', username: '' })
 const busy = ref(false)
 const message = ref('')
 const probingId = ref<string | null>(null)
+const pendingDelete = ref<EnvironmentRow | null>(null)
+const deleteOpen = computed({
+  get: () => pendingDelete.value !== null,
+  set: (v: boolean) => { if (!v) pendingDelete.value = null },
+})
 const probeResults = ref<Record<string, { ok: boolean, detail: string, durationMs: number }>>({})
 
 const createMutation = useMutation<any, any, any>(($orpc as any).environments.create.mutationOptions())
@@ -63,13 +68,20 @@ async function save() {
   // live query pushes the fresh snapshot — no invalidation needed
 }
 
-async function remove(row: EnvironmentRow) {
+function askRemove(row: EnvironmentRow) {
+  pendingDelete.value = row
+}
+
+async function remove() {
+  if (!pendingDelete.value) return
   busy.value = true
   message.value = ''
   try {
-    await removeMutation.mutateAsync({ id: row.id })
+    await removeMutation.mutateAsync({ id: pendingDelete.value.id })
+    pendingDelete.value = null
   }
   catch (e) {
+    pendingDelete.value = null
     message.value = e instanceof Error ? e.message : 'delete failed'
   }
   finally {
@@ -94,7 +106,7 @@ async function probe(row: EnvironmentRow) {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-6 p-6 lg:p-8">
     <div class="flex flex-wrap items-end justify-between gap-2">
       <div>
         <h2 class="text-lg font-semibold text-zinc-900 dark:text-white">Environments
@@ -141,7 +153,7 @@ async function probe(row: EnvironmentRow) {
               @click="probe(row.original)"
             />
             <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit environment" :disabled="busy" @click="openEditor(row.original)" />
-            <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete environment" :disabled="busy" @click="remove(row.original)" />
+            <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete environment" :disabled="busy" @click="askRemove(row.original)" />
           </div>
         </template>
       </UTable>
@@ -153,6 +165,21 @@ async function probe(row: EnvironmentRow) {
         <UButton icon="i-lucide-plus" size="sm" label="New environment" @click="openEditor()" />
       </div>
     </UCard>
+
+    <UModal v-model:open="deleteOpen" title="Delete environment" :ui="{ content: 'max-w-sm' }">
+      <template #body>
+        <div class="space-y-4">
+          <p class="text-sm text-zinc-600 dark:text-zinc-300">
+            Delete environment <span class="font-semibold text-zinc-900 dark:text-white">{{ pendingDelete?.name }}</span>
+            ({{ pendingDelete?.username }}@{{ pendingDelete?.host }})? AI agents configured on it will need reassigning.
+          </p>
+          <div class="flex justify-end gap-2">
+            <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingDelete = null" />
+            <UButton icon="i-lucide-trash-2" color="error" label="Delete" :loading="busy" @click="remove" />
+          </div>
+        </div>
+      </template>
+    </UModal>
 
     <UModal v-model:open="editorOpen" :title="editingId ? 'Edit environment' : 'New environment'">
       <template #body>

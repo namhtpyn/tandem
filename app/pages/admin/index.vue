@@ -3,7 +3,7 @@
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-6 p-6 lg:p-8">
     <div>
       <h2 class="text-lg font-semibold text-zinc-900 dark:text-white">Overview</h2>
       <p class="text-sm text-zinc-500">Company workspace — humans and AI employees, one hierarchy.</p>
