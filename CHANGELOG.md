@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/namhtpyn/tandem/compare/v1.5.0...v1.6.0) (2026-10-10)
+
+
+### Features
+
+* **vault:** encrypted secret vault with audit trail ([9084607](https://github.com/namhtpyn/tandem/commit/908460756e7414125a9973ef94239fbc7c4dc1f6))
+
 # [1.5.0](https://github.com/namhtpyn/tandem/compare/v1.4.3...v1.5.0) (2026-10-10)
 
 
