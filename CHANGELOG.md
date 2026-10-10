@@ -1,3 +1,10 @@
+## [1.4.3](https://github.com/namhtpyn/tandem/compare/v1.4.2...v1.4.3) (2026-10-10)
+
+
+### Bug Fixes
+
+* **coverage:** drop dead post-delete NOT_FOUND branch in employees.remove ([8ea7dea](https://github.com/namhtpyn/tandem/commit/8ea7deae7991ef0745786ae82b3701236af1e9a1))
+
 ## [1.4.2](https://github.com/namhtpyn/tandem/compare/v1.4.1...v1.4.2) (2026-10-10)
 
 
