@@ -2,7 +2,7 @@
 // Every mutation publishes; live generators re-emit fresh snapshots over SSE.
 import { MemoryPublisher } from '@orpc/publisher/memory'
 
-export type ChangeResource = 'environments' | 'settings' | 'oidc' | 'employees' | 'tasks' | 'runs'
+export type ChangeResource = 'environments' | 'settings' | 'oidc' | 'employees' | 'tasks' | 'runs' | 'vault'
 export type ChangeAction = 'create' | 'update' | 'delete'
 
 export type ChangeEvent = {

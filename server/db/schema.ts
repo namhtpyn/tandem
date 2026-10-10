@@ -112,6 +112,33 @@ export const settings = pgTable('tandem_settings', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+// Secret vault: AES-256-GCM encrypted values. Secrets are write-only from the
+// API — plaintext never leaves the server after create; only server-side
+// consumers (M5 SSH runner) import vault-crypto and decrypt.
+export const vaultSecrets = pgTable('tandem_vault_secrets', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  kind: text('kind').notNull().default('generic'),
+  ciphertext: text('ciphertext').notNull(), // v1:<b64 iv>:<b64 tag>:<b64 ct>
+  lastFour: text('last_four').notNull().default(''), // display hint only
+  createdBy: text('created_by').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// Audit trail: every vault write and every server-side decrypt ("use").
+export const vaultAudit = pgTable('tandem_vault_audit', {
+  id: text('id').primaryKey(),
+  secretId: text('secret_id').references(() => vaultSecrets.id, { onDelete: 'cascade' }),
+  secretName: text('secret_name').notNull(),
+  action: text('action').notNull(), // create | update | delete | use
+  actorId: text('actor_id').notNull().default('system'),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('tandem_vault_audit_secret_idx').on(t.secretId),
+  index('tandem_vault_audit_at_idx').on(t.at),
+])
+
 // Supervision is many-to-many: one employee may have many supervisors.
 // Users ARE employees, so both columns reference tandem_user.
 // Self-supervision is structurally impossible (CHECK).
@@ -137,7 +164,7 @@ export const aiEmployees = pgTable('tandem_ai_employees', {
 // ---------- relations ----------
 
 export const relations = defineRelations(
-  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey },
+  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit },
   (helpers) => ({
     user: {
       sessions: helpers.many.session({ from: helpers.user.id, to: helpers.session.userId }),
@@ -145,6 +172,7 @@ export const relations = defineRelations(
       supervisors: helpers.many.employeeSupervisors({ from: helpers.user.id, to: helpers.employeeSupervisors.employeeId }),
       ai: helpers.one.aiEmployees({ from: helpers.user.id, to: helpers.aiEmployees.userId }),
       apiKeys: helpers.many.apikey({ from: helpers.user.id, to: helpers.apikey.referenceId }),
+      vaultSecrets: helpers.many.vaultSecrets({ from: helpers.user.id, to: helpers.vaultSecrets.createdBy }),
     },
     session: {
       user: helpers.one.user({ from: helpers.session.userId, to: helpers.user.id }),
@@ -165,6 +193,8 @@ export const relations = defineRelations(
     },
     environments: {},
     settings: {},
+    vaultSecrets: {},
+    vaultAudit: {},
     verification: {},
   }),
 )

@@ -35,3 +35,23 @@ export interface ApiKeyRow {
   expiresAt: string | null
   createdAt: string
 }
+
+export interface VaultSecretRow {
+  id: string
+  name: string
+  kind: string
+  /** display hint — last 4 chars of the plaintext, nothing more */
+  lastFour: string
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface VaultAuditRow {
+  id: string
+  secretId: string | null
+  secretName: string
+  action: 'create' | 'update' | 'delete' | 'use'
+  actorId: string
+  at: string
+}

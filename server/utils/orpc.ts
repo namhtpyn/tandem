@@ -6,11 +6,12 @@ import { z } from 'zod'
 import { ORPCError, os } from '@orpc/server'
 import type { RequestHeadersHandlerPluginContext } from '@orpc/server/plugins'
 import { db } from '../db'
-import { aiEmployees as aiEmployeesTable, apikey as apikeyTable, employeeSupervisors as supervisorsTable, environments as environmentsTable, user as userTable } from '../db/schema'
+import { aiEmployees as aiEmployeesTable, apikey as apikeyTable, employeeSupervisors as supervisorsTable, environments as environmentsTable, user as userTable, vaultSecrets as vaultSecretsTable, vaultAudit as vaultAuditTable } from '../db/schema'
 import { environmentInput } from './environments'
 import { probeSsh } from './ssh-probe'
 import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from './change-bus'
-import type { ApiKeyRow, EmployeeRow, EnvironmentRow } from '../../shared/types'
+import { encryptSecret, lastFourHint } from './vault-crypto'
+import type { ApiKeyRow, EmployeeRow, EnvironmentRow, VaultAuditRow, VaultSecretRow } from '../../shared/types'
 
 export interface ServerContext extends RequestHeadersHandlerPluginContext {
   getSession: () => Promise<{ user: { id: string, name: string, email: string, role: 'admin' | 'employee' | 'viewer' } } | null>
@@ -50,6 +51,23 @@ function toRow(r: typeof environmentsTable.$inferSelect): EnvironmentRow {
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   }
+}
+
+function toVaultRow(r: typeof vaultSecretsTable.$inferSelect): VaultSecretRow {
+  return {
+    id: r.id,
+    name: r.name,
+    kind: r.kind,
+    lastFour: r.lastFour,
+    createdBy: r.createdBy,
+    createdAt: r.createdAt.toISOString(),
+    updatedAt: r.updatedAt.toISOString(),
+  }
+}
+
+async function listVaultSecrets(): Promise<VaultSecretRow[]> {
+  const rows = await db.select().from(vaultSecretsTable).orderBy(desc(vaultSecretsTable.createdAt))
+  return rows.map(toVaultRow)
 }
 
 async function listEnvironments(): Promise<EnvironmentRow[]> {
@@ -453,6 +471,103 @@ export const router = os.router({
         const started = Date.now()
         const result = await probeSsh(env.host, env.port, env.username)
         return { ...result, durationMs: Date.now() - started }
+      }),
+  },
+
+  vault: {
+    /** live list — metadata only; ciphertext never leaves the server */
+    live: protectedProcedure.handler(() => liveGenerator(['vault'], listVaultSecrets)),
+
+    /** audit trail, newest first */
+    audit: protectedProcedure.handler(async () => {
+      const rows = await db.select().from(vaultAuditTable).orderBy(desc(vaultAuditTable.at)).limit(200)
+      return rows.map((r): VaultAuditRow => ({
+        id: r.id,
+        secretId: r.secretId,
+        secretName: r.secretName,
+        action: r.action as VaultAuditRow['action'],
+        actorId: r.actorId,
+        at: r.at.toISOString(),
+      }))
+    }),
+
+    create: protectedProcedure
+      .input(z.strictObject({
+        name: z.string().min(1).max(100),
+        kind: z.string().min(1).max(50).default('generic'),
+        value: z.string().min(1).max(64_000),
+      }))
+      .handler(async ({ input, context }) => {
+        const clash = await db.select({ id: vaultSecretsTable.id }).from(vaultSecretsTable).where(eq(vaultSecretsTable.name, input.name))
+        if (clash.length > 0) {
+          throw new ORPCError('CONFLICT', { message: `secret "${input.name}" already exists` })
+        }
+        const inserted = await db.insert(vaultSecretsTable).values({
+          id: crypto.randomUUID(),
+          name: input.name,
+          kind: input.kind,
+          ciphertext: encryptSecret(input.value),
+          lastFour: lastFourHint(input.value),
+          createdBy: context.session.user.id,
+        }).returning()
+        await db.insert(vaultAuditTable).values({
+          id: crypto.randomUUID(),
+          secretId: inserted[0]!.id,
+          secretName: input.name,
+          action: 'create',
+          actorId: context.session.user.id,
+        })
+        await publishChange('vault', 'create')
+        return toVaultRow(inserted[0]!)
+      }),
+
+    /** value can be replaced but NEVER read back through the API */
+    update: protectedProcedure
+      .input(z.strictObject({
+        id: z.string().min(1),
+        name: z.string().min(1).max(100),
+        kind: z.string().min(1).max(50).default('generic'),
+        value: z.string().min(1).max(64_000),
+      }))
+      .handler(async ({ input, context }) => {
+        const { id, value, ...meta } = input
+        const clash = await db.select({ id: vaultSecretsTable.id }).from(vaultSecretsTable).where(eq(vaultSecretsTable.name, meta.name))
+        if (clash.some((c: { id: string }) => c.id !== id)) {
+          throw new ORPCError('CONFLICT', { message: `secret "${meta.name}" already exists` })
+        }
+        const updated = await db.update(vaultSecretsTable)
+          .set({ ...meta, ciphertext: encryptSecret(value), lastFour: lastFourHint(value), updatedAt: new Date() })
+          .where(eq(vaultSecretsTable.id, id)).returning()
+        if (updated.length === 0) {
+          throw new ORPCError('NOT_FOUND', { message: 'secret not found' })
+        }
+        await db.insert(vaultAuditTable).values({
+          id: crypto.randomUUID(),
+          secretId: id,
+          secretName: meta.name,
+          action: 'update',
+          actorId: context.session.user.id,
+        })
+        await publishChange('vault', 'update')
+        return toVaultRow(updated[0]!)
+      }),
+
+    remove: protectedProcedure
+      .input(z.strictObject({ id: z.string().min(1) }))
+      .handler(async ({ input, context }) => {
+        const deleted = await db.delete(vaultSecretsTable).where(eq(vaultSecretsTable.id, input.id)).returning({ id: vaultSecretsTable.id, name: vaultSecretsTable.name })
+        if (deleted.length === 0) {
+          throw new ORPCError('NOT_FOUND', { message: 'secret not found' })
+        }
+        await db.insert(vaultAuditTable).values({
+          id: crypto.randomUUID(),
+          secretId: null,
+          secretName: deleted[0]!.name,
+          action: 'delete',
+          actorId: context.session.user.id,
+        })
+        await publishChange('vault', 'delete')
+        return { ok: true }
       }),
   },
 })
