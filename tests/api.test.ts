@@ -27,7 +27,6 @@ g.readBody = readBody
 g.readRawBody = readRawBody
 g.getRouterParam = getRouterParam
 g.getRequestHeaders = getRequestHeaders
-g.requireSession = (await import('../server/utils/session')).requireSession
 
 function makeEvent(req: FakeReq) {
   const rawBody = req.body === undefined ? undefined : JSON.stringify(req.body)
@@ -64,13 +63,17 @@ beforeEach(async () => {
   await sqlClient`delete from tandem_user`
 })
 
-describe('GET /api/version', () => {
+describe('meta.version (oRPC)', () => {
   it('returns APP_VERSION or dev', async () => {
-    const { result } = await call('../server/api/version.get.ts', { method: 'GET', url: '/api/version' })
-    expect(result).toEqual({ version: 'dev' })
+    const { router, buildServerContext } = await import('../server/utils/orpc')
+    const callProc = (path: string[]) => {
+      let node: Record<string, unknown> = router as unknown as Record<string, unknown>
+      for (const k of path) node = node[k] as Record<string, unknown>
+      return (node['~orpc'] as { handler: (o: unknown) => Promise<unknown> }).handler({ input: undefined, context: buildServerContext(new Headers()), signal: new AbortController().signal })
+    }
+    expect(await callProc(['meta', 'version'])).toEqual({ version: 'dev' })
     process.env.APP_VERSION = '1.2.3'
-    const again = await call('../server/api/version.get.ts', { method: 'GET', url: '/api/version' })
-    expect(again.result).toEqual({ version: '1.2.3' })
+    expect(await callProc(['meta', 'version'])).toEqual({ version: '1.2.3' })
     delete process.env.APP_VERSION
   })
 })
@@ -90,48 +93,90 @@ describe('GET /health/ready', () => {
   })
 })
 
-describe('GET /api/auth-config', () => {
+describe('auth.configLive (oRPC, public)', () => {
+  async function firstSnapshot() {
+    const { router, buildServerContext } = await import('../server/utils/orpc')
+    let node: Record<string, unknown> = router as unknown as Record<string, unknown>
+    for (const k of ['auth', 'configLive']) node = node[k] as Record<string, unknown>
+    const gen = await (node['~orpc'] as { handler: (o: unknown) => Promise<AsyncGenerator<unknown>> }).handler({ input: undefined, context: buildServerContext(new Headers()), signal: new AbortController().signal })
+    const first = (await gen.next()).value
+    await gen.return?.()
+    return first
+  }
+
   it('shows password-only defaults', async () => {
-    const { result } = await call('../server/api/auth-config.get.ts', { method: 'GET', url: '/api/auth-config' })
-    expect(result).toEqual({ passwordEnabled: true, oidcEnabled: false, providers: [] })
+    expect(await firstSnapshot()).toEqual({ passwordEnabled: true, oidcEnabled: false, providers: [] })
   })
 
   it('lists stored providers without secrets', async () => {
     const { saveOidcProviders } = await import('../server/utils/oidc')
     await saveOidcProviders([{ id: 'p1', label: 'SSO', issuer: 'https://sso.example.com', clientId: 'cid', clientSecret: 'shh' }])
-    const { result } = await call('../server/api/auth-config.get.ts', { method: 'GET', url: '/api/auth-config' })
-    expect(result).toEqual({ passwordEnabled: true, oidcEnabled: true, providers: [{ id: 'p1', label: 'SSO' }] })
+    expect(await firstSnapshot()).toEqual({ passwordEnabled: true, oidcEnabled: true, providers: [{ id: 'p1', label: 'SSO' }] })
   })
 })
 
-describe('session gates (401 without a session)', () => {
-  it('GET /api/settings', async () => {
-    await expect(call('../server/api/settings/index.get.ts', { method: 'GET', url: '/api/settings' }))
-      .rejects.toMatchObject({ statusCode: 401 })
-  })
-
-  it('GET /api/oidc', async () => {
-    await expect(call('../server/api/oidc/index.get.ts', { method: 'GET', url: '/api/oidc' }))
-      .rejects.toMatchObject({ statusCode: 401 })
-  })
-
-  it('PUT /api/settings', async () => {
-    await expect(call('../server/api/settings/index.put.ts', { method: 'PUT', url: '/api/settings', body: { disablePasswordLogin: true } }))
-      .rejects.toMatchObject({ statusCode: 401 })
-  })
-
-  it('GET /api/auth-session returns null without a cookie', async () => {
-    const { result } = await call('../server/api/auth-session.get.ts', { method: 'GET', url: '/api/auth-session' })
-    expect(result).toBeNull()
-  })
-
-  it('GET /api/auth-session returns the session for a signed-in user', async () => {
+describe('oRPC session surface', () => {
+  // The auth middleware runs inside RPCHandler — exercise through it.
+  async function rpcPost(path: string, headers?: Record<string, string>) {
+    const { RPCHandler } = await import('@orpc/server/fetch')
+    const { router, buildServerContext } = await import('../server/utils/orpc')
     const { getAuth } = await import('../server/utils/auth')
+    const inst = await getAuth()
+    const realGetSession = inst.api.getSession.bind(inst.api)
+    const original = inst.api.getSession
+    inst.api.getSession = async () => null
+    try {
+      const handler = new RPCHandler(router)
+      const req = new Request(`http://x/rpc/${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(headers ?? {}) },
+        body: JSON.stringify({ json: null }),
+      })
+      const { response } = await handler.handle(req, { prefix: '/rpc', context: buildServerContext(new Headers()) })
+      return response
+    }
+    finally {
+      inst.api.getSession = original
+      void realGetSession
+    }
+  }
+
+  it('settings.live rejects anonymous calls (401)', async () => {
+    const res = await rpcPost('settings/live')
+    expect(res!.status).toBe(401)
+  })
+
+  it('oidc.live rejects anonymous calls (401)', async () => {
+    const res = await rpcPost('oidc/live')
+    expect(res!.status).toBe(401)
+  })
+
+  it('settings.update rejects anonymous calls (401)', async () => {
+    const res = await rpcPost('settings/update')
+    expect(res!.status).toBe(401)
+  })
+
+  async function proc(path: string[]) {
+    const { router, buildServerContext } = await import('../server/utils/orpc')
+    let node: Record<string, unknown> = router as unknown as Record<string, unknown>
+    for (const k of path) node = node[k] as Record<string, unknown>
+    return (node['~orpc'] as { handler: (o: unknown) => Promise<unknown> }).handler({ input: undefined, context: buildServerContext(new Headers()), signal: new AbortController().signal })
+  }
+
+  it('auth.session returns null without a cookie', async () => {
+    expect(await proc(['auth', 'session'])).toBeNull()
+  })
+
+  it('auth.session returns the session for a signed-in user', async () => {
+    const { getAuth } = await import('../server/utils/auth')
+    const { buildServerContext, router } = await import('../server/utils/orpc')
     const auth = await getAuth()
     await auth.api.signUpEmail({ body: { email: 's@x.co', password: 'password1234', name: 'S' } })
     const signIn = await auth.api.signInEmail({ body: { email: 's@x.co', password: 'password1234' }, asResponse: true })
     const cookie = signIn.headers.getSetCookie().map(c => c.split(';')[0]).join('; ')
-    const { result } = await call('../server/api/auth-session.get.ts', { method: 'GET', url: '/api/auth-session', headers: { cookie } })
-    expect(result).toMatchObject({ user: { email: 's@x.co', role: 'admin' } })
+    let node: Record<string, unknown> = router as unknown as Record<string, unknown>
+    for (const k of ['auth', 'session']) node = node[k] as Record<string, unknown>
+    const res = await (node['~orpc'] as { handler: (o: unknown) => Promise<unknown> }).handler({ input: undefined, context: buildServerContext(new Headers({ cookie })), signal: new AbortController().signal }) as { user: { email: string, role: string } }
+    expect(res).toMatchObject({ user: { email: 's@x.co', role: 'admin' } })
   })
 })

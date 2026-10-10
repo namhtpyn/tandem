@@ -83,6 +83,23 @@ describe('unknown procedure', () => {
 })
 
 describe('the /rpc h3 route handler (real adapter)', () => {
+  it('onError interceptor logs procedure failures', async () => {
+    const errors: string[] = []
+    const orig = console.error
+    console.error = (...a: unknown[]) => { errors.push(a.join(' ')) }
+    try {
+      const mod = await import('../server/routes/rpc/[...]')
+      const event = makeEvent({ method: 'POST', url: '/rpc/environments/create', headers: { 'content-type': 'application/json' } })
+      ;(event.node.req as { body?: unknown }).body = JSON.stringify({ json: { name: '', host: 'h', port: '22', username: 'u' } }) // invalid: name min 1
+      const res = await mod.default(event)
+      expect((res as Response).status).toBe(400) // validation error -> interceptor
+      expect(errors.some(e => e.includes('[orpc]'))).toBe(true)
+    }
+    finally {
+      console.error = orig
+    }
+  })
+
   it('forwards node headers (incl. arrays/undefined) and returns the RPC response', async () => {
     const mod = await import('../server/routes/rpc/[...]')
     const handler = mod.default

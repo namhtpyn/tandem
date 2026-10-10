@@ -47,7 +47,7 @@ ssh -p <port> <user>@<host> hermes chat -q --query-file - --format stream-json
 - password email + generic OIDC (any count, discovery via `issuer/.well-known/openid-configuration`)
 - sign-up is **closed** after any user exists (403 `sign-up is closed`); the FIRST user (boot-seeded admin) holds the instance; the first user to sign up is promoted to `admin` via the user.create after hook
 - OIDC user creation is never gated
-- admin manages the OIDC provider set at runtime (secrets live in the registry, never returned by `GET /api/oidc` (only `hasSecret: true`)
+- admin manages the OIDC provider set at runtime (secrets live in the registry, never returned by `oidc.live` (only `hasSecret: true`)
 - env fallback: exactly ONE provider (TANDEM_OIDC_ISSUER/_CLIENT_ID/_CLIENT_SECRET/_LABEL), used only when no stored registry exists
 
 ### Auth policy
@@ -56,11 +56,11 @@ ssh -p <port> <user>@<host> hermes chat -q --query-file - --format stream-json
 - `oidcEnabled = providers.length > 0`
 - invariant: disabling password login with no OIDC provider configured is rejected 400
 
-## API law (M2+)
+## API law (app-wide)
 
-All domain APIs are **oRPC v2** procedures mounted at `/rpc` (RPCHandler,
-Fetch adapter). REST remains only for auth, settings/OIDC admin, health, and
-auth-config/session/version endpoints. Rules:
+**Every** application API is an **oRPC v2** procedure mounted at `/rpc`
+(RPCHandler, Fetch adapter, `toWebRequest`). The only REST routes left are
+better-auth's own `/auth/**` protocol and the `/health/*` infra probes. Rules:
 
 - every mutating procedure publishes to the in-process change bus
   (`server/utils/change-bus.ts`, MemoryPublisher) after commit
@@ -74,6 +74,29 @@ auth-config/session/version endpoints. Rules:
 - input validation: zod `strictObject` everywhere (unknown keys rejected)
 - wire format: POST `/rpc/<path>`, body `{ "json": <input> }`,
   `content-type: application/json`; responses `{ "json": <result> }`
+
+### Procedures (complete list)
+
+| procedure | auth | input | result |
+|---|---|---|---|
+| `meta.version` | none | — | `{version}` |
+| `auth.configLive` | none | — | live `{passwordEnabled, oidcEnabled, providers:[{id,label}]}` |
+| `auth.session` | none | — | session payload or null |
+| `settings.live` | session | — | live `{disablePasswordLogin}` |
+| `settings.update` | session | `{disablePasswordLogin?}` | `{ok}` (400 when disabling with no OIDC provider) |
+| `oidc.live` | session | — | live provider list with `hasSecret`, never secrets |
+| `oidc.replace` | session | `{providers:[{id?,label,issuer,clientId,clientSecret?}]}` | `{ok,count}` (secrets write-only; ids server-generated for new providers) |
+| `environments.live` | session | — | live snapshot of all environments |
+| `environments.create` | session | `{name,host,port?,username}` | created row |
+| `environments.update` | session | `{id,name,host,port?,username}` | updated row |
+| `environments.remove` | session | `{id}` | `{ok}` |
+| `environments.probe` | session | `{id}` | `{ok,detail,durationMs}` |
+
+Wiring follows the official oRPC docs: Nuxt adapter (`toWebRequest` +
+`RPCHandler` with `onError` interceptor), Better Auth lazy `getSession`
+shared getter in context, TanStack Query via `createTanstackQueryUtils`
+(`liveOptions` for streams), SSR via `createRouterClient` (in-process, no
+HTTP hop; per-request so cookies stay current).
 
 ### Environments procedures
 
@@ -99,19 +122,12 @@ auth-config/session/version endpoints. Rules:
 - pages use `liveOptions()` live queries; mutations flow through the same
   client; every connected tab updates from the change bus
 
-## Settings API
+## Settings & OIDC (oRPC)
 
-- `GET /api/settings` → `{ disablePasswordLogin: boolean }` (session required)
-- `PUT /api/settings` `{ disablePasswordLogin?: boolean }` (session required; validated zod strictObject)
-- `GET /api/oidc` → provider list with `hasSecret` flags (session required)
-- `PUT /api/oidc` `{ providers: providerInput[] }` (session required)
-  - new provider: id generated (uuid), secret required
-  - edit: secret preserved when omitted; secret required to re stored value
-  - unknown id + no stored secret: kept stored secret; new id generated
-  - stored registry replaced wholesale; max 10 providers
-- `GET /api/auth-config` → public `{ passwordEnabled, oidcEnabled, providers: [{id,label}] }`
-- `GET /api/auth-session` → session shape or null ( `{ user: {id,name,email,role}, session: {expiresAt} }`
-- `GET /api/version` → `{ version }` (`APP_VERSION` or `dev`)
+Handled by `settings.*` and `oidc.*` procedures above (see API law). The
+OIDC env fallback (exactly ONE provider via `TANDEM_OIDC_ISSUER/_CLIENT_ID/
+_CLIENT_SECRET/_LABEL`) applies only when no stored registry exists; stored
+secrets are never returned.
 
 ## Health
 
@@ -133,10 +149,7 @@ auth-config/session/version endpoints. Rules:
 | GET | `/health/live` | none | liveness |
 | GET | `/health/ready` | none | readiness |
 | GET | `/api/auth-config` | none | login capabilities |
-| GET | `/api/auth-session` | none | current session |
-| GET/PUT | `/api/settings` | session | auth settings |
-| GET/PUT | `/api/oidc` | session | OIDC registry |
-| GET | `/api/version` | none | build version |
+| POST | `/rpc/**` | varies (see API law) | all application procedures |
 | POST | `/rpc/**` | session (oRPC middleware) | oRPC v2 procedures (see API law) |
 | GET | `/` | none | 302 → `/admin` |
 

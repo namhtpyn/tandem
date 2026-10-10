@@ -20,12 +20,22 @@ g.useState = useStateStub
 g.onMounted = (fn: () => void) => mounted.push(fn)
 g.onUnmounted = (fn: () => void) => unmounted.push(fn)
 g.$fetch = (url: string) => currentFetch?.(url)
+// oRPC client stub for refreshSession
+g.useNuxtApp = () => ({
+  $client: {
+    auth: {
+      session: async () => currentSession,
+    },
+  },
+})
+let currentSession: unknown = null
 
 beforeEach(() => {
   stateStore.clear()
   mounted.length = 0
   unmounted.length = 0
   currentFetch = null
+  currentSession = null
 })
 
 describe('useAppSession', () => {
@@ -44,11 +54,23 @@ describe('useAppSession', () => {
 })
 
 describe('useSessionRefreshing', () => {
-  it('refreshSession updates the session from /api/auth-session', async () => {
-    currentFetch = async (url) => {
-      if (url === '/api/auth-session') return { user: { id: 'u1', name: 'U', email: 'u@x', role: 'viewer' }, session: { expiresAt: 't' } }
-      throw new Error(`unexpected fetch ${url}`)
-    }
+  it('refreshSession clears the session when the client throws', async () => {
+    const m = await import('../app/composables/useAppSession')
+    m.useAppSession().value = { user: { id: 'old', name: 'Old', email: 'o@x', role: 'admin' }, session: { expiresAt: 't' } }
+    ;(g.useNuxtApp as () => unknown) = () => ({
+      $client: { auth: { session: async () => { throw new Error('boom') } } },
+    })
+    const { refreshSession } = m.useSessionRefreshing()
+    await refreshSession()
+    expect(m.useAppSession().value).toBeNull()
+    // restore the default stub for subsequent tests
+    ;(g.useNuxtApp as () => unknown) = () => ({
+      $client: { auth: { session: async () => currentSession } },
+    })
+  })
+
+  it('refreshSession updates the session via oRPC auth.session', async () => {
+    currentSession = { user: { id: 'u1', name: 'U', email: 'u@x', role: 'viewer' }, session: { expiresAt: 't' } }
     const m = await import('../app/composables/useAppSession')
     const { refreshSession } = m.useSessionRefreshing()
     await refreshSession()

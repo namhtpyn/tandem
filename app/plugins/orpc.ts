@@ -1,7 +1,9 @@
-// oRPC typed client + TanStack Query utils.
-// Browser: RPCLink to /rpc (same origin). SSR: server-side client via
-// internalLink — handler invoked in-process, no HTTP hop (oRPC SSR recipe);
-// registered on globalThis so the client bundle never imports server code.
+// oRPC typed client + TanStack Query utils (official patterns):
+// - Browser: RPCLink to /rpc (same origin)
+// - SSR: createRouterClient — direct in-process calls, no HTTP hop
+//   (orpc.dev "Optimizing SSR"); built per request so cookies/headers are
+//   always the current request's; server code stays out of the client bundle
+//   behind import.meta.server (build-time guard).
 import type { RouterClient } from '@orpc/server'
 import { createORPCClient } from '@orpc/client'
 import { RPCLink } from '@orpc/client/fetch'
@@ -12,7 +14,12 @@ export default defineNuxtPlugin(async () => {
   let client: RouterClient<typeof router>
 
   if (import.meta.server) {
-    client = globalThis.$tandemOrpcClient ??= await createServerClient()
+    const { createRouterClient } = await import('@orpc/server')
+    const { router: serverRouter, buildServerContext } = await import('~/../server/utils/orpc')
+    const event = useRequestEvent()
+    client = createRouterClient(serverRouter, {
+      context: buildServerContext(event?.headers),
+    })
   }
   else {
     client = createORPCClient(new RPCLink({ url: '/rpc' }))
@@ -21,32 +28,3 @@ export default defineNuxtPlugin(async () => {
   const orpc = createTanstackQueryUtils(client)
   return { provide: { client, orpc } }
 })
-
-// Built lazily inside a server-only module so the router never enters the
-// client bundle (oRPC optimizing-ssr recipe).
-async function createServerClient(): Promise<RouterClient<typeof router>> {
-  const [{ RPCHandler }, { router, buildServerContext }] = await Promise.all([
-    import('@orpc/server/fetch'),
-    import('~/../server/utils/orpc'),
-  ])
-  const event = useRequestEvent()
-  const handler = new RPCHandler(router)
-  const internalLink = new RPCLink({
-    url: '/rpc',
-    fetch: async (url: string | URL | Request, init?: RequestInit) => {
-      const request = new Request(url, init)
-      const headers = new Headers()
-      event?.headers?.forEach((v, k) => headers.set(k, v))
-      const { response } = await handler.handle(request, {
-        prefix: '/rpc',
-        context: buildServerContext(headers),
-      })
-      return response ?? new Response('Not Found', { status: 404 })
-    },
-  })
-  return createORPCClient(internalLink)
-}
-
-declare global {
-  var $tandemOrpcClient: RouterClient<typeof router> | undefined
-}

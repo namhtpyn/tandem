@@ -1,6 +1,6 @@
 // Shared harness for authenticated API tests: real h3 events + vitest-mocked session.
 import { vi } from 'vitest'
-import { createEvent, defineEventHandler, setResponseStatus, setResponseHeader, getResponseHeaders, getRequestHeaders, createError, readBody, readRawBody, getRouterParam } from 'h3'
+import { createEvent, defineEventHandler, setResponseStatus, setResponseHeader, getResponseHeaders, getRequestHeaders, createError, readBody, readRawBody, getRouterParam, toWebRequest } from 'h3'
 
 // Keep the REAL requireSession and the REAL auth singleton; stub only
 // getSession on the singleton's api so internal guards see the test admin while
@@ -49,13 +49,8 @@ g.setResponseStatus = setResponseStatus
 g.readBody = readBody
 g.readRawBody = readRawBody
 g.getRouterParam = getRouterParam
+g.toWebRequest = toWebRequest
 g.getRequestHeaders = getRequestHeaders
-// nitro auto-imported guard: call the REAL module fn (its getAuth is mocked above)
-g.requireSession = async (event: unknown) => {
-  const sessionMod = await import('../server/utils/session')
-  return sessionMod.requireSession(event)
-}
-
 // EventEmitter-lite node req: buffered body chunks are delivered on resume/end
 // wiring so h3's stream-based readRawBody sees the full body.
 class FakeNodeReq {

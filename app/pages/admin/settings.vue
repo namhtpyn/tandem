@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useQuery } from '@tanstack/vue-query'
 // Settings: auth policy for this Tandem instance. OIDC provider list is a
 // UTable with a single add/edit modal (no v-model over v-for aliases — the
 // dxup page transform breaks that pattern; pathbridge table+modal law).
@@ -10,8 +11,19 @@ interface OidcProviderRow {
   secretSet: boolean
 }
 
-const providers = ref<OidcProviderRow[]>([])
+const { $orpc } = useNuxtApp()
+
+const oidcLive = useQuery(($orpc as any).oidc.live.liveOptions())
+const settingsLive = useQuery(($orpc as any).settings.live.liveOptions())
+
+const providers = computed<OidcProviderRow[]>(() => ((unref(oidcLive.data) ?? []) as Array<{ id: string, label: string, issuer: string, clientId: string, hasSecret: boolean }>)
+  .map(p => ({ id: p.id, label: p.label, issuer: p.issuer, clientId: p.clientId, secretSet: p.hasSecret })))
+
 const disablePasswordLogin = ref(false)
+watch(() => unref(settingsLive.data), (d) => {
+  if (d) disablePasswordLogin.value = (d as { disablePasswordLogin: boolean }).disablePasswordLogin
+}, { immediate: true })
+
 const busy = ref(false)
 const message = ref('')
 
@@ -28,17 +40,6 @@ const providerColumns = [
   { accessorKey: 'callback', header: 'Callback URL' },
   { accessorKey: 'actions', header: '' },
 ]
-
-async function load() {
-  const [oidc, settings] = await Promise.all([
-    $fetch<{ providers: OidcProviderRow[] }>('/api/oidc'),
-    $fetch<{ disablePasswordLogin: boolean }>('/api/settings'),
-  ])
-  providers.value = oidc.providers
-  disablePasswordLogin.value = settings.disablePasswordLogin
-}
-
-onMounted(load)
 
 function openEditor(row?: OidcProviderRow) {
   editingId.value = row?.id ?? null
@@ -64,9 +65,8 @@ async function saveProvider() {
       clientId: form.clientId,
       ...(form.clientSecret ? { clientSecret: form.clientSecret } : {}),
     })
-    await $fetch('/api/oidc', { method: 'PUT', body: { providers: list } })
+    await ($orpc as any).oidc.replace({ providers: list2 })
     editorOpen.value = false
-    await load()
   }
   catch (e) {
     message.value = e instanceof Error ? e.message : 'save failed'
@@ -80,14 +80,13 @@ async function removeProvider(row: OidcProviderRow) {
   const list = providers.value
     .filter(p => p.id !== row.id)
     .map(p => ({ id: p.id, label: p.label, issuer: p.issuer, clientId: p.clientId }))
-  await $fetch('/api/oidc', { method: 'PUT', body: { providers: list } })
-  await load()
+  await ($orpc as any).oidc.replace({ providers: list })
 }
 
 async function savePasswordPolicy() {
   busy.value = true
   try {
-    await $fetch('/api/settings', { method: 'PUT', body: { disablePasswordLogin: disablePasswordLogin.value } })
+    await ($orpc as any).settings.update({ disablePasswordLogin: disablePasswordLogin.value })
     message.value = 'Saved'
   }
   catch (e) {

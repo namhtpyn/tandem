@@ -23,7 +23,8 @@ export function useSessionRefreshing() {
   const session = useAppSession()
   async function refreshSession() {
     try {
-      session.value = await $fetch<AppSessionPayload | null>('/api/auth-session')
+      const { $client } = useNuxtApp()
+      session.value = await $client.auth.session() as AppSessionPayload | null
     }
     catch {
       session.value = null

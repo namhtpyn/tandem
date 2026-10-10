@@ -111,25 +111,6 @@ describe('auth route header handling', () => {
   })
 })
 
-describe('requireSession', () => {
-  it('throws 401 when the auth session is null', async () => {
-    const authMod = await import('../server/utils/auth')
-    const inst = await authMod.getAuth()
-    const realGetSession = inst.api.getSession.bind(inst.api)
-    inst.api.getSession = async () => null
-    try {
-      const { makeEvent } = await import('./api-harness')
-      const sessionMod = await import('../server/utils/session')
-      const event = makeEvent({ method: 'GET', url: '/api/settings' })
-      await expect(sessionMod.requireSession(event as never)).rejects.toMatchObject({ statusCode: 401 })
-    }
-    finally {
-      inst.api.getSession = realGetSession
-    }
-  })
-
-})
-
 
 describe('GET /health/ready 503 path', () => {
   it('reports failure when the DB query throws', async () => {
@@ -143,55 +124,47 @@ describe('GET /health/ready 503 path', () => {
   })
 })
 
-describe('PUT /api/oidc edit-failure arm', () => {
+describe('oidc.replace edit-failure arm', () => {
   it('rejects an edit whose merged provider fails schema (unknown id + no secret)', async () => {
-    await expect(call('../server/api/oidc/index.put.ts', {
-      method: 'PUT',
-      url: '/api/oidc',
-      body: { providers: [{ id: '00000000-0000-4000-8000-000000000000', label: 'Ghost', issuer: 'https://ghost.example.com', clientId: 'c' }] },
-    })).rejects.toMatchObject({ statusCode: 400 })
+    const { router, buildServerContext } = await import('../server/utils/orpc')
+    let node: Record<string, unknown> = router as unknown as Record<string, unknown>
+    for (const k of ['oidc', 'replace']) node = node[k] as Record<string, unknown>
+    const context = buildServerContext(new Headers())
+    ;(context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({ user: { id: 'a', name: 'A', email: 'a@x', role: 'admin' } })
+    await expect((node['~orpc'] as { handler: (o: unknown) => Promise<unknown> }).handler({
+      input: { providers: [{ id: '00000000-0000-4000-8000-000000000000', label: 'Ghost', issuer: 'https://ghost.example.com', clientId: 'c' }] },
+      context,
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 })
 
-describe('PUT /api/settings payload arms', () => {
-  it('empty object body: no-op success', async () => {
-    const { result } = await call('../server/api/settings/index.put.ts', { method: 'PUT', url: '/api/settings', body: {} })
-    expect(result).toEqual({ ok: true })
+describe('settings.update payload arms (oRPC)', () => {
+  async function rpcSettings(input: unknown) {
+    const { RPCHandler } = await import('@orpc/server/fetch')
+    const { router } = await import('../server/utils/orpc')
+    const handler = new RPCHandler(router)
+    const req = new Request('http://x/rpc/settings/update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ json: input }) })
+    const { response } = await handler.handle(req, { prefix: '/rpc', context: { getSession: async () => ({ user: { id: 'a', name: 'A', email: 'a@x', role: 'admin' } }) } })
+    const body = await response!.json() as { json?: { code?: string } }
+    if (!response!.ok) throw Object.assign(new Error(body.json?.code ?? 'BAD_REQUEST'), { code: body.json?.code })
+    return body.json
+  }
+
+  it('empty object input: no-op success', async () => {
+    expect(await rpcSettings({})).toEqual({ ok: true })
   })
 
-  it('issue path join fallback: body not an object', async () => {
-    await expect(call('../server/api/settings/index.put.ts', { method: 'PUT', url: '/api/settings', body: 'nope' }))
-      .rejects.toMatchObject({ statusCode: 400 })
+  it('non-object input: BAD_REQUEST', async () => {
+    await expect(rpcSettings('nope')).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 })
 
 
 describe('remaining branch arms', () => {
-  it('requireSession header arms: undefined skipped, array appended, scalar set', async () => {
-    const sessionMod = await import('../server/utils/session')
+  it('auth.session role fallback: null role maps to viewer (oRPC)', async () => {
     const authMod = await import('../server/utils/auth')
-    const inst = await authMod.getAuth()
-    const realGetSession = inst.api.getSession.bind(inst.api)
-    let seen: Headers | null = null
-    inst.api.getSession = async (opts: { headers: Headers }) => {
-      seen = opts.headers
-      return null
-    }
-    try {
-      const { makeEvent } = await import('./api-harness')
-      const event = makeEvent({ method: 'GET', url: '/api/settings', headers: { 'x-a': ['1', '2'], 'x-b': 'v', 'x-c': undefined } })
-      await sessionMod.requireSession(event as never).catch(() => {})
-      expect(seen!.get('x-a')).toBe('1, 2')
-      expect(seen!.get('x-b')).toBe('v')
-      expect(seen!.has('x-c')).toBe(false)
-    }
-    finally {
-      inst.api.getSession = realGetSession
-    }
-  })
-
-  it('auth-session role fallback: null role maps to viewer', async () => {
-    const authMod = await import('../server/utils/auth')
+    const { router, buildServerContext } = await import('../server/utils/orpc')
     const inst = await authMod.getAuth()
     const realGetSession = inst.api.getSession.bind(inst.api)
     inst.api.getSession = async () => ({
@@ -199,7 +172,9 @@ describe('remaining branch arms', () => {
       session: { id: 's', userId: 'u', expiresAt: new Date() },
     })
     try {
-      const { result } = await call('../server/api/auth-session.get.ts', { method: 'GET', url: '/api/auth-session' })
+      let node: Record<string, unknown> = router as unknown as Record<string, unknown>
+      for (const k of ['auth', 'session']) node = node[k] as Record<string, unknown>
+      const result = await (node['~orpc'] as { handler: (o: unknown) => Promise<unknown> }).handler({ input: undefined, context: buildServerContext(new Headers()), signal: new AbortController().signal })
       expect(result).toMatchObject({ user: { role: 'viewer' } })
     }
     finally {
@@ -207,17 +182,26 @@ describe('remaining branch arms', () => {
     }
   })
 
-  it('oidc put: schema failure message arm (bad issuer on new provider)', async () => {
-    await expect(call('../server/api/oidc/index.put.ts', {
-      method: 'PUT',
-      url: '/api/oidc',
-      body: { providers: [{ label: 'Bad', issuer: 'not a url at all', clientId: 'c', clientSecret: 's' }] },
-    })).rejects.toMatchObject({ statusCode: 400 })
+  it('oidc.replace: schema failure arm (bad issuer on new provider)', async () => {
+    const { RPCHandler } = await import('@orpc/server/fetch')
+    const { router } = await import('../server/utils/orpc')
+    const handler = new RPCHandler(router)
+    const req = new Request('http://x/rpc/oidc/replace', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ json: { providers: [{ label: 'Bad', issuer: 'not a url at all', clientId: 'c', clientSecret: 's' }] } }),
+    })
+    const { response } = await handler.handle(req, { prefix: '/rpc', context: { getSession: async () => ({ user: { id: 'a', name: 'A', email: 'a@x', role: 'admin' } }) } })
+    expect(response!.status).toBe(400)
   })
 
-  it('settings put: issue.path fallback arm (root-level type error)', async () => {
-    await expect(call('../server/api/settings/index.put.ts', { method: 'PUT', url: '/api/settings', body: 42 }))
-      .rejects.toMatchObject({ statusCode: 400 })
+  it('settings.update: root-level type error arm (oRPC)', async () => {
+    const { RPCHandler } = await import('@orpc/server/fetch')
+    const { router } = await import('../server/utils/orpc')
+    const handler = new RPCHandler(router)
+    const req = new Request('http://x/rpc/settings/update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ json: 42 }) })
+    const { response } = await handler.handle(req, { prefix: '/rpc', context: { getSession: async () => ({ user: { id: 'a', name: 'A', email: 'a@x', role: 'admin' } }) } })
+    expect(response!.status).toBe(400)
   })
 
   it('auth route: headerValue single-value arm + sign-up gate passthrough with body', async () => {
@@ -287,9 +271,13 @@ describe('fallback branch arms', () => {
     }
   })
 
-  it('oidc put: outer zod issue arm with path fallback (array body)', async () => {
-    await expect(call('../server/api/oidc/index.put.ts', { method: 'PUT', url: '/api/oidc', body: [] }))
-      .rejects.toMatchObject({ statusCode: 400 })
+  it('oidc.replace: array input arm (oRPC 400)', async () => {
+    const { RPCHandler } = await import('@orpc/server/fetch')
+    const { router } = await import('../server/utils/orpc')
+    const handler = new RPCHandler(router)
+    const req = new Request('http://x/rpc/oidc/replace', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ json: [] }) })
+    const { response } = await handler.handle(req, { prefix: '/rpc', context: { getSession: async () => ({ user: { id: 'a', name: 'A', email: 'a@x', role: 'admin' } }) } })
+    expect(response!.status).toBe(400)
   })
 })
 

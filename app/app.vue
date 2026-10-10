@@ -5,14 +5,15 @@ const authConfig = useAuthConfigState()
 const appVersion = useAppVersion()
 useSessionRefreshing()
 
-const { data: sess } = await useFetch('/api/auth-session')
-if (sess.value) session.value = sess.value as unknown as typeof session.value
+const { $client } = useNuxtApp()
 
-const { data: ac } = await useFetch('/api/auth-config')
-authConfig.value = (ac.value as unknown as typeof authConfig.value) ?? null
+const sess = await $client.auth.session()
+if (sess) session.value = sess as unknown as typeof session.value
 
-const { data: v } = await useFetch('/api/version')
-if (v.value?.version) appVersion.value = v.value.version
+authConfig.value = (await $client.auth.configLive()) as unknown as typeof authConfig.value
+
+const v = await $client.meta.version()
+if (v.version) appVersion.value = v.version
 </script>
 
 <template>

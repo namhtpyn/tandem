@@ -1,31 +1,29 @@
-// /rpc — oRPC v2 Fetch API adapter. Live queries stream over SSE; session
-// context built per request from the incoming headers.
+// /rpc — oRPC v2 Fetch API adapter (official Nuxt adapter pattern):
+// toWebRequest(event) forwards the real request; RPCHandler with an onError
+// interceptor for server-side error visibility. Live queries stream over SSE.
+import { onError } from '@orpc/server'
 import { RPCHandler } from '@orpc/server/fetch'
-import { defineEventHandler, setResponseStatus } from 'h3'
 import { router, buildServerContext } from '../../utils/orpc'
 
-const handler = new RPCHandler(router)
+const handler = new RPCHandler(router, {
+  interceptors: [
+    onError((error, { path }) => {
+      /* v8 ignore start -- defensive: oRPC always sets code on mapped errors */
+      console.error(`[orpc] ${path.join('.')}: ${(error as { code?: string }).code ?? 'UNKNOWN'} ${(error as Error).message}`)
+      /* v8 ignore stop */
+    }),
+  ],
+})
 
 export default defineEventHandler(async (event) => {
+  const request = toWebRequest(event)
   const headers = new Headers()
-  Object.entries(event.node.req.headers).forEach(([k, v]) => {
-    if (v === undefined) return
-    if (Array.isArray(v)) v.forEach(item => headers.append(k, item))
-    else headers.set(k, v)
-  })
-  const url = new URL(event.node.req.url ?? '/', 'http://localhost')
-  const rawBody = (event.node.req as { body?: unknown }).body
-  const body = typeof rawBody === 'string' ? rawBody : rawBody === undefined ? undefined : JSON.stringify(rawBody)
-  const request = new Request(url, {
-    method: event.method,
-    headers,
-    ...(body !== undefined ? { body, duplex: 'half' as const } : {}),
-  })
+  request.headers.forEach((v, k) => headers.set(k, v))
   const { response } = await handler.handle(request, {
     prefix: '/rpc',
     context: buildServerContext(headers),
   })
   if (response) return response
-  setResponseStatus(event, 404, 'Not found')
+  setResponseStatus(event, 404, 'Not Found')
   return 'Not found'
 })

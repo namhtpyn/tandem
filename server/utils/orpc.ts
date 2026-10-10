@@ -58,6 +58,108 @@ async function listEnvironments(): Promise<EnvironmentRow[]> {
 }
 
 export const router = os.router({
+  meta: {
+    /** version — public */
+    version: base.handler(() => ({ version: process.env.APP_VERSION || 'dev' })),
+  },
+
+  auth: {
+    /** public auth capabilities for the login screen (live) */
+    configLive: base.handler(() => liveGenerator(['settings', 'oidc'], async () => {
+      const { resolveAuthPolicy } = await import('./auth')
+      const p = await resolveAuthPolicy()
+      return {
+        passwordEnabled: p.passwordEnabled,
+        oidcEnabled: p.oidcEnabled,
+        providers: p.oidcProviders.map(x => ({ id: x.id, label: x.label })),
+      }
+    })),
+
+    /** current session (null when anonymous) */
+    session: base.handler(async ({ context }) => {
+      const session = await context.getSession()
+      return session
+    }),
+  },
+
+  settings: {
+    /** live app settings */
+    live: protectedProcedure.handler(() => liveGenerator(['settings'], async () => {
+      const { getSettings } = await import('./settings')
+      return await getSettings()
+    })),
+
+    /** update settings (strict input) */
+    update: protectedProcedure
+      .input(z.strictObject({ disablePasswordLogin: z.boolean().optional() }))
+      .handler(async ({ input }) => {
+        const { setSetting } = await import('./settings')
+        const { rebuildAuth } = await import('./auth')
+        const { getOidcProviders } = await import('./oidc')
+        if (input.disablePasswordLogin === true) {
+          const providers = await getOidcProviders()
+          if (providers.length === 0) {
+            throw new ORPCError('BAD_REQUEST', { message: 'configure an OIDC provider before disabling password login' })
+          }
+        }
+        if (input.disablePasswordLogin !== undefined) {
+          await setSetting('disablePasswordLogin', input.disablePasswordLogin ? 'true' : 'false')
+        }
+        await rebuildAuth()
+        await publishChange('settings', 'update')
+        return { ok: true }
+      }),
+  },
+
+  oidc: {
+    /** live provider list (secrets never leave the server) */
+    live: protectedProcedure.handler(() => liveGenerator(['oidc'], async () => {
+      const { getOidcProviders } = await import('./oidc')
+      const providers = await getOidcProviders()
+      return providers.map(p => ({
+        id: p.id,
+        label: p.label,
+        issuer: p.issuer,
+        clientId: p.clientId,
+        hasSecret: p.clientSecret.length > 0,
+      }))
+    })),
+
+    /** replace the provider registry (secrets write-only) */
+    replace: protectedProcedure
+      .input(z.strictObject({
+        providers: z.array(z.strictObject({
+          id: z.string().min(1).max(64).optional(),
+          label: z.string().min(1).max(64),
+          issuer: z.string().url(),
+          clientId: z.string().min(1).max(200),
+          clientSecret: z.string().max(400).optional(),
+        })).max(10),
+      }))
+      .handler(async ({ input }) => {
+        const { getOidcProviders, saveOidcProviders, oidcProviderSchema } = await import('./oidc')
+        const { rebuildAuth } = await import('./auth')
+        const existing = await getOidcProviders()
+        const result = []
+        for (const p of input.providers) {
+          const secret = p.clientSecret && p.clientSecret.length > 0
+            ? p.clientSecret
+            : existing.find(x => x.id === p.id)?.clientSecret
+          if (!secret) {
+            throw new ORPCError('BAD_REQUEST', { message: `provider ${p.label}: clientSecret is required for new providers` })
+          }
+          const id = p.id && existing.some(x => x.id === p.id)
+            ? p.id
+            : crypto.randomUUID()
+          result.push(oidcProviderSchema.parse({ id, label: p.label, issuer: p.issuer, clientId: p.clientId, clientSecret: secret }))
+        }
+        await saveOidcProviders(result)
+        await rebuildAuth()
+        await publishChange('oidc', 'update')
+        return { ok: true, count: result.length }
+      }),
+  },
+
   environments: {
     /** live list — pushes a fresh snapshot on every environments change */
     live: protectedProcedure.handler(() => liveGenerator(['environments'], listEnvironments)),

@@ -48,15 +48,16 @@ test.describe('auth flow', () => {
     await expect(page.getByRole('button', { name: /sign in/i })).toHaveCount(0)
   })
 
-  test('unauthenticated API access is 401', async ({ request }) => {
-    const res = await request.get('/api/settings')
+  test('unauthenticated oRPC call is 401', async ({ request }) => {
+    const res = await request.post('/rpc/settings/live', { headers: { 'content-type': 'application/json' }, data: { json: null } })
     expect(res.status()).toBe(401)
   })
 
-  test('auth-config is public and password-only by default', async ({ request }) => {
-    const res = await request.get('/api/auth-config')
+  test('auth.configLive is public and password-only by default', async ({ request }) => {
+    const res = await request.post('/rpc/auth/configLive', { headers: { 'content-type': 'application/json' }, data: { json: null } })
     expect(res.status()).toBe(200)
-    expect(await res.json()).toEqual({ passwordEnabled: true, oidcEnabled: false, providers: [] })
+    const body = await res.json()
+    expect(body.json).toEqual({ passwordEnabled: true, oidcEnabled: false, providers: [] })
   })
 })
 
@@ -71,36 +72,41 @@ test.describe('authenticated settings', () => {
     await page.getByRole('button', { name: /sign in/i }).click()
     await expect(page.getByText('Overview').first()).toBeVisible({ timeout: 15_000 })
 
-    // settings API through the browser (carries the cookie)
-    const settings = await page.request.get('/api/settings')
+    // settings via oRPC through the browser (carries the cookie)
+    const settings = await page.request.post('/rpc/settings/live', { headers: { 'content-type': 'application/json' }, data: { json: null } })
     expect(settings.status()).toBe(200)
-    expect(await settings.json()).toEqual({ disablePasswordLogin: false })
+    // SSE: read the first data event
+    const sseText = await settings.text()
+    const firstEvent = sseText.split('data:').filter(Boolean)[0]!
+    expect(JSON.parse(firstEvent.trim().split('\n')[0])).toEqual({ disablePasswordLogin: false })
 
-    // add an OIDC provider via the API
-    const put = await page.request.put('/api/oidc', {
-      data: { providers: [{ label: 'E2E SSO', issuer: 'https://sso.example.com', clientId: 'e2e-client', clientSecret: 'e2e-secret' }] },
+    // add an OIDC provider via oRPC
+    const put = await page.request.post('/rpc/oidc/replace', {
+      headers: { 'content-type': 'application/json' },
+      data: { json: { providers: [{ label: 'E2E SSO', issuer: 'https://sso.example.com', clientId: 'e2e-client', clientSecret: 'e2e-secret' }] } },
     })
     expect(put.status()).toBe(200)
-    expect(await put.json()).toEqual({ ok: true, count: 1 })
+    expect(await put.json()).toMatchObject({ json: { ok: true, count: 1 } })
 
-    // public auth-config now lists it (without the secret)
-    const cfg = await request.get('/api/auth-config')
-    expect(await cfg.json()).toMatchObject({ oidcEnabled: true, providers: [{ label: 'E2E SSO' }] })
+    // public auth.configLive now lists it (without the secret)
+    const cfg = await request.post('/rpc/auth/configLive', { headers: { 'content-type': 'application/json' }, data: { json: null } })
+    const cfgBody = await cfg.json()
+    expect(cfgBody.json).toMatchObject({ oidcEnabled: true, providers: [{ label: 'E2E SSO' }] })
 
     // disabling password login is allowed now (provider exists)
-    const dis = await page.request.put('/api/settings', { data: { disablePasswordLogin: true } })
+    const dis = await page.request.post('/rpc/settings/update', { headers: { 'content-type': 'application/json' }, data: { json: { disablePasswordLogin: true } } })
     expect(dis.status()).toBe(200)
 
     // restore
-    await page.request.put('/api/settings', { data: { disablePasswordLogin: false } })
-    await page.request.put('/api/oidc', { data: { providers: [] } })
+    await page.request.post('/rpc/settings/update', { headers: { 'content-type': 'application/json' }, data: { json: { disablePasswordLogin: false } } })
+    await page.request.post('/rpc/oidc/replace', { headers: { 'content-type': 'application/json' }, data: { json: { providers: [] } } })
   })
 
-  test('version endpoint reports the build version', async ({ request }) => {
-    const res = await request.get('/api/version')
+  test('meta.version reports the build version', async ({ request }) => {
+    const res = await request.post('/rpc/meta/version', { headers: { 'content-type': 'application/json' }, data: { json: null } })
     expect(res.status()).toBe(200)
     const body = await res.json()
-    expect(typeof body.version).toBe('string')
-    expect(body.version.length).toBeGreaterThan(0)
+    expect(typeof body.json.version).toBe('string')
+    expect(body.json.version.length).toBeGreaterThan(0)
   })
 })
