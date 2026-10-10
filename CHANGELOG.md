@@ -1,3 +1,10 @@
+## [1.1.2](https://github.com/namhtpyn/tandem/compare/v1.1.1...v1.1.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* **e2e:** deterministic environments tests — unique row names, scoped selectors, single error node ([233b4fb](https://github.com/namhtpyn/tandem/commit/233b4fb5ad4134f3e48241ee2a524e69a335599a))
+
 ## [1.1.1](https://github.com/namhtpyn/tandem/compare/v1.1.0...v1.1.1) (2026-10-10)
 
 
