@@ -12,22 +12,24 @@ async function login(page: import('@playwright/test').Page) {
 }
 
 test('environment CRUD round-trip on the live page', async ({ page }) => {
+  const suffix = Date.now().toString(36)
+  const rowName = `e2e-box-${suffix}`
   await login(page)
   await page.getByRole('link', { name: /Environments/ }).click()
   await expect(page.getByText('No environments yet')).toBeVisible()
 
   // create
   await page.getByRole('button', { name: 'New environment' }).first().click()
-  await page.getByPlaceholder('ct112-tandem').fill('e2e-box')
+  await page.getByPlaceholder('ct112-tandem').fill(rowName)
   await page.getByPlaceholder('192.168.3.108').fill('127.0.0.1')
   await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
   await page.getByRole('button', { name: 'Save' }).click()
-  await expect(page.getByText('e2e-box')).toBeVisible({ timeout: 15_000 })
-  await expect(page.getByText(/tandem@127\.0\.0\.1:22/)).toBeVisible()
+  await expect(page.getByText(rowName)).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText(/tandem@127\.0\.0\.1:22/).first()).toBeVisible()
 
-  // duplicate name -> conflict surfaced
+  // duplicate name -> conflict surfaced (single error node: page one is hidden while modal open)
   await page.getByRole('button', { name: 'New environment' }).first().click()
-  await page.getByPlaceholder('ct112-tandem').fill('e2e-box')
+  await page.getByPlaceholder('ct112-tandem').fill(rowName)
   await page.getByPlaceholder('192.168.3.108').fill('10.0.0.1')
   await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
   await page.getByRole('button', { name: 'Save' }).click()
@@ -38,19 +40,21 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
   await page.getByRole('button', { name: 'Edit environment' }).click()
   await page.getByPlaceholder('192.168.3.108').fill('10.9.8.7')
   await page.getByRole('button', { name: 'Save' }).click()
-  await expect(page.getByText(/tandem@10\.9\.8\.7:22/)).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText(/tandem@10\.9\.8\.7:22/).first()).toBeVisible({ timeout: 15_000 })
 
   // probe (refused port -> failed badge with detail)
   await page.getByRole('button', { name: 'Edit environment' }).isVisible().catch(() => {})
   await page.getByRole('button', { name: 'Test connection' }).click()
   await expect(page.getByText('failed').first()).toBeVisible({ timeout: 20_000 })
 
-  // delete
-  await page.getByRole('button', { name: 'Delete environment' }).click()
+  // delete (scoped to this row)
+  await page.locator('tr', { hasText: rowName }).getByRole('button', { name: 'Delete environment' }).click()
   await expect(page.getByText('No environments yet')).toBeVisible({ timeout: 15_000 })
 })
 
 test('live table updates from another tab via SSE', async ({ context, page }) => {
+  const suffix = Date.now().toString(36)
+  const rowName = `sse-ghost-${suffix}`
   await login(page)
   await page.getByRole('link', { name: /Environments/ }).click()
   await expect(page.getByText('No environments yet')).toBeVisible()
@@ -61,17 +65,17 @@ test('live table updates from another tab via SSE', async ({ context, page }) =>
 
   // create from the other tab; first tab must update without reload
   await other.getByRole('button', { name: 'New environment' }).first().click()
-  await other.getByPlaceholder('ct112-tandem').fill('sse-ghost')
+  await other.getByPlaceholder('ct112-tandem').fill(rowName)
   await other.getByPlaceholder('192.168.3.108').fill('127.0.0.1')
   await other.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
   await other.getByRole('button', { name: 'Save' }).click()
-  await expect(other.getByText('sse-ghost')).toBeVisible({ timeout: 15_000 })
+  await expect(other.getByText(rowName)).toBeVisible({ timeout: 15_000 })
 
-  await expect(page.getByText('sse-ghost')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText(rowName)).toBeVisible({ timeout: 15_000 })
 
-  // cleanup
-  await page.getByRole('button', { name: 'Delete environment' }).click()
-  await expect(page.getByText('No environments yet')).toBeVisible({ timeout: 15_000 })
+  // cleanup (scoped to this row)
+  await page.locator('tr', { hasText: rowName }).getByRole('button', { name: 'Delete environment' }).click()
+  await expect(page.getByText(rowName)).toHaveCount(0, { timeout: 15_000 })
   await other.close()
 })
 

@@ -105,7 +105,7 @@ async function probe(row: EnvironmentRow) {
       <UButton icon="i-lucide-plus" label="New environment" @click="openEditor()" />
     </div>
 
-    <p v-if="message" class="text-sm text-error">{{ message }}</p>
+    <p v-if="message && !editorOpen" class="text-sm text-error">{{ message }}</p>
 
     <UCard v-if="rows.length" :ui="{ root: 'shadow-sm', body: 'p-0 sm:p-0' }">
       <UTable :data="rows" :columns="columns">
