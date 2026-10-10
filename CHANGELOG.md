@@ -1,3 +1,10 @@
+# [1.11.0](https://github.com/namhtpyn/tandem/compare/v1.10.1...v1.11.0) (2026-10-10)
+
+
+### Features
+
+* **employees:** email editable on update ([ce7ae6d](https://github.com/namhtpyn/tandem/commit/ce7ae6dc7020bd81b3ada6f174245015f94fe6b4))
+
 ## [1.10.1](https://github.com/namhtpyn/tandem/compare/v1.10.0...v1.10.1) (2026-10-10)
 
 
