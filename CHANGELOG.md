@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/namhtpyn/tandem/compare/v1.8.1...v1.9.0) (2026-10-10)
+
+
+### Features
+
+* **settings:** company name setting + form hints (info icon hover popovers) + generic placeholders ([e8880db](https://github.com/namhtpyn/tandem/commit/e8880db1ef40e8e0f57ae6691741af1171d95b88))
+
 ## [1.8.1](https://github.com/namhtpyn/tandem/compare/v1.8.0...v1.8.1) (2026-10-10)
 
 
