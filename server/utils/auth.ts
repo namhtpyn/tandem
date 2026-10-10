@@ -8,6 +8,7 @@
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2'
 import { genericOAuth } from 'better-auth/plugins/generic-oauth'
+import { apiKey } from '@better-auth/api-key'
 import { eq } from 'drizzle-orm'
 import { db } from '../db'
 import { user as userTable } from '../db/schema'
@@ -43,6 +44,7 @@ interface Auth {
       user: { id: string, name: string, email: string, emailVerified: boolean, image?: string | null, role?: string | null }
       session: { id: string, userId: string, expiresAt: Date }
     } | null>
+    createApiKey: (opts: { body: { name: string, userId: string, prefix?: string } }) => Promise<{ id: string, key: string }>
   }
 }
 
@@ -90,6 +92,14 @@ async function buildAuth(): Promise<Auth> {
       enabled: p.passwordEnabled,
     },
     plugins: [
+      // API keys: AI employees authenticate with x-api-key; keys live in the
+      // tandem_apikey table (hashed). enableSessionForAPIKeys makes
+      // getSession accept them, so the oRPC middleware needs no changes.
+      apiKey({
+        enableSessionForAPIKeys: true,
+        requireName: true,
+        defaultPrefix: 'tandem_',
+      }),
       ...(p.oidcProviders.length > 0
         ? [
             genericOAuth({

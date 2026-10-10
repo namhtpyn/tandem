@@ -6,11 +6,11 @@ import { z } from 'zod'
 import { ORPCError, os } from '@orpc/server'
 import type { RequestHeadersHandlerPluginContext } from '@orpc/server/plugins'
 import { db } from '../db'
-import { environments as environmentsTable } from '../db/schema'
+import { aiEmployees as aiEmployeesTable, apikey as apikeyTable, employees as employeesTable, employeeSupervisors as supervisorsTable, environments as environmentsTable, user as userTable } from '../db/schema'
 import { environmentInput } from './environments'
 import { probeSsh } from './ssh-probe'
 import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from './change-bus'
-import type { EnvironmentRow } from '../../shared/types'
+import type { ApiKeyRow, EmployeeRow, EnvironmentRow } from '../../shared/types'
 
 export interface ServerContext extends RequestHeadersHandlerPluginContext {
   getSession: () => Promise<{ user: { id: string, name: string, email: string, role: string } } | null>
@@ -157,6 +157,245 @@ export const router = os.router({
         await rebuildAuth()
         await publishChange('oidc', 'update')
         return { ok: true, count: result.length }
+      }),
+  },
+
+  employees: {
+    /** live list — every employee with supervisors + AI extension, one snapshot */
+    live: protectedProcedure.handler(() => liveGenerator(['employees'], async () => {
+      const rows = await db.select({
+        id: employeesTable.id,
+        userId: employeesTable.userId,
+        kind: employeesTable.kind,
+        title: employeesTable.title,
+        createdAt: employeesTable.createdAt,
+        updatedAt: employeesTable.updatedAt,
+        name: userTable.name,
+        email: userTable.email,
+      }).from(employeesTable).innerJoin(userTable, eq(employeesTable.userId, userTable.id)).orderBy(employeesTable.createdAt)
+      const supRows = await db.select().from(supervisorsTable)
+      const aiRows = await db.select().from(aiEmployeesTable)
+      const byId = new Map(rows.map(r => [r.id, r]))
+      const sups = new Map<string, string[]>()
+      for (const s of supRows) {
+        ;(sups.get(s.employeeId) ?? sups.set(s.employeeId, []).get(s.employeeId)!).push(s.supervisorId)
+      }
+      const aiByEmployee = new Map(aiRows.map(r => [r.employeeId, r]))
+      return rows.map((r): EmployeeRow => {
+        const ai = aiByEmployee.get(r.id)
+        return {
+          id: r.id,
+          userId: r.userId,
+          name: r.name,
+          email: r.email,
+          kind: r.kind as 'human' | 'ai',
+          title: r.title,
+          supervisorIds: sups.get(r.id) ?? [],
+          environmentId: ai?.environmentId ?? null,
+          instructions: ai?.instructions ?? null,
+          createdAt: r.createdAt.toISOString(),
+          updatedAt: r.updatedAt.toISOString(),
+        }
+      })
+    })),
+
+    /** create an employee AND its login user. kind=ai also mints an API key
+     *  (returned once) and the AI extension row. */
+    create: protectedProcedure
+      .input(z.strictObject({
+        name: z.string().min(1).max(100),
+        email: z.string().email(),
+        kind: z.enum(['human', 'ai']),
+        title: z.string().min(1).max(100),
+        supervisorIds: z.array(z.string().min(1)).max(20).default([]),
+        environmentId: z.string().min(1).optional(),
+        instructions: z.string().max(10_000).optional(),
+      }))
+      .handler(async ({ input, context }) => {
+        // AI employees REQUIRE an environment
+        if (input.kind === 'ai' && !input.environmentId) {
+          throw new ORPCError('BAD_REQUEST', { message: 'AI employees need an environment' })
+        }
+        if (input.kind === 'human' && (input.environmentId !== undefined || input.instructions !== undefined)) {
+          throw new ORPCError('BAD_REQUEST', { message: 'environment/instructions apply to AI employees only' })
+        }
+        // supervisors must exist and not include a duplicate (default fills [])
+        const supervisorIds = input.supervisorIds ?? []
+        if (new Set(supervisorIds).size !== supervisorIds.length) {
+          throw new ORPCError('BAD_REQUEST', { message: 'duplicate supervisor ids' })
+        }
+        if (supervisorIds.length > 0) {
+          const found = await db.select({ id: employeesTable.id }).from(employeesTable)
+          const ids = new Set(found.map(f => f.id))
+          for (const s of supervisorIds) {
+            if (!ids.has(s)) {
+              throw new ORPCError('BAD_REQUEST', { message: `supervisor ${s} does not exist` })
+            }
+          }
+        }
+        // environment must exist for AI
+        if (input.environmentId) {
+          const env = await db.select({ id: environmentsTable.id }).from(environmentsTable).where(eq(environmentsTable.id, input.environmentId))
+          if (env.length === 0) {
+            throw new ORPCError('BAD_REQUEST', { message: 'environment does not exist' })
+          }
+        }
+        // email must be free
+        const clash = await db.select({ id: userTable.id }).from(userTable).where(eq(userTable.email, input.email))
+        if (clash.length > 0) {
+          throw new ORPCError('CONFLICT', { message: `user ${input.email} already exists` })
+        }
+        // create the login user (role: employees act as themselves)
+        const userId = crypto.randomUUID()
+        await db.insert(userTable).values({ id: userId, name: input.name, email: input.email, role: 'employee' })
+        const employeeId = crypto.randomUUID()
+        await db.insert(employeesTable).values({ id: employeeId, userId, kind: input.kind, title: input.title })
+        if (supervisorIds.length > 0) {
+          await db.insert(supervisorsTable).values(supervisorIds.map(s => ({ employeeId, supervisorId: s })))
+        }
+        let apiKey: string | undefined
+        if (input.kind === 'ai') {
+          await db.insert(aiEmployeesTable).values({ employeeId, environmentId: input.environmentId!, instructions: input.instructions ?? '' })
+          const { getAuth } = await import('./auth')
+          const auth = await getAuth()
+          const created = await auth.api.createApiKey({ body: { name: `${input.name.slice(0, 40)} ai-key`, userId, prefix: 'tandem_' } })
+          apiKey = created.key
+        }
+        await publishChange('employees', 'create')
+        return { id: employeeId, userId, apiKey }
+      }),
+
+    update: protectedProcedure
+      .input(z.strictObject({
+        id: z.string().min(1),
+        name: z.string().min(1).max(100),
+        title: z.string().min(1).max(100),
+        supervisorIds: z.array(z.string().min(1)).max(20),
+        environmentId: z.string().min(1).nullable().optional(),
+        instructions: z.string().max(10_000).nullable().optional(),
+      }))
+      .handler(async ({ input }) => {
+        const rows = await db.select().from(employeesTable).where(eq(employeesTable.id, input.id))
+        const emp = rows[0]
+        if (!emp) {
+          throw new ORPCError('NOT_FOUND', { message: 'employee not found' })
+        }
+        if (new Set(input.supervisorIds).size !== input.supervisorIds.length) {
+          throw new ORPCError('BAD_REQUEST', { message: 'duplicate supervisor ids' })
+        }
+        if (input.supervisorIds.includes(input.id)) {
+          throw new ORPCError('BAD_REQUEST', { message: 'an employee cannot supervise themselves' })
+        }
+        // supervisors must exist; cycle check over the supervision graph
+        const all = await db.select({ id: employeesTable.id }).from(employeesTable)
+        const ids = new Set(all.map(a => a.id))
+        for (const s of input.supervisorIds) {
+          if (!ids.has(s)) {
+            throw new ORPCError('BAD_REQUEST', { message: `supervisor ${s} does not exist` })
+          }
+        }
+        const supRows = await db.select().from(supervisorsTable)
+        const graph = new Map<string, string[]>()
+        for (const r of supRows) {
+          if (r.employeeId === input.id) continue // pretend the update applied
+          ;(graph.get(r.employeeId) ?? graph.set(r.employeeId, []).get(r.employeeId)!).push(r.supervisorId)
+        }
+        graph.set(input.id, [...input.supervisorIds])
+        // DFS from each supervisor upward: if we reach input.id -> cycle
+        const seen = new Set<string>()
+        const stack = [...input.supervisorIds]
+        while (stack.length > 0) {
+          const cur = stack.pop()!
+          if (cur === input.id) {
+            throw new ORPCError('BAD_REQUEST', { message: 'supervision cycle detected' })
+          }
+          if (seen.has(cur)) continue
+          seen.add(cur)
+          stack.push(...(graph.get(cur) ?? []))
+        }
+        // AI fields (create guarantees the extension row exists for kind='ai')
+        if (emp.kind === 'ai' && (input.environmentId !== undefined || input.instructions !== undefined)) {
+          const patch: { environmentId?: string, instructions?: string, updatedAt: Date } = { updatedAt: new Date() }
+          if (input.environmentId !== undefined && input.environmentId !== null) {
+            const env = await db.select({ id: environmentsTable.id }).from(environmentsTable).where(eq(environmentsTable.id, input.environmentId))
+            if (env.length === 0) {
+              throw new ORPCError('BAD_REQUEST', { message: 'environment does not exist' })
+            }
+            patch.environmentId = input.environmentId
+          }
+          if (input.instructions !== undefined && input.instructions !== null) {
+            patch.instructions = input.instructions
+          }
+          await db.update(aiEmployeesTable).set(patch).where(eq(aiEmployeesTable.employeeId, input.id))
+        }
+        await db.update(userTable).set({ name: input.name, updatedAt: new Date() }).where(eq(userTable.id, emp.userId))
+        await db.delete(supervisorsTable).where(eq(supervisorsTable.employeeId, input.id))
+        if (input.supervisorIds.length > 0) {
+          await db.insert(supervisorsTable).values(input.supervisorIds.map(s => ({ employeeId: input.id, supervisorId: s })))
+        }
+        await db.update(employeesTable).set({ title: input.title, updatedAt: new Date() }).where(eq(employeesTable.id, input.id))
+        await publishChange('employees', 'update')
+        return { ok: true }
+      }),
+
+    remove: protectedProcedure
+      .input(z.strictObject({ id: z.string().min(1) }))
+      .handler(async ({ input }) => {
+        const rows = await db.select({ userId: employeesTable.userId }).from(employeesTable).where(eq(employeesTable.id, input.id))
+        const emp = rows[0]
+        if (!emp) {
+          throw new ORPCError('NOT_FOUND', { message: 'employee not found' })
+        }
+        // FK cascades clear supervisors + ai extension; the LOGIN user must go
+        // too (employees.userId -> user.id cascade is user-side, not this side,
+        // and an orphan login could still authenticate)
+        await db.delete(employeesTable).where(eq(employeesTable.id, input.id))
+        await db.delete(userTable).where(eq(userTable.id, emp.userId))
+        await publishChange('employees', 'delete')
+        return { ok: true }
+      }),
+
+    /** mint a fresh API key for an AI employee (old keys stay valid) */
+    createApiKey: protectedProcedure
+      .input(z.strictObject({ employeeId: z.string().min(1) }))
+      .handler(async ({ input }) => {
+        const rows = await db.select().from(employeesTable).where(eq(employeesTable.id, input.employeeId))
+        const emp = rows[0]
+        if (!emp) throw new ORPCError('NOT_FOUND', { message: 'employee not found' })
+        if (emp.kind !== 'ai') throw new ORPCError('BAD_REQUEST', { message: 'API keys are for AI employees' })
+        const { getAuth } = await import('./auth')
+        const auth = await getAuth()
+        const created = await auth.api.createApiKey({ body: { name: `employee ${emp.id.slice(0, 8)}`, userId: emp.userId, prefix: 'tandem_' } })
+        return { key: created.key, id: created.id }
+      }),
+
+    /** list an employee's API keys (never the key value) */
+    listApiKeys: protectedProcedure
+      .input(z.strictObject({ employeeId: z.string().min(1) }))
+      .handler(async ({ input }): Promise<ApiKeyRow[]> => {
+        const rows = await db.select().from(employeesTable).where(eq(employeesTable.id, input.employeeId))
+        const emp = rows[0]
+        if (!emp) throw new ORPCError('NOT_FOUND', { message: 'employee not found' })
+        const keys = await db.select().from(apikeyTable).where(eq(apikeyTable.referenceId, emp.userId)).orderBy(desc(apikeyTable.createdAt))
+        return keys.map(k => ({
+          id: k.id,
+          name: k.name,
+          start: k.start,
+          prefix: k.prefix,
+          expiresAt: k.expiresAt ? k.expiresAt.toISOString() : null,
+          createdAt: k.createdAt.toISOString(),
+        }))
+      }),
+
+    /** revoke one API key */
+    revokeApiKey: protectedProcedure
+      .input(z.strictObject({ keyId: z.string().min(1) }))
+      .handler(async ({ input }) => {
+        const deleted = await db.delete(apikeyTable).where(eq(apikeyTable.id, input.keyId)).returning({ id: apikeyTable.id })
+        if (deleted.length === 0) {
+          throw new ORPCError('NOT_FOUND', { message: 'api key not found' })
+        }
+        return { ok: true }
       }),
   },
 

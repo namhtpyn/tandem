@@ -1,6 +1,8 @@
 // Drizzle rc (Relations v2) over Postgres. Auth tables = better-auth canonical set.
 // Domain tables: settings (key/value runtime config incl. OIDC providers).
-import { pgTable, text, timestamp, boolean } from 'drizzle-orm/pg-core'
+import { pgEnum, pgTable, text, timestamp, boolean } from 'drizzle-orm/pg-core'
+import { check, index, primaryKey } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
 import { defineRelations } from 'drizzle-orm'
 
 // ---------- better-auth canonical tables ----------
@@ -66,6 +68,34 @@ export const environments = pgTable('tandem_environments', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+// API keys (@better-auth/api-key). Keys are HASHED; referenceId -> user.id.
+export const apikey = pgTable('tandem_apikey', {
+  id: text('id').primaryKey(),
+  configId: text('config_id').notNull().default('default'),
+  name: text('name').notNull(),
+  start: text('start'),
+  prefix: text('prefix'),
+  key: text('key').notNull(),
+  referenceId: text('reference_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  refillInterval: text('refill_interval'),
+  refillAmount: text('refill_amount'),
+  lastRefillAt: timestamp('last_refill_at', { withTimezone: true }),
+  enabled: boolean('enabled').notNull().default(true),
+  rateLimitEnabled: boolean('rate_limit_enabled'),
+  rateLimitTimeWindow: text('rate_limit_time_window'),
+  rateLimitMax: text('rate_limit_max'),
+  requestCount: text('request_count'),
+  remaining: text('remaining'),
+  lastRequest: timestamp('last_request', { withTimezone: true }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  permissions: text('permissions'),
+  metadata: text('metadata'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('tandem_apikey_reference_id_idx').on(t.referenceId),
+])
+
 // runtime key/value settings (oidc providers JSON, flags, …)
 export const settings = pgTable('tandem_settings', {
   key: text('key').primaryKey(),
@@ -73,14 +103,68 @@ export const settings = pgTable('tandem_settings', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+// Employees (M3): every employee IS a tandem_user (they all log in).
+// humans: password/OIDC login. ai: x-api-key login (API key owner = user).
+export const employeeKind = pgEnum('tandem_employee_kind', ['human', 'ai'])
+
+export const employees = pgTable('tandem_employees', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().unique().references(() => user.id, { onDelete: 'cascade' }),
+  kind: employeeKind('kind').notNull(),
+  title: text('title').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// Supervision is many-to-many: one employee may have many supervisors.
+// supervisor_id != employee_id enforced by CHECK — self-supervision is
+// structurally impossible, not just application-checked.
+export const employeeSupervisors = pgTable('tandem_employee_supervisors', {
+  employeeId: text('employee_id').notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  supervisorId: text('supervisor_id').notNull().references(() => employees.id, { onDelete: 'cascade' }),
+}, (t) => [
+  primaryKey({ columns: [t.employeeId, t.supervisorId] }),
+  check('no_self_supervision', sql`${t.supervisorId} <> ${t.employeeId}`),
+  // reverse-pair index keeps duplicate (B supervises A + A supervises B) lookups
+  // cheap; the cycle check itself walks the graph at write time
+  index('tandem_employee_supervisors_supervisor_idx').on(t.supervisorId),
+])
+
+// AI extension (1:1 with employees where kind='ai'): environment + instructions.
+export const aiEmployees = pgTable('tandem_ai_employees', {
+  employeeId: text('employee_id').primaryKey().references(() => employees.id, { onDelete: 'cascade' }),
+  environmentId: text('environment_id').notNull().references(() => environments.id, { onDelete: 'restrict' }),
+  instructions: text('instructions').notNull().default(''),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
 // ---------- relations ----------
 
 export const relations = defineRelations(
-  { user, session, account, verification, settings, environments },
+  { user, session, account, verification, settings, environments, employees, employeeSupervisors, aiEmployees, apikey },
   (helpers) => ({
     user: {
       sessions: helpers.many.session({ from: helpers.user.id, to: helpers.session.userId }),
       accounts: helpers.many.account({ from: helpers.user.id, to: helpers.account.userId }),
+      employees: helpers.one.employees({ from: helpers.user.id, to: helpers.employees.userId }),
+      apiKeys: helpers.many.apikey({ from: helpers.user.id, to: helpers.apikey.referenceId }),
+    },
+    employees: {
+      users: helpers.one.user({ from: helpers.employees.userId, to: helpers.user.id }),
+      supervisors: helpers.many.employeeSupervisors({ from: helpers.employees.id, to: helpers.employeeSupervisors.employeeId }),
+      ai: helpers.one.aiEmployees({ from: helpers.employees.id, to: helpers.aiEmployees.employeeId }),
+    },
+    employeeSupervisors: {
+      employees: helpers.one.employees({ from: helpers.employeeSupervisors.employeeId, to: helpers.employees.id }),
+      supervisors: helpers.one.employees({ from: helpers.employeeSupervisors.supervisorId, to: helpers.employees.id }),
+    },
+    aiEmployees: {
+      employees: helpers.one.employees({ from: helpers.aiEmployees.employeeId, to: helpers.employees.id }),
+      environments: helpers.one.environments({ from: helpers.aiEmployees.environmentId, to: helpers.environments.id }),
+    },
+    apikey: {
+      users: helpers.one.user({ from: helpers.apikey.referenceId, to: helpers.user.id }),
     },
     session: {
       user: helpers.one.user({ from: helpers.session.userId, to: helpers.user.id }),
@@ -88,9 +172,6 @@ export const relations = defineRelations(
     account: {
       user: helpers.one.user({ from: helpers.account.userId, to: helpers.user.id }),
     },
-    verification: {},
-    settings: {},
-    environments: {},
   }),
 )
 
