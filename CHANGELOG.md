@@ -1,3 +1,10 @@
+# [1.12.0](https://github.com/namhtpyn/tandem/compare/v1.11.0...v1.12.0) (2026-10-10)
+
+
+### Features
+
+* **tasks:** M4 — tasks CRUD, assignees (human + AI), live list, /tasks page ([ba7f6d6](https://github.com/namhtpyn/tandem/commit/ba7f6d67c406220a1603c5a7aee26a1ca35021eb))
+
 # [1.11.0](https://github.com/namhtpyn/tandem/compare/v1.10.1...v1.11.0) (2026-10-10)
 
 
