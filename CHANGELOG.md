@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/namhtpyn/tandem/compare/v1.7.0...v1.8.0) (2026-10-10)
+
+
+### Features
+
+* **environments:** secret usage mode (ssh key vs password) + nav fixes ([fd2fdbc](https://github.com/namhtpyn/tandem/commit/fd2fdbcbe9c8309139ffbacba45e1c12bceef4b0))
+
 # [1.7.0](https://github.com/namhtpyn/tandem/compare/v1.6.0...v1.7.0) (2026-10-10)
 
 
