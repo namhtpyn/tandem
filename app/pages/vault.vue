@@ -168,14 +168,15 @@ function kindIcon(): string {
             <template #hint>
               <FormHint :text="isEdit ? 'replaces the stored value' : 'encrypted, never shown again'" />
             </template>
-            <UInput v-model="form.value" :type="showValue ? 'text' : 'password'" placeholder="Secret value"
-              class="w-full" :disabled="busy" autocomplete="off"
-              :ui="{ trailing: 'pe-1' }">
-              <template #trailing>
-                <UButton :icon="showValue ? 'i-lucide-eye-off' : 'i-lucide-eye'" variant="link" color="neutral"
-                  :aria-label="showValue ? 'Hide value' : 'Show value'" tabindex="-1" @click="showValue = !showValue" />
-              </template>
-            </UInput>
+            <div class="relative w-full">
+              <UTextarea v-model="form.value" placeholder="Secret value" :rows="4" class="w-full" :disabled="busy"
+                autocomplete="off" spellcheck="false"
+                :class="showValue ? 'font-mono' : 'secret-masked font-mono'" />
+              <UButton :icon="showValue ? 'i-lucide-eye-off' : 'i-lucide-eye'" variant="link" color="neutral" size="sm"
+                :aria-label="showValue ? 'Hide value' : 'Show value'" tabindex="-1"
+                class="absolute right-1 top-1"
+                @click="showValue = !showValue" />
+            </div>
           </UFormField>
           <UAlert v-if="formError && !formError.includes('required')" icon="i-lucide-alert-circle" color="error" variant="subtle" :title="formError" />
         </div>
@@ -221,3 +222,10 @@ function kindIcon(): string {
     </UModal>
   </UDashboardPanel>
 </template>
+
+<style scoped>
+/* mask secret text while the eye toggle is closed (Chromium/WebKit) */
+:deep(.secret-masked textarea) {
+  -webkit-text-security: disc;
+}
+</style>

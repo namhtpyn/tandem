@@ -215,17 +215,19 @@ async function probe(row: EnvironmentRow) {
             Delete environment <span class="font-semibold text-zinc-900 dark:text-white">{{ pendingDelete?.name }}</span>
             ({{ pendingDelete?.username }}@{{ pendingDelete?.host }})? AI agents configured on it will need reassigning.
           </p>
-          <div class="flex justify-end gap-2">
-            <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingDelete = null" />
-            <UButton icon="i-lucide-trash-2" color="error" label="Delete" :loading="busy" @click="remove" />
-          </div>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingDelete = null" />
+          <UButton icon="i-lucide-trash-2" color="error" label="Delete" :loading="busy" @click="remove" />
         </div>
       </template>
     </UModal>
 
     <UModal v-model:open="editorOpen" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }" :title="editingId ? 'Edit environment' : 'New environment'">
       <template #body>
-        <UForm :state="form" class="space-y-4" @submit="save">
+        <UForm id="environment-editor-form" :state="form" class="space-y-4" @submit="save">
           <UFormField label="Name" name="name">
             <template #hint><FormHint text="Unique label, e.g. ct112-tandem" /></template>
             <UInput v-model="form.name" icon="i-lucide-tag" placeholder="Environment name" class="w-full" required />
@@ -240,26 +242,31 @@ async function probe(row: EnvironmentRow) {
             <template #hint><FormHint text="Key auth only — the runner never uses passwords" /></template>
             <UInput v-model="form.username" icon="i-lucide-user" placeholder="SSH username" class="w-full" required />
           </UFormField>
-          <UFormField label="Secret" name="secretId">
-            <template #hint><FormHint text="from vault" /></template>
-            <USelect v-model="form.secretId" :items="secretOptions" icon="i-lucide-key-round" class="w-full" />
-          </UFormField>
-          <UFormField v-if="form.secretId !== '__none__'" label="Use secret as" name="secretUsage">
-            <URadioGroup
+          <UFormField label="Authentication" name="secretUsage">
+            <template #hint><FormHint text="How the SSH connection authenticates" /></template>
+            <USelect
               v-model="form.secretUsage"
               :items="[
-                { label: 'SSH key (identity file)', value: 'ssh-key' },
+                { label: 'SSH key', value: 'ssh-key' },
                 { label: 'Password', value: 'password' },
               ]"
-              :disabled="busy"
+              value-key="value"
+              icon="i-lucide-fingerprint"
+              class="w-full"
             />
           </UFormField>
+          <UFormField label="Secret" name="secretId">
+            <template #hint><FormHint text="Vault secret holding the key or password (optional)" /></template>
+            <USelect v-model="form.secretId" :items="secretOptions" icon="i-lucide-key-round" class="w-full" />
+          </UFormField>
           <p v-if="message" class="text-sm text-error">{{ message }}</p>
-          <div class="flex justify-end gap-2 pt-2">
-            <UButton variant="ghost" color="neutral" label="Cancel" @click="editorOpen = false" />
-            <UButton type="submit" :loading="busy" label="Save" />
-          </div>
         </UForm>
+      </template>
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton variant="ghost" color="neutral" label="Cancel" :disabled="busy" @click="editorOpen = false" />
+          <UButton type="submit" :loading="busy" label="Save" form="environment-editor-form" />
+        </div>
       </template>
     </UModal>
   </div>

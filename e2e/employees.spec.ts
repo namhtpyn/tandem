@@ -19,14 +19,14 @@ test('human employee CRUD round-trip on the live page', async ({ page }) => {
   await page.getByPlaceholder('name@company.com').fill(email)
   await page.getByRole('radio', { name: /Human/ }).check()
   await page.getByPlaceholder('Job title').fill('E2E Tester')
-  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByRole('button', { name: /Save|Create employee/ }).click()
   await expect(page.locator('tr:visible', { hasText: name })).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('tr:visible', { hasText: email })).toBeVisible()
 
   // edit title
   await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Edit employee' }).click()
   await page.getByPlaceholder('Job title').fill('Promoted Tester')
-  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByRole('button', { name: /Save|Create employee/ }).click()
   await expect(page.locator('tr', { hasText: name }).getByText('Promoted Tester')).toBeVisible({ timeout: 15_000 })
 
   // delete requires CONFIRMATION now: trash opens a dialog, not instant delete
@@ -47,7 +47,7 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   await page.getByPlaceholder('Environment name').fill(envName)
   await page.getByPlaceholder('Hostname or IP').fill('127.0.0.1')
   await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
-  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByRole('button', { name: /Save|Create employee/ }).click()
   await expect(page.locator('tr', { hasText: envName }).first()).toBeVisible({ timeout: 15_000 })
 
   // create AI employee
@@ -65,7 +65,7 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   // harness defaults to Hermes agents; executable override is freetext
   await expect(page.getByRole('button', { name: 'Harness' })).toContainText('Hermes agents')
   await page.getByPlaceholder('hermes (default)').fill('hermes-dev')
-  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByRole('button', { name: /Save|Create employee/ }).click()
   // minted key surfaces once
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 })
   await page.getByRole('button', { name: /Done — I saved the key/ }).click()
@@ -117,7 +117,7 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   await page.getByPlaceholder('name@company.com').fill(`e2e-sup-${suffix}@tandem.local`)
   await page.getByRole('radio', { name: /Human/ }).check()
   await page.getByPlaceholder('Job title').fill('Boss')
-  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByRole('button', { name: /Save|Create employee/ }).click()
   await expect(page.locator('tr:visible', { hasText: supName })).toBeVisible({ timeout: 15_000 })
 
   // create the report with supervisor assigned
@@ -127,7 +127,7 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   await page.getByPlaceholder('name@company.com').fill(`e2e-sub-${suffix}@tandem.local`)
   await page.getByRole('radio', { name: /Human/ }).check()
   await page.getByPlaceholder('Job title').fill('Report')
-  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByRole('button', { name: /Save|Create employee/ }).click()
   await expect(page.locator('tr:visible', { hasText: subName })).toBeVisible({ timeout: 15_000 })
 
   // edit the report: pick the supervisor in the multi-select
@@ -135,7 +135,7 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   await page.getByRole('button', { name: 'Supervisors', exact: true }).click()
   await page.getByRole('option', { name: supName }).click()
   await page.keyboard.press('Escape')
-  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByRole('button', { name: /Save|Create employee/ }).click()
 
   // supervisor badge appears on the report row (scoped to that row)
   const row = page.locator('tr', { hasText: subName })

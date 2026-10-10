@@ -11,7 +11,7 @@ test('environment links a vault secret and shows it in the row', async ({ page }
   await page.getByRole('button', { name: 'New secret' }).first().click()
   await page.getByRole('textbox', { name: 'Name' }).fill(secName)
   await page.getByRole('textbox', { name: 'Value' }).fill('e2e-key-material')
-  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.locator('tr:visible', { hasText: secName })).toBeVisible({ timeout: 15_000 })
 
   // create an environment linked to it
@@ -21,14 +21,14 @@ test('environment links a vault secret and shows it in the row', async ({ page }
   await page.getByRole('textbox', { name: 'Name', exact: true }).fill(envName)
   await page.getByRole('textbox', { name: 'Host' }).fill('10.9.8.7')
   await page.getByRole('textbox', { name: 'Username' }).fill('tandem')
-  await page.getByLabel('Secret').click()
+  await page.getByRole('combobox', { name: 'Secret' }).click()
   await page.getByRole('option', { name: new RegExp(secName) }).click()
-  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.locator('tr:visible', { hasText: envName })).toBeVisible({ timeout: 15_000 })
 
   // edit shows the linked key preselected
   await page.locator('tr:visible', { hasText: envName }).getByRole('button', { name: 'Edit environment' }).click()
-  await expect(page.getByLabel('Secret')).toContainText(secName.slice(0, 20))
+  await expect(page.getByRole('combobox', { name: 'Secret' })).toContainText(secName.slice(0, 20))
   await page.keyboard.press('Escape')
 
   // cleanup env
@@ -49,7 +49,7 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
   await page.getByPlaceholder('Environment name').fill(rowName)
   await page.getByPlaceholder('Hostname or IP').fill('127.0.0.1')
   await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
-  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.locator('tr:visible', { hasText: rowName })).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('tr:visible', { hasText: rowName }).locator('span:visible', { hasText: '127.0.0.1' })).toBeVisible()
 
@@ -58,7 +58,7 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
   await page.getByPlaceholder('Environment name').fill(rowName)
   await page.getByPlaceholder('Hostname or IP').fill('10.0.0.1')
   await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
-  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.getByText(/already exists/i)).toBeVisible()
   await page.getByRole('button', { name: 'Cancel' }).click()
 
@@ -66,7 +66,7 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
   const row = page.locator('tr', { hasText: rowName })
   await row.getByRole('button', { name: 'Edit environment' }).click()
   await page.getByPlaceholder('Hostname or IP').fill('10.9.8.7')
-  await page.getByRole('button', { name: 'Save' }).click()
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.locator('tr:visible', { hasText: rowName }).locator('span:visible', { hasText: '10.9.8.7' })).toBeVisible({ timeout: 15_000 })
 
   // probe (refused port -> failed badge with detail), scoped to the row

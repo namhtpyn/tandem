@@ -332,7 +332,7 @@ const columns = [
     <UModal v-model:open="editorOpen" :title="isEdit ? 'Edit employee' : 'New employee'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
       <template #body>
         <div class="max-h-[55dvh] overflow-y-auto px-4 sm:px-6">
-        <UForm :state="form" class="space-y-4" @submit="save">
+        <UForm id="employee-editor-form" :state="form" class="space-y-4" @submit="save">
           <UFormField label="Name" name="name">
             <UInput v-model="form.name" icon="i-lucide-user" placeholder="Full name" class="w-full" required />
           </UFormField>
@@ -433,11 +433,13 @@ const columns = [
             </div>
             <UButton class="mt-3" size="sm" color="primary" variant="solid" label="Done — I saved the key" @click="editorOpen = false" />
           </div>
-          <div v-else class="sticky bottom-0 -mx-4 mt-2 flex justify-end gap-2 border-t border-zinc-200 bg-white/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 dark:border-zinc-800 dark:bg-zinc-950/95">
-            <UButton variant="ghost" color="neutral" label="Cancel" @click="editorOpen = false" />
-            <UButton type="submit" :loading="busy" label="Save" />
-          </div>
         </UForm>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton variant="ghost" color="neutral" label="Cancel" :disabled="busy" @click="editorOpen = false" />
+          <UButton type="submit" :loading="busy" :label="isEdit ? 'Save changes' : 'Create employee'" form="employee-editor-form" />
         </div>
       </template>
     </UModal>
@@ -449,10 +451,12 @@ const columns = [
             Delete <span class="font-semibold text-zinc-900 dark:text-white">{{ pendingDelete?.name }}</span>
             ({{ pendingDelete?.email }})? Their login, supervision links, API keys{{ pendingDelete?.kind === 'ai' ? ', and AI extension' : '' }} are removed permanently.
           </p>
-          <div class="flex justify-end gap-2">
-            <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingDelete = null" />
-            <UButton icon="i-lucide-trash-2" color="error" label="Delete" :loading="busy" @click="remove" />
-          </div>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingDelete = null" />
+          <UButton icon="i-lucide-trash-2" color="error" label="Delete" :loading="busy" @click="remove" />
         </div>
       </template>
     </UModal>

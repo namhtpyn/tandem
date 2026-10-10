@@ -206,7 +206,7 @@ async function savePasswordPolicy() {
     <!-- OIDC provider editor modal -->
     <UModal :open="editorOpen" :title="editingId ? 'Edit provider' : 'Add OIDC provider'" description="Register the redirect URL shown after saving in your OIDC provider" @update:open="(v: boolean) => editorOpen = v">
       <template #body>
-        <UForm :state="form" class="space-y-4" @submit="saveProvider">
+        <UForm id="oidc-editor-form" :state="form" class="space-y-4" @submit="saveProvider">
           <UFormField name="label" label="Name" required help="Shown on the login button">
             <UInput v-model="form.label" icon="i-lucide-tag" class="w-full" placeholder="Display name" />
           </UFormField>
@@ -219,11 +219,13 @@ async function savePasswordPolicy() {
           <UFormField name="secret" :label="editingId ? 'Client secret (blank = keep stored)' : 'Client secret'" :required="!editingId">
             <UInput v-model="form.clientSecret" type="password" icon="i-lucide-key-round" class="w-full" placeholder="Client secret" />
           </UFormField>
-          <div class="flex justify-end gap-2">
-            <UButton type="button" variant="ghost" color="neutral" label="Cancel" @click="editorOpen = false" />
-            <UButton type="submit" icon="i-lucide-plus" :loading="busy" :label="editingId ? 'Save changes' : 'Add provider'" />
-          </div>
         </UForm>
+      </template>
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton type="button" variant="ghost" color="neutral" label="Cancel" :disabled="busy" @click="editorOpen = false" />
+          <UButton type="submit" icon="i-lucide-plus" :loading="busy" :label="editingId ? 'Save changes' : 'Add provider'" form="oidc-editor-form" />
+        </div>
       </template>
     </UModal>
 

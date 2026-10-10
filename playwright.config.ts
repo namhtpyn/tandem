@@ -1,6 +1,8 @@
 import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
+  // 4 workers starve the app server under load (random login/fill timeouts); 2 is the sweet spot locally
+  workers: process.env.CI ? 2 : 2,
   testDir: './e2e',
   timeout: 60_000,
   fullyParallel: false, // shared DB — serial by file
