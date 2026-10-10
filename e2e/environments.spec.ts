@@ -28,20 +28,20 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
   await expect(page.getByText(/already exists/i)).toBeVisible()
   await page.getByRole('button', { name: 'Cancel' }).click()
 
-  // edit host
-  await page.getByRole('button', { name: 'Edit environment' }).click()
+  // edit host (scoped to this row — leftover rows from other specs exist)
+  const row = page.locator('tr', { hasText: rowName })
+  await row.getByRole('button', { name: 'Edit environment' }).click()
   await page.getByPlaceholder('192.168.3.108').fill('10.9.8.7')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByText(/tandem@10\.9\.8\.7:22/).first()).toBeVisible({ timeout: 15_000 })
 
-  // probe (refused port -> failed badge with detail)
-  await page.getByRole('button', { name: 'Edit environment' }).isVisible().catch(() => {})
-  await page.getByRole('button', { name: 'Test connection' }).click()
+  // probe (refused port -> failed badge with detail), scoped to the row
+  await row.getByRole('button', { name: 'Test connection' }).click()
   await expect(page.getByText('failed').first()).toBeVisible({ timeout: 20_000 })
 
   // delete (scoped to this row)
   await page.locator('tr', { hasText: rowName }).getByRole('button', { name: 'Delete environment' }).click()
-  await expect(page.getByText('No environments yet')).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText(rowName)).toHaveCount(0, { timeout: 15_000 })
 })
 
 test('live table updates from another tab via SSE', async ({ context, page }) => {

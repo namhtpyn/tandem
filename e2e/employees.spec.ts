@@ -84,6 +84,16 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
     await page.waitForTimeout(300)
   }
   await expect(page.getByText('No keys.')).toBeVisible({ timeout: 15_000 })
+
+  // teardown: delete the bot, then its environment (leftover env rows break
+  // other suites' unscoped selectors; keep the DB tidy)
+  await page.keyboard.press('Escape')
+  await page.getByRole('link', { name: /Employees/ }).first().click()
+  await page.locator('tr', { hasText: name }).getByRole('button', { name: 'Delete employee' }).click()
+  await expect(page.getByText(name)).toHaveCount(0, { timeout: 15_000 })
+  await page.getByRole('link', { name: /Environments/ }).first().click()
+  await page.locator('tr', { hasText: envName }).getByRole('button', { name: 'Delete environment' }).click()
+  await expect(page.getByText(envName)).toHaveCount(0, { timeout: 15_000 })
 })
 
 test('supervision: assign supervisors on create, reflected live', async ({ page }) => {
