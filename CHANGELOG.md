@@ -1,3 +1,10 @@
+# [1.13.0](https://github.com/namhtpyn/tandem/compare/v1.12.0...v1.13.0) (2026-10-10)
+
+
+### Features
+
+* **providers:** model provider registry + models catalog + agent model access ([66dd4fb](https://github.com/namhtpyn/tandem/commit/66dd4fbbdbe166db0784a2025835bd770e3b07cf))
+
 # [1.12.0](https://github.com/namhtpyn/tandem/compare/v1.11.0...v1.12.0) (2026-10-10)
 
 
