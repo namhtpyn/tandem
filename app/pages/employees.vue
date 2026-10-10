@@ -35,6 +35,8 @@ const form = reactive({
   supervisorIds: [] as string[],
   environmentId: '' as string,
   instructions: '',
+  harness: 'hermes' as 'hermes',
+  executable: '',
 })
 const busy = ref(false)
 const message = ref('')
@@ -78,6 +80,8 @@ function openEditor(row?: EmployeeRow) {
   form.supervisorIds = row?.supervisorIds ? [...row.supervisorIds] : []
   form.environmentId = row?.environmentId ?? ''
   form.instructions = row?.instructions ?? ''
+  form.harness = (row?.harness as 'hermes') ?? 'hermes'
+  form.executable = row?.executable && row.executable !== 'hermes' ? row.executable : ''
   message.value = ''
   mintedKey.value = ''
   editorOpen.value = true
@@ -95,6 +99,8 @@ async function save() {
         supervisorIds: form.supervisorIds,
         ...(showAiFields.value && form.environmentId ? { environmentId: form.environmentId } : {}),
         ...(showAiFields.value ? { instructions: form.instructions } : {}),
+        ...(showAiFields.value ? { harness: form.harness } : {}),
+        ...(showAiFields.value && form.executable.trim() ? { executable: form.executable.trim() } : {}),
       })
     }
     else {
@@ -104,7 +110,12 @@ async function save() {
         kind: form.kind,
         title: form.title,
         supervisorIds: form.supervisorIds,
-        ...(form.kind === 'ai' ? { environmentId: form.environmentId, instructions: form.instructions } : {}),
+        ...(form.kind === 'ai' ? {
+          environmentId: form.environmentId,
+          instructions: form.instructions,
+          harness: form.harness,
+          ...(form.executable.trim() ? { executable: form.executable.trim() } : {}),
+        } : {}),
       })
       // the API key returns ONCE — surface it before the modal closes
       if (res?.apiKey) mintedKey.value = res.apiKey as string
@@ -368,6 +379,25 @@ const columns = [
                 :items="environmentItems"
                 value-key="value"
                 placeholder="Select an environment"
+                class="w-full"
+              />
+            </UFormField>
+            <UFormField label="Harness" name="harness">
+              <template #hint><FormHint text="Agent harness that runs this employee" /></template>
+              <USelectMenu
+                v-model="form.harness"
+                :items="[{ label: 'Hermes agents', value: 'hermes' }]"
+                value-key="value"
+                placeholder="Select a harness"
+                class="w-full"
+              />
+            </UFormField>
+            <UFormField label="Executable" name="executable">
+              <template #hint><FormHint text="Executable name on the environment if not the default 'hermes'" /></template>
+              <UInput
+                v-model="form.executable"
+                icon="i-lucide-terminal"
+                placeholder="hermes (default)"
                 class="w-full"
               />
             </UFormField>

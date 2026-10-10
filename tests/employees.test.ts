@@ -372,3 +372,64 @@ describe('employees API keys', () => {
     await expect(callProc('employees.revokeApiKey', { keyId: 'ghost' })).rejects.toThrow(/not found/i)
   })
 })
+
+describe('AI harness + executable', () => {
+  it('defaults harness hermes / executable hermes when omitted', async () => {
+    await seedEnv('env-h1')
+    const r = await callProc('employees.create', { name: 'Default Harness', email: 'dh@tandem.local', kind: 'ai', title: 'T', environmentId: 'env-h1' })
+    const iter = await callProc('employees.live')
+    const snap = await iter.next()
+    await iter.return?.()
+    const row = (snap.value as any[]).find(x => x.id === r.id)!
+    expect(row.harness).toBe('hermes')
+    expect(row.executable).toBe('hermes')
+  })
+
+  it('persists custom executable (trimmed) via create and update', async () => {
+    await seedEnv('env-h2')
+    const r = await callProc('employees.create', { name: 'Custom Exe', email: 'ce@tandem.local', kind: 'ai', title: 'T', environmentId: 'env-h2', executable: '  hermes-dev  ' })
+    const { aiEmployees, user } = await schema()
+    const { db } = await dbm()
+    let ai = (await db.select().from(aiEmployees).where(eq(aiEmployees.userId, r.id)))[0]!
+    expect(ai.executable).toBe('hermes-dev')
+    expect(ai.harness).toBe('hermes')
+    await callProc('employees.update', { id: r.id, name: 'Custom Exe', title: 'T', supervisorIds: [], executable: 'hermes-nightly' })
+    ai = (await db.select().from(aiEmployees).where(eq(aiEmployees.userId, r.id)))[0]!
+    expect(ai.executable).toBe('hermes-nightly')
+    // blank resets to default
+    await callProc('employees.update', { id: r.id, name: 'Custom Exe', title: 'T', supervisorIds: [], executable: '' })
+    ai = (await db.select().from(aiEmployees).where(eq(aiEmployees.userId, r.id)))[0]!
+    expect(ai.executable).toBe('hermes')
+  })
+
+  it('update harness change persists', async () => {
+    await seedEnv('env-h4')
+    const r = await callProc('employees.create', { name: 'Upd Harness', email: 'uh@tandem.local', kind: 'ai', title: 'T', environmentId: 'env-h4' })
+    await callProc('employees.update', { id: r.id, name: 'Upd Harness', title: 'T', supervisorIds: [], harness: 'hermes' })
+    const iter = await callProc('employees.live')
+    const snap = await iter.next()
+    await iter.return?.()
+    const row = (snap.value as any[]).find(x => x.id === r.id)!
+    expect(row.harness).toBe('hermes')
+  })
+
+  it('human create rejects harness/executable', async () => {
+    await expect(callProc('employees.create', { name: 'No Harness', email: 'nh@tandem.local', kind: 'human', title: 'T', supervisorIds: [], harness: 'hermes', executable: 'x' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
+  it('live maps harness/executable for AI rows, null for humans', async () => {
+    await seedEnv('env-h3')
+    const r = await callProc('employees.create', { name: 'Map Bot', email: 'mb@tandem.local', kind: 'ai', title: 'T', environmentId: 'env-h3', executable: 'hdev' })
+    await callProc('employees.create', { name: 'Map Human', email: 'mh@tandem.local', kind: 'human', title: 'T', supervisorIds: [] })
+    const iter = await callProc('employees.live')
+    const snap = await iter.next()
+    await iter.return?.()
+    const rows = snap.value as any[]
+    const ai = rows.find(x => x.id === r.id)!
+    const hu = rows.find(x => x.kind === 'human')!
+    expect(ai.harness).toBe('hermes')
+    expect(ai.executable).toBe('hdev')
+    expect(hu.harness).toBeNull()
+    expect(hu.executable).toBeNull()
+  })
+})

@@ -161,6 +161,10 @@ export const aiEmployees = pgTable('tandem_ai_employees', {
   userId: text('user_id').primaryKey().references(() => user.id, { onDelete: 'cascade' }),
   environmentId: text('environment_id').notNull().references(() => environments.id, { onDelete: 'restrict' }),
   instructions: text('instructions').notNull().default(''),
+  // agent harness: 'hermes' (only one today; more later)
+  harness: text('harness').notNull().default('hermes'),
+  // executable name used on the environment when dispatching (default 'hermes')
+  executable: text('executable').notNull().default('hermes'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })

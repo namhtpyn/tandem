@@ -25,6 +25,10 @@ export interface EmployeeRow {
   environmentId: string | null
   /** ai only */
   instructions: string | null
+  /** ai only — agent harness driving this employee ('hermes' today) */
+  harness: string | null
+  /** ai only — executable name on the environment when dispatching (default 'hermes') */
+  executable: string | null
   createdAt: string
   updatedAt: string
 }

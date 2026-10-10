@@ -208,6 +208,8 @@ export const router = os.router({
           title: r.title,
           supervisorIds: sups.get(r.id) ?? [],
           environmentId: ai?.environmentId ?? null,
+          harness: ai?.harness ?? null,
+          executable: ai?.executable ?? null,
           instructions: ai?.instructions ?? null,
           createdAt: r.createdAt.toISOString(),
           updatedAt: r.updatedAt.toISOString(),
@@ -226,14 +228,16 @@ export const router = os.router({
         supervisorIds: z.array(z.string().min(1)).max(20).default([]),
         environmentId: z.string().min(1).optional(),
         instructions: z.string().max(10_000).optional(),
+        harness: z.enum(['hermes']).optional(),
+        executable: z.string().min(1).max(60).optional(),
       }))
       .handler(async ({ input, context }) => {
         // AI employees REQUIRE an environment
         if (input.kind === 'ai' && !input.environmentId) {
           throw new ORPCError('BAD_REQUEST', { message: 'AI employees need an environment' })
         }
-        if (input.kind === 'human' && (input.environmentId !== undefined || input.instructions !== undefined)) {
-          throw new ORPCError('BAD_REQUEST', { message: 'environment/instructions apply to AI employees only' })
+        if (input.kind === 'human' && (input.environmentId !== undefined || input.instructions !== undefined || input.harness !== undefined || input.executable !== undefined)) {
+          throw new ORPCError('BAD_REQUEST', { message: 'environment/instructions/harness/executable apply to AI employees only' })
         }
         // supervisors must exist and not include a duplicate (default fills [])
         const supervisorIds = input.supervisorIds ?? []
@@ -270,7 +274,13 @@ export const router = os.router({
         }
         let apiKey: string | undefined
         if (input.kind === 'ai') {
-          await db.insert(aiEmployeesTable).values({ userId, environmentId: input.environmentId!, instructions: input.instructions ?? '' })
+          await db.insert(aiEmployeesTable).values({
+            userId,
+            environmentId: input.environmentId!,
+            instructions: input.instructions ?? '',
+            harness: input.harness ?? 'hermes',
+            executable: input.executable?.trim() || 'hermes',
+          })
           const { getAuth } = await import('./auth')
           const auth = await getAuth()
           const created = await auth.api.createApiKey({ body: { name: `${input.name.slice(0, 40)} ai-key`, userId, prefix: 'tandem_' } })
@@ -288,6 +298,8 @@ export const router = os.router({
         supervisorIds: z.array(z.string().min(1)).max(20),
         environmentId: z.string().min(1).nullable().optional(),
         instructions: z.string().max(10_000).nullable().optional(),
+        harness: z.enum(['hermes']).optional(),
+        executable: z.string().min(1).max(60).nullable().optional(),
       }))
       .handler(async ({ input }) => {
         const rows = await db.select().from(userTable).where(eq(userTable.id, input.id))
@@ -330,8 +342,8 @@ export const router = os.router({
           stack.push(...(graph.get(cur) ?? []))
         }
         // AI fields — only when this employee IS an AI (extension row exists)
-        if (aiRow && (input.environmentId !== undefined || input.instructions !== undefined)) {
-          const patch: { environmentId?: string, instructions?: string, updatedAt: Date } = { updatedAt: new Date() }
+        if (aiRow && (input.environmentId !== undefined || input.instructions !== undefined || input.harness !== undefined || input.executable !== undefined)) {
+          const patch: { environmentId?: string, instructions?: string, harness?: string, executable?: string, updatedAt: Date } = { updatedAt: new Date() }
           if (input.environmentId !== undefined && input.environmentId !== null) {
             const env = await db.select({ id: environmentsTable.id }).from(environmentsTable).where(eq(environmentsTable.id, input.environmentId))
             if (env.length === 0) {
@@ -341,6 +353,12 @@ export const router = os.router({
           }
           if (input.instructions !== undefined && input.instructions !== null) {
             patch.instructions = input.instructions
+          }
+          if (input.harness !== undefined) {
+            patch.harness = input.harness
+          }
+          if (input.executable !== undefined && input.executable !== null) {
+            patch.executable = input.executable.trim() || 'hermes'
           }
           await db.update(aiEmployeesTable).set(patch).where(eq(aiEmployeesTable.userId, aiRow.userId))
         }
