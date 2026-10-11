@@ -1,3 +1,10 @@
+## [2.7.1](https://github.com/namhtpyn/tandem/compare/v2.7.0...v2.7.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **tests:** vitest resolve alias for the #shared nuxt alias ([1a52937](https://github.com/namhtpyn/tandem/commit/1a52937503a6e5fffc94bf70e85f2d6852dd4349))
+
 # [2.7.0](https://github.com/namhtpyn/tandem/compare/v2.6.0...v2.7.0) (2026-10-11)
 
 
