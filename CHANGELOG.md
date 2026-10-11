@@ -1,3 +1,10 @@
+# [2.6.0](https://github.com/namhtpyn/tandem/compare/v2.5.1...v2.6.0) (2026-10-11)
+
+
+### Features
+
+* **providers:** decision provider kind powers Jev auto-assignment ([21ea881](https://github.com/namhtpyn/tandem/commit/21ea8817f2f02f4ee51a6bb0e1a1f04a887e9850))
+
 ## [2.5.1](https://github.com/namhtpyn/tandem/compare/v2.5.0...v2.5.1) (2026-10-11)
 
 
