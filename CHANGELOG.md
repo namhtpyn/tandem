@@ -1,3 +1,10 @@
+## [1.13.1](https://github.com/namhtpyn/tandem/compare/v1.13.0...v1.13.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **settings:** model providers mobile layout — stacked cards instead of table ([e6942c6](https://github.com/namhtpyn/tandem/commit/e6942c67dda720f164816bded0ae0f265317d1ca))
+
 # [1.13.0](https://github.com/namhtpyn/tandem/compare/v1.12.0...v1.13.0) (2026-10-10)
 
 
