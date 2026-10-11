@@ -1,3 +1,10 @@
+# [1.14.0](https://github.com/namhtpyn/tandem/compare/v1.13.3...v1.14.0) (2026-10-11)
+
+
+### Features
+
+* **providers:** sync models using a vault secret (keySecretId) ([c052869](https://github.com/namhtpyn/tandem/commit/c0528694d42355a521dc57af9cd681ea14ff53cc))
+
 ## [1.13.3](https://github.com/namhtpyn/tandem/compare/v1.13.2...v1.13.3) (2026-10-11)
 
 
