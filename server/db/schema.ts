@@ -204,11 +204,30 @@ export const projects = pgTable('tandem_projects', {
 ])
 
 
+// Custom task statuses — workspace-defined workflow states with allowed
+// transitions (nextIds). Seeded with todo/doing/done; tasks keep a text
+// status referencing taskStatuses.id (no hard FK: deleting a status moves
+// its tasks back to the first status).
+export const taskStatuses = pgTable('tandem_task_statuses', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  /** tailwind badge color: neutral | primary | success | warning | error | info */
+  color: text('color').notNull().default('neutral'),
+  /** 0-based board column order */
+  position: integer('position').notNull().default(0),
+  /** terminal state — completed work */
+  isDone: boolean('is_done').notNull().default(false),
+  /** allowed transitions: array of status ids */
+  nextIds: text('next_ids').array().notNull().default(sql`'{}'::text[]`),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
 export const tasks = pgTable('tandem_tasks', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   description: text('description').notNull().default(''),
-  // todo | doing | done
+  // references tandem_task_statuses.id (seeded: todo/doing/done)
   status: text('status').notNull().default('todo'),
   projectId: text('project_id').references(() => projects.id, { onDelete: 'set null' }),
   assigneeId: text('assignee_id').references(() => user.id, { onDelete: 'set null' }),
@@ -224,7 +243,7 @@ export const tasks = pgTable('tandem_tasks', {
 // ---------- relations ----------
 
 export const relations = defineRelations(
-  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, tasks, modelProviders, projects },
+  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, tasks, taskStatuses, modelProviders, projects },
   (helpers) => ({
     user: {
       sessions: helpers.many.session({ from: helpers.user.id, to: helpers.session.userId }),

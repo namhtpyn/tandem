@@ -15,6 +15,47 @@ const envQuery = useQuery(($orpc as any).environments.live.liveOptions())
 const environments = computed<EnvironmentRow[]>(() => (unref(envQuery.data) ?? []) as EnvironmentRow[])
 
 const byId = computed(() => new Map(rows.value.map(r => [r.id, r])))
+
+// ---- graph (hierarchy) view ----
+const view = ref<'list' | 'graph'>('list')
+/** children map: supervisorId -> direct reports (in row order) */
+const childrenOf = computed(() => {
+  const m = new Map<string, EmployeeRow[]>()
+  for (const r of rows.value) {
+    for (const sup of r.supervisorIds) {
+      const arr = m.get(sup) ?? []
+      arr.push(r)
+      m.set(sup, arr)
+    }
+  }
+  return m
+})
+/** roots = employees with no supervisor (or supervisor missing) */
+const roots = computed(() => rows.value.filter(r => r.supervisorIds.length === 0 || r.supervisorIds.every(id => !byId.value.has(id))))
+/** ordered node list for layout: DFS from roots */
+const graphNodes = computed(() => {
+  const out: Array<{ row: EmployeeRow, depth: number, parentIndex: number }> = []
+  const indexById = new Map<string, number>()
+  const seen = new Set<string>()
+  const walk = (row: EmployeeRow, depth: number, parentIndex: number) => {
+    if (seen.has(row.id)) return
+    seen.add(row.id)
+    indexById.set(row.id, out.length)
+    out.push({ row, depth, parentIndex })
+    for (const child of childrenOf.value.get(row.id) ?? []) walk(child, depth + 1, indexById.get(row.id)!)
+  }
+  for (const r of roots.value) walk(r, 0, -1)
+  // orphans not reachable from roots (cycles — server guards them, belt and braces)
+  for (const r of rows.value) if (!seen.has(r.id)) walk(r, 0, -1)
+  return out
+})
+function nodeY(i: number) {
+  return i * (NODE_H + ROW_GAP) + ROW_GAP / 2 - 12
+}
+const NODE_H = 56
+const ROW_GAP = 24
+const graphHeight = computed(() => graphNodes.value.length * (NODE_H + ROW_GAP) + ROW_GAP)
+const maxDepthX = computed(() => Math.max(0, ...graphNodes.value.map(n => n.depth)) * 28)
 const envName = (id: string | null) => environments.value.find(e => e.id === id)?.name ?? null
 
 const createMutation = useMutation<any, any, any>(($orpc as any).employees.create.mutationOptions())
@@ -297,13 +338,31 @@ const columns = [
       <div>
                 <p class="text-sm text-zinc-500">Humans and AI agents, one hierarchy — every employee is a login</p>
       </div>
-      <UButton icon="i-lucide-plus" label="New employee" @click="openEditor()" />
+      <div class="flex items-center gap-2">
+        <div class="inline-flex overflow-hidden rounded-md border border-zinc-300 dark:border-zinc-700" role="group" aria-label="View">
+          <button
+            type="button"
+            class="px-3 py-1.5 text-sm font-medium transition-colors"
+            :class="view === 'list' ? 'bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400' : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'"
+            aria-label="List view"
+            @click="view = 'list'"
+          >List</button>
+          <button
+            type="button"
+            class="border-l border-zinc-300 px-3 py-1.5 text-sm font-medium transition-colors dark:border-zinc-700"
+            :class="view === 'graph' ? 'bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400' : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'"
+            aria-label="Graph view"
+            @click="view = 'graph'"
+          >Graph</button>
+        </div>
+        <UButton icon="i-lucide-plus" label="New employee" @click="openEditor()" />
+      </div>
     </div>
 
     <p v-if="message && !editorOpen" class="text-sm text-error">{{ message }}</p>
 
-    <!-- Mobile: stacked cards -->
-    <div v-if="rows.length" class="space-y-3 md:hidden">
+    <!-- Mobile: stacked cards (list view) -->
+    <div v-if="rows.length && view === 'list'" class="space-y-3 md:hidden">
       <UCard v-for="row in rows" :key="row.id" :ui="{ root: 'shadow-sm' }">
         <div class="flex items-start justify-between gap-2">
           <div class="min-w-0">
@@ -350,7 +409,7 @@ const columns = [
     </div>
 
     <!-- Desktop: table -->
-    <UCard v-if="rows.length" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
+    <UCard v-if="rows.length && view === 'list'" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
       <UTable :data="rows" :columns="columns">
         <template #name-cell="{ row }">
           <div class="flex items-center gap-2">
@@ -413,11 +472,40 @@ const columns = [
             </UTable>
     </UCard>
 
-    <UCard v-else :ui="{ root: 'shadow-sm' }">
+    <UCard v-else-if="view === 'list'" :ui="{ root: 'shadow-sm' }">
       <div class="flex flex-col items-center gap-2 py-8 text-center">
         <UIcon name="i-lucide-users" class="size-8 text-zinc-300" />
         <p class="text-sm text-zinc-500">No employees yet — add the first human or AI teammate.</p>
         <UButton icon="i-lucide-plus" size="sm" label="New employee" @click="openEditor()" />
+      </div>
+    </UCard>
+
+    <!-- graph view: supervision hierarchy -->
+    <UCard v-if="view === 'graph'" :ui="{ root: 'shadow-sm', body: 'p-0 sm:p-0' }">
+      <div v-if="!rows.length" class="flex flex-col items-center gap-2 py-10 text-center">
+        <UIcon name="i-lucide-users" class="size-8 text-zinc-300" />
+        <p class="text-sm text-zinc-500">No employees yet.</p>
+      </div>
+      <div v-else class="overflow-x-auto p-4">
+        <svg :width="Math.max(360, maxDepthX + 290)" :height="graphHeight" role="img" aria-label="Supervision hierarchy">
+          <template v-for="(n, i) in graphNodes" :key="n.row.id">
+            <path
+              v-if="n.parentIndex >= 0"
+              :d="`M ${(n.depth - 1) * 28 + 24} ${nodeY(n.parentIndex) + NODE_H} V ${nodeY(i) + NODE_H / 2} H ${n.depth * 28}`"
+              fill="none"
+              class="stroke-zinc-300 dark:stroke-zinc-700"
+              stroke-width="1.5"
+            />
+            <g :transform="`translate(${n.depth * 28}, ${nodeY(i)})`">
+              <rect width="248" :height="NODE_H" rx="10" class="fill-white stroke-zinc-200 dark:fill-zinc-900 dark:stroke-zinc-700" stroke-width="1.5" />
+              <circle cx="24" :cy="NODE_H / 2" r="14" :class="n.row.kind === 'ai' ? 'fill-primary-100 stroke-primary-400 dark:fill-primary-500/20' : 'fill-zinc-100 stroke-zinc-300 dark:fill-zinc-800'" stroke-width="1.5" />
+              <text x="24" :y="NODE_H / 2 + 4" text-anchor="middle" class="fill-zinc-600 text-[11px] font-semibold dark:fill-zinc-300">{{ n.row.kind === 'ai' ? 'AI' : n.row.name.slice(0, 1) }}</text>
+              <text x="48" y="24" class="fill-zinc-900 text-[13px] font-medium dark:fill-white">{{ n.row.name.length > 24 ? n.row.name.slice(0, 24) + '…' : n.row.name }}</text>
+              <text x="48" :y="NODE_H - 14" class="fill-zinc-400 text-[11px]">{{ (n.row.title || n.row.email).slice(0, 28) }}</text>
+              <circle v-if="childrenOf.get(n.row.id)?.length" cx="240" :cy="NODE_H / 2" r="4" class="fill-zinc-300" />
+            </g>
+          </template>
+        </svg>
       </div>
     </UCard>
 

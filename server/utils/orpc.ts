@@ -7,7 +7,7 @@ import { ORPCError, os } from '@orpc/server'
 import type { RequestHeadersHandlerPluginContext } from '@orpc/server/plugins'
 import { db } from '../db'
 import { projects as projectsTable,
-  aiEmployees as aiEmployeesTable, apikey as apikeyTable, employeeSupervisors as supervisorsTable, environments as environmentsTable, modelProviders as modelProvidersTable, tasks as tasksTable, user as userTable, vaultSecrets as vaultSecretsTable, vaultAudit as vaultAuditTable } from '../db/schema'
+  aiEmployees as aiEmployeesTable, apikey as apikeyTable, employeeSupervisors as supervisorsTable, environments as environmentsTable, modelProviders as modelProvidersTable, tasks as tasksTable, taskStatuses as taskStatusesTable, user as userTable, vaultSecrets as vaultSecretsTable, vaultAudit as vaultAuditTable } from '../db/schema'
 import { environmentInput } from './environments'
 import { probeSsh } from './ssh-probe'
 import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from './change-bus'
@@ -403,6 +403,68 @@ export const router = os.router({
       }),
   },
 
+  statuses: {
+    /** live task-status list (ordered) */
+    live: protectedProcedure.handler(() => liveGenerator(['statuses'], async () => {
+      const rows = await db.select().from(taskStatusesTable).orderBy(asc(taskStatusesTable.position))
+      return rows.map(r => ({
+        id: r.id,
+        name: r.name,
+        color: r.color,
+        position: r.position,
+        isDone: r.isDone,
+        nextIds: r.nextIds,
+      }))
+    })),
+
+    /** create or update a status (upsert by id) */
+    save: protectedProcedure
+      .input(z.strictObject({
+        id: z.string().min(1).max(64).optional(),
+        name: z.string().min(1).max(64),
+        color: z.enum(['neutral', 'primary', 'success', 'warning', 'error', 'info']).default('neutral'),
+        position: z.number().int().min(0).max(99),
+        isDone: z.boolean().default(false),
+        nextIds: z.array(z.string().min(1).max(64)).max(50).default([]),
+      }))
+      .handler(async ({ input }) => {
+        const id = input.id?.trim() || crypto.randomUUID()
+        if (id === 'new') throw new ORPCError('BAD_REQUEST', { message: 'reserved status id' })
+        // transitions must reference existing statuses (self ok)
+        const all = await db.select({ id: taskStatusesTable.id }).from(taskStatusesTable)
+        const ids = new Set([...all.map(a => a.id), id])
+        for (const n of input.nextIds) {
+          if (!ids.has(n)) throw new ORPCError('BAD_REQUEST', { message: `unknown status in transitions: ${n}` })
+        }
+        const now = new Date()
+        const values = {
+          id,
+          name: input.name,
+          color: input.color,
+          position: input.position,
+          isDone: input.isDone,
+          nextIds: input.nextIds,
+          updatedAt: now,
+        }
+        await db.insert(taskStatusesTable).values(values)
+          .onConflictDoUpdate({ target: taskStatusesTable.id, set: { name: values.name, color: values.color, position: values.position, isDone: values.isDone, nextIds: values.nextIds, updatedAt: now } })
+        await publishChange('statuses', 'update')
+        return { id }
+      }),
+
+    /** delete a status: blocked while in use; deletes nothing else */
+    remove: protectedProcedure
+      .input(z.strictObject({ id: z.string().min(1) }))
+      .handler(async ({ input }) => {
+        const inUse = await db.select({ id: tasksTable.id }).from(tasksTable).where(eq(tasksTable.status, input.id))
+        if (inUse.length > 0) throw new ORPCError('BAD_REQUEST', { message: `status is used by ${inUse.length} task(s)` })
+        const del = await db.delete(taskStatusesTable).where(eq(taskStatusesTable.id, input.id)).returning({ id: taskStatusesTable.id })
+        if (del.length === 0) throw new ORPCError('NOT_FOUND', { message: 'status not found' })
+        await publishChange('statuses', 'update')
+        return { ok: true }
+      }),
+  },
+
   tasks: {
     /** live list — tasks with assignee info, newest first */
     live: protectedProcedure.handler(() => liveGenerator(['tasks'], async (): Promise<TaskRow[]> => {
@@ -436,6 +498,7 @@ export const router = os.router({
         description: z.string().max(10_000).optional(),
         projectId: z.string().min(1).nullable().optional(),
         assigneeId: z.string().min(1).nullable().optional(),
+        status: z.string().min(1).max(64).optional(),
       }))
       .handler(async ({ input, context }) => {
         if (input.assigneeId) {
@@ -446,13 +509,21 @@ export const router = os.router({
           const p = await db.select({ id: projectsTable.id }).from(projectsTable).where(eq(projectsTable.id, input.projectId))
           if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'project does not exist' })
         }
+        const statusRows = await db.select().from(taskStatusesTable).orderBy(asc(taskStatusesTable.position))
+        if (statusRows.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'no task statuses defined' })
+        let status = statusRows[0]!.id
+        if (input.status) {
+          const found = statusRows.find(r => r.id === input.status)
+          if (!found) throw new ORPCError('BAD_REQUEST', { message: 'status does not exist' })
+          status = found.id
+        }
         const selfId = (context as { session?: { user?: { id?: string } } }).session?.user?.id ?? null
         const id = crypto.randomUUID()
         await db.insert(tasksTable).values({
           id,
           title: input.title,
           description: input.description ?? '',
-          status: 'todo',
+          status,
           projectId: input.projectId ?? null,
           assigneeId: input.assigneeId ?? null,
           createdBy: selfId,
@@ -467,7 +538,7 @@ export const router = os.router({
         id: z.string().min(1),
         title: z.string().min(1).max(200).optional(),
         description: z.string().max(10_000).nullable().optional(),
-        status: z.enum(['todo', 'doing', 'done']).optional(),
+        status: z.string().min(1).max(64).optional(),
         projectId: z.string().min(1).nullable().optional(),
         assigneeId: z.string().min(1).nullable().optional(),
       }))
@@ -481,6 +552,18 @@ export const router = os.router({
         if (input.projectId) {
           const p = await db.select({ id: projectsTable.id }).from(projectsTable).where(eq(projectsTable.id, input.projectId))
           if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'project does not exist' })
+        }
+        if (input.status !== undefined) {
+          const stRows = await db.select().from(taskStatusesTable).where(eq(taskStatusesTable.id, input.status))
+          const target = stRows[0]
+          if (!target) throw new ORPCError('BAD_REQUEST', { message: 'status does not exist' })
+          // enforce the workflow: target must be reachable from the current status
+          if (rows[0]!.status !== input.status) {
+            const cur = (await db.select().from(taskStatusesTable).where(eq(taskStatusesTable.id, rows[0]!.status)))[0]
+            if (cur && !cur.nextIds.includes(input.status)) {
+              throw new ORPCError('BAD_REQUEST', { message: `cannot move from '${cur.name}' to '${target.name}'` })
+            }
+          }
         }
         const patch: Record<string, unknown> = { updatedAt: new Date() }
         if (input.projectId !== undefined) patch.projectId = input.projectId

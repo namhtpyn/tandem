@@ -49,6 +49,15 @@ export interface ProjectRow {
   updatedAt: string
 }
 
+export interface TaskStatusRow {
+  id: string
+  name: string
+  color: string
+  position: number
+  isDone: boolean
+  nextIds: string[]
+}
+
 export interface TaskRow {
   id: string
   title: string
