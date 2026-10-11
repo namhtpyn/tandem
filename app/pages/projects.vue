@@ -120,7 +120,7 @@ const statusColor = (s: string) => (s === 'archived' ? 'neutral' : 'success')
 </script>
 
 <template>
-  <UDashboardPanel>
+  <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
     <template #body>
       <UDashboardNavbar title="Projects">
         <template #leading>

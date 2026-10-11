@@ -111,7 +111,7 @@ function statusColor(s: string) {
 </script>
 
 <template>
-  <UDashboardPanel>
+  <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
     <template #body>
       <UDashboardNavbar title="Tasks">
       <template #leading>
