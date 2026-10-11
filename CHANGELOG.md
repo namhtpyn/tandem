@@ -1,3 +1,10 @@
+## [1.13.3](https://github.com/namhtpyn/tandem/compare/v1.13.2...v1.13.3) (2026-10-11)
+
+
+### Bug Fixes
+
+* **providers:** fetchModels follows anthropic pagination (has_more + last_id, cap 10 pages) ([6d3aa3b](https://github.com/namhtpyn/tandem/commit/6d3aa3bb1d5e56aa958caa71c0143694009ab75b))
+
 ## [1.13.2](https://github.com/namhtpyn/tandem/compare/v1.13.1...v1.13.2) (2026-10-11)
 
 
