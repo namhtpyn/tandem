@@ -1,3 +1,10 @@
+# [2.7.0](https://github.com/namhtpyn/tandem/compare/v2.6.0...v2.7.0) (2026-10-11)
+
+
+### Features
+
+* **providers:** api styles as a const-object enum set per provider ([7abaea6](https://github.com/namhtpyn/tandem/commit/7abaea67e40077caa9fd0fbada97e2d539986f13))
+
 # [2.6.0](https://github.com/namhtpyn/tandem/compare/v2.5.1...v2.6.0) (2026-10-11)
 
 
