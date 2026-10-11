@@ -1,3 +1,10 @@
+# [1.15.0](https://github.com/namhtpyn/tandem/compare/v1.14.1...v1.15.0) (2026-10-11)
+
+
+### Features
+
+* **projects:** nestable projects + task linkage ([68f4bff](https://github.com/namhtpyn/tandem/commit/68f4bff9c9b9674c5c228cf94b43b034ee46f78f))
+
 ## [1.14.1](https://github.com/namhtpyn/tandem/compare/v1.14.0...v1.14.1) (2026-10-11)
 
 
