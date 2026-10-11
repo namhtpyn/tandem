@@ -2,7 +2,7 @@
 // Auth tables (tandem_user/session/account/verification/apikey) are GENERATED
 // by the better-auth CLI — regenerate with `bun run gen:auth`; never edit by
 // hand. Domain tables below are hand-owned.
-import { pgTable, text, timestamp, boolean, integer, index, primaryKey, check, type AnyPgColumn } from 'drizzle-orm/pg-core'
+import { pgTable, text, timestamp, boolean, integer, index, primaryKey, check, jsonb, type AnyPgColumn } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 import { defineRelations } from 'drizzle-orm'
 
@@ -161,11 +161,9 @@ export const modelProviders = pgTable('tandem_model_providers', {
   id: text('id').primaryKey(),
   label: text('label').notNull(),
   baseUrl: text('base_url').notNull(),
-  // 'openai' | 'anthropic'
-  apiStyle: text('api_style').notNull().default('openai'),
-  // 'llm' (chat/model backends for agents) | 'decision' (typed-choice endpoints like Jev)
-  kind: text('kind').notNull().default('llm'),
-  /** vault secret id with this provider's API key (decision providers; llm keys stay per-agent) */
+  /** set of API styles this endpoint speaks (see shared/api-styles.ts) */
+  apiStyles: jsonb('api_styles').notNull().default(sql`'["OPENAI-COMPLETIONS"]'::jsonb`),
+  /** vault secret id with this provider's API key (decision styles; llm keys stay per-agent) */
   keySecretId: text('key_secret_id'),
   extraHeaders: text('extra_headers'),
   notes: text('notes'),

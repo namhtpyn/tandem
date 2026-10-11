@@ -5,6 +5,7 @@ import { db } from '../db'
 import { vaultSecrets, modelProviders } from '../db/schema'
 import { eq } from 'drizzle-orm'
 import { decryptSecret } from './vault-crypto'
+import { providerKind, styleKind } from '#shared/api-styles'
 
 export interface JevAssignCandidate {
   id: string
@@ -23,12 +24,21 @@ export interface JevAssignResult {
   fallbackReason: string | null
 }
 
-/** The configured decision provider (first kind='decision' row, e.g. seed-jev). */
-export async function getDecisionProvider(): Promise<{ id: string, label: string, baseUrl: string, keySecretId: string | null } | null> {
-  const rows = await db.select().from(modelProviders).where(eq(modelProviders.kind, 'decision'))
-  const p = rows[0]
+/** Normalized pick returned by every decision adapter. */
+export interface DecisionPick {
+  employeeId: string | null
+  confidence: number
+  probabilities: Record<string, number>
+  model: string
+  fallbackReason: string | null
+}
+
+/** The configured decision provider: first row carrying a DECISION api style. */
+export async function getDecisionProvider(): Promise<{ id: string, label: string, baseUrl: string, apiStyles: string[], keySecretId: string | null } | null> {
+  const rows = await db.select().from(modelProviders)
+  const p = rows.find(r => (r.apiStyles as string[]).some(st => styleKind(st) === providerKind.DECISION))
   if (!p) return null
-  return { id: p.id, label: p.label, baseUrl: p.baseUrl, keySecretId: p.keySecretId }
+  return { id: p.id, label: p.label, baseUrl: p.baseUrl, apiStyles: p.apiStyles as string[], keySecretId: p.keySecretId }
 }
 
 /** Ask Jev which employee should take the task. Returns null employeeId on any failure/low confidence. */

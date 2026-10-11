@@ -54,6 +54,19 @@ export async function setup({ provide }: GlobalSetupContext): Promise<void> {
     const url = process.env.TANDEM_TEST_DATABASE_URL
       || 'postgresql://tandem:tandem@127.0.0.1:5432/tandem_test'
     process.env.TANDEM_TEST_DATABASE_URL = url
+// Sweep orphaned per-file test databases from a previous crashed run
+// (drop-timeout leftovers). Best effort — never blocks the run.
+try {
+  const url = new URL(process.env.TANDEM_TEST_DATABASE_URL || 'postgresql://tandem:tandem@127.0.0.1:55432/tandem_test')
+  const admin = (await import('postgres')).default(url.href, { max: 1 })
+  const rows = await admin.unsafe<{ datname: string }>("select datname from pg_database where datname like 't\\_%' escape '\\' and pg_get_userbyid(datdba) = current_user")
+  for (const r of rows) {
+    await admin.unsafe(`drop database if exists "${r.datname}" with (force)`)
+  }
+  await admin.end()
+}
+catch { /* best effort */ }
+
     provide('testDatabaseUrl', url)
     return
   }

@@ -9,6 +9,7 @@ import { db } from '../db'
 import { projects as projectsTable,
   aiEmployees as aiEmployeesTable, apikey as apikeyTable, employeeSupervisors as supervisorsTable, environments as environmentsTable, modelProviders as modelProvidersTable, tasks as tasksTable, taskStatuses as taskStatusesTable, user as userTable, vaultSecrets as vaultSecretsTable, vaultAudit as vaultAuditTable } from '../db/schema'
 import { environmentInput } from './environments'
+import { allApiStyles, styleKind, isAnthropicWire } from '#shared/api-styles'
 import { probeSsh } from './ssh-probe'
 import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from './change-bus'
 import { decryptSecret, encryptSecret, lastFourHint } from './vault-crypto'
@@ -215,8 +216,7 @@ export const router = os.router({
         id: z.string().min(1).max(64).optional(),
         label: z.string().min(1).max(64),
         baseUrl: z.string().url(),
-        apiStyle: z.enum(['openai', 'anthropic']),
-        kind: z.enum(['llm', 'decision']).default('llm'),
+        apiStyles: z.array(z.enum(allApiStyles)).min(1),
         keySecretId: z.string().min(1).nullable().optional(),
         extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
         notes: z.string().max(500).optional(),
@@ -224,6 +224,10 @@ export const router = os.router({
       .handler(async ({ input }) => {
         const { modelProviderInputSchema } = await import('./model-providers')
         modelProviderInputSchema.parse(input)
+        const hasDecision = input.apiStyles.some(s => styleKind(s) === 'DECISION')
+        if (hasDecision && !input.keySecretId) {
+          throw new ORPCError('BAD_REQUEST', { message: 'decision styles need a vault key (keySecretId)' })
+        }
         if (input.keySecretId) {
           const sec = await db.select({ id: vaultSecretsTable.id }).from(vaultSecretsTable).where(eq(vaultSecretsTable.id, input.keySecretId))
           if (sec.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'key secret not found' })
@@ -237,15 +241,14 @@ export const router = os.router({
           id,
           label: input.label,
           baseUrl: input.baseUrl,
-          apiStyle: input.apiStyle,
-          kind: input.kind,
+          apiStyles: input.apiStyles,
           keySecretId,
           extraHeaders: input.extraHeaders ? JSON.stringify(input.extraHeaders) : null,
           notes: input.notes ?? null,
           updatedAt: now,
         }
         await db.insert(modelProvidersTable).values(values)
-          .onConflictDoUpdate({ target: modelProvidersTable.id, set: { label: values.label, baseUrl: values.baseUrl, apiStyle: values.apiStyle, kind: values.kind, keySecretId: values.keySecretId, extraHeaders: values.extraHeaders, notes: values.notes, updatedAt: now } })
+          .onConflictDoUpdate({ target: modelProvidersTable.id, set: { label: values.label, baseUrl: values.baseUrl, apiStyles: values.apiStyles, keySecretId: values.keySecretId, extraHeaders: values.extraHeaders, notes: values.notes, updatedAt: now } })
         await publishChange('providers', 'update')
         return { id }
       }),
@@ -284,10 +287,11 @@ export const router = os.router({
           actorId: context.session.user.id,
         })
 
+        const provStyles = prov.apiStyles as string[]
         const base = prov.baseUrl.replace(/\/$/, '')
-        const url = prov.apiStyle === 'anthropic' ? `${base}/v1/models` : `${base}/models`
+        const url = isAnthropicWire(provStyles) ? `${base}/v1/models` : `${base}/models`
         const headers: Record<string, string> = prov.extraHeaders ? JSON.parse(prov.extraHeaders) : {}
-        if (prov.apiStyle === 'anthropic') {
+        if (isAnthropicWire(provStyles)) {
           headers['x-api-key'] = key
           headers['anthropic-version'] = headers['anthropic-version'] ?? '2023-06-01'
         }

@@ -4,14 +4,15 @@ import { z } from 'zod'
 import { eq } from 'drizzle-orm'
 import { db } from '../db'
 import { modelProviders } from '../db/schema'
+import { allApiStyles } from '#shared/api-styles'
 
 export interface ModelProviderRow {
   id: string
   label: string
   baseUrl: string
-  apiStyle: 'openai' | 'anthropic'
-  kind: 'llm' | 'decision'
-  /** vault secret id with the provider key (decision providers) */
+  /** set of API styles this endpoint speaks (validated against shared/api-styles.ts) */
+  apiStyles: string[]
+  /** vault secret id with the provider key (required for decision styles) */
   keySecretId: string | null
   extraHeaders: Record<string, string> | null
   notes: string | null
@@ -21,8 +22,7 @@ export const modelProviderInputSchema = z.strictObject({
   id: z.string().min(1).max(64).optional(),
   label: z.string().min(1).max(64),
   baseUrl: z.string().url(),
-  apiStyle: z.enum(['openai', 'anthropic']),
-  kind: z.enum(['llm', 'decision']).default('llm'),
+  apiStyles: z.array(z.enum(allApiStyles)).min(1),
   keySecretId: z.string().min(1).nullable().optional(),
   extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
   notes: z.string().max(500).optional(),
@@ -34,8 +34,7 @@ export async function listModelProviders(): Promise<ModelProviderRow[]> {
     id: p.id,
     label: p.label,
     baseUrl: p.baseUrl,
-    apiStyle: p.apiStyle as 'openai' | 'anthropic',
-    kind: p.kind as 'llm' | 'decision',
+    apiStyles: p.apiStyles as string[],
     keySecretId: p.keySecretId,
     extraHeaders: p.extraHeaders ? JSON.parse(p.extraHeaders) : null,
     notes: p.notes,

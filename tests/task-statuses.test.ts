@@ -10,8 +10,8 @@ async function wireDecisionProvider(secretId: string | null) {
   const d = await dbm()
   const { modelProviders } = await import('../server/db/schema')
   await d.db.insert(modelProviders)
-    .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://api.typesafe.ai/v1/systemone', apiStyle: 'openai', kind: 'decision', keySecretId: secretId })
-    .onConflictDoUpdate({ target: modelProviders.id, set: { keySecretId: secretId, kind: 'decision' } })
+    .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://api.typesafe.ai/v1/systemone', apiStyles: ['TYPESAFE-SYSTEMONE'], keySecretId: secretId })
+    .onConflictDoUpdate({ target: modelProviders.id, set: { keySecretId: secretId, apiStyles: ['TYPESAFE-SYSTEMONE'] } })
 }
 
 const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
@@ -128,6 +128,8 @@ describe('jev auto-assign', () => {
     const r = await callProc('statuses.assign', { taskId: t.id })
     expect(r.assigned).toBe(false)
     expect(r.reason).toBe('no decision provider configured')
+    // restore provider seeds for any later reader (parallel files share the DB)
+    await d.db.insert(modelProviders).values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://api.typesafe.ai/v1/systemone', apiStyles: ['TYPESAFE-SYSTEMONE'] }).onConflictDoNothing()
   })
 
   it('assign: seeded provider without key -> assigned false with reason', async () => {

@@ -42,8 +42,14 @@ afterAll(async () => {
     await postgres.end()
     await sqlClient.end()
   } catch { /* pool may already be gone */ }
+  // Concurrent `drop database with (force)` from parallel test files serialize
+  // behind checkpoints (CheckpointDone waits) and blow the hook timeout; a
+  // crashed worker can also leak a held advisory lock forever. So: no shared
+  // lock — just cap THIS drop statement. On timeout the DB is orphaned and the
+  // global-setup sweep (name prefix t\_) removes it next run.
   try {
+    await admin.unsafe('set statement_timeout = 8000')
     await admin.unsafe(`drop database if exists ${DB_NAME} with (force)`)
-    await admin.end()
-  } catch { /* best effort */ }
+  } catch { /* best effort — sweep catches it */ }
+  try { await admin.end() } catch { /* best effort */ }
 })

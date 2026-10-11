@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query'
+import { styleKind, apiStyleOptions } from '#shared/api-styles'
 // Settings: auth policy for this Tandem instance. OIDC provider list is a
 // UTable with a single add/edit modal (no v-model over v-for aliases — the
 // dxup page transform breaks that pattern; pathbridge table+modal law).
@@ -15,20 +16,20 @@ const { $orpc, $client } = useNuxtApp()
 
 const oidcLive = useQuery(($orpc as any).oidc.live.liveOptions())
 const providersLive = useQuery(($orpc as any).providers.live.liveOptions())
-const mProvList = computed(() => (unref(providersLive.data) ?? []) as Array<{ id: string, label: string, baseUrl: string, apiStyle: 'openai' | 'anthropic', kind: 'llm' | 'decision', keySecretId: string | null, extraHeaders: Record<string, string> | null, notes: string | null }>)
+const mProvList = computed(() => (unref(providersLive.data) ?? []) as Array<{ id: string, label: string, baseUrl: string, apiStyles: string[], keySecretId: string | null, extraHeaders: Record<string, string> | null, notes: string | null }>)
 
 const mProvEditorOpen = ref(false)
 const mProvEditingId = ref<string | null>(null)
-const mProvForm = reactive({ label: '', baseUrl: '', apiStyle: 'openai' as 'openai' | 'anthropic', kind: 'llm' as 'llm' | 'decision', keySecretId: null as string | null, extraHeaders: '', notes: '' })
+const mProvForm = reactive({ label: '', baseUrl: '', apiStyles: ['OPENAI-COMPLETIONS'] as string[], keySecretId: null as string | null, extraHeaders: '', notes: '' })
+const mProvHasDecision = computed(() => mProvForm.apiStyles.some(st => styleKind(st) === 'DECISION'))
 const mProvBusy = ref(false)
 const mProvMessage = ref('')
 
-function openMProvEditor(row?: { id: string, label: string, baseUrl: string, apiStyle: 'openai' | 'anthropic', kind: 'llm' | 'decision', keySecretId: string | null, extraHeaders: Record<string, string> | null, notes: string | null }) {
+function openMProvEditor(row?: { id: string, label: string, baseUrl: string, apiStyles: string[], keySecretId: string | null, extraHeaders: Record<string, string> | null, notes: string | null }) {
   mProvEditingId.value = row?.id ?? null
   mProvForm.label = row?.label ?? ''
   mProvForm.baseUrl = row?.baseUrl ?? ''
-  mProvForm.apiStyle = row?.apiStyle ?? 'openai'
-  mProvForm.kind = row?.kind ?? 'llm'
+  mProvForm.apiStyles = row?.apiStyles?.length ? [...row.apiStyles] : ['OPENAI-COMPLETIONS']
   mProvForm.keySecretId = row?.keySecretId ?? null
   mProvForm.extraHeaders = row?.extraHeaders ? Object.entries(row.extraHeaders).map(([k, v]) => `${k}: ${v}`).join('\n') : ''
   mProvForm.notes = row?.notes ?? ''
@@ -47,9 +48,8 @@ async function saveMProv() {
       ...(mProvEditingId.value ? { id: mProvEditingId.value } : {}),
       label: mProvForm.label,
       baseUrl: mProvForm.baseUrl,
-      apiStyle: mProvForm.apiStyle,
-      kind: mProvForm.kind,
-      ...(mProvForm.kind === 'decision' ? { keySecretId: mProvForm.keySecretId } : {}),
+      apiStyles: mProvForm.apiStyles,
+      ...(mProvHasDecision.value ? { keySecretId: mProvForm.keySecretId } : {}),
       ...(headers && Object.keys(headers).length ? { extraHeaders: headers } : {}),
       ...(mProvForm.notes ? { notes: mProvForm.notes } : {}),
     })
@@ -84,7 +84,7 @@ const providers = computed<OidcProviderRow[]>(() => ((unref(oidcLive.data) ?? []
 
 const disablePasswordLogin = ref(false)
 const companyName = ref('Tandem')
-const decisionProviders = ref<Array<{ id: string, label: string, baseUrl: string, keySecretId: string | null }>>([])
+const decisionProviders = ref<Array<{ id: string, label: string, baseUrl: string, apiStyles: string[], keySecretId: string | null }>>([])
 const decisionSecretId = ref<string | null>(null)
 const decisionMessage = ref('')
 const decisionSaving = ref(false)
@@ -95,8 +95,8 @@ const jevSecretItems = computed(() => ((unref(vaultLiveJev.data) ?? []) as Array
 const decisionProvider = computed(() => decisionProviders.value[0] ?? null)
 
 watch(() => unref(providersLive.data), (d) => {
-  decisionProviders.value = ((d ?? []) as Array<any>).filter(p => p.kind === 'decision')
-    .map(p => ({ id: p.id, label: p.label, baseUrl: p.baseUrl, keySecretId: p.keySecretId }))
+  decisionProviders.value = ((d ?? []) as Array<any>).filter(p => (p.apiStyles ?? []).some((st: string) => styleKind(st) === 'DECISION'))
+    .map(p => ({ id: p.id, label: p.label, baseUrl: p.baseUrl, apiStyles: p.apiStyles ?? [], keySecretId: p.keySecretId }))
   const cur = decisionProviders.value[0]
   if (cur && decisionSecretId.value === null) decisionSecretId.value = cur.keySecretId
 }, { immediate: true })
@@ -110,8 +110,7 @@ async function saveDecisionProvider() {
       id: p?.id,
       label: p?.label ?? 'Jev (TypeSafe AI)',
       baseUrl: p?.baseUrl ?? 'https://api.typesafe.ai/v1/systemone',
-      apiStyle: 'openai',
-      kind: 'decision',
+      apiStyles: p?.apiStyles ?? ['TYPESAFE-SYSTEMONE'],
       keySecretId: decisionSecretId.value ?? null,
     })
     decisionMessage.value = 'Saved'
@@ -254,7 +253,7 @@ async function savePasswordPolicy() {
 
       <UForm :state="{ decisionSecretId }" class="flex flex-wrap items-end gap-3" @submit="saveDecisionProvider">
         <UFormField label="Auto-assign (Jev) endpoint" name="jevBaseUrl" class="min-w-56 flex-1">
-          <template #hint><FormHint text="Decision provider (kind: decision) that picks which employee takes a task" /></template>
+          <template #hint><FormHint text="Decision provider that picks which employee takes a task" /></template>
           <UInput v-if="decisionProvider" v-model="decisionProvider.baseUrl" icon="i-lucide-globe" class="w-full" :disabled="decisionSaving" />
           <UInput v-else model-value="https://api.typesafe.ai/v1/systemone" icon="i-lucide-globe" class="w-full" disabled />
         </UFormField>
@@ -297,8 +296,7 @@ async function savePasswordPolicy() {
                   <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ p.label }}</p>
                   <p class="truncate font-mono text-xs text-zinc-400">{{ p.baseUrl }}</p>
                 </div>
-                <UBadge :color="p.apiStyle === 'anthropic' ? 'warning' : 'primary'" variant="subtle" size="sm">{{ p.apiStyle }}</UBadge>
-                <UBadge v-if="p.kind === 'decision'" color="info" variant="subtle" size="sm">decision</UBadge>
+                <UBadge v-for="st in p.apiStyles" :key="st" :color="styleKind(st) === 'DECISION' ? 'info' : st.startsWith('ANTHROPIC') ? 'warning' : 'primary'" variant="subtle" size="sm" class="max-w-40 truncate">{{ st }}</UBadge>
               </div>
               <div class="mt-3 flex justify-end gap-1">
                 <UPopover mode="hover">
@@ -326,7 +324,7 @@ async function savePasswordPolicy() {
               <template #label-cell="{ row }">
                 <div class="min-w-0">
                   <p class="flex items-center gap-2 truncate font-medium text-zinc-900 dark:text-white">{{ row.original.label }}
-                    <UBadge :color="row.original.apiStyle === 'anthropic' ? 'warning' : 'primary'" variant="subtle" size="sm">{{ row.original.apiStyle }}</UBadge>
+                    <UBadge v-for="st in row.original.apiStyles" :key="st" :color="styleKind(st) === 'DECISION' ? 'info' : st.startsWith('ANTHROPIC') ? 'warning' : 'primary'" variant="subtle" size="sm" class="max-w-40 truncate">{{ st }}</UBadge>
                   </p>
                   <p class="truncate font-mono text-xs text-zinc-400">{{ row.original.baseUrl }}</p>
                 </div>
@@ -459,17 +457,12 @@ async function savePasswordPolicy() {
             <template #hint><FormHint text="OpenAI- or Anthropic-compatible endpoint root" /></template>
             <UInput v-model="mProvForm.baseUrl" icon="i-lucide-globe" placeholder="https://api.example.com/v1" class="w-full" required />
           </UFormField>
-          <UFormField label="API style" name="apiStyle">
-            <template #hint><FormHint text="Wire protocol the endpoint speaks" /></template>
-            <USelect v-model="mProvForm.apiStyle" :items="[{ label: 'OpenAI-compatible', value: 'openai' }, { label: 'Anthropic messages', value: 'anthropic' }]" value-key="value" icon="i-lucide-plug" class="w-full" />
+          <UFormField label="API styles" name="apiStyles">
+            <template #hint><FormHint text="Protocols this endpoint speaks — LLM styles power agents; decision styles (typed choices) power auto-assign" /></template>
+            <USelectMenu v-model="mProvForm.apiStyles" :items="apiStyleOptions" multiple value-key="value" icon="i-lucide-plug" placeholder="Pick at least one style" class="w-full" />
           </UFormField>
 
-          <UFormField label="Kind" name="kind">
-            <template #hint><FormHint text="llm = chat backends for agents; decision = typed-choice endpoints (e.g. Jev) that auto-assign tasks" /></template>
-            <USelect v-model="mProvForm.kind" :items="[{ label: 'LLM (agent models)', value: 'llm' }, { label: 'Decision (task assignment)', value: 'decision' }]" value-key="value" icon="i-lucide-shapes" class="w-full" />
-          </UFormField>
-
-          <UFormField v-if="mProvForm.kind === 'decision'" label="API key (vault)" name="keySecretId">
+          <UFormField v-if="mProvHasDecision" label="API key (vault)" name="keySecretId">
             <template #hint><FormHint text="Vault secret with this provider's key" /></template>
             <USelectMenu
               v-model="mProvForm.keySecretId"

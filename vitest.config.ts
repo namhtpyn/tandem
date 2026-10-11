@@ -7,6 +7,8 @@ export default defineConfig({
     'import.meta.server': 'false',
   },
   test: {
+    hookTimeout: 60_000,
+    testTimeout: 15_000,
     globalSetup: ['./tests/global-setup.ts'],
     setupFiles: ['./tests/setup.ts'],
     include: ['tests/**/*.test.ts'], // e2e/ belongs to Playwright, not vitest
