@@ -93,9 +93,12 @@ function kindIcon(): string {
         <p class="text-sm text-zinc-500">Encrypted secrets for SSH keys and API tokens — write-only, never displayed again</p>
       </div>
       <div class="flex items-center gap-2">
-        <UTooltip text="Audit log">
+        <UPopover mode="hover">
           <UButton icon="i-lucide-history" variant="ghost" color="neutral" aria-label="Audit log" @click="auditOpen = true" />
-        </UTooltip>
+          <template #content>
+            <div class="px-3 py-1.5 text-xs">Audit log</div>
+          </template>
+        </UPopover>
         <UButton icon="i-lucide-plus" label="New secret" @click="openEditor()" />
       </div>
     </div>
@@ -111,12 +114,18 @@ function kindIcon(): string {
           </div>
           <p v-if="row.description" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ row.description }}</p>
           <div class="mt-3 flex justify-end gap-1">
-            <UTooltip text="Replace secret">
+            <UPopover mode="hover">
               <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Replace secret" :disabled="busy" @click="openEditor(row)" />
-            </UTooltip>
-            <UTooltip text="Delete secret">
+              <template #content>
+                <div class="px-3 py-1.5 text-xs">Replace secret</div>
+              </template>
+            </UPopover>
+            <UPopover mode="hover">
               <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete secret" :disabled="busy" @click="askRemove(row)" />
-            </UTooltip>
+              <template #content>
+                <div class="px-3 py-1.5 text-xs">Delete secret</div>
+              </template>
+            </UPopover>
           </div>
         </UCard>
       </div>
@@ -141,12 +150,18 @@ function kindIcon(): string {
           </template>
           <template #actions-cell="{ row }">
             <div class="flex justify-end gap-1">
-              <UTooltip text="Replace secret">
+              <UPopover mode="hover">
                 <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Replace secret" :disabled="busy" @click="openEditor(row.original)" />
-              </UTooltip>
-              <UTooltip text="Delete secret">
+                <template #content>
+                  <div class="px-3 py-1.5 text-xs">Replace secret</div>
+                </template>
+              </UPopover>
+              <UPopover mode="hover">
                 <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete secret" :disabled="busy" @click="askRemove(row.original)" />
-              </UTooltip>
+                <template #content>
+                  <div class="px-3 py-1.5 text-xs">Delete secret</div>
+                </template>
+              </UPopover>
             </div>
           </template>
         </UTable>
@@ -184,14 +199,15 @@ function kindIcon(): string {
               <UTextarea v-model="form.value" placeholder="Secret value" :rows="4" class="w-full" :disabled="busy"
                 autocomplete="off" spellcheck="false"
                 :class="showValue ? 'font-mono' : 'secret-masked font-mono'" />
-              <UTooltip text="showValue ? 'Hide value' : 'Show value'">
-                <UTooltip :text="showValue ? 'Hide value' : 'Show value'">
+              <UPopover mode="hover">
                 <UButton :icon="showValue ? 'i-lucide-eye-off' : 'i-lucide-eye'" variant="link" color="neutral" size="sm"
                   :aria-label="showValue ? 'Hide value' : 'Show value'" tabindex="-1"
                   class="absolute right-1 top-1"
                   @click="showValue = !showValue" />
-              </UTooltip>
-              </UTooltip>
+                <template #content>
+                  <div class="px-3 py-1.5 text-xs">{{ showValue ? 'Hide value' : 'Show value' }}</div>
+                </template>
+              </UPopover>
             </div>
           </UFormField>
           <UAlert v-if="formError && !formError.includes('required')" icon="i-lucide-alert-circle" color="error" variant="subtle" :title="formError" />

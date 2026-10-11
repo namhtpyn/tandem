@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { TooltipProvider as RekaTooltipProvider } from 'reka-ui'
 // Tandem shell: resolve session/auth-config/version once (SSR), share via useState.
 const session = useAppSession()
 const authConfig = useAuthConfigState()
@@ -24,9 +23,7 @@ if (v.version) appVersion.value = v.version
 </script>
 
 <template>
-  <RekaTooltipProvider :delay-duration="300">
-    <NuxtLayout>
-      <NuxtPage />
-    </NuxtLayout>
-  </RekaTooltipProvider>
+  <NuxtLayout>
+    <NuxtPage />
+  </NuxtLayout>
 </template>

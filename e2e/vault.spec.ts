@@ -1,6 +1,18 @@
 import { expect, test } from '@playwright/test'
 import { login } from './helpers/login'
 
+
+async function dismiss(page: any, text: string) {
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(400)
+  const still = await page.evaluate((t) => (document.body.innerText || '').includes(t), text)
+  if (still) {
+    const close = page.getByRole('button', { name: 'Close' }).first()
+    if (await close.count()) await close.click()
+    await page.waitForTimeout(400)
+  }
+}
+
 // Unique-per-run names: a crashed prior run can't poison the unique-name
 // constraint on rerun (same pattern as the employees spec).
 const RUN = process.pid + '-' + Date.now().toString(36)
@@ -37,7 +49,7 @@ test.describe('vault', () => {
     await expect(page.getByText('Vault audit log')).toBeVisible()
     await expect(page.getByRole('dialog').getByText(secName).first()).toBeVisible({ timeout: 15_000 })
     await expect(page.getByText('update', { exact: true }).first()).toBeVisible({ timeout: 15_000 })
-    await page.keyboard.press('Escape')
+    await dismiss(page, 'Vault audit log')
 
     // delete with confirmation
     await page.locator('tr:visible', { hasText: secName }).getByRole('button', { name: 'Delete secret' }).click()

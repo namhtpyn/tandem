@@ -324,18 +324,27 @@ const columns = [
           </UBadge>
         </div>
         <div class="mt-3 flex justify-end gap-1">
-          <UTooltip text="Access keys">
+          <UPopover mode="hover">
             <UButton
             icon="i-lucide-key-round" variant="ghost" color="neutral" size="sm"
             aria-label="Access keys" :disabled="busy" @click="openKeys(row)"
           />
-          </UTooltip>
-          <UTooltip text="Edit employee">
+            <template #content>
+              <div class="px-3 py-1.5 text-xs">Access keys</div>
+            </template>
+          </UPopover>
+          <UPopover mode="hover">
             <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit employee" :disabled="busy" @click="openEditor(row)" />
-          </UTooltip>
-          <UTooltip text="Delete employee">
+            <template #content>
+              <div class="px-3 py-1.5 text-xs">Edit employee</div>
+            </template>
+          </UPopover>
+          <UPopover mode="hover">
             <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete employee" :disabled="busy" @click="askRemove(row)" />
-          </UTooltip>
+            <template #content>
+              <div class="px-3 py-1.5 text-xs">Delete employee</div>
+            </template>
+          </UPopover>
         </div>
       </UCard>
     </div>
@@ -373,7 +382,7 @@ const columns = [
         </template>
         <template #actions-cell="{ row }">
           <div class="flex justify-end gap-1">
-            <UTooltip text="Access keys">
+            <UPopover mode="hover">
               <UButton
               icon="i-lucide-key-round"
               variant="ghost"
@@ -383,13 +392,22 @@ const columns = [
               :disabled="busy"
               @click="openKeys(row.original)"
             />
-            </UTooltip>
-            <UTooltip text="Edit employee">
+              <template #content>
+                <div class="px-3 py-1.5 text-xs">Access keys</div>
+              </template>
+            </UPopover>
+            <UPopover mode="hover">
               <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit employee" :disabled="busy" @click="openEditor(row.original)" />
-            </UTooltip>
-            <UTooltip text="Delete employee">
+              <template #content>
+                <div class="px-3 py-1.5 text-xs">Edit employee</div>
+              </template>
+            </UPopover>
+            <UPopover mode="hover">
               <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete employee" :disabled="busy" @click="askRemove(row.original)" />
-            </UTooltip>
+              <template #content>
+                <div class="px-3 py-1.5 text-xs">Delete employee</div>
+              </template>
+            </UPopover>
           </div>
         </template>
             </UTable>
@@ -602,12 +620,12 @@ const columns = [
               </div>
               <div v-else class="flex min-w-0 flex-1 items-center gap-1">
                 <UInput v-model="renameValue" size="xs" placeholder="Key name" class="flex-1" @keydown.enter.prevent="saveRename" />
-                <UTooltip text="Save name"><UButton icon="i-lucide-check" variant="ghost" color="primary" size="xs" aria-label="Save name" :loading="keysBusy" @click="saveRename" /></UTooltip>
-                <UTooltip text="Cancel"><UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" aria-label="Cancel rename" @click="renamingId = null" /></UTooltip>
+                <UPopover mode="hover"><UButton icon="i-lucide-check" variant="ghost" color="primary" size="xs" aria-label="Save name" :loading="keysBusy" @click="saveRename" /><template #content><div class="px-3 py-1.5 text-xs">Save name</div></template></UPopover>
+                <UPopover mode="hover"><UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" aria-label="Cancel rename" @click="renamingId = null" /><template #content><div class="px-3 py-1.5 text-xs">Cancel</div></template></UPopover>
               </div>
               <div v-if="renamingId !== k.id" class="flex shrink-0 gap-1">
-                <UTooltip text="Rename key"><UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Rename key" :disabled="keysBusy" @click="startRename(k)" /></UTooltip>
-                <UTooltip text="Revoke key"><UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Revoke key" :loading="keysBusy" @click="revokeKey(k.id)" /></UTooltip>
+                <UPopover mode="hover"><UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Rename key" :disabled="keysBusy" @click="startRename(k)"/><template #content><div class="px-3 py-1.5 text-xs">Rename key</div></template></UPopover>
+                <UPopover mode="hover"><UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Revoke key" :loading="keysBusy" @click="revokeKey(k.id)" /><template #content><div class="px-3 py-1.5 text-xs">Revoke key</div></template></UPopover>
               </div>
             </div>
           </div>

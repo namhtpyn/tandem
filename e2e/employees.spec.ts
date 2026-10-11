@@ -1,6 +1,18 @@
 import { expect, test } from '@playwright/test'
 import { login } from './helpers/login'
 
+
+async function dismiss(page: any, text: string) {
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(400)
+  const still = await page.evaluate((t) => (document.body.innerText || '').includes(t), text)
+  if (still) {
+    const close = page.getByRole('button', { name: 'Close' }).first()
+    if (await close.count()) await close.click()
+    await page.waitForTimeout(400)
+  }
+}
+
 // M3: employees — live CRUD over oRPC /rpc, SSE realtime, AI keys.
 // Every run uses unique emails/names (leftover state must not break retries).
 
@@ -97,7 +109,7 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
 
   // teardown: delete the bot, then its environment (leftover env rows break
   // other suites' unscoped selectors; keep the DB tidy)
-  await page.keyboard.press('Escape')
+  await dismiss(page, 'Edit employee')
   await page.getByRole('link', { name: /Employees/ }).first().click()
   await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Delete employee' }).click()
   await page.getByRole('button', { name: 'Delete', exact: true }).click()

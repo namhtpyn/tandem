@@ -153,15 +153,24 @@ async function probe(row: EnvironmentRow) {
           {{ probeResults[row.id]!.detail }} · {{ probeResults[row.id]!.durationMs }}ms
         </p>
         <div class="mt-3 flex justify-end gap-1">
-          <UTooltip text="Test connection">
+          <UPopover mode="hover">
             <UButton icon="i-lucide-plug-zap" variant="ghost" color="neutral" size="sm" aria-label="Test connection" :loading="probingId === row.id" :disabled="busy || probingId !== null" @click="probe(row)" />
-          </UTooltip>
-          <UTooltip text="Edit environment">
+            <template #content>
+              <div class="px-3 py-1.5 text-xs">Test connection</div>
+            </template>
+          </UPopover>
+          <UPopover mode="hover">
             <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit environment" :disabled="busy" @click="openEditor(row)" />
-          </UTooltip>
-          <UTooltip text="Delete environment">
+            <template #content>
+              <div class="px-3 py-1.5 text-xs">Edit environment</div>
+            </template>
+          </UPopover>
+          <UPopover mode="hover">
             <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete environment" :disabled="busy" @click="askRemove(row)" />
-          </UTooltip>
+            <template #content>
+              <div class="px-3 py-1.5 text-xs">Delete environment</div>
+            </template>
+          </UPopover>
         </div>
       </UCard>
     </div>
@@ -190,7 +199,7 @@ async function probe(row: EnvironmentRow) {
         </template>
         <template #actions-cell="{ row }">
           <div class="flex justify-end gap-1">
-            <UTooltip text="Test connection">
+            <UPopover mode="hover">
               <UButton
               icon="i-lucide-plug-zap"
               variant="ghost"
@@ -201,13 +210,22 @@ async function probe(row: EnvironmentRow) {
               :disabled="busy || probingId !== null"
               @click="probe(row.original)"
             />
-            </UTooltip>
-            <UTooltip text="Edit environment">
+              <template #content>
+                <div class="px-3 py-1.5 text-xs">Test connection</div>
+              </template>
+            </UPopover>
+            <UPopover mode="hover">
               <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit environment" :disabled="busy" @click="openEditor(row.original)" />
-            </UTooltip>
-            <UTooltip text="Delete environment">
+              <template #content>
+                <div class="px-3 py-1.5 text-xs">Edit environment</div>
+              </template>
+            </UPopover>
+            <UPopover mode="hover">
               <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete environment" :disabled="busy" @click="askRemove(row.original)" />
-            </UTooltip>
+              <template #content>
+                <div class="px-3 py-1.5 text-xs">Delete environment</div>
+              </template>
+            </UPopover>
           </div>
         </template>
             </UTable>

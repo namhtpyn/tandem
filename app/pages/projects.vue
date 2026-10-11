@@ -151,15 +151,24 @@ const statusColor = (s: string) => (s === 'archived' ? 'neutral' : 'success')
               <UBadge :color="statusColor(row.status)" variant="subtle" size="sm">{{ row.status }}</UBadge>
             </div>
             <div class="mt-3 flex justify-end gap-1">
-              <UTooltip text="Add subproject">
+              <UPopover mode="hover">
                 <UButton icon="i-lucide-plus" variant="ghost" color="neutral" size="sm" aria-label="Add subproject" @click="openEditor(undefined); form.parentId = row.id" />
-              </UTooltip>
-              <UTooltip text="Edit project">
+                <template #content>
+                  <div class="px-3 py-1.5 text-xs">Add subproject</div>
+                </template>
+              </UPopover>
+              <UPopover mode="hover">
                 <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit project" @click="openEditor(row)" />
-              </UTooltip>
-              <UTooltip text="Delete project">
+                <template #content>
+                  <div class="px-3 py-1.5 text-xs">Edit project</div>
+                </template>
+              </UPopover>
+              <UPopover mode="hover">
                 <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete project" :disabled="busy" @click="askRemove(row)" />
-              </UTooltip>
+                <template #content>
+                  <div class="px-3 py-1.5 text-xs">Delete project</div>
+                </template>
+              </UPopover>
             </div>
           </UCard>
         </div>
@@ -185,15 +194,24 @@ const statusColor = (s: string) => (s === 'archived' ? 'neutral' : 'success')
             </template>
             <template #actions-cell="{ row }">
               <div class="flex justify-end gap-1">
-                <UTooltip text="Add subproject">
+                <UPopover mode="hover">
                   <UButton icon="i-lucide-plus" variant="ghost" color="neutral" size="xs" aria-label="Add subproject" @click="openEditor(undefined); form.parentId = row.original.id" />
-                </UTooltip>
-                <UTooltip text="Edit project">
+                  <template #content>
+                    <div class="px-3 py-1.5 text-xs">Add subproject</div>
+                  </template>
+                </UPopover>
+                <UPopover mode="hover">
                   <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit project" @click="openEditor(row.original)" />
-                </UTooltip>
-                <UTooltip text="Delete project">
+                  <template #content>
+                    <div class="px-3 py-1.5 text-xs">Edit project</div>
+                  </template>
+                </UPopover>
+                <UPopover mode="hover">
                   <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Delete project" :disabled="busy" @click="askRemove(row.original)" />
-                </UTooltip>
+                  <template #content>
+                    <div class="px-3 py-1.5 text-xs">Delete project</div>
+                  </template>
+                </UPopover>
               </div>
             </template>
           </UTable>

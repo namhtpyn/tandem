@@ -1,6 +1,18 @@
 import { expect, test } from '@playwright/test'
 import { login } from './helpers/login'
 
+
+async function dismiss(page: any, text: string) {
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(400)
+  const still = await page.evaluate((t) => (document.body.innerText || '').includes(t), text)
+  if (still) {
+    const close = page.getByRole('button', { name: 'Close' }).first()
+    if (await close.count()) await close.click()
+    await page.waitForTimeout(400)
+  }
+}
+
 // M2: environments — live CRUD over oRPC /rpc, SSE realtime, probe.
 
 test('environment links a vault secret and shows it in the row', async ({ page }) => {
@@ -29,7 +41,7 @@ test('environment links a vault secret and shows it in the row', async ({ page }
   // edit shows the linked key preselected
   await page.locator('tr:visible', { hasText: envName }).getByRole('button', { name: 'Edit environment' }).click()
   await expect(page.getByRole('combobox', { name: 'Secret' })).toContainText(secName.slice(0, 20))
-  await page.keyboard.press('Escape')
+  await dismiss(page, 'Username')
 
   // cleanup env
   await page.locator('tr:visible', { hasText: envName }).getByRole('button', { name: 'Delete environment' }).click()

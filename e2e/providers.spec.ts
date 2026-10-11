@@ -2,6 +2,18 @@
 import { expect, test } from '@playwright/test'
 import { login } from './helpers/login'
 
+
+async function dismiss(page: any, text: string) {
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(400)
+  const still = await page.evaluate((t) => (document.body.innerText || '').includes(t), text)
+  if (still) {
+    const close = page.getByRole('button', { name: 'Close' }).first()
+    if (await close.count()) await close.click()
+    await page.waitForTimeout(400)
+  }
+}
+
 test.describe('model providers', () => {
   test('seeds are visible on the settings page', async ({ page }) => {
     await login(page)
@@ -41,6 +53,6 @@ test.describe('model providers', () => {
     await page.getByRole('combobox', { name: 'Provider' }).click()
     await expect(page.getByRole('option', { name: 'OpenAI' })).toBeVisible()
     await page.getByRole('option', { name: 'OpenAI' }).click()
-    await page.keyboard.press('Escape')
+    await dismiss(page, 'Base URL')
   })
 })

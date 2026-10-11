@@ -164,12 +164,18 @@ function statusColor(s: string) {
               @update:model-value="(v: string) => setStatus(row, v as 'todo' | 'doing' | 'done')"
             />
             <div class="flex items-center gap-1">
-              <UTooltip text="Edit task">
+              <UPopover mode="hover">
                 <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit task" @click="openEditor(row)" />
-              </UTooltip>
-              <UTooltip text="Delete task">
+                <template #content>
+                  <div class="px-3 py-1.5 text-xs">Edit task</div>
+                </template>
+              </UPopover>
+              <UPopover mode="hover">
                 <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Delete task" @click="pendingDelete = row" />
-              </UTooltip>
+                <template #content>
+                  <div class="px-3 py-1.5 text-xs">Delete task</div>
+                </template>
+              </UPopover>
             </div>
           </div>
         </UCard>
@@ -209,12 +215,18 @@ function statusColor(s: string) {
           </template>
           <template #actions-cell="{ row }">
             <div class="flex justify-end gap-1">
-              <UTooltip text="Edit task">
+              <UPopover mode="hover">
                 <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit task" @click="openEditor(row.original)" />
-              </UTooltip>
-              <UTooltip text="Delete task">
+                <template #content>
+                  <div class="px-3 py-1.5 text-xs">Edit task</div>
+                </template>
+              </UPopover>
+              <UPopover mode="hover">
                 <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Delete task" @click="pendingDelete = row.original" />
-              </UTooltip>
+                <template #content>
+                  <div class="px-3 py-1.5 text-xs">Delete task</div>
+                </template>
+              </UPopover>
             </div>
           </template>
         </UTable>
