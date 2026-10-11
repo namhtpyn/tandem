@@ -1,3 +1,15 @@
+# [2.0.0](https://github.com/namhtpyn/tandem/compare/v1.15.1...v2.0.0) (2026-10-11)
+
+
+### Code Refactoring
+
+* **providers:** provider is pure connection info — drop models + key sync ([a5b623d](https://github.com/namhtpyn/tandem/commit/a5b623d3337fe8f80cd45abfa68d43fbb2fcc8df))
+
+
+### BREAKING CHANGES
+
+* **providers:** provider is pure connection info — drop models + key sync
+
 ## [1.15.1](https://github.com/namhtpyn/tandem/compare/v1.15.0...v1.15.1) (2026-10-11)
 
 
