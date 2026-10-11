@@ -1,3 +1,10 @@
+## [2.5.1](https://github.com/namhtpyn/tandem/compare/v2.5.0...v2.5.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **tasks:** full branch coverage for jev assign paths ([39f4517](https://github.com/namhtpyn/tandem/commit/39f45173ad1a02d5d9b92c0baf4924099dac4920))
+
 # [2.5.0](https://github.com/namhtpyn/tandem/compare/v2.4.0...v2.5.0) (2026-10-11)
 
 
