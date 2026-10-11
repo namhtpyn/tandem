@@ -169,16 +169,6 @@ export const modelProviders = pgTable('tandem_model_providers', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
-// Models per provider — the agent editor's model dropdown.
-export const models = pgTable('tandem_models', {
-  id: text('id').primaryKey(),
-  providerId: text('provider_id').notNull().references(() => modelProviders.id, { onDelete: 'cascade' }),
-  name: text('name').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [
-  index('tandem_models_provider_idx').on(t.providerId),
-])
-
 // AI extension (1:1 with user): row existence marks the employee as an AI
 // agent; absence = human employee. No kind column anywhere.
 export const aiEmployees = pgTable('tandem_ai_employees', {
@@ -189,9 +179,9 @@ export const aiEmployees = pgTable('tandem_ai_employees', {
   harness: text('harness').notNull().default('hermes'),
   // executable name used on the environment when dispatching (default 'hermes')
   executable: text('executable').notNull().default('hermes'),
-  // model access: provider + model (catalog tables) + vault-held API key
+  // model access: provider registry id + freetext model name + vault-held API key
   providerId: text('provider_id').references(() => modelProviders.id, { onDelete: 'set null' }),
-  modelId: text('model_id').references(() => models.id, { onDelete: 'set null' }),
+  model: text('model'),
   apiKeySecretId: text('api_key_secret_id').references(() => vaultSecrets.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -234,7 +224,7 @@ export const tasks = pgTable('tandem_tasks', {
 // ---------- relations ----------
 
 export const relations = defineRelations(
-  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, tasks, modelProviders, models, projects },
+  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, tasks, modelProviders, projects },
   (helpers) => ({
     user: {
       sessions: helpers.many.session({ from: helpers.user.id, to: helpers.session.userId }),

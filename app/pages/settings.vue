@@ -15,21 +15,20 @@ const { $orpc, $client } = useNuxtApp()
 
 const oidcLive = useQuery(($orpc as any).oidc.live.liveOptions())
 const providersLive = useQuery(($orpc as any).providers.live.liveOptions())
-const mProvList = computed(() => (unref(providersLive.data) ?? []) as Array<{ id: string, label: string, baseUrl: string, apiStyle: 'openai' | 'anthropic', extraHeaders: Record<string, string> | null, notes: string | null, modelNames: string[] }>)
+const mProvList = computed(() => (unref(providersLive.data) ?? []) as Array<{ id: string, label: string, baseUrl: string, apiStyle: 'openai' | 'anthropic', extraHeaders: Record<string, string> | null, notes: string | null }>)
 const mProvEditorOpen = ref(false)
 const mProvEditingId = ref<string | null>(null)
-const mProvForm = reactive({ label: '', baseUrl: '', apiStyle: 'openai' as 'openai' | 'anthropic', extraHeaders: '', notes: '', modelNames: '' })
+const mProvForm = reactive({ label: '', baseUrl: '', apiStyle: 'openai' as 'openai' | 'anthropic', extraHeaders: '', notes: '' })
 const mProvBusy = ref(false)
 const mProvMessage = ref('')
 
-function openMProvEditor(row?: { id: string, label: string, baseUrl: string, apiStyle: 'openai' | 'anthropic', extraHeaders: Record<string, string> | null, notes: string | null, modelNames: string[] }) {
+function openMProvEditor(row?: { id: string, label: string, baseUrl: string, apiStyle: 'openai' | 'anthropic', extraHeaders: Record<string, string> | null, notes: string | null }) {
   mProvEditingId.value = row?.id ?? null
   mProvForm.label = row?.label ?? ''
   mProvForm.baseUrl = row?.baseUrl ?? ''
   mProvForm.apiStyle = row?.apiStyle ?? 'openai'
   mProvForm.extraHeaders = row?.extraHeaders ? Object.entries(row.extraHeaders).map(([k, v]) => `${k}: ${v}`).join('\n') : ''
   mProvForm.notes = row?.notes ?? ''
-  mProvForm.modelNames = row?.modelNames?.join('\n') ?? ''
   mProvMessage.value = ''
   mProvEditorOpen.value = true
 }
@@ -48,7 +47,6 @@ async function saveMProv() {
       apiStyle: mProvForm.apiStyle,
       ...(headers && Object.keys(headers).length ? { extraHeaders: headers } : {}),
       ...(mProvForm.notes ? { notes: mProvForm.notes } : {}),
-      modelNames: mProvForm.modelNames.split('\n').map(l => l.trim()).filter(Boolean),
     })
     mProvEditorOpen.value = false
   }
@@ -57,32 +55,6 @@ async function saveMProv() {
   }
   finally {
     mProvBusy.value = false
-  }
-}
-
-const provSyncSecretId = ref<string | null>(null)
-const provSyncing = ref(false)
-const vaultLive = useQuery(($orpc as any).vault.live.liveOptions())
-const vaultItems = computed(() => ((unref(vaultLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>)
-  .map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })))
-async function syncModels() {
-  provSyncing.value = true
-  mProvMessage.value = ''
-  try {
-    const res = await ($client as any).providers.fetchModels({
-      baseUrl: mProvForm.baseUrl,
-      apiStyle: mProvForm.apiStyle,
-      ...(provSyncSecretId.value ? { keySecretId: provSyncSecretId.value } : {}),
-      ...(mProvForm.extraHeaders.trim() ? { extraHeaders: Object.fromEntries(mProvForm.extraHeaders.split('\n').map(l => l.split(':').map(p => p.trim())).filter(p => p.length === 2).map(p => [p[0]!, p[1]!])) } : {}),
-    })
-    if (res.models?.length) mProvForm.modelNames = res.models.join('\n')
-    else mProvMessage.value = 'Endpoint returned no models'
-  }
-  catch (e) {
-    mProvMessage.value = e instanceof Error ? e.message : 'sync failed'
-  }
-  finally {
-    provSyncing.value = false
   }
 }
 
@@ -258,10 +230,6 @@ async function savePasswordPolicy() {
                 </div>
                 <UBadge :color="p.apiStyle === 'anthropic' ? 'warning' : 'primary'" variant="subtle" size="sm">{{ p.apiStyle }}</UBadge>
               </div>
-              <div v-if="p.modelNames.length" class="mt-2 flex flex-wrap gap-1">
-                <span v-for="m in p.modelNames.slice(0, 6)" :key="m" class="max-w-full truncate rounded-sm bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] leading-4 text-zinc-600 ring-1 ring-inset ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:ring-zinc-700">{{ m }}</span>
-                <span v-if="p.modelNames.length > 6" class="text-[10px] text-zinc-400">+{{ p.modelNames.length - 6 }}</span>
-              </div>
               <div class="mt-3 flex justify-end gap-1">
                 <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit provider" @click="openMProvEditor(p)" />
                 <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete provider" :loading="mProvBusy" @click="removeMProv(p.id)" />
@@ -273,20 +241,14 @@ async function savePasswordPolicy() {
           <UCard v-if="mProvList.length" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
             <UTable :data="mProvList" :columns="[
               { accessorKey: 'label', header: 'Provider' },
-              { accessorKey: 'models', header: 'Models' },
               { accessorKey: 'actions', header: '' },
             ]">
               <template #label-cell="{ row }">
                 <div class="min-w-0">
-                  <p class="truncate font-medium text-zinc-900 dark:text-white">{{ row.original.label }}</p>
+                  <p class="flex items-center gap-2 truncate font-medium text-zinc-900 dark:text-white">{{ row.original.label }}
+                    <UBadge :color="row.original.apiStyle === 'anthropic' ? 'warning' : 'primary'" variant="subtle" size="sm">{{ row.original.apiStyle }}</UBadge>
+                  </p>
                   <p class="truncate font-mono text-xs text-zinc-400">{{ row.original.baseUrl }}</p>
-                </div>
-              </template>
-              <template #models-cell="{ row }">
-                <div class="flex flex-wrap gap-1">
-                  <UBadge v-for="m in row.original.modelNames.slice(0, 4)" :key="m" color="neutral" variant="subtle" size="sm">{{ m }}</UBadge>
-                  <UBadge v-if="row.original.modelNames.length > 4" color="neutral" variant="subtle" size="sm">+{{ row.original.modelNames.length - 4 }}</UBadge>
-                  <UBadge :color="row.original.apiStyle === 'anthropic' ? 'warning' : 'primary'" variant="subtle" size="sm">{{ row.original.apiStyle }}</UBadge>
                 </div>
               </template>
               <template #actions-cell="{ row }">
@@ -401,26 +363,7 @@ async function savePasswordPolicy() {
             <template #hint><FormHint text="Wire protocol the endpoint speaks" /></template>
             <USelect v-model="mProvForm.apiStyle" :items="[{ label: 'OpenAI-compatible', value: 'openai' }, { label: 'Anthropic messages', value: 'anthropic' }]" value-key="value" icon="i-lucide-plug" class="w-full" />
           </UFormField>
-          <UFormField label="Models" name="modelNames">
-            <template #hint><FormHint text="One model name per line — the agent's model dropdown" /></template>
-            <div class="mb-2 flex flex-wrap items-end gap-2">
-              <div class="min-w-48 flex-1">
-                <USelectMenu
-                  v-model="provSyncSecretId"
-                  :items="vaultItems"
-                  value-key="value"
-                  :search-input="{ placeholder: 'Search secrets' }"
-                  clear
-                  icon="i-lucide-vault"
-                  placeholder="Vault secret for sync"
-                  class="w-full"
-                  :disabled="provSyncing"
-                />
-              </div>
-              <UButton icon="i-lucide-refresh-cw" size="sm" :loading="provSyncing" :disabled="!mProvForm.baseUrl" @click="syncModels">Sync from endpoint</UButton>
-            </div>
-            <UTextarea v-model="mProvForm.modelNames" placeholder="model-name&#10;another-model" :rows="4" class="w-full" />
-          </UFormField>
+          
           <UFormField label="Extra headers" name="extraHeaders">
             <template #hint><FormHint text="Optional, one 'Name: value' per line" /></template>
             <UTextarea v-model="mProvForm.extraHeaders" placeholder="HTTP-Referer: https://tandem.local" :rows="2" class="w-full" />

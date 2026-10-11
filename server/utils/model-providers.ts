@@ -3,7 +3,7 @@
 import { z } from 'zod'
 import { eq } from 'drizzle-orm'
 import { db } from '../db'
-import { modelProviders, models } from '../db/schema'
+import { modelProviders } from '../db/schema'
 
 export interface ModelProviderRow {
   id: string
@@ -12,7 +12,6 @@ export interface ModelProviderRow {
   apiStyle: 'openai' | 'anthropic'
   extraHeaders: Record<string, string> | null
   notes: string | null
-  modelNames: string[]
 }
 
 export const modelProviderInputSchema = z.strictObject({
@@ -22,12 +21,10 @@ export const modelProviderInputSchema = z.strictObject({
   apiStyle: z.enum(['openai', 'anthropic']),
   extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
   notes: z.string().max(500).optional(),
-  modelNames: z.array(z.string().min(1).max(200)).max(100).default([]),
 })
 
 export async function listModelProviders(): Promise<ModelProviderRow[]> {
   const provs = await db.select().from(modelProviders)
-  const mods = await db.select().from(models)
   return provs.map(p => ({
     id: p.id,
     label: p.label,
@@ -35,7 +32,6 @@ export async function listModelProviders(): Promise<ModelProviderRow[]> {
     apiStyle: p.apiStyle as 'openai' | 'anthropic',
     extraHeaders: p.extraHeaders ? JSON.parse(p.extraHeaders) : null,
     notes: p.notes,
-    modelNames: mods.filter(m => m.providerId === p.id).map(m => m.name).sort(),
   }))
 }
 

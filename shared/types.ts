@@ -31,8 +31,8 @@ export interface EmployeeRow {
   executable: string | null
   /** ai only — model provider registry id */
   providerId: string | null
-  /** ai only — model catalog id */
-  modelId: string | null
+  /** ai only — model name for dispatch */
+  model: string | null
   /** ai only — vault secret holding the API key */
   apiKeySecretId: string | null
   createdAt: string

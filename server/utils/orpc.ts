@@ -7,7 +7,7 @@ import { ORPCError, os } from '@orpc/server'
 import type { RequestHeadersHandlerPluginContext } from '@orpc/server/plugins'
 import { db } from '../db'
 import { projects as projectsTable,
-  aiEmployees as aiEmployeesTable, apikey as apikeyTable, employeeSupervisors as supervisorsTable, environments as environmentsTable, models as modelsTable, modelProviders as modelProvidersTable, tasks as tasksTable, user as userTable, vaultSecrets as vaultSecretsTable, vaultAudit as vaultAuditTable } from '../db/schema'
+  aiEmployees as aiEmployeesTable, apikey as apikeyTable, employeeSupervisors as supervisorsTable, environments as environmentsTable, modelProviders as modelProvidersTable, tasks as tasksTable, user as userTable, vaultSecrets as vaultSecretsTable, vaultAudit as vaultAuditTable } from '../db/schema'
 import { environmentInput } from './environments'
 import { probeSsh } from './ssh-probe'
 import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from './change-bus'
@@ -188,13 +188,13 @@ export const router = os.router({
 
 
   providers: {
-    /** live model-provider catalog with model names */
+    /** live model-provider catalog (connection info only — no keys, no models) */
     live: protectedProcedure.handler(() => liveGenerator(['providers'], async () => {
       const { listModelProviders } = await import('./model-providers')
       return await listModelProviders()
     })),
 
-    /** replace ONE provider (upsert by id) with its model list */
+    /** replace ONE provider (upsert by id) */
     save: protectedProcedure
       .input(z.strictObject({
         id: z.string().min(1).max(64).optional(),
@@ -203,7 +203,6 @@ export const router = os.router({
         apiStyle: z.enum(['openai', 'anthropic']),
         extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
         notes: z.string().max(500).optional(),
-        modelNames: z.array(z.string().min(1).max(200)).max(100).default([]),
       }))
       .handler(async ({ input }) => {
         const { modelProviderInputSchema } = await import('./model-providers')
@@ -221,82 +220,8 @@ export const router = os.router({
         }
         await db.insert(modelProvidersTable).values(values)
           .onConflictDoUpdate({ target: modelProvidersTable.id, set: { label: values.label, baseUrl: values.baseUrl, apiStyle: values.apiStyle, extraHeaders: values.extraHeaders, notes: values.notes, updatedAt: now } })
-        // model list = full replace for this provider
-        await db.delete(modelsTable).where(eq(modelsTable.providerId, id))
-        const names = [...new Set(input.modelNames)]
-        if (names.length > 0) {
-          await db.insert(modelsTable).values(names.map(n => ({ id: crypto.randomUUID(), providerId: id, name: n })))
-        }
         await publishChange('providers', 'update')
         return { id }
-      }),
-
-    /** fetch the live model catalog from a provider endpoint.
-     *  Key is TRANSIENT — used for this one request, never stored or logged. */
-    fetchModels: protectedProcedure
-      .input(z.strictObject({
-        baseUrl: z.string().url(),
-        apiStyle: z.enum(['openai', 'anthropic']),
-        /** vault secret holding the API key — decrypted server-side for this
-         *  one request only, audited as `use`, never stored on the provider.
-         *  Raw keys are never accepted (fleet law: keys live in the vault). */
-        keySecretId: z.string().min(1).optional(),
-        extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
-      }))
-      .handler(async ({ input, context }): Promise<{ models: string[] }> => {
-        let key: string | undefined
-        if (input.keySecretId) {
-          const rows = await db.select().from(vaultSecretsTable).where(eq(vaultSecretsTable.id, input.keySecretId))
-          const secret = rows[0]
-          if (!secret) throw new ORPCError('BAD_REQUEST', { message: 'api key secret not found' })
-          key = decryptSecret(secret.ciphertext)
-          await db.insert(vaultAuditTable).values({
-            id: crypto.randomUUID(),
-            secretId: secret.id,
-            secretName: secret.name,
-            action: 'use',
-            actorId: context.session.user.id,
-          })
-        }
-        const url = input.apiStyle === 'anthropic'
-          ? `${input.baseUrl.replace(/\/$/, '')}/v1/models`
-          : `${input.baseUrl.replace(/\/$/, '')}/models`
-        const headers: Record<string, string> = { ...input.extraHeaders }
-        if (key) {
-          if (input.apiStyle === 'anthropic') {
-            headers['x-api-key'] = key
-            headers['anthropic-version'] = headers['anthropic-version'] ?? '2023-06-01'
-          }
-          else {
-            headers.Authorization = `Bearer ${key}`
-          }
-        }
-        // fetch pages (Anthropic paginates with has_more + last_id; OpenAI-style returns one page)
-        const models: string[] = []
-        let after: string | null = null
-        for (let page = 0; page < 10; page++) {
-          const paged = after ? `${url}?after_id=${encodeURIComponent(after)}&limit=100` : `${url}?limit=100`
-          let body: unknown
-          try {
-            const res = await fetch(paged, { headers, signal: AbortSignal.timeout(10_000) })
-            if (!res.ok) {
-              throw new ORPCError('BAD_REQUEST', { message: `endpoint returned ${res.status}` })
-            }
-            body = await res.json()
-          }
-          catch (e) {
-            if (e instanceof ORPCError) throw e
-            throw new ORPCError('BAD_REQUEST', { message: 'could not reach the endpoint' })
-          }
-          const payload = body as { data?: Array<{ id?: string }>, has_more?: boolean, last_id?: string | null }
-          const list = payload?.data
-          if (Array.isArray(list)) {
-            models.push(...list.map(m => m.id).filter((m): m is string => typeof m === 'string' && m.length > 0))
-          }
-          if (!payload?.has_more || !payload?.last_id) break
-          after = payload.last_id
-        }
-        return { models: [...new Set(models)].sort() }
       }),
 
     /** delete a provider (blocked while AI employees use it) */
@@ -521,7 +446,7 @@ export const router = os.router({
           harness: ai?.harness ?? null,
           executable: ai?.executable ?? null,
           providerId: ai?.providerId ?? null,
-          modelId: ai?.modelId ?? null,
+          model: ai?.model ?? null,
           apiKeySecretId: ai?.apiKeySecretId ?? null,
           instructions: ai?.instructions ?? null,
           createdAt: r.createdAt.toISOString(),
@@ -544,7 +469,7 @@ export const router = os.router({
         harness: z.enum(['hermes']).optional(),
         executable: z.string().min(1).max(60).optional(),
         providerId: z.string().min(1).nullable().optional(),
-        modelId: z.string().min(1).nullable().optional(),
+        model: z.string().min(1).max(200).nullable().optional(),
         apiKeySecretId: z.string().min(1).nullable().optional(),
       }))
       .handler(async ({ input, context }) => {
@@ -598,10 +523,6 @@ export const router = os.router({
             const prov = await db.select({ id: modelProvidersTable.id }).from(modelProvidersTable).where(eq(modelProvidersTable.id, input.providerId))
             if (prov.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'provider does not exist' })
           }
-          if (input.modelId) {
-            const m = await db.select({ id: modelsTable.id }).from(modelsTable).where(eq(modelsTable.id, input.modelId))
-            if (m.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'model does not exist' })
-          }
           await db.insert(aiEmployeesTable).values({
             userId,
             environmentId: input.environmentId!,
@@ -609,7 +530,7 @@ export const router = os.router({
             harness: input.harness ?? 'hermes',
             executable: input.executable?.trim() || 'hermes',
             providerId: input.providerId ?? null,
-            modelId: input.modelId ?? null,
+            model: input.model ?? null,
             apiKeySecretId: input.apiKeySecretId ?? null,
           })
           const { getAuth } = await import('./auth')
@@ -633,7 +554,7 @@ export const router = os.router({
         harness: z.enum(['hermes']).optional(),
         executable: z.string().min(1).max(60).nullable().optional(),
         providerId: z.string().min(1).nullable().optional(),
-        modelId: z.string().min(1).nullable().optional(),
+        model: z.string().min(1).max(200).nullable().optional(),
         apiKeySecretId: z.string().min(1).nullable().optional(),
       }))
       .handler(async ({ input }) => {
@@ -677,8 +598,8 @@ export const router = os.router({
           stack.push(...(graph.get(cur) ?? []))
         }
         // AI fields — only when this employee IS an AI (extension row exists)
-        if (aiRow && (input.environmentId !== undefined || input.instructions !== undefined || input.harness !== undefined || input.executable !== undefined || input.providerId !== undefined || input.modelId !== undefined || input.apiKeySecretId !== undefined)) {
-          const patch: { environmentId?: string, instructions?: string, harness?: string, executable?: string, providerId?: string | null, modelId?: string | null, apiKeySecretId?: string | null, updatedAt: Date } = { updatedAt: new Date() }
+        if (aiRow && (input.environmentId !== undefined || input.instructions !== undefined || input.harness !== undefined || input.executable !== undefined || input.providerId !== undefined || input.model !== undefined || input.apiKeySecretId !== undefined)) {
+          const patch: { environmentId?: string, instructions?: string, harness?: string, executable?: string, providerId?: string | null, model?: string | null, apiKeySecretId?: string | null, updatedAt: Date } = { updatedAt: new Date() }
           if (input.environmentId !== undefined && input.environmentId !== null) {
             const env = await db.select({ id: environmentsTable.id }).from(environmentsTable).where(eq(environmentsTable.id, input.environmentId))
             if (env.length === 0) {
@@ -704,13 +625,7 @@ export const router = os.router({
             }
             patch.providerId = input.providerId
           }
-          if (input.modelId !== undefined) {
-            if (input.modelId !== null) {
-              const m = await db.select({ id: modelsTable.id }).from(modelsTable).where(eq(modelsTable.id, input.modelId))
-              if (m.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'model does not exist' })
-            }
-            patch.modelId = input.modelId
-          }
+          if (input.model !== undefined) patch.model = input.model
           if (input.apiKeySecretId !== undefined) {
             if (input.apiKeySecretId !== null) {
               const s = await db.select({ id: vaultSecretsTable.id }).from(vaultSecretsTable).where(eq(vaultSecretsTable.id, input.apiKeySecretId))

@@ -48,137 +48,34 @@ describe('providers', () => {
     expect(labels).toEqual(['Anthropic', 'OpenAI', 'OpenRouter'])
     const openai = rows.find(r => r.label === 'OpenAI')!
     expect(openai.baseUrl).toBe('https://api.openai.com/v1')
-    expect(openai.modelNames).toContain('gpt-5.2')
     const anthropic = rows.find(r => r.label === 'Anthropic')!
     expect(anthropic.apiStyle).toBe('anthropic')
-    expect(anthropic.modelNames).toContain('claude-sonnet-4-5')
   })
 
   it('save upserts a provider and replaces its model list', async () => {
-    const r1 = await callProc('providers.save', { label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', apiStyle: 'openai', modelNames: ['llama-4', 'mixtral'] })
+    const r1 = await callProc('providers.save', { label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', apiStyle: 'openai' })
     expect(r1.id).toBeTruthy()
     // update: replace models
-    await callProc('providers.save', { id: r1.id, label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', apiStyle: 'openai', modelNames: ['llama-4-only'] })
+    await callProc('providers.save', { id: r1.id, label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', apiStyle: 'openai' })
     const iter = await callProc('providers.live')
     const snap = await iter.next()
     await iter.return?.()
-    const groq = (snap.value as any[]).find((p: any) => p.id === r1.id)!
-    expect(groq.modelNames).toEqual(['llama-4-only'])
-  })
-
-  it('fetchModels lists + dedupes from an openai-style endpoint', async () => {
-    const origFetch = globalThis.fetch
-    globalThis.fetch = (async (url: unknown, init?: unknown) => {
-      const headers = (init as { headers?: Record<string, string> })?.headers ?? {}
-      if (headers.Authorization !== 'Bearer sk-test') throw new Error('missing auth')
-      return { ok: true, status: 200, json: async () => ({ data: [{ id: 'm-b' }, { id: 'm-a' }, { id: 'm-a' }, { id: '' }, {}] }) }
-    }) as typeof fetch
-    try {
-      const ksec = await callProc('vault.create', { name: 'list-key', value: 'sk-test' })
-      const r = await callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com/v1', apiStyle: 'openai', keySecretId: ksec.id })
-      expect(r.models).toEqual(['m-a', 'm-b'])
-    }
-    finally { globalThis.fetch = origFetch }
-  })
-
-  it('fetchModels uses x-api-key + version for anthropic style; maps errors', async () => {
-    const origFetch = globalThis.fetch
-    const seen: Array<Record<string, string>> = []
-    globalThis.fetch = (async (url: unknown, init?: unknown) => {
-      seen.push(((init as { headers?: Record<string, string> })?.headers) ?? {})
-      return { ok: false, status: 401, json: async () => ({}) }
-    }) as typeof fetch
-    try {
-      const aseg = await callProc('vault.create', { name: 'ant-key', value: 'sk-ant' })
-      await expect(callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com', apiStyle: 'anthropic', keySecretId: aseg.id })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-      expect(seen[0]!['x-api-key']).toBe('sk-ant')
-      expect(seen[0]!['anthropic-version']).toBe('2023-06-01')
-      await expect(callProc('providers.fetchModels', { baseUrl: 'https://unreachable.invalid', apiStyle: 'openai' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-    }
-    finally { globalThis.fetch = origFetch }
-  })
-
-  it('fetchModels follows anthropic pagination (has_more + last_id)', async () => {
-    const origFetch = globalThis.fetch
-    let calls = 0
-    globalThis.fetch = (async (url: unknown) => {
-      calls++
-      const u = String(url)
-      if (!u.includes('after_id=')) {
-        return { ok: true, status: 200, json: async () => ({ data: [{ id: 'm-early' }], has_more: true, last_id: 'm-early' }) }
-      }
-      return { ok: true, status: 200, json: async () => ({ data: [{ id: 'm-late' }], has_more: false, last_id: 'm-late' }) }
-    }) as typeof fetch
-    try {
-      const r = await callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com', apiStyle: 'anthropic', key: 'sk-ant' })
-      expect(r.models).toEqual(['m-early', 'm-late'])
-      expect(calls).toBe(2)
-    }
-    finally { globalThis.fetch = origFetch }
-  })
-
-  it('fetchModels uses a vault secret (decrypted server-side, audited use)', async () => {
-    const sec = await callProc('vault.create', { name: 'sync-key', value: 'sk-from-vault' })
-    const origFetch = globalThis.fetch
-    const seenHeaders: Array<Record<string, string>> = []
-    globalThis.fetch = (async (_url: unknown, init?: unknown) => {
-      seenHeaders.push(((init as { headers?: Record<string, string> })?.headers) ?? {})
-      return { ok: true, status: 200, json: async () => ({ data: [{ id: 'vault-model' }], has_more: false }) }
-    }) as typeof fetch
-    try {
-      const r = await callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com/v1', apiStyle: 'openai', keySecretId: sec.id })
-      expect(r.models).toEqual(['vault-model'])
-      expect(seenHeaders[0]!.Authorization).toBe('Bearer sk-from-vault')
-      // audit trail recorded the use
-      const { db } = await dbm()
-      const { vaultAudit } = await import('../server/db/schema')
-      const audits = await db.select().from(vaultAudit).where(eq(vaultAudit.secretId, sec.id))
-      expect(audits.some(a => a.action === 'use')).toBe(true)
-    }
-    finally { globalThis.fetch = origFetch }
-  })
-
-  it('fetchModels rejects a raw pasted key (vault-only)', async () => {
-    await expect(callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com/v1', apiStyle: 'openai', key: 'sk-pasted' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-  })
-
-  it('fetchModels unknown vault secret rejected', async () => {
-    await expect(callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com/v1', apiStyle: 'openai', keySecretId: 'ghost-sec' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-  })
-
-  it('fetchModels tolerates a malformed body (no data array)', async () => {
-    const origFetch = globalThis.fetch
-    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ unexpected: true }) })) as typeof fetch
-    try {
-      const r = await callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com/v1', apiStyle: 'openai' })
-      expect(r.models).toEqual([])
-    }
-    finally { globalThis.fetch = origFetch }
-  })
-
-  it('fetchModels wraps network failures', async () => {
-    const origFetch = globalThis.fetch
-    globalThis.fetch = (async () => { throw new TypeError('fetch failed') }) as typeof fetch
-    try {
-      await expect(callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com/v1', apiStyle: 'openai' })).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'could not reach the endpoint' })
-    }
-    finally { globalThis.fetch = origFetch }
   })
 
   it('save with extraHeaders set (truthy arm)', async () => {
-    const r = await callProc('providers.save', { label: 'Hdr', baseUrl: 'https://hdr.example.com/v1', apiStyle: 'openai', extraHeaders: { 'HTTP-Referer': 'https://tandem.local' }, modelNames: ['m'] })
+    const r = await callProc('providers.save', { label: 'Hdr', baseUrl: 'https://hdr.example.com/v1', apiStyle: 'openai', extraHeaders: { 'HTTP-Referer': 'https://tandem.local' } })
     expect(r.id).toBeTruthy()
   })
 
   it('save with no headers and empty model list (empty branches)', async () => {
-    const a = await callProc('providers.save', { label: 'Bare', baseUrl: 'https://bare.example.com/v1', apiStyle: 'openai', modelNames: [] })
+    const a = await callProc('providers.save', { label: 'Bare', baseUrl: 'https://bare.example.com/v1', apiStyle: 'openai' })
     expect(a.id).toBeTruthy()
     const b = await callProc('providers.save', { label: 'Bare2', baseUrl: 'https://bare2.example.com/v1', apiStyle: 'openai' })
     expect(b.id).toBeTruthy()
   })
 
   it('live parses stored extraHeaders JSON', async () => {
-    await callProc('providers.save', { label: 'HdrRead', baseUrl: 'https://hr.example.com/v1', apiStyle: 'openai', extraHeaders: { 'X-Probe': '1' }, modelNames: ['m'] })
+    await callProc('providers.save', { label: 'HdrRead', baseUrl: 'https://hr.example.com/v1', apiStyle: 'openai', extraHeaders: { 'X-Probe': '1' } })
     const iter = await callProc('providers.live')
     const snap = await iter.next()
     await iter.return?.()
@@ -186,22 +83,15 @@ describe('providers', () => {
     expect(p.extraHeaders).toEqual({ 'X-Probe': '1' })
   })
 
-  it('providerInUse false when unreferenced', async () => {
-    const { providerInUse } = await import('../server/utils/model-providers')
-    expect(await providerInUse('seed-anthropic')).toBe(false)
-  })
-
   it('save dedupes model names', async () => {
-    const r = await callProc('providers.save', { label: 'Dup', baseUrl: 'https://dup.example.com/v1', apiStyle: 'openai', modelNames: ['m', 'm', 'm2'] })
+    const r = await callProc('providers.save', { label: 'Dup', baseUrl: 'https://dup.example.com/v1', apiStyle: 'openai' })
     const iter = await callProc('providers.live')
     const snap = await iter.next()
     await iter.return?.()
-    const dup = (snap.value as any[]).find((p: any) => p.id === r.id)!
-    expect(dup.modelNames).toEqual(['m', 'm2'])
   })
 
   it('remove deletes an unused provider (models cascade)', async () => {
-    const r = await callProc('providers.save', { label: 'Temp', baseUrl: 'https://temp.example.com/v1', apiStyle: 'openai', modelNames: ['t1'] })
+    const r = await callProc('providers.save', { label: 'Temp', baseUrl: 'https://temp.example.com/v1', apiStyle: 'openai' })
     await callProc('providers.remove', { id: r.id })
     const iter = await callProc('providers.live')
     const snap = await iter.next()
@@ -209,7 +99,6 @@ describe('providers', () => {
     expect((snap.value as any[]).find((p: any) => p.id === r.id)).toBeUndefined()
     const { db } = await dbm()
     const { models } = await import('../server/db/schema')
-    expect((await db.select().from(models)).filter(m => m.providerId === r.id)).toHaveLength(0)
   })
 
   it('remove is blocked while an AI employee uses the provider', async () => {
@@ -222,36 +111,38 @@ describe('providers', () => {
 })
 
 describe('employees model access', () => {
-  it('create/update persist providerId + modelId + apiKeySecretId', async () => {
+  it('update rejects unknown provider / secret', async () => {
+    const { db } = await dbm()
+    const { environments } = await import('../server/db/schema')
+    await db.insert(environments).values({ id: 'env-r', name: 'env-r', host: '127.0.0.1', port: '22', username: 'u' })
+    const bot = await callProc('employees.create', { name: 'R Bot', email: 'rbot@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-r' })
+    await expect(callProc('employees.update', { id: bot.id, name: 'R Bot', title: 'B', supervisorIds: [], providerId: 'ghost-prov' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(callProc('employees.update', { id: bot.id, name: 'R Bot', title: 'B', supervisorIds: [], apiKeySecretId: 'ghost-sec' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    // freetext model accepted as-is; valid provider + secret pass the update-path checks
+    const sec = await callProc('vault.create', { name: 'r-key', value: 'sk-1' })
+    await callProc('employees.update', { id: bot.id, name: 'R Bot', title: 'B', supervisorIds: [], model: 'any-model-name', providerId: 'seed-openai', apiKeySecretId: sec.id })
+    const { aiEmployees } = await import('../server/db/schema')
+    const ai = (await db.select().from(aiEmployees))[0]!
+    expect(ai.model).toBe('any-model-name')
+  })
+
+  it('create/update persist providerId + model + apiKeySecretId', async () => {
     const { db } = await dbm()
     const { environments } = await import('../server/db/schema')
     await db.insert(environments).values({ id: 'env-m', name: 'env-m', host: '127.0.0.1', port: '22', username: 'u' })
-    const { models } = await import('../server/db/schema')
-    const gpt = (await db.select().from(models)).find(m => m.name === 'gpt-5.2')!
     const sec = await callProc('vault.create', { name: 'bot-key', value: 'sk-test-123' })
-    const bot = await callProc('employees.create', { name: 'M Bot', email: 'mbot@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-m', providerId: 'seed-openai', modelId: gpt.id, apiKeySecretId: sec.id })
+    const bot = await callProc('employees.create', { name: 'M Bot', email: 'mbot@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-m', providerId: 'seed-openai', model: 'gpt-5.2', apiKeySecretId: sec.id })
     const { aiEmployees } = await import('../server/db/schema')
     let ai = (await db.select().from(aiEmployees))[0]!
     expect(ai.providerId).toBe('seed-openai')
-    expect(ai.modelId).toBe(gpt.id)
+    expect(ai.model).toBe('gpt-5.2')
     expect(ai.apiKeySecretId).toBe(sec.id)
     // update: clear them
-    await callProc('employees.update', { id: bot.id, name: 'M Bot', title: 'B', supervisorIds: [], providerId: null, modelId: null, apiKeySecretId: null })
+    await callProc('employees.update', { id: bot.id, name: 'M Bot', title: 'B', supervisorIds: [], providerId: null, model: null, apiKeySecretId: null })
     ai = (await db.select().from(aiEmployees))[0]!
     expect(ai.providerId).toBeNull()
-    expect(ai.modelId).toBeNull()
+    expect(ai.model).toBeNull()
     expect(ai.apiKeySecretId).toBeNull()
-  })
-
-  it('create-path reject arms (model + secret variants)', async () => {
-    const { db } = await dbm()
-    const { environments } = await import('../server/db/schema')
-    await db.insert(environments).values({ id: 'env-c2', name: 'env-c2', host: '127.0.0.1', port: '22', username: 'u' })
-    const sec = await callProc('vault.create', { name: 'real-key', value: 'sk-1' })
-    // valid secret but ghost provider
-    await expect(callProc('employees.create', { name: 'C2', email: 'c2a@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-c2', providerId: 'ghost', apiKeySecretId: sec.id })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-    // valid provider but ghost model
-    await expect(callProc('employees.create', { name: 'C2', email: 'c2b@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-c2', providerId: 'seed-openai', modelId: 'ghost-model' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
   it('rejects unknown provider / model / secret', async () => {
@@ -260,8 +151,6 @@ describe('employees model access', () => {
     await db.insert(environments).values({ id: 'env-x', name: 'env-x', host: '127.0.0.1', port: '22', username: 'u' })
     await expect(callProc('employees.create', { name: 'X', email: 'x1@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-x', providerId: 'nope' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(callProc('employees.create', { name: 'X', email: 'x2@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-x', apiKeySecretId: 'nope' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-    const bot = await callProc('employees.create', { name: 'X', email: 'x3@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-x' })
-    await expect(callProc('employees.update', { id: bot.id, name: 'X', title: 'B', supervisorIds: [], modelId: 'ghost-model' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
   it('update null-clear paths: provider null skips validation', async () => {
@@ -270,14 +159,14 @@ describe('employees model access', () => {
     await db.insert(environments).values({ id: 'env-n', name: 'env-n', host: '127.0.0.1', port: '22', username: 'u' })
     const bot = await callProc('employees.create', { name: 'N Bot', email: 'nbot@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-n', providerId: 'seed-openai' })
     // unknown values throw on the update path
-    await expect(callProc('employees.update', { id: bot.id, name: 'N Bot', title: 'B', supervisorIds: [], providerId: 'seed-openai', modelId: 'ghost-model' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(callProc('employees.update', { id: bot.id, name: 'N Bot', title: 'B', supervisorIds: [], providerId: 'ghost-prov' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(callProc('employees.update', { id: bot.id, name: 'N Bot', title: 'B', supervisorIds: [], apiKeySecretId: 'ghost-sec' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     // null clears without hitting the existence checks
-    await callProc('employees.update', { id: bot.id, name: 'N Bot', title: 'B', supervisorIds: [], providerId: null, modelId: null, apiKeySecretId: null })
+    await callProc('employees.update', { id: bot.id, name: 'N Bot', title: 'B', supervisorIds: [], providerId: null, model: null, apiKeySecretId: null })
     const { aiEmployees } = await import('../server/db/schema')
     const ai = (await db.select().from(aiEmployees))[0]!
     expect(ai.providerId).toBeNull()
-    expect(ai.modelId).toBeNull()
+    expect(ai.model).toBeNull()
     expect(ai.apiKeySecretId).toBeNull()
   })
 
@@ -288,29 +177,6 @@ describe('employees model access', () => {
     const bot = await callProc('employees.create', { name: 'U Bot', email: 'ubot@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-u' })
     await expect(callProc('employees.update', { id: bot.id, name: 'U Bot', title: 'B', supervisorIds: [], providerId: 'ghost-prov' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(callProc('employees.update', { id: bot.id, name: 'U Bot', title: 'B', supervisorIds: [], apiKeySecretId: 'ghost-sec' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-  })
-
-  it('update-path model + secret reject arms in isolation', async () => {
-    const { db } = await dbm()
-    const { environments } = await import('../server/db/schema')
-    await db.insert(environments).values({ id: 'env-iso', name: 'env-iso', host: '127.0.0.1', port: '22', username: 'u' })
-    const bot = await callProc('employees.create', { name: 'Iso', email: 'iso@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-iso' })
-    await expect(callProc('employees.update', { id: bot.id, name: 'Iso', title: 'B', supervisorIds: [], modelId: 'nope' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-    await expect(callProc('employees.update', { id: bot.id, name: 'Iso', title: 'B', supervisorIds: [], apiKeySecretId: 'nope' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-  })
-
-  it('update-path happy arms: valid model + secret pass checks', async () => {
-    const { db } = await dbm()
-    const { environments, models } = await import('../server/db/schema')
-    await db.insert(environments).values({ id: 'env-h', name: 'env-h', host: '127.0.0.1', port: '22', username: 'u' })
-    const gpt = (await db.select().from(models)).find(m => m.name === 'gpt-5.2')!
-    const sec = await callProc('vault.create', { name: 'happy-key', value: 'sk-9' })
-    const bot = await callProc('employees.create', { name: 'H Bot', email: 'hbot@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-h' })
-    await callProc('employees.update', { id: bot.id, name: 'H Bot', title: 'B', supervisorIds: [], providerId: 'seed-openai', modelId: gpt.id, apiKeySecretId: sec.id })
-    const { aiEmployees } = await import('../server/db/schema')
-    const ai = (await db.select().from(aiEmployees))[0]!
-    expect(ai.modelId).toBe(gpt.id)
-    expect(ai.apiKeySecretId).toBe(sec.id)
   })
 
   it('deleting the key secret nulls the agent reference (set null)', async () => {
