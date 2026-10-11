@@ -1,3 +1,10 @@
+## [2.3.1](https://github.com/namhtpyn/tandem/compare/v2.3.0...v2.3.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **ui:** release hover popovers ([4ca0939](https://github.com/namhtpyn/tandem/commit/4ca09394c01a6258e21104105c54e5dcd9bb7a70))
+
 # [2.3.0](https://github.com/namhtpyn/tandem/compare/v2.2.0...v2.3.0) (2026-10-11)
 
 
