@@ -1,3 +1,10 @@
+## [1.13.2](https://github.com/namhtpyn/tandem/compare/v1.13.1...v1.13.2) (2026-10-11)
+
+
+### Bug Fixes
+
+* **e2e:** provider seed assertions must filter visible (mobile cards + desktop table both render) ([da63694](https://github.com/namhtpyn/tandem/commit/da63694f78a5e929743c12bb93daec12aca75964))
+
 ## [1.13.1](https://github.com/namhtpyn/tandem/compare/v1.13.0...v1.13.1) (2026-10-11)
 
 
