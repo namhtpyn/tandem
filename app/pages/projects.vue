@@ -151,9 +151,15 @@ const statusColor = (s: string) => (s === 'archived' ? 'neutral' : 'success')
               <UBadge :color="statusColor(row.status)" variant="subtle" size="sm">{{ row.status }}</UBadge>
             </div>
             <div class="mt-3 flex justify-end gap-1">
-              <UButton icon="i-lucide-plus" variant="ghost" color="neutral" size="sm" aria-label="Add subproject" @click="openEditor(undefined); form.parentId = row.id" />
-              <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit project" @click="openEditor(row)" />
-              <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete project" :disabled="busy" @click="askRemove(row)" />
+              <UTooltip text="Add subproject">
+                <UButton icon="i-lucide-plus" variant="ghost" color="neutral" size="sm" aria-label="Add subproject" @click="openEditor(undefined); form.parentId = row.id" />
+              </UTooltip>
+              <UTooltip text="Edit project">
+                <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit project" @click="openEditor(row)" />
+              </UTooltip>
+              <UTooltip text="Delete project">
+                <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete project" :disabled="busy" @click="askRemove(row)" />
+              </UTooltip>
             </div>
           </UCard>
         </div>
@@ -179,9 +185,15 @@ const statusColor = (s: string) => (s === 'archived' ? 'neutral' : 'success')
             </template>
             <template #actions-cell="{ row }">
               <div class="flex justify-end gap-1">
-                <UButton icon="i-lucide-plus" variant="ghost" color="neutral" size="xs" aria-label="Add subproject" @click="openEditor(undefined); form.parentId = row.original.id" />
-                <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit project" @click="openEditor(row.original)" />
-                <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Delete project" :disabled="busy" @click="askRemove(row.original)" />
+                <UTooltip text="Add subproject">
+                  <UButton icon="i-lucide-plus" variant="ghost" color="neutral" size="xs" aria-label="Add subproject" @click="openEditor(undefined); form.parentId = row.original.id" />
+                </UTooltip>
+                <UTooltip text="Edit project">
+                  <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit project" @click="openEditor(row.original)" />
+                </UTooltip>
+                <UTooltip text="Delete project">
+                  <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Delete project" :disabled="busy" @click="askRemove(row.original)" />
+                </UTooltip>
               </div>
             </template>
           </UTable>

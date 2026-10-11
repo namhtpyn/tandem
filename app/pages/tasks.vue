@@ -164,8 +164,12 @@ function statusColor(s: string) {
               @update:model-value="(v: string) => setStatus(row, v as 'todo' | 'doing' | 'done')"
             />
             <div class="flex items-center gap-1">
-              <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit task" @click="openEditor(row)" />
-              <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Delete task" @click="pendingDelete = row" />
+              <UTooltip text="Edit task">
+                <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit task" @click="openEditor(row)" />
+              </UTooltip>
+              <UTooltip text="Delete task">
+                <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Delete task" @click="pendingDelete = row" />
+              </UTooltip>
             </div>
           </div>
         </UCard>
@@ -205,8 +209,12 @@ function statusColor(s: string) {
           </template>
           <template #actions-cell="{ row }">
             <div class="flex justify-end gap-1">
-              <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit task" @click="openEditor(row.original)" />
-              <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Delete task" @click="pendingDelete = row.original" />
+              <UTooltip text="Edit task">
+                <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit task" @click="openEditor(row.original)" />
+              </UTooltip>
+              <UTooltip text="Delete task">
+                <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Delete task" @click="pendingDelete = row.original" />
+              </UTooltip>
             </div>
           </template>
         </UTable>

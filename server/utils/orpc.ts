@@ -623,7 +623,7 @@ export const router = os.router({
         {
           const { getAuth } = await import('./auth')
           const auth = await getAuth()
-          const created = await auth.api.createApiKey({ body: { name: `${input.name.slice(0, 40)} key`, userId, prefix: 'tandem_' } })
+          const created = await auth.api.createApiKey({ body: { name: `${input.name.slice(0, 40)} access key`, userId, prefix: 'tandem_' } })
           apiKey = created.key
         }
         await publishChange('employees', 'create')
@@ -766,15 +766,32 @@ export const router = os.router({
 
     /** mint a fresh access key for any employee — AI or human (old keys stay valid) */
     createApiKey: protectedProcedure
-      .input(z.strictObject({ employeeId: z.string().min(1) }))
+      .input(z.strictObject({
+        employeeId: z.string().min(1),
+        name: z.string().min(1).max(100).optional(),
+      }))
       .handler(async ({ input }) => {
         const rows = await db.select().from(userTable).where(eq(userTable.id, input.employeeId))
         const emp = rows[0]
         if (!emp) throw new ORPCError('NOT_FOUND', { message: 'employee not found' })
         const { getAuth } = await import('./auth')
         const auth = await getAuth()
-        const created = await auth.api.createApiKey({ body: { name: `employee ${emp.id.slice(0, 8)}`, userId: emp.id, prefix: 'tandem_' } })
+        const created = await auth.api.createApiKey({ body: { name: input.name?.trim() || `${emp.name.slice(0, 40)} key`, userId: emp.id, prefix: 'tandem_' } })
         return { key: created.key, id: created.id }
+      }),
+
+    /** rename an access key */
+    updateApiKey: protectedProcedure
+      .input(z.strictObject({
+        keyId: z.string().min(1),
+        name: z.string().min(1).max(100),
+      }))
+      .handler(async ({ input }) => {
+        const name = input.name.trim()
+        if (!name) throw new ORPCError('BAD_REQUEST', { message: 'name is required' })
+        const updated = await db.update(apikeyTable).set({ name }).where(eq(apikeyTable.id, input.keyId)).returning({ id: apikeyTable.id })
+        if (updated.length === 0) throw new ORPCError('NOT_FOUND', { message: 'api key not found' })
+        return { ok: true }
       }),
 
     /** list an employee's API keys (never the key value) */

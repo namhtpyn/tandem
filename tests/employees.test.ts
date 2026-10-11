@@ -324,6 +324,25 @@ describe('employees API keys', () => {
     expect(mintedH.key).toMatch(/^tandem_/)
   })
 
+  it('createApiKey uses provided name; updateApiKey renames', async () => {
+    await seedEnv('env-named')
+    const h = await callProc('employees.create', { name: 'Named H', email: 'k-named@tandem.local', kind: 'human', title: 'T', supervisorIds: [] })
+    const minted = await callProc('employees.createApiKey', { employeeId: h.id, name: 'ci-deploy' })
+    expect(minted.key).toMatch(/^tandem_/)
+    const { apikey } = await schema()
+    const { db } = await dbm()
+    const rows = await db.select().from(apikey)
+    expect(rows.some(r => r.name === 'ci-deploy')).toBe(true)
+    // rename
+    await callProc('employees.updateApiKey', { keyId: minted.id, name: 'ci-deploy-v2' })
+    const rows2 = await db.select().from(apikey)
+    expect(rows2.some(r => r.name === 'ci-deploy-v2')).toBe(true)
+    expect(rows2.some(r => r.name === 'ci-deploy')).toBe(false)
+    // unknown key / blank name
+    await expect(callProc('employees.updateApiKey', { keyId: 'ghost', name: 'x' })).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    await expect(callProc('employees.updateApiKey', { keyId: minted.id, name: '   ' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
   it('createApiKey 404s unknown employee', async () => {
     await expect(callProc('employees.createApiKey', { employeeId: 'ghost' })).rejects.toThrow(/not found/i)
   })

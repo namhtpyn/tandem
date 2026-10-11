@@ -193,12 +193,16 @@ const keys = ref<ApiKeyRow[]>([])
 const keysBusy = ref(false)
 const keysMessage = ref('')
 const freshKey = ref('')
+const mintName = ref('')
+const renamingId = ref<string | null>(null)
+const renameValue = ref('')
 
 async function openKeys(row: EmployeeRow) {
   keysEmployee.value = row
   keysOpen.value = true
   keysMessage.value = ''
   freshKey.value = ''
+  mintName.value = ''
   await refreshKeys()
 }
 
@@ -221,12 +225,34 @@ async function mintKey() {
   keysBusy.value = true
   keysMessage.value = ''
   try {
-    const res = await createKeyMutation.mutateAsync({ employeeId: keysEmployee.value.id })
+    const res = await createKeyMutation.mutateAsync({ employeeId: keysEmployee.value.id, ...(mintName.value.trim() ? { name: mintName.value.trim() } : {}) })
     freshKey.value = res.key as string
+    mintName.value = ''
     await refreshKeys()
   }
   catch (e) {
     keysMessage.value = e instanceof Error ? e.message : 'mint failed'
+  }
+  finally {
+    keysBusy.value = false
+  }
+}
+
+async function startRename(k: ApiKeyRow) {
+  renamingId.value = k.id
+  renameValue.value = k.name ?? ''
+}
+
+async function saveRename() {
+  if (!renamingId.value || !renameValue.value.trim()) return
+  keysBusy.value = true
+  try {
+    await ($client as any).employees.updateApiKey({ keyId: renamingId.value, name: renameValue.value.trim() })
+    renamingId.value = null
+    await refreshKeys()
+  }
+  catch (e) {
+    keysMessage.value = e instanceof Error ? e.message : 'rename failed'
   }
   finally {
     keysBusy.value = false
@@ -298,12 +324,18 @@ const columns = [
           </UBadge>
         </div>
         <div class="mt-3 flex justify-end gap-1">
-          <UButton
+          <UTooltip text="Access keys">
+            <UButton
             icon="i-lucide-key-round" variant="ghost" color="neutral" size="sm"
             aria-label="Access keys" :disabled="busy" @click="openKeys(row)"
           />
-          <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit employee" :disabled="busy" @click="openEditor(row)" />
-          <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete employee" :disabled="busy" @click="askRemove(row)" />
+          </UTooltip>
+          <UTooltip text="Edit employee">
+            <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit employee" :disabled="busy" @click="openEditor(row)" />
+          </UTooltip>
+          <UTooltip text="Delete employee">
+            <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete employee" :disabled="busy" @click="askRemove(row)" />
+          </UTooltip>
         </div>
       </UCard>
     </div>
@@ -341,7 +373,8 @@ const columns = [
         </template>
         <template #actions-cell="{ row }">
           <div class="flex justify-end gap-1">
-            <UButton
+            <UTooltip text="Access keys">
+              <UButton
               icon="i-lucide-key-round"
               variant="ghost"
               color="neutral"
@@ -350,8 +383,13 @@ const columns = [
               :disabled="busy"
               @click="openKeys(row.original)"
             />
-            <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit employee" :disabled="busy" @click="openEditor(row.original)" />
-            <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete employee" :disabled="busy" @click="askRemove(row.original)" />
+            </UTooltip>
+            <UTooltip text="Edit employee">
+              <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit employee" :disabled="busy" @click="openEditor(row.original)" />
+            </UTooltip>
+            <UTooltip text="Delete employee">
+              <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete employee" :disabled="busy" @click="askRemove(row.original)" />
+            </UTooltip>
           </div>
         </template>
             </UTable>
@@ -558,14 +596,25 @@ const columns = [
           </div>
           <div v-if="keys.length" class="divide-y divide-zinc-200 dark:divide-zinc-800">
             <div v-for="k in keys" :key="k.id" class="flex items-center justify-between gap-2 py-2">
-              <div class="min-w-0">
+              <div v-if="renamingId !== k.id" class="min-w-0">
                 <p class="truncate text-sm text-zinc-900 dark:text-white">{{ k.name ?? 'unnamed' }}</p>
                 <p class="font-mono text-xs text-zinc-400">{{ k.prefix }}{{ k.start }}… · created {{ new Date(k.createdAt).toLocaleDateString() }}</p>
               </div>
-              <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Revoke key" :loading="keysBusy" @click="revokeKey(k.id)" />
+              <div v-else class="flex min-w-0 flex-1 items-center gap-1">
+                <UInput v-model="renameValue" size="xs" placeholder="Key name" class="flex-1" @keydown.enter.prevent="saveRename" />
+                <UTooltip text="Save name"><UButton icon="i-lucide-check" variant="ghost" color="primary" size="xs" aria-label="Save name" :loading="keysBusy" @click="saveRename" /></UTooltip>
+                <UTooltip text="Cancel"><UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" aria-label="Cancel rename" @click="renamingId = null" /></UTooltip>
+              </div>
+              <div v-if="renamingId !== k.id" class="flex shrink-0 gap-1">
+                <UTooltip text="Rename key"><UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Rename key" :disabled="keysBusy" @click="startRename(k)" /></UTooltip>
+                <UTooltip text="Revoke key"><UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Revoke key" :loading="keysBusy" @click="revokeKey(k.id)" /></UTooltip>
+              </div>
             </div>
           </div>
           <p v-else-if="!keysBusy" class="text-sm text-zinc-500">No keys.</p>
+          <UFormField label="Key name" name="mintName" class="pt-1">
+            <UInput v-model="mintName" icon="i-lucide-tag" placeholder="e.g. ci-deploy (optional)" class="w-full" />
+          </UFormField>
           <div class="flex justify-end gap-2 pt-1">
             <UButton icon="i-lucide-key-round" size="sm" label="Mint new key" :loading="keysBusy" @click="mintKey" />
           </div>

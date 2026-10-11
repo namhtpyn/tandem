@@ -231,8 +231,12 @@ async function savePasswordPolicy() {
                 <UBadge :color="p.apiStyle === 'anthropic' ? 'warning' : 'primary'" variant="subtle" size="sm">{{ p.apiStyle }}</UBadge>
               </div>
               <div class="mt-3 flex justify-end gap-1">
-                <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit provider" @click="openMProvEditor(p)" />
-                <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete provider" :loading="mProvBusy" @click="removeMProv(p.id)" />
+                <UTooltip text="Edit provider">
+                  <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit provider" @click="openMProvEditor(p)" />
+                </UTooltip>
+                <UTooltip text="Delete provider">
+                  <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete provider" :loading="mProvBusy" @click="removeMProv(p.id)" />
+                </UTooltip>
               </div>
             </UCard>
           </div>
@@ -253,8 +257,12 @@ async function savePasswordPolicy() {
               </template>
               <template #actions-cell="{ row }">
                 <div class="flex justify-end gap-1">
-                  <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit provider" @click="openMProvEditor(row.original)" />
-                  <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Delete provider" :loading="mProvBusy" @click="removeMProv(row.original.id)" />
+                  <UTooltip text="Edit provider">
+                    <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit provider" @click="openMProvEditor(row.original)" />
+                  </UTooltip>
+                  <UTooltip text="Delete provider">
+                    <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Delete provider" :loading="mProvBusy" @click="removeMProv(row.original.id)" />
+                  </UTooltip>
                 </div>
               </template>
             </UTable>
@@ -292,8 +300,12 @@ async function savePasswordPolicy() {
                 </template>
                 <template #actions-cell="{ row }">
                   <div class="flex justify-end gap-2">
-                    <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit provider" @click="openEditor(row.original)" />
-                    <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Remove provider" @click="removeProvider(row.original)" />
+                    <UTooltip text="Edit provider">
+                      <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit provider" @click="openEditor(row.original)" />
+                    </UTooltip>
+                    <UTooltip text="Remove provider">
+                      <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Remove provider" @click="removeProvider(row.original)" />
+                    </UTooltip>
                   </div>
                 </template>
               </UTable>
