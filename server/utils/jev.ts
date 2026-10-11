@@ -86,20 +86,24 @@ export async function jevPickAssignee(params: {
       model: string
       answers?: { assignee?: { choice?: string, confidence?: number, probabilities?: Record<string, number> } }
     }
-    const answer = body.answers?.assignee
-    const choice = answer?.choice
+    const answers = body.answers
+    const answer = answers && answers.assignee
+    const choice = answer ? answer.choice : undefined
     if (!choice) {
-      return { employeeId: null, confidence: 0, probabilities: {}, model: body.model ?? 'unknown', fallbackReason: 'jev returned no choice' }
+      const model = body.model
+      return { employeeId: null, confidence: 0, probabilities: {}, model: model || 'unknown', fallbackReason: 'jev returned no choice' }
     }
-    const confidence = answer?.confidence ?? 0
+    const confidence = answer && typeof answer.confidence === 'number' ? answer.confidence : 0
+    const probabilities = answer && answer.probabilities ? answer.probabilities : {}
     if (choice === 'unassigned' || confidence < 0.5) {
-      return { employeeId: null, confidence, probabilities: answer?.probabilities ?? {}, model: body.model, fallbackReason: choice === 'unassigned' ? 'jev chose unassigned' : `low confidence ${confidence.toFixed(2)}` }
+      const reason = choice === 'unassigned' ? 'jev chose unassigned' : `low confidence ${confidence.toFixed(2)}`
+      return { employeeId: null, confidence, probabilities, model: body.model, fallbackReason: reason }
     }
     const valid = params.candidates.some(c => c.id === choice)
     if (!valid) {
-      return { employeeId: null, confidence, probabilities: answer?.probabilities ?? {}, model: body.model, fallbackReason: `jev returned unknown employee id` }
+      return { employeeId: null, confidence, probabilities, model: body.model, fallbackReason: `jev returned unknown employee id` }
     }
-    return { employeeId: choice, confidence, probabilities: answer?.probabilities ?? {}, model: body.model, fallbackReason: null }
+    return { employeeId: choice, confidence, probabilities, model: body.model, fallbackReason: null }
   }
   catch {
     return { employeeId: null, confidence: 0, probabilities: {}, model: 'none', fallbackReason: 'could not reach jev endpoint' }

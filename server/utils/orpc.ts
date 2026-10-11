@@ -500,9 +500,11 @@ export const router = os.router({
             openByAssignee.set(t.assigneeId, (openByAssignee.get(t.assigneeId) ?? 0) + 1)
           }
         }
-        const projName = task.projectId
-          ? ((await db.select({ name: projectsTable.name }).from(projectsTable).where(eq(projectsTable.id, task.projectId)))[0]?.name ?? null)
-          : null
+        let projName = null as string | null
+        if (task.projectId) {
+          const projRows = await db.select({ name: projectsTable.name }).from(projectsTable).where(eq(projectsTable.id, task.projectId))
+          projName = projRows.length > 0 ? projRows[0]!.name : null
+        }
 
         const { jevPickAssignee } = await import('./jev')
         const result = await jevPickAssignee({

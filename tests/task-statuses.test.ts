@@ -314,6 +314,62 @@ describe('jev auto-assign', () => {
     finally { globalThis.fetch = origFetch }
   })
 
+  it('assign: low-confidence choice with probabilities + missing model', async () => {
+    const { setSetting } = await import('../server/utils/settings')
+    const sec = await callProc('vault.create', { name: 'jev-key8', value: 'sk-jev-8' })
+    await setSetting('jevApiKeySecretId', sec.id)
+    const t = await callProc('tasks.create', { title: 'Lowconf' })
+    const origFetch = globalThis.fetch
+    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ answers: { assignee: { type: 'choice', choice: 'u-admin', confidence: 0.2, probabilities: { 'u-admin': 0.2 } } } }) })) as typeof fetch
+    try {
+      const r = await callProc('statuses.assign', { taskId: t.id })
+      expect(r.assigned).toBe(false)
+      expect(r.reason).toMatch(/low confidence 0.20/)
+      expect(r.probabilities).toMatchObject({ 'u-admin': 0.2 })
+    }
+    finally { globalThis.fetch = origFetch }
+  })
+
+  it('assign: no-choice response without model falls back to unknown', async () => {
+    const { setSetting } = await import('../server/utils/settings')
+    const sec = await callProc('vault.create', { name: 'jev-key9', value: 'sk-jev-9' })
+    await setSetting('jevApiKeySecretId', sec.id)
+    const t = await callProc('tasks.create', { title: 'NoModel' })
+    const origFetch = globalThis.fetch
+    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ answers: {} }) })) as typeof fetch
+    try {
+      const r = await callProc('statuses.assign', { taskId: t.id })
+      expect(r.assigned).toBe(false)
+      expect(r.reason).toBe('jev returned no choice')
+      expect(r.model).toBe('unknown')
+    }
+    finally { globalThis.fetch = origFetch }
+  })
+
+  it('assign: task with dangling project id yields no project name', async () => {
+    const { setSetting } = await import('../server/utils/settings')
+    const sec = await callProc('vault.create', { name: 'jev-keyA', value: 'sk-jev-A' })
+    await setSetting('jevApiKeySecretId', sec.id)
+    const t = await callProc('tasks.create', { title: 'Ghost proj' })
+    // simulate a dangling project reference (FK normally prevents it; guards the lookup)
+    const d = await dbm()
+    const { tasks } = await import('../server/db/schema')
+    await d.db.execute('ALTER TABLE tandem_tasks DROP CONSTRAINT tandem_tasks_project_id_tandem_projects_id_fkey')
+    await d.db.update(tasks).set({ projectId: 'ghost-proj' }).where(eq(tasks.id, t.id))
+    const origFetch = globalThis.fetch
+    let state = ''
+    globalThis.fetch = (async (_u: unknown, init?: unknown) => {
+      state = JSON.parse(String((init as { body?: string })?.body ?? '{}')).state
+      return { ok: true, status: 200, json: async () => ({ model: 'm', answers: { assignee: { type: 'choice', choice: 'u-admin', confidence: 0.9, probabilities: {} } } }) }
+    }) as typeof fetch
+    try {
+      const r = await callProc('statuses.assign', { taskId: t.id })
+      expect(r.assigned).toBe(true)
+      expect(state).not.toContain('Project:')
+    }
+    finally { globalThis.fetch = origFetch }
+  })
+
   it('assign: unknown task 404s', async () => {
     await expect(callProc('statuses.assign', { taskId: 'ghost' })).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
