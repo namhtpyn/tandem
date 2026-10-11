@@ -1,3 +1,10 @@
+# [2.2.0](https://github.com/namhtpyn/tandem/compare/v2.1.0...v2.2.0) (2026-10-11)
+
+
+### Features
+
+* **employees:** access keys for humans too + clearer key semantics ([eea8c78](https://github.com/namhtpyn/tandem/commit/eea8c78a874c4b9e622f017178ecd20a5f0b1a07))
+
 # [2.1.0](https://github.com/namhtpyn/tandem/compare/v2.0.0...v2.1.0) (2026-10-11)
 
 
