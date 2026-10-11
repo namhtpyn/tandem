@@ -30,6 +30,24 @@ const deleteOpen = computed({
 const form = reactive({ title: '', description: '', assigneeId: '__none__' as string, status: 'todo' as string, projectId: '__none__' as string })
 const isEdit = computed(() => editingId.value !== null)
 
+const assignMutation = useMutation<any, any, any>(($orpc.statuses.assign as any).mutationOptions())
+
+async function autoAssign(row: TaskRow) {
+  message.value = ''
+  try {
+    const res = await assignMutation.mutateAsync({ taskId: row.id })
+    if (res.assigned) {
+      message.value = `Assigned to ${assigneeNameById.value.get(res.employeeId) ?? 'employee'} (confidence ${(res.confidence * 100).toFixed(0)}%)`
+    }
+    else {
+      message.value = `Not assigned: ${res.reason ?? 'jev declined'}`
+    }
+  }
+  catch (e) {
+    message.value = e instanceof Error ? e.message : 'auto-assign failed'
+  }
+}
+
 const createMutation = useMutation<any, any, any>(($orpc.tasks.create as any).mutationOptions())
 const updateMutation = useMutation<any, any, any>(($orpc.tasks.update as any).mutationOptions())
 const removeMutation = useMutation<any, any, any>(($orpc.tasks.remove as any).mutationOptions())
@@ -58,7 +76,7 @@ const statusEditorTouched = ref(false)
 const statusBusy = ref(false)
 const statusMessage = ref('')
 const editingStatusId = ref<string | null>(null)
-const statusForm = reactive({ name: '', color: 'neutral' as 'neutral' | 'primary' | 'success' | 'warning' | 'error' | 'info', position: 0, isDone: false, nextIds: [] as string[] })
+const statusForm = reactive({ name: '', color: 'neutral' as 'neutral' | 'primary' | 'success' | 'warning' | 'error' | 'info', position: 0, category: 'backlog' as 'backlog' | 'ready' | 'working' | 'paused' | 'done' | 'cancelled', nextIds: [] as string[] })
 
 const statusSaveMutation = useMutation<any, any, any>(($orpc.statuses.save as any).mutationOptions())
 const statusRemoveMutation = useMutation<any, any, any>(($orpc.statuses.remove as any).mutationOptions())
@@ -68,7 +86,7 @@ function openStatusEditor(row?: import('~/../shared/types').TaskStatusRow) {
   statusForm.name = row?.name ?? ''
   statusForm.color = (row?.color as any) ?? 'neutral'
   statusForm.position = row?.position ?? statuses.value.length
-  statusForm.isDone = row?.isDone ?? false
+  statusForm.category = row?.category ?? 'backlog'
   statusForm.nextIds = row ? [...row.nextIds] : (statuses.value.length > 0 ? [statuses.value[0]!.id] : [])
   statusMessage.value = ''
   statusEditorTouched.value = true
@@ -85,7 +103,7 @@ async function saveStatus() {
       name: statusForm.name.trim(),
       color: statusForm.color,
       position: statusForm.position,
-      isDone: statusForm.isDone,
+      category: statusForm.category,
       nextIds: statusForm.nextIds,
     })
     statusEditorTouched.value = false
@@ -114,6 +132,17 @@ async function removeStatus(id: string) {
 }
 
 const colorOptions = ['neutral', 'primary', 'success', 'warning', 'error', 'info']
+const categoryOptions = [
+  { label: 'Backlog — parked, nobody works on it', value: 'backlog' },
+  { label: 'Ready — assigned agent picks it up', value: 'ready' },
+  { label: 'Working — hands off, in progress', value: 'working' },
+  { label: 'Paused — halted, not terminal', value: 'paused' },
+  { label: 'Done — completed, agents stop', value: 'done' },
+  { label: 'Cancelled — abandoned, agents stop', value: 'cancelled' },
+]
+function categoryColor(c: string) {
+  return c === 'ready' ? 'primary' : c === 'working' ? 'warning' : c === 'done' ? 'success' : c === 'cancelled' ? 'error' : 'neutral'
+}
 
 // ---- board (kanban) view ----
 const view = ref<'list' | 'board'>('list')
@@ -287,6 +316,12 @@ function statusColor(s: string) {
             />
             <div class="flex items-center gap-1">
               <UPopover mode="hover">
+                <UButton icon="i-lucide-wand-sparkles" variant="ghost" color="neutral" size="xs" aria-label="Auto-assign" :disabled="busy" @click="autoAssign(row)" />
+                <template #content>
+                  <div class="px-3 py-1.5 text-xs">Auto-assign (Jev)</div>
+                </template>
+              </UPopover>
+              <UPopover mode="hover">
                 <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit task" @click="openEditor(row)" />
                 <template #content>
                   <div class="px-3 py-1.5 text-xs">Edit task</div>
@@ -337,6 +372,12 @@ function statusColor(s: string) {
           </template>
           <template #actions-cell="{ row }">
             <div class="flex justify-end gap-1">
+              <UPopover mode="hover">
+                <UButton icon="i-lucide-wand-sparkles" variant="ghost" color="neutral" size="xs" aria-label="Auto-assign" :disabled="busy" @click="autoAssign(row.original)" />
+                <template #content>
+                  <div class="px-3 py-1.5 text-xs">Auto-assign (Jev)</div>
+                </template>
+              </UPopover>
               <UPopover mode="hover">
                 <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit task" @click="openEditor(row.original)" />
                 <template #content>
@@ -404,6 +445,12 @@ function statusColor(s: string) {
                   />
                   <div class="flex items-center gap-1">
                     <UPopover mode="hover">
+                      <UButton icon="i-lucide-wand-sparkles" variant="ghost" color="neutral" size="xs" aria-label="Auto-assign" :disabled="busy" @click="autoAssign(row)" />
+                      <template #content>
+                        <div class="px-3 py-1.5 text-xs">Auto-assign (Jev)</div>
+                      </template>
+                    </UPopover>
+                    <UPopover mode="hover">
                       <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit task" @click="openEditor(row)" />
                       <template #content>
                         <div class="px-3 py-1.5 text-xs">Edit task</div>
@@ -435,7 +482,7 @@ function statusColor(s: string) {
                 <div class="min-w-0">
                   <p class="flex items-center gap-2 truncate text-sm font-medium text-zinc-900 dark:text-white">
                     <UBadge :color="(st.color as any)" variant="subtle" size="sm">{{ st.name }}</UBadge>
-                    <span v-if="st.isDone" class="text-xs text-success">done-state</span>
+                    <UBadge :color="categoryColor(st.category)" variant="subtle" size="sm">{{ st.category }}</UBadge>
                   </p>
                   <p class="truncate text-xs text-zinc-400">{{ st.nextIds.length ? `→ ${st.nextIds.map(n => statusById.get(n)?.name ?? n).join(', ')}` : 'no transitions' }}</p>
                 </div>
@@ -476,9 +523,9 @@ function statusColor(s: string) {
             <UFormField label="Position" name="statusPosition">
               <UInput v-model.number="statusForm.position" type="number" min="0" max="99" class="w-full" />
             </UFormField>
-            <UFormField label="Done state" name="statusIsDone">
-              <template #hint><FormHint text="Terminal state — counts as completed work" /></template>
-              <USwitch v-model="statusForm.isDone" />
+            <UFormField label="Meaning" name="statusCategory">
+              <template #hint><FormHint text="ready = agents pick tasks up from here; done/cancelled = agents stop working" /></template>
+              <USelect v-model="statusForm.category" :items="categoryOptions" value-key="value" class="w-full" />
             </UFormField>
             <UFormField label="Can move to" name="statusNext">
               <template #hint><FormHint text="Allowed transitions from this status" /></template>

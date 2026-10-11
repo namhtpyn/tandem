@@ -79,11 +79,33 @@ const providers = computed<OidcProviderRow[]>(() => ((unref(oidcLive.data) ?? []
 
 const disablePasswordLogin = ref(false)
 const companyName = ref('Tandem')
+const jevSecretId = ref<string | null>(null)
+const jevMessage = ref('')
+const jevSaving = ref(false)
+const vaultLiveJev = useQuery(($orpc as any).vault.live.liveOptions())
+const jevSecretItems = computed(() => ((unref(vaultLiveJev.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>)
+  .map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })))
+
+async function saveJevKey() {
+  jevSaving.value = true
+  jevMessage.value = ''
+  try {
+    await ($client as any).settings.update({ jevApiKeySecretId: jevSecretId.value ?? null })
+    jevMessage.value = 'Saved'
+  }
+  catch (e) {
+    jevMessage.value = e instanceof Error ? e.message : 'save failed'
+  }
+  finally {
+    jevSaving.value = false
+  }
+}
 watch(() => unref(settingsLive.data), (d) => {
   if (d) {
-    const v = d as { disablePasswordLogin: boolean, companyName?: string }
+    const v = d as { disablePasswordLogin: boolean, companyName?: string, jevApiKeySecretId?: string | null }
     disablePasswordLogin.value = v.disablePasswordLogin
     companyName.value = v.companyName?.trim() || 'Tandem'
+    jevSecretId.value = v.jevApiKeySecretId ?? null
   }
 }, { immediate: true })
 
@@ -204,6 +226,27 @@ async function savePasswordPolicy() {
         </UFormField>
         <UButton type="submit" icon="i-lucide-save" :loading="savingName">Save</UButton>
         <span v-if="nameMessage" class="pb-2 text-xs" :class="nameMessage === 'Saved' ? 'text-success' : 'text-error'">{{ nameMessage }}</span>
+      </UForm>
+
+      <USeparator class="my-5" />
+
+      <UForm :state="{ jevSecretId }" class="flex flex-wrap items-end gap-3" @submit="saveJevKey">
+        <UFormField label="Auto-assign (Jev) API key" name="jevApiKeySecretId" class="min-w-56 flex-1">
+          <template #hint><FormHint text="Vault secret with the TypeSafe AI key — powers automatic task assignment" /></template>
+          <USelectMenu
+            v-model="jevSecretId"
+            :items="jevSecretItems"
+            value-key="value"
+            :search-input="{ placeholder: 'Search secrets' }"
+            clear
+            icon="i-lucide-vault"
+            placeholder="Pick a vault secret"
+            class="w-full"
+            :disabled="jevSaving"
+          />
+        </UFormField>
+        <UButton type="submit" icon="i-lucide-save" :loading="jevSaving">Save</UButton>
+        <span v-if="jevMessage" class="pb-2 text-xs" :class="jevMessage === 'Saved' ? 'text-success' : 'text-error'">{{ jevMessage }}</span>
       </UForm>
     </UCard>
 

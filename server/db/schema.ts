@@ -215,8 +215,8 @@ export const taskStatuses = pgTable('tandem_task_statuses', {
   color: text('color').notNull().default('neutral'),
   /** 0-based board column order */
   position: integer('position').notNull().default(0),
-  /** terminal state — completed work */
-  isDone: boolean('is_done').notNull().default(false),
+  /** workflow meaning — drives dispatch: backlog|ready|working|paused|done|cancelled */
+  category: text('category').notNull().default('backlog'),
   /** allowed transitions: array of status ids */
   nextIds: text('next_ids').array().notNull().default(sql`'{}'::text[]`),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

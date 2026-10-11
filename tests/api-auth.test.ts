@@ -101,20 +101,36 @@ describe('settings.update (authenticated)', () => {
     await expect(proc(['settings', 'update'], { disablePasswordLogin: true })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
+  it('settings.update persists jevApiKeySecretId (set / clear / invalid)', async () => {
+    const { db } = await import('../server/db')
+    const { vaultSecrets } = await import('../server/db/schema')
+    const { encryptSecret } = await import('../server/utils/vault-crypto')
+    const { user } = await import('../server/db/schema')
+    await db.insert(user).values({ id: admin.user.id, name: admin.user.name, email: admin.user.email, role: 'admin', title: 'T' })
+    const secId = crypto.randomUUID()
+    await db.insert(vaultSecrets).values({ id: secId, name: 'jev-set', ciphertext: encryptSecret('sk-x'), lastFour: 'sk-x', createdBy: admin.user.id })
+    await proc(['settings', 'update'], { jevApiKeySecretId: secId })
+    const { getSettings } = await import('../server/utils/settings')
+    expect((await getSettings()).jevApiKeySecretId).toBe(secId)
+    await expect(proc(['settings', 'update'], { jevApiKeySecretId: 'ghost' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await proc(['settings', 'update'], { jevApiKeySecretId: null })
+    expect((await getSettings()).jevApiKeySecretId).toBeNull()
+  })
+
   it('toggles and persists disablePasswordLogin', async () => {
     await proc(['oidc', 'replace'], { providers: [{ label: 'One', issuer: 'https://one.example.com', clientId: 'c', clientSecret: 's' }] })
     const r = await proc(['settings', 'update'], { disablePasswordLogin: true }) as { ok: boolean }
     expect(r).toEqual({ ok: true })
     const { getSettings } = await import('../server/utils/settings')
-    expect(await getSettings()).toEqual({ disablePasswordLogin: true, companyName: 'Tandem' })
+    expect(await getSettings()).toEqual({ disablePasswordLogin: true, companyName: 'Tandem', jevApiKeySecretId: null })
     // and back
     await proc(['settings', 'update'], { disablePasswordLogin: false })
-    expect(await getSettings()).toEqual({ disablePasswordLogin: false, companyName: 'Tandem' })
+    expect(await getSettings()).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', jevApiKeySecretId: null })
   })
 
   it('live snapshot returns current settings', async () => {
     const snap = await firstSnapshot(['settings', 'live']) as { disablePasswordLogin: boolean }
-    expect(snap).toEqual({ disablePasswordLogin: false, companyName: 'Tandem' })
+    expect(snap).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', jevApiKeySecretId: null })
   })
 })
 

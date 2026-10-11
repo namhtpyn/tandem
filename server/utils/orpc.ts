@@ -126,7 +126,11 @@ export const router = os.router({
 
     /** update settings (strict input) */
     update: protectedProcedure
-      .input(z.strictObject({ disablePasswordLogin: z.boolean().optional(), companyName: z.string().min(1).max(60).optional() }))
+      .input(z.strictObject({
+        disablePasswordLogin: z.boolean().optional(),
+        companyName: z.string().min(1).max(60).optional(),
+        jevApiKeySecretId: z.string().min(1).nullable().optional(),
+      }))
       .handler(async ({ input }) => {
         const { setSetting } = await import('./settings')
         const { rebuildAuth } = await import('./auth')
@@ -142,6 +146,15 @@ export const router = os.router({
         }
         if (input.companyName !== undefined) {
           await setSetting('companyName', input.companyName.trim())
+        }
+        if (input.jevApiKeySecretId !== undefined) {
+          if (input.jevApiKeySecretId !== null) {
+            const sec = await db.select({ id: vaultSecretsTable.id }).from(vaultSecretsTable).where(eq(vaultSecretsTable.id, input.jevApiKeySecretId))
+            if (sec.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'jev api key secret not found' })
+          }
+          const { setSetting, deleteSetting } = await import('./settings')
+          if (input.jevApiKeySecretId === null) await deleteSetting('jevApiKeySecretId')
+          else await setSetting('jevApiKeySecretId', input.jevApiKeySecretId)
         }
         await rebuildAuth()
         await publishChange('settings', 'update')
@@ -412,7 +425,7 @@ export const router = os.router({
         name: r.name,
         color: r.color,
         position: r.position,
-        isDone: r.isDone,
+        category: r.category,
         nextIds: r.nextIds,
       }))
     })),
@@ -424,7 +437,7 @@ export const router = os.router({
         name: z.string().min(1).max(64),
         color: z.enum(['neutral', 'primary', 'success', 'warning', 'error', 'info']).default('neutral'),
         position: z.number().int().min(0).max(99),
-        isDone: z.boolean().default(false),
+        category: z.enum(['backlog', 'ready', 'working', 'paused', 'done', 'cancelled']).default('backlog'),
         nextIds: z.array(z.string().min(1).max(64)).max(50).default([]),
       }))
       .handler(async ({ input }) => {
@@ -442,12 +455,12 @@ export const router = os.router({
           name: input.name,
           color: input.color,
           position: input.position,
-          isDone: input.isDone,
+          category: input.category,
           nextIds: input.nextIds,
           updatedAt: now,
         }
         await db.insert(taskStatusesTable).values(values)
-          .onConflictDoUpdate({ target: taskStatusesTable.id, set: { name: values.name, color: values.color, position: values.position, isDone: values.isDone, nextIds: values.nextIds, updatedAt: now } })
+          .onConflictDoUpdate({ target: taskStatusesTable.id, set: { name: values.name, color: values.color, position: values.position, category: values.category, nextIds: values.nextIds, updatedAt: now } })
         await publishChange('statuses', 'update')
         return { id }
       }),
@@ -462,6 +475,55 @@ export const router = os.router({
         if (del.length === 0) throw new ORPCError('NOT_FOUND', { message: 'status not found' })
         await publishChange('statuses', 'update')
         return { ok: true }
+      }),
+
+    /** auto-assign a task via Jev (typed choice over employee candidates).
+     *  No-op when a Jev key isn't configured or Jev is unsure — the task
+     *  stays unassigned for a human decision. */
+    assign: protectedProcedure
+      .input(z.strictObject({ taskId: z.string().min(1) }))
+      .handler(async ({ input }) => {
+        const tRows = await db.select().from(tasksTable).where(eq(tasksTable.id, input.taskId))
+        const task = tRows[0]
+        if (!task) throw new ORPCError('NOT_FOUND', { message: 'task not found' })
+
+        // candidates: every employee, with open-task load (non-terminal statuses)
+        const users = await db.select().from(userTable)
+        const aiRows = await db.select().from(aiEmployeesTable)
+        const aiByUser = new Map(aiRows.map(r => [r.userId, r]))
+        const statusRows = await db.select().from(taskStatusesTable)
+        const terminal = new Set(statusRows.filter(s => s.category === 'done' || s.category === 'cancelled').map(s => s.id))
+        const allTasks = await db.select({ assigneeId: tasksTable.assigneeId, status: tasksTable.status }).from(tasksTable)
+        const openByAssignee = new Map<string, number>()
+        for (const t of allTasks) {
+          if (t.assigneeId && !terminal.has(t.status)) {
+            openByAssignee.set(t.assigneeId, (openByAssignee.get(t.assigneeId) ?? 0) + 1)
+          }
+        }
+        const projName = task.projectId
+          ? ((await db.select({ name: projectsTable.name }).from(projectsTable).where(eq(projectsTable.id, task.projectId)))[0]?.name ?? null)
+          : null
+
+        const { jevPickAssignee } = await import('./jev')
+        const result = await jevPickAssignee({
+          taskTitle: task.title,
+          taskDescription: task.description,
+          projectName: projName,
+          candidates: users.map(u => ({
+            id: u.id,
+            name: u.name,
+            kind: aiByUser.has(u.id) ? 'ai' as const : 'human' as const,
+            title: u.title ?? null,
+            openTasks: openByAssignee.get(u.id) ?? 0,
+          })),
+        })
+
+        if (!result.employeeId) {
+          return { assigned: false as const, reason: result.fallbackReason, confidence: result.confidence, model: result.model, probabilities: result.probabilities }
+        }
+        await db.update(tasksTable).set({ assigneeId: result.employeeId, updatedAt: new Date() }).where(eq(tasksTable.id, task.id))
+        await publishChange('tasks', 'update')
+        return { assigned: true as const, employeeId: result.employeeId, confidence: result.confidence, model: result.model }
       }),
   },
 

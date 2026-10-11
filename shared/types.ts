@@ -54,7 +54,7 @@ export interface TaskStatusRow {
   name: string
   color: string
   position: number
-  isDone: boolean
+  category: 'backlog' | 'ready' | 'working' | 'paused' | 'done' | 'cancelled'
   nextIds: string[]
 }
 

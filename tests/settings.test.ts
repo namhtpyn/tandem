@@ -29,12 +29,12 @@ describe('settings store', () => {
   })
 
   it('getSettings defaults disablePasswordLogin false + companyName Tandem', async () => {
-    expect(await getSettings()).toEqual({ disablePasswordLogin: false, companyName: 'Tandem' })
+    expect(await getSettings()).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', jevApiKeySecretId: null })
   })
 
   it('getSettings reflects a stored true flag', async () => {
     await setSetting('disablePasswordLogin', 'true')
-    expect(await getSettings()).toEqual({ disablePasswordLogin: true, companyName: 'Tandem' })
+    expect(await getSettings()).toEqual({ disablePasswordLogin: true, companyName: 'Tandem', jevApiKeySecretId: null })
   })
 
   it('companyName round-trips via setSetting and trims on read', async () => {
