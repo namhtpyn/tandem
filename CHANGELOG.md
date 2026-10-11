@@ -1,3 +1,10 @@
+## [2.3.2](https://github.com/namhtpyn/tandem/compare/v2.3.1...v2.3.2) (2026-10-11)
+
+
+### Bug Fixes
+
+* **ui:** remove double padding on projects and tasks pages ([cbb441b](https://github.com/namhtpyn/tandem/commit/cbb441b00822b4097fa84b5dea9ec9814f600f55))
+
 ## [2.3.1](https://github.com/namhtpyn/tandem/compare/v2.3.0...v2.3.1) (2026-10-11)
 
 
