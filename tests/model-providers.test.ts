@@ -95,6 +95,25 @@ describe('providers', () => {
     finally { globalThis.fetch = origFetch }
   })
 
+  it('fetchModels follows anthropic pagination (has_more + last_id)', async () => {
+    const origFetch = globalThis.fetch
+    let calls = 0
+    globalThis.fetch = (async (url: unknown) => {
+      calls++
+      const u = String(url)
+      if (!u.includes('after_id=')) {
+        return { ok: true, status: 200, json: async () => ({ data: [{ id: 'm-early' }], has_more: true, last_id: 'm-early' }) }
+      }
+      return { ok: true, status: 200, json: async () => ({ data: [{ id: 'm-late' }], has_more: false, last_id: 'm-late' }) }
+    }) as typeof fetch
+    try {
+      const r = await callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com', apiStyle: 'anthropic', key: 'sk-ant' })
+      expect(r.models).toEqual(['m-early', 'm-late'])
+      expect(calls).toBe(2)
+    }
+    finally { globalThis.fetch = origFetch }
+  })
+
   it('fetchModels tolerates a malformed body (no data array)', async () => {
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ unexpected: true }) })) as typeof fetch

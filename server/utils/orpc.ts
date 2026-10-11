@@ -253,20 +253,31 @@ export const router = os.router({
             headers.Authorization = `Bearer ${input.key}`
           }
         }
-        let data: unknown
-        try {
-          const res = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) })
-          if (!res.ok) {
-            throw new ORPCError('BAD_REQUEST', { message: `endpoint returned ${res.status}` })
+        // fetch pages (Anthropic paginates with has_more + last_id; OpenAI-style returns one page)
+        const models: string[] = []
+        let after: string | null = null
+        for (let page = 0; page < 10; page++) {
+          const paged = after ? `${url}?after_id=${encodeURIComponent(after)}&limit=100` : `${url}?limit=100`
+          let body: unknown
+          try {
+            const res = await fetch(paged, { headers, signal: AbortSignal.timeout(10_000) })
+            if (!res.ok) {
+              throw new ORPCError('BAD_REQUEST', { message: `endpoint returned ${res.status}` })
+            }
+            body = await res.json()
           }
-          data = await res.json()
+          catch (e) {
+            if (e instanceof ORPCError) throw e
+            throw new ORPCError('BAD_REQUEST', { message: 'could not reach the endpoint' })
+          }
+          const payload = body as { data?: Array<{ id?: string }>, has_more?: boolean, last_id?: string | null }
+          const list = payload?.data
+          if (Array.isArray(list)) {
+            models.push(...list.map(m => m.id).filter((m): m is string => typeof m === 'string' && m.length > 0))
+          }
+          if (!payload?.has_more || !payload?.last_id) break
+          after = payload.last_id
         }
-        catch (e) {
-          if (e instanceof ORPCError) throw e
-          throw new ORPCError('BAD_REQUEST', { message: 'could not reach the endpoint' })
-        }
-        const list = (data as { data?: Array<{ id?: string }> })?.data
-        const models = Array.isArray(list) ? list.map(m => m.id).filter((m): m is string => typeof m === 'string' && m.length > 0) : []
         return { models: [...new Set(models)].sort() }
       }),
 
