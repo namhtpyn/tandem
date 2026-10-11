@@ -1,3 +1,10 @@
+## [1.14.1](https://github.com/namhtpyn/tandem/compare/v1.14.0...v1.14.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **app:** mobile vertical scroll on dashboard panels + searchable vault pickers ([1f4ba07](https://github.com/namhtpyn/tandem/commit/1f4ba07dc6400c68dceb3668be62bab7688f8121))
+
 # [1.14.0](https://github.com/namhtpyn/tandem/compare/v1.13.3...v1.14.0) (2026-10-11)
 
 
