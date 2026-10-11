@@ -65,12 +65,12 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
   with `satisfies`:
 
   ```ts
-  const providerKind = { LLM: 'LLM', DECISION: 'DECISION' } as const
-  type ProviderKind = ValueOf<typeof providerKind>
+  const PROVIDER_KIND = { LLM: 'LLM', DECISION: 'DECISION' } as const
+  type ProviderKind = ValueOf<typeof PROVIDER_KIND>
 
-  const apiStyles = {
-    [providerKind.LLM]: { 'OPENAI-COMPLETIONS': 'OPENAI-COMPLETIONS', /* … */ },
-    [providerKind.DECISION]: { 'TYPESAFE-SYSTEMONE': 'TYPESAFE-SYSTEMONE', /* … */ },
+  const PROVIDER_API_STYLE = {
+    [PROVIDER_KIND.LLM]: { 'OPENAI-COMPLETIONS': 'OPENAI-COMPLETIONS', /* … */ },
+    [PROVIDER_KIND.DECISION]: { 'TYPESAFE-SYSTEMONE': 'TYPESAFE-SYSTEMONE', /* … */ },
   } as const satisfies Record<ProviderKind, Record<string, string>>
   ```
 
@@ -78,6 +78,28 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
   reverse lookup update), grouping keys stay valid `ProviderKind`s at compile
   time, and lookups (`styleKind(s)`) replace scattered string-literal switches.
   Store the leaf value in the DB; derive the group by lookup, never store both.
+- **Enum constants are `SCREAMING_SNAKE_CASE`, for BOTH properties and values**
+  (`PROVIDER_API_STYLE.LLM['ANTHROPIC-MESSAGES'] === 'ANTHROPIC-MESSAGES'`;
+  `PROVIDER_KIND.DECISION === 'DECISION'`). Lowercase/camelCase const-object
+  enums are a bug — rename on sight. Type names stay PascalCase.
+- **Every enum gets an exhaustive label map**: `PROVIDER_API_STYLE_LABEL:
+  { readonly [K in ProviderApiStyle]: string }` (mapped type, not `Record` —
+  `Record` over computed keys collapses to `Record<never, string>` and silently
+  disables exhaustiveness). UI dropdowns/badges render labels from these maps,
+  never raw enum values. Adding an enum value without its label = type error.
+- **Compile-time exhaustiveness everywhere — leave no room for current or future
+  mistakes.** Concretely:
+  - Derive unions by indexed access per group (`type LlmApiStyle = ValueOf<
+    typeof PROVIDER_API_STYLE['LLM']>`) and union the groups. Do NOT nest
+    `ValueOf<ValueOf<…>>` through computed keys — it collapses to `never`/`{}`
+    and silently disables every downstream check.
+  - Never hand-write a union that mirrors a const object (`'OPENAI-COMPLETIONS' |
+    'OPENAI-RESPONSES' | …`). Hand-written copies drift; derived unions can't.
+  - Switches/branches over enum values must end with an exhaustiveness guard
+    (`default: const _x: never = style`), so adding a value breaks the build at
+    every decision site, not at runtime.
+  - zod schemas build from the same source (`z.enum(ALL_API_STYLES)`), never a
+    re-typed literal list.
 
 ## Domain invariants (schema laws)
 
