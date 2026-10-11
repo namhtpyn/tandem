@@ -80,11 +80,13 @@ function kindIcon(): string {
 
 <template>
   <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
-    <UDashboardNavbar title="Vault">
+    <template #body>
+      <UDashboardNavbar title="Vault">
       <template #leading>
         <UDashboardSidebarCollapse />
       </template>
     </UDashboardNavbar>
+      
     <div class="space-y-6 p-6 lg:p-8">
     <div class="flex flex-wrap items-end justify-between gap-2">
       <div>
@@ -220,7 +222,8 @@ function kindIcon(): string {
         </div>
       </template>
     </UModal>
-  </UDashboardPanel>
+    </template>
+    </UDashboardPanel>
 </template>
 
 <style scoped>

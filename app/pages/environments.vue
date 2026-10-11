@@ -119,12 +119,13 @@ async function probe(row: EnvironmentRow) {
 
 <template>
   <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
-    <UDashboardNavbar title="Environments">
+    <template #body>
+      <UDashboardNavbar title="Environments">
       <template #leading>
         <UDashboardSidebarCollapse />
       </template>
     </UDashboardNavbar>
-    <div class="space-y-6 p-6 lg:p-8">
+      <div class="space-y-6 p-6 lg:p-8">
     <div class="flex flex-wrap items-end justify-between gap-2">
       <div>
                 <p class="text-sm text-zinc-500">SSH targets that run the Hermes agent</p>
@@ -270,5 +271,6 @@ async function probe(row: EnvironmentRow) {
       </template>
     </UModal>
   </div>
-  </UDashboardPanel>
+    </template>
+</UDashboardPanel>
 </template>

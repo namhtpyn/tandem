@@ -236,15 +236,15 @@ export const router = os.router({
       .input(z.strictObject({
         baseUrl: z.string().url(),
         apiStyle: z.enum(['openai', 'anthropic']),
-        key: z.string().min(1).max(400).optional(),
         /** vault secret holding the API key — decrypted server-side for this
-         *  one request only, audited as `use`, never stored on the provider */
+         *  one request only, audited as `use`, never stored on the provider.
+         *  Raw keys are never accepted (fleet law: keys live in the vault). */
         keySecretId: z.string().min(1).optional(),
         extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
       }))
       .handler(async ({ input, context }): Promise<{ models: string[] }> => {
-        let key = input.key
-        if (!key && input.keySecretId) {
+        let key: string | undefined
+        if (input.keySecretId) {
           const rows = await db.select().from(vaultSecretsTable).where(eq(vaultSecretsTable.id, input.keySecretId))
           const secret = rows[0]
           if (!secret) throw new ORPCError('BAD_REQUEST', { message: 'api key secret not found' })

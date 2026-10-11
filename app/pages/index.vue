@@ -4,12 +4,13 @@
 
 <template>
   <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
-    <UDashboardNavbar title="Overview">
+    <template #body>
+      <UDashboardNavbar title="Overview">
       <template #leading>
         <UDashboardSidebarCollapse />
       </template>
     </UDashboardNavbar>
-    <div class="space-y-6 p-6 lg:p-8">
+      <div class="space-y-6 p-6 lg:p-8">
     <div>
             <p class="text-sm text-zinc-500">Company workspace — humans and AI employees, one hierarchy.</p>
     </div>
@@ -50,5 +51,6 @@
       </UCard>
     </div>
   </div>
-  </UDashboardPanel>
+    </template>
+</UDashboardPanel>
 </template>

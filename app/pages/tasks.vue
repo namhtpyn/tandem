@@ -103,12 +103,13 @@ function statusColor(s: string) {
 
 <template>
   <UDashboardPanel>
-    <UDashboardNavbar title="Tasks">
+    <template #body>
+      <UDashboardNavbar title="Tasks">
       <template #leading>
         <UDashboardSidebarCollapse />
       </template>
     </UDashboardNavbar>
-    <div class="space-y-6 p-6 lg:p-8">
+      <div class="space-y-6 p-6 lg:p-8">
       <div class="flex flex-wrap items-end justify-between gap-2">
         <div>
           <p class="text-sm text-zinc-500">Work items for humans and AI agents</p>
@@ -246,5 +247,6 @@ function statusColor(s: string) {
         </template>
       </UModal>
     </div>
-  </UDashboardPanel>
+    </template>
+</UDashboardPanel>
 </template>

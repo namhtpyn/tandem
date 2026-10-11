@@ -248,12 +248,13 @@ const columns = [
 
 <template>
   <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
-    <UDashboardNavbar title="Employees">
+    <template #body>
+      <UDashboardNavbar title="Employees">
       <template #leading>
         <UDashboardSidebarCollapse />
       </template>
     </UDashboardNavbar>
-    <div class="space-y-6 p-6 lg:p-8">
+      <div class="space-y-6 p-6 lg:p-8">
     <div class="flex flex-wrap items-end justify-between gap-2">
       <div>
                 <p class="text-sm text-zinc-500">Humans and AI agents, one hierarchy — every employee is a login</p>
@@ -449,10 +450,11 @@ const columns = [
             </UFormField>
             <UFormField label="API key" name="apiKeySecretId">
               <template #hint><FormHint text="Vault secret holding the key (per-agent, injected per run)" /></template>
-              <USelect
+              <USelectMenu
                 v-model="form.apiKeySecretId"
                 :items="secretItems"
                 value-key="value"
+                :search-input="{ placeholder: 'Search secrets' }"
                 icon="i-lucide-key-round"
                 placeholder="No API key"
                 class="w-full"
@@ -556,5 +558,6 @@ const columns = [
       </template>
     </UModal>
   </div>
-  </UDashboardPanel>
+    </template>
+</UDashboardPanel>
 </template>

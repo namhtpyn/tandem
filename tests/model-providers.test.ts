@@ -74,7 +74,8 @@ describe('providers', () => {
       return { ok: true, status: 200, json: async () => ({ data: [{ id: 'm-b' }, { id: 'm-a' }, { id: 'm-a' }, { id: '' }, {}] }) }
     }) as typeof fetch
     try {
-      const r = await callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com/v1', apiStyle: 'openai', key: 'sk-test' })
+      const ksec = await callProc('vault.create', { name: 'list-key', value: 'sk-test' })
+      const r = await callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com/v1', apiStyle: 'openai', keySecretId: ksec.id })
       expect(r.models).toEqual(['m-a', 'm-b'])
     }
     finally { globalThis.fetch = origFetch }
@@ -88,7 +89,8 @@ describe('providers', () => {
       return { ok: false, status: 401, json: async () => ({}) }
     }) as typeof fetch
     try {
-      await expect(callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com', apiStyle: 'anthropic', key: 'sk-ant' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+      const aseg = await callProc('vault.create', { name: 'ant-key', value: 'sk-ant' })
+      await expect(callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com', apiStyle: 'anthropic', keySecretId: aseg.id })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
       expect(seen[0]!['x-api-key']).toBe('sk-ant')
       expect(seen[0]!['anthropic-version']).toBe('2023-06-01')
       await expect(callProc('providers.fetchModels', { baseUrl: 'https://unreachable.invalid', apiStyle: 'openai' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
@@ -136,18 +138,8 @@ describe('providers', () => {
     finally { globalThis.fetch = origFetch }
   })
 
-  it('fetchModels pasted key wins over vault secret', async () => {
-    const sec = await callProc('vault.create', { name: 'lose-key', value: 'sk-from-vault' })
-    const origFetch = globalThis.fetch
-    globalThis.fetch = (async (_url: unknown, init?: unknown) => {
-      const h = ((init as { headers?: Record<string, string> })?.headers) ?? {}
-      expect(h.Authorization).toBe('Bearer sk-pasted')
-      return { ok: true, status: 200, json: async () => ({ data: [{ id: 'x' }], has_more: false }) }
-    }) as typeof fetch
-    try {
-      await callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com/v1', apiStyle: 'openai', key: 'sk-pasted', keySecretId: sec.id })
-    }
-    finally { globalThis.fetch = origFetch }
+  it('fetchModels rejects a raw pasted key (vault-only)', async () => {
+    await expect(callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com/v1', apiStyle: 'openai', key: 'sk-pasted' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
   it('fetchModels unknown vault secret rejected', async () => {

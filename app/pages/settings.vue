@@ -60,13 +60,13 @@ async function saveMProv() {
   }
 }
 
-const provSyncKey = ref('')
 const provSyncSecretId = ref('__none__')
 const provSyncing = ref(false)
 const vaultLive = useQuery(($orpc as any).vault.live.liveOptions())
 const vaultItems = computed(() => [
   { label: 'No key', value: '__none__' },
-  ...((unref(vaultLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>).map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })),
+  ...((unref(vaultLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>)
+    .map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })),
 ])
 async function syncModels() {
   provSyncing.value = true
@@ -76,12 +76,10 @@ async function syncModels() {
       baseUrl: mProvForm.baseUrl,
       apiStyle: mProvForm.apiStyle,
       ...(provSyncSecretId.value !== '__none__' ? { keySecretId: provSyncSecretId.value } : {}),
-      ...(provSyncKey.value.trim() ? { key: provSyncKey.value.trim() } : {}),
       ...(mProvForm.extraHeaders.trim() ? { extraHeaders: Object.fromEntries(mProvForm.extraHeaders.split('\n').map(l => l.split(':').map(p => p.trim())).filter(p => p.length === 2).map(p => [p[0]!, p[1]!])) } : {}),
     })
     if (res.models?.length) mProvForm.modelNames = res.models.join('\n')
     else mProvMessage.value = 'Endpoint returned no models'
-    provSyncKey.value = ''
   }
   catch (e) {
     mProvMessage.value = e instanceof Error ? e.message : 'sync failed'
@@ -211,11 +209,13 @@ async function savePasswordPolicy() {
 
 <template>
   <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
-    <UDashboardNavbar title="Settings">
+    <template #body>
+      <UDashboardNavbar title="Settings">
       <template #leading>
         <UDashboardSidebarCollapse />
       </template>
     </UDashboardNavbar>
+      
     <div class="space-y-6 p-6 lg:p-8">
     <div>
             <p class="text-sm text-zinc-500">General and authentication for this workspace</p>
@@ -406,22 +406,20 @@ async function savePasswordPolicy() {
           </UFormField>
           <UFormField label="Models" name="modelNames">
             <template #hint><FormHint text="One model name per line — the agent's model dropdown" /></template>
-            <div class="mb-2 space-y-2">
-              <div class="flex flex-wrap items-end gap-2">
-                <div class="min-w-48 flex-1">
-                  <USelect
-                    v-model="provSyncSecretId"
-                    :items="vaultItems"
-                    value-key="value"
-                    icon="i-lucide-vault"
-                    placeholder="Vault secret for sync"
-                    class="w-full"
-                    :disabled="provSyncing"
-                  />
-                </div>
-                <UButton icon="i-lucide-refresh-cw" size="sm" :loading="provSyncing" :disabled="!mProvForm.baseUrl" @click="syncModels">Sync from endpoint</UButton>
+            <div class="mb-2 flex flex-wrap items-end gap-2">
+              <div class="min-w-48 flex-1">
+                <USelectMenu
+                  v-model="provSyncSecretId"
+                  :items="vaultItems"
+                  value-key="value"
+                  :search-input="{ placeholder: 'Search secrets' }"
+                  icon="i-lucide-vault"
+                  placeholder="Vault secret for sync"
+                  class="w-full"
+                  :disabled="provSyncing"
+                />
               </div>
-              <UInput v-model="provSyncKey" type="password" icon="i-lucide-key-round" placeholder="…or paste a key (never stored)" class="w-full" :disabled="provSyncing" />
+              <UButton icon="i-lucide-refresh-cw" size="sm" :loading="provSyncing" :disabled="!mProvForm.baseUrl" @click="syncModels">Sync from endpoint</UButton>
             </div>
             <UTextarea v-model="mProvForm.modelNames" placeholder="model-name&#10;another-model" :rows="4" class="w-full" />
           </UFormField>
@@ -442,5 +440,6 @@ async function savePasswordPolicy() {
         </div>
       </template>
     </UModal>
-  </UDashboardPanel>
+    </template>
+    </UDashboardPanel>
 </template>
