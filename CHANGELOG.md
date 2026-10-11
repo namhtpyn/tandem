@@ -1,3 +1,10 @@
+# [2.1.0](https://github.com/namhtpyn/tandem/compare/v2.0.0...v2.1.0) (2026-10-11)
+
+
+### Features
+
+* **employees:** model field autocomplete from provider /models endpoint ([f2d0aa0](https://github.com/namhtpyn/tandem/commit/f2d0aa0342af886eb791efb27fa7e28091dee1a4))
+
 # [2.0.0](https://github.com/namhtpyn/tandem/compare/v1.15.1...v2.0.0) (2026-10-11)
 
 
