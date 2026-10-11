@@ -1,3 +1,10 @@
+# [2.4.0](https://github.com/namhtpyn/tandem/compare/v2.3.2...v2.4.0) (2026-10-11)
+
+
+### Features
+
+* **tasks:** kanban board view with custom statuses and transitions ([d627858](https://github.com/namhtpyn/tandem/commit/d627858541805fb2b3953a2b11a09d9d27a59296))
+
 ## [2.3.2](https://github.com/namhtpyn/tandem/compare/v2.3.1...v2.3.2) (2026-10-11)
 
 
