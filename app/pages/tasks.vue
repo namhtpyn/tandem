@@ -8,6 +8,7 @@ import type { EmployeeRow, TaskRow } from '~/../shared/types'
 const { $orpc, $client } = useNuxtApp()
 const tasksLive = useQuery<TaskRow[]>(($orpc.tasks.live as any).liveOptions())
 const employeesLive = useQuery<import('~/../shared/types').EmployeeRow[]>(($orpc.employees.live as any).liveOptions())
+const projectsLive = useQuery(($orpc.projects.live as any).liveOptions())
 
 const tasks = computed(() => (unref(tasksLive.data) ?? []) as TaskRow[])
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[])
@@ -22,7 +23,7 @@ const deleteOpen = computed({
   set: (v: boolean) => { if (!v) pendingDelete.value = null },
 })
 
-const form = reactive({ title: '', description: '', assigneeId: '__none__' as string, status: 'todo' as 'todo' | 'doing' | 'done' })
+const form = reactive({ title: '', description: '', assigneeId: '__none__' as string, status: 'todo' as 'todo' | 'doing' | 'done', projectId: '__none__' as string })
 const isEdit = computed(() => editingId.value !== null)
 
 const createMutation = useMutation<any, any, any>(($orpc.tasks.create as any).mutationOptions())
@@ -34,6 +35,12 @@ const assigneeOptions = computed(() => [
   ...employees.value.map(e => ({ label: `${e.name}${e.kind === 'ai' ? ' (AI)' : ''}`, value: e.id })),
 ])
 const assigneeNameById = computed(() => new Map(employees.value.map(e => [e.id, e.name])))
+const projectRows = computed(() => (unref(projectsLive.data) ?? []) as Array<{ id: string, name: string }>)
+const projectOptions = computed(() => [
+  { label: 'No project', value: '__none__' },
+  ...projectRows.value.map(p => ({ label: p.name, value: p.id })),
+])
+const projectNameById = computed(() => new Map(projectRows.value.map(p => [p.id, p.name])))
 
 const statusOptions = [
   { label: 'To do', value: 'todo' },
@@ -46,6 +53,7 @@ function openEditor(row?: TaskRow) {
   form.title = row?.title ?? ''
   form.description = row?.description ?? ''
   form.assigneeId = row?.assigneeId ?? '__none__'
+  form.projectId = row?.projectId ?? '__none__'
   form.status = row?.status ?? 'todo'
   message.value = ''
   editorOpen.value = true
@@ -59,6 +67,7 @@ async function save() {
       title: form.title,
       description: form.description,
       assigneeId: form.assigneeId === '__none__' ? null : form.assigneeId,
+      projectId: form.projectId === '__none__' ? null : form.projectId,
     }
     if (editingId.value) {
       await updateMutation.mutateAsync({ id: editingId.value, ...payload, status: form.status })
@@ -134,6 +143,7 @@ function statusColor(s: string) {
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
               <p class="truncate font-medium text-zinc-900 dark:text-white">{{ row.title }}</p>
+              <p v-if="row.projectName" class="mt-0.5 flex items-center gap-1 text-xs text-primary"><UIcon name="i-lucide-folder-kanban" class="size-3" />{{ row.projectName }}</p>
               <p class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-400">
                 <span>{{ assigneeNameById.get(row.assigneeId ?? '') ?? 'Unassigned' }}</span>
                 <span v-if="row.assigneeKind === 'ai'" class="inline-flex items-center gap-1 text-primary"><UIcon name="i-lucide-bot" class="size-3" />AI</span>
@@ -172,6 +182,7 @@ function statusColor(s: string) {
           <template #title-cell="{ row }">
             <div class="min-w-0">
               <p class="truncate font-medium text-zinc-900 dark:text-white">{{ row.original.title }}</p>
+              <p v-if="row.original.projectName" class="flex items-center gap-1 text-xs text-primary"><UIcon name="i-lucide-folder-kanban" class="size-3" />{{ row.original.projectName }}</p>
               <p v-if="row.original.description" class="truncate text-xs text-zinc-400">{{ row.original.description }}</p>
             </div>
           </template>
@@ -212,6 +223,10 @@ function statusColor(s: string) {
             <UFormField label="Description" name="description">
               <template #hint><FormHint text="What needs to be done; AI agents receive it as their instructions" /></template>
               <UTextarea v-model="form.description" placeholder="Description (optional)" :rows="4" class="w-full" />
+            </UFormField>
+            <UFormField label="Project" name="projectId">
+              <template #hint><FormHint text="Group this task under a project" /></template>
+              <USelectMenu v-model="form.projectId" :items="projectOptions" value-key="value" :search-input="{ placeholder: 'Search projects' }" icon="i-lucide-folder-kanban" placeholder="No project" class="w-full" />
             </UFormField>
             <UFormField label="Assignee" name="assigneeId">
               <template #hint><FormHint text="Human or AI agent responsible" /></template>

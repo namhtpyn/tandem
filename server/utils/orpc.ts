@@ -1,17 +1,18 @@
 // oRPC v2 server: router mounted at /rpc (Fetch API adapter). Better Auth
 // sessions resolved lazily per request from reqHeaders (official integration
 // pattern); live queries re-emit snapshots from the change bus over SSE.
-import { desc, eq } from 'drizzle-orm'
+import { asc, desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { ORPCError, os } from '@orpc/server'
 import type { RequestHeadersHandlerPluginContext } from '@orpc/server/plugins'
 import { db } from '../db'
-import { aiEmployees as aiEmployeesTable, apikey as apikeyTable, employeeSupervisors as supervisorsTable, environments as environmentsTable, models as modelsTable, modelProviders as modelProvidersTable, tasks as tasksTable, user as userTable, vaultSecrets as vaultSecretsTable, vaultAudit as vaultAuditTable } from '../db/schema'
+import { projects as projectsTable,
+  aiEmployees as aiEmployeesTable, apikey as apikeyTable, employeeSupervisors as supervisorsTable, environments as environmentsTable, models as modelsTable, modelProviders as modelProvidersTable, tasks as tasksTable, user as userTable, vaultSecrets as vaultSecretsTable, vaultAudit as vaultAuditTable } from '../db/schema'
 import { environmentInput } from './environments'
 import { probeSsh } from './ssh-probe'
 import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from './change-bus'
 import { decryptSecret, encryptSecret, lastFourHint } from './vault-crypto'
-import type { ApiKeyRow, EmployeeRow, EnvironmentRow, TaskRow, VaultAuditRow, VaultSecretRow } from '../../shared/types'
+import type { ApiKeyRow, EmployeeRow, EnvironmentRow, ProjectRow, TaskRow, VaultAuditRow, VaultSecretRow } from '../../shared/types'
 
 export interface ServerContext extends RequestHeadersHandlerPluginContext {
   getSession: () => Promise<{ user: { id: string, name: string, email: string, role: 'admin' | 'employee' | 'viewer' } } | null>
@@ -312,10 +313,92 @@ export const router = os.router({
       }),
   },
 
+  projects: {
+    /** live list — flat rows; nesting resolved client-side from parentId */
+    live: protectedProcedure.handler(() => liveGenerator(['projects'], async (): Promise<ProjectRow[]> => {
+      const rows = await db.select().from(projectsTable).orderBy(asc(projectsTable.name))
+      return rows.map(r => ({
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        status: r.status as 'active' | 'archived',
+        parentId: r.parentId,
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+      }))
+    })),
+
+    /** create */
+    create: protectedProcedure
+      .input(z.strictObject({
+        name: z.string().min(1).max(120),
+        description: z.string().max(2000).default(''),
+        parentId: z.string().min(1).nullable().optional(),
+      }))
+      .handler(async ({ input }) => {
+        if (input.parentId) {
+          const p = await db.select({ id: projectsTable.id }).from(projectsTable).where(eq(projectsTable.id, input.parentId))
+          if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'parent project does not exist' })
+        }
+        const id = crypto.randomUUID()
+        await db.insert(projectsTable).values({ id, name: input.name, description: input.description, parentId: input.parentId ?? null })
+        await publishChange('projects', 'create')
+        return { id }
+      }),
+
+    /** update (name/description/status/parent — cycle-guarded) */
+    update: protectedProcedure
+      .input(z.strictObject({
+        id: z.string().min(1),
+        name: z.string().min(1).max(120).optional(),
+        description: z.string().max(2000).optional(),
+        status: z.enum(['active', 'archived']).optional(),
+        parentId: z.string().min(1).nullable().optional(),
+      }))
+      .handler(async ({ input }) => {
+        const patch: { name?: string, description?: string, status?: string, parentId?: string | null, updatedAt: Date } = { updatedAt: new Date() }
+        if (input.name !== undefined) patch.name = input.name
+        if (input.description !== undefined) patch.description = input.description
+        if (input.status !== undefined) patch.status = input.status
+        if (input.parentId !== undefined) {
+          if (input.parentId === null) {
+            patch.parentId = null
+          }
+          else {
+            if (input.parentId === input.id) throw new ORPCError('BAD_REQUEST', { message: 'project cannot be its own parent' })
+            // walk ancestors; hitting self = cycle
+            let cursor: string | null = input.parentId
+            for (let depth = 0; depth < 100 && cursor; depth++) {
+              if (cursor === input.id) throw new ORPCError('BAD_REQUEST', { message: 'cannot nest a project under its own descendant' })
+              const rows: Array<{ parentId: string | null }> = await db.select({ parentId: projectsTable.parentId }).from(projectsTable).where(eq(projectsTable.id, cursor))
+              cursor = rows[0]?.parentId ?? null
+            }
+            const p = await db.select({ id: projectsTable.id }).from(projectsTable).where(eq(projectsTable.id, input.parentId))
+            if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'parent project does not exist' })
+            patch.parentId = input.parentId
+          }
+        }
+        await db.update(projectsTable).set(patch).where(eq(projectsTable.id, input.id))
+        await publishChange('projects', 'update')
+        return { ok: true }
+      }),
+
+    /** delete — tasks orphan to no-project (set null); children orphan to root (set null) */
+    remove: protectedProcedure
+      .input(z.strictObject({ id: z.string().min(1) }))
+      .handler(async ({ input }) => {
+        await db.delete(projectsTable).where(eq(projectsTable.id, input.id))
+        await publishChange('projects', 'remove')
+        return { ok: true }
+      }),
+  },
+
   tasks: {
     /** live list — tasks with assignee info, newest first */
     live: protectedProcedure.handler(() => liveGenerator(['tasks'], async (): Promise<TaskRow[]> => {
       const rows = await db.select().from(tasksTable).orderBy(desc(tasksTable.createdAt))
+      const projRows = await db.select({ id: projectsTable.id, name: projectsTable.name }).from(projectsTable)
+      const projNameById = new Map(projRows.map(p => [p.id, p.name]))
       const users = await db.select({ id: userTable.id, name: userTable.name }).from(userTable)
       const aiRows = await db.select({ userId: aiEmployeesTable.userId }).from(aiEmployeesTable)
       const aiIds = new Set(aiRows.map(r => r.userId))
@@ -325,6 +408,8 @@ export const router = os.router({
         title: r.title,
         description: r.description,
         status: r.status as 'todo' | 'doing' | 'done',
+        projectId: r.projectId,
+        projectName: (r.projectId && projNameById.get(r.projectId)) || null,
         assigneeId: r.assigneeId,
         assigneeName: (r.assigneeId && nameById.get(r.assigneeId)) || null,
         assigneeKind: r.assigneeId ? (aiIds.has(r.assigneeId) ? 'ai' : 'human') : null,
@@ -339,12 +424,17 @@ export const router = os.router({
       .input(z.strictObject({
         title: z.string().min(1).max(200),
         description: z.string().max(10_000).optional(),
+        projectId: z.string().min(1).nullable().optional(),
         assigneeId: z.string().min(1).nullable().optional(),
       }))
       .handler(async ({ input, context }) => {
         if (input.assigneeId) {
           const u = await db.select({ id: userTable.id }).from(userTable).where(eq(userTable.id, input.assigneeId))
           if (u.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'assignee does not exist' })
+        }
+        if (input.projectId) {
+          const p = await db.select({ id: projectsTable.id }).from(projectsTable).where(eq(projectsTable.id, input.projectId))
+          if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'project does not exist' })
         }
         const selfId = (context as { session?: { user?: { id?: string } } }).session?.user?.id ?? null
         const id = crypto.randomUUID()
@@ -353,6 +443,7 @@ export const router = os.router({
           title: input.title,
           description: input.description ?? '',
           status: 'todo',
+          projectId: input.projectId ?? null,
           assigneeId: input.assigneeId ?? null,
           createdBy: selfId,
         })
@@ -367,6 +458,7 @@ export const router = os.router({
         title: z.string().min(1).max(200).optional(),
         description: z.string().max(10_000).nullable().optional(),
         status: z.enum(['todo', 'doing', 'done']).optional(),
+        projectId: z.string().min(1).nullable().optional(),
         assigneeId: z.string().min(1).nullable().optional(),
       }))
       .handler(async ({ input }) => {
@@ -376,7 +468,12 @@ export const router = os.router({
           const u = await db.select({ id: userTable.id }).from(userTable).where(eq(userTable.id, input.assigneeId))
           if (u.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'assignee does not exist' })
         }
+        if (input.projectId) {
+          const p = await db.select({ id: projectsTable.id }).from(projectsTable).where(eq(projectsTable.id, input.projectId))
+          if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'project does not exist' })
+        }
         const patch: Record<string, unknown> = { updatedAt: new Date() }
+        if (input.projectId !== undefined) patch.projectId = input.projectId
         if (input.title !== undefined) patch.title = input.title
         if (input.description !== undefined && input.description !== null) patch.description = input.description
         if (input.status !== undefined) patch.status = input.status

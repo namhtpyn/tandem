@@ -2,7 +2,7 @@
 // Auth tables (tandem_user/session/account/verification/apikey) are GENERATED
 // by the better-auth CLI — regenerate with `bun run gen:auth`; never edit by
 // hand. Domain tables below are hand-owned.
-import { pgTable, text, timestamp, boolean, integer, index, primaryKey, check } from 'drizzle-orm/pg-core'
+import { pgTable, text, timestamp, boolean, integer, index, primaryKey, check, type AnyPgColumn } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 import { defineRelations } from 'drizzle-orm'
 
@@ -199,25 +199,42 @@ export const aiEmployees = pgTable('tandem_ai_employees', {
 
 // Tasks: work items assigned to employees (human or AI). AI assignees get
 // dispatched to their environment by the runner (M5).
+export const projects = pgTable('tandem_projects', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  description: text('description').notNull().default(''),
+  // active | archived
+  status: text('status').notNull().default('active'),
+  // nesting: parent project (self-reference); deleting a parent orphans children to root
+  parentId: text('parent_id').references((): AnyPgColumn => projects.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('tandem_projects_parent_idx').on(t.parentId),
+])
+
+
 export const tasks = pgTable('tandem_tasks', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   description: text('description').notNull().default(''),
   // todo | doing | done
   status: text('status').notNull().default('todo'),
+  projectId: text('project_id').references(() => projects.id, { onDelete: 'set null' }),
   assigneeId: text('assignee_id').references(() => user.id, { onDelete: 'set null' }),
   createdBy: text('created_by').references(() => user.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   index('tandem_tasks_assignee_idx').on(t.assigneeId),
+  index('tandem_tasks_project_idx').on(t.projectId),
   index('tandem_tasks_status_idx').on(t.status),
 ])
 
 // ---------- relations ----------
 
 export const relations = defineRelations(
-  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, tasks, modelProviders, models },
+  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, tasks, modelProviders, models, projects },
   (helpers) => ({
     user: {
       sessions: helpers.many.session({ from: helpers.user.id, to: helpers.session.userId }),

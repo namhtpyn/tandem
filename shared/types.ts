@@ -39,11 +39,23 @@ export interface EmployeeRow {
   updatedAt: string
 }
 
+export interface ProjectRow {
+  id: string
+  name: string
+  description: string
+  status: 'active' | 'archived'
+  parentId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 export interface TaskRow {
   id: string
   title: string
   description: string
   status: 'todo' | 'doing' | 'done'
+  projectId: string | null
+  projectName: string | null
   assigneeId: string | null
   assigneeName: string | null
   assigneeKind: 'human' | 'ai' | null
