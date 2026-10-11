@@ -39,7 +39,7 @@ const form = reactive({
   executable: '',
   providerId: '__none__' as string,
   modelId: '' as string,
-  apiKeySecretId: '__none__' as string,
+  apiKeySecretId: null as string | null,
 })
 const busy = ref(false)
 const message = ref('')
@@ -73,10 +73,8 @@ const supervisorItems = computed(() =>
 const providersLive = useQuery(($orpc as any).providers.live.liveOptions())
 const modelProviders = computed(() => (unref(providersLive.data) ?? []) as Array<{ id: string, label: string, modelNames: string[], apiStyle: 'openai' | 'anthropic' }>)
 const secretsLive = useQuery(($orpc as any).vault.live.liveOptions())
-const secretItems = computed(() => [
-  { label: 'No API key', value: '__none__' },
-  ...((unref(secretsLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>).map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })),
-])
+const secretItems = computed(() => ((unref(secretsLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>)
+  .map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })))
 const modelItems = computed(() => {
   const prov = modelProviders.value.find(p => p.id === form.providerId)
   return (prov?.modelNames ?? []).map(m => ({ label: m, value: m }))
@@ -98,7 +96,7 @@ function openEditor(row?: EmployeeRow) {
   form.executable = row?.executable && row.executable !== 'hermes' ? row.executable : ''
   form.providerId = row?.providerId ?? '__none__'
   form.modelId = row?.modelId ?? ''
-  form.apiKeySecretId = row?.apiKeySecretId ?? '__none__'
+  form.apiKeySecretId = row?.apiKeySecretId ?? null
   message.value = ''
   mintedKey.value = ''
   editorOpen.value = true
@@ -121,7 +119,7 @@ async function save() {
         ...(showAiFields.value && form.executable.trim() ? { executable: form.executable.trim() } : {}),
         ...(showAiFields.value ? { providerId: form.providerId === '__none__' ? null : form.providerId } : {}),
         ...(showAiFields.value ? { modelId: form.modelId || null } : {}),
-        ...(showAiFields.value ? { apiKeySecretId: form.apiKeySecretId === '__none__' ? null : form.apiKeySecretId } : {}),
+        ...(showAiFields.value ? { apiKeySecretId: form.apiKeySecretId ?? null } : {}),
       })
     }
     else {
@@ -138,7 +136,7 @@ async function save() {
           ...(form.executable.trim() ? { executable: form.executable.trim() } : {}),
           providerId: form.providerId === '__none__' ? null : form.providerId,
           modelId: form.modelId || null,
-          apiKeySecretId: form.apiKeySecretId === '__none__' ? null : form.apiKeySecretId,
+          apiKeySecretId: form.apiKeySecretId ?? null,
         } : {}),
       })
       // the API key returns ONCE — surface it before the modal closes
@@ -455,8 +453,9 @@ const columns = [
                 :items="secretItems"
                 value-key="value"
                 :search-input="{ placeholder: 'Search secrets' }"
+                clear
                 icon="i-lucide-key-round"
-                placeholder="No API key"
+                placeholder="Vault secret with the API key"
                 class="w-full"
               />
             </UFormField>

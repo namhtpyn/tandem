@@ -60,14 +60,11 @@ async function saveMProv() {
   }
 }
 
-const provSyncSecretId = ref('__none__')
+const provSyncSecretId = ref<string | null>(null)
 const provSyncing = ref(false)
 const vaultLive = useQuery(($orpc as any).vault.live.liveOptions())
-const vaultItems = computed(() => [
-  { label: 'No key', value: '__none__' },
-  ...((unref(vaultLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>)
-    .map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })),
-])
+const vaultItems = computed(() => ((unref(vaultLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>)
+  .map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })))
 async function syncModels() {
   provSyncing.value = true
   mProvMessage.value = ''
@@ -75,7 +72,7 @@ async function syncModels() {
     const res = await ($client as any).providers.fetchModels({
       baseUrl: mProvForm.baseUrl,
       apiStyle: mProvForm.apiStyle,
-      ...(provSyncSecretId.value !== '__none__' ? { keySecretId: provSyncSecretId.value } : {}),
+      ...(provSyncSecretId.value ? { keySecretId: provSyncSecretId.value } : {}),
       ...(mProvForm.extraHeaders.trim() ? { extraHeaders: Object.fromEntries(mProvForm.extraHeaders.split('\n').map(l => l.split(':').map(p => p.trim())).filter(p => p.length === 2).map(p => [p[0]!, p[1]!])) } : {}),
     })
     if (res.models?.length) mProvForm.modelNames = res.models.join('\n')
@@ -413,6 +410,7 @@ async function savePasswordPolicy() {
                   :items="vaultItems"
                   value-key="value"
                   :search-input="{ placeholder: 'Search secrets' }"
+                  clear
                   icon="i-lucide-vault"
                   placeholder="Vault secret for sync"
                   class="w-full"
