@@ -1,3 +1,10 @@
+## [1.15.1](https://github.com/namhtpyn/tandem/compare/v1.15.0...v1.15.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **providers:** secret pickers blank + clearable instead of 'No key' option ([092094d](https://github.com/namhtpyn/tandem/commit/092094d5141407a6ef3c0244d7f6febd257d332d))
+
 # [1.15.0](https://github.com/namhtpyn/tandem/compare/v1.14.1...v1.15.0) (2026-10-11)
 
 
