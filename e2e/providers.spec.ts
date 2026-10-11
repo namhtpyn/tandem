@@ -7,11 +7,14 @@ test.describe('model providers', () => {
     await login(page)
     await page.goto('/settings')
     await expect(page.getByRole('heading', { name: 'Model providers' })).toBeVisible()
-    await expect(page.getByText('OpenAI', { exact: true }).first()).toBeVisible()
-    await expect(page.getByText('Anthropic', { exact: true }).first()).toBeVisible()
-    await expect(page.getByText('OpenRouter', { exact: true }).first()).toBeVisible()
-    await expect(page.getByText('gpt-5.2', { exact: true }).first()).toBeVisible()
-    await expect(page.getByText('claude-sonnet-4-5', { exact: true }).first()).toBeVisible()
+    // mobile cards + desktop table both render provider names; only one is visible per breakpoint
+    const visible = (text: string) => page.getByText(text, { exact: true }).filter({ visible: true })
+    await expect(visible('OpenAI').first()).toBeVisible()
+    await expect(visible('Anthropic').first()).toBeVisible()
+    await expect(visible('OpenRouter').first()).toBeVisible()
+    // model names appear inside the visible provider list (cards or table)
+    await expect(visible('gpt-5.2').first()).toBeVisible()
+    await expect(visible('claude-sonnet-4-5').first()).toBeVisible()
   })
 
   test('add provider with models, then delete', async ({ page }) => {
