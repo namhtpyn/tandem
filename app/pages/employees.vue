@@ -6,7 +6,7 @@
 import type { ApiKeyRow, EmployeeRow, EnvironmentRow } from '~/../shared/types'
 import { useQuery, useMutation } from '@tanstack/vue-query'
 
-const { $orpc } = useNuxtApp()
+const { $orpc, $client } = useNuxtApp()
 
 const liveQuery = useQuery(($orpc as any).employees.live.liveOptions())
 const rows = computed<EmployeeRow[]>(() => (unref(liveQuery.data) ?? []) as EmployeeRow[])
@@ -72,6 +72,24 @@ const supervisorItems = computed(() =>
 
 const providersLive = useQuery(($orpc as any).providers.live.liveOptions())
 const modelProviders = computed(() => (unref(providersLive.data) ?? []) as Array<{ id: string, label: string, apiStyle: 'openai' | 'anthropic' }>)
+const modelItems = ref<string[]>([])
+const modelLoading = ref(false)
+watch([() => form.providerId, () => form.apiKeySecretId], async ([providerId, keySecretId]) => {
+  modelItems.value = []
+  if (providerId === '__none__') return
+  modelLoading.value = true
+  try {
+    const res = await ($client as any).providers.models({
+      providerId,
+      ...(keySecretId ? { keySecretId } : {}),
+    })
+    modelItems.value = res.models ?? []
+  }
+  catch { /* autocomplete is best-effort; freetext still allowed */ }
+  finally {
+    modelLoading.value = false
+  }
+}, { immediate: false })
 const secretsLive = useQuery(($orpc as any).vault.live.liveOptions())
 const secretItems = computed(() => ((unref(secretsLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>)
   .map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })))
@@ -432,8 +450,15 @@ const columns = [
               />
             </UFormField>
             <UFormField label="Model" name="model">
-              <template #hint><FormHint text="Model name the agent runs (e.g. gpt-5.2, claude-sonnet-4-5)" /></template>
-              <UInput v-model="form.model" icon="i-lucide-cpu" placeholder="Model name" class="w-full" />
+              <template #hint><FormHint text="Model name the agent runs — pick from the list or type your own" /></template>
+              <UInputMenu
+                v-model="form.model"
+                :items="modelItems"
+                :loading="modelLoading"
+                icon="i-lucide-cpu"
+                placeholder="Model name"
+                class="w-full"
+              />
             </UFormField>
             <UFormField label="API key" name="apiKeySecretId">
               <template #hint><FormHint text="Vault secret holding the key (per-agent, injected per run)" /></template>

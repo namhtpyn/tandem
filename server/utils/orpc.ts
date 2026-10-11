@@ -78,6 +78,18 @@ async function listEnvironments(): Promise<EnvironmentRow[]> {
   return rows.map(toRow)
 }
 
+// providerId(:secretId) -> model names; 5-minute TTL sweeper (armed lazily
+// so tests with fake timers can observe it)
+export const modelCache = new Map<string, string[]>()
+export const MODEL_CACHE_TTL_MS = 5 * 60_000
+export const sweepModelCache = () => modelCache.clear()
+let cacheSweeperArmed = false
+function armCacheSweeper() {
+  if (cacheSweeperArmed) return
+  cacheSweeperArmed = true
+  setInterval(sweepModelCache, MODEL_CACHE_TTL_MS).unref?.()
+}
+
 export const router = os.router({
   meta: {
     /** version — public */
@@ -222,6 +234,79 @@ export const router = os.router({
           .onConflictDoUpdate({ target: modelProvidersTable.id, set: { label: values.label, baseUrl: values.baseUrl, apiStyle: values.apiStyle, extraHeaders: values.extraHeaders, notes: values.notes, updatedAt: now } })
         await publishChange('providers', 'update')
         return { id }
+      }),
+
+    /** autocomplete: known model names for a provider. Probes {base}/models
+     *  on first ask using a TRANSIENT vault secret (audited `use`, never
+     *  stored), cached in-memory per provider+secret for 5 minutes. Falls back
+     *  to an empty list when no secret is given. */
+    models: protectedProcedure
+      .input(z.strictObject({
+        providerId: z.string().min(1),
+        keySecretId: z.string().min(1).optional(),
+      }))
+      .handler(async ({ input, context }): Promise<{ models: string[] }> => {
+        const provRows = await db.select().from(modelProvidersTable).where(eq(modelProvidersTable.id, input.providerId))
+        const prov = provRows[0]
+        if (!prov) throw new ORPCError('BAD_REQUEST', { message: 'provider does not exist' })
+
+        if (!input.keySecretId) {
+          return { models: modelCache.get(prov.id) ?? [] }
+        }
+
+        const cacheKey = `${prov.id}:${input.keySecretId}`
+        const hit = modelCache.get(cacheKey)
+        if (hit) return { models: hit }
+
+        const secRows = await db.select().from(vaultSecretsTable).where(eq(vaultSecretsTable.id, input.keySecretId))
+        const secret = secRows[0]
+        if (!secret) throw new ORPCError('BAD_REQUEST', { message: 'api key secret not found' })
+        const key = decryptSecret(secret.ciphertext)
+        await db.insert(vaultAuditTable).values({
+          id: crypto.randomUUID(),
+          secretId: secret.id,
+          secretName: secret.name,
+          action: 'use',
+          actorId: context.session.user.id,
+        })
+
+        const base = prov.baseUrl.replace(/\/$/, '')
+        const url = prov.apiStyle === 'anthropic' ? `${base}/v1/models` : `${base}/models`
+        const headers: Record<string, string> = prov.extraHeaders ? JSON.parse(prov.extraHeaders) : {}
+        if (prov.apiStyle === 'anthropic') {
+          headers['x-api-key'] = key
+          headers['anthropic-version'] = headers['anthropic-version'] ?? '2023-06-01'
+        }
+        else {
+          headers.Authorization = `Bearer ${key}`
+        }
+
+        const models: string[] = []
+        let after: string | null = null
+        for (let page = 0; page < 10; page++) {
+          const paged = after ? `${url}?after_id=${encodeURIComponent(after)}&limit=100` : `${url}?limit=100`
+          let body: unknown
+          try {
+            const res = await fetch(paged, { headers, signal: AbortSignal.timeout(10_000) })
+            if (!res.ok) throw new ORPCError('BAD_REQUEST', { message: `endpoint returned ${res.status}` })
+            body = await res.json()
+          }
+          catch (e) {
+            if (e instanceof ORPCError) throw e
+            throw new ORPCError('BAD_REQUEST', { message: 'could not reach the endpoint' })
+          }
+          const payload = body as { data?: Array<{ id?: string }>, has_more?: boolean, last_id?: string | null }
+          if (Array.isArray(payload?.data)) {
+            models.push(...payload.data.map(m => m.id).filter((m): m is string => typeof m === 'string' && m.length > 0))
+          }
+          if (!payload?.has_more || !payload?.last_id) break
+          after = payload.last_id
+        }
+        const unique = [...new Set(models)].sort()
+        armCacheSweeper()
+        modelCache.set(cacheKey, unique)
+        modelCache.set(prov.id, unique)
+        return { models: unique }
       }),
 
     /** delete a provider (blocked while AI employees use it) */

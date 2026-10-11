@@ -1,5 +1,5 @@
 // model providers: seeds, save/remove, employee linkage validation
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import './api-harness'
 import { resetSchema } from './helpers/pg'
@@ -30,6 +30,8 @@ async function dbm() {
 }
 
 beforeEach(async () => {
+  const { modelCache } = await import('../server/utils/orpc')
+  modelCache.clear()
   await resetSchema()
   await applyMigrations()
   // FK targets for createdBy / session user
@@ -81,6 +83,139 @@ describe('providers', () => {
     await iter.return?.()
     const p = (snap.value as any[]).find(r => r.label === 'HdrRead')!
     expect(p.extraHeaders).toEqual({ 'X-Probe': '1' })
+  })
+
+  it('models: probes endpoint with vault key, audits use, caches, paginates', async () => {
+    const sec = await callProc('vault.create', { name: 'probe-key', value: 'sk-probe' })
+    const prov = await callProc('providers.save', { label: 'ProbeSrc', baseUrl: 'https://probe.example.com/v1', apiStyle: 'openai' })
+    const origFetch = globalThis.fetch
+    let calls = 0
+    const seen: Array<{ url: string, auth?: string }> = []
+    globalThis.fetch = (async (url: unknown, init?: unknown) => {
+      calls++
+      const h = ((init as { headers?: Record<string, string> })?.headers) ?? {}
+      seen.push({ url: String(url), auth: h.Authorization })
+      if (!String(url).includes('after_id=')) {
+        return { ok: true, status: 200, json: async () => ({ data: [{ id: 'm1' }], has_more: true, last_id: 'm1' }) }
+      }
+      return { ok: true, status: 200, json: async () => ({ data: [{ id: 'm2' }], has_more: false }) }
+    }) as typeof fetch
+    try {
+      const r = await callProc('providers.models', { providerId: prov.id, keySecretId: sec.id })
+      expect(r.models).toEqual(['m1', 'm2'])
+      expect(calls).toBe(2)
+      expect(seen[0]!.auth).toBe('Bearer sk-probe')
+      // audit logged
+      const { db } = await dbm()
+      const { vaultAudit } = await import('../server/db/schema')
+      const audits = await db.select().from(vaultAudit).where(eq(vaultAudit.secretId, sec.id))
+      expect(audits.some(a => a.action === 'use')).toBe(true)
+      // second call served from cache (no extra fetch)
+      const r2 = await callProc('providers.models', { providerId: prov.id, keySecretId: sec.id })
+      expect(r2.models).toEqual(['m1', 'm2'])
+      expect(calls).toBe(2)
+      // no-secret call falls back to the cached provider list
+      const r3 = await callProc('providers.models', { providerId: prov.id })
+      expect(r3.models).toEqual(['m1', 'm2'])
+    }
+    finally { globalThis.fetch = origFetch }
+  })
+
+  it('models: unknown provider rejected; unknown secret rejected', async () => {
+    await expect(callProc('providers.models', { providerId: 'ghost' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    const prov = await callProc('providers.save', { label: 'P2', baseUrl: 'https://p2.example.com/v1', apiStyle: 'openai' })
+    await expect(callProc('providers.models', { providerId: prov.id, keySecretId: 'ghost-sec' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
+  it('models: anthropic style uses x-api-key + version header', async () => {
+    const sec = await callProc('vault.create', { name: 'ant2-key', value: 'sk-ant2' })
+    const prov = await callProc('providers.save', { label: 'AntSrc', baseUrl: 'https://ant.example.com', apiStyle: 'anthropic' })
+    const origFetch = globalThis.fetch
+    const seen: Array<Record<string, string>> = []
+    globalThis.fetch = (async (_u: unknown, init?: unknown) => {
+      seen.push(((init as { headers?: Record<string, string> })?.headers) ?? {})
+      return { ok: true, status: 200, json: async () => ({ data: [{ id: 'claude-x' }], has_more: false }) }
+    }) as typeof fetch
+    try {
+      const r = await callProc('providers.models', { providerId: prov.id, keySecretId: sec.id })
+      expect(r.models).toEqual(['claude-x'])
+      expect(seen[0]!['x-api-key']).toBe('sk-ant2')
+      expect(seen[0]!['anthropic-version']).toBe('2023-06-01')
+    }
+    finally { globalThis.fetch = origFetch }
+  })
+
+  it('models: empty list when never probed and no secret', async () => {
+    const prov = await callProc('providers.save', { label: 'ColdSrc', baseUrl: 'https://cold.example.com/v1', apiStyle: 'openai' })
+    const r = await callProc('providers.models', { providerId: prov.id })
+    expect(r.models).toEqual([])
+  })
+
+  it('models: endpoint error mapped', async () => {
+    const sec = await callProc('vault.create', { name: 'err-key', value: 'sk-err' })
+    const prov = await callProc('providers.save', { label: 'ErrSrc', baseUrl: 'https://err.example.com/v1', apiStyle: 'openai' })
+    const origFetch = globalThis.fetch
+    globalThis.fetch = (async () => ({ ok: false, status: 403, json: async () => ({}) })) as typeof fetch
+    try {
+      await expect(callProc('providers.models', { providerId: prov.id, keySecretId: sec.id })).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'endpoint returned 403' })
+    }
+    finally { globalThis.fetch = origFetch }
+  })
+
+  it('model cache TTL sweeper clears the map', async () => {
+    // warm a real cache entry (arms the sweeper), then use fake timers on a NEW interval
+    const prov = await callProc('providers.save', { label: 'TTL', baseUrl: 'https://ttl.example.com/v1', apiStyle: 'openai' })
+    const sec = await callProc('vault.create', { name: 'ttl-key', value: 'sk-ttl' })
+    const origFetch = globalThis.fetch
+    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'm' }], has_more: false }) })) as typeof fetch
+    try {
+      // two probes exercise the already-armed guard
+      await callProc('providers.models', { providerId: prov.id, keySecretId: sec.id })
+      const sec2 = await callProc('vault.create', { name: 'ttl-key2', value: 'sk-ttl2' })
+      await callProc('providers.models', { providerId: prov.id, keySecretId: sec2.id })
+    }
+    finally { globalThis.fetch = origFetch }
+    const { modelCache, sweepModelCache } = await import('../server/utils/orpc')
+    expect(modelCache.size).toBeGreaterThan(0)
+    // second, uncached probe (different secret) exercises the sweeper-already-armed guard
+    const sec2 = await callProc('vault.create', { name: 'ttl-key2', value: 'sk-ttl2' })
+    const origFetch2 = globalThis.fetch
+    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'm2' }], has_more: false }) })) as typeof fetch
+    try {
+      const r2 = await callProc('providers.models', { providerId: prov.id, keySecretId: sec2.id })
+      expect(r2.models).toEqual(['m2'])
+    }
+    finally { globalThis.fetch = origFetch2 }
+    sweepModelCache()
+    expect(modelCache.size).toBe(0)
+  })
+
+  it('models: network failure wrapped', async () => {
+    const sec = await callProc('vault.create', { name: 'net-key', value: 'sk-net' })
+    const prov = await callProc('providers.save', { label: 'NetSrc', baseUrl: 'https://net.example.com/v1', apiStyle: 'openai' })
+    const origFetch = globalThis.fetch
+    globalThis.fetch = (async () => { throw new TypeError('fetch failed') }) as typeof fetch
+    try {
+      await expect(callProc('providers.models', { providerId: prov.id, keySecretId: sec.id })).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'could not reach the endpoint' })
+    }
+    finally { globalThis.fetch = origFetch }
+  })
+
+  it('models: no-extraHeaders arm + malformed payload arm', async () => {
+    const sec = await callProc('vault.create', { name: 'bare-key', value: 'sk-bare' })
+    const prov = await callProc('providers.save', { label: 'BareSrc', baseUrl: 'https://bare2.example.com/v1', apiStyle: 'openai', extraHeaders: { 'X-Probe': '1' } })
+    const origFetch = globalThis.fetch
+    let malformed = false
+    globalThis.fetch = (async () => {
+      if (malformed) return { ok: true, status: 200, json: async () => ({ unexpected: 1 }) }
+      malformed = true
+      return { ok: true, status: 200, json: async () => ({ data: 'not-an-array' }) }
+    }) as typeof fetch
+    try {
+      const r = await callProc('providers.models', { providerId: prov.id, keySecretId: sec.id })
+      expect(r.models).toEqual([])
+    }
+    finally { globalThis.fetch = origFetch }
   })
 
   it('save dedupes model names', async () => {
