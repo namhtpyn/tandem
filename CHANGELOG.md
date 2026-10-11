@@ -1,3 +1,10 @@
+# [2.5.0](https://github.com/namhtpyn/tandem/compare/v2.4.0...v2.5.0) (2026-10-11)
+
+
+### Features
+
+* **tasks:** status categories + Jev-powered auto-assignment ([031149a](https://github.com/namhtpyn/tandem/commit/031149a56a38f576ce9fd87c20a3d0ee4aa74de9))
+
 # [2.4.0](https://github.com/namhtpyn/tandem/compare/v2.3.2...v2.4.0) (2026-10-11)
 
 
