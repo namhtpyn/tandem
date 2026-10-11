@@ -82,7 +82,8 @@ describe('employees.live', () => {
 describe('employees.create', () => {
   it('creates a human employee + login user, no key', async () => {
     const out = await callProc('employees.create', { name: 'H', email: 'h@tandem.local', kind: 'human', title: 'T', supervisorIds: [] })
-    expect(out.apiKey).toBeUndefined()
+    // humans now get an initial access key too (shown once at create)
+    expect(out.apiKey).toMatch(/^tandem_/)
     const { user } = await schema()
     const { db } = await dbm()
     const users = await db.select().from(user)
@@ -313,13 +314,14 @@ describe('employees.remove', () => {
 })
 
 describe('employees API keys', () => {
-  it('createApiKey mints for AI employees only', async () => {
+  it('createApiKey mints for AI AND human employees', async () => {
     await seedEnv('env-key')
     const ai = await callProc('employees.create', { name: 'AI', email: 'k-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-key' })
     const h = await callProc('employees.create', { name: 'H', email: 'k-h@tandem.local', kind: 'human', title: 'T', supervisorIds: [] })
-    const minted = await callProc('employees.createApiKey', { employeeId: ai.id })
-    expect(minted.key).toMatch(/^tandem_/)
-    await expect(callProc('employees.createApiKey', { employeeId: h.id })).rejects.toThrow(/AI employees/i)
+    const mintedAi = await callProc('employees.createApiKey', { employeeId: ai.id })
+    expect(mintedAi.key).toMatch(/^tandem_/)
+    const mintedH = await callProc('employees.createApiKey', { employeeId: h.id })
+    expect(mintedH.key).toMatch(/^tandem_/)
   })
 
   it('createApiKey 404s unknown employee', async () => {

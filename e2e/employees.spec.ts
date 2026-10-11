@@ -21,6 +21,8 @@ test('human employee CRUD round-trip on the live page', async ({ page }) => {
   await page.getByPlaceholder('Job title').fill('E2E Tester')
   await page.getByRole('button', { name: /Save|Create employee/ }).click()
   await expect(page.locator('tr:visible', { hasText: name })).toBeVisible({ timeout: 15_000 })
+  // humans now also get an initial access key — dismiss the shown-once alert
+  await page.getByRole('button', { name: /Done — I saved the key/ }).click()
   await expect(page.locator('tr:visible', { hasText: email })).toBeVisible()
 
   // edit title + email
@@ -80,8 +82,8 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   await page.getByRole('button', { name: 'Cancel' }).click()
 
   // keys drawer: list + mint + revoke
-  await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'API keys' }).click()
-  await expect(page.getByText(/ai-key/).first()).toBeVisible({ timeout: 15_000 })
+  await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Access keys' }).click()
+  await expect(page.getByText(/employee .{8}|-key/, { exact: false }).first()).toBeVisible({ timeout: 15_000 })
   await page.getByRole('button', { name: 'Mint new key' }).click()
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 })
   const keyRows = page.locator('div.flex.items-center.justify-between.gap-2.py-2')
@@ -121,6 +123,7 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   await page.getByPlaceholder('Job title').fill('Boss')
   await page.getByRole('button', { name: /Save|Create employee/ }).click()
   await expect(page.locator('tr:visible', { hasText: supName })).toBeVisible({ timeout: 15_000 })
+  await page.getByRole('button', { name: /Done — I saved the key/ }).click()
 
   // create the report with supervisor assigned
   const subName = `E2E Sub ${suffix}`
@@ -131,6 +134,7 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   await page.getByPlaceholder('Job title').fill('Report')
   await page.getByRole('button', { name: /Save|Create employee/ }).click()
   await expect(page.locator('tr:visible', { hasText: subName })).toBeVisible({ timeout: 15_000 })
+  await page.getByRole('button', { name: /Done — I saved the key/ }).click()
 
   // edit the report: pick the supervisor in the multi-select
   await page.locator('tr:visible', { hasText: subName }).getByRole('button', { name: 'Edit employee' }).click()

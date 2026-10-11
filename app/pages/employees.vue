@@ -186,7 +186,7 @@ async function remove() {
   }
 }
 
-// ---- API keys drawer (AI employees) ----
+// ---- Access keys drawer (any employee) ----
 const keysOpen = ref(false)
 const keysEmployee = ref<EmployeeRow | null>(null)
 const keys = ref<ApiKeyRow[]>([])
@@ -299,8 +299,8 @@ const columns = [
         </div>
         <div class="mt-3 flex justify-end gap-1">
           <UButton
-            v-if="row.kind === 'ai'" icon="i-lucide-key-round" variant="ghost" color="neutral" size="sm"
-            aria-label="API keys" :disabled="busy" @click="openKeys(row)"
+            icon="i-lucide-key-round" variant="ghost" color="neutral" size="sm"
+            aria-label="Access keys" :disabled="busy" @click="openKeys(row)"
           />
           <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit employee" :disabled="busy" @click="openEditor(row)" />
           <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete employee" :disabled="busy" @click="askRemove(row)" />
@@ -342,12 +342,11 @@ const columns = [
         <template #actions-cell="{ row }">
           <div class="flex justify-end gap-1">
             <UButton
-              v-if="row.original.kind === 'ai'"
               icon="i-lucide-key-round"
               variant="ghost"
               color="neutral"
               size="sm"
-              aria-label="API keys"
+              aria-label="Access keys"
               :disabled="busy"
               @click="openKeys(row.original)"
             />
@@ -533,9 +532,12 @@ const columns = [
       </template>
     </UModal>
 
-    <UModal v-model:open="keysOpen" :title="`API keys — ${keysEmployee?.name ?? ''}`">
+    <UModal v-model:open="keysOpen" :title="`Access keys — ${keysEmployee?.name ?? ''}`">
       <template #body>
         <div class="space-y-3">
+          <p class="text-xs text-zinc-500 dark:text-zinc-400">
+            Access keys authenticate API calls to Tandem as {{ keysEmployee?.name ?? 'this employee' }} — nothing to do with the model provider API key in the editor.
+          </p>
           <p v-if="keysMessage" class="text-sm text-error">{{ keysMessage }}</p>
           <div v-if="freshKey" class="rounded-lg border-2 border-amber-400/70 bg-amber-50 p-4 dark:bg-amber-950/40">
             <p class="flex items-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-200">

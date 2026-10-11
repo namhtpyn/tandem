@@ -618,9 +618,12 @@ export const router = os.router({
             model: input.model ?? null,
             apiKeySecretId: input.apiKeySecretId ?? null,
           })
+        }
+        // every new employee — AI or human — gets an initial access key (shown once)
+        {
           const { getAuth } = await import('./auth')
           const auth = await getAuth()
-          const created = await auth.api.createApiKey({ body: { name: `${input.name.slice(0, 40)} ai-key`, userId, prefix: 'tandem_' } })
+          const created = await auth.api.createApiKey({ body: { name: `${input.name.slice(0, 40)} key`, userId, prefix: 'tandem_' } })
           apiKey = created.key
         }
         await publishChange('employees', 'create')
@@ -761,15 +764,13 @@ export const router = os.router({
         return { ok: true }
       }),
 
-    /** mint a fresh API key for an AI employee (old keys stay valid) */
+    /** mint a fresh access key for any employee — AI or human (old keys stay valid) */
     createApiKey: protectedProcedure
       .input(z.strictObject({ employeeId: z.string().min(1) }))
       .handler(async ({ input }) => {
         const rows = await db.select().from(userTable).where(eq(userTable.id, input.employeeId))
         const emp = rows[0]
         if (!emp) throw new ORPCError('NOT_FOUND', { message: 'employee not found' })
-        const aiRow = (await db.select().from(aiEmployeesTable).where(eq(aiEmployeesTable.userId, input.employeeId)))[0]
-        if (!aiRow) throw new ORPCError('BAD_REQUEST', { message: 'API keys are for AI employees' })
         const { getAuth } = await import('./auth')
         const auth = await getAuth()
         const created = await auth.api.createApiKey({ body: { name: `employee ${emp.id.slice(0, 8)}`, userId: emp.id, prefix: 'tandem_' } })
