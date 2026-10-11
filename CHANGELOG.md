@@ -1,3 +1,10 @@
+# [2.3.0](https://github.com/namhtpyn/tandem/compare/v2.2.0...v2.3.0) (2026-10-11)
+
+
+### Features
+
+* **ui:** tooltips on all icon-only buttons + named access keys ([746bd30](https://github.com/namhtpyn/tandem/commit/746bd306fe186c46915196b6b1ef424751e15cc6))
+
 # [2.2.0](https://github.com/namhtpyn/tandem/compare/v2.1.0...v2.2.0) (2026-10-11)
 
 
