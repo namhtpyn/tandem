@@ -60,6 +60,24 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
 - **Every functional change ships with matching README.md + SPEC.md updates in
   the SAME commit.** Stale docs = shipped bug.
 - bun-only toolchain; Nuxt UI components; zod strict inputs on every procedure.
+- **Const-object "enums", never TS `enum` nor bare string unions.** Define closed
+  value sets as frozen const objects, derive types from them, and validate shape
+  with `satisfies`:
+
+  ```ts
+  const providerKind = { LLM: 'LLM', DECISION: 'DECISION' } as const
+  type ProviderKind = ValueOf<typeof providerKind>
+
+  const apiStyles = {
+    [providerKind.LLM]: { 'OPENAI-COMPLETIONS': 'OPENAI-COMPLETIONS', /* … */ },
+    [providerKind.DECISION]: { 'TYPESAFE-SYSTEMONE': 'TYPESAFE-SYSTEMONE', /* … */ },
+  } as const satisfies Record<ProviderKind, Record<string, string>>
+  ```
+
+  Why: single source of truth (add a value once, every type, zod schema, and
+  reverse lookup update), grouping keys stay valid `ProviderKind`s at compile
+  time, and lookups (`styleKind(s)`) replace scattered string-literal switches.
+  Store the leaf value in the DB; derive the group by lookup, never store both.
 
 ## Domain invariants (schema laws)
 
