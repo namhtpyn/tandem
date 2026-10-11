@@ -237,20 +237,37 @@ export const router = os.router({
         baseUrl: z.string().url(),
         apiStyle: z.enum(['openai', 'anthropic']),
         key: z.string().min(1).max(400).optional(),
+        /** vault secret holding the API key — decrypted server-side for this
+         *  one request only, audited as `use`, never stored on the provider */
+        keySecretId: z.string().min(1).optional(),
         extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
       }))
-      .handler(async ({ input }): Promise<{ models: string[] }> => {
+      .handler(async ({ input, context }): Promise<{ models: string[] }> => {
+        let key = input.key
+        if (!key && input.keySecretId) {
+          const rows = await db.select().from(vaultSecretsTable).where(eq(vaultSecretsTable.id, input.keySecretId))
+          const secret = rows[0]
+          if (!secret) throw new ORPCError('BAD_REQUEST', { message: 'api key secret not found' })
+          key = decryptSecret(secret.ciphertext)
+          await db.insert(vaultAuditTable).values({
+            id: crypto.randomUUID(),
+            secretId: secret.id,
+            secretName: secret.name,
+            action: 'use',
+            actorId: context.session.user.id,
+          })
+        }
         const url = input.apiStyle === 'anthropic'
           ? `${input.baseUrl.replace(/\/$/, '')}/v1/models`
           : `${input.baseUrl.replace(/\/$/, '')}/models`
         const headers: Record<string, string> = { ...input.extraHeaders }
-        if (input.key) {
+        if (key) {
           if (input.apiStyle === 'anthropic') {
-            headers['x-api-key'] = input.key
+            headers['x-api-key'] = key
             headers['anthropic-version'] = headers['anthropic-version'] ?? '2023-06-01'
           }
           else {
-            headers.Authorization = `Bearer ${input.key}`
+            headers.Authorization = `Bearer ${key}`
           }
         }
         // fetch pages (Anthropic paginates with has_more + last_id; OpenAI-style returns one page)

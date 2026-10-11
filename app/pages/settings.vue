@@ -61,7 +61,13 @@ async function saveMProv() {
 }
 
 const provSyncKey = ref('')
+const provSyncSecretId = ref('__none__')
 const provSyncing = ref(false)
+const vaultLive = useQuery(($orpc as any).vault.live.liveOptions())
+const vaultItems = computed(() => [
+  { label: 'No key', value: '__none__' },
+  ...((unref(vaultLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>).map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })),
+])
 async function syncModels() {
   provSyncing.value = true
   mProvMessage.value = ''
@@ -69,6 +75,7 @@ async function syncModels() {
     const res = await ($client as any).providers.fetchModels({
       baseUrl: mProvForm.baseUrl,
       apiStyle: mProvForm.apiStyle,
+      ...(provSyncSecretId.value !== '__none__' ? { keySecretId: provSyncSecretId.value } : {}),
       ...(provSyncKey.value.trim() ? { key: provSyncKey.value.trim() } : {}),
       ...(mProvForm.extraHeaders.trim() ? { extraHeaders: Object.fromEntries(mProvForm.extraHeaders.split('\n').map(l => l.split(':').map(p => p.trim())).filter(p => p.length === 2).map(p => [p[0]!, p[1]!])) } : {}),
     })
@@ -399,9 +406,22 @@ async function savePasswordPolicy() {
           </UFormField>
           <UFormField label="Models" name="modelNames">
             <template #hint><FormHint text="One model name per line — the agent's model dropdown" /></template>
-            <div class="mb-2 flex flex-wrap items-end gap-2">
-              <UInput v-model="provSyncKey" type="password" icon="i-lucide-key-round" placeholder="API key for sync (optional, never stored)" class="min-w-48 flex-1" :disabled="provSyncing" />
-              <UButton icon="i-lucide-refresh-cw" size="sm" :loading="provSyncing" :disabled="!mProvForm.baseUrl" @click="syncModels">Sync from endpoint</UButton>
+            <div class="mb-2 space-y-2">
+              <div class="flex flex-wrap items-end gap-2">
+                <div class="min-w-48 flex-1">
+                  <USelect
+                    v-model="provSyncSecretId"
+                    :items="vaultItems"
+                    value-key="value"
+                    icon="i-lucide-vault"
+                    placeholder="Vault secret for sync"
+                    class="w-full"
+                    :disabled="provSyncing"
+                  />
+                </div>
+                <UButton icon="i-lucide-refresh-cw" size="sm" :loading="provSyncing" :disabled="!mProvForm.baseUrl" @click="syncModels">Sync from endpoint</UButton>
+              </div>
+              <UInput v-model="provSyncKey" type="password" icon="i-lucide-key-round" placeholder="…or paste a key (never stored)" class="w-full" :disabled="provSyncing" />
             </div>
             <UTextarea v-model="mProvForm.modelNames" placeholder="model-name&#10;another-model" :rows="4" class="w-full" />
           </UFormField>

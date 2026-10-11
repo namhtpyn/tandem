@@ -1,5 +1,6 @@
 // model providers: seeds, save/remove, employee linkage validation
 import { beforeEach, describe, expect, it } from 'vitest'
+import { eq } from 'drizzle-orm'
 import './api-harness'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
@@ -112,6 +113,45 @@ describe('providers', () => {
       expect(calls).toBe(2)
     }
     finally { globalThis.fetch = origFetch }
+  })
+
+  it('fetchModels uses a vault secret (decrypted server-side, audited use)', async () => {
+    const sec = await callProc('vault.create', { name: 'sync-key', value: 'sk-from-vault' })
+    const origFetch = globalThis.fetch
+    const seenHeaders: Array<Record<string, string>> = []
+    globalThis.fetch = (async (_url: unknown, init?: unknown) => {
+      seenHeaders.push(((init as { headers?: Record<string, string> })?.headers) ?? {})
+      return { ok: true, status: 200, json: async () => ({ data: [{ id: 'vault-model' }], has_more: false }) }
+    }) as typeof fetch
+    try {
+      const r = await callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com/v1', apiStyle: 'openai', keySecretId: sec.id })
+      expect(r.models).toEqual(['vault-model'])
+      expect(seenHeaders[0]!.Authorization).toBe('Bearer sk-from-vault')
+      // audit trail recorded the use
+      const { db } = await dbm()
+      const { vaultAudit } = await import('../server/db/schema')
+      const audits = await db.select().from(vaultAudit).where(eq(vaultAudit.secretId, sec.id))
+      expect(audits.some(a => a.action === 'use')).toBe(true)
+    }
+    finally { globalThis.fetch = origFetch }
+  })
+
+  it('fetchModels pasted key wins over vault secret', async () => {
+    const sec = await callProc('vault.create', { name: 'lose-key', value: 'sk-from-vault' })
+    const origFetch = globalThis.fetch
+    globalThis.fetch = (async (_url: unknown, init?: unknown) => {
+      const h = ((init as { headers?: Record<string, string> })?.headers) ?? {}
+      expect(h.Authorization).toBe('Bearer sk-pasted')
+      return { ok: true, status: 200, json: async () => ({ data: [{ id: 'x' }], has_more: false }) }
+    }) as typeof fetch
+    try {
+      await callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com/v1', apiStyle: 'openai', key: 'sk-pasted', keySecretId: sec.id })
+    }
+    finally { globalThis.fetch = origFetch }
+  })
+
+  it('fetchModels unknown vault secret rejected', async () => {
+    await expect(callProc('providers.fetchModels', { baseUrl: 'https://fake.example.com/v1', apiStyle: 'openai', keySecretId: 'ghost-sec' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
   it('fetchModels tolerates a malformed body (no data array)', async () => {
