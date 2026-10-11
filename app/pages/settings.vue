@@ -15,18 +15,21 @@ const { $orpc, $client } = useNuxtApp()
 
 const oidcLive = useQuery(($orpc as any).oidc.live.liveOptions())
 const providersLive = useQuery(($orpc as any).providers.live.liveOptions())
-const mProvList = computed(() => (unref(providersLive.data) ?? []) as Array<{ id: string, label: string, baseUrl: string, apiStyle: 'openai' | 'anthropic', extraHeaders: Record<string, string> | null, notes: string | null }>)
+const mProvList = computed(() => (unref(providersLive.data) ?? []) as Array<{ id: string, label: string, baseUrl: string, apiStyle: 'openai' | 'anthropic', kind: 'llm' | 'decision', keySecretId: string | null, extraHeaders: Record<string, string> | null, notes: string | null }>)
+
 const mProvEditorOpen = ref(false)
 const mProvEditingId = ref<string | null>(null)
-const mProvForm = reactive({ label: '', baseUrl: '', apiStyle: 'openai' as 'openai' | 'anthropic', extraHeaders: '', notes: '' })
+const mProvForm = reactive({ label: '', baseUrl: '', apiStyle: 'openai' as 'openai' | 'anthropic', kind: 'llm' as 'llm' | 'decision', keySecretId: null as string | null, extraHeaders: '', notes: '' })
 const mProvBusy = ref(false)
 const mProvMessage = ref('')
 
-function openMProvEditor(row?: { id: string, label: string, baseUrl: string, apiStyle: 'openai' | 'anthropic', extraHeaders: Record<string, string> | null, notes: string | null }) {
+function openMProvEditor(row?: { id: string, label: string, baseUrl: string, apiStyle: 'openai' | 'anthropic', kind: 'llm' | 'decision', keySecretId: string | null, extraHeaders: Record<string, string> | null, notes: string | null }) {
   mProvEditingId.value = row?.id ?? null
   mProvForm.label = row?.label ?? ''
   mProvForm.baseUrl = row?.baseUrl ?? ''
   mProvForm.apiStyle = row?.apiStyle ?? 'openai'
+  mProvForm.kind = row?.kind ?? 'llm'
+  mProvForm.keySecretId = row?.keySecretId ?? null
   mProvForm.extraHeaders = row?.extraHeaders ? Object.entries(row.extraHeaders).map(([k, v]) => `${k}: ${v}`).join('\n') : ''
   mProvForm.notes = row?.notes ?? ''
   mProvMessage.value = ''
@@ -45,6 +48,8 @@ async function saveMProv() {
       label: mProvForm.label,
       baseUrl: mProvForm.baseUrl,
       apiStyle: mProvForm.apiStyle,
+      kind: mProvForm.kind,
+      ...(mProvForm.kind === 'decision' ? { keySecretId: mProvForm.keySecretId } : {}),
       ...(headers && Object.keys(headers).length ? { extraHeaders: headers } : {}),
       ...(mProvForm.notes ? { notes: mProvForm.notes } : {}),
     })
@@ -79,33 +84,50 @@ const providers = computed<OidcProviderRow[]>(() => ((unref(oidcLive.data) ?? []
 
 const disablePasswordLogin = ref(false)
 const companyName = ref('Tandem')
-const jevSecretId = ref<string | null>(null)
-const jevMessage = ref('')
-const jevSaving = ref(false)
+const decisionProviders = ref<Array<{ id: string, label: string, baseUrl: string, keySecretId: string | null }>>([])
+const decisionSecretId = ref<string | null>(null)
+const decisionMessage = ref('')
+const decisionSaving = ref(false)
 const vaultLiveJev = useQuery(($orpc as any).vault.live.liveOptions())
 const jevSecretItems = computed(() => ((unref(vaultLiveJev.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>)
   .map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })))
 
-async function saveJevKey() {
-  jevSaving.value = true
-  jevMessage.value = ''
+const decisionProvider = computed(() => decisionProviders.value[0] ?? null)
+
+watch(() => unref(providersLive.data), (d) => {
+  decisionProviders.value = ((d ?? []) as Array<any>).filter(p => p.kind === 'decision')
+    .map(p => ({ id: p.id, label: p.label, baseUrl: p.baseUrl, keySecretId: p.keySecretId }))
+  const cur = decisionProviders.value[0]
+  if (cur && decisionSecretId.value === null) decisionSecretId.value = cur.keySecretId
+}, { immediate: true })
+
+async function saveDecisionProvider() {
+  decisionSaving.value = true
+  decisionMessage.value = ''
   try {
-    await ($client as any).settings.update({ jevApiKeySecretId: jevSecretId.value ?? null })
-    jevMessage.value = 'Saved'
+    const p = decisionProvider.value
+    await ($client as any).providers.save({
+      id: p?.id,
+      label: p?.label ?? 'Jev (TypeSafe AI)',
+      baseUrl: p?.baseUrl ?? 'https://api.typesafe.ai/v1/systemone',
+      apiStyle: 'openai',
+      kind: 'decision',
+      keySecretId: decisionSecretId.value ?? null,
+    })
+    decisionMessage.value = 'Saved'
   }
   catch (e) {
-    jevMessage.value = e instanceof Error ? e.message : 'save failed'
+    decisionMessage.value = e instanceof Error ? e.message : 'save failed'
   }
   finally {
-    jevSaving.value = false
+    decisionSaving.value = false
   }
 }
 watch(() => unref(settingsLive.data), (d) => {
   if (d) {
-    const v = d as { disablePasswordLogin: boolean, companyName?: string, jevApiKeySecretId?: string | null }
+    const v = d as { disablePasswordLogin: boolean, companyName?: string }
     disablePasswordLogin.value = v.disablePasswordLogin
     companyName.value = v.companyName?.trim() || 'Tandem'
-    jevSecretId.value = v.jevApiKeySecretId ?? null
   }
 }, { immediate: true })
 
@@ -230,11 +252,15 @@ async function savePasswordPolicy() {
 
       <USeparator class="my-5" />
 
-      <UForm :state="{ jevSecretId }" class="flex flex-wrap items-end gap-3" @submit="saveJevKey">
-        <UFormField label="Auto-assign (Jev) API key" name="jevApiKeySecretId" class="min-w-56 flex-1">
-          <template #hint><FormHint text="Vault secret with the TypeSafe AI key — powers automatic task assignment" /></template>
+      <UForm :state="{ decisionSecretId }" class="flex flex-wrap items-end gap-3" @submit="saveDecisionProvider">
+        <UFormField label="Auto-assign (Jev) endpoint" name="jevBaseUrl" class="min-w-56 flex-1">
+          <template #hint><FormHint text="Decision provider (kind: decision) that picks which employee takes a task" /></template>
+          <UInput v-if="decisionProvider" v-model="decisionProvider.baseUrl" icon="i-lucide-globe" class="w-full" :disabled="decisionSaving" />
+          <UInput v-else model-value="https://api.typesafe.ai/v1/systemone" icon="i-lucide-globe" class="w-full" disabled />
+        </UFormField>
+        <UFormField label="API key (vault)" name="jevKey" class="min-w-56 flex-1">
           <USelectMenu
-            v-model="jevSecretId"
+            v-model="decisionSecretId"
             :items="jevSecretItems"
             value-key="value"
             :search-input="{ placeholder: 'Search secrets' }"
@@ -242,11 +268,11 @@ async function savePasswordPolicy() {
             icon="i-lucide-vault"
             placeholder="Pick a vault secret"
             class="w-full"
-            :disabled="jevSaving"
+            :disabled="decisionSaving"
           />
         </UFormField>
-        <UButton type="submit" icon="i-lucide-save" :loading="jevSaving">Save</UButton>
-        <span v-if="jevMessage" class="pb-2 text-xs" :class="jevMessage === 'Saved' ? 'text-success' : 'text-error'">{{ jevMessage }}</span>
+        <UButton type="submit" icon="i-lucide-save" :loading="decisionSaving">Save</UButton>
+        <span v-if="decisionMessage" class="pb-2 text-xs" :class="decisionMessage === 'Saved' ? 'text-success' : 'text-error'">{{ decisionMessage }}</span>
       </UForm>
     </UCard>
 
@@ -272,6 +298,7 @@ async function savePasswordPolicy() {
                   <p class="truncate font-mono text-xs text-zinc-400">{{ p.baseUrl }}</p>
                 </div>
                 <UBadge :color="p.apiStyle === 'anthropic' ? 'warning' : 'primary'" variant="subtle" size="sm">{{ p.apiStyle }}</UBadge>
+                <UBadge v-if="p.kind === 'decision'" color="info" variant="subtle" size="sm">decision</UBadge>
               </div>
               <div class="mt-3 flex justify-end gap-1">
                 <UPopover mode="hover">
@@ -436,7 +463,26 @@ async function savePasswordPolicy() {
             <template #hint><FormHint text="Wire protocol the endpoint speaks" /></template>
             <USelect v-model="mProvForm.apiStyle" :items="[{ label: 'OpenAI-compatible', value: 'openai' }, { label: 'Anthropic messages', value: 'anthropic' }]" value-key="value" icon="i-lucide-plug" class="w-full" />
           </UFormField>
-          
+
+          <UFormField label="Kind" name="kind">
+            <template #hint><FormHint text="llm = chat backends for agents; decision = typed-choice endpoints (e.g. Jev) that auto-assign tasks" /></template>
+            <USelect v-model="mProvForm.kind" :items="[{ label: 'LLM (agent models)', value: 'llm' }, { label: 'Decision (task assignment)', value: 'decision' }]" value-key="value" icon="i-lucide-shapes" class="w-full" />
+          </UFormField>
+
+          <UFormField v-if="mProvForm.kind === 'decision'" label="API key (vault)" name="keySecretId">
+            <template #hint><FormHint text="Vault secret with this provider's key" /></template>
+            <USelectMenu
+              v-model="mProvForm.keySecretId"
+              :items="jevSecretItems"
+              value-key="value"
+              :search-input="{ placeholder: 'Search secrets' }"
+              clear
+              icon="i-lucide-vault"
+              placeholder="Pick a vault secret"
+              class="w-full"
+            />
+          </UFormField>
+
           <UFormField label="Extra headers" name="extraHeaders">
             <template #hint><FormHint text="Optional, one 'Name: value' per line" /></template>
             <UTextarea v-model="mProvForm.extraHeaders" placeholder="HTTP-Referer: https://tandem.local" :rows="2" class="w-full" />

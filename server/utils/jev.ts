@@ -1,9 +1,8 @@
 // Jev (TypeSafe AI System One) integration for task assignment.
 // Sends task state + employee candidates, gets a typed Choice back.
 // Never a hard dependency: unavailable/low-confidence -> caller keeps task unassigned.
-import { getSetting } from './settings'
 import { db } from '../db'
-import { vaultSecrets } from '../db/schema'
+import { vaultSecrets, modelProviders } from '../db/schema'
 import { eq } from 'drizzle-orm'
 import { decryptSecret } from './vault-crypto'
 
@@ -24,7 +23,13 @@ export interface JevAssignResult {
   fallbackReason: string | null
 }
 
-const JEV_ENDPOINT = 'https://api.typesafe.ai/v1/systemone'
+/** The configured decision provider (first kind='decision' row, e.g. seed-jev). */
+export async function getDecisionProvider(): Promise<{ id: string, label: string, baseUrl: string, keySecretId: string | null } | null> {
+  const rows = await db.select().from(modelProviders).where(eq(modelProviders.kind, 'decision'))
+  const p = rows[0]
+  if (!p) return null
+  return { id: p.id, label: p.label, baseUrl: p.baseUrl, keySecretId: p.keySecretId }
+}
 
 /** Ask Jev which employee should take the task. Returns null employeeId on any failure/low confidence. */
 export async function jevPickAssignee(params: {
@@ -36,15 +41,18 @@ export async function jevPickAssignee(params: {
   if (params.candidates.length === 0) {
     return { employeeId: null, confidence: 0, probabilities: {}, model: 'none', fallbackReason: 'no assignee candidates' }
   }
-  const secretId = await getSetting('jevApiKeySecretId')
+  const provider = await getDecisionProvider()
+  if (!provider) {
+    return { employeeId: null, confidence: 0, probabilities: {}, model: 'none', fallbackReason: 'no decision provider configured' }
+  }
   let key: string | null = null
-  if (secretId) {
-    const secRows = await db.select().from(vaultSecrets).where(eq(vaultSecrets.id, secretId))
+  if (provider.keySecretId) {
+    const secRows = await db.select().from(vaultSecrets).where(eq(vaultSecrets.id, provider.keySecretId))
     const secret = secRows[0]
     if (secret) key = decryptSecret(secret.ciphertext)
   }
   if (!key) {
-    return { employeeId: null, confidence: 0, probabilities: {}, model: 'none', fallbackReason: 'jev api key not configured' }
+    return { employeeId: null, confidence: 0, probabilities: {}, model: 'none', fallbackReason: 'decision provider has no api key' }
   }
 
   const state = [
@@ -63,7 +71,7 @@ export async function jevPickAssignee(params: {
   }
 
   try {
-    const res = await fetch(JEV_ENDPOINT, {
+    const res = await fetch(provider.baseUrl, {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({

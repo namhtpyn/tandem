@@ -10,6 +10,9 @@ export interface ModelProviderRow {
   label: string
   baseUrl: string
   apiStyle: 'openai' | 'anthropic'
+  kind: 'llm' | 'decision'
+  /** vault secret id with the provider key (decision providers) */
+  keySecretId: string | null
   extraHeaders: Record<string, string> | null
   notes: string | null
 }
@@ -19,6 +22,8 @@ export const modelProviderInputSchema = z.strictObject({
   label: z.string().min(1).max(64),
   baseUrl: z.string().url(),
   apiStyle: z.enum(['openai', 'anthropic']),
+  kind: z.enum(['llm', 'decision']).default('llm'),
+  keySecretId: z.string().min(1).nullable().optional(),
   extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
   notes: z.string().max(500).optional(),
 })
@@ -30,6 +35,8 @@ export async function listModelProviders(): Promise<ModelProviderRow[]> {
     label: p.label,
     baseUrl: p.baseUrl,
     apiStyle: p.apiStyle as 'openai' | 'anthropic',
+    kind: p.kind as 'llm' | 'decision',
+    keySecretId: p.keySecretId,
     extraHeaders: p.extraHeaders ? JSON.parse(p.extraHeaders) : null,
     notes: p.notes,
   }))

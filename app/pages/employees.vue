@@ -112,7 +112,7 @@ const supervisorItems = computed(() =>
 )
 
 const providersLive = useQuery(($orpc as any).providers.live.liveOptions())
-const modelProviders = computed(() => (unref(providersLive.data) ?? []) as Array<{ id: string, label: string, apiStyle: 'openai' | 'anthropic' }>)
+const modelProviders = computed(() => ((unref(providersLive.data) ?? []) as Array<{ id: string, label: string, apiStyle: 'openai' | 'anthropic', kind: 'llm' | 'decision' }>).filter(p => p.kind === 'llm'))
 const modelItems = ref<string[]>([])
 const modelLoading = ref(false)
 watch([() => form.providerId, () => form.apiKeySecretId], async ([providerId, keySecretId]) => {

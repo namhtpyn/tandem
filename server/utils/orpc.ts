@@ -129,7 +129,6 @@ export const router = os.router({
       .input(z.strictObject({
         disablePasswordLogin: z.boolean().optional(),
         companyName: z.string().min(1).max(60).optional(),
-        jevApiKeySecretId: z.string().min(1).nullable().optional(),
       }))
       .handler(async ({ input }) => {
         const { setSetting } = await import('./settings')
@@ -146,15 +145,6 @@ export const router = os.router({
         }
         if (input.companyName !== undefined) {
           await setSetting('companyName', input.companyName.trim())
-        }
-        if (input.jevApiKeySecretId !== undefined) {
-          if (input.jevApiKeySecretId !== null) {
-            const sec = await db.select({ id: vaultSecretsTable.id }).from(vaultSecretsTable).where(eq(vaultSecretsTable.id, input.jevApiKeySecretId))
-            if (sec.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'jev api key secret not found' })
-          }
-          const { setSetting, deleteSetting } = await import('./settings')
-          if (input.jevApiKeySecretId === null) await deleteSetting('jevApiKeySecretId')
-          else await setSetting('jevApiKeySecretId', input.jevApiKeySecretId)
         }
         await rebuildAuth()
         await publishChange('settings', 'update')
@@ -226,25 +216,36 @@ export const router = os.router({
         label: z.string().min(1).max(64),
         baseUrl: z.string().url(),
         apiStyle: z.enum(['openai', 'anthropic']),
+        kind: z.enum(['llm', 'decision']).default('llm'),
+        keySecretId: z.string().min(1).nullable().optional(),
         extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
         notes: z.string().max(500).optional(),
       }))
       .handler(async ({ input }) => {
         const { modelProviderInputSchema } = await import('./model-providers')
         modelProviderInputSchema.parse(input)
+        if (input.keySecretId) {
+          const sec = await db.select({ id: vaultSecretsTable.id }).from(vaultSecretsTable).where(eq(vaultSecretsTable.id, input.keySecretId))
+          if (sec.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'key secret not found' })
+        }
         const id = input.id?.trim() || crypto.randomUUID()
         const now = new Date()
+        const keySecretId = input.keySecretId === undefined
+          ? null
+          : input.keySecretId
         const values = {
           id,
           label: input.label,
           baseUrl: input.baseUrl,
           apiStyle: input.apiStyle,
+          kind: input.kind,
+          keySecretId,
           extraHeaders: input.extraHeaders ? JSON.stringify(input.extraHeaders) : null,
           notes: input.notes ?? null,
           updatedAt: now,
         }
         await db.insert(modelProvidersTable).values(values)
-          .onConflictDoUpdate({ target: modelProvidersTable.id, set: { label: values.label, baseUrl: values.baseUrl, apiStyle: values.apiStyle, extraHeaders: values.extraHeaders, notes: values.notes, updatedAt: now } })
+          .onConflictDoUpdate({ target: modelProvidersTable.id, set: { label: values.label, baseUrl: values.baseUrl, apiStyle: values.apiStyle, kind: values.kind, keySecretId: values.keySecretId, extraHeaders: values.extraHeaders, notes: values.notes, updatedAt: now } })
         await publishChange('providers', 'update')
         return { id }
       }),

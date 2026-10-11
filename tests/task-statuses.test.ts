@@ -5,6 +5,15 @@ import './api-harness'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 
+
+async function wireDecisionProvider(secretId: string | null) {
+  const d = await dbm()
+  const { modelProviders } = await import('../server/db/schema')
+  await d.db.insert(modelProviders)
+    .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://api.typesafe.ai/v1/systemone', apiStyle: 'openai', kind: 'decision', keySecretId: secretId })
+    .onConflictDoUpdate({ target: modelProviders.id, set: { keySecretId: secretId, kind: 'decision' } })
+}
+
 const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 
 async function ctx() {
@@ -111,18 +120,27 @@ describe('task statuses', () => {
 
 
 describe('jev auto-assign', () => {
-  it('assign: no key configured -> assigned false with reason', async () => {
+  it('assign: no decision provider at all -> clear reason', async () => {
+    const d = await dbm()
+    const { modelProviders } = await import('../server/db/schema')
+    await d.db.delete(modelProviders)
+    const t = await callProc('tasks.create', { title: 'NoProvider' })
+    const r = await callProc('statuses.assign', { taskId: t.id })
+    expect(r.assigned).toBe(false)
+    expect(r.reason).toBe('no decision provider configured')
+  })
+
+  it('assign: seeded provider without key -> assigned false with reason', async () => {
     const t = await callProc('tasks.create', { title: 'Jev task' })
     const r = await callProc('statuses.assign', { taskId: t.id })
     expect(r.assigned).toBe(false)
-    expect(r.reason).toMatch(/not configured/)
+    expect(r.reason).toMatch(/has no api key/)
   })
 
   it('assign: with mocked jev response assigns the chosen employee', async () => {
-    const { setSetting } = await import('../server/utils/settings')
     // create a vault secret as the jev key holder
     const sec = await callProc('vault.create', { name: 'jev-key', value: 'sk-jev-test' })
-    await setSetting('jevApiKeySecretId', sec.id)
+    await wireDecisionProvider(sec.id)
     // an employee candidate
     const emp = await callProc('employees.create', { name: 'Jev Bot', email: 'jevbot@tandem.local', kind: 'human', title: 'Runner', supervisorIds: [] })
     const t = await callProc('tasks.create', { title: 'Write the docs' })
@@ -155,9 +173,8 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: low confidence leaves task unassigned', async () => {
-    const { setSetting } = await import('../server/utils/settings')
     const sec = await callProc('vault.create', { name: 'jev-key2', value: 'sk-jev-test2' })
-    await setSetting('jevApiKeySecretId', sec.id)
+    await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'Unclear task' })
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'jev-test', answers: { assignee: { type: 'choice', choice: 'unassigned', confidence: 0.9, probabilities: { unassigned: 0.9 } } } }) })) as typeof fetch
@@ -170,9 +187,8 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: jev failure arms (http error, no choice, unknown id, network throw)', async () => {
-    const { setSetting } = await import('../server/utils/settings')
     const sec = await callProc('vault.create', { name: 'jev-key3', value: 'sk-jev-3' })
-    await setSetting('jevApiKeySecretId', sec.id)
+    await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'Arms' })
     const origFetch = globalThis.fetch
     // http error
@@ -210,9 +226,8 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: candidate state string includes title/load/description arms', async () => {
-    const { setSetting } = await import('../server/utils/settings')
     const sec = await callProc('vault.create', { name: 'jev-key4', value: 'sk-jev-4' })
-    await setSetting('jevApiKeySecretId', sec.id)
+    await wireDecisionProvider(sec.id)
     // AI employee with a title + open task load; human without title
     const d = await dbm()
     const { environments } = await import('../server/db/schema')
@@ -241,9 +256,8 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: minimal jev answer (no confidence/probabilities) still assigns', async () => {
-    const { setSetting } = await import('../server/utils/settings')
     const sec = await callProc('vault.create', { name: 'jev-key5', value: 'sk-jev-5' })
-    await setSetting('jevApiKeySecretId', sec.id)
+    await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'Minimal' })
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'jev-test', answers: { assignee: { type: 'choice', choice: 'u-admin' } } }) })) as typeof fetch
@@ -256,9 +270,8 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: untitled AI candidate + task with project covers remaining arms', async () => {
-    const { setSetting } = await import('../server/utils/settings')
     const sec = await callProc('vault.create', { name: 'jev-key6', value: 'sk-jev-6' })
-    await setSetting('jevApiKeySecretId', sec.id)
+    await wireDecisionProvider(sec.id)
     const d = await dbm()
     const { environments } = await import('../server/db/schema')
     await d.db.insert(environments).values({ id: 'env-j2', name: 'env-j2', host: '127.0.0.1', port: '22', username: 'u' })
@@ -283,24 +296,22 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: dangling secret id + deleted project name arms', async () => {
-    const { setSetting } = await import('../server/utils/settings')
-    await setSetting('jevApiKeySecretId', 'ghost-secret')
+    await wireDecisionProvider('ghost-secret')
     const proj = await callProc('projects.create', { name: 'GhostProj' })
     const t = await callProc('tasks.create', { title: 'GhostProj task', projectId: proj.id })
     // delete the project row directly -> task.projectId dangles (set null by FK in real flow; simulate)
     const d = await dbm()
     const { projects } = await import('../server/db/schema')
     await d.db.delete(projects).where(eq(projects.id, proj.id))
-    // key missing (ghost secret) -> not configured
+    // ghost secret id -> provider exists but key undecryptable/missing
     const r = await callProc('statuses.assign', { taskId: t.id })
     expect(r.assigned).toBe(false)
-    expect(r.reason).toMatch(/not configured/)
+    expect(r.reason).toMatch(/no api key/)
   })
 
   it('assign: unassigned choice with probabilities present', async () => {
-    const { setSetting } = await import('../server/utils/settings')
     const sec = await callProc('vault.create', { name: 'jev-key7', value: 'sk-jev-7' })
-    await setSetting('jevApiKeySecretId', sec.id)
+    await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'Unassign me' })
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'jev-test', answers: { assignee: { type: 'choice', choice: 'unassigned', confidence: 0.8, probabilities: { unassigned: 0.8, 'u-admin': 0.2 } } } }) })) as typeof fetch
@@ -315,9 +326,8 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: low-confidence choice with probabilities + missing model', async () => {
-    const { setSetting } = await import('../server/utils/settings')
     const sec = await callProc('vault.create', { name: 'jev-key8', value: 'sk-jev-8' })
-    await setSetting('jevApiKeySecretId', sec.id)
+    await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'Lowconf' })
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ answers: { assignee: { type: 'choice', choice: 'u-admin', confidence: 0.2, probabilities: { 'u-admin': 0.2 } } } }) })) as typeof fetch
@@ -331,9 +341,8 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: no-choice response without model falls back to unknown', async () => {
-    const { setSetting } = await import('../server/utils/settings')
     const sec = await callProc('vault.create', { name: 'jev-key9', value: 'sk-jev-9' })
-    await setSetting('jevApiKeySecretId', sec.id)
+    await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'NoModel' })
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ answers: {} }) })) as typeof fetch
@@ -347,9 +356,8 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: task with dangling project id yields no project name', async () => {
-    const { setSetting } = await import('../server/utils/settings')
     const sec = await callProc('vault.create', { name: 'jev-keyA', value: 'sk-jev-A' })
-    await setSetting('jevApiKeySecretId', sec.id)
+    await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'Ghost proj' })
     // simulate a dangling project reference (FK normally prevents it; guards the lookup)
     const d = await dbm()

@@ -163,6 +163,10 @@ export const modelProviders = pgTable('tandem_model_providers', {
   baseUrl: text('base_url').notNull(),
   // 'openai' | 'anthropic'
   apiStyle: text('api_style').notNull().default('openai'),
+  // 'llm' (chat/model backends for agents) | 'decision' (typed-choice endpoints like Jev)
+  kind: text('kind').notNull().default('llm'),
+  /** vault secret id with this provider's API key (decision providers; llm keys stay per-agent) */
+  keySecretId: text('key_secret_id'),
   extraHeaders: text('extra_headers'),
   notes: text('notes'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

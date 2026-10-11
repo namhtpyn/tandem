@@ -22,13 +22,10 @@ export async function deleteSetting(key: string): Promise<void> {
 export interface AppSettings {
   disablePasswordLogin: boolean
   companyName: string
-  /** vault secret id holding the Jev API key (value never leaves the vault) */
-  jevApiKeySecretId: string | null
 }
 
 export async function getSettings(): Promise<AppSettings> {
   const v = await getSetting('disablePasswordLogin')
   const name = await getSetting('companyName')
-  const jev = await getSetting('jevApiKeySecretId')
-  return { disablePasswordLogin: v === 'true', companyName: name?.trim() || 'Tandem', jevApiKeySecretId: jev }
+  return { disablePasswordLogin: v === 'true', companyName: name?.trim() || 'Tandem' }
 }

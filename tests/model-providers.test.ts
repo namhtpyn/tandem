@@ -47,7 +47,7 @@ describe('providers', () => {
     await iter.return?.()
     const rows = snap.value as any[]
     const labels = rows.map(r => r.label).sort()
-    expect(labels).toEqual(['Anthropic', 'OpenAI', 'OpenRouter'])
+    expect(labels).toEqual(['Anthropic', 'Jev (TypeSafe AI)', 'OpenAI', 'OpenRouter'])
     const openai = rows.find(r => r.label === 'OpenAI')!
     expect(openai.baseUrl).toBe('https://api.openai.com/v1')
     const anthropic = rows.find(r => r.label === 'Anthropic')!
@@ -325,5 +325,39 @@ describe('employees model access', () => {
     const ai = (await db.select().from(aiEmployees))[0]!
     expect(ai.apiKeySecretId).toBeNull()
     expect(bot.id).toBeTruthy()
+  })
+})
+
+
+describe('provider kinds', () => {
+  it('seed-jev is a decision provider with no key by default', async () => {
+    const iter = await callProc('providers.live')
+    const snap = await iter.next()
+    await iter.return?.()
+    const list = snap.value as any[]
+    const jev = list.find(p => p.id === 'seed-jev')
+    expect(jev.kind).toBe('decision')
+    expect(jev.keySecretId).toBeNull()
+    expect(jev.baseUrl).toBe('https://api.typesafe.ai/v1/systemone')
+  })
+
+  it('llm providers default kind and can carry a decision key', async () => {
+    const sec = await callProc('vault.create', { name: 'prov-key', value: 'sk-1' })
+    await callProc('providers.save', { label: 'Custom Jev', baseUrl: 'https://jev.example.com/systemone', apiStyle: 'openai', kind: 'decision', keySecretId: sec.id })
+    await callProc('providers.save', { label: 'Plain LLM', baseUrl: 'https://llm.example.com/v1', apiStyle: 'openai' })
+    const iter = await callProc('providers.live')
+    const snap = await iter.next()
+    await iter.return?.()
+    const list = snap.value as any[]
+    const custom = list.find(p => p.label === 'Custom Jev')
+    expect(custom.kind).toBe('decision')
+    expect(custom.keySecretId).toBe(sec.id)
+    const plain = list.find(p => p.label === 'Plain LLM')
+    expect(plain.kind).toBe('llm')
+    expect(plain.keySecretId).toBeNull()
+  })
+
+  it('save rejects an unknown key secret', async () => {
+    await expect(callProc('providers.save', { label: 'Bad', baseUrl: 'https://x.example.com', apiStyle: 'openai', kind: 'decision', keySecretId: 'ghost' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 })
