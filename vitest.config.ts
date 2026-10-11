@@ -2,6 +2,12 @@ import { defineConfig } from 'vitest/config'
 import { loadEnv } from 'vite'
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      // server code imports shared/ via nuxt's #shared alias — vitest needs it too
+      '#shared': new URL('./shared/', import.meta.url).pathname,
+    },
+  },
   define: {
     'import.meta.client': 'true',
     'import.meta.server': 'false',
