@@ -244,37 +244,57 @@ async function savePasswordPolicy() {
             <h4 class="text-xs font-semibold uppercase tracking-wide text-zinc-400">Catalog</h4>
             <UButton icon="i-lucide-plus" size="sm" label="Add provider" @click="openMProvEditor()" />
           </div>
-          <template v-if="mProvList.length">
-            <UCard :ui="{ root: 'shadow-sm', body: 'p-0 sm:p-0' }">
-              <UTable :data="mProvList" :columns="[
-                { accessorKey: 'label', header: 'Provider' },
-                { accessorKey: 'models', header: 'Models' },
-                { accessorKey: 'actions', header: '' },
-              ]">
-                <template #label-cell="{ row }">
-                  <div class="min-w-0">
-                    <p class="truncate font-medium text-zinc-900 dark:text-white">{{ row.original.label }}</p>
-                    <p class="truncate font-mono text-xs text-zinc-400">{{ row.original.baseUrl }}</p>
-                  </div>
-                </template>
-                <template #models-cell="{ row }">
-                  <div class="flex flex-wrap gap-1">
-                    <UBadge v-for="m in row.original.modelNames.slice(0, 4)" :key="m" color="neutral" variant="subtle" size="sm">{{ m }}</UBadge>
-                    <UBadge v-if="row.original.modelNames.length > 4" color="neutral" variant="subtle" size="sm">+{{ row.original.modelNames.length - 4 }}</UBadge>
-                    <UBadge :color="row.original.apiStyle === 'anthropic' ? 'warning' : 'primary'" variant="subtle" size="sm">{{ row.original.apiStyle }}</UBadge>
-                  </div>
-                </template>
-                <template #actions-cell="{ row }">
-                  <div class="flex justify-end gap-1">
-                    <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit provider" @click="openMProvEditor(row.original)" />
-                    <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Delete provider" :loading="mProvBusy" @click="removeMProv(row.original.id)" />
-                  </div>
-                </template>
-              </UTable>
+          <!-- Mobile: stacked cards -->
+          <div v-if="mProvList.length" class="space-y-3 md:hidden">
+            <UCard v-for="p in mProvList" :key="p.id" :ui="{ root: 'shadow-sm' }">
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ p.label }}</p>
+                  <p class="truncate font-mono text-xs text-zinc-400">{{ p.baseUrl }}</p>
+                </div>
+                <UBadge :color="p.apiStyle === 'anthropic' ? 'warning' : 'primary'" variant="subtle" size="sm">{{ p.apiStyle }}</UBadge>
+              </div>
+              <div v-if="p.modelNames.length" class="mt-2 flex flex-wrap gap-1">
+                <span v-for="m in p.modelNames.slice(0, 6)" :key="m" class="max-w-full truncate rounded-sm bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] leading-4 text-zinc-600 ring-1 ring-inset ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:ring-zinc-700">{{ m }}</span>
+                <span v-if="p.modelNames.length > 6" class="text-[10px] text-zinc-400">+{{ p.modelNames.length - 6 }}</span>
+              </div>
+              <div class="mt-3 flex justify-end gap-1">
+                <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit provider" @click="openMProvEditor(p)" />
+                <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete provider" :loading="mProvBusy" @click="removeMProv(p.id)" />
+              </div>
             </UCard>
-            <p v-if="mProvMessage" class="mt-2 text-xs text-error">{{ mProvMessage }}</p>
-          </template>
-          <p v-else class="py-4 text-center text-sm text-zinc-500">No providers yet.</p>
+          </div>
+
+          <!-- Desktop: table -->
+          <UCard v-if="mProvList.length" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
+            <UTable :data="mProvList" :columns="[
+              { accessorKey: 'label', header: 'Provider' },
+              { accessorKey: 'models', header: 'Models' },
+              { accessorKey: 'actions', header: '' },
+            ]">
+              <template #label-cell="{ row }">
+                <div class="min-w-0">
+                  <p class="truncate font-medium text-zinc-900 dark:text-white">{{ row.original.label }}</p>
+                  <p class="truncate font-mono text-xs text-zinc-400">{{ row.original.baseUrl }}</p>
+                </div>
+              </template>
+              <template #models-cell="{ row }">
+                <div class="flex flex-wrap gap-1">
+                  <UBadge v-for="m in row.original.modelNames.slice(0, 4)" :key="m" color="neutral" variant="subtle" size="sm">{{ m }}</UBadge>
+                  <UBadge v-if="row.original.modelNames.length > 4" color="neutral" variant="subtle" size="sm">+{{ row.original.modelNames.length - 4 }}</UBadge>
+                  <UBadge :color="row.original.apiStyle === 'anthropic' ? 'warning' : 'primary'" variant="subtle" size="sm">{{ row.original.apiStyle }}</UBadge>
+                </div>
+              </template>
+              <template #actions-cell="{ row }">
+                <div class="flex justify-end gap-1">
+                  <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" aria-label="Edit provider" @click="openMProvEditor(row.original)" />
+                  <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" aria-label="Delete provider" :loading="mProvBusy" @click="removeMProv(row.original.id)" />
+                </div>
+              </template>
+            </UTable>
+          </UCard>
+          <p v-if="mProvMessage" class="mt-2 text-xs text-error">{{ mProvMessage }}</p>
+          <p v-else-if="!mProvList.length" class="py-4 text-center text-sm text-zinc-500">No providers yet.</p>
         </div>
       </div>
     </UCard>
