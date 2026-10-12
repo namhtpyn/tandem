@@ -5,7 +5,7 @@ import { db } from '../db'
 import { vaultSecrets, modelProviders } from '../db/schema'
 import { eq } from 'drizzle-orm'
 import { decryptSecret } from './vault-crypto'
-import { providerKind, styleKind } from '#shared/api-styles'
+import { PROVIDER_API_STYLE, PROVIDER_KIND, styleKind, type DecisionApiStyle } from '#shared/api-styles'
 
 export interface JevAssignCandidate {
   id: string
@@ -36,7 +36,7 @@ export interface DecisionPick {
 /** The configured decision provider: first row carrying a DECISION api style. */
 export async function getDecisionProvider(): Promise<{ id: string, label: string, baseUrl: string, apiStyles: string[], keySecretId: string | null } | null> {
   const rows = await db.select().from(modelProviders)
-  const p = rows.find(r => (r.apiStyles as string[]).some(st => styleKind(st) === providerKind.DECISION))
+  const p = rows.find(r => (r.apiStyles as string[]).some(st => styleKind(st) === PROVIDER_KIND.DECISION))
   if (!p) return null
   return { id: p.id, label: p.label, baseUrl: p.baseUrl, apiStyles: p.apiStyles as string[], keySecretId: p.keySecretId }
 }
@@ -73,6 +73,7 @@ export async function jevPickAssignee(params: {
     ...params.candidates.map(c => `- ${c.id} | ${c.kind} | ${c.title ?? 'no title'} | ${c.openTasks} open tasks`),
   ].filter(Boolean).join('\n')
 
+  const instructions = INSTRUCTIONS
   const criteria: Record<string, string> = {
     unassigned: 'No candidate fits; leave the task unassigned for a human decision',
   }
@@ -81,49 +82,111 @@ export async function jevPickAssignee(params: {
   }
 
   try {
-    const res = await fetch(provider.baseUrl, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        state,
-        model: 'jev-latest',
-        questions: {
-          assignee: {
-            type: 'choice',
-            instructions: 'Which employee should be assigned this task? Consider skills implied by the title, current workload, and whether an AI agent or human fits better. AI agents suit autonomous digital work; humans suit judgment, external communication, or physical tasks.',
-            criteria,
-          },
-        },
-      }),
-      signal: AbortSignal.timeout(15_000),
-    })
-    if (!res.ok) {
-      return { employeeId: null, confidence: 0, probabilities: {}, model: 'none', fallbackReason: `jev endpoint returned ${res.status}` }
+    let raw: DecisionPick
+    const preferred: DecisionApiStyle = provider.apiStyles.includes(PROVIDER_API_STYLE.DECISION['OPENAI-DECISIONS'])
+      ? PROVIDER_API_STYLE.DECISION['OPENAI-DECISIONS']
+      : PROVIDER_API_STYLE.DECISION['TYPESAFE-SYSTEMONE']
+    switch (preferred) {
+      case PROVIDER_API_STYLE.DECISION['OPENAI-DECISIONS']:
+        raw = await askOpenAIDecisions(provider.baseUrl, key, state, instructions, criteria)
+        break
+      case PROVIDER_API_STYLE.DECISION['TYPESAFE-SYSTEMONE']:
+        raw = await askTypesafeSystemOne(provider.baseUrl, key, state, instructions, criteria)
+        break
     }
-    const body = (await res.json()) as {
-      model: string
-      answers?: { assignee?: { choice?: string, confidence?: number, probabilities?: Record<string, number> } }
+    // compile-time exhaustiveness: adding a DecisionApiStyle without a case
+    // above fails this assignment (raw stays undefined -> typed never match)
+    raw satisfies DecisionPick | undefined
+
+    // shared validation on the normalized pick
+    if (!raw.employeeId) return raw
+    if (raw.employeeId === 'unassigned' || raw.confidence < 0.5) {
+      const reason = raw.employeeId === 'unassigned' ? 'decision model chose unassigned' : `low confidence ${raw.confidence.toFixed(2)}`
+      return { ...raw, employeeId: null, fallbackReason: reason }
     }
-    const answers = body.answers
-    const answer = answers && answers.assignee
-    const choice = answer ? answer.choice : undefined
-    if (!choice) {
-      const model = body.model
-      return { employeeId: null, confidence: 0, probabilities: {}, model: model || 'unknown', fallbackReason: 'jev returned no choice' }
-    }
-    const confidence = answer && typeof answer.confidence === 'number' ? answer.confidence : 0
-    const probabilities = answer && answer.probabilities ? answer.probabilities : {}
-    if (choice === 'unassigned' || confidence < 0.5) {
-      const reason = choice === 'unassigned' ? 'jev chose unassigned' : `low confidence ${confidence.toFixed(2)}`
-      return { employeeId: null, confidence, probabilities, model: body.model, fallbackReason: reason }
-    }
-    const valid = params.candidates.some(c => c.id === choice)
+    const valid = params.candidates.some(c => c.id === raw.employeeId)
     if (!valid) {
-      return { employeeId: null, confidence, probabilities, model: body.model, fallbackReason: `jev returned unknown employee id` }
+      return { ...raw, employeeId: null, fallbackReason: 'decision model returned unknown employee id' }
     }
-    return { employeeId: choice, confidence, probabilities, model: body.model, fallbackReason: null }
+    return raw
   }
   catch {
-    return { employeeId: null, confidence: 0, probabilities: {}, model: 'none', fallbackReason: 'could not reach jev endpoint' }
+    return { employeeId: null, confidence: 0, probabilities: {}, model: 'none', fallbackReason: 'could not reach decision endpoint' }
   }
+}
+
+const INSTRUCTIONS = 'Which employee should be assigned this task? Consider skills implied by the title, current workload, and whether an AI agent or human fits better. AI agents suit autonomous digital work; humans suit judgment, external communication, or physical tasks.'
+
+/** TypeSafe System One: state + questions map, answers map keyed by question id. */
+async function askTypesafeSystemOne(baseUrl: string, key: string, state: string, instructions: string, criteria: Record<string, string>): Promise<DecisionPick> {
+  const res = await fetch(baseUrl, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      state,
+      model: 'jev-latest',
+      questions: {
+        assignee: { type: 'choice', instructions, criteria },
+      },
+    }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!res.ok) {
+    return { employeeId: null, confidence: 0, probabilities: {}, model: 'none', fallbackReason: `decision endpoint returned ${res.status}` }
+  }
+  const body = (await res.json()) as {
+    model: string
+    answers?: { assignee?: { choice?: string, confidence?: number, probabilities?: Record<string, number> } }
+  }
+  const answer = body.answers && body.answers.assignee
+  const choice = answer ? answer.choice : undefined
+  if (!choice) {
+    const model = body.model
+    return { employeeId: null, confidence: 0, probabilities: {}, model: model || 'unknown', fallbackReason: 'no choice in answer' }
+  }
+  const confidence = answer && typeof answer.confidence === 'number' ? answer.confidence : 0
+  const probabilities = answer && answer.probabilities ? answer.probabilities : {}
+  return { employeeId: choice, confidence, probabilities, model: body.model, fallbackReason: null }
+}
+
+/** OpenAI Decisions: input + questions array, answers array (name-keyed). */
+async function askOpenAIDecisions(baseUrl: string, key: string, state: string, instructions: string, criteria: Record<string, string>): Promise<DecisionPick> {
+  const trimmed = baseUrl.replace(/\/$/, '')
+  const url = trimmed.endsWith('/decisions') ? trimmed : `${trimmed}/decisions`
+  const choices = Object.entries(criteria).map(([value, description]) => ({ value, description }))
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'gpt-6-luna',
+      input: state,
+      questions: [{
+        type: 'choice',
+        name: 'assignee',
+        instructions,
+        choices,
+      }],
+    }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!res.ok) {
+    return { employeeId: null, confidence: 0, probabilities: {}, model: 'none', fallbackReason: `decision endpoint returned ${res.status}` }
+  }
+  const body = (await res.json()) as {
+    model: string
+    answers?: Array<{ name?: string | null, type?: string, choice?: string | boolean, confidence?: number, probabilities?: Array<{ value: string | boolean, probability: number }> }>
+  }
+  const answer = body.answers && body.answers.find(a => a && a.name === 'assignee')
+  if (!answer || typeof answer.choice !== 'string') {
+    const model = body.model
+    return { employeeId: null, confidence: 0, probabilities: {}, model: model || 'unknown', fallbackReason: 'no choice in answer' }
+  }
+  const confidence = typeof answer.confidence === 'number' ? answer.confidence : 0
+  const probabilities: Record<string, number> = {}
+  if (answer.probabilities) {
+    for (const p of answer.probabilities) {
+      if (typeof p.value === 'string') probabilities[p.value] = p.probability
+    }
+  }
+  return { employeeId: answer.choice, confidence, probabilities, model: body.model, fallbackReason: null }
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { styleKind } from '#shared/api-styles'
+import { PROVIDER_KIND, styleKind } from '#shared/api-styles'
 // Employees (LIVE): oRPC live query over tandem_user + supervision graph +
 // AI extension rows. Mutations ride the same change-bus — every client
 // updates instantly. AI-ness is derived (extension row exists), never a
@@ -113,7 +113,7 @@ const supervisorItems = computed(() =>
 )
 
 const providersLive = useQuery(($orpc as any).providers.live.liveOptions())
-const modelProviders = computed(() => ((unref(providersLive.data) ?? []) as Array<{ id: string, label: string, apiStyles: string[] }>).filter(p => (p.apiStyles ?? []).some(st => styleKind(st) === 'LLM')))
+const modelProviders = computed(() => ((unref(providersLive.data) ?? []) as Array<{ id: string, label: string, apiStyles: string[] }>).filter(p => (p.apiStyles ?? []).some(st => styleKind(st) === PROVIDER_KIND.LLM)))
 const modelItems = ref<string[]>([])
 const modelLoading = ref(false)
 watch([() => form.providerId, () => form.apiKeySecretId], async ([providerId, keySecretId]) => {

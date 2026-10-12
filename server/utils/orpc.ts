@@ -9,7 +9,7 @@ import { db } from '../db'
 import { projects as projectsTable,
   aiEmployees as aiEmployeesTable, apikey as apikeyTable, employeeSupervisors as supervisorsTable, environments as environmentsTable, modelProviders as modelProvidersTable, tasks as tasksTable, taskStatuses as taskStatusesTable, user as userTable, vaultSecrets as vaultSecretsTable, vaultAudit as vaultAuditTable } from '../db/schema'
 import { environmentInput } from './environments'
-import { allApiStyles, styleKind, isAnthropicWire } from '#shared/api-styles'
+import { ALL_API_STYLES, PROVIDER_KIND, styleKind, isAnthropicWire } from '#shared/api-styles'
 import { probeSsh } from './ssh-probe'
 import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from './change-bus'
 import { decryptSecret, encryptSecret, lastFourHint } from './vault-crypto'
@@ -216,7 +216,7 @@ export const router = os.router({
         id: z.string().min(1).max(64).optional(),
         label: z.string().min(1).max(64),
         baseUrl: z.string().url(),
-        apiStyles: z.array(z.enum(allApiStyles)).min(1),
+        apiStyles: z.array(z.enum(ALL_API_STYLES)).min(1),
         keySecretId: z.string().min(1).nullable().optional(),
         extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
         notes: z.string().max(500).optional(),
@@ -224,7 +224,7 @@ export const router = os.router({
       .handler(async ({ input }) => {
         const { modelProviderInputSchema } = await import('./model-providers')
         modelProviderInputSchema.parse(input)
-        const hasDecision = input.apiStyles.some(s => styleKind(s) === 'DECISION')
+        const hasDecision = input.apiStyles.some(s => styleKind(s) === PROVIDER_KIND.DECISION)
         if (hasDecision && !input.keySecretId) {
           throw new ORPCError('BAD_REQUEST', { message: 'decision styles need a vault key (keySecretId)' })
         }
@@ -530,7 +530,7 @@ export const router = os.router({
         }
         await db.update(tasksTable).set({ assigneeId: result.employeeId, updatedAt: new Date() }).where(eq(tasksTable.id, task.id))
         await publishChange('tasks', 'update')
-        return { assigned: true as const, employeeId: result.employeeId, confidence: result.confidence, model: result.model }
+        return { assigned: true as const, employeeId: result.employeeId, confidence: result.confidence, model: result.model, probabilities: result.probabilities }
       }),
   },
 

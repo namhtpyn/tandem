@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { eq } from 'drizzle-orm'
 import { db } from '../db'
 import { modelProviders } from '../db/schema'
-import { allApiStyles } from '#shared/api-styles'
+import { ALL_API_STYLES } from '#shared/api-styles'
 
 export interface ModelProviderRow {
   id: string
@@ -22,7 +22,7 @@ export const modelProviderInputSchema = z.strictObject({
   id: z.string().min(1).max(64).optional(),
   label: z.string().min(1).max(64),
   baseUrl: z.string().url(),
-  apiStyles: z.array(z.enum(allApiStyles)).min(1),
+  apiStyles: z.array(z.enum(ALL_API_STYLES)).min(1),
   keySecretId: z.string().min(1).nullable().optional(),
   extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
   notes: z.string().max(500).optional(),

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query'
-import { styleKind, apiStyleOptions } from '#shared/api-styles'
+import { PROVIDER_KIND, styleKind, isAnthropicWire, API_STYLE_OPTIONS, PROVIDER_API_STYLE_LABEL } from '#shared/api-styles'
 // Settings: auth policy for this Tandem instance. OIDC provider list is a
 // UTable with a single add/edit modal (no v-model over v-for aliases — the
 // dxup page transform breaks that pattern; pathbridge table+modal law).
@@ -296,7 +296,7 @@ async function savePasswordPolicy() {
                   <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ p.label }}</p>
                   <p class="truncate font-mono text-xs text-zinc-400">{{ p.baseUrl }}</p>
                 </div>
-                <UBadge v-for="st in p.apiStyles" :key="st" :color="styleKind(st) === 'DECISION' ? 'info' : st.startsWith('ANTHROPIC') ? 'warning' : 'primary'" variant="subtle" size="sm" class="max-w-40 truncate">{{ st }}</UBadge>
+                <UBadge v-for="st in p.apiStyles" :key="st" :color="styleKind(st) === PROVIDER_KIND.DECISION ? 'info' : isAnthropicWire([st]) ? 'warning' : 'primary'" variant="subtle" size="sm" class="max-w-52 truncate">{{ (PROVIDER_API_STYLE_LABEL[st as keyof typeof PROVIDER_API_STYLE_LABEL] ?? st).split(' (')[0] }}</UBadge>
               </div>
               <div class="mt-3 flex justify-end gap-1">
                 <UPopover mode="hover">
@@ -324,7 +324,7 @@ async function savePasswordPolicy() {
               <template #label-cell="{ row }">
                 <div class="min-w-0">
                   <p class="flex items-center gap-2 truncate font-medium text-zinc-900 dark:text-white">{{ row.original.label }}
-                    <UBadge v-for="st in row.original.apiStyles" :key="st" :color="styleKind(st) === 'DECISION' ? 'info' : st.startsWith('ANTHROPIC') ? 'warning' : 'primary'" variant="subtle" size="sm" class="max-w-40 truncate">{{ st }}</UBadge>
+                    <UBadge v-for="st in row.original.apiStyles" :key="st" :color="styleKind(st) === PROVIDER_KIND.DECISION ? 'info' : isAnthropicWire([st]) ? 'warning' : 'primary'" variant="subtle" size="sm" class="max-w-52 truncate">{{ (PROVIDER_API_STYLE_LABEL[st as keyof typeof PROVIDER_API_STYLE_LABEL] ?? st).split(' (')[0] }}</UBadge>
                   </p>
                   <p class="truncate font-mono text-xs text-zinc-400">{{ row.original.baseUrl }}</p>
                 </div>
@@ -459,7 +459,7 @@ async function savePasswordPolicy() {
           </UFormField>
           <UFormField label="API styles" name="apiStyles">
             <template #hint><FormHint text="Protocols this endpoint speaks — LLM styles power agents; decision styles (typed choices) power auto-assign" /></template>
-            <USelectMenu v-model="mProvForm.apiStyles" :items="apiStyleOptions" multiple value-key="value" icon="i-lucide-plug" placeholder="Pick at least one style" class="w-full" />
+            <USelectMenu v-model="mProvForm.apiStyles" :items="API_STYLE_OPTIONS" multiple value-key="value" icon="i-lucide-plug" placeholder="Pick at least one style" class="w-full" />
           </UFormField>
 
           <UFormField v-if="mProvHasDecision" label="API key (vault)" name="keySecretId">
