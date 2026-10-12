@@ -1,3 +1,10 @@
+## [2.11.3](https://github.com/namhtpyn/tandem/compare/v2.11.2...v2.11.3) (2026-10-12)
+
+
+### Bug Fixes
+
+* **settings:** unify models badge color, require key+model, model autocomplete ([812f370](https://github.com/namhtpyn/tandem/commit/812f3706c9b45fa80ca5dd3bb8e7888dba202c8d))
+
 ## [2.11.2](https://github.com/namhtpyn/tandem/compare/v2.11.1...v2.11.2) (2026-10-12)
 
 
