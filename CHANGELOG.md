@@ -1,3 +1,10 @@
+# [2.8.0](https://github.com/namhtpyn/tandem/compare/v2.7.1...v2.8.0) (2026-10-12)
+
+
+### Features
+
+* **providers:** exhaustive label maps + screaming-snake enums + real decision adapters ([a79223c](https://github.com/namhtpyn/tandem/commit/a79223c9e42c14543f4faaeb3fce3f405d4a31e8))
+
 ## [2.7.1](https://github.com/namhtpyn/tandem/compare/v2.7.0...v2.7.1) (2026-10-11)
 
 
