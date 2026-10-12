@@ -1,3 +1,10 @@
+# [2.10.0](https://github.com/namhtpyn/tandem/compare/v2.9.0...v2.10.0) (2026-10-12)
+
+
+### Features
+
+* **providers:** endpoint registry with models group + host-root base urls ([6e86d16](https://github.com/namhtpyn/tandem/commit/6e86d168ef5eed78a1b2d0321975dfa868d043ac))
+
 # [2.9.0](https://github.com/namhtpyn/tandem/compare/v2.8.0...v2.9.0) (2026-10-12)
 
 
