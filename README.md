@@ -16,10 +16,13 @@ filled by agents you already run yourself.
 - **Runner** — per-environment serial queue; each run executes
   `ssh <env> hermes chat -q --query-file - --format stream-json` with the prompt on stdin, capturing the JSONL stream live
 - **Auth** — email/password + runtime-configurable OIDC providers (admin UI, no restarts)
-- **Model providers** — pure connection info (label/base URL/api styles/headers), NEVER keys. One
-  provider can speak MANY api styles (`shared/api-styles.ts` const-object enum): LLM styles
-  (OPENAI-COMPLETIONS, OPENAI-RESPONSES, OPENAI-MODELS, ANTHROPIC-MESSAGES) power agents; decision
-  styles (TYPESAFE-SYSTEMONE, OPENAI-DECISIONS) power Jev auto-assignment. Keys are supplied per call
+- **Model providers** — pure connection info (label/base URL/endpoints/headers), NEVER keys. One
+  provider can speak MANY endpoints (`shared/api-styles.ts` const-object enum, three kinds): LLM
+  endpoints (OPENAI-COMPLETIONS, OPENAI-RESPONSES, ANTHROPIC-MESSAGES) power agents; decision
+  endpoints (TYPESAFE-SYSTEMONE, OPENAI-DECISIONS) power Jev auto-assignment; models endpoints
+  (OPENAI-MODELS, ANTHROPIC-MODELS, TYPESAFE-MODELS — at most ONE per provider) power the /models
+  autocomplete. Base URL LAW: baseUrl is the host root BEFORE /v1 (e.g. https://api.openai.com);
+  adapters append the full /v1/... path (tolerating a baked-in leaf). Keys are supplied per call
   from the vault (agent dispatch, /models autocomplete, auto-assign)
 - **Health** — split readiness (`/health/ready`: Postgres + migrations) and liveness (`/health/live`: always 200)
 

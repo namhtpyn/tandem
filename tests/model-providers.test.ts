@@ -49,35 +49,35 @@ describe('providers', () => {
     const labels = rows.map(r => r.label).sort()
     expect(labels).toEqual(['Anthropic', 'Jev (TypeSafe AI)', 'OpenAI', 'OpenRouter'])
     const openai = rows.find(r => r.label === 'OpenAI')!
-    expect(openai.baseUrl).toBe('https://api.openai.com/v1')
+    expect(openai.baseUrl).toBe('https://api.openai.com')
     const anthropic = rows.find(r => r.label === 'Anthropic')!
-    expect(anthropic.apiStyles).toEqual(['ANTHROPIC-MESSAGES'])
+    expect(anthropic.endpoints).toEqual(['ANTHROPIC-MESSAGES'])
   })
 
   it('save upserts a provider and replaces its model list', async () => {
-    const r1 = await callProc('providers.save', { label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', apiStyles: ['OPENAI-COMPLETIONS'] })
+    const r1 = await callProc('providers.save', { label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', endpoints: ['OPENAI-COMPLETIONS'] })
     expect(r1.id).toBeTruthy()
     // update: replace models
-    await callProc('providers.save', { id: r1.id, label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', apiStyles: ['OPENAI-COMPLETIONS'] })
+    await callProc('providers.save', { id: r1.id, label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', endpoints: ['OPENAI-COMPLETIONS'] })
     const iter = await callProc('providers.live')
     const snap = await iter.next()
     await iter.return?.()
   })
 
   it('save with extraHeaders set (truthy arm)', async () => {
-    const r = await callProc('providers.save', { label: 'Hdr', baseUrl: 'https://hdr.example.com/v1', apiStyles: ['OPENAI-COMPLETIONS'], extraHeaders: { 'HTTP-Referer': 'https://tandem.local' } })
+    const r = await callProc('providers.save', { label: 'Hdr', baseUrl: 'https://hdr.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'], extraHeaders: { 'HTTP-Referer': 'https://tandem.local' } })
     expect(r.id).toBeTruthy()
   })
 
   it('save with no headers and empty model list (empty branches)', async () => {
-    const a = await callProc('providers.save', { label: 'Bare', baseUrl: 'https://bare.example.com/v1', apiStyles: ['OPENAI-COMPLETIONS'] })
+    const a = await callProc('providers.save', { label: 'Bare', baseUrl: 'https://bare.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'] })
     expect(a.id).toBeTruthy()
-    const b = await callProc('providers.save', { label: 'Bare2', baseUrl: 'https://bare2.example.com/v1', apiStyles: ['OPENAI-COMPLETIONS'] })
+    const b = await callProc('providers.save', { label: 'Bare2', baseUrl: 'https://bare2.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'] })
     expect(b.id).toBeTruthy()
   })
 
   it('live parses stored extraHeaders JSON', async () => {
-    await callProc('providers.save', { label: 'HdrRead', baseUrl: 'https://hr.example.com/v1', apiStyles: ['OPENAI-COMPLETIONS'], extraHeaders: { 'X-Probe': '1' } })
+    await callProc('providers.save', { label: 'HdrRead', baseUrl: 'https://hr.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'], extraHeaders: { 'X-Probe': '1' } })
     const iter = await callProc('providers.live')
     const snap = await iter.next()
     await iter.return?.()
@@ -87,7 +87,7 @@ describe('providers', () => {
 
   it('models: probes endpoint with vault key, audits use, caches, paginates', async () => {
     const sec = await callProc('vault.create', { name: 'probe-key', value: 'sk-probe' })
-    const prov = await callProc('providers.save', { label: 'ProbeSrc', baseUrl: 'https://probe.example.com/v1', apiStyles: ['OPENAI-COMPLETIONS'] })
+    const prov = await callProc('providers.save', { label: 'ProbeSrc', baseUrl: 'https://probe.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'] })
     const origFetch = globalThis.fetch
     let calls = 0
     const seen: Array<{ url: string, auth?: string }> = []
@@ -123,13 +123,13 @@ describe('providers', () => {
 
   it('models: unknown provider rejected; unknown secret rejected', async () => {
     await expect(callProc('providers.models', { providerId: 'ghost' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-    const prov = await callProc('providers.save', { label: 'P2', baseUrl: 'https://p2.example.com/v1', apiStyles: ['OPENAI-COMPLETIONS'] })
+    const prov = await callProc('providers.save', { label: 'P2', baseUrl: 'https://p2.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'] })
     await expect(callProc('providers.models', { providerId: prov.id, keySecretId: 'ghost-sec' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
   it('models: anthropic style uses x-api-key + version header', async () => {
     const sec = await callProc('vault.create', { name: 'ant2-key', value: 'sk-ant2' })
-    const prov = await callProc('providers.save', { label: 'AntSrc', baseUrl: 'https://ant.example.com', apiStyles: ['ANTHROPIC-MESSAGES'] })
+    const prov = await callProc('providers.save', { label: 'AntSrc', baseUrl: 'https://ant.example.com', endpoints: ['ANTHROPIC-MESSAGES'] })
     const origFetch = globalThis.fetch
     const seen: Array<Record<string, string>> = []
     let hitUrl = ''
@@ -149,14 +149,14 @@ describe('providers', () => {
   })
 
   it('models: empty list when never probed and no secret', async () => {
-    const prov = await callProc('providers.save', { label: 'ColdSrc', baseUrl: 'https://cold.example.com/v1', apiStyles: ['OPENAI-COMPLETIONS'] })
+    const prov = await callProc('providers.save', { label: 'ColdSrc', baseUrl: 'https://cold.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'] })
     const r = await callProc('providers.models', { providerId: prov.id })
     expect(r.models).toEqual([])
   })
 
   it('models: endpoint error mapped', async () => {
     const sec = await callProc('vault.create', { name: 'err-key', value: 'sk-err' })
-    const prov = await callProc('providers.save', { label: 'ErrSrc', baseUrl: 'https://err.example.com/v1', apiStyles: ['OPENAI-COMPLETIONS'] })
+    const prov = await callProc('providers.save', { label: 'ErrSrc', baseUrl: 'https://err.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'] })
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: false, status: 403, json: async () => ({}) })) as typeof fetch
     try {
@@ -167,7 +167,7 @@ describe('providers', () => {
 
   it('model cache TTL sweeper clears the map', async () => {
     // warm a real cache entry (arms the sweeper), then use fake timers on a NEW interval
-    const prov = await callProc('providers.save', { label: 'TTL', baseUrl: 'https://ttl.example.com/v1', apiStyles: ['OPENAI-COMPLETIONS'] })
+    const prov = await callProc('providers.save', { label: 'TTL', baseUrl: 'https://ttl.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'] })
     const sec = await callProc('vault.create', { name: 'ttl-key', value: 'sk-ttl' })
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'm' }], has_more: false }) })) as typeof fetch
@@ -195,7 +195,7 @@ describe('providers', () => {
 
   it('models: network failure wrapped', async () => {
     const sec = await callProc('vault.create', { name: 'net-key', value: 'sk-net' })
-    const prov = await callProc('providers.save', { label: 'NetSrc', baseUrl: 'https://net.example.com/v1', apiStyles: ['OPENAI-COMPLETIONS'] })
+    const prov = await callProc('providers.save', { label: 'NetSrc', baseUrl: 'https://net.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'] })
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => { throw new TypeError('fetch failed') }) as typeof fetch
     try {
@@ -206,7 +206,7 @@ describe('providers', () => {
 
   it('models: no-extraHeaders arm + malformed payload arm', async () => {
     const sec = await callProc('vault.create', { name: 'bare-key', value: 'sk-bare' })
-    const prov = await callProc('providers.save', { label: 'BareSrc', baseUrl: 'https://bare2.example.com/v1', apiStyles: ['OPENAI-COMPLETIONS'], extraHeaders: { 'X-Probe': '1' } })
+    const prov = await callProc('providers.save', { label: 'BareSrc', baseUrl: 'https://bare2.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'], extraHeaders: { 'X-Probe': '1' } })
     const origFetch = globalThis.fetch
     let malformed = false
     globalThis.fetch = (async () => {
@@ -222,14 +222,14 @@ describe('providers', () => {
   })
 
   it('save dedupes model names', async () => {
-    const r = await callProc('providers.save', { label: 'Dup', baseUrl: 'https://dup.example.com/v1', apiStyles: ['OPENAI-COMPLETIONS'] })
+    const r = await callProc('providers.save', { label: 'Dup', baseUrl: 'https://dup.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'] })
     const iter = await callProc('providers.live')
     const snap = await iter.next()
     await iter.return?.()
   })
 
   it('remove deletes an unused provider (models cascade)', async () => {
-    const r = await callProc('providers.save', { label: 'Temp', baseUrl: 'https://temp.example.com/v1', apiStyles: ['OPENAI-COMPLETIONS'] })
+    const r = await callProc('providers.save', { label: 'Temp', baseUrl: 'https://temp.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'] })
     await callProc('providers.remove', { id: r.id })
     const iter = await callProc('providers.live')
     const snap = await iter.next()
@@ -339,40 +339,57 @@ describe('provider styles', () => {
     await iter.return?.()
     const list = snap.value as any[]
     const jev = list.find(p => p.id === 'seed-jev')
-    expect(jev.apiStyles).toEqual(['TYPESAFE-SYSTEMONE'])
-        expect(jev.baseUrl).toBe('https://api.typesafe.ai/v1/systemone')
+    expect(jev.endpoints).toEqual(['TYPESAFE-SYSTEMONE'])
+        expect(jev.baseUrl).toBe('https://api.typesafe.ai')
   })
 
   it('a provider can carry many styles incl. decision + llm together', async () => {
     const sec = await callProc('vault.create', { name: 'prov-key', value: 'sk-1' })
-    await callProc('providers.save', { label: 'Kitchen sink', baseUrl: 'https://api.example.com', apiStyles: ['OPENAI-COMPLETIONS', 'OPENAI-RESPONSES', 'OPENAI-MODELS', 'OPENAI-DECISIONS'] })
-    await callProc('providers.save', { label: 'Plain LLM', baseUrl: 'https://llm.example.com/v1', apiStyles: ['ANTHROPIC-MESSAGES'] })
+    await callProc('providers.save', { label: 'Kitchen sink', baseUrl: 'https://api.example.com', endpoints: ['OPENAI-COMPLETIONS', 'OPENAI-RESPONSES', 'OPENAI-MODELS', 'OPENAI-DECISIONS'] })
+    await callProc('providers.save', { label: 'Plain LLM', baseUrl: 'https://llm.example.com/v1', endpoints: ['ANTHROPIC-MESSAGES'] })
     const iter = await callProc('providers.live')
     const snap = await iter.next()
     await iter.return?.()
     const list = snap.value as any[]
     const sink = list.find(p => p.label === 'Kitchen sink')
-    expect(sink.apiStyles).toEqual(['OPENAI-COMPLETIONS', 'OPENAI-RESPONSES', 'OPENAI-MODELS', 'OPENAI-DECISIONS'])
+    expect(sink.endpoints).toEqual(['OPENAI-COMPLETIONS', 'OPENAI-RESPONSES', 'OPENAI-MODELS', 'OPENAI-DECISIONS'])
         const plain = list.find(p => p.label === 'Plain LLM')
-    expect(plain.apiStyles).toEqual(['ANTHROPIC-MESSAGES'])
+    expect(plain.endpoints).toEqual(['ANTHROPIC-MESSAGES'])
       })
 
   it('rejects an unknown style value', async () => {
-    await expect(callProc('providers.save', { label: 'Bad', baseUrl: 'https://x.example.com', apiStyles: ['NOPE'] } as any)).rejects.toThrow()
+    await expect(callProc('providers.save', { label: 'Bad', baseUrl: 'https://x.example.com', endpoints: ['NOPE'] } as any)).rejects.toThrow()
   })
 
   it('decision styles save keylessly (key provided per call at use time)', async () => {
-    const r = await callProc('providers.save', { label: 'Keyless', baseUrl: 'https://x.example.com', apiStyles: ['OPENAI-DECISIONS'] })
+    const r = await callProc('providers.save', { label: 'Keyless', baseUrl: 'https://x.example.com', endpoints: ['OPENAI-DECISIONS'] })
     expect(r.id).toBeTruthy()
-    await expect(callProc('providers.save', { label: 'Bad', baseUrl: 'https://x.example.com', apiStyles: ['TYPESAFE-SYSTEMONE'], keySecretId: 'ghost' } as any)).rejects.toThrow()
+    await expect(callProc('providers.save', { label: 'Bad', baseUrl: 'https://x.example.com', endpoints: ['TYPESAFE-SYSTEMONE'], keySecretId: 'ghost' } as any)).rejects.toThrow()
   })
 })
 
 
 describe('models probe payload arms', () => {
+  it('typesafe models shape parsed (models[].name)', async () => {
+    const sec = await callProc('vault.create', { name: 'ts-key', value: 'sk-ts' })
+    const prov = await callProc('providers.save', { label: 'TsSrc', baseUrl: 'https://ts.example.com', endpoints: ['TYPESAFE-SYSTEMONE', 'TYPESAFE-MODELS'] })
+    const origFetch = globalThis.fetch
+    let hitUrl = ''
+    globalThis.fetch = (async (u: unknown) => {
+      hitUrl = String(u)
+      return { ok: true, status: 200, json: async () => ({ models: [{ name: 'jev-latest' }, { name: 'jev-preview' }, { name: 42 }] }) }
+    }) as typeof fetch
+    try {
+      const r = await callProc('providers.models', { providerId: prov.id, keySecretId: sec.id })
+      expect(hitUrl).toContain('https://ts.example.com/v1/models')
+      expect(r.models).toEqual(['jev-latest', 'jev-preview'])
+    }
+    finally { globalThis.fetch = origFetch }
+  })
+
   it('openai url arm + non-array data payload tolerated', async () => {
     const sec = await callProc('vault.create', { name: 'arm-key', value: 'sk-arm' })
-    const prov = await callProc('providers.save', { label: 'ArmSrc', baseUrl: 'https://arm.example.com/v1', apiStyles: ['OPENAI-COMPLETIONS'], extraHeaders: { 'X-Probe': '1' } })
+    const prov = await callProc('providers.save', { label: 'ArmSrc', baseUrl: 'https://arm.example.com', endpoints: ['OPENAI-COMPLETIONS'], extraHeaders: { 'X-Probe': '1' } })
     const origFetch = globalThis.fetch
     let hitUrl = ''
     globalThis.fetch = (async (u: unknown) => {

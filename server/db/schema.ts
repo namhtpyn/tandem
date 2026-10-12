@@ -162,7 +162,7 @@ export const modelProviders = pgTable('tandem_model_providers', {
   label: text('label').notNull(),
   baseUrl: text('base_url').notNull(),
   /** set of API styles this endpoint speaks (see shared/api-styles.ts) */
-  apiStyles: jsonb('api_styles').notNull().default(sql`'["OPENAI-COMPLETIONS"]'::jsonb`),
+  endpoints: jsonb('endpoints').notNull().default(sql`'["OPENAI-COMPLETIONS"]'::jsonb`),
   extraHeaders: text('extra_headers'),
   notes: text('notes'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

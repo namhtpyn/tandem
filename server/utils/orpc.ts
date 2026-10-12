@@ -9,7 +9,7 @@ import { db } from '../db'
 import { projects as projectsTable,
   aiEmployees as aiEmployeesTable, apikey as apikeyTable, employeeSupervisors as supervisorsTable, environments as environmentsTable, modelProviders as modelProvidersTable, tasks as tasksTable, taskStatuses as taskStatusesTable, user as userTable, vaultSecrets as vaultSecretsTable, vaultAudit as vaultAuditTable } from '../db/schema'
 import { environmentInput } from './environments'
-import { ALL_API_STYLES, PROVIDER_KIND, styleKind, isAnthropicWire } from '#shared/api-styles'
+import { ALL_ENDPOINTS, PROVIDER_KIND, endpointKind, isAnthropicWire, PROVIDER_ENDPOINT, atMostOneModelsEndpoint } from '#shared/api-styles'
 import { probeSsh } from './ssh-probe'
 import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from './change-bus'
 import { decryptSecret, encryptSecret, lastFourHint } from './vault-crypto'
@@ -216,7 +216,8 @@ export const router = os.router({
         id: z.string().min(1).max(64).optional(),
         label: z.string().min(1).max(64),
         baseUrl: z.string().url(),
-        apiStyles: z.array(z.enum(ALL_API_STYLES)).min(1),
+        endpoints: z.array(z.enum(ALL_ENDPOINTS)).min(1).refine(atMostOneModelsEndpoint, { message: 'only one /v1/models endpoint per provider' }),
+        apiStyles: z.array(z.string()).optional(), // legacy alias, ignored
         extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
         notes: z.string().max(500).optional(),
       }))
@@ -229,13 +230,13 @@ export const router = os.router({
           id,
           label: input.label,
           baseUrl: input.baseUrl,
-          apiStyles: input.apiStyles,
+          endpoints: input.endpoints,
           extraHeaders: input.extraHeaders ? JSON.stringify(input.extraHeaders) : null,
           notes: input.notes ?? null,
           updatedAt: now,
         }
         await db.insert(modelProvidersTable).values(values)
-          .onConflictDoUpdate({ target: modelProvidersTable.id, set: { label: values.label, baseUrl: values.baseUrl, apiStyles: values.apiStyles, extraHeaders: values.extraHeaders, notes: values.notes, updatedAt: now } })
+          .onConflictDoUpdate({ target: modelProvidersTable.id, set: { label: values.label, baseUrl: values.baseUrl, endpoints: values.endpoints, extraHeaders: values.extraHeaders, notes: values.notes, updatedAt: now } })
         await publishChange('providers', 'update')
         return { id }
       }),
@@ -274,16 +275,10 @@ export const router = os.router({
           actorId: context.session.user.id,
         })
 
-        const provStyles = prov.apiStyles as string[]
+        const provEndpoints = prov.endpoints as string[]
         const base = prov.baseUrl.replace(/\/$/, '')
-        const anthropicWire = isAnthropicWire(provStyles)
-        let url: string
-        if (anthropicWire) {
-          url = `${base}/v1/models`
-        }
-        else {
-          url = `${base}/models`
-        }
+        const anthropicWire = isAnthropicWire(provEndpoints)
+        const url = `${base}/v1/models`
         const headers: Record<string, string> = prov.extraHeaders ? JSON.parse(prov.extraHeaders) : {}
         if (anthropicWire) {
           headers['x-api-key'] = key
@@ -307,10 +302,14 @@ export const router = os.router({
             if (e instanceof ORPCError) throw e
             throw new ORPCError('BAD_REQUEST', { message: 'could not reach the endpoint' })
           }
-          const payload = body as { data?: Array<{ id?: string }>, has_more?: boolean, last_id?: string | null }
+          const payload = body as { data?: Array<{ id?: string }>, models?: Array<{ name?: string }>, has_more?: boolean, last_id?: string | null }
           const dataList = payload.data
           if (Array.isArray(dataList)) {
             models.push(...dataList.map(m => m.id).filter((m): m is string => typeof m === 'string' && m.length > 0))
+          }
+          const namedList = payload.models
+          if (Array.isArray(namedList)) {
+            models.push(...namedList.map(m => m.name).filter((m): m is string => typeof m === 'string' && m.length > 0))
           }
           if (!payload.has_more || !payload.last_id) break
           after = payload.last_id

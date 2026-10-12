@@ -5,7 +5,7 @@ import { db } from '../db'
 import { vaultSecrets, modelProviders, vaultAudit } from '../db/schema'
 import { eq } from 'drizzle-orm'
 import { decryptSecret } from './vault-crypto'
-import { PROVIDER_API_STYLE, PROVIDER_KIND, styleKind, type DecisionApiStyle } from '#shared/api-styles'
+import { PROVIDER_ENDPOINT, PROVIDER_KIND, endpointKind, ENDPOINT_PATH, type DecisionEndpoint } from '#shared/api-styles'
 
 export interface JevAssignCandidate {
   id: string
@@ -34,11 +34,11 @@ export interface DecisionPick {
 }
 
 /** The configured decision provider: first row carrying a DECISION api style. */
-export async function getDecisionProvider(): Promise<{ id: string, label: string, baseUrl: string, apiStyles: string[] } | null> {
+export async function getDecisionProvider(): Promise<{ id: string, label: string, baseUrl: string, endpoints: string[] } | null> {
   const rows = await db.select().from(modelProviders)
-  const p = rows.find(r => (r.apiStyles as string[]).some(st => styleKind(st) === PROVIDER_KIND.DECISION))
+  const p = rows.find(r => (r.endpoints as string[]).some(st => endpointKind(st) === PROVIDER_KIND.DECISION))
   if (!p) return null
-  return { id: p.id, label: p.label, baseUrl: p.baseUrl, apiStyles: p.apiStyles as string[] }
+  return { id: p.id, label: p.label, baseUrl: p.baseUrl, endpoints: p.endpoints as string[] }
 }
 
 /** Ask Jev which employee should take the task. Returns null employeeId on any failure/low confidence. */
@@ -88,14 +88,14 @@ export async function jevPickAssignee(params: {
 
   try {
     let raw: DecisionPick
-    const preferred: DecisionApiStyle = provider.apiStyles.includes(PROVIDER_API_STYLE.DECISION['OPENAI-DECISIONS'])
-      ? PROVIDER_API_STYLE.DECISION['OPENAI-DECISIONS']
-      : PROVIDER_API_STYLE.DECISION['TYPESAFE-SYSTEMONE']
+    const preferred: DecisionEndpoint = provider.endpoints.includes(PROVIDER_ENDPOINT.DECISION['OPENAI-DECISIONS'])
+      ? PROVIDER_ENDPOINT.DECISION['OPENAI-DECISIONS']
+      : PROVIDER_ENDPOINT.DECISION['TYPESAFE-SYSTEMONE']
     switch (preferred) {
-      case PROVIDER_API_STYLE.DECISION['OPENAI-DECISIONS']:
+      case PROVIDER_ENDPOINT.DECISION['OPENAI-DECISIONS']:
         raw = await askOpenAIDecisions(provider.baseUrl, key, state, instructions, criteria)
         break
-      case PROVIDER_API_STYLE.DECISION['TYPESAFE-SYSTEMONE']:
+      case PROVIDER_ENDPOINT.DECISION['TYPESAFE-SYSTEMONE']:
         raw = await askTypesafeSystemOne(provider.baseUrl, key, state, instructions, criteria)
         break
     }
@@ -124,7 +124,8 @@ const INSTRUCTIONS = 'Which employee should be assigned this task? Consider skil
 
 /** TypeSafe System One: state + questions map, answers map keyed by question id. */
 async function askTypesafeSystemOne(baseUrl: string, key: string, state: string, instructions: string, criteria: Record<string, string>): Promise<DecisionPick> {
-  const res = await fetch(baseUrl, {
+  const url = buildEndpointUrl(baseUrl, PROVIDER_ENDPOINT.DECISION['TYPESAFE-SYSTEMONE'])
+  const res = await fetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -156,8 +157,7 @@ async function askTypesafeSystemOne(baseUrl: string, key: string, state: string,
 
 /** OpenAI Decisions: input + questions array, answers array (name-keyed). */
 async function askOpenAIDecisions(baseUrl: string, key: string, state: string, instructions: string, criteria: Record<string, string>): Promise<DecisionPick> {
-  const trimmed = baseUrl.replace(/\/$/, '')
-  const url = trimmed.endsWith('/decisions') ? trimmed : `${trimmed}/decisions`
+  const url = buildEndpointUrl(baseUrl, PROVIDER_ENDPOINT.DECISION['OPENAI-DECISIONS'])
   const choices = Object.entries(criteria).map(([value, description]) => ({ value, description }))
   const res = await fetch(url, {
     method: 'POST',
@@ -194,4 +194,16 @@ async function askOpenAIDecisions(baseUrl: string, key: string, state: string, i
     }
   }
   return { employeeId: answer.choice, confidence, probabilities, model: body.model, fallbackReason: null }
+}
+
+
+/**
+ * Build the full URL for an endpoint: baseUrl is the host root BEFORE /v1
+ * (BASE URL LAW); the endpoint's leaf path is appended. Tolerance: when the
+ * baseUrl already ends with the leaf path, it is not doubled.
+ */
+export function buildEndpointUrl(baseUrl: string, endpoint: DecisionEndpoint | import('#shared/api-styles').ProviderEndpoint): string {
+  const root = baseUrl.replace(/\/$/, '')
+  const leaf = ENDPOINT_PATH[endpoint as keyof typeof ENDPOINT_PATH]
+  return root.endsWith(leaf) ? root : `${root}${leaf}`
 }

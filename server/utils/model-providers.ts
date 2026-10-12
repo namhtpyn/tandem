@@ -4,14 +4,14 @@ import { z } from 'zod'
 import { eq } from 'drizzle-orm'
 import { db } from '../db'
 import { modelProviders } from '../db/schema'
-import { ALL_API_STYLES } from '#shared/api-styles'
+import { ALL_ENDPOINTS } from '#shared/api-styles'
 
 export interface ModelProviderRow {
   id: string
   label: string
   baseUrl: string
   /** set of API styles this endpoint speaks (validated against shared/api-styles.ts) */
-  apiStyles: string[]
+  endpoints: string[]
   extraHeaders: Record<string, string> | null
   notes: string | null
 }
@@ -20,7 +20,7 @@ export const modelProviderInputSchema = z.strictObject({
   id: z.string().min(1).max(64).optional(),
   label: z.string().min(1).max(64),
   baseUrl: z.string().url(),
-  apiStyles: z.array(z.enum(ALL_API_STYLES)).min(1),
+  endpoints: z.array(z.enum(ALL_ENDPOINTS)).min(1),
   extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
   notes: z.string().max(500).optional(),
 })
@@ -31,7 +31,7 @@ export async function listModelProviders(): Promise<ModelProviderRow[]> {
     id: p.id,
     label: p.label,
     baseUrl: p.baseUrl,
-    apiStyles: p.apiStyles as string[],
+    endpoints: p.endpoints as string[],
     extraHeaders: p.extraHeaders ? JSON.parse(p.extraHeaders) : null,
     notes: p.notes,
   }))

@@ -10,8 +10,8 @@ async function wireDecisionProvider(secretId: string | null) {
   const d = await dbm()
   const { modelProviders } = await import('../server/db/schema')
   await d.db.insert(modelProviders)
-    .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://api.typesafe.ai/v1/systemone', apiStyles: ['TYPESAFE-SYSTEMONE'] })
-    .onConflictDoUpdate({ target: modelProviders.id, set: { apiStyles: ['TYPESAFE-SYSTEMONE'] } })
+    .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://api.typesafe.ai', endpoints: ['TYPESAFE-SYSTEMONE'] })
+    .onConflictDoUpdate({ target: modelProviders.id, set: { endpoints: ['TYPESAFE-SYSTEMONE'] } })
   ASSignKey = secretId
 }
 let ASSignKey: string | null = null
@@ -131,7 +131,7 @@ describe('jev auto-assign', () => {
     expect(r.assigned).toBe(false)
     expect(r.reason).toBe('no decision provider configured')
     // restore provider seeds for any later reader (parallel files share the DB)
-    await d.db.insert(modelProviders).values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://api.typesafe.ai/v1/systemone', apiStyles: ['TYPESAFE-SYSTEMONE'] }).onConflictDoNothing()
+    await d.db.insert(modelProviders).values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://api.typesafe.ai', endpoints: ['TYPESAFE-SYSTEMONE'] }).onConflictDoNothing()
   })
 
   it('assign: no key secret passed -> assigned false with reason', async () => {
@@ -387,8 +387,8 @@ describe('jev auto-assign', () => {
     const d = await dbm()
     const { modelProviders } = await import('../server/db/schema')
     await d.db.insert(modelProviders)
-      .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://oa.example.com/v1', apiStyles: ['OPENAI-DECISIONS'] })
-      .onConflictDoUpdate({ target: modelProviders.id, set: { baseUrl: 'https://oa.example.com/v1', apiStyles: ['OPENAI-DECISIONS'] } })
+      .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://oa.example.com', endpoints: ['OPENAI-DECISIONS'] })
+      .onConflictDoUpdate({ target: modelProviders.id, set: { baseUrl: 'https://oa.example.com', endpoints: ['OPENAI-DECISIONS'] } })
     ASSignKey = sec.id
     const t = await callProc('tasks.create', { title: 'OA decision task' })
     const origFetch = globalThis.fetch
@@ -416,8 +416,8 @@ describe('jev auto-assign', () => {
     const d = await dbm()
     const { modelProviders } = await import('../server/db/schema')
     await d.db.insert(modelProviders)
-      .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://ob.example.com/v1', apiStyles: ['OPENAI-DECISIONS'] })
-      .onConflictDoUpdate({ target: modelProviders.id, set: { baseUrl: 'https://ob.example.com/v1', apiStyles: ['OPENAI-DECISIONS'] } })
+      .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://ob.example.com', endpoints: ['OPENAI-DECISIONS'] })
+      .onConflictDoUpdate({ target: modelProviders.id, set: { baseUrl: 'https://ob.example.com', endpoints: ['OPENAI-DECISIONS'] } })
     ASSignKey = sec.id
     const t = await callProc('tasks.create', { title: 'OB arms' })
     const origFetch = globalThis.fetch
@@ -438,8 +438,8 @@ describe('jev auto-assign', () => {
     const { modelProviders } = await import('../server/db/schema')
     // baseUrl already ending in /decisions AND with trailing slash
     await d.db.insert(modelProviders)
-      .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://oc.example.com/decisions/', apiStyles: ['OPENAI-DECISIONS'] })
-      .onConflictDoUpdate({ target: modelProviders.id, set: { baseUrl: 'https://oc.example.com/decisions/', apiStyles: ['OPENAI-DECISIONS'] } })
+      .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://oc.example.com/v1/decisions/', endpoints: ['OPENAI-DECISIONS'] })
+      .onConflictDoUpdate({ target: modelProviders.id, set: { baseUrl: 'https://oc.example.com/v1/decisions/', endpoints: ['OPENAI-DECISIONS'] } })
     ASSignKey = sec.id
     const t = await callProc('tasks.create', { title: 'OC edges' })
     const origFetch = globalThis.fetch
@@ -452,7 +452,7 @@ describe('jev auto-assign', () => {
     try {
       const r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
       // trailing slash stripped, no double /decisions
-      expect(hitUrl).toBe('https://oc.example.com/decisions')
+      expect(hitUrl).toBe('https://oc.example.com/v1/decisions')
       expect(r.assigned).toBe(false) // confidence defaults 0 -> low confidence arm
       expect(r.reason).toMatch(/low confidence 0.00/)
     }
@@ -464,8 +464,8 @@ describe('jev auto-assign', () => {
     const d = await dbm()
     const { modelProviders } = await import('../server/db/schema')
     await d.db.insert(modelProviders)
-      .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://od.example.com', apiStyles: ['OPENAI-DECISIONS'] })
-      .onConflictDoUpdate({ target: modelProviders.id, set: { baseUrl: 'https://od.example.com', apiStyles: ['OPENAI-DECISIONS'] } })
+      .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://od.example.com', endpoints: ['OPENAI-DECISIONS'] })
+      .onConflictDoUpdate({ target: modelProviders.id, set: { baseUrl: 'https://od.example.com', endpoints: ['OPENAI-DECISIONS'] } })
     ASSignKey = sec.id
     const t = await callProc('tasks.create', { title: 'OD arms' })
     const origFetch = globalThis.fetch

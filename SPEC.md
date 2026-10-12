@@ -47,8 +47,11 @@ ssh -p <port> <user>@<host> hermes chat -q --query-file - --format stream-json
 - password email + generic OIDC (any count, discovery via `issuer/.well-known/openid-configuration`)
 - sign-up is **closed** after any user exists (403 `sign-up is closed`); the FIRST user (boot-seeded admin) holds the instance; the first user to sign up is promoted to `admin` via the user.create after hook
 - OIDC user creation is never gated
-- model providers carry a SET of api styles (const-object enum in `shared/api-styles.ts`) and are pure
-  connection info — NO keys stored on the provider row. Auto-assign resolves the first provider with a
+- model providers carry a SET of endpoints (const-object enum in `shared/api-styles.ts`, kinds
+  LLM/DECISION/MODELS; at most one MODELS endpoint per provider) and are pure connection info — NO
+  keys stored on the provider row. Base URL LAW: baseUrl = host root before /v1; adapters append
+  /v1/... paths (`ENDPOINT_PATH`); the /models probe dispatches on the declared models endpoint and
+  parses both `data[].id` (OpenAI/Anthropic) and `models[].name` (TypeSafe) shapes Auto-assign resolves the first provider with a
   decision style and adapts per protocol (SystemOne `state`/`questions` map vs OpenAI Decisions
   `input`/`questions` array, both normalized to `{choice, confidence, probabilities}`); the vault
   secret id with the endpoint key arrives per call (`statuses.assign` input) and every decrypt is

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query'
-import { PROVIDER_KIND, styleKind, isAnthropicWire, API_STYLE_OPTIONS, PROVIDER_API_STYLE_LABEL } from '#shared/api-styles'
+import { PROVIDER_KIND, endpointKind, isAnthropicWire, ENDPOINT_OPTIONS, PROVIDER_ENDPOINT_LABEL, isModelsEndpoint } from '#shared/api-styles'
 // Settings: auth policy for this Tandem instance. OIDC provider list is a
 // UTable with a single add/edit modal (no v-model over v-for aliases — the
 // dxup page transform breaks that pattern; pathbridge table+modal law).
@@ -16,19 +16,31 @@ const { $orpc, $client } = useNuxtApp()
 
 const oidcLive = useQuery(($orpc as any).oidc.live.liveOptions())
 const providersLive = useQuery(($orpc as any).providers.live.liveOptions())
-const mProvList = computed(() => (unref(providersLive.data) ?? []) as Array<{ id: string, label: string, baseUrl: string, apiStyles: string[], keySecretId: string | null, extraHeaders: Record<string, string> | null, notes: string | null }>)
+const mProvList = computed(() => (unref(providersLive.data) ?? []) as Array<{ id: string, label: string, baseUrl: string, endpoints: string[], extraHeaders: Record<string, string> | null, notes: string | null }>)
 
 const mProvEditorOpen = ref(false)
 const mProvEditingId = ref<string | null>(null)
-const mProvForm = reactive({ label: '', baseUrl: '', apiStyles: ['OPENAI-COMPLETIONS'] as string[], extraHeaders: '', notes: '' })
+const mProvForm = reactive({ label: '', baseUrl: '', endpoints: ['OPENAI-COMPLETIONS'] as string[], extraHeaders: '', notes: '' })
+
+// at most one /v1/models endpoint: picking another replaces the previous one
+function onEndpointsChange(next: Array<string | undefined>) {
+  const all = next.filter((e): e is string => typeof e === 'string')
+  const models = all.filter(isModelsEndpoint)
+  if (models.length > 1) {
+    const kept = models[models.length - 1]!
+    mProvForm.endpoints = [...all.filter(e => !isModelsEndpoint(e)), kept]
+    return
+  }
+  mProvForm.endpoints = all
+}
 const mProvBusy = ref(false)
 const mProvMessage = ref('')
 
-function openMProvEditor(row?: { id: string, label: string, baseUrl: string, apiStyles: string[], extraHeaders: Record<string, string> | null, notes: string | null }) {
+function openMProvEditor(row?: { id: string, label: string, baseUrl: string, endpoints: string[], extraHeaders: Record<string, string> | null, notes: string | null }) {
   mProvEditingId.value = row?.id ?? null
   mProvForm.label = row?.label ?? ''
   mProvForm.baseUrl = row?.baseUrl ?? ''
-  mProvForm.apiStyles = row?.apiStyles?.length ? [...row.apiStyles] : ['OPENAI-COMPLETIONS']
+  mProvForm.endpoints = row?.endpoints?.length ? [...row.endpoints] : ['OPENAI-COMPLETIONS']
   mProvForm.extraHeaders = row?.extraHeaders ? Object.entries(row.extraHeaders).map(([k, v]) => `${k}: ${v}`).join('\n') : ''
   mProvForm.notes = row?.notes ?? ''
   mProvMessage.value = ''
@@ -46,7 +58,7 @@ async function saveMProv() {
       ...(mProvEditingId.value ? { id: mProvEditingId.value } : {}),
       label: mProvForm.label,
       baseUrl: mProvForm.baseUrl,
-      apiStyles: mProvForm.apiStyles,
+      endpoints: mProvForm.endpoints,
       ...(headers && Object.keys(headers).length ? { extraHeaders: headers } : {}),
       ...(mProvForm.notes ? { notes: mProvForm.notes } : {}),
     })
@@ -81,14 +93,14 @@ const providers = computed<OidcProviderRow[]>(() => ((unref(oidcLive.data) ?? []
 
 const disablePasswordLogin = ref(false)
 const companyName = ref('Tandem')
-const decisionProviders = ref<Array<{ id: string, label: string, baseUrl: string, apiStyles: string[] }>>([])
+const decisionProviders = ref<Array<{ id: string, label: string, baseUrl: string, endpoints: string[] }>>([])
 const decisionMessage = ref('')
 const decisionSaving = ref(false)
 const decisionProvider = computed(() => decisionProviders.value[0] ?? null)
 
 watch(() => unref(providersLive.data), (d) => {
-  decisionProviders.value = ((d ?? []) as Array<any>).filter(p => (p.apiStyles ?? []).some((st: string) => styleKind(st) === PROVIDER_KIND.DECISION))
-    .map(p => ({ id: p.id, label: p.label, baseUrl: p.baseUrl, apiStyles: p.apiStyles ?? [] }))
+  decisionProviders.value = ((d ?? []) as Array<any>).filter(p => (p.endpoints ?? []).some((st: string) => endpointKind(st) === PROVIDER_KIND.DECISION))
+    .map(p => ({ id: p.id, label: p.label, baseUrl: p.baseUrl, endpoints: p.endpoints ?? [] }))
 }, { immediate: true })
 
 async function saveDecisionProvider() {
@@ -100,7 +112,7 @@ async function saveDecisionProvider() {
       id: p?.id,
       label: p?.label ?? 'Jev (TypeSafe AI)',
       baseUrl: p?.baseUrl ?? 'https://api.typesafe.ai/v1/systemone',
-      apiStyles: p?.apiStyles ?? ['TYPESAFE-SYSTEMONE'],
+      endpoints: p?.endpoints ?? ['TYPESAFE-SYSTEMONE'],
     })
     decisionMessage.value = 'Saved'
   }
@@ -272,7 +284,7 @@ async function savePasswordPolicy() {
                   <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ p.label }}</p>
                   <p class="truncate font-mono text-xs text-zinc-400">{{ p.baseUrl }}</p>
                 </div>
-                <UBadge v-for="st in p.apiStyles" :key="st" :color="styleKind(st) === PROVIDER_KIND.DECISION ? 'info' : isAnthropicWire([st]) ? 'warning' : 'primary'" variant="subtle" size="sm" class="max-w-52 truncate">{{ (PROVIDER_API_STYLE_LABEL[st as keyof typeof PROVIDER_API_STYLE_LABEL] ?? st).split(' (')[0] }}</UBadge>
+                <UBadge v-for="st in p.endpoints" :key="st" :color="endpointKind(st) === PROVIDER_KIND.DECISION ? 'info' : isAnthropicWire([st]) ? 'warning' : 'primary'" variant="subtle" size="sm" class="max-w-52 truncate">{{ (PROVIDER_ENDPOINT_LABEL[st as keyof typeof PROVIDER_ENDPOINT_LABEL] ?? st).split(' (')[0] }}</UBadge>
               </div>
               <div class="mt-3 flex justify-end gap-1">
                 <UPopover mode="hover">
@@ -300,7 +312,7 @@ async function savePasswordPolicy() {
               <template #label-cell="{ row }">
                 <div class="min-w-0">
                   <p class="flex items-center gap-2 truncate font-medium text-zinc-900 dark:text-white">{{ row.original.label }}
-                    <UBadge v-for="st in row.original.apiStyles" :key="st" :color="styleKind(st) === PROVIDER_KIND.DECISION ? 'info' : isAnthropicWire([st]) ? 'warning' : 'primary'" variant="subtle" size="sm" class="max-w-52 truncate">{{ (PROVIDER_API_STYLE_LABEL[st as keyof typeof PROVIDER_API_STYLE_LABEL] ?? st).split(' (')[0] }}</UBadge>
+                    <UBadge v-for="st in row.original.endpoints" :key="st" :color="endpointKind(st) === PROVIDER_KIND.DECISION ? 'info' : isAnthropicWire([st]) ? 'warning' : 'primary'" variant="subtle" size="sm" class="max-w-52 truncate">{{ (PROVIDER_ENDPOINT_LABEL[st as keyof typeof PROVIDER_ENDPOINT_LABEL] ?? st).split(' (')[0] }}</UBadge>
                   </p>
                   <p class="truncate font-mono text-xs text-zinc-400">{{ row.original.baseUrl }}</p>
                 </div>
@@ -431,11 +443,18 @@ async function savePasswordPolicy() {
           </UFormField>
           <UFormField label="Base URL" name="baseUrl">
             <template #hint><FormHint text="OpenAI- or Anthropic-compatible endpoint root" /></template>
-            <UInput v-model="mProvForm.baseUrl" icon="i-lucide-globe" placeholder="https://api.example.com/v1" class="w-full" required />
+            <UInput v-model="mProvForm.baseUrl" icon="i-lucide-globe" placeholder="https://api.openai.com" class="w-full" required />
           </UFormField>
-          <UFormField label="API styles" name="apiStyles">
-            <template #hint><FormHint text="Protocols this endpoint speaks — LLM styles power agents; decision styles (typed choices) power auto-assign" /></template>
-            <USelectMenu v-model="mProvForm.apiStyles" :items="API_STYLE_OPTIONS" multiple value-key="value" icon="i-lucide-plug" placeholder="Pick at least one style" class="w-full" />
+          <UFormField label="Available endpoints" name="endpoints">
+            <template #hint><FormHint text="What this provider speaks — LLM endpoints power agents; decision endpoints (typed choices) power auto-assign; models endpoints list the catalog. Only one /v1/models endpoint allowed — picking another replaces it." /></template>
+            <USelectMenu v-model="mProvForm.endpoints" :items="ENDPOINT_OPTIONS" @update:model-value="onEndpointsChange" multiple value-key="value" icon="i-lucide-plug" placeholder="Pick at least one endpoint" class="w-full">
+              <template #default="{ modelValue }">
+                <span v-if="modelValue?.length" class="flex flex-wrap gap-1">
+                  <UBadge v-for="ep in modelValue" :key="ep" :color="endpointKind(String(ep)) === PROVIDER_KIND.DECISION ? 'info' : isModelsEndpoint(String(ep)) ? 'success' : 'primary'" variant="subtle" size="sm" class="max-w-52 truncate">{{ (PROVIDER_ENDPOINT_LABEL[ep as keyof typeof PROVIDER_ENDPOINT_LABEL] ?? ep).split(' (')[0] }}</UBadge>
+                </span>
+                <span v-else class="text-dimmed">Pick at least one endpoint</span>
+              </template>
+            </USelectMenu>
           </UFormField>
 
           <UFormField label="Extra headers" name="extraHeaders">
