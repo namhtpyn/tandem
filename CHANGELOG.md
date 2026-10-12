@@ -1,3 +1,10 @@
+## [2.12.4](https://github.com/namhtpyn/tandem/compare/v2.12.3...v2.12.4) (2026-10-12)
+
+
+### Bug Fixes
+
+* **employees:** all graph connectors solid ([7cb02f1](https://github.com/namhtpyn/tandem/commit/7cb02f1397c0ab76adf99c47d88564064a2a58bd))
+
 ## [2.12.3](https://github.com/namhtpyn/tandem/compare/v2.12.2...v2.12.3) (2026-10-12)
 
 
