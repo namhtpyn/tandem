@@ -106,9 +106,21 @@ describe('settings: workspace ai assignments', () => {
     await db.insert(modelProviders).values({ id: 'llm-1', label: 'Chatty', baseUrl: 'https://llm.example.com', endpoints: ['OPENAI-COMPLETIONS'] })
       .onConflictDoUpdate({ target: modelProviders.id, set: { endpoints: ['OPENAI-COMPLETIONS'] } })
     const sec = await callProc('vault.create', { name: 'llm-key', value: 'sk-llm' })
-    await expect(callProc('settings.update', { internalDecision: { providerId: 'llm-1', model: null, keySecretId: sec.id } })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-    await expect(callProc('settings.update', { internalLlm: { providerId: 'llm-1', model: null, keySecretId: 'ghost' } })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-    await expect(callProc('settings.update', { internalLlm: { providerId: 'ghost', model: null, keySecretId: sec.id } })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(callProc('settings.update', { internalDecision: { providerId: 'llm-1', model: 'jev-latest', keySecretId: sec.id } })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(callProc('settings.update', { internalLlm: { providerId: 'llm-1', model: 'gpt-5.2', keySecretId: 'ghost' } })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(callProc('settings.update', { internalLlm: { providerId: 'ghost', model: 'gpt-5.2', keySecretId: sec.id } })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
+  it('assignment without a model parses to null (model required once provider is set)', async () => {
+    const { modelProviders } = await import('../server/db/schema')
+    const { db } = await import('../server/db')
+    await db.insert(modelProviders).values({ id: 'dec-9', label: 'Dec9', baseUrl: 'https://dec9.example.com', endpoints: ['TYPESAFE-SYSTEMONE'] })
+      .onConflictDoUpdate({ target: modelProviders.id, set: { endpoints: ['TYPESAFE-SYSTEMONE'] } })
+    const sec = await callProc('vault.create', { name: 'dec9-key', value: 'sk-9' })
+    // harness calls the handler directly (zod only guards real transports); the
+    // zod layer rejects this shape on the wire, the service layer degrades it
+    await callProc('settings.update', { internalDecision: { providerId: 'dec-9', model: null, keySecretId: sec.id } } as any)
+    expect((await getSettings()).internalDecision).toBeNull()
   })
 
   it('garbage stored JSON parses to null (not a crash)', async () => {
@@ -119,7 +131,7 @@ describe('settings: workspace ai assignments', () => {
     await setSetting('internal_llm', JSON.stringify({ providerId: '', keySecretId: 'k' }))
     expect((await getSettings()).internalLlm).toBeNull()
     await setSetting('internal_llm', JSON.stringify({ providerId: 'p', model: 5, keySecretId: 'k' }))
-    expect((await getSettings()).internalLlm).toEqual({ providerId: 'p', model: null, keySecretId: 'k' })
+    expect((await getSettings()).internalLlm).toBeNull()
   })
 
   it('internalLlm saves and clears via the API', async () => {
@@ -128,8 +140,8 @@ describe('settings: workspace ai assignments', () => {
     await db.insert(modelProviders).values({ id: 'llm-2', label: 'Chatty2', baseUrl: 'https://llm2.example.com', endpoints: ['OPENAI-COMPLETIONS', 'OPENAI-MODELS'] })
       .onConflictDoUpdate({ target: modelProviders.id, set: { endpoints: ['OPENAI-COMPLETIONS', 'OPENAI-MODELS'] } })
     const sec = await callProc('vault.create', { name: 'llm-key2', value: 'sk-llm2' })
-    await callProc('settings.update', { internalLlm: { providerId: 'llm-2', model: null, keySecretId: sec.id } })
-    expect((await getSettings()).internalLlm).toEqual({ providerId: 'llm-2', model: null, keySecretId: sec.id })
+    await callProc('settings.update', { internalLlm: { providerId: 'llm-2', model: 'gpt-5.2', keySecretId: sec.id } })
+    expect((await getSettings()).internalLlm).toEqual({ providerId: 'llm-2', model: 'gpt-5.2', keySecretId: sec.id })
     await callProc('settings.update', { internalLlm: null })
     expect((await getSettings()).internalLlm).toBeNull()
   })

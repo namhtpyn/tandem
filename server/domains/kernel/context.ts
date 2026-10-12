@@ -1,5 +1,5 @@
 // Per-request server context: lazily-resolved better-auth session.
-import type { RequestHeadersHandlerPluginContext } from '@orpc/server/plugins'
+import type { ServerContext } from './kernel'
 interface AuthSessionPayload {
   user: { id: string, name: string, email: string, role: 'admin' | 'employee' | 'viewer' }
 }

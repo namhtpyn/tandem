@@ -18,7 +18,7 @@ async function wireDecisionProvider(secretId: string | null) {
 async function wireInternalDecisionSetting(secretId: string | null) {
   const { setSetting } = await import('../server/domains/settings/settings.service')
   if (secretId) {
-    await setSetting('internal_decision', JSON.stringify({ providerId: 'seed-jev', model: null, keySecretId: secretId }))
+    await setSetting('internal_decision', JSON.stringify({ providerId: 'seed-jev', model: 'jev-latest', keySecretId: secretId }))
   }
   else {
     const { deleteSetting } = await import('../server/domains/settings/settings.service')
@@ -149,6 +149,19 @@ describe('jev auto-assign', () => {
     const r = await callProc('statuses.assign', { taskId: t.id })
     expect(r.assigned).toBe(false)
     expect(r.reason).toBe('no api key secret provided')
+  })
+
+  it('assign: null model in a legacy stored assignment degrades to not-configured', async () => {
+    const d = await dbm()
+    const { modelProviders, vaultSecrets } = await import('../server/db/schema')
+    const { setSetting } = await import('../server/domains/settings/settings.service')
+    const secId = 'sec-default-arm'
+    await d.db.insert(vaultSecrets).values({ id: secId, name: 'k', description: '', ciphertext: '', lastFour: '', createdBy: admin.id }).onConflictDoNothing()
+    await d.db.insert(modelProviders).values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://def.example.com', endpoints: ['TYPESAFE-SYSTEMONE'] }).onConflictDoUpdate({ target: modelProviders.id, set: { endpoints: ['TYPESAFE-SYSTEMONE'] } })
+    await setSetting('internal_decision', JSON.stringify({ providerId: 'seed-jev', model: null, keySecretId: secId }))
+    const t = await callProc('tasks.create', { title: 'Default model task' })
+    const r = await callProc('statuses.assign', { taskId: t.id })
+    expect(r.assigned).toBe(false)
   })
 
   it('assign: with mocked jev response assigns the chosen employee', async () => {

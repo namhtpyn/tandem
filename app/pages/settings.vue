@@ -122,14 +122,44 @@ watch(() => unref(settingsLive.data), (d) => {
   decisionForm.keySecretId = v.internalDecision?.keySecretId ?? null
 }, { immediate: true })
 
+// model autocomplete for the Workspace AI slots: fires only when the chosen
+// provider speaks a /v1/models endpoint; the picked key unlocks the probe
+function aiModelsState(form: AiAssignmentForm) {
+  const items = ref<string[]>([])
+  const loading = ref(false)
+  watch([() => form.providerId, () => form.keySecretId], async ([providerId, keySecretId]) => {
+    items.value = []
+    if (!providerId || !keySecretId) return
+    const providers = (unref(providersLive.data) ?? []) as Array<{ id: string, endpoints: string[] }>
+    const p = providers.find(x => x.id === providerId)
+    if (!p || !(p.endpoints ?? []).some(st => isModelsEndpoint(st))) return
+    loading.value = true
+    try {
+      const res = await ($client as any).providers.models({ providerId, keySecretId })
+      items.value = res.models ?? []
+    }
+    catch { /* best-effort; freetext still allowed */ }
+    finally {
+      loading.value = false
+    }
+  }, { immediate: false })
+  return { items, loading }
+}
+const llmModels = aiModelsState(llmForm)
+const decisionModels = aiModelsState(decisionForm)
+
 async function saveAssignment(kind: 'internalLlm' | 'internalDecision') {
   const form = kind === 'internalLlm' ? llmForm : decisionForm
   const saving = kind === 'internalLlm' ? llmSaving : decisionSaving
   saving.value = true
   aiMessage.value = ''
   try {
+    if (form.providerId && (!form.keySecretId || !form.model.trim())) {
+      aiMessage.value = 'API key and model are required once a provider is picked'
+      return
+    }
     const value = form.providerId && form.keySecretId
-      ? { providerId: form.providerId, model: form.model.trim() || null, keySecretId: form.keySecretId }
+      ? { providerId: form.providerId, model: form.model.trim(), keySecretId: form.keySecretId }
       : null
     await ($client as any).settings.update({ [kind]: value })
     aiMessage.value = 'Saved'
@@ -279,11 +309,11 @@ async function savePasswordPolicy() {
           <UFormField label="Provider" name="dProvider">
             <USelectMenu v-model="decisionForm.providerId" :items="decisionProviders" value-key="value" icon="i-lucide-plug" placeholder="Pick a decision provider" class="w-full" :disabled="decisionSaving" />
           </UFormField>
-          <UFormField label="Model (optional)" name="dModel">
-            <UInput v-model="decisionForm.model" icon="i-lucide-cpu" placeholder="e.g. jev-latest" class="w-full" :disabled="decisionSaving" />
-          </UFormField>
-          <UFormField label="API key (vault)" name="dKey">
+          <UFormField label="API key (vault)" name="dKey" required>
             <USelectMenu v-model="decisionForm.keySecretId" :items="vaultItems" value-key="value" :search-input="{ placeholder: 'Search secrets' }" clear icon="i-lucide-vault" placeholder="Pick a vault secret" class="w-full" :disabled="decisionSaving" />
+          </UFormField>
+          <UFormField label="Model" name="dModel" required>
+            <UInputMenu v-model="decisionForm.model" :items="decisionModels.items.value" :loading="decisionModels.loading.value" icon="i-lucide-cpu" placeholder="e.g. jev-latest" class="w-full" :disabled="decisionSaving" />
           </UFormField>
           <UButton type="submit" icon="i-lucide-save" :loading="decisionSaving" class="self-start">Save decision engine</UButton>
         </UForm>
@@ -298,11 +328,11 @@ async function savePasswordPolicy() {
           <UFormField label="Provider" name="lProvider">
             <USelectMenu v-model="llmForm.providerId" :items="llmProviders" value-key="value" icon="i-lucide-plug" placeholder="Pick an LLM provider" class="w-full" :disabled="llmSaving" />
           </UFormField>
-          <UFormField label="Model (optional)" name="lModel">
-            <UInput v-model="llmForm.model" icon="i-lucide-cpu" placeholder="e.g. gpt-5.2" class="w-full" :disabled="llmSaving" />
-          </UFormField>
-          <UFormField label="API key (vault)" name="lKey">
+          <UFormField label="API key (vault)" name="lKey" required>
             <USelectMenu v-model="llmForm.keySecretId" :items="vaultItems" value-key="value" :search-input="{ placeholder: 'Search secrets' }" clear icon="i-lucide-vault" placeholder="Pick a vault secret" class="w-full" :disabled="llmSaving" />
+          </UFormField>
+          <UFormField label="Model" name="lModel" required>
+            <UInputMenu v-model="llmForm.model" :items="llmModels.items.value" :loading="llmModels.loading.value" icon="i-lucide-cpu" placeholder="e.g. gpt-5.2" class="w-full" :disabled="llmSaving" />
           </UFormField>
           <UButton type="submit" icon="i-lucide-save" :loading="llmSaving" class="self-start">Save internal LLM</UButton>
         </UForm>
@@ -331,7 +361,7 @@ async function savePasswordPolicy() {
                   <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ p.label }}</p>
                   <p class="truncate font-mono text-xs text-zinc-400">{{ p.baseUrl }}</p>
                 </div>
-                <UBadge v-for="st in p.endpoints" :key="st" :color="endpointKind(st) === PROVIDER_KIND.DECISION ? 'info' : isAnthropicWire([st]) ? 'warning' : 'primary'" variant="subtle" size="sm" class="max-w-52 truncate">{{ (PROVIDER_ENDPOINT_LABEL[st as keyof typeof PROVIDER_ENDPOINT_LABEL] ?? st).split(' (')[0] }}</UBadge>
+                <UBadge v-for="st in p.endpoints" :key="st" :color="endpointKind(st) === PROVIDER_KIND.DECISION ? 'info' : isModelsEndpoint(st) ? 'success' : isAnthropicWire([st]) ? 'warning' : 'primary'" variant="subtle" size="sm" class="max-w-52 truncate">{{ (PROVIDER_ENDPOINT_LABEL[st as keyof typeof PROVIDER_ENDPOINT_LABEL] ?? st).split(' (')[0] }}</UBadge>
               </div>
               <div class="mt-3 flex justify-end gap-1">
                 <UPopover mode="hover">
@@ -359,7 +389,7 @@ async function savePasswordPolicy() {
               <template #label-cell="{ row }">
                 <div class="min-w-0">
                   <p class="flex items-center gap-2 truncate font-medium text-zinc-900 dark:text-white">{{ row.original.label }}
-                    <UBadge v-for="st in row.original.endpoints" :key="st" :color="endpointKind(st) === PROVIDER_KIND.DECISION ? 'info' : isAnthropicWire([st]) ? 'warning' : 'primary'" variant="subtle" size="sm" class="max-w-52 truncate">{{ (PROVIDER_ENDPOINT_LABEL[st as keyof typeof PROVIDER_ENDPOINT_LABEL] ?? st).split(' (')[0] }}</UBadge>
+                    <UBadge v-for="st in row.original.endpoints" :key="st" :color="endpointKind(st) === PROVIDER_KIND.DECISION ? 'info' : isModelsEndpoint(st) ? 'success' : isAnthropicWire([st]) ? 'warning' : 'primary'" variant="subtle" size="sm" class="max-w-52 truncate">{{ (PROVIDER_ENDPOINT_LABEL[st as keyof typeof PROVIDER_ENDPOINT_LABEL] ?? st).split(' (')[0] }}</UBadge>
                   </p>
                   <p class="truncate font-mono text-xs text-zinc-400">{{ row.original.baseUrl }}</p>
                 </div>

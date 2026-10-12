@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { PROVIDER_KIND, endpointKind } from '#shared/api-styles'
+import { PROVIDER_KIND, endpointKind, isModelsEndpoint } from '#shared/api-styles'
 // Employees (LIVE): oRPC live query over tandem_user + supervision graph +
 // AI extension rows. Mutations ride the same change-bus — every client
 // updates instantly. AI-ness is derived (extension row exists), never a
@@ -116,9 +116,13 @@ const providersLive = useQuery(($orpc as any).providers.live.liveOptions())
 const modelProviders = computed(() => ((unref(providersLive.data) ?? []) as Array<{ id: string, label: string, endpoints: string[] }>).filter(p => (p.endpoints ?? []).some(st => endpointKind(st) === PROVIDER_KIND.LLM)))
 const modelItems = ref<string[]>([])
 const modelLoading = ref(false)
+const providerHasModelsEndpoint = computed(() => {
+  const p = ((unref(providersLive.data) ?? []) as Array<{ id: string, endpoints: string[] }>).find(x => x.id === form.providerId)
+  return (p?.endpoints ?? []).some(st => isModelsEndpoint(st))
+})
 watch([() => form.providerId, () => form.apiKeySecretId], async ([providerId, keySecretId]) => {
   modelItems.value = []
-  if (providerId === '__none__') return
+  if (providerId === '__none__' || !providerHasModelsEndpoint.value) return
   modelLoading.value = true
   try {
     const res = await ($client as any).providers.models({

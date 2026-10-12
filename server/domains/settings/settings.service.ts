@@ -42,7 +42,8 @@ function parseAssignment(raw: string | null): InternalAiAssignment | null {
     const v = JSON.parse(raw) as Partial<InternalAiAssignment>
     if (typeof v.providerId !== 'string' || v.providerId.length === 0) return null
     if (typeof v.keySecretId !== 'string' || v.keySecretId.length === 0) return null
-    return { providerId: v.providerId, model: typeof v.model === 'string' && v.model.length > 0 ? v.model : null, keySecretId: v.keySecretId }
+    if (typeof v.model !== 'string' || v.model.length === 0) return null
+    return { providerId: v.providerId, model: v.model, keySecretId: v.keySecretId }
   }
   catch {
     return null

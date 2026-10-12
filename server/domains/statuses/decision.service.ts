@@ -132,7 +132,7 @@ async function askTypesafeSystemOne(baseUrl: string, key: string, state: string,
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       state,
-      model: model ?? 'jev-latest',
+      model,
       questions: {
         assignee: { type: 'choice', instructions, criteria },
       },
@@ -165,7 +165,7 @@ async function askOpenAIDecisions(baseUrl: string, key: string, state: string, i
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: model ?? 'gpt-6-luna',
+      model,
       input: state,
       questions: [{
         type: 'choice',

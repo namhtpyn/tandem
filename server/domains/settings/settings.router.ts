@@ -20,8 +20,8 @@ export const settingsRouter = os.router({
     .input(z.strictObject({
       disablePasswordLogin: z.boolean().optional(),
       companyName: z.string().min(1).max(60).optional(),
-      internalLlm: z.strictObject({ providerId: z.string().min(1), model: z.string().min(1).nullable(), keySecretId: z.string().min(1) }).nullable().optional(),
-      internalDecision: z.strictObject({ providerId: z.string().min(1), model: z.string().min(1).nullable(), keySecretId: z.string().min(1) }).nullable().optional(),
+      internalLlm: z.strictObject({ providerId: z.string().min(1), model: z.string().min(1), keySecretId: z.string().min(1) }).nullable().optional(),
+      internalDecision: z.strictObject({ providerId: z.string().min(1), model: z.string().min(1), keySecretId: z.string().min(1) }).nullable().optional(),
     }))
     .handler(async ({ input }) => {
       const { setSetting, deleteSetting, INTERNAL_ASSIGNMENT_KEYS } = await import('./settings.service')
