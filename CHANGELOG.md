@@ -1,3 +1,10 @@
+## [2.12.3](https://github.com/namhtpyn/tandem/compare/v2.12.2...v2.12.3) (2026-10-12)
+
+
+### Bug Fixes
+
+* **employees:** one box per person, dashed cross-links for extra supervisors ([e58fdf5](https://github.com/namhtpyn/tandem/commit/e58fdf5057e68d4d09da0c5a5f211665ee5e000c))
+
 ## [2.12.2](https://github.com/namhtpyn/tandem/compare/v2.12.1...v2.12.2) (2026-10-12)
 
 
