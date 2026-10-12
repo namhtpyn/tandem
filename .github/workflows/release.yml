@@ -39,9 +39,16 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+        env:
+          # postinstall (nuxt prepare) imports the db client module which
+          # asserts DATABASE_URL; a non-connecting placeholder is enough for
+          # typegen — the real build below also gets one (no queries run).
+          DATABASE_URL: postgresql://placeholder@127.0.0.1:5432/placeholder
 
       - name: Build
         run: bun run build
+        env:
+          DATABASE_URL: postgresql://placeholder@127.0.0.1:5432/placeholder
 
       - name: Typecheck
         run: bun run typecheck
