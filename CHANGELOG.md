@@ -1,3 +1,10 @@
+# [2.11.0](https://github.com/namhtpyn/tandem/compare/v2.10.0...v2.11.0) (2026-10-12)
+
+
+### Features
+
+* **settings:** workspace ai section replaces jev endpoint field ([600955a](https://github.com/namhtpyn/tandem/commit/600955ac565625952da3535849fc2ed17e53e95f))
+
 # [2.10.0](https://github.com/namhtpyn/tandem/compare/v2.9.0...v2.10.0) (2026-10-12)
 
 
