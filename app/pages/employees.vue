@@ -33,33 +33,62 @@ const childrenOf = computed(() => {
 })
 /** roots = employees with no supervisor (or supervisor missing) */
 const roots = computed(() => rows.value.filter(r => r.supervisorIds.length === 0 || r.supervisorIds.every(id => !byId.value.has(id))))
-/** ordered node list for layout: DFS from roots.
- * An employee with MULTIPLE supervisors renders once per supervisor edge
- * (indented-DAG style) — each parent gets its own child row + connector.
- * The DFS path guards against cycles (server rejects them, belt and braces). */
+/** ONE box per employee; ONE line per supervision edge.
+ * Placement: DFS from roots along the FIRST supervisor edge (solid elbow
+ * connectors). Every additional supervisor edge renders as a dashed
+ * cross-link from that supervisor's box to the employee's box — e.g. a CEO
+ * reporting to two board members is one box with two lines. */
 const graphNodes = computed(() => {
-  const out: Array<{ row: EmployeeRow, depth: number, parentIndex: number, repeat: boolean }> = []
-  const occurrence = new Map<string, number>()
+  const out: Array<{ row: EmployeeRow, depth: number, parentIndex: number }> = []
+  const indexById = new Map<string, number>()
   const walk = (row: EmployeeRow, depth: number, parentIndex: number, path: Set<string>) => {
-    const seenTimes = occurrence.get(row.id) ?? 0
-    occurrence.set(row.id, seenTimes + 1)
-    if (path.has(row.id)) return
+    if (indexById.has(row.id) || path.has(row.id)) return
+    indexById.set(row.id, out.length)
     const i = out.length
-    out.push({ row, depth, parentIndex, repeat: seenTimes > 0 })
+    out.push({ row, depth, parentIndex })
     const nextPath = new Set(path)
     nextPath.add(row.id)
     for (const child of childrenOf.value.get(row.id) ?? []) walk(child, depth + 1, i, nextPath)
   }
   for (const r of roots.value) walk(r, 0, -1, new Set())
-  // employees whose supervisors are all downstream (cycles) still render as roots
-  const renderedRoots = new Set(roots.value.map(r => r.id))
-  for (const r of rows.value) {
-    if (out.some(n => n.row.id === r.id)) continue
-    walk(r, 0, -1, new Set([r.id]))
-    void renderedRoots
-  }
+  // cycle members (all supervisors downstream) still render as roots
+  for (const r of rows.value) walk(r, 0, -1, new Set([r.id]))
   return out
 })
+
+/** dashed edges for every supervisor that is NOT the placement parent */
+const secondaryEdges = computed(() => {
+  const nodes = graphNodes.value
+  const indexById = new Map(nodes.map((n, i) => [n.row.id, i]))
+  const edges: Array<{ fromIndex: number, toIndex: number }> = []
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i]!
+    const primaryId = n.parentIndex >= 0 ? nodes[n.parentIndex]!.row.id : null
+    const drawn = new Set<number>()
+    for (const sup of n.row.supervisorIds) {
+      if (sup === primaryId) continue
+      const supIdx = indexById.get(sup)
+      if (supIdx === undefined || supIdx === i || drawn.has(supIdx)) continue
+      drawn.add(supIdx)
+      edges.push({ fromIndex: supIdx, toIndex: i })
+    }
+  }
+  return edges
+})
+
+/** dashed cross-link routed along the left gutter so it never crosses cards */
+function secondaryPath(fromIndex: number, toIndex: number): string {
+  const nodes = graphNodes.value
+  const p = nodes[fromIndex]!
+  const c = nodes[toIndex]!
+  const gutter = 6
+  const fromY = nodeY(fromIndex) + NODE_H / 2
+  const toY = nodeY(toIndex) + NODE_H / 2
+  // out of the supervisor's left edge, into the gutter, down/up, then into the target's left edge
+  const pLeft = p.depth * 28 - 4
+  const cLeft = c.depth * 28 - 4
+  return `M ${pLeft} ${fromY} H ${gutter} V ${toY} H ${cLeft}`
+}
 function nodeY(i: number) {
   return i * (NODE_H + ROW_GAP) + ROW_GAP / 2 - 12
 }
@@ -561,6 +590,15 @@ const columns = [
           preserveAspectRatio="xMinYMin meet"
           role="img" aria-label="Supervision hierarchy"
         >
+          <!-- dashed cross-links: additional supervisor edges (one box per person) -->
+          <path
+            v-for="(e, k) in secondaryEdges" :key="`sec-${k}`"
+            :d="secondaryPath(e.fromIndex, e.toIndex)"
+            fill="none"
+            class="stroke-zinc-400 dark:stroke-zinc-600"
+            stroke-width="2"
+            stroke-dasharray="4 3"
+          />
           <template v-for="(n, i) in graphNodes" :key="n.row.id">
             <path
               v-if="n.parentIndex >= 0"
@@ -575,7 +613,6 @@ const columns = [
               <text x="24" :y="NODE_H / 2 + 4" text-anchor="middle" class="fill-zinc-600 text-[11px] font-semibold dark:fill-zinc-300">{{ n.row.kind === 'ai' ? 'AI' : n.row.name.slice(0, 1) }}</text>
               <text x="48" y="24" class="fill-zinc-900 text-[13px] font-medium dark:fill-white">{{ n.row.name.length > 24 ? n.row.name.slice(0, 24) + '…' : n.row.name }}</text>
               <text x="48" :y="NODE_H - 14" class="fill-zinc-400 text-[11px]">{{ (n.row.title || n.row.email).slice(0, 28) }}</text>
-              <text v-if="n.repeat" x="236" :y="18" class="fill-zinc-400 text-[9px]">multi</text>
               <circle v-if="childrenOf.get(n.row.id)?.length" cx="240" :cy="NODE_H / 2" r="4" class="fill-zinc-300" />
             </g>
           </template>
