@@ -1,3 +1,10 @@
+# [2.9.0](https://github.com/namhtpyn/tandem/compare/v2.8.0...v2.9.0) (2026-10-12)
+
+
+### Features
+
+* **providers:** keys never live on provider rows + prune agent/skills styles ([9817e0b](https://github.com/namhtpyn/tandem/commit/9817e0b04c39d8981a499caf41dad69587a8b2e3))
+
 # [2.8.0](https://github.com/namhtpyn/tandem/compare/v2.7.1...v2.8.0) (2026-10-12)
 
 
