@@ -1,3 +1,10 @@
+## [2.12.2](https://github.com/namhtpyn/tandem/compare/v2.12.1...v2.12.2) (2026-10-12)
+
+
+### Bug Fixes
+
+* **employees:** graph renders every supervisor edge, not just the first ([b766451](https://github.com/namhtpyn/tandem/commit/b76645185e809928c697345a79285ea15ea2a34e))
+
 ## [2.12.1](https://github.com/namhtpyn/tandem/compare/v2.12.0...v2.12.1) (2026-10-12)
 
 
