@@ -245,12 +245,12 @@ export const employeesRouter = os.router({
 
   titles: {
     live: protectedProcedure
-      .handler(async () => {
+      .handler(() => liveGenerator(['employees'], async () => {
         const rows = await db.select().from(employeeTitlesTable).orderBy(asc(employeeTitlesTable.name))
         const counts = await db.select({ title: userTable.title, count: count() }).from(userTable).groupBy(userTable.title)
         const byTitle = new Map(counts.map(c => [c.title, Number(c.count)]))
         return { titles: rows.map(t => ({ id: t.id, name: t.name, employees: byTitle.get(t.name) ?? 0 })) }
-      }),
+      })),
 
     save: protectedProcedure
       .input(z.strictObject({

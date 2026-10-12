@@ -60,13 +60,13 @@ export const vaultRouter = os.router({
       return toVaultRow(inserted[0]!)
     }),
 
-  /** value can be replaced but NEVER read back through the API */
+  /** value can be replaced but NEVER read back through the API; leaving it empty keeps the stored secret */
   update: protectedProcedure
     .input(z.strictObject({
       id: z.string().min(1),
       name: z.string().min(1).max(100),
       description: z.string().max(500).default(''),
-      value: z.string().min(1).max(64_000),
+      value: z.string().max(64_000).optional(),
       folderId: z.string().min(1).nullable().default(null),
     }))
     .handler(async ({ input, context }) => {
@@ -75,8 +75,10 @@ export const vaultRouter = os.router({
         const folder = await db.select({ id: vaultFoldersTable.id }).from(vaultFoldersTable).where(eq(vaultFoldersTable.id, meta.folderId))
         if (folder.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'folder not found' })
       }
+      // empty/omitted value = metadata-only edit; the ciphertext is never re-sent by the client
+      const rotated = value !== undefined && value.length > 0
       const updated = await db.update(vaultSecretsTable)
-        .set({ ...meta, ciphertext: encryptSecret(value), lastFour: lastFourHint(value), updatedAt: new Date() })
+        .set({ ...meta, ...(rotated ? { ciphertext: encryptSecret(value), lastFour: lastFourHint(value) } : {}), updatedAt: new Date() })
         .where(eq(vaultSecretsTable.id, id)).returning()
       if (updated.length === 0) {
         throw new ORPCError('NOT_FOUND', { message: 'secret not found' })
@@ -94,12 +96,12 @@ export const vaultRouter = os.router({
 
   folders: {
     live: protectedProcedure
-      .handler(async () => {
+      .handler(() => liveGenerator(['vault'], async () => {
         const rows = await db.select().from(vaultFoldersTable).orderBy(asc(vaultFoldersTable.name))
         const counts = await db.select({ folderId: vaultSecretsTable.folderId, count: count() }).from(vaultSecretsTable).groupBy(vaultSecretsTable.folderId)
         const byFolder = new Map(counts.map(c => [c.folderId, Number(c.count)]))
         return { folders: rows.map(f => ({ id: f.id, name: f.name, secrets: byFolder.get(f.id) ?? 0 })) }
-      }),
+      })),
 
     save: protectedProcedure
       .input(z.strictObject({

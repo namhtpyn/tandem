@@ -37,17 +37,17 @@ describe('vault folders', () => {
   it('save creates, live lists with counts, remove clears', async () => {
     const { id } = await proc(['vault', 'folders', 'save'], { name: 'Production keys' }) as { id: string }
     await proc(['vault', 'folders', 'save'], { name: 'CI tokens' })
-    const live = await proc(['vault', 'folders', 'live']) as { folders: Array<{ id: string, name: string, secrets: number }> }
+    const live = await firstSnapshot(['vault', 'folders', 'live']) as { folders: Array<{ id: string, name: string, secrets: number }> }
     expect(live.folders.map(f => f.name)).toEqual(['CI tokens', 'Production keys']) // alphabetical
     expect(live.folders.every(f => f.secrets === 0)).toBe(true)
 
     const secret = await proc(['vault', 'create'], { name: 'aws', value: 'sk-1', folderId: id }) as { id: string }
     void secret
-    const live2 = await proc(['vault', 'folders', 'live']) as { folders: Array<{ name: string, secrets: number }> }
+    const live2 = await firstSnapshot(['vault', 'folders', 'live']) as { folders: Array<{ name: string, secrets: number }> }
     expect(live2.folders.find(f => f.name === 'Production keys')?.secrets).toBe(1)
 
     await proc(['vault', 'folders', 'remove'], { id })
-    const live3 = await proc(['vault', 'folders', 'live']) as { folders: Array<{ name: string }> }
+    const live3 = await firstSnapshot(['vault', 'folders', 'live']) as { folders: Array<{ name: string }> }
     expect(live3.folders.map(f => f.name)).toEqual(['CI tokens'])
   })
 
@@ -81,6 +81,17 @@ describe('vault folders', () => {
     await expect(proc(['vault', 'update'], { id: s.id, name: 'y', value: 'v2', folderId: 'ghost' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
+  it('metadata-only update keeps the stored secret (empty value)', async () => {
+    const { id } = await proc(['vault', 'folders', 'save'], { name: 'Keep' }) as { id: string }
+    const s = await proc(['vault', 'create'], { name: 'k', value: 'secret-1', folderId: id }) as { id: string, lastFour: string }
+    expect(s.lastFour).toBe('et-1')
+    const upd = await proc(['vault', 'update'], { id: s.id, name: 'k-renamed', folderId: null }) as { lastFour: string }
+    expect(upd.lastFour).toBe('et-1') // hint unchanged => ciphertext untouched
+    // rotating still works
+    const rot = await proc(['vault', 'update'], { id: s.id, name: 'k-renamed', value: 'secret-2-xyz', folderId: null }) as { lastFour: string }
+    expect(rot.lastFour).toBe('-xyz')
+  })
+
   it('folder rename is reflected in joined secret rows', async () => {
     const { id } = await proc(['vault', 'folders', 'save'], { name: 'Before' }) as { id: string }
     const s = await proc(['vault', 'create'], { name: 'k', value: 'v', folderId: id }) as { id: string }
@@ -94,17 +105,17 @@ describe('employee titles', () => {
   it('save creates, live lists with counts, remove clears', async () => {
     const { id } = await proc(['employees', 'titles', 'save'], { name: 'Senior Engineer' }) as { id: string }
     await proc(['employees', 'titles', 'save'], { name: 'Accountant' })
-    const live = await proc(['employees', 'titles', 'live']) as { titles: Array<{ name: string, employees: number }> }
+    const live = await firstSnapshot(['employees', 'titles', 'live']) as { titles: Array<{ name: string, employees: number }> }
     expect(live.titles.map(t => t.name)).toEqual(['Accountant', 'Senior Engineer'])
 
     // one employee holding the title bumps the count
     const emp = await proc(['employees', 'create'], { name: 'Jane', email: 'jane@t.local', title: 'Senior Engineer', kind: 'human' } as any) as { id: string }
     void emp
-    const live2 = await proc(['employees', 'titles', 'live']) as { titles: Array<{ name: string, employees: number }> }
+    const live2 = await firstSnapshot(['employees', 'titles', 'live']) as { titles: Array<{ name: string, employees: number }> }
     expect(live2.titles.find(t => t.name === 'Senior Engineer')?.employees).toBe(1)
 
     await proc(['employees', 'titles', 'remove'], { id })
-    const live3 = await proc(['employees', 'titles', 'live']) as { titles: Array<{ name: string }> }
+    const live3 = await firstSnapshot(['employees', 'titles', 'live']) as { titles: Array<{ name: string }> }
     expect(live3.titles.map(t => t.name)).toEqual(['Accountant'])
     // employee keeps the free-text title after catalog removal
     const empLive = await firstSnapshot(['employees', 'live']) as Array<{ id: string, title: string | null }>

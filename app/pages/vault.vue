@@ -9,7 +9,7 @@ const { $orpc } = useNuxtApp()
 const queryClient = useQueryClient()
 
 const liveQuery = useQuery<VaultSecretRow[]>(($orpc.vault.live as any).liveOptions())
-const foldersQuery = useQuery(($orpc.vault.folders.live as any).queryOptions({}))
+const foldersQuery = useQuery(($orpc.vault.folders.live as any).liveOptions())
 const folders = computed(() => (foldersQuery.data.value as { folders: Array<{ id: string, name: string, secrets: number }> } | undefined)?.folders ?? [])
 
 // ---- folder filter chip row ----
@@ -70,7 +70,7 @@ const busy = ref(false)
 const editorOpen = ref(false)
 const isEdit = ref(false)
 const editingId = ref<string | null>(null)
-const form = ref({ name: '', description: '', value: '', folderId: null as string | null })
+const form = ref({ name: '', description: '', value: '', folderName: '' })
 const formError = ref<string | null>(null)
 const showValue = ref(false)
 
@@ -88,11 +88,11 @@ function openEditor(row?: VaultSecretRow) {
   if (row) {
     isEdit.value = true
     editingId.value = row.id
-form.value = { name: row.name, description: row.description, value: '', folderId: folders.value.find(f => f.name === row.folder)?.id ?? null }
+form.value = { name: row.name, description: row.description, value: '', folderName: row.folder ?? '' }
   } else {
     isEdit.value = false
     editingId.value = null
-form.value = { name: '', description: '', value: '', folderId: null }
+form.value = { name: '', description: '', value: '', folderName: '' }
   }
   editorOpen.value = true
 }
@@ -100,13 +100,28 @@ form.value = { name: '', description: '', value: '', folderId: null }
 async function save() {
   formError.value = null
   if (!form.value.name.trim()) { formError.value = 'Name is required'; return }
-  if (!form.value.value) { formError.value = 'Value is required (it is stored encrypted and never shown again)'; return }
+  // create needs the secret; edit without a value = metadata-only change (stored secret is kept)
+  if (!isEdit.value && !form.value.value) { formError.value = 'Value is required (it is stored encrypted and never shown again)'; return }
   busy.value = true
   try {
+    // resolve typed folder name -> id; unknown names become new folders
+    let folderId: string | null = null
+    const wanted = form.value.folderName.trim()
+    if (wanted) {
+      const existing = folders.value.find(f => f.name.toLowerCase() === wanted.toLowerCase())
+      folderId = existing?.id ?? (await folderSaveMutation.mutateAsync({ name: wanted }) as { id: string }).id
+    }
     if (isEdit.value && editingId.value) {
-      await updateMutation.mutateAsync({ id: editingId.value, name: form.value.name.trim(), description: form.value.description.trim(), value: form.value.value, folderId: form.value.folderId })
+      const payload = {
+        id: editingId.value,
+        name: form.value.name.trim(),
+        description: form.value.description.trim(),
+        folderId,
+        ...(form.value.value ? { value: form.value.value } : {}),
+      }
+      await updateMutation.mutateAsync(payload)
     } else {
-      await createMutation.mutateAsync({ name: form.value.name.trim(), description: form.value.description.trim(), value: form.value.value, folderId: form.value.folderId })
+      await createMutation.mutateAsync({ name: form.value.name.trim(), description: form.value.description.trim(), value: form.value.value, folderId })
     }
     editorOpen.value = false
   } catch (e: any) {
@@ -256,9 +271,16 @@ function kindIcon(): string {
           <UFormField label="Description">
             <template #hint><FormHint text="optional note" /></template>
             <UTextarea v-model="form.description" placeholder="Description (optional)" :rows="2" class="w-full" :disabled="busy" />
-          <UFormField label="Folder" name="folder">
-            <USelectMenu v-model="form.folderId" :items="[{ label: 'No folder', value: null }, ...folders.map(f => ({ label: f.name, value: f.id }))]" value-key="value" icon="i-lucide-folder" placeholder="No folder" class="w-full" :disabled="busy" />
           </UFormField>
+          <UFormField label="Folder" name="folder">
+            <AutoCompleteInput
+              v-model="form.folderName"
+              :items="folders.map(f => f.name)"
+              icon="i-lucide-folder"
+              placeholder="No folder — type to search or create"
+              create-hint="A new folder will be created"
+              :disabled="busy"
+            />
           </UFormField>
           <UFormField label="Value"
             :error="formError && formError !== 'Name is required' ? formError : undefined">
@@ -266,7 +288,7 @@ function kindIcon(): string {
               <FormHint :text="isEdit ? 'replaces the stored value' : 'encrypted, never shown again'" />
             </template>
             <div class="relative w-full">
-              <UTextarea v-model="form.value" placeholder="Secret value" :rows="4" class="w-full" :disabled="busy"
+              <UTextarea v-model="form.value" :placeholder="isEdit ? 'New secret value (leave empty to keep the current one)' : 'Secret value'" :rows="4" class="w-full" :disabled="busy"
                 autocomplete="off" spellcheck="false"
                 :class="showValue ? 'font-mono' : 'secret-masked font-mono'" />
               <UPopover mode="hover">

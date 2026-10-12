@@ -67,7 +67,7 @@ const revokeKeyMutation = useMutation<any, any, any>(($orpc as any).employees.re
 const listKeysCall = ($orpc as any).employees.listApiKeys.call
 
 // ---- editor ----
-const titlesQuery = useQuery(($orpc.employees.titles.live as any).queryOptions({}))
+const titlesQuery = useQuery(($orpc.employees.titles.live as any).liveOptions())
 const titles = computed(() => (titlesQuery.data.value as { titles: Array<{ id: string, name: string, employees: number }> } | undefined)?.titles ?? [])
 
 // ---- titles manager modal (statuses-style) ----
@@ -213,6 +213,10 @@ async function save() {
   busy.value = true
   message.value = ''
   try {
+    // typed-but-unknown titles join the catalog so they autocomplete next time
+    if (form.title.trim() && !titles.value.some(t => t.name === form.title.trim())) {
+      await titleSaveMutation.mutateAsync({ name: form.title.trim() }).catch(() => {})
+    }
     if (editingId.value) {
       await updateMutation.mutateAsync({
         id: editingId.value,
@@ -541,14 +545,19 @@ const columns = [
         <p class="text-sm text-zinc-500">No employees yet.</p>
       </div>
       <div v-else class="overflow-x-auto p-4">
-        <svg :width="Math.max(360, maxDepthX + 290)" :height="graphHeight" role="img" aria-label="Supervision hierarchy">
+        <svg
+          :viewBox="`0 0 ${Math.max(360, maxDepthX + 290)} ${graphHeight}`"
+          :style="{ width: '100%', height: `${graphHeight}px` }"
+          preserveAspectRatio="xMinYMin meet"
+          role="img" aria-label="Supervision hierarchy"
+        >
           <template v-for="(n, i) in graphNodes" :key="n.row.id">
             <path
               v-if="n.parentIndex >= 0"
-              :d="`M ${(n.depth - 1) * 28 + 24} ${nodeY(n.parentIndex) + NODE_H} V ${nodeY(i) + NODE_H / 2} H ${n.depth * 28}`"
+              :d="`M ${(n.depth - 1) * 28 + 24} ${nodeY(n.parentIndex) + NODE_H} V ${nodeY(i) + NODE_H / 2} H ${n.depth * 28 - 4}`"
               fill="none"
-              class="stroke-zinc-300 dark:stroke-zinc-700"
-              stroke-width="1.5"
+              class="stroke-zinc-400 dark:stroke-zinc-600"
+              stroke-width="2"
             />
             <g :transform="`translate(${n.depth * 28}, ${nodeY(i)})`">
               <rect width="248" :height="NODE_H" rx="10" class="fill-white stroke-zinc-200 dark:fill-zinc-900 dark:stroke-zinc-700" stroke-width="1.5" />
@@ -651,15 +660,14 @@ const columns = [
           </UFormField>
           <UFormField label="Title" name="title">
             <template #hint><FormHint text="Place in the company, e.g. Senior Engineer" /></template>
-            <UInput v-model="form.title" icon="i-lucide-briefcase" placeholder="Job title" class="w-full" required />
-            <div v-if="titles.length" class="mt-1.5 flex flex-wrap gap-1">
-              <UButton
-                v-for="t in titles.filter(x => x.name !== form.title).slice(0, 6)" :key="t.id"
-                size="xs" color="neutral" variant="soft" icon="i-lucide-briefcase"
-                :label="t.name" :disabled="busy"
-                @click="form.title = t.name"
-              />
-            </div>
+            <AutoCompleteInput
+              v-model="form.title"
+              :items="titles.map(t => t.name)"
+              icon="i-lucide-briefcase"
+              placeholder="Job title"
+              create-hint="A new title will be added to the catalog"
+              :disabled="busy"
+            />
           </UFormField>
           <UFormField label="Supervisors" name="supervisorIds">
             <template #hint><FormHint text="Many-to-many — an employee can report to several" /></template>
