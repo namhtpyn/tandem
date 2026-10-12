@@ -56,7 +56,7 @@ const graphNodes = computed(() => {
   return out
 })
 
-/** dashed edges for every supervisor that is NOT the placement parent */
+/** cross-links for every supervisor that is NOT the placement parent */
 const secondaryEdges = computed(() => {
   const nodes = graphNodes.value
   const indexById = new Map(nodes.map((n, i) => [n.row.id, i]))
@@ -76,7 +76,7 @@ const secondaryEdges = computed(() => {
   return edges
 })
 
-/** dashed cross-link routed along the left gutter so it never crosses cards */
+/** cross-link routed along the left gutter so it never crosses cards */
 function secondaryPath(fromIndex: number, toIndex: number): string {
   const nodes = graphNodes.value
   const p = nodes[fromIndex]!
@@ -590,14 +590,13 @@ const columns = [
           preserveAspectRatio="xMinYMin meet"
           role="img" aria-label="Supervision hierarchy"
         >
-          <!-- dashed cross-links: additional supervisor edges (one box per person) -->
+          <!-- cross-links: additional supervisor edges (one box per person) -->
           <path
             v-for="(e, k) in secondaryEdges" :key="`sec-${k}`"
             :d="secondaryPath(e.fromIndex, e.toIndex)"
             fill="none"
             class="stroke-zinc-400 dark:stroke-zinc-600"
             stroke-width="2"
-            stroke-dasharray="4 3"
           />
           <template v-for="(n, i) in graphNodes" :key="n.row.id">
             <path
