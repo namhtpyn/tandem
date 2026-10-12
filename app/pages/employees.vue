@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { groupedSecretOptions } from '~/utils/vault-options'
 import { PROVIDER_KIND, endpointKind, isModelsEndpoint } from '#shared/api-styles'
 // Employees (LIVE): oRPC live query over tandem_user + supervision graph +
 // AI extension rows. Mutations ride the same change-bus — every client
@@ -223,8 +224,7 @@ watch([() => form.providerId, () => form.apiKeySecretId], async ([providerId, ke
   }
 }, { immediate: false })
 const secretsLive = useQuery(($orpc as any).vault.live.liveOptions())
-const secretItems = computed(() => ((unref(secretsLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>)
-  .map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })))
+const secretItems = computed((): any => groupedSecretOptions(((unref(secretsLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string, folder: string | null }>)))
 const environmentItems = computed(() =>
   environments.value.map(e => ({ label: e.name, value: e.id })),
 )

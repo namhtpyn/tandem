@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { groupedSecretOptions } from '~/utils/vault-options'
 // Environments (LIVE): oRPC live query — the table is a streaming snapshot;
 // mutations go through oRPC and every client (this tab or another) updates
 // instantly via the change bus + SSE.
@@ -13,9 +14,9 @@ const rows = computed<EnvironmentRow[]>(() => (unref(liveQuery.data) ?? []) as E
 // vault secrets for the SSH key picker (metadata only)
 const secretsQuery = useQuery<VaultSecretRow[]>(($orpc as any).vault.live.liveOptions())
 const secrets = computed<VaultSecretRow[]>(() => (unref(secretsQuery.data) ?? []) as VaultSecretRow[])
-const secretOptions = computed(() => [
+const secretOptions = computed((): any => [
   { label: 'No key (agent default)', value: '__none__' },
-  ...secrets.value.map(s => ({ label: `${s.name} (•••• ${s.lastFour})`, value: s.id })),
+  ...groupedSecretOptions(secrets.value),
 ])
 const secretNameById = computed(() => new Map(secrets.value.map(s => [s.id, s.name])))
 
@@ -288,7 +289,7 @@ async function probe(row: EnvironmentRow) {
           </UFormField>
           <UFormField label="Secret" name="secretId">
             <template #hint><FormHint text="Vault secret holding the key or password (optional)" /></template>
-            <USelect v-model="form.secretId" :items="secretOptions" icon="i-lucide-key-round" class="w-full" />
+            <USelectMenu v-model="form.secretId" :items="secretOptions" value-key="value" icon="i-lucide-key-round" class="w-full" />
           </UFormField>
           <p v-if="message" class="text-sm text-error">{{ message }}</p>
         </UForm>

@@ -33,14 +33,14 @@ test('environment links a vault secret and shows it in the row', async ({ page }
   await page.getByRole('textbox', { name: 'Name', exact: true }).fill(envName)
   await page.getByRole('textbox', { name: 'Host' }).fill('10.9.8.7')
   await page.getByRole('textbox', { name: 'Username' }).fill('tandem')
-  await page.getByRole('combobox', { name: 'Secret' }).click()
+  await page.locator('button').filter({ hasText: /No key|••••/ }).first().click()
   await page.getByRole('option', { name: new RegExp(secName) }).click()
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.locator('tr:visible', { hasText: envName })).toBeVisible({ timeout: 15_000 })
 
   // edit shows the linked key preselected
   await page.locator('tr:visible', { hasText: envName }).getByRole('button', { name: 'Edit environment' }).click()
-  await expect(page.getByRole('combobox', { name: 'Secret' })).toContainText(secName.slice(0, 20))
+  await expect(page.locator('button').filter({ hasText: /••••/ }).first()).toContainText(secName.slice(0, 20))
   await dismiss(page, 'Username')
 
   // cleanup env

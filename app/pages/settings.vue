@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { groupedSecretOptions } from '~/utils/vault-options'
 import { useQuery } from '@tanstack/vue-query'
 import { PROVIDER_KIND, endpointKind, isAnthropicWire, ENDPOINT_OPTIONS, PROVIDER_ENDPOINT_LABEL, isModelsEndpoint } from '#shared/api-styles'
 // Settings: auth policy for this Tandem instance. OIDC provider list is a
@@ -95,8 +96,7 @@ const disablePasswordLogin = ref(false)
 const companyName = ref('Tandem')
 // ---- Workspace AI: internal LLM + decision assignments ----
 const vaultLive = useQuery(($orpc as any).vault.live.liveOptions())
-const vaultItems = computed(() => ((unref(vaultLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>)
-  .map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })))
+const vaultItems = computed((): any => groupedSecretOptions(((unref(vaultLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string, folder: string | null }>)))
 interface AiAssignmentForm { providerId: string | null, model: string, keySecretId: string | null }
 const llmForm = reactive<AiAssignmentForm>({ providerId: null, model: '', keySecretId: null })
 const decisionForm = reactive<AiAssignmentForm>({ providerId: null, model: '', keySecretId: null })
