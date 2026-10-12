@@ -10,9 +10,11 @@ async function wireDecisionProvider(secretId: string | null) {
   const d = await dbm()
   const { modelProviders } = await import('../server/db/schema')
   await d.db.insert(modelProviders)
-    .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://api.typesafe.ai/v1/systemone', apiStyles: ['TYPESAFE-SYSTEMONE'], keySecretId: secretId })
-    .onConflictDoUpdate({ target: modelProviders.id, set: { keySecretId: secretId, apiStyles: ['TYPESAFE-SYSTEMONE'] } })
+    .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://api.typesafe.ai/v1/systemone', apiStyles: ['TYPESAFE-SYSTEMONE'] })
+    .onConflictDoUpdate({ target: modelProviders.id, set: { apiStyles: ['TYPESAFE-SYSTEMONE'] } })
+  ASSignKey = secretId
 }
+let ASSignKey: string | null = null
 
 const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 
@@ -125,18 +127,18 @@ describe('jev auto-assign', () => {
     const { modelProviders } = await import('../server/db/schema')
     await d.db.delete(modelProviders)
     const t = await callProc('tasks.create', { title: 'NoProvider' })
-    const r = await callProc('statuses.assign', { taskId: t.id })
+    const r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
     expect(r.assigned).toBe(false)
     expect(r.reason).toBe('no decision provider configured')
     // restore provider seeds for any later reader (parallel files share the DB)
     await d.db.insert(modelProviders).values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://api.typesafe.ai/v1/systemone', apiStyles: ['TYPESAFE-SYSTEMONE'] }).onConflictDoNothing()
   })
 
-  it('assign: seeded provider without key -> assigned false with reason', async () => {
+  it('assign: no key secret passed -> assigned false with reason', async () => {
     const t = await callProc('tasks.create', { title: 'Jev task' })
-    const r = await callProc('statuses.assign', { taskId: t.id })
+    const r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
     expect(r.assigned).toBe(false)
-    expect(r.reason).toMatch(/has no api key/)
+    expect(r.reason).toBe('no api key secret provided')
   })
 
   it('assign: with mocked jev response assigns the chosen employee', async () => {
@@ -160,7 +162,7 @@ describe('jev auto-assign', () => {
       return origFetch(url as any, init as any)
     }) as typeof fetch
     try {
-      const r = await callProc('statuses.assign', { taskId: t.id })
+      const r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
       expect(r.assigned).toBe(true)
       expect(r.employeeId).toBe(emp.id)
       expect(called).toBe(1)
@@ -181,7 +183,7 @@ describe('jev auto-assign', () => {
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'jev-test', answers: { assignee: { type: 'choice', choice: 'unassigned', confidence: 0.9, probabilities: { unassigned: 0.9 } } } }) })) as typeof fetch
     try {
-      const r = await callProc('statuses.assign', { taskId: t.id })
+      const r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
       expect(r.assigned).toBe(false)
       expect(r.reason).toMatch(/unassigned/)
     }
@@ -195,23 +197,23 @@ describe('jev auto-assign', () => {
     const origFetch = globalThis.fetch
     // http error
     globalThis.fetch = (async () => ({ ok: false, status: 401, json: async () => ({}) })) as typeof fetch
-    let r = await callProc('statuses.assign', { taskId: t.id })
+    let r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
     expect(r.assigned).toBe(false); expect(r.reason).toMatch(/401/)
     // no choice
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'm', answers: {} }) })) as typeof fetch
-    r = await callProc('statuses.assign', { taskId: t.id })
+    r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
     expect(r.assigned).toBe(false); expect(r.reason).toMatch(/no choice/)
     // unknown employee id
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'm', answers: { assignee: { type: 'choice', choice: 'ghost-emp', confidence: 0.9, probabilities: {} } } }) })) as typeof fetch
-    r = await callProc('statuses.assign', { taskId: t.id })
+    r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
     expect(r.assigned).toBe(false); expect(r.reason).toMatch(/unknown employee/)
     // low confidence (valid candidate id below 0.5)
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'm', answers: { assignee: { type: 'choice', choice: 'u-admin', confidence: 0.3, probabilities: {} } } }) })) as typeof fetch
-    r = await callProc('statuses.assign', { taskId: t.id })
+    r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
     expect(r.assigned).toBe(false); expect(r.reason).toMatch(/low confidence/)
     // network throw
     globalThis.fetch = (async () => { throw new TypeError('fetch failed') }) as typeof fetch
-    r = await callProc('statuses.assign', { taskId: t.id })
+    r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
     expect(r.assigned).toBe(false); expect(r.reason).toMatch(/could not reach/)
     globalThis.fetch = origFetch
   })
@@ -222,7 +224,7 @@ describe('jev auto-assign', () => {
     const { db } = await dbm()
     const { user } = await import('../server/db/schema')
     await db.delete(user)
-    const r = await callProc('statuses.assign', { taskId: t1.id })
+    const r = await callProc('statuses.assign', { taskId: t1.id, keySecretId: ASSignKey })
     expect(r.assigned).toBe(false)
     expect(r.reason).toMatch(/no assignee candidates/)
   })
@@ -248,7 +250,7 @@ describe('jev auto-assign', () => {
       return { ok: true, status: 200, json: async () => ({ model: 'jev-test', answers: { assignee: { type: 'choice', choice: ai.id, confidence: 0.8, probabilities: {} } } }) }
     }) as typeof fetch
     try {
-      const r = await callProc('statuses.assign', { taskId: t.id })
+      const r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
       expect(r.assigned).toBe(true)
       expect(state).toContain('with description')
       expect(state).toContain('1 open tasks')
@@ -264,7 +266,7 @@ describe('jev auto-assign', () => {
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'jev-test', answers: { assignee: { type: 'choice', choice: 'u-admin' } } }) })) as typeof fetch
     try {
-      const r = await callProc('statuses.assign', { taskId: t.id })
+      const r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
       expect(r.assigned).toBe(false) // confidence defaults to 0 -> low confidence arm
       expect(r.reason).toMatch(/low confidence 0.00/)
     }
@@ -290,7 +292,7 @@ describe('jev auto-assign', () => {
       return { ok: true, status: 200, json: async () => ({ model: 'jev-test', answers: { assignee: { type: 'choice', choice: ai.id, confidence: 0.9, probabilities: {} } } }) }
     }) as typeof fetch
     try {
-      const r = await callProc('statuses.assign', { taskId: t.id })
+      const r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
       expect(r.assigned).toBe(true)
       expect(state).toContain('Project: JevProj')
     }
@@ -306,7 +308,7 @@ describe('jev auto-assign', () => {
     const { projects } = await import('../server/db/schema')
     await d.db.delete(projects).where(eq(projects.id, proj.id))
     // ghost secret id -> provider exists but key undecryptable/missing
-    const r = await callProc('statuses.assign', { taskId: t.id })
+    const r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
     expect(r.assigned).toBe(false)
     expect(r.reason).toMatch(/no api key/)
   })
@@ -318,7 +320,7 @@ describe('jev auto-assign', () => {
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'jev-test', answers: { assignee: { type: 'choice', choice: 'unassigned', confidence: 0.8, probabilities: { unassigned: 0.8, 'u-admin': 0.2 } } } }) })) as typeof fetch
     try {
-      const r = await callProc('statuses.assign', { taskId: t.id })
+      const r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
       expect(r.assigned).toBe(false)
       expect(r.reason).toBe('decision model chose unassigned')
       expect(r.confidence).toBe(0.8)
@@ -334,7 +336,7 @@ describe('jev auto-assign', () => {
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ answers: { assignee: { type: 'choice', choice: 'u-admin', confidence: 0.2, probabilities: { 'u-admin': 0.2 } } } }) })) as typeof fetch
     try {
-      const r = await callProc('statuses.assign', { taskId: t.id })
+      const r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
       expect(r.assigned).toBe(false)
       expect(r.reason).toMatch(/low confidence 0.20/)
       expect(r.probabilities).toMatchObject({ 'u-admin': 0.2 })
@@ -349,7 +351,7 @@ describe('jev auto-assign', () => {
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ answers: {} }) })) as typeof fetch
     try {
-      const r = await callProc('statuses.assign', { taskId: t.id })
+      const r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
       expect(r.assigned).toBe(false)
       expect(r.reason).toBe('no choice in answer')
       expect(r.model).toBe('unknown')
@@ -373,7 +375,7 @@ describe('jev auto-assign', () => {
       return { ok: true, status: 200, json: async () => ({ model: 'm', answers: { assignee: { type: 'choice', choice: 'u-admin', confidence: 0.9, probabilities: {} } } }) }
     }) as typeof fetch
     try {
-      const r = await callProc('statuses.assign', { taskId: t.id })
+      const r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
       expect(r.assigned).toBe(true)
       expect(state).not.toContain('Project:')
     }
@@ -385,8 +387,9 @@ describe('jev auto-assign', () => {
     const d = await dbm()
     const { modelProviders } = await import('../server/db/schema')
     await d.db.insert(modelProviders)
-      .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://oa.example.com/v1', apiStyles: ['OPENAI-DECISIONS'], keySecretId: sec.id })
-      .onConflictDoUpdate({ target: modelProviders.id, set: { baseUrl: 'https://oa.example.com/v1', apiStyles: ['OPENAI-DECISIONS'], keySecretId: sec.id } })
+      .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://oa.example.com/v1', apiStyles: ['OPENAI-DECISIONS'] })
+      .onConflictDoUpdate({ target: modelProviders.id, set: { baseUrl: 'https://oa.example.com/v1', apiStyles: ['OPENAI-DECISIONS'] } })
+    ASSignKey = sec.id
     const t = await callProc('tasks.create', { title: 'OA decision task' })
     const origFetch = globalThis.fetch
     let hitUrl = ''
@@ -397,7 +400,7 @@ describe('jev auto-assign', () => {
       return { ok: true, status: 200, json: async () => ({ model: 'gpt-6-luna', answers: [{ name: 'assignee', type: 'choice', choice: 'u-admin', confidence: 0.9, probabilities: [{ value: 'u-admin', probability: 0.9 }] }] }) }
     }) as typeof fetch
     try {
-      const r = await callProc('statuses.assign', { taskId: t.id })
+      const r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
       expect(r.assigned).toBe(true)
       expect(hitUrl).toBe('https://oa.example.com/v1/decisions')
       expect(Array.isArray(body.questions)).toBe(true)
@@ -413,16 +416,17 @@ describe('jev auto-assign', () => {
     const d = await dbm()
     const { modelProviders } = await import('../server/db/schema')
     await d.db.insert(modelProviders)
-      .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://ob.example.com/v1', apiStyles: ['OPENAI-DECISIONS'], keySecretId: sec.id })
-      .onConflictDoUpdate({ target: modelProviders.id, set: { baseUrl: 'https://ob.example.com/v1', apiStyles: ['OPENAI-DECISIONS'], keySecretId: sec.id } })
+      .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://ob.example.com/v1', apiStyles: ['OPENAI-DECISIONS'] })
+      .onConflictDoUpdate({ target: modelProviders.id, set: { baseUrl: 'https://ob.example.com/v1', apiStyles: ['OPENAI-DECISIONS'] } })
+    ASSignKey = sec.id
     const t = await callProc('tasks.create', { title: 'OB arms' })
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: false, status: 429, json: async () => ({}) })) as typeof fetch
-    let r = await callProc('statuses.assign', { taskId: t.id })
+    let r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
     expect(r.assigned).toBe(false)
     expect(r.reason).toMatch(/429/)
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'gpt-6-luna', answers: [{ name: 'other', type: 'choice', choice: 'x' }] }) })) as typeof fetch
-    r = await callProc('statuses.assign', { taskId: t.id })
+    r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
     expect(r.assigned).toBe(false)
     expect(r.reason).toBe('no choice in answer')
     globalThis.fetch = origFetch
@@ -434,8 +438,9 @@ describe('jev auto-assign', () => {
     const { modelProviders } = await import('../server/db/schema')
     // baseUrl already ending in /decisions AND with trailing slash
     await d.db.insert(modelProviders)
-      .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://oc.example.com/decisions/', apiStyles: ['OPENAI-DECISIONS'], keySecretId: sec.id })
-      .onConflictDoUpdate({ target: modelProviders.id, set: { baseUrl: 'https://oc.example.com/decisions/', apiStyles: ['OPENAI-DECISIONS'], keySecretId: sec.id } })
+      .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://oc.example.com/decisions/', apiStyles: ['OPENAI-DECISIONS'] })
+      .onConflictDoUpdate({ target: modelProviders.id, set: { baseUrl: 'https://oc.example.com/decisions/', apiStyles: ['OPENAI-DECISIONS'] } })
+    ASSignKey = sec.id
     const t = await callProc('tasks.create', { title: 'OC edges' })
     const origFetch = globalThis.fetch
     let hitUrl = ''
@@ -445,7 +450,7 @@ describe('jev auto-assign', () => {
       return { ok: true, status: 200, json: async () => ({ model: 'gpt-6-luna', answers: [{ name: 'assignee', type: 'choice', choice: 'u-admin' }] }) }
     }) as typeof fetch
     try {
-      const r = await callProc('statuses.assign', { taskId: t.id })
+      const r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
       // trailing slash stripped, no double /decisions
       expect(hitUrl).toBe('https://oc.example.com/decisions')
       expect(r.assigned).toBe(false) // confidence defaults 0 -> low confidence arm
@@ -459,20 +464,21 @@ describe('jev auto-assign', () => {
     const d = await dbm()
     const { modelProviders } = await import('../server/db/schema')
     await d.db.insert(modelProviders)
-      .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://od.example.com', apiStyles: ['OPENAI-DECISIONS'], keySecretId: sec.id })
-      .onConflictDoUpdate({ target: modelProviders.id, set: { baseUrl: 'https://od.example.com', apiStyles: ['OPENAI-DECISIONS'], keySecretId: sec.id } })
+      .values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://od.example.com', apiStyles: ['OPENAI-DECISIONS'] })
+      .onConflictDoUpdate({ target: modelProviders.id, set: { baseUrl: 'https://od.example.com', apiStyles: ['OPENAI-DECISIONS'] } })
+    ASSignKey = sec.id
     const t = await callProc('tasks.create', { title: 'OD arms' })
     const origFetch = globalThis.fetch
     // no-choice without model -> 'unknown' model; plus boolean-valued probability entries skipped
     // no matching answer name -> no-choice arm, model falls back to 'unknown'
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ answers: [{ name: 'other', type: 'choice', choice: 'x' }] }) })) as typeof fetch
-    let r = await callProc('statuses.assign', { taskId: t.id })
+    let r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
     expect(r.assigned).toBe(false)
     expect(r.reason).toBe('no choice in answer')
     expect(r.model).toBe('unknown')
     // boolean-valued probability entries are skipped; string ones kept
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'gpt-6-luna', answers: [{ name: 'assignee', type: 'choice', choice: 'unassigned', confidence: 0.9, probabilities: [{ value: true, probability: 0.1 }, { value: 'unassigned', probability: 0.9 }] }] }) })) as typeof fetch
-    r = await callProc('statuses.assign', { taskId: t.id })
+    r = await callProc('statuses.assign', { taskId: t.id, keySecretId: ASSignKey })
     expect(r.assigned).toBe(false)
     expect(r.reason).toBe('decision model chose unassigned')
     expect(r.probabilities).toEqual({ unassigned: 0.9 })

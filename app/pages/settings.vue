@@ -20,17 +20,15 @@ const mProvList = computed(() => (unref(providersLive.data) ?? []) as Array<{ id
 
 const mProvEditorOpen = ref(false)
 const mProvEditingId = ref<string | null>(null)
-const mProvForm = reactive({ label: '', baseUrl: '', apiStyles: ['OPENAI-COMPLETIONS'] as string[], keySecretId: null as string | null, extraHeaders: '', notes: '' })
-const mProvHasDecision = computed(() => mProvForm.apiStyles.some(st => styleKind(st) === 'DECISION'))
+const mProvForm = reactive({ label: '', baseUrl: '', apiStyles: ['OPENAI-COMPLETIONS'] as string[], extraHeaders: '', notes: '' })
 const mProvBusy = ref(false)
 const mProvMessage = ref('')
 
-function openMProvEditor(row?: { id: string, label: string, baseUrl: string, apiStyles: string[], keySecretId: string | null, extraHeaders: Record<string, string> | null, notes: string | null }) {
+function openMProvEditor(row?: { id: string, label: string, baseUrl: string, apiStyles: string[], extraHeaders: Record<string, string> | null, notes: string | null }) {
   mProvEditingId.value = row?.id ?? null
   mProvForm.label = row?.label ?? ''
   mProvForm.baseUrl = row?.baseUrl ?? ''
   mProvForm.apiStyles = row?.apiStyles?.length ? [...row.apiStyles] : ['OPENAI-COMPLETIONS']
-  mProvForm.keySecretId = row?.keySecretId ?? null
   mProvForm.extraHeaders = row?.extraHeaders ? Object.entries(row.extraHeaders).map(([k, v]) => `${k}: ${v}`).join('\n') : ''
   mProvForm.notes = row?.notes ?? ''
   mProvMessage.value = ''
@@ -49,7 +47,6 @@ async function saveMProv() {
       label: mProvForm.label,
       baseUrl: mProvForm.baseUrl,
       apiStyles: mProvForm.apiStyles,
-      ...(mProvHasDecision.value ? { keySecretId: mProvForm.keySecretId } : {}),
       ...(headers && Object.keys(headers).length ? { extraHeaders: headers } : {}),
       ...(mProvForm.notes ? { notes: mProvForm.notes } : {}),
     })
@@ -84,21 +81,14 @@ const providers = computed<OidcProviderRow[]>(() => ((unref(oidcLive.data) ?? []
 
 const disablePasswordLogin = ref(false)
 const companyName = ref('Tandem')
-const decisionProviders = ref<Array<{ id: string, label: string, baseUrl: string, apiStyles: string[], keySecretId: string | null }>>([])
-const decisionSecretId = ref<string | null>(null)
+const decisionProviders = ref<Array<{ id: string, label: string, baseUrl: string, apiStyles: string[] }>>([])
 const decisionMessage = ref('')
 const decisionSaving = ref(false)
-const vaultLiveJev = useQuery(($orpc as any).vault.live.liveOptions())
-const jevSecretItems = computed(() => ((unref(vaultLiveJev.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>)
-  .map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })))
-
 const decisionProvider = computed(() => decisionProviders.value[0] ?? null)
 
 watch(() => unref(providersLive.data), (d) => {
-  decisionProviders.value = ((d ?? []) as Array<any>).filter(p => (p.apiStyles ?? []).some((st: string) => styleKind(st) === 'DECISION'))
-    .map(p => ({ id: p.id, label: p.label, baseUrl: p.baseUrl, apiStyles: p.apiStyles ?? [], keySecretId: p.keySecretId }))
-  const cur = decisionProviders.value[0]
-  if (cur && decisionSecretId.value === null) decisionSecretId.value = cur.keySecretId
+  decisionProviders.value = ((d ?? []) as Array<any>).filter(p => (p.apiStyles ?? []).some((st: string) => styleKind(st) === PROVIDER_KIND.DECISION))
+    .map(p => ({ id: p.id, label: p.label, baseUrl: p.baseUrl, apiStyles: p.apiStyles ?? [] }))
 }, { immediate: true })
 
 async function saveDecisionProvider() {
@@ -111,7 +101,6 @@ async function saveDecisionProvider() {
       label: p?.label ?? 'Jev (TypeSafe AI)',
       baseUrl: p?.baseUrl ?? 'https://api.typesafe.ai/v1/systemone',
       apiStyles: p?.apiStyles ?? ['TYPESAFE-SYSTEMONE'],
-      keySecretId: decisionSecretId.value ?? null,
     })
     decisionMessage.value = 'Saved'
   }
@@ -251,24 +240,11 @@ async function savePasswordPolicy() {
 
       <USeparator class="my-5" />
 
-      <UForm :state="{ decisionSecretId }" class="flex flex-wrap items-end gap-3" @submit="saveDecisionProvider">
+      <UForm :state="{}" class="flex flex-wrap items-end gap-3" @submit="saveDecisionProvider">
         <UFormField label="Auto-assign (Jev) endpoint" name="jevBaseUrl" class="min-w-56 flex-1">
           <template #hint><FormHint text="Decision provider that picks which employee takes a task" /></template>
           <UInput v-if="decisionProvider" v-model="decisionProvider.baseUrl" icon="i-lucide-globe" class="w-full" :disabled="decisionSaving" />
           <UInput v-else model-value="https://api.typesafe.ai/v1/systemone" icon="i-lucide-globe" class="w-full" disabled />
-        </UFormField>
-        <UFormField label="API key (vault)" name="jevKey" class="min-w-56 flex-1">
-          <USelectMenu
-            v-model="decisionSecretId"
-            :items="jevSecretItems"
-            value-key="value"
-            :search-input="{ placeholder: 'Search secrets' }"
-            clear
-            icon="i-lucide-vault"
-            placeholder="Pick a vault secret"
-            class="w-full"
-            :disabled="decisionSaving"
-          />
         </UFormField>
         <UButton type="submit" icon="i-lucide-save" :loading="decisionSaving">Save</UButton>
         <span v-if="decisionMessage" class="pb-2 text-xs" :class="decisionMessage === 'Saved' ? 'text-success' : 'text-error'">{{ decisionMessage }}</span>
@@ -460,20 +436,6 @@ async function savePasswordPolicy() {
           <UFormField label="API styles" name="apiStyles">
             <template #hint><FormHint text="Protocols this endpoint speaks — LLM styles power agents; decision styles (typed choices) power auto-assign" /></template>
             <USelectMenu v-model="mProvForm.apiStyles" :items="API_STYLE_OPTIONS" multiple value-key="value" icon="i-lucide-plug" placeholder="Pick at least one style" class="w-full" />
-          </UFormField>
-
-          <UFormField v-if="mProvHasDecision" label="API key (vault)" name="keySecretId">
-            <template #hint><FormHint text="Vault secret with this provider's key" /></template>
-            <USelectMenu
-              v-model="mProvForm.keySecretId"
-              :items="jevSecretItems"
-              value-key="value"
-              :search-input="{ placeholder: 'Search secrets' }"
-              clear
-              icon="i-lucide-vault"
-              placeholder="Pick a vault secret"
-              class="w-full"
-            />
           </UFormField>
 
           <UFormField label="Extra headers" name="extraHeaders">

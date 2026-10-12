@@ -2,7 +2,7 @@
 // Sends task state + employee candidates, gets a typed Choice back.
 // Never a hard dependency: unavailable/low-confidence -> caller keeps task unassigned.
 import { db } from '../db'
-import { vaultSecrets, modelProviders } from '../db/schema'
+import { vaultSecrets, modelProviders, vaultAudit } from '../db/schema'
 import { eq } from 'drizzle-orm'
 import { decryptSecret } from './vault-crypto'
 import { PROVIDER_API_STYLE, PROVIDER_KIND, styleKind, type DecisionApiStyle } from '#shared/api-styles'
@@ -34,11 +34,11 @@ export interface DecisionPick {
 }
 
 /** The configured decision provider: first row carrying a DECISION api style. */
-export async function getDecisionProvider(): Promise<{ id: string, label: string, baseUrl: string, apiStyles: string[], keySecretId: string | null } | null> {
+export async function getDecisionProvider(): Promise<{ id: string, label: string, baseUrl: string, apiStyles: string[] } | null> {
   const rows = await db.select().from(modelProviders)
   const p = rows.find(r => (r.apiStyles as string[]).some(st => styleKind(st) === PROVIDER_KIND.DECISION))
   if (!p) return null
-  return { id: p.id, label: p.label, baseUrl: p.baseUrl, apiStyles: p.apiStyles as string[], keySecretId: p.keySecretId }
+  return { id: p.id, label: p.label, baseUrl: p.baseUrl, apiStyles: p.apiStyles as string[] }
 }
 
 /** Ask Jev which employee should take the task. Returns null employeeId on any failure/low confidence. */
@@ -47,6 +47,8 @@ export async function jevPickAssignee(params: {
   taskDescription: string
   projectName: string | null
   candidates: JevAssignCandidate[]
+  /** vault secret id with the decision endpoint's api key (per call, never stored on the provider) */
+  keySecretId: string | null
 }): Promise<JevAssignResult> {
   if (params.candidates.length === 0) {
     return { employeeId: null, confidence: 0, probabilities: {}, model: 'none', fallbackReason: 'no assignee candidates' }
@@ -56,13 +58,16 @@ export async function jevPickAssignee(params: {
     return { employeeId: null, confidence: 0, probabilities: {}, model: 'none', fallbackReason: 'no decision provider configured' }
   }
   let key: string | null = null
-  if (provider.keySecretId) {
-    const secRows = await db.select().from(vaultSecrets).where(eq(vaultSecrets.id, provider.keySecretId))
+  if (params.keySecretId) {
+    const secRows = await db.select().from(vaultSecrets).where(eq(vaultSecrets.id, params.keySecretId))
     const secret = secRows[0]
-    if (secret) key = decryptSecret(secret.ciphertext)
+    if (secret) {
+      key = decryptSecret(secret.ciphertext)
+      await db.insert(vaultAudit).values({ id: crypto.randomUUID(), secretId: secret.id, secretName: secret.name, action: 'use', actorId: 'system' })
+    }
   }
   if (!key) {
-    return { employeeId: null, confidence: 0, probabilities: {}, model: 'none', fallbackReason: 'decision provider has no api key' }
+    return { employeeId: null, confidence: 0, probabilities: {}, model: 'none', fallbackReason: 'no api key secret provided' }
   }
 
   const state = [

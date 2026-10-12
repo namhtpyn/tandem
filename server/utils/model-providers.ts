@@ -12,8 +12,6 @@ export interface ModelProviderRow {
   baseUrl: string
   /** set of API styles this endpoint speaks (validated against shared/api-styles.ts) */
   apiStyles: string[]
-  /** vault secret id with the provider key (required for decision styles) */
-  keySecretId: string | null
   extraHeaders: Record<string, string> | null
   notes: string | null
 }
@@ -23,7 +21,6 @@ export const modelProviderInputSchema = z.strictObject({
   label: z.string().min(1).max(64),
   baseUrl: z.string().url(),
   apiStyles: z.array(z.enum(ALL_API_STYLES)).min(1),
-  keySecretId: z.string().min(1).nullable().optional(),
   extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
   notes: z.string().max(500).optional(),
 })
@@ -35,7 +32,6 @@ export async function listModelProviders(): Promise<ModelProviderRow[]> {
     label: p.label,
     baseUrl: p.baseUrl,
     apiStyles: p.apiStyles as string[],
-    keySecretId: p.keySecretId,
     extraHeaders: p.extraHeaders ? JSON.parse(p.extraHeaders) : null,
     notes: p.notes,
   }))

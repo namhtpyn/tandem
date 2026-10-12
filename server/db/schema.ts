@@ -163,8 +163,6 @@ export const modelProviders = pgTable('tandem_model_providers', {
   baseUrl: text('base_url').notNull(),
   /** set of API styles this endpoint speaks (see shared/api-styles.ts) */
   apiStyles: jsonb('api_styles').notNull().default(sql`'["OPENAI-COMPLETIONS"]'::jsonb`),
-  /** vault secret id with this provider's API key (decision styles; llm keys stay per-agent) */
-  keySecretId: text('key_secret_id'),
   extraHeaders: text('extra_headers'),
   notes: text('notes'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

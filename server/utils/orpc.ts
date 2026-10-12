@@ -217,38 +217,25 @@ export const router = os.router({
         label: z.string().min(1).max(64),
         baseUrl: z.string().url(),
         apiStyles: z.array(z.enum(ALL_API_STYLES)).min(1),
-        keySecretId: z.string().min(1).nullable().optional(),
         extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
         notes: z.string().max(500).optional(),
       }))
       .handler(async ({ input }) => {
         const { modelProviderInputSchema } = await import('./model-providers')
         modelProviderInputSchema.parse(input)
-        const hasDecision = input.apiStyles.some(s => styleKind(s) === PROVIDER_KIND.DECISION)
-        if (hasDecision && !input.keySecretId) {
-          throw new ORPCError('BAD_REQUEST', { message: 'decision styles need a vault key (keySecretId)' })
-        }
-        if (input.keySecretId) {
-          const sec = await db.select({ id: vaultSecretsTable.id }).from(vaultSecretsTable).where(eq(vaultSecretsTable.id, input.keySecretId))
-          if (sec.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'key secret not found' })
-        }
         const id = input.id?.trim() || crypto.randomUUID()
         const now = new Date()
-        const keySecretId = input.keySecretId === undefined
-          ? null
-          : input.keySecretId
         const values = {
           id,
           label: input.label,
           baseUrl: input.baseUrl,
           apiStyles: input.apiStyles,
-          keySecretId,
           extraHeaders: input.extraHeaders ? JSON.stringify(input.extraHeaders) : null,
           notes: input.notes ?? null,
           updatedAt: now,
         }
         await db.insert(modelProvidersTable).values(values)
-          .onConflictDoUpdate({ target: modelProvidersTable.id, set: { label: values.label, baseUrl: values.baseUrl, apiStyles: values.apiStyles, keySecretId: values.keySecretId, extraHeaders: values.extraHeaders, notes: values.notes, updatedAt: now } })
+          .onConflictDoUpdate({ target: modelProvidersTable.id, set: { label: values.label, baseUrl: values.baseUrl, apiStyles: values.apiStyles, extraHeaders: values.extraHeaders, notes: values.notes, updatedAt: now } })
         await publishChange('providers', 'update')
         return { id }
       }),
@@ -289,9 +276,16 @@ export const router = os.router({
 
         const provStyles = prov.apiStyles as string[]
         const base = prov.baseUrl.replace(/\/$/, '')
-        const url = isAnthropicWire(provStyles) ? `${base}/v1/models` : `${base}/models`
+        const anthropicWire = isAnthropicWire(provStyles)
+        let url: string
+        if (anthropicWire) {
+          url = `${base}/v1/models`
+        }
+        else {
+          url = `${base}/models`
+        }
         const headers: Record<string, string> = prov.extraHeaders ? JSON.parse(prov.extraHeaders) : {}
-        if (isAnthropicWire(provStyles)) {
+        if (anthropicWire) {
           headers['x-api-key'] = key
           headers['anthropic-version'] = headers['anthropic-version'] ?? '2023-06-01'
         }
@@ -314,10 +308,11 @@ export const router = os.router({
             throw new ORPCError('BAD_REQUEST', { message: 'could not reach the endpoint' })
           }
           const payload = body as { data?: Array<{ id?: string }>, has_more?: boolean, last_id?: string | null }
-          if (Array.isArray(payload?.data)) {
-            models.push(...payload.data.map(m => m.id).filter((m): m is string => typeof m === 'string' && m.length > 0))
+          const dataList = payload.data
+          if (Array.isArray(dataList)) {
+            models.push(...dataList.map(m => m.id).filter((m): m is string => typeof m === 'string' && m.length > 0))
           }
-          if (!payload?.has_more || !payload?.last_id) break
+          if (!payload.has_more || !payload.last_id) break
           after = payload.last_id
         }
         const unique = [...new Set(models)].sort()
@@ -486,7 +481,7 @@ export const router = os.router({
      *  No-op when a Jev key isn't configured or Jev is unsure — the task
      *  stays unassigned for a human decision. */
     assign: protectedProcedure
-      .input(z.strictObject({ taskId: z.string().min(1) }))
+      .input(z.strictObject({ taskId: z.string().min(1), keySecretId: z.string().min(1).nullable().default(null) }))
       .handler(async ({ input }) => {
         const tRows = await db.select().from(tasksTable).where(eq(tasksTable.id, input.taskId))
         const task = tRows[0]
@@ -516,6 +511,7 @@ export const router = os.router({
           taskTitle: task.title,
           taskDescription: task.description,
           projectName: projName,
+          keySecretId: input.keySecretId,
           candidates: users.map(u => ({
             id: u.id,
             name: u.name,

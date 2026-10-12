@@ -11,10 +11,8 @@ export const PROVIDER_API_STYLE = {
   [PROVIDER_KIND.LLM]: {
     'OPENAI-COMPLETIONS': 'OPENAI-COMPLETIONS',
     'OPENAI-RESPONSES': 'OPENAI-RESPONSES',
-    'OPENAI-AGENTS': 'OPENAI-AGENTS',
     'OPENAI-MODELS': 'OPENAI-MODELS',
     'ANTHROPIC-MESSAGES': 'ANTHROPIC-MESSAGES',
-    'ANTHROPIC-SKILLS': 'ANTHROPIC-SKILLS',
   },
   [PROVIDER_KIND.DECISION]: {
     'TYPESAFE-SYSTEMONE': 'TYPESAFE-SYSTEMONE',
@@ -36,10 +34,8 @@ export const PROVIDER_KIND_LABEL: { readonly [K in ProviderKind]: string } = {
 export const PROVIDER_API_STYLE_LABEL: { readonly [K in ProviderApiStyle]: string } = {
   [PROVIDER_API_STYLE.LLM['OPENAI-COMPLETIONS']]: 'OpenAI completions (/v1/chat/completions)',
   [PROVIDER_API_STYLE.LLM['OPENAI-RESPONSES']]: 'OpenAI responses (/v1/responses)',
-  [PROVIDER_API_STYLE.LLM['OPENAI-AGENTS']]: 'OpenAI agents (Responses + tools)',
   [PROVIDER_API_STYLE.LLM['OPENAI-MODELS']]: 'OpenAI models (/v1/models)',
   [PROVIDER_API_STYLE.LLM['ANTHROPIC-MESSAGES']]: 'Anthropic messages (/v1/messages)',
-  [PROVIDER_API_STYLE.LLM['ANTHROPIC-SKILLS']]: 'Anthropic skills (messages + skills)',
   [PROVIDER_API_STYLE.DECISION['TYPESAFE-SYSTEMONE']]: 'TypeSafe System One (/v1/systemone)',
   [PROVIDER_API_STYLE.DECISION['OPENAI-DECISIONS']]: 'OpenAI decisions (/v1/decisions)',
 }
@@ -68,7 +64,6 @@ export const ALL_API_STYLES = [...LLM_STYLES, ...DECISION_STYLES] as const
 /** True when the style set speaks an Anthropic wire (affects /models probe headers/path). */
 export function isAnthropicWire(styles: string[]): boolean {
   return styles.includes(PROVIDER_API_STYLE.LLM['ANTHROPIC-MESSAGES'])
-    || styles.includes(PROVIDER_API_STYLE.LLM['ANTHROPIC-SKILLS'])
 }
 
 /** Flat items for USelect/USelectMenu with group separator rows (LLM group first). */

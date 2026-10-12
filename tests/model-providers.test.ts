@@ -132,12 +132,15 @@ describe('providers', () => {
     const prov = await callProc('providers.save', { label: 'AntSrc', baseUrl: 'https://ant.example.com', apiStyles: ['ANTHROPIC-MESSAGES'] })
     const origFetch = globalThis.fetch
     const seen: Array<Record<string, string>> = []
-    globalThis.fetch = (async (_u: unknown, init?: unknown) => {
+    let hitUrl = ''
+    globalThis.fetch = (async (u: unknown, init?: unknown) => {
+      hitUrl = String(u)
       seen.push(((init as { headers?: Record<string, string> })?.headers) ?? {})
       return { ok: true, status: 200, json: async () => ({ data: [{ id: 'claude-x' }], has_more: false }) }
     }) as typeof fetch
     try {
       const r = await callProc('providers.models', { providerId: prov.id, keySecretId: sec.id })
+      expect(hitUrl).toContain('/v1/models')
       expect(r.models).toEqual(['claude-x'])
       expect(seen[0]!['x-api-key']).toBe('sk-ant2')
       expect(seen[0]!['anthropic-version']).toBe('2023-06-01')
@@ -170,7 +173,7 @@ describe('providers', () => {
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'm' }], has_more: false }) })) as typeof fetch
     try {
       // two probes exercise the already-armed guard
-      await callProc('providers.models', { providerId: prov.id, keySecretId: sec.id })
+      await callProc('providers.models', { providerId: prov.id })
       const sec2 = await callProc('vault.create', { name: 'ttl-key2', value: 'sk-ttl2' })
       await callProc('providers.models', { providerId: prov.id, keySecretId: sec2.id })
     }
@@ -212,7 +215,7 @@ describe('providers', () => {
       return { ok: true, status: 200, json: async () => ({ data: 'not-an-array' }) }
     }) as typeof fetch
     try {
-      const r = await callProc('providers.models', { providerId: prov.id, keySecretId: sec.id })
+      const r = await callProc('providers.models', { providerId: prov.id })
       expect(r.models).toEqual([])
     }
     finally { globalThis.fetch = origFetch }
@@ -337,35 +340,50 @@ describe('provider styles', () => {
     const list = snap.value as any[]
     const jev = list.find(p => p.id === 'seed-jev')
     expect(jev.apiStyles).toEqual(['TYPESAFE-SYSTEMONE'])
-    expect(jev.keySecretId).toBeNull()
-    expect(jev.baseUrl).toBe('https://api.typesafe.ai/v1/systemone')
+        expect(jev.baseUrl).toBe('https://api.typesafe.ai/v1/systemone')
   })
 
   it('a provider can carry many styles incl. decision + llm together', async () => {
     const sec = await callProc('vault.create', { name: 'prov-key', value: 'sk-1' })
-    await callProc('providers.save', { label: 'Kitchen sink', baseUrl: 'https://api.example.com', apiStyles: ['OPENAI-COMPLETIONS', 'OPENAI-RESPONSES', 'OPENAI-AGENTS', 'OPENAI-MODELS', 'OPENAI-DECISIONS'], keySecretId: sec.id })
-    await callProc('providers.save', { label: 'Plain LLM', baseUrl: 'https://llm.example.com/v1', apiStyles: ['ANTHROPIC-MESSAGES', 'ANTHROPIC-SKILLS'] })
+    await callProc('providers.save', { label: 'Kitchen sink', baseUrl: 'https://api.example.com', apiStyles: ['OPENAI-COMPLETIONS', 'OPENAI-RESPONSES', 'OPENAI-MODELS', 'OPENAI-DECISIONS'] })
+    await callProc('providers.save', { label: 'Plain LLM', baseUrl: 'https://llm.example.com/v1', apiStyles: ['ANTHROPIC-MESSAGES'] })
     const iter = await callProc('providers.live')
     const snap = await iter.next()
     await iter.return?.()
     const list = snap.value as any[]
     const sink = list.find(p => p.label === 'Kitchen sink')
-    expect(sink.apiStyles).toEqual(['OPENAI-COMPLETIONS', 'OPENAI-RESPONSES', 'OPENAI-AGENTS', 'OPENAI-MODELS', 'OPENAI-DECISIONS'])
-    expect(sink.keySecretId).toBe(sec.id)
-    const plain = list.find(p => p.label === 'Plain LLM')
-    expect(plain.apiStyles).toEqual(['ANTHROPIC-MESSAGES', 'ANTHROPIC-SKILLS'])
-    expect(plain.keySecretId).toBeNull()
-  })
+    expect(sink.apiStyles).toEqual(['OPENAI-COMPLETIONS', 'OPENAI-RESPONSES', 'OPENAI-MODELS', 'OPENAI-DECISIONS'])
+        const plain = list.find(p => p.label === 'Plain LLM')
+    expect(plain.apiStyles).toEqual(['ANTHROPIC-MESSAGES'])
+      })
 
   it('rejects an unknown style value', async () => {
     await expect(callProc('providers.save', { label: 'Bad', baseUrl: 'https://x.example.com', apiStyles: ['NOPE'] } as any)).rejects.toThrow()
   })
 
-  it('decision styles require a vault key', async () => {
-    await expect(callProc('providers.save', { label: 'Keyless', baseUrl: 'https://x.example.com', apiStyles: ['OPENAI-DECISIONS'] })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  it('decision styles save keylessly (key provided per call at use time)', async () => {
+    const r = await callProc('providers.save', { label: 'Keyless', baseUrl: 'https://x.example.com', apiStyles: ['OPENAI-DECISIONS'] })
+    expect(r.id).toBeTruthy()
+    await expect(callProc('providers.save', { label: 'Bad', baseUrl: 'https://x.example.com', apiStyles: ['TYPESAFE-SYSTEMONE'], keySecretId: 'ghost' } as any)).rejects.toThrow()
   })
+})
 
-  it('rejects an unknown key secret', async () => {
-    await expect(callProc('providers.save', { label: 'Bad', baseUrl: 'https://x.example.com', apiStyles: ['TYPESAFE-SYSTEMONE'], keySecretId: 'ghost' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+
+describe('models probe payload arms', () => {
+  it('openai url arm + non-array data payload tolerated', async () => {
+    const sec = await callProc('vault.create', { name: 'arm-key', value: 'sk-arm' })
+    const prov = await callProc('providers.save', { label: 'ArmSrc', baseUrl: 'https://arm.example.com/v1', apiStyles: ['OPENAI-COMPLETIONS'], extraHeaders: { 'X-Probe': '1' } })
+    const origFetch = globalThis.fetch
+    let hitUrl = ''
+    globalThis.fetch = (async (u: unknown) => {
+      hitUrl = String(u)
+      return { ok: true, status: 200, json: async () => ({ data: 'nope' }) }
+    }) as typeof fetch
+    try {
+      const r = await callProc('providers.models', { providerId: prov.id, keySecretId: sec.id })
+      expect(hitUrl).toContain('https://arm.example.com/v1/models')
+      expect(r.models).toEqual([])
+    }
+    finally { globalThis.fetch = origFetch }
   })
 })

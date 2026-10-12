@@ -31,11 +31,19 @@ const form = reactive({ title: '', description: '', assigneeId: '__none__' as st
 const isEdit = computed(() => editingId.value !== null)
 
 const assignMutation = useMutation<any, any, any>(($orpc.statuses.assign as any).mutationOptions())
+const vaultLiveT = useQuery(($orpc as any).vault.live.liveOptions())
+const secretItems = computed(() => ((unref(vaultLiveT.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>)
+  .map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })))
+const assignKeySecretId = ref<string | null>(import.meta.client ? localStorage.getItem('tandem.assignKey') ?? null : null)
+watch(assignKeySecretId, (v) => {
+  if (v) localStorage.setItem('tandem.assignKey', v)
+  else localStorage.removeItem('tandem.assignKey')
+})
 
 async function autoAssign(row: TaskRow) {
   message.value = ''
   try {
-    const res = await assignMutation.mutateAsync({ taskId: row.id })
+    const res = await assignMutation.mutateAsync({ taskId: row.id, keySecretId: assignKeySecretId.value })
     if (res.assigned) {
       message.value = `Assigned to ${assigneeNameById.value.get(res.employeeId) ?? 'employee'} (confidence ${(res.confidence * 100).toFixed(0)}%)`
     }
@@ -278,6 +286,22 @@ function statusColor(s: string) {
       </div>
 
       <p v-if="message" class="text-sm text-error">{{ message }}</p>
+
+      <!-- per-call decision key (never stored server-side; remembered per browser) -->
+      <div v-if="secretItems.length" class="flex items-center gap-2">
+        <span class="text-xs text-muted">Auto-assign key</span>
+        <USelectMenu
+          v-model="assignKeySecretId"
+          :items="secretItems"
+          value-key="value"
+          :search-input="{ placeholder: 'Search secrets' }"
+          clear
+          icon="i-lucide-vault"
+          placeholder="Pick a vault secret"
+          class="max-w-56"
+          size="xs"
+        />
+      </div>
 
       <!-- empty state -->
       <UCard v-if="!tasks.length" :ui="{ root: 'shadow-sm' }">
@@ -573,6 +597,7 @@ function statusColor(s: string) {
               <USelect v-model="form.status" :items="statusOptions" value-key="value" icon="i-lucide-circle-dot" class="w-full" />
             </UFormField>
             <p v-if="message" class="text-sm text-error">{{ message }}</p>
+
           </UForm>
         </template>
         <template #footer>

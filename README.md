@@ -16,11 +16,11 @@ filled by agents you already run yourself.
 - **Runner** — per-environment serial queue; each run executes
   `ssh <env> hermes chat -q --query-file - --format stream-json` with the prompt on stdin, capturing the JSONL stream live
 - **Auth** — email/password + runtime-configurable OIDC providers (admin UI, no restarts)
-- **Model providers** — connection info only (label/base URL/api styles/headers). One provider can speak
-  MANY api styles (`shared/api-styles.ts` const-object enum): LLM styles (OPENAI-COMPLETIONS,
-  OPENAI-RESPONSES, OPENAI-AGENTS, OPENAI-MODELS, ANTHROPIC-MESSAGES, ANTHROPIC-SKILLS) power agents;
-  decision styles (TYPESAFE-SYSTEMONE, OPENAI-DECISIONS) power Jev auto-assignment, key vault-backed on
-  the provider row
+- **Model providers** — pure connection info (label/base URL/api styles/headers), NEVER keys. One
+  provider can speak MANY api styles (`shared/api-styles.ts` const-object enum): LLM styles
+  (OPENAI-COMPLETIONS, OPENAI-RESPONSES, OPENAI-MODELS, ANTHROPIC-MESSAGES) power agents; decision
+  styles (TYPESAFE-SYSTEMONE, OPENAI-DECISIONS) power Jev auto-assignment. Keys are supplied per call
+  from the vault (agent dispatch, /models autocomplete, auto-assign)
 - **Health** — split readiness (`/health/ready`: Postgres + migrations) and liveness (`/health/live`: always 200)
 
 Stack: Nuxt 4 + Nitro, Nuxt UI v4, better-auth, drizzle + postgres.js,
