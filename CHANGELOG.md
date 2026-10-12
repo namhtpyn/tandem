@@ -1,3 +1,10 @@
+## [2.11.2](https://github.com/namhtpyn/tandem/compare/v2.11.1...v2.11.2) (2026-10-12)
+
+
+### Bug Fixes
+
+* **server:** rename modules dir to domains — server/modules is nitro-reserved ([02a0e28](https://github.com/namhtpyn/tandem/commit/02a0e28832db3dbb0860c328c35a44ee93c9b7f6))
+
 ## [2.11.1](https://github.com/namhtpyn/tandem/compare/v2.11.0...v2.11.1) (2026-10-12)
 
 
