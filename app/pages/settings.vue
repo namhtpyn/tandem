@@ -93,34 +93,52 @@ const providers = computed<OidcProviderRow[]>(() => ((unref(oidcLive.data) ?? []
 
 const disablePasswordLogin = ref(false)
 const companyName = ref('Tandem')
-const decisionProviders = ref<Array<{ id: string, label: string, baseUrl: string, endpoints: string[] }>>([])
-const decisionMessage = ref('')
+// ---- Workspace AI: internal LLM + decision assignments ----
+const vaultLive = useQuery(($orpc as any).vault.live.liveOptions())
+const vaultItems = computed(() => ((unref(vaultLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string }>)
+  .map(sec => ({ label: `${sec.name} (•••• ${sec.lastFour})`, value: sec.id })))
+interface AiAssignmentForm { providerId: string | null, model: string, keySecretId: string | null }
+const llmForm = reactive<AiAssignmentForm>({ providerId: null, model: '', keySecretId: null })
+const decisionForm = reactive<AiAssignmentForm>({ providerId: null, model: '', keySecretId: null })
+const aiMessage = ref('')
+const llmSaving = ref(false)
 const decisionSaving = ref(false)
-const decisionProvider = computed(() => decisionProviders.value[0] ?? null)
 
-watch(() => unref(providersLive.data), (d) => {
-  decisionProviders.value = ((d ?? []) as Array<any>).filter(p => (p.endpoints ?? []).some((st: string) => endpointKind(st) === PROVIDER_KIND.DECISION))
-    .map(p => ({ id: p.id, label: p.label, baseUrl: p.baseUrl, endpoints: p.endpoints ?? [] }))
+const llmProviders = computed(() => ((unref(providersLive.data) ?? []) as Array<any>)
+  .filter(p => (p.endpoints ?? []).some((st: string) => endpointKind(st) === PROVIDER_KIND.LLM))
+  .map(p => ({ label: p.label, value: p.id })))
+const decisionProviders = computed(() => ((unref(providersLive.data) ?? []) as Array<any>)
+  .filter(p => (p.endpoints ?? []).some((st: string) => endpointKind(st) === PROVIDER_KIND.DECISION))
+  .map(p => ({ label: p.label, value: p.id })))
+
+watch(() => unref(settingsLive.data), (d) => {
+  if (!d) return
+  const v = d as { internalLlm?: { providerId: string, model: string | null, keySecretId: string } | null, internalDecision?: { providerId: string, model: string | null, keySecretId: string } | null }
+  llmForm.providerId = v.internalLlm?.providerId ?? null
+  llmForm.model = v.internalLlm?.model ?? ''
+  llmForm.keySecretId = v.internalLlm?.keySecretId ?? null
+  decisionForm.providerId = v.internalDecision?.providerId ?? null
+  decisionForm.model = v.internalDecision?.model ?? ''
+  decisionForm.keySecretId = v.internalDecision?.keySecretId ?? null
 }, { immediate: true })
 
-async function saveDecisionProvider() {
-  decisionSaving.value = true
-  decisionMessage.value = ''
+async function saveAssignment(kind: 'internalLlm' | 'internalDecision') {
+  const form = kind === 'internalLlm' ? llmForm : decisionForm
+  const saving = kind === 'internalLlm' ? llmSaving : decisionSaving
+  saving.value = true
+  aiMessage.value = ''
   try {
-    const p = decisionProvider.value
-    await ($client as any).providers.save({
-      id: p?.id,
-      label: p?.label ?? 'Jev (TypeSafe AI)',
-      baseUrl: p?.baseUrl ?? 'https://api.typesafe.ai/v1/systemone',
-      endpoints: p?.endpoints ?? ['TYPESAFE-SYSTEMONE'],
-    })
-    decisionMessage.value = 'Saved'
+    const value = form.providerId && form.keySecretId
+      ? { providerId: form.providerId, model: form.model.trim() || null, keySecretId: form.keySecretId }
+      : null
+    await ($client as any).settings.update({ [kind]: value })
+    aiMessage.value = 'Saved'
   }
   catch (e) {
-    decisionMessage.value = e instanceof Error ? e.message : 'save failed'
+    aiMessage.value = e instanceof Error ? e.message : 'save failed'
   }
   finally {
-    decisionSaving.value = false
+    saving.value = false
   }
 }
 watch(() => unref(settingsLive.data), (d) => {
@@ -252,15 +270,44 @@ async function savePasswordPolicy() {
 
       <USeparator class="my-5" />
 
-      <UForm :state="{}" class="flex flex-wrap items-end gap-3" @submit="saveDecisionProvider">
-        <UFormField label="Auto-assign (Jev) endpoint" name="jevBaseUrl" class="min-w-56 flex-1">
-          <template #hint><FormHint text="Decision provider that picks which employee takes a task" /></template>
-          <UInput v-if="decisionProvider" v-model="decisionProvider.baseUrl" icon="i-lucide-globe" class="w-full" :disabled="decisionSaving" />
-          <UInput v-else model-value="https://api.typesafe.ai/v1/systemone" icon="i-lucide-globe" class="w-full" disabled />
-        </UFormField>
-        <UButton type="submit" icon="i-lucide-save" :loading="decisionSaving">Save</UButton>
-        <span v-if="decisionMessage" class="pb-2 text-xs" :class="decisionMessage === 'Saved' ? 'text-success' : 'text-error'">{{ decisionMessage }}</span>
-      </UForm>
+      <USeparator class="my-5" />
+
+      <div>
+        <p class="pb-1 text-sm font-medium">Decision engine (auto-assign)</p>
+        <p class="pb-2 text-xs text-muted">Picks which employee takes a task. Provider must speak a decision endpoint.</p>
+        <UForm :state="decisionForm" class="flex flex-col gap-3" @submit="saveAssignment('internalDecision')">
+          <UFormField label="Provider" name="dProvider">
+            <USelectMenu v-model="decisionForm.providerId" :items="decisionProviders" value-key="value" icon="i-lucide-plug" placeholder="Pick a decision provider" class="w-full" :disabled="decisionSaving" />
+          </UFormField>
+          <UFormField label="Model (optional)" name="dModel">
+            <UInput v-model="decisionForm.model" icon="i-lucide-cpu" placeholder="e.g. jev-latest" class="w-full" :disabled="decisionSaving" />
+          </UFormField>
+          <UFormField label="API key (vault)" name="dKey">
+            <USelectMenu v-model="decisionForm.keySecretId" :items="vaultItems" value-key="value" :search-input="{ placeholder: 'Search secrets' }" clear icon="i-lucide-vault" placeholder="Pick a vault secret" class="w-full" :disabled="decisionSaving" />
+          </UFormField>
+          <UButton type="submit" icon="i-lucide-save" :loading="decisionSaving" class="self-start">Save decision engine</UButton>
+        </UForm>
+      </div>
+
+      <USeparator class="my-5" />
+
+      <div>
+        <p class="pb-1 text-sm font-medium">Internal LLM</p>
+        <p class="pb-2 text-xs text-muted">Used by Tandem's own server-side features. Provider must speak an LLM endpoint. Not sent to agents.</p>
+        <UForm :state="llmForm" class="flex flex-col gap-3" @submit="saveAssignment('internalLlm')">
+          <UFormField label="Provider" name="lProvider">
+            <USelectMenu v-model="llmForm.providerId" :items="llmProviders" value-key="value" icon="i-lucide-plug" placeholder="Pick an LLM provider" class="w-full" :disabled="llmSaving" />
+          </UFormField>
+          <UFormField label="Model (optional)" name="lModel">
+            <UInput v-model="llmForm.model" icon="i-lucide-cpu" placeholder="e.g. gpt-5.2" class="w-full" :disabled="llmSaving" />
+          </UFormField>
+          <UFormField label="API key (vault)" name="lKey">
+            <USelectMenu v-model="llmForm.keySecretId" :items="vaultItems" value-key="value" :search-input="{ placeholder: 'Search secrets' }" clear icon="i-lucide-vault" placeholder="Pick a vault secret" class="w-full" :disabled="llmSaving" />
+          </UFormField>
+          <UButton type="submit" icon="i-lucide-save" :loading="llmSaving" class="self-start">Save internal LLM</UButton>
+        </UForm>
+      </div>
+      <span v-if="aiMessage" class="pb-2 text-xs" :class="aiMessage === 'Saved' ? 'text-success' : 'text-error'">{{ aiMessage }}</span>
     </UCard>
 
     <UCard :ui="{ root: 'shadow-sm' }">

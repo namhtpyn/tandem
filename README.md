@@ -23,7 +23,10 @@ filled by agents you already run yourself.
   (OPENAI-MODELS, ANTHROPIC-MODELS, TYPESAFE-MODELS — at most ONE per provider) power the /models
   autocomplete. Base URL LAW: baseUrl is the host root BEFORE /v1 (e.g. https://api.openai.com);
   adapters append the full /v1/... path (tolerating a baked-in leaf). Keys are supplied per call
-  from the vault (agent dispatch, /models autocomplete, auto-assign)
+  from the vault (agent dispatch, /models autocomplete, auto-assign). The **Workspace AI** settings
+  section pins which LLM + decision engine Tandem uses internally (provider + optional model + vault
+  key each); keys configured on agents travel to the agent's machine at dispatch and are never used
+  internally
 - **Health** — split readiness (`/health/ready`: Postgres + migrations) and liveness (`/health/live`: always 200)
 
 Stack: Nuxt 4 + Nitro, Nuxt UI v4, better-auth, drizzle + postgres.js,

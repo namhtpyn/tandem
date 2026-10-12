@@ -130,9 +130,11 @@ export const router = os.router({
       .input(z.strictObject({
         disablePasswordLogin: z.boolean().optional(),
         companyName: z.string().min(1).max(60).optional(),
+        internalLlm: z.strictObject({ providerId: z.string().min(1), model: z.string().min(1).nullable(), keySecretId: z.string().min(1) }).nullable().optional(),
+        internalDecision: z.strictObject({ providerId: z.string().min(1), model: z.string().min(1).nullable(), keySecretId: z.string().min(1) }).nullable().optional(),
       }))
       .handler(async ({ input }) => {
-        const { setSetting } = await import('./settings')
+        const { setSetting, deleteSetting, INTERNAL_ASSIGNMENT_KEYS } = await import('./settings')
         const { rebuildAuth } = await import('./auth')
         const { getOidcProviders } = await import('./oidc')
         if (input.disablePasswordLogin === true) {
@@ -146,6 +148,34 @@ export const router = os.router({
         }
         if (input.companyName !== undefined) {
           await setSetting('companyName', input.companyName.trim())
+        }
+        // Workspace AI assignments: provider must exist and speak the right kind;
+        // key secret must exist (keys are write-only vault references).
+        if (input.internalLlm !== undefined || input.internalDecision !== undefined) {
+          const provRows = await db.select().from(modelProvidersTable)
+          const validate = async (a: { providerId: string, model: string | null, keySecretId: string } | null, kind: 'LLM' | 'DECISION') => {
+            if (!a) return null
+            const prov = provRows.find(p => p.id === a.providerId)
+            if (!prov) throw new ORPCError('BAD_REQUEST', { message: `internal ${kind.toLowerCase()} provider not found` })
+            const eps = prov.endpoints as string[]
+            const { endpointKind } = await import('#shared/api-styles')
+            if (!eps.some(e => endpointKind(e) === kind)) {
+              throw new ORPCError('BAD_REQUEST', { message: `provider does not speak any ${kind} endpoint` })
+            }
+            const sec = await db.select({ id: vaultSecretsTable.id }).from(vaultSecretsTable).where(eq(vaultSecretsTable.id, a.keySecretId))
+            if (sec.length === 0) throw new ORPCError('BAD_REQUEST', { message: `internal ${kind.toLowerCase()} key secret not found` })
+            return JSON.stringify({ providerId: a.providerId, model: a.model, keySecretId: a.keySecretId })
+          }
+          if (input.internalLlm !== undefined) {
+            const raw = await validate(input.internalLlm, 'LLM')
+            if (raw) await setSetting(INTERNAL_ASSIGNMENT_KEYS.LLM, raw)
+            else await deleteSetting(INTERNAL_ASSIGNMENT_KEYS.LLM)
+          }
+          if (input.internalDecision !== undefined) {
+            const raw = await validate(input.internalDecision, 'DECISION')
+            if (raw) await setSetting(INTERNAL_ASSIGNMENT_KEYS.DECISION, raw)
+            else await deleteSetting(INTERNAL_ASSIGNMENT_KEYS.DECISION)
+          }
         }
         await rebuildAuth()
         await publishChange('settings', 'update')
@@ -480,7 +510,7 @@ export const router = os.router({
      *  No-op when a Jev key isn't configured or Jev is unsure — the task
      *  stays unassigned for a human decision. */
     assign: protectedProcedure
-      .input(z.strictObject({ taskId: z.string().min(1), keySecretId: z.string().min(1).nullable().default(null) }))
+      .input(z.strictObject({ taskId: z.string().min(1) }))
       .handler(async ({ input }) => {
         const tRows = await db.select().from(tasksTable).where(eq(tasksTable.id, input.taskId))
         const task = tRows[0]
@@ -506,11 +536,14 @@ export const router = os.router({
         }
 
         const { jevPickAssignee } = await import('./jev')
+        const { getSettings } = await import('./settings')
+        const decision = (await getSettings()).internalDecision
         const result = await jevPickAssignee({
           taskTitle: task.title,
           taskDescription: task.description,
           projectName: projName,
-          keySecretId: input.keySecretId,
+          keySecretId: decision?.keySecretId ?? null,
+          model: decision?.model ?? null,
           candidates: users.map(u => ({
             id: u.id,
             name: u.name,

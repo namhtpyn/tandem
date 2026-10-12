@@ -49,6 +49,8 @@ export async function jevPickAssignee(params: {
   candidates: JevAssignCandidate[]
   /** vault secret id with the decision endpoint's api key (per call, never stored on the provider) */
   keySecretId: string | null
+  /** model pin from the Workspace AI assignment (null = endpoint default / jev-latest) */
+  model: string | null
 }): Promise<JevAssignResult> {
   if (params.candidates.length === 0) {
     return { employeeId: null, confidence: 0, probabilities: {}, model: 'none', fallbackReason: 'no assignee candidates' }
@@ -93,10 +95,10 @@ export async function jevPickAssignee(params: {
       : PROVIDER_ENDPOINT.DECISION['TYPESAFE-SYSTEMONE']
     switch (preferred) {
       case PROVIDER_ENDPOINT.DECISION['OPENAI-DECISIONS']:
-        raw = await askOpenAIDecisions(provider.baseUrl, key, state, instructions, criteria)
+        raw = await askOpenAIDecisions(provider.baseUrl, key, state, instructions, criteria, params.model)
         break
       case PROVIDER_ENDPOINT.DECISION['TYPESAFE-SYSTEMONE']:
-        raw = await askTypesafeSystemOne(provider.baseUrl, key, state, instructions, criteria)
+        raw = await askTypesafeSystemOne(provider.baseUrl, key, state, instructions, criteria, params.model)
         break
     }
     // compile-time exhaustiveness: adding a DecisionApiStyle without a case
@@ -123,14 +125,14 @@ export async function jevPickAssignee(params: {
 const INSTRUCTIONS = 'Which employee should be assigned this task? Consider skills implied by the title, current workload, and whether an AI agent or human fits better. AI agents suit autonomous digital work; humans suit judgment, external communication, or physical tasks.'
 
 /** TypeSafe System One: state + questions map, answers map keyed by question id. */
-async function askTypesafeSystemOne(baseUrl: string, key: string, state: string, instructions: string, criteria: Record<string, string>): Promise<DecisionPick> {
+async function askTypesafeSystemOne(baseUrl: string, key: string, state: string, instructions: string, criteria: Record<string, string>, model: string | null): Promise<DecisionPick> {
   const url = buildEndpointUrl(baseUrl, PROVIDER_ENDPOINT.DECISION['TYPESAFE-SYSTEMONE'])
   const res = await fetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       state,
-      model: 'jev-latest',
+      model: model ?? 'jev-latest',
       questions: {
         assignee: { type: 'choice', instructions, criteria },
       },
@@ -156,14 +158,14 @@ async function askTypesafeSystemOne(baseUrl: string, key: string, state: string,
 }
 
 /** OpenAI Decisions: input + questions array, answers array (name-keyed). */
-async function askOpenAIDecisions(baseUrl: string, key: string, state: string, instructions: string, criteria: Record<string, string>): Promise<DecisionPick> {
+async function askOpenAIDecisions(baseUrl: string, key: string, state: string, instructions: string, criteria: Record<string, string>, model: string | null): Promise<DecisionPick> {
   const url = buildEndpointUrl(baseUrl, PROVIDER_ENDPOINT.DECISION['OPENAI-DECISIONS'])
   const choices = Object.entries(criteria).map(([value, description]) => ({ value, description }))
   const res = await fetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'gpt-6-luna',
+      model: model ?? 'gpt-6-luna',
       input: state,
       questions: [{
         type: 'choice',

@@ -108,15 +108,15 @@ describe('settings.update (authenticated)', () => {
     const r = await proc(['settings', 'update'], { disablePasswordLogin: true }) as { ok: boolean }
     expect(r).toEqual({ ok: true })
     const { getSettings } = await import('../server/utils/settings')
-    expect(await getSettings()).toEqual({ disablePasswordLogin: true, companyName: 'Tandem' })
+    expect(await getSettings()).toEqual({ disablePasswordLogin: true, companyName: 'Tandem', internalLlm: null, internalDecision: null })
     // and back
     await proc(['settings', 'update'], { disablePasswordLogin: false })
-    expect(await getSettings()).toEqual({ disablePasswordLogin: false, companyName: 'Tandem' })
+    expect(await getSettings()).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', internalLlm: null, internalDecision: null })
   })
 
   it('live snapshot returns current settings', async () => {
     const snap = await firstSnapshot(['settings', 'live']) as { disablePasswordLogin: boolean }
-    expect(snap).toEqual({ disablePasswordLogin: false, companyName: 'Tandem' })
+    expect(snap).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', internalLlm: null, internalDecision: null })
   })
 })
 

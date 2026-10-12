@@ -54,8 +54,9 @@ ssh -p <port> <user>@<host> hermes chat -q --query-file - --format stream-json
   parses both `data[].id` (OpenAI/Anthropic) and `models[].name` (TypeSafe) shapes Auto-assign resolves the first provider with a
   decision style and adapts per protocol (SystemOne `state`/`questions` map vs OpenAI Decisions
   `input`/`questions` array, both normalized to `{choice, confidence, probabilities}`); the vault
-  secret id with the endpoint key arrives per call (`statuses.assign` input) and every decrypt is
-  audited `use`
+  key comes from the Workspace AI settings assignment (`internal_decision`: providerId + optional
+  model + vault keySecretId, validated kind-correct on save; garbage JSON parses to null). The same
+  shape exists for `internal_llm` for future server-side features. Every decrypt is audited `use`
 - admin manages the OIDC provider set at runtime (secrets live in the registry, never returned by `oidc.live` (only `hasSecret: true`)
 - env fallback: exactly ONE provider (TANDEM_OIDC_ISSUER/_CLIENT_ID/_CLIENT_SECRET/_LABEL), used only when no stored registry exists
 

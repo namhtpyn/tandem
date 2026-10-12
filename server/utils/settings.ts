@@ -19,13 +19,43 @@ export async function deleteSetting(key: string): Promise<void> {
   await db.delete(settings).where(eq(settings.key, key))
 }
 
+/** One Workspace AI assignment: provider + optional model + vault key (internal use only). */
+export interface InternalAiAssignment {
+  providerId: string
+  model: string | null
+  keySecretId: string
+}
+
 export interface AppSettings {
   disablePasswordLogin: boolean
   companyName: string
+  /** LLM used by Tandem's own server-side features (null = unassigned). */
+  internalLlm: InternalAiAssignment | null
+  /** Decision engine used for auto-assign (null = unassigned). */
+  internalDecision: InternalAiAssignment | null
+}
+
+/** Parse one assignment; invalid JSON or a non-object yields null. */
+function parseAssignment(raw: string | null): InternalAiAssignment | null {
+  if (!raw) return null
+  try {
+    const v = JSON.parse(raw) as Partial<InternalAiAssignment>
+    if (typeof v.providerId !== 'string' || v.providerId.length === 0) return null
+    if (typeof v.keySecretId !== 'string' || v.keySecretId.length === 0) return null
+    return { providerId: v.providerId, model: typeof v.model === 'string' && v.model.length > 0 ? v.model : null, keySecretId: v.keySecretId }
+  }
+  catch {
+    return null
+  }
 }
 
 export async function getSettings(): Promise<AppSettings> {
   const v = await getSetting('disablePasswordLogin')
   const name = await getSetting('companyName')
-  return { disablePasswordLogin: v === 'true', companyName: name?.trim() || 'Tandem' }
+  const llm = parseAssignment(await getSetting('internal_llm'))
+  const decision = parseAssignment(await getSetting('internal_decision'))
+  return { disablePasswordLogin: v === 'true', companyName: name?.trim() || 'Tandem', internalLlm: llm, internalDecision: decision }
 }
+
+export const INTERNAL_ASSIGNMENT_KEYS = { LLM: 'internal_llm', DECISION: 'internal_decision' } as const
+export type InternalAssignmentKey = (typeof INTERNAL_ASSIGNMENT_KEYS)[keyof typeof INTERNAL_ASSIGNMENT_KEYS]
