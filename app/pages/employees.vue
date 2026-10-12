@@ -33,21 +33,31 @@ const childrenOf = computed(() => {
 })
 /** roots = employees with no supervisor (or supervisor missing) */
 const roots = computed(() => rows.value.filter(r => r.supervisorIds.length === 0 || r.supervisorIds.every(id => !byId.value.has(id))))
-/** ordered node list for layout: DFS from roots */
+/** ordered node list for layout: DFS from roots.
+ * An employee with MULTIPLE supervisors renders once per supervisor edge
+ * (indented-DAG style) — each parent gets its own child row + connector.
+ * The DFS path guards against cycles (server rejects them, belt and braces). */
 const graphNodes = computed(() => {
-  const out: Array<{ row: EmployeeRow, depth: number, parentIndex: number }> = []
-  const indexById = new Map<string, number>()
-  const seen = new Set<string>()
-  const walk = (row: EmployeeRow, depth: number, parentIndex: number) => {
-    if (seen.has(row.id)) return
-    seen.add(row.id)
-    indexById.set(row.id, out.length)
-    out.push({ row, depth, parentIndex })
-    for (const child of childrenOf.value.get(row.id) ?? []) walk(child, depth + 1, indexById.get(row.id)!)
+  const out: Array<{ row: EmployeeRow, depth: number, parentIndex: number, repeat: boolean }> = []
+  const occurrence = new Map<string, number>()
+  const walk = (row: EmployeeRow, depth: number, parentIndex: number, path: Set<string>) => {
+    const seenTimes = occurrence.get(row.id) ?? 0
+    occurrence.set(row.id, seenTimes + 1)
+    if (path.has(row.id)) return
+    const i = out.length
+    out.push({ row, depth, parentIndex, repeat: seenTimes > 0 })
+    const nextPath = new Set(path)
+    nextPath.add(row.id)
+    for (const child of childrenOf.value.get(row.id) ?? []) walk(child, depth + 1, i, nextPath)
   }
-  for (const r of roots.value) walk(r, 0, -1)
-  // orphans not reachable from roots (cycles — server guards them, belt and braces)
-  for (const r of rows.value) if (!seen.has(r.id)) walk(r, 0, -1)
+  for (const r of roots.value) walk(r, 0, -1, new Set())
+  // employees whose supervisors are all downstream (cycles) still render as roots
+  const renderedRoots = new Set(roots.value.map(r => r.id))
+  for (const r of rows.value) {
+    if (out.some(n => n.row.id === r.id)) continue
+    walk(r, 0, -1, new Set([r.id]))
+    void renderedRoots
+  }
   return out
 })
 function nodeY(i: number) {
@@ -565,6 +575,7 @@ const columns = [
               <text x="24" :y="NODE_H / 2 + 4" text-anchor="middle" class="fill-zinc-600 text-[11px] font-semibold dark:fill-zinc-300">{{ n.row.kind === 'ai' ? 'AI' : n.row.name.slice(0, 1) }}</text>
               <text x="48" y="24" class="fill-zinc-900 text-[13px] font-medium dark:fill-white">{{ n.row.name.length > 24 ? n.row.name.slice(0, 24) + '…' : n.row.name }}</text>
               <text x="48" :y="NODE_H - 14" class="fill-zinc-400 text-[11px]">{{ (n.row.title || n.row.email).slice(0, 28) }}</text>
+              <text v-if="n.repeat" x="236" :y="18" class="fill-zinc-400 text-[9px]">multi</text>
               <circle v-if="childrenOf.get(n.row.id)?.length" cx="240" :cy="NODE_H / 2" r="4" class="fill-zinc-300" />
             </g>
           </template>
