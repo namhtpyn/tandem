@@ -1,3 +1,10 @@
+## [2.12.1](https://github.com/namhtpyn/tandem/compare/v2.12.0...v2.12.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **vault:** live folder lists, no-retype secret edits, autocomplete with create ([ee2d1df](https://github.com/namhtpyn/tandem/commit/ee2d1df5f8e594353ab25fcd68daff696ec57518))
+
 # [2.12.0](https://github.com/namhtpyn/tandem/compare/v2.11.3...v2.12.0) (2026-10-12)
 
 
