@@ -1,3 +1,10 @@
+# [2.13.0](https://github.com/namhtpyn/tandem/compare/v2.12.4...v2.13.0) (2026-10-12)
+
+
+### Features
+
+* **vault:** secret pickers group secrets by folder ([d77822d](https://github.com/namhtpyn/tandem/commit/d77822dc91f411fbef1e5e89f444f6126860ef5b))
+
 ## [2.12.4](https://github.com/namhtpyn/tandem/compare/v2.12.3...v2.12.4) (2026-10-12)
 
 
