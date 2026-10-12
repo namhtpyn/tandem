@@ -32,6 +32,8 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
+      - run: bun run gen:auth
+      - run: git diff --exit-code -- server/db/schema.ts scripts/ # drift guard: better-auth schema must regenerate byte-identical
       - run: bun run typecheck
       - run: bun run build
       - run: bun run test:coverage

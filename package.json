@@ -16,7 +16,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "postinstall": "nuxt prepare",
-    "gen:auth": "python3 scripts/splice-auth-schema.py"
+    "gen:auth": "bun run scripts/gen-auth-schema.ts"
   },
   "dependencies": {
     "@better-auth/api-key": "^1.7.7",

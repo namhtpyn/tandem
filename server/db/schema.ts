@@ -7,36 +7,35 @@ import { sql } from 'drizzle-orm'
 import { defineRelations } from 'drizzle-orm'
 
 // >>> BEGIN GENERATED better-auth tables (bun run gen:auth) — do not edit by hand
+
 export const user = pgTable('tandem_user', {
   id: text('id').primaryKey(),
-name: text('name').notNull(),
+  name: text('name').notNull(),
  email: text('email').notNull().unique(),
  emailVerified: boolean('email_verified').default(false).notNull(),
  image: text('image'),
  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
- updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().$onUpdate(() => /* @__PURE__ */ new Date()).notNull(),
+ updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
  role: text('role', { enum: ['admin', 'employee', 'viewer'] }).default('viewer'),
- title: text('title').default(''),
-})
-
+ title: text('title').default('')
+   })
 export const session = pgTable('tandem_session', {
   id: text('id').primaryKey(),
-expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
  token: text('token').notNull().unique(),
  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
  ipAddress: text('ip_address'),
  userAgent: text('user_agent'),
- userId: text('user_id').notNull().references(()=> user.id, { onDelete: 'cascade' }),
-}, (t) => [
-  index('session_userId_idx').on(t.userId),
-])
-
+ userId: text('user_id').notNull().references(()=>user.id, { onDelete: 'cascade' })
+  }, (table) => [
+  index('session_userId_idx').on(table.userId),
+]);
 export const account = pgTable('tandem_account', {
   id: text('id').primaryKey(),
-accountId: text('account_id').notNull(),
+  accountId: text('account_id').notNull(),
  providerId: text('provider_id').notNull(),
- userId: text('user_id').notNull().references(()=> user.id, { onDelete: 'cascade' }),
+ userId: text('user_id').notNull().references(()=>user.id, { onDelete: 'cascade' }),
  accessToken: text('access_token'),
  refreshToken: text('refresh_token'),
  idToken: text('id_token'),
@@ -45,25 +44,23 @@ accountId: text('account_id').notNull(),
  scope: text('scope'),
  password: text('password'),
  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
- updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
-}, (t) => [
-  index('account_userId_idx').on(t.userId),
-])
-
+ updatedAt: timestamp('updated_at', { withTimezone: true }).notNull()
+  }, (table) => [
+  index('account_userId_idx').on(table.userId),
+]);
 export const verification = pgTable('tandem_verification', {
   id: text('id').primaryKey(),
-identifier: text('identifier').notNull(),
+  identifier: text('identifier').notNull(),
  value: text('value').notNull(),
  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
- updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().$onUpdate(() => /* @__PURE__ */ new Date()).notNull(),
-}, (t) => [
-  index('verification_identifier_idx').on(t.identifier),
-])
-
+ updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
+  }, (table) => [
+  index('verification_identifier_idx').on(table.identifier),
+]);
 export const apikey = pgTable('tandem_apikey', {
   id: text('id').primaryKey(),
-configId: text('config_id').default('default').notNull(),
+  configId: text('config_id').default('default').notNull(),
  name: text('name'),
  start: text('start'),
  referenceId: text('reference_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
@@ -83,12 +80,12 @@ configId: text('config_id').default('default').notNull(),
  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
  permissions: text('permissions'),
- metadata: text('metadata'),
-}, (t) => [
-  index('apikey_configId_idx').on(t.configId),
-  index('apikey_referenceId_idx').on(t.referenceId),
-  index('apikey_key_idx').on(t.key),
-])
+ metadata: text('metadata')
+  }, (table) => [
+  index('apikey_configId_idx').on(table.configId),
+  index('apikey_referenceId_idx').on(table.referenceId),
+  index('apikey_key_idx').on(table.key),
+]);
 
 // <<< END GENERATED better-auth tables
 

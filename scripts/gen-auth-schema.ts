@@ -42,7 +42,25 @@ if (i === -1 || j === -1) {
   console.error('markers missing in server/db/schema.ts')
   process.exit(1)
 }
-const body = gen.split('\n').filter(l => !l.startsWith('import')).join('\n')
+// drop any relations the CLI appends — the app defines its own relations via
+// defineRelations below the generated block (relations-v2)
+const relIdx = gen.indexOf('export const authRelations')
+if (relIdx > -1) gen = gen.slice(0, relIdx)
+let body = gen.split('\n').filter(l => !l.startsWith('import') && l.trim() !== '').join('\n')
+// normalize to repo style: 2-space indent, single quotes (keeps the diff
+// between regenerations minimal — pure formatting, no semantic change)
+body = body.replaceAll('\t', '  ')
+body = body.replace(/"/g, "'")
+body = body.replace(/ {2,}/g, '  ')
+body = body.replace(/\n {2}/g, '\n  ')
+// repo style: no space in arrow ()=>, closing braces de-indented like the
+// hand-written sections; $onUpdate dropped (runtime-only sugar, not DDL —
+// keeping it out makes regenerated output stable)
+body = body.replaceAll('()=> ', '()=>')
+body = body.replaceAll(' )', ')')
+body = body.replaceAll('});', ' })')
+body = body.replaceAll('])', '])')
+body = body.replaceAll(String.raw`.$onUpdate(() => /* @__PURE__ */ new Date())`, '')
 schema = schema.slice(0, i + START.length) + '\n\n' + body + '\n\n' + schema.slice(j)
 writeFileSync(SCHEMA, schema)
 console.log('server/db/schema.ts regenerated from better-auth config')
