@@ -1,7 +1,7 @@
 // ssh-probe unit tests: interpret(), Bun Shell path (bun runtime), node
 // fallback path (vitest workers), unreachable-host failures.
 import { describe, expect, it, vi } from 'vitest'
-import { probeSsh, interpret } from '../server/utils/ssh-probe'
+import { probeSsh, interpret } from '../server/domains/environments/ssh-probe.service'
 
 describe('probeSsh (node fallback path — vitest workers are node)', () => {
   it('succeeds when ssh echoes the marker (localhost key auth)', async () => {
@@ -20,7 +20,7 @@ describe('probeSsh (node fallback path — vitest workers are node)', () => {
       spawn: () => { throw new Error('spawn exploded') },
     }))
     try {
-      const mod = await import('../server/utils/ssh-probe')
+      const mod = await import('../server/domains/environments/ssh-probe.service')
       // force the bun branch to throw a non-Cannot-find error so it falls to
       // probeViaNode, which throws in spawn -> catch arm
       const r = await mod.probeSsh('127.0.0.1', '22', 'u')
@@ -37,7 +37,7 @@ describe('probeSsh (node fallback path — vitest workers are node)', () => {
 
 describe('ensureTrailingNewline (via writeIdentity contract)', () => {
   it('appends a newline to keys lacking one', async () => {
-    const { probeSsh } = await import('../server/utils/ssh-probe')
+    const { probeSsh } = await import('../server/domains/environments/ssh-probe.service')
     // exercise the key-file path with a garbage key against a dead port:
     // writeIdentity runs before any ssh attempt; newline branch covered.
     const r = await probeSsh('127.0.0.1', '59999', 'nobody', 'KEY-WITHOUT-NEWLINE')

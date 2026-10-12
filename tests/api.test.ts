@@ -65,7 +65,8 @@ beforeEach(async () => {
 
 describe('meta.version (oRPC)', () => {
   it('returns APP_VERSION or dev', async () => {
-    const { router, buildServerContext } = await import('../server/utils/orpc')
+    const { appRouter: router } = await import('../server/domains/app.router')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
     const callProc = (path: string[]) => {
       let node: Record<string, unknown> = router as unknown as Record<string, unknown>
       for (const k of path) node = node[k] as Record<string, unknown>
@@ -95,7 +96,8 @@ describe('GET /health/ready', () => {
 
 describe('auth.configLive (oRPC, public)', () => {
   async function firstSnapshot() {
-    const { router, buildServerContext } = await import('../server/utils/orpc')
+    const { appRouter: router } = await import('../server/domains/app.router')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
     let node: Record<string, unknown> = router as unknown as Record<string, unknown>
     for (const k of ['auth', 'configLive']) node = node[k] as Record<string, unknown>
     const gen = await (node['~orpc'] as { handler: (o: unknown) => Promise<AsyncGenerator<unknown>> }).handler({ input: undefined, context: buildServerContext(new Headers()), signal: new AbortController().signal })
@@ -109,7 +111,7 @@ describe('auth.configLive (oRPC, public)', () => {
   })
 
   it('lists stored providers without secrets', async () => {
-    const { saveOidcProviders } = await import('../server/utils/oidc')
+    const { saveOidcProviders } = await import('../server/domains/auth/oidc.service')
     await saveOidcProviders([{ id: 'p1', label: 'SSO', issuer: 'https://sso.example.com', clientId: 'cid', clientSecret: 'shh' }])
     expect(await firstSnapshot()).toEqual({ passwordEnabled: true, oidcEnabled: true, providers: [{ id: 'p1', label: 'SSO' }], companyName: 'Tandem' })
   })
@@ -119,8 +121,9 @@ describe('oRPC session surface', () => {
   // The auth middleware runs inside RPCHandler — exercise through it.
   async function rpcPost(path: string, headers?: Record<string, string>) {
     const { RPCHandler } = await import('@orpc/server/fetch')
-    const { router, buildServerContext } = await import('../server/utils/orpc')
-    const { getAuth } = await import('../server/utils/auth')
+    const { appRouter: router } = await import('../server/domains/app.router')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
+    const { getAuth } = await import('../server/domains/auth/auth.service')
     const inst = await getAuth()
     const realGetSession = inst.api.getSession.bind(inst.api)
     const original = inst.api.getSession
@@ -157,7 +160,8 @@ describe('oRPC session surface', () => {
   })
 
   async function proc(path: string[]) {
-    const { router, buildServerContext } = await import('../server/utils/orpc')
+    const { appRouter: router } = await import('../server/domains/app.router')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
     let node: Record<string, unknown> = router as unknown as Record<string, unknown>
     for (const k of path) node = node[k] as Record<string, unknown>
     return (node['~orpc'] as { handler: (o: unknown) => Promise<unknown> }).handler({ input: undefined, context: buildServerContext(new Headers()), signal: new AbortController().signal })
@@ -168,8 +172,9 @@ describe('oRPC session surface', () => {
   })
 
   it('auth.session returns the session for a signed-in user', async () => {
-    const { getAuth } = await import('../server/utils/auth')
-    const { buildServerContext, router } = await import('../server/utils/orpc')
+    const { getAuth } = await import('../server/domains/auth/auth.service')
+    const { appRouter: router } = await import('../server/domains/app.router')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
     const auth = await getAuth()
     await auth.api.signUpEmail({ body: { email: 's@x.co', password: 'password1234', name: 'S' } })
     const signIn = await auth.api.signInEmail({ body: { email: 's@x.co', password: 'password1234' }, asResponse: true })

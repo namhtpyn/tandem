@@ -3,9 +3,9 @@ import { os } from '@orpc/server'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '../../db'
-import { environmentInput } from '../../utils/environments'
-import { probeSsh } from '../../utils/ssh-probe'
-import { decryptSecret } from '../../utils/vault-crypto'
+import { environmentInput } from './environments.util'
+import { probeSsh } from './ssh-probe.service'
+import { decryptSecret } from '../vault/vault-crypto.service'
 import {
   environments as environmentsTable, vaultAudit as vaultAuditTable, vaultSecrets as vaultSecretsTable,
 } from '../../db/schema'

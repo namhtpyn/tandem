@@ -28,7 +28,7 @@ export default defineNitroPlugin(async () => {
     role: 'admin',
   })
   // password hash via better-auth's own hasher for compatibility
-  const { hashPassword } = await import('../utils/auth-hash')
+  const { hashPassword } = await import('../domains/auth/auth-hash.util')
   await db.insert(account).values({
     id: crypto.randomUUID(),
     accountId: id,

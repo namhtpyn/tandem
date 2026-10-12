@@ -12,7 +12,7 @@ export function buildServerContext(headers: Headers | undefined): ServerContext 
     getSession: async (): Promise<AuthSessionPayload | null> => {
       if (resolved) return cached
       resolved = true
-      const { getAuth } = await import('../../utils/auth')
+      const { getAuth } = await import('../auth/auth.service')
       const auth = await getAuth()
       const session = await auth.api.getSession({ headers: headers ?? new Headers() })
       if (!session) {

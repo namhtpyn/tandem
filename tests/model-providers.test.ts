@@ -8,7 +8,7 @@ import { applyMigrations } from '../server/db/index'
 const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 
 async function ctx(sessionUser: { id: string, name: string, email: string, role: string } | null = admin) {
-  const { buildServerContext } = await import('../server/utils/orpc')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
   const context = buildServerContext(new Headers()) as Record<string, unknown>
   ;(context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => sessionUser ? { user: sessionUser } : null
   context.session = sessionUser ? { user: sessionUser } : null
@@ -16,7 +16,7 @@ async function ctx(sessionUser: { id: string, name: string, email: string, role:
 }
 
 async function callProc(path: string, input?: unknown): Promise<any> {
-  const { router } = await import('../server/utils/orpc')
+  const { appRouter: router } = await import('../server/domains/app.router')
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>
   for (const key of path.split('.')) {
     node = node[key] as Record<string, unknown>
@@ -30,7 +30,7 @@ async function dbm() {
 }
 
 beforeEach(async () => {
-  const { modelCache } = await import('../server/utils/orpc')
+  const { modelCache } = await import('../server/domains/providers/models-cache')
   modelCache.clear()
   await resetSchema()
   await applyMigrations()
@@ -178,7 +178,7 @@ describe('providers', () => {
       await callProc('providers.models', { providerId: prov.id, keySecretId: sec2.id })
     }
     finally { globalThis.fetch = origFetch }
-    const { modelCache, sweepModelCache } = await import('../server/utils/orpc')
+    const { modelCache, sweepModelCache } = await import('../server/domains/providers/models-cache')
     expect(modelCache.size).toBeGreaterThan(0)
     // second, uncached probe (different secret) exercises the sweeper-already-armed guard
     const sec2 = await callProc('vault.create', { name: 'ttl-key2', value: 'sk-ttl2' })

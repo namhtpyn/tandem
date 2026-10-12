@@ -10,11 +10,11 @@ import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2'
 import { genericOAuth } from 'better-auth/plugins/generic-oauth'
 import { apiKey } from '@better-auth/api-key'
 import { eq } from 'drizzle-orm'
-import { db } from '../db'
-import { user as userTable } from '../db/schema'
-import { authSchema } from '../db/schema'
-import { getSettings } from './settings'
-import { getOidcProviders, type OidcProvider } from './oidc'
+import { db } from '../../db'
+import { user as userTable } from '../../db/schema'
+import { authSchema } from '../../db/schema'
+import { getSettings } from '../settings/settings.service'
+import { getOidcProviders, type OidcProvider } from './oidc.service'
 
 const env = process.env
 

@@ -4,7 +4,7 @@ import { desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '../../db'
 import { listVaultSecrets, toVaultRow } from './vault.service'
-import { decryptSecret, encryptSecret, lastFourHint } from '../../utils/vault-crypto'
+import { decryptSecret, encryptSecret, lastFourHint } from './vault-crypto.service'
 import {
   vaultAudit as vaultAuditTable, vaultSecrets as vaultSecretsTable,
 } from '../../db/schema'

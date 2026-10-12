@@ -126,7 +126,7 @@ export const employeesRouter = os.router({
       }
       // every new employee — AI or human — gets an initial access key (shown once)
       {
-        const { getAuth } = await import('../../utils/auth')
+        const { getAuth } = await import('../auth/auth.service')
         const auth = await getAuth()
         const created = await auth.api.createApiKey({ body: { name: `${input.name.slice(0, 40)} access key`, userId, prefix: 'tandem_' } })
         apiKey = created.key
@@ -279,7 +279,7 @@ export const employeesRouter = os.router({
       const rows = await db.select().from(userTable).where(eq(userTable.id, input.employeeId))
       const emp = rows[0]
       if (!emp) throw new ORPCError('NOT_FOUND', { message: 'employee not found' })
-      const { getAuth } = await import('../../utils/auth')
+      const { getAuth } = await import('../auth/auth.service')
       const auth = await getAuth()
       const created = await auth.api.createApiKey({ body: { name: input.name?.trim() || `${emp.name.slice(0, 40)} key`, userId: emp.id, prefix: 'tandem_' } })
       return { key: created.key, id: created.id }

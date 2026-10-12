@@ -1,10 +1,10 @@
 // Jev (TypeSafe AI System One) integration for task assignment.
 // Sends task state + employee candidates, gets a typed Choice back.
 // Never a hard dependency: unavailable/low-confidence -> caller keeps task unassigned.
-import { db } from '../db'
-import { vaultSecrets, modelProviders, vaultAudit } from '../db/schema'
+import { db } from '../../db'
+import { vaultSecrets, modelProviders, vaultAudit } from '../../db/schema'
 import { eq } from 'drizzle-orm'
-import { decryptSecret } from './vault-crypto'
+import { decryptSecret } from '../vault/vault-crypto.service'
 import { PROVIDER_ENDPOINT, PROVIDER_KIND, endpointKind, ENDPOINT_PATH, type DecisionEndpoint } from '#shared/api-styles'
 
 export interface JevAssignCandidate {
@@ -42,14 +42,14 @@ export async function getDecisionProvider(): Promise<{ id: string, label: string
 }
 
 /** Ask Jev which employee should take the task. Returns null employeeId on any failure/low confidence. */
-export async function jevPickAssignee(params: {
+export async function pickAssignee(params: {
   taskTitle: string
   taskDescription: string
   projectName: string | null
   candidates: JevAssignCandidate[]
   /** vault secret id with the decision endpoint's api key (per call, never stored on the provider) */
   keySecretId: string | null
-  /** model pin from the Workspace AI assignment (null = endpoint default / jev-latest) */
+  /** model pin from the Workspace AI assignment (null = the endpoint default) */
   model: string | null
 }): Promise<JevAssignResult> {
   if (params.candidates.length === 0) {

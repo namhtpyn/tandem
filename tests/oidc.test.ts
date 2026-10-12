@@ -1,7 +1,7 @@
 // OIDC registry: storage round-trip, env fallback, validation failures
 import { describe, expect, it, beforeEach } from 'vitest'
 import './helpers/pg'
-import { getOidcProviders, saveOidcProviders } from '../server/utils/oidc'
+import { getOidcProviders, saveOidcProviders } from '../server/domains/auth/oidc.service'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 
@@ -59,7 +59,7 @@ describe('oidc registry', () => {
   })
 
   it('ignores a corrupted stored registry and falls through to env', async () => {
-    const { setSetting } = await import('../server/utils/settings')
+    const { setSetting } = await import('../server/domains/settings/settings.service')
     await setSetting('oidc_providers', 'not json {{{')
     process.env.TANDEM_OIDC_ISSUER = 'https://env.example.com'
     process.env.TANDEM_OIDC_CLIENT_ID = 'env-client'
@@ -77,7 +77,7 @@ describe('oidc registry', () => {
   })
 
   it('ignores a stored registry failing schema validation', async () => {
-    const { setSetting } = await import('../server/utils/settings')
+    const { setSetting } = await import('../server/domains/settings/settings.service')
     // valid JSON, but issuer is not a URL
     await setSetting('oidc_providers', JSON.stringify([{ id: 'x', label: 'X', issuer: 'nope', clientId: 'c', clientSecret: 's' }]))
     expect(await getOidcProviders()).toEqual([])

@@ -80,7 +80,7 @@ describe('auth first-user-admin hook', () => {
   it('promotes the first created user to admin via the after hook', async () => {
     await resetSchema()
     await applyMigrations()
-    const { getAuth } = await import('../server/utils/auth')
+    const { getAuth } = await import('../server/domains/auth/auth.service')
     const auth = await getAuth()
     await auth.api.signUpEmail({ body: { email: 'first@x.co', password: 'password1234', name: 'First' } })
     const rows = await sqlClient`select email, role from tandem_user`

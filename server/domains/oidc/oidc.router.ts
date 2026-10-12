@@ -6,7 +6,7 @@ import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } fro
 export const oidcRouter = os.router({
   /** live provider list (secrets never leave the server) */
   live: protectedProcedure.handler(() => liveGenerator(['oidc'], async () => {
-    const { getOidcProviders } = await import('../../utils/oidc')
+    const { getOidcProviders } = await import('../auth/oidc.service')
     const providers = await getOidcProviders()
     return providers.map(p => ({
       id: p.id,
@@ -29,8 +29,8 @@ export const oidcRouter = os.router({
       })).max(10),
     }))
     .handler(async ({ input }) => {
-      const { getOidcProviders, saveOidcProviders, oidcProviderSchema } = await import('../../utils/oidc')
-      const { rebuildAuth } = await import('../../utils/auth')
+      const { getOidcProviders, saveOidcProviders, oidcProviderSchema } = await import('../auth/oidc.service')
+      const { rebuildAuth } = await import('../auth/auth.service')
       const existing = await getOidcProviders()
       const result = []
       for (const p of input.providers) {

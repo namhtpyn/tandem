@@ -16,12 +16,12 @@ async function wireDecisionProvider(secretId: string | null) {
 }
 
 async function wireInternalDecisionSetting(secretId: string | null) {
-  const { setSetting } = await import('../server/utils/settings')
+  const { setSetting } = await import('../server/domains/settings/settings.service')
   if (secretId) {
     await setSetting('internal_decision', JSON.stringify({ providerId: 'seed-jev', model: null, keySecretId: secretId }))
   }
   else {
-    const { deleteSetting } = await import('../server/utils/settings')
+    const { deleteSetting } = await import('../server/domains/settings/settings.service')
     await deleteSetting('internal_decision')
   }
 }
@@ -29,7 +29,7 @@ async function wireInternalDecisionSetting(secretId: string | null) {
 const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 
 async function ctx() {
-  const { buildServerContext } = await import('../server/utils/orpc')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
   const context = buildServerContext(new Headers()) as Record<string, unknown>
   ;(context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({ user: admin })
   context.session = { user: admin }
@@ -41,7 +41,7 @@ async function dbm() {
 }
 
 async function callProc(path: string, input?: unknown): Promise<any> {
-  const { router } = await import('../server/utils/orpc')
+  const { appRouter: router } = await import('../server/domains/app.router')
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>
   for (const key of path.split('.')) node = node[key] as Record<string, unknown>
   const internals = node['~orpc'] as { handler: (opts: unknown) => Promise<unknown> }

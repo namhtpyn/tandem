@@ -1,6 +1,6 @@
 // Mount better-auth under /auth/* (basePath /auth — handler gets the FULL original path).
 import type { H3Event } from 'h3'
-import { getAuth, resolveAuthPolicy, anyUserExists } from '../../utils/auth'
+import { getAuth, resolveAuthPolicy, anyUserExists } from '../../domains/auth/auth.service'
 
 function headerValue(v: string | string[] | undefined): string | undefined {
   // node never delivers undefined header values; arrays collapse to first

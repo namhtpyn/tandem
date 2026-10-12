@@ -25,7 +25,7 @@ describe('auth route gates', () => {
   })
 
   it('passes through to the auth handler for plain GETs (mocked auth instance)', async () => {
-    const authMod = await import('../server/utils/auth')
+    const authMod = await import('../server/domains/auth/auth.service')
     const inst = await authMod.getAuth()
     const originalHandler = inst.handler
     inst.handler = async () => new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } })

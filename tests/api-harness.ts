@@ -5,8 +5,8 @@ import { createEvent, defineEventHandler, setResponseStatus, setResponseHeader, 
 // Keep the REAL requireSession and the REAL auth singleton; stub only
 // getSession on the singleton's api so internal guards see the test admin while
 // auth-route handler swaps keep working (same object identity).
-vi.mock('../server/utils/auth', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../server/utils/auth')>()
+vi.mock('../server/domains/auth/auth.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../server/domains/auth/auth.service')>()
   let singleton: Awaited<ReturnType<typeof actual.getAuth>> | null = null
   const originalGetAuth = actual.getAuth
   const wrappedGetAuth = async () => {

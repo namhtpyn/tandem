@@ -5,8 +5,8 @@ import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } fro
 export const authRouter = os.router({
   /** public auth capabilities for the login screen (live) */
   configLive: base.handler(() => liveGenerator(['settings', 'oidc'], async () => {
-    const { resolveAuthPolicy } = await import('../../utils/auth')
-    const { getSettings } = await import('../../utils/settings')
+    const { resolveAuthPolicy } = await import('./auth.service')
+    const { getSettings } = await import('../settings/settings.service')
     const [p, s] = await Promise.all([resolveAuthPolicy(), getSettings()])
     return {
       passwordEnabled: p.passwordEnabled,

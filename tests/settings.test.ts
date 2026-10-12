@@ -1,7 +1,7 @@
 // settings store: get/set/delete + typed getSettings
 import { beforeEach, describe, expect, it } from 'vitest'
 import './helpers/pg'
-import { getSetting, setSetting, deleteSetting, getSettings } from '../server/utils/settings'
+import { getSetting, setSetting, deleteSetting, getSettings } from '../server/domains/settings/settings.service'
 import { postgres } from './helpers/pg'
 
 describe('settings store', () => {
@@ -44,7 +44,8 @@ describe('settings store', () => {
   })
 
   it('companyName undefined in update leaves the stored value untouched', async () => {
-    const { buildServerContext, router } = await import('../server/utils/orpc')
+    const { appRouter: router } = await import('../server/domains/app.router')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
     await setSetting('companyName', 'Kept Name')
     const ctx = buildServerContext(new Headers())
     ;(ctx as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({ user: { id: 'u1', name: 'A', email: 'a@x', role: 'admin' } })
@@ -75,7 +76,8 @@ describe('settings: workspace ai assignments', () => {
   })
 
   async function callProc(path: string, input?: unknown): Promise<any> {
-    const { router, buildServerContext } = await import('../server/utils/orpc')
+    const { appRouter: router } = await import('../server/domains/app.router')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
     let node: Record<string, unknown> = router as unknown as Record<string, unknown>
     for (const key of path.split('.')) node = node[key] as Record<string, unknown>
     const internals = node['~orpc'] as { handler: (opts: unknown) => Promise<unknown> }

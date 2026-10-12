@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { db } from '../../db'
 import { ALL_ENDPOINTS, isAnthropicWire, atMostOneModelsEndpoint } from '#shared/api-styles'
 import { modelCache, armCacheSweeper } from './models-cache'
-import { decryptSecret } from '../../utils/vault-crypto'
+import { decryptSecret } from '../vault/vault-crypto.service'
 import {
   modelProviders as modelProvidersTable, vaultAudit as vaultAuditTable, vaultSecrets as vaultSecretsTable,
 } from '../../db/schema'
@@ -14,7 +14,7 @@ import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } fro
 export const providersRouter = os.router({
   /** live model-provider catalog (connection info only — no keys, no models) */
   live: protectedProcedure.handler(() => liveGenerator(['providers'], async () => {
-    const { listModelProviders } = await import('../../utils/model-providers')
+    const { listModelProviders } = await import('./model-providers.service')
     return await listModelProviders()
   })),
 
@@ -30,7 +30,7 @@ export const providersRouter = os.router({
       notes: z.string().max(500).optional(),
     }))
     .handler(async ({ input }) => {
-      const { modelProviderInputSchema } = await import('../../utils/model-providers')
+      const { modelProviderInputSchema } = await import('./model-providers.service')
       modelProviderInputSchema.parse(input)
       const id = input.id?.trim() || crypto.randomUUID()
       const now = new Date()
@@ -133,7 +133,7 @@ export const providersRouter = os.router({
   remove: protectedProcedure
     .input(z.strictObject({ id: z.string().min(1) }))
     .handler(async ({ input }) => {
-      const { providerInUse } = await import('../../utils/model-providers')
+      const { providerInUse } = await import('./model-providers.service')
       if (await providerInUse(input.id)) {
         throw new ORPCError('BAD_REQUEST', { message: 'provider is in use by AI employees' })
       }

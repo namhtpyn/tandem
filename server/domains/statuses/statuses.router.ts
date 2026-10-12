@@ -98,10 +98,10 @@ export const statusesRouter = os.router({
         projName = projRows.length > 0 ? projRows[0]!.name : null
       }
 
-      const { jevPickAssignee } = await import('../../utils/jev')
-      const { getSettings } = await import('../../utils/settings')
+      const { pickAssignee } = await import('./decision.service')
+      const { getSettings } = await import('../settings/settings.service')
       const decision = (await getSettings()).internalDecision
-      const result = await jevPickAssignee({
+      const result = await pickAssignee({
         taskTitle: task.title,
         taskDescription: task.description,
         projectName: projName,

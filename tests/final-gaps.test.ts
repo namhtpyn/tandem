@@ -18,7 +18,7 @@ describe('auth route header handling', () => {
   it('POST sign-in/email with multi-value + undefined headers passes the gate', async () => {
     // auth instance is real; without a user the underlying handler 401s — but our
     // route gate (passwordEnabled) must let it THROUGH to the handler.
-    const { getAuth } = await import('../server/utils/auth')
+    const { getAuth } = await import('../server/domains/auth/auth.service')
     const inst = await getAuth()
     const originalHandler = inst.handler
     let captured: Request | undefined
@@ -43,7 +43,7 @@ describe('auth route header handling', () => {
   })
 
   it('GET with array cookie header: first value wins', async () => {
-    const { getAuth } = await import('../server/utils/auth')
+    const { getAuth } = await import('../server/domains/auth/auth.service')
     const inst = await getAuth()
     const originalHandler = inst.handler
     inst.handler = async (req: Request) => {
@@ -65,7 +65,7 @@ describe('auth route header handling', () => {
   })
 
   it('GET with undefined header value: header omitted', async () => {
-    const { getAuth } = await import('../server/utils/auth')
+    const { getAuth } = await import('../server/domains/auth/auth.service')
     const inst = await getAuth()
     const originalHandler = inst.handler
     inst.handler = async (req: Request) => {
@@ -87,9 +87,9 @@ describe('auth route header handling', () => {
   })
 
   it('blocks password sign-in when password login is disabled (403)', async () => {
-    const { setSetting } = await import('../server/utils/settings')
+    const { setSetting } = await import('../server/domains/settings/settings.service')
     await setSetting('disablePasswordLogin', 'true')
-    const { saveOidcProviders } = await import('../server/utils/oidc')
+    const { saveOidcProviders } = await import('../server/domains/auth/oidc.service')
     await saveOidcProviders([{ id: 'p1', label: 'SSO', issuer: 'https://sso.example.com', clientId: 'c', clientSecret: 's' }])
     await expect(call('../server/routes/auth/[...].ts', { method: 'POST', url: '/auth/sign-in/email', body: { email: 'a@b.co', password: 'password1234' } }))
       .rejects.toMatchObject({ statusCode: 403 })
@@ -97,7 +97,7 @@ describe('auth route header handling', () => {
   })
 
   it('returns null body when the auth handler sends no body', async () => {
-    const { getAuth } = await import('../server/utils/auth')
+    const { getAuth } = await import('../server/domains/auth/auth.service')
     const inst = await getAuth()
     const originalHandler = inst.handler
     inst.handler = async () => new Response(null, { status: 204 })
@@ -126,7 +126,8 @@ describe('GET /health/ready 503 path', () => {
 
 describe('oidc.replace edit-failure arm', () => {
   it('rejects an edit whose merged provider fails schema (unknown id + no secret)', async () => {
-    const { router, buildServerContext } = await import('../server/utils/orpc')
+    const { appRouter: router } = await import('../server/domains/app.router')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
     let node: Record<string, unknown> = router as unknown as Record<string, unknown>
     for (const k of ['oidc', 'replace']) node = node[k] as Record<string, unknown>
     const context = buildServerContext(new Headers())
@@ -142,7 +143,7 @@ describe('oidc.replace edit-failure arm', () => {
 describe('settings.update payload arms (oRPC)', () => {
   async function rpcSettings(input: unknown) {
     const { RPCHandler } = await import('@orpc/server/fetch')
-    const { router } = await import('../server/utils/orpc')
+    const { appRouter: router } = await import('../server/domains/app.router')
     const handler = new RPCHandler(router)
     const req = new Request('http://x/rpc/settings/update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ json: input }) })
     const { response } = await handler.handle(req, { prefix: '/rpc', context: { getSession: async () => ({ user: { id: 'a', name: 'A', email: 'a@x', role: 'admin' } }) } })
@@ -163,8 +164,9 @@ describe('settings.update payload arms (oRPC)', () => {
 
 describe('remaining branch arms', () => {
   it('auth.session role fallback: null role maps to viewer (oRPC)', async () => {
-    const authMod = await import('../server/utils/auth')
-    const { router, buildServerContext } = await import('../server/utils/orpc')
+    const authMod = await import('../server/domains/auth/auth.service')
+    const { appRouter: router } = await import('../server/domains/app.router')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
     const inst = await authMod.getAuth()
     const realGetSession = inst.api.getSession.bind(inst.api)
     inst.api.getSession = async () => ({
@@ -184,7 +186,7 @@ describe('remaining branch arms', () => {
 
   it('oidc.replace: schema failure arm (bad issuer on new provider)', async () => {
     const { RPCHandler } = await import('@orpc/server/fetch')
-    const { router } = await import('../server/utils/orpc')
+    const { appRouter: router } = await import('../server/domains/app.router')
     const handler = new RPCHandler(router)
     const req = new Request('http://x/rpc/oidc/replace', {
       method: 'POST',
@@ -197,7 +199,7 @@ describe('remaining branch arms', () => {
 
   it('settings.update: root-level type error arm (oRPC)', async () => {
     const { RPCHandler } = await import('@orpc/server/fetch')
-    const { router } = await import('../server/utils/orpc')
+    const { appRouter: router } = await import('../server/domains/app.router')
     const handler = new RPCHandler(router)
     const req = new Request('http://x/rpc/settings/update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ json: 42 }) })
     const { response } = await handler.handle(req, { prefix: '/rpc', context: { getSession: async () => ({ user: { id: 'a', name: 'A', email: 'a@x', role: 'admin' } }) } })
@@ -205,7 +207,7 @@ describe('remaining branch arms', () => {
   })
 
   it('auth route: headerValue single-value arm + sign-up gate passthrough with body', async () => {
-    const authMod = await import('../server/utils/auth')
+    const authMod = await import('../server/domains/auth/auth.service')
     const inst = await authMod.getAuth()
     const originalHandler = inst.handler
     let captured: Request | undefined
@@ -253,7 +255,7 @@ describe('remaining branch arms', () => {
 
 describe('fallback branch arms', () => {
   it('auth route: host/proto/url fallbacks when headers absent', async () => {
-    const authMod = await import('../server/utils/auth')
+    const authMod = await import('../server/domains/auth/auth.service')
     const inst = await authMod.getAuth()
     const originalHandler = inst.handler
     let capturedUrl = ''
@@ -273,7 +275,7 @@ describe('fallback branch arms', () => {
 
   it('oidc.replace: array input arm (oRPC 400)', async () => {
     const { RPCHandler } = await import('@orpc/server/fetch')
-    const { router } = await import('../server/utils/orpc')
+    const { appRouter: router } = await import('../server/domains/app.router')
     const handler = new RPCHandler(router)
     const req = new Request('http://x/rpc/oidc/replace', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ json: [] }) })
     const { response } = await handler.handle(req, { prefix: '/rpc', context: { getSession: async () => ({ user: { id: 'a', name: 'A', email: 'a@x', role: 'admin' } }) } })
@@ -284,7 +286,7 @@ describe('fallback branch arms', () => {
 
 describe('auth route fallback arms (real coverage)', () => {
   it('array x-forwarded-proto collapses to first value; undefined url falls back', async () => {
-    const authMod = await import('../server/utils/auth')
+    const authMod = await import('../server/domains/auth/auth.service')
     const inst = await authMod.getAuth()
     const originalHandler = inst.handler
     let captured: Request | undefined
@@ -320,7 +322,7 @@ describe('auth route fallback arms (real coverage)', () => {
   })
 
   it('oidc route 404 when no provider configured (real registry empty)', async () => {
-    const { saveOidcProviders } = await import('../server/utils/oidc')
+    const { saveOidcProviders } = await import('../server/domains/auth/oidc.service')
     await saveOidcProviders([])
     delete process.env.TANDEM_OIDC_ISSUER
     await expect(call('../server/routes/auth/[...].ts', { method: 'GET', url: '/auth/oauth2/testprovider' }))
@@ -328,7 +330,7 @@ describe('auth route fallback arms (real coverage)', () => {
   })
 
   it('oidc route passes the gate when a provider is configured', async () => {
-    const { saveOidcProviders } = await import('../server/utils/oidc')
+    const { saveOidcProviders } = await import('../server/domains/auth/oidc.service')
     await saveOidcProviders([{ id: 'p1', label: 'SSO', issuer: 'https://sso.example.com', clientId: 'c', clientSecret: 's' }])
     delete process.env.TANDEM_OIDC_ISSUER
     // passes our gate; the real better-auth handler then responds (likely 400/404

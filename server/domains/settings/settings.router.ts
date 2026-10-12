@@ -11,7 +11,7 @@ import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } fro
 export const settingsRouter = os.router({
   /** live app settings */
   live: protectedProcedure.handler(() => liveGenerator(['settings'], async () => {
-    const { getSettings } = await import('../../utils/settings')
+    const { getSettings } = await import('./settings.service')
     return await getSettings()
   })),
 
@@ -24,9 +24,9 @@ export const settingsRouter = os.router({
       internalDecision: z.strictObject({ providerId: z.string().min(1), model: z.string().min(1).nullable(), keySecretId: z.string().min(1) }).nullable().optional(),
     }))
     .handler(async ({ input }) => {
-      const { setSetting, deleteSetting, INTERNAL_ASSIGNMENT_KEYS } = await import('../../utils/settings')
-      const { rebuildAuth } = await import('../../utils/auth')
-      const { getOidcProviders } = await import('../../utils/oidc')
+      const { setSetting, deleteSetting, INTERNAL_ASSIGNMENT_KEYS } = await import('./settings.service')
+      const { rebuildAuth } = await import('../auth/auth.service')
+      const { getOidcProviders } = await import('../auth/oidc.service')
       if (input.disablePasswordLogin === true) {
         const providers = await getOidcProviders()
         if (providers.length === 0) {

@@ -30,17 +30,17 @@ describe('/rpc adapter branch arms', () => {
 
 describe('pickFailureDetail', () => {
   it('prefers a real bun shell error over the node error', async () => {
-    const { pickFailureDetail } = await import('../server/utils/ssh-probe')
+    const { pickFailureDetail } = await import('../server/domains/environments/ssh-probe.service')
     expect(pickFailureDetail(new Error('shell exploded'), new Error('node fail'))).toBe('shell exploded')
   })
 
   it('falls back to the node error when bun is unavailable', async () => {
-    const { pickFailureDetail } = await import('../server/utils/ssh-probe')
+    const { pickFailureDetail } = await import('../server/domains/environments/ssh-probe.service')
     expect(pickFailureDetail(new Error("Cannot find package 'bun'"), new Error('node fail'))).toBe('node fail')
   })
 
   it('degrades to a generic message for non-Error throws', async () => {
-    const { pickFailureDetail } = await import('../server/utils/ssh-probe')
+    const { pickFailureDetail } = await import('../server/domains/environments/ssh-probe.service')
     expect(pickFailureDetail('nope', 'also nope')).toBe('probe failed')
   })
 })
@@ -66,7 +66,7 @@ describe('ssh-probe probeViaNode (mocked child_process)', () => {
       },
     }))
     try {
-      const mod = await import('../server/utils/ssh-probe')
+      const mod = await import('../server/domains/environments/ssh-probe.service')
       const r = await mod.probeSsh('h', '22', 'u')
       expect(r.ok).toBe(false)
     }
@@ -109,7 +109,7 @@ describe('ssh-probe probeViaNode (mocked child_process)', () => {
       },
     }))
     try {
-      const mod = await import('../server/utils/ssh-probe')
+      const mod = await import('../server/domains/environments/ssh-probe.service')
       const r = await mod.probeSsh('h', '22', 'u')
       expect(r).toEqual({ ok: false, detail: 'ssh: killed by timeout' })
     }
@@ -151,7 +151,7 @@ describe('ssh-probe probeViaNode (mocked child_process)', () => {
       },
     }))
     try {
-      const mod = await import('../server/utils/ssh-probe')
+      const mod = await import('../server/domains/environments/ssh-probe.service')
       const r = await mod.probeSsh('h', '22', 'u')
       // marker echoed + exit 0 -> ok even with stderr noise
       expect(r).toEqual({ ok: true, detail: 'SSH key auth works' })
@@ -170,7 +170,7 @@ describe('ssh-probe node fallback arms', () => {
       spawn: () => { throw 'plain string failure' },
     }))
     try {
-      const mod = await import('../server/utils/ssh-probe')
+      const mod = await import('../server/domains/environments/ssh-probe.service')
       const r = await mod.probeSsh('127.0.0.1', '22', 'u')
       expect(r.ok).toBe(false)
       expect(typeof r.detail).toBe('string')

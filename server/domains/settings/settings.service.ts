@@ -1,8 +1,8 @@
 // Runtime key/value settings in Postgres (tandem_settings). Typed getters with
 // defaults; OIDC providers live under key 'oidc_providers' as JSON.
 import { eq } from 'drizzle-orm'
-import { db } from '../db'
-import { settings } from '../db/schema'
+import { db } from '../../db'
+import { settings } from '../../db/schema'
 
 export async function getSetting(key: string): Promise<string | null> {
   const rows = await db.select().from(settings).where(eq(settings.key, key)).limit(1)

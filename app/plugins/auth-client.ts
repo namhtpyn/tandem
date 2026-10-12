@@ -8,7 +8,7 @@
 // (single-project setup — better-auth docs: concepts/typescript).
 import { createAuthClient } from 'better-auth/vue'
 import { inferAdditionalFields } from 'better-auth/client/plugins'
-import type { getAuth } from '#server/utils/auth'
+import type { getAuth } from '#server/domains/auth/auth.service'
 
 export default defineNuxtPlugin(() => {
   const url = useRequestURL()

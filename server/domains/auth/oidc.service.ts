@@ -4,7 +4,7 @@
 //   TANDEM_OIDC_LABEL (display name, default "SSO")
 // Runtime management lives at PUT/GET /api/oidc.
 import { z } from 'zod'
-import { getSetting, setSetting } from './settings'
+import { getSetting, setSetting } from '../settings/settings.service'
 
 export interface OidcProvider {
   id: string

@@ -6,7 +6,7 @@ import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 
 async function ctx(sessionUser: { id: string, name: string, email: string, role: string } | null) {
-  const { buildServerContext } = await import('../server/utils/orpc')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
   const headers = new Headers()
   const context = buildServerContext(headers)
   // replace the lazy resolver with a stub
@@ -17,7 +17,7 @@ async function ctx(sessionUser: { id: string, name: string, email: string, role:
 const admin = { id: 'u1', name: 'A', email: 'a@x', role: 'admin' }
 
 async function callRouter() {
-  const { router } = await import('../server/utils/orpc')
+  const { appRouter: router } = await import('../server/domains/app.router')
   return router
 }
 
@@ -45,8 +45,9 @@ beforeEach(async () => {
 describe('session gate (via RPCHandler — middleware runs)', () => {
   it('rejects unauthenticated calls (UNAUTHORIZED)', async () => {
     const { RPCHandler } = await import('@orpc/server/fetch')
-    const { router, buildServerContext } = await import('../server/utils/orpc')
-    const { getAuth } = await import('../server/utils/auth')
+    const { appRouter: router } = await import('../server/domains/app.router')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
+    const { getAuth } = await import('../server/domains/auth/auth.service')
     const inst = await getAuth()
     const realGetSession = inst.api.getSession.bind(inst.api)
     inst.api.getSession = async () => null
@@ -138,7 +139,7 @@ describe('environments.live', () => {
   })
 
   it('does not re-emit for settings-only changes during an active subscription', async () => {
-    const { publishChange } = await import('../server/utils/change-bus')
+    const { publishChange } = await import('../server/domains/kernel/change-bus')
     const iter = await callProc(['environments', 'live'], undefined) as AsyncGenerator<unknown>
     await iter.next()
     // park the generator in subscribe(), publish an unrelated event
@@ -161,7 +162,7 @@ describe('environments.live', () => {
 
 describe('buildServerContext', () => {
   it('maps a real better-auth session to the trimmed payload, caches per call', async () => {
-    const { getAuth } = await import('../server/utils/auth')
+    const { getAuth } = await import('../server/domains/auth/auth.service')
     const inst = await getAuth()
     const realGetSession = inst.api.getSession.bind(inst.api)
     let calls = 0
@@ -170,7 +171,7 @@ describe('buildServerContext', () => {
       return { user: { id: 'u9', name: 'Nine', email: 'n@x', emailVerified: true, role: 'viewer' }, session: { id: 's1', userId: 'u9', expiresAt: new Date() } }
     }
     try {
-      const { buildServerContext } = await import('../server/utils/orpc')
+      const { buildServerContext } = await import('../server/domains/kernel/context')
       const c = buildServerContext(new Headers())
       const a = await c.getSession()
       const b = await c.getSession()
@@ -184,12 +185,12 @@ describe('buildServerContext', () => {
   })
 
   it('defaults a missing role to viewer and absent headers to empty', async () => {
-    const { getAuth } = await import('../server/utils/auth')
+    const { getAuth } = await import('../server/domains/auth/auth.service')
     const inst = await getAuth()
     const realGetSession = inst.api.getSession.bind(inst.api)
     inst.api.getSession = async () => ({ user: { id: 'u2', name: 'B', email: 'b@x', emailVerified: true } })
     try {
-      const { buildServerContext } = await import('../server/utils/orpc')
+      const { buildServerContext } = await import('../server/domains/kernel/context')
       const c = buildServerContext(undefined) // <- no headers at all
       expect(await c.getSession()).toEqual({ user: { id: 'u2', name: 'B', email: 'b@x', role: 'viewer' } })
     }
@@ -199,12 +200,12 @@ describe('buildServerContext', () => {
   })
 
   it('returns null when no session', async () => {
-    const { getAuth } = await import('../server/utils/auth')
+    const { getAuth } = await import('../server/domains/auth/auth.service')
     const inst = await getAuth()
     const realGetSession = inst.api.getSession.bind(inst.api)
     inst.api.getSession = async () => null
     try {
-      const { buildServerContext } = await import('../server/utils/orpc')
+      const { buildServerContext } = await import('../server/domains/kernel/context')
       const c = buildServerContext(new Headers())
       expect(await c.getSession()).toBeNull()
     }

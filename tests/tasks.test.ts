@@ -15,14 +15,14 @@ async function schema() {
 const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 
 async function ctx(sessionUser: { id: string, name: string, email: string, role: string } | null = admin) {
-  const { buildServerContext } = await import('../server/utils/orpc')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
   const context = buildServerContext(new Headers())
   ;(context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => sessionUser ? { user: sessionUser } : null
   return context
 }
 
 async function callProc(path: string, input?: unknown): Promise<any> {
-  const { router } = await import('../server/utils/orpc')
+  const { appRouter: router } = await import('../server/domains/app.router')
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>
   for (const key of path.split('.')) {
     node = node[key] as Record<string, unknown>

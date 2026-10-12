@@ -3,10 +3,10 @@ import { describe, expect, it, beforeEach } from 'vitest'
 import './helpers/pg'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
-import { resolveAuthPolicy, anyUserExists, getAuth, rebuildAuth } from '../server/utils/auth'
-import { saveOidcProviders } from '../server/utils/oidc'
-import { setSetting } from '../server/utils/settings'
-import { hashPassword } from '../server/utils/auth-hash'
+import { resolveAuthPolicy, anyUserExists, getAuth, rebuildAuth } from '../server/domains/auth/auth.service'
+import { saveOidcProviders } from '../server/domains/auth/oidc.service'
+import { setSetting } from '../server/domains/settings/settings.service'
+import { hashPassword } from '../server/domains/auth/auth-hash.util'
 import { db } from '../server/db/index'
 import { user, account } from '../server/db/schema'
 
@@ -44,7 +44,7 @@ describe('auth policy', () => {
   })
 
   it('env TANDEM_DISABLE_PASSWORD_LOGIN respected with env provider', async () => {
-    const { deleteSetting } = await import('../server/utils/settings')
+    const { deleteSetting } = await import('../server/domains/settings/settings.service')
     await deleteSetting('oidc_providers')
     process.env.TANDEM_OIDC_ISSUER = 'https://env.example.com'
     process.env.TANDEM_OIDC_CLIENT_ID = 'env-client'
@@ -115,7 +115,7 @@ describe('auth baseURL env branch', () => {
     process.env.BETTER_AUTH_URL = 'https://auth.example.com'
     try {
       await rebuildAuth()
-      const { getAuth } = await import('../server/utils/auth')
+      const { getAuth } = await import('../server/domains/auth/auth.service')
       const auth = await getAuth()
       expect((auth.options as { baseURL?: string }).baseURL).toBe('https://auth.example.com')
     }

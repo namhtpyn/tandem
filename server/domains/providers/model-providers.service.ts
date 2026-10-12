@@ -2,8 +2,8 @@
 // API keys are NEVER stored here — per-agent in the vault (fleet law).
 import { z } from 'zod'
 import { eq } from 'drizzle-orm'
-import { db } from '../db'
-import { modelProviders } from '../db/schema'
+import { db } from '../../db'
+import { modelProviders } from '../../db/schema'
 import { ALL_ENDPOINTS } from '#shared/api-styles'
 
 export interface ModelProviderRow {
@@ -38,7 +38,7 @@ export async function listModelProviders(): Promise<ModelProviderRow[]> {
 }
 
 export async function providerInUse(providerId: string): Promise<boolean> {
-  const { aiEmployees } = await import('../db/schema')
+  const { aiEmployees } = await import('../../db/schema')
   const rows = await db.select({ userId: aiEmployees.userId }).from(aiEmployees).where(eq(aiEmployees.providerId, providerId))
   return rows.length > 0
 }

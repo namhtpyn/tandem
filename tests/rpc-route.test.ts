@@ -7,7 +7,8 @@ import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 import { makeEvent } from './api-harness'
 import { RPCHandler } from '@orpc/server/fetch'
-import { router, buildServerContext } from '../server/utils/orpc'
+import { appRouter as router } from '../server/domains/app.router'
+import { buildServerContext } from '../server/domains/kernel/context'
 
 beforeEach(async () => {
   await resetSchema()

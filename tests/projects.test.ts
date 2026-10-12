@@ -7,7 +7,7 @@ import { applyMigrations } from '../server/db/index'
 const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 
 async function ctx() {
-  const { buildServerContext } = await import('../server/utils/orpc')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
   const context = buildServerContext(new Headers()) as Record<string, unknown>
   ;(context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({ user: admin })
   context.session = { user: admin }
@@ -15,7 +15,7 @@ async function ctx() {
 }
 
 async function callProc(path: string, input?: unknown): Promise<any> {
-  const { router } = await import('../server/utils/orpc')
+  const { appRouter: router } = await import('../server/domains/app.router')
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>
   for (const key of path.split('.')) node = node[key] as Record<string, unknown>
   const internals = node['~orpc'] as { handler: (opts: unknown) => Promise<unknown> }

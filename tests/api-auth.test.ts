@@ -9,7 +9,8 @@ import './api-harness'
 const admin = { user: { id: 'test-admin', name: 'Test Admin', email: 'test@tandem.local', role: 'admin' } }
 
 async function proc(path: string[], input?: unknown) {
-  const { router, buildServerContext } = await import('../server/utils/orpc')
+  const { appRouter: router } = await import('../server/domains/app.router')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>
   for (const k of path) node = node[k] as Record<string, unknown>
   const context = buildServerContext(new Headers())
@@ -20,7 +21,7 @@ async function proc(path: string[], input?: unknown) {
 /** Through RPCHandler — validation errors map to ORPCError codes (400s). */
 async function rpc(path: string, input?: unknown) {
   const { RPCHandler } = await import('@orpc/server/fetch')
-  const { router } = await import('../server/utils/orpc')
+  const { appRouter: router } = await import('../server/domains/app.router')
   const handler = new RPCHandler(router)
   const req = new Request(`http://x/rpc/${path}`, {
     method: 'POST',
@@ -69,7 +70,7 @@ describe('oidc.replace (authenticated)', () => {
   it('saves providers, keeps secret on edit, generates ids for new ones', async () => {
     const r1 = await proc(['oidc', 'replace'], { providers: [{ label: 'One', issuer: 'https://one.example.com', clientId: 'c1', clientSecret: 's1' }] }) as { ok: boolean, count: number }
     expect(r1).toEqual({ ok: true, count: 1 })
-    const { getOidcProviders } = await import('../server/utils/oidc')
+    const { getOidcProviders } = await import('../server/domains/auth/oidc.service')
     const stored = await getOidcProviders()
     expect(stored).toHaveLength(1)
     expect(stored[0]!.id).toMatch(/^[0-9a-f-]{36}$/)
@@ -107,7 +108,7 @@ describe('settings.update (authenticated)', () => {
     await proc(['oidc', 'replace'], { providers: [{ label: 'One', issuer: 'https://one.example.com', clientId: 'c', clientSecret: 's' }] })
     const r = await proc(['settings', 'update'], { disablePasswordLogin: true }) as { ok: boolean }
     expect(r).toEqual({ ok: true })
-    const { getSettings } = await import('../server/utils/settings')
+    const { getSettings } = await import('../server/domains/settings/settings.service')
     expect(await getSettings()).toEqual({ disablePasswordLogin: true, companyName: 'Tandem', internalLlm: null, internalDecision: null })
     // and back
     await proc(['settings', 'update'], { disablePasswordLogin: false })
@@ -123,7 +124,8 @@ describe('settings.update (authenticated)', () => {
 describe('auth.configLive (public snapshot content)', () => {
   it('reflects providers and password policy live', async () => {
     await proc(['oidc', 'replace'], { providers: [{ label: 'SSO', issuer: 'https://sso.example.com', clientId: 'c', clientSecret: 's' }] })
-    const { router, buildServerContext } = await import('../server/utils/orpc')
+    const { appRouter: router } = await import('../server/domains/app.router')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
     let node: Record<string, unknown> = router as unknown as Record<string, unknown>
     for (const k of ['auth', 'configLive']) node = node[k] as Record<string, unknown>
     const gen = await (node['~orpc'] as { handler: (o: unknown) => Promise<AsyncGenerator<unknown>> }).handler({ input: undefined, context: buildServerContext(new Headers()), signal: new AbortController().signal })

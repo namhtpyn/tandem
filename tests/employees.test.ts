@@ -13,14 +13,14 @@ import { applyMigrations } from '../server/db/index'
 const admin = { id: 'u1', name: 'A', email: 'a@x', role: 'admin' }
 
 async function ctx(sessionUser: { id: string, name: string, email: string, role: string } | null = admin) {
-  const { buildServerContext } = await import('../server/utils/orpc')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
   const context = buildServerContext(new Headers())
   ;(context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => sessionUser ? { user: sessionUser } : null
   return context
 }
 
 async function callProc(path: string, input?: unknown): Promise<any> {
-  const { router } = await import('../server/utils/orpc')
+  const { appRouter: router } = await import('../server/domains/app.router')
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>
   for (const key of path.split('.')) {
     node = node[key] as Record<string, unknown>
@@ -64,7 +64,7 @@ describe('employees.live', () => {
     const { employeeSupervisors } = await schema()
     const { db } = await dbm()
     await db.insert(employeeSupervisors).values({ employeeId: bot.id, supervisorId: boss.id })
-    const { publishChange } = await import('../server/utils/change-bus')
+    const { publishChange } = await import('../server/domains/kernel/change-bus')
     publishChange('employees', 'update')
 
     const iter = await callProc('employees.live')
@@ -280,7 +280,7 @@ describe('employees.remove', () => {
   })
 
   it('refuses self-deletion', async () => {
-    const { router } = await import('../server/utils/orpc')
+    const { appRouter: router } = await import('../server/domains/app.router')
     const { db } = await dbm()
     const { user } = await schema()
     await db.insert(user).values({ id: 'u1', name: 'Sess', email: 'sess@tandem.local', role: 'viewer' })
@@ -380,7 +380,7 @@ describe('employees API keys', () => {
     const before = await callProc('employees.listApiKeys', { employeeId: ai.id })
     expect(before[0].expiresAt).toBeNull()
     // seed one WITH expiry via the real plugin (verifyApiKey path not needed)
-    const { getAuth } = await import('../server/utils/auth')
+    const { getAuth } = await import('../server/domains/auth/auth.service')
     const auth = await getAuth()
     const { db } = await dbm()
     const { apikey } = await schema()

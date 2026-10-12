@@ -40,7 +40,7 @@ async function autoAssign(row: TaskRow) {
       message.value = `Assigned to ${assigneeNameById.value.get(res.employeeId) ?? 'employee'} (confidence ${(res.confidence * 100).toFixed(0)}%)`
     }
     else {
-      message.value = `Not assigned: ${res.reason ?? 'jev declined'}`
+      message.value = `Not assigned: ${res.reason ?? 'decision engine declined'}`
     }
   }
   catch (e) {

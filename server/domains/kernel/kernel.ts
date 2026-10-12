@@ -3,7 +3,7 @@ import { ORPCError, os } from '@orpc/server'
 // change-bus re-exports. Modules import from here — never from each other's
 // routers; services never import routers.
 import type { RequestHeadersHandlerPluginContext } from '@orpc/server/plugins'
-import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from '../../utils/change-bus'
+import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from './change-bus'
 
 export interface ServerContext extends RequestHeadersHandlerPluginContext {
   getSession: () => Promise<{ user: { id: string, name: string, email: string, role: 'admin' | 'employee' | 'viewer' } } | null>

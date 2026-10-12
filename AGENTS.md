@@ -115,7 +115,7 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
 
 - Every resource lives in `server/domains/<name>/` with `<name>.router.ts`
   (procedure wiring ONLY) and `<name>.service.ts` (row mapping, queries,
-  business logic) once logic outgrows the handlers.
+  business logic). Pure helpers keep a `.util.ts` suffix in the same folder.
 - Routers consume services, never the reverse; services never import routers.
 - Modules never import each other's routers; shared procedure primitives come
   from `server/domains/kernel/kernel.ts` (base, protectedProcedure,
@@ -124,8 +124,9 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
 - All routers merge in `server/domains/app.router.ts`; `server/routes/rpc/[...].ts`
   imports appRouter + `domains/kernel/context.buildServerContext` to create the
   oRPC handler. `/health/*` and `/auth/**` stay REST outside modules.
-- `server/utils/orpc.ts` is a compat shim re-exporting the app router — tests
-  may keep importing it; new code imports from `server/domains/`.
+- `server/utils/` DOES NOT EXIST anymore — every service lives in its domain
+  (`auth.service.ts`, `settings.service.ts`, `decision.service.ts`, …) and
+  tests import from `server/domains/` directly.
 - Adding a resource = new module folder + registration in app.router.ts.
 
 ## Better-auth schema law

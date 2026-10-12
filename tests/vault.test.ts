@@ -6,19 +6,19 @@ import { eq } from 'drizzle-orm'
 import './api-harness'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
-import { decryptSecret, encryptSecret, lastFourHint } from '../server/utils/vault-crypto'
+import { decryptSecret, encryptSecret, lastFourHint } from '../server/domains/vault/vault-crypto.service'
 
 const admin = { id: 'u1', name: 'A', email: 'a@x', role: 'admin' }
 
 async function ctx(sessionUser: { id: string, name: string, email: string, role: string } | null = admin) {
-  const { buildServerContext } = await import('../server/utils/orpc')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
   const context = buildServerContext(new Headers())
   ;(context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => sessionUser ? { user: sessionUser } : null
   return context
 }
 
 async function callProc(path: string, input?: unknown, sessionUser: { id: string, name: string, email: string, role: string } | null = admin): Promise<any> {
-  const { router } = await import('../server/utils/orpc')
+  const { appRouter: router } = await import('../server/domains/app.router')
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>
   for (const key of path.split('.')) {
     node = node[key] as Record<string, unknown>
@@ -80,7 +80,7 @@ describe('vault-crypto (module)', () => {
   })
 
   it('rejects wrong-size TANDEM_VAULT_KEY; generateVaultKeyB64 gives 32 bytes', async () => {
-    const mod = await import('../server/utils/vault-crypto')
+    const mod = await import('../server/domains/vault/vault-crypto.service')
     process.env.TANDEM_VAULT_KEY = Buffer.alloc(16).toString('base64')
     mod.resetVaultKeyCache()
     expect(() => mod.getVaultKey()).toThrowError(/32 bytes/)
@@ -182,7 +182,7 @@ describe('vault API', () => {
     const { db } = await dbm()
     const { vaultSecrets, user } = await schema()
     // create as u2
-    const { router } = await import('../server/utils/orpc')
+    const { appRouter: router } = await import('../server/domains/app.router')
     const node = (router as any).vault.create['~orpc']
     const row = await node.handler({ input: { name: 'u2-secret', value: 'v', description: '' }, context: { ...(await ctx({ id: 'u2', name: 'B', email: 'b@x', role: 'admin' })), session: { user: { id: 'u2', name: 'B', email: 'b@x', role: 'admin' } } }, signal: new AbortController().signal })
     await db.delete(user).where(eq(user.id, 'u2'))
@@ -198,7 +198,7 @@ describe('vault API', () => {
   })
 
   it('unauthenticated calls are rejected', async () => {
-    const { router } = await import('../server/utils/orpc')
+    const { appRouter: router } = await import('../server/domains/app.router')
     const node = (router as any).vault.create['~orpc']
     const context = buildAnonContext()
     const res = await node.handler({ input: { name: 'x', value: 'y', description: '' }, context, signal: new AbortController().signal }).catch(e => e)
@@ -207,7 +207,7 @@ describe('vault API', () => {
 })
 
 async function buildAnonContext() {
-  const { buildServerContext } = await import('../server/utils/orpc')
+  const { buildServerContext } = await import('../server/domains/kernel/context')
   const context = buildServerContext(new Headers())
   ;(context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => null
   return context
