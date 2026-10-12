@@ -1,3 +1,10 @@
+# [2.12.0](https://github.com/namhtpyn/tandem/compare/v2.11.3...v2.12.0) (2026-10-12)
+
+
+### Features
+
+* **vault:** folders for secrets + employee title catalog, statuses-style managers ([443542e](https://github.com/namhtpyn/tandem/commit/443542ef57ae0efcf2f646ee6e90d22f77f6ece4))
+
 ## [2.11.3](https://github.com/namhtpyn/tandem/compare/v2.11.2...v2.11.3) (2026-10-12)
 
 
