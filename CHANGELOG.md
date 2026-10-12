@@ -1,3 +1,11 @@
+## [2.11.1](https://github.com/namhtpyn/tandem/compare/v2.11.0...v2.11.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **ci:** release job passes a placeholder DATABASE_URL for install/build ([4caddc3](https://github.com/namhtpyn/tandem/commit/4caddc35308225b5335346db484a6e5b3bb70ee4))
+* **db:** gen:auth regenerates idempotently + ci drift guard ([f681689](https://github.com/namhtpyn/tandem/commit/f681689a4ebccb241697bab5a6e4ba394dd18f9f))
+
 # [2.11.0](https://github.com/namhtpyn/tandem/compare/v2.10.0...v2.11.0) (2026-10-12)
 
 
