@@ -109,21 +109,23 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
 - Supervision is many-to-many, DAG-checked at write time, self-supervision
   impossible via DB CHECK.
 
-## Server module structure (NestJS-style)
+## Server domain structure (NestJS-style)
 
-- Every resource lives in `server/modules/<name>/` with `<name>.router.ts`
+**Never create `server/modules/` — it is a reserved nitro scan directory** (auto-loaded as nitro module defs; frozen objects there crash any fresh-install build with "Attempted to assign to readonly property"). The domain tree is `server/domains/`.
+
+- Every resource lives in `server/domains/<name>/` with `<name>.router.ts`
   (procedure wiring ONLY) and `<name>.service.ts` (row mapping, queries,
   business logic) once logic outgrows the handlers.
 - Routers consume services, never the reverse; services never import routers.
 - Modules never import each other's routers; shared procedure primitives come
-  from `server/modules/kernel/kernel.ts` (base, protectedProcedure,
+  from `server/domains/kernel/kernel.ts` (base, protectedProcedure,
   liveGenerator, publishChange). Row-mapping service helpers may be imported
   cross-module when genuinely shared (keep it rare).
-- All routers merge in `server/modules/app.router.ts`; `server/routes/rpc/[...].ts`
-  imports appRouter + `modules/kernel/context.buildServerContext` to create the
+- All routers merge in `server/domains/app.router.ts`; `server/routes/rpc/[...].ts`
+  imports appRouter + `domains/kernel/context.buildServerContext` to create the
   oRPC handler. `/health/*` and `/auth/**` stay REST outside modules.
 - `server/utils/orpc.ts` is a compat shim re-exporting the app router — tests
-  may keep importing it; new code imports from `server/modules/`.
+  may keep importing it; new code imports from `server/domains/`.
 - Adding a resource = new module folder + registration in app.router.ts.
 
 ## Better-auth schema law

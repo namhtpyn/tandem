@@ -8,15 +8,15 @@ import type { RouterClient } from '@orpc/server'
 import { createORPCClient } from '@orpc/client'
 import { RPCLink } from '@orpc/client/fetch'
 import { createTanstackQueryUtils } from '@orpc/tanstack-query'
-import type { appRouter } from '~/../server/modules/app.router'
+import type { appRouter } from '~/../server/domains/app.router'
 
 export default defineNuxtPlugin(async () => {
   let client: RouterClient<typeof appRouter>
 
   if (import.meta.server) {
     const { createRouterClient } = await import('@orpc/server')
-    const { appRouter: serverRouter } = await import('~/../server/modules/app.router')
-    const { buildServerContext } = await import('~/../server/modules/kernel/context')
+    const { appRouter: serverRouter } = await import('~/../server/domains/app.router')
+    const { buildServerContext } = await import('~/../server/domains/kernel/context')
     const event = useRequestEvent()
     client = createRouterClient(serverRouter, {
       context: buildServerContext(event?.headers),
