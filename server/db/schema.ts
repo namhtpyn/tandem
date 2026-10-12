@@ -37,10 +37,30 @@ export const settings = pgTable('tandem_settings', {
 // Secret vault: AES-256-GCM encrypted values. Secrets are write-only from the
 // API — plaintext never leaves the server after create; only server-side
 // consumers (M5 SSH runner) import vault-crypto and decrypt.
+// Vault folders: pure metadata for categorizing secrets. Deleting a folder
+// never deletes secrets (FK SET NULL -> uncategorized).
+export const vaultFolders = pgTable('tandem_vault_folders', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// Employee title catalog: offered in the employee form picker. Employees keep
+// title as free text (no FK); renaming a catalog entry rewrites matching
+// employees so the org chart stays consistent.
+export const employeeTitles = pgTable('tandem_employee_titles', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
 export const vaultSecrets = pgTable('tandem_vault_secrets', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   description: text('description').notNull().default(''),
+  folderId: text('folder_id').references(() => vaultFolders.id, { onDelete: 'set null' }),
   ciphertext: text('ciphertext').notNull(), // v1:<b64 iv>:<b64 tag>:<b64 ct>
   lastFour: text('last_four').notNull().default(''), // display hint only
   createdBy: text('created_by').notNull().references(() => user.id, { onDelete: 'cascade' }),
@@ -161,7 +181,7 @@ export const tasks = pgTable('tandem_tasks', {
 // ---------- relations ----------
 
 export const relations = defineRelations(
-  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, tasks, taskStatuses, modelProviders, projects },
+  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, vaultFolders, employeeTitles, tasks, taskStatuses, modelProviders, projects },
   (helpers) => ({
     user: {
       sessions: helpers.many.session({ from: helpers.user.id, to: helpers.session.userId }),

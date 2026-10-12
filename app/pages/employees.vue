@@ -67,6 +67,53 @@ const revokeKeyMutation = useMutation<any, any, any>(($orpc as any).employees.re
 const listKeysCall = ($orpc as any).employees.listApiKeys.call
 
 // ---- editor ----
+const titlesQuery = useQuery(($orpc.employees.titles.live as any).queryOptions({}))
+const titles = computed(() => (titlesQuery.data.value as { titles: Array<{ id: string, name: string, employees: number }> } | undefined)?.titles ?? [])
+
+// ---- titles manager modal (statuses-style) ----
+const titleManagerOpen = ref(false)
+const titleEditorOpen = ref(false)
+const titleEditingId = ref<string | null>(null)
+const titleForm = ref({ name: '' })
+const titleBusy = ref(false)
+const titleError = ref<string | null>(null)
+const titleConfirmId = ref<string | null>(null)
+const titleConfirming = computed(() => titles.value.find(t => t.id === titleConfirmId.value) ?? null)
+
+const titleSaveMutation = useMutation({ ...$orpc.employees.titles.save.mutationOptions() })
+const titleRemoveMutation = useMutation({ ...$orpc.employees.titles.remove.mutationOptions() })
+
+function openTitleEditor(id?: string) {
+  titleError.value = null
+  titleEditingId.value = id ?? null
+  titleForm.value = { name: titles.value.find(t => t.id === id)?.name ?? '' }
+  titleEditorOpen.value = true
+}
+
+async function saveTitle() {
+  titleError.value = null
+  if (!titleForm.value.name.trim()) { titleError.value = 'Name is required'; return }
+  titleBusy.value = true
+  try {
+    await titleSaveMutation.mutateAsync({ ...(titleEditingId.value ? { id: titleEditingId.value } : {}), name: titleForm.value.name.trim() })
+    titleEditorOpen.value = false
+  } catch (e: any) {
+    titleError.value = e?.message ?? 'Save failed'
+  } finally {
+    titleBusy.value = false
+  }
+}
+
+async function removeTitle(id: string) {
+  titleBusy.value = true
+  try {
+    await titleRemoveMutation.mutateAsync({ id })
+    titleConfirmId.value = null
+  } finally {
+    titleBusy.value = false
+  }
+}
+
 const editorOpen = ref(false)
 const editingId = ref<string | null>(null)
 const form = reactive({
@@ -360,6 +407,7 @@ const columns = [
             @click="view = 'graph'"
           >Graph</button>
         </div>
+        <UButton icon="i-lucide-briefcase" label="Titles" color="neutral" variant="outline" @click="titleManagerOpen = true" />
         <UButton icon="i-lucide-plus" label="New employee" @click="openEditor()" />
       </div>
     </div>
@@ -481,6 +529,7 @@ const columns = [
       <div class="flex flex-col items-center gap-2 py-8 text-center">
         <UIcon name="i-lucide-users" class="size-8 text-zinc-300" />
         <p class="text-sm text-zinc-500">No employees yet — add the first human or AI teammate.</p>
+        <UButton icon="i-lucide-briefcase" size="sm" label="Titles" color="neutral" variant="outline" @click="titleManagerOpen = true" />
         <UButton icon="i-lucide-plus" size="sm" label="New employee" @click="openEditor()" />
       </div>
     </UCard>
@@ -514,6 +563,65 @@ const columns = [
       </div>
     </UCard>
 
+    <!-- titles manager (statuses-style) -->
+    <UModal v-model:open="titleManagerOpen" title="Employee titles" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
+      <template #body>
+        <div v-if="titleError" class="mb-3 rounded-md bg-error/10 px-3 py-2 text-xs text-error">{{ titleError }}</div>
+        <div v-if="titles.length" class="divide-y divide-default">
+          <div v-for="t in titles" :key="t.id" class="flex items-center gap-2 py-2.5">
+            <UBadge color="neutral" variant="subtle" icon="i-lucide-briefcase">{{ t.name }}</UBadge>
+            <span class="text-xs text-zinc-500">{{ t.employees }} {{ t.employees === 1 ? 'employee' : 'employees' }}</span>
+            <span class="flex-1" />
+            <UPopover mode="hover">
+              <UButton icon="i-lucide-pencil" size="xs" color="neutral" variant="ghost" aria-label="Rename title" :disabled="titleBusy" @click="openTitleEditor(t.id)" />
+              <template #content><div class="px-3 py-1.5 text-xs">Rename</div></template>
+            </UPopover>
+            <UPopover mode="hover">
+              <UButton icon="i-lucide-trash-2" size="xs" color="neutral" variant="ghost" aria-label="Delete title" :disabled="titleBusy" @click="titleConfirmId = t.id" />
+              <template #content><div class="px-3 py-1.5 text-xs">Delete</div></template>
+            </UPopover>
+          </div>
+        </div>
+        <p v-else class="py-6 text-center text-sm text-zinc-500">No titles yet — create one to standardize roles.</p>
+      </template>
+      <template #footer>
+        <div class="flex w-full items-center justify-between gap-2">
+          <UButton icon="i-lucide-plus" size="sm" label="New title" @click="openTitleEditor()" />
+        </div>
+      </template>
+    </UModal>
+
+    <!-- title editor -->
+    <UModal v-model:open="titleEditorOpen" :title="titleEditingId ? 'Rename title' : 'New title'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
+      <template #body>
+        <UFormField label="Name" name="name" required>
+          <UInput v-model="titleForm.name" icon="i-lucide-briefcase" placeholder="e.g. Senior Engineer" class="w-full" :disabled="titleBusy" />
+        </UFormField>
+        <p class="mt-2 text-xs text-zinc-500">Renaming updates every employee who holds this title.</p>
+      </template>
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton variant="ghost" color="neutral" @click="titleEditorOpen = false">Cancel</UButton>
+          <UButton icon="i-lucide-check" :loading="titleBusy" @click="saveTitle">Save</UButton>
+        </div>
+      </template>
+    </UModal>
+
+    <!-- title delete confirm: employees keep their text -->
+    <UModal :open="titleConfirmId !== null" @update:open="(v: boolean) => { if (!v) titleConfirmId = null }" title="Delete title">
+      <template #body>
+        <p class="text-sm">
+          Delete <strong>{{ titleConfirming?.name }}</strong> from the catalog? Employees keep their title text — it just stops being offered in the picker.
+        </p>
+      </template>
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton variant="ghost" color="neutral" @click="titleConfirmId = null">Cancel</UButton>
+          <UButton color="error" icon="i-lucide-trash-2" :loading="titleBusy" @click="removeTitle(titleConfirming!.id)">Delete</UButton>
+        </div>
+      </template>
+    </UModal>
+
     <UModal v-model:open="editorOpen" :title="isEdit ? 'Edit employee' : 'New employee'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
       <template #body>
         <div class="max-h-[55dvh] overflow-y-auto px-4 sm:px-6">
@@ -544,6 +652,14 @@ const columns = [
           <UFormField label="Title" name="title">
             <template #hint><FormHint text="Place in the company, e.g. Senior Engineer" /></template>
             <UInput v-model="form.title" icon="i-lucide-briefcase" placeholder="Job title" class="w-full" required />
+            <div v-if="titles.length" class="mt-1.5 flex flex-wrap gap-1">
+              <UButton
+                v-for="t in titles.filter(x => x.name !== form.title).slice(0, 6)" :key="t.id"
+                size="xs" color="neutral" variant="soft" icon="i-lucide-briefcase"
+                :label="t.name" :disabled="busy"
+                @click="form.title = t.name"
+              />
+            </div>
           </UFormField>
           <UFormField label="Supervisors" name="supervisorIds">
             <template #hint><FormHint text="Many-to-many — an employee can report to several" /></template>

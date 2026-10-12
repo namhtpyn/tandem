@@ -1,8 +1,8 @@
 // vault service: row mapping + list helpers
-import { desc } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { db } from '../../db'
-import { environments as environmentsTable, vaultSecrets as vaultSecretsTable } from '../../db/schema'
-import type { EnvironmentRow, VaultSecretRow } from '../../../shared/types'
+import { vaultSecrets as vaultSecretsTable, vaultFolders as vaultFoldersTable } from '../../db/schema'
+import type { VaultSecretRow } from '../../../shared/types'
 
 export function toVaultRow(r: typeof vaultSecretsTable.$inferSelect): VaultSecretRow {
   return {
@@ -13,11 +13,15 @@ export function toVaultRow(r: typeof vaultSecretsTable.$inferSelect): VaultSecre
     createdBy: r.createdBy,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
+    folder: null,
   }
 }
 
 export async function listVaultSecrets(): Promise<VaultSecretRow[]> {
-  const rows = await db.select().from(vaultSecretsTable).orderBy(desc(vaultSecretsTable.createdAt))
-  return rows.map(toVaultRow)
+  const rows = await db.select({ s: vaultSecretsTable, folderName: vaultFoldersTable.name })
+    .from(vaultSecretsTable)
+    .leftJoin(vaultFoldersTable, eq(vaultSecretsTable.folderId, vaultFoldersTable.id))
+    .orderBy(desc(vaultSecretsTable.createdAt))
+  return rows.map(({ s, folderName }) => ({ ...toVaultRow(s), folder: folderName }))
 }
 

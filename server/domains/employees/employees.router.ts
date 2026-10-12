@@ -1,11 +1,11 @@
 import { os } from '@orpc/server'
 // employees router — business logic lives in services/utils; this file only wires procedures
-import { desc, eq } from 'drizzle-orm'
+import { asc, count, desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '../../db'
 import { endpointKind, PROVIDER_KIND } from '#shared/api-styles'
 import {
-  aiEmployees as aiEmployeesTable, apikey as apikeyTable, employeeSupervisors as supervisorsTable, environments as environmentsTable, modelProviders as modelProvidersTable, user as userTable, vaultSecrets as vaultSecretsTable,
+  aiEmployees as aiEmployeesTable, apikey as apikeyTable, employeeSupervisors as supervisorsTable, employeeTitles as employeeTitlesTable, environments as environmentsTable, modelProviders as modelProvidersTable, user as userTable, vaultSecrets as vaultSecretsTable,
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 import type { ApiKeyRow, EmployeeRow } from '../../../shared/types'
@@ -242,6 +242,48 @@ export const employeesRouter = os.router({
       await publishChange('employees', 'update')
       return { ok: true }
     }),
+
+  titles: {
+    live: protectedProcedure
+      .handler(async () => {
+        const rows = await db.select().from(employeeTitlesTable).orderBy(asc(employeeTitlesTable.name))
+        const counts = await db.select({ title: userTable.title, count: count() }).from(userTable).groupBy(userTable.title)
+        const byTitle = new Map(counts.map(c => [c.title, Number(c.count)]))
+        return { titles: rows.map(t => ({ id: t.id, name: t.name, employees: byTitle.get(t.name) ?? 0 })) }
+      }),
+
+    save: protectedProcedure
+      .input(z.strictObject({
+        id: z.string().min(1).optional(),
+        name: z.string().min(1).max(80),
+      }))
+      .handler(async ({ input }) => {
+        if (input.id === undefined) {
+          const dupe = await db.select({ id: employeeTitlesTable.id }).from(employeeTitlesTable).where(eq(employeeTitlesTable.name, input.name))
+          if (dupe.length > 0) throw new ORPCError('BAD_REQUEST', { message: 'a title with that name already exists' })
+          const inserted = await db.insert(employeeTitlesTable).values({ id: crypto.randomUUID(), name: input.name }).returning()
+          await publishChange('employees', 'create')
+          return { id: inserted[0]!.id }
+        }
+        const existing = (await db.select({ name: employeeTitlesTable.name }).from(employeeTitlesTable).where(eq(employeeTitlesTable.id, input.id)))[0]
+        if (!existing) throw new ORPCError('NOT_FOUND', { message: 'title not found' })
+        // rename cascades to employees holding the old title (free-text column, no FK)
+        await db.update(userTable).set({ title: input.name, updatedAt: new Date() }).where(eq(userTable.title, existing.name))
+        await db.update(employeeTitlesTable).set({ name: input.name, updatedAt: new Date() }).where(eq(employeeTitlesTable.id, input.id))
+        await publishChange('employees', 'update')
+        return { id: input.id }
+      }),
+
+    /** removing a catalog entry leaves employees' free-text titles untouched */
+    remove: protectedProcedure
+      .input(z.strictObject({ id: z.string().min(1) }))
+      .handler(async ({ input }) => {
+        const deleted = await db.delete(employeeTitlesTable).where(eq(employeeTitlesTable.id, input.id)).returning({ id: employeeTitlesTable.id })
+        if (deleted.length === 0) throw new ORPCError('NOT_FOUND', { message: 'title not found' })
+        await publishChange('employees', 'remove')
+        return { ok: true }
+      }),
+  },
 
   remove: protectedProcedure
     .input(z.strictObject({ id: z.string().min(1) }))

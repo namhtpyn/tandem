@@ -93,6 +93,8 @@ export interface VaultSecretRow {
   createdBy: string
   createdAt: string
   updatedAt: string
+  /** folder name joined server-side (null = uncategorized) */
+  folder: string | null
 }
 
 export interface VaultAuditRow {

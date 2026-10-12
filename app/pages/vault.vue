@@ -9,6 +9,59 @@ const { $orpc } = useNuxtApp()
 const queryClient = useQueryClient()
 
 const liveQuery = useQuery<VaultSecretRow[]>(($orpc.vault.live as any).liveOptions())
+const foldersQuery = useQuery(($orpc.vault.folders.live as any).queryOptions({}))
+const folders = computed(() => (foldersQuery.data.value as { folders: Array<{ id: string, name: string, secrets: number }> } | undefined)?.folders ?? [])
+
+// ---- folder filter chip row ----
+const activeFolder = ref<string | null>(null) // null = All
+const filteredRows = computed(() => activeFolder.value === null
+  ? rows.value
+  : rows.value.filter(r => r.folder === folders.value.find(f => f.id === activeFolder.value)?.name))
+
+// ---- folders manager modal (statuses-style) ----
+const folderManagerOpen = ref(false)
+const folderEditorOpen = ref(false)
+const folderEditingId = ref<string | null>(null)
+const folderForm = ref({ name: '' })
+const folderBusy = ref(false)
+const folderError = ref<string | null>(null)
+const folderConfirmId = ref<string | null>(null)
+const folderConfirming = computed(() => folders.value.find(f => f.id === folderConfirmId.value) ?? null)
+
+const folderSaveMutation = useMutation({ ...$orpc.vault.folders.save.mutationOptions() })
+const folderRemoveMutation = useMutation({ ...$orpc.vault.folders.remove.mutationOptions() })
+
+function openFolderEditor(id?: string) {
+  folderError.value = null
+  folderEditingId.value = id ?? null
+  folderForm.value = { name: folders.value.find(f => f.id === id)?.name ?? '' }
+  folderEditorOpen.value = true
+}
+
+async function saveFolder() {
+  folderError.value = null
+  if (!folderForm.value.name.trim()) { folderError.value = 'Name is required'; return }
+  folderBusy.value = true
+  try {
+    await folderSaveMutation.mutateAsync({ ...(folderEditingId.value ? { id: folderEditingId.value } : {}), name: folderForm.value.name.trim() })
+    folderEditorOpen.value = false
+  } catch (e: any) {
+    folderError.value = e?.message ?? 'Save failed'
+  } finally {
+    folderBusy.value = false
+  }
+}
+
+async function removeFolder(id: string) {
+  folderBusy.value = true
+  try {
+    await folderRemoveMutation.mutateAsync({ id })
+    folderConfirmId.value = null
+    if (activeFolder.value === id) activeFolder.value = null
+  } finally {
+    folderBusy.value = false
+  }
+}
 const auditQuery = useQuery<VaultAuditRow[]>(($orpc.vault.audit as any).queryOptions({}))
 const rows = computed(() => liveQuery.data.value ?? [])
 const audit = computed(() => auditQuery.data.value ?? [])
@@ -17,7 +70,7 @@ const busy = ref(false)
 const editorOpen = ref(false)
 const isEdit = ref(false)
 const editingId = ref<string | null>(null)
-const form = ref({ name: '', description: '', value: '' })
+const form = ref({ name: '', description: '', value: '', folderId: null as string | null })
 const formError = ref<string | null>(null)
 const showValue = ref(false)
 
@@ -35,11 +88,11 @@ function openEditor(row?: VaultSecretRow) {
   if (row) {
     isEdit.value = true
     editingId.value = row.id
-form.value = { name: row.name, description: row.description, value: '' }
+form.value = { name: row.name, description: row.description, value: '', folderId: folders.value.find(f => f.name === row.folder)?.id ?? null }
   } else {
     isEdit.value = false
     editingId.value = null
-form.value = { name: '', description: '', value: '' }
+form.value = { name: '', description: '', value: '', folderId: null }
   }
   editorOpen.value = true
 }
@@ -51,9 +104,9 @@ async function save() {
   busy.value = true
   try {
     if (isEdit.value && editingId.value) {
-      await updateMutation.mutateAsync({ id: editingId.value, name: form.value.name.trim(), description: form.value.description.trim(), value: form.value.value })
+      await updateMutation.mutateAsync({ id: editingId.value, name: form.value.name.trim(), description: form.value.description.trim(), value: form.value.value, folderId: form.value.folderId })
     } else {
-      await createMutation.mutateAsync({ name: form.value.name.trim(), description: form.value.description.trim(), value: form.value.value })
+      await createMutation.mutateAsync({ name: form.value.name.trim(), description: form.value.description.trim(), value: form.value.value, folderId: form.value.folderId })
     }
     editorOpen.value = false
   } catch (e: any) {
@@ -99,13 +152,27 @@ function kindIcon(): string {
             <div class="px-3 py-1.5 text-xs">Audit log</div>
           </template>
         </UPopover>
+        <UButton icon="i-lucide-folder" label="Folders" color="neutral" variant="outline" @click="folderManagerOpen = true" />
         <UButton icon="i-lucide-plus" label="New secret" @click="openEditor()" />
       </div>
     </div>
 
       <!-- Mobile: stacked cards -->
-      <div v-if="rows.length" class="space-y-3 md:hidden">
-        <UCard v-for="row in rows" :key="row.id" :ui="{ root: 'shadow-sm' }">
+      <!-- folder filter chips: All + one per folder; manager defines the taxonomy -->
+      <div v-if="folders.length" class="flex flex-wrap items-center gap-1.5">
+        <UButton size="xs" :color="activeFolder === null ? 'primary' : 'neutral'" :variant="activeFolder === null ? 'solid' : 'soft'" label="All" @click="activeFolder = null" />
+        <UButton
+          v-for="f in folders" :key="f.id" size="xs"
+          :color="activeFolder === f.id ? 'primary' : 'neutral'"
+          :variant="activeFolder === f.id ? 'solid' : 'soft'"
+          :icon="activeFolder === f.id ? 'i-lucide-folder-open' : 'i-lucide-folder'"
+          :label="`${f.name} (${f.secrets})`"
+          @click="activeFolder = activeFolder === f.id ? null : f.id"
+        />
+      </div>
+
+      <div v-if="filteredRows.length" class="space-y-3 md:hidden">
+        <UCard v-for="row in filteredRows" :key="row.id" :ui="{ root: 'shadow-sm' }">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
               <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
@@ -132,7 +199,7 @@ function kindIcon(): string {
 
       <!-- Desktop: table -->
       <UCard v-if="rows.length" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
-        <UTable :data="rows" :columns="[
+        <UTable :data="filteredRows" :columns="[
           { accessorKey: 'name', header: 'Name' },
           { accessorKey: 'description', header: 'Description' },
           { accessorKey: 'lastFour', header: 'Value' },
@@ -167,7 +234,7 @@ function kindIcon(): string {
         </UTable>
       </UCard>
 
-      <UCard v-if="!rows.length" :ui="{ root: 'shadow-sm' }">
+      <UCard v-if="!filteredRows.length" :ui="{ root: 'shadow-sm' }">
         <template #body>
           <div class="flex flex-col items-center gap-2 py-6 text-center">
             <UIcon name="i-lucide-shield" class="size-8 text-zinc-300 dark:text-zinc-600" />
@@ -189,6 +256,9 @@ function kindIcon(): string {
           <UFormField label="Description">
             <template #hint><FormHint text="optional note" /></template>
             <UTextarea v-model="form.description" placeholder="Description (optional)" :rows="2" class="w-full" :disabled="busy" />
+          <UFormField label="Folder" name="folder">
+            <USelectMenu v-model="form.folderId" :items="[{ label: 'No folder', value: null }, ...folders.map(f => ({ label: f.name, value: f.id }))]" value-key="value" icon="i-lucide-folder" placeholder="No folder" class="w-full" :disabled="busy" />
+          </UFormField>
           </UFormField>
           <UFormField label="Value"
             :error="formError && formError !== 'Name is required' ? formError : undefined">
@@ -249,6 +319,64 @@ function kindIcon(): string {
         <div class="flex w-full justify-end gap-2">
           <UButton variant="ghost" color="neutral" @click="confirming = null">Cancel</UButton>
           <UButton color="error" icon="i-lucide-trash-2" @click="reallyRemove(confirmingRow!)">Delete</UButton>
+        </div>
+      </template>
+    </UModal>
+
+    <!-- folders manager (statuses-style) -->
+    <UModal v-model:open="folderManagerOpen" title="Vault folders" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
+      <template #body>
+        <div v-if="folderError" class="mb-3 rounded-md bg-error/10 px-3 py-2 text-xs text-error">{{ folderError }}</div>
+        <div v-if="folders.length" class="divide-y divide-default">
+          <div v-for="f in folders" :key="f.id" class="flex items-center gap-2 py-2.5">
+            <UBadge color="neutral" variant="subtle" icon="i-lucide-folder">{{ f.name }}</UBadge>
+            <span class="text-xs text-zinc-500">{{ f.secrets }} {{ f.secrets === 1 ? 'secret' : 'secrets' }}</span>
+            <span class="flex-1" />
+            <UPopover mode="hover">
+              <UButton icon="i-lucide-pencil" size="xs" color="neutral" variant="ghost" aria-label="Rename folder" :disabled="folderBusy" @click="openFolderEditor(f.id)" />
+              <template #content><div class="px-3 py-1.5 text-xs">Rename</div></template>
+            </UPopover>
+            <UPopover mode="hover">
+              <UButton icon="i-lucide-trash-2" size="xs" color="neutral" variant="ghost" aria-label="Delete folder" :disabled="folderBusy" @click="folderConfirmId = f.id" />
+              <template #content><div class="px-3 py-1.5 text-xs">Delete</div></template>
+            </UPopover>
+          </div>
+        </div>
+        <p v-else class="py-6 text-center text-sm text-zinc-500">No folders yet — create one to categorize secrets.</p>
+      </template>
+      <template #footer>
+        <div class="flex w-full items-center justify-between gap-2">
+          <UButton icon="i-lucide-plus" size="sm" label="New folder" @click="openFolderEditor()" />
+        </div>
+      </template>
+    </UModal>
+
+    <!-- folder editor (stacked on the manager) -->
+    <UModal v-model:open="folderEditorOpen" :title="folderEditingId ? 'Rename folder' : 'New folder'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
+      <template #body>
+        <UFormField label="Name" name="name" required>
+          <UInput v-model="folderForm.name" icon="i-lucide-folder" placeholder="e.g. Production keys" class="w-full" :disabled="folderBusy" />
+        </UFormField>
+      </template>
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton variant="ghost" color="neutral" @click="folderEditorOpen = false">Cancel</UButton>
+          <UButton icon="i-lucide-check" :loading="folderBusy" @click="saveFolder">Save</UButton>
+        </div>
+      </template>
+    </UModal>
+
+    <!-- folder delete confirm: secrets survive -->
+    <UModal :open="folderConfirmId !== null" @update:open="(v: boolean) => { if (!v) folderConfirmId = null }" title="Delete folder">
+      <template #body>
+        <p class="text-sm">
+          Delete <strong>{{ folderConfirming?.name }}</strong>? Secrets in it stay — they just become uncategorized.
+        </p>
+      </template>
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton variant="ghost" color="neutral" @click="folderConfirmId = null">Cancel</UButton>
+          <UButton color="error" icon="i-lucide-trash-2" :loading="folderBusy" @click="removeFolder(folderConfirming!.id)">Delete</UButton>
         </div>
       </template>
     </UModal>
