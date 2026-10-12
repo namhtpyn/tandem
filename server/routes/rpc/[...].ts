@@ -3,7 +3,8 @@
 // interceptor for server-side error visibility. Live queries stream over SSE.
 import { onError } from '@orpc/server'
 import { RPCHandler } from '@orpc/server/fetch'
-import { router, buildServerContext } from '../../utils/orpc'
+import { appRouter as router } from '../../modules/app.router'
+import { buildServerContext } from '../../modules/kernel/context'
 
 const handler = new RPCHandler(router, {
   interceptors: [
