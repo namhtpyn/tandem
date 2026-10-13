@@ -1,3 +1,10 @@
+# [2.16.0](https://github.com/namhtpyn/tandem/compare/v2.15.0...v2.16.0) (2026-10-13)
+
+
+### Features
+
+* **tasks:** agent dispatcher + streamed run logs with workflow drawer visibility ([af1d474](https://github.com/namhtpyn/tandem/commit/af1d474bf431d5490332c905f2134a64f34a5913))
+
 # [2.15.0](https://github.com/namhtpyn/tandem/compare/v2.14.1...v2.15.0) (2026-10-13)
 
 
