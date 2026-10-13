@@ -28,6 +28,7 @@ export const employeesRouter = os.router({
         userId: r.id,
         name: r.name,
         email: r.email,
+        image: r.image,
         // derived: extension row present => ai, absent => human
         kind: ai ? 'ai' : 'human',
         title: r.title,
@@ -52,6 +53,7 @@ export const employeesRouter = os.router({
       name: z.string().min(1).max(100),
       email: z.string().email(),
       kind: z.enum(['human', 'ai']),
+      image: z.string().max(300_000).nullable().optional(),
       title: z.string().min(1).max(100),
       supervisorIds: z.array(z.string().min(1)).max(20).default([]),
       environmentId: z.string().min(1).optional(),
@@ -99,7 +101,7 @@ export const employeesRouter = os.router({
       // user IS the employee: one row carries identity + employment.
       // AI-ness = extension row, never a column.
       const userId = crypto.randomUUID()
-      await db.insert(userTable).values({ id: userId, name: input.name, email: input.email, role: 'employee', title: input.title })
+      await db.insert(userTable).values({ id: userId, name: input.name, email: input.email, role: 'employee', title: input.title, ...(input.image !== undefined && input.image !== null ? { image: input.image } : {}) })
       if (supervisorIds.length > 0) {
         await db.insert(supervisorsTable).values(supervisorIds.map(s => ({ employeeId: userId, supervisorId: s })))
       }
@@ -149,6 +151,8 @@ export const employeesRouter = os.router({
       providerId: z.string().min(1).nullable().optional(),
       model: z.string().min(1).max(200).nullable().optional(),
       apiKeySecretId: z.string().min(1).nullable().optional(),
+      /** avatar: data URL (resized client-side); null clears */
+      image: z.string().max(300_000).nullable().optional(),
     }))
     .handler(async ({ input }) => {
       const rows = await db.select().from(userTable).where(eq(userTable.id, input.id))
@@ -234,7 +238,7 @@ export const employeesRouter = os.router({
           throw new ORPCError('CONFLICT', { message: `user ${input.email} already exists` })
         }
       }
-      await db.update(userTable).set({ name: input.name, title: input.title, ...(input.email !== undefined ? { email: input.email } : {}), updatedAt: new Date() }).where(eq(userTable.id, input.id))
+      await db.update(userTable).set({ name: input.name, title: input.title, ...(input.email !== undefined ? { email: input.email } : {}), ...(input.image !== undefined ? { image: input.image } : {}), updatedAt: new Date() }).where(eq(userTable.id, input.id))
       await db.delete(supervisorsTable).where(eq(supervisorsTable.employeeId, input.id))
       if (input.supervisorIds.length > 0) {
         await db.insert(supervisorsTable).values(input.supervisorIds.map(s => ({ employeeId: input.id, supervisorId: s })))

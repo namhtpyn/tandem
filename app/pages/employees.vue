@@ -35,31 +35,80 @@ const childrenOf = computed(() => {
 /** roots = employees with no supervisor (or supervisor missing) */
 const roots = computed(() => rows.value.filter(r => r.supervisorIds.length === 0 || r.supervisorIds.every(id => !byId.value.has(id))))
 /** ONE box per employee; ONE line per supervision edge.
- * Placement: DFS from roots along the FIRST supervisor edge (solid elbow
- * connectors). Every additional supervisor edge renders as a dashed
- * cross-link from that supervisor's box to the employee's box — e.g. a CEO
- * reporting to two board members is one box with two lines. */
-const graphNodes = computed(() => {
-  const out: Array<{ row: EmployeeRow, depth: number, parentIndex: number }> = []
+ * TOP-DOWN layered layout (classic org chart): depth = row, subtree width =
+ * leaf count; children centered under their parent, elbow connectors from the
+ * parent's bottom-center to each child's top-center. Extra supervisor edges
+ * (multi-parent) curve from the other supervisor's bottom to the child's top. */
+interface GraphNode { row: EmployeeRow, depth: number, parentIndex: number, x: number, y: number }
+const NODE_W = 168
+const NODE_H = 84
+const COL_GAP = 16
+const ROW_GAP = 64
+
+const graphLayout = computed(() => {
+  const nodes: GraphNode[] = []
   const indexById = new Map<string, number>()
-  const walk = (row: EmployeeRow, depth: number, parentIndex: number, path: Set<string>) => {
-    if (indexById.has(row.id) || path.has(row.id)) return
-    indexById.set(row.id, out.length)
-    const i = out.length
-    out.push({ row, depth, parentIndex })
-    const nextPath = new Set(path)
-    nextPath.add(row.id)
-    for (const child of childrenOf.value.get(row.id) ?? []) walk(child, depth + 1, i, nextPath)
+  // children arrays in stable order
+  const kids = new Map<string, EmployeeRow[]>()
+  for (const r of rows.value) {
+    for (const sup of r.supervisorIds) {
+      const arr = kids.get(sup) ?? []
+      if (!arr.some(x => x.id === r.id)) arr.push(r)
+      kids.set(sup, arr)
+    }
   }
-  for (const r of roots.value) walk(r, 0, -1, new Set())
-  // cycle members (all supervisors downstream) still render as roots
-  for (const r of rows.value) walk(r, 0, -1, new Set([r.id]))
-  return out
+  const primaryOf = (r: EmployeeRow): string | null => {
+    for (const sup of r.supervisorIds) if (byId.value.has(sup)) return sup
+    return null
+  }
+  // width = number of leaves in subtree (min 1)
+  const widthCache = new Map<string, number>()
+  const subtreeWidth = (r: EmployeeRow, path: Set<string>): number => {
+    if (path.has(r.id)) return 1
+    if (widthCache.has(r.id)) return widthCache.get(r.id)!
+    const next = new Set(path).add(r.id)
+    const ch = (kids.get(r.id) ?? []).filter(c => primaryOf(c) === r.id)
+    let w = 1
+    for (const c of ch) w += subtreeWidth(c, next) - 1 + 1, w += 0
+    // each child contributes max(1, its own width); accumulate:
+    w = ch.length ? ch.reduce((acc, c) => acc + Math.max(1, subtreeWidth(c, next)), 0) : 1
+    widthCache.set(r.id, w)
+    return w
+  }
+  const place = (r: EmployeeRow, depth: number, parentIndex: number, leftX: number, path: Set<string>) => {
+    if (indexById.has(r.id) || path.has(r.id)) return
+    indexById.set(r.id, nodes.length)
+    const i = nodes.length
+    const w = Math.max(1, subtreeWidth(r, new Set()))
+    const x = leftX + (w * (NODE_W + COL_GAP) - COL_GAP) / 2 - NODE_W / 2
+    nodes.push({ row: r, depth, parentIndex, x, y: depth * (NODE_H + ROW_GAP) })
+    const next = new Set(path).add(r.id)
+    const ch = (kids.get(r.id) ?? []).filter(c => primaryOf(c) === r.id && !indexById.has(c.id))
+    let cursor = leftX
+    for (const c of ch) {
+      place(c, depth + 1, i, cursor, next)
+      cursor += Math.max(1, subtreeWidth(c, next)) * (NODE_W + COL_GAP)
+    }
+  }
+  let cursor = 0
+  const rootList = [...roots.value]
+  for (const r of rows.value) if (!indexById.has(r.id) && !rootList.some(x => x.id === r.id) && ![...indexById.keys()].includes(r.id) && !(r.supervisorIds.some(id => indexById.has(id)))) {
+    if (!indexById.has(r.id)) { rootList.push(r) }
+  }
+  for (const r of rootList) {
+    if (indexById.has(r.id)) continue
+    place(r, 0, -1, cursor, new Set())
+    cursor += Math.max(1, subtreeWidth(r, new Set())) * (NODE_W + COL_GAP)
+  }
+  return nodes
 })
 
-/** cross-links for every supervisor that is NOT the placement parent */
+/** indices of nodes with a placement parent (primary tree edges) */
+const primaryEdgeIndices = computed(() => graphLayout.value.map((n, i) => n.parentIndex >= 0 ? i : -1).filter(i => i >= 0))
+
+/** extra supervisor edges beyond the placement parent */
 const secondaryEdges = computed(() => {
-  const nodes = graphNodes.value
+  const nodes = graphLayout.value
   const indexById = new Map(nodes.map((n, i) => [n.row.id, i]))
   const edges: Array<{ fromIndex: number, toIndex: number }> = []
   for (let i = 0; i < nodes.length; i++) {
@@ -77,26 +126,28 @@ const secondaryEdges = computed(() => {
   return edges
 })
 
-/** cross-link routed along the left gutter so it never crosses cards */
-function secondaryPath(fromIndex: number, toIndex: number): string {
-  const nodes = graphNodes.value
+const graphWidth = computed(() => Math.max(360, ...graphLayout.value.map(n => n.x + NODE_W)) + 8)
+const graphHeight = computed(() => (Math.max(0, ...graphLayout.value.map(n => n.depth)) + 1) * (NODE_H + ROW_GAP))
+function primaryPath(i: number): string {
+  const nodes = graphLayout.value
+  const n = nodes[i]!
+  const p = nodes[n.parentIndex]!
+  const px = p.x + NODE_W / 2
+  const py = p.y + NODE_H
+  const cx = n.x + NODE_W / 2
+  const cy = n.y
+  return `M ${px} ${py} V ${(py + cy) / 2} H ${cx} V ${cy}`
+}
+function secondaryTopPath(fromIndex: number, toIndex: number): string {
+  const nodes = graphLayout.value
   const p = nodes[fromIndex]!
   const c = nodes[toIndex]!
-  const gutter = 6
-  const fromY = nodeY(fromIndex) + NODE_H / 2
-  const toY = nodeY(toIndex) + NODE_H / 2
-  // out of the supervisor's left edge, into the gutter, down/up, then into the target's left edge
-  const pLeft = p.depth * 28 - 4
-  const cLeft = c.depth * 28 - 4
-  return `M ${pLeft} ${fromY} H ${gutter} V ${toY} H ${cLeft}`
+  const px = p.x + NODE_W / 2
+  const py = p.y + NODE_H
+  const cx = c.x + NODE_W / 2
+  const cy = c.y
+  return `M ${px} ${py} C ${px} ${py + ROW_GAP * 0.6}, ${cx} ${cy - ROW_GAP * 0.6}, ${cx} ${cy}`
 }
-function nodeY(i: number) {
-  return i * (NODE_H + ROW_GAP) + ROW_GAP / 2 - 12
-}
-const NODE_H = 56
-const ROW_GAP = 24
-const graphHeight = computed(() => graphNodes.value.length * (NODE_H + ROW_GAP) + ROW_GAP)
-const maxDepthX = computed(() => Math.max(0, ...graphNodes.value.map(n => n.depth)) * 28)
 const envName = (id: string | null) => environments.value.find(e => e.id === id)?.name ?? null
 
 const createMutation = useMutation<any, any, any>(($orpc as any).employees.create.mutationOptions())
@@ -160,6 +211,7 @@ const form = reactive({
   name: '',
   email: '',
   kind: 'human' as 'human' | 'ai',
+  image: null as string | null,
   title: '',
   supervisorIds: [] as string[],
   environmentId: '' as string,
@@ -229,11 +281,34 @@ const environmentItems = computed(() =>
   environments.value.map(e => ({ label: e.name, value: e.id })),
 )
 
+/** read + downscale an avatar to a 256px JPEG data URL */
+async function onAvatarPicked(ev: Event) {
+  const file = (ev.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const fr = new FileReader()
+    fr.onload = () => resolve(String(fr.result))
+    fr.onerror = () => reject(new Error('read failed'))
+    fr.readAsDataURL(file)
+  })
+  const img = new Image()
+  await new Promise((resolve, reject) => { img.onload = resolve, img.onerror = reject, img.src = dataUrl })
+  const size = 256
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  const side = Math.min(img.width, img.height)
+  ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size)
+  form.image = canvas.toDataURL('image/jpeg', 0.85)
+}
+
 function openEditor(row?: EmployeeRow) {
   editingId.value = row?.id ?? null
   form.name = row?.name ?? ''
   form.email = row?.email ?? ''
   form.kind = row?.kind ?? 'human'
+  form.image = row?.image ?? null
   form.title = row?.title ?? ''
   form.supervisorIds = row?.supervisorIds ? [...row.supervisorIds] : []
   form.environmentId = row?.environmentId ?? ''
@@ -261,6 +336,7 @@ async function save() {
         id: editingId.value,
         name: form.name,
         email: form.email,
+        image: form.image,
         title: form.title,
         supervisorIds: form.supervisorIds,
         ...(showAiFields.value && form.environmentId ? { environmentId: form.environmentId } : {}),
@@ -276,6 +352,7 @@ async function save() {
       const res = await createMutation.mutateAsync({
         name: form.name,
         email: form.email,
+        ...(form.image ? { image: form.image } : {}),
         kind: form.kind,
         title: form.title,
         supervisorIds: form.supervisorIds,
@@ -585,36 +662,39 @@ const columns = [
       </div>
       <div v-else class="overflow-x-auto p-4">
         <svg
-          :viewBox="`0 0 ${Math.max(360, maxDepthX + 290)} ${graphHeight}`"
-          :style="{ width: '100%', height: `${graphHeight}px` }"
-          preserveAspectRatio="xMinYMin meet"
+          :width="graphWidth" :height="graphHeight"
           role="img" aria-label="Supervision hierarchy"
         >
-          <!-- cross-links: additional supervisor edges (one box per person) -->
+          <!-- primary tree: elbow from parent bottom-center to child top-center -->
           <path
-            v-for="(e, k) in secondaryEdges" :key="`sec-${k}`"
-            :d="secondaryPath(e.fromIndex, e.toIndex)"
+            v-for="pi in primaryEdgeIndices" :key="`p-${graphLayout[pi]!.row.id}`"
+            :d="primaryPath(pi)"
             fill="none"
             class="stroke-zinc-400 dark:stroke-zinc-600"
             stroke-width="2"
           />
-          <template v-for="(n, i) in graphNodes" :key="n.row.id">
-            <path
-              v-if="n.parentIndex >= 0"
-              :d="`M ${(n.depth - 1) * 28 + 24} ${nodeY(n.parentIndex) + NODE_H} V ${nodeY(i) + NODE_H / 2} H ${n.depth * 28 - 4}`"
-              fill="none"
-              class="stroke-zinc-400 dark:stroke-zinc-600"
-              stroke-width="2"
-            />
-            <g :transform="`translate(${n.depth * 28}, ${nodeY(i)})`">
-              <rect width="248" :height="NODE_H" rx="10" class="fill-white stroke-zinc-200 dark:fill-zinc-900 dark:stroke-zinc-700" stroke-width="1.5" />
-              <circle cx="24" :cy="NODE_H / 2" r="14" :class="n.row.kind === 'ai' ? 'fill-primary-100 stroke-primary-400 dark:fill-primary-500/20' : 'fill-zinc-100 stroke-zinc-300 dark:fill-zinc-800'" stroke-width="1.5" />
-              <text x="24" :y="NODE_H / 2 + 4" text-anchor="middle" class="fill-zinc-600 text-[11px] font-semibold dark:fill-zinc-300">{{ n.row.kind === 'ai' ? 'AI' : n.row.name.slice(0, 1) }}</text>
-              <text x="48" y="24" class="fill-zinc-900 text-[13px] font-medium dark:fill-white">{{ n.row.name.length > 24 ? n.row.name.slice(0, 24) + '…' : n.row.name }}</text>
-              <text x="48" :y="NODE_H - 14" class="fill-zinc-400 text-[11px]">{{ (n.row.title || n.row.email).slice(0, 28) }}</text>
-              <circle v-if="childrenOf.get(n.row.id)?.length" cx="240" :cy="NODE_H / 2" r="4" class="fill-zinc-300" />
-            </g>
-          </template>
+          <!-- extra supervisor edges: solid curve parent-bottom -> child-top -->
+          <path
+            v-for="(e, k) in secondaryEdges" :key="`sec-${k}`"
+            :d="secondaryTopPath(e.fromIndex, e.toIndex)"
+            fill="none"
+            class="stroke-zinc-400 dark:stroke-zinc-600"
+            stroke-width="2"
+          />
+          <g v-for="(n, i) in graphLayout" :key="n.row.id" :transform="`translate(${n.x}, ${n.y})`">
+            <rect :width="NODE_W" :height="NODE_H" rx="10" class="fill-white stroke-zinc-200 dark:fill-zinc-900 dark:stroke-zinc-700" stroke-width="1.5" />
+            <defs>
+              <clipPath :id="`av-${n.row.id}`">
+                <circle cx="28" cy="26" r="17" />
+              </clipPath>
+            </defs>
+            <circle cx="28" cy="26" r="17" :class="n.row.kind === 'ai' ? 'fill-primary-100 stroke-primary-400 dark:fill-primary-500/20' : 'fill-zinc-100 stroke-zinc-300 dark:fill-zinc-800'" stroke-width="1.5" />
+            <image v-if="n.row.image" :href="n.row.image" x="11" y="9" width="34" height="34" :clip-path="`url(#av-${n.row.id})`" preserveAspectRatio="xMidYMid slice" />
+            <text v-else x="28" y="30" text-anchor="middle" class="fill-zinc-600 text-[11px] font-semibold dark:fill-zinc-300">{{ n.row.kind === 'ai' ? 'AI' : n.row.name.slice(0, 1) }}</text>
+            <text x="52" y="22" class="fill-zinc-900 text-[12px] font-medium dark:fill-white">{{ n.row.name.length > 14 ? n.row.name.slice(0, 14) + '…' : n.row.name }}</text>
+            <text x="52" y="38" class="fill-zinc-400 text-[10px]">{{ (n.row.title || n.row.email).slice(0, 16) }}</text>
+            <text x="8" :y="NODE_H - 12" class="fill-zinc-400 text-[10px]">{{ n.row.kind === 'ai' ? 'AI agent' : 'Human' }}</text>
+          </g>
         </svg>
       </div>
     </UCard>
@@ -688,6 +768,17 @@ const columns = [
           <UFormField label="Email (login)" name="email">
             <template #hint><FormHint text="Humans sign in with it; AI employees authenticate by API key" /></template>
             <UInput v-model="form.email" icon="i-lucide-at-sign" placeholder="name@company.com" class="w-full" required />
+          </UFormField>
+          <UFormField label="Avatar" name="avatar">
+            <template #hint><FormHint text="square photo, resized to 256px" /></template>
+            <div class="flex items-center gap-3">
+              <span class="inline-flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-elevated text-lg font-semibold text-muted">
+                <img v-if="form.image" :src="form.image" alt="avatar preview" class="size-12 rounded-full object-cover">
+                <template v-else>{{ form.kind === 'ai' ? 'AI' : (form.name.slice(0, 1) || '?') }}</template>
+              </span>
+              <input type="file" accept="image/*" class="w-full text-xs" :disabled="busy" @change="onAvatarPicked">
+              <UButton v-if="form.image" icon="i-lucide-x" size="xs" color="neutral" variant="soft" aria-label="Remove avatar" @click="form.image = null" />
+            </div>
           </UFormField>
           <UFormField v-if="!isEdit" label="Kind" name="kind">
             <URadioGroup
