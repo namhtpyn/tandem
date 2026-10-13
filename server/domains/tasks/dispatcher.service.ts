@@ -7,11 +7,40 @@ import { db } from '../../db'
 import { tasks, taskRuns, taskStatuses, aiEmployees } from '../../db/schema'
 import { dispatchTask } from './runner.service'
 import { redisHub } from '../kernel/redis'
+import { publishChange } from '../kernel/change-bus'
 
 const inFlight = new Map<string, Promise<unknown>>() // employeeId -> run promise
 
 export function activeRunCount(): number {
   return inFlight.size
+}
+
+/** reap runs stuck in 'running' past the hard timeout + grace: mark failed, bounce task to
+ * ready (with the normal backoff ladder), so orphaned rows never pin a task in doing forever. */
+export async function reapStaleRuns(): Promise<number> {
+  const { RUN_TIMEOUT_MS } = await import('./runner.service')
+  const grace = 2 * 60_000
+  const cutoff = new Date(Date.now() - RUN_TIMEOUT_MS - grace)
+  const stale = await db.select().from(taskRuns).where(eq(taskRuns.status, 'running'))
+  let reaped = 0
+  for (const run of stale) {
+    if (run.startedAt.getTime() > cutoff.getTime()) continue
+    await db.update(taskRuns).set({ status: 'failed', exitCode: null, output: run.output ? `${run.output}\n[reaper] run timed out after ${Math.round((Date.now() - run.startedAt.getTime()) / 60_000)} min` : '[reaper] run timed out', finishedAt: new Date() }).where(eq(taskRuns.id, run.id))
+    // only bounce the task if this was its latest run
+    const latest = await db.select().from(taskRuns).where(eq(taskRuns.taskId, run.taskId))
+    const newest = latest.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0]
+    if (newest?.id === run.id) {
+      // FK cascade: a present run implies its task row exists
+      const current = (await db.select().from(tasks).where(eq(tasks.id, run.taskId)))[0]!
+      const streak = current.failStreak + 1
+      const waitMs = 15 * 60_000 // timeout = worst tier; something is wrong with the agent
+      await db.update(tasks).set({ status: 'todo', failStreak: streak, dispatchAfter: new Date(Date.now() + waitMs), updatedAt: new Date() }).where(eq(tasks.id, run.taskId))
+    }
+    await publishChange('runs', 'update')
+    await publishChange('tasks', 'update')
+    reaped += 1
+  }
+  return reaped
 }
 
 /** find one eligible task: ready-category status, AI assignee, agent idle */
@@ -22,9 +51,12 @@ export async function findEligible(): Promise<{ taskId: string, employeeId: stri
   const rows = await db.select().from(tasks)
   const aiRows = await db.select({ userId: aiEmployees.userId }).from(aiEmployees)
   const aiIds = new Set(aiRows.map(r => r.userId))
+  const now = Date.now()
   const eligible = rows
     .filter(t => readyIds.includes(t.status) && t.assigneeId && aiIds.has(t.assigneeId))
     .filter(t => !inFlight.has(t.assigneeId!))
+    // failure backoff: not claimable until dispatch_after passes (null = immediately)
+    .filter(t => !t.dispatchAfter || t.dispatchAfter.getTime() <= now)
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
   const first = eligible[0]
   return first ? { taskId: first.id, employeeId: first.assigneeId! } : null
@@ -84,6 +116,7 @@ export type DispatchJob = { taskId: string, tandemUrl: string }
 export function startDispatcher(tandemUrl: string, intervalMs = 5000): () => void {
   const timer = setInterval(() => {
     void scanOnce(tandemUrl) // scanOnce never rejects: its own catch turns errors into false
+    void reapStaleRuns().catch(() => {}) // best-effort orphan sweep
   }, intervalMs)
   return () => clearInterval(timer)
 }

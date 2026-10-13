@@ -179,6 +179,10 @@ export const tasks = pgTable('tandem_tasks', {
   questionChain: text('question_chain').array().notNull().default(sql`'{}'::text[]`),
   /** reviewers who approved the current review round; reset on request-changes */
   reviewApprovals: text('review_approvals').array().notNull().default(sql`'{}'::text[]`),
+  /** earliest time the dispatcher may claim this task again (failure backoff); null = now */
+  dispatchAfter: timestamp('dispatch_after', { withTimezone: true }),
+  /** consecutive failed runs; drives the backoff ladder and resets on success */
+  failStreak: integer('fail_streak').notNull().default(0),
   createdBy: text('created_by').references(() => user.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

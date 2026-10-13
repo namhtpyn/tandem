@@ -16,6 +16,21 @@ export const TAIL_MAX_LINES = 100
 // stream-flush cadence; overridable so tests can exercise the flush path quickly
 const FLUSH_MS = Number(process.env.TANDEM_RUN_FLUSH_MS ?? 500)
 
+// hard cap on one run; a hung agent (frozen process, TCP never drops) becomes a failure
+export const RUN_TIMEOUT_MS = Number(process.env.TANDEM_RUN_TIMEOUT_MS ?? 30 * 60_000)
+
+// failure backoff ladder: consecutive failures -> wait before the next claim
+const BACKOFF_STEPS_MS = [60_000, 5 * 60_000, 15 * 60_000] // 1min, 5min, 15min cap
+
+/** quota/limit signatures in run output jump straight to the longest backoff tier */
+const QUOTA_PATTERN = /(402|429|insufficient[ _]?(quota|credit)|rate.?limit|out of (usage|credits|quota)|exceeded your|billing)/i
+
+export function backoffFor(failStreak: number, output: string): number {
+  const quota = QUOTA_PATTERN.test(output)
+  if (quota) return BACKOFF_STEPS_MS[BACKOFF_STEPS_MS.length - 1]!
+  return BACKOFF_STEPS_MS[Math.min(Math.max(failStreak - 1, 0), BACKOFF_STEPS_MS.length - 1)]!
+}
+
 export interface RunHandle {
   runId: string
   finished: Promise<{ status: 'done' | 'failed', exitCode: number | null }>
@@ -168,16 +183,29 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
 
   const finish = async (status: 'done' | 'failed', exitCode: number | null) => {
     await db.update(taskRuns).set({ status, exitCode, output: tail(buffer), finishedAt: new Date() }).where(eq(taskRuns.id, runId))
-    await logRun(taskId, runId, status === 'done' ? 'run finished' : `run failed (exit ${exitCode ?? '?'})`, { [status]: true, exitCode })
+    // activity logging must never block the run's verdict (task may be deleted mid-run)
+    await logRun(taskId, runId, status === 'done' ? 'run finished' : `run failed (exit ${exitCode ?? '?'})`, { [status]: true, exitCode }).catch(() => {})
     // verdict: done run submits the result for review (or completes when no reviewers)
     if (status === 'done') {
       const { submitResult } = await import('./workflow.service')
       try {
         await submitResult(taskId, plan.ai.userId, 'run complete')
       } catch { /* task may have moved on; leave as-is */ }
+      await db.update(tasks).set({ failStreak: 0, dispatchAfter: null, updatedAt: new Date() }).where(eq(tasks.id, taskId))
     }
     else {
-      await db.update(tasks).set({ status: 'todo', updatedAt: new Date() }).where(eq(tasks.id, taskId))
+      // bounce to ready, but back off: consecutive failures (and quota walls) must not
+      // turn into a 5s retry storm — see BACKOFF_STEPS_MS / QUOTA_PATTERN
+      const current = (await db.select().from(tasks).where(eq(tasks.id, taskId)))[0]
+      const streak = (current?.failStreak ?? 0) + 1
+      const waitMs = backoffFor(streak, buffer)
+      await db.update(tasks).set({
+        status: 'todo',
+        failStreak: streak,
+        dispatchAfter: new Date(Date.now() + waitMs),
+        updatedAt: new Date(),
+      }).where(eq(tasks.id, taskId)) // no-op when the task was deleted mid-run
+      await logRun(taskId, runId, `retry scheduled in ${Math.round(waitMs / 60_000)} min (streak ${streak})`, { backoffMs: waitMs }).catch(() => {})
       await publishChange('tasks', 'update')
     }
     await publishChange('runs', 'update')

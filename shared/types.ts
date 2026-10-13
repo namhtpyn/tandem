@@ -81,6 +81,10 @@ export interface TaskRow {
   /** who owes the answer while waiting (moves on forward) */
   questionHolderId: string | null
   questionHolderName: string | null
+  /** earliest next dispatch (failure backoff); null = immediately eligible */
+  dispatchAfter: string | null
+  /** consecutive failed runs; resets on success */
+  failStreak: number
   createdBy: string | null
   createdAt: string
   updatedAt: string

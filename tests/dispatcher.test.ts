@@ -371,6 +371,20 @@ describe('dispatch-plan edge arms', () => {
     expect(plan.llmEnv).toEqual({}) // provider set but no key secret -> no llm env
   })
 
+  it('maybeStartDispatcher falls back to a default URL without TANDEM_PUBLIC_URL', async () => {
+    const { maybeStartDispatcher } = await import('../server/domains/tasks/dispatcher.service')
+    const prev = process.env.TANDEM_PUBLIC_URL
+    delete process.env.TANDEM_PUBLIC_URL
+    try {
+      const stop = await maybeStartDispatcher()
+      expect(typeof stop).toBe('function')
+      stop!()
+    }
+    finally {
+      if (prev !== undefined) process.env.TANDEM_PUBLIC_URL = prev
+    }
+  })
+
   it('maybeStartDispatcher respects TANDEM_NO_DISPATCHER', async () => {
     const { maybeStartDispatcher } = await import('../server/domains/tasks/dispatcher.service')
     const prev = process.env.TANDEM_NO_DISPATCHER

@@ -55,6 +55,8 @@ export const tasksRouter = os.router({
       reviewApprovals: r.reviewApprovals,
       questionHolderId: r.questionHolderId,
       questionHolderName: (r.questionHolderId && nameById.get(r.questionHolderId)) || null,
+      dispatchAfter: r.dispatchAfter ? r.dispatchAfter.toISOString() : null,
+      failStreak: r.failStreak,
       createdBy: r.createdBy,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),

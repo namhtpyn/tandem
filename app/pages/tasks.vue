@@ -264,6 +264,13 @@ function startRunWatch(taskId: string) {
   }, 2000)
 }
 
+const retryInMin = computed(() => {
+  const t = workflowTask.value
+  if (!t?.dispatchAfter) return 0
+  const ms = new Date(t.dispatchAfter).getTime() - Date.now()
+  return ms > 0 ? Math.max(1, Math.round(ms / 60_000)) : 0
+})
+
 async function openWorkflow(row: TaskRow) {
   workflowTask.value = row
   workflowNote.value = ''
@@ -646,6 +653,7 @@ function statusColor(s: string) {
                 <pre v-if="r.output" class="max-h-40 overflow-auto whitespace-pre-wrap rounded-b-md bg-zinc-950 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-zinc-200">{{ r.output }}</pre>
               </div>
               <p v-if="!runFeed.length" class="text-xs text-zinc-400">No runs yet.</p>
+              <p v-if="retryInMin > 0" class="text-xs font-medium text-warning">Retrying in ~{{ retryInMin }} min ({{ workflowTask?.failStreak ?? 0 }} consecutive failure{{ (workflowTask?.failStreak ?? 0) === 1 ? '' : 's' }})</p>
             </div>
             <div class="space-y-2">
               <p class="text-xs font-semibold uppercase tracking-wide text-zinc-400">Activity</p>

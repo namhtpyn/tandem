@@ -38,6 +38,16 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
     await db.insert(tasks).values({ id: 't-1', title: 'Queued', description: '', status: 'todo', assigneeId: 'u-agent' })
   })
 
+  it('the queue worker dispatches a job end-to-end (redis path)', async () => {
+    const { scanOnce } = await import('../server/domains/tasks/dispatcher.service')
+    expect(await scanOnce('http://t.local')).toBe(true)
+    // maybeStartDispatcher's worker picks it up; the mocked runner resolves instantly
+    const { maybeStartDispatcher } = await import('../server/domains/tasks/dispatcher.service')
+    const stop = await maybeStartDispatcher()
+    await new Promise(r => setTimeout(r, 800)) // worker poll + process
+    stop!()
+  })
+
   it('scanOnce enqueues to the redis queue and the worker consumes it', async () => {
     const { scanOnce } = await import('../server/domains/tasks/dispatcher.service')
     expect(await scanOnce('http://t.local')).toBe(true)

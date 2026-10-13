@@ -32,6 +32,7 @@ runs(id, task_id -> tasks.id, environment_id, status, stream, result, exit_code,
 tasks.workflow: owner_id, reviewers text[], question_holder_id, question_chain text[], review_approvals text[]
 dispatcher: scans ready-category statuses; per-agent serial dispatch; run logs tail 100 lines
 redis (REDIS_URL, optional): bullmq queue 'tandem-dispatch' (retries/backoff) + pub/sub change-bus fanout + cache; unset = in-process fallback
+resilience: tasks.dispatch_after + fail_streak (backoff ladder 1m/5m/15m, quota -> 15m); reaper fails stale running rows past TANDEM_RUN_TIMEOUT_MS+grace; ssh keepalive 15s
 ```
 
 Runner (M5) executes per run:

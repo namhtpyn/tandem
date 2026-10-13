@@ -32,6 +32,11 @@ filled by agents you already run yourself.
   section pins which LLM + decision engine Tandem uses internally (provider + optional model + vault
   key each); keys configured on agents travel to the agent's machine at dispatch and are never used
   internally
+- **Run resilience** — SSH keepalive + readyTimeout + a hard run cap (`TANDEM_RUN_TIMEOUT_MS`,
+  default 30min) so a hung agent becomes a failure instead of a zombie; a stale-run reaper on the
+  dispatch sweep orphans crash-left `running` rows; failed runs back off before re-dispatch
+  (1min/5min/15min ladder per consecutive failure, quota/429 signatures jump straight to 15min) so
+  an out-of-usage agent doesn't become a 5s retry storm; the drawer shows "Retrying in ~Xm"
 - **Redis (optional, `REDIS_URL`)** — one instance powers three things: BullMQ dispatch queue
   (durable per-agent job processing with exponential-backoff retries — replaces the bare interval
   when set; the interval stays on as a sweep), pub/sub fan-out of change-bus events across
