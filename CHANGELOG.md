@@ -1,3 +1,10 @@
+# [2.14.0](https://github.com/namhtpyn/tandem/compare/v2.13.0...v2.14.0) (2026-10-13)
+
+
+### Features
+
+* **employees:** top-down org chart + employee avatars ([eb0b892](https://github.com/namhtpyn/tandem/commit/eb0b89214212ccf3f8a62a7337ea6a3e2116f54d))
+
 # [2.13.0](https://github.com/namhtpyn/tandem/compare/v2.12.4...v2.13.0) (2026-10-12)
 
 
