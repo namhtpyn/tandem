@@ -20,8 +20,12 @@ async function redisUp(): Promise<boolean> {
 
 const up = await redisUp()
 
+const dispatched: string[] = []
 vi.mock('../server/domains/tasks/runner.service', () => ({
-  dispatchTask: async () => ({ finished: Promise.resolve({ status: 'done', exitCode: 0 }) }),
+  dispatchTask: async (taskId: string) => {
+    dispatched.push(taskId)
+    return { finished: Promise.resolve({ status: 'done', exitCode: 0 }) }
+  },
 }))
 
 describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
@@ -41,23 +45,13 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
   it('the queue worker dispatches a job end-to-end (redis path)', async () => {
     const { redisHub } = await import('../server/domains/kernel/redis')
     const hub = await redisHub()
-    // watch the queue drain: wait until no waiting/active jobs remain (CI-safe poll)
-    const drained = async () => {
-      for (let i = 0; i < 60; i++) {
-        const r = new (await import('ioredis')).default('redis://127.0.0.1:6399')
-        const waiting = (await new Promise(res => r.keys('bull:tandem-dispatch:wait*', res))) as string[] | null ?? []
-        const active = (await new Promise(res => r.keys('bull:tandem-dispatch:active*', res))) as string[] | null ?? []
-        await r.disconnect()
-        if (waiting.length === 0 && active.length === 0) return true
-        await new Promise(rs => setTimeout(rs, 200))
-      }
-      return false
-    }
     const { scanOnce } = await import('../server/domains/tasks/dispatcher.service')
     expect(await scanOnce('http://t.local')).toBe(true)
     const { maybeStartDispatcher } = await import('../server/domains/tasks/dispatcher.service')
     const stop = await maybeStartDispatcher()
-    expect(await drained()).toBe(true) // worker picked it up and processed it
+    // deterministic: the worker's job fn must actually invoke the mocked runner
+    for (let i = 0; i < 100 && dispatched.length === 0; i++) await new Promise(r => setTimeout(r, 100))
+    expect(dispatched.length).toBe(1)
     stop!()
     void hub
   }, 20_000)
