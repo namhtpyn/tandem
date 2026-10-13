@@ -1,3 +1,10 @@
+## [2.19.3](https://github.com/namhtpyn/tandem/compare/v2.19.2...v2.19.3) (2026-10-13)
+
+
+### Bug Fixes
+
+* **tasks:** PATH blob must use double quotes so $HOME/$PATH expand when sourced ([1603c5f](https://github.com/namhtpyn/tandem/commit/1603c5f32441ceba6c24e83be67f880d32060ca7))
+
 ## [2.19.2](https://github.com/namhtpyn/tandem/compare/v2.19.1...v2.19.2) (2026-10-13)
 
 
