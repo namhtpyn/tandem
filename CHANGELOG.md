@@ -1,3 +1,10 @@
+# [2.19.0](https://github.com/namhtpyn/tandem/compare/v2.18.1...v2.19.0) (2026-10-13)
+
+
+### Features
+
+* **tasks:** task info page; run errors always visible; reaper catch made testable ([c14b454](https://github.com/namhtpyn/tandem/commit/c14b454fb0da4d377c244af9500d391280934530))
+
 ## [2.18.1](https://github.com/namhtpyn/tandem/compare/v2.18.0...v2.18.1) (2026-10-13)
 
 
