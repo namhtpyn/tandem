@@ -27,7 +27,7 @@ const deleteOpen = computed({
   set: (v: boolean) => { if (!v) pendingDelete.value = null },
 })
 
-const form = reactive({ title: '', description: '', assigneeId: '__none__' as string, status: 'todo' as string, projectId: '__none__' as string })
+const form = reactive({ title: '', description: '', assigneeId: '__none__' as string, status: 'todo' as string, projectId: '__none__' as string, ownerId: '__none__' as string, reviewers: [] as string[] })
 const isEdit = computed(() => editingId.value !== null)
 
 const assignMutation = useMutation<any, any, any>(($orpc.statuses.assign as any).mutationOptions())
@@ -76,7 +76,7 @@ const statusEditorTouched = ref(false)
 const statusBusy = ref(false)
 const statusMessage = ref('')
 const editingStatusId = ref<string | null>(null)
-const statusForm = reactive({ name: '', color: 'neutral' as 'neutral' | 'primary' | 'success' | 'warning' | 'error' | 'info', position: 0, category: 'backlog' as 'backlog' | 'ready' | 'working' | 'paused' | 'done' | 'cancelled', nextIds: [] as string[] })
+const statusForm = reactive({ name: '', color: 'neutral' as 'neutral' | 'primary' | 'success' | 'warning' | 'error' | 'info', position: 0, category: 'backlog' as 'backlog' | 'ready' | 'working' | 'paused' | 'waiting_answer' | 'in_review' | 'done' | 'cancelled', nextIds: [] as string[] })
 
 const statusSaveMutation = useMutation<any, any, any>(($orpc.statuses.save as any).mutationOptions())
 const statusRemoveMutation = useMutation<any, any, any>(($orpc.statuses.remove as any).mutationOptions())
@@ -137,11 +137,13 @@ const categoryOptions = [
   { label: 'Ready — assigned agent picks it up', value: 'ready' },
   { label: 'Working — hands off, in progress', value: 'working' },
   { label: 'Paused — halted, not terminal', value: 'paused' },
+  { label: 'Waiting answer — question routed, work paused', value: 'waiting_answer' },
+  { label: 'In review — result awaits unanimous approval', value: 'in_review' },
   { label: 'Done — completed, agents stop', value: 'done' },
   { label: 'Cancelled — abandoned, agents stop', value: 'cancelled' },
 ]
 function categoryColor(c: string) {
-  return c === 'ready' ? 'primary' : c === 'working' ? 'warning' : c === 'done' ? 'success' : c === 'cancelled' ? 'error' : 'neutral'
+  return c === 'ready' ? 'primary' : c === 'working' ? 'warning' : c === 'waiting_answer' ? 'warning' : c === 'in_review' ? 'info' : c === 'done' ? 'success' : c === 'cancelled' ? 'error' : 'neutral'
 }
 
 // ---- board (kanban) view ----
@@ -173,6 +175,8 @@ function openEditor(row?: TaskRow) {
   form.description = row?.description ?? ''
   form.assigneeId = row?.assigneeId ?? '__none__'
   form.projectId = row?.projectId ?? '__none__'
+  form.ownerId = row?.ownerId ?? '__none__'
+  form.reviewers = row?.reviewers ? [...row.reviewers] : []
   form.status = row?.status ?? firstStatusId.value
   message.value = ''
   editorOpen.value = true
@@ -187,6 +191,8 @@ async function save() {
       description: form.description,
       assigneeId: form.assigneeId === '__none__' ? null : form.assigneeId,
       projectId: form.projectId === '__none__' ? null : form.projectId,
+      ownerId: form.ownerId === '__none__' ? null : form.ownerId,
+      reviewers: form.reviewers,
     }
     if (editingId.value) {
       await updateMutation.mutateAsync({ id: editingId.value, ...payload, status: form.status })
@@ -201,6 +207,71 @@ async function save() {
   }
   finally {
     busy.value = false
+  }
+}
+
+const workflowOpen = ref(false)
+const workflowTask = ref<TaskRow | null>(null)
+const workflowNote = ref('')
+const workflowBusy = ref(false)
+const workflowMessage = ref('')
+const workflowFeed = ref<import('~/../shared/types').TaskActivityRow[]>([])
+const forwardTo = ref('__none__')
+
+async function openWorkflow(row: TaskRow) {
+  workflowTask.value = row
+  workflowNote.value = ''
+  workflowMessage.value = ''
+  workflowOpen.value = true
+  await refreshFeed(row.id)
+}
+
+async function refreshFeed(taskId: string) {
+  // activity is a live procedure (SSE): read the FIRST data event, then abort
+  try {
+    const ac = new AbortController()
+    const res = await fetch(`/rpc/tasks/activity`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ json: { taskId } }),
+      signal: ac.signal,
+    })
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    const deadline = Date.now() + 8000
+    while (Date.now() < deadline) {
+      const { value } = await reader.read()
+      buffer += decoder.decode(value!, { stream: true })
+      const m = /data:(.+)/.exec(buffer)
+      if (m) {
+        ac.abort()
+        const payload = JSON.parse(m[1]!.trim())
+        workflowFeed.value = (payload?.json ?? payload ?? []) as import('~/../shared/types').TaskActivityRow[]
+        return
+      }
+    }
+    ac.abort()
+    workflowFeed.value = []
+  }
+  catch { workflowFeed.value = [] }
+}
+
+async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
+  if (!workflowTask.value) return
+  workflowBusy.value = true
+  workflowMessage.value = ''
+  try {
+    await $fetch(`/rpc/tasks/${proc}`, { method: 'POST', body: { json: { taskId: workflowTask.value.id, ...extra } } })
+    workflowNote.value = ''
+    await refreshFeed(workflowTask.value.id)
+    workflowMessage.value = 'done'
+  }
+  catch (e) {
+    workflowMessage.value = e instanceof Error ? e.message : 'action failed'
+  }
+  finally {
+    workflowBusy.value = false
   }
 }
 
@@ -319,6 +390,12 @@ function statusColor(s: string) {
                 <UButton icon="i-lucide-wand-sparkles" variant="ghost" color="neutral" size="xs" aria-label="Auto-assign" :disabled="busy" @click="autoAssign(row)" />
                 <template #content>
                   <div class="px-3 py-1.5 text-xs">Auto-assign (Jev)</div>
+                </template>
+              </UPopover>
+              <UPopover mode="hover">
+                <UButton icon="i-lucide-message-circle-more" variant="ghost" color="neutral" size="xs" aria-label="Task workflow" @click="openWorkflow(row)" />
+                <template #content>
+                  <div class="px-3 py-1.5 text-xs">Workflow &amp; activity</div>
                 </template>
               </UPopover>
               <UPopover mode="hover">
@@ -472,6 +549,51 @@ function statusColor(s: string) {
       </div>
 
       <!-- status manager -->
+      <UModal v-model:open="workflowOpen" title="Task workflow">
+        <template #body>
+          <div v-if="workflowTask" class="space-y-4">
+            <div>
+              <p class="font-medium">{{ workflowTask.title }}</p>
+              <p class="mt-0.5 text-xs text-zinc-400">
+                {{ statusById.get(workflowTask.status)?.name ?? workflowTask.status }}
+                <template v-if="workflowTask.questionHolderName"> · waiting on {{ workflowTask.questionHolderName }}</template>
+                <template v-if="workflowTask.reviewers.length"> · reviewers: {{ workflowTask.reviewerNames.join(', ') }}</template>
+              </p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <UButton size="xs" color="warning" variant="soft" icon="i-lucide-help-circle" :disabled="workflowBusy" @click="wfAction('ask', { body: workflowNote || 'question' })">Ask</UButton>
+              <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-corner-up-right" :disabled="workflowBusy || !forwardTo" @click="forwardTo && wfAction('forward', { toEmployeeId: forwardTo, body: workflowNote })">Forward</UButton>
+              <UButton size="xs" color="primary" variant="soft" icon="i-lucide-check-check" :disabled="workflowBusy" @click="wfAction('answer', { body: workflowNote || 'answer' })">Answer</UButton>
+              <UButton size="xs" color="info" variant="soft" icon="i-lucide-send" :disabled="workflowBusy" @click="wfAction('submit', { body: workflowNote })">Submit</UButton>
+              <UButton size="xs" color="success" variant="soft" icon="i-lucide-thumbs-up" :disabled="workflowBusy" @click="wfAction('approve')">Approve</UButton>
+              <UButton size="xs" color="warning" variant="soft" icon="i-lucide-undo-2" :disabled="workflowBusy || !workflowNote" @click="wfAction('requestChanges', { body: workflowNote })">Request changes</UButton>
+              <UButton size="xs" color="error" variant="soft" icon="i-lucide-x-circle" :disabled="workflowBusy" @click="wfAction('abandon')">Abandon</UButton>
+            </div>
+            <USelect
+              v-model="forwardTo"
+              :items="[{ label: 'Forward to…', value: '__none__' }, ...employees.filter(e => e.id !== workflowTask?.questionHolderId).map(e => ({ label: e.name, value: e.id }))]"
+              value-key="value"
+              size="sm"
+              class="w-full"
+              aria-label="Forward to"
+            />
+            <UTextarea v-model="workflowNote" :rows="3" placeholder="Question / answer / review note" class="w-full" />
+            <p v-if="workflowMessage" class="text-xs" :class="workflowMessage === 'done' ? 'text-success' : 'text-error'">{{ workflowMessage }}</p>
+            <div class="space-y-2">
+              <p class="text-xs font-semibold uppercase tracking-wide text-zinc-400">Activity</p>
+              <div v-for="a in workflowFeed" :key="a.id" class="rounded-md border border-zinc-200 px-2.5 py-2 text-xs dark:border-zinc-800">
+                <p class="flex items-center gap-1.5 font-medium text-zinc-600 dark:text-zinc-300">
+                  <UIcon :name="a.kind === 'question' ? 'i-lucide-help-circle' : a.kind === 'answer' ? 'i-lucide-check-check' : a.kind === 'forward' ? 'i-lucide-corner-up-right' : a.kind === 'verdict' ? 'i-lucide-gavel' : 'i-lucide-info'" class="size-3.5" />
+                  {{ a.kind }} · {{ a.authorName ?? 'system' }}
+                </p>
+                <p v-if="a.body" class="mt-1 text-zinc-500 dark:text-zinc-400">{{ a.body }}</p>
+              </div>
+              <p v-if="!workflowFeed.length" class="text-xs text-zinc-400">No activity yet.</p>
+            </div>
+          </div>
+        </template>
+      </UModal>
+
       <UModal v-model:open="statusManagerOpen" title="Task statuses" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
         <template #body>
           <div class="space-y-4">
@@ -571,6 +693,29 @@ function statusColor(s: string) {
             </UFormField>
             <UFormField v-if="isEdit" label="Status" name="status">
               <USelect v-model="form.status" :items="statusOptions" value-key="value" icon="i-lucide-circle-dot" class="w-full" />
+              <UFormField label="Owner (routes questions)" name="owner">
+                <USelect
+                  v-model="form.ownerId"
+                  :items="[{ label: 'Creator (default)', value: '__none__' }, ...employees.map(e => ({ label: e.name, value: e.id }))]"
+                  value-key="value"
+                  icon="i-lucide-user-cog"
+                  class="w-full"
+                />
+              </UFormField>
+              <UFormField label="Reviewers (all must approve)" name="reviewers">
+                <div class="flex flex-wrap gap-2">
+                  <UButton
+                    v-for="e in employees"
+                    :key="e.id"
+                    size="xs"
+                    :variant="form.reviewers.includes(e.id) ? 'solid' : 'soft'"
+                    :color="form.reviewers.includes(e.id) ? 'primary' : 'neutral'"
+                    @click="form.reviewers.includes(e.id) ? form.reviewers = form.reviewers.filter(x => x !== e.id) : form.reviewers.push(e.id)"
+                  >
+                    {{ e.name }}
+                  </UButton>
+                </div>
+              </UFormField>
             </UFormField>
             <p v-if="message" class="text-sm text-error">{{ message }}</p>
 

@@ -45,6 +45,10 @@ async function mkEmployee(name: string, email: string): Promise<string> {
 beforeEach(async () => {
   await resetSchema()
   await applyMigrations()
+  // tasks.created_by/owner_id FK target: the mocked session user must exist
+  const { db } = await dbm()
+  const { user } = await schema()
+  await db.insert(user).values({ id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
 })
 
 describe('tasks', () => {

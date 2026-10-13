@@ -169,6 +169,16 @@ export const tasks = pgTable('tandem_tasks', {
   status: text('status').notNull().default('todo'),
   projectId: text('project_id').references(() => projects.id, { onDelete: 'set null' }),
   assigneeId: text('assignee_id').references(() => user.id, { onDelete: 'set null' }),
+  /** the person responsible for routing questions/answers (creator by default; NOT necessarily a supervisor) */
+  ownerId: text('owner_id').references(() => user.id, { onDelete: 'set null' }),
+  /** unanimous-approval gate before done; any mix of AI/human */
+  reviewers: text('reviewers').array().notNull().default(sql`'{}'::text[]`),
+  /** who currently owes the answer while status = waiting_answer (moves on forward) */
+  questionHolderId: text('question_holder_id').references(() => user.id, { onDelete: 'set null' }),
+  /** everyone the question has already been through: [owner, ...forwards] — loop guard */
+  questionChain: text('question_chain').array().notNull().default(sql`'{}'::text[]`),
+  /** reviewers who approved the current review round; reset on request-changes */
+  reviewApprovals: text('review_approvals').array().notNull().default(sql`'{}'::text[]`),
   createdBy: text('created_by').references(() => user.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -178,10 +188,24 @@ export const tasks = pgTable('tandem_tasks', {
   index('tandem_tasks_status_idx').on(t.status),
 ])
 
+// Task activity feed: questions, answers, forwards, verdicts, status notes.
+export const taskActivity = pgTable('tandem_task_activity', {
+  id: text('id').primaryKey(),
+  taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  /** question | answer | forward | note | verdict | status */
+  kind: text('kind').notNull(),
+  authorId: text('author_id').references(() => user.id, { onDelete: 'set null' }),
+  body: text('body').notNull().default(''),
+  meta: jsonb('meta').notNull().default({}),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('tandem_task_activity_task_idx').on(t.taskId, t.createdAt),
+])
+
 // ---------- relations ----------
 
 export const relations = defineRelations(
-  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, vaultFolders, employeeTitles, tasks, taskStatuses, modelProviders, projects },
+  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, vaultFolders, employeeTitles, tasks, taskActivity, taskStatuses, modelProviders, projects },
   (helpers) => ({
     user: {
       sessions: helpers.many.session({ from: helpers.user.id, to: helpers.session.userId }),

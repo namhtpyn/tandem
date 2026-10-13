@@ -56,7 +56,7 @@ export interface TaskStatusRow {
   name: string
   color: string
   position: number
-  category: 'backlog' | 'ready' | 'working' | 'paused' | 'done' | 'cancelled'
+  category: 'backlog' | 'ready' | 'working' | 'paused' | 'waiting_answer' | 'in_review' | 'done' | 'cancelled'
   nextIds: string[]
 }
 
@@ -64,15 +64,37 @@ export interface TaskRow {
   id: string
   title: string
   description: string
-  status: 'todo' | 'doing' | 'done'
+  status: string
   projectId: string | null
   projectName: string | null
   assigneeId: string | null
   assigneeName: string | null
   assigneeKind: 'human' | 'ai' | null
+  /** person responsible for questions/routing (creator by default; NOT necessarily supervisor) */
+  ownerId: string | null
+  ownerName: string | null
+  /** unanimous approval gate; any mix of AI/human */
+  reviewers: string[]
+  reviewerNames: string[]
+  /** reviewers who approved the current round */
+  reviewApprovals: string[]
+  /** who owes the answer while waiting (moves on forward) */
+  questionHolderId: string | null
+  questionHolderName: string | null
   createdBy: string | null
   createdAt: string
   updatedAt: string
+}
+
+export interface TaskActivityRow {
+  id: string
+  taskId: string
+  kind: 'question' | 'answer' | 'forward' | 'note' | 'verdict' | 'status'
+  authorId: string | null
+  authorName: string | null
+  body: string
+  meta: Record<string, unknown>
+  createdAt: string
 }
 
 export interface ApiKeyRow {

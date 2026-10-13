@@ -29,7 +29,7 @@ export const statusesRouter = os.router({
       name: z.string().min(1).max(64),
       color: z.enum(['neutral', 'primary', 'success', 'warning', 'error', 'info']).default('neutral'),
       position: z.number().int().min(0).max(99),
-      category: z.enum(['backlog', 'ready', 'working', 'paused', 'done', 'cancelled']).default('backlog'),
+      category: z.enum(['backlog', 'ready', 'working', 'paused', 'waiting_answer', 'in_review', 'done', 'cancelled']).default('backlog'),
       nextIds: z.array(z.string().min(1).max(64)).max(50).default([]),
     }))
     .handler(async ({ input }) => {

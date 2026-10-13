@@ -142,3 +142,14 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
 - CI regenerates and fails on any diff (drift guard) — regen must be idempotent.
 - Relations are hand-owned via `defineRelations` in schema.ts; the CLI's
   `defineRelationsPart` block is stripped by the script.
+
+
+## Task workflow (user laws, 2026-10-13)
+
+- Statuses: `todo → doing → waiting-answer →(answer)→ todo` and `doing →(submit)→ in-review →(unanimous approve)→ done`; `in-review →(changes)→ doing`, `in-review →(abandon)→ cancelled`.
+- **Owner ≠ supervisor**: owner routes questions; creator by default; no hierarchy coupling.
+- **All reviewers must approve** (unanimous) before done. Reviewer or assignee can be AI or human — no restriction anywhere.
+- **Forward chain is free** but stops at the top of the hierarchy (employee with no supervisors must ANSWER, cannot receive forwards) and never revisits someone already in the chain.
+- Workflow logic lives in `server/domains/tasks/workflow.service.ts`; the router only wires procedures (`ask`, `forward`, `answer`, `submit`, `approve`, `requestChanges`, `abandon`, `activity`).
+- `tasks.activity` is a liveGenerator over `['taskActivity','tasks']` — publish both resources on every workflow write.
+- Coverage law: no defensive `?? fallback` on NOT NULL columns (istanbul counts the dead arm and CI enforces 100% branches).

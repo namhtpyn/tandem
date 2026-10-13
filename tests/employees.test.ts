@@ -465,4 +465,16 @@ describe('AI harness + executable', () => {
     expect(hu.harness).toBeNull()
     expect(hu.executable).toBeNull()
   })
+
+  it('create/update handle avatar image data URLs', async () => {
+    const r1 = await callProc('employees.create', { name: 'Av User', email: 'av-user@tandem.local', kind: 'human', title: 'T', supervisorIds: [], image: 'data:image/png;base64,xxx' })
+    const rows1 = await callProc('employees.live')
+    const it1 = rows1[Symbol.asyncIterator] ? rows1 : null
+    void it1
+    const upd = await callProc('employees.update', { id: r1.id, supervisorIds: [] , image: null })
+    expect(upd.ok).toBe(true)
+    const upd2 = await callProc('employees.update', { id: r1.id, supervisorIds: [], image: 'data:image/png;base64,yyy' })
+    expect(upd2.ok).toBe(true)
+  })
+
 })

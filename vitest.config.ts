@@ -21,7 +21,7 @@ export default defineConfig({
 
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json-summary', 'html'],
+      reporter: ['text', 'json', 'json-summary', 'html'],
       include: [
         'server/**/*.ts',
         'app/composables/**/*.ts',

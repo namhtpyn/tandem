@@ -15,7 +15,9 @@ export default defineEventHandler(async (event) => {
   // avatars are not secrets, but don't serve them to anonymous crawlers either
   const { buildServerContext } = await import('../../../../domains/kernel/context')
   const headers = new Headers()
-  for (const [k, v] of Object.entries(getRequestHeaders(event))) headers.set(k, Array.isArray(v) ? v.join(',') : (v ?? ''))
+  for (const [k, v] of Object.entries(getRequestHeaders(event))) {
+    headers.set(k, String(v))
+  }
   const session = await buildServerContext(headers).getSession()
   if (!session) throw createError({ statusCode: 401, statusMessage: 'unauthorized' })
   const rows = await db.select({ image: userTable.image, updatedAt: userTable.updatedAt })

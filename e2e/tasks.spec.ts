@@ -78,3 +78,24 @@ test('task assignee picker lists AI employees with (AI)', async ({ page }) => {
   // row shows the bot as assignee
   await expect(page.locator('tr:visible').filter({ hasText: botName }).first()).toBeVisible({ timeout: 15_000 })
 })
+
+test('workflow drawer shows activity and lets the owner answer', async ({ page }) => {
+  await login(page)
+  const suffix = Date.now().toString(36).slice(-6)
+  await page.goto('/tasks')
+  // create a task owned by admin
+  await page.getByRole('button', { name: 'New task' }).first().click()
+  await page.getByPlaceholder('Task title').fill(`WF ${suffix}`)
+  await page.getByRole('button', { name: /Save|Create task/ }).click()
+  await page.waitForTimeout(1200)
+  // open the workflow drawer
+  const card = page.locator('div').filter({ hasText: `WF ${suffix}` }).first()
+  await card.locator('button[aria-label="Task workflow"]').first().click()
+  const drawer = page.locator('[data-slot="content"]').first()
+  await expect(drawer).toBeVisible()
+  await expect(drawer.getByText(/no activity yet/i)).toBeVisible()
+  // note + Ask is rejected (admin is not assignee) -> error surfaces
+  await drawer.locator('textarea').fill('who owns the spec?')
+  await drawer.getByRole('button', { name: 'Ask' }).click()
+  await expect(drawer.getByText(/only a task in progress|assignee/i).first()).toBeVisible({ timeout: 10_000 })
+})
