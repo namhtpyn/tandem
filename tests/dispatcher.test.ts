@@ -416,6 +416,9 @@ describe('env blob quoting', () => {
     const { execSync } = await import('child_process')
     execSync(`cat > /tmp/tandem-env.test && . /tmp/tandem-env.test && rm -f /tmp/tandem-env.test`, { input: blob, shell: '/bin/bash' })
     expect(blob).toContain(`TANDEM_TASK_TITLE='Find out who'`)
+    // and the built command escapes the same apostrophe in its --resume prompt
+    const { buildCommand } = await import('../server/domains/tasks/runner.service')
+    expect(buildCommand(plan)).toContain(`-p 'Task: Find out who'`)
   })
 })
 
