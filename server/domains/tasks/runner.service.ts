@@ -97,6 +97,9 @@ export async function loadDispatchPlan(taskId: string) {
 /** the env blob written to the remote agent's stdin (never argv) */
 export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>, tandemUrl: string): string {
   return [
+    // non-interactive ssh shells get a minimal PATH (~/.local/bin, ~/.bun/bin missing) —
+    // extend it or the agent executable is 'command not found' (exit 127)
+    `PATH="'$HOME'/.local/bin:'$HOME'/.bun/bin:'$HOME'/.cargo/bin:/usr/local/bin:'$PATH'"`,
     `CUSTOM_API_KEY='${plan.llmEnv.CUSTOM_API_KEY ?? ''}'`,
     `CUSTOM_BASE_URL='${plan.llmEnv.CUSTOM_BASE_URL ?? ''}'`,
     `HERMES_MODEL='${plan.llmEnv.HERMES_MODEL ?? ''}'`,
