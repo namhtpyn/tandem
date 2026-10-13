@@ -1,3 +1,10 @@
+# [2.15.0](https://github.com/namhtpyn/tandem/compare/v2.14.1...v2.15.0) (2026-10-13)
+
+
+### Features
+
+* **tasks:** question/answer chain + unanimous review workflow ([ab7a28b](https://github.com/namhtpyn/tandem/commit/ab7a28b0a75be590bb6a49682836e7884f03aa90))
+
 ## [2.14.1](https://github.com/namhtpyn/tandem/compare/v2.14.0...v2.14.1) (2026-10-13)
 
 
