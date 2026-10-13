@@ -207,6 +207,8 @@ async function removeTitle(id: string) {
 
 const editorOpen = ref(false)
 const editingId = ref<string | null>(null)
+const avatarUrl = ref<string | null>(null) // existing avatar (endpoint URL)
+const avatarDirty = ref(false) // true when the user picked a NEW file
 const form = reactive({
   name: '',
   email: '',
@@ -301,6 +303,7 @@ async function onAvatarPicked(ev: Event) {
   const side = Math.min(img.width, img.height)
   ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size)
   form.image = canvas.toDataURL('image/jpeg', 0.85)
+  avatarDirty.value = true
 }
 
 function openEditor(row?: EmployeeRow) {
@@ -308,7 +311,14 @@ function openEditor(row?: EmployeeRow) {
   form.name = row?.name ?? ''
   form.email = row?.email ?? ''
   form.kind = row?.kind ?? 'human'
-  form.image = row?.image ?? null
+  form.image = null
+  avatarDirty.value = false
+  if (row?.hasAvatar) {
+    // existing avatar only enters the form as the preview src; not re-uploaded unless replaced
+    avatarUrl.value = `/api/employees/${row.id}/avatar`
+  } else {
+    avatarUrl.value = null
+  }
   form.title = row?.title ?? ''
   form.supervisorIds = row?.supervisorIds ? [...row.supervisorIds] : []
   form.environmentId = row?.environmentId ?? ''
@@ -336,7 +346,7 @@ async function save() {
         id: editingId.value,
         name: form.name,
         email: form.email,
-        image: form.image,
+        ...(avatarDirty.value ? { image: form.image } : {}),
         title: form.title,
         supervisorIds: form.supervisorIds,
         ...(showAiFields.value && form.environmentId ? { environmentId: form.environmentId } : {}),
@@ -538,7 +548,8 @@ const columns = [
     <div v-if="rows.length && view === 'list'" class="space-y-3 md:hidden">
       <UCard v-for="row in rows" :key="row.id" :ui="{ root: 'shadow-sm' }">
         <div class="flex items-start justify-between gap-2">
-          <div class="min-w-0">
+          <div class="flex min-w-0 items-center gap-2">
+            <img v-if="row.hasAvatar" :src="`/api/employees/${row.id}/avatar`" :alt="row.name" class="size-8 shrink-0 rounded-full object-cover">
             <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
             <p class="truncate font-mono text-xs text-zinc-400">{{ row.email }}</p>
             <p v-if="row.title" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ row.title }}</p>
@@ -586,7 +597,10 @@ const columns = [
       <UTable :data="rows" :columns="columns">
         <template #name-cell="{ row }">
           <div class="flex items-center gap-2">
-            <span class="text-sm font-medium text-zinc-900 dark:text-white">{{ row.original.name }}</span>
+            <span class="flex items-center gap-2">
+              <img v-if="row.original.hasAvatar" :src="`/api/employees/${row.original.id}/avatar`" :alt="row.original.name" class="size-6 shrink-0 rounded-full object-cover">
+              <span class="text-sm font-medium text-zinc-900 dark:text-white">{{ row.original.name }}</span>
+            </span>
             <span class="truncate font-mono text-xs text-zinc-400">{{ row.original.email }}</span>
           </div>
         </template>
@@ -689,7 +703,7 @@ const columns = [
               </clipPath>
             </defs>
             <circle cx="28" cy="26" r="17" :class="n.row.kind === 'ai' ? 'fill-primary-100 stroke-primary-400 dark:fill-primary-500/20' : 'fill-zinc-100 stroke-zinc-300 dark:fill-zinc-800'" stroke-width="1.5" />
-            <image v-if="n.row.image" :href="n.row.image" x="11" y="9" width="34" height="34" :clip-path="`url(#av-${n.row.id})`" preserveAspectRatio="xMidYMid slice" />
+            <image v-if="n.row.hasAvatar" :href="`/api/employees/${n.row.id}/avatar`" x="11" y="9" width="34" height="34" :clip-path="`url(#av-${n.row.id})`" preserveAspectRatio="xMidYMid slice" />
             <text v-else x="28" y="30" text-anchor="middle" class="fill-zinc-600 text-[11px] font-semibold dark:fill-zinc-300">{{ n.row.kind === 'ai' ? 'AI' : n.row.name.slice(0, 1) }}</text>
             <text x="52" y="22" class="fill-zinc-900 text-[12px] font-medium dark:fill-white">{{ n.row.name.length > 14 ? n.row.name.slice(0, 14) + '…' : n.row.name }}</text>
             <text x="52" y="38" class="fill-zinc-400 text-[10px]">{{ (n.row.title || n.row.email).slice(0, 16) }}</text>
@@ -774,10 +788,11 @@ const columns = [
             <div class="flex items-center gap-3">
               <span class="inline-flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-elevated text-lg font-semibold text-muted">
                 <img v-if="form.image" :src="form.image" alt="avatar preview" class="size-12 rounded-full object-cover">
+                <img v-else-if="avatarUrl" :src="avatarUrl" alt="avatar preview" class="size-12 rounded-full object-cover">
                 <template v-else>{{ form.kind === 'ai' ? 'AI' : (form.name.slice(0, 1) || '?') }}</template>
               </span>
               <input type="file" accept="image/*" class="w-full text-xs" :disabled="busy" @change="onAvatarPicked">
-              <UButton v-if="form.image" icon="i-lucide-x" size="xs" color="neutral" variant="soft" aria-label="Remove avatar" @click="form.image = null" />
+              <UButton v-if="form.image" icon="i-lucide-x" size="xs" color="neutral" variant="soft" aria-label="Remove avatar" @click="form.image = null; avatarDirty = true; avatarUrl = null" />
             </div>
           </UFormField>
           <UFormField v-if="!isEdit" label="Kind" name="kind">

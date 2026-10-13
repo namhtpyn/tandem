@@ -28,7 +28,7 @@ export const employeesRouter = os.router({
         userId: r.id,
         name: r.name,
         email: r.email,
-        image: r.image,
+        hasAvatar: r.image !== null,
         // derived: extension row present => ai, absent => human
         kind: ai ? 'ai' : 'human',
         title: r.title,

@@ -18,8 +18,8 @@ export interface EmployeeRow {
   userId: string
   name: string
   email: string
-  /** avatar data URL or null (initials fallback in UI) */
-  image: string | null
+  /** avatar present — fetch via GET /api/employees/:id/avatar (cacheable) */
+  hasAvatar: boolean
   kind: 'human' | 'ai'
   title: string | null
   supervisorIds: string[]
