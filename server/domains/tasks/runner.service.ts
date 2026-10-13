@@ -97,6 +97,9 @@ export async function loadDispatchPlan(taskId: string) {
 /** the env blob written to the remote agent's stdin (never argv) */
 export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>, tandemUrl: string): string {
   return [
+    // set -a: every assignment below is EXPORTED to the agent child process env
+    // (plain `VAR=...` after `.` only sets shell vars, hermes would see nothing)
+    'set -a',
     // non-interactive ssh shells get a minimal PATH (~/.local/bin, ~/.bun/bin missing) —
     // extend it or the agent executable is 'command not found' (exit 127)
     // double quotes: $HOME/$PATH must EXPAND when the blob is sourced
@@ -107,6 +110,7 @@ export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>,
     `TANDEM_URL='${tandemUrl}'`,
     `TANDEM_TASK_ID='${plan.task.id}'`,
     `HERMES_HOME="/root/.hermes-profiles/tandem-${plan.ai.userId}"`,
+    'set +a',
     // single-quote EVERY value: titles contain spaces; unquoted words would be
     // executed as commands when the blob is sourced (exit 127)
     `TANDEM_TASK_TITLE='${plan.task.title.replace(/'/g, `'\\''`)}'`,
