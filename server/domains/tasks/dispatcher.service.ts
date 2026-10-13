@@ -18,6 +18,15 @@ export function activeRunCount(): number {
 /** reap runs stuck in 'running' past the hard timeout + grace: mark failed, bounce task to
  * ready (with the normal backoff ladder), so orphaned rows never pin a task in doing forever. */
 export async function reapStaleRuns(): Promise<number> {
+  try {
+    return await reapStaleRunsInner()
+  }
+  catch {
+    return 0 // best-effort sweep: a failed DB read just means try again next tick
+  }
+}
+
+async function reapStaleRunsInner(): Promise<number> {
   const { RUN_TIMEOUT_MS } = await import('./runner.service')
   const grace = 2 * 60_000
   const cutoff = new Date(Date.now() - RUN_TIMEOUT_MS - grace)
@@ -116,7 +125,7 @@ export type DispatchJob = { taskId: string, tandemUrl: string }
 export function startDispatcher(tandemUrl: string, intervalMs = 5000): () => void {
   const timer = setInterval(() => {
     void scanOnce(tandemUrl) // scanOnce never rejects: its own catch turns errors into false
-    void reapStaleRuns().catch(() => {}) // best-effort orphan sweep
+    void reapStaleRuns() // never rejects: its own catch turns errors into 0 reaped
   }, intervalMs)
   return () => clearInterval(timer)
 }

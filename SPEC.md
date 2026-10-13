@@ -167,6 +167,8 @@ secrets are never returned.
 | POST | `/rpc/**` | varies (see API law) | all application procedures |
 | POST | `/rpc/**` | session (oRPC middleware) | oRPC v2 procedures (see API law) |
 | GET | `/` | none | 302 → `/admin` |
+| GET | `/tasks` | session | task list/board (mobile-first cards; titles link to the task page) |
+| GET | `/tasks/:id` | session | task info page: header + workflow actions + agent runs (full output) + activity feed; polls runs/feed every 2s while open |
 
 ## Testing contract
 

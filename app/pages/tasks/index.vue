@@ -420,7 +420,7 @@ function statusColor(s: string) {
         <UCard v-for="row in tasks" :key="row.id" :ui="{ root: 'shadow-sm' }">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
-              <p class="truncate font-medium text-zinc-900 dark:text-white">{{ row.title }}</p>
+              <NuxtLink :to="`/tasks/${row.id}`" class="truncate font-medium text-zinc-900 hover:underline dark:text-white">{{ row.title }}</NuxtLink>
               <p v-if="row.projectName" class="mt-0.5 flex items-center gap-1 text-xs text-primary"><UIcon name="i-lucide-folder-kanban" class="size-3" />{{ row.projectName }}</p>
               <p class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-400">
                 <span>{{ assigneeNameById.get(row.assigneeId ?? '') ?? 'Unassigned' }}</span>
@@ -481,7 +481,7 @@ function statusColor(s: string) {
         ]">
           <template #title-cell="{ row }">
             <div class="min-w-0">
-              <p class="truncate font-medium text-zinc-900 dark:text-white">{{ row.original.title }}</p>
+              <NuxtLink :to="`/tasks/${row.original.id}`" class="truncate font-medium text-zinc-900 hover:underline dark:text-white">{{ row.original.title }}</NuxtLink>
               <p v-if="row.original.projectName" class="flex items-center gap-1 text-xs text-primary"><UIcon name="i-lucide-folder-kanban" class="size-3" />{{ row.original.projectName }}</p>
               <p v-if="row.original.description" class="truncate text-xs text-zinc-400">{{ row.original.description }}</p>
             </div>
@@ -560,7 +560,7 @@ function statusColor(s: string) {
                 @dragenter="dropTarget === null && allowedTargets(row.status).includes(col.id) && (dropTarget = col.id)"
               >
                 <div class="min-w-0">
-                  <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.title }}</p>
+                  <NuxtLink :to="`/tasks/${row.id}`" class="truncate text-sm font-medium text-zinc-900 hover:underline dark:text-white">{{ row.title }}</NuxtLink>
                   <p v-if="row.projectName" class="mt-0.5 flex items-center gap-1 text-xs text-primary"><UIcon name="i-lucide-folder-kanban" class="size-3" />{{ row.projectName }}</p>
                   <p class="mt-0.5 flex items-center gap-1 text-xs text-zinc-400">
                     <UIcon v-if="row.assigneeKind === 'ai'" name="i-lucide-bot" class="size-3 text-primary" />

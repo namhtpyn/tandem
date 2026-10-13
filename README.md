@@ -12,7 +12,7 @@ filled by agents you already run yourself.
 
 - **Environments** — SSH targets (host, port, user) that run your AI agents; connection probe before use
 - **Employees** — humans and AI in one directory; titles, hierarchy (org chart), AI bound to an environment + system instructions
-- **Tasks** — assign to any employee (human or AI); question/answer chain with forwarding, unanimous review workflow before done
+- **Tasks** — assign to any employee (human or AI); question/answer chain with forwarding, unanimous review workflow before done; every task has a full info page (workflow actions, agent runs with their complete output, activity history)
 - **Agent runs** — tasks assigned to AI are dispatched automatically to the agent's machine over SSH; output streams live into the task's workflow drawer with the full activity feed; success finishes the task, failure retries with backoff
 - **Resilience** — hung agents time out (default 30 min), crash-orphaned runs are reaped, failed runs back off before retrying (1/5/15 min ladder; out-of-quota errors wait the full 15 min) — no retry storms
 - **Auth** — email/password + runtime-configurable OIDC providers (admin UI, no restarts)
