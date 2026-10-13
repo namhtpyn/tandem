@@ -31,6 +31,7 @@ tasks(id, title, description, assignee_id -> employees.id, status, created_at, u
 runs(id, task_id -> tasks.id, environment_id, status, stream, result, exit_code, started_at, ended_at)
 tasks.workflow: owner_id, reviewers text[], question_holder_id, question_chain text[], review_approvals text[]
 dispatcher: scans ready-category statuses; per-agent serial dispatch; run logs tail 100 lines
+redis (REDIS_URL, optional): bullmq queue 'tandem-dispatch' (retries/backoff) + pub/sub change-bus fanout + cache; unset = in-process fallback
 ```
 
 Runner (M5) executes per run:

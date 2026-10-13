@@ -14,7 +14,9 @@ export default defineNitroPlugin(async () => {
   // agent dispatcher: eligible tasks (ready + AI assignee) fire automatically.
   // Opt out with TANDEM_NO_DISPATCHER=1 (tests); fake runner with TANDEM_FAKE_RUNNER=1.
   const { maybeStartDispatcher } = await import('../domains/tasks/dispatcher.service')
-  maybeStartDispatcher()
+  await maybeStartDispatcher()
+  const { bridgeRedisChanges } = await import('../domains/kernel/change-bus')
+  await bridgeRedisChanges()
 
   const existing = await db.select({ id: user.id }).from(user).limit(1)
   if (existing.length > 0) return

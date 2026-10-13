@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm'
 import { db } from '../../db'
 import { tasks, taskRuns, taskStatuses, aiEmployees } from '../../db/schema'
 import { dispatchTask } from './runner.service'
+import { redisHub } from '../kernel/redis'
 
 const inFlight = new Map<string, Promise<unknown>>() // employeeId -> run promise
 
@@ -33,6 +34,17 @@ export async function findEligible(): Promise<{ taskId: string, employeeId: stri
 export async function scanOnce(tandemUrl: string): Promise<boolean> {
   const hit = await findEligible()
   if (!hit) return false
+  const hub = await redisHub()
+  if (hub) {
+    try {
+      await hub.enqueue<DispatchJob>(DISPATCH_QUEUE, { taskId: hit.taskId, tandemUrl }, { attempts: 3 })
+      return true
+    }
+    catch (e) {
+      console.warn('[tandem] dispatch enqueue failed, retrying next scan:', (e as Error).message)
+      return false // redis hiccup: try next scan
+    }
+  }
   try {
     const handle = await dispatchTask(hit.taskId, tandemUrl)
     inFlight.set(hit.employeeId, handle.finished.finally(() => inFlight.delete(hit.employeeId)))
@@ -44,14 +56,29 @@ export async function scanOnce(tandemUrl: string): Promise<boolean> {
   }
 }
 
-/** boot hook: start the dispatcher unless opted out (tests set TANDEM_NO_DISPATCHER=1) */
-export function maybeStartDispatcher(): (() => void) | null {
+/** boot hook: start the dispatcher unless opted out (tests set TANDEM_NO_DISPATCHER=1).
+ * With REDIS_URL set, dispatch flows through a BullMQ per-agent queue (durable,
+ * concurrency-1 per agent, exponential-backoff retries) instead of the interval
+ * scanner; the scan loop still runs as a sweep for tasks queued while redis was down. */
+export async function maybeStartDispatcher(): Promise<(() => void) | null> {
   if (process.env.TANDEM_NO_DISPATCHER) return null
   const url = process.env.TANDEM_PUBLIC_URL || 'http://localhost:3000'
+  const hub = await redisHub()
+  if (hub) {
+    await hub.queue<DispatchJob>(DISPATCH_QUEUE, async (job) => {
+      const run = await dispatchTask(job.taskId, job.tandemUrl)
+      await run.finished // worker stays busy (concurrency 1) until the SSH run ends
+    }, { concurrency: 1, attempts: 3 })
+    console.log('[tandem] dispatch queue worker started (redis)')
+  }
   const stop = startDispatcher(url)
-  console.log('[tandem] dispatcher started')
+  console.log(`[tandem] dispatcher started (${hub ? 'redis+interval' : 'interval'})`)
   return stop
 }
+
+export const DISPATCH_QUEUE = 'tandem-dispatch' // bullmq forbids ':' in queue names
+
+export type DispatchJob = { taskId: string, tandemUrl: string }
 
 /** start the interval; returns a stop function */
 export function startDispatcher(tandemUrl: string, intervalMs = 5000): () => void {

@@ -376,13 +376,13 @@ describe('dispatch-plan edge arms', () => {
     const prev = process.env.TANDEM_NO_DISPATCHER
     process.env.TANDEM_NO_DISPATCHER = '1'
     try {
-      expect(maybeStartDispatcher()).toBeNull()
+      expect(await maybeStartDispatcher()).toBeNull()
     }
     finally {
       if (prev === undefined) delete process.env.TANDEM_NO_DISPATCHER
       else process.env.TANDEM_NO_DISPATCHER = prev
     }
-    const stop = maybeStartDispatcher()
+    const stop = await maybeStartDispatcher()
     expect(typeof stop).toBe('function')
     stop!()
   })

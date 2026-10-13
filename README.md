@@ -32,6 +32,11 @@ filled by agents you already run yourself.
   section pins which LLM + decision engine Tandem uses internally (provider + optional model + vault
   key each); keys configured on agents travel to the agent's machine at dispatch and are never used
   internally
+- **Redis (optional, `REDIS_URL`)** — one instance powers three things: BullMQ dispatch queue
+  (durable per-agent job processing with exponential-backoff retries — replaces the bare interval
+  when set; the interval stays on as a sweep), pub/sub fan-out of change-bus events across
+  replicas, and a shared cache. Without `REDIS_URL` everything falls back to in-process behavior
+  (single replica). Queue names use dashes (bullmq forbids colons)
 - **Health** — split readiness (`/health/ready`: Postgres + migrations) and liveness (`/health/live`: always 200)
 
 Stack: Nuxt 4 + Nitro, Nuxt UI v4, better-auth, drizzle + postgres.js,
