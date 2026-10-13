@@ -39,14 +39,28 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
   })
 
   it('the queue worker dispatches a job end-to-end (redis path)', async () => {
+    const { redisHub } = await import('../server/domains/kernel/redis')
+    const hub = await redisHub()
+    // watch the queue drain: wait until no waiting/active jobs remain (CI-safe poll)
+    const drained = async () => {
+      for (let i = 0; i < 60; i++) {
+        const r = new (await import('ioredis')).default('redis://127.0.0.1:6399')
+        const waiting = (await new Promise(res => r.keys('bull:tandem-dispatch:wait*', res))) as string[] | null ?? []
+        const active = (await new Promise(res => r.keys('bull:tandem-dispatch:active*', res))) as string[] | null ?? []
+        await r.disconnect()
+        if (waiting.length === 0 && active.length === 0) return true
+        await new Promise(rs => setTimeout(rs, 200))
+      }
+      return false
+    }
     const { scanOnce } = await import('../server/domains/tasks/dispatcher.service')
     expect(await scanOnce('http://t.local')).toBe(true)
-    // maybeStartDispatcher's worker picks it up; the mocked runner resolves instantly
     const { maybeStartDispatcher } = await import('../server/domains/tasks/dispatcher.service')
     const stop = await maybeStartDispatcher()
-    await new Promise(r => setTimeout(r, 800)) // worker poll + process
+    expect(await drained()).toBe(true) // worker picked it up and processed it
     stop!()
-  })
+    void hub
+  }, 20_000)
 
   it('scanOnce enqueues to the redis queue and the worker consumes it', async () => {
     const { scanOnce } = await import('../server/domains/tasks/dispatcher.service')

@@ -10,49 +10,16 @@ filled by agents you already run yourself.
 
 ## Features
 
-- **Environments** — SSH targets (host, port, user) that run Hermes; connection probe before use
-- **Employees** — humans and AI in one directory; title, manager pointer (hierarchy), AI bound to an environment + system instructions
-- **Tasks** — assign to any employee, track status, comment; question/answer chain (forwarding
-  walks the supervisor chain, never revisiting) + unanimous review workflow (ALL reviewers must
-  approve; request-changes sends it back)
-- **Agent runs** — a server-side dispatcher claims tasks in ready statuses with AI assignees and
-  runs them on the agent's environment over SSH (env blob written to a temp file, sourced; keys
-  never on argv). stdout/stderr stream line-by-line into the run log (last 100 lines tailed),
-  surfaced live in the task's workflow drawer with the activity feed. Success flips the task to
-  done, failure bounces it back to ready. `TANDEM_FAKE_RUNNER=1` swaps in a fake script for tests
+- **Environments** — SSH targets (host, port, user) that run your AI agents; connection probe before use
+- **Employees** — humans and AI in one directory; titles, hierarchy (org chart), AI bound to an environment + system instructions
+- **Tasks** — assign to any employee (human or AI); question/answer chain with forwarding, unanimous review workflow before done
+- **Agent runs** — tasks assigned to AI are dispatched automatically to the agent's machine over SSH; output streams live into the task's workflow drawer with the full activity feed; success finishes the task, failure retries with backoff
+- **Resilience** — hung agents time out (default 30 min), crash-orphaned runs are reaped, failed runs back off before retrying (1/5/15 min ladder; out-of-quota errors wait the full 15 min) — no retry storms
 - **Auth** — email/password + runtime-configurable OIDC providers (admin UI, no restarts)
-- **Model providers** — pure connection info (label/base URL/endpoints/headers), NEVER keys. One
-  provider can speak MANY endpoints (`shared/api-styles.ts` const-object enum, three kinds): LLM
-  endpoints (OPENAI-COMPLETIONS, OPENAI-RESPONSES, ANTHROPIC-MESSAGES) power agents; decision
-  endpoints (TYPESAFE-SYSTEMONE, OPENAI-DECISIONS) power Jev auto-assignment; models endpoints
-  (OPENAI-MODELS, ANTHROPIC-MODELS, TYPESAFE-MODELS — at most ONE per provider) power the /models
-  autocomplete. Base URL LAW: baseUrl is the host root BEFORE /v1 (e.g. https://api.openai.com);
-  adapters append the full /v1/... path (tolerating a baked-in leaf). Keys are supplied per call
-  from the vault (agent dispatch, /models autocomplete, auto-assign). The **Workspace AI** settings
-  section pins which LLM + decision engine Tandem uses internally (provider + optional model + vault
-  key each); keys configured on agents travel to the agent's machine at dispatch and are never used
-  internally
-- **Run resilience** — SSH keepalive + readyTimeout + a hard run cap (`TANDEM_RUN_TIMEOUT_MS`,
-  default 30min) so a hung agent becomes a failure instead of a zombie; a stale-run reaper on the
-  dispatch sweep orphans crash-left `running` rows; failed runs back off before re-dispatch
-  (1min/5min/15min ladder per consecutive failure, quota/429 signatures jump straight to 15min) so
-  an out-of-usage agent doesn't become a 5s retry storm; the drawer shows "Retrying in ~Xm"
-- **Redis (optional, `REDIS_URL`)** — one instance powers three things: BullMQ dispatch queue
-  (durable per-agent job processing with exponential-backoff retries — replaces the bare interval
-  when set; the interval stays on as a sweep), pub/sub fan-out of change-bus events across
-  replicas, and a shared cache. Without `REDIS_URL` everything falls back to in-process behavior
-  (single replica). Queue names use dashes (bullmq forbids colons)
-- **Health** — split readiness (`/health/ready`: Postgres + migrations) and liveness (`/health/live`: always 200)
+- **Model providers** — connection info only, keys live in the built-in vault and are delivered to agents at dispatch; works with OpenAI/Anthropic-compatible endpoints and more
+- **Health** — `/health/ready` (Postgres + migrations) and `/health/live` endpoints
 
-Stack: Nuxt 4 + Nitro, Nuxt UI v4, better-auth, drizzle + postgres.js,
-**oRPC v2** (live queries over SSE — the app-wide API layer), TanStack Query,
-VueUse, es-toolkit, type-fest. bun-only toolchain (Bun Shell for all
-subprocess). Postgres is the only backing service.
-
-**Realtime everywhere**: the whole application API is oRPC procedures at
-`/rpc` — settings, OIDC providers, auth capabilities, environments all stream
-as live queries; the admin UI subscribes to snapshot streams and updates in
-every open tab the moment anything changes. No polling, no manual refresh.
+Everything is realtime: open tabs update the moment anything changes — no refresh.
 
 ## Quick start (Docker)
 
@@ -65,7 +32,7 @@ docker run -d \
 ```
 
 Bring your own Postgres (any managed instance works). Open
-`http://localhost:3000/admin` and sign in with the seeded admin:
+`http://localhost:3000` and sign in with the seeded admin:
 
 - email `admin@tandem.local`
 - password `tandem-admin`
@@ -81,35 +48,17 @@ only on a fresh database — never on restarts.
 | `BETTER_AUTH_SECRET` | in prod | session signing |
 | `BETTER_AUTH_URL` | no | canonical origin override |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | no | first-boot seed overrides |
+| `REDIS_URL` | no | Redis for durable dispatch queue, multi-replica live updates, and cache; unset = single-process mode |
+| `TANDEM_PUBLIC_URL` | no | canonical URL handed to dispatched agents |
+| `TANDEM_RUN_TIMEOUT_MS` | no | hard cap on one agent run (default 30 min) |
 | `TANDEM_OIDC_ISSUER` + `_CLIENT_ID` + `_CLIENT_SECRET` (+ `_LABEL`) | no | env-fallback single OIDC provider; more via admin UI |
 
 Migrations apply at boot (bundled with the server; no CLI step).
 
-## Development
+## Support
 
-```bash
-bun install
-bun run dev            # Nuxt dev server
-bun run test           # vitest unit suite (needs a local Postgres)
-bun run test:coverage  # unit + 100% coverage gates
-bun run test:e2e       # Playwright (builds nothing; expects bun build output)
-bun run typecheck
-```
-
-Unit tests create one throwaway Postgres database per test file (drop on exit);
-point them with `TANDEM_TEST_DATABASE_URL`. E2E uses `tandem_e2e` on the same
-server, spawned by Playwright's `webServer` on port 4100.
-
-Docs: [SPEC.md](SPEC.md) · [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
-
-## Roadmap
-
-- M1 — foundation: auth, settings, health, admin shell ✅
-- M2 — environments: oRPC live API + realtime admin UI + SSH probe ✅
-- M3 — employees + org chart
-- M4 — tasks
-- M5 — runner (SSH + Hermes stream capture)
-- M6 — ship: CI, release, GHCR, docs ✅
+Issues and questions: [GitHub issues](https://github.com/namhtpyn/tandem/issues).
+Developer docs: [AGENTS.md](AGENTS.md) · [SPEC.md](SPEC.md).
 
 ## License
 

@@ -9,6 +9,8 @@ describe('redis failure arms', () => {
     process.env.REDIS_URL = 'redis://127.0.0.1:6390' // nothing listens here
     const { redisHub } = await import('../server/domains/kernel/redis')
     await expect(redisHub()).rejects.toThrow()
+    // cache was cleared by the rejection: a second call retries (and fails) fresh
+    await expect(redisHub()).rejects.toThrow()
     delete process.env.REDIS_URL
   })
 

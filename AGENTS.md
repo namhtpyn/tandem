@@ -2,6 +2,15 @@
 
 Rules for any AI agent working in this repository. Human-readable name: tandem.
 
+## Stack
+
+Nuxt 4 + Nitro, Nuxt UI v4, better-auth, drizzle + postgres.js, **oRPC v2**
+(live queries over SSE — the app-wide API layer; only `/auth/**`, `/health/*`,
+`/api/employees/:id/avatar` are REST), TanStack Query, VueUse, es-toolkit,
+type-fest. bun-only toolchain (Bun Shell for all subprocess). Postgres is the
+only required backing service; Redis optional via REDIS_URL (BullMQ dispatch
+queue, pub/sub change-bus fan-out, cache).
+
 ## Mandated rule: manual browser test after every feature
 
 **Before any feature is considered complete — and again before every commit that
@@ -57,8 +66,18 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
 - **Bun Shell for all subprocess** (multi-OS support law).
 - **Postgres, never SQLite.** better-auth tables are ALWAYS CLI-generated
   (`bun run gen:auth`); never hand-edit inside the GENERATED markers.
-- **Every functional change ships with matching README.md + SPEC.md updates in
-  the SAME commit.** Stale docs = shipped bug.
+- **Docs law:** README.md is for USERS (install, configure, use) — never developer
+  internals. Developer-facing detail (architecture, test infra, internal env knobs like
+  `TANDEM_FAKE_RUNNER`, `TANDEM_NO_DISPATCHER`, `TANDEM_TEST_DATABASE_URL`, roadmap/milestones)
+  lives HERE in AGENTS.md or SPEC.md. **Every functional change ships with matching
+  README.md (user impact) + SPEC.md (schema/behavior) updates in the SAME commit.** Stale
+  docs = shipped bug.
+- **Dev workflow:** `bun run dev` (Nuxt), `bun run test` (needs local Postgres; one throwaway
+  DB per file via `TANDEM_TEST_DATABASE_URL`), `bun run test:coverage` (100% gates),
+  `bun run test:e2e` (Playwright, `tandem_e2e` DB, webServer :4100), `bun run typecheck`.
+  CI adds a redis service (port 6399) for the bullmq/pubsub integration tests.
+- **Roadmap:** M1 auth/settings/health/admin ✅ · M2 environments ✅ · M3 employees + org chart ✅ ·
+  M4 tasks ✅ (+workflow, agent runs) · M5 SSH runner ✅ · M6 ship: CI/release/GHCR/docs ✅.
 - bun-only toolchain; Nuxt UI components; zod strict inputs on every procedure.
 - **Const-object "enums", never TS `enum` nor bare string unions.** Define closed
   value sets as frozen const objects, derive types from them, and validate shape
