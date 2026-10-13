@@ -1,3 +1,10 @@
+## [2.19.1](https://github.com/namhtpyn/tandem/compare/v2.19.0...v2.19.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **tasks:** guard ssh2 stream.stderr — absent on some exec paths after timeout settle ([c708df5](https://github.com/namhtpyn/tandem/commit/c708df54cc3d53b2eeca59553c213899153ac1e5))
+
 # [2.19.0](https://github.com/namhtpyn/tandem/compare/v2.18.1...v2.19.0) (2026-10-13)
 
 
