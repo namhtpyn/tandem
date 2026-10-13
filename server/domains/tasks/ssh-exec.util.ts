@@ -52,9 +52,11 @@ export async function runOverSsh(plan: SshPlan, command: string, envBlob: string
       stream.on('data', (d: Buffer) => {
         for (const line of d.toString().split('\n')) if (line) onLine(line)
       })
-      stream.stderr.on('data', (d: Buffer) => {
-        for (const line of d.toString().split('\n')) if (line) onLine(`[stderr] ${line}`)
-      })
+      if (stream.stderr) {
+        stream.stderr.on('data', (d: Buffer) => {
+          for (const line of d.toString().split('\n')) if (line) onLine(`[stderr] ${line}`)
+        })
+      }
       stream.on('close', (code: number | null) => settle(code === 0 ? 'done' : 'failed', code))
       stream.end(envBlob)
     })
