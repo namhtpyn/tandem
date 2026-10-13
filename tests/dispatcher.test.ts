@@ -84,7 +84,7 @@ describe('runner service guards', () => {
     const taskRow = (await d.db.select().from(sch.tasks))[0]!
     const plan = await loadDispatchPlan(taskRow.id)
     const blob = buildEnvBlob(plan, 'http://t.local')
-    expect(blob).toContain('TANDEM_URL=http://t.local')
+    expect(blob).toContain(`TANDEM_URL='http://t.local'`)
     expect(blob.endsWith('\n')).toBe(true)
     const cmd = buildCommand(plan)
     expect(cmd).toContain('--resume')
@@ -185,7 +185,7 @@ describe('runner ssh-config paths', () => {
     expect(plan.sshKey).toBeUndefined()
     expect(plan.llmEnv).toEqual({ CUSTOM_API_KEY: 'sk-123', CUSTOM_BASE_URL: 'https://api.example.com', HERMES_MODEL: 'gpt-test' })
     const blob = buildEnvBlob(plan, 'http://t.local')
-    expect(blob).toContain('CUSTOM_API_KEY=sk-123')
+    expect(blob).toContain(`CUSTOM_API_KEY='sk-123'`)
     const audits = await db.select().from(vaultAudit)
     expect(audits.filter(a => a.secretId === 'sec-pw').length).toBeGreaterThan(0)
     expect(audits.filter(a => a.secretId === 'sec-llm').length).toBeGreaterThan(0)
@@ -275,7 +275,7 @@ describe('runner failure + fallback arms', () => {
     expect(plan.agentName).toBe('Robby')
     expect(buildCommand(plan)).toContain('agent-cli')
     const blob = buildEnvBlob(plan, 'http://t.local')
-    expect(blob).toContain('TANDEM_TASK_TITLE=Exe')
+    expect(blob).toContain(`TANDEM_TASK_TITLE='Exe'`)
   })
 
   it('env secret with ssh-key usage lands in sshKey', async () => {
@@ -399,6 +399,23 @@ describe('dispatch-plan edge arms', () => {
     const stop = await maybeStartDispatcher()
     expect(typeof stop).toBe('function')
     stop!()
+  })
+})
+
+describe('env blob quoting', () => {
+  it('titles with spaces and quotes survive sourcing (no exit 127)', async () => {
+    const agentId = await mkAiAgent()
+    await callProc('tasks.create', { title: `Find out who's your supervior today`, assigneeId: agentId })
+    const d = await dbm()
+    const sch = await schema()
+    const taskRow = (await d.db.select().from(sch.tasks))[0]!
+    const { loadDispatchPlan, buildEnvBlob } = await import('../server/domains/tasks/runner.service')
+    const plan = await loadDispatchPlan(taskRow.id)
+    const blob = buildEnvBlob(plan, 'http://t.local')
+    // prove it sources: run it through sh exactly like the remote side does
+    const { execSync } = await import('child_process')
+    execSync(`cat > /tmp/tandem-env.test && . /tmp/tandem-env.test && rm -f /tmp/tandem-env.test`, { input: blob, shell: '/bin/bash' })
+    expect(blob).toContain(`TANDEM_TASK_TITLE='Find out who'`)
   })
 })
 

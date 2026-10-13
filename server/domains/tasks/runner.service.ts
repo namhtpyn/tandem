@@ -97,12 +97,14 @@ export async function loadDispatchPlan(taskId: string) {
 /** the env blob written to the remote agent's stdin (never argv) */
 export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>, tandemUrl: string): string {
   return [
-    `CUSTOM_API_KEY=${plan.llmEnv.CUSTOM_API_KEY ?? ''}`,
-    `CUSTOM_BASE_URL=${plan.llmEnv.CUSTOM_BASE_URL ?? ''}`,
-    `HERMES_MODEL=${plan.llmEnv.HERMES_MODEL ?? ''}`,
-    `TANDEM_URL=${tandemUrl}`,
-    `TANDEM_TASK_ID=${plan.task.id}`,
-    `TANDEM_TASK_TITLE=${plan.task.title.replace(/'/g, `'\\''`)}`,
+    `CUSTOM_API_KEY='${plan.llmEnv.CUSTOM_API_KEY ?? ''}'`,
+    `CUSTOM_BASE_URL='${plan.llmEnv.CUSTOM_BASE_URL ?? ''}'`,
+    `HERMES_MODEL='${plan.llmEnv.HERMES_MODEL ?? ''}'`,
+    `TANDEM_URL='${tandemUrl}'`,
+    `TANDEM_TASK_ID='${plan.task.id}'`,
+    // single-quote EVERY value: titles contain spaces; unquoted words would be
+    // executed as commands when the blob is sourced (exit 127)
+    `TANDEM_TASK_TITLE='${plan.task.title.replace(/'/g, `'\\''`)}'`,
     '',
   ].join('\n')
 }
