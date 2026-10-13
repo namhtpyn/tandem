@@ -17,7 +17,8 @@ Remote-only: the agent never runs on the Tandem server itself.
 | M1 | foundation: schema, auth, settings, health, admin shell, boot migrations + admin seed | shipped |
 | M2 | environments: oRPC v2 live API, realtime admin UI, SSH probe (Bun Shell) | shipped |
 | M3 | employees (human/AI, title, managerId, org view | planned |
-| M4 | tasks CRUD, assignee, status | planned |
+| M4 | tasks CRUD, assignee, status | shipped |
+| M4+ | workflow (question chain, unanimous review), agent dispatcher + streamed runs | shipped |
 | M5 | runner: per-env serial queue, SSH one-shot Hermes, stream capture | planned |
 | M6 | ship: tests at 100%, CI, semantic-release, GHCR, docs | shipped |
 
@@ -28,6 +29,8 @@ environments(id, name, host, port, username, created_at, updated_at)
 employees(id, name, kind: human|ai, title, manager_id -> employees.id, environment_id -> environments.id, instructions, created_at, updated_at)
 tasks(id, title, description, assignee_id -> employees.id, status, created_at, updated_at)
 runs(id, task_id -> tasks.id, environment_id, status, stream, result, exit_code, started_at, ended_at)
+tasks.workflow: owner_id, reviewers text[], question_holder_id, question_chain text[], review_approvals text[]
+dispatcher: scans ready-category statuses; per-agent serial dispatch; run logs tail 100 lines
 ```
 
 Runner (M5) executes per run:

@@ -1,0 +1,66 @@
+// Dispatcher: scans for eligible tasks (ready-category status + AI assignee)
+// and dispatches them to the runner. One task at a time per agent (serial);
+// extra ready tasks queue until the agent is idle. Intended to run on a
+// server-side interval (boot plugin), skippable in tests via env.
+import { eq } from 'drizzle-orm'
+import { db } from '../../db'
+import { tasks, taskRuns, taskStatuses, aiEmployees } from '../../db/schema'
+import { dispatchTask } from './runner.service'
+
+const inFlight = new Map<string, Promise<unknown>>() // employeeId -> run promise
+
+export function activeRunCount(): number {
+  return inFlight.size
+}
+
+/** find one eligible task: ready-category status, AI assignee, agent idle */
+export async function findEligible(): Promise<{ taskId: string, employeeId: string } | null> {
+  const statuses = await db.select().from(taskStatuses)
+  const readyIds = statuses.filter(s => s.category === 'ready').map(s => s.id)
+  if (readyIds.length === 0) return null
+  const rows = await db.select().from(tasks)
+  const aiRows = await db.select({ userId: aiEmployees.userId }).from(aiEmployees)
+  const aiIds = new Set(aiRows.map(r => r.userId))
+  const eligible = rows
+    .filter(t => readyIds.includes(t.status) && t.assigneeId && aiIds.has(t.assigneeId))
+    .filter(t => !inFlight.has(t.assigneeId!))
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+  const first = eligible[0]
+  return first ? { taskId: first.id, employeeId: first.assigneeId! } : null
+}
+
+/** one scan step: claim + dispatch at most one task. Returns true if dispatched. */
+export async function scanOnce(tandemUrl: string): Promise<boolean> {
+  const hit = await findEligible()
+  if (!hit) return false
+  try {
+    const handle = await dispatchTask(hit.taskId, tandemUrl)
+    inFlight.set(hit.employeeId, handle.finished.finally(() => inFlight.delete(hit.employeeId)))
+    return true
+  }
+  catch {
+    // dispatchTask validates its own preconditions; misses just mean "try next scan"
+    return false
+  }
+}
+
+/** boot hook: start the dispatcher unless opted out (tests set TANDEM_NO_DISPATCHER=1) */
+export function maybeStartDispatcher(): (() => void) | null {
+  if (process.env.TANDEM_NO_DISPATCHER) return null
+  const url = process.env.TANDEM_PUBLIC_URL || 'http://localhost:3000'
+  const stop = startDispatcher(url)
+  console.log('[tandem] dispatcher started')
+  return stop
+}
+
+/** start the interval; returns a stop function */
+export function startDispatcher(tandemUrl: string, intervalMs = 5000): () => void {
+  const timer = setInterval(() => {
+    void scanOnce(tandemUrl) // scanOnce never rejects: its own catch turns errors into false
+  }, intervalMs)
+  return () => clearInterval(timer)
+}
+
+/** runs lookup used by the router */
+export { listRuns } from './runner.service'
+export { taskRuns } from '../../db/schema'

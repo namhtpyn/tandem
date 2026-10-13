@@ -88,9 +88,9 @@ test('workflow drawer shows activity and lets the owner answer', async ({ page }
   await page.getByPlaceholder('Task title').fill(`WF ${suffix}`)
   await page.getByRole('button', { name: /Save|Create task/ }).click()
   await page.waitForTimeout(1200)
-  // open the workflow drawer
-  const card = page.locator('div').filter({ hasText: `WF ${suffix}` }).first()
-  await card.locator('button[aria-label="Task workflow"]').first().click()
+  // open the workflow drawer (row-scoped locator: immune to live re-renders of sibling rows)
+  const row = page.locator('tr').filter({ hasText: `WF ${suffix}` }).first()
+  await row.locator('button[aria-label="Task workflow"]').first().click()
   const drawer = page.locator('[data-slot="content"]').first()
   await expect(drawer).toBeVisible()
   await expect(drawer.getByText(/no activity yet/i)).toBeVisible()
@@ -98,4 +98,49 @@ test('workflow drawer shows activity and lets the owner answer', async ({ page }
   await drawer.locator('textarea').fill('who owns the spec?')
   await drawer.getByRole('button', { name: 'Ask' }).click()
   await expect(drawer.getByText(/only a task in progress|assignee/i).first()).toBeVisible({ timeout: 10_000 })
+})
+
+test('workflow drawer streams an agent run to completion', async ({ page }) => {
+  await login(page)
+  const suffix = Date.now().toString(36)
+  const envName = `e2e-runenv-${suffix}`
+  const botName = `E2e Runner ${suffix}`
+  // prerequisite: environment + AI employee
+  await page.goto('/environments')
+  await page.getByRole('button', { name: 'New environment' }).first().click()
+  await page.getByPlaceholder('Environment name').fill(envName)
+  await page.getByPlaceholder('Hostname or IP').fill('127.0.0.1')
+  await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(page.locator('tr', { hasText: envName }).first()).toBeVisible({ timeout: 15_000 })
+  await page.goto('/employees')
+  await page.getByRole('button', { name: 'New employee' }).first().click()
+  await page.getByPlaceholder('Full name').fill(botName)
+  await page.getByPlaceholder('name@company.com').fill(`e2e-runner-${suffix}@tandem.local`)
+  await page.getByRole('radio', { name: /AI agent/ }).check()
+  await page.getByPlaceholder('Job title').fill('Runner')
+  await page.getByRole('button', { name: 'Environment', exact: true }).click()
+  await page.getByRole('option', { name: envName }).click()
+  await page.getByRole('button', { name: /Save|Create employee/ }).click()
+  await page.getByRole('button', { name: /Done — I saved the key/ }).click()
+  await page.goto('/tasks')
+  // create a task assigned to the AI employee
+  await page.getByRole('button', { name: 'New task' }).first().click()
+  await page.getByPlaceholder('Task title').fill(`Run ${suffix}`)
+  await page.getByRole('combobox', { name: 'Assignee' }).click()
+  await page.getByRole('option', { name: new RegExp(botName) }).first().click()
+  await page.getByRole('button', { name: /Save|Create task/ }).click()
+  await page.waitForTimeout(1500)
+  // open the workflow drawer (row-scoped locator)
+  const row = page.locator('tr').filter({ hasText: `Run ${suffix}` }).first()
+  await row.locator('button[aria-label="Task workflow"]').first().click()
+  const drawer = page.locator('[data-slot="content"]').first()
+  await expect(drawer).toBeVisible()
+  // the auto-dispatcher (fake runner) picks the ready task up and streams output
+  await expect(drawer.getByText(/RESULT: task complete/i)).toBeVisible({ timeout: 30_000 })
+  // the run card reports done + exit 0
+  await expect(drawer.getByText(/done · exit 0/i)).toBeVisible()
+  // the activity feed logs dispatch + finish
+  await expect(drawer.getByText(/dispatched to/i).first()).toBeVisible()
+  await expect(drawer.getByText(/run finished/i).first()).toBeVisible()
 })

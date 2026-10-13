@@ -188,6 +188,22 @@ export const tasks = pgTable('tandem_tasks', {
   index('tandem_tasks_status_idx').on(t.status),
 ])
 
+// One row per agent dispatch over SSH. Output is the capped tail.
+export const taskRuns = pgTable('tandem_task_runs', {
+  id: text('id').primaryKey(),
+  taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  employeeId: text('employee_id').references(() => user.id, { onDelete: 'set null' }),
+  environmentId: text('environment_id'),
+  /** running | done | failed */
+  status: text('status').notNull().default('running'),
+  exitCode: integer('exit_code'),
+  output: text('output').notNull().default(''),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+}, (t) => [
+  index('tandem_task_runs_task_idx').on(t.taskId, t.startedAt),
+])
+
 // Task activity feed: questions, answers, forwards, verdicts, status notes.
 export const taskActivity = pgTable('tandem_task_activity', {
   id: text('id').primaryKey(),
@@ -205,7 +221,7 @@ export const taskActivity = pgTable('tandem_task_activity', {
 // ---------- relations ----------
 
 export const relations = defineRelations(
-  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, vaultFolders, employeeTitles, tasks, taskActivity, taskStatuses, modelProviders, projects },
+  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, vaultFolders, employeeTitles, tasks, taskActivity, taskRuns, taskStatuses, modelProviders, projects },
   (helpers) => ({
     user: {
       sessions: helpers.many.session({ from: helpers.user.id, to: helpers.session.userId }),

@@ -8,6 +8,7 @@ import {
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 import { askQuestion, forwardQuestion, answerQuestion, submitResult, approveReview, requestChanges, abandonReview, listActivity } from './workflow.service'
+import { dispatchTask, listRuns } from './runner.service'
 import type { TaskRow } from '../../../shared/types'
 
 type WorkflowSession = { getSession: () => Promise<{ user: { id: string } } | null> }
@@ -235,6 +236,38 @@ export const tasksRouter = os.router({
         createdAt: r.createdAt.toISOString(),
       }))
     })),
+
+  /** runs for a task (live) — streaming output tail from agent dispatches */
+  runs: protectedProcedure
+    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .handler(({ input }) => liveGenerator(['runs', 'tasks'], async () => {
+      const rows = await listRuns(input.taskId)
+      return rows.map(r => ({
+        id: r.id,
+        taskId: r.taskId,
+        employeeId: r.employeeId,
+        environmentId: r.environmentId,
+        status: r.status as 'running' | 'done' | 'failed',
+        exitCode: r.exitCode,
+        output: r.output,
+        startedAt: r.startedAt.toISOString(),
+        finishedAt: r.finishedAt ? r.finishedAt.toISOString() : null,
+      }))
+    })),
+
+  /** manually dispatch a task to its AI assignee (the dispatcher also fires automatically) */
+  dispatch: protectedProcedure
+    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .handler(async ({ input, context }) => {
+      const session = await (context as unknown as { getSession: () => Promise<{ user: { id: string } } | null> }).getSession()
+      const selfId = session?.user?.id ?? null
+      if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' })
+      return await runWorkflow(async () => {
+        const tandemUrl = process.env.TANDEM_PUBLIC_URL || 'http://localhost:3000'
+        const handle = await dispatchTask(input.taskId, tandemUrl)
+        return { runId: handle.runId }
+      })
+    }),
 
   /** delete a task */
   remove: protectedProcedure

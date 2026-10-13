@@ -11,6 +11,11 @@ export default defineNitroPlugin(async () => {
   const applied = await applyMigrations()
   if (applied.length > 0) console.log('[tandem] applied migrations:', applied.join(', '))
 
+  // agent dispatcher: eligible tasks (ready + AI assignee) fire automatically.
+  // Opt out with TANDEM_NO_DISPATCHER=1 (tests); fake runner with TANDEM_FAKE_RUNNER=1.
+  const { maybeStartDispatcher } = await import('../domains/tasks/dispatcher.service')
+  maybeStartDispatcher()
+
   const existing = await db.select({ id: user.id }).from(user).limit(1)
   if (existing.length > 0) return
 

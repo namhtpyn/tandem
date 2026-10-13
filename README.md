@@ -12,9 +12,14 @@ filled by agents you already run yourself.
 
 - **Environments** — SSH targets (host, port, user) that run Hermes; connection probe before use
 - **Employees** — humans and AI in one directory; title, manager pointer (hierarchy), AI bound to an environment + system instructions
-- **Tasks** — assign to any employee, track status, comment
-- **Runner** — per-environment serial queue; each run executes
-  `ssh <env> hermes chat -q --query-file - --format stream-json` with the prompt on stdin, capturing the JSONL stream live
+- **Tasks** — assign to any employee, track status, comment; question/answer chain (forwarding
+  walks the supervisor chain, never revisiting) + unanimous review workflow (ALL reviewers must
+  approve; request-changes sends it back)
+- **Agent runs** — a server-side dispatcher claims tasks in ready statuses with AI assignees and
+  runs them on the agent's environment over SSH (env blob written to a temp file, sourced; keys
+  never on argv). stdout/stderr stream line-by-line into the run log (last 100 lines tailed),
+  surfaced live in the task's workflow drawer with the activity feed. Success flips the task to
+  done, failure bounces it back to ready. `TANDEM_FAKE_RUNNER=1` swaps in a fake script for tests
 - **Auth** — email/password + runtime-configurable OIDC providers (admin UI, no restarts)
 - **Model providers** — pure connection info (label/base URL/endpoints/headers), NEVER keys. One
   provider can speak MANY endpoints (`shared/api-styles.ts` const-object enum, three kinds): LLM

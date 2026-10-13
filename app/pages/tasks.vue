@@ -217,6 +217,52 @@ const workflowBusy = ref(false)
 const workflowMessage = ref('')
 const workflowFeed = ref<import('~/../shared/types').TaskActivityRow[]>([])
 const forwardTo = ref('__none__')
+const runFeed = ref<Array<{ id: string, status: string, output: string, exitCode: number | null, startedAt: string }>>([])
+let runStreamAbort: AbortController | null = null
+
+async function refreshRuns(taskId: string) {
+  runStreamAbort?.abort()
+  const ac = new AbortController()
+  runStreamAbort = ac
+  try {
+    const res = await fetch('/rpc/tasks/runs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ json: { taskId } }),
+      signal: ac.signal,
+    })
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    const deadline = Date.now() + 8000
+    while (Date.now() < deadline) {
+      const { value } = await reader.read()
+      buffer += decoder.decode(value!, { stream: true })
+      const m = /data:(.+)/.exec(buffer)
+      if (m) {
+        ac.abort()
+        const payload = JSON.parse(m[1]!.trim())
+        runFeed.value = (payload?.json ?? payload ?? []) as typeof runFeed.value
+        return
+      }
+    }
+    ac.abort()
+  }
+  catch { /* stream aborted or closed */ }
+}
+
+function startRunWatch(taskId: string) {
+  void refreshRuns(taskId)
+  // poll while the drawer is open so streaming tails flow and late-starting runs
+  // (dispatcher can claim the task seconds after creation) still appear
+  const timer = setInterval(() => {
+    if (!workflowOpen.value || !workflowTask.value) clearInterval(timer)
+    else {
+      void refreshRuns(taskId)
+      void refreshFeed(taskId) // runs completing while watching log dispatch/finish entries
+    }
+  }, 2000)
+}
 
 async function openWorkflow(row: TaskRow) {
   workflowTask.value = row
@@ -224,6 +270,7 @@ async function openWorkflow(row: TaskRow) {
   workflowMessage.value = ''
   workflowOpen.value = true
   await refreshFeed(row.id)
+  startRunWatch(row.id)
 }
 
 async function refreshFeed(taskId: string) {
@@ -268,7 +315,9 @@ async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
     workflowMessage.value = 'done'
   }
   catch (e) {
-    workflowMessage.value = e instanceof Error ? e.message : 'action failed'
+    // surface the server's oRPC message, not ofetch's generic '[POST] …: 400'
+    const err = e as { data?: { json?: { message?: string }, message?: string }, message?: string }
+    workflowMessage.value = err.data?.json?.message ?? err.data?.message ?? err.message ?? 'action failed'
   }
   finally {
     workflowBusy.value = false
@@ -451,6 +500,7 @@ function statusColor(s: string) {
             <div class="flex justify-end gap-1">
               <UPopover mode="hover">
                 <UButton icon="i-lucide-wand-sparkles" variant="ghost" color="neutral" size="xs" aria-label="Auto-assign" :disabled="busy" @click="autoAssign(row.original)" />
+                <UButton icon="i-lucide-message-circle-more" variant="ghost" color="neutral" size="xs" aria-label="Task workflow" @click="openWorkflow(row.original)" />
                 <template #content>
                   <div class="px-3 py-1.5 text-xs">Auto-assign (Jev)</div>
                 </template>
@@ -579,6 +629,24 @@ function statusColor(s: string) {
             />
             <UTextarea v-model="workflowNote" :rows="3" placeholder="Question / answer / review note" class="w-full" />
             <p v-if="workflowMessage" class="text-xs" :class="workflowMessage === 'done' ? 'text-success' : 'text-error'">{{ workflowMessage }}</p>
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-400">Agent runs</p>
+                <UButton size="xs" variant="soft" icon="i-lucide-play" :disabled="workflowBusy || !workflowTask.assigneeKind || workflowTask.assigneeKind !== 'ai'" @click="wfAction('dispatch'); startRunWatch(workflowTask.id)">
+                  Dispatch now
+                </UButton>
+              </div>
+              <div v-for="r in runFeed" :key="r.id" class="rounded-md border border-zinc-200 dark:border-zinc-800">
+                <p class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                  <span v-if="r.status === 'running'" class="inline-block size-2 animate-pulse rounded-full bg-warning" />
+                  <span v-else-if="r.status === 'done'" class="inline-block size-2 rounded-full bg-success" />
+                  <span v-else class="inline-block size-2 rounded-full bg-error" />
+                  {{ r.status }}<span v-if="r.exitCode !== null"> · exit {{ r.exitCode }}</span>
+                </p>
+                <pre v-if="r.output" class="max-h-40 overflow-auto whitespace-pre-wrap rounded-b-md bg-zinc-950 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-zinc-200">{{ r.output }}</pre>
+              </div>
+              <p v-if="!runFeed.length" class="text-xs text-zinc-400">No runs yet.</p>
+            </div>
             <div class="space-y-2">
               <p class="text-xs font-semibold uppercase tracking-wide text-zinc-400">Activity</p>
               <div v-for="a in workflowFeed" :key="a.id" class="rounded-md border border-zinc-200 px-2.5 py-2 text-xs dark:border-zinc-800">
