@@ -1,3 +1,10 @@
+## [2.18.1](https://github.com/namhtpyn/tandem/compare/v2.18.0...v2.18.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **tasks:** quote every env-blob value — multi-word titles broke sourcing (exit 127) ([d21d0bf](https://github.com/namhtpyn/tandem/commit/d21d0bf1f8d0119053ab1f8ba52a223c7cbb7daa))
+
 # [2.18.0](https://github.com/namhtpyn/tandem/compare/v2.17.0...v2.18.0) (2026-10-13)
 
 
