@@ -87,7 +87,9 @@ describe('runner service guards', () => {
     expect(blob).toContain(`TANDEM_URL='http://t.local'`)
     expect(blob.endsWith('\n')).toBe(true)
     const cmd = buildCommand(plan)
-    expect(cmd).toContain('--resume')
+    expect(cmd).toContain('-z ')
+    expect(blob).toContain(`HERMES_HOME="/root/.hermes-profiles/tandem-`)
+    expect(cmd).toContain('--provider custom')
     expect(cmd).not.toContain('CUSTOM_API_KEY=') // keys live in the env blob, never argv
   })
 
@@ -408,6 +410,10 @@ describe('env blob quoting', () => {
     await callProc('tasks.create', { title: `Find out who's your supervior today`, assigneeId: agentId })
     const d = await dbm()
     const sch = await schema()
+    const { encryptSecret } = await import('../server/domains/vault/vault-crypto.service')
+    await d.db.insert(sch.modelProviders).values({ id: 'prov-q', label: 'PQ', baseUrl: 'https://pq.example.com' })
+    await d.db.insert(sch.vaultSecrets).values({ id: 'sec-q', name: 'kq', ciphertext: encryptSecret('sk-q'), createdBy: 'u-admin' })
+    await d.db.update(sch.aiEmployees).set({ providerId: 'prov-q', model: 'm-q', apiKeySecretId: 'sec-q' }).where(eq(sch.aiEmployees.userId, agentId))
     const taskRow = (await d.db.select().from(sch.tasks))[0]!
     const { loadDispatchPlan, buildEnvBlob } = await import('../server/domains/tasks/runner.service')
     const plan = await loadDispatchPlan(taskRow.id)
@@ -418,7 +424,10 @@ describe('env blob quoting', () => {
     expect(blob).toContain(`TANDEM_TASK_TITLE='Find out who'`)
     // and the built command escapes the same apostrophe in its --resume prompt
     const { buildCommand } = await import('../server/domains/tasks/runner.service')
-    expect(buildCommand(plan)).toContain(`-p 'Task: Find out who'`)
+    expect(buildCommand(plan)).toContain(`-z 'Task: Find out who'`)
+    // no-model arm: stub plan without HERMES_MODEL omits -m
+    const cmd2 = buildCommand({ ...plan, llmEnv: { ...plan.llmEnv, HERMES_MODEL: '' } } as typeof plan)
+    expect(cmd2).not.toContain(' -m ')
   })
 })
 

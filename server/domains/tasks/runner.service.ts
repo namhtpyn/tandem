@@ -106,6 +106,7 @@ export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>,
     `HERMES_MODEL='${plan.llmEnv.HERMES_MODEL ?? ''}'`,
     `TANDEM_URL='${tandemUrl}'`,
     `TANDEM_TASK_ID='${plan.task.id}'`,
+    `HERMES_HOME="/root/.hermes-profiles/tandem-${plan.ai.userId}"`,
     // single-quote EVERY value: titles contain spaces; unquoted words would be
     // executed as commands when the blob is sourced (exit 127)
     `TANDEM_TASK_TITLE='${plan.task.title.replace(/'/g, `'\\''`)}'`,
@@ -116,9 +117,13 @@ export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>,
 /** the remote command: agent resumes its own profile home, prompt on argv-free stdin */
 export function buildCommand(plan: Awaited<ReturnType<typeof loadDispatchPlan>>): string {
   const exe = plan.ai.executable || 'hermes'
-  const home = `/root/.hermes/profiles/tandem-${plan.ai.userId}`
   const prompt = `Task: ${plan.task.title}\n\n${plan.task.description}`
-  return `${exe} --home '${home}' --resume -p '${prompt.replace(/'/g, `'\\''`)}'`
+  const esc = (v: string) => v.replace(/'/g, `'\\''`)
+  // hermes one-shot: -z prints only the final response (pipe-friendly); the per-agent
+  // HERMES_HOME comes from the env blob (profiles must pre-exist, HERMES_HOME dirs don't);
+  // -m/--provider select the model (CUSTOM_API_KEY/CUSTOM_BASE_URL also come from the blob)
+  const model = plan.llmEnv.HERMES_MODEL ? ` -m '${esc(plan.llmEnv.HERMES_MODEL)}'` : ''
+  return `${exe}${model} --provider custom -z '${esc(prompt)}'`
 }
 
 /** fake runner: synthetic streaming emitter for tests/CI */
