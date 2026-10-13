@@ -1,3 +1,10 @@
+## [2.14.1](https://github.com/namhtpyn/tandem/compare/v2.14.0...v2.14.1) (2026-10-13)
+
+
+### Performance Improvements
+
+* **employees:** avatars out of the live payload via cacheable endpoint ([e9311b3](https://github.com/namhtpyn/tandem/commit/e9311b30c3022de484b2632175e4928cd521570f))
+
 # [2.14.0](https://github.com/namhtpyn/tandem/compare/v2.13.0...v2.14.0) (2026-10-13)
 
 
