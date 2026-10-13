@@ -1,3 +1,10 @@
+## [2.19.4](https://github.com/namhtpyn/tandem/compare/v2.19.3...v2.19.4) (2026-10-13)
+
+
+### Bug Fixes
+
+* **tasks:** real hermes one-shot invocation — -z prompt, --provider custom, HERMES_HOME isolation ([467deff](https://github.com/namhtpyn/tandem/commit/467deff8092eda9538e5661055695abfe64b32fe))
+
 ## [2.19.3](https://github.com/namhtpyn/tandem/compare/v2.19.2...v2.19.3) (2026-10-13)
 
 
