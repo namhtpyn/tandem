@@ -1,3 +1,10 @@
+## [2.19.5](https://github.com/namhtpyn/tandem/compare/v2.19.4...v2.19.5) (2026-10-13)
+
+
+### Bug Fixes
+
+* **tasks:** export the env blob (set -a) — sourced vars were shell-only, hermes saw no credentials ([654dfe4](https://github.com/namhtpyn/tandem/commit/654dfe407892a7e49dba07fc8caba9186873f131))
+
 ## [2.19.4](https://github.com/namhtpyn/tandem/compare/v2.19.3...v2.19.4) (2026-10-13)
 
 
