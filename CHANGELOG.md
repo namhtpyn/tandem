@@ -1,3 +1,10 @@
+# [2.17.0](https://github.com/namhtpyn/tandem/compare/v2.16.0...v2.17.0) (2026-10-13)
+
+
+### Features
+
+* **kernel:** optional redis — bullmq dispatch queue, pub/sub change-bus, cache ([20aa70a](https://github.com/namhtpyn/tandem/commit/20aa70ad3b3bbb0fff20ece34d8c4b44ab0b35c9))
+
 # [2.16.0](https://github.com/namhtpyn/tandem/compare/v2.15.0...v2.16.0) (2026-10-13)
 
 
