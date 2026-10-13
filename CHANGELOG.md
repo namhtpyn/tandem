@@ -1,3 +1,10 @@
+## [2.19.2](https://github.com/namhtpyn/tandem/compare/v2.19.1...v2.19.2) (2026-10-13)
+
+
+### Bug Fixes
+
+* **tasks:** extend PATH in the env blob — non-interactive ssh shells can't find the agent ([ead385d](https://github.com/namhtpyn/tandem/commit/ead385d531421da348dd615e77d907def8c902f3))
+
 ## [2.19.1](https://github.com/namhtpyn/tandem/compare/v2.19.0...v2.19.1) (2026-10-13)
 
 
