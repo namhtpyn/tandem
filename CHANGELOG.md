@@ -1,3 +1,10 @@
+## [2.20.1](https://github.com/namhtpyn/tandem/compare/v2.20.0...v2.20.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **build:** production server bundle targets the bun runtime ([9d7efc7](https://github.com/namhtpyn/tandem/commit/9d7efc70dfdd94e2e4042342e360bfefc66500df))
+
 # [2.20.0](https://github.com/namhtpyn/tandem/compare/v2.19.9...v2.20.0) (2026-10-14)
 
 
