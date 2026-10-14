@@ -1,3 +1,15 @@
+# [2.22.0](https://github.com/namhtpyn/tandem/compare/v2.21.1...v2.22.0) (2026-10-14)
+
+
+### Bug Fixes
+
+* **tasks:** satisfy strict tsgo typings in attachment routes ([5c29788](https://github.com/namhtpyn/tandem/commit/5c297886415ad98c6a558051a48a20afa0cbe130))
+
+
+### Features
+
+* **tasks:** task attachments — upload to description, SFTP push to agent, collect outputs back ([f15105e](https://github.com/namhtpyn/tandem/commit/f15105ef0195687c7229e5f2b4e53667f3ff528e))
+
 ## [2.21.1](https://github.com/namhtpyn/tandem/compare/v2.21.0...v2.21.1) (2026-10-14)
 
 
