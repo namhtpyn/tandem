@@ -1,3 +1,10 @@
+## [2.19.8](https://github.com/namhtpyn/tandem/compare/v2.19.7...v2.19.8) (2026-10-14)
+
+
+### Bug Fixes
+
+* **tasks:** agent-portable PATH + docker-aware HERMES_HOME ([0e0661a](https://github.com/namhtpyn/tandem/commit/0e0661a902c3a821ae9877cbe85b815c7af39b6c))
+
 ## [2.19.7](https://github.com/namhtpyn/tandem/compare/v2.19.6...v2.19.7) (2026-10-14)
 
 
