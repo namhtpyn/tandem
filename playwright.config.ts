@@ -19,6 +19,12 @@ export default defineConfig({
     ? undefined
     : {
         command: `PORT=4100 TANDEM_FAKE_RUNNER=1 TANDEM_PUBLIC_URL=http://localhost:4100 DATABASE_URL=${process.env.TANDEM_E2E_DATABASE_URL || 'postgresql://tandem:tandem@127.0.0.1:55432/tandem_e2e'} bun .output/server/index.mjs`,
+        env: {
+          // faster e2e logins: session cookie injected via better-auth test-utils
+          // (helpers/login.ts fast path); TANDEM_E2E_FAST_LOGIN=0 forces the UI form
+          TANDEM_E2E_FAST_LOGIN: process.env.TANDEM_E2E_FAST_LOGIN ?? '1',
+          TANDEM_E2E_DATABASE_URL: process.env.TANDEM_E2E_DATABASE_URL || 'postgresql://tandem:tandem@127.0.0.1:55432/tandem_e2e',
+        },
         url: 'http://localhost:4100/health/live',
         reuseExistingServer: !process.env.CI,
         timeout: 30_000,

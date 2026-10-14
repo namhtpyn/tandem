@@ -8,6 +8,7 @@
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2'
 import { genericOAuth } from 'better-auth/plugins/generic-oauth'
+import { testUtils } from 'better-auth/plugins'
 import { apiKey } from '@better-auth/api-key'
 import { eq } from 'drizzle-orm'
 import { db } from '../../db'
@@ -56,7 +57,7 @@ function policyKey(p: AuthPolicy): string {
   return JSON.stringify([p.oidcProviders.map(x => [x.id, x.issuer, x.clientId, x.clientSecret]), p.passwordEnabled])
 }
 
-async function buildAuth(): Promise<Auth> {
+async function buildAuth(options: { includeTestUtils?: boolean } = {}): Promise<Auth> {
   const p = await resolveAuthPolicy()
   builtWith = policyKey(p)
   return betterAuth({
@@ -97,6 +98,9 @@ async function buildAuth(): Promise<Auth> {
       enabled: p.passwordEnabled,
     },
     plugins: [
+      // test-only: privileged helpers (ctx.test.login etc). NEVER enabled in the
+      // production singleton — buildAuthForTest() is the only caller with the flag.
+      ...(options.includeTestUtils ? [testUtils({ captureOTP: true })] : []),
       // API keys: AI employees authenticate with x-api-key; keys live in the
       // tandem_apikey table (hashed). enableSessionForAPIKeys makes
       // getSession accept them, so the oRPC middleware needs no changes.
@@ -130,6 +134,17 @@ async function buildAuth(): Promise<Auth> {
       },
     },
   }) as unknown as Auth
+}
+
+/**
+ * Test-only auth instance: same database/config as production auth plus the
+ * better-auth test-utils plugin (ctx.test -> factories, login(), cookie helpers).
+ * Docs guidance: keep it a SEPARATE instance instead of conditionally spreading
+ * the plugin, so ctx.test stays typed and no privileged helper ever ships in the
+ * production singleton. Used by the e2e login helper against the e2e database.
+ */
+export async function buildAuthForTest(): Promise<Auth> {
+  return await buildAuth({ includeTestUtils: true })
 }
 
 export async function getAuth(): Promise<Auth> {

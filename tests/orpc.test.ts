@@ -4,6 +4,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest'
 import './api-harness'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
+import { makeProcCaller } from './helpers/procs'
 
 async function ctx(sessionUser: { id: string, name: string, email: string, role: string } | null) {
   const { buildServerContext } = await import('../server/domains/kernel/context')
@@ -21,21 +22,28 @@ async function callRouter() {
   return router
 }
 
-// invoke a procedure through the router object directly: oRPC v2 procedures
-// carry internals under ['~orpc'], with .handler({ input, context }) callable.
-async function callProc(path: string[], input: unknown, sessionUser = admin): Promise<unknown> {
-  const router = await callRouter()
-  const context = await ctx(sessionUser)
-  let node: Record<string, unknown> = router as unknown as Record<string, unknown>
-  for (const key of path) {
-    node = node[key] as Record<string, unknown>
-  }
-  const internals = node['~orpc'] as { handler: (opts: unknown) => Promise<unknown> }
-  const signal = new AbortController().signal
-  return await internals.handler({ input, context, signal })
+// official oRPC call() helper (tests/helpers/procs) — same middleware/context path
+// as production without HTTP; replaces hand-rolled ['~orpc'] internals poking
+const procAdmin = await makeProcCaller(admin as never)
+async function callProc(path: string[] | string, input: unknown, sessionUser = admin): Promise<unknown> {
+  const p = Array.isArray(path) ? path.join('.') : path
+  return await procAdmin.as(sessionUser as never, p, input)
 }
 
 const valid = { name: 'ct112', host: '192.168.3.108', port: '22', username: 'tandem' }
+
+describe('test-only auth instance', () => {
+  it('buildAuthForTest exposes ctx.test helpers; the production singleton does not', async () => {
+    const { buildAuthForTest, getAuth } = await import('../server/domains/auth/auth.service')
+    const testAuth = (await buildAuthForTest()) as unknown as { $context: Promise<Record<string, unknown>> }
+    const testCtx = await testAuth.$context
+    expect(typeof testCtx.test).toBe('object')
+    expect(typeof (testCtx.test as { login?: unknown }).login).toBe('function')
+    const prodAuth = (await getAuth()) as unknown as { $context: Promise<Record<string, unknown>> }
+    const prodCtx = await prodAuth.$context
+    expect(prodCtx.test).toBeUndefined()
+  })
+})
 
 beforeEach(async () => {
   await resetSchema()

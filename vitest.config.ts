@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config'
+import { defineVitestProject } from '@nuxt/test-utils/config'
 import { loadEnv } from 'vite'
 
 export default defineConfig({
@@ -17,8 +18,6 @@ export default defineConfig({
     testTimeout: 15_000,
     globalSetup: ['./tests/global-setup.ts'],
     setupFiles: ['./tests/setup.ts'],
-    include: ['tests/**/*.test.ts'], // e2e/ belongs to Playwright, not vitest
-
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'json-summary', 'html'],
@@ -43,5 +42,25 @@ export default defineConfig({
         lines: 100,
       },
     },
+    projects: [
+      {
+        test: {
+          name: 'unit',
+          include: ['tests/**/*.test.ts'],
+          exclude: ['tests/nuxt/**'], // nuxt-env component tests live in their own project below
+        },
+      },
+      // component tests in a real Nuxt environment (auto-imports, plugins, injections)
+      // — mountSuspended etc. Docs: defineVitestProject is only for nuxt-env tests.
+      // Coverage stays a unit-project concern (server/composables surface).
+      await defineVitestProject({
+        test: {
+          name: 'nuxt',
+          include: ['tests/nuxt/**/*.test.ts'],
+          environment: 'nuxt',
+          coverage: { enabled: false, reporter: [], reportsDirectory: null, thresholds: {} },
+        },
+      }),
+    ],
   },
 })

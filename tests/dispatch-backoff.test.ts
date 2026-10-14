@@ -1,6 +1,7 @@
 // Backoff ladder, quota-jump, dispatchAfter gating, reaper, and run timeout settle.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import './api-harness'
+import { makeProcCaller } from './helpers/procs'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 import { eq } from 'drizzle-orm'
@@ -27,16 +28,9 @@ vi.mock('ssh2', () => {
 
 const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 
-async function callProc(path: string, input?: unknown): Promise<any> {
-  const { appRouter: router } = await import('../server/domains/app.router')
-  const { buildServerContext } = await import('../server/domains/kernel/context')
-  const context = buildServerContext(new Headers())
-  ;(context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({ user: admin })
-  let node: Record<string, unknown> = router as unknown as Record<string, unknown>
-  for (const key of path.split('.')) node = node[key] as Record<string, unknown>
-  const internals = node['~orpc'] as { handler: (opts: unknown) => Promise<unknown> }
-  return await internals.handler({ input, context, signal: new AbortController().signal })
-}
+// official oRPC call() helper — replaces hand-rolled ['~orpc'] internals poking
+const procAdmin = await makeProcCaller({ id: 'u1', name: 'A', email: 'a@x', role: 'admin' })
+const callProc = procAdmin as unknown as (path: string, input?: unknown) => Promise<any>
 
 beforeEach(async () => {
   await resetSchema()

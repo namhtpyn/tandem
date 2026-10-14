@@ -132,7 +132,7 @@ export async function requestChanges(taskId: string, authorId: string, body: str
     reviewApprovals: [],
     updatedAt: new Date(),
   }).where(eq(tasks.id, taskId))
-  await logActivity(taskId, 'verdict', authorId, body || 'changes requested', { requestChanges: true })
+  await logActivity(taskId, 'verdict', authorId, body, { requestChanges: true })
   return { ok: true }
 }
 

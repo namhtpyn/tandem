@@ -6,6 +6,7 @@
 //   4. forward is a free chain; stops at the top of the hierarchy; no revisits
 import { beforeEach, describe, expect, it } from 'vitest'
 import './api-harness'
+import { makeProcCaller } from './helpers/procs'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 
@@ -16,7 +17,6 @@ const rev1 = { id: 'u-rev1', name: 'Rev One', email: 'rev1@tandem.local', role: 
 const rev2 = { id: 'u-rev2', name: 'Rev Two', email: 'rev2@tandem.local', role: 'member' }
 const top = { id: 'u-top', name: 'Top', email: 'top@tandem.local', role: 'member' }
 
-let currentSession: typeof admin = admin
 
 async function dbm() {
   return await import('../server/db')
@@ -25,24 +25,17 @@ async function schema() {
   return await import('../server/db/schema')
 }
 
-async function ctx() {
-  const { buildServerContext } = await import('../server/domains/kernel/context')
-  const context = buildServerContext(new Headers())
-  ;(context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => currentSession ? { user: currentSession } : null
-  return context
-}
+// official oRPC call() helper (tests/helpers/procs) — same middleware/context path
+// as production without HTTP; replaces the hand-rolled ['~orpc'] internals poking
+const procCaller = await makeProcCaller(admin)
+const callProc = procCaller as unknown as (path: string, input?: unknown) => Promise<any>
 
-async function callProc(path: string, input?: unknown): Promise<any> {
-  const { appRouter: router } = await import('../server/domains/app.router')
-  let node: Record<string, unknown> = router as unknown as Record<string, unknown>
-  for (const key of path.split('.')) node = node[key] as Record<string, unknown>
-  const internals = node['~orpc'] as { handler: (opts: unknown) => Promise<unknown> }
-  return await internals.handler({ input, context: await ctx(), signal: new AbortController().signal })
-}
-
+// run fn with the router session switched to another user (restores admin after)
 async function as(user: typeof admin, fn: () => Promise<void>) {
-  currentSession = user
-  try { await fn() } finally { currentSession = admin }
+  await (procCaller as unknown as { __setUser: (u: unknown) => void }).__setUser(user)
+  try { await fn() } finally {
+    await (procCaller as unknown as { __setUser: (u: unknown) => void }).__setUser(admin)
+  }
 }
 
 const idMap = new Map<string, string>() // logical id -> real uuid
@@ -79,7 +72,6 @@ async function activity(id: string) {
 }
 
 beforeEach(async () => {
-  currentSession = admin
   idMap.clear()
   await resetSchema()
   await applyMigrations()
@@ -222,7 +214,7 @@ describe('task workflow — review gate', () => {
     // default body arm: submit again, request changes without body
     await startWork(t.id)
     await as({ ...worker, id: idMap.get('worker')! }, async () => { await callProc('tasks.submit', { taskId }) })
-    await as({ ...rev1, id: idMap.get('rev1')! }, async () => { await callProc('tasks.requestChanges', { taskId }) })
+    await as({ ...rev1, id: idMap.get('rev1')! }, async () => { await callProc('tasks.requestChanges', { taskId, body: 'needs work' }) })
     t = await getTask(taskId)
     expect(t.status).toBe('doing')
     expect(t.reviewApprovals).toEqual([])
