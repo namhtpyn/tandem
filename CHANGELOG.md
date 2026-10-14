@@ -1,3 +1,10 @@
+# [2.20.0](https://github.com/namhtpyn/tandem/compare/v2.19.9...v2.20.0) (2026-10-14)
+
+
+### Features
+
+* **tasks:** per-task agent brief + rich-text mentions + live-stream info page ([5b503ac](https://github.com/namhtpyn/tandem/commit/5b503acedd31db34414a5b265f9fd9989cdfddd7))
+
 ## [2.19.9](https://github.com/namhtpyn/tandem/compare/v2.19.8...v2.19.9) (2026-10-14)
 
 
