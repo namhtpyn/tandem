@@ -1,3 +1,10 @@
+## [2.20.2](https://github.com/namhtpyn/tandem/compare/v2.20.1...v2.20.2) (2026-10-14)
+
+
+### Bug Fixes
+
+* **docker:** .dockerignore + non-root runtime user ([df8ab0c](https://github.com/namhtpyn/tandem/commit/df8ab0cadffae43fa8ce958498205b89333dbf11))
+
 ## [2.20.1](https://github.com/namhtpyn/tandem/compare/v2.20.0...v2.20.1) (2026-10-14)
 
 
