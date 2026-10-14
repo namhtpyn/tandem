@@ -57,6 +57,18 @@ export function runOutputWithoutEnvelope(output: string | null | undefined): str
   return output!.slice(0, idx).trim()
 }
 
+/** Compact thread time: same-day -> "14:32", older -> "Oct 12". No seconds, no date spam. */
+export function formatThreadTime(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
+  if (sameDay) return hm
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const sameYear = d.getFullYear() === now.getFullYear()
+  return sameYear ? `${months[d.getMonth()]} ${d.getDate()}, ${hm}` : `${months[d.getMonth()]} ${d.getDate()} ${d.getFullYear()}`
+}
+
 /** Merge by stable timestamp: runs by startedAt, notes by createdAt, brief first. */
 export function buildThread(src: ThreadSource): ThreadItem[] {
   const items: ThreadItem[] = []
