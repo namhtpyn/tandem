@@ -1,3 +1,10 @@
+## [2.21.1](https://github.com/namhtpyn/tandem/compare/v2.21.0...v2.21.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **tasks:** task-detail visual redesign after harsh vision QA ([27d03c0](https://github.com/namhtpyn/tandem/commit/27d03c0a60630d6c2c2b2f074728c023239398b7))
+
 # [2.21.0](https://github.com/namhtpyn/tandem/compare/v2.20.2...v2.21.0) (2026-10-14)
 
 
