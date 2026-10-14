@@ -74,8 +74,14 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
   docs = shipped bug.
 - **Dev workflow:** `bun run dev` (Nuxt), `bun run test` (needs local Postgres; one throwaway
   DB per file via `TANDEM_TEST_DATABASE_URL`), `bun run test:coverage` (100% gates),
-  `bun run test:e2e` (Playwright, `tandem_e2e` DB, webServer :4100), `bun run typecheck`.
-  CI adds a redis service (port 6399) for the bullmq/pubsub integration tests.
+  `bun run test:e2e` (Playwright, `tandem_e2e` DB, webServer :4100; logins are cookie-injected
+  via better-auth test-utils by default — `TANDEM_E2E_FAST_LOGIN=0` forces the UI form),
+  `bun run typecheck`. CI adds a redis service (port 6399) for the bullmq/pubsub integration tests.
+- **Test layout:** vitest projects — `unit` (server/composables, 100%×4 coverage law) and
+  `nuxt` (happy-dom component tests in `tests/nuxt/` via `@nuxt/test-utils` `mountSuspended`;
+  coverage off). Router procedures are invoked through the official `call()` helper
+  (`tests/helpers/procs.ts`) — never poke `['~orpc']` internals. The better-auth test instance
+  is `buildAuthForTest()` (ctx.test helpers); the production singleton must never expose them.
 - **Roadmap:** M1 auth/settings/health/admin ✅ · M2 environments ✅ · M3 employees + org chart ✅ ·
   M4 tasks ✅ (+workflow, agent runs) · M5 SSH runner ✅ · M6 ship: CI/release/GHCR/docs ✅.
 - bun-only toolchain; Nuxt UI components; zod strict inputs on every procedure.
