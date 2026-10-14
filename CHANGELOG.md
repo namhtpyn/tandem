@@ -1,3 +1,10 @@
+## [2.19.6](https://github.com/namhtpyn/tandem/compare/v2.19.5...v2.19.6) (2026-10-14)
+
+
+### Bug Fixes
+
+* **tasks:** emit hermes host-derived API key env (ULTRANOMIC_API_KEY for ai.ultranomic.net) ([a1c59ee](https://github.com/namhtpyn/tandem/commit/a1c59eebf6cf2a61b604d584ae768e18c13b59d2))
+
 ## [2.19.5](https://github.com/namhtpyn/tandem/compare/v2.19.4...v2.19.5) (2026-10-13)
 
 
