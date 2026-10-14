@@ -21,7 +21,7 @@ export default defineEventHandler(async (event) => {
   const bytes = readAttachmentBytes(id)
   const mime = mimeAllowed(row.mime) ? row.mime : 'application/octet-stream'
   setResponseHeader(event, 'content-type', mime)
-  setResponseHeader(event, 'content-length', String(bytes.byteLength))
+  setResponseHeader(event, 'content-length', bytes.byteLength)
   setResponseHeader(event, 'etag', `"${row.sha256}"`)
   if (getRequestHeader(event, 'if-none-match') === `"${row.sha256}"`) {
     event.node.res.statusCode = 304
