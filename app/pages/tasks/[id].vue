@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/vue-query'
 import type { EmployeeRow, TaskRow } from '~/../shared/types'
 
 const route = useRoute()
-const { $orpc } = useNuxtApp()
+const { $orpc, $client } = useNuxtApp()
 
 const tasksLive = useQuery<TaskRow[]>(($orpc.tasks.live as any).liveOptions())
 const employeesLive = useQuery<EmployeeRow[]>(($orpc.employees.live as any).liveOptions())
@@ -30,63 +30,25 @@ const retryInMin = computed(() => {
 })
 
 async function refreshFeed(taskId: string) {
-  // activity is a live procedure (SSE): read the FIRST data event, then abort
+  // typed oRPC client call (same transport as tasks.live — cookies + envelope handled
+  // by RPCLink; raw SSE fetches proved brittle behind some proxies)
   try {
-    const ac = new AbortController()
-    const res = await fetch(`/rpc/tasks/activity`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ json: { taskId } }),
-      signal: ac.signal,
-    })
-    const reader = res.body!.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    const deadline = Date.now() + 8000
-    while (Date.now() < deadline) {
-      const { value } = await reader.read()
-      buffer += decoder.decode(value!, { stream: true })
-      const m = /data:(.+)/.exec(buffer)
-      if (m) {
-        ac.abort()
-        const payload = JSON.parse(m[1]!.trim())
-        workflowFeed.value = (payload?.json ?? payload ?? []) as typeof workflowFeed.value
-        return
-      }
+    for await (const rows of await $client.tasks.activity({ taskId })) {
+      workflowFeed.value = (rows ?? []) as unknown as typeof workflowFeed.value
+      return // first snapshot is enough
     }
-    ac.abort()
   }
-  catch { /* stream aborted or closed */ }
+  catch { /* best-effort */ }
 }
 
 async function refreshRuns(taskId: string) {
-  // runs is a live procedure (SSE): read the FIRST data event, then abort
-  const ac = new AbortController()
   try {
-    const res = await fetch('/rpc/tasks/runs', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ json: { taskId } }),
-      signal: ac.signal,
-    })
-    const reader = res.body!.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    const deadline = Date.now() + 8000
-    while (Date.now() < deadline) {
-      const { value } = await reader.read()
-      buffer += decoder.decode(value!, { stream: true })
-      const m = /data:(.+)/.exec(buffer)
-      if (m) {
-        ac.abort()
-        const payload = JSON.parse(m[1]!.trim())
-        runFeed.value = (payload?.json ?? payload ?? []) as typeof runFeed.value
-        return
-      }
+    for await (const rows of await $client.tasks.runs({ taskId })) {
+      runFeed.value = (rows ?? []) as unknown as typeof runFeed.value
+      return // first snapshot is enough
     }
-    ac.abort()
   }
-  catch { /* stream aborted or closed */ }
+  catch { /* best-effort */ }
 }
 
 async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
