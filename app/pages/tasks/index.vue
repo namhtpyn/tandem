@@ -16,6 +16,12 @@ const statuses = computed(() => (unref(statusesLive.data) ?? []) as import('~/..
 const statusById = computed(() => new Map(statuses.value.map(x => [x.id, x])))
 const firstStatusId = computed(() => statuses.value[0]?.id ?? 'todo')
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[])
+// @mention menu items: label = display name, mention id = employee id (used by the brief builder)
+const mentionItems = computed(() => employees.value.map(e => ({
+  label: e.name,
+  id: e.id,
+  description: e.title ?? (e.kind === 'ai' ? 'AI employee' : 'Employee'),
+})))
 
 const editorOpen = ref(false)
 const editingId = ref<string | null>(null)
@@ -211,6 +217,7 @@ async function save() {
 }
 
 const workflowOpen = ref(false)
+watch(workflowOpen, (open) => { if (!open) watchAbortFeed?.abort() })
 const workflowTask = ref<TaskRow | null>(null)
 const workflowNote = ref('')
 const workflowBusy = ref(false)
@@ -219,6 +226,7 @@ const workflowFeed = ref<import('~/../shared/types').TaskActivityRow[]>([])
 const forwardTo = ref('__none__')
 const runFeed = ref<Array<{ id: string, status: string, output: string, exitCode: number | null, startedAt: string }>>([])
 let runStreamAbort: AbortController | null = null
+let watchAbortFeed: AbortController | null = null
 
 async function refreshRuns(taskId: string) {
   runStreamAbort?.abort()
@@ -251,16 +259,28 @@ async function refreshRuns(taskId: string) {
   catch { /* stream aborted or closed */ }
 }
 
+// persistent activity stream while the drawer is open (change-bus pushes new feed rows)
+async function streamActivity(taskId: string) {
+  const ac = new AbortController()
+  watchAbortFeed?.abort()
+  watchAbortFeed = ac
+  try {
+    for await (const rows of await $client.tasks.activity({ taskId }, { signal: ac.signal })) {
+      workflowFeed.value = (rows ?? []) as unknown as typeof workflowFeed.value
+    }
+  }
+  catch { /* drawer closed or transport error */ }
+}
+
 function startRunWatch(taskId: string) {
   void refreshRuns(taskId)
-  // poll while the drawer is open so streaming tails flow and late-starting runs
-  // (dispatcher can claim the task seconds after creation) still appear
+  void streamActivity(taskId)
+  // poll runs while the drawer is open (each refreshRuns aborts the previous stream — no
+  // zombie pileup; kept off a persistent runs stream because tasks/employees live queries
+  // already hold two streams and http/1.1 caps connections per origin at six)
   const timer = setInterval(() => {
     if (!workflowOpen.value || !workflowTask.value) clearInterval(timer)
-    else {
-      void refreshRuns(taskId)
-      void refreshFeed(taskId) // runs completing while watching log dispatch/finish entries
-    }
+    else void refreshRuns(taskId)
   }, 2000)
 }
 
@@ -756,8 +776,16 @@ function statusColor(s: string) {
               <UInput v-model="form.title" icon="i-lucide-list-todo" placeholder="Task title" class="w-full" required />
             </UFormField>
             <UFormField label="Description" name="description">
-              <template #hint><FormHint text="What needs to be done; AI agents receive it as their instructions" /></template>
-              <UTextarea v-model="form.description" placeholder="Description (optional)" :rows="4" class="w-full" />
+              <template #hint><FormHint text="What needs to be done; @mention employees — AI agents receive it as their instructions" /></template>
+              <UEditor
+                v-slot="{ editor }"
+                v-model="form.description"
+                content-type="markdown"
+                placeholder="Description (optional) — type @ to mention an employee"
+                class="w-full"
+              >
+                <UEditorMentionMenu :editor="editor" :items="mentionItems" />
+              </UEditor>
             </UFormField>
             <UFormField label="Project" name="projectId">
               <template #hint><FormHint text="Group this task under a project" /></template>

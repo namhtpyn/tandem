@@ -86,7 +86,7 @@ describe('runner service guards', () => {
     const blob = buildEnvBlob(plan, 'http://t.local')
     expect(blob).toContain(`TANDEM_URL='http://t.local'`)
     expect(blob.endsWith('\n')).toBe(true)
-    const cmd = buildCommand(plan)
+    const cmd = buildCommand(plan, 'Task: Find out who')
     expect(cmd).toContain('-z ')
     expect(blob).toContain('tandem-')
     expect(blob).toContain('HERMES_HOME="$( [ -d /opt/data ]')
@@ -276,7 +276,7 @@ describe('runner failure + fallback arms', () => {
     const taskRow = (await d.db.select().from(sch.tasks))[0]!
     const plan = await loadDispatchPlan(taskRow.id)
     expect(plan.agentName).toBe('Robby')
-    expect(buildCommand(plan)).toContain('agent-cli')
+    expect(buildCommand(plan, 'Task: Find out who')).toContain('agent-cli')
     const blob = buildEnvBlob(plan, 'http://t.local')
     expect(blob).toContain(`TANDEM_TASK_TITLE='Exe'`)
   })
@@ -457,9 +457,9 @@ describe('env blob quoting', () => {
     expect(blob).toContain(`TANDEM_TASK_TITLE='Find out who'`)
     // and the built command escapes the same apostrophe in its --resume prompt
     const { buildCommand } = await import('../server/domains/tasks/runner.service')
-    expect(buildCommand(plan)).toContain(`-z 'Task: Find out who'`)
+    expect(buildCommand(plan, 'Task: Find out who')).toContain(`-z 'Task: Find out who'`)
     // no-model arm: stub plan without HERMES_MODEL omits -m
-    const cmd2 = buildCommand({ ...plan, llmEnv: { ...plan.llmEnv, HERMES_MODEL: '' } } as typeof plan)
+    const cmd2 = buildCommand({ ...plan, llmEnv: { ...plan.llmEnv, HERMES_MODEL: '' } } as typeof plan, 'Task: Find out who')
     expect(cmd2).not.toContain(' -m ')
   })
 })

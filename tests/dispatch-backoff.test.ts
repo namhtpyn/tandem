@@ -192,7 +192,10 @@ describe('double settle', () => {
       const { dispatchTask } = await import('../server/domains/tasks/runner.service')
       const handle = await dispatchTask('t-1', 'http://t.local')
       const clientMod = (await import('ssh2')).default
-      const FakeClient = clientMod.Client as unknown as { last?: { emitError(e: Error): void } }
+      const FakeClient = clientMod.Client as unknown as { last?: { emitError(e: Error): void }, __prev?: unknown }
+      // clear the client left by the previous test so the poll below waits for THIS run's
+      // connection (a stale FakeClient.last made emitError fire on an already-settled run)
+      ;(FakeClient as { last?: unknown }).last = undefined
       for (let i = 0; i < 40 && !FakeClient.last; i++) await new Promise(r => setTimeout(r, 5))
       // task vanishes mid-run (deleted by a human): finish must not crash on the missing row
       const { db } = await import('../server/db')

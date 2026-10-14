@@ -8,11 +8,8 @@ const route = useRoute()
 const { $orpc, $client } = useNuxtApp()
 
 const tasksLive = useQuery<TaskRow[]>(($orpc.tasks.live as any).liveOptions())
-const employeesLive = useQuery<EmployeeRow[]>(($orpc.employees.live as any).liveOptions())
 
 const tasks = computed(() => (unref(tasksLive.data) ?? []) as TaskRow[])
-const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[])
-const nameById = computed(() => new Map(employees.value.map(e => [e.id, e.name])))
 
 const task = computed(() => tasks.value.find(t => t.id === String(route.params.id)) ?? null)
 
@@ -21,31 +18,44 @@ const workflowBusy = ref(false)
 const workflowMessage = ref('')
 const workflowFeed = ref<Array<{ id: string, kind: string, body: string, authorName: string | null, createdAt: string }>>([])
 const runFeed = ref<Array<{ id: string, status: string, output: string, exitCode: number | null, startedAt: string }>>([])
-let pollTimer: ReturnType<typeof setInterval> | null = null
-
 const retryInMin = computed(() => {
   if (!task.value?.dispatchAfter) return 0
   const ms = new Date(task.value.dispatchAfter).getTime() - Date.now()
   return ms > 0 ? Math.max(1, Math.round(ms / 60_000)) : 0
 })
 
+// ONE persistent live stream per feed: the server generator yields an initial snapshot,
+// then fresh snapshots on change-bus events. Polling-by-reconnect (the old behavior) opened
+// a new SSE request every 2s without aborting the previous one — zombie streams exhausted
+// the browser's per-host connection limit, so runs appeared to hang.
+let runsAbort: AbortController | null = null
+let feedAbort: AbortController | null = null
+
+async function streamRuns(taskId: string, signal: AbortSignal) {
+  try {
+    for await (const rows of await $client.tasks.runs({ taskId }, { signal })) {
+      runFeed.value = (rows ?? []) as unknown as typeof runFeed.value
+    }
+  }
+  catch { /* aborted or transport error — stopped below */ }
+}
+
+async function streamFeed(taskId: string, signal: AbortSignal) {
+  try {
+    for await (const rows of await $client.tasks.activity({ taskId }, { signal })) {
+      workflowFeed.value = (rows ?? []) as unknown as typeof workflowFeed.value
+    }
+  }
+  catch { /* aborted or transport error — stopped below */ }
+}
+
 async function refreshFeed(taskId: string) {
-  // typed oRPC client call (same transport as tasks.live — cookies + envelope handled
-  // by RPCLink; raw SSE fetches proved brittle behind some proxies)
+  // one-shot fallback after a workflow action (stream picks up the change too, but the
+  // immediate refresh keeps the UI snappy)
   try {
     for await (const rows of await $client.tasks.activity({ taskId })) {
       workflowFeed.value = (rows ?? []) as unknown as typeof workflowFeed.value
-      return // first snapshot is enough
-    }
-  }
-  catch { /* best-effort */ }
-}
-
-async function refreshRuns(taskId: string) {
-  try {
-    for await (const rows of await $client.tasks.runs({ taskId })) {
-      runFeed.value = (rows ?? []) as unknown as typeof runFeed.value
-      return // first snapshot is enough
+      return
     }
   }
   catch { /* best-effort */ }
@@ -70,24 +80,27 @@ async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
   }
 }
 
-function startPolling() {
+function startStreams() {
   const id = task.value?.id
   if (!id) return
-  void refreshRuns(id)
-  void refreshFeed(id)
-  pollTimer = setInterval(() => {
-    const current = task.value?.id
-    if (!current) { if (pollTimer) clearInterval(pollTimer); return }
-    void refreshRuns(current)
-    void refreshFeed(current)
-  }, 2000)
+  runsAbort = new AbortController()
+  feedAbort = new AbortController()
+  void streamRuns(id, runsAbort.signal)
+  void streamFeed(id, feedAbort.signal)
 }
 
-onMounted(startPolling)
-onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
+function stopStreams() {
+  runsAbort?.abort()
+  feedAbort?.abort()
+  runsAbort = null
+  feedAbort = null
+}
+
+onMounted(startStreams)
+onBeforeUnmount(stopStreams)
 watch(() => task.value?.id, (id, old) => {
-  if (pollTimer) clearInterval(pollTimer)
-  if (id && id !== old) startPolling()
+  stopStreams()
+  if (id && id !== old) startStreams()
 })
 
 useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · Tandem' })

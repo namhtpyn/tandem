@@ -48,6 +48,8 @@ async function logRun(taskId: string, runId: string, body: string, meta: Record<
 }
 
 /** everything the dispatched agent needs, decrypted; returns null pieces when unconfigured */
+import { buildBrief, loadBriefData } from './brief.service'
+
 export async function loadDispatchPlan(taskId: string) {
   const taskRows = await db.select().from(tasks).where(eq(tasks.id, taskId))
   const task = taskRows[0]
@@ -151,15 +153,15 @@ export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>,
 }
 
 /** the remote command: agent resumes its own profile home, prompt on argv-free stdin */
-export function buildCommand(plan: Awaited<ReturnType<typeof loadDispatchPlan>>): string {
+export function buildCommand(plan: Awaited<ReturnType<typeof loadDispatchPlan>>, brief: string): string {
   const exe = plan.ai.executable || 'hermes'
-  const prompt = `Task: ${plan.task.title}\n\n${plan.task.description}`
   const esc = (v: string) => v.replace(/'/g, `'\\''`)
   // hermes one-shot: -z prints only the final response (pipe-friendly); the per-agent
   // HERMES_HOME comes from the env blob (profiles must pre-exist, HERMES_HOME dirs don't);
   // -m/--provider select the model (CUSTOM_API_KEY/CUSTOM_BASE_URL also come from the blob)
+  // prompt = per-task brief: identity, org chains, task context, output contract
   const model = plan.llmEnv.HERMES_MODEL ? ` -m '${esc(plan.llmEnv.HERMES_MODEL)}'` : ''
-  return `${exe}${model} --provider custom -z '${esc(prompt)}'`
+  return `${exe}${model} --provider custom -z '${esc(brief)}'`
 }
 
 /** fake runner: synthetic streaming emitter for tests/CI */
@@ -271,7 +273,9 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
             return
           }
           const envBlob = buildEnvBlob(plan, tandemUrl)
-          const command = buildCommand(plan)
+          const briefData = await loadBriefData(taskId, tandemUrl)
+          const brief = buildBrief(briefData)
+          const command = buildCommand(plan, brief)
           const { runOverSsh } = await import('./ssh-exec.util')
           await runOverSsh(plan, command, envBlob, onLine, finish, resolve)
         }
