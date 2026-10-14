@@ -1,3 +1,10 @@
+## [2.19.9](https://github.com/namhtpyn/tandem/compare/v2.19.8...v2.19.9) (2026-10-14)
+
+
+### Bug Fixes
+
+* **tasks:** scrollable run output — drawer body scrolls, taller output blocks ([4cee0d4](https://github.com/namhtpyn/tandem/commit/4cee0d4616ff3dd9a6b342144b8c5e26fec8d126))
+
 ## [2.19.8](https://github.com/namhtpyn/tandem/compare/v2.19.7...v2.19.8) (2026-10-14)
 
 
