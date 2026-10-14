@@ -404,6 +404,38 @@ describe('dispatch-plan edge arms', () => {
   })
 })
 
+describe('host-derived key env (hermes host-gated credentials)', () => {
+  it('mirrors hermes _host_derived_api_key', async () => {
+    const { hostDerivedKeyEnv } = await import('../server/domains/tasks/runner.service')
+    expect(hostDerivedKeyEnv('https://ai.ultranomic.net')).toBe('ULTRANOMIC_API_KEY')
+    expect(hostDerivedKeyEnv('https://api.deepseek.com')).toBe('DEEPSEEK_API_KEY')
+    expect(hostDerivedKeyEnv('http://127.0.0.1:8080')).toBe('CUSTOM_API_KEY')
+    expect(hostDerivedKeyEnv('https://openrouter.ai/api/v1')).toBe('CUSTOM_API_KEY') // reserved vendor
+    expect(hostDerivedKeyEnv('not a url')).toBe('CUSTOM_API_KEY')
+    expect(hostDerivedKeyEnv('http://localhost:3000')).toBe('CUSTOM_API_KEY') // loopback
+    expect(hostDerivedKeyEnv('https://host123.example.net')).toBe('EXAMPLE_API_KEY') // registrable label wins
+    expect(hostDerivedKeyEnv('https://intranet/v1')).toBe('CUSTOM_API_KEY') // single-label host
+    expect(hostDerivedKeyEnv('https://box.123')).toBe('CUSTOM_API_KEY') // numeric TLD arm
+    expect(hostDerivedKeyEnv('https://api.openai.com/v1')).toBe('CUSTOM_API_KEY') // reserved
+  })
+  it('blob carries BOTH CUSTOM_API_KEY and the host-derived alias', async () => {
+    const agentId = await mkAiAgent()
+    await callProc('tasks.create', { title: 'Host key', assigneeId: agentId })
+    const d = await dbm()
+    const sch = await schema()
+    const { encryptSecret } = await import('../server/domains/vault/vault-crypto.service')
+    await d.db.insert(sch.modelProviders).values({ id: 'prov-h', label: 'PH', baseUrl: 'https://ai.example.net' })
+    await d.db.insert(sch.vaultSecrets).values({ id: 'sec-h', name: 'kh', ciphertext: encryptSecret('sk-h'), createdBy: 'u-admin' })
+    await d.db.update(sch.aiEmployees).set({ providerId: 'prov-h', model: 'm-h', apiKeySecretId: 'sec-h' }).where(eq(sch.aiEmployees.userId, agentId))
+    const taskRow = (await d.db.select().from(sch.tasks))[0]!
+    const { loadDispatchPlan, buildEnvBlob } = await import('../server/domains/tasks/runner.service')
+    const plan = await loadDispatchPlan(taskRow.id)
+    const blob = buildEnvBlob(plan, 'http://t.local')
+    expect(blob).toContain(`CUSTOM_API_KEY='sk-h'`)
+    expect(blob).toContain(`EXAMPLE_API_KEY='sk-h'`)
+  })
+})
+
 describe('env blob quoting', () => {
   it('titles with spaces and quotes survive sourcing (no exit 127)', async () => {
     const agentId = await mkAiAgent()
