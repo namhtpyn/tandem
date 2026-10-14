@@ -88,7 +88,8 @@ describe('runner service guards', () => {
     expect(blob.endsWith('\n')).toBe(true)
     const cmd = buildCommand(plan)
     expect(cmd).toContain('-z ')
-    expect(blob).toContain(`HERMES_HOME="/root/.hermes-profiles/tandem-`)
+    expect(blob).toContain('tandem-')
+    expect(blob).toContain('HERMES_HOME="$( [ -d /opt/data ]')
     expect(cmd).toContain('--provider custom')
     expect(cmd).not.toContain('CUSTOM_API_KEY=') // keys live in the env blob, never argv
   })

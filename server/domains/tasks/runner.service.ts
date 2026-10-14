@@ -124,7 +124,7 @@ export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>,
     // non-interactive ssh shells get a minimal PATH (~/.local/bin, ~/.bun/bin missing) —
     // extend it or the agent executable is 'command not found' (exit 127)
     // double quotes: $HOME/$PATH must EXPAND when the blob is sourced
-    `PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.cargo/bin:/usr/local/bin:$PATH"`,
+    `PATH="/opt/hermes/bin:$HOME/.local/bin:$HOME/.bun/bin:$HOME/.cargo/bin:/usr/local/bin:$PATH"`,
     `CUSTOM_BASE_URL='${plan.llmEnv.CUSTOM_BASE_URL ?? ''}'`,
     // hermes's credential ladder is HOST-GATED: for host a.b.example.com it reads only
     // <BEXAMPLE>_API_KEY (registrable label of the host), NOT CUSTOM_API_KEY, for the chat
@@ -137,7 +137,11 @@ export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>,
     `HERMES_MODEL='${plan.llmEnv.HERMES_MODEL ?? ''}'`,
     `TANDEM_URL='${tandemUrl}'`,
     `TANDEM_TASK_ID='${plan.task.id}'`,
-    `HERMES_HOME="/root/.hermes-profiles/tandem-${plan.ai.userId}"`,
+    // per-agent home; the official docker image drops privileges to uid 10000 and /root is
+    // 0700 root-only, so when the target is a hermes container (/opt/data exists) the home
+    // must live in the readable volume instead
+    `HERMES_HOME="$( [ -d /opt/data ] && echo /opt/data/profiles/tandem-${plan.ai.userId} || echo /root/.hermes-profiles/tandem-${plan.ai.userId} )"`,
+
     'set +a',
     // single-quote EVERY value: titles contain spaces; unquoted words would be
     // executed as commands when the blob is sourced (exit 127)
