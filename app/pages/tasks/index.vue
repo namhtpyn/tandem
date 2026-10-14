@@ -606,7 +606,7 @@ function statusColor(s: string) {
       </div>
 
       <!-- status manager -->
-      <UModal v-model:open="workflowOpen" title="Task workflow">
+      <UModal v-model:open="workflowOpen" title="Task workflow" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }">
         <template #body>
           <div v-if="workflowTask" class="space-y-4">
             <div>
@@ -650,7 +650,7 @@ function statusColor(s: string) {
                   <span v-else class="inline-block size-2 rounded-full bg-error" />
                   {{ r.status }}<span v-if="r.exitCode !== null"> · exit {{ r.exitCode }}</span>
                 </p>
-                <pre v-if="r.output" class="max-h-40 overflow-auto whitespace-pre-wrap rounded-b-md bg-zinc-950 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-zinc-200">{{ r.output }}</pre>
+                <pre v-if="r.output" class="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-b-md bg-zinc-950 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-zinc-200">{{ r.output }}</pre>
               </div>
               <p v-if="!runFeed.length" class="text-xs text-zinc-400">No runs yet.</p>
               <p v-if="retryInMin > 0" class="text-xs font-medium text-warning">Retrying in ~{{ retryInMin }} min ({{ workflowTask?.failStreak ?? 0 }} consecutive failure{{ (workflowTask?.failStreak ?? 0) === 1 ? '' : 's' }})</p>
