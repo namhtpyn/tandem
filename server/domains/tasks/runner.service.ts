@@ -7,7 +7,7 @@
 // local e2e can exercise the full dispatch→stream→finish loop with no host.
 import { eq, and } from 'drizzle-orm'
 import { db } from '../../db'
-import { tasks, taskRuns, taskActivity, aiEmployees, environments, modelProviders, vaultSecrets, vaultAudit, user as userTable } from '../../db/schema'
+import { tasks, taskRuns, taskActivity, taskAttachments, aiEmployees, environments, modelProviders, vaultSecrets, vaultAudit, user as userTable } from '../../db/schema'
 import { decryptSecret } from '../vault/vault-crypto.service'
 import { publishChange } from '../kernel/kernel'
 
@@ -47,8 +47,87 @@ async function logRun(taskId: string, runId: string, body: string, meta: Record<
   await publishChange('runs', 'update')
 }
 
+/** push the task's input attachments to the sandbox; failures are logged, never fatal */
+export async function pushInputAttachments(
+  taskId: string,
+  briefData: { attachments?: Array<{ id: string, filename: string, mime: string, size: number, remotePath: string }> },
+  sshPlan: { env: { host: string, port: string, username: string }, sshKey?: string, sshPassword?: string },
+  envName: string,
+  loadSshClient: () => Promise<Parameters<typeof pushTaskFiles>[0]>,
+  onLine: (line: string) => void,
+) {
+  try {
+    const inputFiles = (briefData.attachments ?? []).filter(a => attachmentExists(a.id)).map(a => ({
+      localPath: attachmentPath(a.id),
+      remoteName: a.filename,
+    }))
+    if (inputFiles.length) {
+      const ClientCtor = await loadSshClient()
+      await pushTaskFiles(ClientCtor, sshPlan, taskId, inputFiles)
+      onLine(`[dispatch] pushed ${inputFiles.length} attachment(s) to ${envName}`)
+    }
+  }
+  catch (e) {
+    onLine(`[dispatch] attachment push failed: ${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
+/** after a run settles: collect agent outputs from the sandbox, then clean up when last */
+export async function settleAttachments(taskId: string, runId: string, sshPlan: { env: { host: string, port: string, username: string }, sshKey?: string, sshPassword?: string }, _status: 'done' | 'failed') {
+  try {
+    const { loadClient } = await import('./ssh-exec.util')
+    const ClientCtor = await loadClient()
+    const tmp = mkdtempSync(join(tmpdir(), 'tandem-out-'))
+    try {
+      const collected = await collectRunOutputs(ClientCtor, sshPlan, taskId, tmp, COLLECTION_MAX_BYTES)
+      for (const f of collected) {
+        const bytes = readFileSync(f.localPath)
+        const mime = normalizeMime(guessMime(f.filename))
+        if (!mimeAllowed(mime)) continue
+        const id = crypto.randomUUID()
+        saveAttachmentBytes(id, bytes)
+        await db.insert(taskAttachments).values({ id, taskId, runId, kind: 'output', filename: f.filename, mime, size: bytes.byteLength, sha256: sha256Hex(bytes), createdBy: null })
+      }
+      if (collected.length) {
+        await logRun(taskId, runId, `collected ${collected.length} output file(s)`, { outputs: collected.map(c => c.filename) })
+        await publishChange('taskActivity', 'create')
+      }
+    }
+    finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  }
+  catch { /* collection is best-effort; never fail a finished run over it */ }
+  // cleanup only when no other run of this task is still running
+  try {
+    const active = await db.select({ id: taskRuns.id }).from(taskRuns)
+      .where(and(eq(taskRuns.taskId, taskId), eq(taskRuns.status, 'running')))
+    if (active.length === 0) {
+      const { loadClient } = await import('./ssh-exec.util')
+      const ClientCtor = await loadClient()
+      await cleanupTaskFiles(ClientCtor, sshPlan, taskId)
+    }
+  }
+  catch { /* cleanup is best-effort */ }
+}
+
+export function guessMime(filename: string): string {
+  const ext = (filename.split('.').pop() || '').toLowerCase()
+  const map: Record<string, string> = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif',
+    pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv',
+    json: 'application/json', zip: 'application/zip',
+  }
+  return map[ext] ?? 'application/octet-stream'
+}
+
 /** everything the dispatched agent needs, decrypted; returns null pieces when unconfigured */
 import { buildBrief, loadBriefData } from './brief.service'
+import { attachmentExists, attachmentPath, COLLECTION_MAX_BYTES, mimeAllowed, normalizeMime, saveAttachmentBytes, sha256Hex } from './attachments.util'
+import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles } from './ssh-files.util'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 export async function loadDispatchPlan(taskId: string) {
   const taskRows = await db.select().from(tasks).where(eq(tasks.id, taskId))
@@ -276,8 +355,15 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
           const briefData = await loadBriefData(taskId, tandemUrl)
           const brief = buildBrief(briefData)
           const command = buildCommand(plan, brief)
-          const { runOverSsh } = await import('./ssh-exec.util')
-          await runOverSsh(plan, command, envBlob, onLine, finish, resolve)
+          const { runOverSsh, loadClient: loadSshClient } = await import('./ssh-exec.util')
+          const sshPlan = { env: plan.env, sshKey: plan.sshKey, sshPassword: plan.sshPassword }
+          // push input attachments (idempotent; no-op when none)
+          await pushInputAttachments(taskId, briefData, sshPlan, plan.envName, loadSshClient, onLine)
+          await runOverSsh(plan, command, envBlob, onLine, async (status: 'done' | 'failed', exitCode: number | null) => {
+            // settle attachments DETACHED: collection/cleanup must never block the verdict
+            void settleAttachments(taskId, runId, sshPlan, status)
+            await finish(status, exitCode)
+          }, resolve)
         }
         catch (e) {
           /* v8 ignore next -- service throws are Error by construction */

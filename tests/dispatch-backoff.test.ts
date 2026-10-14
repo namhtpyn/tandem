@@ -51,6 +51,7 @@ describe('backoff ladder', () => {
     expect(backoffFor(2, 'boom')).toBe(5 * 60_000)
     expect(backoffFor(3, 'boom')).toBe(15 * 60_000)
     expect(backoffFor(99, 'boom')).toBe(15 * 60_000) // capped
+    expect(backoffFor(0, 'boom')).toBe(60_000) // failStreak floor
   })
 
   it('quota signatures jump straight to the 15m tier', async () => {

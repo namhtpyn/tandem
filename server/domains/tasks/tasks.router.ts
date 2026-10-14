@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { db } from '../../db'
 import {
   aiEmployees as aiEmployeesTable, projects as projectsTable, taskStatuses as taskStatusesTable, tasks as tasksTable, user as userTable,
+  taskAttachments,
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 import { askQuestion, forwardQuestion, answerQuestion, submitResult, approveReview, requestChanges, abandonReview, listActivity } from './workflow.service'
@@ -26,6 +27,18 @@ async function runWorkflow(fn: () => Promise<unknown>): Promise<unknown> {
     // every service throw is an Error by construction
     throw new ORPCError('BAD_REQUEST', { message: (e as Error).message })
   }
+}
+
+/** group output attachments by their run id (inputs are not part of run payloads) */
+export function groupOutputsByRun(atts: Array<{ id: string, runId: string | null, kind: string, filename: string, mime: string, size: number }>) {
+  const outputsByRun = new Map<string, Array<{ id: string, filename: string, mime: string, size: number }>>()
+  for (const a of atts) {
+    if (a.kind !== 'output' || !a.runId) continue
+    const list = outputsByRun.get(a.runId) ?? []
+    list.push({ id: a.id, filename: a.filename, mime: a.mime, size: a.size })
+    outputsByRun.set(a.runId, list)
+  }
+  return outputsByRun
 }
 
 export const tasksRouter = os.router({
@@ -240,10 +253,12 @@ export const tasksRouter = os.router({
     })),
 
   /** runs for a task (live) — streaming output tail from agent dispatches */
-  runs: protectedProcedure
+runs: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))
     .handler(({ input }) => liveGenerator(['runs', 'tasks'], async () => {
       const rows = await listRuns(input.taskId)
+      const atts = await db.select().from(taskAttachments).where(eq(taskAttachments.taskId, input.taskId))
+      const outputsByRun = groupOutputsByRun(atts)
       return rows.map(r => ({
         id: r.id,
         taskId: r.taskId,
@@ -254,6 +269,7 @@ export const tasksRouter = os.router({
         output: r.output,
         startedAt: r.startedAt.toISOString(),
         finishedAt: r.finishedAt ? r.finishedAt.toISOString() : null,
+        outputs: outputsByRun.get(r.id) ?? [],
       }))
     })),
 

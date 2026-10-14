@@ -2,7 +2,8 @@
 // Pure functions — no I/O; loadBriefData gathers rows.
 import { eq } from 'drizzle-orm'
 import { db } from '../../db'
-import { tasks, user as userTable, aiEmployees, employeeSupervisors, taskActivity } from '../../db/schema'
+import { tasks, user as userTable, aiEmployees, employeeSupervisors, taskActivity, taskAttachments } from '../../db/schema'
+import { stripAttachments } from './attachments.util'
 
 export interface BriefPerson { id: string, name: string, title: string | null, kind: string }
 
@@ -45,6 +46,7 @@ export function buildBrief(input: {
   extraChains: Array<{ person: BriefPerson, chain: BriefPerson[] }>
   task: { title: string, description: string, ownerName: string | null, reviewerNames: string[], projectName: string | null, url: string }
   recentActivity: Array<{ kind: string, authorName: string | null, body: string | null }>
+  attachments?: Array<{ id: string, filename: string, mime: string, size: number, remotePath: string }>
 }): string {
   const lines: string[] = []
   lines.push(`You are ${input.agent.name}${input.agent.title ? `, ${input.agent.title}` : ''}.`)
@@ -59,7 +61,7 @@ export function buildBrief(input: {
   lines.push('')
   lines.push('TASK (via Tandem)')
   lines.push(`Title: ${input.task.title}`)
-  if (input.task.description.trim()) lines.push(`Description: ${stripMentions(input.task.description)}`)
+  if (input.task.description.trim()) lines.push(`Description: ${stripAttachments(stripMentions(input.task.description))}`)
   lines.push(`Owner: ${input.task.ownerName ?? 'unassigned'}`)
   if (input.task.reviewerNames.length) lines.push(`Reviewers (all must approve): ${input.task.reviewerNames.join(', ')}`)
   if (input.task.projectName) lines.push(`Project: ${input.task.projectName}`)
@@ -69,6 +71,16 @@ export function buildBrief(input: {
     lines.push('Recent activity on this task (oldest first):')
     for (const a of input.recentActivity) lines.push(`- ${a.kind} by ${a.authorName ?? 'system'}: ${trunc(a.body ?? '', 200)}`)
   }
+  if (input.attachments?.length) {
+    lines.push('')
+    lines.push('ATTACHMENTS (already on this machine — do not re-download):')
+    for (const a of input.attachments) {
+      const kind = a.mime.startsWith('image/') ? 'image — view with your image tool' : 'document — read with file tools'
+      lines.push(`- ${a.remotePath} (${a.filename}, ${kind}, ${Math.max(1, Math.round(a.size / 1024))}KB)`)
+    }
+  }
+  lines.push('')
+  lines.push('DELIVERABLES — write any output files to /opt/data/task-files/<task>/out/ (create it if needed); everything left there when you exit is collected and attached to your result.')
   lines.push('')
   lines.push('OUTPUT CONTRACT — end your response with exactly one of these lines:')
   lines.push('[RESULT] <final answer or summary of work done>')
@@ -118,6 +130,10 @@ export async function loadBriefData(taskId: string, tandemUrl: string) {
   const nameById = new Map(users.map(u => [u.id, u.name]))
   const recent = activity.slice(-20).map(a => ({ kind: a.kind, authorName: a.authorId ? nameById.get(a.authorId)! : null, body: a.body! }))
   const ai = aiById.get(assigneeId)
+  const attachmentRows = await db.select().from(taskAttachments).where(eq(taskAttachments.taskId, taskId))
+  const attachments = attachmentRows
+    .filter(a => a.kind === 'input')
+    .map(a => ({ id: a.id, filename: a.filename, mime: a.mime, size: a.size, remotePath: `/opt/data/task-files/${taskId}/${a.filename}` }))
   return {
     agent: person(assigneeId),
     agentInstructions: ai?.instructions ?? '',
@@ -133,5 +149,6 @@ export async function loadBriefData(taskId: string, tandemUrl: string) {
       url: `${tandemUrl}/tasks/${task.id}`,
     },
     recentActivity: recent,
+    attachments,
   }
 }

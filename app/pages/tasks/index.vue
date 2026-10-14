@@ -24,6 +24,43 @@ const mentionItems = computed(() => employees.value.map(e => ({
 })))
 
 const editorOpen = ref(false)
+const attachmentInput = ref<HTMLInputElement | null>(null)
+
+/** upload a file to the task being created/edited and insert its token into the description */
+async function uploadAttachment(file: File) {
+  if (!form.title.trim()) { message.value = 'save the task title first — attachments need a task'; return }
+  try {
+    busy.value = true
+    let taskId = editingId.value
+    if (!taskId) {
+      // create the task first so the attachment has a row to belong to
+      const created = await $fetch('/rpc/tasks/create', { method: 'POST', body: { json: { title: form.title, description: '', assigneeId: form.assigneeId === '__none__' ? null : form.assigneeId, status: form.status, projectId: form.projectId === '__none__' ? null : form.projectId } } }) as { json: { id: string } }
+      taskId = created.json.id
+      editingId.value = taskId
+    }
+    const fd = new FormData()
+    fd.append('file', file)
+    const up = await $fetch(`/api/tasks/${taskId}/attachments`, { method: 'POST', body: fd }) as { id: string, filename: string, mime: string }
+    const token = up.mime.startsWith('image/') ? `![${up.filename}](attachment-${up.id})` : `@[${up.filename}](attachment-${up.id})`
+    form.description = form.description ? `${form.description}\n${token}` : token
+    message.value = `attached ${up.filename}`
+  }
+  catch (e) {
+    message.value = (e as { data?: { message?: string }, message?: string }).data?.message ?? (e as Error).message
+  }
+  finally {
+    busy.value = false
+  }
+}
+
+function onAttachmentPicked(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) void uploadAttachment(file)
+  input.value = ''
+}
+
+
 const editingId = ref<string | null>(null)
 const busy = ref(false)
 const message = ref('')
@@ -775,8 +812,14 @@ function statusColor(s: string) {
               <template #hint><FormHint text="Short summary of the work" /></template>
               <UInput v-model="form.title" icon="i-lucide-list-todo" placeholder="Task title" class="w-full" required />
             </UFormField>
-            <UFormField label="Description" name="description">
+            <UFormField name="description">
+              <template #label>
+                <span class="flex items-center gap-2">Description
+                  <UButton size="xs" variant="ghost" icon="i-lucide-paperclip" aria-label="Attach file" :disabled="busy || !form.title.trim()" @click="attachmentInput?.click()" />
+                </span>
+              </template>
               <template #hint><FormHint text="What needs to be done; @mention employees — AI agents receive it as their instructions" /></template>
+              <input ref="attachmentInput" type="file" class="hidden" accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.txt,.md,.csv,.json,.zip" @change="onAttachmentPicked">
               <UEditor
                 v-slot="{ editor }"
                 v-model="form.description"

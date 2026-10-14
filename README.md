@@ -14,6 +14,7 @@ filled by agents you already run yourself.
 - **Employees** — humans and AI in one directory; titles, hierarchy (org chart), AI bound to an environment + system instructions
 - **Tasks** — assign to any employee (human or AI); question/answer chain with forwarding, unanimous review workflow before done; every task has a full info page (workflow actions, agent runs with their complete output, activity history)
 - **Agent runs** — tasks assigned to AI are dispatched automatically to the agent's machine over SSH; output streams live into the task's workflow drawer with the full activity feed; success finishes the task, failure retries with backoff
+- **Task attachments** — attach images/documents to a task description (paperclip in the editor, 20MB per file); inputs are pushed to the agent's machine over SFTP before each run and listed in its brief; files the agent leaves in its `out/` directory are collected back (50MB cap) and shown as run outputs; the sandbox copy is cleaned up once no run is active. Serve route honors etag revalidation
 - **Resilience** — hung agents time out (default 30 min), crash-orphaned runs are reaped, failed runs back off before retrying (1/5/15 min ladder; out-of-quota errors wait the full 15 min) — no retry storms
 - **Auth** — email/password + runtime-configurable OIDC providers (admin UI, no restarts)
 - **Model providers** — connection info only, keys live in the built-in vault and are delivered to agents at dispatch; works with OpenAI/Anthropic-compatible endpoints and more
@@ -51,6 +52,7 @@ only on a fresh database — never on restarts.
 | `REDIS_URL` | no | Redis for durable dispatch queue, multi-replica live updates, and cache; unset = single-process mode |
 | `TANDEM_PUBLIC_URL` | no | canonical URL handed to dispatched agents |
 | `TANDEM_RUN_TIMEOUT_MS` | no | hard cap on one agent run (default 30 min) |
+| `TANDEM_ATTACHMENTS_DIR` | no | where attachment bytes live (default `./data/attachments` — mount a volume in Docker) |
 | `TANDEM_OIDC_ISSUER` + `_CLIENT_ID` + `_CLIENT_SECRET` (+ `_LABEL`) | no | env-fallback single OIDC provider; more via admin UI |
 
 Migrations apply at boot (bundled with the server; no CLI step).

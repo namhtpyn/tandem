@@ -209,6 +209,23 @@ export const taskRuns = pgTable('tandem_task_runs', {
 ])
 
 // Task activity feed: questions, answers, forwards, verdicts, status notes.
+export const taskAttachments = pgTable('tandem_task_attachments', {
+  id: text('id').primaryKey(),
+  taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  /** set for agent-produced files: the run that produced them */
+  runId: text('run_id'),
+  /** input (human upload) | output (collected from the sandbox) */
+  kind: text('kind').notNull().default('input'),
+  filename: text('filename').notNull(),
+  mime: text('mime').notNull(),
+  size: integer('size').notNull(),
+  sha256: text('sha256').notNull(),
+  createdBy: text('created_by'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('tandem_task_attachments_task_idx').on(t.taskId, t.createdAt),
+])
+
 export const taskActivity = pgTable('tandem_task_activity', {
   id: text('id').primaryKey(),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),

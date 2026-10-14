@@ -31,6 +31,8 @@ tasks(id, title, description, assignee_id -> employees.id, status, created_at, u
 runs(id, task_id -> tasks.id, environment_id, status, stream, result, exit_code, started_at, ended_at)
 tasks.workflow: owner_id, reviewers text[], question_holder_id, question_chain text[], review_approvals text[]
 dispatcher: scans ready-category statuses; per-agent serial dispatch; run logs tail 100 lines
+task_attachments(id, task_id -> tasks.id cascade, run_id, kind: input|output, filename, mime, size, sha256, created_by, created_at); bytes on disk under TANDEM_ATTACHMENTS_DIR (default ./data/attachments)
+attachments flow: inputs upload via REST multipart (20MB cap, MIME allowlist png/jpeg/webp/gif/pdf/txt/md/csv/json/zip), token `![name](attachment-<id>)` / `@[name](attachment-<id>)` embedded in description; dispatch pushes inputs over SFTP to /opt/data/task-files/<taskId>/ (chowned to the agent uid) and lists them in the brief; agent deliverables left in out/ are collected back post-run (50MB cap) as kind='output' rows under their run; the sandbox task dir is removed once no run of the task is running; serve route GET /api/attachments/:id honors etag (sha256) revalidation
 redis (REDIS_URL, optional): bullmq queue 'tandem-dispatch' (retries/backoff) + pub/sub change-bus fanout + cache; unset = in-process fallback
 resilience: tasks.dispatch_after + fail_streak (backoff ladder 1m/5m/15m, quota -> 15m); reaper fails stale running rows past TANDEM_RUN_TIMEOUT_MS+grace; ssh keepalive 15s
 ```
@@ -166,6 +168,8 @@ secrets are never returned.
 | GET | `/api/auth-config` | none | login capabilities |
 | POST | `/rpc/**` | varies (see API law) | all application procedures |
 | POST | `/rpc/**` | session (oRPC middleware) | oRPC v2 procedures (see API law) |
+| POST | `/api/tasks/:id/attachments` | session | multipart attachment upload (REST exception, like avatar) |
+| GET | `/api/attachments/:id` | session | serve attachment bytes (etag = sha256, 304 revalidation) |
 | GET | `/` | none | 302 → `/admin` |
 | GET | `/tasks` | session | task list/board (mobile-first cards; titles link to the task page) |
 | GET | `/tasks/:id` | session | task info page: header + workflow actions + agent runs (full output) + activity feed; polls runs/feed every 2s while open |
