@@ -1,3 +1,10 @@
+# [2.21.0](https://github.com/namhtpyn/tandem/compare/v2.20.2...v2.21.0) (2026-10-14)
+
+
+### Features
+
+* **tasks:** Paperclip-style task detail — chat thread + info sidebar ([eb5026b](https://github.com/namhtpyn/tandem/commit/eb5026b6ac44253ed074a37dcaad89192965e623))
+
 ## [2.20.2](https://github.com/namhtpyn/tandem/compare/v2.20.1...v2.20.2) (2026-10-14)
 
 
