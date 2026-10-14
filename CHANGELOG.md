@@ -1,3 +1,10 @@
+## [2.19.7](https://github.com/namhtpyn/tandem/compare/v2.19.6...v2.19.7) (2026-10-14)
+
+
+### Bug Fixes
+
+* **tasks:** info page fetches runs/activity through the typed oRPC client ([b434be8](https://github.com/namhtpyn/tandem/commit/b434be89ac729ccf420d8c486c3cbcfcf18e114b))
+
 ## [2.19.6](https://github.com/namhtpyn/tandem/compare/v2.19.5...v2.19.6) (2026-10-14)
 
 
