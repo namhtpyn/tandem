@@ -59,11 +59,13 @@ describe('buildBrief', () => {
       reviewerNames: ['Ash'],
       projectName: 'Tandem',
     },
+    outDir: '~/.tandem/t-123/attachments/out/',
     recentActivity: [{ kind: 'question', authorName: 'Nam Hoang', body: 'Which format?' }],
   }
   it('contains identity, chains, task, contract', () => {
     const b = buildBrief(base)
     expect(b).toContain('You are Zed, CEO.')
+    expect(b).toContain('~/.tandem/t-123/attachments/out/')
     expect(b).toContain('You report to: Nam Hoang (Founder).')
     expect(b).toContain('Reports to you: Ash (CTO).')
     expect(b).toContain('Standing instructions: Always answer in Vietnamese.')

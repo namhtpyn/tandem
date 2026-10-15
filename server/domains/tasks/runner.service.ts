@@ -343,7 +343,7 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
       void (async () => {
         try {
           const briefData = await loadBriefData(taskId)
-          const brief = buildBrief(briefData)
+          const brief = buildBrief({ ...briefData, outDir: `~/.tandem/${taskId}/attachments/out/` })
           // persist the exact prompt so the run is auditable from the task page
           await db.update(taskRuns).set({ prompt: brief }).where(eq(taskRuns.id, runId))
           if (process.env.TANDEM_FAKE_RUNNER === '1') {

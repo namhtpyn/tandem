@@ -45,6 +45,8 @@ export function buildBrief(input: {
   directReports: BriefPerson[]
   extraChains: Array<{ person: BriefPerson, chain: BriefPerson[] }>
   task: { title: string, description: string, ownerName: string | null, reviewerNames: string[], projectName: string | null, parentTitle?: string | null }
+  /** exact deliverable out-dir for this run's task — agents must not guess it */
+  outDir: string
   recentActivity: Array<{ kind: string, authorName: string | null, body: string | null }>
   attachments?: Array<{ id: string, filename: string, mime: string, size: number, remotePath: string }>
 }): string {
@@ -80,7 +82,7 @@ export function buildBrief(input: {
     }
   }
   lines.push('')
-  lines.push('DELIVERABLES — write any output files to ~/.tandem/<task>/attachments/out/ (create it if needed); everything left there when you exit is collected and attached to your result.')
+  lines.push(`DELIVERABLES — write any output files to ${input.outDir} (create it if needed; that EXACT path, not the environment name); everything left there when you exit is collected and attached to your result.`)
   lines.push('')
   lines.push('OUTPUT CONTRACT — end your response with exactly one of these lines:')
   lines.push('[RESULT] <final answer or summary of work done>')
