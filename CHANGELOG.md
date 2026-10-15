@@ -1,3 +1,10 @@
+## [2.25.1](https://github.com/namhtpyn/tandem/compare/v2.25.0...v2.25.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **docker:** pin oven/bun 1.4.2-alpine bases — no floating tags ([89606c5](https://github.com/namhtpyn/tandem/commit/89606c5aec10b0502b60ca800520ea14f5be29ef))
+
 # [2.25.0](https://github.com/namhtpyn/tandem/compare/v2.24.0...v2.25.0) (2026-10-15)
 
 
