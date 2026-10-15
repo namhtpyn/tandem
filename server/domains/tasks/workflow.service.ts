@@ -10,6 +10,8 @@ import { eq, and, asc } from 'drizzle-orm'
 import { db } from '../../db'
 import { tasks, taskActivity, user as userTable, employeeSupervisors } from '../../db/schema'
 import { publishChange } from '../kernel/kernel'
+import { spawnObligation, resolveObligation, cancelObligations, answerHolder, pendingApprovers } from './obligations.service'
+import { refreshParentGating, hasOpenChildren } from './gating.service'
 
 export const WAITING_ANSWER_STATUS = 'waiting-answer'
 export const IN_REVIEW_STATUS = 'in-review'
@@ -42,9 +44,10 @@ export async function askQuestion(taskId: string, authorId: string, body: string
   const holder = task.ownerId ?? task.createdBy
   if (!holder) throw new Error('task has no owner to answer')
   if (task.status !== DOING_STATUS) throw new Error('only a task in progress can ask')
+  await cancelObligations(taskId, 'answer')
+  await spawnObligation(taskId, holder, 'answer')
   await db.update(tasks).set({
     status: WAITING_ANSWER_STATUS,
-    questionHolderId: holder,
     questionChain: [holder],
     updatedAt: new Date(),
   }).where(eq(tasks.id, taskId))
@@ -56,17 +59,19 @@ export async function askQuestion(taskId: string, authorId: string, body: string
 export async function forwardQuestion(taskId: string, authorId: string, toEmployeeId: string, body: string) {
   const task = await getTask(taskId)
   if (task.status !== WAITING_ANSWER_STATUS) throw new Error('task is not waiting for an answer')
-  if (task.questionHolderId !== authorId) throw new Error('only the current holder can forward')
+  const holder = await answerHolder(taskId)
+  if (holder !== authorId) throw new Error('only the current holder can forward')
   const chain = task.questionChain
   if (chain.includes(toEmployeeId)) throw new Error('already in the question chain')
   const target = await db.select({ name: userTable.name }).from(userTable).where(eq(userTable.id, toEmployeeId))
   if (target.length === 0) throw new Error('employee does not exist')
   if (!await hasSupervisors(toEmployeeId)) throw new Error('that person is the top of the hierarchy — they should answer')
+  await resolveObligation(taskId, holder!, 'answer', authorId)
   await db.update(tasks).set({
-    questionHolderId: toEmployeeId,
     questionChain: [...chain, toEmployeeId],
     updatedAt: new Date(),
   }).where(eq(tasks.id, taskId))
+  await spawnObligation(taskId, toEmployeeId, 'answer')
   await logActivity(taskId, 'forward', authorId, body, { toId: toEmployeeId, toName: target[0]!.name })
   return { holderId: toEmployeeId }
 }
@@ -77,13 +82,14 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
   if (task.status !== WAITING_ANSWER_STATUS) throw new Error('task is not waiting for an answer')
   const chain = task.questionChain
   if (!chain.includes(authorId)) throw new Error('only someone in the question chain can answer')
+  await cancelObligations(taskId, 'answer')
   await db.update(tasks).set({
     status: TODO_STATUS,
-    questionHolderId: null,
     questionChain: [],
     updatedAt: new Date(),
   }).where(eq(tasks.id, taskId))
   await logActivity(taskId, 'answer', authorId, body, {})
+  await refreshParentGating(taskId)
   return { ok: true }
 }
 
@@ -92,14 +98,15 @@ export async function submitResult(taskId: string, authorId: string, body: strin
   const task = await getTask(taskId)
   if (task.status !== DOING_STATUS) throw new Error('only a task in progress can submit')
   if (task.assigneeId !== authorId) throw new Error('only the assignee can submit')
+  if (await hasOpenChildren(taskId)) throw new Error('task has open subtasks — they must be done or abandoned first')
   const reviewers = task.reviewers
   const nextStatus = reviewers.length > 0 ? IN_REVIEW_STATUS : DONE_STATUS
-  await db.update(tasks).set({
-    status: nextStatus,
-    reviewApprovals: [],
-    updatedAt: new Date(),
-  }).where(eq(tasks.id, taskId))
+  await cancelObligations(taskId, 'approval')
+  const round = new Date() // one timestamp per round — round identity in the ledger
+  for (const r of reviewers) await spawnObligation(taskId, r, 'approval', round)
+  await db.update(tasks).set({ status: nextStatus, updatedAt: new Date() }).where(eq(tasks.id, taskId))
   await logActivity(taskId, 'verdict', authorId, body, { submitted: true, reviewers })
+  await refreshParentGating(taskId)
   return { status: nextStatus }
 }
 
@@ -109,15 +116,15 @@ export async function approveReview(taskId: string, authorId: string, body: stri
   if (task.status !== IN_REVIEW_STATUS) throw new Error('task is not in review')
   const reviewers = task.reviewers
   if (!reviewers.includes(authorId)) throw new Error('not a reviewer on this task')
-  const approvals = new Set(task.reviewApprovals)
-  approvals.add(authorId)
-  const all = reviewers.every(r => approvals.has(r))
+  await resolveObligation(taskId, authorId, 'approval', authorId)
+  const remaining = await pendingApprovers(taskId)
+  const all = remaining.length === 0
   await db.update(tasks).set({
-    reviewApprovals: [...approvals],
     status: all ? DONE_STATUS : IN_REVIEW_STATUS,
     updatedAt: new Date(),
   }).where(eq(tasks.id, taskId))
   await logActivity(taskId, 'verdict', authorId, body || 'approved', { approve: true, unanimous: all })
+  await refreshParentGating(taskId)
   return { done: all }
 }
 
@@ -127,12 +134,10 @@ export async function requestChanges(taskId: string, authorId: string, body: str
   if (task.status !== IN_REVIEW_STATUS) throw new Error('task is not in review')
   const reviewers = task.reviewers
   if (!reviewers.includes(authorId)) throw new Error('not a reviewer on this task')
-  await db.update(tasks).set({
-    status: DOING_STATUS,
-    reviewApprovals: [],
-    updatedAt: new Date(),
-  }).where(eq(tasks.id, taskId))
+  await cancelObligations(taskId, 'approval')
+  await db.update(tasks).set({ status: DOING_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId))
   await logActivity(taskId, 'verdict', authorId, body, { requestChanges: true })
+  await refreshParentGating(taskId)
   return { ok: true }
 }
 
@@ -144,8 +149,11 @@ export async function abandonReview(taskId: string, authorId: string, body: stri
   const isReviewer = reviewers.includes(authorId)
   const isOwner = task.ownerId === authorId || task.createdBy === authorId
   if (!isReviewer && !isOwner) throw new Error('only a reviewer or the owner can abandon')
-  await db.update(tasks).set({ status: 'cancelled', updatedAt: new Date() }).where(eq(tasks.id, taskId))
+  await cancelObligations(taskId, 'approval')
+  await cancelObligations(taskId, 'answer')
+  await db.update(tasks).set({ status: 'abandoned', updatedAt: new Date() }).where(eq(tasks.id, taskId))
   await logActivity(taskId, 'verdict', authorId, body || 'abandoned', { abandon: true })
+  await refreshParentGating(taskId)
   return { ok: true }
 }
 

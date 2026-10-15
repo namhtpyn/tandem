@@ -125,6 +125,7 @@ export function guessMime(filename: string): string {
 import { buildBrief, loadBriefData } from './brief.service'
 import { attachmentExists, attachmentPath, COLLECTION_MAX_BYTES, mimeAllowed, normalizeMime, saveAttachmentBytes, sha256Hex } from './attachments.util'
 import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles } from './ssh-files.util'
+import { recordProposals } from './proposals.service'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -314,6 +315,12 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
     await logRun(taskId, runId, status === 'done' ? 'run finished' : `run failed (exit ${exitCode ?? '?'})`, { [status]: true, exitCode }).catch(() => {})
     // verdict: done run submits the result for review (or completes when no reviewers)
     if (status === 'done') {
+      // routing proposals ([SUBTASKS]/[REASSIGN]) ride the output — record before submit
+      try {
+        const { parseRoutingProposals } = await import('../../../app/utils/task-thread')
+        const payloads = parseRoutingProposals(buffer)
+        if (payloads.length) await recordProposals(taskId, runId, payloads)
+      } catch { /* proposal recording is best-effort */ }
       const { submitResult } = await import('./workflow.service')
       try {
         await submitResult(taskId, plan.ai.userId, 'run complete')

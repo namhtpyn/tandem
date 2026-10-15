@@ -48,6 +48,39 @@ export function parseRunEnvelope(output: string | null | undefined): RunEnvelope
   return null
 }
 
+/** Parse routing proposals from run output (structural markers, scanned anywhere):
+ *  [SUBTASKS] title :: description :: assignee | title2 :: ...
+ *  [REASSIGN] Employee Name — reason
+ * These are proposals only — the confirm flow (human/decision model) executes them. */
+export interface SubtaskProposalItem { title: string, description?: string, assigneeName?: string }
+export type RoutingProposal =
+  | { kind: 'subtasks', items: SubtaskProposalItem[] }
+  | { kind: 'reassign', targetName: string, reason?: string }
+
+export function parseRoutingProposals(output: string | null | undefined): RoutingProposal[] {
+  if (!output) return []
+  const out: RoutingProposal[] = []
+  for (const raw of output.split('\n')) {
+    const line = raw.trim()
+    const st = line.match(/^\[SUBTASKS\]\s*(.+)$/)
+    if (st) {
+      const items: SubtaskProposalItem[] = st[1]!.split('|').map(part => {
+        const seg = part.split('::').map(p => p.trim())
+        return { title: seg[0]!.slice(0, 200), description: seg[1] || undefined, assigneeName: seg[2] || undefined }
+      }).filter(i => i.title.length > 0)
+      if (items.length) out.push({ kind: 'subtasks', items })
+      continue
+    }
+    const re = line.match(/^\[REASSIGN\]\s*(.+)$/)
+    if (re) {
+      const m = re[1]!.split(/\s+—\s+|\s+--\s+/)
+      const targetName = m[0]!.trim() // the marker regex guarantees non-empty here
+      out.push({ kind: 'reassign', targetName, reason: m[1]?.trim() })
+    }
+  }
+  return out
+}
+
 /** Strip the envelope line from displayed output so the bubble shows prose only. */
 export function runOutputWithoutEnvelope(output: string | null | undefined): string {
   const env = parseRunEnvelope(output)

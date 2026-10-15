@@ -143,6 +143,81 @@ async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
   }
 }
 
+// ---- subtasks, agent proposals, assignment history ---------------------------
+const employeesLive = useQuery(($orpc.employees.live as any).liveOptions())
+const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[])
+const employeeName = computed(() => new Map(employees.value.map(e => [e.id, e.name])))
+
+interface ChildRow { id: string, title: string, status: string, assigneeId: string | null }
+interface ProposalRow { id: string, kind: 'subtasks' | 'reassign', payload: Record<string, any>, status: string, decisionNote: string, createdAt: string }
+interface AssignmentRow { id: string, employeeName: string | null, reason: string, startedAt: string, endedAt: string | null }
+
+const subtaskRows = ref<ChildRow[]>([])
+const proposalRows = ref<ProposalRow[]>([])
+const assignmentRows = ref<AssignmentRow[]>([])
+const proposalBusy = ref(false)
+const proposalMessage = ref('')
+const subtaskTitle = ref('')
+const subtaskAssignee = ref('')
+
+async function refreshRoutingPanels(taskId: string) {
+  try {
+    const [st, pr, as] = await Promise.all([
+      ($fetch('/rpc/tasks/subtasks', { method: 'POST', body: { json: { taskId } } }) as unknown as Promise<{ json: { items: ChildRow[] } }>),
+      ($fetch('/rpc/tasks/proposals', { method: 'POST', body: { json: { taskId } } }) as unknown as Promise<{ json: { items: ProposalRow[] } }>),
+      ($fetch('/rpc/tasks/assignments', { method: 'POST', body: { json: { taskId } } }) as unknown as Promise<{ json: { items: AssignmentRow[] } }>),
+    ])
+    subtaskRows.value = st.json.items
+    proposalRows.value = pr.json.items
+    assignmentRows.value = as.json.items
+  }
+  catch { /* panels are best-effort; the thread still works */ }
+}
+
+watch(() => task.value?.id, (id) => { if (id) void refreshRoutingPanels(id) }, { immediate: true })
+
+async function createSubtask() {
+  if (!task.value || !subtaskTitle.value.trim()) return
+  proposalBusy.value = true
+  proposalMessage.value = ''
+  try {
+    await $fetch('/rpc/tasks/create', { method: 'POST', body: { json: { title: subtaskTitle.value.trim(), parentId: task.value.id, assigneeId: subtaskAssignee.value || null } } })
+    subtaskTitle.value = ''
+    subtaskAssignee.value = ''
+    await refreshRoutingPanels(task.value.id)
+    proposalMessage.value = 'subtask created'
+  }
+  catch (e) {
+    proposalMessage.value = (e as { data?: { json?: { message?: string } }, message?: string }).data?.json?.message ?? (e as Error).message
+  }
+  finally { proposalBusy.value = false }
+}
+
+async function decideProposal(id: string, action: 'confirmProposal' | 'rejectProposal') {
+  proposalBusy.value = true
+  proposalMessage.value = ''
+  try {
+    const r = await $fetch(`/rpc/tasks/${action}`, { method: 'POST', body: { json: { proposalId: id } } }) as { json: { events?: string[] } }
+    proposalMessage.value = r.json.events?.length ? r.json.events.join('; ') : 'done'
+    await refreshRoutingPanels(task.value!.id)
+    await refreshFeed(task.value!.id)
+  }
+  catch (e) {
+    proposalMessage.value = (e as { data?: { json?: { message?: string } }, message?: string }).data?.json?.message ?? (e as Error).message
+  }
+  finally { proposalBusy.value = false }
+}
+
+const parentTask = computed(() => task.value?.parentTaskId ? tasks.value.find(t => t.id === task.value!.parentTaskId) ?? null : null)
+const openProposals = computed(() => proposalRows.value.filter(p => p.status === 'proposed'))
+const assignmentLines = computed(() => {
+  const rows = [...assignmentRows.value].reverse() // oldest first
+  return rows.map((r, i) => {
+    const from = i === 0 ? '∅' : rows[i - 1]!.employeeName ?? '∅'
+    return `${from} → ${r.employeeName ?? '∅'}${r.reason ? ` (${r.reason})` : ''}`
+  })
+})
+
 function startStreams() {
   const id = task.value?.id
   if (!id) return
@@ -188,6 +263,9 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
             <h1 class="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-50">{{ task.title }}</h1>
             <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-500">
               <UBadge :color="(task.status === 'done') ? 'success' : (task.status === 'todo') ? 'neutral' : 'warning'" variant="subtle" size="sm">{{ task.status }}</UBadge>
+              <NuxtLink v-if="parentTask" :to="`/tasks/${parentTask.id}`" class="inline-flex items-center gap-1 text-primary hover:underline" data-testid="parent-task-link">
+                <UIcon name="i-lucide-corner-left-up" class="size-3" /> part of: {{ parentTask.title }}
+              </NuxtLink>
               <span v-if="task.assigneeName">{{ task.assigneeName }}<span v-if="task.assigneeKind === 'ai'" class="text-primary">(AI)</span></span>
             </div>
           </div>
@@ -326,6 +404,52 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
             </ul>
           </div>
 
+          <div v-if="openProposals.length" data-testid="proposal-panel">
+            <p class="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Agent proposals</p>
+            <div class="space-y-2">
+              <div v-for="p in openProposals" :key="p.id" class="rounded-lg border border-zinc-200 bg-white p-2.5 text-sm dark:border-zinc-800 dark:bg-zinc-900">
+                <p class="mb-1 flex items-center gap-1.5 font-medium text-zinc-800 dark:text-zinc-200">
+                  <UIcon :name="p.kind === 'subtasks' ? 'i-lucide-git-branch' : 'i-lucide-corner-up-right'" class="size-3.5 text-primary" />
+                  {{ p.kind === 'subtasks' ? 'Split into subtasks' : 'Reassign ticket' }}
+                </p>
+                <ul v-if="p.kind === 'subtasks'" class="mb-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+                  <li v-for="(item, i) in (p.payload.items ?? [])" :key="i" class="truncate">
+                    • {{ item.title }}<span v-if="item.assigneeName" class="text-zinc-400"> — {{ item.assigneeName }}</span>
+                  </li>
+                </ul>
+                <p v-else class="mb-2 truncate text-xs text-zinc-600 dark:text-zinc-400">→ {{ p.payload.targetName }}<span v-if="p.payload.reason"> — {{ p.payload.reason }}</span></p>
+                <div class="flex gap-2">
+                  <UButton size="xs" color="primary" icon="i-lucide-check" :disabled="proposalBusy" @click="decideProposal(p.id, 'confirmProposal')">Confirm</UButton>
+                  <UButton size="xs" color="neutral" variant="outline" icon="i-lucide-x" :disabled="proposalBusy" @click="decideProposal(p.id, 'rejectProposal')">Reject</UButton>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div data-testid="subtask-panel">
+            <p class="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Subtasks</p>
+            <ul class="space-y-1 text-sm">
+              <li v-for="c in subtaskRows" :key="c.id">
+                <NuxtLink :to="`/tasks/${c.id}`" class="flex items-center justify-between gap-2 rounded px-1.5 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800">
+                  <span class="truncate text-zinc-800 dark:text-zinc-200">{{ c.title }}</span>
+                  <UBadge :color="(c.status === 'done') ? 'success' : (c.status === 'blocked') ? 'error' : 'neutral'" variant="subtle" size="sm">{{ c.status }}</UBadge>
+                </NuxtLink>
+              </li>
+            </ul>
+            <div class="mt-2 flex gap-1.5">
+              <UInput v-model="subtaskTitle" placeholder="New subtask…" size="xs" class="flex-1" :disabled="proposalBusy" @keydown.enter.prevent="createSubtask" />
+              <USelect v-model="subtaskAssignee" :items="[{ label: 'Unassigned', value: '' }, ...employees.map(e => ({ label: e.name, value: e.id }))]" size="xs" class="w-28" />
+              <UButton size="xs" icon="i-lucide-plus" :disabled="proposalBusy || !subtaskTitle.trim()" @click="createSubtask" />
+            </div>
+          </div>
+
+          <div v-if="assignmentLines.length" data-testid="assignment-history">
+            <p class="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Assignees</p>
+            <ul class="space-y-0.5 text-xs text-zinc-500">
+              <li v-for="(line, i) in assignmentLines" :key="i" class="truncate">{{ line }}</li>
+            </ul>
+          </div>
+
           <div>
             <p class="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Workflow</p>
             <div class="grid grid-cols-2 gap-2">
@@ -375,6 +499,52 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
               </li>
             </ul>
           </div>
+          <div v-if="openProposals.length" data-testid="proposal-panel">
+            <p class="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Agent proposals</p>
+            <div class="space-y-2">
+              <div v-for="p in openProposals" :key="p.id" class="rounded-lg border border-zinc-200 bg-white p-2.5 text-sm dark:border-zinc-800 dark:bg-zinc-900">
+                <p class="mb-1 flex items-center gap-1.5 font-medium text-zinc-800 dark:text-zinc-200">
+                  <UIcon :name="p.kind === 'subtasks' ? 'i-lucide-git-branch' : 'i-lucide-corner-up-right'" class="size-3.5 text-primary" />
+                  {{ p.kind === 'subtasks' ? 'Split into subtasks' : 'Reassign ticket' }}
+                </p>
+                <ul v-if="p.kind === 'subtasks'" class="mb-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+                  <li v-for="(item, i) in (p.payload.items ?? [])" :key="i" class="truncate">
+                    • {{ item.title }}<span v-if="item.assigneeName" class="text-zinc-400"> — {{ item.assigneeName }}</span>
+                  </li>
+                </ul>
+                <p v-else class="mb-2 truncate text-xs text-zinc-600 dark:text-zinc-400">→ {{ p.payload.targetName }}<span v-if="p.payload.reason"> — {{ p.payload.reason }}</span></p>
+                <div class="flex gap-2">
+                  <UButton size="xs" color="primary" icon="i-lucide-check" :disabled="proposalBusy" @click="decideProposal(p.id, 'confirmProposal')">Confirm</UButton>
+                  <UButton size="xs" color="neutral" variant="outline" icon="i-lucide-x" :disabled="proposalBusy" @click="decideProposal(p.id, 'rejectProposal')">Reject</UButton>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div data-testid="subtask-panel">
+            <p class="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Subtasks</p>
+            <ul class="space-y-1 text-sm">
+              <li v-for="c in subtaskRows" :key="c.id">
+                <NuxtLink :to="`/tasks/${c.id}`" class="flex items-center justify-between gap-2 rounded px-1.5 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800">
+                  <span class="truncate text-zinc-800 dark:text-zinc-200">{{ c.title }}</span>
+                  <UBadge :color="(c.status === 'done') ? 'success' : (c.status === 'blocked') ? 'error' : 'neutral'" variant="subtle" size="sm">{{ c.status }}</UBadge>
+                </NuxtLink>
+              </li>
+            </ul>
+            <div class="mt-2 flex gap-1.5">
+              <UInput v-model="subtaskTitle" placeholder="New subtask…" size="xs" class="flex-1" :disabled="proposalBusy" @keydown.enter.prevent="createSubtask" />
+              <USelect v-model="subtaskAssignee" :items="[{ label: 'Unassigned', value: '' }, ...employees.map(e => ({ label: e.name, value: e.id }))]" size="xs" class="w-28" />
+              <UButton size="xs" icon="i-lucide-plus" :disabled="proposalBusy || !subtaskTitle.trim()" @click="createSubtask" />
+            </div>
+          </div>
+
+          <div v-if="assignmentLines.length" data-testid="assignment-history">
+            <p class="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Assignees</p>
+            <ul class="space-y-0.5 text-xs text-zinc-500">
+              <li v-for="(line, i) in assignmentLines" :key="i" class="truncate">{{ line }}</li>
+            </ul>
+          </div>
+
           <div>
             <p class="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Workflow</p>
             <div class="grid grid-cols-2 gap-2">

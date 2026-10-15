@@ -1,3 +1,7 @@
+import { approvalsInRoundBatch, openObligations, pendingForUser, pendingCounts } from './obligations.service'
+import { recordAssignment, listAssignments } from './assignments.service'
+import { refreshParentGating } from './gating.service'
+import { confirmProposal, rejectProposal } from './proposals.service'
 import { os } from '@orpc/server'
 // tasks router — business logic lives in services/utils; this file only wires procedures
 import { asc, desc, eq } from 'drizzle-orm'
@@ -6,6 +10,8 @@ import { db } from '../../db'
 import {
   aiEmployees as aiEmployeesTable, projects as projectsTable, taskStatuses as taskStatusesTable, tasks as tasksTable, user as userTable,
   taskAttachments,
+  taskActivity,
+  taskProposals,
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 import { askQuestion, forwardQuestion, answerQuestion, submitResult, approveReview, requestChanges, abandonReview, listActivity } from './workflow.service'
@@ -45,6 +51,10 @@ export const tasksRouter = os.router({
   /** live list — tasks with assignee info, newest first */
   live: protectedProcedure.handler(() => liveGenerator(['tasks'], async (): Promise<TaskRow[]> => {
     const rows = await db.select().from(tasksTable).orderBy(desc(tasksTable.createdAt))
+    const open = await openObligations(rows.map(r => r.id))
+    const holders = new Map<string, string>()
+    for (const [tid, o] of open) if (o.holders[0]) holders.set(tid, o.holders[0])
+    const approvalsByTask = await approvalsInRoundBatch(rows.map(r => r.id))
     const projRows = await db.select({ id: projectsTable.id, name: projectsTable.name }).from(projectsTable)
     const projNameById = new Map(projRows.map(p => [p.id, p.name]))
     const users = await db.select({ id: userTable.id, name: userTable.name }).from(userTable)
@@ -65,9 +75,10 @@ export const tasksRouter = os.router({
       ownerName: nameById.get(r.ownerId ?? r.createdBy ?? '') ?? null,
       reviewers: r.reviewers,
       reviewerNames: r.reviewers.map(id => nameById.get(id) ?? id),
-      reviewApprovals: r.reviewApprovals,
-      questionHolderId: r.questionHolderId,
-      questionHolderName: (r.questionHolderId && nameById.get(r.questionHolderId)) || null,
+      reviewApprovals: approvalsByTask.get(r.id) ?? [],
+      questionHolderId: holders.get(r.id) ?? null,
+      questionHolderName: (holders.get(r.id) && nameById.get(holders.get(r.id)!)) || null,
+      parentTaskId: r.parentTaskId,
       dispatchAfter: r.dispatchAfter ? r.dispatchAfter.toISOString() : null,
       failStreak: r.failStreak,
       createdBy: r.createdBy,
@@ -86,6 +97,7 @@ export const tasksRouter = os.router({
       ownerId: z.string().min(1).nullable().optional(),
       reviewers: z.array(z.string().min(1)).max(10).optional(),
       status: z.string().min(1).max(64).optional(),
+      parentId: z.string().min(1).nullable().optional(),
     }))
     .handler(async ({ input, context }) => {
       if (input.assigneeId) {
@@ -106,6 +118,10 @@ export const tasksRouter = os.router({
       }
       const session = await (context as unknown as { getSession: () => Promise<{ user: { id: string } } | null> }).getSession()
       const selfId = session?.user?.id ?? null
+      if (input.parentId) {
+        const parent = await db.select({ id: tasksTable.id }).from(tasksTable).where(eq(tasksTable.id, input.parentId))
+        if (parent.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'parent task does not exist' })
+      }
       const id = crypto.randomUUID()
       await db.insert(tasksTable).values({
         id,
@@ -116,9 +132,16 @@ export const tasksRouter = os.router({
         assigneeId: input.assigneeId ?? null,
         ownerId: input.ownerId ?? selfId,
         reviewers: input.reviewers ?? [],
+        parentTaskId: input.parentId ?? null,
         createdBy: selfId,
       })
+      if (input.assigneeId) await recordAssignment(id, input.assigneeId, 'created', selfId)
+      if (input.parentId) {
+        await db.insert(taskActivity).values({ id: crypto.randomUUID(), taskId: input.parentId, kind: 'status', authorId: selfId, body: `subtask created: ${input.title}`, meta: { childId: id } })
+        await refreshParentGating(id)
+      }
       await publishChange('tasks', 'create')
+      await publishChange('taskActivity', 'create')
       return { id }
     }),
 
@@ -134,7 +157,7 @@ export const tasksRouter = os.router({
       ownerId: z.string().min(1).nullable().optional(),
       reviewers: z.array(z.string().min(1)).max(10).nullable().optional(),
     }))
-    .handler(async ({ input }) => {
+    .handler(async ({ input, context }) => {
       const rows = await db.select().from(tasksTable).where(eq(tasksTable.id, input.id))
       if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' })
       if (input.assigneeId) {
@@ -157,6 +180,7 @@ export const tasksRouter = os.router({
           }
         }
       }
+      const actorId = await selfIdOf(context)
       const patch: Record<string, unknown> = { updatedAt: new Date() }
       if (input.projectId !== undefined) patch.projectId = input.projectId
       if (input.title !== undefined) patch.title = input.title
@@ -166,11 +190,69 @@ export const tasksRouter = os.router({
       if (input.ownerId !== undefined) patch.ownerId = input.ownerId
       if (input.reviewers !== undefined && input.reviewers !== null) patch.reviewers = input.reviewers
       await db.update(tasksTable).set(patch).where(eq(tasksTable.id, input.id))
+      if (input.assigneeId !== undefined && input.assigneeId !== rows[0]!.assigneeId) {
+        await recordAssignment(input.id, input.assigneeId, 'manual', actorId)
+      }
+      if (input.status !== undefined && input.status !== rows[0]!.status) {
+        await db.insert(taskActivity).values({ id: crypto.randomUUID(), taskId: input.id, kind: 'status', authorId: actorId, body: `status: ${rows[0]!.status} → ${input.status}`, meta: {} })
+        await refreshParentGating(input.id)
+      }
       await publishChange('tasks', 'update')
+      await publishChange('taskActivity', 'create')
       return { ok: true }
     }),
 
   /** assignee asks the owner a question (task → waiting-answer) */
+  /** the waiting-on-you inbox: tasks with a pending obligation on me, plus counts */
+  inbox: protectedProcedure.handler(async ({ context }) => {
+    const me = await selfIdOf(context)
+    const items = await pendingForUser(me)
+    const counts = await pendingCounts(me)
+    return { items, counts }
+  }),
+
+  /** subtask children of a task (for the detail page subtasks section) */
+  subtasks: protectedProcedure
+    .input(z.object({ taskId: z.string().min(1) }))
+    .handler(async ({ input }) => {
+      const rows = await db.select({ id: tasksTable.id, title: tasksTable.title, status: tasksTable.status, assigneeId: tasksTable.assigneeId }).from(tasksTable).where(eq(tasksTable.parentTaskId, input.taskId)).orderBy(tasksTable.createdAt)
+      return { items: rows }
+    }),
+
+  /** assignment history for a task (append-only ledger) */
+  assignments: protectedProcedure
+    .input(z.object({ taskId: z.string().min(1) }))
+    .handler(async ({ input }) => {
+      const rows = await listAssignments(input.taskId)
+      const users = await db.select({ id: userTable.id, name: userTable.name }).from(userTable)
+      const nameById = new Map(users.map(u => [u.id, u.name]))
+      return { items: rows.map(x => ({ id: x.id, employeeId: x.employeeId, employeeName: x.employeeId ? nameById.get(x.employeeId)! : null, reason: x.reason, actorId: x.actorId, startedAt: x.startedAt.toISOString(), endedAt: x.endedAt ? x.endedAt.toISOString() : null })) }
+    }),
+
+  /** proposals on a task (agent [SUBTASKS]/[REASSIGN] awaiting decision) */
+  proposals: protectedProcedure
+    .input(z.object({ taskId: z.string().min(1) }))
+    .handler(async ({ input }) => {
+      const rows = await db.select().from(taskProposals).where(eq(taskProposals.taskId, input.taskId)).orderBy(desc(taskProposals.createdAt))
+      return { items: rows.map(p => ({ id: p.id, kind: p.kind, payload: p.payload, status: p.status, decisionNote: p.decisionNote, createdAt: p.createdAt.toISOString() })) }
+    }),
+
+  /** confirm an agent proposal (single writer executes: creates subtasks / reassigns) */
+  confirmProposal: protectedProcedure
+    .input(z.object({ proposalId: z.string().min(1), note: z.string().max(2000).optional() }))
+    .handler(async ({ input, context }) => {
+      const me = await selfIdOf(context)
+      return confirmProposal(input.proposalId, me, input.note ?? '')
+    }),
+
+  /** reject an agent proposal (note rides the next brief to prevent re-propose loops) */
+  rejectProposal: protectedProcedure
+    .input(z.object({ proposalId: z.string().min(1), note: z.string().max(2000).optional() }))
+    .handler(async ({ input, context }) => {
+      const me = await selfIdOf(context)
+      return rejectProposal(input.proposalId, me, input.note ?? '')
+    }),
+
   ask: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1), body: z.string().min(1).max(4_000) }))
     .handler(async ({ input, context }) => {

@@ -81,6 +81,8 @@ export interface TaskRow {
   /** who owes the answer while waiting (moves on forward) */
   questionHolderId: string | null
   questionHolderName: string | null
+  /** subtask nesting: this task is a child of this parent (unlimited depth) */
+  parentTaskId: string | null
   /** earliest next dispatch (failure backoff); null = immediately eligible */
   dispatchAfter: string | null
   /** consecutive failed runs; resets on success */

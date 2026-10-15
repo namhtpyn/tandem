@@ -555,3 +555,23 @@ describe('dispatcher', () => {
   }, 10_000)
 })
 
+describe('runner proposal recording', () => {
+  it('a finished run with [SUBTASKS] output records proposals + activity', async () => {
+    const agentId = await mkAiAgent()
+    const t = await callProc('tasks.create', { title: 'PropRun', assigneeId: agentId })
+    process.env.TANDEM_FAKE_SCRIPT = ['thinking…', '[SUBTASKS] Draft docs :: write :: Peer Person', '[RESULT] done'].join('\n')
+    try {
+      const { dispatchTask } = await import('../server/domains/tasks/runner.service')
+      const h = await dispatchTask(t.id, 'http://t.local')
+      await h.finished
+    } finally { delete process.env.TANDEM_FAKE_SCRIPT }
+    const { taskProposals: tp, taskActivity: ta } = await schema()
+    const { db } = await dbm()
+    const proposals = await db.select().from(tp)
+    expect(proposals.length).toBe(1)
+    expect(proposals[0].kind).toBe('subtasks')
+    expect((proposals[0].payload as any).items[0].title).toBe('Draft docs')
+    const acts = await db.select().from(ta)
+    expect(acts.some(a => a.body!.includes('proposed 1 subtask'))).toBe(true)
+  }, 15_000)
+})

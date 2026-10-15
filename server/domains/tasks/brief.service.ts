@@ -1,8 +1,8 @@
 // Per-task brief: identity + org chains + task context + mention chains + output contract.
 // Pure functions — no I/O; loadBriefData gathers rows.
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { db } from '../../db'
-import { tasks, user as userTable, aiEmployees, employeeSupervisors, taskActivity, taskAttachments } from '../../db/schema'
+import { tasks, user as userTable, aiEmployees, employeeSupervisors, taskActivity, taskAttachments, taskProposals } from '../../db/schema'
 import { stripAttachments } from './attachments.util'
 
 export interface BriefPerson { id: string, name: string, title: string | null, kind: string }
@@ -44,7 +44,7 @@ export function buildBrief(input: {
   upChain: BriefPerson[]
   directReports: BriefPerson[]
   extraChains: Array<{ person: BriefPerson, chain: BriefPerson[] }>
-  task: { title: string, description: string, ownerName: string | null, reviewerNames: string[], projectName: string | null }
+  task: { title: string, description: string, ownerName: string | null, reviewerNames: string[], projectName: string | null, parentTitle?: string | null }
   recentActivity: Array<{ kind: string, authorName: string | null, body: string | null }>
   attachments?: Array<{ id: string, filename: string, mime: string, size: number, remotePath: string }>
 }): string {
@@ -60,6 +60,7 @@ export function buildBrief(input: {
   }
   lines.push('')
   lines.push('TASK (via Tandem)')
+  if (input.task.parentTitle) lines.push(`This is a subtask of: ${input.task.parentTitle}`)
   lines.push(`Title: ${input.task.title}`)
   if (input.task.description.trim()) lines.push(`Description: ${stripAttachments(stripMentions(input.task.description))}`)
   lines.push(`Owner: ${input.task.ownerName ?? 'unassigned'}`)
@@ -85,6 +86,10 @@ export function buildBrief(input: {
   lines.push('[RESULT] <final answer or summary of work done>')
   lines.push('[QUESTION] <blocking question for the owner>')
   lines.push('[BLOCKED] <what you need and from whom>')
+  lines.push('')
+  lines.push('ROUTING — if part of this task belongs to someone else, also add a proposal line (the system confirms and acts; you decide nothing):')
+  lines.push('[SUBTASKS] <title> :: <description> :: <suggested assignee name> | <another subtask> (propose subtasks; suggest assignees from people you know above — outside your chain gets escalated to your supervisor)')
+  lines.push('[REASSIGN] <employee name> — <reason> (only when the WHOLE task belongs to someone else)')
   return lines.join('\n')
 }
 
@@ -105,6 +110,13 @@ function stripMentions(desc: string): string {
 export async function loadBriefData(taskId: string) {
   const task = (await db.select().from(tasks).where(eq(tasks.id, taskId)))[0]
   if (!task) throw new Error('task not found')
+  // FK invariant: parent_task_id set => the row exists (ON DELETE SET NULL keeps it true)
+  const parentTitle = task.parentTaskId
+    ? (await db.select({ title: tasks.title }).from(tasks).where(eq(tasks.id, task.parentTaskId)))[0]!.title
+    : null
+  const rejectedNotes = (await db.select().from(taskProposals).where(and(eq(taskProposals.taskId, taskId), eq(taskProposals.status, 'rejected'))))
+    .filter(p => p.decisionNote)
+    .map(p => `- proposal declined: ${p.kind} — ${trunc(p.decisionNote, 200)}`)
   const assigneeId = task.assigneeId!
   const edges = await db.select().from(employeeSupervisors)
   const users = await db.select({ id: userTable.id, name: userTable.name, title: userTable.title }).from(userTable)
@@ -140,13 +152,14 @@ export async function loadBriefData(taskId: string) {
     directReports: downIds.map(person),
     extraChains: extra,
     task: {
+      parentTitle,
       title: task.title,
       description: task.description,
       ownerName: task.ownerId ? nameById.get(task.ownerId)! : null,
       reviewerNames: task.reviewers.map(id => nameById.get(id)).filter((n): n is string => Boolean(n)),
       projectName: null,
     },
-    recentActivity: recent,
+    recentActivity: [...recent, ...rejectedNotes.map(n => ({ kind: 'note', authorName: 'system', body: n }))],
     attachments,
   }
 }

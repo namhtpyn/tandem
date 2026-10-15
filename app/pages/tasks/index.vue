@@ -12,6 +12,15 @@ const employeesLive = useQuery<import('~/../shared/types').EmployeeRow[]>(($orpc
 const projectsLive = useQuery(($orpc.projects.live as any).liveOptions())
 
 const tasks = computed(() => (unref(tasksLive.data) ?? []) as TaskRow[])
+
+// ---- "needs my decision" inbox (pending obligations on me) ----
+const inboxQuery = useQuery(($orpc.tasks.inbox as any).queryOptions({ queryKey: ['tasks', 'inbox'] }))
+interface InboxItem { taskId: string, role: string, title: string, status: string }
+const inboxItems = computed<InboxItem[]>(() => ((unref(inboxQuery.data) as { items?: InboxItem[] } | undefined)?.items ?? []))
+const inboxCount = computed(() => inboxItems.value.length)
+const inboxTaskIds = computed(() => new Set(inboxItems.value.map(i => i.taskId)))
+const needsDecision = ref(false)
+const visibleTasks = computed(() => needsDecision.value ? tasks.value.filter(t => inboxTaskIds.value.has(t.id)) : tasks.value)
 const statuses = computed(() => (unref(statusesLive.data) ?? []) as import('~/../shared/types').TaskStatusRow[])
 const statusById = computed(() => new Map(statuses.value.map(x => [x.id, x])))
 const firstStatusId = computed(() => statuses.value[0]?.id ?? 'todo')
@@ -199,7 +208,7 @@ function allowedTargets(statusId: string): string[] {
 }
 
 function tasksByStatus(status: string) {
-  return tasks.value.filter(t => t.status === status)
+  return visibleTasks.value.filter(t => t.status === status)
 }
 
 function onDrop(status: string) {
@@ -456,6 +465,20 @@ function statusColor(s: string) {
               @click="view = 'board'"
             >Board</button>
           </div>
+          <UButton
+            :color="needsDecision ? 'primary' : 'neutral'"
+            :variant="needsDecision ? 'solid' : 'outline'"
+            size="sm"
+            :aria-pressed="needsDecision"
+            data-testid="needs-decision-toggle"
+            @click="needsDecision = !needsDecision"
+          >
+            <span class="inline-flex items-center gap-1.5">
+              <UIcon name="i-lucide-inbox" class="size-4" />
+              {{ needsDecision ? 'All tasks' : 'Needs my decision' }}
+              <span v-if="inboxCount > 0" class="inline-flex min-w-4 items-center justify-center rounded-full bg-primary-600 px-1 text-[10px] font-semibold leading-4 text-white" data-testid="inbox-count">{{ inboxCount }}</span>
+            </span>
+          </UButton>
           <UButton icon="i-lucide-settings-2" label="Statuses" color="neutral" variant="outline" size="sm" @click="statusManagerOpen = true" />
           <UButton icon="i-lucide-plus" label="New task" @click="openEditor()" />
         </div>
@@ -464,17 +487,17 @@ function statusColor(s: string) {
       <p v-if="message" class="text-sm text-error">{{ message }}</p>
 
       <!-- empty state -->
-      <UCard v-if="!tasks.length" :ui="{ root: 'shadow-sm' }">
+      <UCard v-if="!tasks.length || (needsDecision && !visibleTasks.length)" :ui="{ root: 'shadow-sm' }">
         <div class="flex flex-col items-center gap-2 py-8 text-center">
-          <UIcon name="i-lucide-list-todo" class="size-8 text-zinc-300" />
-          <p class="text-sm text-zinc-500">No tasks yet — create the first one.</p>
+          <UIcon name="i-lucide-inbox" class="size-8 text-zinc-300" />
+          <p class="text-sm text-zinc-500">{{ needsDecision ? 'Nothing needs your decision right now.' : 'No tasks yet — create the first one.' }}</p>
           <UButton icon="i-lucide-plus" size="sm" label="New task" variant="soft" @click="openEditor()" />
         </div>
       </UCard>
 
       <!-- mobile cards (list view) -->
-      <div v-if="tasks.length && view === 'list'" class="space-y-3 md:hidden">
-        <UCard v-for="row in tasks" :key="row.id" :ui="{ root: 'shadow-sm' }">
+      <div v-if="visibleTasks.length && view === 'list'" class="space-y-3 md:hidden">
+        <UCard v-for="row in visibleTasks" :key="row.id" :ui="{ root: 'shadow-sm' }">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
               <NuxtLink :to="`/tasks/${row.id}`" class="truncate font-medium text-zinc-900 hover:underline dark:text-white">{{ row.title }}</NuxtLink>
@@ -530,7 +553,7 @@ function statusColor(s: string) {
 
       <!-- desktop table -->
       <UCard v-if="tasks.length && view === 'list'" :ui="{ root: 'shadow-sm', body: 'p-0 sm:p-0' }" class="hidden md:block">
-        <UTable :data="tasks" :columns="[
+        <UTable :data="visibleTasks" :columns="[
           { accessorKey: 'title', header: 'Task' },
           { accessorKey: 'assignee', header: 'Assignee' },
           { accessorKey: 'status', header: 'Status' },

@@ -1,5 +1,5 @@
 // Drizzle rc (Relations v2) over Postgres.
-import { pgTable, text, timestamp, boolean, integer, index, primaryKey, check, jsonb, type AnyPgColumn } from 'drizzle-orm/pg-core'
+import { type AnyPgColumn, pgTable, text, timestamp, boolean, integer, index, primaryKey, check, jsonb } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 import { defineRelations } from 'drizzle-orm'
 
@@ -173,16 +173,16 @@ export const tasks = pgTable('tandem_tasks', {
   ownerId: text('owner_id').references(() => user.id, { onDelete: 'set null' }),
   /** unanimous-approval gate before done; any mix of AI/human */
   reviewers: text('reviewers').array().notNull().default(sql`'{}'::text[]`),
-  /** who currently owes the answer while status = waiting_answer (moves on forward) */
-  questionHolderId: text('question_holder_id').references(() => user.id, { onDelete: 'set null' }),
   /** everyone the question has already been through: [owner, ...forwards] — loop guard */
   questionChain: text('question_chain').array().notNull().default(sql`'{}'::text[]`),
-  /** reviewers who approved the current review round; reset on request-changes */
-  reviewApprovals: text('review_approvals').array().notNull().default(sql`'{}'::text[]`),
   /** earliest time the dispatcher may claim this task again (failure backoff); null = now */
   dispatchAfter: timestamp('dispatch_after', { withTimezone: true }),
   /** consecutive failed runs; drives the backoff ladder and resets on success */
   failStreak: integer('fail_streak').notNull().default(0),
+  /** subtask nesting: this task is a child of parent_task_id (unlimited depth) */
+  parentTaskId: text('parent_task_id').references((): AnyPgColumn => tasks.id, { onDelete: 'set null' }),
+  /** status to restore when the auto-block (open children) lifts; null = not auto-blocked */
+  preBlockStatus: text('pre_block_status'),
   createdBy: text('created_by').references(() => user.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -193,6 +193,55 @@ export const tasks = pgTable('tandem_tasks', {
 ])
 
 // One row per agent dispatch over SSH. Output is the capped tail.
+/** pending obligations: who owes what on a task — answers, approvals. Single source
+ * for "who acts next" (the waiting-on-you inbox + badge). answer role moves on forward. */
+export const taskObligations = pgTable('tandem_task_obligations', {
+  id: text('id').primaryKey(),
+  taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  employeeId: text('employee_id').references(() => user.id, { onDelete: 'cascade' }),
+  /** answer | approval (future roles just add values) */
+  role: text('role').notNull(),
+  /** pending | fulfilled | cancelled */
+  status: text('status').notNull().default('pending'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  resolvedBy: text('resolved_by').references(() => user.id, { onDelete: 'set null' }),
+}, (t) => [
+  index('tandem_task_obligations_task_idx').on(t.taskId, t.role, t.status),
+  index('tandem_task_obligations_employee_idx').on(t.employeeId, t.status),
+])
+
+/** append-only assignee history; the current assignee stays denormalized on the task */
+export const taskAssignments = pgTable('tandem_task_assignments', {
+  id: text('id').primaryKey(),
+  taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  employeeId: text('employee_id').references(() => user.id, { onDelete: 'set null' }),
+  reason: text('reason').notNull().default(''),
+  actorId: text('actor_id').references(() => user.id, { onDelete: 'set null' }),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  endedAt: timestamp('ended_at', { withTimezone: true }),
+}, (t) => [
+  index('tandem_task_assignments_task_idx').on(t.taskId, t.startedAt),
+])
+
+/** agent proposals from run envelopes ([SUBTASKS]/[REASSIGN]) awaiting confirmation */
+export const taskProposals = pgTable('tandem_task_proposals', {
+  id: text('id').primaryKey(),
+  taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  runId: text('run_id').references(() => taskRuns.id, { onDelete: 'cascade' }),
+  /** subtasks | reassign */
+  kind: text('kind').notNull(),
+  payload: jsonb('payload').notNull().default({}),
+  /** proposed | executed | rejected */
+  status: text('status').notNull().default('proposed'),
+  decisionNote: text('decision_note').notNull().default(''),
+  decidedBy: text('decided_by').references(() => user.id, { onDelete: 'set null' }),
+  decidedAt: timestamp('decided_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index('tandem_task_proposals_task_idx').on(t.taskId, t.status),
+])
+
 export const taskRuns = pgTable('tandem_task_runs', {
   id: text('id').primaryKey(),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),

@@ -9,6 +9,7 @@ import './api-harness'
 import { makeProcCaller } from './helpers/procs'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
+import { answerHolder, approvalsInRound, spawnObligation } from '../server/domains/tasks/obligations.service'
 
 const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 const worker = { id: 'u-worker', name: 'Worker', email: 'worker@tandem.local', role: 'member' }
@@ -93,7 +94,7 @@ describe('task workflow — question chain', () => {
     })
     const t = await getTask(taskId)
     expect(t.status).toBe('waiting-answer')
-    expect(t.questionHolderId).toBe(idMap.get('owner')!)
+    expect(await answerHolder(t.id)).toBe(idMap.get('owner')!)
   })
 
   it('holder forwards down the chain; top of the hierarchy cannot be forwarded to', async () => {
@@ -114,7 +115,7 @@ describe('task workflow — question chain', () => {
       expect(r.holderId).toBe(mid)
     })
     const t = await getTask(taskId)
-    expect(t.questionHolderId).toBe(mid)
+    expect(await answerHolder(t.id)).toBe(mid)
     expect(t.questionChain).toEqual([idMap.get('owner')!, mid])
   })
 
@@ -143,10 +144,10 @@ describe('task workflow — question chain', () => {
     })
     const t = await getTask(taskId)
     expect(t.status).toBe('todo')
-    expect(t.questionHolderId).toBeNull()
+    expect(await answerHolder(t.id)).toBeNull()
     expect(t.questionChain).toEqual([])
     const feed = await activity(taskId)
-    expect(feed.map(a => a.kind)).toEqual(['question', 'answer'])
+    expect(feed.map(a => a.kind)).toEqual(['status', 'question', 'answer'])
   })
 
   it('outsider cannot answer', async () => {
@@ -217,7 +218,7 @@ describe('task workflow — review gate', () => {
     await as({ ...rev1, id: idMap.get('rev1')! }, async () => { await callProc('tasks.requestChanges', { taskId, body: 'needs work' }) })
     t = await getTask(taskId)
     expect(t.status).toBe('doing')
-    expect(t.reviewApprovals).toEqual([])
+    expect(await approvalsInRound(t.id)).toEqual([])
     const feed = await activity(taskId)
     const verdicts = feed.filter(a => a.kind === 'verdict')
     expect(verdicts.some(v => v.body.includes('redo the thing'))).toBe(true)
@@ -243,7 +244,7 @@ describe('task workflow — review gate', () => {
     await as({ ...worker, id: idMap.get('worker')! }, async () => { await callProc('tasks.submit', { taskId, body: 'half baked' }) })
     await as({ ...rev1, id: idMap.get('rev1')! }, async () => { await callProc('tasks.abandon', { taskId }) })
     const t = await getTask(taskId)
-    expect(t.status).toBe('cancelled')
+    expect(t.status).toBe('abandoned')
   })
 
   it('only the assignee can submit', async () => {
@@ -311,7 +312,7 @@ describe('task workflow — guard rails', () => {
       await callProc('tasks.abandon', { taskId, body: 'killing it' })
     })
     const t = await getTask(taskId)
-    expect(t.status).toBe('cancelled')
+    expect(t.status).toBe('abandoned')
   })
 
   it('requestChanges/abandon outside review are rejected', async () => {
@@ -441,7 +442,7 @@ describe('task workflow — guard rails', () => {
     await as({ ...worker, id: idMap.get('worker')! }, async () => { await callProc('tasks.submit', { taskId, body: 'x' }) })
     await callProc('tasks.abandon', { taskId, body: 'by creator' }) // admin session = creator
     const t = await getTask(taskId)
-    expect(t.status).toBe('cancelled')
+    expect(t.status).toBe('abandoned')
   })
 
   it('ask with no owner and no creator fails; forward only while waiting', async () => {
@@ -492,7 +493,8 @@ describe('task workflow — guard rails', () => {
     await mkEmployee('worker', worker.name, worker.email)
     await mkEmployee('owner', ownerUser.name, ownerUser.email)
     // raw row with null owner (bypasses create defaults)
-    await db.insert(tasks).values({ id: 't-raw', title: 'raw', description: '', status: 'waiting-answer', assigneeId: idMap.get('worker')!, ownerId: null, createdBy: null, questionHolderId: idMap.get('owner')! })
+    await db.insert(tasks).values({ id: 't-raw', title: 'raw', description: '', status: 'waiting-answer', assigneeId: idMap.get('worker')!, ownerId: null, createdBy: null })
+    await spawnObligation('t-raw', idMap.get('owner')!, 'answer')
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
     await iter.return?.()
