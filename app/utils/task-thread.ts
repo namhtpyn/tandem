@@ -14,6 +14,8 @@ export interface ThreadRunItem {
   status: 'running' | 'done' | 'failed'
   exitCode: number | null
   output: string
+  /** the exact prompt (brief) sent for this turn, when recorded */
+  prompt?: string | null
   startedAt: string
   finishedAt: string | null
 }
@@ -30,7 +32,7 @@ export type ThreadItem = ThreadBriefItem | ThreadRunItem | ThreadNoteItem
 export interface ThreadSource {
   description?: string | null
   createdAt?: string | null
-  runs?: Array<Pick<ThreadRunItem, 'id' | 'status' | 'output' | 'exitCode' | 'startedAt' | 'finishedAt'>>
+  runs?: Array<Pick<ThreadRunItem, 'id' | 'status' | 'output' | 'exitCode' | 'prompt' | 'startedAt' | 'finishedAt'>>
   activity?: Array<Pick<ThreadNoteItem, 'id' | 'noteKind' | 'body' | 'authorName' | 'createdAt'>>
 }
 
@@ -109,7 +111,7 @@ export function buildThread(src: ThreadSource): ThreadItem[] {
     items.push({ kind: 'brief', id: 'brief', body: src.description, createdAt: src.createdAt ?? '' })
   }
   for (const r of src.runs ?? []) {
-    items.push({ kind: 'run', id: r.id, status: r.status, exitCode: r.exitCode, output: r.output, startedAt: r.startedAt, finishedAt: r.finishedAt })
+    items.push({ kind: 'run', id: r.id, status: r.status, exitCode: r.exitCode, output: r.output, prompt: r.prompt, startedAt: r.startedAt, finishedAt: r.finishedAt })
   }
   for (const a of src.activity ?? []) {
     items.push({ kind: 'note', id: a.id, noteKind: a.noteKind, body: a.body, authorName: a.authorName, createdAt: a.createdAt })

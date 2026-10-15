@@ -98,7 +98,7 @@ export async function submitResult(taskId: string, authorId: string, body: strin
   const task = await getTask(taskId)
   if (task.status !== DOING_STATUS) throw new Error('only a task in progress can submit')
   if (task.assigneeId !== authorId) throw new Error('only the assignee can submit')
-  if (await hasOpenChildren(taskId)) throw new Error('task has open subtasks — they must be done or abandoned first')
+  if (await hasOpenChildren(taskId)) throw new Error('task has open subtasks — they must be done or cancelled first')
   const reviewers = task.reviewers
   const nextStatus = reviewers.length > 0 ? IN_REVIEW_STATUS : DONE_STATUS
   await cancelObligations(taskId, 'approval')
@@ -151,8 +151,9 @@ export async function abandonReview(taskId: string, authorId: string, body: stri
   if (!isReviewer && !isOwner) throw new Error('only a reviewer or the owner can abandon')
   await cancelObligations(taskId, 'approval')
   await cancelObligations(taskId, 'answer')
-  await db.update(tasks).set({ status: 'abandoned', updatedAt: new Date() }).where(eq(tasks.id, taskId))
-  await logActivity(taskId, 'verdict', authorId, body || 'abandoned', { abandon: true })
+  // abandoned == cancelled (one terminal, no fake distinction)
+  await db.update(tasks).set({ status: 'cancelled', updatedAt: new Date() }).where(eq(tasks.id, taskId))
+  await logActivity(taskId, 'verdict', authorId, body || 'cancelled', { abandon: true })
   await refreshParentGating(taskId)
   return { ok: true }
 }

@@ -192,7 +192,7 @@ const categoryOptions = [
   { label: 'Waiting answer — question routed, work paused', value: 'waiting_answer' },
   { label: 'In review — result awaits unanimous approval', value: 'in_review' },
   { label: 'Done — completed, agents stop', value: 'done' },
-  { label: 'Cancelled — abandoned, agents stop', value: 'cancelled' },
+  { label: 'Cancelled — agents stop', value: 'cancelled' },
 ]
 function categoryColor(c: string) {
   return c === 'ready' ? 'primary' : c === 'working' ? 'warning' : c === 'waiting_answer' ? 'warning' : c === 'in_review' ? 'info' : c === 'done' ? 'success' : c === 'cancelled' ? 'error' : 'neutral'
@@ -408,15 +408,6 @@ function statusColor(s: string) {
 
       <p v-if="message" class="text-sm text-error">{{ message }}</p>
 
-      <!-- empty state -->
-      <UCard v-if="!tasks.length || (needsDecision && !visibleTasks.length)" :ui="{ root: 'shadow-sm' }">
-        <div class="flex flex-col items-center gap-2 py-8 text-center">
-          <UIcon name="i-lucide-inbox" class="size-8 text-zinc-300" />
-          <p class="text-sm text-zinc-500">{{ needsDecision ? 'Nothing needs your decision right now.' : 'No tasks yet — create the first one.' }}</p>
-          <UButton icon="i-lucide-plus" size="sm" label="New task" variant="soft" @click="openEditor()" />
-        </div>
-      </UCard>
-
       <!-- mobile cards (list view) -->
       <div v-if="visibleTasks.length && view === 'list'" class="space-y-3 md:hidden">
         <UCard v-for="row in visibleTasks" :key="row.id" :ui="{ root: 'shadow-sm' }">
@@ -431,7 +422,6 @@ function statusColor(s: string) {
             </div>
             <UBadge :color="statusColor(row.status)" variant="subtle" size="sm">{{ statusById.get(row.status)?.name ?? row.status }}</UBadge>
           </div>
-          <p v-if="row.description" class="mt-2 line-clamp-2 text-sm text-zinc-500">{{ row.description }}</p>
           <div class="mt-3 flex items-center justify-between">
             <USelect
               :model-value="row.status"
@@ -485,7 +475,6 @@ function statusColor(s: string) {
             <div class="min-w-0">
               <NuxtLink :to="`/tasks/${row.original.id}`" class="truncate font-medium text-zinc-900 hover:underline dark:text-white">{{ row.original.title }}</NuxtLink>
               <p v-if="row.original.projectName" class="flex items-center gap-1 text-xs text-primary"><UIcon name="i-lucide-folder-kanban" class="size-3" />{{ row.original.projectName }}</p>
-              <p v-if="row.original.description" class="truncate text-xs text-zinc-400">{{ row.original.description }}</p>
             </div>
           </template>
           <template #assignee-cell="{ row }">

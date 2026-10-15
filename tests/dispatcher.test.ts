@@ -643,7 +643,24 @@ describe('dispatcher', () => {
     expect(rows.length).toBeGreaterThan(0)
     expect(rows[0].status).toBe('done')
     expect(rows[0].output).toContain('working')
+    // the exact prompt (brief) sent is persisted and surfaced with the run
+    expect(typeof rows[0].prompt).toBe('string')
+    expect(rows[0].prompt).toContain('Stream me')
+
+    const listRows = (await callProc('tasks.runsList', { taskId: t.id })) as any[]
+    expect(listRows[0].prompt).toEqual(rows[0].prompt)
   }, 10_000)
+
+  it('runsList keeps null prompt for pre-2.26 rows', async () => {
+    const agentId = await mkAiAgent()
+    const t = await callProc('tasks.create', { title: 'Legacy', assigneeId: agentId })
+    const { db } = await dbm()
+    const { taskRuns } = await schema()
+    await db.insert(taskRuns).values({ id: 'run-legacy', taskId: t.id, employeeId: agentId, status: 'done', output: 'old' })
+    const rows = (await callProc('tasks.runsList', { taskId: t.id })) as any[]
+    expect(rows).toHaveLength(1)
+    expect(rows[0].prompt).toBeNull()
+  })
 
   it('manual dispatch endpoint fires and returns a run id', async () => {
     const agentId = await mkAiAgent()

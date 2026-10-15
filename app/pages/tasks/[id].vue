@@ -30,7 +30,7 @@ const runsQuery = useQuery(computed(() => ($orpc.tasks.runsList as any).queryOpt
   input: (task.value?.id ? { taskId: task.value.id } : skipToken),
   queryKey: ['runs', task.value?.id ?? ''],
 })))
-const runFeed = computed(() => (unref(runsQuery.data) ?? []) as unknown as Array<{ id: string, status: string, output: string, exitCode: number | null, startedAt: string, outputs?: Array<{ id: string, filename: string, mime: string, size: number }> }>)
+const runFeed = computed(() => (unref(runsQuery.data) ?? []) as unknown as Array<{ id: string, status: string, output: string, prompt?: string | null, exitCode: number | null, startedAt: string, outputs?: Array<{ id: string, filename: string, mime: string, size: number }> }>)
 
 const activityQuery = useQuery(computed(() => ($orpc.tasks.activityList as any).queryOptions({
   input: (task.value?.id ? { taskId: task.value.id } : skipToken),
@@ -52,6 +52,7 @@ const thread = computed<ThreadItem[]>(() => buildThread({
     id: r.id,
     status: (r.status === 'running' ? 'running' : r.status === 'done' ? 'done' : 'failed') as 'running' | 'done' | 'failed',
     output: r.output,
+    prompt: r.prompt,
     exitCode: r.exitCode,
     startedAt: r.startedAt,
     finishedAt: null,
@@ -84,17 +85,29 @@ function runOutputs(item: ThreadItem) {
 /** split the brief description into text + attachment refs for rendering */
 const briefParts = computed(() => {
   const desc = task.value?.description ?? ''
-  const parts: Array<{ type: 'text', body: string } | { type: 'image', id: string, alt: string } | { type: 'file', id: string, name: string }> = []
+  const parts: Array<{ type: 'text', body: string } | { type: 'mention', label: string } | { type: 'image', id: string, alt: string } | { type: 'file', id: string, name: string }> = []
+  // split attachments first, then employee mentions inside the text parts
   const re = /!\[([^\]]*)\]\(attachment-([^)]+)\)|@\[([^\]]*)\]\(attachment-([^)]+)\)/g
   let last = 0
   for (const m of desc.matchAll(re)) {
-    if (m.index! > last) parts.push({ type: 'text', body: desc.slice(last, m.index) })
+    if (m.index! > last) pushText(desc.slice(last, m.index))
     if (m[2] !== undefined) parts.push({ type: 'image', id: m[2]!, alt: m[1]! })
     else parts.push({ type: 'file', id: m[4]!, name: m[3]! })
     last = m.index! + m[0].length
   }
-  if (last < desc.length) parts.push({ type: 'text', body: desc.slice(last) })
+  if (last < desc.length) pushText(desc.slice(last))
   return parts
+
+  function pushText(text: string) {
+    const re = /@\[([^\]]+)\]\(mention-[^)]+\)/g
+    let at = 0
+    for (const m of text.matchAll(re)) {
+      if (m.index! > at) parts.push({ type: 'text', body: text.slice(at, m.index) })
+      parts.push({ type: 'mention', label: m[1]! })
+      at = m.index! + m[0].length
+    }
+    if (at < text.length) parts.push({ type: 'text', body: text.slice(at) })
+  }
 })
 
 function envelopeOf(item: ThreadItem) {
@@ -251,9 +264,10 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
                 <!-- description: mention tokens -> @Name; attachment tokens -> inline images / file chips -->
                 <div class="rounded-xl rounded-tl-sm border border-zinc-200/70 bg-zinc-50 px-3.5 py-2.5 text-sm leading-relaxed text-zinc-800 dark:border-zinc-700/60 dark:bg-zinc-800/60 dark:text-zinc-200">
                   <template v-for="(p, i) in briefParts" :key="i">
-                    <span v-if="p.type === 'text'" class="whitespace-pre-wrap">{{ p.body.replace(/@\[([^\]]*)\]\(mention-[^)]+\)/g, '@$1') }}</span>
+                    <span v-if="p.type === 'mention'" class="mx-0.5 inline-flex items-center rounded-md bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary">@{{ p.label }}</span>
+                    <span v-if="p.type === 'text'" class="whitespace-pre-wrap">{{ p.body }}</span>
                     <img v-else-if="p.type === 'image'" :src="`/api/attachments/${p.id}`" :alt="p.alt" class="my-1.5 max-h-64 rounded-lg border border-zinc-200 dark:border-zinc-700">
-                    <a v-else :href="`/api/attachments/${p.id}`" target="_blank" class="my-1 inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:border-primary/50 hover:text-primary dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"><UIcon name="i-lucide-file-text" class="size-3.5 shrink-0" />{{ p.name }}</a>
+                    <a v-else-if="p.type === 'file'" :href="`/api/attachments/${p.id}`" target="_blank" class="my-1 inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:border-primary/50 hover:text-primary dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"><UIcon name="i-lucide-file-text" class="size-3.5 shrink-0" />{{ p.name }}</a>
                   </template>
                 </div>
               </div>
@@ -284,6 +298,11 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
                     <a v-else :href="`/api/attachments/${f.id}`" target="_blank" class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:border-primary/50 hover:text-primary dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"><UIcon :name="f.mime === 'application/pdf' ? 'i-lucide-file-text' : 'i-lucide-file'" class="size-3.5 shrink-0" />{{ f.filename }}<span class="font-normal text-zinc-400">{{ Math.max(1, Math.round(f.size / 1024)) }}KB</span></a>
                   </template>
                 </div>
+                <!-- exact prompt (brief) sent for this turn -->
+                <details v-if="item.prompt" class="group mt-1">
+                  <summary class="cursor-pointer select-none text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">input</summary>
+                  <pre class="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-zinc-100 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-zinc-800 dark:bg-zinc-800/70 dark:text-zinc-300">{{ item.prompt }}</pre>
+                </details>
                 <!-- raw output (collapsed details keeps the thread chat-like) -->
                 <details v-if="runOutputWithoutEnvelope(item.output)" class="group mt-1">
                   <summary class="cursor-pointer select-none text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">output</summary>

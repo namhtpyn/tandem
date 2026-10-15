@@ -1,5 +1,5 @@
 // Parent gating: a parent is blocked while ANY child is open and unblocks when ALL
-// children are terminal (done or a cancelled-category status like abandoned/cancelled).
+// children are terminal (done or a cancelled-category status; abandoned was merged into cancelled).
 // The flip is DERIVED state — no human action, no drift (user law, 2026-10-15):
 //   - children spawn → parent flips to 'blocked' (pre_block_status remembers the old one)
 //   - last child lands terminal → parent restores pre_block_status (or 'todo')

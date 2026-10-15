@@ -244,7 +244,7 @@ describe('task workflow — review gate', () => {
     await as({ ...worker, id: idMap.get('worker')! }, async () => { await callProc('tasks.submit', { taskId, body: 'half baked' }) })
     await as({ ...rev1, id: idMap.get('rev1')! }, async () => { await callProc('tasks.abandon', { taskId }) })
     const t = await getTask(taskId)
-    expect(t.status).toBe('abandoned')
+    expect(t.status).toBe('cancelled')
   })
 
   it('only the assignee can submit', async () => {
@@ -312,7 +312,7 @@ describe('task workflow — guard rails', () => {
       await callProc('tasks.abandon', { taskId, body: 'killing it' })
     })
     const t = await getTask(taskId)
-    expect(t.status).toBe('abandoned')
+    expect(t.status).toBe('cancelled')
   })
 
   it('requestChanges/abandon outside review are rejected', async () => {
@@ -442,7 +442,7 @@ describe('task workflow — guard rails', () => {
     await as({ ...worker, id: idMap.get('worker')! }, async () => { await callProc('tasks.submit', { taskId, body: 'x' }) })
     await callProc('tasks.abandon', { taskId, body: 'by creator' }) // admin session = creator
     const t = await getTask(taskId)
-    expect(t.status).toBe('abandoned')
+    expect(t.status).toBe('cancelled')
   })
 
   it('ask with no owner and no creator fails; forward only while waiting', async () => {

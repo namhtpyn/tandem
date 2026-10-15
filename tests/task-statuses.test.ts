@@ -63,7 +63,7 @@ describe('task statuses', () => {
     const rows = (snap as any).status === 'pending' ? (await iter.next()).value : snap
     const list = Array.isArray(rows) ? rows : (rows as any).rows ?? rows
     const ids = (list as any[]).map(x => x.id)
-    expect(ids).toEqual(['todo', 'doing', 'done', 'waiting-answer', 'in-review', 'blocked', 'cancelled', 'abandoned'])
+    expect(ids).toEqual(['todo', 'doing', 'done', 'waiting-answer', 'in-review', 'blocked', 'cancelled'])
     expect((list as any[]).find(x => x.id === 'doing')!.nextIds).toContain('done')
     expect((list as any[]).find(x => x.id === 'todo')!.category).toBe('ready')
   })
@@ -96,7 +96,7 @@ describe('task statuses', () => {
 
   it('create with no statuses defined fails clearly', async () => {
     // remove all seeded statuses (no tasks exist)
-    for (const id of ['todo', 'doing', 'done', 'waiting-answer', 'in-review', 'blocked', 'cancelled', 'abandoned']) await callProc('statuses.remove', { id })
+    for (const id of ['todo', 'doing', 'done', 'waiting-answer', 'in-review', 'blocked', 'cancelled']) await callProc('statuses.remove', { id })
     await expect(callProc('tasks.create', { title: 'NoStatus' })).rejects.toMatchObject({ code: 'BAD_REQUEST', message: /no task statuses/i })
   })
 

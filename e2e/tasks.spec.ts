@@ -9,8 +9,7 @@ test('task CRUD round-trip, assignee badge, status via select', async ({ page })
   await login(page)
   await page.goto('/tasks')
 
-  // empty state -> create via modal
-  await expect(page.getByText('No tasks yet')).toBeVisible()
+  // create via the toolbar button
   await page.getByRole('button', { name: 'New task' }).first().click()
   await page.getByPlaceholder('Task title').fill(`E2E Task ${suffix}`)
   await page.locator('[contenteditable]').first().fill('created by e2e')
@@ -18,9 +17,8 @@ test('task CRUD round-trip, assignee badge, status via select', async ({ page })
   await page.getByRole('option', { name: 'Admin' }).click()
   await page.getByRole('button', { name: /Save|Create task/ }).click()
   await expect(page.locator(VISIBLE_ROW).filter({ hasText: `E2E Task ${suffix}` }).first()).toBeVisible({ timeout: 15_000 })
-  await expect(page.locator('tr:visible').filter({ hasText: 'created by e2e' }).first()).toBeVisible()
 
-  // status flip via the inline select
+  // status flip via the inline select (task descriptions no longer render on the list)
   await page.locator('tbody').getByLabel(`Status for E2E Task ${suffix}`).click()
   await page.getByRole('option', { name: 'Doing' }).click()
   await expect(page.locator('tr:visible').filter({ hasText: 'doing' }).first()).toBeVisible({ timeout: 10_000 })

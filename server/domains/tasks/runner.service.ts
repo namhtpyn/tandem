@@ -340,6 +340,10 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
     finished: new Promise((resolve) => {
       void (async () => {
         try {
+          const briefData = await loadBriefData(taskId)
+          const brief = buildBrief(briefData)
+          // persist the exact prompt so the run is auditable from the task page
+          await db.update(taskRuns).set({ prompt: brief }).where(eq(taskRuns.id, runId))
           if (process.env.TANDEM_FAKE_RUNNER === '1') {
             const fake = fakeRun(onLine, fakeScriptFromEnv() ?? undefined)
             const r = await fake.finished
@@ -348,8 +352,6 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
             return
           }
           const envBlob = buildEnvBlob(plan, tandemUrl)
-          const briefData = await loadBriefData(taskId)
-          const brief = buildBrief(briefData)
           const { openAcpSshStream } = await import('./acp-ssh.util')
           const { runAcpTurn, verdictFor } = await import('./acp.client')
           const { loadClient: loadSshClient } = await import('./ssh-exec.util')

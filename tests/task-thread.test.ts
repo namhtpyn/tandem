@@ -57,6 +57,17 @@ describe('buildThread', () => {
   it('omits the brief when description is empty/whitespace', () => {
     expect(buildThread({ description: '   ', runs: [], activity: [] })).toEqual([])
   })
+  it('carries run prompt through when the source provides it', () => {
+    const items = buildThread({
+      runs: [{ id: 'r1', status: 'done', output: 'out', prompt: 'please do it', exitCode: 0, startedAt: '2026-01-01T00:00:00Z', finishedAt: null }],
+    })
+    expect(items[0].kind === 'run' && items[0].prompt).toBe('please do it')
+    const none = buildThread({
+      runs: [{ id: 'r2', status: 'done', output: '', exitCode: 0, startedAt: '2026-01-01T00:00:00Z', finishedAt: null }],
+    })
+    expect(none[0].kind === 'run' && none[0].prompt).toBeUndefined()
+  })
+
   it('carries run fields through', () => {
     const [item] = buildThread({ runs: [{ id: 'r1', status: 'running', output: 'partial', exitCode: null, startedAt: 't', finishedAt: null }] })
     expect(item).toMatchObject({ kind: 'run', status: 'running', output: 'partial', exitCode: null })

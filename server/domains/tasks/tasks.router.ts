@@ -97,6 +97,7 @@ const rows = await listRuns(taskId)
         status: r.status as 'running' | 'done' | 'failed',
         exitCode: r.exitCode,
         output: r.output,
+        prompt: r.prompt,
         startedAt: r.startedAt.toISOString(),
         finishedAt: r.finishedAt ? r.finishedAt.toISOString() : null,
         outputs: outputsByRun.get(r.id) ?? [],

@@ -197,10 +197,10 @@ describe('subtask gating', () => {
     expect((await getTask(parentId)).status).toBe('doing')
     expect((await getTask(parentId)).preBlockStatus).toBeNull()
 
-    // second round: abandoned also counts as terminal; cancelled too
+    // second round: cancelled counts as terminal again (done was arm one)
     const c2 = await mkTask({ title: 'C2', parentId })
     expect((await getTask(parentId)).status).toBe('blocked')
-    await callProc('tasks.update', { id: c2, status: 'abandoned' })
+    await callProc('tasks.update', { id: c2, status: 'cancelled' })
     expect((await getTask(parentId)).status).toBe('doing')
   })
 

@@ -252,6 +252,8 @@ export const taskRuns = pgTable('tandem_task_runs', {
   status: text('status').notNull().default('running'),
   exitCode: integer('exit_code'),
   output: text('output').notNull().default(''),
+  /** the exact brief (prompt) sent to the agent for this turn; null on pre-2.26 rows */
+  prompt: text('prompt'),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 }, (t) => [
