@@ -1,3 +1,10 @@
+## [2.27.5](https://github.com/namhtpyn/tandem/compare/v2.27.4...v2.27.5) (2026-10-15)
+
+
+### Bug Fixes
+
+* **brief:** give agents the exact per-task deliverable out-dir ([fd8da4f](https://github.com/namhtpyn/tandem/commit/fd8da4f6534012ab451be6e70297c56f74970529))
+
 ## [2.27.4](https://github.com/namhtpyn/tandem/compare/v2.27.3...v2.27.4) (2026-10-15)
 
 
