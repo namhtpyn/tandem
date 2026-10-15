@@ -1,3 +1,10 @@
+# [2.27.0](https://github.com/namhtpyn/tandem/compare/v2.26.0...v2.27.0) (2026-10-15)
+
+
+### Features
+
+* **ui:** run input (prompt) on the task page + status/UI trims ([2980716](https://github.com/namhtpyn/tandem/commit/29807162e34443f8a2a534f499344b8b3e03ef1e))
+
 # [2.26.0](https://github.com/namhtpyn/tandem/compare/v2.25.2...v2.26.0) (2026-10-15)
 
 
