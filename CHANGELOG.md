@@ -1,3 +1,10 @@
+## [2.22.1](https://github.com/namhtpyn/tandem/compare/v2.22.0...v2.22.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **tasks:** drop dead filename fallback arm for full branch coverage ([a3bb032](https://github.com/namhtpyn/tandem/commit/a3bb032792c3c640baa747f9d5cad7981531f339))
+
 # [2.22.0](https://github.com/namhtpyn/tandem/compare/v2.21.1...v2.22.0) (2026-10-14)
 
 
