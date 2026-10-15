@@ -1,3 +1,10 @@
+# [2.28.0](https://github.com/namhtpyn/tandem/compare/v2.27.5...v2.28.0) (2026-10-15)
+
+
+### Features
+
+* **settings:** agent run timeout configurable on the Settings page (no env var) ([54c8d54](https://github.com/namhtpyn/tandem/commit/54c8d5497846c7f6242c1e8952ffeb969925f25d))
+
 ## [2.27.5](https://github.com/namhtpyn/tandem/compare/v2.27.4...v2.27.5) (2026-10-15)
 
 
