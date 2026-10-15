@@ -1,3 +1,10 @@
+## [2.22.2](https://github.com/namhtpyn/tandem/compare/v2.22.1...v2.22.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **tasks:** never expose the Tandem URL or ticket link to dispatched agents ([8e97ed0](https://github.com/namhtpyn/tandem/commit/8e97ed0ad475624ba5248dd18885e0099fa10a5a))
+
 ## [2.22.1](https://github.com/namhtpyn/tandem/compare/v2.22.0...v2.22.1) (2026-10-15)
 
 
