@@ -25,7 +25,7 @@ describe('loadBriefData (real db)', () => {
       { id: peerId, name: 'Peer Three', email: `${peerId}@t.local`, role: 'employee', title: 'Peer' },
     ])
     await db.insert(environments).values({ id: 'env-x', name: 'brief-env', host: 'brief.invalid', port: 22, username: 'root' })
-    await db.insert(aiEmployees).values({ userId: agentId, environmentId: 'env-x', instructions: 'Be terse.', harness: 'hermes', executable: '' })
+    await db.insert(aiEmployees).values({ userId: agentId, environmentId: 'env-x', instructions: 'Be terse.', executable: 'hermes acp' })
     await db.insert(employeeSupervisors).values([
       { employeeId: agentId, supervisorId: chiefId },
       { employeeId: peerId, supervisorId: chiefId },

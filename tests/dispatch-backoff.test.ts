@@ -9,19 +9,31 @@ import { eq } from 'drizzle-orm'
 // mock ssh2: connect+exec succeed; the stream never closes on its own, so tests
 // drive terminal events explicitly (error emit) or rely on the run-timeout timer
 vi.mock('ssh2', () => {
+  // writable silent ACP stream: captures writes, never answers protocol itself.
+  // Tests drive terminal events (conn error => stream close, mirroring ssh2).
   class FakeStream {
-    on() { return this }
-    end() { /* swallow stdin; never emit close */ }
+    handlers: Record<string, Array<(d: unknown) => void>> = {}
+    writes: string[] = []
+    on(ev: string, fn: (d: unknown) => void) { this.handlers[ev] = [...(this.handlers[ev] ?? []), fn]; return this }
+    write(d: unknown) { this.writes.push(String(d)) }
+    signal() { /* ssh2 signal */ }
+    end() { /* swallow stdin */ }
+    close() { (this.handlers['close'] ?? []).forEach(f => { (f as (c: unknown) => void)(null) }) }
   }
   class FakeClient {
     static last: FakeClient
     handlers: Record<string, Array<(d: unknown) => void>> = {}
+    stream = new FakeStream()
     constructor() { FakeClient.last = this }
     on(ev: string, fn: (d: unknown) => void) { this.handlers[ev] = [...(this.handlers[ev] ?? []), fn]; return this }
     end() {}
-    exec(_c: string, cb: (e: Error | null, s: unknown) => void) { cb(null, new FakeStream()) }
-    connect(_o: unknown) { setTimeout(() => (this.handlers['ready'] ?? []).forEach(f => (f as () => void)()), 0) }
-    emitError(e: Error) { (this.handlers['error'] ?? []).forEach(f => f(e)) }
+    exec(_c: string, cb: (e: Error | null, s: unknown) => void) { cb(null, this.stream) }
+    connect(_o: unknown) { setTimeout(() => (this.handlers['ready'] ?? []).forEach(f => { (f as () => void)() }), 0) }
+    // a lost connection tears down its open streams — runAcpTurn unblocks via close
+    emitError(e: Error) {
+      ;(this.handlers['error'] ?? []).forEach(f => { (f as (x: Error) => void)(e) })
+      this.stream.close()
+    }
   }
   return { default: { Client: FakeClient } }
 })
@@ -40,7 +52,7 @@ beforeEach(async () => {
   await db.insert(user).values({ id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
   await db.insert(user).values({ id: 'u-agent', name: 'Robby', email: 'robby@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
   await db.insert(environments).values({ id: 'env-1', name: 'E1', host: '127.0.0.1', port: '2222', username: 'u' })
-  await db.insert(aiEmployees).values({ userId: 'u-agent', environmentId: 'env-1', instructions: '' })
+  await db.insert(aiEmployees).values({ userId: 'u-agent', environmentId: 'env-1', instructions: '', executable: 'hermes acp' })
   await db.insert(tasks).values({ id: 't-1', title: 'B', description: '', status: 'todo', assigneeId: 'u-agent' })
 })
 

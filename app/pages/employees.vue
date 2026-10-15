@@ -218,7 +218,6 @@ const form = reactive({
   supervisorIds: [] as string[],
   environmentId: '' as string,
   instructions: '',
-  harness: 'hermes' as 'hermes',
   executable: '',
   providerId: '__none__' as string,
   model: '',
@@ -323,8 +322,7 @@ function openEditor(row?: EmployeeRow) {
   form.supervisorIds = row?.supervisorIds ? [...row.supervisorIds] : []
   form.environmentId = row?.environmentId ?? ''
   form.instructions = row?.instructions ?? ''
-  form.harness = (row?.harness as 'hermes') ?? 'hermes'
-  form.executable = row?.executable && row.executable !== 'hermes' ? row.executable : ''
+  form.executable = row?.executable ?? ''
   form.providerId = row?.providerId ?? '__none__'
   form.model = row?.model ?? ''
   form.apiKeySecretId = row?.apiKeySecretId ?? null
@@ -337,6 +335,11 @@ async function save() {
   busy.value = true
   message.value = ''
   try {
+    if ((editingId.value ? showAiFields.value : form.kind === 'ai') && !form.executable.trim()) {
+      message.value = 'AI employees need an ACP executable (e.g. "hermes acp")'
+      busy.value = false
+      return
+    }
     // typed-but-unknown titles join the catalog so they autocomplete next time
     if (form.title.trim() && !titles.value.some(t => t.name === form.title.trim())) {
       await titleSaveMutation.mutateAsync({ name: form.title.trim() }).catch(() => {})
@@ -351,8 +354,7 @@ async function save() {
         supervisorIds: form.supervisorIds,
         ...(showAiFields.value && form.environmentId ? { environmentId: form.environmentId } : {}),
         ...(showAiFields.value ? { instructions: form.instructions } : {}),
-        ...(showAiFields.value ? { harness: form.harness } : {}),
-        ...(showAiFields.value && form.executable.trim() ? { executable: form.executable.trim() } : {}),
+        ...(showAiFields.value ? { executable: form.executable.trim() } : {}),
         ...(showAiFields.value ? { providerId: form.providerId === '__none__' ? null : form.providerId } : {}),
         ...(showAiFields.value ? { model: form.model || null } : {}),
         ...(showAiFields.value ? { apiKeySecretId: form.apiKeySecretId ?? null } : {}),
@@ -369,8 +371,7 @@ async function save() {
         ...(form.kind === 'ai' ? {
           environmentId: form.environmentId,
           instructions: form.instructions,
-          harness: form.harness,
-          ...(form.executable.trim() ? { executable: form.executable.trim() } : {}),
+          executable: form.executable.trim(),
           providerId: form.providerId === '__none__' ? null : form.providerId,
           model: form.model || null,
           apiKeySecretId: form.apiKeySecretId ?? null,
@@ -844,23 +845,14 @@ const columns = [
                 class="w-full"
               />
             </UFormField>
-            <UFormField label="Harness" name="harness">
-              <template #hint><FormHint text="Agent harness that runs this employee" /></template>
-              <USelectMenu
-                v-model="form.harness"
-                :items="[{ label: 'Hermes agents', value: 'hermes' }]"
-                value-key="value"
-                placeholder="Select a harness"
-                class="w-full"
-              />
-            </UFormField>
-            <UFormField label="Executable" name="executable">
-              <template #hint><FormHint text="Executable name on the environment if not the default 'hermes'" /></template>
+            <UFormField label="ACP executable" name="executable" required>
+              <template #hint><FormHint text="Command that starts an ACP server on stdio in the environment" /></template>
               <UInput
                 v-model="form.executable"
                 icon="i-lucide-terminal"
-                placeholder="hermes (default)"
+                placeholder="hermes acp"
                 class="w-full"
+                data-testid="acp-executable-input"
               />
             </UFormField>
             <UFormField label="Provider" name="providerId">

@@ -467,7 +467,7 @@ describe('task workflow — guard rails', () => {
     await expect(callProc('tasks.create', { title: 'GA2', assigneeId: 'u-ghost' })).rejects.toThrow(/assignee does not exist/i)
     // AI employee via API (kind ai, with environment)
     await db.insert(environments).values({ id: 'env-1', name: 'E1', host: '127.0.0.1', port: '22', username: 'u' })
-    const r = await callProc('employees.create', { name: 'Robo', email: 'robo@tandem.local', kind: 'ai', title: 'Bot', supervisorIds: [], environmentId: 'env-1' })
+    const r = await callProc('employees.create', { name: 'Robo', email: 'robo@tandem.local', kind: 'ai', title: 'Bot', supervisorIds: [], environmentId: 'env-1', executable: 'hermes acp' })
     const taskId = await mkTask({ title: 'AI task', assigneeId: r.id })
     const iter = await callProc('tasks.live')
     const snap = await iter.next()

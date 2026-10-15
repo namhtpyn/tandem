@@ -27,9 +27,7 @@ export interface EmployeeRow {
   environmentId: string | null
   /** ai only */
   instructions: string | null
-  /** ai only — agent harness driving this employee ('hermes' today) */
-  harness: string | null
-  /** ai only — executable name on the environment when dispatching (default 'hermes') */
+  /** ai only — full command starting an ACP server on stdio (e.g. 'hermes acp'); required */
   executable: string | null
   /** ai only — model provider registry id */
   providerId: string | null

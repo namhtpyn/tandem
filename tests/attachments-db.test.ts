@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { and, eq } from 'drizzle-orm'
 import { db } from '../server/db'
 import { tasks, taskAttachments, taskActivity, user as userTable, taskRuns, aiEmployees, environments } from '../server/db/schema'
-import { ATTACHMENTS_DIR } from '../server/domains/tasks/attachments.util'
+import { TANDEM_DATA_ROOT } from '../server/domains/tasks/attachments.util'
 
 const settleTmp = mkdtempSync(join(tmpdir(), 'settle-'))
 writeFileSync(join(settleTmp, 'report.md'), '# findings\n')
@@ -36,7 +36,7 @@ async function seed() {
   await db.insert(userTable).values({ id: `u-${uid}`, name: `Att ${uid.slice(0, 6)}`, email: `att-${uid}@t.test`, emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
   const tid = crypto.randomUUID()
   await db.insert(tasks).values({ id: tid, title: `att task ${uid.slice(0, 6)}`, description: '', status: 'todo', assigneeId: `u-${uid}`, createdAt: new Date(), updatedAt: new Date() })
-  await db.insert(aiEmployees).values({ userId: `u-${uid}`, environmentId: envId, instructions: '', harness: 'hermes', executable: '' })
+  await db.insert(aiEmployees).values({ userId: `u-${uid}`, environmentId: envId, instructions: '', executable: 'hermes acp' })
   return { uid: `u-${uid}`, tid }
 }
 
@@ -45,13 +45,13 @@ describe('attachment storage round-trip', () => {
     const { saveAttachmentBytes, readAttachmentBytes, attachmentExists, deleteAttachmentBytes } = await import('../server/domains/tasks/attachments.util')
     const id = crypto.randomUUID()
     const bytes = Buffer.from('hello attachment')
-    saveAttachmentBytes(id, bytes)
-    expect(attachmentExists(id)).toBe(true)
-    expect(readAttachmentBytes(id).toString()).toBe('hello attachment')
-    expect(() => readAttachmentBytes('../escape')).toThrow()
-    deleteAttachmentBytes(id)
-    expect(attachmentExists(id)).toBe(false)
-    expect(() => deleteAttachmentBytes('../escape')).not.toThrow()
+    saveAttachmentBytes('t-bytes', id, bytes)
+    expect(attachmentExists('t-bytes', id)).toBe(true)
+    expect(readAttachmentBytes('t-bytes', id).toString()).toBe('hello attachment')
+    expect(() => readAttachmentBytes('../escape', id)).toThrow()
+    deleteAttachmentBytes('t-bytes', id)
+    expect(attachmentExists('t-bytes', id)).toBe(false)
+    expect(() => deleteAttachmentBytes('../escape', id)).not.toThrow()
   })
 })
 
@@ -60,35 +60,35 @@ describe('dispatch attachment push (runner integration)', () => {
     const { uid, tid } = await seed()
     // input attachment row + bytes
     const attId = crypto.randomUUID()
-    mkdirSync(ATTACHMENTS_DIR, { recursive: true })
-    writeFileSync(join(ATTACHMENTS_DIR, attId), 'PNGDATA')
+    mkdirSync(TANDEM_DATA_ROOT, { recursive: true })
+    writeFileSync(join(TANDEM_DATA_ROOT, attId), 'PNGDATA')
     await db.insert(taskAttachments).values({ id: attId, taskId: tid, kind: 'input', filename: 'spec.png', mime: 'image/png', size: 7, sha256: 'x', createdBy: uid })
 
     // brief carries it with its sandbox path
     const { loadBriefData } = await import('../server/domains/tasks/brief.service')
     const data = await loadBriefData(tid)
-    expect(data.attachments).toEqual([expect.objectContaining({ filename: 'spec.png', remotePath: `/opt/data/task-files/${tid}/spec.png` })])
+    expect(data.attachments).toEqual([expect.objectContaining({ filename: 'spec.png', remotePath: `~/.tandem/${tid}/attachments/spec.png` })])
 
     const { buildBrief } = await import('../server/domains/tasks/brief.service')
     // document arm: swap mime to a non-image kind
     const brief = buildBrief({ ...data, attachments: data.attachments })
     expect(brief).toContain('ATTACHMENTS (already on this machine')
-    const briefDoc = buildBrief({ ...data, attachments: [{ id: 'x', filename: 'spec.pdf', mime: 'application/pdf', size: 2048, remotePath: '/opt/data/task-files/x/spec.pdf' }] })
+    const briefDoc = buildBrief({ ...data, attachments: [{ id: 'x', filename: 'spec.pdf', mime: 'application/pdf', size: 2048, remotePath: '~/.tandem/x/attachments/spec.pdf' }] })
     expect(briefDoc).toContain('document — read with file tools')
-    expect(brief).toContain(`/opt/data/task-files/${tid}/spec.png`)
+    expect(brief).toContain(`~/.tandem/${tid}/attachments/spec.png`)
     expect(brief).toContain('DELIVERABLES')
 
     // simulate collected output -> the runner's settle writes kind='output' rows
     const runId = crypto.randomUUID()
     await db.insert(taskRuns).values({ id: runId, taskId: tid, employeeId: uid, status: 'done', exitCode: 0, output: '[RESULT] ok', finishedAt: new Date() })
     const outId = crypto.randomUUID()
-    writeFileSync(join(ATTACHMENTS_DIR, outId), 'RESULTBYTES')
+    writeFileSync(join(TANDEM_DATA_ROOT, outId), 'RESULTBYTES')
     await db.insert(taskAttachments).values({ id: outId, taskId: tid, runId, kind: 'output', filename: 'report.md', mime: 'text/markdown', size: 11, sha256: 'y', createdBy: null })
 
     const outs = await db.select().from(taskAttachments).where(and(eq(taskAttachments.taskId, tid), eq(taskAttachments.kind, 'output')))
     expect(outs.map(o => o.filename)).toEqual(['report.md'])
-    expect(existsSync(join(ATTACHMENTS_DIR, outId))).toBe(true)
-    expect(readFileSync(join(ATTACHMENTS_DIR, outId), 'utf8')).toBe('RESULTBYTES')
+    expect(existsSync(join(TANDEM_DATA_ROOT, outId))).toBe(true)
+    expect(readFileSync(join(TANDEM_DATA_ROOT, outId), 'utf8')).toBe('RESULTBYTES')
   })
 })
 
@@ -165,7 +165,7 @@ describe('pushInputAttachments', () => {
     const lines: string[] = []
     const { saveAttachmentBytes } = await import('../server/domains/tasks/attachments.util')
     const id1 = crypto.randomUUID()
-    saveAttachmentBytes(id1, Buffer.from('A'))
+    saveAttachmentBytes('t-push', id1, Buffer.from('A'))
     class FakeCtor {
       private h = new Map<string, Array<(a?: unknown) => void>>()
       connect() { queueMicrotask(() => this.emit('ready')); return this }
@@ -187,8 +187,8 @@ describe('pushInputAttachments', () => {
       sftp(cb: (e: Error | null, s: unknown) => void) { cb(null, { fastPut: (_l: string, _r: string, d: (e?: Error | null) => void) => d(null) }) }
     }
     await pushInputAttachments('t-push', { attachments: [
-      { id: id1, filename: 'a.txt', mime: 'text/plain', size: 1, remotePath: '/opt/data/task-files/t-push/a.txt' },
-      { id: 'missing', filename: 'gone.txt', mime: 'text/plain', size: 1, remotePath: '/opt/data/task-files/t-push/gone.txt' },
+      { id: id1, filename: 'a.txt', mime: 'text/plain', size: 1, remotePath: '~/.tandem/t-push/attachments/a.txt' },
+      { id: 'missing', filename: 'gone.txt', mime: 'text/plain', size: 1, remotePath: '~/.tandem/t-push/attachments/gone.txt' },
     ] }, { env: { host: 'h', port: '22', username: 'u' } }, 'env', async () => FakeCtor as never, l => lines.push(l))
     expect(lines).toEqual(['[dispatch] pushed 1 attachment(s) to env'])
   })
@@ -206,7 +206,7 @@ describe('pushInputAttachments', () => {
     const lines: string[] = []
     const { saveAttachmentBytes } = await import('../server/domains/tasks/attachments.util')
     const id1 = crypto.randomUUID()
-    saveAttachmentBytes(id1, Buffer.from('A'))
+    saveAttachmentBytes('t-push', id1, Buffer.from('A'))
     const boom = async () => { throw 'plain string failure' }
     await pushInputAttachments('t-push', { attachments: [{ id: id1, filename: 'a.txt', mime: 'text/plain', size: 1, remotePath: '/r' }] }, { env: { host: 'h', port: '22', username: 'u' } }, 'env', boom, l => lines.push(l))
     expect(lines[0]).toContain('plain string failure')
@@ -217,7 +217,7 @@ describe('pushInputAttachments', () => {
     const lines: string[] = []
     const { saveAttachmentBytes } = await import('../server/domains/tasks/attachments.util')
     const id1 = crypto.randomUUID()
-    saveAttachmentBytes(id1, Buffer.from('A'))
+    saveAttachmentBytes('t-push', id1, Buffer.from('A'))
     const boom = async () => { throw new Error('no route to host') }
     await pushInputAttachments('t-push', { attachments: [{ id: id1, filename: 'a.txt', mime: 'text/plain', size: 1, remotePath: '/r' }] }, { env: { host: 'h', port: '22', username: 'u' } }, 'env', boom, l => lines.push(l))
     expect(lines[0]).toContain('attachment push failed')

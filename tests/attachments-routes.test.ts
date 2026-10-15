@@ -163,7 +163,7 @@ describe('GET /api/attachments/:id', () => {
   it('serves bytes with etag; 304 on revalidation; 404 unknown', async () => {
     const { default: get } = await import('../server/routes/api/attachments/[id].get')
     const id = crypto.randomUUID()
-    saveAttachmentBytes(id, Buffer.from('BYTES-1'))
+    saveAttachmentBytes('task-att-1', id, Buffer.from('BYTES-1'))
     await db.insert(taskAttachments).values({ id, taskId: 'task-att-1', kind: 'input', filename: 'a.txt', mime: 'text/plain', size: 7, sha256: sha256Hex(Buffer.from('BYTES-1')), createdBy: 'u-att-admin' })
 
     const ev = evFor('/api/attachments/' + id, Buffer.alloc(0), 'text/plain', 'GET')
@@ -195,7 +195,7 @@ describe('GET /api/attachments/:id', () => {
 
     // disallowed row mime falls back to octet-stream download
     const octId = crypto.randomUUID()
-    saveAttachmentBytes(octId, Buffer.from('X'))
+    saveAttachmentBytes('task-att-1', octId, Buffer.from('X'))
     await db.insert(taskAttachments).values({ id: octId, taskId: 'task-att-1', kind: 'input', filename: 'm.bin', mime: 'application/x-sh', size: 1, sha256: 'w', createdBy: 'u-att-admin' })
     const ev5 = evFor('/api/attachments/' + octId, Buffer.alloc(0), 'text/plain', 'GET')
     ev5.context.params = { id: octId }

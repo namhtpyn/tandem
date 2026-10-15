@@ -49,6 +49,7 @@ test.describe('model providers', () => {
     await page.getByPlaceholder('Full name').fill(`Prov Bot ${suffix}`)
     await page.getByPlaceholder('name@company.com').fill(`provbot-${suffix}@tandem.local`)
     await page.getByRole('radio', { name: /AI agent/ }).check()
+  await page.getByPlaceholder('hermes acp').fill('hermes acp')
     // provider dropdown seeded
     await page.getByRole('combobox', { name: 'Provider' }).click()
     await expect(page.getByRole('option', { name: 'OpenAI' })).toBeVisible()

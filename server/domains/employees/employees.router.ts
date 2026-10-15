@@ -10,6 +10,8 @@ import {
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 import type { ApiKeyRow, EmployeeRow } from '../../../shared/types'
 
+const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/
+
 export const employeesRouter = os.router({
   /** live list — every employee with supervisors + AI extension, one snapshot */
   live: protectedProcedure.handler(() => liveGenerator(['employees'], async () => {
@@ -34,7 +36,6 @@ export const employeesRouter = os.router({
         title: r.title,
         supervisorIds: sups.get(r.id) ?? [],
         environmentId: ai?.environmentId ?? null,
-        harness: ai?.harness ?? null,
         executable: ai?.executable ?? null,
         providerId: ai?.providerId ?? null,
         model: ai?.model ?? null,
@@ -58,8 +59,7 @@ export const employeesRouter = os.router({
       supervisorIds: z.array(z.string().min(1)).max(20).default([]),
       environmentId: z.string().min(1).optional(),
       instructions: z.string().max(10_000).optional(),
-      harness: z.enum(['hermes']).optional(),
-      executable: z.string().min(1).max(60).optional(),
+      executable: z.string().min(1).max(120).regex(ACP_EXECUTABLE_RE, 'ACP executable must be shell-safe command words, e.g. "hermes acp"').optional(),
       providerId: z.string().min(1).nullable().optional(),
       model: z.string().min(1).max(200).nullable().optional(),
       apiKeySecretId: z.string().min(1).nullable().optional(),
@@ -69,8 +69,8 @@ export const employeesRouter = os.router({
       if (input.kind === 'ai' && !input.environmentId) {
         throw new ORPCError('BAD_REQUEST', { message: 'AI employees need an environment' })
       }
-      if (input.kind === 'human' && (input.environmentId !== undefined || input.instructions !== undefined || input.harness !== undefined || input.executable !== undefined)) {
-        throw new ORPCError('BAD_REQUEST', { message: 'environment/instructions/harness/executable apply to AI employees only' })
+      if (input.kind === 'human' && (input.environmentId !== undefined || input.instructions !== undefined || input.executable !== undefined)) {
+        throw new ORPCError('BAD_REQUEST', { message: 'environment/instructions/acp executable apply to AI employees only' })
       }
       // supervisors must exist and not include a duplicate (default fills [])
       const supervisorIds = input.supervisorIds ?? []
@@ -119,8 +119,11 @@ export const employeesRouter = os.router({
           userId,
           environmentId: input.environmentId!,
           instructions: input.instructions ?? '',
-          harness: input.harness ?? 'hermes',
-          executable: input.executable?.trim() || 'hermes',
+          executable: (() => {
+            if (!input.executable || !input.executable.trim()) throw new ORPCError('BAD_REQUEST', { message: 'AI employees need an ACP executable (e.g. "hermes acp")' })
+            if (!ACP_EXECUTABLE_RE.test(input.executable.trim())) throw new ORPCError('BAD_REQUEST', { message: 'ACP executable must be shell-safe command words, e.g. "hermes acp"' })
+            return input.executable.trim()
+          })(),
           providerId: input.providerId ?? null,
           model: input.model ?? null,
           apiKeySecretId: input.apiKeySecretId ?? null,
@@ -146,8 +149,7 @@ export const employeesRouter = os.router({
       supervisorIds: z.array(z.string().min(1)).max(20),
       environmentId: z.string().min(1).nullable().optional(),
       instructions: z.string().max(10_000).nullable().optional(),
-      harness: z.enum(['hermes']).optional(),
-      executable: z.string().min(1).max(60).nullable().optional(),
+      executable: z.string().min(1).max(120).regex(ACP_EXECUTABLE_RE, 'ACP executable must be shell-safe command words, e.g. "hermes acp"').nullable().optional(),
       providerId: z.string().min(1).nullable().optional(),
       model: z.string().min(1).max(200).nullable().optional(),
       apiKeySecretId: z.string().min(1).nullable().optional(),
@@ -195,8 +197,8 @@ export const employeesRouter = os.router({
         stack.push(...(graph.get(cur) ?? []))
       }
       // AI fields — only when this employee IS an AI (extension row exists)
-      if (aiRow && (input.environmentId !== undefined || input.instructions !== undefined || input.harness !== undefined || input.executable !== undefined || input.providerId !== undefined || input.model !== undefined || input.apiKeySecretId !== undefined)) {
-        const patch: { environmentId?: string, instructions?: string, harness?: string, executable?: string, providerId?: string | null, model?: string | null, apiKeySecretId?: string | null, updatedAt: Date } = { updatedAt: new Date() }
+      if (aiRow && (input.environmentId !== undefined || input.instructions !== undefined || input.executable !== undefined || input.providerId !== undefined || input.model !== undefined || input.apiKeySecretId !== undefined)) {
+        const patch: { environmentId?: string, instructions?: string, executable?: string, providerId?: string | null, model?: string | null, apiKeySecretId?: string | null, updatedAt: Date } = { updatedAt: new Date() }
         if (input.environmentId !== undefined && input.environmentId !== null) {
           const env = await db.select({ id: environmentsTable.id }).from(environmentsTable).where(eq(environmentsTable.id, input.environmentId))
           if (env.length === 0) {
@@ -207,11 +209,9 @@ export const employeesRouter = os.router({
         if (input.instructions !== undefined && input.instructions !== null) {
           patch.instructions = input.instructions
         }
-        if (input.harness !== undefined) {
-          patch.harness = input.harness
-        }
         if (input.executable !== undefined && input.executable !== null) {
-          patch.executable = input.executable.trim() || 'hermes'
+          if (!ACP_EXECUTABLE_RE.test(input.executable.trim())) throw new ORPCError('BAD_REQUEST', { message: 'ACP executable must be shell-safe command words, e.g. "hermes acp"' })
+          patch.executable = input.executable.trim()
         }
         if (input.providerId !== undefined) {
           if (input.providerId !== null) {

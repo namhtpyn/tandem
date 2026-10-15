@@ -1,5 +1,7 @@
 // SSH file shuttle for task attachments — same channel/credentials as the exec seam.
-// Push: inputs land in /opt/data/task-files/<taskId>/ (chowned to the shim's uid).
+// Paths are RELATIVE (resolve against the SSH user's home on every OS): the task's
+// staging tree is ~/.tandem/<taskId>/attachments/ with outputs under out/.
+// Push: inputs land in that dir (chowned to the shim's uid on hermes images).
 // Collect: everything the agent left in out/ comes back and becomes run outputs.
 // Cleanup: the task dir is removed once no run of that task is still running.
 // Exported as an object so tests can mock the whole shuttle.
@@ -11,7 +13,17 @@ export interface SshFilePlan {
   sshPassword?: string
 }
 
-export const TASK_FILES_ROOT = '/opt/data/task-files'
+/** agent-side staging subtree, relative to the environment SSH user's home */
+export const TASK_FILES_HOME = '.tandem'
+
+/** ~/.tandem/<taskId>/attachments (relative form works in both exec and sftp) */
+export function taskFilesDir(taskId: string): string {
+  return `${TASK_FILES_HOME}/${taskId}/attachments`
+}
+
+export function taskFilesOutDir(taskId: string): string {
+  return `${taskFilesDir(taskId)}/out`
+}
 
 function connect(ClientCtor: typeof Client, plan: SshFilePlan, timeoutMs = 20_000): Promise<Client> {
   return new Promise((resolve, reject) => {
@@ -68,14 +80,14 @@ export async function pushTaskFiles(
   if (!files.length) return
   const conn = await connect(ClientCtor, plan, timeoutMs)
   try {
-    const dir = `${TASK_FILES_ROOT}/${taskId}`
+    const dir = taskFilesDir(taskId)
     await exec(conn, `mkdir -p ${dir}`)
     const sftp = await sftpOf(conn)
     for (const f of files) {
       await fastPut(sftp, f.localPath, `${dir}/${f.remoteName}`)
     }
     // hermes shim drops to uid 10000 — the files must be readable/writable by it
-    await exec(conn, `chown -R 10000:10000 ${TASK_FILES_ROOT}/${taskId} 2>/dev/null || chmod -R a+rwX ${TASK_FILES_ROOT}/${taskId}`)
+    await exec(conn, `chown -R 10000:10000 ${TASK_FILES_HOME}/${taskId} 2>/dev/null || chmod -R a+rwX ${TASK_FILES_HOME}/${taskId}`)
   }
   finally {
     try { conn.end() } catch { /* already gone */ }
@@ -96,7 +108,7 @@ export async function collectRunOutputs(
   const out = []
   const conn = await connect(ClientCtor, plan, timeoutMs)
   try {
-    const outDir = `${TASK_FILES_ROOT}/${taskId}/out`
+    const outDir = taskFilesOutDir(taskId)
     let names: string[] = []
     const listing = await exec(conn, `find ${outDir} -maxdepth 1 -type f -printf '%f\\n' 2>/dev/null || true`)
     names = listing ? listing.split('\n').filter(Boolean) : []
@@ -124,7 +136,7 @@ export async function collectRunOutputs(
 export async function cleanupTaskFiles(ClientCtor: typeof Client, plan: SshFilePlan, taskId: string, timeoutMs?: number): Promise<void> {
   const conn = await connect(ClientCtor, plan, timeoutMs)
   try {
-    await exec(conn, `rm -rf ${TASK_FILES_ROOT}/${taskId}`)
+    await exec(conn, `rm -rf ${TASK_FILES_HOME}/${taskId}`)
   }
   finally {
     try { conn.end() } catch { /* already gone */ }

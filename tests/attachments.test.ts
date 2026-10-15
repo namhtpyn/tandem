@@ -4,15 +4,32 @@ import {
   extractAttachmentIds, mimeAllowed, normalizeMime, sanitizeFilename, stripAttachments,
 } from '../server/domains/tasks/attachments.util'
 
-describe('ATTACHMENTS_DIR default', () => {
+describe('DATA_ROOT default', () => {
   it('defaults under /tandem/** when the env is unset (env still wins)', async () => {
     const saved = process.env.TANDEM_ATTACHMENTS_DIR
     delete process.env.TANDEM_ATTACHMENTS_DIR
     vi.resetModules()
     const mod = await import('../server/domains/tasks/attachments.util')
-    expect(mod.ATTACHMENTS_DIR).toBe('/tandem/attachments')
+    expect(mod.TANDEM_DATA_ROOT).toBe('/tandem')
+    expect(mod.attachmentPath('t1', 'a1')).toBe('/tandem/tasks/t1/attachments/a1')
     if (saved) process.env.TANDEM_ATTACHMENTS_DIR = saved
     vi.resetModules()
+  })
+})
+
+describe('attachmentPath guards', () => {
+  it('rejects unsafe task ids and attachment ids', async () => {
+    const mod = await import('../server/domains/tasks/attachments.util')
+    expect(() => mod.attachmentPath('../escape', 'a1')).toThrow('bad task id')
+    expect(() => mod.attachmentPath('t1', '../escape')).toThrow('bad attachment id')
+    expect(() => mod.taskAttachmentsDir('../escape')).toThrow('bad task id')
+    expect(mod.taskAttachmentsDir('t1')).toBe(`${mod.TANDEM_DATA_ROOT}/tasks/t1/attachments`)
+    expect(() => mod.attachmentPath('t1', 'a b')).toThrow('bad attachment id')
+    // delete with unsafe ids is a no-op, never a throw
+    expect(() => mod.deleteAttachmentBytes('../escape', 'x')).not.toThrow()
+    expect(() => mod.deleteAttachmentBytes('t1', '../escape')).not.toThrow()
+    expect(mod.attachmentExists('../escape', 'x')).toBe(false)
+    expect(mod.attachmentExists('t1', 'x')).toBe(false)
   })
 })
 

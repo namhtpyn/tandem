@@ -1,13 +1,15 @@
 // Task attachments: metadata rows in tandem_task_attachments, bytes on disk under
-// TANDEM_ATTACHMENTS_DIR (default /tandem/attachments — all Tandem data lives
-// under /tandem/**; mount one volume there in docker).
+// a per-task directory <DATA_ROOT>/tasks/<taskId>/attachments/<id> (DATA_ROOT
+// defaults to /tandem — all Tandem data lives under /tandem/**; mount one volume
+// there in docker; TANDEM_ATTACHMENTS_DIR overrides the root).
 // Two kinds: 'input' (uploaded by a human into the task description) and 'output'
 // (collected from the agent sandbox after a run).
+// The agent-side staging mirror uses the same per-task shape: ~/.tandem/<taskId>/attachments/.
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
-export const ATTACHMENTS_DIR = process.env.TANDEM_ATTACHMENTS_DIR || join('/tandem', 'attachments')
+export const TANDEM_DATA_ROOT = process.env.TANDEM_ATTACHMENTS_DIR || '/tandem'
 
 export const ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024 // 20MB per input upload
 export const COLLECTION_MAX_BYTES = 50 * 1024 * 1024 // 50MB total collected output per run
@@ -36,26 +38,32 @@ function idSafe(id: string): boolean {
   return /^[a-zA-Z0-9_-]+$/.test(id)
 }
 
-export function attachmentPath(id: string): string {
+export function attachmentPath(taskId: string, id: string): string {
+  if (!idSafe(taskId)) throw new Error('bad task id')
   if (!idSafe(id)) throw new Error('bad attachment id')
-  return join(ATTACHMENTS_DIR, id)
+  return join(TANDEM_DATA_ROOT, 'tasks', taskId, 'attachments', id)
 }
 
-export function saveAttachmentBytes(id: string, bytes: Buffer): void {
-  mkdirSync(ATTACHMENTS_DIR, { recursive: true })
-  writeFileSync(attachmentPath(id), bytes)
+export function taskAttachmentsDir(taskId: string): string {
+  if (!idSafe(taskId)) throw new Error('bad task id')
+  return join(TANDEM_DATA_ROOT, 'tasks', taskId, 'attachments')
 }
 
-export function readAttachmentBytes(id: string): Buffer {
-  return readFileSync(attachmentPath(id))
+export function saveAttachmentBytes(taskId: string, id: string, bytes: Buffer): void {
+  mkdirSync(taskAttachmentsDir(taskId), { recursive: true })
+  writeFileSync(attachmentPath(taskId, id), bytes)
 }
 
-export function attachmentExists(id: string): boolean {
-  return idSafe(id) && existsSync(attachmentPath(id))
+export function readAttachmentBytes(taskId: string, id: string): Buffer {
+  return readFileSync(attachmentPath(taskId, id))
 }
 
-export function deleteAttachmentBytes(id: string): void {
-  if (idSafe(id)) rmSync(attachmentPath(id), { force: true })
+export function attachmentExists(taskId: string, id: string): boolean {
+  return idSafe(taskId) && idSafe(id) && existsSync(attachmentPath(taskId, id))
+}
+
+export function deleteAttachmentBytes(taskId: string, id: string): void {
+  if (idSafe(taskId) && idSafe(id)) rmSync(attachmentPath(taskId, id), { force: true })
 }
 
 export function sha256Hex(bytes: Buffer): string {

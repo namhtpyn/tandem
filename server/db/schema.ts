@@ -113,10 +113,9 @@ export const aiEmployees = pgTable('tandem_ai_employees', {
   userId: text('user_id').primaryKey().references(() => user.id, { onDelete: 'cascade' }),
   environmentId: text('environment_id').notNull().references(() => environments.id, { onDelete: 'restrict' }),
   instructions: text('instructions').notNull().default(''),
-  // agent harness: 'hermes' (only one today; more later)
-  harness: text('harness').notNull().default('hermes'),
-  // executable name used on the environment when dispatching (default 'hermes')
-  executable: text('executable').notNull().default('hermes'),
+  // full command that starts an ACP server on stdio in the environment
+  // (e.g. 'hermes acp'); required, no default, shell-word safe (validated in the router)
+  executable: text('executable').notNull(),
   // model access: provider registry id + freetext model name + vault-held API key
   providerId: text('provider_id').references(() => modelProviders.id, { onDelete: 'set null' }),
   model: text('model'),
@@ -181,6 +180,8 @@ export const tasks = pgTable('tandem_tasks', {
   failStreak: integer('fail_streak').notNull().default(0),
   /** subtask nesting: this task is a child of parent_task_id (unlimited depth) */
   parentTaskId: text('parent_task_id').references((): AnyPgColumn => tasks.id, { onDelete: 'set null' }),
+  /** ACP session for this task's whole life (created on first dispatch, resumed after) */
+  acpSessionId: text('acp_session_id'),
   /** status to restore when the auto-block (open children) lifts; null = not auto-blocked */
   preBlockStatus: text('pre_block_status'),
   createdBy: text('created_by').references(() => user.id, { onDelete: 'set null' }),

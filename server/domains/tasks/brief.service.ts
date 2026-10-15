@@ -80,7 +80,7 @@ export function buildBrief(input: {
     }
   }
   lines.push('')
-  lines.push('DELIVERABLES — write any output files to /opt/data/task-files/<task>/out/ (create it if needed); everything left there when you exit is collected and attached to your result.')
+  lines.push('DELIVERABLES — write any output files to ~/.tandem/<task>/attachments/out/ (create it if needed); everything left there when you exit is collected and attached to your result.')
   lines.push('')
   lines.push('OUTPUT CONTRACT — end your response with exactly one of these lines:')
   lines.push('[RESULT] <final answer or summary of work done>')
@@ -144,7 +144,7 @@ export async function loadBriefData(taskId: string) {
   const attachmentRows = await db.select().from(taskAttachments).where(eq(taskAttachments.taskId, taskId))
   const attachments = attachmentRows
     .filter(a => a.kind === 'input')
-    .map(a => ({ id: a.id, filename: a.filename, mime: a.mime, size: a.size, remotePath: `/opt/data/task-files/${taskId}/${a.filename}` }))
+    .map(a => ({ id: a.id, filename: a.filename, mime: a.mime, size: a.size, remotePath: `~/.tandem/${taskId}/attachments/${a.filename}` }))
   return {
     agent: person(assigneeId),
     agentInstructions: ai?.instructions ?? '',

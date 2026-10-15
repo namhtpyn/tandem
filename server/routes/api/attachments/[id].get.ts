@@ -16,9 +16,9 @@ export default defineEventHandler(async (event) => {
 
   const row = (await db.select().from(taskAttachments).where(eq(taskAttachments.id, id)))[0]
   if (!row) throw createError({ statusCode: 404, statusMessage: 'attachment not found' })
-  if (!attachmentExists(id)) throw createError({ statusCode: 410, statusMessage: 'attachment bytes missing' })
+  if (!attachmentExists(row.taskId, id)) throw createError({ statusCode: 410, statusMessage: 'attachment bytes missing' })
 
-  const bytes = readAttachmentBytes(id)
+  const bytes = readAttachmentBytes(row.taskId, id)
   const mime = mimeAllowed(row.mime) ? row.mime : 'application/octet-stream'
   setResponseHeader(event, 'content-type', mime)
   setResponseHeader(event, 'content-length', bytes.byteLength)

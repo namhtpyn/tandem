@@ -78,9 +78,8 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   // AI REQUIRES an environment — pick the one created above
   await page.getByRole('button', { name: 'Environment', exact: true }).click()
   await page.getByRole('option', { name: envName }).click()
-  // harness defaults to Hermes agents; executable override is freetext
-  await expect(page.getByRole('button', { name: 'Harness' })).toContainText('Hermes agents')
-  await page.getByPlaceholder('hermes (default)').fill('hermes-dev')
+  // ACP executable is required freetext (defaults typed by the operator)
+  await page.getByPlaceholder('hermes acp').fill('hermes acp')
   await page.getByRole('button', { name: /Save|Create employee/ }).click()
   // minted key surfaces once
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 })

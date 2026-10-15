@@ -17,7 +17,7 @@ beforeEach(async () => {
   await db.insert(user).values({ id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
   await db.insert(user).values({ id: 'u-agent', name: 'Robby', email: 'robby@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
   await db.insert(environments).values({ id: 'env-1', name: 'E1', host: '127.0.0.1', port: '2222', username: 'u' })
-  await db.insert(aiEmployees).values({ userId: 'u-agent', environmentId: 'env-1', instructions: '' })
+  await db.insert(aiEmployees).values({ userId: 'u-agent', environmentId: 'env-1', instructions: '', executable: 'hermes acp' })
   await db.insert(tasks).values({ id: 't-1', title: 'Ghost', description: '', status: 'todo', assigneeId: 'u-agent' })
 })
 

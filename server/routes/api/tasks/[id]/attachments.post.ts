@@ -32,7 +32,7 @@ export default defineEventHandler(async (event) => {
 
   const filename = sanitizeFilename(file.filename!)
   const attachmentId = crypto.randomUUID()
-  saveAttachmentBytes(attachmentId, Buffer.from(file.data))
+  saveAttachmentBytes(id, attachmentId, Buffer.from(file.data))
   const sha = sha256Hex(Buffer.from(file.data))
   await db.insert(taskAttachments).values({
     id: attachmentId,

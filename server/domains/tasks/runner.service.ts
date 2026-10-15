@@ -1,7 +1,11 @@
-// Agent runner: dispatch a task to its AI assignee over SSH, stream stdout
+// Agent runner: dispatch a task to its AI assignee over SSH as ONE ACP
+// prompt turn (Agent Client Protocol v1 over stdio), stream session updates
 // back, persist a capped tail on the run row. Secrets (SSH identity, agent
 // LLM key) are decrypted in memory only and NEVER placed on argv — they ride
-// a stdin env blob inside the remote shell, per the M5 law.
+// a stdin env blob inside the remote shell (byte-count framed ahead of the
+// JSON-RPC stream), per the M5 law. One ACP session per task: first dispatch
+// creates it, later dispatches resume it (the agent keeps its own task
+// memory across runs); the agent PROCESS dies after every turn.
 //
 // TANDEM_FAKE_RUNNER=1 short-circuits SSH with a synthetic emitter so CI and
 // local e2e can exercise the full dispatch→stream→finish loop with no host.
@@ -57,8 +61,8 @@ export async function pushInputAttachments(
   onLine: (line: string) => void,
 ) {
   try {
-    const inputFiles = (briefData.attachments ?? []).filter(a => attachmentExists(a.id)).map(a => ({
-      localPath: attachmentPath(a.id),
+    const inputFiles = (briefData.attachments ?? []).filter(a => attachmentExists(taskId, a.id)).map(a => ({
+      localPath: attachmentPath(taskId, a.id),
       remoteName: a.filename,
     }))
     if (inputFiles.length) {
@@ -85,7 +89,7 @@ export async function settleAttachments(taskId: string, runId: string, sshPlan: 
         const mime = normalizeMime(guessMime(f.filename))
         if (!mimeAllowed(mime)) continue
         const id = crypto.randomUUID()
-        saveAttachmentBytes(id, bytes)
+        saveAttachmentBytes(taskId, id, bytes)
         await db.insert(taskAttachments).values({ id, taskId, runId, kind: 'output', filename: f.filename, mime, size: bytes.byteLength, sha256: sha256Hex(bytes), createdBy: null })
       }
       if (collected.length) {
@@ -218,10 +222,8 @@ export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>,
     `${hostDerivedKeyEnv(plan.llmEnv.CUSTOM_BASE_URL ?? '')}='${plan.llmEnv.CUSTOM_API_KEY ?? ''}'`,
     `HERMES_MODEL='${plan.llmEnv.HERMES_MODEL ?? ''}'`,
     `TANDEM_TASK_ID='${plan.task.id}'`,
-    // per-agent home; the official docker image drops privileges to uid 10000 and /root is
-    // 0700 root-only, so when the target is a hermes container (/opt/data exists) the home
-    // must live in the readable volume instead
-    `HERMES_HOME="$( [ -d /opt/data ] && echo /opt/data/profiles/tandem-${plan.ai.userId} || echo /root/.hermes-profiles/tandem-${plan.ai.userId} )"`,
+    // NO HERMES_HOME override: the host's own agent home is the employee's
+    // environment; per-task isolation comes from ACP sessions, not homes
 
     'set +a',
     // single-quote EVERY value: titles contain spaces; unquoted words would be
@@ -229,18 +231,6 @@ export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>,
     `TANDEM_TASK_TITLE='${plan.task.title.replace(/'/g, `'\\''`)}'`,
     '',
   ].join('\n')
-}
-
-/** the remote command: agent resumes its own profile home, prompt on argv-free stdin */
-export function buildCommand(plan: Awaited<ReturnType<typeof loadDispatchPlan>>, brief: string): string {
-  const exe = plan.ai.executable || 'hermes'
-  const esc = (v: string) => v.replace(/'/g, `'\\''`)
-  // hermes one-shot: -z prints only the final response (pipe-friendly); the per-agent
-  // HERMES_HOME comes from the env blob (profiles must pre-exist, HERMES_HOME dirs don't);
-  // -m/--provider select the model (CUSTOM_API_KEY/CUSTOM_BASE_URL also come from the blob)
-  // prompt = per-task brief: identity, org chains, task context, output contract
-  const model = plan.llmEnv.HERMES_MODEL ? ` -m '${esc(plan.llmEnv.HERMES_MODEL)}'` : ''
-  return `${exe}${model} --provider custom -z '${esc(brief)}'`
 }
 
 /** fake runner: synthetic streaming emitter for tests/CI */
@@ -360,16 +350,29 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
           const envBlob = buildEnvBlob(plan, tandemUrl)
           const briefData = await loadBriefData(taskId)
           const brief = buildBrief(briefData)
-          const command = buildCommand(plan, brief)
-          const { runOverSsh, loadClient: loadSshClient } = await import('./ssh-exec.util')
+          const { openAcpSshStream } = await import('./acp-ssh.util')
+          const { runAcpTurn, verdictFor } = await import('./acp.client')
+          const { loadClient: loadSshClient } = await import('./ssh-exec.util')
           const sshPlan = { env: plan.env, sshKey: plan.sshKey, sshPassword: plan.sshPassword }
           // push input attachments (idempotent; no-op when none)
           await pushInputAttachments(taskId, briefData, sshPlan, plan.envName, loadSshClient, onLine)
-          await runOverSsh(plan, command, envBlob, onLine, async (status: 'done' | 'failed', exitCode: number | null) => {
-            // settle attachments DETACHED: collection/cleanup must never block the verdict
-            void settleAttachments(taskId, runId, sshPlan, status)
-            await finish(status, exitCode)
-          }, resolve)
+          // one ACP prompt turn: session per task (resume when one exists)
+          const stream = await openAcpSshStream(sshPlan, envBlob, plan.ai.executable, onLine)
+          const acp = await runAcpTurn({
+            stream,
+            resumeSessionId: plan.task.acpSessionId,
+            prompt: brief,
+            timeoutMs: RUN_TIMEOUT_MS,
+            onLine,
+          })
+          if (acp.sessionId !== plan.task.acpSessionId) {
+            await db.update(tasks).set({ acpSessionId: acp.sessionId }).where(eq(tasks.id, taskId))
+          }
+          const { status, exitCode } = verdictFor(acp.stopReason)
+          // settle attachments DETACHED: collection/cleanup must never block the verdict
+          void settleAttachments(taskId, runId, sshPlan, status)
+          await finish(status, exitCode)
+          resolve({ status, exitCode })
         }
         catch (e) {
           /* v8 ignore next -- service throws are Error by construction */

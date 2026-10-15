@@ -5,15 +5,73 @@ import { eq } from 'drizzle-orm'
 import { vi } from 'vitest'
 
 vi.mock('ssh2', () => {
+  // minimal ACP-capable fake stream: client writes are parsed as env blob +
+  // JSON-RPC; scripted agent behavior answers protocol methods
+  class FakeAcpStream {
+    handlers: Record<string, Array<(d: unknown) => void>> = {}
+    written: string[] = []
+    killed = false
+    blob = ''
+    jsonStarted = false
+    blobExpected: number | null = null
+    agent: ((msg: Record<string, unknown>) => void) | null = null
+    on(ev: string, fn: (d: unknown) => void) { this.handlers[ev] = [...this.handlers[ev] ?? [], fn]; return this }
+    write(d: unknown) {
+      const s = String(d)
+      this.written.push(s)
+      if (!this.jsonStarted) {
+        if (this.blobExpected === null) this.blobExpected = FakeClient.blobLen ?? s.length
+        this.blob += s
+        if (this.blob.length >= this.blobExpected) {
+          const rest = this.blob.slice(this.blobExpected)
+          this.blob = this.blob.slice(0, this.blobExpected)
+          this.jsonStarted = true
+          if (rest.trim()) this.feed(rest)
+        }
+        return
+      }
+      this.feed(s)
+    }
+    signal(_s: string) { this.killed = true }
+    close() { (this.handlers['close'] ?? []).forEach(f => { (f as (c: unknown) => void)(null) }) }
+    emitStdout(text: string) { (this.handlers['data'] ?? []).forEach(f => { (f as (b: Buffer) => void)(Buffer.from(text)) }) }
+    emitStderr(text: string) { (this.handlers['stderr'] ?? []).forEach(f => { (f as (b: Buffer) => void)(Buffer.from(text)) }) }
+    emitExit(code: number | null) { (this.handlers['exit'] ?? []).forEach(f => { (f as (c: unknown) => void)(code) }) }
+    send(obj: unknown) { this.emitStdout(`${JSON.stringify(obj)}\n`) }
+    feed(s: string) {
+      const agent = this.agent ?? FakeClient.defaultAgent
+      for (const line of s.split('\n')) {
+        if (!line.trim()) continue
+        try { agent?.(JSON.parse(line) as Record<string, unknown>, (o: unknown) => this.send(o)) } catch { /* non-JSON */ }
+      }
+    }
+  }
   class FakeClient {
     static last: FakeClient
+    static blobLen: number | null = null
+    /** opt-in modes for whole-turn tests: auto-ready on connect, shared agent */
+    static autoReady = false
+    static defaultAgent: ((msg: Record<string, unknown>, send: (o: unknown) => void) => void) | null = null
     handlers: Record<string, Array<(d: unknown) => void>> = {}
+    execError: Error | null = new Error('no exec in fake')
+    stream = new FakeAcpStream()
     constructor() { FakeClient.last = this }
-    on(ev: string, fn: (d: unknown) => void) { this.handlers[ev] = [...(this.handlers[ev] ?? []), fn]; return this }
+    on(ev: string, fn: (d: unknown) => void) { this.handlers[ev] = [...this.handlers[ev] ?? [], fn]; return this }
     end() {}
-    exec(_c: string, cb: (e: Error | null, s: unknown) => void) { cb(new Error('no exec in fake'), null) }
-    connect(_o: unknown) { /* tests drive ready/error manually */ }
-    emitError(e: Error) { (this.handlers['error'] ?? []).forEach(f => f(e)) }
+    exec(cmd: string, cb: (e: Error | null, s: unknown) => void) {
+      const m = /head -c (\d+)/.exec(String(cmd))
+      FakeClient.blobLen = m ? Number(m[1]) : null
+      this.stream.blobExpected = FakeClient.blobLen
+      // autoReady mode: full-turn tests expect a working exec unless they say otherwise
+      const err = FakeClient.autoReady && this.execError?.message === 'no exec in fake' ? null : this.execError
+      cb(err, err ? null : this.stream)
+    }
+    connect(_o: unknown) {
+      // tests drive ready/error manually, unless autoReady is on for full turns
+      setTimeout(() => { if (FakeClient.autoReady) (this.handlers['ready'] ?? []).forEach(f => { (f as () => void)() }) }, 0)
+    }
+    emitError(e: Error) { (this.handlers['error'] ?? []).forEach(f => { (f as (x: Error) => void)(e) }) }
+    emitReady() { (this.handlers['ready'] ?? []).forEach(f => { (f as () => void)() }) }
   }
   return { default: { Client: FakeClient } }
 })
@@ -49,7 +107,7 @@ async function mkAiAgent(): Promise<string> {
   await db.insert(environments).values({ id: 'env-1', name: 'E1', host: '127.0.0.1', port: '2222', username: 'u' })
   const id = 'u-agent'
   await db.insert(user).values({ id, name: 'Robby', email: 'robby@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
-  await db.insert(aiEmployees).values({ userId: id, environmentId: 'env-1', instructions: '' })
+  await db.insert(aiEmployees).values({ userId: id, environmentId: 'env-1', instructions: '', executable: 'hermes acp' })
   return id
 }
 
@@ -75,8 +133,9 @@ describe('runner service guards', () => {
     await expect(loadDispatchPlan('t-none')).rejects.toThrow(/no assignee/i)
   })
 
-  it('buildEnvBlob + buildCommand shape (no secrets on argv)', async () => {
-    const { loadDispatchPlan, buildEnvBlob, buildCommand } = await import('../server/domains/tasks/runner.service')
+  it('buildEnvBlob + acp remote command shape (no secrets on argv)', async () => {
+    const { loadDispatchPlan, buildEnvBlob } = await import('../server/domains/tasks/runner.service')
+    const { acpRemoteCommand } = await import('../server/domains/tasks/acp-ssh.util')
     await mkAiAgent()
     await callProc('tasks.create', { title: `Quote's task`, description: 'do it', assigneeId: 'u-agent' })
     const d = await dbm()
@@ -85,12 +144,16 @@ describe('runner service guards', () => {
     const plan = await loadDispatchPlan(taskRow.id)
     const blob = buildEnvBlob(plan, 'http://t.local')
     expect(blob.endsWith('\n')).toBe(true)
-    const cmd = buildCommand(plan, 'Task: Find out who')
-    expect(cmd).toContain('-z ')
-    expect(blob).toContain('tandem-')
-    expect(blob).toContain('HERMES_HOME="$( [ -d /opt/data ]')
-    expect(cmd).toContain('--provider custom')
-    expect(cmd).not.toContain('CUSTOM_API_KEY=') // keys live in the env blob, never argv
+    expect(blob).toContain('CUSTOM_API_KEY=') // keys ride the env blob...
+    expect(blob).not.toContain('HERMES_HOME') // ...and no per-run home override anymore
+    // the remote command frames the blob by exact byte count, then execs the ACP server
+    const cmd = acpRemoteCommand(Buffer.byteLength(blob), plan.ai.executable)
+    expect(cmd).toContain(`head -c ${Buffer.byteLength(blob)}`)
+    expect(cmd).toContain('exec hermes acp')
+    expect(cmd).not.toContain('CUSTOM_API_KEY=') // keys never appear on the command line
+    // prove the blob still sources cleanly under sh (the remote side evals it)
+    const { execSync } = await import('child_process')
+    execSync('eval "$(head -c ' + Buffer.byteLength(blob) + ')"', { input: blob, shell: '/bin/bash' })
   })
 
   it('tail keeps the last N lines', async () => {
@@ -268,14 +331,15 @@ describe('runner failure + fallback arms', () => {
     const { aiEmployees } = await schema()
     await mkAiAgent()
     await db.update(aiEmployees).set({ executable: 'agent-cli' }).where(eq(aiEmployees.userId, 'u-agent'))
-    const { loadDispatchPlan, buildCommand, buildEnvBlob } = await import('../server/domains/tasks/runner.service')
+    const { loadDispatchPlan, buildEnvBlob } = await import('../server/domains/tasks/runner.service')
+    const { acpRemoteCommand } = await import('../server/domains/tasks/acp-ssh.util')
     await callProc('tasks.create', { title: 'Exe', assigneeId: 'u-agent' })
     const d = await dbm()
     const sch = await schema()
     const taskRow = (await d.db.select().from(sch.tasks))[0]!
     const plan = await loadDispatchPlan(taskRow.id)
     expect(plan.agentName).toBe('Robby')
-    expect(buildCommand(plan, 'Task: Find out who')).toContain('agent-cli')
+    expect(acpRemoteCommand(10, plan.ai.executable)).toContain('exec agent-cli')
     const blob = buildEnvBlob(plan, 'http://t.local')
     expect(blob).toContain(`TANDEM_TASK_TITLE='Exe'`)
   })
@@ -299,6 +363,67 @@ describe('runner failure + fallback arms', () => {
 })
 
 describe('runner real-ssh path (mocked ssh2)', () => {
+  it('full ACP turn: session created + persisted on the task, envelope streamed, run done', async () => {
+    const prev = process.env.TANDEM_FAKE_RUNNER
+    delete process.env.TANDEM_FAKE_RUNNER
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const FakeClientMod = ((await import('ssh2')).default as any).Client
+    const prevAuto = FakeClientMod.autoReady
+    const prevAgent = FakeClientMod.defaultAgent
+    try {
+      FakeClientMod.autoReady = true
+      // one agent answers BOTH dispatches: fresh session first, resume after
+      FakeClientMod.defaultAgent = (msg: Record<string, unknown>, send: (o: unknown) => void) => {
+        const method = msg.method as string | undefined
+        if (!method) return
+        if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } })
+        else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-acp-1' } })
+        else if (method === 'session/resume') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-acp-1' } })
+        else if (method === 'session/prompt') {
+          send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'sess-acp-1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '[RESULT] all done' } } } })
+          send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } })
+        }
+      }
+      const agentId = await mkAiAgent()
+      const t = await callProc('tasks.create', { title: 'ACP happy', description: 'do it', assigneeId: agentId })
+      const { dispatchTask } = await import('../server/domains/tasks/runner.service')
+      const handle = await dispatchTask(t.id, 'http://t.local')
+      const res = await handle.finished
+      expect(res.status).toBe('done')
+      const d = await dbm()
+      const sch = await schema()
+      const taskRow = (await d.db.select().from(sch.tasks).where(eq(sch.tasks.id, t.id)))[0]!
+      expect(taskRow.acpSessionId).toBe('sess-acp-1')
+      const run = (await d.db.select().from(sch.taskRuns))[0]!
+      expect(run.status).toBe('done')
+      expect(run.output).toContain('[RESULT] all done')
+
+      // SECOND dispatch resumes the stored session — no session/new on the wire.
+      // Evidence from the agent side (settle's own ssh clients never speak ACP).
+      const seen2: string[] = []
+      const agent1 = FakeClientMod.defaultAgent
+      FakeClientMod.defaultAgent = (msg: Record<string, unknown>, send: (o: unknown) => void) => {
+        if (typeof msg.method === 'string') seen2.push(msg.method)
+        agent1(msg, send)
+      }
+      try {
+        const handle2 = await dispatchTask(t.id, 'http://t.local')
+        const res2 = await handle2.finished
+        expect(res2.status).toBe('done')
+        expect(seen2).toContain('session/resume')
+        expect(seen2).not.toContain('session/new')
+      }
+      finally {
+        FakeClientMod.defaultAgent = agent1
+      }
+    }
+    finally {
+      process.env.TANDEM_FAKE_RUNNER = prev ?? '1'
+      FakeClientMod.autoReady = prevAuto
+      FakeClientMod.defaultAgent = prevAgent
+    }
+  }, 20_000)
+
   it('connection error fails the run and bounces the task to ready', async () => {
     const prev = process.env.TANDEM_FAKE_RUNNER
     delete process.env.TANDEM_FAKE_RUNNER
@@ -307,12 +432,13 @@ describe('runner real-ssh path (mocked ssh2)', () => {
       const t = await callProc('tasks.create', { title: 'SSH fail', assigneeId: agentId })
       const { dispatchTask } = await import('../server/domains/tasks/runner.service')
       const { db } = await dbm()
-      const { tasks, taskRuns, aiEmployees } = await schema()
-      await db.update(aiEmployees).set({ executable: '' }).where(eq(aiEmployees.userId, agentId)) // exe || 'hermes' fallback
+      const { tasks, taskRuns } = await schema()
       const handle = await dispatchTask(t.id, 'http://t.local')
       const clientMod = (await import('ssh2')).default
       const FakeClient = clientMod.Client as unknown as { last?: { emitError(e: Error): void } }
-      for (let i = 0; i < 40 && !FakeClient.last; i++) await new Promise(r => setTimeout(r, 5))
+      // settle/collect clients from earlier tests linger in `last` — wait for OUR connection
+      const stale: unknown = FakeClient.last
+      for (let i = 0; i < 40 && FakeClient.last === stale; i++) await new Promise(r => setTimeout(r, 5))
       FakeClient.last!.emitError(new Error('ECONNREFUSED test'))
       const res = await handle.finished
       expect(res.status).toBe('failed')
@@ -454,12 +580,9 @@ describe('env blob quoting', () => {
     const { execSync } = await import('child_process')
     execSync(`cat > /tmp/tandem-env.test && . /tmp/tandem-env.test && rm -f /tmp/tandem-env.test`, { input: blob, shell: '/bin/bash' })
     expect(blob).toContain(`TANDEM_TASK_TITLE='Find out who'`)
-    // and the built command escapes the same apostrophe in its --resume prompt
-    const { buildCommand } = await import('../server/domains/tasks/runner.service')
-    expect(buildCommand(plan, 'Task: Find out who')).toContain(`-z 'Task: Find out who'`)
-    // no-model arm: stub plan without HERMES_MODEL omits -m
-    const cmd2 = buildCommand({ ...plan, llmEnv: { ...plan.llmEnv, HERMES_MODEL: '' } } as typeof plan, 'Task: Find out who')
-    expect(cmd2).not.toContain(' -m ')
+    // the brief itself now rides session/prompt JSON (apostrophes safe by construction)
+    // and the model still travels through the env blob, not argv
+    expect(blob).toContain(`HERMES_MODEL='`)
   })
 })
 

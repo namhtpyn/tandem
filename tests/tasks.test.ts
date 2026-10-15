@@ -151,7 +151,7 @@ describe('tasks', () => {
 
   it('AI assignee maps assigneeKind ai', async () => {
     await seedEnv('env-ai-kind')
-    const bot = await callProc('employees.create', { name: 'Kind Bot', email: 'kb@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-ai-kind' })
+    const bot = await callProc('employees.create', { name: 'Kind Bot', email: 'kb@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-ai-kind', executable: 'hermes acp' })
     const r = await callProc('tasks.create', { title: 'T-ai', assigneeId: bot.id })
     const iter = await callProc('tasks.live')
     const snap = await iter.next()

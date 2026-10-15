@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { cleanupTaskFiles, collectRunOutputs, pushTaskFiles, TASK_FILES_ROOT, type SshFilePlan } from '../server/domains/tasks/ssh-files.util'
+import { cleanupTaskFiles, collectRunOutputs, pushTaskFiles, TASK_FILES_HOME, taskFilesOutDir, type SshFilePlan } from '../server/domains/tasks/ssh-files.util'
 
 class FakeStream {
   private stderrCb: ((d: Buffer) => void) | null = null
@@ -112,8 +112,8 @@ describe('pushTaskFiles', () => {
 describe('collectRunOutputs', () => {
   it('lists out/ via find, size-checks with du, fastGets each file', async () => {
     const Fake = makeFakeClient({
-      [`find ${TASK_FILES_ROOT}/t2/out`]: 'report.md\nchart.png',
-      [`du -cb '${TASK_FILES_ROOT}/t2/out/report.md' '${TASK_FILES_ROOT}/t2/out/chart.png'`]: '1024\ttotal',
+      [`find ${taskFilesOutDir('t2')}`]: 'report.md\nchart.png',
+      [`du -cb '${taskFilesOutDir('t2')}/report.md' '${taskFilesOutDir('t2')}/chart.png'`]: '1024\ttotal',
     })
     const tmp = mkdtempSync(join(tmpdir(), 'collect-'))
     const got = await collectRunOutputs(Fake, plan, 't2', tmp, 50 * 1024 * 1024)
@@ -121,14 +121,14 @@ describe('collectRunOutputs', () => {
     expect(got.every(g => g.size > 0)).toBe(true)
   })
   it('returns nothing when out/ is empty', async () => {
-    const Fake = makeFakeClient({ [`find ${TASK_FILES_ROOT}/t3/out`]: '' })
+    const Fake = makeFakeClient({ [`find ${taskFilesOutDir('t3')}`]: '' })
     const got = await collectRunOutputs(Fake, plan, 't3', mkdtempSync(join(tmpdir(), 'collect-')), 1024)
     expect(got).toEqual([])
   })
   it('refuses to collect over the size cap', async () => {
     const Fake = makeFakeClient({
-      [`find ${TASK_FILES_ROOT}/t4/out`]: 'big.bin',
-      [`du -cb '${TASK_FILES_ROOT}/t4/out/big.bin'`]: '999999999\ttotal',
+      [`find ${taskFilesOutDir('t4')}`]: 'big.bin',
+      [`du -cb '${taskFilesOutDir('t4')}/big.bin'`]: '999999999\ttotal',
     })
     const got = await collectRunOutputs(Fake, plan, 't4', mkdtempSync(join(tmpdir(), 'collect-')), 1000)
     expect(got).toEqual([])
@@ -182,8 +182,8 @@ describe('error propagation arms', () => {
 
   it('du fallback when total line unparseable', async () => {
     const Fake = makeFakeClient({
-      [`find ${TASK_FILES_ROOT}/td/out`]: 'a.txt',
-      [`du -cb '${TASK_FILES_ROOT}/td/out/a.txt'`]: 'garbage',
+      [`find ${taskFilesOutDir('td')}`]: 'a.txt',
+      [`du -cb '${taskFilesOutDir('td')}/a.txt'`]: 'garbage',
     })
     const got = await collectRunOutputs(Fake, plan, 'td', mkdtempSync(join(tmpdir(), 'du-')), 1024)
     expect(got.map(g => g.filename)).toEqual(['a.txt'])
@@ -253,6 +253,6 @@ describe('cleanupTaskFiles', () => {
     const Fake = makeFakeClient({})
     await cleanupTaskFiles(Fake, plan, 't5')
     const all = (Fake as unknown as { __instances: Array<{ __cmds: string[] }> }).__instances.flatMap(i => i.__cmds)
-    expect(all.some(c => c.includes(`rm -rf ${TASK_FILES_ROOT}/t5`))).toBe(true)
+    expect(all.some(c => c.includes(`rm -rf ${TASK_FILES_HOME}/t5`))).toBe(true)
   })
 })
