@@ -84,7 +84,6 @@ describe('runner service guards', () => {
     const taskRow = (await d.db.select().from(sch.tasks))[0]!
     const plan = await loadDispatchPlan(taskRow.id)
     const blob = buildEnvBlob(plan, 'http://t.local')
-    expect(blob).toContain(`TANDEM_URL='http://t.local'`)
     expect(blob.endsWith('\n')).toBe(true)
     const cmd = buildCommand(plan, 'Task: Find out who')
     expect(cmd).toContain('-z ')

@@ -44,7 +44,7 @@ export function buildBrief(input: {
   upChain: BriefPerson[]
   directReports: BriefPerson[]
   extraChains: Array<{ person: BriefPerson, chain: BriefPerson[] }>
-  task: { title: string, description: string, ownerName: string | null, reviewerNames: string[], projectName: string | null, url: string }
+  task: { title: string, description: string, ownerName: string | null, reviewerNames: string[], projectName: string | null }
   recentActivity: Array<{ kind: string, authorName: string | null, body: string | null }>
   attachments?: Array<{ id: string, filename: string, mime: string, size: number, remotePath: string }>
 }): string {
@@ -65,7 +65,6 @@ export function buildBrief(input: {
   lines.push(`Owner: ${input.task.ownerName ?? 'unassigned'}`)
   if (input.task.reviewerNames.length) lines.push(`Reviewers (all must approve): ${input.task.reviewerNames.join(', ')}`)
   if (input.task.projectName) lines.push(`Project: ${input.task.projectName}`)
-  lines.push(`Workspace: ${input.task.url}`)
   if (input.recentActivity.length) {
     lines.push('')
     lines.push('Recent activity on this task (oldest first):')
@@ -103,7 +102,7 @@ function stripMentions(desc: string): string {
 }
 
 /** gather everything the brief needs from the DB (single dispatch-time read) */
-export async function loadBriefData(taskId: string, tandemUrl: string) {
+export async function loadBriefData(taskId: string) {
   const task = (await db.select().from(tasks).where(eq(tasks.id, taskId)))[0]
   if (!task) throw new Error('task not found')
   const assigneeId = task.assigneeId!
@@ -146,7 +145,6 @@ export async function loadBriefData(taskId: string, tandemUrl: string) {
       ownerName: task.ownerId ? nameById.get(task.ownerId)! : null,
       reviewerNames: task.reviewers.map(id => nameById.get(id)).filter((n): n is string => Boolean(n)),
       projectName: null,
-      url: `${tandemUrl}/tasks/${task.id}`,
     },
     recentActivity: recent,
     attachments,

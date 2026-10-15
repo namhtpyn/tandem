@@ -216,7 +216,6 @@ export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>,
     // every other OpenAI-compatible client
     `${hostDerivedKeyEnv(plan.llmEnv.CUSTOM_BASE_URL ?? '')}='${plan.llmEnv.CUSTOM_API_KEY ?? ''}'`,
     `HERMES_MODEL='${plan.llmEnv.HERMES_MODEL ?? ''}'`,
-    `TANDEM_URL='${tandemUrl}'`,
     `TANDEM_TASK_ID='${plan.task.id}'`,
     // per-agent home; the official docker image drops privileges to uid 10000 and /root is
     // 0700 root-only, so when the target is a hermes container (/opt/data exists) the home
@@ -352,7 +351,7 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
             return
           }
           const envBlob = buildEnvBlob(plan, tandemUrl)
-          const briefData = await loadBriefData(taskId, tandemUrl)
+          const briefData = await loadBriefData(taskId)
           const brief = buildBrief(briefData)
           const command = buildCommand(plan, brief)
           const { runOverSsh, loadClient: loadSshClient } = await import('./ssh-exec.util')

@@ -50,7 +50,6 @@ only on a fresh database — never on restarts.
 | `BETTER_AUTH_URL` | no | canonical origin override |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | no | first-boot seed overrides |
 | `REDIS_URL` | no | Redis for durable dispatch queue, multi-replica live updates, and cache; unset = single-process mode |
-| `TANDEM_PUBLIC_URL` | no | canonical URL handed to dispatched agents |
 | `TANDEM_RUN_TIMEOUT_MS` | no | hard cap on one agent run (default 30 min) |
 | `TANDEM_ATTACHMENTS_DIR` | no | where attachment bytes live (default `./data/attachments` — mount a volume in Docker) |
 | `TANDEM_OIDC_ISSUER` + `_CLIENT_ID` + `_CLIENT_SECRET` (+ `_LABEL`) | no | env-fallback single OIDC provider; more via admin UI |

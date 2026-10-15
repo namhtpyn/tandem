@@ -44,14 +44,13 @@ describe('loadBriefData (real db)', () => {
     for (const id of [agentId, chiefId, peerId]) await db.delete(userTable).where(eq(userTable.id, id))
   })
 
-  it('assembles identity, chains, mention chain, activity, task url', async () => {
-    const d = await loadBriefData(taskId, 'http://x.local')
+  it('assembles identity, chains, mention chain, activity', async () => {
+    const d = await loadBriefData(taskId)
     expect(d.agent).toMatchObject({ id: agentId, name: 'Agent One', title: 'Worker', kind: 'ai' })
     expect(d.agentInstructions).toBe('Be terse.')
     expect(d.upChain.map(p => p.id)).toEqual([chiefId])
     expect(d.task.ownerName).toBe('Chief Two')
-    expect(d.task.url).toBe(`http://x.local/tasks/${taskId}`)
-    // @Peer Three mentioned -> extra chain with their supervisor
+      // @Peer Three mentioned -> extra chain with their supervisor
     expect(d.extraChains).toHaveLength(1)
     expect(d.extraChains[0]!.person.id).toBe(peerId)
     expect(d.extraChains[0]!.chain.map(p => p.id)).toEqual([chiefId])
@@ -62,7 +61,7 @@ describe('loadBriefData (real db)', () => {
     const long = 'x'.repeat(300)
     await db.insert(taskActivity).values({ id: taskId + '-long', taskId, kind: 'note', authorId: null, body: long })
     await db.update(tasks).set({ description: `ping @[Peer Three](mention-${peerId}) and [@ label="Chief Two"]`, reviewers: [chiefId] }).where(eq(tasks.id, taskId))
-    const d = await loadBriefData(taskId, 'http://x.local')
+    const d = await loadBriefData(taskId)
     const brief = buildBrief(d)
     expect(brief).toContain('…') // long activity truncated
     expect(brief).toContain('Peer Three') // mention link stripped to the bare name
@@ -78,7 +77,7 @@ describe('loadBriefData (real db)', () => {
     await db.insert(tasks).values({ id: bareId, title: 'Bare', description: '', status: 'todo', assigneeId: chiefId, ownerId: null, reviewers: [] })
     // chief is human: no ai row -> empty instructions
     try {
-      const d = await loadBriefData(bareId, 'http://x.local')
+      const d = await loadBriefData(bareId)
       expect(d.agentInstructions).toBe('')
       expect(d.task.ownerName).toBeNull()
       expect(d.task.reviewerNames).toEqual([])
@@ -95,20 +94,20 @@ describe('loadBriefData (real db)', () => {
 
   it('link-mention with a non-user id is skipped (bogus id arm)', async () => {
     await db.update(tasks).set({ description: 'see @[Someone](mention-bogus-id) now' }).where(eq(tasks.id, taskId))
-    const d = await loadBriefData(taskId, 'http://x.local')
+    const d = await loadBriefData(taskId)
     expect(d.extraChains).toHaveLength(0)
   })
 
   it('mention id that is not a user is skipped', async () => {
     await db.update(tasks).set({ description: 'cc @Ghost Nobody' }).where(eq(tasks.id, taskId))
-    const d = await loadBriefData(taskId, 'http://x.local')
+    const d = await loadBriefData(taskId)
     expect(d.extraChains).toHaveLength(0)
   })
 
   it('defensive arms: activity by unknown author, null description fallbacks', async () => {
     await db.insert(taskActivity).values({ id: taskId + '-ghost', taskId, kind: 'status', authorId: null, body: 'system did something' })
     try {
-      const d = await loadBriefData(taskId, 'http://x.local')
+      const d = await loadBriefData(taskId)
       expect(d.recentActivity.some(a => a.authorName === null)).toBe(true)
     }
     finally {
@@ -120,7 +119,7 @@ describe('loadBriefData (real db)', () => {
     const freshId = taskId + 'f'
     await db.insert(tasks).values({ id: freshId, title: 'Fresh', description: '', status: 'todo', assigneeId: agentId, ownerId: chiefId, reviewers: [] })
     try {
-      const d = await loadBriefData(freshId, 'http://x.local')
+      const d = await loadBriefData(freshId)
       expect(d.recentActivity).toEqual([])
       const brief = buildBrief(d)
       expect(brief).not.toContain('Recent activity')

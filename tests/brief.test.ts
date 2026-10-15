@@ -58,7 +58,6 @@ describe('buildBrief', () => {
       ownerName: 'Nam Hoang',
       reviewerNames: ['Ash'],
       projectName: 'Tandem',
-      url: 'http://t.local/tasks/t1',
     },
     recentActivity: [{ kind: 'question', authorName: 'Nam Hoang', body: 'Which format?' }],
   }
@@ -73,8 +72,7 @@ describe('buildBrief', () => {
     expect(b).toContain('Coordinate with @Jay on the API')
     expect(b).toContain('Owner: Nam Hoang')
     expect(b).toContain('Reviewers (all must approve): Ash')
-    expect(b).toContain('Workspace: http://t.local/tasks/t1')
-    expect(b).toContain('[RESULT] <final answer or summary of work done>')
+      expect(b).toContain('[RESULT] <final answer or summary of work done>')
   })
   it('agent without a title renders bare identity line', () => {
     const b = buildBrief({ ...base, agent: P('u-zed', 'Zed') })

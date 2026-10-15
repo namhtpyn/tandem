@@ -66,7 +66,7 @@ describe('dispatch attachment push (runner integration)', () => {
 
     // brief carries it with its sandbox path
     const { loadBriefData } = await import('../server/domains/tasks/brief.service')
-    const data = await loadBriefData(tid, 'http://t.test')
+    const data = await loadBriefData(tid)
     expect(data.attachments).toEqual([expect.objectContaining({ filename: 'spec.png', remotePath: `/opt/data/task-files/${tid}/spec.png` })])
 
     const { buildBrief } = await import('../server/domains/tasks/brief.service')
