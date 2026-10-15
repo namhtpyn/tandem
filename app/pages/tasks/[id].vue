@@ -99,11 +99,12 @@ const briefParts = computed(() => {
   return parts
 
   function pushText(text: string) {
-    const re = /@\[([^\]]+)\]\(mention-[^)]+\)/g
+    // either tiptap link form `@[Label](mention-id)` or serialized span `[@ id="..." label="..."]`
+    const re = /@\[([^\]]+)\]\(mention-[^)]+\)|\[@\s*id="[^"]*"\s+label="([^"]+)"\]/g
     let at = 0
     for (const m of text.matchAll(re)) {
       if (m.index! > at) parts.push({ type: 'text', body: text.slice(at, m.index) })
-      parts.push({ type: 'mention', label: m[1]! })
+      parts.push({ type: 'mention', label: m[1] ?? m[2] ?? '' })
       at = m.index! + m[0].length
     }
     if (at < text.length) parts.push({ type: 'text', body: text.slice(at) })
@@ -218,7 +219,9 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
 </script>
 
 <template>
-  <div>
+  <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
+    <template #body>
+    <div class="p-3 lg:p-6">
     <div v-if="!task" class="py-16 text-center text-sm text-zinc-400">
       Task not found — it may have been deleted.
       <ULink to="/tasks" class="underline">Back to tasks</ULink>
@@ -538,5 +541,7 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
         </div>
       </template>
     </USlideover>
-  </div>
+    </div>
+    </template>
+  </UDashboardPanel>
 </template>
