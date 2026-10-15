@@ -30,7 +30,7 @@ export default defineEventHandler(async (event) => {
   const mime = normalizeMime(file.type)
   if (!mimeAllowed(mime)) throw createError({ statusCode: 415, statusMessage: `unsupported type: ${mime}` })
 
-  const filename = sanitizeFilename(file.filename || '')
+  const filename = sanitizeFilename(file.filename!)
   const attachmentId = crypto.randomUUID()
   saveAttachmentBytes(attachmentId, Buffer.from(file.data))
   const sha = sha256Hex(Buffer.from(file.data))
