@@ -1,3 +1,10 @@
+## [2.23.2](https://github.com/namhtpyn/tandem/compare/v2.23.1...v2.23.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **deploy:** code-side runtime defaults — /tandem/** data root and Bun idle timeout 255 ([9cc838d](https://github.com/namhtpyn/tandem/commit/9cc838d2e396c355f7a6d5ae164b4770ebf53128))
+
 ## [2.23.1](https://github.com/namhtpyn/tandem/compare/v2.23.0...v2.23.1) (2026-10-15)
 
 
