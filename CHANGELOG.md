@@ -1,3 +1,10 @@
+## [2.28.2](https://github.com/namhtpyn/tandem/compare/v2.28.1...v2.28.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **tests:** no unhandled redis/flush errors at suite exit ([9eaadc7](https://github.com/namhtpyn/tandem/commit/9eaadc78e945cee7bd4f5966c84545d911c8f34a))
+
 ## [2.28.1](https://github.com/namhtpyn/tandem/compare/v2.28.0...v2.28.1) (2026-10-15)
 
 
