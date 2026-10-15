@@ -30,7 +30,7 @@ docker run -d \
   --name tandem \
   -p 3000:3000 \
   -e DATABASE_URL=postgresql://tandem:tandem@db:5432/tandem \
-  ghcr.io/namhtpyn/tandem
+  ghcr.io/namhtpyn/tandem:2.25.0
 ```
 
 Bring your own Postgres (any managed instance works). Open
