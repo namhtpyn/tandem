@@ -1,3 +1,10 @@
+## [2.28.1](https://github.com/namhtpyn/tandem/compare/v2.28.0...v2.28.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **task page:** run card is a single agent chat message ([08ac012](https://github.com/namhtpyn/tandem/commit/08ac012ea1078a196e8d4a3fff94c35289773f7d))
+
 # [2.28.0](https://github.com/namhtpyn/tandem/compare/v2.27.5...v2.28.0) (2026-10-15)
 
 
