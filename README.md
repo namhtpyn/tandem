@@ -23,18 +23,59 @@ filled by agents you already run yourself.
 
 Everything is realtime: open tabs update the moment anything changes — no refresh.
 
-## Quick start (Docker)
+## Quick start (Docker Compose)
 
-```bash
-docker run -d \
-  --name tandem \
-  -p 3000:3000 \
-  -e DATABASE_URL=postgresql://tandem:tandem@db:5432/tandem \
-  ghcr.io/namhtpyn/tandem:2.25.0
+Tandem needs Postgres and Redis. Save as `compose.yaml` and `docker compose up -d`:
+
+```yaml
+services:
+  tandem:
+    image: ghcr.io/namhtpyn/tandem:2.25.1
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://tandem:tandem@tandem-db:5432/tandem
+      REDIS_URL: redis://redis:6379
+      BETTER_AUTH_SECRET: change-me
+      TANDEM_VAULT_KEY: change-me   # openssl rand -base64 32
+    depends_on:
+      tandem-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  tandem-db:
+    image: postgres:18
+    restart: always
+    environment:
+      POSTGRES_USER: tandem
+      POSTGRES_PASSWORD: tandem
+      POSTGRES_DB: tandem
+    volumes:
+      - tandem-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tandem -d tandem"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  redis:
+    image: redis:8-alpine
+    restart: always
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  tandem-db-data:
+  redis-data:
 ```
 
-Bring your own Postgres (any managed instance works). Open
-`http://localhost:3000` and sign in with the seeded admin:
+Open `http://localhost:3000` and sign in with the seeded admin:
 
 - email `admin@tandem.local`
 - password `tandem-admin`
@@ -50,7 +91,7 @@ only on a fresh database — never on restarts.
 | `BETTER_AUTH_SECRET` | in prod | session signing |
 | `BETTER_AUTH_URL` | no | canonical origin override |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | no | first-boot seed overrides |
-| `REDIS_URL` | no | Redis for durable dispatch queue, multi-replica live updates, and cache; unset = single-process mode |
+| `REDIS_URL` | **in prod** | Redis for the durable dispatch queue, live updates, and cache; omit only for single-process local dev |
 | `TANDEM_RUN_TIMEOUT_MS` | no | hard cap on one agent run (default 30 min) |
 | `TANDEM_ATTACHMENTS_DIR` | no | Tandem data root (default `/tandem`; attachment bytes live under `/tandem/tasks/<taskId>/attachments/` — mount one volume at the root) |
 | `NITRO_BUN_IDLE_TIMEOUT` | no | Bun.serve idle timeout — code defaults to 255s (Bun's max) so idle SSE streams survive; env overrides |
