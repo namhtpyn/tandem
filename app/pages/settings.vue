@@ -94,6 +94,7 @@ const providers = computed<OidcProviderRow[]>(() => ((unref(oidcLive.data) ?? []
 
 const disablePasswordLogin = ref(false)
 const companyName = ref('Tandem')
+const runTimeoutMinutes = ref(30)
 // ---- Workspace AI: internal LLM + decision assignments ----
 const vaultLive = useQuery(($orpc.vault.list as any).queryOptions({ queryKey: ['vault'] }))
 const vaultItems = computed((): any => groupedSecretOptions(((unref(vaultLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string, folder: string | null }>)))
@@ -173,11 +174,32 @@ async function saveAssignment(kind: 'internalLlm' | 'internalDecision') {
 }
 watch(() => unref(settingsLive.data), (d) => {
   if (d) {
-    const v = d as { disablePasswordLogin: boolean, companyName?: string }
+    const v = d as { disablePasswordLogin: boolean, companyName?: string, runTimeoutMs?: number }
     disablePasswordLogin.value = v.disablePasswordLogin
     companyName.value = v.companyName?.trim() || 'Tandem'
+    runTimeoutMinutes.value = Math.round((v.runTimeoutMs ?? 1_800_000) / 60_000)
   }
 }, { immediate: true })
+
+const savingRunTimeout = ref(false)
+const runTimeoutMessage = ref('')
+async function saveRunTimeout() {
+  savingRunTimeout.value = true
+  runTimeoutMessage.value = ''
+  try {
+    const minutes = Number(runTimeoutMinutes.value)
+    if (!Number.isFinite(minutes) || minutes < 1) {
+      runTimeoutMessage.value = 'Enter at least 1 minute'
+      return
+    }
+    await ($client as any).settings.update({ runTimeoutMs: Math.round(minutes * 60_000) })
+    runTimeoutMessage.value = 'Saved'
+  } catch (e: any) {
+    runTimeoutMessage.value = e?.message ?? 'Save failed'
+  } finally {
+    savingRunTimeout.value = false
+  }
+}
 
 const savingName = ref(false)
 const nameMessage = ref('')
@@ -296,6 +318,17 @@ async function savePasswordPolicy() {
         </UFormField>
         <UButton type="submit" icon="i-lucide-save" :loading="savingName">Save</UButton>
         <span v-if="nameMessage" class="pb-2 text-xs" :class="nameMessage === 'Saved' ? 'text-success' : 'text-error'">{{ nameMessage }}</span>
+      </UForm>
+
+      <USeparator class="my-5" />
+
+      <UForm :state="{ runTimeoutMinutes }" class="flex flex-wrap items-end gap-3" @submit="saveRunTimeout">
+        <UFormField label="Agent run timeout (minutes)" name="runTimeoutMinutes" class="min-w-56">
+          <template #hint><FormHint text="Hard cap on one agent run — the run is cancelled when it exceeds this" /></template>
+          <UInput v-model.number="runTimeoutMinutes" type="number" :min="1" :max="360" icon="i-lucide-timer" class="w-40" :disabled="savingRunTimeout" />
+        </UFormField>
+        <UButton type="submit" icon="i-lucide-save" :loading="savingRunTimeout">Save</UButton>
+        <span v-if="runTimeoutMessage" class="pb-2 text-xs" :class="runTimeoutMessage === 'Saved' ? 'text-success' : 'text-error'">{{ runTimeoutMessage }}</span>
       </UForm>
 
       <USeparator class="my-5" />

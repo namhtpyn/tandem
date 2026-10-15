@@ -56,6 +56,7 @@ describe('buildBrief', () => {
       title: 'Write the spec',
       description: 'Coordinate with @Jay on the API',
       ownerName: 'Nam Hoang',
+      ownerId: 'u-nam',
       reviewerNames: ['Ash'],
       projectName: 'Tandem',
     },

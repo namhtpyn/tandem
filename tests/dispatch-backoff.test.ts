@@ -161,7 +161,8 @@ describe('stale-run reaper', () => {
 
 describe('double settle', () => {
   it('events after the timer are ignored (idempotent settle)', async () => {
-    process.env.TANDEM_RUN_TIMEOUT_MS = '60'
+    const { setSetting } = await import('../server/domains/settings/settings.service')
+    await setSetting('run_timeout_ms', '60')
     try {
       const { runOverSsh } = await import('../server/domains/tasks/ssh-exec.util')
       const lines: string[] = []
@@ -188,7 +189,7 @@ describe('double settle', () => {
       expect(lines.filter(l => l.includes('late')).length).toBe(0)
     }
     finally {
-      delete process.env.TANDEM_RUN_TIMEOUT_MS
+      await setSetting('run_timeout_ms', '1800000')
     }
   }, 5000)
 
@@ -233,7 +234,8 @@ describe('double settle', () => {
 
 describe('ssh run timeout', () => {
   it('a run that never closes settles as failed via the timer', async () => {
-    process.env.TANDEM_RUN_TIMEOUT_MS = '80'
+    const { setSetting } = await import('../server/domains/settings/settings.service')
+    await setSetting('run_timeout_ms', '80')
     try {
       const { runOverSsh } = await import('../server/domains/tasks/ssh-exec.util')
       const lines: string[] = []
@@ -254,7 +256,7 @@ describe('ssh run timeout', () => {
       expect(lines.some(l => l.includes('timed out'))).toBe(true)
     }
     finally {
-      delete process.env.TANDEM_RUN_TIMEOUT_MS
+      await setSetting('run_timeout_ms', '1800000')
     }
   }, 5000)
 })

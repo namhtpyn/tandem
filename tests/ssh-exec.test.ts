@@ -2,6 +2,11 @@
 // stderr prefixing, exec error, connection error, exit codes.
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
+// runOverSsh lê o cap de run da Settings page — mock sem banco de dados
+vi.mock('../server/domains/settings/settings.service', () => ({
+  getRunTimeoutMs: async () => 10_000,
+}))
+
 vi.mock('ssh2', () => {
   class FakeStream {
     handlers: Record<string, Array<(d: unknown) => void>> = {}

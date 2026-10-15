@@ -86,6 +86,7 @@ describe('loadBriefData (real db)', () => {
       const bare = buildBrief(d)
       expect(bare).not.toContain('Reviewers')
       expect(bare).toContain('Owner: unassigned')
+    // owner line carries the user id when known
     }
     finally {
       await db.delete(tasks).where(eq(tasks.id, bareId))

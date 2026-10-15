@@ -109,15 +109,26 @@ describe('settings.update (authenticated)', () => {
     const r = await proc(['settings', 'update'], { disablePasswordLogin: true }) as { ok: boolean }
     expect(r).toEqual({ ok: true })
     const { getSettings } = await import('../server/domains/settings/settings.service')
-    expect(await getSettings()).toEqual({ disablePasswordLogin: true, companyName: 'Tandem', internalLlm: null, internalDecision: null })
+    expect(await getSettings()).toEqual({ disablePasswordLogin: true, companyName: 'Tandem', internalLlm: null, internalDecision: null, runTimeoutMs: 1_800_000 })
     // and back
     await proc(['settings', 'update'], { disablePasswordLogin: false })
-    expect(await getSettings()).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', internalLlm: null, internalDecision: null })
+    expect(await getSettings()).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', internalLlm: null, internalDecision: null, runTimeoutMs: 1_800_000 })
   })
 
   it('live snapshot returns current settings', async () => {
-    const snap = await firstSnapshot(['settings', 'live']) as { disablePasswordLogin: boolean }
-    expect(snap).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', internalLlm: null, internalDecision: null })
+    const snap = await firstSnapshot(['settings', 'live']) as { disablePasswordLogin: boolean, runTimeoutMs: number }
+    expect(snap).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', internalLlm: null, internalDecision: null, runTimeoutMs: 1_800_000 })
+  })
+
+  it('run timeout setting: update + bounds (min 1 min, max 6h)', async () => {
+    const { getSettings } = await import('../server/domains/settings/settings.service')
+    await proc(['settings', 'update'], { runTimeoutMs: 3_600_000 })
+    expect((await getSettings()).runTimeoutMs).toBe(3_600_000)
+    // bounds enforced by zod — validated through RPCHandler (see rpc() note)
+    await expect(rpc('settings/update', { runTimeoutMs: 59_999 })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(rpc('settings/update', { runTimeoutMs: 6 * 60 * 60_000 + 1 })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await proc(['settings', 'update'], { runTimeoutMs: 1_800_000 })
+    expect((await getSettings()).runTimeoutMs).toBe(1_800_000)
   })
 })
 

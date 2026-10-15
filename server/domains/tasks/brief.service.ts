@@ -44,7 +44,7 @@ export function buildBrief(input: {
   upChain: BriefPerson[]
   directReports: BriefPerson[]
   extraChains: Array<{ person: BriefPerson, chain: BriefPerson[] }>
-  task: { title: string, description: string, ownerName: string | null, reviewerNames: string[], projectName: string | null, parentTitle?: string | null }
+  task: { title: string, description: string, ownerName: string | null, ownerId?: string | null, reviewerNames: string[], projectName: string | null, parentTitle?: string | null }
   /** exact deliverable out-dir for this run's task — agents must not guess it */
   outDir: string
   recentActivity: Array<{ kind: string, authorName: string | null, body: string | null }>
@@ -61,11 +61,11 @@ export function buildBrief(input: {
     else lines.push(`${c.person.name}: ${personLine(c.person)}; their chain: (unknown).`)
   }
   lines.push('')
-  lines.push('TASK (via Tandem)')
+  lines.push('TASK')
   if (input.task.parentTitle) lines.push(`This is a subtask of: ${input.task.parentTitle}`)
   lines.push(`Title: ${input.task.title}`)
   if (input.task.description.trim()) lines.push(`Description: ${stripAttachments(stripMentions(input.task.description))}`)
-  lines.push(`Owner: ${input.task.ownerName ?? 'unassigned'}`)
+  lines.push(`Owner: ${input.task.ownerName ?? 'unassigned'}${input.task.ownerId ? ` (id: ${input.task.ownerId})` : ''}`)
   if (input.task.reviewerNames.length) lines.push(`Reviewers (all must approve): ${input.task.reviewerNames.join(', ')}`)
   if (input.task.projectName) lines.push(`Project: ${input.task.projectName}`)
   if (input.recentActivity.length) {
@@ -158,6 +158,7 @@ export async function loadBriefData(taskId: string) {
       title: task.title,
       description: task.description,
       ownerName: task.ownerId ? nameById.get(task.ownerId)! : null,
+      ownerId: task.ownerId,
       reviewerNames: task.reviewers.map(id => nameById.get(id)).filter((n): n is string => Boolean(n)),
       projectName: null,
     },

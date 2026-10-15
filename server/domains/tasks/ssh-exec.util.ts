@@ -21,9 +21,9 @@ export async function loadClient(): Promise<typeof Client> {
 }
 
 // a frozen agent (no TCP reset) must still terminate: cap the whole run.
-// Lazy read so tests can shrink it after import.
-function runTimeoutMs(): number {
-  return Number(process.env.TANDEM_RUN_TIMEOUT_MS ?? 30 * 60_000)
+async function runTimeoutMs(): Promise<number> {
+  const { getRunTimeoutMs } = await import('../settings/settings.service')
+  return await getRunTimeoutMs()
 }
 
 export async function runOverSsh(plan: SshPlan, command: string, envBlob: string, onLine: OnLine, finish: Finish, resolve: Resolve): Promise<void> {
@@ -41,7 +41,7 @@ export async function runOverSsh(plan: SshPlan, command: string, envBlob: string
       resolve({ status: s, exitCode: code })
     })()
   }
-  const timeoutMs = runTimeoutMs()
+  const timeoutMs = await runTimeoutMs()
   const timer = setTimeout(() => settle('failed', null, `[dispatch] run timed out after ${Math.round(timeoutMs / 1000)}s`), timeoutMs)
   conn.on('ready', () => {
     conn.exec(`cat > /tmp/tandem-env.$$ && . /tmp/tandem-env.$$ && rm -f /tmp/tandem-env.$$ && ${command}`, (err, stream) => {

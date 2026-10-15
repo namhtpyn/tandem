@@ -21,7 +21,7 @@ export const TAIL_MAX_LINES = 100
 const FLUSH_MS = Number(process.env.TANDEM_RUN_FLUSH_MS ?? 500)
 
 // hard cap on one run; a hung agent (frozen process, TCP never drops) becomes a failure
-export const RUN_TIMEOUT_MS = Number(process.env.TANDEM_RUN_TIMEOUT_MS ?? 30 * 60_000)
+import { getRunTimeoutMs } from '../settings/settings.service'
 
 // failure backoff ladder: consecutive failures -> wait before the next claim
 const BACKOFF_STEPS_MS = [60_000, 5 * 60_000, 15 * 60_000] // 1min, 5min, 15min cap
@@ -366,7 +366,7 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
             stream,
             resumeSessionId: plan.task.acpSessionId,
             prompt: brief,
-            timeoutMs: RUN_TIMEOUT_MS,
+            timeoutMs: await getRunTimeoutMs(),
             onLine,
           })
           if (acp.sessionId !== plan.task.acpSessionId) {

@@ -27,9 +27,9 @@ export async function reapStaleRuns(): Promise<number> {
 }
 
 async function reapStaleRunsInner(): Promise<number> {
-  const { RUN_TIMEOUT_MS } = await import('./runner.service')
+  const { getRunTimeoutMs } = await import('../settings/settings.service')
   const grace = 2 * 60_000
-  const cutoff = new Date(Date.now() - RUN_TIMEOUT_MS - grace)
+  const cutoff = new Date(Date.now() - (await getRunTimeoutMs()) - grace)
   const stale = await db.select().from(taskRuns).where(eq(taskRuns.status, 'running'))
   let reaped = 0
   for (const run of stale) {
