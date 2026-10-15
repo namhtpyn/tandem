@@ -281,15 +281,16 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
               </div>
             </div>
 
-            <!-- run: an agent turn -->
+            <!-- run: an agent turn — one message from the agent, avatar + name + bubble -->
             <div v-else-if="item.kind === 'run'" class="flex gap-2.5">
-              <div class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <div class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
                 <UIcon v-if="item.status === 'running'" name="i-lucide-loader-circle" class="size-4 animate-spin" />
-                <UIcon v-else-if="item.status === 'done'" name="i-lucide-bot" class="size-4" />
-                <UIcon v-else name="i-lucide-circle-x" class="size-4 text-error" />
+                <span v-else>{{ (item.agentName ?? 'Agent').slice(0, 2).toUpperCase() }}</span>
               </div>
               <div class="min-w-0 flex-1">
                 <p class="mb-1 flex items-center gap-1.5 text-[11px] leading-none">
+                  <span class="font-semibold text-zinc-600 dark:text-zinc-300">{{ item.agentName ?? 'Agent' }}</span>
+                  <span class="text-primary">(AI)</span>
                   <span v-if="item.status === 'running'" class="inline-flex items-center gap-1 rounded-full bg-warning/15 px-1.5 py-0.5 font-semibold text-warning"><span class="inline-block size-1.5 animate-pulse rounded-full bg-warning" />working</span>
                   <span v-else-if="item.status === 'done'" class="rounded-full bg-zinc-100 px-1.5 py-0.5 font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">completed</span>
                   <span v-else class="inline-flex items-center gap-1 rounded-full bg-error/10 px-1.5 py-0.5 font-semibold text-error">failed<span v-if="item.exitCode !== null" class="font-normal opacity-80"> exit {{ item.exitCode }}</span></span>
@@ -299,15 +300,8 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
                 <div v-if="envelopeOf(item)" :class="['max-w-[calc(100%-3rem)] rounded-xl rounded-tl-sm border-l-2 px-3.5 py-2.5 text-sm leading-relaxed', envelopeOf(item)!.kind === 'question' ? 'border-l-blue-400/70 bg-blue-50/40 text-zinc-800 dark:bg-blue-500/10 dark:text-zinc-200' : envelopeOf(item)!.kind === 'blocked' ? 'border-l-error/70 bg-error/5 text-zinc-800 dark:bg-error/5 dark:text-zinc-200' : 'border-l-emerald-400/70 bg-emerald-50/40 text-zinc-800 dark:bg-emerald-500/10 dark:text-zinc-200']">
                   <span :class="['mr-1.5 align-middle text-[9px] font-bold uppercase tracking-widest', envelopeOf(item)!.kind === 'question' ? 'text-blue-500' : envelopeOf(item)!.kind === 'blocked' ? 'text-error' : 'text-emerald-600 dark:text-emerald-400']">{{ envelopeOf(item)!.kind }}</span><span class="align-middle">{{ envelopeOf(item)!.text || '(empty)' }}</span>
                 </div>
-                <!-- the agent's own message, as chat -->
-                <div v-if="runAgentMessage(item.output)" class="mt-1.5 flex items-start gap-2">
-                  <div class="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">{{
-                    (item.agentName ?? 'Agent').slice(0, 2).toUpperCase() }}</div>
-                  <div class="min-w-0 flex-1">
-                    <p class="mb-0.5 text-[11px] leading-none"><span class="font-semibold text-zinc-600 dark:text-zinc-300">{{ item.agentName ?? 'Agent' }}</span><span class="text-primary"> (AI)</span></p>
-                    <div class="inline-block max-w-full whitespace-pre-wrap break-words rounded-xl rounded-tr-sm bg-primary/5 px-3.5 py-2 text-sm leading-relaxed text-zinc-800 dark:bg-primary/10 dark:text-zinc-200">{{ runAgentMessage(item.output) }}</div>
-                  </div>
-                </div>
+                <!-- the agent's message bubble -->
+                <div v-if="runAgentMessage(item.output)" class="inline-block max-w-full whitespace-pre-wrap break-words rounded-xl rounded-tl-sm bg-primary/5 px-3.5 py-2 text-sm leading-relaxed text-zinc-800 dark:bg-primary/10 dark:text-zinc-200">{{ runAgentMessage(item.output) }}</div>
                 <!-- collected output files (agent deliverables) -->
                 <div v-if="runOutputs(item).length" class="mt-1.5 flex flex-wrap gap-1.5">
                   <template v-for="f in runOutputs(item)" :key="f.id">
