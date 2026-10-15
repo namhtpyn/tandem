@@ -1,4 +1,4 @@
-FROM oven/bun:1.4.2 AS build
+FROM oven/bun:1.4.2-alpine AS build
 ARG APP_VERSION=dev
 WORKDIR /app
 COPY package.json bun.lock ./
@@ -6,11 +6,11 @@ RUN bun install --frozen-lockfile
 COPY . .
 RUN bun run build
 
-FROM oven/bun:latest AS runtime
+FROM oven/bun:1.4.2-alpine AS runtime
 ARG APP_VERSION=dev
 WORKDIR /app
 # ssh client for the environment SSH probe (openssh-client, no server)
-RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends openssh-client && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache openssh-client
 ENV NODE_ENV=production APP_VERSION=${APP_VERSION} HOME=/home/bun
 COPY --from=build /app/.output ./.output
 COPY --from=build /app/drizzle ./drizzle
