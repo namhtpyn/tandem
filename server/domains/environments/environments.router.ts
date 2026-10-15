@@ -13,6 +13,9 @@ import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } fro
 import { toRow, listEnvironments } from './environments.service'
 
 export const environmentsRouter = os.router({
+  /** plain GET list (first-load data per the SSE law) */
+  list: protectedProcedure.handler(() => listEnvironments()),
+
   /** live list — pushes a fresh snapshot on every environments change */
   live: protectedProcedure.handler(() => liveGenerator(['environments'], listEnvironments)),
 

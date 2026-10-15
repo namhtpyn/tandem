@@ -10,7 +10,7 @@ useSeoMeta({ title: 'Projects · Tandem' })
 const { $orpc, $client } = useNuxtApp()
 const queryClient = useQueryClient()
 
-const liveQuery = useQuery(($orpc.projects.live as any).liveOptions())
+const liveQuery = useQuery(($orpc.projects.list as any).queryOptions({ queryKey: ['projects'] }))
 const rows = computed(() => (unref(liveQuery.data) ?? []) as ProjectRow[])
 const busy = ref(false)
 const message = ref('')

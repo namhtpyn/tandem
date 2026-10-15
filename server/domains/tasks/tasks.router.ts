@@ -47,9 +47,7 @@ export function groupOutputsByRun(atts: Array<{ id: string, runId: string | null
   return outputsByRun
 }
 
-export const tasksRouter = os.router({
-  /** live list — tasks with assignee info, newest first */
-  live: protectedProcedure.handler(() => liveGenerator(['tasks'], async (): Promise<TaskRow[]> => {
+const listTasksSnapshot = async (): Promise<TaskRow[]> => {
     const rows = await db.select().from(tasksTable).orderBy(desc(tasksTable.createdAt))
     const open = await openObligations(rows.map(r => r.id))
     const holders = new Map<string, string>()
@@ -85,7 +83,48 @@ export const tasksRouter = os.router({
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     }))
-  })),
+  }
+
+async function runsSnapshot(taskId: string) {
+const rows = await listRuns(taskId)
+      const atts = await db.select().from(taskAttachments).where(eq(taskAttachments.taskId, taskId))
+      const outputsByRun = groupOutputsByRun(atts)
+      return rows.map(r => ({
+        id: r.id,
+        taskId: r.taskId,
+        employeeId: r.employeeId,
+        environmentId: r.environmentId,
+        status: r.status as 'running' | 'done' | 'failed',
+        exitCode: r.exitCode,
+        output: r.output,
+        startedAt: r.startedAt.toISOString(),
+        finishedAt: r.finishedAt ? r.finishedAt.toISOString() : null,
+        outputs: outputsByRun.get(r.id) ?? [],
+      }))
+}
+
+async function activitySnapshot(taskId: string) {
+const rows = await listActivity(taskId)
+      const users = await db.select({ id: userTable.id, name: userTable.name }).from(userTable)
+      const nameById = new Map(users.map(u => [u.id, u.name]))
+      return rows.map(r => ({
+        id: r.id,
+        taskId: r.taskId,
+        kind: r.kind as 'question' | 'answer' | 'forward' | 'note' | 'verdict' | 'status',
+        authorId: r.authorId,
+        authorName: (r.authorId && nameById.get(r.authorId)) || null,
+        body: r.body,
+        meta: r.meta as Record<string, unknown>,
+        createdAt: r.createdAt.toISOString(),
+      }))
+}
+
+export const tasksRouter = os.router({
+  /** live list — tasks with assignee info, newest first */
+  /** plain GET list (first-load data per the SSE law) */
+  list: protectedProcedure.handler(() => listTasksSnapshot()),
+
+  live: protectedProcedure.handler(() => liveGenerator(['tasks'], listTasksSnapshot)),
 
   /** create a task */
   create: protectedProcedure
@@ -316,44 +355,22 @@ export const tasksRouter = os.router({
     }),
 
   /** activity feed for one task (live) */
-  activity: protectedProcedure
+  activityList: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))
-    .handler(({ input }) => liveGenerator(['taskActivity', 'tasks'], async () => {
-      const rows = await listActivity(input.taskId)
-      const users = await db.select({ id: userTable.id, name: userTable.name }).from(userTable)
-      const nameById = new Map(users.map(u => [u.id, u.name]))
-      return rows.map(r => ({
-        id: r.id,
-        taskId: r.taskId,
-        kind: r.kind as 'question' | 'answer' | 'forward' | 'note' | 'verdict' | 'status',
-        authorId: r.authorId,
-        authorName: (r.authorId && nameById.get(r.authorId)) || null,
-        body: r.body,
-        meta: r.meta as Record<string, unknown>,
-        createdAt: r.createdAt.toISOString(),
-      }))
-    })),
+    .handler(({ input }) => activitySnapshot(input.taskId)),
+
+activity: protectedProcedure
+    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .handler(({ input }) => liveGenerator(['taskActivity', 'tasks'], () => activitySnapshot(input.taskId))),
 
   /** runs for a task (live) — streaming output tail from agent dispatches */
+runsList: protectedProcedure
+    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .handler(({ input }) => runsSnapshot(input.taskId)),
+
 runs: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))
-    .handler(({ input }) => liveGenerator(['runs', 'tasks'], async () => {
-      const rows = await listRuns(input.taskId)
-      const atts = await db.select().from(taskAttachments).where(eq(taskAttachments.taskId, input.taskId))
-      const outputsByRun = groupOutputsByRun(atts)
-      return rows.map(r => ({
-        id: r.id,
-        taskId: r.taskId,
-        employeeId: r.employeeId,
-        environmentId: r.environmentId,
-        status: r.status as 'running' | 'done' | 'failed',
-        exitCode: r.exitCode,
-        output: r.output,
-        startedAt: r.startedAt.toISOString(),
-        finishedAt: r.finishedAt ? r.finishedAt.toISOString() : null,
-        outputs: outputsByRun.get(r.id) ?? [],
-      }))
-    })),
+    .handler(({ input }) => liveGenerator(['runs', 'tasks'], () => runsSnapshot(input.taskId))),
 
   /** manually dispatch a task to its AI assignee (the dispatcher also fires automatically) */
   dispatch: protectedProcedure

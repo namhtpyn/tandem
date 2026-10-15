@@ -8,9 +8,7 @@ import {
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 
-export const statusesRouter = os.router({
-  /** live task-status list (ordered) */
-  live: protectedProcedure.handler(() => liveGenerator(['statuses'], async () => {
+async function listStatuses() {
     const rows = await db.select().from(taskStatusesTable).orderBy(asc(taskStatusesTable.position))
     return rows.map(r => ({
       id: r.id,
@@ -18,9 +16,16 @@ export const statusesRouter = os.router({
       color: r.color,
       position: r.position,
       category: r.category,
-      nextIds: r.nextIds,
-    }))
-  })),
+    nextIds: r.nextIds,
+  }))
+}
+
+export const statusesRouter = os.router({
+  /** plain GET list (first-load data per the SSE law) */
+  list: protectedProcedure.handler(() => listStatuses()),
+
+  /** live task-status list (ordered) */
+  live: protectedProcedure.handler(() => liveGenerator(['statuses'], listStatuses)),
 
   /** create or update a status (upsert by id) */
   save: protectedProcedure

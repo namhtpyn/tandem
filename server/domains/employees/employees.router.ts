@@ -12,9 +12,7 @@ import type { ApiKeyRow, EmployeeRow } from '../../../shared/types'
 
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/
 
-export const employeesRouter = os.router({
-  /** live list — every employee with supervisors + AI extension, one snapshot */
-  live: protectedProcedure.handler(() => liveGenerator(['employees'], async () => {
+const listEmployeesSnapshot = async () => {
     const rows = await db.select().from(userTable).orderBy(userTable.createdAt)
     const supRows = await db.select().from(supervisorsTable)
     const aiRows = await db.select().from(aiEmployeesTable)
@@ -45,7 +43,14 @@ export const employeesRouter = os.router({
         updatedAt: r.updatedAt.toISOString(),
       }
     })
-  })),
+  }
+
+export const employeesRouter = os.router({
+  /** live list — every employee with supervisors + AI extension, one snapshot */
+  /** plain GET list (first-load data per the SSE law) */
+  list: protectedProcedure.handler(() => listEmployeesSnapshot()),
+
+  live: protectedProcedure.handler(() => liveGenerator(['employees'], listEmployeesSnapshot)),
 
   /** create an employee AND its login user. kind=ai also mints an API key
    *  (returned once) and the AI extension row. */
@@ -248,6 +253,14 @@ export const employeesRouter = os.router({
     }),
 
   titles: {
+    list: protectedProcedure
+      .handler(async () => {
+        const rows = await db.select().from(employeeTitlesTable).orderBy(asc(employeeTitlesTable.name))
+        const counts = await db.select({ title: userTable.title, count: count() }).from(userTable).groupBy(userTable.title)
+        const byTitle = new Map(counts.map(c => [c.title, Number(c.count)]))
+        return { titles: rows.map(t => ({ id: t.id, name: t.name, employees: byTitle.get(t.name) ?? 0 })) }
+      }),
+
     live: protectedProcedure
       .handler(() => liveGenerator(['employees'], async () => {
         const rows = await db.select().from(employeeTitlesTable).orderBy(asc(employeeTitlesTable.name))

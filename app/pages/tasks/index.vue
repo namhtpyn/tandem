@@ -1,15 +1,15 @@
 <script setup lang="ts">
 // Tasks: work items for human + AI employees. Mobile-first card list with
 // status pills; editor modal follows the shared structure (body + #footer).
-import { useQuery, useMutation } from '@tanstack/vue-query'
+import { useQuery, useMutation, skipToken, useQueryClient } from '@tanstack/vue-query'
 import type { EmployeeRow, TaskRow } from '~/../shared/types'
 
 
 const { $orpc, $client } = useNuxtApp()
-const tasksLive = useQuery<TaskRow[]>(($orpc.tasks.live as any).liveOptions())
-const statusesLive = useQuery<import('~/../shared/types').TaskStatusRow[]>(($orpc.statuses.live as any).liveOptions())
-const employeesLive = useQuery<import('~/../shared/types').EmployeeRow[]>(($orpc.employees.live as any).liveOptions())
-const projectsLive = useQuery(($orpc.projects.live as any).liveOptions())
+const tasksLive = useQuery<TaskRow[]>(($orpc.tasks.list as any).queryOptions({ queryKey: ['tasks'] }))
+const statusesLive = useQuery<import('~/../shared/types').TaskStatusRow[]>(($orpc.statuses.list as any).queryOptions({ queryKey: ['statuses'] }))
+const employeesLive = useQuery<import('~/../shared/types').EmployeeRow[]>(($orpc.employees.list as any).queryOptions({ queryKey: ['employees'] }))
+const projectsLive = useQuery(($orpc.projects.list as any).queryOptions({ queryKey: ['projects'] }))
 
 const tasks = computed(() => (unref(tasksLive.data) ?? []) as TaskRow[])
 
@@ -263,72 +263,27 @@ async function save() {
 }
 
 const workflowOpen = ref(false)
-watch(workflowOpen, (open) => { if (!open) watchAbortFeed?.abort() })
 const workflowTask = ref<TaskRow | null>(null)
 const workflowNote = ref('')
 const workflowBusy = ref(false)
 const workflowMessage = ref('')
-const workflowFeed = ref<import('~/../shared/types').TaskActivityRow[]>([])
 const forwardTo = ref('__none__')
-const runFeed = ref<Array<{ id: string, status: string, output: string, exitCode: number | null, startedAt: string }>>([])
-let runStreamAbort: AbortController | null = null
-let watchAbortFeed: AbortController | null = null
 
-async function refreshRuns(taskId: string) {
-  runStreamAbort?.abort()
-  const ac = new AbortController()
-  runStreamAbort = ac
-  try {
-    const res = await fetch('/rpc/tasks/runs', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ json: { taskId } }),
-      signal: ac.signal,
-    })
-    const reader = res.body!.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    const deadline = Date.now() + 8000
-    while (Date.now() < deadline) {
-      const { value } = await reader.read()
-      buffer += decoder.decode(value!, { stream: true })
-      const m = /data:(.+)/.exec(buffer)
-      if (m) {
-        ac.abort()
-        const payload = JSON.parse(m[1]!.trim())
-        runFeed.value = (payload?.json ?? payload ?? []) as typeof runFeed.value
-        return
-      }
-    }
-    ac.abort()
-  }
-  catch { /* stream aborted or closed */ }
-}
-
-// persistent activity stream while the drawer is open (change-bus pushes new feed rows)
-async function streamActivity(taskId: string) {
-  const ac = new AbortController()
-  watchAbortFeed?.abort()
-  watchAbortFeed = ac
-  try {
-    for await (const rows of await $client.tasks.activity({ taskId }, { signal: ac.signal })) {
-      workflowFeed.value = (rows ?? []) as unknown as typeof workflowFeed.value
-    }
-  }
-  catch { /* drawer closed or transport error */ }
-}
-
-function startRunWatch(taskId: string) {
-  void refreshRuns(taskId)
-  void streamActivity(taskId)
-  // poll runs while the drawer is open (each refreshRuns aborts the previous stream — no
-  // zombie pileup; kept off a persistent runs stream because tasks/employees live queries
-  // already hold two streams and http/1.1 caps connections per origin at six)
-  const timer = setInterval(() => {
-    if (!workflowOpen.value || !workflowTask.value) clearInterval(timer)
-    else void refreshRuns(taskId)
-  }, 2000)
-}
+// ---- drawer data: conventional GETs + change-event invalidation (SSE law) ----
+// runs/activity load as plain GETs once the drawer opens (skipToken until
+// then); the app-wide changes subscription refetches them while it stays open —
+// no polling, no per-drawer SSE streams.
+const queryClient = useQueryClient()
+const drawerRunsQuery = useQuery(computed(() => ($orpc.tasks.runsList as any).queryOptions({
+  input: (workflowOpen.value && workflowTask.value ? { taskId: workflowTask.value.id } : skipToken),
+  queryKey: ['runs', (workflowOpen.value && workflowTask.value) ? workflowTask.value.id : ''],
+})))
+const runFeed = computed(() => (unref(drawerRunsQuery.data) ?? []) as unknown as Array<{ id: string, status: string, output: string, exitCode: number | null, startedAt: string }>)
+const drawerActivityQuery = useQuery(computed(() => ($orpc.tasks.activityList as any).queryOptions({
+  input: (workflowOpen.value && workflowTask.value ? { taskId: workflowTask.value.id } : skipToken),
+  queryKey: ['taskActivity', (workflowOpen.value && workflowTask.value) ? workflowTask.value.id : ''],
+})))
+const workflowFeed = computed(() => (unref(drawerActivityQuery.data) ?? []) as unknown as import('~/../shared/types').TaskActivityRow[])
 
 const retryInMin = computed(() => {
   const t = workflowTask.value
@@ -342,39 +297,6 @@ async function openWorkflow(row: TaskRow) {
   workflowNote.value = ''
   workflowMessage.value = ''
   workflowOpen.value = true
-  await refreshFeed(row.id)
-  startRunWatch(row.id)
-}
-
-async function refreshFeed(taskId: string) {
-  // activity is a live procedure (SSE): read the FIRST data event, then abort
-  try {
-    const ac = new AbortController()
-    const res = await fetch(`/rpc/tasks/activity`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ json: { taskId } }),
-      signal: ac.signal,
-    })
-    const reader = res.body!.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    const deadline = Date.now() + 8000
-    while (Date.now() < deadline) {
-      const { value } = await reader.read()
-      buffer += decoder.decode(value!, { stream: true })
-      const m = /data:(.+)/.exec(buffer)
-      if (m) {
-        ac.abort()
-        const payload = JSON.parse(m[1]!.trim())
-        workflowFeed.value = (payload?.json ?? payload ?? []) as import('~/../shared/types').TaskActivityRow[]
-        return
-      }
-    }
-    ac.abort()
-    workflowFeed.value = []
-  }
-  catch { workflowFeed.value = [] }
 }
 
 async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
@@ -384,7 +306,7 @@ async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
   try {
     await $fetch(`/rpc/tasks/${proc}`, { method: 'POST', body: { json: { taskId: workflowTask.value.id, ...extra } } })
     workflowNote.value = ''
-    await refreshFeed(workflowTask.value.id)
+    void queryClient.invalidateQueries({ queryKey: ['taskActivity', workflowTask.value.id] })
     workflowMessage.value = 'done'
   }
   catch (e) {
@@ -719,7 +641,7 @@ function statusColor(s: string) {
             <div class="space-y-2">
               <div class="flex items-center justify-between">
                 <p class="text-xs font-semibold uppercase tracking-wide text-zinc-400">Agent runs</p>
-                <UButton size="xs" variant="soft" icon="i-lucide-play" :disabled="workflowBusy || !workflowTask.assigneeKind || workflowTask.assigneeKind !== 'ai'" @click="wfAction('dispatch'); startRunWatch(workflowTask.id)">
+                <UButton size="xs" variant="soft" icon="i-lucide-play" :disabled="workflowBusy || !workflowTask.assigneeKind || workflowTask.assigneeKind !== 'ai'" @click="wfAction('dispatch')">
                   Dispatch now
                 </UButton>
               </div>

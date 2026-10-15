@@ -8,11 +8,11 @@ import { useQuery, useMutation } from '@tanstack/vue-query'
 
 const { $orpc } = useNuxtApp()
 
-const liveQuery = useQuery(($orpc as any).environments.live.liveOptions())
+const liveQuery = useQuery(($orpc.environments.list as any).queryOptions({ queryKey: ['environments'] }))
 const rows = computed<EnvironmentRow[]>(() => (unref(liveQuery.data) ?? []) as EnvironmentRow[])
 
 // vault secrets for the SSH key picker (metadata only)
-const secretsQuery = useQuery<VaultSecretRow[]>(($orpc as any).vault.live.liveOptions())
+const secretsQuery = useQuery<VaultSecretRow[]>(($orpc.vault.list as any).queryOptions({ queryKey: ['vault'] }))
 const secrets = computed<VaultSecretRow[]>(() => (unref(secretsQuery.data) ?? []) as VaultSecretRow[])
 const secretOptions = computed((): any => [
   { label: 'No key (agent default)', value: '__none__' },

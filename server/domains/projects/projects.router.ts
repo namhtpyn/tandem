@@ -11,6 +11,19 @@ import type { ProjectRow } from '../../../shared/types'
 
 export const projectsRouter = os.router({
   /** live list — flat rows; nesting resolved client-side from parentId */
+  list: protectedProcedure.handler(async (): Promise<ProjectRow[]> => {
+    const rows = await db.select().from(projectsTable).orderBy(asc(projectsTable.name))
+    return rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      status: r.status as 'active' | 'archived',
+      parentId: r.parentId,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+    }))
+  }),
+
   live: protectedProcedure.handler(() => liveGenerator(['projects'], async (): Promise<ProjectRow[]> => {
     const rows = await db.select().from(projectsTable).orderBy(asc(projectsTable.name))
     return rows.map(r => ({

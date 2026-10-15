@@ -13,6 +13,8 @@ import type { VaultAuditRow } from '../../../shared/types'
 
 export const vaultRouter = os.router({
   /** live list — metadata only; ciphertext never leaves the server */
+  list: protectedProcedure.handler(() => listVaultSecrets()),
+
   live: protectedProcedure.handler(() => liveGenerator(['vault'], listVaultSecrets)),
 
   /** audit trail, newest first */
@@ -95,6 +97,14 @@ export const vaultRouter = os.router({
     }),
 
   folders: {
+    list: protectedProcedure
+      .handler(async () => {
+        const rows = await db.select().from(vaultFoldersTable).orderBy(asc(vaultFoldersTable.name))
+        const counts = await db.select({ folderId: vaultSecretsTable.folderId, count: count() }).from(vaultSecretsTable).groupBy(vaultSecretsTable.folderId)
+        const byFolder = new Map(counts.map(c => [c.folderId, Number(c.count)]))
+        return { folders: rows.map(f => ({ id: f.id, name: f.name, secrets: byFolder.get(f.id) ?? 0 })) }
+      }),
+
     live: protectedProcedure
       .handler(() => liveGenerator(['vault'], async () => {
         const rows = await db.select().from(vaultFoldersTable).orderBy(asc(vaultFoldersTable.name))

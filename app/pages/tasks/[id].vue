@@ -4,7 +4,7 @@
 // (status, assignee, reviewers, workflow actions). Mobile-first: single column,
 // sidebar collapses into a sheet. Streams stay persistent (one per feed, aborted
 // on unmount) — see the stream law in AGENTS.md.
-import { useQuery } from '@tanstack/vue-query'
+import { useQuery, skipToken, useQueryClient } from '@tanstack/vue-query'
 import type { EmployeeRow, TaskRow } from '~/../shared/types'
 import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '~/utils/task-thread'
 import type { ThreadItem } from '~/utils/task-thread'
@@ -12,7 +12,7 @@ import type { ThreadItem } from '~/utils/task-thread'
 const route = useRoute()
 const { $orpc, $client } = useNuxtApp()
 
-const tasksLive = useQuery<TaskRow[]>(($orpc.tasks.live as any).liveOptions())
+const tasksLive = useQuery<TaskRow[]>(($orpc.tasks.list as any).queryOptions({ queryKey: ['tasks'] }))
 
 const tasks = computed(() => (unref(tasksLive.data) ?? []) as TaskRow[])
 
@@ -21,8 +21,22 @@ const task = computed(() => tasks.value.find(t => t.id === String(route.params.i
 const workflowNote = ref('')
 const workflowBusy = ref(false)
 const workflowMessage = ref('')
-const workflowFeed = ref<Array<{ id: string, kind: string, body: string, authorName: string | null, createdAt: string }>>([])
-const runFeed = ref<Array<{ id: string, status: string, output: string, exitCode: number | null, startedAt: string, outputs?: Array<{ id: string, filename: string, mime: string, size: number }> }>>([])
+
+// ---- first-load data via GET + change-event invalidation (SSE law) -----------
+// runs/activity start as a conventional GET the moment the task resolves; the
+// app-wide changes subscription refetches them whenever the server says runs or
+// activity changed. No long-lived stream is opened for initial data.
+const runsQuery = useQuery(computed(() => ($orpc.tasks.runsList as any).queryOptions({
+  input: (task.value?.id ? { taskId: task.value.id } : skipToken),
+  queryKey: ['runs', task.value?.id ?? ''],
+})))
+const runFeed = computed(() => (unref(runsQuery.data) ?? []) as unknown as Array<{ id: string, status: string, output: string, exitCode: number | null, startedAt: string, outputs?: Array<{ id: string, filename: string, mime: string, size: number }> }>)
+
+const activityQuery = useQuery(computed(() => ($orpc.tasks.activityList as any).queryOptions({
+  input: (task.value?.id ? { taskId: task.value.id } : skipToken),
+  queryKey: ['taskActivity', task.value?.id ?? ''],
+})))
+const workflowFeed = computed(() => (unref(activityQuery.data) ?? []) as unknown as Array<{ id: string, kind: string, body: string, authorName: string | null, createdAt: string }>)
 const infoSheetOpen = ref(false)
 const retryInMin = computed(() => {
   if (!task.value?.dispatchAfter) return 0
@@ -90,40 +104,6 @@ function envelopeColor(kind: string) {
   return kind === 'question' ? 'warning' : kind === 'blocked' ? 'error' : 'success'
 }
 
-// ---- persistent streams (unchanged model) ------------------------------------
-let runsAbort: AbortController | null = null
-let feedAbort: AbortController | null = null
-
-async function streamRuns(taskId: string, signal: AbortSignal) {
-  try {
-    for await (const rows of await $client.tasks.runs({ taskId }, { signal })) {
-      runFeed.value = (rows ?? []) as unknown as typeof runFeed.value
-    }
-  }
-  catch { /* aborted or transport error — stopped below */ }
-}
-
-async function streamFeed(taskId: string, signal: AbortSignal) {
-  try {
-    for await (const rows of await $client.tasks.activity({ taskId }, { signal })) {
-      workflowFeed.value = (rows ?? []) as unknown as typeof workflowFeed.value
-    }
-  }
-  catch { /* aborted or transport error — stopped below */ }
-}
-
-async function refreshFeed(taskId: string) {
-  // one-shot fallback after a workflow action (stream picks up the change too, but the
-  // immediate refresh keeps the UI snappy)
-  try {
-    for await (const rows of await $client.tasks.activity({ taskId })) {
-      workflowFeed.value = (rows ?? []) as unknown as typeof workflowFeed.value
-      return
-    }
-  }
-  catch { /* best-effort */ }
-}
-
 async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
   if (!task.value) return
   workflowBusy.value = true
@@ -131,7 +111,7 @@ async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
   try {
     await $fetch(`/rpc/tasks/${proc}`, { method: 'POST', body: { json: { taskId: task.value.id, ...extra } } })
     workflowNote.value = ''
-    await refreshFeed(task.value.id)
+    void queryClient.invalidateQueries({ queryKey: ['taskActivity', task.value.id] })
     workflowMessage.value = 'done'
   }
   catch (e) {
@@ -144,7 +124,7 @@ async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
 }
 
 // ---- subtasks, agent proposals, assignment history ---------------------------
-const employeesLive = useQuery(($orpc.employees.live as any).liveOptions())
+const employeesLive = useQuery(($orpc.employees.list as any).queryOptions({ queryKey: ['employees'] }))
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[])
 const employeeName = computed(() => new Map(employees.value.map(e => [e.id, e.name])))
 
@@ -200,7 +180,8 @@ async function decideProposal(id: string, action: 'confirmProposal' | 'rejectPro
     const r = await $fetch(`/rpc/tasks/${action}`, { method: 'POST', body: { json: { proposalId: id } } }) as { json: { events?: string[] } }
     proposalMessage.value = r.json.events?.length ? r.json.events.join('; ') : 'done'
     await refreshRoutingPanels(task.value!.id)
-    await refreshFeed(task.value!.id)
+    void queryClient.invalidateQueries({ queryKey: ['taskActivity', task.value!.id] })
+    void queryClient.invalidateQueries({ queryKey: ['runs', task.value!.id] })
   }
   catch (e) {
     proposalMessage.value = (e as { data?: { json?: { message?: string } }, message?: string }).data?.json?.message ?? (e as Error).message
@@ -218,28 +199,7 @@ const assignmentLines = computed(() => {
   })
 })
 
-function startStreams() {
-  const id = task.value?.id
-  if (!id) return
-  runsAbort = new AbortController()
-  feedAbort = new AbortController()
-  void streamRuns(id, runsAbort.signal)
-  void streamFeed(id, feedAbort.signal)
-}
-
-function stopStreams() {
-  runsAbort?.abort()
-  feedAbort?.abort()
-  runsAbort = null
-  feedAbort = null
-}
-
-onMounted(startStreams)
-onBeforeUnmount(stopStreams)
-watch(() => task.value?.id, (id, old) => {
-  stopStreams()
-  if (id && id !== old) startStreams()
-})
+const queryClient = useQueryClient()
 
 useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · Tandem' })
 </script>

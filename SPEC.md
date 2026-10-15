@@ -97,9 +97,21 @@ better-auth's own `/auth/**` protocol and the `/health/*` infra probes. Rules:
 
 - every mutating procedure publishes to the in-process change bus
   (`server/utils/change-bus.ts`, MemoryPublisher) after commit
-- list endpoints are **live generators**: initial snapshot, then re-emitted
-  snapshots on matching change events, streamed to clients as SSE
-  (`text/event-stream`) — the UI never polls or invalidates
+- **SSE law — streams only update an already-loaded page.** INITIAL page-load
+  data always comes from a conventional GET: every live domain also ships a
+  plain `list` procedure (`tasks.list`, `tasks.runsList`, `tasks.activityList`,
+  `statuses.list`, `settings.list`, `oidc.list`, `providers.list`,
+  `projects.list`, `environments.list`, `employees.list`,
+  `employees.titles.list`, `vault.list`, `vault.folders.list`, `auth.config`)
+  and pages mount those via `queryOptions`. After load, one app-wide SSE
+  channel `changes.live` streams `{resource, action}` change events (no data);
+  `app/composables/useChangeEvents.ts` (mounted once in `app.vue`) holds that
+  connection (client-only, 2s reconnect backoff, aborted on scope teardown) and
+  invalidates the matching TanStack Query prefix `['<resource>']`, so the
+  invalidated GET queries refetch. Live generators (`*.live`: initial snapshot
+  then re-emitted snapshots on matching change events, SSE
+  `text/event-stream`) remain the streaming transport available for post-load
+  consumers — no page opens a live stream as its data source anymore
 - session context: lazy `getSession()` from better-auth per request (cookie
   headers forwarded); `UNAUTHORIZED` (401) for anonymous calls via middleware
 - procedure errors map to oRPC codes: `CONFLICT` 409 duplicate name,
@@ -113,6 +125,8 @@ better-auth's own `/auth/**` protocol and the `/health/*` infra probes. Rules:
 | procedure | auth | input | result |
 |---|---|---|---|
 | `meta.version` | none | — | `{version}` |
+| `changes.live` | session | — | SSE stream of `{resource, action}` change events (post-load invalidation only — never carries data) |
+| `auth.config` | none | — | plain GET `{passwordEnabled, oidcEnabled, providers:[{id,label}]}` |
 | `auth.configLive` | none | — | live `{passwordEnabled, oidcEnabled, providers:[{id,label}]}` |
 | `auth.session` | none | — | session payload or null |
 | `settings.live` | session | — | live `{disablePasswordLogin}` |
@@ -195,7 +209,7 @@ secrets are never returned.
 | GET | `/api/attachments/:id` | session | serve attachment bytes (etag = sha256, 304 revalidation) |
 | GET | `/` | none | 302 → `/admin` |
 | GET | `/tasks` | session | task list/board (mobile-first cards; titles link to the task page) |
-| GET | `/tasks/:id` | session | task info page: header + workflow actions + agent runs (full output) + activity feed; polls runs/feed every 2s while open |
+| GET | `/tasks/:id` | session | task info page: header + workflow actions + agent runs (full output) + activity feed; data loads via GET procs and refetches on change events |
 
 ## Testing contract
 

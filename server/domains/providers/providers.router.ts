@@ -13,6 +13,11 @@ import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } fro
 
 export const providersRouter = os.router({
   /** live model-provider catalog (connection info only — no keys, no models) */
+  list: protectedProcedure.handler(async () => {
+    const { listModelProviders } = await import('./model-providers.service')
+    return await listModelProviders()
+  }),
+
   live: protectedProcedure.handler(() => liveGenerator(['providers'], async () => {
     const { listModelProviders } = await import('./model-providers.service')
     return await listModelProviders()

@@ -4,6 +4,7 @@ import { os } from '@orpc/server'
 // X.router.ts (+ X.service.ts when logic outgrows the handlers) + registration
 // here.
 import { metaRouter } from './meta/meta.router'
+import { changesRouter } from './changes/changes.router'
 import { authRouter } from './auth/auth.router'
 import { settingsRouter } from './settings/settings.router'
 import { oidcRouter } from './oidc/oidc.router'
@@ -17,6 +18,7 @@ import { vaultRouter } from './vault/vault.router'
 
 export const appRouter = os.router({
   meta: metaRouter,
+  changes: changesRouter,
   auth: authRouter,
   settings: settingsRouter,
   oidc: oidcRouter,

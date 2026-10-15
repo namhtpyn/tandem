@@ -8,8 +8,8 @@ import type { VaultAuditRow, VaultSecretRow } from '~/../shared/types'
 const { $orpc } = useNuxtApp()
 const queryClient = useQueryClient()
 
-const liveQuery = useQuery<VaultSecretRow[]>(($orpc.vault.live as any).liveOptions())
-const foldersQuery = useQuery(($orpc.vault.folders.live as any).liveOptions())
+const liveQuery = useQuery<VaultSecretRow[]>(($orpc.vault.list as any).queryOptions({ queryKey: ['vault'] }))
+const foldersQuery = useQuery(($orpc.vault.folders.list as any).queryOptions({ queryKey: ['vault', 'folders'] }))
 const folders = computed(() => (foldersQuery.data.value as { folders: Array<{ id: string, name: string, secrets: number }> } | undefined)?.folders ?? [])
 
 // ---- folder filter chip row ----

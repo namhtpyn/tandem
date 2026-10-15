@@ -10,13 +10,14 @@ const { $client } = useNuxtApp()
 const sess = await $client.auth.session()
 if (sess) session.value = sess as unknown as typeof session.value
 
-// configLive is an async-iterator object — take only its first snapshot for
-// the SSR-shared state (plain POJO, devalue-serializable); the login screen
-// is static so a live stream here buys nothing.
-const configIter = await $client.auth.configLive()
-const first = await configIter.next()
-await configIter.return?.()
-authConfig.value = (first.value ?? null) as unknown as typeof authConfig.value
+// plain GET (SSE law: initial data comes from conventional queries; the
+// change-events subscription below refetches when auth-affecting settings/oidc
+// change). Plain POJO, devalue-serializable.
+authConfig.value = (await $client.auth.config()) as unknown as typeof authConfig.value
+
+// SSE law enforcement: GET queries carry first-load data; this subscription
+// only invalidates them after the page is loaded.
+useChangeEvents()
 
 const v = await $client.meta.version()
 if (v.version) appVersion.value = v.version

@@ -15,8 +15,8 @@ interface OidcProviderRow {
 
 const { $orpc, $client } = useNuxtApp()
 
-const oidcLive = useQuery(($orpc as any).oidc.live.liveOptions())
-const providersLive = useQuery(($orpc as any).providers.live.liveOptions())
+const oidcLive = useQuery(($orpc.oidc.list as any).queryOptions({ queryKey: ['oidc'] }))
+const providersLive = useQuery(($orpc.providers.list as any).queryOptions({ queryKey: ['providers'] }))
 const mProvList = computed(() => (unref(providersLive.data) ?? []) as Array<{ id: string, label: string, baseUrl: string, endpoints: string[], extraHeaders: Record<string, string> | null, notes: string | null }>)
 
 const mProvEditorOpen = ref(false)
@@ -87,7 +87,7 @@ async function removeMProv(id: string) {
   }
 }
 
-const settingsLive = useQuery(($orpc as any).settings.live.liveOptions())
+const settingsLive = useQuery(($orpc.settings.list as any).queryOptions({ queryKey: ['settings'] }))
 
 const providers = computed<OidcProviderRow[]>(() => ((unref(oidcLive.data) ?? []) as Array<{ id: string, label: string, issuer: string, clientId: string, hasSecret: boolean }>)
   .map(p => ({ id: p.id, label: p.label, issuer: p.issuer, clientId: p.clientId, secretSet: p.hasSecret })))
@@ -95,7 +95,7 @@ const providers = computed<OidcProviderRow[]>(() => ((unref(oidcLive.data) ?? []
 const disablePasswordLogin = ref(false)
 const companyName = ref('Tandem')
 // ---- Workspace AI: internal LLM + decision assignments ----
-const vaultLive = useQuery(($orpc as any).vault.live.liveOptions())
+const vaultLive = useQuery(($orpc.vault.list as any).queryOptions({ queryKey: ['vault'] }))
 const vaultItems = computed((): any => groupedSecretOptions(((unref(vaultLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string, folder: string | null }>)))
 interface AiAssignmentForm { providerId: string | null, model: string, keySecretId: string | null }
 const llmForm = reactive<AiAssignmentForm>({ providerId: null, model: '', keySecretId: null })

@@ -8,12 +8,17 @@ import {
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 
+async function getSettingsSnapshot() {
+  const { getSettings } = await import('./settings.service')
+  return await getSettings()
+}
+
 export const settingsRouter = os.router({
+  /** plain GET (first-load data per the SSE law) */
+  list: protectedProcedure.handler(() => getSettingsSnapshot()),
+
   /** live app settings */
-  live: protectedProcedure.handler(() => liveGenerator(['settings'], async () => {
-    const { getSettings } = await import('./settings.service')
-    return await getSettings()
-  })),
+  live: protectedProcedure.handler(() => liveGenerator(['settings'], getSettingsSnapshot)),
 
   /** update settings (strict input) */
   update: protectedProcedure

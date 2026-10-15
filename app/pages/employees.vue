@@ -10,10 +10,10 @@ import { useQuery, useMutation } from '@tanstack/vue-query'
 
 const { $orpc, $client } = useNuxtApp()
 
-const liveQuery = useQuery(($orpc as any).employees.live.liveOptions())
+const liveQuery = useQuery(($orpc.employees.list as any).queryOptions({ queryKey: ['employees'] }))
 const rows = computed<EmployeeRow[]>(() => (unref(liveQuery.data) ?? []) as EmployeeRow[])
 
-const envQuery = useQuery(($orpc as any).environments.live.liveOptions())
+const envQuery = useQuery(($orpc.environments.list as any).queryOptions({ queryKey: ['environments'] }))
 const environments = computed<EnvironmentRow[]>(() => (unref(envQuery.data) ?? []) as EnvironmentRow[])
 
 const byId = computed(() => new Map(rows.value.map(r => [r.id, r])))
@@ -158,7 +158,7 @@ const revokeKeyMutation = useMutation<any, any, any>(($orpc as any).employees.re
 const listKeysCall = ($orpc as any).employees.listApiKeys.call
 
 // ---- editor ----
-const titlesQuery = useQuery(($orpc.employees.titles.live as any).liveOptions())
+const titlesQuery = useQuery(($orpc.employees.titles.list as any).queryOptions({ queryKey: ['employees', 'titles'] }))
 const titles = computed(() => (titlesQuery.data.value as { titles: Array<{ id: string, name: string, employees: number }> } | undefined)?.titles ?? [])
 
 // ---- titles manager modal (statuses-style) ----
@@ -252,7 +252,7 @@ const supervisorItems = computed(() =>
     .map(r => ({ label: r.name, value: r.id })),
 )
 
-const providersLive = useQuery(($orpc as any).providers.live.liveOptions())
+const providersLive = useQuery(($orpc.providers.list as any).queryOptions({ queryKey: ['providers'] }))
 const modelProviders = computed(() => ((unref(providersLive.data) ?? []) as Array<{ id: string, label: string, endpoints: string[] }>).filter(p => (p.endpoints ?? []).some(st => endpointKind(st) === PROVIDER_KIND.LLM)))
 const modelItems = ref<string[]>([])
 const modelLoading = ref(false)
@@ -276,7 +276,7 @@ watch([() => form.providerId, () => form.apiKeySecretId], async ([providerId, ke
     modelLoading.value = false
   }
 }, { immediate: false })
-const secretsLive = useQuery(($orpc as any).vault.live.liveOptions())
+const secretsLive = useQuery(($orpc.vault.list as any).queryOptions({ queryKey: ['vault'] }))
 const secretItems = computed((): any => groupedSecretOptions(((unref(secretsLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string, folder: string | null }>)))
 const environmentItems = computed(() =>
   environments.value.map(e => ({ label: e.name, value: e.id })),
