@@ -42,8 +42,12 @@ async function createHub(): Promise<RedisHub> {
   const subs: Array<InstanceType<typeof Redis>> = []
   const pubs: Array<InstanceType<typeof Redis>> = []
 
-  // fail fast: verify the connection works before handing out the hub
-  const ping = new Redis(redisUrl(), { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 1500 })
+  // fail fast: verify the connection works before handing out the hub.
+  // retryStrategy null + a swallowed error listener: a dead endpoint must
+  // reject once and leave NOTHING retrying in the background (unhandled
+  // 'error' events at process exit otherwise).
+  const ping = new Redis(redisUrl(), { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 1500, retryStrategy: () => null })
+  ping.on('error', () => {})
   try {
     await ping.connect()
     await ping.ping()

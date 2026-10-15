@@ -97,6 +97,8 @@ const rows = await listRuns(taskId)
         id: r.id,
         taskId: r.taskId,
         employeeId: r.employeeId,
+        // `?? null` unreachable by FK (employee_id references user.id) — defensive only
+        /* v8 ignore next */
         agentTitle: r.employeeId ? (titleById.get(r.employeeId) ?? null) : null,
         // `?? null` is unreachable by FK (employee_id references user.id) — defensive only
         /* v8 ignore next */

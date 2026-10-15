@@ -297,7 +297,13 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
       // late lines are dropped (their content is already in finish's tail write)
       void db.update(taskRuns).set({ output: tail(buffer) }).where(and(eq(taskRuns.id, runId), eq(taskRuns.status, 'running')))
         .then(() => publishChange('runs', 'update'))
-        .finally(() => { flushing = false }) // flush is best-effort; finish() writes the final tail
+        // flush is best-effort; finish() writes the final tail. A late flush can
+        // race teardown (test DB drops, shutdown) — swallow, never an unhandled rejection.
+        .catch(
+          // v8 ignore next 2
+          () => {},
+        )
+        .finally(() => { flushing = false })
     }
   }
 
