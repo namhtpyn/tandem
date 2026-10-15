@@ -1,3 +1,10 @@
+## [2.27.2](https://github.com/namhtpyn/tandem/compare/v2.27.1...v2.27.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **task page:** result shows as the agent's chat bubble; dispatch note precedes the run ([bb92e54](https://github.com/namhtpyn/tandem/commit/bb92e549bfe37a524ec72c1d0852b460d26328cb))
+
 ## [2.27.1](https://github.com/namhtpyn/tandem/compare/v2.27.0...v2.27.1) (2026-10-15)
 
 
