@@ -9,3 +9,7 @@ package-lock.json
 coverage
 test-results
 playwright-report
+.vitest
+qa-shots
+mockprobe.mjs
+*.log

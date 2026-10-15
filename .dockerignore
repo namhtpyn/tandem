@@ -17,3 +17,8 @@ SPEC.md
 Makefile
 .vscode
 .idea
+qa-shots
+.vitest
+coverage
+data
+*.log
