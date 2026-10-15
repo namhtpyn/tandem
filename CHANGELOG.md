@@ -1,3 +1,10 @@
+## [2.23.1](https://github.com/namhtpyn/tandem/compare/v2.23.0...v2.23.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **vault:** TANDEM_VAULT_KEY is required — drop the hardcoded dev fallback ([11647ab](https://github.com/namhtpyn/tandem/commit/11647abb3b80d4ecfd96fc04068730afba8efacc))
+
 # [2.23.0](https://github.com/namhtpyn/tandem/compare/v2.22.2...v2.23.0) (2026-10-15)
 
 
