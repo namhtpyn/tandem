@@ -61,8 +61,15 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
   without an explicit user decision.
 - **oRPC v2 app-wide.** Only `/auth/**` (better-auth protocol) and `/health/*`
   (infra probes) may be plain REST. Everything else is an oRPC procedure.
-- **Everything realtime.** Live queries + SSE change-bus; every screen reflects
-  mutations from any client without reload.
+- **Everything realtime — but SSE never serves the first load.** Live queries +
+  SSE change-bus update every screen after mount without reload. The INITIAL data
+  on first page load ALWAYS comes from a conventional GET query
+  (`orpc.<x>.list.queryOptions`) — prefetchable, cacheable, SSR-safe. SSE
+  (`liveOptions` = latest-event-replaces, `streamedOptions` = events-append, per
+  orpc.dev/docs/integrations/tanstack-query) is only the post-load updater; never
+  the primary fetch. If a streamed/live query is kept open client-side, follow the
+  oRPC SSR pattern: cancel streams on success during SSR (dehydrate the snapshot)
+  and `refetchOnMount: 'always'` on the client to reopen the stream.
 - **Bun Shell for all subprocess** (multi-OS support law).
 - **Postgres, never SQLite.** better-auth tables are ALWAYS CLI-generated
   (`bun run gen:auth`); never hand-edit inside the GENERATED markers.
