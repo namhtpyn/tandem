@@ -1,3 +1,10 @@
+# [2.24.0](https://github.com/namhtpyn/tandem/compare/v2.23.2...v2.24.0) (2026-10-15)
+
+
+### Features
+
+* **ui:** desktop-sized modals via app-wide UModal theme override ([2b03a01](https://github.com/namhtpyn/tandem/commit/2b03a01f7f79765a9d2c2b5dd80bf07935c288f0))
+
 ## [2.23.2](https://github.com/namhtpyn/tandem/compare/v2.23.1...v2.23.2) (2026-10-15)
 
 
