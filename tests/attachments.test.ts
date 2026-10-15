@@ -1,8 +1,20 @@
 // Attachments util — pure parts: tokens, mime allowlist, filename sanitizing.
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   extractAttachmentIds, mimeAllowed, normalizeMime, sanitizeFilename, stripAttachments,
 } from '../server/domains/tasks/attachments.util'
+
+describe('ATTACHMENTS_DIR default', () => {
+  it('defaults under /tandem/** when the env is unset (env still wins)', async () => {
+    const saved = process.env.TANDEM_ATTACHMENTS_DIR
+    delete process.env.TANDEM_ATTACHMENTS_DIR
+    vi.resetModules()
+    const mod = await import('../server/domains/tasks/attachments.util')
+    expect(mod.ATTACHMENTS_DIR).toBe('/tandem/attachments')
+    if (saved) process.env.TANDEM_ATTACHMENTS_DIR = saved
+    vi.resetModules()
+  })
+})
 
 describe('extractAttachmentIds', () => {
   it('collects image and file tokens', () => {

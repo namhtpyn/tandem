@@ -7,6 +7,11 @@ import { db } from '../db'
 import { user, account } from '../db/schema'
 import { applyMigrations } from '../db'
 
+// Bun.serve idle timeout, in the code (was stack env). 255s = Bun's max: without it
+// the default (10s) kills idle SSE feeds mid-stream. Runs before Bun.serve reads it
+// (plugins init before the serve call in the generated entry). Env still wins if set.
+process.env.NITRO_BUN_IDLE_TIMEOUT ||= '255'
+
 export default defineNitroPlugin(async () => {
   const applied = await applyMigrations()
   if (applied.length > 0) console.log('[tandem] applied migrations:', applied.join(', '))

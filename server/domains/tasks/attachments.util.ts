@@ -1,12 +1,13 @@
 // Task attachments: metadata rows in tandem_task_attachments, bytes on disk under
-// TANDEM_ATTACHMENTS_DIR (default ./data/attachments — a persistent volume in docker).
+// TANDEM_ATTACHMENTS_DIR (default /tandem/attachments — all Tandem data lives
+// under /tandem/**; mount one volume there in docker).
 // Two kinds: 'input' (uploaded by a human into the task description) and 'output'
 // (collected from the agent sandbox after a run).
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
-export const ATTACHMENTS_DIR = process.env.TANDEM_ATTACHMENTS_DIR || join(process.cwd(), 'data', 'attachments')
+export const ATTACHMENTS_DIR = process.env.TANDEM_ATTACHMENTS_DIR || join('/tandem', 'attachments')
 
 export const ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024 // 20MB per input upload
 export const COLLECTION_MAX_BYTES = 50 * 1024 * 1024 // 50MB total collected output per run

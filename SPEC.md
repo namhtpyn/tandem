@@ -37,9 +37,10 @@ task_proposals(id, task_id cascade, run_id cascade, kind: subtasks|reassign, pay
 seeded statuses add blocked (paused; next: todo) and cancelled/abandoned (cancelled-category terminals; abandonReview lands on abandoned)
 tasks page: "Needs my decision" toggle (badge = pending obligations on the current user) filters the list/board to inbox tasks
 dispatcher: scans ready-category statuses; per-agent serial dispatch; run logs tail 100 lines
-task_attachments(id, task_id -> tasks.id cascade, run_id, kind: input|output, filename, mime, size, sha256, created_by, created_at); bytes on disk under TANDEM_ATTACHMENTS_DIR (default ./data/attachments)
+task_attachments(id, task_id -> tasks.id cascade, run_id, kind: input|output, filename, mime, size, sha256, created_by, created_at); bytes on disk under TANDEM_ATTACHMENTS_DIR (default /tandem/attachments — all Tandem data lives under /tandem/**)
 attachments flow: inputs upload via REST multipart (20MB cap, MIME allowlist png/jpeg/webp/gif/pdf/txt/md/csv/json/zip), token `![name](attachment-<id>)` / `@[name](attachment-<id>)` embedded in description; dispatch pushes inputs over SFTP to /opt/data/task-files/<taskId>/ (chowned to the agent uid) and lists them in the brief; agent deliverables left in out/ are collected back post-run (50MB cap) as kind='output' rows under their run; the sandbox task dir is removed once no run of the task is running; serve route GET /api/attachments/:id honors etag (sha256) revalidation
 redis (REDIS_URL, optional): bullmq queue 'tandem-dispatch' (retries/backoff) + pub/sub change-bus fanout + cache; unset = in-process fallback
+bun serve: NITRO_BUN_IDLE_TIMEOUT defaults to 255 (code, boot plugin — Bun's max; default 10s would kill idle SSE feeds); env can override
 resilience: tasks.dispatch_after + fail_streak (backoff ladder 1m/5m/15m, quota -> 15m); reaper fails stale running rows past TANDEM_RUN_TIMEOUT_MS+grace; ssh keepalive 15s
 ```
 
