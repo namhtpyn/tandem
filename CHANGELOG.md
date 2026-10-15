@@ -1,3 +1,10 @@
+# [2.26.0](https://github.com/namhtpyn/tandem/compare/v2.25.2...v2.26.0) (2026-10-15)
+
+
+### Features
+
+* **realtime:** SSE law — initial data via conventional GET procs; SSE only updates after load ([ac0b7c9](https://github.com/namhtpyn/tandem/commit/ac0b7c94b4bd2bce28d2b6c6ec84451f1f7d48c0))
+
 ## [2.25.2](https://github.com/namhtpyn/tandem/compare/v2.25.1...v2.25.2) (2026-10-15)
 
 
