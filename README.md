@@ -30,7 +30,7 @@ Tandem needs Postgres and Redis. Save as `compose.yaml` and `docker compose up -
 ```yaml
 services:
   tandem:
-    image: ghcr.io/namhtpyn/tandem:2.25.1
+    image: ghcr.io/namhtpyn/tandem:latest
     restart: always
     ports:
       - "3000:3000"
