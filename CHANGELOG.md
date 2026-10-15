@@ -1,3 +1,10 @@
+## [2.27.1](https://github.com/namhtpyn/tandem/compare/v2.27.0...v2.27.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **task page:** mobile layout + mention rendering ([9dee960](https://github.com/namhtpyn/tandem/commit/9dee960bedd8678f40e2fa0ff0aafb17823499b2))
+
 # [2.27.0](https://github.com/namhtpyn/tandem/compare/v2.26.0...v2.27.0) (2026-10-15)
 
 
