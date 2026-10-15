@@ -1,3 +1,10 @@
+# [2.23.0](https://github.com/namhtpyn/tandem/compare/v2.22.2...v2.23.0) (2026-10-15)
+
+
+### Features
+
+* **tasks:** task routing — pending obligations, assignee ledger, subtasks with parent gating, agent routing proposals ([95cfbd9](https://github.com/namhtpyn/tandem/commit/95cfbd9b1d0f859ae9e3201a47a93f8e04ab8477))
+
 ## [2.22.2](https://github.com/namhtpyn/tandem/compare/v2.22.1...v2.22.2) (2026-10-15)
 
 
