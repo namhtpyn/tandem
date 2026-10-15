@@ -1,3 +1,10 @@
+# [2.25.0](https://github.com/namhtpyn/tandem/compare/v2.24.0...v2.25.0) (2026-10-15)
+
+
+### Features
+
+* **runner:** dispatch via ACP v1 — one session per task; per-task attachment paths ([4078b31](https://github.com/namhtpyn/tandem/commit/4078b31727d3af9efe10388ba9fc5cb203619ebb))
+
 # [2.24.0](https://github.com/namhtpyn/tandem/compare/v2.23.2...v2.24.0) (2026-10-15)
 
 
