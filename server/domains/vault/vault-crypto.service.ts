@@ -1,20 +1,22 @@
 // Vault crypto: AES-256-GCM envelope encryption for tandem secrets.
 //
-// Key source (first match wins):
-//   1. TANDEM_VAULT_KEY  — 32-byte key, base64 (prod; stack .env)
-//   2. dev fallback      — a fixed dev key (so local runs work out of the box)
+// TANDEM_VAULT_KEY is REQUIRED — 32-byte key, base64. No hardcoded fallback:
+// a key shipped in the repo is a key everyone has. Generate one with
+// `openssl rand -base64 32` (or generateVaultKeyB64()) and put it in the
+// stack env. Losing it loses every stored secret — back it up.
 //
 // Ciphertext format: v1:<b64 iv>:<b64 authTag>:<b64 ciphertext>
 // The key NEVER ships to the client; decrypt() is server-import-only.
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 
-const DEV_KEY_B64 = 'CLgFJRHCwSJSPVBEMfvPoZFURelQheO6XqlKr3PUPGc=' // sha256('dev-only-vault-dev-key-do-not-use-in-prod')
-
 let cachedKey: Buffer | null = null
 
 export function getVaultKey(): Buffer {
   if (cachedKey) return cachedKey
-  const b64 = process.env.TANDEM_VAULT_KEY || DEV_KEY_B64
+  const b64 = process.env.TANDEM_VAULT_KEY
+  if (!b64) {
+    throw new Error('TANDEM_VAULT_KEY is required — set it to a 32-byte base64 key (openssl rand -base64 32)')
+  }
   const key = Buffer.from(b64, 'base64')
   if (key.length !== 32) {
     throw new Error(`TANDEM_VAULT_KEY must decode to 32 bytes (got ${key.length})`)

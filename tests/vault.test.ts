@@ -89,7 +89,11 @@ describe('vault-crypto (module)', () => {
     process.env.TANDEM_VAULT_KEY = fresh
     mod.resetVaultKeyCache()
     expect(mod.getVaultKey()).toHaveLength(32)
+    // REQUIRED: no env -> hard throw, never a fallback key
     delete process.env.TANDEM_VAULT_KEY
+    mod.resetVaultKeyCache()
+    expect(() => mod.getVaultKey()).toThrowError(/TANDEM_VAULT_KEY is required/)
+    process.env.TANDEM_VAULT_KEY = fresh
     mod.resetVaultKeyCache()
   })
 

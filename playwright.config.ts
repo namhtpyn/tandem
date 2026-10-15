@@ -18,7 +18,7 @@ export default defineConfig({
   webServer: process.env.TANDEM_E2E_NO_SERVER
     ? undefined
     : {
-        command: `PORT=4100 TANDEM_FAKE_RUNNER=1 TANDEM_PUBLIC_URL=http://localhost:4100 DATABASE_URL=${process.env.TANDEM_E2E_DATABASE_URL || 'postgresql://tandem:tandem@127.0.0.1:55432/tandem_e2e'} bun .output/server/index.mjs`,
+        command: `PORT=4100 TANDEM_FAKE_RUNNER=1 TANDEM_PUBLIC_URL=http://localhost:4100 TANDEM_VAULT_KEY=${process.env.TANDEM_E2E_VAULT_KEY || Buffer.alloc(32, 7).toString('base64')} DATABASE_URL=${process.env.TANDEM_E2E_DATABASE_URL || 'postgresql://tandem:tandem@127.0.0.1:55432/tandem_e2e'} bun .output/server/index.mjs`,
         env: {
           // faster e2e logins: session cookie injected via better-auth test-utils
           // (helpers/login.ts fast path); TANDEM_E2E_FAST_LOGIN=0 forces the UI form

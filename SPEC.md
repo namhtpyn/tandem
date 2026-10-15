@@ -54,6 +54,10 @@ ssh -p <port> <user>@<host> hermes chat -q --query-file - --format stream-json
 - the `result` event finalizes the run row
 - one run at active per environment at a time (serial queue)
 
+## Vault key law
+
+- `TANDEM_VAULT_KEY` is REQUIRED (32-byte base64, `openssl rand -base64 32`); there is NO hardcoded fallback — a key shipped in the repo is a key everyone has. Wrong size or missing key throws at first use with a clear message. Losing the key loses every stored secret.
+
 ## Auth
 
 - better-auth + drizzle adapter; canonical tables `tandem_user`, `tandem_session`, `tandem_account`, `tandem_verification`
@@ -73,7 +77,11 @@ ssh -p <port> <user>@<host> hermes chat -q --query-file - --format stream-json
 - admin manages the OIDC provider set at runtime (secrets live in the registry, never returned by `oidc.live` (only `hasSecret: true`)
 - env fallback: exactly ONE provider (TANDEM_OIDC_ISSUER/_CLIENT_ID/_CLIENT_SECRET/_LABEL), used only when no stored registry exists
 
-### Auth policy
+### Vault key law
+
+- `TANDEM_VAULT_KEY` is REQUIRED (32-byte base64, `openssl rand -base64 32`); there is NO hardcoded fallback — a key shipped in the repo is a key everyone has. Wrong size or missing key throws at first use with a clear message. Losing the key loses every stored secret.
+
+## Auth policy
 
 - `passwordEnabled = !(settings.disablePasswordLogin)`
 - `oidcEnabled = providers.length > 0`

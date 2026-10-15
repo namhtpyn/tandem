@@ -53,6 +53,7 @@ only on a fresh database — never on restarts.
 | `REDIS_URL` | no | Redis for durable dispatch queue, multi-replica live updates, and cache; unset = single-process mode |
 | `TANDEM_RUN_TIMEOUT_MS` | no | hard cap on one agent run (default 30 min) |
 | `TANDEM_ATTACHMENTS_DIR` | no | where attachment bytes live (default `./data/attachments` — mount a volume in Docker) |
+| `TANDEM_VAULT_KEY` | **yes** | 32-byte base64 key for vault envelope encryption — REQUIRED, no fallback (`openssl rand -base64 32`); losing it loses every stored secret |
 | `TANDEM_OIDC_ISSUER` + `_CLIENT_ID` + `_CLIENT_SECRET` (+ `_LABEL`) | no | env-fallback single OIDC provider; more via admin UI |
 
 Migrations apply at boot (bundled with the server; no CLI step).
