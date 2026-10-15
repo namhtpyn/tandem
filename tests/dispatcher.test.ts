@@ -695,6 +695,16 @@ describe('dispatcher', () => {
     const handle = await dispatchTask(t.id, 'http://tandem.local')
     const r = await handle.finished
     expect(r.status).toBe('done') // fake runner succeeds; failure path exercised in service unit below
+    // the 'dispatched to' note must sort BEFORE the run card: it is created before
+    // the run row exists, so its createdAt is strictly under the run's startedAt
+    const { db } = await dbm()
+    const { taskActivity: ta } = await schema()
+    const notes = (await db.select().from(ta)).filter(x => x.taskId === t.id)
+    const dispatchNote = notes.find(n => (n.meta as Record<string, unknown> | null)?.dispatched === true)
+    const { taskRuns: tr } = await schema()
+    const run0 = (await db.select().from(tr)).find(x => x.taskId === t.id)!
+    expect(dispatchNote).toBeTruthy()
+    expect(dispatchNote!.createdAt.getTime()).toBeLessThan(run0.startedAt.getTime())
     void r
   }, 10_000)
 })
