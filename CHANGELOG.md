@@ -1,3 +1,10 @@
+## [2.27.4](https://github.com/namhtpyn/tandem/compare/v2.27.3...v2.27.4) (2026-10-15)
+
+
+### Bug Fixes
+
+* **task page:** the brief bubble is authored by the task creator, not 'Task brief' ([f38b4f4](https://github.com/namhtpyn/tandem/commit/f38b4f49641e03c264b0b398929dd794e5e59ac3))
+
 ## [2.27.3](https://github.com/namhtpyn/tandem/compare/v2.27.2...v2.27.3) (2026-10-15)
 
 
