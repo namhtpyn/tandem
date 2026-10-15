@@ -86,6 +86,7 @@ export interface TaskRow {
   /** consecutive failed runs; resets on success */
   failStreak: number
   createdBy: string | null
+  creatorName: string | null
   createdAt: string
   updatedAt: string
 }

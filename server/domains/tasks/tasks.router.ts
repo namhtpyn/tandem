@@ -73,6 +73,7 @@ const listTasksSnapshot = async (): Promise<TaskRow[]> => {
       ownerName: nameById.get(r.ownerId ?? r.createdBy ?? '') ?? null,
       reviewers: r.reviewers,
       reviewerNames: r.reviewers.map(id => nameById.get(id) ?? id),
+      creatorName: nameById.get(r.createdBy ?? '') ?? null,
       reviewApprovals: approvalsByTask.get(r.id) ?? [],
       questionHolderId: holders.get(r.id) ?? null,
       questionHolderName: (holders.get(r.id) && nameById.get(holders.get(r.id)!)) || null,

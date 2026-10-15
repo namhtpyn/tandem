@@ -38,6 +38,9 @@ const activityQuery = useQuery(computed(() => ($orpc.tasks.activityList as any).
 })))
 const workflowFeed = computed(() => (unref(activityQuery.data) ?? []) as unknown as Array<{ id: string, kind: string, body: string, authorName: string | null, createdAt: string }>)
 const infoSheetOpen = ref(false)
+// the task creator opens the thread as the brief's author
+const briefAuthor = computed(() => task.value?.creatorName ?? null)
+
 const retryInMin = computed(() => {
   if (!task.value?.dispatchAfter) return 0
   const ms = new Date(task.value.dispatchAfter).getTime() - Date.now()
@@ -48,6 +51,7 @@ const retryInMin = computed(() => {
 const thread = computed<ThreadItem[]>(() => buildThread({
   description: task.value?.description ?? null,
   createdAt: task.value?.createdAt ?? null,
+  briefAuthorName: task.value?.creatorName ?? null,
   runs: runFeed.value.map(r => ({
     id: r.id,
     status: (r.status === 'running' ? 'running' : r.status === 'done' ? 'done' : 'failed') as 'running' | 'done' | 'failed',
@@ -262,9 +266,9 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
           <template v-for="item in thread" :key="item.id">
             <!-- brief: the task description as the opening message -->
             <div v-if="item.kind === 'brief'" class="flex gap-2.5">
-              <div class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">T</div>
+              <div class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">{{ briefAuthor ? briefAuthor.slice(0, 2).toUpperCase() : 'T' }}</div>
               <div class="min-w-0 flex-1">
-                <p class="mb-1 text-[11px] font-medium text-zinc-400">Task brief <span v-if="item.createdAt" class="font-normal text-zinc-300 dark:text-zinc-500">· {{ formatThreadTime(item.createdAt) }}</span></p>
+                <p class="mb-1 text-[11px] font-medium text-zinc-400">{{ briefAuthor ?? 'Task brief' }} <span v-if="item.createdAt" class="font-normal text-zinc-300 dark:text-zinc-500">· {{ formatThreadTime(item.createdAt) }}</span></p>
                 <!-- description: mention tokens -> @Name; attachment tokens -> inline images / file chips -->
                 <div class="rounded-xl rounded-tl-sm border border-zinc-200/70 bg-zinc-50 px-3.5 py-2.5 text-sm leading-relaxed text-zinc-800 dark:border-zinc-700/60 dark:bg-zinc-800/60 dark:text-zinc-200">
                   <template v-for="(p, i) in briefParts" :key="i">

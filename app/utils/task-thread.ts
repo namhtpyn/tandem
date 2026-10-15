@@ -7,7 +7,7 @@
  *  - 'run'      an agent dispatch turn (status pill + output bubble)
  *  - 'note'     human/system activity (questions, verdicts, status changes...)
  */
-export interface ThreadBriefItem { kind: 'brief'; id: string; body: string; createdAt: string }
+export interface ThreadBriefItem { kind: 'brief'; id: string; body: string; createdAt: string; /** task creator shown as the brief author */ authorName?: string | null }
 export interface ThreadRunItem {
   kind: 'run'
   id: string
@@ -34,6 +34,7 @@ export type ThreadItem = ThreadBriefItem | ThreadRunItem | ThreadNoteItem
 export interface ThreadSource {
   description?: string | null
   createdAt?: string | null
+  briefAuthorName?: string | null
   runs?: Array<Pick<ThreadRunItem, 'id' | 'status' | 'output' | 'exitCode' | 'prompt' | 'agentName' | 'startedAt' | 'finishedAt'>>
   activity?: Array<Pick<ThreadNoteItem, 'id' | 'noteKind' | 'body' | 'authorName' | 'createdAt'>>
 }
@@ -120,7 +121,7 @@ export function formatThreadTime(iso: string, now: Date = new Date()): string {
 export function buildThread(src: ThreadSource): ThreadItem[] {
   const items: ThreadItem[] = []
   if (src.description && src.description.trim()) {
-    items.push({ kind: 'brief', id: 'brief', body: src.description, createdAt: src.createdAt ?? '' })
+    items.push({ kind: 'brief', id: 'brief', body: src.description, createdAt: src.createdAt ?? '', authorName: src.briefAuthorName ?? null })
   }
   for (const r of src.runs ?? []) {
     items.push({ kind: 'run', id: r.id, status: r.status, exitCode: r.exitCode, output: r.output, prompt: r.prompt, agentName: r.agentName, startedAt: r.startedAt, finishedAt: r.finishedAt })

@@ -76,6 +76,17 @@ describe('buildThread', () => {
     })
     expect(items.map(i => i.id)).toEqual(['r1', 'r2', 'a9'])
   })
+  it('carries the brief author (task creator) through', () => {
+    const items = buildThread({
+      description: 'do it',
+      createdAt: '2026-01-01T00:00:00Z',
+      briefAuthorName: 'Nam',
+    })
+    expect(items[0].kind === 'brief' && items[0].authorName).toBe('Nam')
+    const none = buildThread({ description: 'do it', createdAt: '2026-01-01T00:00:00Z' })
+    expect(none[0].kind === 'brief' && none[0].authorName).toBeNull()
+  })
+
   it('omits the brief when description is empty/whitespace', () => {
     expect(buildThread({ description: '   ', runs: [], activity: [] })).toEqual([])
   })
