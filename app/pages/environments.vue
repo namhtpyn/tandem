@@ -240,7 +240,7 @@ async function probe(row: EnvironmentRow) {
       </div>
     </UCard>
 
-    <UModal v-model:open="deleteOpen" title="Delete environment" :ui="{ content: 'max-w-sm' }">
+    <UModal v-model:open="deleteOpen" title="Delete environment">
       <template #body>
         <div class="space-y-4">
           <p class="text-sm text-zinc-600 dark:text-zinc-300">

@@ -173,6 +173,13 @@ secrets are never returned.
 3. no users & `tandem_user` rows → seed admin (`ADMIN_EMAIL`/`ADMIN_PASSWORD`, defaults `admin@tandem.local` / tandem-admin); seed never runs when users exists
 4. password stored as better-auth scrypt (`salt:hash`, no prefix label)
 
+## UI laws
+
+- Modals (UModal) size app-wide via `app/app.config.ts` — mobile keeps the library
+  default `w-[calc(100vw-2rem)]` card; desktop grows with the viewport
+  (`sm:max-w-xl md:max-w-2xl lg:max-w-3xl`) instead of the stock 512px `max-w-lg`.
+  No per-modal width pins; the environments delete-confirm pin was removed for uniformity.
+
 ## Routes table
 
 | method | path | auth | purpose |
