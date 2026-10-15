@@ -149,7 +149,7 @@ describe('acp.client turns', () => {
     expect(res.sessionId).toBe('sess-1')
     expect(res.stopReason).toBe('end_turn')
     expect(res.transcript).toBe('working…[RESULT] done')
-    expect(lines).toContain('working…')
+    expect(lines).toContain('working…[RESULT] done') // no newline between chunks = one line, flushed at turn end
     expect(lines).toContain('[tool] read_file in_progress')
     expect(lines).toContain('[context] 10/100 tokens')
     // stream torn down after the turn
@@ -373,6 +373,66 @@ describe('acp.client turns', () => {
     const res = await runAcpTurn({ stream: degenerate, prompt: 'x', timeoutMs: 2_000 })
     expect(res.transcript).toBe('')
     expect(res.stopReason).toBe('end_turn')
+  })
+
+  it('chunks coalesce into real lines: newline splits, remainder flushes, paragraphs keep blanks', async () => {
+    const lines: string[] = []
+    const stream = fakeAgent((msg, send) => {
+      const method = msg.method as string | undefined
+      if (!method) return
+      if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} })
+      else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's' } })
+      else if (method === 'session/prompt') {
+        const chunk = (text: string) => send({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } } })
+        chunk('Hello ')                       // no newline yet — held
+        chunk('world\nsecond line\n\n')   // flushes 'Hello world', 'second line', '' (paragraph break)
+        chunk('third')                        // held to turn end
+        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } })
+      }
+    })
+    const res = await turn(stream, { onLine: l => lines.push(l) })
+    expect(res.transcript).toBe('Hello world\nsecond line\n\nthird')
+    const textLines = lines.filter(l => !l.startsWith('['))
+    expect(textLines).toEqual(['Hello world', 'second line', '', 'third'])
+  })
+
+  it('unbroken text over 400 chars force-flushes mid-stream instead of landing at turn end', async () => {
+    const lines: string[] = []
+    const long = 'a'.repeat(450)
+    const stream = fakeAgent((msg, send) => {
+      const method = msg.method as string | undefined
+      if (!method) return
+      if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} })
+      else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's' } })
+      else if (method === 'session/prompt') {
+        send({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: long } } } })
+        send({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'tool_call', toolName: 'bash' } } })
+        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } })
+      }
+    })
+    await turn(stream, { onLine: l => lines.push(l) })
+    const i = lines.indexOf('[tool] bash')
+    expect(i).toBeGreaterThan(0)      // the long line flushed BEFORE the tool line
+    expect(lines[i - 1]).toBe(long)
+  })
+
+  it('full agent_message with no chunks logs once; after chunks it never duplicates', async () => {
+    const lines: string[] = []
+    const stream = fakeAgent((msg, send) => {
+      const method = msg.method as string | undefined
+      if (!method) return
+      if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} })
+      else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's' } })
+      else if (method === 'session/prompt') {
+        send({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'agent_message', content: [{ type: 'text', text: 'full message, no chunks before' }] } } })
+        send({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'agent_message', content: [{ type: 'text', text: 'replaced final' }] } } })
+        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } })
+      }
+    })
+    const res = await turn(stream, { onLine: l => lines.push(l) })
+    expect(res.transcript).toBe('replaced final') // replace semantics kept
+    const textLines = lines.filter(l => !l.startsWith('['))
+    expect(textLines).toEqual(['full message, no chunks before']) // second full text never duplicated
   })
 
   it('sparse stream shapes WITH logging: mixed content, images, partial tool metadata', async () => {

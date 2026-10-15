@@ -64,6 +64,30 @@ export async function runAcpTurn(opts: {
   const pending = new Map<number, { resolve: (m: RpcMessage) => void }>()
   let transcript = ''
   let settled = false
+  /** chunk deltas coalesce here until a real newline — one log line per source line, not per chunk */
+  let pendingLine = ''
+  let streamedText = false
+  const LINE_FLUSH_MAX = 400
+  const emitChunkText = (text: string) => {
+    pendingLine += text
+    let nl = pendingLine.indexOf('\n')
+    while (nl >= 0) {
+      onLine?.(pendingLine.slice(0, nl))
+      pendingLine = pendingLine.slice(nl + 1)
+      nl = pendingLine.indexOf('\n')
+    }
+    // very long unbroken text still streams instead of landing as one blob at turn end
+    if (pendingLine.length >= LINE_FLUSH_MAX) {
+      onLine?.(pendingLine)
+      pendingLine = ''
+    }
+  }
+  const flushPendingLine = () => {
+    if (pendingLine) {
+      onLine?.(pendingLine)
+      pendingLine = ''
+    }
+  }
 
   const request = (method: string, params: unknown): Promise<RpcMessage> =>
     new Promise((resolve) => {
@@ -78,20 +102,29 @@ export async function runAcpTurn(opts: {
   const applyUpdate = (update: Record<string, unknown>) => {
     const kind = update.sessionUpdate
     if (kind === 'agent_message' && Array.isArray(update.content)) {
+      flushPendingLine()
       transcript = (update.content as Array<{ type: string, text?: string }>)
         .map(c => (c.type === 'text' ? c.text ?? '' : '')).join('')
+      // streaming harnesses already logged their lines; non-streaming ones get the full text once
+      if (!streamedText && transcript) {
+        streamedText = true
+        onLine?.(transcript)
+      }
     }
     else if (kind === 'agent_message_chunk') {
       const c = update.content as { type: string, text?: string } | undefined
-      if (c && c.type === 'text') transcript += c.text ?? ''
+      if (c && c.type === 'text') {
+        const t = c.text ?? ''
+        transcript += t
+        if (t) {
+          streamedText = true
+          emitChunkText(t)
+        }
+      }
     }
     // stream every human-meaningful update into the run output (live progress)
     if (onLine) {
-      if (kind === 'agent_message_chunk' || kind === 'agent_message') {
-        const c = update.content as { type: string, text?: string } | undefined
-        if (c && c.type === 'text' && c.text) onLine(c.text)
-      }
-      else if (kind === 'tool_call' || kind === 'tool_call_update') {
+      if (kind === 'tool_call' || kind === 'tool_call_update') {
         const title = typeof update.title === 'string' ? update.title : typeof update.toolName === 'string' ? update.toolName : 'tool'
         const status = typeof update.status === 'string' ? ` ${update.status}` : ''
         onLine(`[tool] ${title}${status}`)
@@ -217,6 +250,8 @@ export async function runAcpTurn(opts: {
     return { sessionId, stopReason, transcript }
   }
   finally {
+    // anything the agent never newline-terminated still reaches the log
+    flushPendingLine()
     // the harness session persists on the agent host; the PROCESS does not
     teardown()
     void closedPromise
