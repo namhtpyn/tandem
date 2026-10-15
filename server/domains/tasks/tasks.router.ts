@@ -89,10 +89,15 @@ async function runsSnapshot(taskId: string) {
 const rows = await listRuns(taskId)
       const atts = await db.select().from(taskAttachments).where(eq(taskAttachments.taskId, taskId))
       const outputsByRun = groupOutputsByRun(atts)
+      const users = await db.select({ id: userTable.id, name: userTable.name }).from(userTable)
+      const nameById = new Map(users.map(u => [u.id, u.name]))
       return rows.map(r => ({
         id: r.id,
         taskId: r.taskId,
         employeeId: r.employeeId,
+        // `?? null` is unreachable by FK (employee_id references user.id) — defensive only
+        /* v8 ignore next */
+        agentName: r.employeeId ? (nameById.get(r.employeeId) ?? null) : null,
         environmentId: r.environmentId,
         status: r.status as 'running' | 'done' | 'failed',
         exitCode: r.exitCode,

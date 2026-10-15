@@ -6,7 +6,7 @@
 // on unmount) — see the stream law in AGENTS.md.
 import { useQuery, skipToken, useQueryClient } from '@tanstack/vue-query'
 import type { EmployeeRow, TaskRow } from '~/../shared/types'
-import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '~/utils/task-thread'
+import { buildThread, formatThreadTime, parseRunEnvelope, runAgentMessage, runOutputWithoutEnvelope } from '~/utils/task-thread'
 import type { ThreadItem } from '~/utils/task-thread'
 
 const route = useRoute()
@@ -30,7 +30,7 @@ const runsQuery = useQuery(computed(() => ($orpc.tasks.runsList as any).queryOpt
   input: (task.value?.id ? { taskId: task.value.id } : skipToken),
   queryKey: ['runs', task.value?.id ?? ''],
 })))
-const runFeed = computed(() => (unref(runsQuery.data) ?? []) as unknown as Array<{ id: string, status: string, output: string, prompt?: string | null, exitCode: number | null, startedAt: string, outputs?: Array<{ id: string, filename: string, mime: string, size: number }> }>)
+const runFeed = computed(() => (unref(runsQuery.data) ?? []) as unknown as Array<{ id: string, status: string, output: string, prompt?: string | null, agentName?: string | null, exitCode: number | null, startedAt: string, outputs?: Array<{ id: string, filename: string, mime: string, size: number }> }>)
 
 const activityQuery = useQuery(computed(() => ($orpc.tasks.activityList as any).queryOptions({
   input: (task.value?.id ? { taskId: task.value.id } : skipToken),
@@ -53,6 +53,7 @@ const thread = computed<ThreadItem[]>(() => buildThread({
     status: (r.status === 'running' ? 'running' : r.status === 'done' ? 'done' : 'failed') as 'running' | 'done' | 'failed',
     output: r.output,
     prompt: r.prompt,
+    agentName: r.agentName,
     exitCode: r.exitCode,
     startedAt: r.startedAt,
     finishedAt: null,
@@ -293,6 +294,15 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
                 <!-- envelope: the decision-model line, integrated not alarmist (max-w for rhythm) -->
                 <div v-if="envelopeOf(item)" :class="['max-w-[calc(100%-3rem)] rounded-xl rounded-tl-sm border-l-2 px-3.5 py-2.5 text-sm leading-relaxed', envelopeOf(item)!.kind === 'question' ? 'border-l-blue-400/70 bg-blue-50/40 text-zinc-800 dark:bg-blue-500/10 dark:text-zinc-200' : envelopeOf(item)!.kind === 'blocked' ? 'border-l-error/70 bg-error/5 text-zinc-800 dark:bg-error/5 dark:text-zinc-200' : 'border-l-emerald-400/70 bg-emerald-50/40 text-zinc-800 dark:bg-emerald-500/10 dark:text-zinc-200']">
                   <span :class="['mr-1.5 align-middle text-[9px] font-bold uppercase tracking-widest', envelopeOf(item)!.kind === 'question' ? 'text-blue-500' : envelopeOf(item)!.kind === 'blocked' ? 'text-error' : 'text-emerald-600 dark:text-emerald-400']">{{ envelopeOf(item)!.kind }}</span><span class="align-middle">{{ envelopeOf(item)!.text || '(empty)' }}</span>
+                </div>
+                <!-- the agent's own message, as chat -->
+                <div v-if="runAgentMessage(item.output)" class="mt-1.5 flex items-start gap-2">
+                  <div class="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">{{
+                    (item.agentName ?? 'Agent').slice(0, 2).toUpperCase() }}</div>
+                  <div class="min-w-0 flex-1">
+                    <p class="mb-0.5 text-[11px] leading-none"><span class="font-semibold text-zinc-600 dark:text-zinc-300">{{ item.agentName ?? 'Agent' }}</span><span class="text-primary"> (AI)</span></p>
+                    <div class="inline-block max-w-full whitespace-pre-wrap break-words rounded-xl rounded-tr-sm bg-primary/5 px-3.5 py-2 text-sm leading-relaxed text-zinc-800 dark:bg-primary/10 dark:text-zinc-200">{{ runAgentMessage(item.output) }}</div>
+                  </div>
                 </div>
                 <!-- collected output files (agent deliverables) -->
                 <div v-if="runOutputs(item).length" class="mt-1.5 flex flex-wrap gap-1.5">

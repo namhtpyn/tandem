@@ -657,9 +657,13 @@ describe('dispatcher', () => {
     const { db } = await dbm()
     const { taskRuns } = await schema()
     await db.insert(taskRuns).values({ id: 'run-legacy', taskId: t.id, employeeId: agentId, status: 'done', output: 'old' })
+    await db.insert(taskRuns).values({ id: 'run-ghost', taskId: t.id, employeeId: null, status: 'done', output: 'old' })
     const rows = (await callProc('tasks.runsList', { taskId: t.id })) as any[]
-    expect(rows).toHaveLength(1)
-    expect(rows[0].prompt).toBeNull()
+    expect(rows).toHaveLength(2)
+    // newest first: the employeeless ghost run lands first
+    expect(rows[0].agentName).toBeNull()
+    expect(rows[1].prompt).toBeNull()
+    expect(rows[1].agentName).toBe('Robby')
   })
 
   it('manual dispatch endpoint fires and returns a run id', async () => {

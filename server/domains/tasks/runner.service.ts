@@ -268,8 +268,11 @@ function fakeRun(onLine: (line: string) => void, scriptOverride?: string[]): Run
 export async function dispatchTask(taskId: string, tandemUrl: string): Promise<RunHandle> {
   const plan = await loadDispatchPlan(taskId)
 
-  // claim: working -> the assignee is on it
+  // claim: dispatch note is written BEFORE the run row exists so its createdAt
+  // sits BEFORE the run's startedAt — the timeline shows "dispatched" above the
+  // result card, not after it
   const runId = crypto.randomUUID()
+  await logRun(taskId, runId, `dispatched to ${plan.agentName} on ${plan.envName}`, { dispatched: true })
   await db.insert(taskRuns).values({
     id: runId,
     taskId,
@@ -279,7 +282,6 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
     output: '',
   })
   await db.update(tasks).set({ status: 'doing', updatedAt: new Date() }).where(eq(tasks.id, taskId))
-  await logRun(taskId, runId, `dispatched to ${plan.agentName} on ${plan.envName}`, { dispatched: true })
   await publishChange('tasks', 'update')
 
   let buffer = ''

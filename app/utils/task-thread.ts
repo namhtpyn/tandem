@@ -14,6 +14,8 @@ export interface ThreadRunItem {
   status: 'running' | 'done' | 'failed'
   exitCode: number | null
   output: string
+  /** the agent (employee) that ran this turn, for the chat bubble label */
+  agentName?: string | null
   /** the exact prompt (brief) sent for this turn, when recorded */
   prompt?: string | null
   startedAt: string
@@ -32,13 +34,23 @@ export type ThreadItem = ThreadBriefItem | ThreadRunItem | ThreadNoteItem
 export interface ThreadSource {
   description?: string | null
   createdAt?: string | null
-  runs?: Array<Pick<ThreadRunItem, 'id' | 'status' | 'output' | 'exitCode' | 'prompt' | 'startedAt' | 'finishedAt'>>
+  runs?: Array<Pick<ThreadRunItem, 'id' | 'status' | 'output' | 'exitCode' | 'prompt' | 'agentName' | 'startedAt' | 'finishedAt'>>
   activity?: Array<Pick<ThreadNoteItem, 'id' | 'noteKind' | 'body' | 'authorName' | 'createdAt'>>
 }
 
 /** Envelope of the output contract: last [RESULT]/[QUESTION]/[BLOCKED] line wins. */
 export type EnvelopeKind = 'result' | 'run' | 'question' | 'blocked'
 export interface RunEnvelope { kind: EnvelopeKind; text: string }
+
+/** A run's log mixes the agent's prose with system lines ([tool]/[context]/[stderr]/…) and the
+ * envelope line; this returns just the agent's own message, paragraphs preserved. */
+export function runAgentMessage(output: string | null | undefined): string {
+  if (!output) return ''
+  const prose = output
+    .split('\n')
+    .filter(l => !(/^\[[A-Za-z]/.test(l)))
+  return prose.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
 
 export function parseRunEnvelope(output: string | null | undefined): RunEnvelope | null {
   if (!output) return null
@@ -111,7 +123,7 @@ export function buildThread(src: ThreadSource): ThreadItem[] {
     items.push({ kind: 'brief', id: 'brief', body: src.description, createdAt: src.createdAt ?? '' })
   }
   for (const r of src.runs ?? []) {
-    items.push({ kind: 'run', id: r.id, status: r.status, exitCode: r.exitCode, output: r.output, prompt: r.prompt, startedAt: r.startedAt, finishedAt: r.finishedAt })
+    items.push({ kind: 'run', id: r.id, status: r.status, exitCode: r.exitCode, output: r.output, prompt: r.prompt, agentName: r.agentName, startedAt: r.startedAt, finishedAt: r.finishedAt })
   }
   for (const a of src.activity ?? []) {
     items.push({ kind: 'note', id: a.id, noteKind: a.noteKind, body: a.body, authorName: a.authorName, createdAt: a.createdAt })

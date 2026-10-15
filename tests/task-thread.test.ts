@@ -1,5 +1,27 @@
 import { describe, expect, it } from 'vitest'
-import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '../app/utils/task-thread'
+import { buildThread, formatThreadTime, parseRunEnvelope, runAgentMessage, runOutputWithoutEnvelope } from '../app/utils/task-thread'
+
+describe('runAgentMessage', () => {
+  it('keeps the agent prose, drops system lines and the envelope, collapses blanks', () => {
+    const out = [
+      '[context] 52204/1000000',
+      'Screenshot computed.',
+      '',
+      '',
+      '',
+      'Contract page is realistic.',
+      '[tool] vision_analyze',
+      '[RESULT] done',
+    ].join('\n')
+    expect(runAgentMessage(out)).toBe('Screenshot computed.\n\nContract page is realistic.')
+  })
+
+  it('returns empty when only system lines exist (failed stderr runs)', () => {
+    expect(runAgentMessage('[stderr] boom\n[reaper] run timed out')).toBe('')
+    expect(runAgentMessage('')).toBe('')
+    expect(runAgentMessage(null)).toBe('')
+  })
+})
 
 describe('parseRunEnvelope', () => {
   it('parses a RESULT envelope on the last line', () => {
@@ -59,8 +81,9 @@ describe('buildThread', () => {
   })
   it('carries run prompt through when the source provides it', () => {
     const items = buildThread({
-      runs: [{ id: 'r1', status: 'done', output: 'out', prompt: 'please do it', exitCode: 0, startedAt: '2026-01-01T00:00:00Z', finishedAt: null }],
+      runs: [{ id: 'r1', status: 'done', output: 'out', prompt: 'please do it', agentName: 'Jay', exitCode: 0, startedAt: '2026-01-01T00:00:00Z', finishedAt: null }],
     })
+    expect(items[0].kind === 'run' && items[0].agentName).toBe('Jay')
     expect(items[0].kind === 'run' && items[0].prompt).toBe('please do it')
     const none = buildThread({
       runs: [{ id: 'r2', status: 'done', output: '', exitCode: 0, startedAt: '2026-01-01T00:00:00Z', finishedAt: null }],
