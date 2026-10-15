@@ -1,3 +1,10 @@
+## [2.27.3](https://github.com/namhtpyn/tandem/compare/v2.27.2...v2.27.3) (2026-10-15)
+
+
+### Bug Fixes
+
+* **dispatch:** re-anchor historical dispatched notes before their run row ([e3cdc44](https://github.com/namhtpyn/tandem/commit/e3cdc44e04097197d7312bf3b9910719057f13bf))
+
 ## [2.27.2](https://github.com/namhtpyn/tandem/compare/v2.27.1...v2.27.2) (2026-10-15)
 
 
