@@ -1,3 +1,10 @@
+## [2.25.2](https://github.com/namhtpyn/tandem/compare/v2.25.1...v2.25.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **runner:** coalesce ACP chunk deltas into real lines — one word per line is gone ([dab9a49](https://github.com/namhtpyn/tandem/commit/dab9a49bc1a3ddd58063326cde83ba8c232ad3b8))
+
 ## [2.25.1](https://github.com/namhtpyn/tandem/compare/v2.25.0...v2.25.1) (2026-10-15)
 
 
