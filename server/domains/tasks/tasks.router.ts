@@ -14,7 +14,8 @@ import {
   taskProposals,
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
-import { askQuestion, forwardQuestion, answerQuestion, submitResult, approveReview, requestChanges, abandonReview, listActivity } from './workflow.service'
+import { askQuestion, forwardQuestion, answerQuestion, submitResult, approveReview, requestChanges, rejectReview, abandonReview, listActivity } from './workflow.service'
+import { listReviews } from './review.service'
 import { dispatchTask, listRuns } from './runner.service'
 import type { TaskRow } from '../../../shared/types'
 
@@ -355,6 +356,20 @@ export const tasksRouter = os.router({
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' })
       return await runWorkflow(() => requestChanges(input.taskId, selfId, input.body))
     }),
+
+  /** REVIEW LAW: reviewer rejects — HUMAN-only terminal verdict, task cancelled */
+  reject: protectedProcedure
+    .input(z.strictObject({ taskId: z.string().min(1), body: z.string().max(4_000).optional() }))
+    .handler(async ({ input, context }) => {
+      const selfId = await selfIdOf(context)
+      if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' })
+      return await runWorkflow(() => rejectReview(input.taskId, selfId, input.body ?? ''))
+    }),
+
+  /** REVIEW LAW: per-reviewer verdict checklist for the task page */
+  reviews: protectedProcedure
+    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .handler(({ input }) => listReviews(input.taskId)),
 
   /** reviewer or owner abandons the task outright */
   abandon: protectedProcedure

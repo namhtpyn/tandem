@@ -36,6 +36,13 @@ export async function cancelObligations(taskId: string, role: ObligationRole) {
     .where(and(eq(taskObligations.taskId, taskId), eq(taskObligations.role, role), eq(taskObligations.status, 'pending')))
 }
 
+/** cancel EVERY obligation of a role on a task — including ones already resolved this
+ * round (REVIEW LAW: a change_requested/rejected round must not read as approvals) */
+export async function cancelAllObligations(taskId: string, role: ObligationRole) {
+  await db.update(taskObligations).set({ status: 'cancelled', resolvedAt: new Date() })
+    .where(and(eq(taskObligations.taskId, taskId), eq(taskObligations.role, role)))
+}
+
 /** who currently owes the answer (the moved holder), or null */
 export async function answerHolder(taskId: string) {
   const rows = await db.select({ employeeId: taskObligations.employeeId }).from(taskObligations)
@@ -59,12 +66,6 @@ export async function approvalsInRound(taskId: string) {
 }
 
 /** remaining pending approvers for the current round */
-export async function pendingApprovers(taskId: string) {
-  const rows = await db.select({ employeeId: taskObligations.employeeId }).from(taskObligations)
-    .where(and(eq(taskObligations.taskId, taskId), eq(taskObligations.role, 'approval'), eq(taskObligations.status, 'pending')))
-  return rows.map(r => r.employeeId!).filter(Boolean)
-}
-
 /** fulfilled approvals per task for the LATEST round each (batch, for list payloads) */
 export async function approvalsInRoundBatch(taskIds: string[]) {
   if (taskIds.length === 0) return new Map<string, string[]>()

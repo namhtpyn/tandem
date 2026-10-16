@@ -182,10 +182,7 @@ export const tasks = pgTable('tandem_tasks', {
   failStreak: integer('fail_streak').notNull().default(0),
   /** subtask nesting: this task is a child of parent_task_id (unlimited depth) */
   parentTaskId: text('parent_task_id').references((): AnyPgColumn => tasks.id, { onDelete: 'set null' }),
-  /** review law (2026-10-16): this task is a supervisor REVIEW of review_of_task_id's
-   * result — its envelope settles the PARENT's review (approve/request-changes), never
-   * a further review of itself; deliberately NOT parent_task_id so gating is untouched */
-  reviewOfTaskId: text('review_of_task_id').references((): AnyPgColumn => tasks.id, { onDelete: 'set null' }),
+
   /** ACP session for this task's whole life (created on first dispatch, resumed after) */
   acpSessionId: text('acp_session_id'),
   /** status to restore when the auto-block (open children) lifts; null = not auto-blocked */
@@ -253,6 +250,9 @@ export const taskRuns = pgTable('tandem_task_runs', {
   id: text('id').primaryKey(),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
   employeeId: text('employee_id').references(() => user.id, { onDelete: 'set null' }),
+  /** REVIEW LAW: the ACP session this run used — review turns by OTHER employees must
+   * never resume the assignee's session (one session per task PER EMPLOYEE, not per task) */
+  sessionId: text('session_id'),
   environmentId: text('environment_id'),
   /** running | done | failed */
   status: text('status').notNull().default('running'),
@@ -264,6 +264,26 @@ export const taskRuns = pgTable('tandem_task_runs', {
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 }, (t) => [
   index('tandem_task_runs_task_idx').on(t.taskId, t.startedAt),
+])
+
+// REVIEW LAW (2026-10-16): one row per reviewer per review round — the single source
+// of truth for who approved what. pending -> approved | change_requested | rejected;
+// rejected is a HUMAN-only verdict and cancels the task.
+export const taskReviews = pgTable('tandem_task_reviews', {
+  id: text('id').primaryKey(),
+  taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  reviewerId: text('reviewer_id').references(() => user.id, { onDelete: 'set null' }),
+  /** 1, 2, … — increments on resubmission after change_requested */
+  round: integer('round').notNull(),
+  /** pending | approved | change_requested | rejected */
+  status: text('status').notNull().default('pending'),
+  note: text('note'),
+  /** human click | ai review turn */
+  source: text('source'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  decidedAt: timestamp('decided_at', { withTimezone: true }),
+}, (t) => [
+  index('tandem_task_reviews_task_idx').on(t.taskId, t.round),
 ])
 
 // Task activity feed: questions, answers, forwards, verdicts, status notes.
@@ -300,7 +320,7 @@ export const taskActivity = pgTable('tandem_task_activity', {
 // ---------- relations ----------
 
 export const relations = defineRelations(
-  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, vaultFolders, employeeTitles, tasks, taskActivity, taskRuns, taskStatuses, modelProviders, projects },
+  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, vaultFolders, employeeTitles, tasks, taskActivity, taskRuns, taskReviews, taskStatuses, modelProviders, projects },
   (helpers) => ({
     user: {
       sessions: helpers.many.session({ from: helpers.user.id, to: helpers.session.userId }),

@@ -131,26 +131,67 @@ describe('obligations', () => {
     expect(await answerHolder(taskId)).toBeNull()
   })
 
-  it('review spawns approval obligations; unanimity via pending rows; re-round on request-changes', async () => {
+  it('REVIEW LAW: rounds open per submit; verdict rows drive unanimity; change_requested returns READY', async () => {
     const taskId = await mkTask({ title: 'R task', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!, idMap.get('report')!] })
     await callProc('tasks.update', { id: taskId, status: 'doing' })
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'done' }))
     const t1 = await getTask(taskId)
     expect(t1.status).toBe('in-review')
-    expect((await pendingForUser(idMap.get('peer')!)).length).toBe(1)
+    expect((await pendingForUser(idMap.get('peer')!)).length).toBe(1) // inbox ping per reviewer
+
+    // verdict checklist: one pending row per reviewer in round 1
+    const revs1 = await callProc('tasks.reviews', { taskId })
+    expect(revs1.map((r: any) => r.status)).toEqual(['pending', 'pending'])
+    expect(revs1.every((r: any) => r.round === 1)).toBe(true)
 
     await asEmp('peer', () => callProc('tasks.approve', { taskId, body: 'ok' }))
-    expect(await approvalsInRound(taskId)).toEqual([idMap.get('peer')!])
-    expect((await getTask(taskId)).status).toBe('in-review')
+    expect((await getTask(taskId)).status).toBe('in-review') // not unanimous yet
 
     await asEmp('report', () => callProc('tasks.requestChanges', { taskId, body: 'redo' }))
-    expect((await getTask(taskId)).status).toBe('doing')
-    // fresh round: peer's earlier approval no longer counts
-    expect(await approvalsInRound(taskId)).toEqual([])
+    expect((await getTask(taskId)).status).toBe('todo') // READY — the assignee resumes
+    // resubmit opens round 2; round 1 history kept
+    await callProc('tasks.update', { id: taskId, status: 'doing' })
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'v2' }))
+    const revs2 = await callProc('tasks.reviews', { taskId })
+    expect(revs2.filter((r: any) => r.round === 2)).toHaveLength(2)
+    expect(revs2.filter((r: any) => r.round === 1).some((r: any) => r.status === 'change_requested')).toBe(true)
     await asEmp('peer', () => callProc('tasks.approve', { taskId, body: 'ok2' }))
     await asEmp('report', () => callProc('tasks.approve', { taskId, body: 'ok3' }))
     expect((await getTask(taskId)).status).toBe('done')
+    const revs3 = await callProc('tasks.reviews', { taskId })
+    expect(revs3.filter((r: any) => r.round === 2).every((r: any) => r.status === 'approved')).toBe(true)
+  })
+
+  it('REVIEW LAW: approvalsInRoundBatch fulfilled arm — approved round reads as approvals', async () => {
+    const taskId = await mkTask({ title: 'BatchOK', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!] })
+    await callProc('tasks.update', { id: taskId, status: 'doing' })
+    await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'v1' }))
+    await asEmp('peer', () => callProc('tasks.approve', { taskId, body: 'ok' }))
+    expect((await getTask(taskId)).status).toBe('done')
+    const batch = await approvalsInRoundBatch([taskId])
+    expect(batch.get(taskId)).toEqual([idMap.get('peer')!])
+  })
+
+  it('REVIEW LAW: rejectReview refuses a task not in review', async () => {
+    const taskId = await mkTask({ title: 'NotInRev', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!] })
+    const { rejectReview } = await import('../server/domains/tasks/workflow.service')
+    await expect(rejectReview(taskId, idMap.get('peer')!, 'nope')).rejects.toThrow(/not in review/i)
+  })
+
+  it('REVIEW LAW: reject proc requires a session', async () => {
+    const anon = await makeProcCaller(null)
+    await expect((anon as unknown as (path: string, input?: unknown) => Promise<any>)('tasks.reject', { taskId: 'x' })).rejects.toMatchObject({ code: 'UNAUTHORIZED' })
+  })
+
+  it('REVIEW LAW: human reject cancels the task (terminal verdict)', async () => {
+    const taskId = await mkTask({ title: 'RJ task', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!] })
+    await callProc('tasks.update', { id: taskId, status: 'doing' })
+    await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'done' }))
+    await asEmp('peer', () => callProc('tasks.reject', { taskId, body: 'wrong scope entirely' }))
+    expect((await getTask(taskId)).status).toBe('cancelled')
+    const revs = await callProc('tasks.reviews', { taskId })
+    expect(revs[0].status).toBe('rejected')
+    expect(revs[0].note).toContain('wrong scope')
   })
 
   it('inbox lists tasks pending on me with counts', async () => {

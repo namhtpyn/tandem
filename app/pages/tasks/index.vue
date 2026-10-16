@@ -199,7 +199,8 @@ function categoryColor(c: string) {
 }
 
 // ---- board (kanban) view ----
-const view = ref<'list' | 'board'>('list')
+// Persisted client-side only (localStorage via VueUse) — deliberately NOT a DB setting.
+const view = useLocalStorage<'list' | 'board'>('tasks:view', 'list')
 const draggingId = ref<string | null>(null)
 const dropTarget = ref<string | null>(null)
 const columns = computed(() => statuses.value)

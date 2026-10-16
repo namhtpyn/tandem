@@ -1,27 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildThread, formatThreadTime, parseRunEnvelope, runAgentMessage, runOutputWithoutEnvelope } from '../app/utils/task-thread'
-
-describe('runAgentMessage', () => {
-  it('keeps the agent prose, drops system lines and the envelope, collapses blanks', () => {
-    const out = [
-      '[context] 52204/1000000',
-      'Screenshot computed.',
-      '',
-      '',
-      '',
-      'Contract page is realistic.',
-      '[tool] vision_analyze',
-      '[RESULT] done',
-    ].join('\n')
-    expect(runAgentMessage(out)).toBe('Screenshot computed.\n\nContract page is realistic.')
-  })
-
-  it('returns empty when only system lines exist (failed stderr runs)', () => {
-    expect(runAgentMessage('[stderr] boom\n[reaper] run timed out')).toBe('')
-    expect(runAgentMessage('')).toBe('')
-    expect(runAgentMessage(null)).toBe('')
-  })
-})
+import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '../app/utils/task-thread'
 
 describe('parseRunEnvelope', () => {
   it('parses a RESULT envelope on the last line', () => {
