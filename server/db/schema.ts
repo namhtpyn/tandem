@@ -41,7 +41,7 @@ export const settings = pgTable('tandem_settings', {
 // never deletes secrets (FK SET NULL -> uncategorized).
 export const vaultFolders = pgTable('tandem_vault_folders', {
   id: text('id').primaryKey(),
-  name: text('name').notNull().unique(),
+  name: text('name').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
@@ -183,8 +183,6 @@ export const tasks = pgTable('tandem_tasks', {
   /** subtask nesting: this task is a child of parent_task_id (unlimited depth) */
   parentTaskId: text('parent_task_id').references((): AnyPgColumn => tasks.id, { onDelete: 'set null' }),
 
-  /** ACP session for this task's whole life (created on first dispatch, resumed after) */
-  acpSessionId: text('acp_session_id'),
   /** status to restore when the auto-block (open children) lifts; null = not auto-blocked */
   preBlockStatus: text('pre_block_status'),
   createdBy: text('created_by').references(() => user.id, { onDelete: 'set null' }),

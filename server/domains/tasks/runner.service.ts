@@ -9,7 +9,7 @@
 //
 // TANDEM_FAKE_RUNNER=1 short-circuits SSH with a synthetic emitter so CI and
 // local e2e can exercise the full dispatch→stream→finish loop with no host.
-import { eq, and } from 'drizzle-orm'
+import {eq, and, desc, ne} from 'drizzle-orm'
 import { db } from '../../db'
 import { tasks, taskRuns, taskActivity, taskAttachments, aiEmployees, environments, modelProviders, vaultSecrets, vaultAudit, user as userTable } from '../../db/schema'
 import { decryptSecret } from '../vault/vault-crypto.service'
@@ -177,17 +177,25 @@ export async function loadDispatchPlan(taskId: string) {
   return { task, ai, env, envName: env.name, agentName: empRows[0]?.name ?? 'agent', sshKey, sshPassword, llmEnv }
 }
 
+/** the employee's latest ACP session on this task (per task PER EMPLOYEE —
+ * reviewers and assignees never share a session). Null = first turn: session/new. */
+async function lastSessionFor(taskId: string, employeeId: string, excludeRunId?: string): Promise<string | null> {
+  // excludeRunId: the CURRENT run's own row (inserted before the turn, sessionId
+  // still null) would otherwise shadow the previous run's session.
+  const conds = [eq(taskRuns.taskId, taskId), eq(taskRuns.employeeId, employeeId)]
+  if (excludeRunId) conds.push(ne(taskRuns.id, excludeRunId))
+  const row = (await db.select({ sessionId: taskRuns.sessionId }).from(taskRuns)
+    .where(and(...conds)).orderBy(desc(taskRuns.startedAt)).limit(1))[0]
+  return row?.sessionId ?? null
+}
+
 /** REVIEW LAW: a review turn runs ON the task but BY a reviewer — their own AI env,
  * their own ACP session (per task PER EMPLOYEE — never the assignee's session), and a
  * review brief carrying the submitted result. Envelope settles the verdict at run end. */
 export async function loadReviewPlan(taskId: string, reviewerId: string, resultBody: string) {
   const base = await loadDispatchPlanFor(reviewerId, taskId)
   // reviewer's own session on this task = their latest run's sessionId (null on first)
-  const { desc } = await import('drizzle-orm')
-  const lastRun = (await db.select({ sessionId: taskRuns.sessionId }).from(taskRuns)
-    .where(and(eq(taskRuns.taskId, taskId), eq(taskRuns.employeeId, reviewerId)))
-    .orderBy(desc(taskRuns.startedAt)).limit(1))[0]
-  return { ...base, review: { reviewerId, resultBody, resumeSessionId: lastRun?.sessionId ?? null } }
+  return { ...base, review: { reviewerId, resultBody, resumeSessionId: await lastSessionFor(taskId, reviewerId) } }
 }
 
 /** loadDispatchPlan for a specific employee (the reviewer), not the task assignee.
@@ -483,7 +491,6 @@ export async function dispatchTask(taskId: string, tandemUrl: string, opts?: { r
             // separation (assignee vs reviewer) is exercised without a real ACP host
             const fakeSession = `${plan.review ? 'rev' : 'sess'}-${taskId}-${plan.ai.userId}`
             await db.update(taskRuns).set({ sessionId: fakeSession }).where(eq(taskRuns.id, runId))
-            if (!plan.review) await db.update(tasks).set({ acpSessionId: fakeSession }).where(eq(tasks.id, taskId))
             const fake = fakeRun(onLine, fakeScriptFromEnv(plan.review ? 'TANDEM_FAKE_SCRIPT_REVIEW' : 'TANDEM_FAKE_SCRIPT') ?? undefined)
             const r = await fake.finished
             await finish(r.status, r.exitCode)
@@ -509,17 +516,13 @@ export async function dispatchTask(taskId: string, tandemUrl: string, opts?: { r
             stream,
             /* v8 ignore next -- the review-resume arm runs on real ACP review turns;
              * unit coverage drives review turns through the fake runner */
-            resumeSessionId: plan.review ? plan.review.resumeSessionId : plan.task.acpSessionId,
+            resumeSessionId: plan.review ? plan.review.resumeSessionId : await lastSessionFor(taskId, plan.ai.userId, runId),
             prompt: brief,
             timeoutMs: await getRunTimeoutMs(),
             onLine,
           })
-          // sessions are per (task, employee): the assignee's lives on the task row,
-          // a reviewer's on their run rows — never cross-wired
+          // sessions are per (task, employee) — every run persists its own session id
           await db.update(taskRuns).set({ sessionId: acp.sessionId }).where(eq(taskRuns.id, runId))
-          if (!plan.review && acp.sessionId !== plan.task.acpSessionId) {
-            await db.update(tasks).set({ acpSessionId: acp.sessionId }).where(eq(tasks.id, taskId))
-          }
           const { status, exitCode } = verdictFor(acp.stopReason)
           // settle attachments DETACHED: collection/cleanup must never block the verdict
           void settleAttachments(taskId, runId, sshPlan, status)
