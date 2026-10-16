@@ -694,6 +694,18 @@ describe('dispatcher', () => {
     }
   }, 15_000)
 
+  it('STALE-JOB LAW: dispatchIfEligible skips a task that is not ready (no run row)', async () => {
+    process.env.TANDEM_FAKE_RUNNER = '1'
+    const agentId = await mkAiAgent()
+    const t = await callProc('tasks.create', { title: 'Stale', assigneeId: agentId })
+    await callProc('tasks.update', { id: t.id, status: 'doing' }) // worker busy elsewhere flipped nothing; a stale job arrives now
+    const { dispatchIfEligible } = await import('../server/domains/tasks/dispatcher.service')
+    await dispatchIfEligible(t.id, 'http://tandem.local')
+    const { db } = await dbm()
+    const { taskRuns } = await schema()
+    expect((await db.select().from(taskRuns)).filter(r => r.taskId === t.id)).toHaveLength(0)
+  })
+
   it('onDispatcherSettingsChanged is a no-op without redis', async () => {
     const { onDispatcherSettingsChanged } = await import('../server/domains/tasks/dispatcher.service')
     await expect(onDispatcherSettingsChanged()).resolves.toBeUndefined()

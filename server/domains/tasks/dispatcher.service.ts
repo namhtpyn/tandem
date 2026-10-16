@@ -105,7 +105,9 @@ export async function scanOnce(tandemUrl: string): Promise<boolean> {
     try {
       /* v8 ignore next -- lazy resync; the catch arrow only fires on a redis failure */
       void syncDispatchWorkers(hub).catch(() => {})
-      await hub.enqueue<DispatchJob>(dispatchQueueName(hit.employeeId), { taskId: hit.taskId, tandemUrl }, { attempts: 3 })
+      // jobId = taskId: while a dispatch for this task waits or runs, duplicate
+      // enqueues (scanner ticks during a worker backlog) are rejected by bullmq
+      await hub.enqueue<DispatchJob>(dispatchQueueName(hit.employeeId), { taskId: hit.taskId, tandemUrl }, { attempts: 3, jobId: hit.taskId, removeOnComplete: true })
       return true
     }
     catch (e) {
@@ -139,6 +141,18 @@ const workers = new Map<string, { concurrency: number, close: () => Promise<void
 /** spawn one worker per AI employee at the current tasksPerAgent cap; recreate
  * any whose concurrency is stale (setting changed) and drop the ones whose
  * employee row is gone. Idempotent — safe to call on every sweep. */
+/** a queued job may be STALE (task already running/done/waiting — duplicates could
+ * stack while the worker was busy). The worker skips ineligible tasks quietly: no
+ * re-run, no retry storm, no status flip back to doing. */
+export async function dispatchIfEligible(taskId: string, tandemUrl: string): Promise<void> {
+  const statuses = await db.select().from(taskStatuses)
+  const readyIds = new Set(statuses.filter(s => s.category === 'ready').map(s => s.id))
+  const row = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0]
+  if (!row || !readyIds.has(row.status)) return // stale duplicate: skip
+  const run = await dispatchTask(taskId, tandemUrl)
+  await run.finished
+}
+
 export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<typeof redisHub>>>): Promise<void> {
   const { getTasksPerAgent } = await import('../settings/settings.service')
   const cap = await getTasksPerAgent()
@@ -154,8 +168,7 @@ export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<ty
     const existing = workers.get(agentId)
     if (existing?.concurrency === cap) continue
     const handle = await hub.queue<DispatchJob>(dispatchQueueName(agentId), async (job) => {
-      const run = await dispatchTask(job.taskId, job.tandemUrl)
-      await run.finished // worker slot stays busy until the run ends
+      await dispatchIfEligible(job.taskId, job.tandemUrl) // stale jobs no-op
     }, { concurrency: cap, attempts: 3 })
     workers.set(agentId, { concurrency: cap, close: handle.close })
   }

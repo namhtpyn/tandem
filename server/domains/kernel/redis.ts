@@ -12,7 +12,7 @@ export function redisUrl(): string {
 
 export type RedisHub = {
   queue: <T>(name: string, process: (data: T) => Promise<void>, opts?: { concurrency?: number, attempts?: number }) => Promise<{ close: () => Promise<void> }>
-  enqueue: <T>(name: string, data: T, opts?: { delayMs?: number, attempts?: number }) => Promise<string>
+  enqueue: <T>(name: string, data: T, opts?: { delayMs?: number, attempts?: number, jobId?: string, removeOnComplete?: boolean }) => Promise<string>
   publish: (channel: string, message: string) => Promise<void>
   subscribe: (channel: string, handler: (message: string) => void) => Promise<void>
   cacheGet: (key: string) => Promise<string | null>
@@ -74,11 +74,16 @@ async function createHub(): Promise<RedisHub> {
     async enqueue(name, data, opts) {
       const q = queues.get(name) ?? new Queue(name, { connection })
       queues.set(name, q)
+      // jobId = idempotency key: bullmq rejects a duplicate add while a job with
+      // the same id waits/runs — dispatch uses the taskId so duplicates can't stack
       const job = await q.add('job', data, {
+        jobId: opts?.jobId,
         delay: opts?.delayMs ?? 0,
         attempts: opts?.attempts ?? 1,
         backoff: { type: 'exponential', delay: 1000 },
-        removeOnComplete: 100,
+        // with jobId dedup, a KEPT completed job would block re-dispatch of the
+        // same task until it ages out — dispatch queues remove immediately
+        removeOnComplete: opts?.removeOnComplete ? true : 100,
         removeOnFail: 500,
       })
       /* v8 ignore next -- bullmq always assigns an id */

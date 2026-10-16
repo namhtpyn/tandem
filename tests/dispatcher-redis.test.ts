@@ -31,6 +31,13 @@ vi.mock('../server/domains/tasks/runner.service', () => ({
 describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
   beforeEach(async () => {
     process.env.REDIS_URL = REDIS_URL
+    // redis state persists across runs; leftover jobs (incl. deduped ids) must not
+    // leak between tests — flush bullmq keys for a hermetic suite
+    const { default: Redis } = await import('ioredis')
+    const flush = new Redis(REDIS_URL)
+    const keys = await flush.keys('bull:*')
+    if (keys.length) await flush.del(...keys)
+    await flush.disconnect()
     await resetSchema()
     await applyMigrations()
     const { db } = await import('../server/db')
@@ -92,6 +99,24 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
     expect(seen.filter(r => r === 'tasks').length).toBe(1) // echo deduped
     expect(seen).toContain('runs') // external event bridged
     unsub()
+  })
+
+  it('enqueue with the same jobId dedupes (stale dispatch floods cannot stack)', async () => {
+    const { redisHub } = await import('../server/domains/kernel/redis')
+    const hub = (await redisHub())!
+    const id1 = await hub.enqueue('tandem-dedup', { taskId: 't-x' }, { jobId: 't-x' })
+    const id2 = await hub.enqueue('tandem-dedup', { taskId: 't-x' }, { jobId: 't-x' })
+    expect(id1).toBe(id2) // bullmq returned the existing job, no duplicate stacked
+    const { Queue } = await import('bullmq')
+    const { default: Redis } = await import('ioredis')
+    const q = new Queue('tandem-dedup', { connection: { url: REDIS_URL, maxRetriesPerRequest: null } })
+    const counts = await q.getJobCounts()
+    expect(counts.waiting + counts.active + counts.delayed).toBe(1)
+    await q.drain()
+    await q.close()
+    const r = new Redis(REDIS_URL)
+    await r.del('bull:tandem-dedup:wait', 'bull:tandem-dedup:meta')
+    await r.disconnect()
   })
 
   it('syncDispatchWorkers spawns per-agent workers and resyncs on cap change', async () => {
