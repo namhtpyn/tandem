@@ -4,7 +4,7 @@
 // (status, assignee, reviewers, workflow actions). Mobile-first: single column,
 // sidebar collapses into a sheet. Streams stay persistent (one per feed, aborted
 // on unmount) — see the stream law in AGENTS.md.
-import { useQuery, skipToken, useQueryClient } from '@tanstack/vue-query'
+import { useQuery, useMutation, skipToken, useQueryClient } from '@tanstack/vue-query'
 import type { EmployeeRow, TaskRow } from '~/../shared/types'
 import { buildThread, formatThreadTime, parseRunEnvelope, runAgentMessage, runOutputWithoutEnvelope } from '~/utils/task-thread'
 import type { ThreadItem } from '~/utils/task-thread'
@@ -146,6 +146,47 @@ async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
 const employeesLive = useQuery(($orpc.employees.list as any).queryOptions({ queryKey: ['employees'] }))
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[])
 const employeeName = computed(() => new Map(employees.value.map(e => [e.id, e.name])))
+
+// ---- editable details (assignee / project / status) — reviewers deliberately excluded ----
+const statusesLive = useQuery<import('~/../shared/types').TaskStatusRow[]>(($orpc.statuses.list as any).queryOptions({ queryKey: ['statuses'] }))
+const statuses = computed(() => (unref(statusesLive.data) ?? []) as import('~/../shared/types').TaskStatusRow[])
+const statusById = computed(() => new Map(statuses.value.map(x => [x.id, x])))
+const projectsLive = useQuery(($orpc.projects.list as any).queryOptions({ queryKey: ['projects'] }))
+const projects = computed(() => (unref(projectsLive.data) ?? []) as Array<{ id: string, name: string }>)
+const updateMutation = useMutation<any, any, any>(($orpc.tasks.update as any).mutationOptions())
+const fieldBusy = ref(false)
+const fieldError = ref('')
+/** status select: current + the workflow-allowed next statuses (server enforces the same rule) */
+const selectableStatuses = computed(() => {
+  const cur = task.value?.status ? statusById.value.get(task.value.status) : null
+  if (!cur) return []
+  return [cur, ...cur.nextIds.filter(id => id !== cur.id).map(id => statusById.value.get(id)).filter(Boolean)] as import('~/../shared/types').TaskStatusRow[]
+})
+const statusOptions = computed(() => selectableStatuses.value.map(s => ({ label: s.name, value: s.id })))
+const assigneeOptions = computed(() => [
+  { label: 'Unassigned', value: '' },
+  ...employees.value.map(e => ({ label: e.kind === 'ai' ? `${e.name} (AI)` : e.name, value: e.id })),
+])
+const projectOptions = computed(() => [
+  { label: 'No project', value: '' },
+  ...projects.value.map(p => ({ label: p.name, value: p.id })),
+])
+async function updateField(patch: { status?: string, assigneeId?: string | null, projectId?: string | null }) {
+  if (!task.value || fieldBusy.value) return
+  fieldBusy.value = true
+  fieldError.value = ''
+  try {
+    await updateMutation.mutateAsync({ id: task.value.id, ...patch })
+    await queryClient.invalidateQueries({ queryKey: ['tasks'] })
+  }
+  catch (e) {
+    const err = e as { data?: { json?: { message?: string } }, message?: string }
+    fieldError.value = err.data?.json?.message ?? err.message ?? 'update failed'
+  }
+  finally {
+    fieldBusy.value = false
+  }
+}
 
 interface ChildRow { id: string, title: string, status: string, assigneeId: string | null }
 interface ProposalRow { id: string, kind: 'subtasks' | 'reassign', payload: Record<string, any>, status: string, decisionNote: string, createdAt: string }
@@ -367,11 +408,11 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
             <dl class="space-y-1.5 text-sm">
               <div class="flex items-center justify-between gap-2">
                 <dt class="text-xs text-zinc-500">Status</dt>
-                <dd><UBadge :color="(task.status === 'done') ? 'success' : (task.status === 'todo') ? 'neutral' : 'warning'" variant="subtle" size="sm">{{ task.status }}</UBadge></dd>
+                <dd><USelect :model-value="task.status" :items="statusOptions" value-key="value" size="md" :disabled="fieldBusy" aria-label="Task status" class="w-40" @update:model-value="(v: string) => task && v !== task.status && updateField({ status: v })" /></dd>
               </div>
               <div class="flex items-center justify-between gap-2">
                 <dt class="text-xs text-zinc-500">Assignee</dt>
-                <dd class="truncate text-right" :class="task.assigneeName ? 'text-zinc-800 dark:text-zinc-200' : 'italic text-zinc-400'">{{ task.assigneeName ?? 'Unassigned' }}<span v-if="task.assigneeKind === 'ai'" class="text-primary"> (AI)</span></dd>
+                <dd><USelect :model-value="task.assigneeId ?? ''" :items="assigneeOptions" value-key="value" size="md" :disabled="fieldBusy" aria-label="Task assignee" class="w-40" @update:model-value="(v: string) => task && updateField({ assigneeId: v === '' ? null : v })" /></dd>
               </div>
               <div class="flex items-center justify-between gap-2">
                 <dt class="text-xs text-zinc-500">Owner</dt>
@@ -379,9 +420,10 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
               </div>
               <div class="flex items-center justify-between gap-2">
                 <dt class="text-xs text-zinc-500">Project</dt>
-                <dd class="truncate text-right" :class="task.projectName ? 'text-zinc-800 dark:text-zinc-200' : 'italic text-zinc-400'">{{ task.projectName ?? 'No project' }}</dd>
+                <dd><USelect :model-value="task.projectId ?? ''" :items="projectOptions" value-key="value" size="md" :disabled="fieldBusy" aria-label="Task project" class="w-40" @update:model-value="(v: string) => task && updateField({ projectId: v === '' ? null : v })" /></dd>
               </div>
             </dl>
+            <p v-if="fieldError" class="mt-1.5 text-xs text-error">{{ fieldError }}</p>
           </div>
 
           <div v-if="task.reviewerNames.length">
@@ -464,11 +506,11 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
             <dl class="space-y-1.5 text-sm">
               <div class="flex items-center justify-between gap-2">
                 <dt class="text-xs text-zinc-500">Status</dt>
-                <dd><UBadge :color="(task.status === 'done') ? 'success' : (task.status === 'todo') ? 'neutral' : 'warning'" variant="subtle" size="sm">{{ task.status }}</UBadge></dd>
+                <dd><USelect :model-value="task.status" :items="statusOptions" value-key="value" size="md" :disabled="fieldBusy" aria-label="Task status" class="w-40" @update:model-value="(v: string) => task && v !== task.status && updateField({ status: v })" /></dd>
               </div>
               <div class="flex items-center justify-between gap-2">
                 <dt class="text-xs text-zinc-500">Assignee</dt>
-                <dd class="truncate text-right" :class="task.assigneeName ? 'text-zinc-800 dark:text-zinc-200' : 'italic text-zinc-400'">{{ task.assigneeName ?? 'Unassigned' }}<span v-if="task.assigneeKind === 'ai'" class="text-primary"> (AI)</span></dd>
+                <dd><USelect :model-value="task.assigneeId ?? ''" :items="assigneeOptions" value-key="value" size="md" :disabled="fieldBusy" aria-label="Task assignee" class="w-40" @update:model-value="(v: string) => task && updateField({ assigneeId: v === '' ? null : v })" /></dd>
               </div>
               <div class="flex items-center justify-between gap-2">
                 <dt class="text-xs text-zinc-500">Owner</dt>
@@ -476,9 +518,10 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
               </div>
               <div class="flex items-center justify-between gap-2">
                 <dt class="text-xs text-zinc-500">Project</dt>
-                <dd class="truncate text-right" :class="task.projectName ? 'text-zinc-800 dark:text-zinc-200' : 'italic text-zinc-400'">{{ task.projectName ?? 'No project' }}</dd>
+                <dd><USelect :model-value="task.projectId ?? ''" :items="projectOptions" value-key="value" size="md" :disabled="fieldBusy" aria-label="Task project" class="w-40" @update:model-value="(v: string) => task && updateField({ projectId: v === '' ? null : v })" /></dd>
               </div>
             </dl>
+            <p v-if="fieldError" class="mt-1.5 text-xs text-error">{{ fieldError }}</p>
           </div>
           <div v-if="task.reviewerNames.length">
             <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">Review</p>
