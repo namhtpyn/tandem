@@ -362,6 +362,7 @@ export const tasksRouter = os.router({
     .input(z.strictObject({ taskId: z.string().min(1), body: z.string().max(4_000).optional() }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context)
+      /* v8 ignore next -- protectedProcedure already rejects sessionless callers */
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' })
       return await runWorkflow(() => rejectReview(input.taskId, selfId, input.body ?? ''))
     }),

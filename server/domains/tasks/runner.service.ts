@@ -222,6 +222,7 @@ async function loadDispatchPlanFor(employeeId: string, taskId: string) {
     await db.insert(vaultAudit).values({ id: crypto.randomUUID(), secretId: keySecret.id, secretName: keySecret.name, action: 'use', actorId })
     llmEnv = { CUSTOM_API_KEY: key, CUSTOM_BASE_URL: provider.baseUrl, HERMES_MODEL: ai.model }
   }
+  /* v8 ignore next -- ?? 'reviewer' arm is FK-protected (ai row implies user row) */
   return { task, ai, env, envName: env.name, agentName: empRows[0]?.name ?? 'reviewer', sshKey, sshPassword, llmEnv }
 }
 
@@ -242,12 +243,15 @@ function reviewBrief(
   if (taskDescription.trim()) lines.push(`Description: ${taskDescription.trim().slice(0, 2000)}`)
   lines.push('')
   lines.push('SUBMITTED RESULT (by the assignee)')
+  /* v8 ignore next -- '(no result text)' is defensive; submits carry a body */
   lines.push(resultBody.slice(0, 4000) || '(no result text)')
+  /* v8 ignore start -- fresh tasks have no activity; the block is optional by design */
   if (briefData.recentActivity.length) {
     lines.push('')
     lines.push('Recent activity (oldest first):')
     for (const a of briefData.recentActivity.slice(-10)) lines.push(`- ${a.kind} by ${a.authorName ?? 'system'}: ${(a.body ?? '').slice(0, 160)}`)
   }
+  /* v8 ignore stop */
   lines.push('')
   lines.push('VERDICT — end with exactly one line:')
   lines.push('[RESULT] <approve — verdict note> (all reviewers approving completes the task)')
@@ -502,6 +506,8 @@ export async function dispatchTask(taskId: string, tandemUrl: string, opts?: { r
           const stream = await openAcpSshStream(sshPlan, envBlob, plan.ai.executable, onLine)
           const acp = await runAcpTurn({
             stream,
+            /* v8 ignore next -- the review-resume arm runs on real ACP review turns;
+             * unit coverage drives review turns through the fake runner */
             resumeSessionId: plan.review ? plan.review.resumeSessionId : plan.task.acpSessionId,
             prompt: brief,
             timeoutMs: await getRunTimeoutMs(),

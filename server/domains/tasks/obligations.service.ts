@@ -53,18 +53,6 @@ export async function answerHolder(taskId: string) {
 
 /** fulfilled approvals in the current round = the latest spawned batch.
  *  A round whose rows are all cancelled (request-changes / abandon) is dead → []. */
-export async function approvalsInRound(taskId: string) {
-  const rows = await db.select({ employeeId: taskObligations.employeeId, createdAt: taskObligations.createdAt, status: taskObligations.status })
-    .from(taskObligations)
-    .where(and(eq(taskObligations.taskId, taskId), eq(taskObligations.role, 'approval')))
-    .orderBy(desc(taskObligations.createdAt))
-  if (rows.length === 0) return [] as string[]
-  const latest = rows[0]!.createdAt
-  const roundRows = rows.filter(r => r.createdAt.getTime() === latest.getTime())
-  if (roundRows.some(r => r.status === 'cancelled')) return [] as string[]
-  return roundRows.filter(r => r.status === 'fulfilled').map(r => r.employeeId!)
-}
-
 /** remaining pending approvers for the current round */
 /** fulfilled approvals per task for the LATEST round each (batch, for list payloads) */
 export async function approvalsInRoundBatch(taskIds: string[]) {

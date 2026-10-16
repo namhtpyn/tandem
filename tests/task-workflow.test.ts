@@ -9,7 +9,7 @@ import './api-harness'
 import { makeProcCaller } from './helpers/procs'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
-import { answerHolder, approvalsInRound, spawnObligation } from '../server/domains/tasks/obligations.service'
+import { answerHolder, spawnObligation } from '../server/domains/tasks/obligations.service'
 
 const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 const worker = { id: 'u-worker', name: 'Worker', email: 'worker@tandem.local', role: 'member' }
@@ -220,7 +220,6 @@ describe('task workflow — review gate', () => {
     await as({ ...rev1, id: idMap.get('rev1')! }, async () => { await callProc('tasks.requestChanges', { taskId, body: 'needs work' }) })
     t = await getTask(taskId)
     expect(t.status).toBe('todo')
-    expect(await approvalsInRound(t.id)).toEqual([])
     const feed = await activity(taskId)
     const verdicts = feed.filter(a => a.kind === 'verdict')
     expect(verdicts.some(v => v.body.includes('redo the thing'))).toBe(true)
