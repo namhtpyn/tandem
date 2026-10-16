@@ -16,6 +16,10 @@ export default defineConfig({
   test: {
     hookTimeout: 60_000,
     testTimeout: 15_000,
+    // test files share ONE postgres (resetSchema per beforeEach) — parallel files
+    // reset each other's tables mid-test (the 42P01 teardown-race family).
+    // File parallelism off: the suite is stable, ~2min instead of ~70s.
+    fileParallelism: false,
     globalSetup: ['./tests/global-setup.ts'],
     setupFiles: ['./tests/setup.ts'],
     coverage: {

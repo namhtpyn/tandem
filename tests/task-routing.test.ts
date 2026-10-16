@@ -10,7 +10,7 @@ import './api-harness'
 import { makeProcCaller } from './helpers/procs'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
-import { answerHolder, approvalsInRound, approvalsInRoundBatch, openObligations, pendingForUser, spawnObligation } from '../server/domains/tasks/obligations.service'
+import { answerHolder, approvalsInRoundBatch, openObligations, pendingForUser, spawnObligation } from '../server/domains/tasks/obligations.service'
 import { eq } from 'drizzle-orm'
 import { recentAssignees } from '../server/domains/tasks/assignments.service'
 import { recordProposals } from '../server/domains/tasks/proposals.service'
@@ -178,6 +178,19 @@ describe('obligations', () => {
     await expect(rejectReview(taskId, idMap.get('peer')!, 'nope')).rejects.toThrow(/not in review/i)
   })
 
+  it('REVIEW LAW: approvalsInRoundBatch fulfilled arm (hand-inserted rows, no cancelled)', async () => {
+    const { db } = await import('../server/db')
+    const { taskObligations } = await import('../server/db/schema')
+    const taskId = await mkTask({ title: 'BatchFul', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!] })
+    const now = new Date()
+    await db.insert(taskObligations).values([
+      { id: crypto.randomUUID(), taskId, employeeId: idMap.get('peer')!, role: 'approval', status: 'fulfilled', createdAt: now, resolvedAt: now },
+      { id: crypto.randomUUID(), taskId, employeeId: idMap.get('report')!, role: 'approval', status: 'fulfilled', createdAt: now, resolvedAt: now },
+    ])
+    const batch = await approvalsInRoundBatch([taskId])
+    expect(batch.get(taskId)).toEqual([idMap.get('peer')!, idMap.get('report')!])
+  })
+
   it('REVIEW LAW: reject proc requires a session', async () => {
     const anon = await makeProcCaller(null)
     await expect((anon as unknown as (path: string, input?: unknown) => Promise<any>)('tasks.reject', { taskId: 'x' })).rejects.toMatchObject({ code: 'UNAUTHORIZED' })
@@ -188,6 +201,11 @@ describe('obligations', () => {
     await callProc('tasks.update', { id: taskId, status: 'doing' })
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'done' }))
     await asEmp('peer', () => callProc('tasks.reject', { taskId, body: 'wrong scope entirely' }))
+    // body-omitted arm: reject without a note (default body '')
+    const taskId2 = await mkTask({ title: 'RJ2', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!] })
+    await callProc('tasks.update', { id: taskId2, status: 'doing' })
+    await asEmp('worker', () => callProc('tasks.submit', { taskId: taskId2, body: 'done' }))
+    await asEmp('peer', () => callProc('tasks.reject', { taskId: taskId2 }))
     expect((await getTask(taskId)).status).toBe('cancelled')
     const revs = await callProc('tasks.reviews', { taskId })
     expect(revs[0].status).toBe('rejected')
@@ -438,9 +456,10 @@ describe('routing coverage arms', () => {
 })
 
 describe('routing coverage arms II', () => {
-  it('approvalsInRound on a task with no review history is empty; batch cancelled rounds read empty', async () => {
+  it('approvalsInRoundBatch on a task with no review history is empty; cancelled rounds read empty', async () => {
     const fresh = await mkTask({ title: 'Fresh' })
-    expect(await approvalsInRound(fresh)).toEqual([])
+    // no approval obligations at all -> the map simply has no entry for the task
+    expect((await approvalsInRoundBatch([fresh])).get(fresh) ?? []).toEqual([])
 
     const taskId = await mkTask({ title: 'RoundTrip', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!] })
     await callProc('tasks.update', { id: taskId, status: 'doing' })
