@@ -395,7 +395,7 @@ describe('runner failure + fallback arms', () => {
 })
 
 describe('runner real-ssh path (mocked ssh2)', () => {
-  it('full ACP turn: session created + persisted on the task, envelope streamed, run done', async () => {
+  it('full ACP turn: session persisted on the run, envelope streamed, run done', async () => {
     const prev = process.env.TANDEM_FAKE_RUNNER
     delete process.env.TANDEM_FAKE_RUNNER
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -424,10 +424,9 @@ describe('runner real-ssh path (mocked ssh2)', () => {
       expect(res.status).toBe('done')
       const d = await dbm()
       const sch = await schema()
-      const taskRow = (await d.db.select().from(sch.tasks).where(eq(sch.tasks.id, t.id)))[0]!
-      expect(taskRow.acpSessionId).toBe('sess-acp-1')
       const run = (await d.db.select().from(sch.taskRuns))[0]!
       expect(run.status).toBe('done')
+      expect(run.sessionId).toBe('sess-acp-1') // session lives on the run (per task x employee)
       expect(run.output).toContain('[RESULT] all done')
 
       // SECOND dispatch resumes the stored session — no session/new on the wire.
@@ -780,8 +779,8 @@ describe('dispatcher', () => {
       // the review brief carried the REAL submitted result (7d06bae0 lesson)
       expect(reviewRun.prompt).toContain('PR #42 done, tests green')
       expect(reviewRun.prompt).toContain('REVIEW turn')
-      const taskRow = (await db.select().from(tasks)).find(x => x.id === t.id)!
-      expect(taskRow.acpSessionId).not.toBe(reviewRun.sessionId)
+      const assigneeRun = (await db.select().from(taskRuns)).find(r => r.employeeId === jay)!
+      expect(assigneeRun.sessionId).not.toBe(reviewRun.sessionId) // per (task, employee) sessions
       // no phantom task was created
       expect((await db.select().from(tasks)).filter(x => x.id !== t.id && x.title.startsWith('Review:'))).toHaveLength(0)
     }
