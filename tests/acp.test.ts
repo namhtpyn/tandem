@@ -6,6 +6,23 @@ import type { AcpStream } from '../server/domains/tasks/acp.client'
 
 const NL_SRC = String.fromCharCode(10) // a real newline byte on the wire
 
+/** the connect is async — poll for the NEWLY constructed client instead of a fixed
+ * sleep (a fixed 10ms raced under CI load: FakeClient.last was still undefined, and
+ * a stale .last from the previous test would ready the WRONG connection). */
+let lastReturnedClient: any = null
+async function lastClient(): Promise<any> {
+  const FakeClient = ((await import('ssh2')).default as any).Client
+  for (let i = 0; i < 400; i++) {
+    const candidate = FakeClient.last
+    if (candidate && candidate !== lastReturnedClient) {
+      lastReturnedClient = candidate
+      return candidate
+    }
+    await new Promise(r => setTimeout(r, 25))
+  }
+  throw new Error('no ssh2 fake client was constructed')
+}
+
 vi.mock('ssh2', () => {
   class FakeStream {
     handlers: Record<string, Array<(d: unknown) => void>> = {}
@@ -526,10 +543,7 @@ describe('acp-ssh transport', () => {
     const plan = { env: { host: 'h', port: '22', username: 'u' }, sshKey: 'k', sshPassword: undefined }
     const blob = 'set -a\nCUSTOM_API_KEY=\'k\'\nset +a\n'
     const p = openAcpSshStream(plan, blob, 'hermes acp', () => {})
-    await new Promise(r => setTimeout(r, 10))
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const FakeClient = ((await import('ssh2')).default as any).Client
-    const client: any = FakeClient.last
+    const client: any = await lastClient()
     client.emitReady()
     const stream = await p
     expect(client.stream.blob).toBe(blob) // exactly the blob, nothing more
@@ -566,22 +580,17 @@ describe('acp-ssh transport', () => {
     const { openAcpSshStream } = await import('../server/domains/tasks/acp-ssh.util')
     const plan = { env: { host: 'h', port: '', username: 'u' }, sshKey: undefined, sshPassword: 'pw' }
     const p = openAcpSshStream(plan, 'blob', 'hermes acp', () => {})
-    await new Promise(r => setTimeout(r, 10))
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const FakeClient = ((await import('ssh2')).default as any).Client
-    FakeClient.last.emitReady()
+    const client: any = await lastClient()
+    client.emitReady()
     await p // default port 22 + password arm exercised through connect()
-    expect(FakeClient.last.stream.blob).toBe('blob')
+    expect(client.stream.blob).toBe('blob')
   })
 
   it('write guards + close survives throwing signal/close + non-number exit codes', async () => {
     const { openAcpSshStream } = await import('../server/domains/tasks/acp-ssh.util')
     const plan = { env: { host: 'h', port: '22', username: 'u' }, sshKey: 'k', sshPassword: undefined }
     const p = openAcpSshStream(plan, 'blob', 'hermes acp', () => {})
-    await new Promise(r => setTimeout(r, 10))
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const FakeClient = ((await import('ssh2')).default as any).Client
-    const client: any = FakeClient.last
+    const client: any = await lastClient()
     client.emitReady()
     const stream = await p
     // write before the blob: impossible via runAcpTurn (open resolves after blob) —
@@ -608,13 +617,13 @@ describe('acp-ssh transport', () => {
     const FakeClient = ((await import('ssh2')).default as any).Client
     // exec error
     let p = openAcpSshStream(plan, 'blob', 'hermes acp', () => {})
-    await new Promise(r => setTimeout(r, 10))
-    FakeClient.last.execError = new Error('exec nope')
-    FakeClient.last.emitReady()
+    let client: any = await lastClient()
+    client.execError = new Error('exec nope')
+    client.emitReady()
     await expect(p).rejects.toThrow('exec nope')
     // connection error
     p = openAcpSshStream(plan, 'blob', 'hermes acp', () => {})
-    await new Promise(r => setTimeout(r, 10))
-    FakeClient.last.emitError(new Error('ECONNREFUSED'))
+    client = await lastClient()
+    client.emitError(new Error('ECONNREFUSED'))
     await expect(p).rejects.toThrow('ECONNREFUSED')
   })})
