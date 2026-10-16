@@ -1,3 +1,10 @@
+## [2.35.1](https://github.com/namhtpyn/tandem/compare/v2.35.0...v2.35.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* **e2e:** provider specs follow the no-seed baseline; harden task-picker wait ([2ef1fbc](https://github.com/namhtpyn/tandem/commit/2ef1fbc1ce0bf5a7a531a2299310876423faf94b))
+
 # [2.35.0](https://github.com/namhtpyn/tandem/compare/v2.34.0...v2.35.0) (2026-10-16)
 
 
