@@ -33,6 +33,7 @@ test.describe('projects', () => {
 
     await page.goto('/tasks')
     await page.getByRole('button', { name: /New task|Add task/ }).first().click()
+    await expect(page.getByPlaceholder(/task title|Brief title/i)).toBeVisible()
     await page.getByPlaceholder(/task title|Brief title/i).fill(`Task ${suffix}`)
     await page.getByRole('button', { name: /^Project/ }).click()
     await page.getByRole('option', { name: `Picker ${suffix}` }).click()
