@@ -153,17 +153,47 @@ export async function rejectProposal(proposalId: string, decidedBy: string, note
   return { ok: true }
 }
 
-/** store proposals parsed from a run envelope (called by the runner on settle) */
+/** store proposals parsed from a run envelope (called by the runner on settle).
+ * AUTO-EXECUTION LAW (2026-10-16): a supervisor routing work to people inside its
+ * own supervision chain needs NO approval — the proposal is executed immediately
+ * by the same confirm path a human would use. Anything touching people outside
+ * the chain (or unnamed routing targets) still waits for a human. */
 export async function recordProposals(taskId: string, runId: string, payloads: Array<ProposalPayload>) {
+  const agent = (await db.select({ assigneeId: tasks.assigneeId }).from(tasks).where(eq(tasks.id, taskId)))[0]?.assigneeId ?? null
+  const chain = agent ? await supervisionChain(agent) : new Set<string>()
   for (const payload of payloads) {
+    const proposalId = crypto.randomUUID()
     await db.insert(taskProposals).values({
-      id: crypto.randomUUID(),
+      id: proposalId,
       taskId,
       runId,
       kind: payload.kind,
       payload: payload as unknown as Record<string, unknown>,
       status: 'proposed',
     })
+    // every routing target named and inside the agent's own chain -> auto-execute
+    let inChain = false
+    if (agent && chain.size > 1) {
+      if (payload.kind === 'reassign') {
+        const target = await findByName(payload.targetName)
+        inChain = !!target && chain.has(target.id)
+      }
+      else {
+        const targets = await Promise.all(payload.items.map(async i => await findByName(i.assigneeName)))
+        inChain = payload.items.length > 0 && targets.every(t => t !== null && chain.has(t.id))
+      }
+    }
+    if (inChain) {
+      try {
+        const r = await confirmProposal(proposalId, agent!, 'auto: routing within own supervision chain')
+        // events may be empty for degenerate payloads — the fallback text covers it
+        /* v8 ignore next */
+        const summary = r.events.length ? r.events.join('; ') : 'auto-executed (within chain)'
+        await logActivity(taskId, agent, `routing executed without approval — ${summary}`, { proposal: true, kind: payload.kind, auto: true })
+        continue
+      }
+      catch { /* loop guard or missing target: fall through, stays proposed */ }
+    }
     const summary = payload.kind === 'subtasks'
       ? `proposed ${payload.items.length} subtask(s): ${payload.items.map(i => i.title).join(', ')}`
       : `proposed reassigning to ${payload.targetName}${payload.reason ? ` — ${payload.reason}` : ''}`

@@ -89,7 +89,7 @@ export function buildBrief(input: {
   lines.push('[QUESTION] <blocking question for the owner>')
   lines.push('[BLOCKED] <what you need and from whom>')
   lines.push('')
-  lines.push('ROUTING — if part of this task belongs to someone else, also add a proposal line (the system confirms and acts; you decide nothing):')
+  lines.push('ROUTING — if part of this task belongs to someone else, also add a routing line (routing to people inside your own supervision chain executes immediately; anything outside your chain goes to a human for confirmation):')
   lines.push('[SUBTASKS] <title> :: <description> :: <suggested assignee name> | <another subtask> (propose subtasks; suggest assignees from people you know above — outside your chain gets escalated to your supervisor)')
   lines.push('[REASSIGN] <employee name> — <reason> (only when the WHOLE task belongs to someone else)')
   return lines.join('\n')

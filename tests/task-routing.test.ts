@@ -63,6 +63,12 @@ async function dbRow(table: string, id: string) {
   return rows.find((r: any) => r.id === id)
 }
 
+async function dbRows(table: string) {
+  const { db } = await import('../server/db')
+  const mod = await import('../server/db/schema')
+  return db.select().from((mod as any)[table])
+}
+
 async function mkProposal(taskId: string, kind: 'subtasks' | 'reassign', payload: unknown) {
   const { db } = await import('../server/db')
   const { taskProposals } = await import('../server/db/schema')
@@ -308,7 +314,8 @@ describe('routing coverage arms', () => {
   it('tasks.proposals lists stored proposals; create with bad parentId rejected', async () => {
     await expect(mkTask({ title: 'X', parentId: 'nope' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     const taskId = await mkTask({ title: 'Cov', assigneeId: idMap.get('worker')! })
-    await recordProposals(taskId, null as unknown as string, [{ kind: 'subtasks', items: [{ title: 'Only', description: 'd', assigneeName: 'Peer Person' }] }])
+    // outside-chain target stays proposed (the list still surfaces proposals)
+    await recordProposals(taskId, null as unknown as string, [{ kind: 'subtasks', items: [{ title: 'Only', description: 'd', assigneeName: 'Solo Person' }] }])
     const list = await callProc('tasks.proposals', { taskId })
     expect(list.items.length).toBe(1)
     expect(list.items[0].kind).toBe('subtasks')
@@ -468,6 +475,38 @@ describe('routing coverage arms II', () => {
     expect(hist.items[0].reason).toContain('reassign:')
   })
 
+  it('AUTO-LAW: routing to own chain executes without approval; outside stays proposed', async () => {
+    // worker's chain includes Peer Person; Solo Person is outside
+    const taskId = await mkTask({ title: 'AutoExec', assigneeId: idMap.get('worker')! })
+    await recordProposals(taskId, null as unknown as string, [{ kind: 'subtasks', items: [{ title: 'Mine to Peer', description: 'd', assigneeName: 'Peer Person' }] }])
+    let rows = (await dbRows('taskProposals')).filter((p: any) => p.taskId === taskId)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].status).toBe('executed') // no human touched it
+    const st = await callProc('tasks.subtasks', { taskId })
+    expect(st.items[0].title).toBe('Mine to Peer')
+    expect(st.items[0].assigneeId).toBe(idMap.get('peer')!)
+
+    // outside the chain -> still a proposal awaiting a human
+    const taskId2 = await mkTask({ title: 'AutoKeep', assigneeId: idMap.get('worker')! })
+    await recordProposals(taskId2, null as unknown as string, [{ kind: 'subtasks', items: [{ title: 'Out', description: 'd', assigneeName: 'Solo Person' }] }])
+    rows = (await dbRows('taskProposals')).filter((p: any) => p.taskId === taskId2)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].status).toBe('proposed')
+  })
+
+  it('AUTO-LAW: in-chain reassign executes immediately; loop-guard target stays proposed (no throw)', async () => {
+    const taskId = await mkTask({ title: 'AutoRe', assigneeId: idMap.get('worker')! })
+    await recordProposals(taskId, null as unknown as string, [{ kind: 'reassign', targetName: 'Peer Person', reason: 'their domain' }])
+    expect((await getTask(taskId)).assigneeId).toBe(idMap.get('peer')!)
+    const rows = (await dbRows('taskProposals')).filter((p: any) => p.taskId === taskId)
+    expect(rows[0].status).toBe('executed')
+
+    // peer is now the assignee; routing BACK to worker (recent) trips the loop guard -> stays proposed
+    await recordProposals(taskId, null as unknown as string, [{ kind: 'reassign', targetName: 'Worker', reason: 'back' }])
+    const back = (await dbRows('taskProposals')).filter((p: any) => p.taskId === taskId && p.status === 'proposed')
+    expect(back).toHaveLength(1)
+  })
+
   it('recordProposals reassign summary includes the reason', async () => {
     const taskId = await mkTask({ title: 'ReasonSum' })
     await recordProposals(taskId, null as unknown as string, [{ kind: 'reassign', targetName: 'Peer Person', reason: 'legal work' }])
@@ -492,7 +531,8 @@ describe('routing coverage arms II', () => {
 
   it('recordProposals logs a reassign summary without reason; live payload exposes holder and approvals', async () => {
     const taskId = await mkTask({ title: 'Live', assigneeId: idMap.get('worker')!, ownerId: idMap.get('peer')!, reviewers: [idMap.get('report')!] })
-    await recordProposals(taskId, null as unknown as string, [{ kind: 'reassign', targetName: 'Peer Person' }])
+    // outside-chain target: stays proposed (in-chain routing auto-executes by law and would move the assignee)
+    await recordProposals(taskId, null as unknown as string, [{ kind: 'reassign', targetName: 'Solo Person' }])
 
     await callProc('tasks.update', { id: taskId, status: 'doing' })
     await asEmp('worker', () => callProc('tasks.ask', { taskId, body: 'q' }))
