@@ -1,3 +1,10 @@
+# [2.31.0](https://github.com/namhtpyn/tandem/compare/v2.30.0...v2.31.0) (2026-10-16)
+
+
+### Features
+
+* **dispatch:** per-agent parallel dispatch — tasksPerAgent setting (default 1) ([339cf77](https://github.com/namhtpyn/tandem/commit/339cf7780fcbdcdd93f8b6bba54c396128e33d4e))
+
 # [2.30.0](https://github.com/namhtpyn/tandem/compare/v2.29.2...v2.30.0) (2026-10-16)
 
 
