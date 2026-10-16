@@ -182,6 +182,10 @@ export const tasks = pgTable('tandem_tasks', {
   failStreak: integer('fail_streak').notNull().default(0),
   /** subtask nesting: this task is a child of parent_task_id (unlimited depth) */
   parentTaskId: text('parent_task_id').references((): AnyPgColumn => tasks.id, { onDelete: 'set null' }),
+  /** review law (2026-10-16): this task is a supervisor REVIEW of review_of_task_id's
+   * result — its envelope settles the PARENT's review (approve/request-changes), never
+   * a further review of itself; deliberately NOT parent_task_id so gating is untouched */
+  reviewOfTaskId: text('review_of_task_id').references((): AnyPgColumn => tasks.id, { onDelete: 'set null' }),
   /** ACP session for this task's whole life (created on first dispatch, resumed after) */
   acpSessionId: text('acp_session_id'),
   /** status to restore when the auto-block (open children) lifts; null = not auto-blocked */

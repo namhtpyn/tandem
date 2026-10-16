@@ -694,6 +694,137 @@ describe('dispatcher', () => {
     }
   }, 15_000)
 
+  it('REVIEW LAW: submit with no reviewers defaults to the HUMAN supervisor (no AI review task)', async () => {
+    process.env.TANDEM_FAKE_SCRIPT = 'done\n[RESULT] shipped'
+    try {
+      const { db } = await dbm()
+      const { user, employeeSupervisors, taskObligations } = await schema()
+      await db.insert(user).values({ id: 'u-boss', name: 'Ash Boss', email: 'boss@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
+      const agentId = await mkAiAgent()
+      await db.insert(employeeSupervisors).values({ employeeId: agentId, supervisorId: 'u-boss' })
+      const t = await callProc('tasks.create', { title: 'HReview', assigneeId: agentId })
+      const { dispatchTask } = await import('../server/domains/tasks/runner.service')
+      const handle = await dispatchTask(t.id, 'http://tandem.local')
+      await handle.finished
+      const { tasks } = await schema()
+      const row = (await db.select().from(tasks)).find(x => x.id === t.id)!
+      expect(row.status).toBe('in-review')
+      expect(row.reviewers).toEqual(['u-boss'])
+      const obl = (await db.select().from(taskObligations)).filter(o => o.taskId === t.id)
+      expect(obl.some(o => o.role === 'approval' && o.employeeId === 'u-boss' && o.status === 'pending')).toBe(true)
+    }
+    finally {
+      delete process.env.TANDEM_FAKE_SCRIPT
+      process.env.TANDEM_FAKE_RUNNER = '1'
+    }
+  }, 15_000)
+
+  it('REVIEW LAW: AI supervisor gets a dispatched review; [RESULT] approves the parent', async () => {
+    process.env.TANDEM_FAKE_SCRIPT = 'done\n[RESULT] shipped'
+    try {
+      const { db } = await dbm()
+      const { employeeSupervisors } = await schema()
+      const jay = await mkAiAgent()
+      const ash = await mkAiAgent()
+      await db.insert(employeeSupervisors).values({ employeeId: jay, supervisorId: ash })
+      const t = await callProc('tasks.create', { title: 'AIReview', assigneeId: jay })
+      const { dispatchTask } = await import('../server/domains/tasks/runner.service')
+      await (await dispatchTask(t.id, 'http://tandem.local')).finished
+      const { tasks } = await schema()
+      const parent = (await db.select().from(tasks)).find(x => x.id === t.id)!
+      expect(parent.status).toBe('in-review')
+      const review = (await db.select().from(tasks)).find(x => x.reviewOfTaskId === t.id)
+      expect(review).toBeTruthy()
+      expect(review!.assigneeId).toBe(ash)
+      expect(review!.status).toBe('todo') // ready — dispatcher will pick it up
+
+      // the review turn runs and approves
+      await (await dispatchTask(review!.id, 'http://tandem.local')).finished
+      const after = (await db.select().from(tasks))
+      expect(after.find(x => x.id === t.id)!.status).toBe('done')
+      expect(after.find(x => x.id === review!.id)!.status).toBe('done')
+    }
+    finally {
+      delete process.env.TANDEM_FAKE_SCRIPT
+      process.env.TANDEM_FAKE_RUNNER = '1'
+    }
+  }, 15_000)
+
+  it('REVIEW LAW: a review ending [QUESTION] parks the REVIEW task on the owner', async () => {
+    process.env.TANDEM_FAKE_SCRIPT = 'done\n[RESULT] shipped'
+    try {
+      const { db } = await dbm()
+      const { employeeSupervisors } = await schema()
+      const jay = await mkAiAgent()
+      const ash = await mkAiAgent()
+      await db.insert(employeeSupervisors).values({ employeeId: jay, supervisorId: ash })
+      const t = await callProc('tasks.create', { title: 'AIQ', assigneeId: jay, ownerId: 'u-admin' })
+      const { dispatchTask } = await import('../server/domains/tasks/runner.service')
+      await (await dispatchTask(t.id, 'http://tandem.local')).finished
+      const { tasks } = await schema()
+      const review = (await db.select().from(tasks)).find(x => x.reviewOfTaskId === t.id)!
+      process.env.TANDEM_FAKE_SCRIPT = 'hmm\n[QUESTION] which branch?'
+      await (await dispatchTask(review.id, 'http://tandem.local')).finished
+      const after = (await db.select().from(tasks))
+      expect(after.find(x => x.id === review.id)!.status).toBe('waiting-answer')
+      expect(after.find(x => x.id === t.id)!.status).toBe('in-review') // parent untouched
+    }
+    finally {
+      delete process.env.TANDEM_FAKE_SCRIPT
+      process.env.TANDEM_FAKE_RUNNER = '1'
+    }
+  }, 15_000)
+
+  it('REVIEW LAW: a review run with NO verdict never silently approves — it asks the owner', async () => {
+    process.env.TANDEM_FAKE_SCRIPT = 'done\n[RESULT] shipped'
+    try {
+      const { db } = await dbm()
+      const { employeeSupervisors } = await schema()
+      const jay = await mkAiAgent()
+      const ash = await mkAiAgent()
+      await db.insert(employeeSupervisors).values({ employeeId: jay, supervisorId: ash })
+      const t = await callProc('tasks.create', { title: 'AINoV', assigneeId: jay, ownerId: 'u-admin' })
+      const { dispatchTask } = await import('../server/domains/tasks/runner.service')
+      await (await dispatchTask(t.id, 'http://tandem.local')).finished
+      const { tasks } = await schema()
+      const review = (await db.select().from(tasks)).find(x => x.reviewOfTaskId === t.id)!
+      process.env.TANDEM_FAKE_SCRIPT = 'i looked at it' // no envelope at all
+      await (await dispatchTask(review.id, 'http://tandem.local')).finished
+      const after = (await db.select().from(tasks))
+      expect(after.find(x => x.id === review.id)!.status).toBe('waiting-answer')
+      expect(after.find(x => x.id === t.id)!.status).toBe('in-review') // NOT auto-done
+    }
+    finally {
+      delete process.env.TANDEM_FAKE_SCRIPT
+      process.env.TANDEM_FAKE_RUNNER = '1'
+    }
+  }, 15_000)
+
+  it('REVIEW LAW: [BLOCKED] review sends the parent back to the assignee (ready) and cancels the review', async () => {
+    process.env.TANDEM_FAKE_SCRIPT = 'done\n[RESULT] shipped'
+    try {
+      const { db } = await dbm()
+      const { employeeSupervisors } = await schema()
+      const jay = await mkAiAgent()
+      const ash = await mkAiAgent()
+      await db.insert(employeeSupervisors).values({ employeeId: jay, supervisorId: ash })
+      const t = await callProc('tasks.create', { title: 'AIReject', assigneeId: jay })
+      const { dispatchTask } = await import('../server/domains/tasks/runner.service')
+      await (await dispatchTask(t.id, 'http://tandem.local')).finished
+      const { tasks } = await schema()
+      const review = (await db.select().from(tasks)).find(x => x.reviewOfTaskId === t.id)!
+      process.env.TANDEM_FAKE_SCRIPT = 'nope\n[BLOCKED] tests are missing'
+      await (await dispatchTask(review.id, 'http://tandem.local')).finished
+      const after = (await db.select().from(tasks))
+      expect(after.find(x => x.id === t.id)!.status).toBe('todo') // ready: assignee resumes with feedback
+      expect(after.find(x => x.id === review.id)!.status).toBe('cancelled')
+    }
+    finally {
+      delete process.env.TANDEM_FAKE_SCRIPT
+      process.env.TANDEM_FAKE_RUNNER = '1'
+    }
+  }, 15_000)
+
   it('STALE-JOB LAW: dispatchIfEligible skips a task that is not ready (no run row)', async () => {
     process.env.TANDEM_FAKE_RUNNER = '1'
     const agentId = await mkAiAgent()

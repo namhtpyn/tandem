@@ -94,12 +94,53 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
 }
 
 /** assignee submits the result → in review (reviewers pinged). No reviewers → done. */
+/** REVIEW LAW (2026-10-16): a submitted result defaults to the assignee's SUPERVISOR
+ * for review — humans and AI employees are equal reviewers. Explicit reviewers (if
+ * set) win; a lone top-of-org agent with no supervisor completes as before. When the
+ * default reviewer is an AI employee, a review task is dispatched to them and their
+ * envelope settles this task's review. */
+async function defaultReviewer(assigneeId: string): Promise<string | null> {
+  const rows = await db.select({ supervisorId: employeeSupervisors.supervisorId })
+    .from(employeeSupervisors).where(eq(employeeSupervisors.employeeId, assigneeId))
+  return rows[0]?.supervisorId ?? null
+}
+
+/** create + auto-dispatch a review turn for an AI supervisor (envelope settles the parent) */
+async function spawnAiReview(parentId: string, supervisorId: string, body: string) {
+  const parent = await getTask(parentId)
+  const { aiEmployees } = await import('../../db/schema')
+  const isAi = (await db.select({ userId: aiEmployees.userId }).from(aiEmployees).where(eq(aiEmployees.userId, supervisorId))).length > 0
+  if (!isAi) return // human supervisor: the approval obligation card is enough
+  const id = crypto.randomUUID()
+  await db.insert(tasks).values({
+    id,
+    title: `Review: ${parent.title}`,
+    description: `Review the submitted result of "${parent.title}". End with [RESULT] <verdict note> to approve, or [BLOCKED] <what must change> to send it back.\n\nSubmitted result:\n${body.slice(0, 4000)}`,
+    status: 'todo', // ready: the dispatcher picks it up automatically
+    assigneeId: supervisorId,
+    ownerId: parent.ownerId,
+    reviewOfTaskId: parentId,
+  })
+  await logActivity(parentId, 'status', null, `review dispatched to supervisor ${supervisorId}`, { reviewDispatched: true })
+  await publishChange('tasks', 'create')
+}
+
 export async function submitResult(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId)
   if (task.status !== DOING_STATUS) throw new Error('only a task in progress can submit')
   if (task.assigneeId !== authorId) throw new Error('only the assignee can submit')
   if (await hasOpenChildren(taskId)) throw new Error('task has open subtasks — they must be done or cancelled first')
-  const reviewers = task.reviewers
+  let reviewers = task.reviewers
+  if (reviewers.length === 0) {
+    /* v8 ignore next -- submit requires an assignee; the null arm is defensive */
+    const supervisor = task.assigneeId ? await defaultReviewer(task.assigneeId) : null
+    if (supervisor) {
+      // persist so approve/request-changes author checks and the UI see the reviewer
+      reviewers = [supervisor]
+      await db.update(tasks).set({ reviewers, updatedAt: new Date() }).where(eq(tasks.id, taskId))
+      await spawnAiReview(taskId, supervisor, body)
+    }
+  }
   const nextStatus = reviewers.length > 0 ? IN_REVIEW_STATUS : DONE_STATUS
   await cancelObligations(taskId, 'approval')
   const round = new Date() // one timestamp per round — round identity in the ledger

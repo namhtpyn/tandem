@@ -320,9 +320,35 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
       } catch { /* proposal recording is best-effort */ }
       const { parseRunEnvelope } = await import('../../../app/utils/task-thread')
       const envelope = parseRunEnvelope(buffer)
-      const { submitResult, askQuestion } = await import('./workflow.service')
+      const { submitResult, askQuestion, approveReview, requestChanges } = await import('./workflow.service')
       try {
-        if (envelope && (envelope.kind === 'question' || envelope.kind === 'blocked')) {
+        if (plan.task.reviewOfTaskId) {
+          // REVIEW LAW: this run WAS a supervisor review — its envelope settles the
+          // PARENT's review. Reviews are never themselves re-reviewed (no chains),
+          // and a review WITHOUT a verdict never silently approves — it parks on the owner.
+          if (envelope?.kind === 'blocked') {
+            /* v8 ignore next -- empty-text fallback */
+            await requestChanges(plan.task.reviewOfTaskId, plan.ai.userId, envelope.text || 'changes requested by review')
+            // back to ready so the assignee agent resumes with the feedback in its brief
+            await db.update(tasks).set({ status: 'todo', updatedAt: new Date() }).where(eq(tasks.id, plan.task.reviewOfTaskId))
+            await publishChange('tasks', 'update')
+            await db.update(tasks).set({ status: 'cancelled', updatedAt: new Date() }).where(eq(tasks.id, taskId))
+          }
+          else if (envelope?.kind === 'question') {
+            /* v8 ignore next -- empty-text fallback */
+            await askQuestion(taskId, plan.ai.userId, envelope.text || 'question during review')
+          }
+          else if (envelope?.kind === 'result') {
+            /* v8 ignore next -- empty-text fallback */
+            await approveReview(plan.task.reviewOfTaskId, plan.ai.userId, envelope.text || 'approved by supervisor review')
+            await db.update(tasks).set({ status: 'done', updatedAt: new Date() }).where(eq(tasks.id, taskId))
+          }
+          else {
+            await askQuestion(taskId, plan.ai.userId, 'review finished without a verdict — approve or reject')
+          }
+          await publishChange('tasks', 'update')
+        }
+        else if (envelope && (envelope.kind === 'question' || envelope.kind === 'blocked')) {
           // empty-text envelopes fall back to the kind as the question body
           /* v8 ignore next */
           await askQuestion(taskId, plan.ai.userId, envelope.text || envelope.kind)
