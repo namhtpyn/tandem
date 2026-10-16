@@ -1,3 +1,17 @@
+# [2.34.0](https://github.com/namhtpyn/tandem/compare/v2.33.0...v2.34.0) (2026-10-16)
+
+
+### Bug Fixes
+
+* **runner:** ensureOutDir always fires; deleted-mid-run failure covers the bounce's missing-task arm ([557f79e](https://github.com/namhtpyn/tandem/commit/557f79ee08252f6a840aaaf6b09b1525db10e339))
+* **run:** submit the REAL result body; ALWAYS pre-create the task out-dir ([30fa6e0](https://github.com/namhtpyn/tandem/commit/30fa6e09365ba35c0c5fa3760121a7a26b7512bb))
+
+
+### Features
+
+* **review:** verdict rows per reviewer per round — review ON the task, 3 verdicts ([348ad96](https://github.com/namhtpyn/tandem/commit/348ad96c0d5d61d82537dc7ef69ad725d008738f))
+* **tasks:** editable assignee/project/status in task detail Details ([f1e84d1](https://github.com/namhtpyn/tandem/commit/f1e84d1f9d62586744b127141aea152676c133b9))
+
 # [2.33.0](https://github.com/namhtpyn/tandem/compare/v2.32.1...v2.33.0) (2026-10-16)
 
 
