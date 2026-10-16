@@ -1,3 +1,10 @@
+# [2.35.0](https://github.com/namhtpyn/tandem/compare/v2.34.0...v2.35.0) (2026-10-16)
+
+
+### Features
+
+* **db:** squash 32 hand-written migrations into one drizzle-kit baseline ([6cfe484](https://github.com/namhtpyn/tandem/commit/6cfe48464cb1c394afeb507276a302025929a7e2))
+
 # [2.34.0](https://github.com/namhtpyn/tandem/compare/v2.33.0...v2.34.0) (2026-10-16)
 
 
