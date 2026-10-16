@@ -70,6 +70,13 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
   the primary fetch. If a streamed/live query is kept open client-side, follow the
   oRPC SSR pattern: cancel streams on success during SSR (dehydrate the snapshot)
   and `refetchOnMount: 'always'` on the client to reopen the stream.
+- **Migrations are drizzle-kit generated, never hand-written** (2026-10-16). After
+  editing `server/db/schema.ts`, run `bun run db:generate` and commit the folder it
+  creates (SQL + snapshot). `drizzle/20261016151937_common_madame_hydra` is the
+  single squashed baseline (schema + status seed), generated from the live prod
+  schema via drizzle-kit pull/generate on 2026-10-16 — the 32 historical folders
+  it replaced are gone. CI runs `bunx drizzle-kit check` as the drift guard. Hand-written
+  migration folders are how the chain silently broke for 20 migrations.
 - **Bun Shell for all subprocess** (multi-OS support law).
 - **Postgres, never SQLite.** better-auth tables are ALWAYS CLI-generated
   (`bun run gen:auth`); never hand-edit inside the GENERATED markers.

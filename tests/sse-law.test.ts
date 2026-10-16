@@ -148,6 +148,10 @@ describe('conventional GET list procs (the first-load half)', () => {
   })
 
   it('providers.list returns the seeded catalog; settings.list carries app config; oidc.list is empty without providers', async () => {
+    // BASELINE LAW: no provider seeds — the test creates its own row
+    const d0 = await import('../server/db')
+    const { modelProviders } = await import('../server/db/schema')
+    await d0.db.insert(modelProviders).values({ id: 'sse-law-prov', label: 'SSE Law Prov', baseUrl: 'https://sse-law.example.com', endpoints: ['OPENAI-COMPLETIONS'] }).onConflictDoNothing()
     const providers = await callProc('providers.list')
     expect(providers.length).toBeGreaterThan(0)
     expect(providers[0]).toHaveProperty('label')

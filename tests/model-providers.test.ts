@@ -40,18 +40,21 @@ beforeEach(async () => {
   await db.insert(user).values({ id: admin.id, name: 'Admin', email: 'admin@tandem.local', role: 'admin', title: 'T' })
 })
 
+// BASELINE LAW (2026-10-16 squash): migrations seed statuses only — the provider
+// catalog starts EMPTY; tests create their own fixtures.
+async function ensureProvider(id: string, label: string, baseUrl: string, endpoints: string[]) {
+  const d = await dbm()
+  const { modelProviders } = await import('../server/db/schema')
+  await d.db.insert(modelProviders).values({ id, label, baseUrl, endpoints }).onConflictDoNothing()
+}
+
 describe('providers', () => {
-  it('seeds openai, anthropic, openrouter with models', async () => {
+
+  it('catalog starts empty on a fresh DB (no provider seeds)', async () => {
     const iter = await callProc('providers.live')
     const snap = await iter.next()
     await iter.return?.()
-    const rows = snap.value as any[]
-    const labels = rows.map(r => r.label).sort()
-    expect(labels).toEqual(['Anthropic', 'Jev (TypeSafe AI)', 'OpenAI', 'OpenRouter'])
-    const openai = rows.find(r => r.label === 'OpenAI')!
-    expect(openai.baseUrl).toBe('https://api.openai.com')
-    const anthropic = rows.find(r => r.label === 'Anthropic')!
-    expect(anthropic.endpoints).toEqual(['ANTHROPIC-MESSAGES'])
+    expect(snap.value).toEqual([])
   })
 
   it('save upserts a provider and replaces its model list', async () => {
@@ -240,6 +243,7 @@ describe('providers', () => {
   })
 
   it('remove is blocked while an AI employee uses the provider', async () => {
+    await ensureProvider('seed-openai', 'OpenAI', 'https://api.openai.com', ['OPENAI-COMPLETIONS'])
     const { db } = await dbm()
     const { environments } = await import('../server/db/schema')
     await db.insert(environments).values({ id: 'env-p', name: 'env-p', host: '127.0.0.1', port: '22', username: 'u' })
@@ -250,6 +254,7 @@ describe('providers', () => {
 
 describe('employees model access', () => {
   it('update rejects unknown provider / secret', async () => {
+    await ensureProvider('seed-openai', 'OpenAI', 'https://api.openai.com', ['OPENAI-COMPLETIONS'])
     const { db } = await dbm()
     const { environments } = await import('../server/db/schema')
     await db.insert(environments).values({ id: 'env-r', name: 'env-r', host: '127.0.0.1', port: '22', username: 'u' })
@@ -265,6 +270,7 @@ describe('employees model access', () => {
   })
 
   it('create/update persist providerId + model + apiKeySecretId', async () => {
+    await ensureProvider('seed-openai', 'OpenAI', 'https://api.openai.com', ['OPENAI-COMPLETIONS'])
     const { db } = await dbm()
     const { environments } = await import('../server/db/schema')
     await db.insert(environments).values({ id: 'env-m', name: 'env-m', host: '127.0.0.1', port: '22', username: 'u' })
@@ -292,6 +298,7 @@ describe('employees model access', () => {
   })
 
   it('update null-clear paths: provider null skips validation', async () => {
+    await ensureProvider('seed-openai', 'OpenAI', 'https://api.openai.com', ['OPENAI-COMPLETIONS'])
     const { db } = await dbm()
     const { environments } = await import('../server/db/schema')
     await db.insert(environments).values({ id: 'env-n', name: 'env-n', host: '127.0.0.1', port: '22', username: 'u' })
@@ -333,7 +340,8 @@ describe('employees model access', () => {
 
 
 describe('provider styles', () => {
-  it('seed-jev is a decision provider with no key by default', async () => {
+  it('seed-jev shape when present: decision provider, no key by default', async () => {
+    await ensureProvider('seed-jev', 'Jev (TypeSafe AI)', 'https://api.typesafe.ai', ['TYPESAFE-SYSTEMONE'])
     const iter = await callProc('providers.live')
     const snap = await iter.next()
     await iter.return?.()

@@ -145,6 +145,12 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: no key secret passed -> assigned false with reason', async () => {
+    // no key secret WIRED (provider exists, setting has no keySecretId) -> assign refuses
+    const d = await dbm()
+    const { modelProviders } = await import('../server/db/schema')
+    await d.db.insert(modelProviders).values({ id: 'seed-jev', label: 'Jev (TypeSafe AI)', baseUrl: 'https://api.typesafe.ai', endpoints: ['TYPESAFE-SYSTEMONE'] }).onConflictDoNothing()
+    const { setSetting } = await import('../server/domains/settings/settings.service')
+    await setSetting('internal_decision', JSON.stringify({ providerId: 'seed-jev', model: 'jev-latest', keySecretId: null }))
     const t = await callProc('tasks.create', { title: 'Jev task' })
     const r = await callProc('statuses.assign', { taskId: t.id })
     expect(r.assigned).toBe(false)

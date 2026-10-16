@@ -1,1 +1,0 @@
-ALTER TABLE "tandem_environments" ADD COLUMN "secret_usage" text DEFAULT 'ssh-key' NOT NULL;
