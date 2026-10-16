@@ -10,6 +10,7 @@ import {
   modelProviders as modelProvidersTable, vaultAudit as vaultAuditTable, vaultSecrets as vaultSecretsTable,
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
+import { uuidv7 } from '../kernel/ids'
 
 export const providersRouter = os.router({
   /** live model-provider catalog (connection info only — no keys, no models) */
@@ -37,7 +38,7 @@ export const providersRouter = os.router({
     .handler(async ({ input }) => {
       const { modelProviderInputSchema } = await import('./model-providers.service')
       modelProviderInputSchema.parse(input)
-      const id = input.id?.trim() || crypto.randomUUID()
+      const id = input.id?.trim() || uuidv7()
       const now = new Date()
       const values = {
         id,
@@ -81,7 +82,7 @@ export const providersRouter = os.router({
       if (!secret) throw new ORPCError('BAD_REQUEST', { message: 'api key secret not found' })
       const key = decryptSecret(secret.ciphertext)
       await db.insert(vaultAuditTable).values({
-        id: crypto.randomUUID(),
+        id: uuidv7(),
         secretId: secret.id,
         secretName: secret.name,
         action: 'use',

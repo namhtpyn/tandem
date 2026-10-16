@@ -9,11 +9,12 @@ import { and, eq, inArray, ne } from 'drizzle-orm'
 import { db } from '../../db'
 import { tasks, taskActivity, taskStatuses } from '../../db/schema'
 import { publishChange } from '../kernel/kernel'
+import { uuidv7 } from '../kernel/ids'
 
 export const BLOCKED_STATUS = 'blocked'
 
 async function logActivity(taskId: string, body: string, meta: Record<string, unknown> = {}) {
-  await db.insert(taskActivity).values({ id: crypto.randomUUID(), taskId, kind: 'status', authorId: null, body, meta })
+  await db.insert(taskActivity).values({ id: uuidv7(), taskId, kind: 'status', authorId: null, body, meta })
   await publishChange('taskActivity', 'create')
   await publishChange('tasks', 'update')
 }

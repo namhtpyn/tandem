@@ -7,6 +7,7 @@ import { and, eq } from 'drizzle-orm'
 import { db } from '../../../../db'
 import { tasks, taskAttachments } from '../../../../db/schema'
 import { buildServerContext } from '../../../../domains/kernel/context'
+import { uuidv7 } from '../../../../domains/kernel/ids'
 import {
   ATTACHMENT_MAX_BYTES, mimeAllowed, normalizeMime, sanitizeFilename,
   saveAttachmentBytes, sha256Hex,
@@ -31,7 +32,7 @@ export default defineEventHandler(async (event) => {
   if (!mimeAllowed(mime)) throw createError({ statusCode: 415, statusMessage: `unsupported type: ${mime}` })
 
   const filename = sanitizeFilename(file.filename!)
-  const attachmentId = crypto.randomUUID()
+  const attachmentId = uuidv7()
   saveAttachmentBytes(id, attachmentId, Buffer.from(file.data))
   const sha = sha256Hex(Buffer.from(file.data))
   await db.insert(taskAttachments).values({

@@ -18,6 +18,7 @@ import { askQuestion, forwardQuestion, answerQuestion, submitResult, approveRevi
 import { listReviews } from './review.service'
 import { dispatchTask, listRuns } from './runner.service'
 import type { TaskRow } from '../../../shared/types'
+import { uuidv7 } from '../kernel/ids'
 
 type WorkflowSession = { getSession: () => Promise<{ user: { id: string } } | null> }
 
@@ -173,7 +174,7 @@ export const tasksRouter = os.router({
         const parent = await db.select({ id: tasksTable.id }).from(tasksTable).where(eq(tasksTable.id, input.parentId))
         if (parent.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'parent task does not exist' })
       }
-      const id = crypto.randomUUID()
+      const id = uuidv7()
       await db.insert(tasksTable).values({
         id,
         title: input.title,
@@ -188,7 +189,7 @@ export const tasksRouter = os.router({
       })
       if (input.assigneeId) await recordAssignment(id, input.assigneeId, 'created', selfId)
       if (input.parentId) {
-        await db.insert(taskActivity).values({ id: crypto.randomUUID(), taskId: input.parentId, kind: 'status', authorId: selfId, body: `subtask created: ${input.title}`, meta: { childId: id } })
+        await db.insert(taskActivity).values({ id: uuidv7(), taskId: input.parentId, kind: 'status', authorId: selfId, body: `subtask created: ${input.title}`, meta: { childId: id } })
         await refreshParentGating(id)
       }
       await publishChange('tasks', 'create')
@@ -245,7 +246,7 @@ export const tasksRouter = os.router({
         await recordAssignment(input.id, input.assigneeId, 'manual', actorId)
       }
       if (input.status !== undefined && input.status !== rows[0]!.status) {
-        await db.insert(taskActivity).values({ id: crypto.randomUUID(), taskId: input.id, kind: 'status', authorId: actorId, body: `status: ${rows[0]!.status} → ${input.status}`, meta: {} })
+        await db.insert(taskActivity).values({ id: uuidv7(), taskId: input.id, kind: 'status', authorId: actorId, body: `status: ${rows[0]!.status} → ${input.status}`, meta: {} })
         await refreshParentGating(input.id)
       }
       await publishChange('tasks', 'update')

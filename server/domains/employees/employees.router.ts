@@ -9,6 +9,7 @@ import {
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 import type { ApiKeyRow, EmployeeRow } from '../../../shared/types'
+import { uuidv7 } from '../kernel/ids'
 
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/
 
@@ -105,7 +106,7 @@ export const employeesRouter = os.router({
       }
       // user IS the employee: one row carries identity + employment.
       // AI-ness = extension row, never a column.
-      const userId = crypto.randomUUID()
+      const userId = uuidv7()
       await db.insert(userTable).values({ id: userId, name: input.name, email: input.email, role: 'employee', title: input.title, ...(input.image !== undefined && input.image !== null ? { image: input.image } : {}) })
       if (supervisorIds.length > 0) {
         await db.insert(supervisorsTable).values(supervisorIds.map(s => ({ employeeId: userId, supervisorId: s })))
@@ -278,7 +279,7 @@ export const employeesRouter = os.router({
         if (input.id === undefined) {
           const dupe = await db.select({ id: employeeTitlesTable.id }).from(employeeTitlesTable).where(eq(employeeTitlesTable.name, input.name))
           if (dupe.length > 0) throw new ORPCError('BAD_REQUEST', { message: 'a title with that name already exists' })
-          const inserted = await db.insert(employeeTitlesTable).values({ id: crypto.randomUUID(), name: input.name }).returning()
+          const inserted = await db.insert(employeeTitlesTable).values({ id: uuidv7(), name: input.name }).returning()
           await publishChange('employees', 'create')
           return { id: inserted[0]!.id }
         }

@@ -16,6 +16,7 @@ import { user as userTable } from '../../db/schema'
 import { authSchema } from '../../db/schema'
 import { getSettings } from '../settings/settings.service'
 import { getOidcProviders, type OidcProvider } from './oidc.service'
+import { uuidv7 } from '../kernel/ids'
 
 const env = process.env
 
@@ -61,6 +62,9 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}): Promise<
   const p = await resolveAuthPolicy()
   builtWith = policyKey(p)
   return betterAuth({
+    // UUIDv7 for auth tables (user/session/account/verification), same as every
+    // Tandem-minted id — time-ordered, index-friendly.
+    advanced: { database: { generateId: () => uuidv7() } },
     database: drizzleAdapter(db, {
       provider: 'pg',
       schema: authSchema,

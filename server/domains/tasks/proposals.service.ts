@@ -10,6 +10,7 @@ import { tasks, taskActivity, taskProposals, user as userTable, employeeSupervis
 import { publishChange } from '../kernel/kernel'
 import { recordAssignment, recentAssignees, assignTask } from './assignments.service'
 import { refreshParentGating } from './gating.service'
+import { uuidv7 } from '../kernel/ids'
 
 export interface SubtaskItem { title: string, description?: string, assigneeName?: string }
 export type ProposalPayload =
@@ -51,7 +52,7 @@ async function findByName(name: string | undefined) {
 }
 
 async function logActivity(taskId: string, authorId: string | null, body: string, meta: Record<string, unknown> = {}) {
-  await db.insert(taskActivity).values({ id: crypto.randomUUID(), taskId, kind: 'note', authorId, body, meta })
+  await db.insert(taskActivity).values({ id: uuidv7(), taskId, kind: 'note', authorId, body, meta })
   await publishChange('taskActivity', 'create')
   await publishChange('tasks', 'update')
 }
@@ -86,7 +87,7 @@ export async function confirmProposal(proposalId: string, confirmedBy: string, n
           events.push(`"${item.assigneeName}" is outside ${'the agent'}'s chain → escalated to supervisor`)
         }
       }
-      const childId = crypto.randomUUID()
+      const childId = uuidv7()
       await db.insert(tasks).values({
         id: childId,
         title: item.title.slice(0, 200),
@@ -162,7 +163,7 @@ export async function recordProposals(taskId: string, runId: string, payloads: A
   const agent = (await db.select({ assigneeId: tasks.assigneeId }).from(tasks).where(eq(tasks.id, taskId)))[0]?.assigneeId ?? null
   const chain = agent ? await supervisionChain(agent) : new Set<string>()
   for (const payload of payloads) {
-    const proposalId = crypto.randomUUID()
+    const proposalId = uuidv7()
     await db.insert(taskProposals).values({
       id: proposalId,
       taskId,
