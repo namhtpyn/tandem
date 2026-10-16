@@ -8,6 +8,7 @@ import {
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 import type { ProjectRow } from '../../../shared/types'
+import { uuidv7 } from '../kernel/ids'
 
 export const projectsRouter = os.router({
   /** live list — flat rows; nesting resolved client-side from parentId */
@@ -52,7 +53,7 @@ export const projectsRouter = os.router({
         const p = await db.select({ id: projectsTable.id }).from(projectsTable).where(eq(projectsTable.id, input.parentId))
         if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'parent project does not exist' })
       }
-      const id = crypto.randomUUID()
+      const id = uuidv7()
       await db.insert(projectsTable).values({ id, name: input.name, description: input.description, prompt: input.prompt, parentId: input.parentId ?? null })
       await publishChange('projects', 'create')
       return { id }

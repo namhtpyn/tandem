@@ -6,6 +6,7 @@
 import { db } from '../db'
 import { user, account } from '../db/schema'
 import { applyMigrations } from '../db'
+import { uuidv7 } from '../domains/kernel/ids'
 
 // Bun.serve idle timeout, in the code (was stack env). 255s = Bun's max: without it
 // the default (10s) kills idle SSE feeds mid-stream. Runs before Bun.serve reads it
@@ -28,7 +29,7 @@ export default defineNitroPlugin(async () => {
 
   const email = process.env.ADMIN_EMAIL || 'admin@tandem.local'
   const password = process.env.ADMIN_PASSWORD || 'tandem-admin'
-  const id = crypto.randomUUID()
+  const id = uuidv7()
   const now = new Date()
   await db.insert(user).values({
     id,
@@ -42,7 +43,7 @@ export default defineNitroPlugin(async () => {
   // password hash via better-auth's own hasher for compatibility
   const { hashPassword } = await import('../domains/auth/auth-hash.util')
   await db.insert(account).values({
-    id: crypto.randomUUID(),
+    id: uuidv7(),
     accountId: id,
     providerId: 'credential',
     userId: id,

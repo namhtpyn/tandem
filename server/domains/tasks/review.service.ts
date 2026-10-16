@@ -12,6 +12,7 @@ import { db } from '../../db'
 import { tasks, taskReviews, taskRuns, aiEmployees } from '../../db/schema'
 import { spawnObligation, cancelObligations, cancelAllObligations } from './obligations.service'
 import { publishChange } from '../kernel/kernel'
+import { uuidv7 } from '../kernel/ids'
 
 export type ReviewVerdict = 'approved' | 'change_requested' | 'rejected'
 
@@ -22,7 +23,7 @@ const CANCELLED_STATUS = 'cancelled'
 
 async function logActivity(taskId: string, kind: string, authorId: string | null, body: string, meta: Record<string, unknown>) {
   const { taskActivity } = await import('../../db/schema')
-  await db.insert(taskActivity).values({ id: crypto.randomUUID(), taskId, authorId, kind, body, meta })
+  await db.insert(taskActivity).values({ id: uuidv7(), taskId, authorId, kind, body, meta })
   await publishChange('taskActivity', 'create')
   await publishChange('tasks', 'update')
 }
@@ -39,7 +40,7 @@ export async function openReviewRound(taskId: string, reviewers: string[], resul
   const round = (await currentRound(taskId)) + 1
   const now = new Date()
   for (const reviewerId of reviewers) {
-    await db.insert(taskReviews).values({ id: crypto.randomUUID(), taskId, reviewerId, round, status: 'pending', createdAt: now })
+    await db.insert(taskReviews).values({ id: uuidv7(), taskId, reviewerId, round, status: 'pending', createdAt: now })
     await spawnObligation(taskId, reviewerId, 'approval', now)
   }
   await logActivity(taskId, 'status', null, `review round ${round} opened — waiting on ${reviewers.length} reviewer(s)`, { reviewRound: round })

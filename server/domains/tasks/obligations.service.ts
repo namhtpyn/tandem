@@ -7,11 +7,12 @@
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import { db } from '../../db'
 import { tasks, taskObligations } from '../../db/schema'
+import { uuidv7 } from '../kernel/ids'
 
 export type ObligationRole = 'answer' | 'approval'
 
 function id() {
-  return crypto.randomUUID()
+  return uuidv7()
 }
 
 /** spawn a pending obligation; no-op if an identical pending row already exists */

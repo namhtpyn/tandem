@@ -11,6 +11,7 @@ import {
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 import { toRow, listEnvironments } from './environments.service'
+import { uuidv7 } from '../kernel/ids'
 
 export const environmentsRouter = os.router({
   /** plain GET list (first-load data per the SSE law) */
@@ -32,7 +33,7 @@ export const environmentsRouter = os.router({
           throw new ORPCError('NOT_FOUND', { message: 'linked secret not found' })
         }
       }
-      const inserted = await db.insert(environmentsTable).values({ id: crypto.randomUUID(), ...input }).returning()
+      const inserted = await db.insert(environmentsTable).values({ id: uuidv7(), ...input }).returning()
       await publishChange('environments', 'create')
       return toRow(inserted[0]!)
     }),
@@ -88,7 +89,7 @@ export const environmentsRouter = os.router({
           privateKey = decryptSecret(secret.ciphertext)
           usage = env.secretUsage === 'password' ? 'password' : 'ssh-key'
           await db.insert(vaultAuditTable).values({
-            id: crypto.randomUUID(),
+            id: uuidv7(),
             secretId: secret.id,
             secretName: secret.name,
             action: 'use',
