@@ -1,3 +1,10 @@
+# [2.29.0](https://github.com/namhtpyn/tandem/compare/v2.28.2...v2.29.0) (2026-10-16)
+
+
+### Features
+
+* **run output:** keep the FULL output; drop the redundant settle note ([839b925](https://github.com/namhtpyn/tandem/commit/839b925a1c2ed8d8494e67f1a4aece988d36aa24))
+
 ## [2.28.2](https://github.com/namhtpyn/tandem/compare/v2.28.1...v2.28.2) (2026-10-15)
 
 
