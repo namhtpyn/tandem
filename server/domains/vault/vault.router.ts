@@ -119,9 +119,8 @@ export const vaultRouter = os.router({
         name: z.string().min(1).max(60),
       }))
       .handler(async ({ input }) => {
+        // duplicate folder names are allowed (the unique constraint was dropped)
         if (input.id === undefined) {
-          const dupe = await db.select({ id: vaultFoldersTable.id }).from(vaultFoldersTable).where(eq(vaultFoldersTable.name, input.name))
-          if (dupe.length > 0) throw new ORPCError('BAD_REQUEST', { message: 'a folder with that name already exists' })
           const inserted = await db.insert(vaultFoldersTable).values({ id: crypto.randomUUID(), name: input.name }).returning()
           await publishChange('vault', 'create')
           return { id: inserted[0]!.id }

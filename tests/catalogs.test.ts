@@ -51,11 +51,15 @@ describe('vault folders', () => {
     expect(live3.folders.map(f => f.name)).toEqual(['CI tokens'])
   })
 
-  it('duplicate name rejected; unknown ids rejected', async () => {
+  it('duplicate folder names ALLOWED; unknown ids rejected', async () => {
     await proc(['vault', 'folders', 'save'], { name: 'X' })
-    await expect(proc(['vault', 'folders', 'save'], { name: 'X' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    // unique dropped (2026-10-16): same-name folders are two distinct rows
+    const again = await proc(['vault', 'folders', 'save'], { name: 'X' }) as { id: string }
+    const live = await firstSnapshot(['vault', 'folders', 'live']) as { folders: Array<{ id: string, name: string }> }
+    expect(live.folders.filter(f => f.name === 'X')).toHaveLength(2)
     await expect(proc(['vault', 'folders', 'save'], { id: 'ghost', name: 'Y' })).rejects.toMatchObject({ code: 'NOT_FOUND' })
     await expect(proc(['vault', 'folders', 'remove'], { id: 'ghost' })).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    void again
   })
 
   it('secrets survive folder deletion (FK SET NULL) and live rows carry folder name', async () => {
