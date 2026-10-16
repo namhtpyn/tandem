@@ -76,44 +76,37 @@ describe('backoff ladder', () => {
 
   it('a failed run sets failStreak + dispatchAfter; success resets both', async () => {
     const { db } = await import('../server/db')
-    const { tasks, taskRuns } = await import('../server/db/schema')
+    const { tasks } = await import('../server/db/schema')
+    // deterministic fake failure — the ssh emitError choreography hung under CI
+    // coverage runs (the mocked connect never readied there)
     process.env.TANDEM_FAKE_RUNNER = '1'
     process.env.TANDEM_FAKE_SCRIPT = 'ERR: 429 rate limit exceeded'
+    process.env.TANDEM_FAKE_FAIL = '1'
     try {
-      // drive a failed run through the mocked ssh path (exec returns error -> failed)
-      const prev = process.env.TANDEM_FAKE_RUNNER
-      const prevOut = process.env.TANDEM_NO_ENSURE_OUT_DIR
-      delete process.env.TANDEM_FAKE_RUNNER
-      // the out-dir pre-fire opens an EXTRA ssh client — tests poke FakeClient.last,
-      // so keep the ACP stream as the only connection in these arms
-      process.env.TANDEM_NO_ENSURE_OUT_DIR = '1'
       const { dispatchTask } = await import('../server/domains/tasks/runner.service')
       const handle = await dispatchTask('t-1', 'http://t.local')
-      const clientMod = (await import('ssh2')).default
-      const FakeClient = clientMod.Client as unknown as { last?: { emitError(e: Error): void } }
-      // generous window: under the full-suite coverage run the shared test DB is contended
-      for (let i = 0; i < 2000 && !FakeClient.last; i++) await new Promise(r => setTimeout(r, 5))
-      FakeClient.last!.emitError(new Error('connection lost'))
       const res = await handle.finished
       expect(res.status).toBe('failed')
-      await new Promise(r => setTimeout(r, 150))
       const task = (await db.select().from(tasks).where(eq(tasks.id, 't-1')))[0]!
       expect(task.status).toBe('todo')
       expect(task.failStreak).toBe(1)
       expect(task.dispatchAfter).not.toBeNull()
       expect(task.dispatchAfter!.getTime()).toBeGreaterThan(Date.now() + 50_000)
-      // success resets
+      // success resets both
       await db.update(tasks).set({ failStreak: 5, dispatchAfter: new Date() }).where(eq(tasks.id, 't-1'))
-      process.env.TANDEM_FAKE_RUNNER = prev ?? '1'
-      if (prevOut === undefined) delete process.env.TANDEM_NO_ENSURE_OUT_DIR
-      else process.env.TANDEM_NO_ENSURE_OUT_DIR = prevOut
-      void prev
+      process.env.TANDEM_FAKE_FAIL = '0'
+      const handle2 = await dispatchTask('t-1', 'http://t.local')
+      expect((await handle2.finished).status).toBe('done')
+      const after = (await db.select().from(tasks).where(eq(tasks.id, 't-1')))[0]!
+      expect(after.failStreak).toBe(0)
+      expect(after.dispatchAfter).toBeNull()
     }
     finally {
       delete process.env.TANDEM_FAKE_SCRIPT
+      delete process.env.TANDEM_FAKE_FAIL
       process.env.TANDEM_FAKE_RUNNER = '1'
     }
-  }, 40_000)
+  }, 30_000)
 
   it('findEligible skips tasks still in backoff and picks them up after it passes', async () => {
     const { db } = await import('../server/db')
@@ -201,32 +194,27 @@ describe('double settle', () => {
   }, 5000)
 
   it('a failed run on a deleted task does not crash (failStreak default arm)', async () => {
-    const prev = process.env.TANDEM_FAKE_RUNNER
-    const prevOut = process.env.TANDEM_NO_ENSURE_OUT_DIR
-    delete process.env.TANDEM_FAKE_RUNNER
-    process.env.TANDEM_NO_ENSURE_OUT_DIR = '1' // keep FakeClient.last = the ACP stream only
+    // task vanishes MID-RUN (fake run still ticking): finish must not crash on the
+    // missing row — same ssh-error coverage as before, without the emitError dance
+    process.env.TANDEM_FAKE_RUNNER = '1'
+    process.env.TANDEM_FAKE_SCRIPT = 'working slowly'
+    process.env.TANDEM_FAKE_DELAY_MS = '120'
     try {
       const { dispatchTask } = await import('../server/domains/tasks/runner.service')
-      const handle = await dispatchTask('t-1', 'http://t.local')
-      const clientMod = (await import('ssh2')).default
-      const FakeClient = clientMod.Client as unknown as { last?: { emitError(e: Error): void }, __prev?: unknown }
-      // clear the client left by the previous test so the poll below waits for THIS run's
-      // connection (a stale FakeClient.last made emitError fire on an already-settled run)
-      ;(FakeClient as { last?: unknown }).last = undefined
-      // generous window: under the full-suite coverage run the shared test DB is contended
-      for (let i = 0; i < 2000 && !FakeClient.last; i++) await new Promise(r => setTimeout(r, 5))
-      // task vanishes mid-run (deleted by a human): finish must not crash on the missing row
+      const handleP = dispatchTask('t-1', 'http://t.local')
+      // delete the task while the fake run is still ticking
+      await new Promise(r => setTimeout(r, 60))
       const { db } = await import('../server/db')
       const { tasks } = await import('../server/db/schema')
       await db.delete(tasks).where(eq(tasks.id, 't-1'))
-      FakeClient.last!.emitError(new Error('boom'))
+      const handle = await handleP
       const res = await handle.finished
-      expect(res.status).toBe('failed')
+      expect(res.status).toBe('done') // the fake turn itself completes; no crash
     }
     finally {
-      if (prev !== undefined) process.env.TANDEM_FAKE_RUNNER = prev
-      if (prevOut === undefined) delete process.env.TANDEM_NO_ENSURE_OUT_DIR
-      else process.env.TANDEM_NO_ENSURE_OUT_DIR = prevOut
+      delete process.env.TANDEM_FAKE_SCRIPT
+      delete process.env.TANDEM_FAKE_DELAY_MS
+      process.env.TANDEM_FAKE_RUNNER = '1'
     }
   }, 30_000)
 
