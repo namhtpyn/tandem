@@ -1,3 +1,10 @@
+## [2.29.2](https://github.com/namhtpyn/tandem/compare/v2.29.1...v2.29.2) (2026-10-16)
+
+
+### Bug Fixes
+
+* **runner:** [QUESTION]/[BLOCKED] envelopes park the task on the owner, never complete it ([c11b250](https://github.com/namhtpyn/tandem/commit/c11b250dd24e8b07b657827609ab70b6f19a5a3c))
+
 ## [2.29.1](https://github.com/namhtpyn/tandem/compare/v2.29.0...v2.29.1) (2026-10-16)
 
 
