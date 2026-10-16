@@ -6,7 +6,7 @@
 // on unmount) — see the stream law in AGENTS.md.
 import { useQuery, skipToken, useQueryClient } from '@tanstack/vue-query'
 import type { EmployeeRow, TaskRow } from '~/../shared/types'
-import { buildThread, formatThreadTime, parseRunEnvelope, runAgentMessage, runOutputWithoutEnvelope } from '~/utils/task-thread'
+import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '~/utils/task-thread'
 import type { ThreadItem } from '~/utils/task-thread'
 
 const route = useRoute()
@@ -36,10 +36,11 @@ const activityQuery = useQuery(computed(() => ($orpc.tasks.activityList as any).
   input: (task.value?.id ? { taskId: task.value.id } : skipToken),
   queryKey: ['taskActivity', task.value?.id ?? ''],
 })))
-const workflowFeed = computed(() => (unref(activityQuery.data) ?? []) as unknown as Array<{ id: string, kind: string, body: string, authorName: string | null, createdAt: string }>)
+const workflowFeed = computed(() => (unref(activityQuery.data) ?? []) as unknown as Array<{ id: string, kind: string, body: string, authorName: string | null, authorId: string | null, createdAt: string }>)
 const infoSheetOpen = ref(false)
 // the task creator opens the thread as the brief's author
 const briefAuthor = computed(() => task.value?.creatorName ?? null)
+const briefAuthorId = computed(() => task.value?.createdBy ?? null)
 
 const retryInMin = computed(() => {
   if (!task.value?.dispatchAfter) return 0
@@ -52,6 +53,7 @@ const thread = computed<ThreadItem[]>(() => buildThread({
   description: task.value?.description ?? null,
   createdAt: task.value?.createdAt ?? null,
   briefAuthorName: task.value?.creatorName ?? null,
+  briefAuthorId: task.value?.createdBy ?? null,
   runs: runFeed.value.map(r => ({
     id: r.id,
     status: (r.status === 'running' ? 'running' : r.status === 'done' ? 'done' : 'failed') as 'running' | 'done' | 'failed',
@@ -67,6 +69,7 @@ const thread = computed<ThreadItem[]>(() => buildThread({
     noteKind: a.kind,
     body: a.body,
     authorName: a.authorName,
+    authorId: a.authorId,
     createdAt: a.createdAt,
   })),
 }))
@@ -146,6 +149,8 @@ async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
 const employeesLive = useQuery(($orpc.employees.list as any).queryOptions({ queryKey: ['employees'] }))
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[])
 const employeeName = computed(() => new Map(employees.value.map(e => [e.id, e.name])))
+/** userId -> hasAvatar: chat avatars render via /api/employees/:userId/avatar, initials otherwise */
+const hasAvatarByUserId = computed(() => new Map(employees.value.map(e => [e.userId, e.hasAvatar])))
 
 interface ChildRow { id: string, title: string, status: string, assigneeId: string | null }
 interface ProposalRow { id: string, kind: 'subtasks' | 'reassign', payload: Record<string, any>, status: string, decisionNote: string, createdAt: string }
@@ -266,7 +271,8 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
           <template v-for="item in thread" :key="item.id">
             <!-- brief: the task description as the opening message -->
             <div v-if="item.kind === 'brief'" class="flex gap-2.5">
-              <div class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">{{ briefAuthor ? briefAuthor.slice(0, 2).toUpperCase() : 'T' }}</div>
+              <img v-if="item.authorId && hasAvatarByUserId.get(item.authorId)" :src="`/api/employees/${item.authorId}/avatar`" :alt="item.authorName ?? 'Task brief'" class="mt-0.5 size-8 shrink-0 rounded-full object-cover">
+              <div v-else class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">{{ briefAuthor ? briefAuthor.slice(0, 2).toUpperCase() : 'T' }}</div>
               <div class="min-w-0 flex-1">
                 <p class="mb-1 text-[11px] font-medium text-zinc-400">{{ briefAuthor ?? 'Task brief' }} <span v-if="item.createdAt" class="font-normal text-zinc-300 dark:text-zinc-500">· {{ formatThreadTime(item.createdAt) }}</span></p>
                 <!-- description: mention tokens -> @Name; attachment tokens -> inline images / file chips -->
@@ -283,15 +289,12 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
 
             <!-- run: an agent turn — one message from the agent, avatar + name + bubble -->
             <div v-else-if="item.kind === 'run'" class="flex gap-2.5">
-              <div class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
-                <UIcon v-if="item.status === 'running'" name="i-lucide-loader-circle" class="size-4 animate-spin" />
-                <span v-else>{{ (item.agentName ?? 'Agent').slice(0, 2).toUpperCase() }}</span>
-              </div>
+              <div class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">{{ (item.agentName ?? 'Agent').slice(0, 2).toUpperCase() }}</div>
               <div class="min-w-0 flex-1">
                 <p class="mb-1 flex items-center gap-1.5 text-[11px] leading-none">
                   <span class="font-semibold text-zinc-600 dark:text-zinc-300">{{ item.agentName ?? 'Agent' }}</span>
                   <span class="text-primary">(AI)</span>
-                  <span v-if="item.status === 'running'" class="inline-flex items-center gap-1 rounded-full bg-warning/15 px-1.5 py-0.5 font-semibold text-warning"><span class="inline-block size-1.5 animate-pulse rounded-full bg-warning" />working</span>
+                  <span v-if="item.status === 'running'" class="inline-flex items-center gap-1 rounded-full bg-warning/15 px-1.5 py-0.5 font-semibold text-warning"><UIcon name="i-lucide-loader-circle" class="size-3 animate-spin" />working</span>
                   <span v-else-if="item.status === 'done'" class="rounded-full bg-zinc-100 px-1.5 py-0.5 font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">completed</span>
                   <span v-else class="inline-flex items-center gap-1 rounded-full bg-error/10 px-1.5 py-0.5 font-semibold text-error">failed<span v-if="item.exitCode !== null" class="font-normal opacity-80"> exit {{ item.exitCode }}</span></span>
                   <span class="ml-auto text-zinc-300 dark:text-zinc-600">{{ formatThreadTime(item.startedAt) }}</span>
@@ -300,8 +303,6 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
                 <div v-if="envelopeOf(item)" :class="['max-w-[calc(100%-3rem)] rounded-xl rounded-tl-sm border-l-2 px-3.5 py-2.5 text-sm leading-relaxed', envelopeOf(item)!.kind === 'question' ? 'border-l-blue-400/70 bg-blue-50/40 text-zinc-800 dark:bg-blue-500/10 dark:text-zinc-200' : envelopeOf(item)!.kind === 'blocked' ? 'border-l-error/70 bg-error/5 text-zinc-800 dark:bg-error/5 dark:text-zinc-200' : 'border-l-emerald-400/70 bg-emerald-50/40 text-zinc-800 dark:bg-emerald-500/10 dark:text-zinc-200']">
                   <span :class="['mr-1.5 align-middle text-[9px] font-bold uppercase tracking-widest', envelopeOf(item)!.kind === 'question' ? 'text-blue-500' : envelopeOf(item)!.kind === 'blocked' ? 'text-error' : 'text-emerald-600 dark:text-emerald-400']">{{ envelopeOf(item)!.kind }}</span><span class="align-middle">{{ envelopeOf(item)!.text || '(empty)' }}</span>
                 </div>
-                <!-- the agent's message bubble -->
-                <div v-if="runAgentMessage(item.output)" class="inline-block max-w-full whitespace-pre-wrap break-words rounded-xl rounded-tl-sm bg-primary/5 px-3.5 py-2 text-sm leading-relaxed text-zinc-800 dark:bg-primary/10 dark:text-zinc-200">{{ runAgentMessage(item.output) }}</div>
                 <!-- collected output files (agent deliverables) -->
                 <div v-if="runOutputs(item).length" class="mt-1.5 flex flex-wrap gap-1.5">
                   <template v-for="f in runOutputs(item)" :key="f.id">
@@ -325,7 +326,8 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
             <!-- note: slim system/human activity row -->
             <!-- human note: left bubble with initials avatar -->
             <div v-else-if="item.authorName" class="flex gap-2.5">
-              <div class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-[11px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">{{ item.authorName.slice(0, 2).toUpperCase() }}</div>
+              <img v-if="item.authorId && hasAvatarByUserId.get(item.authorId)" :src="`/api/employees/${item.authorId}/avatar`" :alt="item.authorName" class="mt-0.5 size-8 shrink-0 rounded-full object-cover">
+              <div v-else class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-[11px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">{{ item.authorName.slice(0, 2).toUpperCase() }}</div>
               <div class="min-w-0 flex-1">
                 <p class="mb-1 flex items-center gap-1.5 text-[11px] leading-none">
                   <span class="font-semibold text-zinc-600 dark:text-zinc-300">{{ item.authorName }}</span>
