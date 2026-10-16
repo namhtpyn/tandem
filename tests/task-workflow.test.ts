@@ -187,16 +187,18 @@ describe('task workflow — review gate', () => {
     })
     await as({ ...rev1, id: idMap.get('rev1')! }, async () => {
       const r = await callProc('tasks.approve', { taskId })
-      expect(r.done).toBe(false)
+      expect(r.ok).toBe(true)
     })
     let t = await getTask(taskId)
-    expect(t.status).toBe('in-review')
+    expect(t.status).toBe('in-review') // rev2 still pending
     await as({ ...rev2, id: idMap.get('rev2')! }, async () => {
-      const r = await callProc('tasks.approve', { taskId })
-      expect(r.done).toBe(true)
+      await callProc('tasks.approve', { taskId })
     })
     t = await getTask(taskId)
     expect(t.status).toBe('done')
+    // REVIEW LAW: both verdict rows approved in round 1
+    const revs = await callProc('tasks.reviews', { taskId })
+    expect(revs.filter((r: any) => r.round === 1).every((r: any) => r.status === 'approved')).toBe(true)
   })
 
   it('request-changes sends it back to working and resets approvals', async () => {
@@ -211,13 +213,13 @@ describe('task workflow — review gate', () => {
     expect(t.status).toBe('in-review') // rev2 still pending
     await as({ ...rev2, id: idMap.get('rev2')! }, async () => { await callProc('tasks.requestChanges', { taskId, body: 'redo the thing' }) })
     t = await getTask(taskId)
-    expect(t.status).toBe('doing')
+    expect(t.status).toBe('todo') // REVIEW LAW: back to READY, the assignee resumes
     // default body arm: submit again, request changes without body
     await startWork(t.id)
     await as({ ...worker, id: idMap.get('worker')! }, async () => { await callProc('tasks.submit', { taskId }) })
     await as({ ...rev1, id: idMap.get('rev1')! }, async () => { await callProc('tasks.requestChanges', { taskId, body: 'needs work' }) })
     t = await getTask(taskId)
-    expect(t.status).toBe('doing')
+    expect(t.status).toBe('todo')
     expect(await approvalsInRound(t.id)).toEqual([])
     const feed = await activity(taskId)
     const verdicts = feed.filter(a => a.kind === 'verdict')

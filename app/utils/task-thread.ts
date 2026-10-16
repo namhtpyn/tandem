@@ -7,7 +7,7 @@
  *  - 'run'      an agent dispatch turn (status pill + output bubble)
  *  - 'note'     human/system activity (questions, verdicts, status changes...)
  */
-export interface ThreadBriefItem { kind: 'brief'; id: string; body: string; createdAt: string; /** task creator shown as the brief author */ authorName?: string | null }
+export interface ThreadBriefItem { kind: 'brief'; id: string; body: string; createdAt: string; /** task creator shown as the brief author */ authorName?: string | null; /** creator's user id — avatar lookup via /api/employees/:userId/avatar */ authorId?: string | null }
 export interface ThreadRunItem {
   kind: 'run'
   id: string
@@ -27,6 +27,8 @@ export interface ThreadNoteItem {
   noteKind: string
   body: string
   authorName: string | null
+  /** author's user id — avatar lookup via /api/employees/:userId/avatar */
+  authorId?: string | null
   createdAt: string
 }
 export type ThreadItem = ThreadBriefItem | ThreadRunItem | ThreadNoteItem
@@ -35,23 +37,14 @@ export interface ThreadSource {
   description?: string | null
   createdAt?: string | null
   briefAuthorName?: string | null
+  briefAuthorId?: string | null
   runs?: Array<Pick<ThreadRunItem, 'id' | 'status' | 'output' | 'exitCode' | 'prompt' | 'agentName' | 'startedAt' | 'finishedAt'>>
-  activity?: Array<Pick<ThreadNoteItem, 'id' | 'noteKind' | 'body' | 'authorName' | 'createdAt'>>
+  activity?: Array<Pick<ThreadNoteItem, 'id' | 'noteKind' | 'body' | 'authorName' | 'authorId' | 'createdAt'>>
 }
 
 /** Envelope of the output contract: last [RESULT]/[QUESTION]/[BLOCKED] line wins. */
 export type EnvelopeKind = 'result' | 'run' | 'question' | 'blocked'
 export interface RunEnvelope { kind: EnvelopeKind; text: string }
-
-/** A run's log mixes the agent's prose with system lines ([tool]/[context]/[stderr]/…) and the
- * envelope line; this returns just the agent's own message, paragraphs preserved. */
-export function runAgentMessage(output: string | null | undefined): string {
-  if (!output) return ''
-  const prose = output
-    .split('\n')
-    .filter(l => !(/^\[[A-Za-z]/.test(l)))
-  return prose.join('\n').replace(/\n{3,}/g, '\n\n').trim()
-}
 
 export function parseRunEnvelope(output: string | null | undefined): RunEnvelope | null {
   if (!output) return null
@@ -121,13 +114,13 @@ export function formatThreadTime(iso: string, now: Date = new Date()): string {
 export function buildThread(src: ThreadSource): ThreadItem[] {
   const items: ThreadItem[] = []
   if (src.description && src.description.trim()) {
-    items.push({ kind: 'brief', id: 'brief', body: src.description, createdAt: src.createdAt ?? '', authorName: src.briefAuthorName ?? null })
+    items.push({ kind: 'brief', id: 'brief', body: src.description, createdAt: src.createdAt ?? '', authorName: src.briefAuthorName ?? null, authorId: src.briefAuthorId ?? null })
   }
   for (const r of src.runs ?? []) {
     items.push({ kind: 'run', id: r.id, status: r.status, exitCode: r.exitCode, output: r.output, prompt: r.prompt, agentName: r.agentName, startedAt: r.startedAt, finishedAt: r.finishedAt })
   }
   for (const a of src.activity ?? []) {
-    items.push({ kind: 'note', id: a.id, noteKind: a.noteKind, body: a.body, authorName: a.authorName, createdAt: a.createdAt })
+    items.push({ kind: 'note', id: a.id, noteKind: a.noteKind, body: a.body, authorName: a.authorName, authorId: a.authorId, createdAt: a.createdAt })
   }
   // brief first regardless of clock skew, then chronological by each item's own clock
   const timeOf = (t: ThreadItem): string => (t.kind === 'run' ? t.startedAt : t.createdAt)
