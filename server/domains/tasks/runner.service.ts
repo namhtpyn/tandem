@@ -15,7 +15,9 @@ import { tasks, taskRuns, taskActivity, taskAttachments, aiEmployees, environmen
 import { decryptSecret } from '../vault/vault-crypto.service'
 import { publishChange } from '../kernel/kernel'
 
-export const TAIL_MAX_LINES = 100
+// FULL output is kept on the run row (user law 2026-10-15: "the task output must
+// show full output") — no line tailing; the DB text column carries whatever the
+// agent produced.
 
 // stream-flush cadence; overridable so tests can exercise the flush path quickly
 const FLUSH_MS = Number(process.env.TANDEM_RUN_FLUSH_MS ?? 500)
@@ -38,11 +40,6 @@ export function backoffFor(failStreak: number, output: string): number {
 export interface RunHandle {
   runId: string
   finished: Promise<{ status: 'done' | 'failed', exitCode: number | null }>
-}
-
-function tail(text: string, maxLines = TAIL_MAX_LINES): string {
-  const lines = text.split('\n')
-  return lines.length <= maxLines ? text : lines.slice(-maxLines).join('\n')
 }
 
 async function logRun(taskId: string, runId: string, body: string, meta: Record<string, unknown> = {}) {
@@ -288,14 +285,14 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
   let lastFlush = 0
   let flushing = false
   const onLine = (line: string) => {
-    buffer = tail(`${buffer}${buffer ? '\n' : ''}${line}`)
+    buffer = `${buffer}${buffer ? '\n' : ''}${line}`
     const now = Date.now()
     if (now - lastFlush > FLUSH_MS && !flushing) {
       lastFlush = now
       flushing = true
       // flush only while the run row is still 'running': once finish() flips the status,
       // late lines are dropped (their content is already in finish's tail write)
-      void db.update(taskRuns).set({ output: tail(buffer) }).where(and(eq(taskRuns.id, runId), eq(taskRuns.status, 'running')))
+      void db.update(taskRuns).set({ output: buffer }).where(and(eq(taskRuns.id, runId), eq(taskRuns.status, 'running')))
         .then(() => publishChange('runs', 'update'))
         // flush is best-effort; finish() writes the final tail. A late flush can
         // race teardown (test DB drops, shutdown) — swallow, never an unhandled rejection.
@@ -308,9 +305,9 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
   }
 
   const finish = async (status: 'done' | 'failed', exitCode: number | null) => {
-    await db.update(taskRuns).set({ status, exitCode, output: tail(buffer), finishedAt: new Date() }).where(eq(taskRuns.id, runId))
-    // activity logging must never block the run's verdict (task may be deleted mid-run)
-    await logRun(taskId, runId, status === 'done' ? 'run finished' : `run failed (exit ${exitCode ?? '?'})`, { [status]: true, exitCode }).catch(() => {})
+    await db.update(taskRuns).set({ status, exitCode, output: buffer, finishedAt: new Date() }).where(eq(taskRuns.id, runId))
+    // no settle note: the run card's status pill (completed / failed exit N) IS the
+    // verdict — a separate 'run finished' pill only duplicated it in the thread
     // verdict: done run submits the result for review (or completes when no reviewers)
     if (status === 'done') {
       // routing proposals ([SUBTASKS]/[REASSIGN]) ride the output — record before submit

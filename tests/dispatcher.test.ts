@@ -286,7 +286,7 @@ describe('runner failure + fallback arms', () => {
     expect(r.status).toBe('done')
   }, 10_000)
 
-  it('long outputs are tailed to the last 100 lines', async () => {
+  it('long stored outputs are returned in full by the runs procs', async () => {
     const agentId = await mkAiAgent()
     await callProc('tasks.create', { title: 'Long2', assigneeId: agentId })
     const { default: { Client } } = await import('ssh2')
@@ -456,8 +456,8 @@ describe('runner real-ssh path (mocked ssh2)', () => {
   }, 10_000)
 })
 
-describe('tail truncation via long fake script', () => {
-  it('keeps only the last 100 lines', async () => {
+describe('full output via long fake script', () => {
+  it('keeps every line — no tail truncation', async () => {
     process.env.TANDEM_FAKE_SCRIPT = Array.from({ length: 130 }, (_, i) => `out-${i}`).join('\n')
     process.env.TANDEM_FAKE_DELAY_MS = '1'
     try {
@@ -471,9 +471,9 @@ describe('tail truncation via long fake script', () => {
       const { taskRuns } = await schema()
       const run = (await db.select().from(taskRuns))[0]!
       const lines = run.output.split('\n')
-      expect(lines.length).toBe(100)
-      expect(lines[0]).toBe('out-30')
-      expect(lines[99]).toBe('out-129')
+      expect(lines.length).toBe(130)
+      expect(lines[0]).toBe('out-0')
+      expect(lines[129]).toBe('out-129')
     }
     finally {
       delete process.env.TANDEM_FAKE_SCRIPT
