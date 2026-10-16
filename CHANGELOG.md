@@ -1,3 +1,10 @@
+# [2.30.0](https://github.com/namhtpyn/tandem/compare/v2.29.2...v2.30.0) (2026-10-16)
+
+
+### Features
+
+* **routing:** supervisor routing within own chain auto-executes — no approval ([174fabf](https://github.com/namhtpyn/tandem/commit/174fabf76fa04e0c5af03224c2d370c6d853e979))
+
 ## [2.29.2](https://github.com/namhtpyn/tandem/compare/v2.29.1...v2.29.2) (2026-10-16)
 
 
