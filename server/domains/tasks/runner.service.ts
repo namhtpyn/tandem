@@ -499,13 +499,10 @@ export async function dispatchTask(taskId: string, tandemUrl: string, opts?: { r
           await pushInputAttachments(taskId, briefData, sshPlan, plan.envName, loadSshClient, onLine)
           // ALWAYS pre-create the out dir so deliverables have a real home (7d06bae0
           // law). Fired detached: mkdir lands in ms, the turn starts immediately, and a
-          // slow/unreachable host must never delay dispatch. (Tests that drive the ssh
-          // mock by its LAST client skip the extra connection via env.)
-          if (process.env.TANDEM_NO_ENSURE_OUT_DIR !== '1') {
-            /* v8 ignore next 2 -- only fires on ssh failure before the turn starts */
-            void ensureOutDir(await loadSshClient(), sshPlan, taskId)
-              .catch(e => onLine(`[dispatch] out-dir prepare failed: ${e instanceof Error ? e.message : String(e)}`))
-          }
+          // slow/unreachable host must never delay dispatch.
+          /* v8 ignore next 2 -- the catch only fires on ssh failure before the turn */
+          void ensureOutDir(await loadSshClient(), sshPlan, taskId)
+            .catch(e => onLine(`[dispatch] out-dir prepare failed: ${e instanceof Error ? e.message : String(e)}`))
           // one ACP prompt turn: session per task (resume when one exists)
           const stream = await openAcpSshStream(sshPlan, envBlob, plan.ai.executable, onLine)
           const acp = await runAcpTurn({
