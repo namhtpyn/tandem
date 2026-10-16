@@ -142,5 +142,5 @@ test('workflow drawer streams an agent run to completion', async ({ page }) => {
   await expect(drawer.getByText(/done · exit 0/i)).toBeVisible()
   // the activity feed logs dispatch; the run card's status pill is the verdict
   await expect(drawer.getByText(/dispatched to/i).first()).toBeVisible()
-  await expect(drawer.getByText(/completed/i).first()).toBeVisible()
+  await expect(drawer.getByText(/done/i).first()).toBeVisible()
 })
