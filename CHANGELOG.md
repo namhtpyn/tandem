@@ -1,3 +1,10 @@
+# [2.32.0](https://github.com/namhtpyn/tandem/compare/v2.31.0...v2.32.0) (2026-10-16)
+
+
+### Features
+
+* **brief:** layered prompts — company (Settings) + project (Projects) ride every agent brief ([cd182dd](https://github.com/namhtpyn/tandem/commit/cd182dd99db15298bb69e53d2285e01eb040b7de))
+
 # [2.31.0](https://github.com/namhtpyn/tandem/compare/v2.30.0...v2.31.0) (2026-10-16)
 
 
