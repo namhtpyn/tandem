@@ -308,7 +308,9 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
     await db.update(taskRuns).set({ status, exitCode, output: buffer, finishedAt: new Date() }).where(eq(taskRuns.id, runId))
     // no settle note: the run card's status pill (completed / failed exit N) IS the
     // verdict — a separate 'run finished' pill only duplicated it in the thread
-    // verdict: done run submits the result for review (or completes when no reviewers)
+    // verdict: the envelope decides the workflow. [QUESTION]/[BLOCKED] park the
+    // task on the owner (waiting-answer + answer obligation) instead of completing
+    // it; [RESULT] (or none) submits for review / completes as before.
     if (status === 'done') {
       // routing proposals ([SUBTASKS]/[REASSIGN]) ride the output — record before submit
       try {
@@ -316,9 +318,18 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
         const payloads = parseRoutingProposals(buffer)
         if (payloads.length) await recordProposals(taskId, runId, payloads)
       } catch { /* proposal recording is best-effort */ }
-      const { submitResult } = await import('./workflow.service')
+      const { parseRunEnvelope } = await import('../../../app/utils/task-thread')
+      const envelope = parseRunEnvelope(buffer)
+      const { submitResult, askQuestion } = await import('./workflow.service')
       try {
-        await submitResult(taskId, plan.ai.userId, 'run complete')
+        if (envelope && (envelope.kind === 'question' || envelope.kind === 'blocked')) {
+          // empty-text envelopes fall back to the kind as the question body
+          /* v8 ignore next */
+          await askQuestion(taskId, plan.ai.userId, envelope.text || envelope.kind)
+        }
+        else {
+          await submitResult(taskId, plan.ai.userId, 'run complete')
+        }
       } catch { /* task may have moved on; leave as-is */ }
       await db.update(tasks).set({ failStreak: 0, dispatchAfter: null, updatedAt: new Date() }).where(eq(tasks.id, taskId))
     }

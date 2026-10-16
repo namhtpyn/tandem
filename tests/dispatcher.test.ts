@@ -630,6 +630,56 @@ describe('dispatcher', () => {
     await new Promise(r => setTimeout(r, 400))
   }, 10_000)
 
+  it('a run ending [QUESTION] parks the task on the owner, not done', async () => {
+    const prev = process.env.TANDEM_FAKE_SCRIPT
+    process.env.TANDEM_FAKE_RUNNER = '1'
+    process.env.TANDEM_FAKE_SCRIPT = 'working on it\n[QUESTION] which database should I seed?'
+    try {
+      const agentId = await mkAiAgent()
+      const { db } = await dbm()
+      const { user } = await schema()
+      await db.insert(user).values({ id: 'u-owner', name: 'Owner', email: 'owner@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
+      const t = await callProc('tasks.create', { title: 'Q task', assigneeId: agentId, ownerId: 'u-owner' })
+      const { dispatchTask } = await import('../server/domains/tasks/runner.service')
+      const handle = await dispatchTask(t.id, 'http://tandem.local')
+      expect((await handle.finished).status).toBe('done')
+      const { tasks, taskObligations } = await schema()
+      const task = (await db.select().from(tasks)).find(x => x.id === t.id)!
+      expect(task.status).toBe('waiting-answer')
+      const obl = (await db.select().from(taskObligations)).filter(o => o.taskId === t.id)
+      expect(obl.some(o => o.role === 'answer' && o.status === 'pending' && o.employeeId === 'u-owner')).toBe(true)
+    }
+    finally {
+      if (prev !== undefined) process.env.TANDEM_FAKE_SCRIPT = prev
+      else delete process.env.TANDEM_FAKE_SCRIPT
+      process.env.TANDEM_FAKE_RUNNER = '1' // file-level default (set at top)
+    }
+  }, 15_000)
+
+  it('a run ending [RESULT] completes the task as before', async () => {
+    const prevRunner = process.env.TANDEM_FAKE_RUNNER
+    const prevScript = process.env.TANDEM_FAKE_SCRIPT
+    process.env.TANDEM_FAKE_RUNNER = '1'
+    process.env.TANDEM_FAKE_SCRIPT = 'all done\n[RESULT] shipped'
+    try {
+      const agentId = await mkAiAgent()
+      const t = await callProc('tasks.create', { title: 'R task', assigneeId: agentId })
+      const { dispatchTask } = await import('../server/domains/tasks/runner.service')
+      const handle = await dispatchTask(t.id, 'http://tandem.local')
+      expect((await handle.finished).status).toBe('done')
+      const { tasks } = await schema()
+      const { db } = await dbm()
+      const task = (await db.select().from(tasks)).find(x => x.id === t.id)!
+      expect(task.status).toBe('done')
+    }
+    finally {
+      if (prevRunner !== undefined) process.env.TANDEM_FAKE_RUNNER = prevRunner
+      else delete process.env.TANDEM_FAKE_RUNNER
+      if (prevScript !== undefined) process.env.TANDEM_FAKE_SCRIPT = prevScript
+      else delete process.env.TANDEM_FAKE_SCRIPT
+    }
+  }, 15_000)
+
   it('runs live lists the run with its streaming tail', async () => {
     const agentId = await mkAiAgent()
     const t = await callProc('tasks.create', { title: 'Stream me', assigneeId: agentId })
