@@ -137,7 +137,8 @@ test('workflow drawer streams an agent run to completion', async ({ page }) => {
   const drawer = page.locator('[data-slot="content"]').first()
   await expect(drawer).toBeVisible()
   // the auto-dispatcher (fake runner) picks the ready task up and streams output
-  await expect(drawer.getByText(/RESULT: task complete/i)).toBeVisible({ timeout: 30_000 })
+  // the submitted result also lands in the thread as the verdict note — scope to the run output
+  await expect(drawer.locator('pre').getByText(/RESULT: task complete/i).first()).toBeVisible({ timeout: 30_000 })
   // the run card reports done + exit 0
   await expect(drawer.getByText(/done · exit 0/i)).toBeVisible()
   // the activity feed logs dispatch; the run card's status pill is the verdict
