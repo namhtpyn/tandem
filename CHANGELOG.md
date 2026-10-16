@@ -1,3 +1,10 @@
+## [2.32.1](https://github.com/namhtpyn/tandem/compare/v2.32.0...v2.32.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* **dispatch:** stale-job law — worker skips ineligible tasks; jobId dedup stops duplicate stacking ([3f6197d](https://github.com/namhtpyn/tandem/commit/3f6197db8bdb93d313fbd6b12aa4d011ebe3d64f))
+
 # [2.32.0](https://github.com/namhtpyn/tandem/compare/v2.31.0...v2.32.0) (2026-10-16)
 
 
