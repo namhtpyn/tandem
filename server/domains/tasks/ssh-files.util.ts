@@ -25,6 +25,27 @@ export function taskFilesOutDir(taskId: string): string {
   return `${taskFilesDir(taskId)}/out`
 }
 
+/** ALWAYS create ~/.tandem/<taskId>/attachments/out before a turn — even when the
+ * task has no input attachments. Without it the dir never exists, agents "write
+ * deliverables" into a void (or mangle the path), and collection finds nothing.
+ * (incident 7d06bae0, 2026-10-16: 9 screenshots claimed, 0 collected) */
+export async function ensureOutDir(
+  ClientCtor: typeof Client,
+  plan: SshFilePlan,
+  taskId: string,
+  timeoutMs?: number,
+): Promise<void> {
+  const conn = await connect(ClientCtor, plan, timeoutMs)
+  try {
+    const out = taskFilesOutDir(taskId)
+    await exec(conn, `mkdir -p ${out}`)
+    await exec(conn, `chown -R 10000:10000 ${TASK_FILES_HOME}/${taskId} 2>/dev/null || chmod -R a+rwX ${TASK_FILES_HOME}/${taskId}`)
+  }
+  finally {
+    conn.end()
+  }
+}
+
 function connect(ClientCtor: typeof Client, plan: SshFilePlan, timeoutMs = 20_000): Promise<Client> {
   return new Promise((resolve, reject) => {
     const conn = new ClientCtor()

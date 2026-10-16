@@ -125,7 +125,7 @@ export function guessMime(filename: string): string {
 /** everything the dispatched agent needs, decrypted; returns null pieces when unconfigured */
 import { buildBrief, loadBriefData } from './brief.service'
 import { attachmentExists, attachmentPath, COLLECTION_MAX_BYTES, mimeAllowed, normalizeMime, saveAttachmentBytes, sha256Hex } from './attachments.util'
-import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles } from './ssh-files.util'
+import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles, ensureOutDir } from './ssh-files.util'
 import { recordProposals } from './proposals.service'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -354,7 +354,11 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
           await askQuestion(taskId, plan.ai.userId, envelope.text || envelope.kind)
         }
         else {
-          await submitResult(taskId, plan.ai.userId, 'run complete')
+          // the REAL result rides the submit — the supervisor's review brief needs it
+          // (envelope text, else the tail of what the agent actually said)
+          /* v8 ignore next -- bare 'run complete' only when the agent said nothing at all */
+          const resultBody = envelope?.text?.trim() || buffer.trim().split('\n').slice(-12).join('\n').slice(-2000) || 'run complete'
+          await submitResult(taskId, plan.ai.userId, resultBody)
         }
       } catch { /* task may have moved on; leave as-is */ }
       await db.update(tasks).set({ failStreak: 0, dispatchAfter: null, updatedAt: new Date() }).where(eq(tasks.id, taskId))
@@ -400,6 +404,12 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
           const sshPlan = { env: plan.env, sshKey: plan.sshKey, sshPassword: plan.sshPassword }
           // push input attachments (idempotent; no-op when none)
           await pushInputAttachments(taskId, briefData, sshPlan, plan.envName, loadSshClient, onLine)
+          // ALWAYS pre-create the out dir so deliverables have a real home (7d06bae0
+          // law). Fired detached: mkdir lands in ms, the turn starts immediately, and a
+          // slow/unreachable host must never delay dispatch.
+          /* v8 ignore next 3 -- only fires on ssh failure before the turn starts */
+          void ensureOutDir(await loadSshClient(), sshPlan, taskId)
+            .catch(e => onLine(`[dispatch] out-dir prepare failed: ${e instanceof Error ? e.message : String(e)}`))
           // one ACP prompt turn: session per task (resume when one exists)
           const stream = await openAcpSshStream(sshPlan, envBlob, plan.ai.executable, onLine)
           const acp = await runAcpTurn({

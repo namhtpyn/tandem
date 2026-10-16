@@ -750,6 +750,28 @@ describe('dispatcher', () => {
     }
   }, 15_000)
 
+  it('REVIEW LAW: the review brief carries the REAL result + parent description', async () => {
+    process.env.TANDEM_FAKE_SCRIPT = 'working\n[RESULT] PR #99 open, CI green, 52/52 tests'
+    try {
+      const { db } = await dbm()
+      const { employeeSupervisors, tasks } = await schema()
+      const jay = await mkAiAgent()
+      const ash = await mkAiAgent()
+      await db.insert(employeeSupervisors).values({ employeeId: jay, supervisorId: ash })
+      const t = await callProc('tasks.create', { title: 'Ship feature X', description: 'cut a release with tests', assigneeId: jay })
+      const { dispatchTask } = await import('../server/domains/tasks/runner.service')
+      await (await dispatchTask(t.id, 'http://tandem.local')).finished
+      const review = (await db.select().from(tasks)).find(x => x.reviewOfTaskId === t.id)!
+      expect(review.description).toContain('PR #99 open, CI green, 52/52 tests') // real result, not 'run complete'
+      expect(review.description).toContain('cut a release with tests') // parent context
+      expect(review.description).toContain('[RESULT]') // verdict instructions
+    }
+    finally {
+      delete process.env.TANDEM_FAKE_SCRIPT
+      process.env.TANDEM_FAKE_RUNNER = '1'
+    }
+  }, 15_000)
+
   it('REVIEW LAW: a review ending [QUESTION] parks the REVIEW task on the owner', async () => {
     process.env.TANDEM_FAKE_SCRIPT = 'done\n[RESULT] shipped'
     try {
