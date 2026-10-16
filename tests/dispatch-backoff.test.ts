@@ -199,6 +199,7 @@ describe('double settle', () => {
     process.env.TANDEM_FAKE_RUNNER = '1'
     process.env.TANDEM_FAKE_SCRIPT = 'working slowly'
     process.env.TANDEM_FAKE_DELAY_MS = '120'
+    process.env.TANDEM_FAKE_FAIL = '1'
     try {
       const { dispatchTask } = await import('../server/domains/tasks/runner.service')
       const handleP = dispatchTask('t-1', 'http://t.local')
@@ -209,11 +210,12 @@ describe('double settle', () => {
       await db.delete(tasks).where(eq(tasks.id, 't-1'))
       const handle = await handleP
       const res = await handle.finished
-      expect(res.status).toBe('done') // the fake turn itself completes; no crash
+      expect(res.status).toBe('failed') // the run itself failed; the bounce no-ops on the missing row
     }
     finally {
       delete process.env.TANDEM_FAKE_SCRIPT
       delete process.env.TANDEM_FAKE_DELAY_MS
+      delete process.env.TANDEM_FAKE_FAIL
       process.env.TANDEM_FAKE_RUNNER = '1'
     }
   }, 30_000)
