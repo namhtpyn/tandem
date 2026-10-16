@@ -109,15 +109,15 @@ describe('settings.update (authenticated)', () => {
     const r = await proc(['settings', 'update'], { disablePasswordLogin: true }) as { ok: boolean }
     expect(r).toEqual({ ok: true })
     const { getSettings } = await import('../server/domains/settings/settings.service')
-    expect(await getSettings()).toEqual({ disablePasswordLogin: true, companyName: 'Tandem', internalLlm: null, internalDecision: null, runTimeoutMs: 1_800_000, tasksPerAgent: 1 })
+    expect(await getSettings()).toEqual({ disablePasswordLogin: true, companyName: 'Tandem', internalLlm: null, internalDecision: null, runTimeoutMs: 1_800_000, tasksPerAgent: 1, companyPrompt: '' })
     // and back
     await proc(['settings', 'update'], { disablePasswordLogin: false })
-    expect(await getSettings()).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', internalLlm: null, internalDecision: null, runTimeoutMs: 1_800_000, tasksPerAgent: 1 })
+    expect(await getSettings()).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', internalLlm: null, internalDecision: null, runTimeoutMs: 1_800_000, tasksPerAgent: 1, companyPrompt: '' })
   })
 
   it('live snapshot returns current settings', async () => {
     const snap = await firstSnapshot(['settings', 'live']) as { disablePasswordLogin: boolean, runTimeoutMs: number }
-    expect(snap).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', internalLlm: null, internalDecision: null, runTimeoutMs: 1_800_000, tasksPerAgent: 1 })
+    expect(snap).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', internalLlm: null, internalDecision: null, runTimeoutMs: 1_800_000, tasksPerAgent: 1, companyPrompt: '' })
   })
 
   it('run timeout setting: update + bounds (min 1 min, max 6h)', async () => {

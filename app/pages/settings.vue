@@ -96,6 +96,26 @@ const disablePasswordLogin = ref(false)
 const companyName = ref('Tandem')
 const runTimeoutMinutes = ref(30)
 const tasksPerAgent = ref(1)
+const companyPrompt = ref('')
+const savingCompanyPrompt = ref(false)
+const companyPromptMessage = ref('')
+async function saveCompanyPrompt() {
+  savingCompanyPrompt.value = true
+  companyPromptMessage.value = ''
+  try {
+    const text = companyPrompt.value.trim()
+    if (text.length > 8000) {
+      companyPromptMessage.value = 'Keep it under 8000 characters'
+      return
+    }
+    await ($client as any).settings.update({ companyPrompt: text })
+    companyPromptMessage.value = 'Saved'
+  } catch (e: any) {
+    companyPromptMessage.value = e?.message ?? 'Save failed'
+  } finally {
+    savingCompanyPrompt.value = false
+  }
+}
 // ---- Workspace AI: internal LLM + decision assignments ----
 const vaultLive = useQuery(($orpc.vault.list as any).queryOptions({ queryKey: ['vault'] }))
 const vaultItems = computed((): any => groupedSecretOptions(((unref(vaultLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string, folder: string | null }>)))
@@ -175,11 +195,12 @@ async function saveAssignment(kind: 'internalLlm' | 'internalDecision') {
 }
 watch(() => unref(settingsLive.data), (d) => {
   if (d) {
-    const v = d as { disablePasswordLogin: boolean, companyName?: string, runTimeoutMs?: number, tasksPerAgent?: number }
+    const v = d as { disablePasswordLogin: boolean, companyName?: string, runTimeoutMs?: number, tasksPerAgent?: number, companyPrompt?: string }
     disablePasswordLogin.value = v.disablePasswordLogin
     companyName.value = v.companyName?.trim() || 'Tandem'
     runTimeoutMinutes.value = Math.round((v.runTimeoutMs ?? 1_800_000) / 60_000)
     tasksPerAgent.value = v.tasksPerAgent ?? 1
+    companyPrompt.value = v.companyPrompt ?? ''
   }
 }, { immediate: true })
 
@@ -340,6 +361,19 @@ async function savePasswordPolicy() {
         </UFormField>
         <UButton type="submit" icon="i-lucide-save" :loading="savingName">Save</UButton>
         <span v-if="nameMessage" class="pb-2 text-xs" :class="nameMessage === 'Saved' ? 'text-success' : 'text-error'">{{ nameMessage }}</span>
+      </UForm>
+
+      <USeparator class="my-5" />
+
+      <UForm :state="{ companyPrompt }" class="flex flex-col gap-3" @submit="saveCompanyPrompt">
+        <UFormField label="Company prompt" name="companyPrompt">
+          <template #hint><FormHint text="Added to EVERY agent brief — company-wide context, standards, tone (empty = omitted)" /></template>
+          <UTextarea v-model="companyPrompt" placeholder="e.g. We are a shipping-integration agency. Always prefer pinned dependencies. Reply in English…" :rows="5" class="w-full" :disabled="savingCompanyPrompt" />
+        </UFormField>
+        <div class="flex items-center gap-3">
+          <UButton type="submit" icon="i-lucide-save" :loading="savingCompanyPrompt">Save</UButton>
+          <span v-if="companyPromptMessage" class="pb-2 text-xs" :class="companyPromptMessage === 'Saved' ? 'text-success' : 'text-error'">{{ companyPromptMessage }}</span>
+        </div>
       </UForm>
 
       <USeparator class="my-5" />

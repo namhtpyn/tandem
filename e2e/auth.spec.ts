@@ -104,7 +104,7 @@ test.describe('authenticated settings', () => {
     try {
       // settings via oRPC with the browser cookie (SSE: first event only)
       const settings = await readFirstSseData(request, '/rpc/settings/live', cookieHeader)
-      expect(settings).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', internalLlm: null, internalDecision: null, runTimeoutMs: 1_800_000, tasksPerAgent: 1 })
+      expect(settings).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', internalLlm: null, internalDecision: null, runTimeoutMs: 1_800_000, tasksPerAgent: 1, companyPrompt: '' })
 
       // add an OIDC provider via oRPC
       const put = await request.post('/rpc/oidc/replace', {

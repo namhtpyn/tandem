@@ -2,7 +2,7 @@
 // Pure functions — no I/O; loadBriefData gathers rows.
 import { and, eq } from 'drizzle-orm'
 import { db } from '../../db'
-import { tasks, user as userTable, aiEmployees, employeeSupervisors, taskActivity, taskAttachments, taskProposals } from '../../db/schema'
+import { tasks, user as userTable, aiEmployees, employeeSupervisors, taskActivity, taskAttachments, taskProposals, projects } from '../../db/schema'
 import { stripAttachments } from './attachments.util'
 
 export interface BriefPerson { id: string, name: string, title: string | null, kind: string }
@@ -39,6 +39,8 @@ export function chainToRoot(startId: string, edges: Array<{ employeeId: string, 
 }
 
 export function buildBrief(input: {
+  companyPrompt?: string
+  projectPrompt?: string
   agent: BriefPerson
   agentInstructions: string
   upChain: BriefPerson[]
@@ -59,6 +61,16 @@ export function buildBrief(input: {
   for (const c of input.extraChains) {
     if (c.chain.length) lines.push(`${c.person.name}: ${personLine(c.person)}; their chain: ${c.chain.map(personLine).join(' -> ')}.`)
     else lines.push(`${c.person.name}: ${personLine(c.person)}; their chain: (unknown).`)
+  }
+  if (input.companyPrompt?.trim()) {
+    lines.push('')
+    lines.push('COMPANY (applies to all your work)')
+    lines.push(input.companyPrompt.trim())
+  }
+  if (input.projectPrompt?.trim()) {
+    lines.push('')
+    lines.push(`PROJECT ${input.task.projectName ? `— ${input.task.projectName}` : ''}`.trim())
+    lines.push(input.projectPrompt.trim())
   }
   lines.push('')
   lines.push('TASK')
@@ -143,11 +155,19 @@ export async function loadBriefData(taskId: string) {
   const nameById = new Map(users.map(u => [u.id, u.name]))
   const recent = activity.slice(-20).map(a => ({ kind: a.kind, authorName: a.authorId ? nameById.get(a.authorId)! : null, body: a.body! }))
   const ai = aiById.get(assigneeId)
+  // company + project prompts ride every brief (user law 2026-10-16: layered context)
+  const { getCompanyPrompt } = await import('../settings/settings.service')
+  const companyPrompt = await getCompanyPrompt()
+  const projectRow = task.projectId
+    ? (await db.select().from(projects).where(eq(projects.id, task.projectId)))[0]
+    : undefined
   const attachmentRows = await db.select().from(taskAttachments).where(eq(taskAttachments.taskId, taskId))
   const attachments = attachmentRows
     .filter(a => a.kind === 'input')
     .map(a => ({ id: a.id, filename: a.filename, mime: a.mime, size: a.size, remotePath: `~/.tandem/${taskId}/attachments/${a.filename}` }))
   return {
+    companyPrompt,
+    projectPrompt: projectRow?.prompt ?? '',
     agent: person(assigneeId),
     agentInstructions: ai?.instructions ?? '',
     upChain: upIds.map(person),
@@ -160,7 +180,7 @@ export async function loadBriefData(taskId: string) {
       ownerName: task.ownerId ? nameById.get(task.ownerId)! : null,
       ownerId: task.ownerId,
       reviewerNames: task.reviewers.map(id => nameById.get(id)).filter((n): n is string => Boolean(n)),
-      projectName: null,
+      projectName: projectRow?.name ?? null,
     },
     recentActivity: [...recent, ...rejectedNotes.map(n => ({ kind: 'note', authorName: 'system', body: n }))],
     attachments,

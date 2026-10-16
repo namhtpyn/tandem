@@ -642,6 +642,32 @@ describe('dispatcher', () => {
     await new Promise(r => setTimeout(r, 400))
   }, 10_000)
 
+  it('company + project prompts ride the persisted run prompt end-to-end', async () => {
+    process.env.TANDEM_FAKE_RUNNER = '1'
+    process.env.TANDEM_FAKE_SCRIPT = 'ok\n[RESULT] done'
+    try {
+      const { setSetting } = await import('../server/domains/settings/settings.service')
+      await setSetting('company_prompt', 'English only, pinned deps.')
+      const { db } = await dbm()
+      const { projects } = await schema()
+      await db.insert(projects).values({ id: 'p-1', name: 'FedEx', description: '', prompt: 'FedEx API v9, never log labels.' })
+      const agentId = await mkAiAgent()
+      const t = await callProc('tasks.create', { title: 'Prompted', assigneeId: agentId, projectId: 'p-1' })
+      const { dispatchTask } = await import('../server/domains/tasks/runner.service')
+      const handle = await dispatchTask(t.id, 'http://tandem.local')
+      await handle.finished
+      const { taskRuns } = await schema()
+      const row = (await db.select().from(taskRuns)).find(r => r.taskId === t.id)!
+      expect(row.prompt).toContain('COMPANY (applies to all your work)\nEnglish only, pinned deps.')
+      expect(row.prompt).toContain('PROJECT — FedEx\nFedEx API v9, never log labels.')
+      expect(row.prompt).toContain('Project: FedEx')
+    }
+    finally {
+      delete process.env.TANDEM_FAKE_SCRIPT
+      process.env.TANDEM_FAKE_RUNNER = '1'
+    }
+  }, 15_000)
+
   it('a run ending [QUESTION] parks the task on the owner, not done', async () => {
     const prev = process.env.TANDEM_FAKE_SCRIPT
     process.env.TANDEM_FAKE_RUNNER = '1'

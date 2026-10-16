@@ -17,6 +17,7 @@ export const projectsRouter = os.router({
       id: r.id,
       name: r.name,
       description: r.description,
+      prompt: r.prompt,
       status: r.status as 'active' | 'archived',
       parentId: r.parentId,
       createdAt: r.createdAt.toISOString(),
@@ -30,6 +31,7 @@ export const projectsRouter = os.router({
       id: r.id,
       name: r.name,
       description: r.description,
+      prompt: r.prompt,
       status: r.status as 'active' | 'archived',
       parentId: r.parentId,
       createdAt: r.createdAt.toISOString(),
@@ -42,6 +44,7 @@ export const projectsRouter = os.router({
     .input(z.strictObject({
       name: z.string().min(1).max(120),
       description: z.string().max(2000).default(''),
+      prompt: z.string().max(8000).default(''),
       parentId: z.string().min(1).nullable().optional(),
     }))
     .handler(async ({ input }) => {
@@ -50,7 +53,7 @@ export const projectsRouter = os.router({
         if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'parent project does not exist' })
       }
       const id = crypto.randomUUID()
-      await db.insert(projectsTable).values({ id, name: input.name, description: input.description, parentId: input.parentId ?? null })
+      await db.insert(projectsTable).values({ id, name: input.name, description: input.description, prompt: input.prompt, parentId: input.parentId ?? null })
       await publishChange('projects', 'create')
       return { id }
     }),
@@ -61,13 +64,15 @@ export const projectsRouter = os.router({
       id: z.string().min(1),
       name: z.string().min(1).max(120).optional(),
       description: z.string().max(2000).optional(),
+      prompt: z.string().max(8000).optional(),
       status: z.enum(['active', 'archived']).optional(),
       parentId: z.string().min(1).nullable().optional(),
     }))
     .handler(async ({ input }) => {
-      const patch: { name?: string, description?: string, status?: string, parentId?: string | null, updatedAt: Date } = { updatedAt: new Date() }
+      const patch: { name?: string, description?: string, prompt?: string, status?: string, parentId?: string | null, updatedAt: Date } = { updatedAt: new Date() }
       if (input.name !== undefined) patch.name = input.name
       if (input.description !== undefined) patch.description = input.description
+      if (input.prompt !== undefined) patch.prompt = input.prompt
       if (input.status !== undefined) patch.status = input.status
       if (input.parentId !== undefined) {
         if (input.parentId === null) {

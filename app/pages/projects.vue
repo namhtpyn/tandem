@@ -17,7 +17,7 @@ const message = ref('')
 const editorOpen = ref(false)
 const editingId = ref<string | null>(null)
 const confirmId = ref<string | null>(null)
-const form = reactive({ name: '', description: '', parentId: '__none__' as string, status: 'active' as 'active' | 'archived' })
+const form = reactive({ name: '', description: '', prompt: '', parentId: '__none__' as string, status: 'active' as 'active' | 'archived' })
 
 // flattened tree with depth for indentation
 interface FlatRow extends ProjectRow { depth: number, path: string }
@@ -69,6 +69,7 @@ function openEditor(row?: FlatRow) {
   editingId.value = row?.id ?? null
   form.name = row?.name ?? ''
   form.description = row?.description ?? ''
+  form.prompt = row?.prompt ?? ''
   form.parentId = row?.parentId ?? '__none__'
   form.status = row?.status ?? 'active'
   message.value = ''
@@ -82,6 +83,7 @@ async function save() {
     const payload = {
       name: form.name,
       description: form.description,
+      prompt: form.prompt,
       parentId: form.parentId === '__none__' ? null : form.parentId,
       ...(editingId.value ? { status: form.status } : {}),
     }
@@ -244,6 +246,10 @@ const statusColor = (s: string) => (s === 'archived' ? 'neutral' : 'success')
             </UFormField>
             <UFormField label="Description" name="description">
               <UTextarea v-model="form.description" placeholder="What this project is about" :rows="3" class="w-full" />
+            </UFormField>
+            <UFormField label="Project prompt" name="prompt">
+              <template #hint><FormHint text="Added to every agent brief of this project's tasks (empty = omitted)" /></template>
+              <UTextarea v-model="form.prompt" placeholder="e.g. This project integrates FedEx/UPS APIs into a NestJS checkout. Never store raw API keys in the repo…" :rows="5" class="w-full" />
             </UFormField>
             <p v-if="message" class="text-sm text-error">{{ message }}</p>
           </UForm>

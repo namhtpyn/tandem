@@ -107,6 +107,20 @@ describe('conventional GET list procs (the first-load half)', () => {
     expect(snap.value.titles.find((t: any) => t.name === 'Dev').employees).toBe(1)
   })
 
+  it('project prompt roundtrips through create + update; company prompt persists', async () => {
+    const made = await callProc('projects.create', { name: 'P Prompt', description: '', prompt: 'v9 only.' })
+    let rows = await callProc('projects.list')
+    expect(rows.find((r: any) => r.id === made.id).prompt).toBe('v9 only.')
+    await callProc('projects.update', { id: made.id, prompt: 'v10 now.' })
+    rows = await callProc('projects.list')
+    expect(rows.find((r: any) => r.id === made.id).prompt).toBe('v10 now.')
+    await callProc('settings.update', { companyPrompt: 'English only.' })
+    const { getCompanyPrompt } = await import('../server/domains/settings/settings.service')
+    expect(await getCompanyPrompt()).toBe('English only.')
+    await callProc('settings.update', { companyPrompt: '' })
+    expect(await getCompanyPrompt()).toBe('')
+  })
+
   it('environments.list, projects.list, statuses.list are plain GETs', async () => {
     expect(await callProc('environments.list')).toEqual([])
     // seed a project so the list mapper (not just the handler) runs

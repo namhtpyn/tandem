@@ -43,6 +43,8 @@ export interface ProjectRow {
   id: string
   name: string
   description: string
+  /** project prompt — added to every brief of this project's tasks */
+  prompt: string
   status: 'active' | 'archived'
   parentId: string | null
   createdAt: string

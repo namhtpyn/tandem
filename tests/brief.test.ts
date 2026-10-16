@@ -87,6 +87,25 @@ describe('buildBrief', () => {
     expect(b).not.toContain('Reviewers')
     expect(b).not.toContain('Project:')
   })
+  it('company and project prompts ride the brief above TASK', () => {
+    const b = buildBrief({ ...base, companyPrompt: 'Always ship pinned deps.', projectPrompt: 'This project is the FedEx integration.' })
+    expect(b).toContain('COMPANY (applies to all your work)\nAlways ship pinned deps.')
+    expect(b).toContain('PROJECT — Tandem\nThis project is the FedEx integration.')
+    expect(b.indexOf('COMPANY')).toBeLessThan(b.indexOf('PROJECT'))
+    expect(b.indexOf('PROJECT')).toBeLessThan(b.indexOf('\nTASK'))
+  })
+
+  it('empty company/project prompts omit their sections entirely', () => {
+    const b = buildBrief({ ...base })
+    expect(b).not.toContain('COMPANY')
+    expect(b).not.toContain('PROJECT')
+  })
+
+  it('project prompt without a project name still renders the section', () => {
+    const b = buildBrief({ ...base, task: { ...base.task, projectName: null }, projectPrompt: 'standards apply' })
+    expect(b).toContain('PROJECT\nstandards apply')
+  })
+
   it('no supervisors -> top of organization', () => {
     const b = buildBrief({ ...base, upChain: [] })
     expect(b).toContain('(nobody — top of organization)')

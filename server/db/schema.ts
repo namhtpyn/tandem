@@ -132,6 +132,8 @@ export const projects = pgTable('tandem_projects', {
   description: text('description').notNull().default(''),
   // active | archived
   status: text('status').notNull().default('active'),
+  /** project prompt — added to every brief of this project's tasks (empty = omitted) */
+  prompt: text('prompt').notNull().default(''),
   // nesting: parent project (self-reference); deleting a parent orphans children to root
   parentId: text('parent_id').references((): AnyPgColumn => projects.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

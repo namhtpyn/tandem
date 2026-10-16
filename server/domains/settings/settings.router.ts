@@ -27,6 +27,7 @@ export const settingsRouter = os.router({
       companyName: z.string().min(1).max(60).optional(),
       runTimeoutMs: z.number().int().min(60_000).max(6 * 60 * 60_000).optional(),
       tasksPerAgent: z.number().int().min(1).max(32).optional(),
+      companyPrompt: z.string().max(8000).optional(),
       internalLlm: z.strictObject({ providerId: z.string().min(1), model: z.string().min(1), keySecretId: z.string().min(1) }).nullable().optional(),
       internalDecision: z.strictObject({ providerId: z.string().min(1), model: z.string().min(1), keySecretId: z.string().min(1) }).nullable().optional(),
     }))
@@ -45,6 +46,9 @@ export const settingsRouter = os.router({
       }
       if (input.companyName !== undefined) {
         await setSetting('companyName', input.companyName.trim())
+      }
+      if (input.companyPrompt !== undefined) {
+        await setSetting('company_prompt', input.companyPrompt)
       }
       if (input.tasksPerAgent !== undefined) {
         await setSetting('tasks_per_agent', String(input.tasksPerAgent))
