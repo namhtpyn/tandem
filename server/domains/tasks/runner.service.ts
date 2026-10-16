@@ -339,7 +339,10 @@ function fakeRun(onLine: (line: string) => void, scriptOverride?: string[]): Run
       await new Promise(r => setTimeout(r, delay))
       onLine(line)
     }
-    finished!({ status: 'done', exitCode: 0 })
+    // TANDEM_FAKE_FAIL=1: the fake run FAILS (drives the backoff ladder in tests
+    // without the ssh emitError choreography, which hung under CI coverage runs)
+    const failed = process.env.TANDEM_FAKE_FAIL === '1'
+    finished!({ status: failed ? 'failed' : 'done', exitCode: failed ? 1 : 0 })
   })()
   return { runId, finished: promise }
 }
@@ -457,6 +460,7 @@ export async function dispatchTask(taskId: string, tandemUrl: string, opts?: { r
         dispatchAfter: new Date(Date.now() + waitMs),
         updatedAt: new Date(),
       }).where(eq(tasks.id, taskId)) // no-op when the task was deleted mid-run
+      /* v8 ignore next -- the catch only guards a task deleted between the update and the log */
       await logRun(taskId, runId, `retry scheduled in ${Math.round(waitMs / 60_000)} min (streak ${streak})`, { backoffMs: waitMs }).catch(() => {})
       await publishChange('tasks', 'update')
     }
