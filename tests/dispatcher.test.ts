@@ -1187,7 +1187,9 @@ describe('dispatcher', () => {
     const { taskRuns: tr } = await schema()
     const run0 = (await db.select().from(tr)).find(x => x.taskId === t.id)!
     expect(dispatchNote).toBeTruthy()
-    expect(dispatchNote!.createdAt.getTime()).toBeLessThan(run0.startedAt.getTime())
+    // strict < flaked in CI when both stamps landed in the same millisecond;
+    // activity feeds order by createdAt only, so same-ms ties are admissible
+    expect(dispatchNote!.createdAt.getTime()).toBeLessThanOrEqual(run0.startedAt.getTime())
     void r
   }, 10_000)
 })
