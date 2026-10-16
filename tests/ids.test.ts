@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import './helpers/pg'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
-import { uuidv7, __uuidv7Fallback, __UUID7_RE } from '../server/domains/kernel/ids'
+import { uuidv7 } from '../server/domains/kernel/ids'
 
 const UUID7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
@@ -20,7 +20,7 @@ async function proc(path: string[], input?: unknown) {
 }
 
 describe('uuidv7 ids', () => {
-  it('mints valid, unique, time-ordered ids', async () => {
+  it('mints valid, unique, time-ordered ids (uuid pkg v7)', async () => {
     const ids = Array.from({ length: 200 }, () => uuidv7())
     for (const id of ids) expect(id).toMatch(UUID7)
     expect(new Set(ids).size).toBe(ids.length)
@@ -29,11 +29,6 @@ describe('uuidv7 ids', () => {
     await new Promise(r => setTimeout(r, 3))
     const b = uuidv7()
     expect(b > a).toBe(true)
-  })
-
-  it('fallback is a valid v7 (non-Bun safety net)', () => {
-    for (let i = 0; i < 50; i++) expect(__uuidv7Fallback()).toMatch(UUID7)
-    expect(__UUID7_RE).toBeInstanceOf(RegExp)
   })
 
   it('domain minting goes through uuidv7 — created rows carry v7 ids', async () => {
