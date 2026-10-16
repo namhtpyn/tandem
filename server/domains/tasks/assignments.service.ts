@@ -4,12 +4,13 @@
 import { and, desc, eq, isNull } from 'drizzle-orm'
 import { db } from '../../db'
 import { taskAssignments, tasks } from '../../db/schema'
+import { uuidv7 } from '../kernel/ids'
 
 /** close the open row (if any) and open a new one for the new assignee */
 export async function recordAssignment(taskId: string, employeeId: string | null, reason: string, actorId: string | null) {
   await db.update(taskAssignments).set({ endedAt: new Date() })
     .where(and(eq(taskAssignments.taskId, taskId), isNull(taskAssignments.endedAt)))
-  await db.insert(taskAssignments).values({ id: crypto.randomUUID(), taskId, employeeId, reason, actorId })
+  await db.insert(taskAssignments).values({ id: uuidv7(), taskId, employeeId, reason, actorId })
 }
 
 /** full assignment history for a task, newest first */

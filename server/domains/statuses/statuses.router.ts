@@ -7,6 +7,7 @@ import {
   aiEmployees as aiEmployeesTable, projects as projectsTable, taskStatuses as taskStatusesTable, tasks as tasksTable, user as userTable,
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
+import { uuidv7 } from '../kernel/ids'
 
 async function listStatuses() {
     const rows = await db.select().from(taskStatusesTable).orderBy(asc(taskStatusesTable.position))
@@ -38,7 +39,7 @@ export const statusesRouter = os.router({
       nextIds: z.array(z.string().min(1).max(64)).max(50).default([]),
     }))
     .handler(async ({ input }) => {
-      const id = input.id?.trim() || crypto.randomUUID()
+      const id = input.id?.trim() || uuidv7()
       if (id === 'new') throw new ORPCError('BAD_REQUEST', { message: 'reserved status id' })
       // transitions must reference existing statuses (self ok)
       const all = await db.select({ id: taskStatusesTable.id }).from(taskStatusesTable)

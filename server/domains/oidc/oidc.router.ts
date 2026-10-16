@@ -2,6 +2,7 @@ import { os } from '@orpc/server'
 import { z } from 'zod'
 // oidc router — business logic lives in services/utils; this file only wires procedures
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
+import { uuidv7 } from '../kernel/ids'
 
 async function listOidcProviders() {
   const { getOidcProviders } = await import('../auth/oidc.service')
@@ -47,7 +48,7 @@ export const oidcRouter = os.router({
         }
         const id = p.id && existing.some(x => x.id === p.id)
           ? p.id
-          : crypto.randomUUID()
+          : uuidv7()
         result.push(oidcProviderSchema.parse({ id, label: p.label, issuer: p.issuer, clientId: p.clientId, clientSecret: secret }))
       }
       await saveOidcProviders(result)

@@ -6,6 +6,7 @@ import { vaultSecrets, modelProviders, vaultAudit } from '../../db/schema'
 import { eq } from 'drizzle-orm'
 import { decryptSecret } from '../vault/vault-crypto.service'
 import { PROVIDER_ENDPOINT, PROVIDER_KIND, endpointKind, ENDPOINT_PATH, type DecisionEndpoint } from '#shared/api-styles'
+import { uuidv7 } from '../kernel/ids'
 
 export interface JevAssignCandidate {
   id: string
@@ -65,7 +66,7 @@ export async function pickAssignee(params: {
     const secret = secRows[0]
     if (secret) {
       key = decryptSecret(secret.ciphertext)
-      await db.insert(vaultAudit).values({ id: crypto.randomUUID(), secretId: secret.id, secretName: secret.name, action: 'use', actorId: 'system' })
+      await db.insert(vaultAudit).values({ id: uuidv7(), secretId: secret.id, secretName: secret.name, action: 'use', actorId: 'system' })
     }
   }
   if (!key) {

@@ -12,6 +12,7 @@ import { tasks, taskActivity, user as userTable, employeeSupervisors } from '../
 import { publishChange } from '../kernel/kernel'
 import { spawnObligation, resolveObligation, cancelObligations, answerHolder } from './obligations.service'
 import { refreshParentGating, hasOpenChildren } from './gating.service'
+import { uuidv7 } from '../kernel/ids'
 
 export const WAITING_ANSWER_STATUS = 'waiting-answer'
 export const IN_REVIEW_STATUS = 'in-review'
@@ -20,7 +21,7 @@ export const DOING_STATUS = 'doing'
 export const DONE_STATUS = 'done'
 
 async function logActivity(taskId: string, kind: 'question' | 'answer' | 'forward' | 'note' | 'verdict' | 'status', authorId: string | null, body: string, meta: Record<string, unknown> = {}) {
-  await db.insert(taskActivity).values({ id: crypto.randomUUID(), taskId, kind, authorId, body, meta })
+  await db.insert(taskActivity).values({ id: uuidv7(), taskId, kind, authorId, body, meta })
   await publishChange('taskActivity', 'create')
   await publishChange('tasks', 'update')
 }

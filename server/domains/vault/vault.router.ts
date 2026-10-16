@@ -10,6 +10,7 @@ import {
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 import type { VaultAuditRow } from '../../../shared/types'
+import { uuidv7 } from '../kernel/ids'
 
 export const vaultRouter = os.router({
   /** live list — metadata only; ciphertext never leaves the server */
@@ -43,7 +44,7 @@ export const vaultRouter = os.router({
         if (folder.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'folder not found' })
       }
       const inserted = await db.insert(vaultSecretsTable).values({
-        id: crypto.randomUUID(),
+        id: uuidv7(),
         name: input.name,
         description: input.description,
         folderId: input.folderId,
@@ -52,7 +53,7 @@ export const vaultRouter = os.router({
         createdBy: context.session.user.id,
       }).returning()
       await db.insert(vaultAuditTable).values({
-        id: crypto.randomUUID(),
+        id: uuidv7(),
         secretId: inserted[0]!.id,
         secretName: input.name,
         action: 'create',
@@ -86,7 +87,7 @@ export const vaultRouter = os.router({
         throw new ORPCError('NOT_FOUND', { message: 'secret not found' })
       }
       await db.insert(vaultAuditTable).values({
-        id: crypto.randomUUID(),
+        id: uuidv7(),
         secretId: id,
         secretName: meta.name,
         action: 'update',
@@ -121,7 +122,8 @@ export const vaultRouter = os.router({
       .handler(async ({ input }) => {
         // duplicate folder names are allowed (the unique constraint was dropped)
         if (input.id === undefined) {
-          const inserted = await db.insert(vaultFoldersTable).values({ id: crypto.randomUUID(), name: input.name }).returning()
+          // duplicate folder names are allowed (the unique constraint was dropped)
+          const inserted = await db.insert(vaultFoldersTable).values({ id: uuidv7(), name: input.name }).returning()
           await publishChange('vault', 'create')
           return { id: inserted[0]!.id }
         }
@@ -150,7 +152,7 @@ export const vaultRouter = os.router({
         throw new ORPCError('NOT_FOUND', { message: 'secret not found' })
       }
       await db.insert(vaultAuditTable).values({
-        id: crypto.randomUUID(),
+        id: uuidv7(),
         secretId: null,
         secretName: deleted[0]!.name,
         action: 'delete',

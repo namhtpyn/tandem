@@ -43,7 +43,7 @@ export interface RunHandle {
 }
 
 async function logRun(taskId: string, runId: string, body: string, meta: Record<string, unknown> = {}) {
-  await db.insert(taskActivity).values({ id: crypto.randomUUID(), taskId, kind: 'status', authorId: null, body, meta: { ...meta, runId } })
+  await db.insert(taskActivity).values({ id: uuidv7(), taskId, kind: 'status', authorId: null, body, meta: { ...meta, runId } })
   await publishChange('taskActivity', 'create')
   await publishChange('runs', 'update')
 }
@@ -85,7 +85,7 @@ export async function settleAttachments(taskId: string, runId: string, sshPlan: 
         const bytes = readFileSync(f.localPath)
         const mime = normalizeMime(guessMime(f.filename))
         if (!mimeAllowed(mime)) continue
-        const id = crypto.randomUUID()
+        const id = uuidv7()
         saveAttachmentBytes(taskId, id, bytes)
         await db.insert(taskAttachments).values({ id, taskId, runId, kind: 'output', filename: f.filename, mime, size: bytes.byteLength, sha256: sha256Hex(bytes), createdBy: null })
       }
@@ -130,6 +130,7 @@ import { recordProposals } from './proposals.service'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { uuidv7 } from '../kernel/ids'
 
 export async function loadDispatchPlan(taskId: string) {
   const taskRows = await db.select().from(tasks).where(eq(tasks.id, taskId))
@@ -155,7 +156,7 @@ export async function loadDispatchPlan(taskId: string) {
     const plain = decryptSecret(secret.ciphertext)
     if (env.secretUsage === 'password') sshPassword = plain
     else sshKey = plain
-    await db.insert(vaultAudit).values({ id: crypto.randomUUID(), secretId: secret.id, secretName: secret.name, action: 'use', actorId })
+    await db.insert(vaultAudit).values({ id: uuidv7(), secretId: secret.id, secretName: secret.name, action: 'use', actorId })
   }
 
   // agent LLM access: provider endpoint + key + pinned model
@@ -165,7 +166,7 @@ export async function loadDispatchPlan(taskId: string) {
     const provider = (await db.select().from(modelProviders).where(eq(modelProviders.id, ai.providerId)))[0]!
     const keySecret = (await db.select().from(vaultSecrets).where(eq(vaultSecrets.id, ai.apiKeySecretId)))[0]!
     const key = decryptSecret(keySecret.ciphertext)
-    await db.insert(vaultAudit).values({ id: crypto.randomUUID(), secretId: keySecret.id, secretName: keySecret.name, action: 'use', actorId })
+    await db.insert(vaultAudit).values({ id: uuidv7(), secretId: keySecret.id, secretName: keySecret.name, action: 'use', actorId })
     llmEnv = {
       CUSTOM_API_KEY: key,
       CUSTOM_BASE_URL: provider.baseUrl,
@@ -220,14 +221,14 @@ async function loadDispatchPlanFor(employeeId: string, taskId: string) {
     const plain = decryptSecret(secret.ciphertext)
     if (env.secretUsage === 'password') sshPassword = plain
     else sshKey = plain
-    await db.insert(vaultAudit).values({ id: crypto.randomUUID(), secretId: secret.id, secretName: secret.name, action: 'use', actorId })
+    await db.insert(vaultAudit).values({ id: uuidv7(), secretId: secret.id, secretName: secret.name, action: 'use', actorId })
   }
   let llmEnv: Record<string, string> = {}
   if (ai.providerId && ai.model && ai.apiKeySecretId) {
     const provider = (await db.select().from(modelProviders).where(eq(modelProviders.id, ai.providerId)))[0]!
     const keySecret = (await db.select().from(vaultSecrets).where(eq(vaultSecrets.id, ai.apiKeySecretId)))[0]!
     const key = decryptSecret(keySecret.ciphertext)
-    await db.insert(vaultAudit).values({ id: crypto.randomUUID(), secretId: keySecret.id, secretName: keySecret.name, action: 'use', actorId })
+    await db.insert(vaultAudit).values({ id: uuidv7(), secretId: keySecret.id, secretName: keySecret.name, action: 'use', actorId })
     llmEnv = { CUSTOM_API_KEY: key, CUSTOM_BASE_URL: provider.baseUrl, HERMES_MODEL: ai.model }
   }
   /* v8 ignore next -- ?? 'reviewer' arm is FK-protected (ai row implies user row) */
@@ -338,7 +339,7 @@ function fakeRun(onLine: (line: string) => void, scriptOverride?: string[]): Run
     'RESULT: task complete as requested',
   ]
 
-  const runId = crypto.randomUUID()
+  const runId = uuidv7()
   let finished: (v: { status: 'done' | 'failed', exitCode: number | null }) => void
   const promise = new Promise<{ status: 'done' | 'failed', exitCode: number | null }>((resolve) => { finished = resolve })
   void (async () => {
@@ -365,7 +366,7 @@ export async function dispatchTask(taskId: string, tandemUrl: string, opts?: { r
   // claim: dispatch note is written BEFORE the run row exists so its createdAt
   // sits BEFORE the run's startedAt — the timeline shows "dispatched" above the
   // result card, not after it
-  const runId = crypto.randomUUID()
+  const runId = uuidv7()
   await logRun(taskId, runId, `dispatched to ${plan.agentName} on ${plan.envName}`, { dispatched: true })
   await db.insert(taskRuns).values({
     id: runId,
