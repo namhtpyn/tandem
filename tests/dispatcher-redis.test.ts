@@ -94,6 +94,18 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
     unsub()
   })
 
+  it('syncDispatchWorkers spawns per-agent workers and resyncs on cap change', async () => {
+    const { redisHub } = await import('../server/domains/kernel/redis')
+    const hub = (await redisHub())!
+    const { setSetting } = await import('../server/domains/settings/settings.service')
+    const { syncDispatchWorkers, onDispatcherSettingsChanged } = await import('../server/domains/tasks/dispatcher.service')
+    await setSetting('tasks_per_agent', '1')
+    await syncDispatchWorkers(hub)
+    await setSetting('tasks_per_agent', '3')
+    await syncDispatchWorkers(hub) // stale worker (cap 1) closed, recreated at cap 3
+    await onDispatcherSettingsChanged() // the settings.update hook path, redis present
+  }, 20_000)
+
   it('second enqueue on the same queue reuses the cached Queue instance', async () => {
     const { redisHub } = await import('../server/domains/kernel/redis')
     const hub = await redisHub()

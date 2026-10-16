@@ -29,12 +29,12 @@ describe('settings store', () => {
   })
 
   it('getSettings defaults disablePasswordLogin false + companyName Tandem', async () => {
-    expect(await getSettings()).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', internalLlm: null, internalDecision: null, runTimeoutMs: 1_800_000 })
+    expect(await getSettings()).toEqual({ disablePasswordLogin: false, companyName: 'Tandem', internalLlm: null, internalDecision: null, runTimeoutMs: 1_800_000, tasksPerAgent: 1 })
   })
 
   it('getSettings reflects a stored true flag', async () => {
     await setSetting('disablePasswordLogin', 'true')
-    expect(await getSettings()).toEqual({ disablePasswordLogin: true, companyName: 'Tandem', internalLlm: null, internalDecision: null, runTimeoutMs: 1_800_000 })
+    expect(await getSettings()).toEqual({ disablePasswordLogin: true, companyName: 'Tandem', internalLlm: null, internalDecision: null, runTimeoutMs: 1_800_000, tasksPerAgent: 1 })
   })
 
   it('companyName round-trips via setSetting and trims on read', async () => {

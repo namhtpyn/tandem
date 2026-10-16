@@ -30,6 +30,17 @@ export async function getRunTimeoutMs(): Promise<number> {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_RUN_TIMEOUT_MS
 }
 
+/** Default concurrent tasks allowed per agent; the Settings page overrides it. */
+export const DEFAULT_TASKS_PER_AGENT = 1
+
+/** The tasks-per-agent setting; falls back to 1. The 1..32 range is enforced at
+ * the boundary (settings.update zod), not here. */
+export async function getTasksPerAgent(): Promise<number> {
+  const v = await getSetting('tasks_per_agent')
+  const n = v === null ? NaN : Number(v)
+  return Number.isInteger(n) && n >= 1 ? n : DEFAULT_TASKS_PER_AGENT
+}
+
 /** One Workspace AI assignment: provider + optional model + vault key (internal use only). */
 export interface InternalAiAssignment {
   providerId: string
@@ -42,6 +53,8 @@ export interface AppSettings {
   companyName: string
   /** hard cap for one agent run (ms) */
   runTimeoutMs: number
+  /** concurrent tasks allowed per agent */
+  tasksPerAgent: number
   /** LLM used by Tandem's own server-side features (null = unassigned). */
   internalLlm: InternalAiAssignment | null
   /** Decision engine used for auto-assign (null = unassigned). */
@@ -68,7 +81,7 @@ export async function getSettings(): Promise<AppSettings> {
   const name = await getSetting('companyName')
   const llm = parseAssignment(await getSetting('internal_llm'))
   const decision = parseAssignment(await getSetting('internal_decision'))
-  return { disablePasswordLogin: v === 'true', companyName: name?.trim() || 'Tandem', internalLlm: llm, internalDecision: decision, runTimeoutMs: await getRunTimeoutMs() }
+  return { disablePasswordLogin: v === 'true', companyName: name?.trim() || 'Tandem', internalLlm: llm, internalDecision: decision, runTimeoutMs: await getRunTimeoutMs(), tasksPerAgent: await getTasksPerAgent() }
 }
 
 export const INTERNAL_ASSIGNMENT_KEYS = { LLM: 'internal_llm', DECISION: 'internal_decision' } as const

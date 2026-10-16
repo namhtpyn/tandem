@@ -9,10 +9,30 @@ import { dispatchTask } from './runner.service'
 import { redisHub } from '../kernel/redis'
 import { publishChange } from '../kernel/change-bus'
 
-const inFlight = new Map<string, Promise<unknown>>() // employeeId -> run promise
+const inFlight = new Map<string, Set<Promise<unknown>>>() // employeeId -> live run promises
 
 export function activeRunCount(): number {
-  return inFlight.size
+  let n = 0
+  for (const set of inFlight.values()) n += set.size
+  return n
+}
+
+/** how many runs of one agent are in flight right now (no-redis fallback) */
+export function inFlightCount(employeeId: string): number {
+  return inFlight.get(employeeId)?.size ?? 0
+}
+
+function trackInFlight(employeeId: string, p: Promise<unknown>) {
+  let set = inFlight.get(employeeId)
+  if (!set) { set = new Set(); inFlight.set(employeeId, set) }
+  set.add(p)
+  void p.finally(() => {
+    const s = inFlight.get(employeeId)
+    /* v8 ignore next 1 -- two same-agent runs can settle in one microtask; the key is already gone */
+    if (!s) return
+    s.delete(p)
+    if (s.size === 0) inFlight.delete(employeeId)
+  })
 }
 
 /** reap runs stuck in 'running' past the hard timeout + grace: mark failed, bounce task to
@@ -52,18 +72,23 @@ async function reapStaleRunsInner(): Promise<number> {
   return reaped
 }
 
-/** find one eligible task: ready-category status, AI assignee, agent idle */
+/** find one eligible task: ready-category status, AI assignee, agent under its cap.
+ * CAP LAW (2026-10-16): one concurrent task per agent by default; the Settings page's
+ * tasksPerAgent raises it. Agents run in PARALLEL — the cap is per agent, never global. */
 export async function findEligible(): Promise<{ taskId: string, employeeId: string } | null> {
   const statuses = await db.select().from(taskStatuses)
   const readyIds = statuses.filter(s => s.category === 'ready').map(s => s.id)
   if (readyIds.length === 0) return null
+  const { getTasksPerAgent } = await import('../settings/settings.service')
+  const cap = await getTasksPerAgent()
   const rows = await db.select().from(tasks)
   const aiRows = await db.select({ userId: aiEmployees.userId }).from(aiEmployees)
   const aiIds = new Set(aiRows.map(r => r.userId))
   const now = Date.now()
   const eligible = rows
     .filter(t => readyIds.includes(t.status) && t.assigneeId && aiIds.has(t.assigneeId))
-    .filter(t => !inFlight.has(t.assigneeId!))
+    // per-agent concurrency cap (in-memory slot count; the redis path counts its own workers)
+    .filter(t => inFlightCount(t.assigneeId!) < cap)
     // failure backoff: not claimable until dispatch_after passes (null = immediately)
     .filter(t => !t.dispatchAfter || t.dispatchAfter.getTime() <= now)
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
@@ -78,7 +103,9 @@ export async function scanOnce(tandemUrl: string): Promise<boolean> {
   const hub = await redisHub()
   if (hub) {
     try {
-      await hub.enqueue<DispatchJob>(DISPATCH_QUEUE, { taskId: hit.taskId, tandemUrl }, { attempts: 3 })
+      /* v8 ignore next -- lazy resync; the catch arrow only fires on a redis failure */
+      void syncDispatchWorkers(hub).catch(() => {})
+      await hub.enqueue<DispatchJob>(dispatchQueueName(hit.employeeId), { taskId: hit.taskId, tandemUrl }, { attempts: 3 })
       return true
     }
     catch (e) {
@@ -88,7 +115,7 @@ export async function scanOnce(tandemUrl: string): Promise<boolean> {
   }
   try {
     const handle = await dispatchTask(hit.taskId, tandemUrl)
-    inFlight.set(hit.employeeId, handle.finished.finally(() => inFlight.delete(hit.employeeId)))
+    trackInFlight(hit.employeeId, handle.finished)
     return true
   }
   catch {
@@ -97,29 +124,73 @@ export async function scanOnce(tandemUrl: string): Promise<boolean> {
   }
 }
 
+/** per-agent dispatch queue name (bullmq forbids ':' in queue names) */
+export function dispatchQueueName(employeeId: string): string {
+  return `${DISPATCH_QUEUE_PREFIX}-${employeeId}`
+}
+
+export const DISPATCH_QUEUE_PREFIX = 'tandem-dispatch'
+
+export type DispatchJob = { taskId: string, tandemUrl: string }
+
+/** live per-agent workers: agentId -> { concurrency, close } */
+const workers = new Map<string, { concurrency: number, close: () => Promise<void> }>()
+
+/** spawn one worker per AI employee at the current tasksPerAgent cap; recreate
+ * any whose concurrency is stale (setting changed) and drop the ones whose
+ * employee row is gone. Idempotent — safe to call on every sweep. */
+export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<typeof redisHub>>>): Promise<void> {
+  const { getTasksPerAgent } = await import('../settings/settings.service')
+  const cap = await getTasksPerAgent()
+  const aiRows = await db.select({ userId: aiEmployees.userId }).from(aiEmployees)
+  const wanted = new Set(aiRows.map(r => r.userId))
+  for (const [agentId, w] of workers) {
+    if (!wanted.has(agentId) || w.concurrency !== cap) {
+      await w.close()
+      workers.delete(agentId)
+    }
+  }
+  for (const agentId of wanted) {
+    const existing = workers.get(agentId)
+    if (existing?.concurrency === cap) continue
+    const handle = await hub.queue<DispatchJob>(dispatchQueueName(agentId), async (job) => {
+      const run = await dispatchTask(job.taskId, job.tandemUrl)
+      await run.finished // worker slot stays busy until the run ends
+    }, { concurrency: cap, attempts: 3 })
+    workers.set(agentId, { concurrency: cap, close: handle.close })
+  }
+}
+
+/** settings.update calls this so a tasksPerAgent change applies without a redeploy.
+ * Best-effort: no redis or a resync failure must never fail the settings write. */
+export async function onDispatcherSettingsChanged(): Promise<void> {
+  try {
+    const hub = await redisHub()
+    if (!hub) return
+    await syncDispatchWorkers(hub)
+  }
+  catch (e) {
+    console.warn('[tandem] dispatch worker resync failed:', (e as Error).message)
+  }
+}
+
 /** boot hook: start the dispatcher unless opted out (tests set TANDEM_NO_DISPATCHER=1).
- * With REDIS_URL set, dispatch flows through a BullMQ per-agent queue (durable,
- * concurrency-1 per agent, exponential-backoff retries) instead of the interval
- * scanner; the scan loop still runs as a sweep for tasks queued while redis was down. */
+ * With REDIS_URL set, dispatch flows through BullMQ PER-AGENT queues (durable,
+ * exponential-backoff retries) — one worker per AI employee, concurrency =
+ * tasksPerAgent (default 1). Agents run in parallel; the scan loop still runs as a
+ * sweep for tasks queued while redis was down. */
 export async function maybeStartDispatcher(): Promise<(() => void) | null> {
   if (process.env.TANDEM_NO_DISPATCHER) return null
   const url = process.env.TANDEM_PUBLIC_URL || 'http://localhost:3000'
   const hub = await redisHub()
   if (hub) {
-    await hub.queue<DispatchJob>(DISPATCH_QUEUE, async (job) => {
-      const run = await dispatchTask(job.taskId, job.tandemUrl)
-      await run.finished // worker stays busy (concurrency 1) until the SSH run ends
-    }, { concurrency: 1, attempts: 3 })
-    console.log('[tandem] dispatch queue worker started (redis)')
+    await syncDispatchWorkers(hub)
+    console.log(`[tandem] dispatch queue workers started (redis, per-agent)`)
   }
   const stop = startDispatcher(url)
   console.log(`[tandem] dispatcher started (${hub ? 'redis+interval' : 'interval'})`)
   return stop
 }
-
-export const DISPATCH_QUEUE = 'tandem-dispatch' // bullmq forbids ':' in queue names
-
-export type DispatchJob = { taskId: string, tandemUrl: string }
 
 /** start the interval; returns a stop function */
 export function startDispatcher(tandemUrl: string, intervalMs = 5000): () => void {

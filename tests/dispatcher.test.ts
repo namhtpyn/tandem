@@ -101,17 +101,29 @@ async function callProc(path: string, input?: unknown): Promise<any> {
   return await internals.handler({ input, context, signal: new AbortController().signal })
 }
 
+let agentSeq = 0
 async function mkAiAgent(): Promise<string> {
   const { db } = await dbm()
   const { environments, user, aiEmployees } = await schema()
-  await db.insert(environments).values({ id: 'env-1', name: 'E1', host: '127.0.0.1', port: '2222', username: 'u' })
-  const id = 'u-agent'
-  await db.insert(user).values({ id, name: 'Robby', email: 'robby@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
-  await db.insert(aiEmployees).values({ userId: id, environmentId: 'env-1', instructions: '', executable: 'hermes acp' })
+  const n = ++agentSeq
+  // first agent keeps the historical fixed ids — many tests assert against them
+  const envId = n === 1 ? 'env-1' : `env-${n}`
+  await db.insert(environments).values({ id: envId, name: `E${n}`, host: '127.0.0.1', port: '2222', username: 'u' })
+  const id = n === 1 ? 'u-agent' : `u-agent-${n}`
+  await db.insert(user).values({ id, name: 'Robby', email: `robby${n}@tandem.local`, emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
+  await db.insert(aiEmployees).values({ userId: id, environmentId: envId, instructions: '', executable: 'hermes acp' })
   return id
 }
 
+/** wait until every fake run drained (module inFlight state must not leak between tests) */
+async function drainInFlight(maxMs = 5000) {
+  const { activeRunCount } = await import('../server/domains/tasks/dispatcher.service')
+  const t0 = Date.now()
+  while (activeRunCount() > 0 && Date.now() - t0 < maxMs) await new Promise(r => setTimeout(r, 100))
+}
+
 beforeEach(async () => {
+  agentSeq = 0 // ids are per-test: the DB resets but module vars do not
   await resetSchema()
   await applyMigrations()
   const { db } = await dbm()
@@ -655,6 +667,95 @@ describe('dispatcher', () => {
       process.env.TANDEM_FAKE_RUNNER = '1' // file-level default (set at top)
     }
   }, 15_000)
+
+  it('onDispatcherSettingsChanged is a no-op without redis', async () => {
+    const { onDispatcherSettingsChanged } = await import('../server/domains/tasks/dispatcher.service')
+    await expect(onDispatcherSettingsChanged()).resolves.toBeUndefined()
+  })
+
+  it('onDispatcherSettingsChanged survives a dead redis (best-effort by law)', async () => {
+    process.env.REDIS_URL = 'redis://127.0.0.1:6390' // nothing listens here
+    try {
+      const { onDispatcherSettingsChanged } = await import('../server/domains/tasks/dispatcher.service')
+      await expect(onDispatcherSettingsChanged()).resolves.toBeUndefined()
+    }
+    finally {
+      delete process.env.REDIS_URL
+    }
+  })
+
+  it('CAP LAW: default 1 task per agent — second ready task waits', async () => {
+    process.env.TANDEM_FAKE_SCRIPT = 'step 1\nstep 2\n[RESULT] done'
+    process.env.TANDEM_FAKE_DELAY_MS = '120'
+    try {
+      const agentId = await mkAiAgent()
+      const a = await callProc('tasks.create', { title: 'CapA', assigneeId: agentId })
+      const b = await callProc('tasks.create', { title: 'CapB', assigneeId: agentId })
+      const { scanOnce } = await import('../server/domains/tasks/dispatcher.service')
+      expect(await scanOnce('http://tandem.local')).toBe(true) // A goes
+      expect(await scanOnce('http://tandem.local')).toBe(false) // B blocked: agent at cap 1
+      const { tasks } = await schema()
+      const { db } = await dbm()
+      const st = async (id: string) => (await db.select().from(tasks)).find(x => x.id === id)!.status
+      expect(await st(a.id)).not.toBe(await st(b.id)) // A dispatched, B still ready
+      await new Promise(r => setTimeout(r, 1400)) // let A finish
+      expect(await scanOnce('http://tandem.local')).toBe(true) // B goes after A settles
+    }
+    finally {
+      await drainInFlight()
+      delete process.env.TANDEM_FAKE_SCRIPT
+      delete process.env.TANDEM_FAKE_DELAY_MS
+    }
+  }, 20_000)
+
+  it('CAP LAW: tasksPerAgent=2 lets the same agent run two tasks at once', async () => {
+    process.env.TANDEM_FAKE_SCRIPT = 'step 1\nstep 2\n[RESULT] done'
+    process.env.TANDEM_FAKE_DELAY_MS = '120'
+    try {
+      const { setSetting } = await import('../server/domains/settings/settings.service')
+      await setSetting('tasks_per_agent', '2')
+      const agentId = await mkAiAgent()
+      const a = await callProc('tasks.create', { title: 'ParA', assigneeId: agentId })
+      const b = await callProc('tasks.create', { title: 'ParB', assigneeId: agentId })
+      const { scanOnce } = await import('../server/domains/tasks/dispatcher.service')
+      expect(await scanOnce('http://tandem.local')).toBe(true) // A goes
+      expect(await scanOnce('http://tandem.local')).toBe(true) // B goes too: cap 2
+      const { tasks } = await schema()
+      const { db } = await dbm()
+      const rows = await db.select().from(tasks)
+      expect(rows.find(x => x.id === a.id)!.status).toBe('doing')
+      expect(rows.find(x => x.id === b.id)!.status).toBe('doing')
+    }
+    finally {
+      await drainInFlight()
+      delete process.env.TANDEM_FAKE_SCRIPT
+      delete process.env.TANDEM_FAKE_DELAY_MS
+    }
+  }, 20_000)
+
+  it('CAP LAW: different agents always run in parallel (cap applies per agent)', async () => {
+    process.env.TANDEM_FAKE_SCRIPT = 'step 1\nstep 2\n[RESULT] done'
+    process.env.TANDEM_FAKE_DELAY_MS = '120'
+    try {
+      const x = await mkAiAgent()
+      const y = await mkAiAgent()
+      const a = await callProc('tasks.create', { title: 'X task', assigneeId: x })
+      const b = await callProc('tasks.create', { title: 'Y task', assigneeId: y })
+      const { scanOnce } = await import('../server/domains/tasks/dispatcher.service')
+      expect(await scanOnce('http://tandem.local')).toBe(true) // X's task
+      expect(await scanOnce('http://tandem.local')).toBe(true) // Y's task — no shared queue
+      const { tasks } = await schema()
+      const { db } = await dbm()
+      const rows = await db.select().from(tasks)
+      expect(rows.find(t => t.id === a.id)!.status).toBe('doing')
+      expect(rows.find(t => t.id === b.id)!.status).toBe('doing')
+    }
+    finally {
+      await drainInFlight()
+      delete process.env.TANDEM_FAKE_SCRIPT
+      delete process.env.TANDEM_FAKE_DELAY_MS
+    }
+  }, 20_000)
 
   it('a run ending [RESULT] completes the task as before', async () => {
     const prevRunner = process.env.TANDEM_FAKE_RUNNER

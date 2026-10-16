@@ -95,6 +95,7 @@ const providers = computed<OidcProviderRow[]>(() => ((unref(oidcLive.data) ?? []
 const disablePasswordLogin = ref(false)
 const companyName = ref('Tandem')
 const runTimeoutMinutes = ref(30)
+const tasksPerAgent = ref(1)
 // ---- Workspace AI: internal LLM + decision assignments ----
 const vaultLive = useQuery(($orpc.vault.list as any).queryOptions({ queryKey: ['vault'] }))
 const vaultItems = computed((): any => groupedSecretOptions(((unref(vaultLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string, folder: string | null }>)))
@@ -174,12 +175,33 @@ async function saveAssignment(kind: 'internalLlm' | 'internalDecision') {
 }
 watch(() => unref(settingsLive.data), (d) => {
   if (d) {
-    const v = d as { disablePasswordLogin: boolean, companyName?: string, runTimeoutMs?: number }
+    const v = d as { disablePasswordLogin: boolean, companyName?: string, runTimeoutMs?: number, tasksPerAgent?: number }
     disablePasswordLogin.value = v.disablePasswordLogin
     companyName.value = v.companyName?.trim() || 'Tandem'
     runTimeoutMinutes.value = Math.round((v.runTimeoutMs ?? 1_800_000) / 60_000)
+    tasksPerAgent.value = v.tasksPerAgent ?? 1
   }
 }, { immediate: true })
+
+const savingTasksPerAgent = ref(false)
+const tasksPerAgentMessage = ref('')
+async function saveTasksPerAgent() {
+  savingTasksPerAgent.value = true
+  tasksPerAgentMessage.value = ''
+  try {
+    const n = Number(tasksPerAgent.value)
+    if (!Number.isInteger(n) || n < 1 || n > 32) {
+      tasksPerAgentMessage.value = 'Enter a whole number between 1 and 32'
+      return
+    }
+    await ($client as any).settings.update({ tasksPerAgent: n })
+    tasksPerAgentMessage.value = 'Saved'
+  } catch (e: any) {
+    tasksPerAgentMessage.value = e?.message ?? 'Save failed'
+  } finally {
+    savingTasksPerAgent.value = false
+  }
+}
 
 const savingRunTimeout = ref(false)
 const runTimeoutMessage = ref('')
@@ -332,6 +354,15 @@ async function savePasswordPolicy() {
       </UForm>
 
       <USeparator class="my-5" />
+
+      <UForm :state="{ tasksPerAgent }" class="flex flex-wrap items-end gap-3" @submit="saveTasksPerAgent">
+        <UFormField label="Tasks per agent" name="tasksPerAgent" class="min-w-56">
+          <template #hint><FormHint text="How many tasks one agent can work at the same time (default 1). Agents always run in parallel with each other" /></template>
+          <UInput v-model.number="tasksPerAgent" type="number" :min="1" :max="32" icon="i-lucide-layers" class="w-40" :disabled="savingTasksPerAgent" />
+        </UFormField>
+        <UButton type="submit" icon="i-lucide-save" :loading="savingTasksPerAgent">Save</UButton>
+        <span v-if="tasksPerAgentMessage" class="pb-2 text-xs" :class="tasksPerAgentMessage === 'Saved' ? 'text-success' : 'text-error'">{{ tasksPerAgentMessage }}</span>
+      </UForm>
 
       <USeparator class="my-5" />
 
