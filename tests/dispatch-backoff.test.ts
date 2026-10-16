@@ -82,12 +82,17 @@ describe('backoff ladder', () => {
     try {
       // drive a failed run through the mocked ssh path (exec returns error -> failed)
       const prev = process.env.TANDEM_FAKE_RUNNER
+      const prevOut = process.env.TANDEM_NO_ENSURE_OUT_DIR
       delete process.env.TANDEM_FAKE_RUNNER
+      // the out-dir pre-fire opens an EXTRA ssh client — tests poke FakeClient.last,
+      // so keep the ACP stream as the only connection in these arms
+      process.env.TANDEM_NO_ENSURE_OUT_DIR = '1'
       const { dispatchTask } = await import('../server/domains/tasks/runner.service')
       const handle = await dispatchTask('t-1', 'http://t.local')
       const clientMod = (await import('ssh2')).default
       const FakeClient = clientMod.Client as unknown as { last?: { emitError(e: Error): void } }
-      for (let i = 0; i < 40 && !FakeClient.last; i++) await new Promise(r => setTimeout(r, 5))
+      // generous window: under the full-suite coverage run the shared test DB is contended
+      for (let i = 0; i < 2000 && !FakeClient.last; i++) await new Promise(r => setTimeout(r, 5))
       FakeClient.last!.emitError(new Error('connection lost'))
       const res = await handle.finished
       expect(res.status).toBe('failed')
@@ -100,13 +105,15 @@ describe('backoff ladder', () => {
       // success resets
       await db.update(tasks).set({ failStreak: 5, dispatchAfter: new Date() }).where(eq(tasks.id, 't-1'))
       process.env.TANDEM_FAKE_RUNNER = prev ?? '1'
+      if (prevOut === undefined) delete process.env.TANDEM_NO_ENSURE_OUT_DIR
+      else process.env.TANDEM_NO_ENSURE_OUT_DIR = prevOut
       void prev
     }
     finally {
       delete process.env.TANDEM_FAKE_SCRIPT
       process.env.TANDEM_FAKE_RUNNER = '1'
     }
-  })
+  }, 40_000)
 
   it('findEligible skips tasks still in backoff and picks them up after it passes', async () => {
     const { db } = await import('../server/db')
@@ -195,7 +202,9 @@ describe('double settle', () => {
 
   it('a failed run on a deleted task does not crash (failStreak default arm)', async () => {
     const prev = process.env.TANDEM_FAKE_RUNNER
+    const prevOut = process.env.TANDEM_NO_ENSURE_OUT_DIR
     delete process.env.TANDEM_FAKE_RUNNER
+    process.env.TANDEM_NO_ENSURE_OUT_DIR = '1' // keep FakeClient.last = the ACP stream only
     try {
       const { dispatchTask } = await import('../server/domains/tasks/runner.service')
       const handle = await dispatchTask('t-1', 'http://t.local')
@@ -204,7 +213,8 @@ describe('double settle', () => {
       // clear the client left by the previous test so the poll below waits for THIS run's
       // connection (a stale FakeClient.last made emitError fire on an already-settled run)
       ;(FakeClient as { last?: unknown }).last = undefined
-      for (let i = 0; i < 40 && !FakeClient.last; i++) await new Promise(r => setTimeout(r, 5))
+      // generous window: under the full-suite coverage run the shared test DB is contended
+      for (let i = 0; i < 2000 && !FakeClient.last; i++) await new Promise(r => setTimeout(r, 5))
       // task vanishes mid-run (deleted by a human): finish must not crash on the missing row
       const { db } = await import('../server/db')
       const { tasks } = await import('../server/db/schema')
@@ -215,8 +225,10 @@ describe('double settle', () => {
     }
     finally {
       if (prev !== undefined) process.env.TANDEM_FAKE_RUNNER = prev
+      if (prevOut === undefined) delete process.env.TANDEM_NO_ENSURE_OUT_DIR
+      else process.env.TANDEM_NO_ENSURE_OUT_DIR = prevOut
     }
-  }, 10_000)
+  }, 30_000)
 
   it('live rows expose dispatchAfter when set (router non-null arm)', async () => {
     const { db } = await import('../server/db')

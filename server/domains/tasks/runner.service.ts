@@ -177,6 +177,85 @@ export async function loadDispatchPlan(taskId: string) {
   return { task, ai, env, envName: env.name, agentName: empRows[0]?.name ?? 'agent', sshKey, sshPassword, llmEnv }
 }
 
+/** REVIEW LAW: a review turn runs ON the task but BY a reviewer — their own AI env,
+ * their own ACP session (per task PER EMPLOYEE — never the assignee's session), and a
+ * review brief carrying the submitted result. Envelope settles the verdict at run end. */
+export async function loadReviewPlan(taskId: string, reviewerId: string, resultBody: string) {
+  const base = await loadDispatchPlanFor(reviewerId, taskId)
+  // reviewer's own session on this task = their latest run's sessionId (null on first)
+  const { desc } = await import('drizzle-orm')
+  const lastRun = (await db.select({ sessionId: taskRuns.sessionId }).from(taskRuns)
+    .where(and(eq(taskRuns.taskId, taskId), eq(taskRuns.employeeId, reviewerId)))
+    .orderBy(desc(taskRuns.startedAt)).limit(1))[0]
+  return { ...base, review: { reviewerId, resultBody, resumeSessionId: lastRun?.sessionId ?? null } }
+}
+
+/** loadDispatchPlan for a specific employee (the reviewer), not the task assignee.
+ * Same secret/LLM loading as the assignee path — a reviewer turn is a real run. */
+async function loadDispatchPlanFor(employeeId: string, taskId: string) {
+  const taskRows = await db.select().from(tasks).where(eq(tasks.id, taskId))
+  const task = taskRows[0]
+  if (!task) throw new Error('task not found')
+  const aiRows = await db.select().from(aiEmployees).where(eq(aiEmployees.userId, employeeId))
+  const ai = aiRows[0]
+  if (!ai) throw new Error('reviewer is not an AI employee')
+  const envRows = await db.select().from(environments).where(eq(environments.id, ai.environmentId))
+  const env = envRows[0]
+  /* v8 ignore next -- FK prevents a dangling environment_id; kept as defense */
+  if (!env) throw new Error('agent environment not found')
+  const empRows = await db.select({ name: userTable.name }).from(userTable).where(eq(userTable.id, employeeId))
+  const actorId = 'system'
+  let sshKey: string | undefined
+  let sshPassword: string | undefined
+  if (env.secretId) {
+    const secret = (await db.select().from(vaultSecrets).where(eq(vaultSecrets.id, env.secretId)))[0]!
+    const plain = decryptSecret(secret.ciphertext)
+    if (env.secretUsage === 'password') sshPassword = plain
+    else sshKey = plain
+    await db.insert(vaultAudit).values({ id: crypto.randomUUID(), secretId: secret.id, secretName: secret.name, action: 'use', actorId })
+  }
+  let llmEnv: Record<string, string> = {}
+  if (ai.providerId && ai.model && ai.apiKeySecretId) {
+    const provider = (await db.select().from(modelProviders).where(eq(modelProviders.id, ai.providerId)))[0]!
+    const keySecret = (await db.select().from(vaultSecrets).where(eq(vaultSecrets.id, ai.apiKeySecretId)))[0]!
+    const key = decryptSecret(keySecret.ciphertext)
+    await db.insert(vaultAudit).values({ id: crypto.randomUUID(), secretId: keySecret.id, secretName: keySecret.name, action: 'use', actorId })
+    llmEnv = { CUSTOM_API_KEY: key, CUSTOM_BASE_URL: provider.baseUrl, HERMES_MODEL: ai.model }
+  }
+  return { task, ai, env, envName: env.name, agentName: empRows[0]?.name ?? 'reviewer', sshKey, sshPassword, llmEnv }
+}
+
+/** REVIEW LAW: the brief for a review turn — reviewer identity, the task under
+ * review, the submitted result, and the verdict contract. Ends like every brief. */
+function reviewBrief(
+  reviewerName: string,
+  taskTitle: string,
+  taskDescription: string,
+  briefData: { recentActivity: Array<{ kind: string, authorName: string | null, body: string | null }> },
+  resultBody: string,
+): string {
+  const lines: string[] = []
+  lines.push(`You are ${reviewerName}, reviewing a submitted result. This is a REVIEW turn — do the work again is NOT the goal; verify and verdict.`)
+  lines.push('')
+  lines.push('TASK UNDER REVIEW')
+  lines.push(`Title: ${taskTitle}`)
+  if (taskDescription.trim()) lines.push(`Description: ${taskDescription.trim().slice(0, 2000)}`)
+  lines.push('')
+  lines.push('SUBMITTED RESULT (by the assignee)')
+  lines.push(resultBody.slice(0, 4000) || '(no result text)')
+  if (briefData.recentActivity.length) {
+    lines.push('')
+    lines.push('Recent activity (oldest first):')
+    for (const a of briefData.recentActivity.slice(-10)) lines.push(`- ${a.kind} by ${a.authorName ?? 'system'}: ${(a.body ?? '').slice(0, 160)}`)
+  }
+  lines.push('')
+  lines.push('VERDICT — end with exactly one line:')
+  lines.push('[RESULT] <approve — verdict note> (all reviewers approving completes the task)')
+  lines.push('[BLOCKED] <what must change — sent back to the assignee with your note>')
+  lines.push('[QUESTION] <blocking question for the owner>')
+  return lines.join('\n')
+}
+
 /** the env blob written to the remote agent's stdin (never argv) */
 /** hermes reads the API key for a custom endpoint from <VENDOR>_API_KEY where VENDOR is
  * derived from the endpoint HOST (registrable label, api./www. stripped, non-alnum -> _,
@@ -231,8 +310,8 @@ export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>,
 }
 
 /** fake runner: synthetic streaming emitter for tests/CI */
-export function fakeScriptFromEnv(): string[] | null {
-  const raw = process.env.TANDEM_FAKE_SCRIPT
+export function fakeScriptFromEnv(envName?: string): string[] | null {
+  const raw = process.env[envName ?? 'TANDEM_FAKE_SCRIPT']
   if (!raw) return null
   return raw.split('\n')
 }
@@ -262,8 +341,11 @@ function fakeRun(onLine: (line: string) => void, scriptOverride?: string[]): Run
 }
 
 /** dispatch a task to its AI assignee. Records the run row, streams output into it. */
-export async function dispatchTask(taskId: string, tandemUrl: string): Promise<RunHandle> {
-  const plan = await loadDispatchPlan(taskId)
+export async function dispatchTask(taskId: string, tandemUrl: string, opts?: { reviewBy?: string, resultBody?: string }): Promise<RunHandle> {
+  const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & { review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'] }
+    = opts?.reviewBy // eslint-disable-line @typescript-eslint/consistent-type-definitions -- union widening
+      ? await loadReviewPlan(taskId, opts.reviewBy, opts.resultBody ?? '')
+      : await loadDispatchPlan(taskId)
 
   // claim: dispatch note is written BEFORE the run row exists so its createdAt
   // sits BEFORE the run's startedAt — the timeline shows "dispatched" above the
@@ -320,19 +402,16 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
       } catch { /* proposal recording is best-effort */ }
       const { parseRunEnvelope } = await import('../../../app/utils/task-thread')
       const envelope = parseRunEnvelope(buffer)
-      const { submitResult, askQuestion, approveReview, requestChanges } = await import('./workflow.service')
+      const { submitResult, askQuestion } = await import('./workflow.service')
       try {
-        if (plan.task.reviewOfTaskId) {
-          // REVIEW LAW: this run WAS a supervisor review — its envelope settles the
-          // PARENT's review. Reviews are never themselves re-reviewed (no chains),
-          // and a review WITHOUT a verdict never silently approves — it parks on the owner.
+        if (plan.review) {
+          // REVIEW LAW: this run WAS a review turn BY a reviewer on this task. The
+          // envelope writes their verdict row ([RESULT] approve / [BLOCKED] change request);
+          // a verdict-less review NEVER silently approves — it parks on the owner.
+          const { recordVerdict } = await import('./review.service')
           if (envelope?.kind === 'blocked') {
             /* v8 ignore next -- empty-text fallback */
-            await requestChanges(plan.task.reviewOfTaskId, plan.ai.userId, envelope.text || 'changes requested by review')
-            // back to ready so the assignee agent resumes with the feedback in its brief
-            await db.update(tasks).set({ status: 'todo', updatedAt: new Date() }).where(eq(tasks.id, plan.task.reviewOfTaskId))
-            await publishChange('tasks', 'update')
-            await db.update(tasks).set({ status: 'cancelled', updatedAt: new Date() }).where(eq(tasks.id, taskId))
+            await recordVerdict(taskId, plan.ai.userId, 'change_requested', envelope.text || 'changes requested by review', 'ai')
           }
           else if (envelope?.kind === 'question') {
             /* v8 ignore next -- empty-text fallback */
@@ -340,11 +419,10 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
           }
           else if (envelope?.kind === 'result') {
             /* v8 ignore next -- empty-text fallback */
-            await approveReview(plan.task.reviewOfTaskId, plan.ai.userId, envelope.text || 'approved by supervisor review')
-            await db.update(tasks).set({ status: 'done', updatedAt: new Date() }).where(eq(tasks.id, taskId))
+            await recordVerdict(taskId, plan.ai.userId, 'approved', envelope.text || 'approved by review', 'ai')
           }
           else {
-            await askQuestion(taskId, plan.ai.userId, 'review finished without a verdict — approve or reject')
+            await askQuestion(taskId, plan.ai.userId, 'review finished without a verdict — approve or request changes')
           }
           await publishChange('tasks', 'update')
         }
@@ -387,11 +465,18 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
       void (async () => {
         try {
           const briefData = await loadBriefData(taskId)
-          const brief = buildBrief({ ...briefData, outDir: `~/.tandem/${taskId}/attachments/out/` })
+          const brief = plan.review
+            ? reviewBrief(plan.agentName, plan.task.title, plan.task.description, briefData, plan.review.resultBody)
+            : buildBrief({ ...briefData, outDir: `~/.tandem/${taskId}/attachments/out/` })
           // persist the exact prompt so the run is auditable from the task page
           await db.update(taskRuns).set({ prompt: brief }).where(eq(taskRuns.id, runId))
           if (process.env.TANDEM_FAKE_RUNNER === '1') {
-            const fake = fakeRun(onLine, fakeScriptFromEnv() ?? undefined)
+            // fake path: deterministic per-(task, employee) session so resume
+            // separation (assignee vs reviewer) is exercised without a real ACP host
+            const fakeSession = `${plan.review ? 'rev' : 'sess'}-${taskId}-${plan.ai.userId}`
+            await db.update(taskRuns).set({ sessionId: fakeSession }).where(eq(taskRuns.id, runId))
+            if (!plan.review) await db.update(tasks).set({ acpSessionId: fakeSession }).where(eq(tasks.id, taskId))
+            const fake = fakeRun(onLine, fakeScriptFromEnv(plan.review ? 'TANDEM_FAKE_SCRIPT_REVIEW' : 'TANDEM_FAKE_SCRIPT') ?? undefined)
             const r = await fake.finished
             await finish(r.status, r.exitCode)
             resolve(r)
@@ -406,20 +491,26 @@ export async function dispatchTask(taskId: string, tandemUrl: string): Promise<R
           await pushInputAttachments(taskId, briefData, sshPlan, plan.envName, loadSshClient, onLine)
           // ALWAYS pre-create the out dir so deliverables have a real home (7d06bae0
           // law). Fired detached: mkdir lands in ms, the turn starts immediately, and a
-          // slow/unreachable host must never delay dispatch.
-          /* v8 ignore next 3 -- only fires on ssh failure before the turn starts */
-          void ensureOutDir(await loadSshClient(), sshPlan, taskId)
-            .catch(e => onLine(`[dispatch] out-dir prepare failed: ${e instanceof Error ? e.message : String(e)}`))
+          // slow/unreachable host must never delay dispatch. (Tests that drive the ssh
+          // mock by its LAST client skip the extra connection via env.)
+          if (process.env.TANDEM_NO_ENSURE_OUT_DIR !== '1') {
+            /* v8 ignore next 2 -- only fires on ssh failure before the turn starts */
+            void ensureOutDir(await loadSshClient(), sshPlan, taskId)
+              .catch(e => onLine(`[dispatch] out-dir prepare failed: ${e instanceof Error ? e.message : String(e)}`))
+          }
           // one ACP prompt turn: session per task (resume when one exists)
           const stream = await openAcpSshStream(sshPlan, envBlob, plan.ai.executable, onLine)
           const acp = await runAcpTurn({
             stream,
-            resumeSessionId: plan.task.acpSessionId,
+            resumeSessionId: plan.review ? plan.review.resumeSessionId : plan.task.acpSessionId,
             prompt: brief,
             timeoutMs: await getRunTimeoutMs(),
             onLine,
           })
-          if (acp.sessionId !== plan.task.acpSessionId) {
+          // sessions are per (task, employee): the assignee's lives on the task row,
+          // a reviewer's on their run rows — never cross-wired
+          await db.update(taskRuns).set({ sessionId: acp.sessionId }).where(eq(taskRuns.id, runId))
+          if (!plan.review && acp.sessionId !== plan.task.acpSessionId) {
             await db.update(tasks).set({ acpSessionId: acp.sessionId }).where(eq(tasks.id, taskId))
           }
           const { status, exitCode } = verdictFor(acp.stopReason)
