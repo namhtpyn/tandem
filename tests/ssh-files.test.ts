@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { cleanupTaskFiles, collectRunOutputs, pushTaskFiles, TASK_FILES_HOME, taskFilesOutDir, type SshFilePlan } from '../server/domains/tasks/ssh-files.util'
+import { cleanupTaskFiles, collectRunOutputs, pushTaskFiles, ensureOutDir, TASK_FILES_HOME, taskFilesOutDir, type SshFilePlan } from '../server/domains/tasks/ssh-files.util'
 
 class FakeStream {
   private stderrCb: ((d: Buffer) => void) | null = null
@@ -87,6 +87,16 @@ describe('connect timeout', () => {
     }
     await expect(cleanupTaskFiles(RudeClient as unknown as typeof import('ssh2').Client, plan, 'tz', 20))
       .rejects.toThrow('sftp connect timeout')
+  })
+})
+
+describe('ensureOutDir', () => {
+  it('ALWAYS mkdirs the out dir + fixes permissions, even with no input files', async () => {
+    const Fake = makeFakeClient({ 'mkdir -p': '' })
+    await ensureOutDir(Fake, plan, 't-out')
+    const all = (Fake as unknown as { __instances: Array<{ __cmds: string[] }> }).__instances.flatMap(i => i.__cmds)
+    expect(all.some(c => c.includes('mkdir -p') && c.includes('/attachments/out'))).toBe(true)
+    expect(all.some(c => c.includes('chown -R 10000:10000'))).toBe(true)
   })
 })
 

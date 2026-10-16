@@ -112,10 +112,11 @@ async function spawnAiReview(parentId: string, supervisorId: string, body: strin
   const isAi = (await db.select({ userId: aiEmployees.userId }).from(aiEmployees).where(eq(aiEmployees.userId, supervisorId))).length > 0
   if (!isAi) return // human supervisor: the approval obligation card is enough
   const id = crypto.randomUUID()
+  const parentDesc = parent.description.trim() ? `\n\nOriginal task description:\n${parent.description.slice(0, 2000)}` : ''
   await db.insert(tasks).values({
     id,
     title: `Review: ${parent.title}`,
-    description: `Review the submitted result of "${parent.title}". End with [RESULT] <verdict note> to approve, or [BLOCKED] <what must change> to send it back.\n\nSubmitted result:\n${body.slice(0, 4000)}`,
+    description: `You are the supervisor reviewing "${parent.title}" (assignee: ${parent.assigneeId}). Weigh the submitted result against the task. End with [RESULT] <verdict note> to approve, or [BLOCKED] <what must change> to send it back.${parentDesc}\n\nSubmitted result:\n${body.slice(0, 4000)}`,
     status: 'todo', // ready: the dispatcher picks it up automatically
     assigneeId: supervisorId,
     ownerId: parent.ownerId,
