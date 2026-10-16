@@ -1,3 +1,10 @@
+## [2.29.1](https://github.com/namhtpyn/tandem/compare/v2.29.0...v2.29.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* **e2e:** drawer run status asserts the drawer's own text (done, not completed) ([011996a](https://github.com/namhtpyn/tandem/commit/011996a967d7089b9c74259aad8514b462b65311))
+
 # [2.29.0](https://github.com/namhtpyn/tandem/compare/v2.28.2...v2.29.0) (2026-10-16)
 
 
