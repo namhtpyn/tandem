@@ -98,7 +98,7 @@ describe('parseRoutingProposals', () => {
       'Did the analysis.',
       '[SUBTASKS] Draft legal review :: contract clauses :: Peer Person | Fix CSS :: layout bugs :: Report Guy',
       '[REASSIGN] Peer Person — the whole thing is legal work',
-      '[RESULT] analysis complete',
+      '{"kind": "result", "body": "analysis complete"}',
     ].join('\n')
     expect(parseRoutingProposals(out)).toEqual([
       { kind: 'subtasks', items: [
@@ -112,7 +112,7 @@ describe('parseRoutingProposals', () => {
   it('empty titles filtered; missing reason optional; no markers = no proposals', () => {
     expect(parseRoutingProposals('[SUBTASKS] :: desc :: Someone')).toEqual([])
     expect(parseRoutingProposals('[REASSIGN] Nobody')).toEqual([{ kind: 'reassign', targetName: 'Nobody', reason: undefined }])
-    expect(parseRoutingProposals('plain output\n[RESULT] done')).toEqual([])
+    expect(parseRoutingProposals('plain output\n{"kind": "result", "body": "done"}')).toEqual([])
     expect(parseRoutingProposals(null)).toEqual([])
   })
 })
