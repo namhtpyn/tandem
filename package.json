@@ -1,7 +1,7 @@
 {
   "name": "tandem",
   "version": "0.0.0",
-  "description": "Company workspace where human and AI employees work together — SSH environments run the Hermes agent as the task runner.",
+  "description": "Company workspace where human and AI employees work together \u2014 SSH environments run the Hermes agent as the task runner.",
   "type": "module",
   "scripts": {
     "dev": "nuxt dev",
@@ -29,6 +29,8 @@
     "@orpc/server": "2.0.0-beta.44",
     "@orpc/tanstack-query": "2.0.0-beta.44",
     "@tanstack/vue-query": "5.104.3",
+    "@tiptap/core": "3.32.0",
+    "@tiptap/extension-image": "3.32.0",
     "@vueuse/core": "15.0.0",
     "@vueuse/nuxt": "15.0.0",
     "better-auth": "1.7.10",
