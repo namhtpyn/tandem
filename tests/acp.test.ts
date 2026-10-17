@@ -173,6 +173,56 @@ describe('acp.client turns', () => {
     expect(stream.closed).toBe(true)
   })
 
+  it('outputSchema: contract appended to the prompt; structured parsed from the transcript', async () => {
+    const { z } = await import('zod')
+    const Report = z.object({ score: z.number(), notes: z.string() })
+    let sawPrompt = ''
+    const stream = fakeAgent((msg, send) => {
+      const method = msg.method as string | undefined
+      if (!method) return
+      if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1 } })
+      else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-s' } })
+      else if (method === 'session/prompt') {
+        sawPrompt = JSON.stringify((msg.params as { prompt?: unknown } | undefined)?.prompt ?? '')
+        send({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'analysis\n' } } } })
+        send({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '{"score": 8, "notes": "solid"}' } } } })
+        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } })
+      }
+    })
+    const res = await turn(stream, {})
+    // plain turn: no structured field
+    expect((res as Record<string, unknown>).structured).toBeUndefined()
+    void sawPrompt
+    const stream2 = fakeAgent((msg, send) => {
+      const method = msg.method as string | undefined
+      if (!method) return
+      if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1 } })
+      else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-s2' } })
+      else if (method === 'session/prompt') {
+        send({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'analysis\n{\"score\": 8, \"notes\": \"solid\"}' } } } })
+        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } })
+      }
+    })
+    const { runAcpTurn } = await import('../server/domains/tasks/acp.client')
+    const res2 = await runAcpTurn({ stream: stream2, prompt: 'grade it', timeoutMs: 2_000, outputSchema: Report })
+    expect(res2.structured).toEqual({ score: 8, notes: 'solid' })
+    // the contract rode along on the prompt
+    const stream3 = fakeAgent((msg, send) => {
+      const method = msg.method as string | undefined
+      if (!method) return
+      if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1 } })
+      else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-s3' } })
+      else if (method === 'session/prompt') {
+        const p = (msg.params as { prompt?: unknown } | undefined)?.prompt
+        sawPrompt = typeof p === 'string' ? p : JSON.stringify(p ?? '')
+        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } })
+      }
+    })
+    await runAcpTurn({ stream: stream3, prompt: 'grade it', timeoutMs: 2_000, outputSchema: Report })
+    expect(sawPrompt).toContain('grade it')
+    expect(sawPrompt).toContain('OUTPUT CONTRACT')
+  })
+
   it('resume: an existing session id skips session/new', async () => {
     const stream = happyAgent()
     const res = await turn(stream, { resumeSessionId: 'sess-r' })
