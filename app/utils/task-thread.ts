@@ -46,15 +46,11 @@ export interface ThreadSource {
 export type EnvelopeKind = 'result' | 'run' | 'question' | 'blocked'
 export interface RunEnvelope { kind: EnvelopeKind; text: string }
 
-export function parseRunEnvelope(output: string | null | undefined): RunEnvelope | null {
-  if (!output) return null
-  const lines = output.trimEnd().split('\n')
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const m = lines[i]!.match(/^\[(RESULT|QUESTION|BLOCKED)\]\s*(.*)$/)
-    if (m) return { kind: m[1]!.toLowerCase() as EnvelopeKind, text: m[2]!.trim() }
-  }
-  return null
-}
+// verdict parsing lives in shared/run-verdict (zod schema + marker fallback) —
+// re-exported here so the UI thread and the runner share one implementation.
+// (the file's own EnvelopeKind/RunEnvelope below include the 'run' thread kind)
+import { parseStructuredVerdict } from '../../shared/run-verdict'
+export { parseRunEnvelope, parseStructuredVerdict, RunVerdictSchema } from '../../shared/run-verdict'
 
 /** Parse routing proposals from run output (structural markers, scanned anywhere):
  *  [SUBTASKS] title :: description :: assignee | title2 :: ...
@@ -89,13 +85,20 @@ export function parseRoutingProposals(output: string | null | undefined): Routin
   return out
 }
 
-/** Strip the envelope line from displayed output so the bubble shows prose only. */
+/** Strip the envelope/verdict line from displayed output so the bubble shows prose only. */
 export function runOutputWithoutEnvelope(output: string | null | undefined): string {
-  const env = parseRunEnvelope(output)
-  if (!env) return output ?? ''
-  // parseRunEnvelope anchors on ^, so the uppercase token is always findable
-  const idx = output!.trimEnd().lastIndexOf(`[${env.kind.toUpperCase()}]`)
-  return output!.slice(0, idx).trim()
+  if (!output) return ''
+  const lines = output.trimEnd().split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!.trim()
+    if (/^\[(RESULT|QUESTION|BLOCKED)\]/.test(line) || parseStructuredVerdict(line)) {
+      let end = i
+      // drop the fence opener left dangling above a fenced JSON verdict
+      if (i > 0 && /^```/.test(lines[i - 1]!.trim())) end = i - 1
+      return lines.slice(0, end).join('\n').trim()
+    }
+  }
+  return output
 }
 
 /** Compact thread time: same-day -> "14:32", older -> "Oct 12". No seconds, no date spam. */

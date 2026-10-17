@@ -1090,6 +1090,30 @@ describe('dispatcher', () => {
     }
   }, 20_000)
 
+  it('a run ending in a JSON verdict completes the task (structured output)', async () => {
+    const prevRunner = process.env.TANDEM_FAKE_RUNNER
+    const prevScript = process.env.TANDEM_FAKE_SCRIPT
+    process.env.TANDEM_FAKE_RUNNER = '1'
+    process.env.TANDEM_FAKE_SCRIPT = 'all done\n{"kind": "result", "body": "shipped"}'
+    try {
+      const agentId = await mkAiAgent()
+      const t = await callProc('tasks.create', { title: 'J task', assigneeId: agentId })
+      const { dispatchTask } = await import('../server/domains/tasks/runner.service')
+      const handle = await dispatchTask(t.id, 'http://tandem.local')
+      expect((await handle.finished).status).toBe('done')
+      const { tasks } = await schema()
+      const { db } = await dbm()
+      const task = (await db.select().from(tasks)).find(x => x.id === t.id)!
+      expect(task.status).toBe(STATUS.done)
+    }
+    finally {
+      if (prevRunner === undefined) delete process.env.TANDEM_FAKE_RUNNER
+      else process.env.TANDEM_FAKE_RUNNER = prevRunner
+      if (prevScript === undefined) delete process.env.TANDEM_FAKE_SCRIPT
+      else process.env.TANDEM_FAKE_SCRIPT = prevScript
+    }
+  }, 30_000)
+
   it('a run ending [RESULT] completes the task as before', async () => {
     const prevRunner = process.env.TANDEM_FAKE_RUNNER
     const prevScript = process.env.TANDEM_FAKE_SCRIPT

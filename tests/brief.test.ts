@@ -75,7 +75,8 @@ describe('buildBrief', () => {
     expect(b).toContain('Coordinate with @Jay on the API')
     expect(b).toContain('Owner: Nam Hoang')
     expect(b).toContain('Reviewers (all must approve): Ash')
-      expect(b).toContain('[RESULT] <final answer or summary of work done>')
+      expect(b).toContain('{"kind": "result", "body": "<final answer or summary of work done>"}')
+      expect(b).toContain('OUTPUT CONTRACT')
   })
   it('agent without a title renders bare identity line', () => {
     const b = buildBrief({ ...base, agent: P('u-zed', 'Zed') })
