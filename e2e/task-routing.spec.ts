@@ -70,7 +70,8 @@ test('subtask creation nests under the parent, chips the child, and blocks the p
   // parent flips to blocked (derived from the open child)
   await page.waitForTimeout(800)
   await page.reload()
-  await expect(page.getByText('blocked', { exact: true }).first()).toBeVisible({ timeout: 10_000 })
+  // status ids are uuids now — the badge renders the status NAME
+  await expect(page.getByText('Blocked', { exact: true }).first()).toBeVisible({ timeout: 10_000 })
 
   // child page carries the parent chip
   await panel.getByRole('link', { name: childName }).click()
