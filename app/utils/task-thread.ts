@@ -49,8 +49,8 @@ export interface RunEnvelope { kind: EnvelopeKind; text: string }
 // verdict parsing lives in shared/run-verdict (zod schema + marker fallback) —
 // re-exported here so the UI thread and the runner share one implementation.
 // (the file's own EnvelopeKind/RunEnvelope below include the 'run' thread kind)
-import { parseStructuredVerdict } from '../../shared/run-verdict'
-export { parseRunEnvelope, parseStructuredVerdict, RunVerdictSchema } from '../../shared/run-verdict'
+import { parseStructuredVerdict } from '#shared/run-verdict'
+export { parseRunEnvelope, parseStructuredVerdict, RunVerdictSchema } from '#shared/run-verdict'
 
 /** Parse routing proposals from run output (structural markers, scanned anywhere):
  *  [SUBTASKS] title :: description :: assignee | title2 :: ...
