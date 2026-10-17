@@ -417,7 +417,7 @@ export async function dispatchTask(taskId: string, tandemUrl: string, opts?: { r
         const payloads = parseRoutingProposals(buffer)
         if (payloads.length) await recordProposals(taskId, runId, payloads)
       } catch { /* proposal recording is best-effort */ }
-      const { parseRunEnvelope } = await import('../../../app/utils/task-thread')
+      const { parseRunEnvelope } = await import('#shared/run-verdict')
       const envelope = parseRunEnvelope(buffer)
       const { submitResult, askQuestion } = await import('./workflow.service')
       try {

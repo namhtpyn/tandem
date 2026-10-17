@@ -139,7 +139,7 @@ function happyAgent(final: Record<string, unknown> = { stopReason: 'end_turn' })
     else if (method === 'session/resume') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-r' } })
     else if (method === 'session/prompt') {
       send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'sess-1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working…' } } } })
-      send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'sess-1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '[RESULT] done' } } } })
+      send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'sess-1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '{"kind": "result", "body": "done"}' } } } })
       send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'sess-1', update: { sessionUpdate: 'tool_call', title: 'read_file', status: 'in_progress' } } })
       send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'sess-1', update: { sessionUpdate: 'usage_update', used: 10, size: 100 } } })
       send({ jsonrpc: '2.0', id: msg.id, result: final })
@@ -165,8 +165,8 @@ describe('acp.client turns', () => {
     const res = await turn(stream, { onLine: l => lines.push(l) })
     expect(res.sessionId).toBe('sess-1')
     expect(res.stopReason).toBe('end_turn')
-    expect(res.transcript).toBe('working…[RESULT] done')
-    expect(lines).toContain('working…[RESULT] done') // no newline between chunks = one line, flushed at turn end
+    expect(res.transcript).toBe('working…{"kind": "result", "body": "done"}')
+    expect(lines).toContain('working…{"kind": "result", "body": "done"}') // no newline between chunks = one line, flushed at turn end
     expect(lines).toContain('[tool] read_file in_progress')
     expect(lines).toContain('[context] 10/100 tokens')
     // stream torn down after the turn
@@ -203,12 +203,12 @@ describe('acp.client turns', () => {
       else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's' } })
       else if (method === 'session/prompt') {
         send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 's', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'image', url: 'data:x' } } } })
-        send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 's', update: { sessionUpdate: 'agent_message', content: [{ type: 'text', text: '[RESULT] replaced' }] } } })
+        send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 's', update: { sessionUpdate: 'agent_message', content: [{ type: 'text', text: '{"kind": "result", "body": "replaced"}' }] } } })
         send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } })
       }
     })
     const res = await turn(stream)
-    expect(res.transcript).toBe('[RESULT] replaced')
+    expect(res.transcript).toBe('{"kind": "result", "body": "replaced"}')
   })
 
   it('permission requests are auto-allowed and logged; unknown agent calls get -32601', async () => {

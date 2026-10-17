@@ -413,7 +413,7 @@ describe('runner real-ssh path (mocked ssh2)', () => {
         else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-acp-1' } })
         else if (method === 'session/resume') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-acp-1' } })
         else if (method === 'session/prompt') {
-          send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'sess-acp-1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '[RESULT] all done' } } } })
+          send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'sess-acp-1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '{"kind": "result", "body": "all done"}' } } } })
           send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } })
         }
       }
@@ -428,7 +428,7 @@ describe('runner real-ssh path (mocked ssh2)', () => {
       const run = (await d.db.select().from(sch.taskRuns))[0]!
       expect(run.status).toBe('done')
       expect(run.sessionId).toBe('sess-acp-1') // session lives on the run (per task x employee)
-      expect(run.output).toContain('[RESULT] all done')
+      expect(run.output).toContain('{"kind": "result", "body": "all done"}')
 
       // SECOND dispatch resumes the stored session — no session/new on the wire.
       // Evidence from the agent side (settle's own ssh clients never speak ACP).
@@ -664,7 +664,7 @@ describe('dispatcher', () => {
 
   it('company + project prompts ride the persisted run prompt end-to-end', async () => {
     process.env.TANDEM_FAKE_RUNNER = '1'
-    process.env.TANDEM_FAKE_SCRIPT = 'ok\n[RESULT] done'
+    process.env.TANDEM_FAKE_SCRIPT = 'ok\n{"kind": "result", "body": "done"}'
     try {
       const { setSetting } = await import('../server/domains/settings/settings.service')
       await setSetting('company_prompt', 'English only, pinned deps.')
@@ -688,10 +688,10 @@ describe('dispatcher', () => {
     }
   }, 15_000)
 
-  it('a run ending [QUESTION] parks the task on the owner, not done', async () => {
+  it('a run ending {"kind": "question", "body": "parks the task on the owner, not done"}', async () => {
     const prev = process.env.TANDEM_FAKE_SCRIPT
     process.env.TANDEM_FAKE_RUNNER = '1'
-    process.env.TANDEM_FAKE_SCRIPT = 'working on it\n[QUESTION] which database should I seed?'
+    process.env.TANDEM_FAKE_SCRIPT = 'working on it\n{"kind": "question", "body": "which database should I seed?"}'
     try {
       const agentId = await mkAiAgent()
       const { db } = await dbm()
@@ -715,7 +715,7 @@ describe('dispatcher', () => {
   }, 15_000)
 
   it('REVIEW LAW: human supervisor default — pending row + obligation, no run', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = 'done\n[RESULT] shipped'
+    process.env.TANDEM_FAKE_SCRIPT = 'done\n{"kind": "result", "body": "shipped"}'
     try {
       const { db } = await dbm()
       const { user, employeeSupervisors, taskReviews, taskObligations } = await schema()
@@ -746,9 +746,9 @@ describe('dispatcher', () => {
     }
   }, 15_000)
 
-  it('REVIEW LAW: AI reviewer gets a review TURN on the same task; [RESULT] approves; separate session', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = 'working\n[RESULT] PR #42 done, tests green'
-    process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'looked good\n[RESULT] approved — nice work'
+  it('REVIEW LAW: AI reviewer gets a review TURN on the same task; {"kind": "result", "body": "approves; separate session"}', async () => {
+    process.env.TANDEM_FAKE_SCRIPT = 'working\n{"kind": "result", "body": "PR #42 done, tests green"}'
+    process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'looked good\n{"kind": "result", "body": "approved — nice work"}'
     try {
       const { db } = await dbm()
       const { employeeSupervisors } = await schema()
@@ -793,9 +793,9 @@ describe('dispatcher', () => {
     }
   }, 20_000)
 
-  it('REVIEW LAW: AI [BLOCKED] = change_requested — task back to ready, round increments on resubmit', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = 'working\n[RESULT] v1 shipped'
-    process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'nope\n[BLOCKED] missing e2e coverage'
+  it('REVIEW LAW: AI {"kind": "blocked", "body": "= change_requested — task back to ready, round increments on resubmit"}', async () => {
+    process.env.TANDEM_FAKE_SCRIPT = 'working\n{"kind": "result", "body": "v1 shipped"}'
+    process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'nope\n{"kind": "blocked", "body": "missing e2e coverage"}'
     try {
       const { db } = await dbm()
       const { employeeSupervisors } = await schema()
@@ -816,8 +816,8 @@ describe('dispatcher', () => {
       expect(rev[0]!.status).toBe('change_requested')
       expect(rev[0]!.note).toContain('e2e coverage')
       // resubmit after rework: round 2 opens
-      process.env.TANDEM_FAKE_SCRIPT = 'fixed\n[RESULT] v2 with e2e'
-      process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'lgtm\n[RESULT] approved'
+      process.env.TANDEM_FAKE_SCRIPT = 'fixed\n{"kind": "result", "body": "v2 with e2e"}'
+      process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'lgtm\n{"kind": "result", "body": "approved"}'
       await callProc('tasks.update', { id: t.id, status: STATUS.doing })
       const { submitResult } = await import('../server/domains/tasks/workflow.service')
       await submitResult(t.id, jay, 'v2 with e2e')
@@ -834,7 +834,7 @@ describe('dispatcher', () => {
   }, 20_000)
 
   it('REVIEW LAW: human reject cancels the task (terminal); verdict-less AI review parks on the owner', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = 'working\n[RESULT] done'
+    process.env.TANDEM_FAKE_SCRIPT = 'working\n{"kind": "result", "body": "done"}'
     process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'i looked at it' // no envelope
     try {
       const { db } = await dbm()
@@ -858,7 +858,7 @@ describe('dispatcher', () => {
       // answer the question -> back to in-review, review re-arms
       const { answerQuestion } = await import('../server/domains/tasks/workflow.service')
       await answerQuestion(t.id, 'u-admin', 'proceed as you see fit')
-      process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'ok now\n[RESULT] approved after clarification'
+      process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'ok now\n{"kind": "result", "body": "approved after clarification"}'
       await new Promise(r => setTimeout(r, 800))
       // now the human-only REJECT path on a fresh round state
       const before = (await db.select().from(tasks)).find(x => x.id === t.id)!
@@ -900,8 +900,8 @@ describe('dispatcher', () => {
     await dispatchAiReviewTurns(t.id) // round 0: no-op arm
 
     // reviewer with password-secret env + provider/LLM key -> full loadDispatchPlanFor arms
-    process.env.TANDEM_FAKE_SCRIPT = 'done\n[RESULT] shipped'
-    process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'ok\n[RESULT] fine'
+    process.env.TANDEM_FAKE_SCRIPT = 'done\n{"kind": "result", "body": "shipped"}'
+    process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'ok\n{"kind": "result", "body": "fine"}'
     const { encryptSecret } = await import('../server/domains/vault/vault-crypto.service')
     const pwSecret = await db.insert(vaultSecrets).values({ id: 'sec-pw', name: 'pw', ciphertext: encryptSecret('hunter2'), createdBy: 'u-admin', createdAt: new Date(), updatedAt: new Date() }).returning()
     void pwSecret
@@ -941,8 +941,8 @@ describe('dispatcher', () => {
   }, 20_000)
 
   it('REVIEW LAW: re-arm after answer fetches the submitted body from activity; running review is not double-dispatched', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = 'done\n[RESULT] body v1'
-    process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'hmm\n[QUESTION] which color?'
+    process.env.TANDEM_FAKE_SCRIPT = 'done\n{"kind": "result", "body": "body v1"}'
+    process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'hmm\n{"kind": "question", "body": "which color?"}'
     try {
       const { db } = await dbm()
       const { employeeSupervisors } = await schema()
@@ -966,7 +966,7 @@ describe('dispatcher', () => {
       const runCount = (await db.select().from(taskRuns)).filter(r => r.taskId === t.id && r.employeeId === ash).length
       await db.update(taskRuns).set({ status: 'done' }).where(eq(taskRuns.taskId, t.id))
       // answer -> re-arm without an explicit body (fetches from activity)
-      process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'ok now\n[RESULT] approved after the answer'
+      process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'ok now\n{"kind": "result", "body": "approved after the answer"}'
       const { answerQuestion } = await import('../server/domains/tasks/workflow.service')
       await answerQuestion(t.id, 'u-admin', 'blue')
       let done = false
@@ -1018,7 +1018,7 @@ describe('dispatcher', () => {
   })
 
   it('CAP LAW: default 1 task per agent — second ready task waits', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = 'step 1\nstep 2\n[RESULT] done'
+    process.env.TANDEM_FAKE_SCRIPT = 'step 1\nstep 2\n{"kind": "result", "body": "done"}'
     process.env.TANDEM_FAKE_DELAY_MS = '120'
     try {
       const agentId = await mkAiAgent()
@@ -1042,7 +1042,7 @@ describe('dispatcher', () => {
   }, 20_000)
 
   it('CAP LAW: tasksPerAgent=2 lets the same agent run two tasks at once', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = 'step 1\nstep 2\n[RESULT] done'
+    process.env.TANDEM_FAKE_SCRIPT = 'step 1\nstep 2\n{"kind": "result", "body": "done"}'
     process.env.TANDEM_FAKE_DELAY_MS = '120'
     try {
       const { setSetting } = await import('../server/domains/settings/settings.service')
@@ -1067,7 +1067,7 @@ describe('dispatcher', () => {
   }, 20_000)
 
   it('CAP LAW: different agents always run in parallel (cap applies per agent)', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = 'step 1\nstep 2\n[RESULT] done'
+    process.env.TANDEM_FAKE_SCRIPT = 'step 1\nstep 2\n{"kind": "result", "body": "done"}'
     process.env.TANDEM_FAKE_DELAY_MS = '120'
     try {
       const x = await mkAiAgent()
@@ -1114,11 +1114,11 @@ describe('dispatcher', () => {
     }
   }, 30_000)
 
-  it('a run ending [RESULT] completes the task as before', async () => {
+  it('a run ending {"kind": "result", "body": "completes the task as before"}', async () => {
     const prevRunner = process.env.TANDEM_FAKE_RUNNER
     const prevScript = process.env.TANDEM_FAKE_SCRIPT
     process.env.TANDEM_FAKE_RUNNER = '1'
-    process.env.TANDEM_FAKE_SCRIPT = 'all done\n[RESULT] shipped'
+    process.env.TANDEM_FAKE_SCRIPT = 'all done\n{"kind": "result", "body": "shipped"}'
     try {
       const agentId = await mkAiAgent()
       const t = await callProc('tasks.create', { title: 'R task', assigneeId: agentId })
@@ -1223,7 +1223,7 @@ describe('runner proposal recording', () => {
   it('a finished run with [SUBTASKS] output records proposals + activity', async () => {
     const agentId = await mkAiAgent()
     const t = await callProc('tasks.create', { title: 'PropRun', assigneeId: agentId })
-    process.env.TANDEM_FAKE_SCRIPT = ['thinking…', '[SUBTASKS] Draft docs :: write :: Peer Person', '[RESULT] done'].join('\n')
+    process.env.TANDEM_FAKE_SCRIPT = ['thinking…', '[SUBTASKS] Draft docs :: write :: Peer Person', '{"kind": "result", "body": "done"}'].join('\n')
     try {
       const { dispatchTask } = await import('../server/domains/tasks/runner.service')
       const h = await dispatchTask(t.id, 'http://t.local')
