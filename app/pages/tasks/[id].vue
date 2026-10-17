@@ -4,7 +4,7 @@
 // (status, assignee, reviewers, workflow actions). Mobile-first: single column,
 // sidebar collapses into a sheet. Streams stay persistent (one per feed, aborted
 // on unmount) — see the stream law in AGENTS.md.
-import { useQuery, useMutation, skipToken, useQueryClient } from '@tanstack/vue-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import type { EmployeeRow, TaskRow } from '~/../shared/types'
 import { STATUS } from '~/../shared/status'
 import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '~/utils/task-thread'
@@ -27,19 +27,26 @@ const workflowMessage = ref('')
 // runs/activity start as a conventional GET the moment the task resolves; the
 // app-wide changes subscription refetches them whenever the server says runs or
 // activity changed. No long-lived stream is opened for initial data.
+// Gated via `enabled` rather than skipToken — bundler-split copies of the
+// skipToken symbol (oRPC vs vue-query chunks) defeat oRPC's skip detection and
+// the queries fire with a serialized-away input (server: BAD_REQUEST).
+const taskIdRef = computed(() => task.value?.id ?? '')
 const runsQuery = useQuery(computed(() => ($orpc.tasks.runsList as any).queryOptions({
-  input: (task.value?.id ? { taskId: task.value.id } : skipToken),
-  queryKey: ['runs', task.value?.id ?? ''],
+  input: { taskId: taskIdRef.value },
+  queryKey: ['runs', taskIdRef.value],
+  enabled: !!taskIdRef.value,
 })))
 const runFeed = computed(() => (unref(runsQuery.data) ?? []) as unknown as Array<{ id: string, status: string, output: string, prompt?: string | null, agentName?: string | null, exitCode: number | null, startedAt: string, outputs?: Array<{ id: string, filename: string, mime: string, size: number }> }>)
 
 const activityQuery = useQuery(computed(() => ($orpc.tasks.activityList as any).queryOptions({
-  input: (task.value?.id ? { taskId: task.value.id } : skipToken),
-  queryKey: ['taskActivity', task.value?.id ?? ''],
+  input: { taskId: taskIdRef.value },
+  queryKey: ['taskActivity', taskIdRef.value],
+  enabled: !!taskIdRef.value,
 })))
 const reviewsQuery = useQuery(computed(() => ($orpc.tasks.reviews as any).queryOptions({
-  input: (task.value?.id ? { taskId: task.value.id } : skipToken),
-  queryKey: ['taskReviews', task.value?.id ?? ''],
+  input: { taskId: taskIdRef.value },
+  queryKey: ['taskReviews', taskIdRef.value],
+  enabled: !!taskIdRef.value,
 })))
 /** REVIEW LAW checklist: current-round verdicts per reviewer, history collapsed by round */
 const reviewChecklist = computed(() => {

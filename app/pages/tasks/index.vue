@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Tasks: work items for human + AI employees. Mobile-first card list with
 // status pills; editor modal follows the shared structure (body + #footer).
-import { useQuery, useMutation, skipToken, useQueryClient } from '@tanstack/vue-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
@@ -335,18 +335,23 @@ const workflowMessage = ref('')
 const forwardTo = ref('__none__')
 
 // ---- drawer data: conventional GETs + change-event invalidation (SSE law) ----
-// runs/activity load as plain GETs once the drawer opens (skipToken until
-// then); the app-wide changes subscription refetches them while it stays open —
-// no polling, no per-drawer SSE streams.
+// runs/activity load as plain GETs once the drawer opens; the app-wide changes
+// subscription refetches them while it stays open — no polling, no per-drawer
+// SSE streams. Gated with `enabled`, NOT skipToken: bundlers can duplicate the
+// skipToken symbol across chunks (oRPC vs vue-query), which silently defeats
+// oRPC's own skip detection and the query fires with a serialized-away input.
 const queryClient = useQueryClient()
+const drawerTaskId = computed(() => (workflowOpen.value && workflowTask.value ? workflowTask.value.id : ''))
 const drawerRunsQuery = useQuery(computed(() => ($orpc.tasks.runsList as any).queryOptions({
-  input: (workflowOpen.value && workflowTask.value ? { taskId: workflowTask.value.id } : skipToken),
-  queryKey: ['runs', (workflowOpen.value && workflowTask.value) ? workflowTask.value.id : ''],
+  input: { taskId: drawerTaskId.value },
+  queryKey: ['runs', drawerTaskId.value],
+  enabled: !!drawerTaskId.value,
 })))
 const runFeed = computed(() => (unref(drawerRunsQuery.data) ?? []) as unknown as Array<{ id: string, status: string, output: string, exitCode: number | null, startedAt: string }>)
 const drawerActivityQuery = useQuery(computed(() => ($orpc.tasks.activityList as any).queryOptions({
-  input: (workflowOpen.value && workflowTask.value ? { taskId: workflowTask.value.id } : skipToken),
-  queryKey: ['taskActivity', (workflowOpen.value && workflowTask.value) ? workflowTask.value.id : ''],
+  input: { taskId: drawerTaskId.value },
+  queryKey: ['taskActivity', drawerTaskId.value],
+  enabled: !!drawerTaskId.value,
 })))
 const workflowFeed = computed(() => (unref(drawerActivityQuery.data) ?? []) as unknown as import('~/../shared/types').TaskActivityRow[])
 
