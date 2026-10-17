@@ -257,7 +257,7 @@ async function probe(row: EnvironmentRow) {
       </template>
     </UModal>
 
-    <UModal v-model:open="editorOpen" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }" :title="editingId ? 'Edit environment' : 'New environment'">
+    <UModal v-model:open="editorOpen" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }" :title="editingId ? 'Edit environment' : 'New environment'">
       <template #body>
         <UForm id="environment-editor-form" :state="form" class="space-y-4" @submit="save">
           <UFormField label="Name" name="name">
