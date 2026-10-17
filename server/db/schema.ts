@@ -167,7 +167,7 @@ export const tasks = pgTable('tandem_tasks', {
   title: text('title').notNull(),
   description: text('description').notNull().default(''),
   // references tandem_task_statuses.id (seeded: todo/doing/done)
-  status: text('status').notNull().default('todo'),
+  status: text('status').notNull().default('01a14743-43f4-7053-a698-5b4ef36ed046'),
   projectId: text('project_id').references(() => projects.id, { onDelete: 'set null' }),
   assigneeId: text('assignee_id').references(() => user.id, { onDelete: 'set null' }),
   /** the person responsible for routing questions/answers (creator by default; NOT necessarily a supervisor) */

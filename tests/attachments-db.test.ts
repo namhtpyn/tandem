@@ -28,6 +28,7 @@ vi.mock('../server/domains/tasks/ssh-exec.util', async (importOriginal) => {
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { STATUS } from '../shared/status'
 
 async function seed() {
   const envId = `env-${crypto.randomUUID().slice(0, 8)}`
@@ -35,7 +36,7 @@ async function seed() {
   const uid = crypto.randomUUID()
   await db.insert(userTable).values({ id: `u-${uid}`, name: `Att ${uid.slice(0, 6)}`, email: `att-${uid}@t.test`, emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
   const tid = crypto.randomUUID()
-  await db.insert(tasks).values({ id: tid, title: `att task ${uid.slice(0, 6)}`, description: '', status: 'todo', assigneeId: `u-${uid}`, createdAt: new Date(), updatedAt: new Date() })
+  await db.insert(tasks).values({ id: tid, title: `att task ${uid.slice(0, 6)}`, description: '', status: STATUS.todo, assigneeId: `u-${uid}`, createdAt: new Date(), updatedAt: new Date() })
   await db.insert(aiEmployees).values({ userId: `u-${uid}`, environmentId: envId, instructions: '', executable: 'hermes acp' })
   return { uid: `u-${uid}`, tid }
 }

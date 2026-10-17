@@ -6,6 +6,7 @@
 // on unmount) — see the stream law in AGENTS.md.
 import { useQuery, useMutation, skipToken, useQueryClient } from '@tanstack/vue-query'
 import type { EmployeeRow, TaskRow } from '~/../shared/types'
+import { STATUS } from '~/../shared/status'
 import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '~/utils/task-thread'
 import type { ThreadItem } from '~/utils/task-thread'
 
@@ -302,7 +303,7 @@ useHead({ title: () => task.value ? `${task.value.title} · Tandem` : 'Task · T
           <div class="min-w-0 flex-1">
             <h1 class="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-50">{{ task.title }}</h1>
             <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-500">
-              <UBadge :color="(task.status === 'done') ? 'success' : (task.status === 'todo') ? 'neutral' : 'warning'" variant="subtle" size="sm">{{ task.status }}</UBadge>
+              <UBadge :color="(task.status === STATUS.done) ? 'success' : (task.status === STATUS.todo) ? 'neutral' : 'warning'" variant="subtle" size="sm">{{ statusById.get(task.status)?.name ?? '' }}</UBadge>
               <NuxtLink v-if="parentTask" :to="`/tasks/${parentTask.id}`" class="inline-flex items-center gap-1 text-primary hover:underline" data-testid="parent-task-link">
                 <UIcon name="i-lucide-corner-left-up" class="size-3" /> part of: {{ parentTask.title }}
               </NuxtLink>

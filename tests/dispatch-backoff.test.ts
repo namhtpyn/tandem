@@ -5,6 +5,7 @@ import { makeProcCaller } from './helpers/procs'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 import { eq } from 'drizzle-orm'
+import { STATUS } from '../shared/status'
 
 // mock ssh2: connect+exec succeed; the stream never closes on its own, so tests
 // drive terminal events explicitly (error emit) or rely on the run-timeout timer
@@ -53,7 +54,7 @@ beforeEach(async () => {
   await db.insert(user).values({ id: 'u-agent', name: 'Robby', email: 'robby@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
   await db.insert(environments).values({ id: 'env-1', name: 'E1', host: '127.0.0.1', port: '2222', username: 'u' })
   await db.insert(aiEmployees).values({ userId: 'u-agent', environmentId: 'env-1', instructions: '', executable: 'hermes acp' })
-  await db.insert(tasks).values({ id: 't-1', title: 'B', description: '', status: 'todo', assigneeId: 'u-agent' })
+  await db.insert(tasks).values({ id: 't-1', title: 'B', description: '', status: STATUS.todo, assigneeId: 'u-agent' })
 })
 
 describe('backoff ladder', () => {
@@ -88,7 +89,7 @@ describe('backoff ladder', () => {
       const res = await handle.finished
       expect(res.status).toBe('failed')
       const task = (await db.select().from(tasks).where(eq(tasks.id, 't-1')))[0]!
-      expect(task.status).toBe('todo')
+      expect(task.status).toBe(STATUS.todo)
       expect(task.failStreak).toBe(1)
       expect(task.dispatchAfter).not.toBeNull()
       expect(task.dispatchAfter!.getTime()).toBeGreaterThan(Date.now() + 50_000)
@@ -125,14 +126,14 @@ describe('stale-run reaper', () => {
     const { db } = await import('../server/db')
     const { tasks, taskRuns } = await import('../server/db/schema')
     await db.insert(taskRuns).values({ id: 'r-old', taskId: 't-1', employeeId: 'u-agent', environmentId: 'env-1', status: 'running', output: 'partial output', startedAt: new Date(Date.now() - 3 * 60 * 60_000) })
-    await db.update(tasks).set({ status: 'doing' }).where(eq(tasks.id, 't-1'))
+    await db.update(tasks).set({ status: STATUS.doing }).where(eq(tasks.id, 't-1'))
     const { reapStaleRuns } = await import('../server/domains/tasks/dispatcher.service')
     expect(await reapStaleRuns()).toBe(1)
     const run = (await db.select().from(taskRuns)).find(r => r.id === 'r-old')!
     expect(run.status).toBe('failed')
     expect(run.output).toContain('[reaper]')
     const task = (await db.select().from(tasks)).find(x => x.id === 't-1')!
-    expect(task.status).toBe('todo')
+    expect(task.status).toBe(STATUS.todo)
     expect(task.failStreak).toBe(1)
     expect(task.dispatchAfter!.getTime()).toBeGreaterThan(Date.now() + 14 * 60_000)
     // fresh running runs are left alone
@@ -146,7 +147,7 @@ describe('stale-run reaper', () => {
     const old = new Date(Date.now() - 3 * 60 * 60_000)
     await db.insert(taskRuns).values({ id: 'r-a', taskId: 't-1', employeeId: 'u-agent', environmentId: 'env-1', status: 'running', output: '', startedAt: old })
     await db.insert(taskRuns).values({ id: 'r-b', taskId: 't-1', employeeId: 'u-agent', environmentId: 'env-1', status: 'running', output: '', startedAt: new Date(Date.now() - 2 * 60 * 60_000) })
-    await db.update(tasks).set({ status: 'doing' }).where(eq(tasks.id, 't-1'))
+    await db.update(tasks).set({ status: STATUS.doing }).where(eq(tasks.id, 't-1'))
     const { reapStaleRuns } = await import('../server/domains/tasks/dispatcher.service')
     expect(await reapStaleRuns()).toBe(2) // both stale -> both reaped
     // now only ONE new run: reaping it must NOT bounce when a newer done run exists

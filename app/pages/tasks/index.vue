@@ -3,6 +3,7 @@
 // status pills; editor modal follows the shared structure (body + #footer).
 import { useQuery, useMutation, skipToken, useQueryClient } from '@tanstack/vue-query'
 import type { EmployeeRow, TaskRow } from '~/../shared/types'
+import { STATUS } from '~/../shared/status'
 
 
 const { $orpc, $client } = useNuxtApp()
@@ -23,7 +24,7 @@ const needsDecision = ref(false)
 const visibleTasks = computed(() => needsDecision.value ? tasks.value.filter(t => inboxTaskIds.value.has(t.id)) : tasks.value)
 const statuses = computed(() => (unref(statusesLive.data) ?? []) as import('~/../shared/types').TaskStatusRow[])
 const statusById = computed(() => new Map(statuses.value.map(x => [x.id, x])))
-const firstStatusId = computed(() => statuses.value[0]?.id ?? 'todo')
+const firstStatusId = computed(() => statuses.value[0]?.id ?? STATUS.todo)
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[])
 // @mention menu items: label = display name, mention id = employee id (used by the brief builder)
 const mentionItems = computed(() => employees.value.map(e => ({
@@ -79,7 +80,7 @@ const deleteOpen = computed({
   set: (v: boolean) => { if (!v) pendingDelete.value = null },
 })
 
-const form = reactive({ title: '', description: '', assigneeId: '__none__' as string, status: 'todo' as string, projectId: '__none__' as string, ownerId: '__none__' as string, reviewers: [] as string[] })
+const form = reactive({ title: '', description: '', assigneeId: '__none__' as string, status: STATUS.todo as string, projectId: '__none__' as string, ownerId: '__none__' as string, reviewers: [] as string[] })
 const isEdit = computed(() => editingId.value !== null)
 
 const assignMutation = useMutation<any, any, any>(($orpc.statuses.assign as any).mutationOptions())

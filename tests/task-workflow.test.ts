@@ -10,6 +10,7 @@ import { makeProcCaller } from './helpers/procs'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 import { answerHolder, spawnObligation } from '../server/domains/tasks/obligations.service'
+import { STATUS } from '../shared/status'
 
 const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 const worker = { id: 'u-worker', name: 'Worker', email: 'worker@tandem.local', role: 'member' }
@@ -55,7 +56,7 @@ async function mkTask(input: Record<string, unknown>): Promise<string> {
 
 /** move task to doing (the assignee picked it up) */
 async function startWork(taskId: string) {
-  await callProc('tasks.update', { id: taskId, status: 'doing' })
+  await callProc('tasks.update', { id: taskId, status: STATUS.doing })
 }
 
 async function getTask(id: string) {
@@ -93,7 +94,7 @@ describe('task workflow — question chain', () => {
       expect(r.holderId).toBe(idMap.get('owner')!)
     })
     const t = await getTask(taskId)
-    expect(t.status).toBe('waiting-answer')
+    expect(t.status).toBe(STATUS.waitingAnswer)
     expect(await answerHolder(t.id)).toBe(idMap.get('owner')!)
   })
 
@@ -143,7 +144,7 @@ describe('task workflow — question chain', () => {
       await callProc('tasks.answer', { taskId, body: 'use postgres' })
     })
     const t = await getTask(taskId)
-    expect(t.status).toBe('todo')
+    expect(t.status).toBe(STATUS.todo)
     expect(await answerHolder(t.id)).toBeNull()
     expect(t.questionChain).toEqual([])
     const feed = await activity(taskId)
@@ -171,7 +172,7 @@ describe('task workflow — review gate', () => {
     await startWork(taskId)
     await as({ ...worker, id: idMap.get('worker')! }, async () => {
       const r = await callProc('tasks.submit', { taskId, body: 'done it' })
-      expect(r.status).toBe('done')
+      expect(r.status).toBe(STATUS.done)
     })
   })
 
@@ -183,19 +184,19 @@ describe('task workflow — review gate', () => {
     await startWork(taskId)
     await as({ ...worker, id: idMap.get('worker')! }, async () => {
       const r = await callProc('tasks.submit', { taskId, body: 'result' })
-      expect(r.status).toBe('in-review')
+      expect(r.status).toBe(STATUS.inReview)
     })
     await as({ ...rev1, id: idMap.get('rev1')! }, async () => {
       const r = await callProc('tasks.approve', { taskId })
       expect(r.ok).toBe(true)
     })
     let t = await getTask(taskId)
-    expect(t.status).toBe('in-review') // rev2 still pending
+    expect(t.status).toBe(STATUS.inReview) // rev2 still pending
     await as({ ...rev2, id: idMap.get('rev2')! }, async () => {
       await callProc('tasks.approve', { taskId })
     })
     t = await getTask(taskId)
-    expect(t.status).toBe('done')
+    expect(t.status).toBe(STATUS.done)
     // REVIEW LAW: both verdict rows approved in round 1
     const revs = await callProc('tasks.reviews', { taskId })
     expect(revs.filter((r: any) => r.round === 1).every((r: any) => r.status === 'approved')).toBe(true)
@@ -210,16 +211,16 @@ describe('task workflow — review gate', () => {
     await as({ ...worker, id: idMap.get('worker')! }, async () => { await callProc('tasks.submit', { taskId, body: 'v1' }) })
     await as({ ...rev1, id: idMap.get('rev1')! }, async () => { await callProc('tasks.approve', { taskId }) })
     let t = await getTask(taskId)
-    expect(t.status).toBe('in-review') // rev2 still pending
+    expect(t.status).toBe(STATUS.inReview) // rev2 still pending
     await as({ ...rev2, id: idMap.get('rev2')! }, async () => { await callProc('tasks.requestChanges', { taskId, body: 'redo the thing' }) })
     t = await getTask(taskId)
-    expect(t.status).toBe('todo') // REVIEW LAW: back to READY, the assignee resumes
+    expect(t.status).toBe(STATUS.todo) // REVIEW LAW: back to READY, the assignee resumes
     // default body arm: submit again, request changes without body
     await startWork(t.id)
     await as({ ...worker, id: idMap.get('worker')! }, async () => { await callProc('tasks.submit', { taskId }) })
     await as({ ...rev1, id: idMap.get('rev1')! }, async () => { await callProc('tasks.requestChanges', { taskId, body: 'needs work' }) })
     t = await getTask(taskId)
-    expect(t.status).toBe('todo')
+    expect(t.status).toBe(STATUS.todo)
     const feed = await activity(taskId)
     const verdicts = feed.filter(a => a.kind === 'verdict')
     expect(verdicts.some(v => v.body.includes('redo the thing'))).toBe(true)
@@ -245,7 +246,7 @@ describe('task workflow — review gate', () => {
     await as({ ...worker, id: idMap.get('worker')! }, async () => { await callProc('tasks.submit', { taskId, body: 'half baked' }) })
     await as({ ...rev1, id: idMap.get('rev1')! }, async () => { await callProc('tasks.abandon', { taskId }) })
     const t = await getTask(taskId)
-    expect(t.status).toBe('cancelled')
+    expect(t.status).toBe(STATUS.cancelled)
   })
 
   it('only the assignee can submit', async () => {
@@ -313,7 +314,7 @@ describe('task workflow — guard rails', () => {
       await callProc('tasks.abandon', { taskId, body: 'killing it' })
     })
     const t = await getTask(taskId)
-    expect(t.status).toBe('cancelled')
+    expect(t.status).toBe(STATUS.cancelled)
   })
 
   it('requestChanges/abandon outside review are rejected', async () => {
@@ -349,7 +350,7 @@ describe('task workflow — guard rails', () => {
     // creator (admin) answers — chain includes admin via fallback
     await callProc('tasks.answer', { taskId, body: 'me' })
     const t = await getTask(taskId)
-    expect(t.status).toBe('todo')
+    expect(t.status).toBe(STATUS.todo)
   })
 
   it('live shows reviewer names, falling back to raw ids for deleted employees', async () => {
@@ -443,7 +444,7 @@ describe('task workflow — guard rails', () => {
     await as({ ...worker, id: idMap.get('worker')! }, async () => { await callProc('tasks.submit', { taskId, body: 'x' }) })
     await callProc('tasks.abandon', { taskId, body: 'by creator' }) // admin session = creator
     const t = await getTask(taskId)
-    expect(t.status).toBe('cancelled')
+    expect(t.status).toBe(STATUS.cancelled)
   })
 
   it('ask with no owner and no creator fails; forward only while waiting', async () => {
@@ -451,7 +452,7 @@ describe('task workflow — guard rails', () => {
     const { tasks } = await schema()
     await mkEmployee('worker', worker.name, worker.email)
     // raw row: nobody owns it (ownerId null, createdBy null)
-    await db.insert(tasks).values({ id: 't-orphan', title: 'orphan', description: '', status: 'doing', assigneeId: idMap.get('worker')!, ownerId: null, createdBy: null })
+    await db.insert(tasks).values({ id: 't-orphan', title: 'orphan', description: '', status: STATUS.doing, assigneeId: idMap.get('worker')!, ownerId: null, createdBy: null })
     await as({ ...worker, id: idMap.get('worker')! }, async () => {
       await expect(callProc('tasks.ask', { taskId: 't-orphan', body: 'anyone?' })).rejects.toThrow(/no owner/i)
     })
@@ -494,7 +495,7 @@ describe('task workflow — guard rails', () => {
     await mkEmployee('worker', worker.name, worker.email)
     await mkEmployee('owner', ownerUser.name, ownerUser.email)
     // raw row with null owner (bypasses create defaults)
-    await db.insert(tasks).values({ id: 't-raw', title: 'raw', description: '', status: 'waiting-answer', assigneeId: idMap.get('worker')!, ownerId: null, createdBy: null })
+    await db.insert(tasks).values({ id: 't-raw', title: 'raw', description: '', status: STATUS.waitingAnswer, assigneeId: idMap.get('worker')!, ownerId: null, createdBy: null })
     await spawnObligation('t-raw', idMap.get('owner')!, 'answer')
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
@@ -534,16 +535,16 @@ describe('task workflow — status transitions', () => {
     const { db } = await dbm()
     const { taskStatuses } = await schema()
     const rows = await db.select().from(taskStatuses)
-    const todo = rows.find(r => r.id === 'todo')!
-    const doing = rows.find(r => r.id === 'doing')!
-    const wa = rows.find(r => r.id === 'waiting-answer')!
-    const ir = rows.find(r => r.id === 'in-review')!
-    expect(todo.nextIds).toContain('doing')
-    expect(doing.nextIds).toContain('waiting-answer')
-    expect(doing.nextIds).toContain('in-review')
-    expect(doing.nextIds).toContain('done')
-    expect(ir.nextIds).toContain('done')
-    expect(wa.nextIds).toContain('doing')
+    const todo = rows.find(r => r.id === STATUS.todo)!
+    const doing = rows.find(r => r.id === STATUS.doing)!
+    const wa = rows.find(r => r.id === STATUS.waitingAnswer)!
+    const ir = rows.find(r => r.id === STATUS.inReview)!
+    expect(todo.nextIds).toContain(STATUS.doing)
+    expect(doing.nextIds).toContain(STATUS.waitingAnswer)
+    expect(doing.nextIds).toContain(STATUS.inReview)
+    expect(doing.nextIds).toContain(STATUS.done)
+    expect(ir.nextIds).toContain(STATUS.done)
+    expect(wa.nextIds).toContain(STATUS.doing)
   })
 
   it('create defaults owner to creator; reviewers stored', async () => {

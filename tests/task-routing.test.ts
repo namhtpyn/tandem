@@ -15,6 +15,7 @@ import { eq } from 'drizzle-orm'
 import { recentAssignees } from '../server/domains/tasks/assignments.service'
 import { recordProposals } from '../server/domains/tasks/proposals.service'
 import { parseRoutingProposals } from '../app/utils/task-thread'
+import { STATUS } from '../shared/status'
 
 const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 const worker = { id: 'u-worker', name: 'Worker', email: 'worker@tandem.local', role: 'member' }
@@ -119,7 +120,7 @@ describe('parseRoutingProposals', () => {
 describe('obligations', () => {
   it('ask spawns a pending answer obligation; forward MOVES it; answer resolves it', async () => {
     const taskId = await mkTask({ title: 'Q task', assigneeId: idMap.get('worker')!, ownerId: idMap.get('peer')! })
-    await callProc('tasks.update', { id: taskId, status: 'doing' })
+    await callProc('tasks.update', { id: taskId, status: STATUS.doing })
     await asEmp('worker', () => callProc('tasks.ask', { taskId, body: 'which db?' }))
     expect(await answerHolder(taskId)).toBe(idMap.get('peer')!)
     expect((await pendingForUser(idMap.get('peer')!)).map(i => i.taskId)).toContain(taskId)
@@ -133,10 +134,10 @@ describe('obligations', () => {
 
   it('REVIEW LAW: rounds open per submit; verdict rows drive unanimity; change_requested returns READY', async () => {
     const taskId = await mkTask({ title: 'R task', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!, idMap.get('report')!] })
-    await callProc('tasks.update', { id: taskId, status: 'doing' })
+    await callProc('tasks.update', { id: taskId, status: STATUS.doing })
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'done' }))
     const t1 = await getTask(taskId)
-    expect(t1.status).toBe('in-review')
+    expect(t1.status).toBe(STATUS.inReview)
     expect((await pendingForUser(idMap.get('peer')!)).length).toBe(1) // inbox ping per reviewer
 
     // verdict checklist: one pending row per reviewer in round 1
@@ -145,29 +146,29 @@ describe('obligations', () => {
     expect(revs1.every((r: any) => r.round === 1)).toBe(true)
 
     await asEmp('peer', () => callProc('tasks.approve', { taskId, body: 'ok' }))
-    expect((await getTask(taskId)).status).toBe('in-review') // not unanimous yet
+    expect((await getTask(taskId)).status).toBe(STATUS.inReview) // not unanimous yet
 
     await asEmp('report', () => callProc('tasks.requestChanges', { taskId, body: 'redo' }))
-    expect((await getTask(taskId)).status).toBe('todo') // READY — the assignee resumes
+    expect((await getTask(taskId)).status).toBe(STATUS.todo) // READY — the assignee resumes
     // resubmit opens round 2; round 1 history kept
-    await callProc('tasks.update', { id: taskId, status: 'doing' })
+    await callProc('tasks.update', { id: taskId, status: STATUS.doing })
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'v2' }))
     const revs2 = await callProc('tasks.reviews', { taskId })
     expect(revs2.filter((r: any) => r.round === 2)).toHaveLength(2)
     expect(revs2.filter((r: any) => r.round === 1).some((r: any) => r.status === 'change_requested')).toBe(true)
     await asEmp('peer', () => callProc('tasks.approve', { taskId, body: 'ok2' }))
     await asEmp('report', () => callProc('tasks.approve', { taskId, body: 'ok3' }))
-    expect((await getTask(taskId)).status).toBe('done')
+    expect((await getTask(taskId)).status).toBe(STATUS.done)
     const revs3 = await callProc('tasks.reviews', { taskId })
     expect(revs3.filter((r: any) => r.round === 2).every((r: any) => r.status === 'approved')).toBe(true)
   })
 
   it('REVIEW LAW: approvalsInRoundBatch fulfilled arm — approved round reads as approvals', async () => {
     const taskId = await mkTask({ title: 'BatchOK', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!] })
-    await callProc('tasks.update', { id: taskId, status: 'doing' })
+    await callProc('tasks.update', { id: taskId, status: STATUS.doing })
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'v1' }))
     await asEmp('peer', () => callProc('tasks.approve', { taskId, body: 'ok' }))
-    expect((await getTask(taskId)).status).toBe('done')
+    expect((await getTask(taskId)).status).toBe(STATUS.done)
     const batch = await approvalsInRoundBatch([taskId])
     expect(batch.get(taskId)).toEqual([idMap.get('peer')!])
   })
@@ -198,15 +199,15 @@ describe('obligations', () => {
 
   it('REVIEW LAW: human reject cancels the task (terminal verdict)', async () => {
     const taskId = await mkTask({ title: 'RJ task', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!] })
-    await callProc('tasks.update', { id: taskId, status: 'doing' })
+    await callProc('tasks.update', { id: taskId, status: STATUS.doing })
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'done' }))
     await asEmp('peer', () => callProc('tasks.reject', { taskId, body: 'wrong scope entirely' }))
     // body-omitted arm: reject without a note (default body '')
     const taskId2 = await mkTask({ title: 'RJ2', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!] })
-    await callProc('tasks.update', { id: taskId2, status: 'doing' })
+    await callProc('tasks.update', { id: taskId2, status: STATUS.doing })
     await asEmp('worker', () => callProc('tasks.submit', { taskId: taskId2, body: 'done' }))
     await asEmp('peer', () => callProc('tasks.reject', { taskId: taskId2 }))
-    expect((await getTask(taskId)).status).toBe('cancelled')
+    expect((await getTask(taskId)).status).toBe(STATUS.cancelled)
     const revs = await callProc('tasks.reviews', { taskId })
     expect(revs[0].status).toBe('rejected')
     expect(revs[0].note).toContain('wrong scope')
@@ -216,7 +217,7 @@ describe('obligations', () => {
     const a = await mkTask({ title: 'A', assigneeId: idMap.get('worker')!, ownerId: idMap.get('peer')! })
     const b = await mkTask({ title: 'B', assigneeId: idMap.get('worker')!, ownerId: idMap.get('peer')! })
     for (const id of [a, b]) {
-      await callProc('tasks.update', { id, status: 'doing' })
+      await callProc('tasks.update', { id, status: STATUS.doing })
       await asEmp('worker', () => callProc('tasks.ask', { taskId: id, body: 'q' }))
     }
     let inbox: any
@@ -252,50 +253,50 @@ describe('assignee history', () => {
 describe('subtask gating', () => {
   it('parent auto-blocks while children are open and restores when all are terminal', async () => {
     const parentId = await mkTask({ title: 'Parent', assigneeId: idMap.get('worker')! })
-    await callProc('tasks.update', { id: parentId, status: 'doing' })
+    await callProc('tasks.update', { id: parentId, status: STATUS.doing })
     const c1 = await mkTask({ title: 'C1', parentId, assigneeId: idMap.get('peer')! })
-    expect((await getTask(parentId)).status).toBe('blocked')
-    expect((await getTask(parentId)).preBlockStatus).toBe('doing')
+    expect((await getTask(parentId)).status).toBe(STATUS.blocked)
+    expect((await getTask(parentId)).preBlockStatus).toBe(STATUS.doing)
 
-    await callProc('tasks.update', { id: c1, status: 'doing' })
-    await callProc('tasks.update', { id: c1, status: 'done' })
-    expect((await getTask(parentId)).status).toBe('doing')
+    await callProc('tasks.update', { id: c1, status: STATUS.doing })
+    await callProc('tasks.update', { id: c1, status: STATUS.done })
+    expect((await getTask(parentId)).status).toBe(STATUS.doing)
     expect((await getTask(parentId)).preBlockStatus).toBeNull()
 
     // second round: cancelled counts as terminal again (done was arm one)
     const c2 = await mkTask({ title: 'C2', parentId })
-    expect((await getTask(parentId)).status).toBe('blocked')
-    await callProc('tasks.update', { id: c2, status: 'cancelled' })
-    expect((await getTask(parentId)).status).toBe('doing')
+    expect((await getTask(parentId)).status).toBe(STATUS.blocked)
+    await callProc('tasks.update', { id: c2, status: STATUS.cancelled })
+    expect((await getTask(parentId)).status).toBe(STATUS.doing)
   })
 
   it('recursive: grandchild keeps the child (and parent) blocked', async () => {
     const root = await mkTask({ title: 'Root' })
     const mid = await mkTask({ title: 'Mid', parentId: root })
-    expect((await getTask(root)).status).toBe('blocked')
-    await callProc('tasks.update', { id: mid, status: 'doing' })
+    expect((await getTask(root)).status).toBe(STATUS.blocked)
+    await callProc('tasks.update', { id: mid, status: STATUS.doing })
     const leaf = await mkTask({ title: 'Leaf', parentId: mid })
-    expect((await getTask(mid)).status).toBe('blocked')
+    expect((await getTask(mid)).status).toBe(STATUS.blocked)
 
-    await callProc('tasks.update', { id: leaf, status: 'doing' })
-    await callProc('tasks.update', { id: leaf, status: 'done' })
-    expect((await getTask(mid)).status).toBe('doing')
-    await callProc('tasks.update', { id: mid, status: 'done' })
-    expect((await getTask(root)).status).toBe('todo')
+    await callProc('tasks.update', { id: leaf, status: STATUS.doing })
+    await callProc('tasks.update', { id: leaf, status: STATUS.done })
+    expect((await getTask(mid)).status).toBe(STATUS.doing)
+    await callProc('tasks.update', { id: mid, status: STATUS.done })
+    expect((await getTask(root)).status).toBe(STATUS.todo)
   })
 
   it('submit is refused while children are open; subtasks proc lists children', async () => {
     const parentId = await mkTask({ title: 'P2', assigneeId: idMap.get('worker')! })
-    await callProc('tasks.update', { id: parentId, status: 'doing' })
-    // a raw child row (no router hook) keeps the parent 'doing' so the explicit
+    await callProc('tasks.update', { id: parentId, status: STATUS.doing })
+    // a raw child row (no router hook) keeps the parent STATUS.doing so the explicit
     // open-children submit guard is reachable — defense in depth for racing flips
     const { db } = await import('../server/db')
     const { tasks: tasksTable } = await import('../server/db/schema')
-    await db.insert(tasksTable).values({ id: 'c-raw', title: 'Open child', description: '', status: 'todo', assigneeId: null, ownerId: null, reviewers: [], parentTaskId: parentId, createdBy: null })
+    await db.insert(tasksTable).values({ id: 'c-raw', title: 'Open child', description: '', status: STATUS.todo, assigneeId: null, ownerId: null, reviewers: [], parentTaskId: parentId, createdBy: null })
     await expect(asEmp('worker', () => callProc('tasks.submit', { taskId: parentId, body: 'x' }))).rejects.toThrow(/open subtasks/i)
     const c1 = 'c-raw'
 
-    await callProc('tasks.update', { id: c1, status: 'cancelled' })
+    await callProc('tasks.update', { id: c1, status: STATUS.cancelled })
     await asEmp('worker', async () => { expect(await callProc('tasks.submit', { taskId: parentId, body: 'x' })).toBeTruthy() })
     const st = await callProc('tasks.subtasks', { taskId: parentId })
     expect(st.items.map((i: any) => i.title)).toEqual(['Open child'])
@@ -318,7 +319,7 @@ describe('proposal confirm flow', () => {
     // outside worker's chain -> escalates to worker's supervisor (chief)
     expect(byTitle.get('Outside chain').assigneeId).toBe(idMap.get('chief')!)
     // parent auto-blocked now
-    expect((await getTask(taskId)).status).toBe('blocked')
+    expect((await getTask(taskId)).status).toBe(STATUS.blocked)
     const done = await dbRow('taskProposals', pid)
     expect(done.status).toBe('executed')
   })
@@ -416,9 +417,9 @@ describe('routing coverage arms', () => {
   it('pendingCounts splits by role; openObligations batches holders and approvers', async () => {
     const a = await mkTask({ title: 'MultiA', assigneeId: idMap.get('worker')!, ownerId: idMap.get('peer')! })
     const b = await mkTask({ title: 'MultiB', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!] })
-    await callProc('tasks.update', { id: a, status: 'doing' })
+    await callProc('tasks.update', { id: a, status: STATUS.doing })
     await asEmp('worker', () => callProc('tasks.ask', { taskId: a, body: 'q' }))
-    await callProc('tasks.update', { id: b, status: 'doing' })
+    await callProc('tasks.update', { id: b, status: STATUS.doing })
     await asEmp('worker', () => callProc('tasks.submit', { taskId: b, body: 's' }))
     let counts: any
     await asEmp('peer', async () => { counts = await callProc('tasks.inbox') })
@@ -462,7 +463,7 @@ describe('routing coverage arms II', () => {
     expect((await approvalsInRoundBatch([fresh])).get(fresh) ?? []).toEqual([])
 
     const taskId = await mkTask({ title: 'RoundTrip', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!] })
-    await callProc('tasks.update', { id: taskId, status: 'doing' })
+    await callProc('tasks.update', { id: taskId, status: STATUS.doing })
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'v1' }))
     await asEmp('peer', () => callProc('tasks.requestChanges', { taskId, body: 'no' }))
     const batch = await approvalsInRoundBatch([taskId])
@@ -578,7 +579,7 @@ describe('routing coverage arms II', () => {
 
   it('live payload skips holders for approval-only tasks (in-review snapshot)', async () => {
     const taskId = await mkTask({ title: 'ApproveOnly', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!] })
-    await callProc('tasks.update', { id: taskId, status: 'doing' })
+    await callProc('tasks.update', { id: taskId, status: STATUS.doing })
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 's' }))
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
@@ -594,10 +595,10 @@ describe('routing coverage arms II', () => {
     // outside-chain target: stays proposed (in-chain routing auto-executes by law and would move the assignee)
     await recordProposals(taskId, null as unknown as string, [{ kind: 'reassign', targetName: 'Solo Person' }])
 
-    await callProc('tasks.update', { id: taskId, status: 'doing' })
+    await callProc('tasks.update', { id: taskId, status: STATUS.doing })
     await asEmp('worker', () => callProc('tasks.ask', { taskId, body: 'q' }))
     await asEmp('peer', () => callProc('tasks.answer', { taskId, body: 'a' }))
-    await callProc('tasks.update', { id: taskId, status: 'doing' })
+    await callProc('tasks.update', { id: taskId, status: STATUS.doing })
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 's' }))
     await asEmp('report', () => callProc('tasks.approve', { taskId, body: 'ok' }))
 

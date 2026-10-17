@@ -131,6 +131,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { uuidv7 } from '../kernel/ids'
+import { STATUS } from '#shared/status'
 
 export async function loadDispatchPlan(taskId: string) {
   const taskRows = await db.select().from(tasks).where(eq(tasks.id, taskId))
@@ -376,7 +377,7 @@ export async function dispatchTask(taskId: string, tandemUrl: string, opts?: { r
     status: 'running',
     output: '',
   })
-  await db.update(tasks).set({ status: 'doing', updatedAt: new Date() }).where(eq(tasks.id, taskId))
+  await db.update(tasks).set({ status: STATUS.doing, updatedAt: new Date() }).where(eq(tasks.id, taskId))
   await publishChange('tasks', 'update')
 
   let buffer = ''
@@ -464,7 +465,7 @@ export async function dispatchTask(taskId: string, tandemUrl: string, opts?: { r
       const streak = (current?.failStreak ?? 0) + 1
       const waitMs = backoffFor(streak, buffer)
       await db.update(tasks).set({
-        status: 'todo',
+        status: STATUS.todo,
         failStreak: streak,
         dispatchAfter: new Date(Date.now() + waitMs),
         updatedAt: new Date(),

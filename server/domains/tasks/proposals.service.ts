@@ -11,6 +11,7 @@ import { publishChange } from '../kernel/kernel'
 import { recordAssignment, recentAssignees, assignTask } from './assignments.service'
 import { refreshParentGating } from './gating.service'
 import { uuidv7 } from '../kernel/ids'
+import { STATUS } from '#shared/status'
 
 export interface SubtaskItem { title: string, description?: string, assigneeName?: string }
 export type ProposalPayload =
@@ -92,7 +93,7 @@ export async function confirmProposal(proposalId: string, confirmedBy: string, n
         id: childId,
         title: item.title.slice(0, 200),
         description: item.description ?? '',
-        status: 'todo',
+        status: STATUS.todo,
         assigneeId,
         ownerId: task.ownerId ?? task.createdBy,
         reviewers: [],

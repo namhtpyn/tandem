@@ -11,7 +11,9 @@ import { tasks, taskActivity, taskStatuses } from '../../db/schema'
 import { publishChange } from '../kernel/kernel'
 import { uuidv7 } from '../kernel/ids'
 
-export const BLOCKED_STATUS = 'blocked'
+import { STATUS } from '#shared/status'
+
+export const BLOCKED_STATUS = STATUS.blocked
 
 async function logActivity(taskId: string, body: string, meta: Record<string, unknown> = {}) {
   await db.insert(taskActivity).values({ id: uuidv7(), taskId, kind: 'status', authorId: null, body, meta })

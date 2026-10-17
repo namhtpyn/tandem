@@ -6,6 +6,7 @@ import { db } from '../server/db'
 import { tasks, user as userTable, aiEmployees, employeeSupervisors, taskActivity, environments } from '../server/db/schema'
 import { buildBrief, loadBriefData } from '../server/domains/tasks/brief.service'
 import { eq } from 'drizzle-orm'
+import { STATUS } from '../shared/status'
 
 describe('loadBriefData (real db)', () => {
   let agentId: string
@@ -30,7 +31,7 @@ describe('loadBriefData (real db)', () => {
       { employeeId: agentId, supervisorId: chiefId },
       { employeeId: peerId, supervisorId: chiefId },
     ])
-    await db.insert(tasks).values({ id: taskId, title: 'Do things', description: 'Sync with @Peer Three today', status: 'todo', assigneeId: agentId, ownerId: chiefId })
+    await db.insert(tasks).values({ id: taskId, title: 'Do things', description: 'Sync with @Peer Three today', status: STATUS.todo, assigneeId: agentId, ownerId: chiefId })
     await db.insert(taskActivity).values({ id: `act-${rnd}`, taskId, kind: 'status', authorId: chiefId, body: 'dispatched' })
   })
 
@@ -74,7 +75,7 @@ describe('loadBriefData (real db)', () => {
 
   it('bare task: no owner/reviewers/activity, unknown mention ids skipped, human assignee', async () => {
     const bareId = taskId + 'b'
-    await db.insert(tasks).values({ id: bareId, title: 'Bare', description: '', status: 'todo', assigneeId: chiefId, ownerId: null, reviewers: [] })
+    await db.insert(tasks).values({ id: bareId, title: 'Bare', description: '', status: STATUS.todo, assigneeId: chiefId, ownerId: null, reviewers: [] })
     // chief is human: no ai row -> empty instructions
     try {
       const d = await loadBriefData(bareId)
@@ -118,7 +119,7 @@ describe('loadBriefData (real db)', () => {
 
   it('fresh task with no activity: brief omits the activity section; titled owner renders', async () => {
     const freshId = taskId + 'f'
-    await db.insert(tasks).values({ id: freshId, title: 'Fresh', description: '', status: 'todo', assigneeId: agentId, ownerId: chiefId, reviewers: [] })
+    await db.insert(tasks).values({ id: freshId, title: 'Fresh', description: '', status: STATUS.todo, assigneeId: agentId, ownerId: chiefId, reviewers: [] })
     try {
       const d = await loadBriefData(freshId)
       expect(d.recentActivity).toEqual([])

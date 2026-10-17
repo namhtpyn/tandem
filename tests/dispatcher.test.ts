@@ -78,6 +78,7 @@ vi.mock('ssh2', () => {
 import './api-harness'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
+import { STATUS } from '../shared/status'
 
 process.env.TANDEM_FAKE_RUNNER = '1'
 
@@ -158,10 +159,10 @@ describe('runner service guards', () => {
     const { db } = await dbm()
     const { user, tasks, environments, aiEmployees } = await schema()
     await db.insert(user).values({ id: 'u-h2', name: 'H2', email: 'h2@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
-    await db.insert(tasks).values({ id: 't-h2', title: 'x', description: '', status: 'todo', assigneeId: 'u-h2' })
+    await db.insert(tasks).values({ id: 't-h2', title: 'x', description: '', status: STATUS.todo, assigneeId: 'u-h2' })
     await expect(loadDispatchPlan('t-h2')).rejects.toThrow(/not an AI/i)
     // task with no assignee at all
-    await db.insert(tasks).values({ id: 't-none', title: 'x', description: '', status: 'todo' })
+    await db.insert(tasks).values({ id: 't-none', title: 'x', description: '', status: STATUS.todo })
     await expect(loadDispatchPlan('t-none')).rejects.toThrow(/no assignee/i)
   })
 
@@ -216,7 +217,7 @@ describe('dispatcher extras', () => {
   it('scanOnce returns false when nothing is eligible (no throw)', async () => {
     const { db } = await dbm()
     const { tasks } = await schema()
-    await db.insert(tasks).values({ id: 't-h3', title: 'x', description: '', status: 'todo' })
+    await db.insert(tasks).values({ id: 't-h3', title: 'x', description: '', status: STATUS.todo })
     const { scanOnce } = await import('../server/domains/tasks/dispatcher.service')
     expect(await scanOnce('http://t.local')).toBe(false)
   })
@@ -343,7 +344,7 @@ describe('runner failure + fallback arms', () => {
     const { scanOnce } = await import('../server/domains/tasks/dispatcher.service')
     // nothing eligible at all
     expect(await scanOnce('http://t.local')).toBe(false)
-    await db.insert(tasks).values({ id: 't-x9', title: 'x', description: '', status: 'todo' })
+    await db.insert(tasks).values({ id: 't-x9', title: 'x', description: '', status: STATUS.todo })
     expect(await scanOnce('http://t.local')).toBe(false)
   })
 
@@ -475,7 +476,7 @@ describe('runner real-ssh path (mocked ssh2)', () => {
       expect(res.status).toBe('failed')
       await new Promise(r => setTimeout(r, 100)) // finish() runs async after resolve in the err path
       const task = (await db.select().from(tasks)).find(x => x.id === t.id)!
-      expect(task.status).toBe('todo')
+      expect(task.status).toBe(STATUS.todo)
       const run = (await db.select().from(taskRuns))[0]!
       expect(run.status).toBe('failed')
       expect(run.output).toContain('ECONNREFUSED test')
@@ -628,14 +629,14 @@ describe('dispatcher', () => {
     const { db } = await dbm()
     const { tasks, taskRuns } = await schema()
     const taskRow = (await db.select().from(tasks))[0]
-    expect(taskRow.status).toBe('doing')
+    expect(taskRow.status).toBe(STATUS.doing)
     const run = (await db.select().from(taskRuns))[0]
     expect(run).toBeTruthy()
     expect(run.status).toBe('running')
     // wait for the fake run to finish, then the task is submitted (done: no reviewers)
     await new Promise(r => setTimeout(r, 400))
     const after = (await db.select().from(tasks))[0]
-    expect(after.status).toBe('done')
+    expect(after.status).toBe(STATUS.done)
     const runAfter = (await db.select().from(taskRuns))[0]
     expect(runAfter.status).toBe('done')
     expect(runAfter.exitCode).toBe(0)
@@ -702,7 +703,7 @@ describe('dispatcher', () => {
       expect((await handle.finished).status).toBe('done')
       const { tasks, taskObligations } = await schema()
       const task = (await db.select().from(tasks)).find(x => x.id === t.id)!
-      expect(task.status).toBe('waiting-answer')
+      expect(task.status).toBe(STATUS.waitingAnswer)
       const obl = (await db.select().from(taskObligations)).filter(o => o.taskId === t.id)
       expect(obl.some(o => o.role === 'answer' && o.status === 'pending' && o.employeeId === 'u-owner')).toBe(true)
     }
@@ -727,7 +728,7 @@ describe('dispatcher', () => {
       await new Promise(r => setTimeout(r, 300)) // settle cascade
       const { tasks, taskRuns } = await schema()
       const row = (await db.select().from(tasks)).find(x => x.id === t.id)!
-      expect(row.status).toBe('in-review')
+      expect(row.status).toBe(STATUS.inReview)
       expect(row.reviewers).toEqual(['u-boss'])
       const rev = (await db.select().from(taskReviews)).filter(r => r.taskId === t.id)
       expect(rev).toHaveLength(1)
@@ -762,7 +763,7 @@ describe('dispatcher', () => {
       let done = false
       for (let i = 0; i < 100 && !done; i++) {
         await new Promise(r => setTimeout(r, 100))
-        done = ((await db.select().from(tasks)).find(x => x.id === t.id)!.status) === 'done'
+        done = ((await db.select().from(tasks)).find(x => x.id === t.id)!.status) === STATUS.done
       }
       expect(done).toBe(true)
       const rev = (await db.select().from(taskReviews)).filter(r => r.taskId === t.id)
@@ -808,7 +809,7 @@ describe('dispatcher', () => {
       let back = false
       for (let i = 0; i < 100 && !back; i++) {
         await new Promise(r => setTimeout(r, 100))
-        back = ((await db.select().from(tasks)).find(x => x.id === t.id)!.status) === 'todo'
+        back = ((await db.select().from(tasks)).find(x => x.id === t.id)!.status) === STATUS.todo
       }
       expect(back).toBe(true) // ready: the assignee resumes with the feedback
       const rev = (await db.select().from(taskReviews)).filter(r => r.taskId === t.id)
@@ -817,7 +818,7 @@ describe('dispatcher', () => {
       // resubmit after rework: round 2 opens
       process.env.TANDEM_FAKE_SCRIPT = 'fixed\n[RESULT] v2 with e2e'
       process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'lgtm\n[RESULT] approved'
-      await callProc('tasks.update', { id: t.id, status: 'doing' })
+      await callProc('tasks.update', { id: t.id, status: STATUS.doing })
       const { submitResult } = await import('../server/domains/tasks/workflow.service')
       await submitResult(t.id, jay, 'v2 with e2e')
       await new Promise(r => setTimeout(r, 600))
@@ -848,7 +849,7 @@ describe('dispatcher', () => {
       let waiting = false
       for (let i = 0; i < 100 && !waiting; i++) {
         await new Promise(r => setTimeout(r, 100))
-        waiting = ((await db.select().from(tasks)).find(x => x.id === t.id)!.status) === 'waiting-answer'
+        waiting = ((await db.select().from(tasks)).find(x => x.id === t.id)!.status) === STATUS.waitingAnswer
       }
       expect(waiting).toBe(true) // never silently approved
       const rev = (await db.select().from(taskReviews)).filter(r => r.taskId === t.id)
@@ -861,11 +862,11 @@ describe('dispatcher', () => {
       await new Promise(r => setTimeout(r, 800))
       // now the human-only REJECT path on a fresh round state
       const before = (await db.select().from(tasks)).find(x => x.id === t.id)!
-      if (before.status === 'in-review') {
+      if (before.status === STATUS.inReview) {
         const { rejectReview } = await import('../server/domains/tasks/workflow.service')
         await rejectReview(t.id, ash, 'wrong approach entirely')
         const after = (await db.select().from(tasks)).find(x => x.id === t.id)!
-        expect(after.status).toBe('cancelled')
+        expect(after.status).toBe(STATUS.cancelled)
         const revAfter = (await db.select().from(taskReviews)).filter(r => r.taskId === t.id)
         expect(revAfter.some(r => r.status === 'rejected')).toBe(true)
       }
@@ -913,14 +914,14 @@ describe('dispatcher', () => {
     await db.insert(user).values({ id: 'u-rev', name: 'Secured Rev', email: 'sr@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
     await db.insert(aiEmployees).values({ userId: 'u-rev', environmentId: 'env-r', instructions: '', executable: 'hermes acp', providerId: 'prov-r', model: 'glm-x', apiKeySecretId: 'sec-llm' })
     const t2 = await callProc('tasks.create', { title: 'Secured review', description: 'review with secrets wired', assigneeId: agentId, reviewers: ['u-rev'] })
-    await callProc('tasks.update', { id: t2.id, status: 'doing' })
+    await callProc('tasks.update', { id: t2.id, status: STATUS.doing })
     const { submitResult } = await import('../server/domains/tasks/workflow.service')
     await submitResult(t2.id, agentId, 'real body')
     // review turn ran with the reviewer's secrets/LLM env loaded; verdict landed
     let done = false
     for (let i = 0; i < 100 && !done; i++) {
       await new Promise(r => setTimeout(r, 100))
-      done = ((await db.select().from((await schema()).tasks)).find(x => x.id === t2.id)!.status) === 'done'
+      done = ((await db.select().from((await schema()).tasks)).find(x => x.id === t2.id)!.status) === STATUS.done
     }
     expect(done).toBe(true)
     // double-verdict guard on the decided round
@@ -955,7 +956,7 @@ describe('dispatcher', () => {
       let waiting = false
       for (let i = 0; i < 100 && !waiting; i++) {
         await new Promise(r => setTimeout(r, 100))
-        waiting = ((await db.select().from(tasks)).find(x => x.id === t.id)!.status) === 'waiting-answer'
+        waiting = ((await db.select().from(tasks)).find(x => x.id === t.id)!.status) === STATUS.waitingAnswer
       }
       expect(waiting).toBe(true)
       // while the review turn's run is settling, a manual re-arm skips live runs
@@ -971,7 +972,7 @@ describe('dispatcher', () => {
       let done = false
       for (let i = 0; i < 100 && !done; i++) {
         await new Promise(r => setTimeout(r, 100))
-        done = ((await db.select().from(tasks)).find(x => x.id === t.id)!.status) === 'done'
+        done = ((await db.select().from(tasks)).find(x => x.id === t.id)!.status) === STATUS.done
       }
       expect(done).toBe(true)
       const ashRuns = (await db.select().from(taskRuns)).filter(r => r.taskId === t.id && r.employeeId === ash)
@@ -992,7 +993,7 @@ describe('dispatcher', () => {
     process.env.TANDEM_FAKE_RUNNER = '1'
     const agentId = await mkAiAgent()
     const t = await callProc('tasks.create', { title: 'Stale', assigneeId: agentId })
-    await callProc('tasks.update', { id: t.id, status: 'doing' }) // worker busy elsewhere flipped nothing; a stale job arrives now
+    await callProc('tasks.update', { id: t.id, status: STATUS.doing }) // worker busy elsewhere flipped nothing; a stale job arrives now
     const { dispatchIfEligible } = await import('../server/domains/tasks/dispatcher.service')
     await dispatchIfEligible(t.id, 'http://tandem.local')
     const { db } = await dbm()
@@ -1055,8 +1056,8 @@ describe('dispatcher', () => {
       const { tasks } = await schema()
       const { db } = await dbm()
       const rows = await db.select().from(tasks)
-      expect(rows.find(x => x.id === a.id)!.status).toBe('doing')
-      expect(rows.find(x => x.id === b.id)!.status).toBe('doing')
+      expect(rows.find(x => x.id === a.id)!.status).toBe(STATUS.doing)
+      expect(rows.find(x => x.id === b.id)!.status).toBe(STATUS.doing)
     }
     finally {
       await drainInFlight()
@@ -1079,8 +1080,8 @@ describe('dispatcher', () => {
       const { tasks } = await schema()
       const { db } = await dbm()
       const rows = await db.select().from(tasks)
-      expect(rows.find(t => t.id === a.id)!.status).toBe('doing')
-      expect(rows.find(t => t.id === b.id)!.status).toBe('doing')
+      expect(rows.find(t => t.id === a.id)!.status).toBe(STATUS.doing)
+      expect(rows.find(t => t.id === b.id)!.status).toBe(STATUS.doing)
     }
     finally {
       await drainInFlight()
@@ -1103,7 +1104,7 @@ describe('dispatcher', () => {
       const { tasks } = await schema()
       const { db } = await dbm()
       const task = (await db.select().from(tasks)).find(x => x.id === t.id)!
-      expect(task.status).toBe('done')
+      expect(task.status).toBe(STATUS.done)
     }
     finally {
       if (prevRunner !== undefined) process.env.TANDEM_FAKE_RUNNER = prevRunner
@@ -1158,7 +1159,7 @@ describe('dispatcher', () => {
     const { db } = await dbm()
     const { tasks } = await schema()
     const after = (await db.select().from(tasks)).find(x => x.id === t.id)!
-    expect(after.status).toBe('done')
+    expect(after.status).toBe(STATUS.done)
   }, 10_000)
 
   it('dispatch to a human assignee is refused', async () => {
