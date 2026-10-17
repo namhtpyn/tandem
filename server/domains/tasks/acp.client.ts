@@ -1,3 +1,6 @@
+// Structured-output contract rendering comes from the generic shared module.
+import { renderOutputContract, parseStructuredOutput } from '#shared/structured-output'
+
 // Minimal ACP v1 client for task dispatch: newline-delimited JSON-RPC 2.0 over
 // any byte duplex — an SSH exec stream in production, PassThrough pairs in
 // tests. Deliberately hand-rolled (no SDK): the surface we need is small
@@ -34,6 +37,13 @@ export interface AcpTurnResult {
   transcript: string
 }
 
+/** an ACP turn with a structured-output contract: pass any zod schema and the
+ * client renders the output contract onto the prompt and parses the trailing
+ * JSON against the schema (null when the agent ignored the contract). */
+export interface AcpStructuredTurnResult<S extends import('zod').ZodType> extends AcpTurnResult {
+  structured: import('zod').infer<S> | null
+}
+
 interface RpcMessage {
   jsonrpc: '2.0'
   id?: number | string
@@ -47,7 +57,7 @@ const PROTOCOL_VERSION = 1
 /** grace after session/cancel before we hard-kill the stream */
 const CANCEL_GRACE_MS = Number(process.env.TANDEM_ACP_CANCEL_GRACE_MS ?? 5_000)
 
-export async function runAcpTurn(opts: {
+export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: {
   stream: AcpStream
   /** task's existing harness session; falsy = create a new one */
   resumeSessionId?: string | null
@@ -56,8 +66,18 @@ export async function runAcpTurn(opts: {
   /** human-visible activity lines (streamed into the run output) */
   onLine?: (line: string) => void
   clientInfo?: { name: string, version: string }
-}): Promise<AcpTurnResult> {
-  const { stream, prompt, timeoutMs, onLine } = opts
+  /** optional structured-output contract: rendered onto the prompt and parsed
+   *  from the trailing JSON on completion — generic, any zod schema */
+  outputSchema?: S
+  /** extra lines appended after the auto-rendered contract (e.g. examples) */
+  outputContractExtras?: string[]
+}): Promise<[S] extends [never] ? AcpTurnResult : AcpStructuredTurnResult<S>> {
+  const { stream, timeoutMs, onLine } = opts
+  let prompt = opts.prompt
+  if (opts.outputSchema) {
+    const contract = renderOutputContract(opts.outputSchema, { examples: opts.outputContractExtras })
+    prompt = `${prompt}\n\n${contract}`
+  }
   const clientInfo = opts.clientInfo ?? { name: 'tandem', version: '1' }
 
   let nextId = 1
@@ -247,7 +267,11 @@ export async function runAcpTurn(opts: {
       throw new Error(`acp session/prompt failed: ${prompt.error.message} (transcript so far: ${transcript.slice(0, 500)})`)
     }
     const stopReason = ((prompt.result as { stopReason?: string } | undefined)?.stopReason ?? 'end_turn') as StopReason
-    return { sessionId, stopReason, transcript }
+    if (opts.outputSchema) {
+      const structured = await parseStructuredOutput(transcript, opts.outputSchema)
+      return { sessionId, stopReason, transcript, structured } as [S] extends [never] ? AcpTurnResult : AcpStructuredTurnResult<S>
+    }
+    return { sessionId, stopReason, transcript } as [S] extends [never] ? AcpTurnResult : AcpStructuredTurnResult<S>
   }
   finally {
     // anything the agent never newline-terminated still reaches the log

@@ -81,7 +81,7 @@ describe('dispatch attachment push (runner integration)', () => {
 
     // simulate collected output -> the runner's settle writes kind='output' rows
     const runId = crypto.randomUUID()
-    await db.insert(taskRuns).values({ id: runId, taskId: tid, employeeId: uid, status: 'done', exitCode: 0, output: '[RESULT] ok', finishedAt: new Date() })
+    await db.insert(taskRuns).values({ id: runId, taskId: tid, employeeId: uid, status: 'done', exitCode: 0, output: '{"kind": "result", "body": "ok"}', finishedAt: new Date() })
     const outId = crypto.randomUUID()
     writeFileSync(join(TANDEM_DATA_ROOT, outId), 'RESULTBYTES')
     await db.insert(taskAttachments).values({ id: outId, taskId: tid, runId, kind: 'output', filename: 'report.md', mime: 'text/markdown', size: 11, sha256: 'y', createdBy: null })
@@ -97,7 +97,7 @@ describe('settleAttachments (runner integration)', () => {
   it('collects outputs, stores rows, logs activity, cleans up when idle', async () => {
     const { uid, tid } = await seed()
     const runId = crypto.randomUUID()
-    await db.insert(taskRuns).values({ id: runId, taskId: tid, employeeId: uid, status: 'done', exitCode: 0, output: '[RESULT] ok', finishedAt: new Date() })
+    await db.insert(taskRuns).values({ id: runId, taskId: tid, employeeId: uid, status: 'done', exitCode: 0, output: '{"kind": "result", "body": "ok"}', finishedAt: new Date() })
 
     // mocks hoisted to top level (see vi.mock calls above); tmp created there
     writeFileSync(join(settleTmp, 'evil.exe'), 'MZ')
@@ -129,7 +129,7 @@ describe('settleAttachments edge arms', () => {
     const { uid, tid } = await seed()
     const runDone = crypto.randomUUID()
     const runActive = crypto.randomUUID()
-    await db.insert(taskRuns).values({ id: runDone, taskId: tid, employeeId: uid, status: 'done', exitCode: 0, output: '[RESULT] ok', finishedAt: new Date() })
+    await db.insert(taskRuns).values({ id: runDone, taskId: tid, employeeId: uid, status: 'done', exitCode: 0, output: '{"kind": "result", "body": "ok"}', finishedAt: new Date() })
     await db.insert(taskRuns).values({ id: runActive, taskId: tid, employeeId: uid, status: 'running', startedAt: new Date() })
     // ssh-files mock: collect returns [] for this call? module mock returns files... override per-call impossible.
     // Instead verify settle resolves and no output rows/activity appear when collect returns [].

@@ -49,8 +49,8 @@ export interface RunEnvelope { kind: EnvelopeKind; text: string }
 // verdict parsing lives in shared/run-verdict (zod schema + marker fallback) —
 // re-exported here so the UI thread and the runner share one implementation.
 // (the file's own EnvelopeKind/RunEnvelope below include the 'run' thread kind)
-import { parseStructuredVerdict } from '#shared/run-verdict'
-export { parseRunEnvelope, parseStructuredVerdict, RunVerdictSchema } from '#shared/run-verdict'
+import { parseRunEnvelope } from '#shared/run-verdict'
+export { parseRunEnvelope, RunVerdictSchema } from '#shared/run-verdict'
 
 /** Parse routing proposals from run output (structural markers, scanned anywhere):
  *  [SUBTASKS] title :: description :: assignee | title2 :: ...
@@ -85,13 +85,12 @@ export function parseRoutingProposals(output: string | null | undefined): Routin
   return out
 }
 
-/** Strip the envelope/verdict line from displayed output so the bubble shows prose only. */
+/** Strip the JSON verdict line from displayed output so the bubble shows prose only. */
 export function runOutputWithoutEnvelope(output: string | null | undefined): string {
   if (!output) return ''
   const lines = output.trimEnd().split('\n')
   for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i]!.trim()
-    if (/^\[(RESULT|QUESTION|BLOCKED)\]/.test(line) || parseStructuredVerdict(line)) {
+    if (parseRunEnvelope(lines[i]!.trim())) {
       let end = i
       // drop the fence opener left dangling above a fenced JSON verdict
       if (i > 0 && /^```/.test(lines[i - 1]!.trim())) end = i - 1

@@ -1,41 +1,37 @@
 import { describe, expect, it } from 'vitest'
-import { buildThread, formatThreadTime, parseRunEnvelope, parseStructuredVerdict, runOutputWithoutEnvelope } from '../app/utils/task-thread'
+import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '../app/utils/task-thread'
 
 describe('parseRunEnvelope', () => {
-  it('parses a RESULT envelope on the last line', () => {
-    expect(parseRunEnvelope('work\n[RESULT] shipped v1')).toEqual({ kind: 'result', text: 'shipped v1' })
+  it('parses a JSON verdict on the last line', () => {
+    expect(parseRunEnvelope('work\n{"kind": "result", "body": "shipped v1"}')).toEqual({ kind: 'result', text: 'shipped v1' })
+    expect(parseRunEnvelope('{"kind": "question", "body": "which db?"}')).toEqual({ kind: 'question', text: 'which db?' })
+    expect(parseRunEnvelope('{"kind": "blocked", "body": "no key"}')).toEqual({ kind: 'blocked', text: 'no key' })
   })
-  it('parses QUESTION and BLOCKED', () => {
-    expect(parseRunEnvelope('[QUESTION] which db?')).toEqual({ kind: 'question', text: 'which db?' })
-    expect(parseRunEnvelope('[BLOCKED] no key')).toEqual({ kind: 'blocked', text: 'no key' })
+  it('takes the LAST verdict when several appear', () => {
+    expect((parseRunEnvelope('{"kind": "result", "body": "old"}\nmore\n{"kind": "question", "body": "final?"}'))?.kind).toBe('question')
   })
-  it('takes the LAST envelope when several appear', () => {
-    expect(parseRunEnvelope('[RESULT] old\nmore\n[QUESTION] final?')?.kind).toBe('question')
-  })
-  it('returns null for no envelope or empty output', () => {
+  it('returns null for no verdict or empty output', () => {
     expect(parseRunEnvelope('plain output')).toBeNull()
     expect(parseRunEnvelope('')).toBeNull()
     expect(parseRunEnvelope(null)).toBeNull()
   })
 })
 
-describe('structured JSON verdicts (zod)', () => {
+describe('structured verdicts (zod)', () => {
   it('parses a bare JSON verdict line', () => {
     expect(parseRunEnvelope('work\n{"kind": "result", "body": "shipped v1"}')).toEqual({ kind: 'result', text: 'shipped v1' })
     expect(parseRunEnvelope('{"kind": "question", "body": "which db?"}')).toEqual({ kind: 'question', text: 'which db?' })
-    expect(parseRunEnvelope('{"kind": "blocked", "body": "no key"}')).toEqual({ kind: 'blocked', text: 'no key' })
   })
   it('tolerates a code fence around the JSON', () => {
     expect(parseRunEnvelope('work\n```json\n{"kind": "result", "body": "ok"}\n```')).toEqual({ kind: 'result', text: 'ok' })
   })
-  it('rejects invalid kinds and missing body (zod), falls back to markers', () => {
+  it('rejects invalid kinds and missing body (zod)', () => {
     expect(parseRunEnvelope('{"kind": "victory", "body": "nope"}')).toBeNull()
     expect(parseRunEnvelope('{"kind": "result"}')).toBeNull()
-    expect(parseRunEnvelope('{"kind": "result", "body": "x"}\n[QUESTION] real question')).toEqual({ kind: 'question', text: 'real question' })
   })
   it('schema rejects non-object JSON', () => {
-    expect(parseStructuredVerdict('"just a string"')).toBeNull()
-    expect(parseStructuredVerdict('[1,2,3]')).toBeNull()
+    expect(parseRunEnvelope('"just a string"')).toBeNull()
+    expect(parseRunEnvelope('[1,2,3]')).toBeNull()
   })
 })
 
@@ -50,7 +46,7 @@ describe('runOutputWithoutEnvelope (structured)', () => {
 
 describe('runOutputWithoutEnvelope', () => {
   it('strips the envelope line, keeps prose', () => {
-    expect(runOutputWithoutEnvelope('line one\n[RESULT] done')).toBe('line one')
+    expect(runOutputWithoutEnvelope('line one\n{"kind": "result", "body": "done"}')).toBe('line one')
   })
   it('returns output untouched when no envelope', () => {
     expect(runOutputWithoutEnvelope('plain')).toBe('plain')
@@ -116,17 +112,18 @@ describe('buildThread', () => {
 })
 
 describe('envelope edge arms', () => {
-  it('question envelope with empty text yields kind and empty text', () => {
-    expect(parseRunEnvelope('pre\n[QUESTION]')).toEqual({ kind: 'question', text: '' })
+  it('question verdict with empty body still parks (runner substitutes text)', () => {
+    expect(parseRunEnvelope('pre\n{"kind": "question", "body": ""}')).toEqual({ kind: 'question', text: '' })
   })
-  it('envelope inside earlier line but not last still found from the end', () => {
-    expect(parseRunEnvelope('[RESULT] first\nmid\n[QUESTION] q?')?.text).toBe('q?')
+  it('verdict a few lines above the end is still found (bounded window)', async () => {
+    const out = 'prose\n{"kind": "question", "body": "q?"}\n\ntrailing note'
+    expect((parseRunEnvelope(out))?.text).toBe('q?')
   })
   it('output of envelope-only run strips to empty string', () => {
-    expect(runOutputWithoutEnvelope('[BLOCKED] waiting')).toBe('')
+    expect(runOutputWithoutEnvelope('{"kind": "blocked", "body": "waiting"}')).toBe('')
   })
   it('envelope-only run strips to empty (envelope at position 0)', () => {
-    expect(runOutputWithoutEnvelope('[RESULT] only line')).toBe('')
+    expect(runOutputWithoutEnvelope('{"kind": "result", "body": "only line"}')).toBe('')
   })
   it('whitespace-only description omits brief; null description too', () => {
     expect(buildThread({ description: null as string | null, runs: [], activity: [] })).toEqual([])
@@ -141,8 +138,9 @@ describe('buildThread degenerate sources', () => {
   it('no runs and no activity keys at all yields brief only', () => {
     expect(buildThread({ description: 'solo', createdAt: 't' }).map(i => i.kind)).toEqual(['brief'])
   })
-  it('trailing non-envelope lines after an earlier envelope still resolve from the end', () => {
-    expect(parseRunEnvelope('[RESULT] early\ntail line\nmore tail')?.kind).toBe('result')
+  it('prose after the verdict: window still finds it (last JSON line wins)', () => {
+    const out = '{"kind": "result", "body": "early"}\ntail line\nmore tail'
+    expect(parseRunEnvelope(out)?.kind).toBe('result')
   })
   it('empty-string description (falsy) omits brief via the other arm', () => {
     expect(buildThread({ description: '', runs: [], activity: [] })).toEqual([])

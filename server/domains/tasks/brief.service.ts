@@ -4,6 +4,8 @@ import { and, eq } from 'drizzle-orm'
 import { db } from '../../db'
 import { tasks, user as userTable, aiEmployees, employeeSupervisors, taskActivity, taskAttachments, taskProposals, projects } from '../../db/schema'
 import { stripAttachments } from './attachments.util'
+import { renderOutputContract } from '#shared/structured-output'
+import { RunVerdictSchema } from '#shared/run-verdict'
 
 export interface BriefPerson { id: string, name: string, title: string | null, kind: string }
 
@@ -96,11 +98,14 @@ export function buildBrief(input: {
   lines.push('')
   lines.push(`DELIVERABLES — write any output files to ${input.outDir} (create it if needed; that EXACT path, not the environment name); everything left there when you exit is collected and attached to your result.`)
   lines.push('')
-  lines.push('OUTPUT CONTRACT — end your response with exactly one JSON line (no code fence):')
-  lines.push('{"kind": "result", "body": "<final answer or summary of work done>"}')
-  lines.push('{"kind": "question", "body": "<blocking question for the owner>"}')
-  lines.push('{"kind": "blocked", "body": "<what you need and from whom>"}')
-  lines.push('The legacy marker form ([RESULT] <text>) is still accepted, but JSON is preferred.')
+  lines.push(renderOutputContract(RunVerdictSchema, {
+    intro: 'OUTPUT CONTRACT — end your response with exactly one JSON line (no code fence):',
+    examples: [
+      '{"kind": "result", "body": "<final answer or summary of work done>"}',
+      '{"kind": "question", "body": "<blocking question for the owner>"}',
+      '{"kind": "blocked", "body": "<what you need and from whom>"}',
+    ],
+  }))
   lines.push('')
   lines.push('ROUTING — if part of this task belongs to someone else, also add a routing line (routing to people inside your own supervision chain executes immediately; anything outside your chain goes to a human for confirmation):')
   lines.push('[SUBTASKS] <title> :: <description> :: <suggested assignee name> | <another subtask> (propose subtasks; suggest assignees from people you know above — outside your chain gets escalated to your supervisor)')
