@@ -610,7 +610,7 @@ async function savePasswordPolicy() {
     <p v-if="message" class="text-xs text-zinc-400">{{ message }}</p>
   </div>
     <!-- model provider editor -->
-    <UModal v-model:open="mProvEditorOpen" :title="mProvEditingId ? 'Edit provider' : 'Add provider'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
+    <UModal v-model:open="mProvEditorOpen" :title="mProvEditingId ? 'Edit provider' : 'Add provider'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }">
       <template #body>
         <UForm id="provider-editor-form" :state="mProvForm" class="space-y-4" @submit="saveMProv">
           <UFormField label="Label" name="label">

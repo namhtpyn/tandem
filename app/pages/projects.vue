@@ -223,7 +223,7 @@ const statusColor = (s: string) => (s === 'archived' ? 'neutral' : 'success')
       </div>
 
       <!-- editor modal -->
-      <UModal v-model:open="editorOpen" :title="editingId ? 'Edit project' : 'New project'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
+      <UModal v-model:open="editorOpen" :title="editingId ? 'Edit project' : 'New project'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }">
         <template #body>
           <UForm id="project-editor-form" :state="form" class="space-y-4" @submit="save">
             <UFormField label="Name" name="name">

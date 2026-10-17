@@ -663,7 +663,7 @@ function statusColor(s: string) {
         </template>
       </UModal>
 
-      <UModal v-model:open="statusManagerOpen" title="Task statuses" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
+      <UModal v-model:open="statusManagerOpen" title="Task statuses" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }">
         <template #body>
           <div class="space-y-4">
             <p class="text-xs text-zinc-500 dark:text-zinc-400">Define the workflow statuses and which moves are allowed between them (used by the board and the task editor).</p>
@@ -741,7 +741,7 @@ function statusColor(s: string) {
       </UModal>
 
       <!-- editor -->
-      <UModal v-model:open="editorOpen" :title="isEdit ? 'Edit task' : 'New task'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
+      <UModal v-model:open="editorOpen" :title="isEdit ? 'Edit task' : 'New task'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }">
         <template #body>
           <UForm id="task-editor-form" :state="form" class="space-y-4" @submit="save">
             <UFormField label="Title" name="title">

@@ -261,7 +261,7 @@ function kindIcon(): string {
     </div>
 
     <!-- editor: create / replace -->
-    <UModal v-model:open="editorOpen" :title="isEdit ? 'Replace secret' : 'New secret'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
+    <UModal v-model:open="editorOpen" :title="isEdit ? 'Replace secret' : 'New secret'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }">
       <template #body>
         <div class="space-y-4">
           <UFormField label="Name" :error="formError && !form.name ? formError : undefined">
@@ -314,7 +314,7 @@ function kindIcon(): string {
     </UModal>
 
     <!-- audit drawer -->
-    <UModal v-model:open="auditOpen" title="Vault audit log" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
+    <UModal v-model:open="auditOpen" title="Vault audit log" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }">
       <template #body>
         <div class="space-y-2">
           <p v-if="!audit.length" class="py-4 text-center text-sm text-zinc-500">No audit entries yet.</p>
@@ -346,7 +346,7 @@ function kindIcon(): string {
     </UModal>
 
     <!-- folders manager (statuses-style) -->
-    <UModal v-model:open="folderManagerOpen" title="Vault folders" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
+    <UModal v-model:open="folderManagerOpen" title="Vault folders" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }">
       <template #body>
         <div v-if="folderError" class="mb-3 rounded-md bg-error/10 px-3 py-2 text-xs text-error">{{ folderError }}</div>
         <div v-if="folders.length" class="divide-y divide-default">
@@ -374,7 +374,7 @@ function kindIcon(): string {
     </UModal>
 
     <!-- folder editor (stacked on the manager) -->
-    <UModal v-model:open="folderEditorOpen" :title="folderEditingId ? 'Rename folder' : 'New folder'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
+    <UModal v-model:open="folderEditorOpen" :title="folderEditingId ? 'Rename folder' : 'New folder'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }">
       <template #body>
         <UFormField label="Name" name="name" required>
           <UInput v-model="folderForm.name" icon="i-lucide-folder" placeholder="e.g. Production keys" class="w-full" :disabled="folderBusy" />
