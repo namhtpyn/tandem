@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm'
 import './api-harness'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
+import { STATUS } from '../shared/status'
 
 async function dbm() {
   return await import('../server/db')
@@ -69,7 +70,7 @@ describe('tasks', () => {
     const rows = snap.value as any[]
     expect(rows).toHaveLength(1)
     expect(rows[0].title).toBe('First task')
-    expect(rows[0].status).toBe('todo')
+    expect(rows[0].status).toBe(STATUS.todo)
     expect(rows[0].assigneeId).toBe(empId)
     expect(rows[0].assigneeName).toBe('Task Owner')
     expect(rows[0].assigneeKind).toBe('human')
@@ -94,19 +95,19 @@ describe('tasks', () => {
     const a = await mkEmployee('A', 'a@t.local')
     const b = await mkEmployee('B', 'b@t.local')
     const r = await callProc('tasks.create', { title: 'T1', assigneeId: a })
-    await callProc('tasks.update', { id: r.id, title: 'T1 renamed', status: 'doing', assigneeId: b })
+    await callProc('tasks.update', { id: r.id, title: 'T1 renamed', status: STATUS.doing, assigneeId: b })
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
     await iter.return?.()
     const row = (snap.value as any[])[0]
     expect(row.title).toBe('T1 renamed')
-    expect(row.status).toBe('doing')
+    expect(row.status).toBe(STATUS.doing)
     expect(row.assigneeName).toBe('B')
-    await callProc('tasks.update', { id: r.id, status: 'done' })
+    await callProc('tasks.update', { id: r.id, status: STATUS.done })
     const { tasks } = await schema()
     const { db } = await dbm()
     const t = (await db.select().from(tasks).where(eq(tasks.id, r.id)))[0]!
-    expect(t.status).toBe('done')
+    expect(t.status).toBe(STATUS.done)
   })
 
   it('update unassigns via null', async () => {
@@ -142,7 +143,7 @@ describe('tasks', () => {
     let snap = await iter.next()
     await iter.return?.()
     expect((snap.value as any[])[0].description).toBe('keep me')
-    await callProc('tasks.update', { id: r.id, description: 'replaced', status: 'todo' })
+    await callProc('tasks.update', { id: r.id, description: 'replaced', status: STATUS.todo })
     iter = await callProc('tasks.live')
     snap = await iter.next()
     await iter.return?.()

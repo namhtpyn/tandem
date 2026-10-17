@@ -10,6 +10,7 @@ import type { IncomingMessage } from 'node:http'
 import { db } from '../server/db'
 import { tasks, taskAttachments, user as userTable } from '../server/db/schema'
 import { saveAttachmentBytes, sha256Hex } from '../server/domains/tasks/attachments.util'
+import { STATUS } from '../shared/status'
 
 /** minimal node IncomingMessage carrying a raw body buffer + content-type */
 function fakeNodeReq(url: string, body: Buffer, contentType: string, method = 'POST'): IncomingMessage {
@@ -34,7 +35,7 @@ beforeEach(async () => {
   await resetSchema()
   await applyMigrations()
   await db.insert(userTable).values({ id: 'u-att-admin', name: 'Att Admin', email: 'att-admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
-  await db.insert(tasks).values({ id: 'task-att-1', title: 'Att task', description: '', status: 'todo', createdAt: new Date(), updatedAt: new Date() })
+  await db.insert(tasks).values({ id: 'task-att-1', title: 'Att task', description: '', status: STATUS.todo, createdAt: new Date(), updatedAt: new Date() })
 })
 
 describe('POST /api/tasks/:id/attachments', () => {

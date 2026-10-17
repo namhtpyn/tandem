@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import './api-harness'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
+import { STATUS } from '../shared/status'
 
 async function dbm() {
   return await import('../server/db')
@@ -83,7 +84,7 @@ describe('conventional GET list procs (the first-load half)', () => {
     const { db } = await dbm()
     const { tasks } = await schema()
     const id = 't-get1'
-    await db.insert(tasks).values({ id, title: 'R', description: '', status: 'todo', createdBy: 'u-admin', createdAt: new Date(), updatedAt: new Date() })
+    await db.insert(tasks).values({ id, title: 'R', description: '', status: STATUS.todo, createdBy: 'u-admin', createdAt: new Date(), updatedAt: new Date() })
     const runs = await callProc('tasks.runsList', { taskId: id })
     expect(runs).toEqual([])
     const acts = await callProc('tasks.activityList', { taskId: id })

@@ -8,6 +8,7 @@ import { tasks, taskRuns, taskStatuses, aiEmployees } from '../../db/schema'
 import { dispatchTask } from './runner.service'
 import { redisHub } from '../kernel/redis'
 import { publishChange } from '../kernel/change-bus'
+import { STATUS } from '#shared/status'
 
 const inFlight = new Map<string, Set<Promise<unknown>>>() // employeeId -> live run promises
 
@@ -63,7 +64,7 @@ async function reapStaleRunsInner(): Promise<number> {
       const current = (await db.select().from(tasks).where(eq(tasks.id, run.taskId)))[0]!
       const streak = current.failStreak + 1
       const waitMs = 15 * 60_000 // timeout = worst tier; something is wrong with the agent
-      await db.update(tasks).set({ status: 'todo', failStreak: streak, dispatchAfter: new Date(Date.now() + waitMs), updatedAt: new Date() }).where(eq(tasks.id, run.taskId))
+      await db.update(tasks).set({ status: STATUS.todo, failStreak: streak, dispatchAfter: new Date(Date.now() + waitMs), updatedAt: new Date() }).where(eq(tasks.id, run.taskId))
     }
     await publishChange('runs', 'update')
     await publishChange('tasks', 'update')

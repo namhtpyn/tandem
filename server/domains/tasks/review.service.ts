@@ -16,10 +16,12 @@ import { uuidv7 } from '../kernel/ids'
 
 export type ReviewVerdict = 'approved' | 'change_requested' | 'rejected'
 
-const TODO_STATUS = 'todo'
-const IN_REVIEW_STATUS = 'in-review'
-const DONE_STATUS = 'done'
-const CANCELLED_STATUS = 'cancelled'
+import { STATUS } from '#shared/status'
+
+const TODO_STATUS = STATUS.todo
+const IN_REVIEW_STATUS = STATUS.inReview
+const DONE_STATUS = STATUS.done
+const CANCELLED_STATUS = STATUS.cancelled
 
 async function logActivity(taskId: string, kind: string, authorId: string | null, body: string, meta: Record<string, unknown>) {
   const { taskActivity } = await import('../../db/schema')

@@ -162,7 +162,7 @@ CREATE TABLE "tandem_tasks" (
 	"id" text PRIMARY KEY,
 	"title" text NOT NULL,
 	"description" text DEFAULT '' NOT NULL,
-	"status" text DEFAULT 'todo' NOT NULL,
+	"status" text DEFAULT '01a14743-43f4-7053-a698-5b4ef36ed046' NOT NULL,
 	"project_id" text,
 	"assignee_id" text,
 	"owner_id" text,
@@ -341,11 +341,11 @@ ALTER TABLE "tandem_session" ADD CONSTRAINT "tandem_session_user_id_tandem_user_
 -- Future schema changes are drizzle-kit generated only; future seed tweaks belong
 -- in app boot code, never here.
 INSERT INTO "tandem_task_statuses" ("id", "name", "color", "position", "category", "next_ids") VALUES
-	('todo', 'To do', 'neutral', 0, 'ready', ARRAY['doing','cancelled']::text[]),
-	('doing', 'Doing', 'warning', 1, 'working', ARRAY['todo','waiting-answer','in-review','done','blocked']::text[]),
-	('done', 'Done', 'success', 2, 'done', ARRAY['doing']::text[]),
-	('waiting-answer', 'Waiting answer', 'warning', 3, 'waiting_answer', ARRAY['doing']::text[]),
-	('in-review', 'In review', 'info', 4, 'in_review', ARRAY['doing','done']::text[]),
-	('blocked', 'Blocked', 'error', 5, 'paused', ARRAY['todo','blocked']::text[]),
-	('cancelled', 'Cancelled', 'neutral', 6, 'cancelled', ARRAY[]::text[])
+	('01a14743-43f4-7053-a698-5b4ef36ed046', 'To do', 'neutral', 0, 'ready', ARRAY['doing','cancelled']::text[]),
+	('01a14743-43f5-759d-a00e-9ccda502cc88', 'Doing', 'warning', 1, 'working', ARRAY['todo','waiting-answer','in-review','done','blocked']::text[]),
+	('01a14743-43f5-759d-a00e-a20a36faa315', 'Done', 'success', 2, 'done', ARRAY['doing']::text[]),
+	('01a14743-43f5-759d-a00e-a424b478f2fa', 'Waiting answer', 'warning', 3, 'waiting_answer', ARRAY['doing']::text[]),
+	('01a14743-43f5-759d-a00e-a90831248ea5', 'In review', 'info', 4, 'in_review', ARRAY['doing','done']::text[]),
+	('01a14743-43f5-759d-a00e-ada27e46c2f8', 'Blocked', 'error', 5, 'paused', ARRAY['todo','blocked']::text[]),
+	('01a14743-43f5-759d-a00e-b0f2a5a04f4c', 'Cancelled', 'neutral', 6, 'cancelled', ARRAY[]::text[])
 ON CONFLICT ("id") DO NOTHING;

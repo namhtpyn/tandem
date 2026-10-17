@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm'
 import './api-harness'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
+import { STATUS } from '../shared/status'
 
 
 async function wireDecisionProvider(secretId: string | null) {
@@ -63,31 +64,31 @@ describe('task statuses', () => {
     const rows = (snap as any).status === 'pending' ? (await iter.next()).value : snap
     const list = Array.isArray(rows) ? rows : (rows as any).rows ?? rows
     const ids = (list as any[]).map(x => x.id)
-    expect(ids).toEqual(['todo', 'doing', 'done', 'waiting-answer', 'in-review', 'blocked', 'cancelled'])
-    expect((list as any[]).find(x => x.id === 'doing')!.nextIds).toContain('done')
-    expect((list as any[]).find(x => x.id === 'todo')!.category).toBe('ready')
+    expect(ids).toEqual([STATUS.todo, STATUS.doing, STATUS.done, STATUS.waitingAnswer, STATUS.inReview, STATUS.blocked, STATUS.cancelled])
+    expect((list as any[]).find(x => x.id === STATUS.doing)!.nextIds).toContain(STATUS.done)
+    expect((list as any[]).find(x => x.id === STATUS.todo)!.category).toBe('ready')
   })
 
   it('save creates a status with transitions; unknown transition rejected', async () => {
-    const r = await callProc('statuses.save', { name: 'In review', color: 'warning', position: 2, category: 'working', nextIds: ['done'] })
+    const r = await callProc('statuses.save', { name: 'In review', color: 'warning', position: 2, category: 'working', nextIds: [STATUS.done] })
     expect(r.id).toBeTruthy()
     await expect(callProc('statuses.save', { name: 'Bad', color: 'neutral', position: 5, isDone: false, nextIds: ['ghost'] })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
   it('save upserts by id (rename)', async () => {
-    const r = await callProc('statuses.save', { id: 'todo', name: 'Backlog', color: 'neutral', position: 0, category: 'ready', nextIds: ['doing'] })
-    expect(r.id).toBe('todo')
+    const r = await callProc('statuses.save', { id: STATUS.todo, name: 'Backlog', color: 'neutral', position: 0, category: 'ready', nextIds: [STATUS.doing] })
+    expect(r.id).toBe(STATUS.todo)
     const { db } = await dbm()
     const { taskStatuses } = await import('../server/db/schema')
-    const row = (await db.select().from(taskStatuses)).find(x => x.id === 'todo')!
+    const row = (await db.select().from(taskStatuses)).find(x => x.id === STATUS.todo)!
     expect(row.name).toBe('Backlog')
   })
 
   it('remove blocked while a task uses the status', async () => {
     const t = await callProc('tasks.create', { title: 'T1' })
-    await expect(callProc('statuses.remove', { id: 'todo' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(callProc('statuses.remove', { id: STATUS.todo })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await callProc('tasks.remove', { id: t.id })
-    await expect(callProc('statuses.remove', { id: 'todo' })).resolves.toMatchObject({ ok: true })
+    await expect(callProc('statuses.remove', { id: STATUS.todo })).resolves.toMatchObject({ ok: true })
   })
 
   it('save rejects reserved id "new"', async () => {
@@ -96,7 +97,7 @@ describe('task statuses', () => {
 
   it('create with no statuses defined fails clearly', async () => {
     // remove all seeded statuses (no tasks exist)
-    for (const id of ['todo', 'doing', 'done', 'waiting-answer', 'in-review', 'blocked', 'cancelled']) await callProc('statuses.remove', { id })
+    for (const id of [STATUS.todo, STATUS.doing, STATUS.done, STATUS.waitingAnswer, STATUS.inReview, STATUS.blocked, STATUS.cancelled]) await callProc('statuses.remove', { id })
     await expect(callProc('tasks.create', { title: 'NoStatus' })).rejects.toMatchObject({ code: 'BAD_REQUEST', message: /no task statuses/i })
   })
 
@@ -109,24 +110,24 @@ describe('task statuses', () => {
     const { db } = await dbm()
     const { tasks } = await import('../server/db/schema')
     const row = (await db.select().from(tasks)).find(x => x.id === t.id)!
-    expect(row.status).toBe('todo')
+    expect(row.status).toBe(STATUS.todo)
     await expect(callProc('tasks.create', { title: 'B', status: 'ghost' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-    const t2 = await callProc('tasks.create', { title: 'C', status: 'doing' })
+    const t2 = await callProc('tasks.create', { title: 'C', status: STATUS.doing })
     const row2 = (await db.select().from(tasks)).find(x => x.id === t2.id)!
-    expect(row2.status).toBe('doing')
+    expect(row2.status).toBe(STATUS.doing)
   })
 
   it('tasks.update enforces transitions (todo -> done blocked, todo -> doing ok)', async () => {
     const t = await callProc('tasks.create', { title: 'X' })
-    await expect(callProc('tasks.update', { id: t.id, status: 'done' })).rejects.toMatchObject({ code: 'BAD_REQUEST', message: /cannot move/i })
-    await callProc('tasks.update', { id: t.id, status: 'doing' })
-    await callProc('tasks.update', { id: t.id, status: 'done' })
+    await expect(callProc('tasks.update', { id: t.id, status: STATUS.done })).rejects.toMatchObject({ code: 'BAD_REQUEST', message: /cannot move/i })
+    await callProc('tasks.update', { id: t.id, status: STATUS.doing })
+    await callProc('tasks.update', { id: t.id, status: STATUS.done })
     await expect(callProc('tasks.update', { id: t.id, status: 'ghost' })).rejects.toMatchObject({ code: 'BAD_REQUEST', message: /does not exist/i })
   })
 
   it('tasks.update same-status is a no-op pass', async () => {
     const t = await callProc('tasks.create', { title: 'Y' })
-    await expect(callProc('tasks.update', { id: t.id, status: 'todo' })).resolves.toMatchObject({ ok: true })
+    await expect(callProc('tasks.update', { id: t.id, status: STATUS.todo })).resolves.toMatchObject({ ok: true })
   })
 })
 

@@ -13,12 +13,14 @@ import { publishChange } from '../kernel/kernel'
 import { spawnObligation, resolveObligation, cancelObligations, answerHolder } from './obligations.service'
 import { refreshParentGating, hasOpenChildren } from './gating.service'
 import { uuidv7 } from '../kernel/ids'
+import { STATUS } from '#shared/status'
 
-export const WAITING_ANSWER_STATUS = 'waiting-answer'
-export const IN_REVIEW_STATUS = 'in-review'
-export const TODO_STATUS = 'todo'
-export const DOING_STATUS = 'doing'
-export const DONE_STATUS = 'done'
+export const WAITING_ANSWER_STATUS = STATUS.waitingAnswer
+export const IN_REVIEW_STATUS = STATUS.inReview
+export const TODO_STATUS = STATUS.todo
+export const DOING_STATUS = STATUS.doing
+export const DONE_STATUS = STATUS.done
+export const CANCELLED_STATUS = STATUS.cancelled
 
 async function logActivity(taskId: string, kind: 'question' | 'answer' | 'forward' | 'note' | 'verdict' | 'status', authorId: string | null, body: string, meta: Record<string, unknown> = {}) {
   await db.insert(taskActivity).values({ id: uuidv7(), taskId, kind, authorId, body, meta })
@@ -181,7 +183,7 @@ export async function abandonReview(taskId: string, authorId: string, body: stri
   await cancelObligations(taskId, 'approval')
   await cancelObligations(taskId, 'answer')
   // abandoned == cancelled (one terminal, no fake distinction)
-  await db.update(tasks).set({ status: 'cancelled', updatedAt: new Date() }).where(eq(tasks.id, taskId))
+  await db.update(tasks).set({ status: CANCELLED_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId))
   await logActivity(taskId, 'verdict', authorId, body || 'cancelled', { abandon: true })
   await refreshParentGating(taskId)
   return { ok: true }
