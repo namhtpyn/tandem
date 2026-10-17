@@ -2,8 +2,46 @@
 // Tasks: work items for human + AI employees. Mobile-first card list with
 // status pills; editor modal follows the shared structure (body + #footer).
 import { useQuery, useMutation, skipToken, useQueryClient } from '@tanstack/vue-query'
+import { Extension } from '@tiptap/core'
+import type { Editor } from '@tiptap/core'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
+import type { EditorView, ClipboardEventLike, DragEventLike } from '~/editor-typing'
 import type { EmployeeRow, TaskRow } from '~/../shared/types'
 import { STATUS } from '~/../shared/status'
+
+/** paste/drop images in the description editor -> attachments pipeline.
+ *  Bytes NEVER ride ACP: upload lands them in /api/tasks/:id/attachments, the
+ *  description keeps its ![](attachment-<id>) markdown ref, and dispatch stages
+ *  the file to the agent host over the SFTP mirror like any other attachment. */
+const descriptionEditor = ref<Editor | null>(null)
+function captureDescriptionEditor(e: Editor): string { if (descriptionEditor.value !== e) descriptionEditor.value = e; return '' }
+
+/** paste/drop images in the description editor -> attachments pipeline.
+ *  Bytes NEVER ride ACP: upload lands them in /api/tasks/:id/attachments, the
+ *  description keeps its ![](attachment-<id>) markdown ref, and dispatch stages
+ *  the file to the agent host over the SFTP mirror like any other attachment.
+ *  (the bundled UEditor Image extension parses/serializes the marker refs) */
+const ImagePaste = Extension.create<{ onImage: (file: File) => Promise<void> }>({
+  name: 'tandemImagePaste',
+  addOptions() { return { onImage: async () => {} } },
+  addProseMirrorPlugins() {
+    const onImage = this.options.onImage
+    const grab = (files: FileList | null | undefined): boolean => {
+      const imgs = files ? Array.from(files).filter(f => f.type.startsWith('image/')) : []
+      if (!imgs.length) return false
+      for (const f of imgs) void onImage(f)
+      return true
+    }
+    return [new Plugin({
+      name: new PluginKey('tandemImagePaste'),
+      props: {
+        handlePaste: (_view: EditorView, event: ClipboardEventLike) => grab(event.clipboardData?.files),
+        handleDrop: (_view: EditorView, event: DragEventLike, _slice: unknown, moved: boolean) => !moved && grab(event.dataTransfer?.files),
+      },
+    })]
+  },
+})
+
 
 
 const { $orpc, $client } = useNuxtApp()
@@ -37,8 +75,8 @@ const editorOpen = ref(false)
 const attachmentInput = ref<HTMLInputElement | null>(null)
 
 /** upload a file to the task being created/edited and insert its token into the description */
-async function uploadAttachment(file: File) {
-  if (!form.title.trim()) { message.value = 'save the task title first — attachments need a task'; return }
+async function uploadAttachment(file: File, viaEditor = false): Promise<{ id: string, filename: string, token: string } | null> {
+  if (!form.title.trim()) { message.value = 'save the task title first — attachments need a task'; return null }
   try {
     busy.value = true
     let taskId = editingId.value
@@ -52,8 +90,11 @@ async function uploadAttachment(file: File) {
     fd.append('file', file)
     const up = await $fetch(`/api/tasks/${taskId}/attachments`, { method: 'POST', body: fd }) as { id: string, filename: string, mime: string }
     const token = up.mime.startsWith('image/') ? `![${up.filename}](attachment-${up.id})` : `@[${up.filename}](attachment-${up.id})`
-    form.description = form.description ? `${form.description}\n${token}` : token
+    // when the editor owns the field the image NODE is the single insertion —
+    // appending the string too would duplicate the marker in the doc
+    if (!viaEditor) form.description = form.description ? `${form.description}\n${token}` : token
     message.value = `attached ${up.filename}`
+    return { id: up.id, filename: up.filename, token }
   }
   catch (e) {
     message.value = (e as { data?: { message?: string }, message?: string }).data?.message ?? (e as Error).message
@@ -61,12 +102,32 @@ async function uploadAttachment(file: File) {
   finally {
     busy.value = false
   }
+  return null
 }
+
+/** in-editor paste/drop (and the paperclip): upload then insert an image
+ *  NODE at the cursor — serializes back to the attachment marker in v-model */
+async function onEditorImage(file: File) {
+  const att = await uploadAttachment(file, true)
+  if (!att) return
+  if (descriptionEditor.value) {
+    descriptionEditor.value.commands.insertContent({ type: 'image', attrs: { src: `attachment-${att.id}`, alt: att.filename } })
+  }
+  else {
+    // editor not mounted (defensive) — fall back to the string append
+    form.description = form.description ? `${form.description}\n${att.token}` : att.token
+  }
+}
+
+/** STABLE identity: an inline `:extensions="[...]"` re-creates the array every
+ *  render (message.value, title typing, ...) — UEditor re-initializes on the
+ *  new array and its reset emit clobbers the description to ''. Built once. */
+const descriptionExtensions = [ImagePaste.configure({ onImage: onEditorImage })]
 
 function onAttachmentPicked(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
-  if (file) void uploadAttachment(file)
+  if (file) void onEditorImage(file)
   input.value = ''
 }
 
@@ -242,7 +303,9 @@ async function save() {
   try {
     const payload = {
       title: form.title,
-      description: form.description,
+      // prefer the live doc's markdown; the string form.description is the
+      // fallback (defensive against editor remounts)
+      description: (descriptionEditor.value?.getMarkdown() ?? '').trim() || form.description,
       assigneeId: form.assigneeId === '__none__' ? null : form.assigneeId,
       projectId: form.projectId === '__none__' ? null : form.projectId,
       ownerId: form.ownerId === '__none__' ? null : form.ownerId,
@@ -759,11 +822,13 @@ function statusColor(s: string) {
               <UEditor
                 v-slot="{ editor }"
                 v-model="form.description"
+                :extensions="descriptionExtensions"
                 content-type="markdown"
-                placeholder="Description (optional) — type @ to mention an employee"
+                placeholder="Description (optional) — paste/drop images to attach; type @ to mention an employee"
                 class="w-full min-h-24 rounded-md bg-default px-2.5 py-1.5 ring ring-inset ring-accented focus-visible:ring-primary"
                 :ui="{ base: 'px-0 sm:px-0' }"
               >
+                <span class="hidden">{{ captureDescriptionEditor(editor) }}</span>
                 <UEditorMentionMenu :editor="editor" :items="mentionItems" />
               </UEditor>
             </UFormField>
@@ -775,7 +840,7 @@ function statusColor(s: string) {
               <template #hint><FormHint text="Human or AI agent responsible" /></template>
               <USelect v-model="form.assigneeId" :items="assigneeOptions" value-key="value" icon="i-lucide-user-check" class="w-full" />
             </UFormField>
-            <UFormField v-if="isEdit" label="Status" name="status">
+            <UFormField v-show="isEdit" label="Status" name="status">
               <USelect v-model="form.status" :items="statusOptions" value-key="value" icon="i-lucide-circle-dot" class="w-full" />
               <UFormField label="Owner (routes questions)" name="owner">
                 <USelect
@@ -832,3 +897,22 @@ function statusColor(s: string) {
     </template>
 </UDashboardPanel>
 </template>
+
+<style scoped>
+/* attachment marker images inside the description editor: src is the protocol
+   marker (attachment-<id>), not a URL — render as a tidy chip instead of the
+   browser's broken-image glyph. The real image renders in the task thread. */
+:deep(.ProseMirror img[src^='attachment-']) {
+  display: inline-block;
+  min-height: 1.75em;
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--ui-border-accented);
+  background: var(--ui-bg-muted);
+  color: var(--ui-text-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  object-fit: contain;
+  vertical-align: middle;
+}
+</style>
