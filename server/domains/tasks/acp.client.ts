@@ -73,10 +73,12 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
   outputContractExtras?: string[]
 }): Promise<[S] extends [never] ? AcpTurnResult : AcpStructuredTurnResult<S>> {
   const { stream, timeoutMs, onLine } = opts
-  let prompt = opts.prompt
+  // promptText: the caller's prompt plus the auto-rendered structured-output
+  // contract (kept separate from the later session/prompt RESULT binding)
+  let promptText = opts.prompt
   if (opts.outputSchema) {
     const contract = renderOutputContract(opts.outputSchema, { examples: opts.outputContractExtras })
-    prompt = `${prompt}\n\n${contract}`
+    promptText = `${promptText}\n\n${contract}`
   }
   const clientInfo = opts.clientInfo ?? { name: 'tandem', version: '1' }
 
@@ -258,7 +260,7 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
 
     const prompt = await request('session/prompt', {
       sessionId,
-      prompt: [{ type: 'text', text: opts.prompt }],
+      prompt: [{ type: 'text', text: promptText }],
     })
     clearTimeout(turnTimer)
     settled = true
