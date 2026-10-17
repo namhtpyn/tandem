@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '../app/utils/task-thread'
+import { buildThread, formatThreadTime, parseRunEnvelope, parseStructuredVerdict, runOutputWithoutEnvelope } from '../app/utils/task-thread'
 
 describe('parseRunEnvelope', () => {
   it('parses a RESULT envelope on the last line', () => {
@@ -16,6 +16,35 @@ describe('parseRunEnvelope', () => {
     expect(parseRunEnvelope('plain output')).toBeNull()
     expect(parseRunEnvelope('')).toBeNull()
     expect(parseRunEnvelope(null)).toBeNull()
+  })
+})
+
+describe('structured JSON verdicts (zod)', () => {
+  it('parses a bare JSON verdict line', () => {
+    expect(parseRunEnvelope('work\n{"kind": "result", "body": "shipped v1"}')).toEqual({ kind: 'result', text: 'shipped v1' })
+    expect(parseRunEnvelope('{"kind": "question", "body": "which db?"}')).toEqual({ kind: 'question', text: 'which db?' })
+    expect(parseRunEnvelope('{"kind": "blocked", "body": "no key"}')).toEqual({ kind: 'blocked', text: 'no key' })
+  })
+  it('tolerates a code fence around the JSON', () => {
+    expect(parseRunEnvelope('work\n```json\n{"kind": "result", "body": "ok"}\n```')).toEqual({ kind: 'result', text: 'ok' })
+  })
+  it('rejects invalid kinds and missing body (zod), falls back to markers', () => {
+    expect(parseRunEnvelope('{"kind": "victory", "body": "nope"}')).toBeNull()
+    expect(parseRunEnvelope('{"kind": "result"}')).toBeNull()
+    expect(parseRunEnvelope('{"kind": "result", "body": "x"}\n[QUESTION] real question')).toEqual({ kind: 'question', text: 'real question' })
+  })
+  it('schema rejects non-object JSON', () => {
+    expect(parseStructuredVerdict('"just a string"')).toBeNull()
+    expect(parseStructuredVerdict('[1,2,3]')).toBeNull()
+  })
+})
+
+describe('runOutputWithoutEnvelope (structured)', () => {
+  it('strips the JSON verdict line, keeps prose', () => {
+    expect(runOutputWithoutEnvelope('line one\n{"kind": "result", "body": "done"}')).toBe('line one')
+  })
+  it('fenced JSON verdict is stripped too', () => {
+    expect(runOutputWithoutEnvelope('prose\n```json\n{"kind": "result", "body": "ok"}\n```')).toBe('prose')
   })
 })
 
