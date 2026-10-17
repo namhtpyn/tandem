@@ -761,7 +761,8 @@ function statusColor(s: string) {
                 v-model="form.description"
                 content-type="markdown"
                 placeholder="Description (optional) — type @ to mention an employee"
-                class="w-full"
+                class="w-full min-h-24 rounded-md bg-default px-2.5 py-1.5 ring ring-inset ring-accented focus-visible:ring-primary"
+                :ui="{ base: 'px-0 sm:px-0' }"
               >
                 <UEditorMentionMenu :editor="editor" :items="mentionItems" />
               </UEditor>
