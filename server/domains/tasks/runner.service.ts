@@ -132,6 +132,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { uuidv7 } from '../kernel/ids'
 import { STATUS } from '#shared/status'
+import { submitResult, askQuestion } from './workflow.service'
+import { recordVerdict } from './review.service'
 
 export async function loadDispatchPlan(taskId: string) {
   const taskRows = await db.select().from(tasks).where(eq(tasks.id, taskId))
@@ -419,13 +421,11 @@ export async function dispatchTask(taskId: string, tandemUrl: string, opts?: { r
       } catch { /* proposal recording is best-effort */ }
       const { parseRunEnvelope } = await import('#shared/run-verdict')
       const envelope = parseRunEnvelope(buffer)
-      const { submitResult, askQuestion } = await import('./workflow.service')
       try {
         if (plan.review) {
           // REVIEW LAW: this run WAS a review turn BY a reviewer on this task. The
           // envelope writes their verdict row ([RESULT] approve / [BLOCKED] change request);
           // a verdict-less review NEVER silently approves — it parks on the owner.
-          const { recordVerdict } = await import('./review.service')
           if (envelope?.kind === 'blocked') {
             /* v8 ignore next -- empty-text fallback */
             await recordVerdict(taskId, plan.ai.userId, 'change_requested', envelope.text || 'changes requested by review', 'ai')

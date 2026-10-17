@@ -10,7 +10,8 @@
 import { and, desc, eq } from 'drizzle-orm'
 import { db } from '../../db'
 import { tasks, taskReviews, taskRuns, aiEmployees } from '../../db/schema'
-import { spawnObligation, cancelObligations, cancelAllObligations } from './obligations.service'
+import { spawnObligation, cancelObligations, cancelAllObligations, resolveObligation } from './obligations.service'
+import { dispatchTask } from './runner.service'
 import { publishChange } from '../kernel/kernel'
 import { uuidv7 } from '../kernel/ids'
 
@@ -78,7 +79,6 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
   const rows = await db.select().from(taskReviews).where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round), eq(taskReviews.status, 'pending')))
   const aiRows = await db.select({ userId: aiEmployees.userId }).from(aiEmployees)
   const aiIds = new Set(aiRows.map(r => r.userId))
-  const { dispatchTask } = await import('./runner.service')
   const body = resultBody ?? await latestSubmittedBody(taskId)
   for (const row of rows) {
     if (!row.reviewerId || !aiIds.has(row.reviewerId)) continue // human reviewer: the card is enough
@@ -106,7 +106,6 @@ export async function recordVerdict(taskId: string, reviewerId: string, verdict:
   if (!row) throw new Error('not a reviewer in the current round')
   if (row.status !== 'pending') throw new Error('verdict already recorded for this round')
   await db.update(taskReviews).set({ status: verdict, note: note || null, decidedAt: new Date(), source }).where(eq(taskReviews.id, row.id))
-  const { resolveObligation } = await import('./obligations.service')
   /* v8 ignore next -- the obligation always exists for a verdict author; the
    * catch only guards a race with a concurrent round close */
   await resolveObligation(taskId, reviewerId, 'approval', reviewerId).catch(() => {})

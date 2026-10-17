@@ -14,6 +14,7 @@ import { spawnObligation, resolveObligation, cancelObligations, answerHolder } f
 import { refreshParentGating, hasOpenChildren } from './gating.service'
 import { uuidv7 } from '../kernel/ids'
 import { STATUS } from '#shared/status'
+import { openRoundLive, dispatchAiReviewTurns, openReviewRound, recordVerdict } from './review.service'
 
 export const WAITING_ANSWER_STATUS = STATUS.waitingAnswer
 export const IN_REVIEW_STATUS = STATUS.inReview
@@ -90,7 +91,6 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
   await cancelObligations(taskId, 'answer')
   // a LIVE review round returns to in-review (the round is still open); the
   // assignee's own question returns to todo so the agent resumes with the answer
-  const { openRoundLive, dispatchAiReviewTurns } = await import('./review.service')
   const backTo = await openRoundLive(taskId) ? IN_REVIEW_STATUS : TODO_STATUS
   await db.update(tasks).set({
     status: backTo,
@@ -132,7 +132,6 @@ export async function submitResult(taskId: string, authorId: string, body: strin
       await db.update(tasks).set({ reviewers, updatedAt: new Date() }).where(eq(tasks.id, taskId))
     }
   }
-  const { openReviewRound } = await import('./review.service')
   const nextStatus = reviewers.length > 0 ? IN_REVIEW_STATUS : DONE_STATUS
   await db.update(tasks).set({ status: nextStatus, updatedAt: new Date() }).where(eq(tasks.id, taskId))
   if (reviewers.length > 0) await openReviewRound(taskId, reviewers, body)
@@ -145,10 +144,8 @@ export async function submitResult(taskId: string, authorId: string, body: strin
 export async function approveReview(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId)
   if (task.status !== IN_REVIEW_STATUS) throw new Error('task is not in review')
-  const { recordVerdict } = await import('./review.service')
   await recordVerdict(taskId, authorId, 'approved', body, 'human')
-  const { refreshParentGating: gating } = await import('./gating.service')
-  await gating(taskId)
+  await refreshParentGating(taskId)
   return { ok: true }
 }
 
@@ -156,7 +153,6 @@ export async function approveReview(taskId: string, authorId: string, body: stri
 export async function rejectReview(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId)
   if (task.status !== IN_REVIEW_STATUS) throw new Error('task is not in review')
-  const { recordVerdict } = await import('./review.service')
   await recordVerdict(taskId, authorId, 'rejected', body, 'human')
   return { ok: true }
 }
@@ -165,10 +161,8 @@ export async function rejectReview(taskId: string, authorId: string, body: strin
 export async function requestChanges(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId)
   if (task.status !== IN_REVIEW_STATUS) throw new Error('task is not in review')
-  const { recordVerdict } = await import('./review.service')
   await recordVerdict(taskId, authorId, 'change_requested', body, 'human')
-  const { refreshParentGating: gating } = await import('./gating.service')
-  await gating(taskId)
+  await refreshParentGating(taskId)
   return { ok: true }
 }
 
