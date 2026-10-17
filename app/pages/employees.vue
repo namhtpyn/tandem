@@ -715,7 +715,7 @@ const columns = [
     </UCard>
 
     <!-- titles manager (statuses-style) -->
-    <UModal v-model:open="titleManagerOpen" title="Employee titles" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
+    <UModal v-model:open="titleManagerOpen" title="Employee titles" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }">
       <template #body>
         <div v-if="titleError" class="mb-3 rounded-md bg-error/10 px-3 py-2 text-xs text-error">{{ titleError }}</div>
         <div v-if="titles.length" class="divide-y divide-default">
@@ -743,7 +743,7 @@ const columns = [
     </UModal>
 
     <!-- title editor -->
-    <UModal v-model:open="titleEditorOpen" :title="titleEditingId ? 'Rename title' : 'New title'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
+    <UModal v-model:open="titleEditorOpen" :title="titleEditingId ? 'Rename title' : 'New title'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }">
       <template #body>
         <UFormField label="Name" name="name" required>
           <UInput v-model="titleForm.name" icon="i-lucide-briefcase" placeholder="e.g. Senior Engineer" class="w-full" :disabled="titleBusy" />
@@ -773,7 +773,7 @@ const columns = [
       </template>
     </UModal>
 
-    <UModal v-model:open="editorOpen" :title="isEdit ? 'Edit employee' : 'New employee'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]' }">
+    <UModal v-model:open="editorOpen" :title="isEdit ? 'Edit employee' : 'New employee'" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }">
       <template #body>
         <div class="max-h-[55dvh] overflow-y-auto px-4 sm:px-6">
         <UForm id="employee-editor-form" :state="form" class="space-y-4" @submit="save">

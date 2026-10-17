@@ -23,15 +23,16 @@ test('task CRUD round-trip, assignee badge, status via select', async ({ page })
   await page.getByRole('option', { name: 'Doing' }).click()
   await expect(page.locator('tr:visible').filter({ hasText: 'doing' }).first()).toBeVisible({ timeout: 10_000 })
 
-  // edit: rename + reassign UI opens with values
-  await page.getByRole('button', { name: 'Edit task' }).first().click()
+  // edit: rename + reassign UI opens with values (scoped to THIS task's row —
+  // leftovers from other specs share the DB and can sort first)
+  await page.locator('tr:visible').filter({ hasText: `E2E Task ${suffix}` }).first().getByRole('button', { name: 'Edit task' }).click()
   await expect(page.getByPlaceholder('Task title')).toHaveValue(`E2E Task ${suffix}`)
   await page.getByPlaceholder('Task title').fill(`E2E Task ${suffix} v2`)
   await page.getByRole('button', { name: /Save|Create task/ }).click()
   await expect(page.locator('tr:visible').filter({ hasText: `E2E Task ${suffix} v2` }).first()).toBeVisible({ timeout: 15_000 })
 
   // delete requires confirmation
-  await page.getByRole('button', { name: 'Delete task' }).first().click()
+  await page.locator('tr:visible').filter({ hasText: `E2E Task ${suffix} v2` }).first().getByRole('button', { name: 'Delete task' }).click()
   await expect(page.getByRole('dialog').getByText(/cannot be undone/i)).toBeVisible()
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
   await expect(page.locator('tr:visible').filter({ hasText: `E2E Task ${suffix} v2` })).toHaveCount(0, { timeout: 15_000 })
