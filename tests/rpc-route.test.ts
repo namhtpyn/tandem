@@ -91,7 +91,7 @@ describe('the /rpc h3 route handler (real adapter)', () => {
     try {
       const mod = await import('../server/routes/rpc/[...]')
       const event = makeEvent({ method: 'POST', url: '/rpc/environments/create', headers: { 'content-type': 'application/json' } })
-      ;(event.node.req as { body?: unknown }).body = JSON.stringify({ json: { name: '', host: 'h', port: '22', username: 'u' } }) // invalid: name min 1
+      ;(event.node.req as { body?: unknown }).body = JSON.stringify({ json: { name: '', host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } }) // invalid: name min 1
       const res = await mod.default(event)
       expect((res as Response).status).toBe(400) // validation error -> interceptor
       expect(errors.some(e => e.includes('[orpc]'))).toBe(true)

@@ -13,7 +13,7 @@ async function schema() {
   return await import('../server/db/schema')
 }
 
-const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
+const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 
 async function ctx(sessionUser: { id: string, name: string, email: string, role: string } | null = admin) {
   const { buildServerContext } = await import('../server/domains/kernel/context')
@@ -35,7 +35,7 @@ async function callProc(path: string, input?: unknown): Promise<any> {
 async function seedEnv(id: string): Promise<void> {
   const { db } = await dbm()
   const { environments } = await schema()
-  await db.insert(environments).values({ id, name: id, host: '127.0.0.1', port: '22', username: 'u' })
+  await db.insert(environments).values({ id, name: id, host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
 }
 
 async function mkEmployee(name: string, email: string): Promise<string> {
@@ -49,7 +49,7 @@ beforeEach(async () => {
   // tasks.created_by/owner_id FK target: the mocked session user must exist
   const { db } = await dbm()
   const { user } = await schema()
-  await db.insert(user).values({ id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
+  await db.insert(user).values({ id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
 })
 
 describe('tasks', () => {
@@ -88,7 +88,7 @@ describe('tasks', () => {
   })
 
   it('create rejects a nonexistent assignee', async () => {
-    await expect(callProc('tasks.create', { title: 'X', assigneeId: 'nope' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(callProc('tasks.create', { title: 'X', assigneeId: '00000000-0000-7000-8000-21b2d09f5631' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
   it('update changes title/status/assignee; done sticks', async () => {
@@ -123,7 +123,7 @@ describe('tasks', () => {
   it('update rejects unknown task and bad assignee', async () => {
     await expect(callProc('tasks.update', { id: 'ghost', title: 'x' })).rejects.toMatchObject({ code: 'NOT_FOUND' })
     const r = await callProc('tasks.create', { title: 'T3' })
-    await expect(callProc('tasks.update', { id: r.id, assigneeId: 'ghost' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(callProc('tasks.update', { id: r.id, assigneeId: '00000000-0000-7000-8000-21b2d09f5631' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
   it('remove deletes the row', async () => {

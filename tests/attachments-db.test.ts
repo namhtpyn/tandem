@@ -34,11 +34,11 @@ async function seed() {
   const envId = `env-${crypto.randomUUID().slice(0, 8)}`
   await db.insert(environments).values({ id: envId, name: `att-env-${envId.slice(4)}`, host: 'att.invalid', port: 22, username: 'root' })
   const uid = crypto.randomUUID()
-  await db.insert(userTable).values({ id: `u-${uid}`, name: `Att ${uid.slice(0, 6)}`, email: `att-${uid}@t.test`, emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
+  await db.insert(userTable).values({ id: `${uid}`, name: `Att ${uid.slice(0, 6)}`, email: `att-${uid}@t.test`, emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
   const tid = crypto.randomUUID()
-  await db.insert(tasks).values({ id: tid, title: `att task ${uid.slice(0, 6)}`, description: '', status: STATUS.todo, assigneeId: `u-${uid}`, createdAt: new Date(), updatedAt: new Date() })
-  await db.insert(aiEmployees).values({ userId: `u-${uid}`, environmentId: envId, instructions: '', executable: 'hermes acp' })
-  return { uid: `u-${uid}`, tid }
+  await db.insert(tasks).values({ id: tid, title: `att task ${uid.slice(0, 6)}`, description: '', status: STATUS.todo, assigneeId: `${uid}`, createdAt: new Date(), updatedAt: new Date() })
+  await db.insert(aiEmployees).values({ userId: `${uid}`, environmentId: envId, instructions: '', executable: 'hermes acp' })
+  return { uid: `${uid}`, tid }
 }
 
 describe('attachment storage round-trip', () => {
@@ -102,7 +102,7 @@ describe('settleAttachments (runner integration)', () => {
     // mocks hoisted to top level (see vi.mock calls above); tmp created there
     writeFileSync(join(settleTmp, 'evil.exe'), 'MZ')
     const { settleAttachments } = await import('../server/domains/tasks/runner.service')
-    await settleAttachments(tid, runId, { env: { host: 'x', port: '22', username: 'u' } }, 'done')
+    await settleAttachments(tid, runId, { env: { host: 'x', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } }, 'done')
 
     const outs = await db.select().from(taskAttachments).where(and(eq(taskAttachments.taskId, tid), eq(taskAttachments.kind, 'output')))
     expect(outs.map(o => o.filename)).toEqual(['report.md'])
@@ -138,7 +138,7 @@ describe('settleAttachments edge arms', () => {
     const orig = (filesMod as unknown as { collectRunOutputs: unknown }).collectRunOutputs
     ;(filesMod as unknown as { collectRunOutputs: unknown }).collectRunOutputs = async () => []
     try {
-      await settleAttachments(tid, runDone, { env: { host: 'h', port: '22', username: 'u' } }, 'done')
+      await settleAttachments(tid, runDone, { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } }, 'done')
     }
     finally {
       ;(filesMod as unknown as { collectRunOutputs: unknown }).collectRunOutputs = orig
@@ -156,7 +156,7 @@ describe('settleAttachments rejection safety', () => {
     // ssh-exec mock returns a ctor; ssh-files collect is mocked to return files incl. a
     // missing one -> readFileSync ENOENT inside try -> swallowed; call must resolve anyway
     writeFileSync(join(settleTmp, 'report.md'), '# x\n')
-    await expect(settleAttachments('t-no-task', 'r-no-run', { env: { host: 'h', port: '22', username: 'u' } }, 'done')).resolves.toBeUndefined()
+    await expect(settleAttachments('t-no-task', 'r-no-run', { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } }, 'done')).resolves.toBeUndefined()
   })
 })
 
@@ -190,7 +190,7 @@ describe('pushInputAttachments', () => {
     await pushInputAttachments('t-push', { attachments: [
       { id: id1, filename: 'a.txt', mime: 'text/plain', size: 1, remotePath: '~/.tandem/t-push/attachments/a.txt' },
       { id: 'missing', filename: 'gone.txt', mime: 'text/plain', size: 1, remotePath: '~/.tandem/t-push/attachments/gone.txt' },
-    ] }, { env: { host: 'h', port: '22', username: 'u' } }, 'env', async () => FakeCtor as never, l => lines.push(l))
+    ] }, { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } }, 'env', async () => FakeCtor as never, l => lines.push(l))
     expect(lines).toEqual(['[dispatch] pushed 1 attachment(s) to env'])
   })
 
@@ -198,7 +198,7 @@ describe('pushInputAttachments', () => {
     const { pushInputAttachments } = await import('../server/domains/tasks/runner.service')
     const lines: string[] = []
     class NeverConnect { connect() { throw new Error('must not connect') } }
-    await pushInputAttachments('t-x', {}, { env: { host: 'h', port: '22', username: 'u' } }, 'env', async () => NeverConnect as never, l => lines.push(l))
+    await pushInputAttachments('t-x', {}, { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } }, 'env', async () => NeverConnect as never, l => lines.push(l))
     expect(lines).toEqual([])
   })
 
@@ -209,7 +209,7 @@ describe('pushInputAttachments', () => {
     const id1 = crypto.randomUUID()
     saveAttachmentBytes('t-push', id1, Buffer.from('A'))
     const boom = async () => { throw 'plain string failure' }
-    await pushInputAttachments('t-push', { attachments: [{ id: id1, filename: 'a.txt', mime: 'text/plain', size: 1, remotePath: '/r' }] }, { env: { host: 'h', port: '22', username: 'u' } }, 'env', boom, l => lines.push(l))
+    await pushInputAttachments('t-push', { attachments: [{ id: id1, filename: 'a.txt', mime: 'text/plain', size: 1, remotePath: '/r' }] }, { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } }, 'env', boom, l => lines.push(l))
     expect(lines[0]).toContain('plain string failure')
   })
 
@@ -220,7 +220,7 @@ describe('pushInputAttachments', () => {
     const id1 = crypto.randomUUID()
     saveAttachmentBytes('t-push', id1, Buffer.from('A'))
     const boom = async () => { throw new Error('no route to host') }
-    await pushInputAttachments('t-push', { attachments: [{ id: id1, filename: 'a.txt', mime: 'text/plain', size: 1, remotePath: '/r' }] }, { env: { host: 'h', port: '22', username: 'u' } }, 'env', boom, l => lines.push(l))
+    await pushInputAttachments('t-push', { attachments: [{ id: id1, filename: 'a.txt', mime: 'text/plain', size: 1, remotePath: '/r' }] }, { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } }, 'env', boom, l => lines.push(l))
     expect(lines[0]).toContain('attachment push failed')
     expect(lines[0]).toContain('no route to host')
   })

@@ -39,10 +39,10 @@ vi.mock('ssh2', () => {
   return { default: { Client: FakeClient } }
 })
 
-const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
+const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 
 // official oRPC call() helper — replaces hand-rolled ['~orpc'] internals poking
-const procAdmin = await makeProcCaller({ id: 'u1', name: 'A', email: 'a@x', role: 'admin' })
+const procAdmin = await makeProcCaller({ id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' })
 const callProc = procAdmin as unknown as (path: string, input?: unknown) => Promise<any>
 
 beforeEach(async () => {
@@ -50,11 +50,11 @@ beforeEach(async () => {
   await applyMigrations()
   const { db } = await import('../server/db')
   const { user, environments, aiEmployees, tasks } = await import('../server/db/schema')
-  await db.insert(user).values({ id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
-  await db.insert(user).values({ id: 'u-agent', name: 'Robby', email: 'robby@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
-  await db.insert(environments).values({ id: 'env-1', name: 'E1', host: '127.0.0.1', port: '2222', username: 'u' })
-  await db.insert(aiEmployees).values({ userId: 'u-agent', environmentId: 'env-1', instructions: '', executable: 'hermes acp' })
-  await db.insert(tasks).values({ id: 't-1', title: 'B', description: '', status: STATUS.todo, assigneeId: 'u-agent' })
+  await db.insert(user).values({ id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
+  await db.insert(user).values({ id: '00000000-0000-7000-8000-79d931929132', name: 'Robby', email: 'robby@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
+  await db.insert(environments).values({ id: 'env-1', name: 'E1', host: '127.0.0.1', port: '2222', username: '00000000-0000-7000-8000-51e69892ab49' })
+  await db.insert(aiEmployees).values({ userId: '00000000-0000-7000-8000-79d931929132', environmentId: 'env-1', instructions: '', executable: 'hermes acp' })
+  await db.insert(tasks).values({ id: 't-1', title: 'B', description: '', status: STATUS.todo, assigneeId: '00000000-0000-7000-8000-79d931929132' })
 })
 
 describe('backoff ladder', () => {
@@ -125,7 +125,7 @@ describe('stale-run reaper', () => {
   it('fails ancient running runs and bounces the task with a long backoff', async () => {
     const { db } = await import('../server/db')
     const { tasks, taskRuns } = await import('../server/db/schema')
-    await db.insert(taskRuns).values({ id: 'r-old', taskId: 't-1', employeeId: 'u-agent', environmentId: 'env-1', status: 'running', output: 'partial output', startedAt: new Date(Date.now() - 3 * 60 * 60_000) })
+    await db.insert(taskRuns).values({ id: 'r-old', taskId: 't-1', employeeId: '00000000-0000-7000-8000-79d931929132', environmentId: 'env-1', status: 'running', output: 'partial output', startedAt: new Date(Date.now() - 3 * 60 * 60_000) })
     await db.update(tasks).set({ status: STATUS.doing }).where(eq(tasks.id, 't-1'))
     const { reapStaleRuns } = await import('../server/domains/tasks/dispatcher.service')
     expect(await reapStaleRuns()).toBe(1)
@@ -137,7 +137,7 @@ describe('stale-run reaper', () => {
     expect(task.failStreak).toBe(1)
     expect(task.dispatchAfter!.getTime()).toBeGreaterThan(Date.now() + 14 * 60_000)
     // fresh running runs are left alone
-    await db.insert(taskRuns).values({ id: 'r-new', taskId: 't-1', employeeId: 'u-agent', environmentId: 'env-1', status: 'running', output: '', startedAt: new Date() })
+    await db.insert(taskRuns).values({ id: 'r-new', taskId: 't-1', employeeId: '00000000-0000-7000-8000-79d931929132', environmentId: 'env-1', status: 'running', output: '', startedAt: new Date() })
     expect(await reapStaleRuns()).toBe(0)
   })
 
@@ -145,14 +145,14 @@ describe('stale-run reaper', () => {
     const { db } = await import('../server/db')
     const { tasks, taskRuns } = await import('../server/db/schema')
     const old = new Date(Date.now() - 3 * 60 * 60_000)
-    await db.insert(taskRuns).values({ id: 'r-a', taskId: 't-1', employeeId: 'u-agent', environmentId: 'env-1', status: 'running', output: '', startedAt: old })
-    await db.insert(taskRuns).values({ id: 'r-b', taskId: 't-1', employeeId: 'u-agent', environmentId: 'env-1', status: 'running', output: '', startedAt: new Date(Date.now() - 2 * 60 * 60_000) })
+    await db.insert(taskRuns).values({ id: 'r-a', taskId: 't-1', employeeId: '00000000-0000-7000-8000-79d931929132', environmentId: 'env-1', status: 'running', output: '', startedAt: old })
+    await db.insert(taskRuns).values({ id: 'r-b', taskId: 't-1', employeeId: '00000000-0000-7000-8000-79d931929132', environmentId: 'env-1', status: 'running', output: '', startedAt: new Date(Date.now() - 2 * 60 * 60_000) })
     await db.update(tasks).set({ status: STATUS.doing }).where(eq(tasks.id, 't-1'))
     const { reapStaleRuns } = await import('../server/domains/tasks/dispatcher.service')
     expect(await reapStaleRuns()).toBe(2) // both stale -> both reaped
     // now only ONE new run: reaping it must NOT bounce when a newer done run exists
-    await db.insert(taskRuns).values({ id: 'r-c', taskId: 't-1', employeeId: 'u-agent', environmentId: 'env-1', status: 'running', output: '', startedAt: new Date(Date.now() - 3 * 60 * 60_000) })
-    await db.insert(taskRuns).values({ id: 'r-d', taskId: 't-1', employeeId: 'u-agent', environmentId: 'env-1', status: 'done', exitCode: 0, output: '', startedAt: new Date() })
+    await db.insert(taskRuns).values({ id: 'r-c', taskId: 't-1', employeeId: '00000000-0000-7000-8000-79d931929132', environmentId: 'env-1', status: 'running', output: '', startedAt: new Date(Date.now() - 3 * 60 * 60_000) })
+    await db.insert(taskRuns).values({ id: 'r-d', taskId: 't-1', employeeId: '00000000-0000-7000-8000-79d931929132', environmentId: 'env-1', status: 'done', exitCode: 0, output: '', startedAt: new Date() })
     await db.update(tasks).set({ status: 'done', failStreak: 0, dispatchAfter: null }).where(eq(tasks.id, 't-1'))
     expect(await reapStaleRuns()).toBe(1) // r-c reaped
     const task = (await db.select().from(tasks)).find(x => x.id === 't-1')!
@@ -170,7 +170,7 @@ describe('double settle', () => {
       let finishCount = 0
       const done = new Promise<{ status: string }>(r => {
         void runOverSsh(
-          { env: { host: 'x', port: '22', username: 'u' } },
+          { env: { host: 'x', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } },
           'cmd',
           '',
           l => lines.push(l),
@@ -245,7 +245,7 @@ describe('ssh run timeout', () => {
       let finished = false
       const done = new Promise<{ status: string }>(r => {
         void runOverSsh(
-          { env: { host: 'x', port: '22', username: 'u' } },
+          { env: { host: 'x', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } },
           'cmd',
           '',
           l => lines.push(l),

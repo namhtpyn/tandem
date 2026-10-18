@@ -239,7 +239,7 @@ describe('connect timeout', () => {
       on() { return this }
       end() { throw new Error('gone') }
     }
-    await expect(cleanupTaskFiles(RudeClient2 as unknown as typeof import('ssh2').Client, { env: { host: 'h', port: '', username: 'u' } }, 'tp2', 15))
+    await expect(cleanupTaskFiles(RudeClient2 as unknown as typeof import('ssh2').Client, { env: { host: 'h', port: '', username: '00000000-0000-7000-8000-51e69892ab49' } }, 'tp2', 15))
       .rejects.toThrow('sftp connect timeout')
   })
 })

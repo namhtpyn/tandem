@@ -23,7 +23,7 @@ describe('probeSsh (node fallback path — vitest workers are node)', () => {
       const mod = await import('../server/domains/environments/ssh-probe.service')
       // force the bun branch to throw a non-Cannot-find error so it falls to
       // probeViaNode, which throws in spawn -> catch arm
-      const r = await mod.probeSsh('127.0.0.1', '22', 'u')
+      const r = await mod.probeSsh('127.0.0.1', '22', '00000000-0000-7000-8000-51e69892ab49')
       // spawn threw synchronously inside probeViaNode -> its own promise rejects
       // -> caught by probeSsh catch -> ok:false
       expect(r.ok).toBe(false)

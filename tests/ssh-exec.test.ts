@@ -60,7 +60,7 @@ vi.mock('ssh2', () => {
 
 import { runOverSsh } from '../server/domains/tasks/ssh-exec.util'
 
-const plan = { env: { host: 'h', port: '22', username: 'u' }, sshKey: 'k', sshPassword: undefined }
+const plan = { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' }, sshKey: 'k', sshPassword: undefined }
 
 async function collected() {
   const lines: string[] = []
@@ -135,7 +135,7 @@ describe('runOverSsh (mocked ssh2)', () => {
     const { lines, finish, resolve } = await collected()
     const clientMod = (await import('ssh2')).default
     const FakeClient = clientMod.Client as unknown as { last: { stream: { close(c: number | null): void } } }
-    const p = runOverSsh({ env: { host: 'h', port: 'x', username: 'u' } as never, sshKey: 'k' }, 'cmd', 'blob', l => lines.push(l), finish, resolve as never)
+    const p = runOverSsh({ env: { host: 'h', port: 'x', username: '00000000-0000-7000-8000-51e69892ab49' } as never, sshKey: 'k' }, 'cmd', 'blob', l => lines.push(l), finish, resolve as never)
     await new Promise(r => setTimeout(r, 10))
     FakeClient.last.stream.close(0)
     await p

@@ -15,10 +15,11 @@ describe('loadBriefData (real db)', () => {
   let taskId: string
 
   beforeEach(async () => {
-    const rnd = Math.random().toString(36).slice(2, 8)
-    agentId = `brief-a-${rnd}`
-    chiefId = `brief-c-${rnd}`
-    peerId = `brief-p-${rnd}`
+    const rnd = Math.random().toString(16).slice(2, 8) // hex: the uuid tail embeds it
+    const tail = rnd.padEnd(12, '0')
+    agentId = `00000a00-0000-7000-8000-${tail}`
+    chiefId = `00000c00-0000-7000-8000-${tail}`
+    peerId = `00000p00-0000-7000-8000-${tail}`.replace('p00', 'd00')
     taskId = `brief-t-${rnd}`
     await db.insert(userTable).values([
       { id: agentId, name: 'Agent One', email: `${agentId}@t.local`, role: 'employee', title: 'Worker' },

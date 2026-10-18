@@ -17,10 +17,10 @@ import { recordProposals } from '../server/domains/tasks/proposals.service'
 import { parseRoutingProposals } from '../app/utils/task-thread'
 import { STATUS } from '../shared/status'
 
-const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
-const worker = { id: 'u-worker', name: 'Worker', email: 'worker@tandem.local', role: 'member' }
-const peer = { id: 'u-peer', name: 'Peer Person', email: 'peer@tandem.local', role: 'member' }
-const report = { id: 'u-report', name: 'Report Guy', email: 'report@tandem.local', role: 'member' }
+const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
+const worker = { id: '00000000-0000-7000-8000-bccb5af49873', name: 'Worker', email: 'worker@tandem.local', role: 'member' }
+const peer = { id: '00000000-0000-7000-8000-5c20efd0d33e', name: 'Peer Person', email: 'peer@tandem.local', role: 'member' }
+const report = { id: '00000000-0000-7000-8000-e0896d1c89f1', name: 'Report Guy', email: 'report@tandem.local', role: 'member' }
 
 const procCaller = await makeProcCaller(admin)
 const callProc = procCaller as unknown as (path: string, input?: unknown) => Promise<any>
@@ -84,7 +84,7 @@ beforeEach(async () => {
   await applyMigrations()
   const { db } = await import('../server/db')
   const { user } = await import('../server/db/schema')
-  await db.insert(user).values({ id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
+  await db.insert(user).values({ id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
   await mkEmployee('chief', 'Chief Person', 'chief@tandem.local')
   await mkEmployee('worker', worker.name, worker.email, ['chief'])
   await mkEmployee('peer', peer.name, peer.email, ['worker'])

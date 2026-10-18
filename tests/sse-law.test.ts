@@ -15,7 +15,7 @@ async function schema() {
   return await import('../server/db/schema')
 }
 
-const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
+const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 
 async function ctx(sessionUser: { id: string, name: string, email: string, role: string } | null = admin) {
   const { buildServerContext } = await import('../server/domains/kernel/context')
@@ -39,7 +39,7 @@ beforeEach(async () => {
   await applyMigrations()
   const { db } = await dbm()
   const { user } = await schema()
-  await db.insert(user).values({ id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
+  await db.insert(user).values({ id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
 })
 
 describe('changes.live — the SSE half (post-load events only)', () => {
@@ -84,7 +84,7 @@ describe('conventional GET list procs (the first-load half)', () => {
     const { db } = await dbm()
     const { tasks } = await schema()
     const id = 't-get1'
-    await db.insert(tasks).values({ id, title: 'R', description: '', status: STATUS.todo, createdBy: 'u-admin', createdAt: new Date(), updatedAt: new Date() })
+    await db.insert(tasks).values({ id, title: 'R', description: '', status: STATUS.todo, createdBy: '00000000-0000-7000-8000-cd5fca5e2d34', createdAt: new Date(), updatedAt: new Date() })
     const runs = await callProc('tasks.runsList', { taskId: id })
     expect(runs).toEqual([])
     const acts = await callProc('tasks.activityList', { taskId: id })
@@ -139,7 +139,7 @@ describe('conventional GET list procs (the first-load half)', () => {
     // both shapes: one folder holding a secret count, one empty (??-0 branch)
     await db.insert(vaultFolders).values({ id: 'vf-get1', name: 'Full Folder' })
     await db.insert(vaultFolders).values({ id: 'vf-get2', name: 'Empty Folder' })
-    await db.insert(vaultSecrets).values({ id: 'vs-get1', name: 'k', ciphertext: 'v1:c', folderId: 'vf-get1', createdBy: 'u-admin' })
+    await db.insert(vaultSecrets).values({ id: 'vs-get1', name: 'k', ciphertext: 'v1:c', folderId: 'vf-get1', createdBy: '00000000-0000-7000-8000-cd5fca5e2d34' })
     await db.insert(employeeTitles).values({ id: 'et-get1', name: 'Ghost Title' })
     const folders = await callProc('vault.folders.list')
     expect(folders.folders).toContainEqual(expect.objectContaining({ name: 'Full Folder', secrets: 1 }))

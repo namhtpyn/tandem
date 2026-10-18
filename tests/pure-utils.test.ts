@@ -14,7 +14,7 @@ describe('groupedSecretOptions', () => {
   it('groups by folder, folders first alphabetically, loose secrets last', () => {
     const out = groupedSecretOptions([
       { id: 's2', name: 'aws', lastFour: '1234', folder: 'Prod' },
-      { id: 's1', name: 'zed', lastFour: '', folder: null },
+      { id: 's1', name: '00000000-0000-7000-8000-5821b64a4515', lastFour: '', folder: null },
       { id: 's3', name: 'anthropic', lastFour: '9999', folder: 'AI' },
     ])
     expect(out).toEqual([
@@ -23,7 +23,7 @@ describe('groupedSecretOptions', () => {
       { label: 'Prod', type: 'label' },
       { label: 'aws (•••• 1234)', value: 's2' },
       { label: 'No folder', type: 'label' },
-      { label: 'zed', value: 's1' },
+      { label: '00000000-0000-7000-8000-5821b64a4515', value: 's1' },
     ])
   })
 
@@ -51,7 +51,7 @@ describe('avatar endpoint', () => {
     ;(auth.api as unknown as { getSession: unknown }).getSession = async () => null
     const event = {
       context: { sessions: {} },
-      node: { req: { method: 'GET', url: '/api/employees/x/avatar', headers: {} }, res: {} },
+      node: { req: { method: 'GET', url: '/api/employees/00000000-0000-7000-8000-21b2d09f5631/avatar', headers: {} }, res: {} },
       path: '/api/employees/x/avatar',
       params: { id: 'x' },
       headers: {},
@@ -72,7 +72,7 @@ describe('avatar endpoint', () => {
     const { db } = await import('../server/db')
     const { user } = await import('../server/db/schema')
     const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
-    await db.insert(user).values({ id: 'u-av', name: 'Av', email: 'av@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date(), image: png })
+    await db.insert(user).values({ id: '00000000-0000-7000-8000-e08464d93cf8', name: 'Av', email: 'av@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date(), image: png })
     const headersOut: Array<[string, string]> = []
     const state = { status: 200 }
     const mkEvent = (headers: Record<string, string> = {}) => ({
@@ -84,7 +84,7 @@ describe('avatar endpoint', () => {
           set statusCode(code: number) { state.status = code },
         },
       },
-      context: { params: { id: 'u-av' } },
+      context: { params: { id: '00000000-0000-7000-8000-e08464d93cf8' } },
       get headers() { return headers },
       method: 'GET',
     })
@@ -113,14 +113,14 @@ describe('avatar endpoint', () => {
     const event = {
       req: { headers: reqHeaders },
       node: {
-        req: { method: 'GET', url: '/api/employees/x/avatar', headers: reqHeaders },
+        req: { method: 'GET', url: '/api/employees/00000000-0000-7000-8000-21b2d09f5631/avatar', headers: reqHeaders },
         res: {
           setHeader: (k: string, v: string) => { headersOut.push([k, String(v)]) },
           get statusCode() { return state.status },
           set statusCode(code: number) { state.status = code },
         },
       },
-      context: { params: { id: 'x' } },
+      context: { params: { id: '00000000-0000-7000-8000-21b2d09f5631' } },
       get headers() { return { 'x-multi': ['a', 'b'], 'x-single': 'v' } },
       method: 'GET',
     }
@@ -133,16 +133,16 @@ describe('avatar endpoint', () => {
     const { default: avatarEndpoint } = await import('../server/routes/api/employees/[id]/avatar.get')
     const { db } = await import('../server/db')
     const { user } = await import('../server/db/schema')
-    await db.insert(user).values({ id: 'u-noav', name: 'No', email: 'no@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
-    await db.insert(user).values({ id: 'u-bad', name: 'Bad', email: 'bad@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date(), image: 'http://example.com/x.png' })
+    await db.insert(user).values({ id: '00000000-0000-7000-8000-18e469eaa1e6', name: 'No', email: 'no@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
+    await db.insert(user).values({ id: '00000000-0000-7000-8000-debca3b3ac2b', name: 'Bad', email: 'bad@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date(), image: 'http://example.com/x.png' })
     const mkEvent = (id: string) => ({
       node: { req: { method: 'GET', url: `/api/employees/${id}/avatar`, headers: {} }, res: {} },
       context: { params: { id } },
       get headers() { return {} },
       method: 'GET',
     })
-    await expect(avatarEndpoint(mkEvent('u-noav') as never)).rejects.toMatchObject({ statusCode: 404 })
-    await expect(avatarEndpoint(mkEvent('u-bad') as never)).rejects.toMatchObject({ statusCode: 422 })
-    await expect(avatarEndpoint(mkEvent('ghost') as never)).rejects.toMatchObject({ statusCode: 404 })
+    await expect(avatarEndpoint(mkEvent('00000000-0000-7000-8000-18e469eaa1e6') as never)).rejects.toMatchObject({ statusCode: 404 })
+    await expect(avatarEndpoint(mkEvent('00000000-0000-7000-8000-debca3b3ac2b') as never)).rejects.toMatchObject({ statusCode: 422 })
+    await expect(avatarEndpoint(mkEvent('00000000-0000-7000-8000-21b2d09f5631') as never)).rejects.toMatchObject({ statusCode: 404 })
   })
 })

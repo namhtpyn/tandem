@@ -7,7 +7,7 @@ import './api-harness'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 
-const admin = { id: 'u1', name: 'A', email: 'a@x', role: 'admin' }
+const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' }
 
 async function ctx(sessionUser: { id: string, name: string, email: string, role: string } | null = admin) {
   const { buildServerContext } = await import('../server/domains/kernel/context')
@@ -39,13 +39,13 @@ beforeEach(async () => {
   await applyMigrations()
   const { db } = await dbm()
   const { user } = await schema()
-  await db.insert(user).values({ id: 'u1', name: 'A', email: 'a@x', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
+  await db.insert(user).values({ id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
 })
 
 describe('environment secret linkage', () => {
   it('create accepts secretId and returns it in rows', async () => {
     const secret = await callProc('vault.create', { name: 'env-key', value: 'PRIVATE KEY MATERIAL', description: 'ssh key' })
-    const env = await callProc('environments.create', { name: 'box', host: '127.0.0.1', port: '22', username: 'u', secretId: secret.id })
+    const env = await callProc('environments.create', { name: 'box', host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49', secretId: secret.id })
     expect(env.secretId).toBe(secret.id)
     const iter = await callProc('environments.live')
     const snap = await iter.next()
@@ -54,22 +54,22 @@ describe('environment secret linkage', () => {
   })
 
   it('secretId defaults to null when omitted; secretUsage defaults to ssh-key', async () => {
-    const env = await callProc('environments.create', { name: 'nosecret', host: '127.0.0.1', port: '22', username: 'u' })
+    const env = await callProc('environments.create', { name: 'nosecret', host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
     expect(env.secretId).toBeNull()
     expect(env.secretUsage).toBe('ssh-key')
   })
 
   it('persists secretUsage=password and can switch back', async () => {
     const secret = await callProc('vault.create', { name: 'pw-key', value: 'hunter2', description: '' })
-    const env = await callProc('environments.create', { name: 'pw-box', host: '127.0.0.1', port: '59999', username: 'u', secretId: secret.id, secretUsage: 'password' })
+    const env = await callProc('environments.create', { name: 'pw-box', host: '127.0.0.1', port: '59999', username: '00000000-0000-7000-8000-51e69892ab49', secretId: secret.id, secretUsage: 'password' })
     expect(env.secretUsage).toBe('password')
-    const back = await callProc('environments.update', { id: env.id, name: 'pw-box', host: '127.0.0.1', port: '59999', username: 'u', secretId: secret.id, secretUsage: 'ssh-key' })
+    const back = await callProc('environments.update', { id: env.id, name: 'pw-box', host: '127.0.0.1', port: '59999', username: '00000000-0000-7000-8000-51e69892ab49', secretId: secret.id, secretUsage: 'ssh-key' })
     expect(back.secretUsage).toBe('ssh-key')
   })
 
   it('password-mode probe uses askpass path and audits the use', async () => {
     const secret = await callProc('vault.create', { name: 'pw-probe', value: 's3cret-pw', description: '' })
-    const env = await callProc('environments.create', { name: 'pw-probe-box', host: '127.0.0.1', port: '59999', username: 'u', secretId: secret.id, secretUsage: 'password' })
+    const env = await callProc('environments.create', { name: 'pw-probe-box', host: '127.0.0.1', port: '59999', username: '00000000-0000-7000-8000-51e69892ab49', secretId: secret.id, secretUsage: 'password' })
     const result = await callProc('environments.probe', { id: env.id })
     expect(result.ok).toBe(false) // dead port, but the password path ran
     const audit = await callProc('vault.audit')
@@ -78,24 +78,24 @@ describe('environment secret linkage', () => {
   })
 
   it('create with unknown secretId 404s', async () => {
-    await expect(callProc('environments.create', { name: 'bad', host: 'h', port: '22', username: 'u', secretId: 'missing' }))
+    await expect(callProc('environments.create', { name: 'bad', host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49', secretId: 'missing' }))
       .rejects.toThrowError(/linked secret not found/)
   })
 
   it('update with unknown secretId 404s; update can link/unlink', async () => {
-    const env = await callProc('environments.create', { name: 'box', host: 'h', port: '22', username: 'u' })
-    await expect(callProc('environments.update', { id: env.id, name: 'box', host: 'h', port: '22', username: 'u', secretId: 'missing' }))
+    const env = await callProc('environments.create', { name: 'box', host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
+    await expect(callProc('environments.update', { id: env.id, name: 'box', host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49', secretId: 'missing' }))
       .rejects.toThrowError(/linked secret not found/)
     const secret = await callProc('vault.create', { name: 'k1', value: 'v1', description: 'ssh key' })
-    const linked = await callProc('environments.update', { id: env.id, name: 'box', host: 'h', port: '22', username: 'u', secretId: secret.id })
+    const linked = await callProc('environments.update', { id: env.id, name: 'box', host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49', secretId: secret.id })
     expect(linked.secretId).toBe(secret.id)
-    const unlinked = await callProc('environments.update', { id: env.id, name: 'box', host: 'h', port: '22', username: 'u', secretId: null })
+    const unlinked = await callProc('environments.update', { id: env.id, name: 'box', host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49', secretId: null })
     expect(unlinked.secretId).toBeNull()
   })
 
   it('deleting the secret set-nulls the environment link (no dangling FK)', async () => {
     const secret = await callProc('vault.create', { name: 'doomed-key', value: 'v', description: 'ssh key' })
-    const env = await callProc('environments.create', { name: 'box', host: 'h', port: '22', username: 'u', secretId: secret.id })
+    const env = await callProc('environments.create', { name: 'box', host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49', secretId: secret.id })
     await callProc('vault.remove', { id: secret.id })
     const { db } = await dbm()
     const { environments } = await schema()
@@ -106,7 +106,7 @@ describe('environment secret linkage', () => {
 
   it('probe with a linked secret decrypts server-side and audits the use', async () => {
     const secret = await callProc('vault.create', { name: 'probe-key', value: 'not-a-real-key', description: 'ssh key' })
-    const env = await callProc('environments.create', { name: 'probe-box', host: '127.0.0.1', port: '59999', username: 'u', secretId: secret.id })
+    const env = await callProc('environments.create', { name: 'probe-box', host: '127.0.0.1', port: '59999', username: '00000000-0000-7000-8000-51e69892ab49', secretId: secret.id })
     // port 59999: nothing listens -> probe fails fast, but the KEY was
     // decrypted + audited BEFORE the ssh attempt
     const result = await callProc('environments.probe', { id: env.id })
@@ -115,7 +115,7 @@ describe('environment secret linkage', () => {
     const use = audit.find((r: any) => r.action === 'use')
     expect(use).toBeDefined()
     expect(use.secretName).toBe('probe-key')
-    expect(use.actorId).toBe('u1')
+    expect(use.actorId).toBe('00000000-0000-7000-8000-c5ea71554c77')
   })
 
   it('probe tolerates a dangling secretId (secret row gone)', async () => {
@@ -124,7 +124,7 @@ describe('environment secret linkage', () => {
     // POSTGRES rule — bypass by dropping the constraint in this throwaway DB)
     const { postgres } = await import('./helpers/pg')
     const secret = await callProc('vault.create', { name: 'ghost-key', value: 'v', description: 'ssh key' })
-    const env = await callProc('environments.create', { name: 'dangling', host: '127.0.0.1', port: '59999', username: 'u', secretId: secret.id })
+    const env = await callProc('environments.create', { name: 'dangling', host: '127.0.0.1', port: '59999', username: '00000000-0000-7000-8000-51e69892ab49', secretId: secret.id })
     await postgres.unsafe('alter table environments drop constraint tandem_environments_secret_id_tandem_vault_secrets_id_fkey')
     await postgres.unsafe('delete from vault_secrets where id = $1', [secret.id])
     const result = await callProc('environments.probe', { id: env.id })
@@ -134,7 +134,7 @@ describe('environment secret linkage', () => {
   })
 
   it('probe without a linked secret audits nothing', async () => {
-    const env = await callProc('environments.create', { name: 'probe-box2', host: '127.0.0.1', port: '59999', username: 'u' })
+    const env = await callProc('environments.create', { name: 'probe-box2', host: '127.0.0.1', port: '59999', username: '00000000-0000-7000-8000-51e69892ab49' })
     await callProc('environments.probe', { id: env.id })
     const audit = await callProc('vault.audit')
     expect(audit.filter((r: any) => r.action === 'use')).toHaveLength(0)

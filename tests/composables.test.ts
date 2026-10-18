@@ -70,11 +70,11 @@ describe('useSessionRefreshing', () => {
   })
 
   it('refreshSession updates the session via oRPC auth.session', async () => {
-    currentSession = { user: { id: 'u1', name: 'U', email: 'u@x', role: 'viewer' }, session: { expiresAt: 't' } }
+    currentSession = { user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'U', email: 'u@x', role: 'viewer' }, session: { expiresAt: 't' } }
     const m = await import('../app/composables/useAppSession')
     const { refreshSession } = m.useSessionRefreshing()
     await refreshSession()
-    expect(m.useAppSession().value?.user.id).toBe('u1')
+    expect(m.useAppSession().value?.user.id).toBe('00000000-0000-7000-8000-c5ea71554c77')
   })
 
   it('refreshSession swallows fetch errors and nulls the session', async () => {

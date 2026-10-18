@@ -15,7 +15,7 @@ async function ctx(sessionUser: { id: string, name: string, email: string, role:
   return context
 }
 
-const admin = { id: 'u1', name: 'A', email: 'a@x', role: 'admin' }
+const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' }
 
 async function callRouter() {
   const { appRouter: router } = await import('../server/domains/app.router')
@@ -176,14 +176,14 @@ describe('buildServerContext', () => {
     let calls = 0
     inst.api.getSession = async () => {
       calls += 1
-      return { user: { id: 'u9', name: 'Nine', email: 'n@x', emailVerified: true, role: 'viewer' }, session: { id: 's1', userId: 'u9', expiresAt: new Date() } }
+      return { user: { id: '00000000-0000-7000-8000-98b6e4e77966', name: 'Nine', email: 'n@x', emailVerified: true, role: 'viewer' }, session: { id: 's1', userId: '00000000-0000-7000-8000-98b6e4e77966', expiresAt: new Date() } }
     }
     try {
       const { buildServerContext } = await import('../server/domains/kernel/context')
       const c = buildServerContext(new Headers())
       const a = await c.getSession()
       const b = await c.getSession()
-      expect(a).toEqual({ user: { id: 'u9', name: 'Nine', email: 'n@x', role: 'viewer' } })
+      expect(a).toEqual({ user: { id: '00000000-0000-7000-8000-98b6e4e77966', name: 'Nine', email: 'n@x', role: 'viewer' } })
       expect(b).toBe(a) // cached — one lookup per request
       expect(calls).toBe(1)
     }
@@ -196,11 +196,11 @@ describe('buildServerContext', () => {
     const { getAuth } = await import('../server/domains/auth/auth.service')
     const inst = await getAuth()
     const realGetSession = inst.api.getSession.bind(inst.api)
-    inst.api.getSession = async () => ({ user: { id: 'u2', name: 'B', email: 'b@x', emailVerified: true } })
+    inst.api.getSession = async () => ({ user: { id: '00000000-0000-7000-8000-b9c69e5488ff', name: 'B', email: 'b@x', emailVerified: true } })
     try {
       const { buildServerContext } = await import('../server/domains/kernel/context')
       const c = buildServerContext(undefined) // <- no headers at all
-      expect(await c.getSession()).toEqual({ user: { id: 'u2', name: 'B', email: 'b@x', role: 'viewer' } })
+      expect(await c.getSession()).toEqual({ user: { id: '00000000-0000-7000-8000-b9c69e5488ff', name: 'B', email: 'b@x', role: 'viewer' } })
     }
     finally {
       inst.api.getSession = realGetSession

@@ -6,57 +6,57 @@ const P = (id: string, name: string, title: string | null = null) => ({ id, name
 
 describe('chainToRoot', () => {
   const edges = [
-    { employeeId: 'zed', supervisorId: 'nam' },
-    { employeeId: 'ash', supervisorId: 'nam' },
-    { employeeId: 'jim', supervisorId: 'zed' },
+    { employeeId: '00000000-0000-7000-8000-5821b64a4515', supervisorId: '00000000-0000-7000-8000-ce4004f150eb' },
+    { employeeId: '00000000-0000-7000-8000-cb101192dff2', supervisorId: '00000000-0000-7000-8000-ce4004f150eb' },
+    { employeeId: 'jim', supervisorId: '00000000-0000-7000-8000-5821b64a4515' },
   ]
   it('walks up to the root', () => {
-    expect(chainToRoot('jim', edges)).toEqual(['zed', 'nam'])
+    expect(chainToRoot('jim', edges)).toEqual(['00000000-0000-7000-8000-5821b64a4515', '00000000-0000-7000-8000-ce4004f150eb'])
   })
   it('top of org yields empty chain', () => {
-    expect(chainToRoot('nam', edges)).toEqual([])
+    expect(chainToRoot('00000000-0000-7000-8000-ce4004f150eb', edges)).toEqual([])
   })
   it('cycles terminate', () => {
-    const cyclic = [...edges, { employeeId: 'nam', supervisorId: 'jim' }]
+    const cyclic = [...edges, { employeeId: '00000000-0000-7000-8000-ce4004f150eb', supervisorId: 'jim' }]
     const out = chainToRoot('jim', cyclic)
     expect(out.length).toBeLessThan(5)
   })
 })
 
 describe('extractMentionedEmployeeIds', () => {
-  const map = new Map([['Nam Hoang', 'u-nam'], ['Zed', 'u-zed'], ['Ash', 'u-ash']])
+  const map = new Map([['Nam Hoang', '00000000-0000-7000-8000-481d41fbaa78'], ['Zed', '00000000-0000-7000-8000-cba5723598ca'], ['Ash', '00000000-0000-7000-8000-b5ca5ca514c6']])
   it('matches plain @Name tokens exactly', () => {
-    expect(extractMentionedEmployeeIds('Please ask @Zed for review', map)).toEqual(['u-zed'])
+    expect(extractMentionedEmployeeIds('Please ask @Zed for review', map)).toEqual(['00000000-0000-7000-8000-cba5723598ca'])
   })
   it('matches tiptap mention links', () => {
-    expect(extractMentionedEmployeeIds('x @[Zed](mention-u-zed) y', map)).toEqual(['u-zed'])
+    expect(extractMentionedEmployeeIds('x @[Zed](mention-00000000-0000-7000-8000-cba5723598ca) y', map)).toEqual(['00000000-0000-7000-8000-cba5723598ca'])
   })
   it('multi-word names match whole', () => {
-    expect(extractMentionedEmployeeIds('cc @Nam Hoang please', map)).toEqual(['u-nam'])
+    expect(extractMentionedEmployeeIds('cc @Nam Hoang please', map)).toEqual(['00000000-0000-7000-8000-481d41fbaa78'])
   })
   it('unknown names are ignored, never guessed', () => {
     expect(extractMentionedEmployeeIds('ask @Nobody here', map)).toEqual([])
   })
   it('matches tiptap [@ label] bracket form', () => {
-    expect(extractMentionedEmployeeIds('Coordinate with [@ label="Zed"] now', map)).toEqual(['u-zed'])
+    expect(extractMentionedEmployeeIds('Coordinate with [@ label="Zed"] now', map)).toEqual(['00000000-0000-7000-8000-cba5723598ca'])
   })
   it('dedupes', () => {
-    expect(extractMentionedEmployeeIds('@Zed and @Zed again', map)).toEqual(['u-zed'])
+    expect(extractMentionedEmployeeIds('@Zed and @Zed again', map)).toEqual(['00000000-0000-7000-8000-cba5723598ca'])
   })
 })
 
 describe('buildBrief', () => {
   const base = {
-    agent: P('u-zed', 'Zed', 'CEO'),
+    agent: P('00000000-0000-7000-8000-cba5723598ca', 'Zed', 'CEO'),
     agentInstructions: 'Always answer in Vietnamese.',
-    upChain: [P('u-nam', 'Nam Hoang', 'Founder')],
-    directReports: [P('u-ash', 'Ash', 'CTO')],
-    extraChains: [{ person: P('u-jay', 'Jay', 'PSE'), chain: [P('u-nam', 'Nam Hoang', 'Founder')] }],
+    upChain: [P('00000000-0000-7000-8000-481d41fbaa78', 'Nam Hoang', 'Founder')],
+    directReports: [P('00000000-0000-7000-8000-b5ca5ca514c6', 'Ash', 'CTO')],
+    extraChains: [{ person: P('00000000-0000-7000-8000-4a10b4d22ecf', 'Jay', 'PSE'), chain: [P('00000000-0000-7000-8000-481d41fbaa78', 'Nam Hoang', 'Founder')] }],
     task: {
       title: 'Write the spec',
       description: 'Coordinate with @Jay on the API',
       ownerName: 'Nam Hoang',
-      ownerId: 'u-nam',
+      ownerId: '00000000-0000-7000-8000-481d41fbaa78',
       reviewerNames: ['Ash'],
       projectName: 'Tandem',
     },
@@ -79,7 +79,7 @@ describe('buildBrief', () => {
       expect(b).toContain('OUTPUT CONTRACT')
   })
   it('agent without a title renders bare identity line', () => {
-    const b = buildBrief({ ...base, agent: P('u-zed', 'Zed') })
+    const b = buildBrief({ ...base, agent: P('00000000-0000-7000-8000-cba5723598ca', 'Zed') })
     expect(b.startsWith('You are Zed.')).toBe(true)
   })
   it('no direct reports and empty reviewers/project omit their lines', () => {
@@ -117,7 +117,7 @@ describe('buildBrief', () => {
   it('null body + null authorName + untitled people render safely', () => {
     const b = buildBrief({
       ...base,
-      upChain: [P('u-x', 'NoTitle')],
+      upChain: [P('00000000-0000-7000-8000-f20d9b639839', 'NoTitle')],
       agentInstructions: '',
       recentActivity: [{ kind: 'status', authorName: null, body: null }],
     })
@@ -126,12 +126,12 @@ describe('buildBrief', () => {
     expect(b).toMatch(/status by system: $/m)
   })
   it('mentioned person at the top of the org shows (unknown) chain', () => {
-    const b = buildBrief({ ...base, extraChains: [{ person: P('u-lone', 'Lone'), chain: [] }] })
+    const b = buildBrief({ ...base, extraChains: [{ person: P('00000000-0000-7000-8000-a75828b8df28', 'Lone'), chain: [] }] })
     expect(b).toContain('Lone: Lone; their chain: (unknown).')
   })
   it('strips tiptap mention markup but keeps the name', () => {
-    const b = buildBrief({ ...base, task: { ...base.task, description: 'ping @[Jay](mention-u-jay) pls' } })
+    const b = buildBrief({ ...base, task: { ...base.task, description: 'ping @[Jay](mention-00000000-0000-7000-8000-4a10b4d22ecf) pls' } })
     expect(b).toContain('ping Jay pls')
-    expect(b).not.toContain('mention-u-jay')
+    expect(b).not.toContain('mention-00000000-0000-7000-8000-4a10b4d22ecf')
   })
 })

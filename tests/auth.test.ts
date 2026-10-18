@@ -92,7 +92,7 @@ describe('auth instance', () => {
   it('anyUserExists tracks the user table', async () => {
     expect(await anyUserExists()).toBe(false)
     await db.insert(user).values({
-      id: 'u1', name: 'U', email: 'u@x.co', emailVerified: true, createdAt: new Date(), updatedAt: new Date(), role: 'viewer',
+      id: '00000000-0000-7000-8000-c5ea71554c77', name: 'U', email: 'u@x.co', emailVerified: true, createdAt: new Date(), updatedAt: new Date(), role: 'viewer',
     })
     expect(await anyUserExists()).toBe(true)
   })

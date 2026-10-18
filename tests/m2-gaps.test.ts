@@ -67,7 +67,7 @@ describe('ssh-probe probeViaNode (mocked child_process)', () => {
     }))
     try {
       const mod = await import('../server/domains/environments/ssh-probe.service')
-      const r = await mod.probeSsh('h', '22', 'u')
+      const r = await mod.probeSsh('h', '22', '00000000-0000-7000-8000-51e69892ab49')
       expect(r.ok).toBe(false)
     }
     finally {
@@ -110,7 +110,7 @@ describe('ssh-probe probeViaNode (mocked child_process)', () => {
     }))
     try {
       const mod = await import('../server/domains/environments/ssh-probe.service')
-      const r = await mod.probeSsh('h', '22', 'u')
+      const r = await mod.probeSsh('h', '22', '00000000-0000-7000-8000-51e69892ab49')
       expect(r).toEqual({ ok: false, detail: 'ssh: killed by timeout' })
     }
     finally {
@@ -152,7 +152,7 @@ describe('ssh-probe probeViaNode (mocked child_process)', () => {
     }))
     try {
       const mod = await import('../server/domains/environments/ssh-probe.service')
-      const r = await mod.probeSsh('h', '22', 'u')
+      const r = await mod.probeSsh('h', '22', '00000000-0000-7000-8000-51e69892ab49')
       // marker echoed + exit 0 -> ok even with stderr noise
       expect(r).toEqual({ ok: true, detail: 'SSH key auth works' })
     }
@@ -171,7 +171,7 @@ describe('ssh-probe node fallback arms', () => {
     }))
     try {
       const mod = await import('../server/domains/environments/ssh-probe.service')
-      const r = await mod.probeSsh('127.0.0.1', '22', 'u')
+      const r = await mod.probeSsh('127.0.0.1', '22', '00000000-0000-7000-8000-51e69892ab49')
       expect(r.ok).toBe(false)
       expect(typeof r.detail).toBe('string')
     }

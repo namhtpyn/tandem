@@ -590,7 +590,7 @@ describe('acp-ssh transport', () => {
 
   it('openAcpSshStream: blob first, then JSON-RPC; stdout/stderr lines split; close tears down', async () => {
     const { openAcpSshStream } = await import('../server/domains/tasks/acp-ssh.util')
-    const plan = { env: { host: 'h', port: '22', username: 'u' }, sshKey: 'k', sshPassword: undefined }
+    const plan = { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' }, sshKey: 'k', sshPassword: undefined }
     const blob = 'set -a\nCUSTOM_API_KEY=\'k\'\nset +a\n'
     const p = openAcpSshStream(plan, blob, 'hermes acp', () => {})
     const client: any = await lastClient()
@@ -628,7 +628,7 @@ describe('acp-ssh transport', () => {
 
   it('connects on port 22 when the plan port is empty; password auth tolerated', async () => {
     const { openAcpSshStream } = await import('../server/domains/tasks/acp-ssh.util')
-    const plan = { env: { host: 'h', port: '', username: 'u' }, sshKey: undefined, sshPassword: 'pw' }
+    const plan = { env: { host: 'h', port: '', username: '00000000-0000-7000-8000-51e69892ab49' }, sshKey: undefined, sshPassword: 'pw' }
     const p = openAcpSshStream(plan, 'blob', 'hermes acp', () => {})
     const client: any = await lastClient()
     client.emitReady()
@@ -638,7 +638,7 @@ describe('acp-ssh transport', () => {
 
   it('write guards + close survives throwing signal/close + non-number exit codes', async () => {
     const { openAcpSshStream } = await import('../server/domains/tasks/acp-ssh.util')
-    const plan = { env: { host: 'h', port: '22', username: 'u' }, sshKey: 'k', sshPassword: undefined }
+    const plan = { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' }, sshKey: 'k', sshPassword: undefined }
     const p = openAcpSshStream(plan, 'blob', 'hermes acp', () => {})
     const client: any = await lastClient()
     client.emitReady()
@@ -662,7 +662,7 @@ describe('acp-ssh transport', () => {
 
   it('ssh/exec errors reject the open', async () => {
     const { openAcpSshStream } = await import('../server/domains/tasks/acp-ssh.util')
-    const plan = { env: { host: 'h', port: '22', username: 'u' } }
+    const plan = { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const FakeClient = ((await import('ssh2')).default as any).Client
     // exec error

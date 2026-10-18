@@ -170,8 +170,8 @@ describe('remaining branch arms', () => {
     const inst = await authMod.getAuth()
     const realGetSession = inst.api.getSession.bind(inst.api)
     inst.api.getSession = async () => ({
-      user: { id: 'u', name: 'U', email: 'u@x', emailVerified: true, role: null },
-      session: { id: 's', userId: 'u', expiresAt: new Date() },
+      user: { id: '00000000-0000-7000-8000-51e69892ab49', name: 'U', email: 'u@x', emailVerified: true, role: null },
+      session: { id: 's', userId: '00000000-0000-7000-8000-51e69892ab49', expiresAt: new Date() },
     })
     try {
       let node: Record<string, unknown> = router as unknown as Record<string, unknown>
@@ -316,7 +316,7 @@ describe('auth route fallback arms (real coverage)', () => {
   it('POST sign-up/email closed once a user exists (403)', async () => {
     const { sqlClient } = await import('../server/db/index')
     await sqlClient`insert into "user" (id, name, email, email_verified, created_at, updated_at, role)
-      values ('u-close', 'Closer', 'c@x.co', true, now(), now(), 'viewer')`
+      values ('00000000-0000-7000-8000-55749737aa07', 'Closer', 'c@x.co', true, now(), now(), 'viewer')`
     await expect(call('../server/routes/auth/[...].ts', { method: 'POST', url: '/auth/sign-up/email', body: { email: 'a@b.co', password: 'password1234', name: 'A' } }))
       .rejects.toMatchObject({ statusCode: 403 })
   })

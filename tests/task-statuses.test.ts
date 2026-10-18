@@ -27,7 +27,7 @@ async function wireInternalDecisionSetting(secretId: string | null) {
   }
 }
 
-const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
+const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 
 async function ctx() {
   const { buildServerContext } = await import('../server/domains/kernel/context')
@@ -238,7 +238,7 @@ describe('jev auto-assign', () => {
     r = await callProc('statuses.assign', { taskId: t.id })
     expect(r.assigned).toBe(false); expect(r.reason).toMatch(/unknown employee/)
     // low confidence (valid candidate id below 0.5)
-    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'm', answers: { assignee: { type: 'choice', choice: 'u-admin', confidence: 0.3, probabilities: {} } } }) })) as typeof fetch
+    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'm', answers: { assignee: { type: 'choice', choice: '00000000-0000-7000-8000-cd5fca5e2d34', confidence: 0.3, probabilities: {} } } }) })) as typeof fetch
     r = await callProc('statuses.assign', { taskId: t.id })
     expect(r.assigned).toBe(false); expect(r.reason).toMatch(/low confidence/)
     // network throw
@@ -265,7 +265,7 @@ describe('jev auto-assign', () => {
     // AI employee with a title + open task load; human without title
     const d = await dbm()
     const { environments } = await import('../server/db/schema')
-    await d.db.insert(environments).values({ id: 'env-jev', name: 'env-jev', host: '127.0.0.1', port: '22', username: 'u' })
+    await d.db.insert(environments).values({ id: 'env-jev', name: 'env-jev', host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
     const ai = await callProc('employees.create', { name: 'Titled Bot', email: 'tb@tandem.local', kind: 'ai', title: 'Writer', environmentId: 'env-jev', executable: 'hermes acp' })
     const loaded = await callProc('tasks.create', { title: 'Load carrier' })
     await callProc('tasks.update', { id: loaded.id, assigneeId: ai.id })
@@ -294,7 +294,7 @@ describe('jev auto-assign', () => {
     await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'Minimal' })
     const origFetch = globalThis.fetch
-    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'jev-test', answers: { assignee: { type: 'choice', choice: 'u-admin' } } }) })) as typeof fetch
+    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'jev-test', answers: { assignee: { type: 'choice', choice: '00000000-0000-7000-8000-cd5fca5e2d34' } } }) })) as typeof fetch
     try {
       const r = await callProc('statuses.assign', { taskId: t.id })
       expect(r.assigned).toBe(false) // confidence defaults to 0 -> low confidence arm
@@ -308,7 +308,7 @@ describe('jev auto-assign', () => {
     await wireDecisionProvider(sec.id)
     const d = await dbm()
     const { environments } = await import('../server/db/schema')
-    await d.db.insert(environments).values({ id: 'env-j2', name: 'env-j2', host: '127.0.0.1', port: '22', username: 'u' })
+    await d.db.insert(environments).values({ id: 'env-j2', name: 'env-j2', host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
     const ai = await callProc('employees.create', { name: 'Plain Bot', email: 'pb@tandem.local', kind: 'ai', title: 'Writer', environmentId: 'env-j2' , executable: 'hermes acp' })
     // null the title on the user row (candidates map reads user.title)
     const { user } = await import('../server/db/schema')
@@ -348,7 +348,7 @@ describe('jev auto-assign', () => {
     await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'Unassign me' })
     const origFetch = globalThis.fetch
-    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'jev-test', answers: { assignee: { type: 'choice', choice: 'unassigned', confidence: 0.8, probabilities: { unassigned: 0.8, 'u-admin': 0.2 } } } }) })) as typeof fetch
+    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ model: 'jev-test', answers: { assignee: { type: 'choice', choice: 'unassigned', confidence: 0.8, probabilities: { unassigned: 0.8, '00000000-0000-7000-8000-cd5fca5e2d34': 0.2 } } } }) })) as typeof fetch
     try {
       const r = await callProc('statuses.assign', { taskId: t.id })
       expect(r.assigned).toBe(false)
@@ -364,12 +364,12 @@ describe('jev auto-assign', () => {
     await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'Lowconf' })
     const origFetch = globalThis.fetch
-    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ answers: { assignee: { type: 'choice', choice: 'u-admin', confidence: 0.2, probabilities: { 'u-admin': 0.2 } } } }) })) as typeof fetch
+    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ answers: { assignee: { type: 'choice', choice: '00000000-0000-7000-8000-cd5fca5e2d34', confidence: 0.2, probabilities: { '00000000-0000-7000-8000-cd5fca5e2d34': 0.2 } } } }) })) as typeof fetch
     try {
       const r = await callProc('statuses.assign', { taskId: t.id })
       expect(r.assigned).toBe(false)
       expect(r.reason).toMatch(/low confidence 0.20/)
-      expect(r.probabilities).toMatchObject({ 'u-admin': 0.2 })
+      expect(r.probabilities).toMatchObject({ '00000000-0000-7000-8000-cd5fca5e2d34': 0.2 })
     }
     finally { globalThis.fetch = origFetch }
   })
@@ -402,7 +402,7 @@ describe('jev auto-assign', () => {
     let state = ''
     globalThis.fetch = (async (_u: unknown, init?: unknown) => {
       state = JSON.parse(String((init as { body?: string })?.body ?? '{}')).state
-      return { ok: true, status: 200, json: async () => ({ model: 'm', answers: { assignee: { type: 'choice', choice: 'u-admin', confidence: 0.9, probabilities: {} } } }) }
+      return { ok: true, status: 200, json: async () => ({ model: 'm', answers: { assignee: { type: 'choice', choice: '00000000-0000-7000-8000-cd5fca5e2d34', confidence: 0.9, probabilities: {} } } }) }
     }) as typeof fetch
     try {
       const r = await callProc('statuses.assign', { taskId: t.id })
@@ -427,7 +427,7 @@ describe('jev auto-assign', () => {
     globalThis.fetch = (async (u: unknown, init?: unknown) => {
       hitUrl = String(u)
       body = JSON.parse(String((init as { body?: string })?.body ?? '{}'))
-      return { ok: true, status: 200, json: async () => ({ model: 'gpt-6-luna', answers: [{ name: 'assignee', type: 'choice', choice: 'u-admin', confidence: 0.9, probabilities: [{ value: 'u-admin', probability: 0.9 }] }] }) }
+      return { ok: true, status: 200, json: async () => ({ model: 'gpt-6-luna', answers: [{ name: 'assignee', type: 'choice', choice: '00000000-0000-7000-8000-cd5fca5e2d34', confidence: 0.9, probabilities: [{ value: '00000000-0000-7000-8000-cd5fca5e2d34', probability: 0.9 }] }] }) }
     }) as typeof fetch
     try {
       const r = await callProc('statuses.assign', { taskId: t.id })
@@ -436,7 +436,7 @@ describe('jev auto-assign', () => {
       expect(Array.isArray(body.questions)).toBe(true)
       expect(body.input).toContain('OA decision task')
       expect(r.confidence).toBe(0.9)
-      expect(r.probabilities).toEqual({ 'u-admin': 0.9 })
+      expect(r.probabilities).toEqual({ '00000000-0000-7000-8000-cd5fca5e2d34': 0.9 })
     }
     finally { globalThis.fetch = origFetch }
   })
@@ -477,7 +477,7 @@ describe('jev auto-assign', () => {
     globalThis.fetch = (async (u: unknown) => {
       hitUrl = String(u)
       // answer without confidence and without probabilities; choice is a string
-      return { ok: true, status: 200, json: async () => ({ model: 'gpt-6-luna', answers: [{ name: 'assignee', type: 'choice', choice: 'u-admin' }] }) }
+      return { ok: true, status: 200, json: async () => ({ model: 'gpt-6-luna', answers: [{ name: 'assignee', type: 'choice', choice: '00000000-0000-7000-8000-cd5fca5e2d34' }] }) }
     }) as typeof fetch
     try {
       const r = await callProc('statuses.assign', { taskId: t.id })

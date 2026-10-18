@@ -17,8 +17,8 @@ vi.mock('../server/domains/auth/auth.service', async (importOriginal) => {
         value: {
           ...realApi,
           getSession: async () => ({
-            user: { id: 'test-admin', name: 'Test Admin', email: 'test@tandem.local', emailVerified: true, role: 'admin' },
-            session: { id: 'test-session', userId: 'test-admin', expiresAt: new Date(Date.now() + 3600_000) },
+            user: { id: '00000000-0000-7000-8000-3f18cbc16519', name: 'Test Admin', email: 'test@tandem.local', emailVerified: true, role: 'admin' },
+            session: { id: 'test-session', userId: '00000000-0000-7000-8000-3f18cbc16519', expiresAt: new Date(Date.now() + 3600_000) },
           }),
         },
         writable: true,

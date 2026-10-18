@@ -82,7 +82,7 @@ import { STATUS } from '../shared/status'
 
 process.env.TANDEM_FAKE_RUNNER = '1'
 
-const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
+const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 
 async function dbm() {
   return await import('../server/db')
@@ -109,8 +109,8 @@ async function mkAiAgent(): Promise<string> {
   const n = ++agentSeq
   // first agent keeps the historical fixed ids — many tests assert against them
   const envId = n === 1 ? 'env-1' : `env-${n}`
-  await db.insert(environments).values({ id: envId, name: `E${n}`, host: '127.0.0.1', port: '2222', username: 'u' })
-  const id = n === 1 ? 'u-agent' : `u-agent-${n}`
+  await db.insert(environments).values({ id: envId, name: `E${n}`, host: '127.0.0.1', port: '2222', username: '00000000-0000-7000-8000-51e69892ab49' })
+  const id = n === 1 ? '00000000-0000-7000-8000-79d931929132' : `0000000${n}-0000-7000-8000-${String(n).padStart(12, '0')}`
   await db.insert(user).values({ id, name: 'Robby', email: `robby${n}@tandem.local`, emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
   await db.insert(aiEmployees).values({ userId: id, environmentId: envId, instructions: '', executable: 'hermes acp' })
   return id
@@ -149,7 +149,7 @@ beforeEach(async () => {
   await applyMigrations()
   const { db } = await dbm()
   const { user } = await schema()
-  await db.insert(user).values({ id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
+  await db.insert(user).values({ id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
 })
 
 describe('runner service guards', () => {
@@ -158,8 +158,8 @@ describe('runner service guards', () => {
     await expect(loadDispatchPlan('ghost')).rejects.toThrow(/task not found/i)
     const { db } = await dbm()
     const { user, tasks, environments, aiEmployees } = await schema()
-    await db.insert(user).values({ id: 'u-h2', name: 'H2', email: 'h2@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
-    await db.insert(tasks).values({ id: 't-h2', title: 'x', description: '', status: STATUS.todo, assigneeId: 'u-h2' })
+    await db.insert(user).values({ id: '00000000-0000-7000-8000-6ec8d637f32c', name: 'H2', email: 'h2@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
+    await db.insert(tasks).values({ id: 't-h2', title: 'x', description: '', status: STATUS.todo, assigneeId: '00000000-0000-7000-8000-6ec8d637f32c' })
     await expect(loadDispatchPlan('t-h2')).rejects.toThrow(/not an AI/i)
     // task with no assignee at all
     await db.insert(tasks).values({ id: 't-none', title: 'x', description: '', status: STATUS.todo })
@@ -170,7 +170,7 @@ describe('runner service guards', () => {
     const { loadDispatchPlan, buildEnvBlob } = await import('../server/domains/tasks/runner.service')
     const { acpRemoteCommand } = await import('../server/domains/tasks/acp-ssh.util')
     await mkAiAgent()
-    await callProc('tasks.create', { title: `Quote's task`, description: 'do it', assigneeId: 'u-agent' })
+    await callProc('tasks.create', { title: `Quote's task`, description: 'do it', assigneeId: '00000000-0000-7000-8000-79d931929132' })
     const d = await dbm()
     const sch = await schema()
     const taskRow = (await d.db.select().from(sch.tasks))[0]!
@@ -268,13 +268,13 @@ describe('runner ssh-config paths', () => {
     const { db } = await dbm()
     const { environments, vaultSecrets, modelProviders, aiEmployees, vaultAudit } = await schema()
     const { encryptSecret } = await import('../server/domains/vault/vault-crypto.service')
-    await db.insert(vaultSecrets).values({ id: 'sec-pw', name: 'pw', ciphertext: encryptSecret('hunter2'), lastFour: 'er2', createdBy: 'u-admin', createdAt: new Date(), updatedAt: new Date() })
+    await db.insert(vaultSecrets).values({ id: 'sec-pw', name: 'pw', ciphertext: encryptSecret('hunter2'), lastFour: 'er2', createdBy: '00000000-0000-7000-8000-cd5fca5e2d34', createdAt: new Date(), updatedAt: new Date() })
     await db.update(environments).set({ secretId: 'sec-pw', secretUsage: 'password' }).where(eq(environments.id, 'env-1'))
     await db.insert(modelProviders).values({ id: 'prov-1', label: 'P1', baseUrl: 'https://api.example.com' })
-    await db.insert(vaultSecrets).values({ id: 'sec-llm', name: 'llmkey', ciphertext: encryptSecret('sk-123'), lastFour: '123', createdBy: 'u-admin', createdAt: new Date(), updatedAt: new Date() })
-    await db.update(aiEmployees).set({ providerId: 'prov-1', model: 'gpt-test', apiKeySecretId: 'sec-llm' }).where(eq(aiEmployees.userId, 'u-agent'))
+    await db.insert(vaultSecrets).values({ id: 'sec-llm', name: 'llmkey', ciphertext: encryptSecret('sk-123'), lastFour: '123', createdBy: '00000000-0000-7000-8000-cd5fca5e2d34', createdAt: new Date(), updatedAt: new Date() })
+    await db.update(aiEmployees).set({ providerId: 'prov-1', model: 'gpt-test', apiKeySecretId: 'sec-llm' }).where(eq(aiEmployees.userId, '00000000-0000-7000-8000-79d931929132'))
     const { loadDispatchPlan, buildEnvBlob } = await import('../server/domains/tasks/runner.service')
-    await callProc('tasks.create', { title: 'Creds', assigneeId: 'u-agent' })
+    await callProc('tasks.create', { title: 'Creds', assigneeId: '00000000-0000-7000-8000-79d931929132' })
     const d = await dbm()
     const sch = await schema()
     const taskRow = (await d.db.select().from(sch.tasks))[0]!
@@ -363,10 +363,10 @@ describe('runner failure + fallback arms', () => {
     const { db } = await dbm()
     const { aiEmployees } = await schema()
     await mkAiAgent()
-    await db.update(aiEmployees).set({ executable: 'agent-cli' }).where(eq(aiEmployees.userId, 'u-agent'))
+    await db.update(aiEmployees).set({ executable: 'agent-cli' }).where(eq(aiEmployees.userId, '00000000-0000-7000-8000-79d931929132'))
     const { loadDispatchPlan, buildEnvBlob } = await import('../server/domains/tasks/runner.service')
     const { acpRemoteCommand } = await import('../server/domains/tasks/acp-ssh.util')
-    await callProc('tasks.create', { title: 'Exe', assigneeId: 'u-agent' })
+    await callProc('tasks.create', { title: 'Exe', assigneeId: '00000000-0000-7000-8000-79d931929132' })
     const d = await dbm()
     const sch = await schema()
     const taskRow = (await d.db.select().from(sch.tasks))[0]!
@@ -382,9 +382,9 @@ describe('runner failure + fallback arms', () => {
     const { environments, vaultSecrets } = await schema()
     const { encryptSecret } = await import('../server/domains/vault/vault-crypto.service')
     await mkAiAgent()
-    await db.insert(vaultSecrets).values({ id: 'sec-key', name: 'key', ciphertext: encryptSecret('-----BEGIN KEY-----'), lastFour: 'KEY-', createdBy: 'u-admin', createdAt: new Date(), updatedAt: new Date() })
+    await db.insert(vaultSecrets).values({ id: 'sec-key', name: 'key', ciphertext: encryptSecret('-----BEGIN KEY-----'), lastFour: 'KEY-', createdBy: '00000000-0000-7000-8000-cd5fca5e2d34', createdAt: new Date(), updatedAt: new Date() })
     await db.update(environments).set({ secretId: 'sec-key', secretUsage: 'ssh-key' }).where(eq(environments.id, 'env-1'))
-    await callProc('tasks.create', { title: 'KeyAuth', assigneeId: 'u-agent' })
+    await callProc('tasks.create', { title: 'KeyAuth', assigneeId: '00000000-0000-7000-8000-79d931929132' })
     const d = await dbm()
     const sch = await schema()
     const taskRow = (await d.db.select().from(sch.tasks))[0]!
@@ -520,8 +520,8 @@ describe('dispatch-plan edge arms', () => {
     const { db } = await dbm()
     const { aiEmployees, modelProviders } = await schema()
     await db.insert(modelProviders).values({ id: 'prov-9', label: 'P9', baseUrl: 'https://p9.example.com' })
-    await db.update(aiEmployees).set({ providerId: 'prov-9', model: 'm9', apiKeySecretId: null }).where(eq(aiEmployees.userId, 'u-agent'))
-    await callProc('tasks.create', { title: 'Degrade', assigneeId: 'u-agent' })
+    await db.update(aiEmployees).set({ providerId: 'prov-9', model: 'm9', apiKeySecretId: null }).where(eq(aiEmployees.userId, '00000000-0000-7000-8000-79d931929132'))
+    await callProc('tasks.create', { title: 'Degrade', assigneeId: '00000000-0000-7000-8000-79d931929132' })
     const d = await dbm()
     const sch = await schema()
     const taskRow = (await d.db.select().from(sch.tasks))[0]!
@@ -583,7 +583,7 @@ describe('host-derived key env (hermes host-gated credentials)', () => {
     const sch = await schema()
     const { encryptSecret } = await import('../server/domains/vault/vault-crypto.service')
     await d.db.insert(sch.modelProviders).values({ id: 'prov-h', label: 'PH', baseUrl: 'https://ai.example.net' })
-    await d.db.insert(sch.vaultSecrets).values({ id: 'sec-h', name: 'kh', ciphertext: encryptSecret('sk-h'), createdBy: 'u-admin' })
+    await d.db.insert(sch.vaultSecrets).values({ id: 'sec-h', name: 'kh', ciphertext: encryptSecret('sk-h'), createdBy: '00000000-0000-7000-8000-cd5fca5e2d34' })
     await d.db.update(sch.aiEmployees).set({ providerId: 'prov-h', model: 'm-h', apiKeySecretId: 'sec-h' }).where(eq(sch.aiEmployees.userId, agentId))
     const taskRow = (await d.db.select().from(sch.tasks))[0]!
     const { loadDispatchPlan, buildEnvBlob } = await import('../server/domains/tasks/runner.service')
@@ -602,7 +602,7 @@ describe('env blob quoting', () => {
     const sch = await schema()
     const { encryptSecret } = await import('../server/domains/vault/vault-crypto.service')
     await d.db.insert(sch.modelProviders).values({ id: 'prov-q', label: 'PQ', baseUrl: 'https://pq.example.com' })
-    await d.db.insert(sch.vaultSecrets).values({ id: 'sec-q', name: 'kq', ciphertext: encryptSecret('sk-q'), createdBy: 'u-admin' })
+    await d.db.insert(sch.vaultSecrets).values({ id: 'sec-q', name: 'kq', ciphertext: encryptSecret('sk-q'), createdBy: '00000000-0000-7000-8000-cd5fca5e2d34' })
     await d.db.update(sch.aiEmployees).set({ providerId: 'prov-q', model: 'm-q', apiKeySecretId: 'sec-q' }).where(eq(sch.aiEmployees.userId, agentId))
     const taskRow = (await d.db.select().from(sch.tasks))[0]!
     const { loadDispatchPlan, buildEnvBlob } = await import('../server/domains/tasks/runner.service')
@@ -646,8 +646,8 @@ describe('dispatcher', () => {
   it('human assignees are never dispatched', async () => {
     const { db } = await dbm()
     const { user } = await schema()
-    await db.insert(user).values({ id: 'u-h', name: 'Hu', email: 'hu@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
-    await callProc('tasks.create', { title: 'Human work', assigneeId: 'u-h' })
+    await db.insert(user).values({ id: '00000000-0000-7000-8000-b4b57f028566', name: 'Hu', email: 'hu@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
+    await callProc('tasks.create', { title: 'Human work', assigneeId: '00000000-0000-7000-8000-b4b57f028566' })
     const { scanOnce } = await import('../server/domains/tasks/dispatcher.service')
     expect(await scanOnce('http://tandem.local')).toBe(false)
   })
@@ -696,8 +696,8 @@ describe('dispatcher', () => {
       const agentId = await mkAiAgent()
       const { db } = await dbm()
       const { user } = await schema()
-      await db.insert(user).values({ id: 'u-owner', name: 'Owner', email: 'owner@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
-      const t = await callProc('tasks.create', { title: 'Q task', assigneeId: agentId, ownerId: 'u-owner' })
+      await db.insert(user).values({ id: '00000000-0000-7000-8000-820caae75a5f', name: 'Owner', email: 'owner@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
+      const t = await callProc('tasks.create', { title: 'Q task', assigneeId: agentId, ownerId: '00000000-0000-7000-8000-820caae75a5f' })
       const { dispatchTask } = await import('../server/domains/tasks/runner.service')
       const handle = await dispatchTask(t.id, 'http://tandem.local')
       expect((await handle.finished).status).toBe('done')
@@ -705,7 +705,7 @@ describe('dispatcher', () => {
       const task = (await db.select().from(tasks)).find(x => x.id === t.id)!
       expect(task.status).toBe(STATUS.waitingAnswer)
       const obl = (await db.select().from(taskObligations)).filter(o => o.taskId === t.id)
-      expect(obl.some(o => o.role === 'answer' && o.status === 'pending' && o.employeeId === 'u-owner')).toBe(true)
+      expect(obl.some(o => o.role === 'answer' && o.status === 'pending' && o.employeeId === '00000000-0000-7000-8000-820caae75a5f')).toBe(true)
     }
     finally {
       if (prev !== undefined) process.env.TANDEM_FAKE_SCRIPT = prev
@@ -719,9 +719,9 @@ describe('dispatcher', () => {
     try {
       const { db } = await dbm()
       const { user, employeeSupervisors, taskReviews, taskObligations } = await schema()
-      await db.insert(user).values({ id: 'u-boss', name: 'Ash Boss', email: 'boss@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
+      await db.insert(user).values({ id: '00000000-0000-7000-8000-b09d13ad1a84', name: 'Ash Boss', email: 'boss@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
       const agentId = await mkAiAgent()
-      await db.insert(employeeSupervisors).values({ employeeId: agentId, supervisorId: 'u-boss' })
+      await db.insert(employeeSupervisors).values({ employeeId: agentId, supervisorId: '00000000-0000-7000-8000-b09d13ad1a84' })
       const t = await callProc('tasks.create', { title: 'HReview', assigneeId: agentId })
       const { dispatchTask } = await import('../server/domains/tasks/runner.service')
       await (await dispatchTask(t.id, 'http://tandem.local')).finished
@@ -729,14 +729,14 @@ describe('dispatcher', () => {
       const { tasks, taskRuns } = await schema()
       const row = (await db.select().from(tasks)).find(x => x.id === t.id)!
       expect(row.status).toBe(STATUS.inReview)
-      expect(row.reviewers).toEqual(['u-boss'])
+      expect(row.reviewers).toEqual(['00000000-0000-7000-8000-b09d13ad1a84'])
       const rev = (await db.select().from(taskReviews)).filter(r => r.taskId === t.id)
       expect(rev).toHaveLength(1)
       expect(rev[0]!.status).toBe('pending') // human: waits for the card, no auto run
       expect(rev[0]!.round).toBe(1)
       expect((await db.select().from(taskRuns)).filter(r => r.taskId === t.id)).toHaveLength(1) // assignee run only
       const obl = (await db.select().from(taskObligations)).filter(o => o.taskId === t.id)
-      expect(obl.some(o => o.role === 'approval' && o.employeeId === 'u-boss' && o.status === 'pending')).toBe(true)
+      expect(obl.some(o => o.role === 'approval' && o.employeeId === '00000000-0000-7000-8000-b09d13ad1a84' && o.status === 'pending')).toBe(true)
     }
     finally {
       await drainRuns()
@@ -842,7 +842,7 @@ describe('dispatcher', () => {
       const jay = await mkAiAgent()
       const ash = await mkAiAgent()
       await db.insert(employeeSupervisors).values({ employeeId: jay, supervisorId: ash })
-      const t = await callProc('tasks.create', { title: 'AIVerdict', assigneeId: jay, ownerId: 'u-admin' })
+      const t = await callProc('tasks.create', { title: 'AIVerdict', assigneeId: jay, ownerId: '00000000-0000-7000-8000-cd5fca5e2d34' })
       const { dispatchTask } = await import('../server/domains/tasks/runner.service')
       await (await dispatchTask(t.id, 'http://tandem.local')).finished
       const { tasks, taskReviews } = await schema()
@@ -857,7 +857,7 @@ describe('dispatcher', () => {
 
       // answer the question -> back to in-review, review re-arms
       const { answerQuestion } = await import('../server/domains/tasks/workflow.service')
-      await answerQuestion(t.id, 'u-admin', 'proceed as you see fit')
+      await answerQuestion(t.id, '00000000-0000-7000-8000-cd5fca5e2d34', 'proceed as you see fit')
       process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'ok now\n{"kind": "result", "body": "approved after clarification"}'
       await new Promise(r => setTimeout(r, 800))
       // now the human-only REJECT path on a fresh round state
@@ -886,16 +886,16 @@ describe('dispatcher', () => {
     const { user, aiEmployees, environments, vaultSecrets, modelProviders } = await schema()
 
     // ghost task arm
-    await expect(loadReviewPlan('ghost', 'u-x', '')).rejects.toThrow(/task not found/i)
+    await expect(loadReviewPlan('ghost', '00000000-0000-7000-8000-f20d9b639839', '')).rejects.toThrow(/task not found/i)
 
     // human reviewer arm
     const agentId = await mkAiAgent()
-    await db.insert(user).values({ id: 'u-human', name: 'Human Rev', email: 'hr@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
+    await db.insert(user).values({ id: '00000000-0000-7000-8000-28d0c73631ec', name: 'Human Rev', email: 'hr@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
     const t = await callProc('tasks.create', { title: 'Guards', assigneeId: agentId })
-    await expect(dispatchTask(t.id, 'http://tandem.local', { reviewBy: 'u-human' })).rejects.toThrow(/not an AI employee/i)
+    await expect(dispatchTask(t.id, 'http://tandem.local', { reviewBy: '00000000-0000-7000-8000-28d0c73631ec' })).rejects.toThrow(/not an AI employee/i)
 
     // recordVerdict guards: no round yet / double verdict
-    await expect(recordVerdict(t.id, 'u-human', 'approved', '', 'human')).rejects.toThrow(/no open review round/i)
+    await expect(recordVerdict(t.id, '00000000-0000-7000-8000-28d0c73631ec', 'approved', '', 'human')).rejects.toThrow(/no open review round/i)
     expect(await currentRound(t.id)).toBe(0)
     await dispatchAiReviewTurns(t.id) // round 0: no-op arm
 
@@ -903,17 +903,17 @@ describe('dispatcher', () => {
     process.env.TANDEM_FAKE_SCRIPT = 'done\n{"kind": "result", "body": "shipped"}'
     process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'ok\n{"kind": "result", "body": "fine"}'
     const { encryptSecret } = await import('../server/domains/vault/vault-crypto.service')
-    const pwSecret = await db.insert(vaultSecrets).values({ id: 'sec-pw', name: 'pw', ciphertext: encryptSecret('hunter2'), createdBy: 'u-admin', createdAt: new Date(), updatedAt: new Date() }).returning()
+    const pwSecret = await db.insert(vaultSecrets).values({ id: 'sec-pw', name: 'pw', ciphertext: encryptSecret('hunter2'), createdBy: '00000000-0000-7000-8000-cd5fca5e2d34', createdAt: new Date(), updatedAt: new Date() }).returning()
     void pwSecret
-    const keySecret = await db.insert(vaultSecrets).values({ id: 'sec-key', name: 'key', ciphertext: encryptSecret('ssh-key-bytes'), createdBy: 'u-admin', createdAt: new Date(), updatedAt: new Date() }).returning()
+    const keySecret = await db.insert(vaultSecrets).values({ id: 'sec-key', name: 'key', ciphertext: encryptSecret('ssh-key-bytes'), createdBy: '00000000-0000-7000-8000-cd5fca5e2d34', createdAt: new Date(), updatedAt: new Date() }).returning()
     void keySecret
-    const llmSecret = await db.insert(vaultSecrets).values({ id: 'sec-llm', name: 'llm', ciphertext: encryptSecret('sk-123'), createdBy: 'u-admin', createdAt: new Date(), updatedAt: new Date() }).returning()
+    const llmSecret = await db.insert(vaultSecrets).values({ id: 'sec-llm', name: 'llm', ciphertext: encryptSecret('sk-123'), createdBy: '00000000-0000-7000-8000-cd5fca5e2d34', createdAt: new Date(), updatedAt: new Date() }).returning()
     void llmSecret
     await db.insert(modelProviders).values({ id: 'prov-r', label: 'OmniRoute R', baseUrl: 'https://ai.example/v1', createdAt: new Date(), updatedAt: new Date() })
-    await db.insert(environments).values({ id: 'env-r', name: 'ERev', host: '127.0.0.1', port: '2222', username: 'u', secretId: 'sec-pw', secretUsage: 'password' })
-    await db.insert(user).values({ id: 'u-rev', name: 'Secured Rev', email: 'sr@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
-    await db.insert(aiEmployees).values({ userId: 'u-rev', environmentId: 'env-r', instructions: '', executable: 'hermes acp', providerId: 'prov-r', model: 'glm-x', apiKeySecretId: 'sec-llm' })
-    const t2 = await callProc('tasks.create', { title: 'Secured review', description: 'review with secrets wired', assigneeId: agentId, reviewers: ['u-rev'] })
+    await db.insert(environments).values({ id: 'env-r', name: 'ERev', host: '127.0.0.1', port: '2222', username: '00000000-0000-7000-8000-51e69892ab49', secretId: 'sec-pw', secretUsage: 'password' })
+    await db.insert(user).values({ id: '00000000-0000-7000-8000-fe1cc20db501', name: 'Secured Rev', email: 'sr@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
+    await db.insert(aiEmployees).values({ userId: '00000000-0000-7000-8000-fe1cc20db501', environmentId: 'env-r', instructions: '', executable: 'hermes acp', providerId: 'prov-r', model: 'glm-x', apiKeySecretId: 'sec-llm' })
+    const t2 = await callProc('tasks.create', { title: 'Secured review', description: 'review with secrets wired', assigneeId: agentId, reviewers: ['00000000-0000-7000-8000-fe1cc20db501'] })
     await callProc('tasks.update', { id: t2.id, status: STATUS.doing })
     const { submitResult } = await import('../server/domains/tasks/workflow.service')
     await submitResult(t2.id, agentId, 'real body')
@@ -925,16 +925,16 @@ describe('dispatcher', () => {
     }
     expect(done).toBe(true)
     // double-verdict guard on the decided round
-    await expect(recordVerdict(t2.id, 'u-rev', 'approved', 'again', 'human')).rejects.toThrow(/already recorded|no open review round/i)
+    await expect(recordVerdict(t2.id, '00000000-0000-7000-8000-fe1cc20db501', 'approved', 'again', 'human')).rejects.toThrow(/already recorded|no open review round/i)
     // the review brief carried the parent description
     const { taskRuns } = await schema()
-    const revPrompt = (await db.select().from(taskRuns)).filter(r => r.employeeId === 'u-rev')[0]!.prompt!
+    const revPrompt = (await db.select().from(taskRuns)).filter(r => r.employeeId === '00000000-0000-7000-8000-fe1cc20db501')[0]!.prompt!
     expect(revPrompt).toContain('review with secrets wired')
     // ssh KEY usage arm: a reviewer env with a key secret fills plan.sshKey
-    await db.insert(environments).values({ id: 'env-k', name: 'EKey', host: '127.0.0.1', port: '2222', username: 'u', secretId: 'sec-key' })
-    await db.insert(user).values({ id: 'u-revk', name: 'Key Rev', email: 'kr@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
-    await db.insert(aiEmployees).values({ userId: 'u-revk', environmentId: 'env-k', instructions: '', executable: 'hermes acp' })
-    const planK = await loadReviewPlan(t2.id, 'u-revk', 'body')
+    await db.insert(environments).values({ id: 'env-k', name: 'EKey', host: '127.0.0.1', port: '2222', username: '00000000-0000-7000-8000-51e69892ab49', secretId: 'sec-key' })
+    await db.insert(user).values({ id: '00000000-0000-7000-8000-2e718e818929', name: 'Key Rev', email: 'kr@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
+    await db.insert(aiEmployees).values({ userId: '00000000-0000-7000-8000-2e718e818929', environmentId: 'env-k', instructions: '', executable: 'hermes acp' })
+    const planK = await loadReviewPlan(t2.id, '00000000-0000-7000-8000-2e718e818929', 'body')
     expect(planK.sshKey).toBe('ssh-key-bytes')
     delete process.env.TANDEM_FAKE_SCRIPT
     delete process.env.TANDEM_FAKE_SCRIPT_REVIEW
@@ -949,7 +949,7 @@ describe('dispatcher', () => {
       const jay = await mkAiAgent()
       const ash = await mkAiAgent()
       await db.insert(employeeSupervisors).values({ employeeId: jay, supervisorId: ash })
-      const t = await callProc('tasks.create', { title: 'Rearm', assigneeId: jay, ownerId: 'u-admin' })
+      const t = await callProc('tasks.create', { title: 'Rearm', assigneeId: jay, ownerId: '00000000-0000-7000-8000-cd5fca5e2d34' })
       const { dispatchTask } = await import('../server/domains/tasks/runner.service')
       await (await dispatchTask(t.id, 'http://tandem.local')).finished
       const { tasks, taskRuns } = await schema()
@@ -968,7 +968,7 @@ describe('dispatcher', () => {
       // answer -> re-arm without an explicit body (fetches from activity)
       process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'ok now\n{"kind": "result", "body": "approved after the answer"}'
       const { answerQuestion } = await import('../server/domains/tasks/workflow.service')
-      await answerQuestion(t.id, 'u-admin', 'blue')
+      await answerQuestion(t.id, '00000000-0000-7000-8000-cd5fca5e2d34', 'blue')
       let done = false
       for (let i = 0; i < 100 && !done; i++) {
         await new Promise(r => setTimeout(r, 100))
@@ -1189,8 +1189,8 @@ describe('dispatcher', () => {
   it('dispatch to a human assignee is refused', async () => {
     const { db } = await dbm()
     const { user } = await schema()
-    await db.insert(user).values({ id: 'u-h', name: 'Hu', email: 'hu@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
-    const t = await callProc('tasks.create', { title: 'Nope', assigneeId: 'u-h' })
+    await db.insert(user).values({ id: '00000000-0000-7000-8000-b4b57f028566', name: 'Hu', email: 'hu@tandem.local', emailVerified: true, createdAt: new Date(), updatedAt: new Date() })
+    const t = await callProc('tasks.create', { title: 'Nope', assigneeId: '00000000-0000-7000-8000-b4b57f028566' })
     await expect(callProc('tasks.dispatch', { taskId: t.id })).rejects.toThrow(/not an AI/i)
   })
 

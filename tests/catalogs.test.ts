@@ -5,7 +5,7 @@ import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 import './api-harness'
 
-const admin = { user: { id: 'test-admin', name: 'Test Admin', email: 'test@tandem.local', role: 'admin' } }
+const admin = { user: { id: '00000000-0000-7000-8000-3f18cbc16519', name: 'Test Admin', email: 'test@tandem.local', role: 'admin' } }
 
 async function proc(path: string[], input?: unknown) {
   const { appRouter: router } = await import('../server/domains/app.router')

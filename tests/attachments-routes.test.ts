@@ -34,7 +34,7 @@ function evFor(url: string, body: Buffer, contentType: string, method = 'POST') 
 beforeEach(async () => {
   await resetSchema()
   await applyMigrations()
-  await db.insert(userTable).values({ id: 'u-att-admin', name: 'Att Admin', email: 'att-admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
+  await db.insert(userTable).values({ id: '00000000-0000-7000-8000-145adf11dba0', name: 'Att Admin', email: 'att-admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
   await db.insert(tasks).values({ id: 'task-att-1', title: 'Att task', description: '', status: STATUS.todo, createdAt: new Date(), updatedAt: new Date() })
 })
 
@@ -70,7 +70,7 @@ describe('POST /api/tasks/:id/attachments', () => {
     const row = (await db.select().from(taskAttachments))[0]
     expect(row.taskId).toBe('task-att-1')
     expect(row.kind).toBe('input')
-    expect(row.createdBy).toBe('test-admin')
+    expect(row.createdBy).toBe('00000000-0000-7000-8000-3f18cbc16519')
   })
 
   it('treats a missing router param as an unknown task (defensive arm)', async () => {
@@ -165,7 +165,7 @@ describe('GET /api/attachments/:id', () => {
     const { default: get } = await import('../server/routes/api/attachments/[id].get')
     const id = crypto.randomUUID()
     saveAttachmentBytes('task-att-1', id, Buffer.from('BYTES-1'))
-    await db.insert(taskAttachments).values({ id, taskId: 'task-att-1', kind: 'input', filename: 'a.txt', mime: 'text/plain', size: 7, sha256: sha256Hex(Buffer.from('BYTES-1')), createdBy: 'u-att-admin' })
+    await db.insert(taskAttachments).values({ id, taskId: 'task-att-1', kind: 'input', filename: 'a.txt', mime: 'text/plain', size: 7, sha256: sha256Hex(Buffer.from('BYTES-1')), createdBy: '00000000-0000-7000-8000-145adf11dba0' })
 
     const ev = evFor('/api/attachments/' + id, Buffer.alloc(0), 'text/plain', 'GET')
     ev.context.params = { id }
@@ -189,7 +189,7 @@ describe('GET /api/attachments/:id', () => {
 
     // 410 when the row exists but bytes are gone
     const ghostId = crypto.randomUUID()
-    await db.insert(taskAttachments).values({ id: ghostId, taskId: 'task-att-1', kind: 'input', filename: 'g.txt', mime: 'text/plain', size: 1, sha256: 'z', createdBy: 'u-att-admin' })
+    await db.insert(taskAttachments).values({ id: ghostId, taskId: 'task-att-1', kind: 'input', filename: 'g.txt', mime: 'text/plain', size: 1, sha256: 'z', createdBy: '00000000-0000-7000-8000-145adf11dba0' })
     const ev4 = evFor('/api/attachments/' + ghostId, Buffer.alloc(0), 'text/plain', 'GET')
     ev4.context.params = { id: ghostId }
     await expect(get(ev4 as never)).rejects.toMatchObject({ statusCode: 410 })
@@ -197,7 +197,7 @@ describe('GET /api/attachments/:id', () => {
     // disallowed row mime falls back to octet-stream download
     const octId = crypto.randomUUID()
     saveAttachmentBytes('task-att-1', octId, Buffer.from('X'))
-    await db.insert(taskAttachments).values({ id: octId, taskId: 'task-att-1', kind: 'input', filename: 'm.bin', mime: 'application/x-sh', size: 1, sha256: 'w', createdBy: 'u-att-admin' })
+    await db.insert(taskAttachments).values({ id: octId, taskId: 'task-att-1', kind: 'input', filename: 'm.bin', mime: 'application/x-sh', size: 1, sha256: 'w', createdBy: '00000000-0000-7000-8000-145adf11dba0' })
     const ev5 = evFor('/api/attachments/' + octId, Buffer.alloc(0), 'text/plain', 'GET')
     ev5.context.params = { id: octId }
     const sent5: Record<string, unknown> = {}

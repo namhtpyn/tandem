@@ -1,5 +1,5 @@
 // Drizzle rc (Relations v2) over Postgres.
-import { type AnyPgColumn, pgTable, text, timestamp, boolean, integer, index, primaryKey, check, jsonb } from 'drizzle-orm/pg-core'
+import { type AnyPgColumn, pgTable, text, timestamp, boolean, integer, index, primaryKey, check, jsonb, uuid } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 import { defineRelations } from 'drizzle-orm'
 
@@ -63,7 +63,7 @@ export const vaultSecrets = pgTable('vault_secrets', {
   folderId: text('folder_id').references(() => vaultFolders.id, { onDelete: 'set null' }),
   ciphertext: text('ciphertext').notNull(), // v1:<b64 iv>:<b64 tag>:<b64 ct>
   lastFour: text('last_four').notNull().default(''), // display hint only
-  createdBy: text('created_by').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  createdBy: uuid('created_by').notNull().references(() => user.id, { onDelete: 'cascade' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
@@ -85,8 +85,8 @@ export const vaultAudit = pgTable('vault_audit', {
 // Users ARE employees, so both columns reference user.
 // Self-supervision is structurally impossible (CHECK).
 export const employeeSupervisors = pgTable('employee_supervisors', {
-  employeeId: text('employee_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
-  supervisorId: text('supervisor_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  employeeId: uuid('employee_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  supervisorId: uuid('supervisor_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
 }, (t) => [
   primaryKey({ columns: [t.employeeId, t.supervisorId] }),
   check('no_self_supervision', sql`${t.supervisorId} <> ${t.employeeId}`),
@@ -110,7 +110,7 @@ export const modelProviders = pgTable('model_providers', {
 // AI extension (1:1 with user): row existence marks the employee as an AI
 // agent; absence = human employee. No kind column anywhere.
 export const aiEmployees = pgTable('ai_employees', {
-  userId: text('user_id').primaryKey().references(() => user.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').primaryKey().references(() => user.id, { onDelete: 'cascade' }),
   environmentId: text('environment_id').notNull().references(() => environments.id, { onDelete: 'restrict' }),
   instructions: text('instructions').notNull().default(''),
   // full command that starts an ACP server on stdio in the environment
@@ -169,9 +169,9 @@ export const tasks = pgTable('tasks', {
   // references task_statuses.id (seeded: todo/doing/done)
   status: text('status').notNull().default('01a14743-43f4-7053-a698-5b4ef36ed046'),
   projectId: text('project_id').references(() => projects.id, { onDelete: 'set null' }),
-  assigneeId: text('assignee_id').references(() => user.id, { onDelete: 'set null' }),
+  assigneeId: uuid('assignee_id').references(() => user.id, { onDelete: 'set null' }),
   /** the person responsible for routing questions/answers (creator by default; NOT necessarily a supervisor) */
-  ownerId: text('owner_id').references(() => user.id, { onDelete: 'set null' }),
+  ownerId: uuid('owner_id').references(() => user.id, { onDelete: 'set null' }),
   /** unanimous-approval gate before done; any mix of AI/human */
   reviewers: text('reviewers').array().notNull().default(sql`'{}'::text[]`),
   /** everyone the question has already been through: [owner, ...forwards] — loop guard */
@@ -185,7 +185,7 @@ export const tasks = pgTable('tasks', {
 
   /** status to restore when the auto-block (open children) lifts; null = not auto-blocked */
   preBlockStatus: text('pre_block_status'),
-  createdBy: text('created_by').references(() => user.id, { onDelete: 'set null' }),
+  createdBy: uuid('created_by').references(() => user.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
@@ -200,14 +200,14 @@ export const tasks = pgTable('tasks', {
 export const taskObligations = pgTable('task_obligations', {
   id: text('id').primaryKey(),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
-  employeeId: text('employee_id').references(() => user.id, { onDelete: 'cascade' }),
+  employeeId: uuid('employee_id').references(() => user.id, { onDelete: 'cascade' }),
   /** answer | approval (future roles just add values) */
   role: text('role').notNull(),
   /** pending | fulfilled | cancelled */
   status: text('status').notNull().default('pending'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   resolvedAt: timestamp('resolved_at', { withTimezone: true }),
-  resolvedBy: text('resolved_by').references(() => user.id, { onDelete: 'set null' }),
+  resolvedBy: uuid('resolved_by').references(() => user.id, { onDelete: 'set null' }),
 }, (t) => [
   index('task_obligations_task_idx').on(t.taskId, t.role, t.status),
   index('task_obligations_employee_idx').on(t.employeeId, t.status),
@@ -217,9 +217,9 @@ export const taskObligations = pgTable('task_obligations', {
 export const taskAssignments = pgTable('task_assignments', {
   id: text('id').primaryKey(),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
-  employeeId: text('employee_id').references(() => user.id, { onDelete: 'set null' }),
+  employeeId: uuid('employee_id').references(() => user.id, { onDelete: 'set null' }),
   reason: text('reason').notNull().default(''),
-  actorId: text('actor_id').references(() => user.id, { onDelete: 'set null' }),
+  actorId: uuid('actor_id').references(() => user.id, { onDelete: 'set null' }),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   endedAt: timestamp('ended_at', { withTimezone: true }),
 }, (t) => [
@@ -237,7 +237,7 @@ export const taskProposals = pgTable('task_proposals', {
   /** proposed | executed | rejected */
   status: text('status').notNull().default('proposed'),
   decisionNote: text('decision_note').notNull().default(''),
-  decidedBy: text('decided_by').references(() => user.id, { onDelete: 'set null' }),
+  decidedBy: uuid('decided_by').references(() => user.id, { onDelete: 'set null' }),
   decidedAt: timestamp('decided_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
@@ -247,7 +247,7 @@ export const taskProposals = pgTable('task_proposals', {
 export const taskRuns = pgTable('task_runs', {
   id: text('id').primaryKey(),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
-  employeeId: text('employee_id').references(() => user.id, { onDelete: 'set null' }),
+  employeeId: uuid('employee_id').references(() => user.id, { onDelete: 'set null' }),
   /** REVIEW LAW: the ACP session this run used — review turns by OTHER employees must
    * never resume the assignee's session (one session per task PER EMPLOYEE, not per task) */
   sessionId: text('session_id'),
@@ -270,7 +270,7 @@ export const taskRuns = pgTable('task_runs', {
 export const taskReviews = pgTable('task_reviews', {
   id: text('id').primaryKey(),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
-  reviewerId: text('reviewer_id').references(() => user.id, { onDelete: 'set null' }),
+  reviewerId: uuid('reviewer_id').references(() => user.id, { onDelete: 'set null' }),
   /** 1, 2, … — increments on resubmission after change_requested */
   round: integer('round').notNull(),
   /** pending | approved | change_requested | rejected */
@@ -307,7 +307,7 @@ export const taskActivity = pgTable('task_activity', {
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
   /** question | answer | forward | note | verdict | status */
   kind: text('kind').notNull(),
-  authorId: text('author_id').references(() => user.id, { onDelete: 'set null' }),
+  authorId: uuid('author_id').references(() => user.id, { onDelete: 'set null' }),
   body: text('body').notNull().default(''),
   meta: jsonb('meta').notNull().default({}),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

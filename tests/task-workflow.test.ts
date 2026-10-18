@@ -12,12 +12,12 @@ import { applyMigrations } from '../server/db/index'
 import { answerHolder, spawnObligation } from '../server/domains/tasks/obligations.service'
 import { STATUS } from '../shared/status'
 
-const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
-const worker = { id: 'u-worker', name: 'Worker', email: 'worker@tandem.local', role: 'member' }
-const ownerUser = { id: 'u-owner', name: 'Owner', email: 'owner@tandem.local', role: 'member' }
-const rev1 = { id: 'u-rev1', name: 'Rev One', email: 'rev1@tandem.local', role: 'member' }
-const rev2 = { id: 'u-rev2', name: 'Rev Two', email: 'rev2@tandem.local', role: 'member' }
-const top = { id: 'u-top', name: 'Top', email: 'top@tandem.local', role: 'member' }
+const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
+const worker = { id: '00000000-0000-7000-8000-bccb5af49873', name: 'Worker', email: 'worker@tandem.local', role: 'member' }
+const ownerUser = { id: '00000000-0000-7000-8000-820caae75a5f', name: 'Owner', email: 'owner@tandem.local', role: 'member' }
+const rev1 = { id: '00000000-0000-7000-8000-a825ff846dc9', name: 'Rev One', email: 'rev1@tandem.local', role: 'member' }
+const rev2 = { id: '00000000-0000-7000-8000-2b52961dac61', name: 'Rev Two', email: 'rev2@tandem.local', role: 'member' }
+const top = { id: '00000000-0000-7000-8000-5ecc0b58a4f3', name: 'Top', email: 'top@tandem.local', role: 'member' }
 
 
 async function dbm() {
@@ -79,7 +79,7 @@ beforeEach(async () => {
   await applyMigrations()
   const { db } = await dbm()
   const { user } = await schema()
-  await db.insert(user).values({ id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
+  await db.insert(user).values({ id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
 })
 
 describe('task workflow — question chain', () => {
@@ -345,7 +345,7 @@ describe('task workflow — guard rails', () => {
     await startWork(taskId)
     await as({ ...worker, id: idMap.get('worker')! }, async () => {
       const r = await callProc('tasks.ask', { taskId, body: 'who owns this?' })
-      expect(r.holderId).toBe('u-admin')
+      expect(r.holderId).toBe('00000000-0000-7000-8000-cd5fca5e2d34')
     })
     // creator (admin) answers — chain includes admin via fallback
     await callProc('tasks.answer', { taskId, body: 'me' })
@@ -357,12 +357,12 @@ describe('task workflow — guard rails', () => {
     await mkEmployee('worker', worker.name, worker.email)
     await mkEmployee('rev1', rev1.name, rev1.email)
     const revId = idMap.get('rev1')!
-    const taskId = await mkTask({ title: 'LN task', assigneeId: idMap.get('worker')!, reviewers: [revId, 'u-gone'] })
+    const taskId = await mkTask({ title: 'LN task', assigneeId: idMap.get('worker')!, reviewers: [revId, '00000000-0000-7000-8000-05db3a00ee3e'] })
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
     await iter.return?.()
     const row = (snap.value as any[]).find(r => r.id === taskId)
-    expect(row.reviewerNames).toEqual(['Rev One', 'u-gone'])
+    expect(row.reviewerNames).toEqual(['Rev One', '00000000-0000-7000-8000-05db3a00ee3e'])
   })
 
   it('every workflow proc rejects a missing session', async () => {
@@ -374,7 +374,7 @@ describe('task workflow — guard rails', () => {
     for (const p of procs) {
       const node = (appRouter as any).tasks[p]
       const internals = node['~orpc']
-      const base = { taskId: 't-x', toEmployeeId: 'u-x', body: 'x' }
+      const base = { taskId: 't-x', toEmployeeId: '00000000-0000-7000-8000-f20d9b639839', body: 'x' }
       await expect(internals.handler({ input: base, context, signal: new AbortController().signal })).rejects.toMatchObject({ code: 'UNAUTHORIZED' })
     }
   })
@@ -426,7 +426,7 @@ describe('task workflow — guard rails', () => {
     await startWork(taskId)
     await as({ ...worker, id: idMap.get('worker')! }, async () => { await callProc('tasks.ask', { taskId, body: 'q' }) })
     await as({ ...ownerUser, id: idMap.get('owner')! }, async () => {
-      await expect(callProc('tasks.forward', { taskId, toEmployeeId: 'u-ghost', body: 'x' })).rejects.toThrow(/employee does not exist/i)
+      await expect(callProc('tasks.forward', { taskId, toEmployeeId: '00000000-0000-7000-8000-9f2e5a2d4d64', body: 'x' })).rejects.toThrow(/employee does not exist/i)
     })
     // answer flips to todo; answering AGAIN (not waiting anymore) throws
     await as({ ...ownerUser, id: idMap.get('owner')! }, async () => {
@@ -466,9 +466,9 @@ describe('task workflow — guard rails', () => {
   it('create rejects a ghost assignee; live maps ai assignee + null fields', async () => {
     const { db } = await dbm()
     const { environments } = await schema()
-    await expect(callProc('tasks.create', { title: 'GA2', assigneeId: 'u-ghost' })).rejects.toThrow(/assignee does not exist/i)
+    await expect(callProc('tasks.create', { title: 'GA2', assigneeId: '00000000-0000-7000-8000-9f2e5a2d4d64' })).rejects.toThrow(/assignee does not exist/i)
     // AI employee via API (kind ai, with environment)
-    await db.insert(environments).values({ id: 'env-1', name: 'E1', host: '127.0.0.1', port: '22', username: 'u' })
+    await db.insert(environments).values({ id: 'env-1', name: 'E1', host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
     const r = await callProc('employees.create', { name: 'Robo', email: 'robo@tandem.local', kind: 'ai', title: 'Bot', supervisorIds: [], environmentId: 'env-1', executable: 'hermes acp' })
     const taskId = await mkTask({ title: 'AI task', assigneeId: r.id })
     const iter = await callProc('tasks.live')
@@ -486,7 +486,7 @@ describe('task workflow — guard rails', () => {
     const snap = await iter.next()
     await iter.return?.()
     const row = (snap.value as any[]).find(r => r.id === taskId)
-    expect(row).toMatchObject({ projectId: null, projectName: null, assigneeId: null, assigneeName: null, assigneeKind: null, ownerId: 'u-admin', ownerName: 'Admin', reviewers: [], reviewerNames: [], reviewApprovals: [], questionHolderId: null, questionHolderName: null })
+    expect(row).toMatchObject({ projectId: null, projectName: null, assigneeId: null, assigneeName: null, assigneeKind: null, ownerId: '00000000-0000-7000-8000-cd5fca5e2d34', ownerName: 'Admin', reviewers: [], reviewerNames: [], reviewApprovals: [], questionHolderId: null, questionHolderName: null })
   })
 
   it('live handles raw rows: null owner, held question', async () => {

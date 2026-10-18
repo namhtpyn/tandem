@@ -5,7 +5,7 @@ import './api-harness'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 
-const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
+const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 
 async function ctx(sessionUser: { id: string, name: string, email: string, role: string } | null = admin) {
   const { buildServerContext } = await import('../server/domains/kernel/context')
@@ -246,7 +246,7 @@ describe('providers', () => {
     await ensureProvider('seed-openai', 'OpenAI', 'https://api.openai.com', ['OPENAI-COMPLETIONS'])
     const { db } = await dbm()
     const { environments } = await import('../server/db/schema')
-    await db.insert(environments).values({ id: 'env-p', name: 'env-p', host: '127.0.0.1', port: '22', username: 'u' })
+    await db.insert(environments).values({ id: 'env-p', name: 'env-p', host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
     await callProc('employees.create', { name: 'P Bot', email: 'pbot@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-p', providerId: 'seed-openai' , executable: 'hermes acp' })
     await expect(callProc('providers.remove', { id: 'seed-openai' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
@@ -257,7 +257,7 @@ describe('employees model access', () => {
     await ensureProvider('seed-openai', 'OpenAI', 'https://api.openai.com', ['OPENAI-COMPLETIONS'])
     const { db } = await dbm()
     const { environments } = await import('../server/db/schema')
-    await db.insert(environments).values({ id: 'env-r', name: 'env-r', host: '127.0.0.1', port: '22', username: 'u' })
+    await db.insert(environments).values({ id: 'env-r', name: 'env-r', host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
     const bot = await callProc('employees.create', { name: 'R Bot', email: 'rbot@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-r' , executable: 'hermes acp' })
     await expect(callProc('employees.update', { id: bot.id, name: 'R Bot', title: 'B', supervisorIds: [], providerId: 'ghost-prov' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(callProc('employees.update', { id: bot.id, name: 'R Bot', title: 'B', supervisorIds: [], apiKeySecretId: 'ghost-sec' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
@@ -273,7 +273,7 @@ describe('employees model access', () => {
     await ensureProvider('seed-openai', 'OpenAI', 'https://api.openai.com', ['OPENAI-COMPLETIONS'])
     const { db } = await dbm()
     const { environments } = await import('../server/db/schema')
-    await db.insert(environments).values({ id: 'env-m', name: 'env-m', host: '127.0.0.1', port: '22', username: 'u' })
+    await db.insert(environments).values({ id: 'env-m', name: 'env-m', host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
     const sec = await callProc('vault.create', { name: 'bot-key', value: 'sk-test-123' })
     const bot = await callProc('employees.create', { name: 'M Bot', email: 'mbot@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-m', providerId: 'seed-openai', model: 'gpt-5.2', apiKeySecretId: sec.id , executable: 'hermes acp' })
     const { aiEmployees } = await import('../server/db/schema')
@@ -292,7 +292,7 @@ describe('employees model access', () => {
   it('rejects unknown provider / model / secret', async () => {
     const { db } = await dbm()
     const { environments } = await import('../server/db/schema')
-    await db.insert(environments).values({ id: 'env-x', name: 'env-x', host: '127.0.0.1', port: '22', username: 'u' })
+    await db.insert(environments).values({ id: 'env-x', name: 'env-x', host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
     await expect(callProc('employees.create', { name: 'X', email: 'x1@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-x', providerId: 'nope' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(callProc('employees.create', { name: 'X', email: 'x2@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-x', apiKeySecretId: 'nope' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
@@ -301,7 +301,7 @@ describe('employees model access', () => {
     await ensureProvider('seed-openai', 'OpenAI', 'https://api.openai.com', ['OPENAI-COMPLETIONS'])
     const { db } = await dbm()
     const { environments } = await import('../server/db/schema')
-    await db.insert(environments).values({ id: 'env-n', name: 'env-n', host: '127.0.0.1', port: '22', username: 'u' })
+    await db.insert(environments).values({ id: 'env-n', name: 'env-n', host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
     const bot = await callProc('employees.create', { name: 'N Bot', email: 'nbot@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-n', providerId: 'seed-openai' , executable: 'hermes acp' })
     // unknown values throw on the update path
     await expect(callProc('employees.update', { id: bot.id, name: 'N Bot', title: 'B', supervisorIds: [], providerId: 'ghost-prov' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
@@ -318,7 +318,7 @@ describe('employees model access', () => {
   it('update rejects unknown provider / secret (update-path validation)', async () => {
     const { db } = await dbm()
     const { environments } = await import('../server/db/schema')
-    await db.insert(environments).values({ id: 'env-u', name: 'env-u', host: '127.0.0.1', port: '22', username: 'u' })
+    await db.insert(environments).values({ id: 'env-u', name: 'env-u', host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
     const bot = await callProc('employees.create', { name: 'U Bot', email: 'ubot@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-u' , executable: 'hermes acp' })
     await expect(callProc('employees.update', { id: bot.id, name: 'U Bot', title: 'B', supervisorIds: [], providerId: 'ghost-prov' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(callProc('employees.update', { id: bot.id, name: 'U Bot', title: 'B', supervisorIds: [], apiKeySecretId: 'ghost-sec' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
@@ -327,7 +327,7 @@ describe('employees model access', () => {
   it('deleting the key secret nulls the agent reference (set null)', async () => {
     const { db } = await dbm()
     const { environments } = await import('../server/db/schema')
-    await db.insert(environments).values({ id: 'env-s', name: 'env-s', host: '127.0.0.1', port: '22', username: 'u' })
+    await db.insert(environments).values({ id: 'env-s', name: 'env-s', host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
     const sec = await callProc('vault.create', { name: 'gone-key', value: 'sk-gone' })
     const bot = await callProc('employees.create', { name: 'S Bot', email: 'sbot@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-s', apiKeySecretId: sec.id , executable: 'hermes acp' })
     await callProc('vault.remove', { id: sec.id })

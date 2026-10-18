@@ -10,7 +10,7 @@ import { resetSchema } from './helpers/pg'
 import { eq } from 'drizzle-orm'
 import { applyMigrations } from '../server/db/index'
 
-const admin = { id: 'u1', name: 'A', email: 'a@x', role: 'admin' }
+const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' }
 
 async function ctx(sessionUser: { id: string, name: string, email: string, role: string } | null = admin) {
   const { buildServerContext } = await import('../server/domains/kernel/context')
@@ -40,7 +40,7 @@ async function schema() {
 async function seedEnv(id: string): Promise<string> {
   const { db } = await dbm()
   const { environments } = await schema()
-  await db.insert(environments).values({ id, name: id, host: '127.0.0.1', port: '22', username: 'u' })
+  await db.insert(environments).values({ id, name: id, host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
   return id
 }
 
@@ -121,7 +121,7 @@ describe('employees.create', () => {
   })
 
   it('rejects unknown supervisor', async () => {
-    await expect(callProc('employees.create', { name: 'H', email: 'h3@tandem.local', kind: 'human', title: 'T', supervisorIds: ['ghost'] }))
+    await expect(callProc('employees.create', { name: 'H', email: 'h3@tandem.local', kind: 'human', title: 'T', supervisorIds: ['00000000-0000-7000-8000-21b2d09f5631'] }))
       .rejects.toThrow(/does not exist/i)
   })
 
@@ -197,7 +197,7 @@ describe('employees.update', () => {
   })
 
   it('rejects unknown employee id', async () => {
-    await expect(callProc('employees.update', { id: 'ghost', name: 'G', title: 'T', supervisorIds: [] }))
+    await expect(callProc('employees.update', { id: '00000000-0000-7000-8000-21b2d09f5631', name: 'G', title: 'T', supervisorIds: [] }))
       .rejects.toThrow(/not found/i)
   })
 
@@ -210,7 +210,7 @@ describe('employees.update', () => {
 
   it('rejects unknown supervisor on update', async () => {
     const a = await callProc('employees.create', { name: 'A', email: 'us@tandem.local', kind: 'human', title: 'T', supervisorIds: [] })
-    await expect(callProc('employees.update', { id: a.id, name: 'A', title: 'T', supervisorIds: ['ghost'] }))
+    await expect(callProc('employees.update', { id: a.id, name: 'A', title: 'T', supervisorIds: ['00000000-0000-7000-8000-21b2d09f5631'] }))
       .rejects.toThrow(/does not exist/i)
   })
 
@@ -283,12 +283,12 @@ describe('employees.remove', () => {
     const { appRouter: router } = await import('../server/domains/app.router')
     const { db } = await dbm()
     const { user } = await schema()
-    await db.insert(user).values({ id: 'u1', name: 'Sess', email: 'sess@tandem.local', role: 'viewer' })
+    await db.insert(user).values({ id: '00000000-0000-7000-8000-c5ea71554c77', name: 'Sess', email: 'sess@tandem.local', role: 'viewer' })
     // call the handler with a session present (as requireSession middleware provides)
     const node = (router as any).employees.remove['~orpc']
     await expect(node.handler({
-      input: { id: 'u1' },
-      context: { ...(await ctx()), session: { user: { id: 'u1', name: 'Sess', email: 'sess@tandem.local', role: 'viewer' } } },
+      input: { id: '00000000-0000-7000-8000-c5ea71554c77' },
+      context: { ...(await ctx()), session: { user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'Sess', email: 'sess@tandem.local', role: 'viewer' } } },
       signal: new AbortController().signal,
     })).rejects.toThrow(/own account/i)
     expect(await db.select().from(user)).toHaveLength(1) // nothing deleted
@@ -301,15 +301,15 @@ describe('employees.remove', () => {
     const { user } = await schema()
     // promote Self to admin, then delete the original admin while Self is... admin too (2 admins = allowed).
     // For the guard: single-admin case. Remove the second user; target = the only admin.
-    await db.insert(user).values({ id: 'only-admin', name: 'OA', email: 'oa@tandem.local', role: 'admin' })
-    await expect(callProc('employees.remove', { id: 'only-admin' })).rejects.toThrow(/last admin/i)
+    await db.insert(user).values({ id: '00000000-0000-7000-8000-d331665e11c9', name: 'OA', email: 'oa@tandem.local', role: 'admin' })
+    await expect(callProc('employees.remove', { id: '00000000-0000-7000-8000-d331665e11c9' })).rejects.toThrow(/last admin/i)
     // now add another admin -> deletion allowed
-    await db.insert(user).values({ id: 'admin-2', name: 'A2', email: 'a2@tandem.local', role: 'admin' })
-    await expect(callProc('employees.remove', { id: 'only-admin' })).resolves.toMatchObject({ ok: true })
+    await db.insert(user).values({ id: '00000000-0000-7000-8000-169e12499691', name: 'A2', email: 'a2@tandem.local', role: 'admin' })
+    await expect(callProc('employees.remove', { id: '00000000-0000-7000-8000-d331665e11c9' })).resolves.toMatchObject({ ok: true })
   })
 
   it('404s on unknown id', async () => {
-    await expect(callProc('employees.remove', { id: 'ghost' })).rejects.toThrow(/not found/i)
+    await expect(callProc('employees.remove', { id: '00000000-0000-7000-8000-21b2d09f5631' })).rejects.toThrow(/not found/i)
   })
 })
 
@@ -339,12 +339,12 @@ describe('employees API keys', () => {
     expect(rows2.some(r => r.name === 'ci-deploy-v2')).toBe(true)
     expect(rows2.some(r => r.name === 'ci-deploy')).toBe(false)
     // unknown key / blank name
-    await expect(callProc('employees.updateApiKey', { keyId: 'ghost', name: 'x' })).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    await expect(callProc('employees.updateApiKey', { keyId: '00000000-0000-7000-8000-21b2d09f5631', name: 'x' })).rejects.toMatchObject({ code: 'NOT_FOUND' })
     await expect(callProc('employees.updateApiKey', { keyId: minted.id, name: '   ' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
   it('createApiKey 404s unknown employee', async () => {
-    await expect(callProc('employees.createApiKey', { employeeId: 'ghost' })).rejects.toThrow(/not found/i)
+    await expect(callProc('employees.createApiKey', { employeeId: '00000000-0000-7000-8000-21b2d09f5631' })).rejects.toThrow(/not found/i)
   })
 
   it('listApiKeys returns metadata only (no key value)', async () => {
@@ -361,7 +361,7 @@ describe('employees API keys', () => {
   })
 
   it('listApiKeys 404s unknown employee', async () => {
-    await expect(callProc('employees.listApiKeys', { employeeId: 'ghost' })).rejects.toThrow(/not found/i)
+    await expect(callProc('employees.listApiKeys', { employeeId: '00000000-0000-7000-8000-21b2d09f5631' })).rejects.toThrow(/not found/i)
   })
 
   it('revokeApiKey deletes the key', async () => {
@@ -390,7 +390,7 @@ describe('employees API keys', () => {
   })
 
   it('revokeApiKey 404s unknown key', async () => {
-    await expect(callProc('employees.revokeApiKey', { keyId: 'ghost' })).rejects.toThrow(/not found/i)
+    await expect(callProc('employees.revokeApiKey', { keyId: '00000000-0000-7000-8000-21b2d09f5631' })).rejects.toThrow(/not found/i)
   })
 })
 

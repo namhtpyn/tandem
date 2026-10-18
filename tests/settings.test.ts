@@ -48,12 +48,12 @@ describe('settings store', () => {
   const { buildServerContext } = await import('../server/domains/kernel/context')
     await setSetting('companyName', 'Kept Name')
     const ctx = buildServerContext(new Headers())
-    ;(ctx as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({ user: { id: 'u1', name: 'A', email: 'a@x', role: 'admin' } })
+    ;(ctx as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({ user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' } })
     const node = (router as any).settings.update['~orpc']
-    await node.handler({ input: { disablePasswordLogin: false }, context: { ...ctx, session: { user: { id: 'u1', name: 'A', email: 'a@x', role: 'admin' } } }, signal: new AbortController().signal })
+    await node.handler({ input: { disablePasswordLogin: false }, context: { ...ctx, session: { user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' } } }, signal: new AbortController().signal })
     expect((await getSettings()).companyName).toBe('Kept Name')
     // and with a value present it persists (trims)
-    await node.handler({ input: { companyName: '  New Name  ' }, context: { ...ctx, session: { user: { id: 'u1', name: 'A', email: 'a@x', role: 'admin' } } }, signal: new AbortController().signal })
+    await node.handler({ input: { companyName: '  New Name  ' }, context: { ...ctx, session: { user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' } } }, signal: new AbortController().signal })
     expect((await getSettings()).companyName).toBe('New Name')
   })
 
@@ -66,7 +66,7 @@ describe('settings store', () => {
 
 
 describe('settings: workspace ai assignments', () => {
-  const admin = { id: 'u-admin', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
+  const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 
   beforeEach(async () => {
     const { db } = await import('../server/db')

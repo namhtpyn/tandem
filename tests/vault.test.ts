@@ -8,7 +8,7 @@ import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 import { decryptSecret, encryptSecret, lastFourHint } from '../server/domains/vault/vault-crypto.service'
 
-const admin = { id: 'u1', name: 'A', email: 'a@x', role: 'admin' }
+const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' }
 
 async function ctx(sessionUser: { id: string, name: string, email: string, role: string } | null = admin) {
   const { buildServerContext } = await import('../server/domains/kernel/context')
@@ -51,7 +51,7 @@ async function secretFactory(name: string, value = 'super-secret-value', descrip
 beforeEach(async () => {
   await resetSchema()
   await applyMigrations()
-  await userFactory('u1')
+  await userFactory('00000000-0000-7000-8000-c5ea71554c77')
 })
 
 describe('vault-crypto (module)', () => {
@@ -178,18 +178,18 @@ describe('vault API', () => {
     await callProc('vault.update', { id: a.id, name: 'first', description: '', value: 'rotated' })
     const audit = await callProc('vault.audit')
     expect(audit.map((r: any) => r.action)).toEqual(['update', 'create', 'create'])
-    expect(audit.every((r: any) => r.actorId === 'u1')).toBe(true)
+    expect(audit.every((r: any) => r.actorId === '00000000-0000-7000-8000-c5ea71554c77')).toBe(true)
   })
 
   it('cascade: deleting the creator removes their secrets but keeps audit tombstones', async () => {
-    await userFactory('u2')
+    await userFactory('00000000-0000-7000-8000-b9c69e5488ff')
     const { db } = await dbm()
     const { vaultSecrets, user } = await schema()
     // create as u2
     const { appRouter: router } = await import('../server/domains/app.router')
     const node = (router as any).vault.create['~orpc']
-    const row = await node.handler({ input: { name: 'u2-secret', value: 'v', description: '' }, context: { ...(await ctx({ id: 'u2', name: 'B', email: 'b@x', role: 'admin' })), session: { user: { id: 'u2', name: 'B', email: 'b@x', role: 'admin' } } }, signal: new AbortController().signal })
-    await db.delete(user).where(eq(user.id, 'u2'))
+    const row = await node.handler({ input: { name: 'u2-secret', value: 'v', description: '' }, context: { ...(await ctx({ id: '00000000-0000-7000-8000-b9c69e5488ff', name: 'B', email: 'b@x', role: 'admin' })), session: { user: { id: '00000000-0000-7000-8000-b9c69e5488ff', name: 'B', email: 'b@x', role: 'admin' } } }, signal: new AbortController().signal })
+    await db.delete(user).where(eq(user.id, '00000000-0000-7000-8000-b9c69e5488ff'))
     const remaining = await db.select().from(vaultSecrets)
     expect(remaining).toHaveLength(0)
     const audit = await callProc('vault.audit')

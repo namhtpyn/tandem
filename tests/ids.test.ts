@@ -6,7 +6,7 @@ import { uuidv7 } from '../server/domains/kernel/ids'
 
 const UUID7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
-const admin = { user: { id: 'test-admin', name: 'Test Admin', email: 'test@tandem.local', role: 'admin' } }
+const admin = { user: { id: '00000000-0000-7000-8000-3f18cbc16519', name: 'Test Admin', email: 'test@tandem.local', role: 'admin' } }
 
 async function proc(path: string[], input?: unknown) {
   const { appRouter: router } = await import('../server/domains/app.router')
