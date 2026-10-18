@@ -1,5 +1,5 @@
 // Assignee history — append-only ledger of who owned a task and why it moved.
-// The current assignee stays denormalized on tandem_tasks; every change flows
+// The current assignee stays denormalized on tasks; every change flows
 // through recordAssignment so the ledger never drifts (user law, 2026-10-15).
 import { and, desc, eq, isNull } from 'drizzle-orm'
 import { db } from '../../db'

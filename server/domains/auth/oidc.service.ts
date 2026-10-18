@@ -1,4 +1,4 @@
-// OIDC provider registry — stored as JSON in tandem_settings (key: oidc_providers).
+// OIDC provider registry — stored as JSON in settings (key: oidc_providers).
 // Env fallback seeds ONE provider (legacy/simple deployments):
 //   TANDEM_OIDC_ISSUER / TANDEM_OIDC_CLIENT_ID / TANDEM_OIDC_CLIENT_SECRET
 //   TANDEM_OIDC_LABEL (display name, default "SSO")

@@ -1,4 +1,4 @@
-// Task attachments: metadata rows in tandem_task_attachments, bytes on disk under
+// Task attachments: metadata rows in task_attachments, bytes on disk under
 // a per-task directory <DATA_ROOT>/tasks/<taskId>/attachments/<id> (DATA_ROOT
 // defaults to /tandem — all Tandem data lives under /tandem/**; mount one volume
 // there in docker; TANDEM_ATTACHMENTS_DIR overrides the root).

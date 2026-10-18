@@ -11,7 +11,7 @@ beforeEach(async () => {
   await resetSchema()
   const { applyMigrations } = await import('../server/db/index')
   await applyMigrations()
-  await sqlClient`delete from tandem_user`
+  await sqlClient`delete from "user"`
 })
 
 describe('auth route header handling', () => {
@@ -117,7 +117,7 @@ describe('GET /health/ready 503 path', () => {
     // sabotage the ledger the ready check uses: point search_path at a dead
     // schema via a prepared sabotage — simplest: drop the migrations table so
     // the ledger count query throws inside the handler's try
-    await sqlClient`drop table tandem_migrations`
+    await sqlClient`drop table migrations`
     const { result, event } = await call('../server/routes/health/ready.get.ts', { method: 'GET', url: '/health/ready' })
     expect(result).toMatchObject({ ok: false })
     expect((event.node.res as { statusCode: number }).statusCode).toBe(503)
@@ -315,7 +315,7 @@ describe('auth route fallback arms (real coverage)', () => {
 
   it('POST sign-up/email closed once a user exists (403)', async () => {
     const { sqlClient } = await import('../server/db/index')
-    await sqlClient`insert into tandem_user (id, name, email, email_verified, created_at, updated_at, role)
+    await sqlClient`insert into "user" (id, name, email, email_verified, created_at, updated_at, role)
       values ('u-close', 'Closer', 'c@x.co', true, now(), now(), 'viewer')`
     await expect(call('../server/routes/auth/[...].ts', { method: 'POST', url: '/auth/sign-up/email', body: { email: 'a@b.co', password: 'password1234', name: 'A' } }))
       .rejects.toMatchObject({ statusCode: 403 })

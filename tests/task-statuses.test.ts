@@ -396,7 +396,7 @@ describe('jev auto-assign', () => {
     // simulate a dangling project reference (FK normally prevents it; guards the lookup)
     const d = await dbm()
     const { tasks } = await import('../server/db/schema')
-    await d.db.execute('ALTER TABLE tandem_tasks DROP CONSTRAINT tandem_tasks_project_id_tandem_projects_id_fkey')
+    await d.db.execute('ALTER TABLE tasks DROP CONSTRAINT tandem_tasks_project_id_tandem_projects_id_fkey')
     await d.db.update(tasks).set({ projectId: 'ghost-proj' }).where(eq(tasks.id, t.id))
     const origFetch = globalThis.fetch
     let state = ''

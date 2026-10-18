@@ -18,7 +18,7 @@ describe('settings store', () => {
     await setSetting('k2', 'first')
     await setSetting('k2', 'second')
     expect(await getSetting('k2')).toBe('second')
-    const rows = await postgres`select count(*)::int as n from tandem_settings where key = 'k2'`
+    const rows = await postgres`select count(*)::int as n from settings where key = 'k2'`
     expect(rows[0]!.n).toBe(1)
   })
 

@@ -3,7 +3,7 @@
 // (script: scripts/gen-auth-schema.ts; config mirror: scripts/auth.config.ts)
 import { pgTable, text, timestamp, boolean, integer, index } from 'drizzle-orm/pg-core'
 
-export const user = pgTable('tandem_user', {
+export const user = pgTable('user', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
  email: text('email').notNull().unique(),
@@ -14,7 +14,7 @@ export const user = pgTable('tandem_user', {
  role: text('role', { enum: ['admin', 'employee', 'viewer'] }).default('viewer'),
  title: text('title').default('')
    })
-export const session = pgTable('tandem_session', {
+export const session = pgTable('session', {
   id: text('id').primaryKey(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
  token: text('token').notNull().unique(),
@@ -26,7 +26,7 @@ export const session = pgTable('tandem_session', {
   }, (table) => [
   index('session_userId_idx').on(table.userId),
 ]);
-export const account = pgTable('tandem_account', {
+export const account = pgTable('account', {
   id: text('id').primaryKey(),
   accountId: text('account_id').notNull(),
  providerId: text('provider_id').notNull(),
@@ -43,7 +43,7 @@ export const account = pgTable('tandem_account', {
   }, (table) => [
   index('account_userId_idx').on(table.userId),
 ]);
-export const verification = pgTable('tandem_verification', {
+export const verification = pgTable('verification', {
   id: text('id').primaryKey(),
   identifier: text('identifier').notNull(),
  value: text('value').notNull(),
@@ -53,7 +53,7 @@ export const verification = pgTable('tandem_verification', {
   }, (table) => [
   index('verification_identifier_idx').on(table.identifier),
 ]);
-export const apikey = pgTable('tandem_apikey', {
+export const apikey = pgTable('apikey', {
   id: text('id').primaryKey(),
   configId: text('config_id').default('default').notNull(),
  name: text('name'),

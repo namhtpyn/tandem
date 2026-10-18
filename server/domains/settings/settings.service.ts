@@ -1,4 +1,4 @@
-// Runtime key/value settings in Postgres (tandem_settings). Typed getters with
+// Runtime key/value settings in Postgres (settings). Typed getters with
 // defaults; OIDC providers live under key 'oidc_providers' as JSON.
 import { eq } from 'drizzle-orm'
 import { db } from '../../db'

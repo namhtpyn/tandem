@@ -17,12 +17,12 @@ describe('applyMigrations', () => {
     expect(applied.length).toBeGreaterThanOrEqual(1)
     const tables = await postgres`select table_name from information_schema.tables where table_schema = 'public' order by table_name`
     const names = tables.map(r => r.table_name as string)
-    expect(names).toContain('tandem_user')
-    expect(names).toContain('tandem_session')
-    expect(names).toContain('tandem_account')
-    expect(names).toContain('tandem_verification')
-    expect(names).toContain('tandem_settings')
-    const recorded = await postgres`select name from tandem_migrations`
+    expect(names).toContain('user')
+    expect(names).toContain('session')
+    expect(names).toContain('account')
+    expect(names).toContain('verification')
+    expect(names).toContain('settings')
+    const recorded = await postgres`select name from migrations`
     expect(recorded.map(r => r.name as string).sort()).toEqual(applied.slice().sort())
   })
 

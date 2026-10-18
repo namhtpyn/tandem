@@ -6,9 +6,10 @@ import { betterAuth } from 'better-auth'
 import { apiKey } from '@better-auth/api-key'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2'
-
+import { uuidv7 } from '../server/domains/kernel/ids'
 export const auth = betterAuth({
-  database: drizzleAdapter(drizzle('postgresql://generate:generate@127.0.0.1:1/generate', { schema: {} }), { provider: 'pg' }),
+  database: drizzleAdapter(drizzle('postgresql://generate:generate@127.0.0.1:1/generate', { schema: {} }), { provider: 'pg',  }),
+  advanced: { database: { generateId: 'uuid' } },
   basePath: '/auth',
   user: {
     additionalFields: {
@@ -19,4 +20,5 @@ export const auth = betterAuth({
   plugins: [
     apiKey({ enableSessionForAPIKeys: true, requireName: true, defaultPrefix: 'tandem_' }),
   ],
+
 })

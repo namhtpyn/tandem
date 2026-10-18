@@ -4,7 +4,7 @@
 //   DATABASE_URL            — postgres://user:pass@host:port/db (required in prod)
 //   TANDEM_DRIZZLE_DIR      — migrations dir override (default ./drizzle)
 //
-// Migrations are drizzle-kit SQL folders applied at boot, tracked in tandem_migrations.
+// Migrations are drizzle-kit SQL folders applied at boot, tracked in the migrations table.
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { readdirSync, readFileSync } from 'node:fs'
@@ -72,21 +72,31 @@ async function listMigrations(): Promise<MigrationSource[]> {
   }
 }
 
+export const MIGRATIONS_TABLE = 'migrations'
+
 export async function applyMigrations(): Promise<string[]> {
   const applied: string[] = []
-  await sqlClient`create table if not exists tandem_migrations (
+  // one-time ledger rename (tandem_migrations -> migrations): keep the applied
+  // history so already-run migrations never re-run; fresh databases start on
+  // the new name directly
+  const legacy = await sqlClient`select 1 from information_schema.tables where table_schema = 'public' and table_name = 'tandem_migrations'`
+  const modern = await sqlClient`select 1 from information_schema.tables where table_schema = 'public' and table_name = ${MIGRATIONS_TABLE}`
+  if (legacy.length > 0 && modern.length === 0) {
+    await sqlClient`alter table tandem_migrations rename to ${sqlClient(MIGRATIONS_TABLE)}`
+  }
+  await sqlClient`create table if not exists ${sqlClient(MIGRATIONS_TABLE)} (
     name text primary key,
     applied_at timestamptz not null default now()
   )`
   const migrations = await listMigrations()
   for (const m of migrations) {
-    const already = await sqlClient`select 1 from tandem_migrations where name = ${m.name}`
+    const already = await sqlClient`select 1 from ${sqlClient(MIGRATIONS_TABLE)} where name = ${m.name}`
     if (already.length > 0) continue
     const stmts = m.sql.split('--> statement-breakpoint').map(s => s.trim()).filter(Boolean)
     // one transaction per migration folder
     await sqlClient.begin(async (tx) => {
       for (const stmt of stmts) await tx.unsafe(stmt)
-      await tx`insert into tandem_migrations (name) values (${m.name})`
+      await tx`insert into ${sqlClient(MIGRATIONS_TABLE)} (name) values (${m.name})`
     })
     applied.push(m.name)
   }

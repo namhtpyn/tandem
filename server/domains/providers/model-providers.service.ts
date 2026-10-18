@@ -1,4 +1,4 @@
-// Model provider + model catalog (tandem_model_providers / tandem_models).
+// Model provider + model catalog (model_providers).
 // API keys are NEVER stored here — per-agent in the vault (fleet law).
 import { z } from 'zod'
 import { eq } from 'drizzle-orm'

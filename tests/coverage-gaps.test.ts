@@ -83,7 +83,7 @@ describe('auth first-user-admin hook', () => {
     const { getAuth } = await import('../server/domains/auth/auth.service')
     const auth = await getAuth()
     await auth.api.signUpEmail({ body: { email: 'first@x.co', password: 'password1234', name: 'First' } })
-    const rows = await sqlClient`select email, role from tandem_user`
+    const rows = await sqlClient`select email, role from "user"`
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ email: 'first@x.co', role: 'admin' })
   })

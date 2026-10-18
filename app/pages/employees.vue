@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { groupedSecretOptions } from '~/utils/vault-options'
 import { PROVIDER_KIND, endpointKind, isModelsEndpoint } from '#shared/api-styles'
-// Employees (LIVE): oRPC live query over tandem_user + supervision graph +
+// Employees (LIVE): oRPC live query over user + supervision graph +
 // AI extension rows. Mutations ride the same change-bus — every client
 // updates instantly. AI-ness is derived (extension row exists), never a
 // column, and kind is immutable after create.

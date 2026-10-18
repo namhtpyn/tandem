@@ -94,7 +94,7 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}): Promise<
         // input:false = server-owned, users can't self-promote
         role: { type: ['admin', 'employee', 'viewer'] as const, required: false, defaultValue: 'viewer', input: false },
         // employment title rides the identity row; AI-ness is derived from
-        // the tandem_ai_employees extension row, never a user column
+        // the ai_employees extension row, never a user column
         title: { type: 'string', required: false, defaultValue: '', input: false },
       },
     },
@@ -106,7 +106,7 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}): Promise<
       // production singleton — buildAuthForTest() is the only caller with the flag.
       ...(options.includeTestUtils ? [testUtils({ captureOTP: true })] : []),
       // API keys: AI employees authenticate with x-api-key; keys live in the
-      // tandem_apikey table (hashed). enableSessionForAPIKeys makes
+      // apikey table (hashed). enableSessionForAPIKeys makes
       // getSession accept them, so the oRPC middleware needs no changes.
       apiKey({
         enableSessionForAPIKeys: true,

@@ -3,7 +3,7 @@ import { type AnyPgColumn, pgTable, text, timestamp, boolean, integer, index, pr
 import { sql } from 'drizzle-orm'
 import { defineRelations } from 'drizzle-orm'
 
-// Auth tables (tandem_user/session/account/verification/apikey) are GENERATED
+// Auth tables (user/session/account/verification/apikey) are GENERATED
 // by the better-auth CLI into ./schema.auth.ts — regenerate with `bun run
 // gen:auth`; never edit by hand. CI reruns the generator and fails on drift.
 // Domain tables below are hand-owned.
@@ -13,7 +13,7 @@ export * from './schema.auth'
 // ---------- Tandem domain tables (hand-owned) ----------
 
 // SSH targets that run the Hermes agent (M2).
-export const environments = pgTable('tandem_environments', {
+export const environments = pgTable('environments', {
   id: text('id').primaryKey(),
   name: text('name').notNull().unique(),
   host: text('host').notNull(),
@@ -28,7 +28,7 @@ export const environments = pgTable('tandem_environments', {
 })
 
 // runtime key/value settings (oidc providers JSON, flags, …)
-export const settings = pgTable('tandem_settings', {
+export const settings = pgTable('settings', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -39,7 +39,7 @@ export const settings = pgTable('tandem_settings', {
 // consumers (M5 SSH runner) import vault-crypto and decrypt.
 // Vault folders: pure metadata for categorizing secrets. Deleting a folder
 // never deletes secrets (FK SET NULL -> uncategorized).
-export const vaultFolders = pgTable('tandem_vault_folders', {
+export const vaultFolders = pgTable('vault_folders', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -49,14 +49,14 @@ export const vaultFolders = pgTable('tandem_vault_folders', {
 // Employee title catalog: offered in the employee form picker. Employees keep
 // title as free text (no FK); renaming a catalog entry rewrites matching
 // employees so the org chart stays consistent.
-export const employeeTitles = pgTable('tandem_employee_titles', {
+export const employeeTitles = pgTable('employee_titles', {
   id: text('id').primaryKey(),
   name: text('name').notNull().unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
-export const vaultSecrets = pgTable('tandem_vault_secrets', {
+export const vaultSecrets = pgTable('vault_secrets', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   description: text('description').notNull().default(''),
@@ -69,7 +69,7 @@ export const vaultSecrets = pgTable('tandem_vault_secrets', {
 })
 
 // Audit trail: every vault write and every server-side decrypt ("use").
-export const vaultAudit = pgTable('tandem_vault_audit', {
+export const vaultAudit = pgTable('vault_audit', {
   id: text('id').primaryKey(),
   secretId: text('secret_id').references(() => vaultSecrets.id, { onDelete: 'cascade' }),
   secretName: text('secret_name').notNull(),
@@ -77,25 +77,25 @@ export const vaultAudit = pgTable('tandem_vault_audit', {
   actorId: text('actor_id').notNull().default('system'),
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
-  index('tandem_vault_audit_secret_idx').on(t.secretId),
-  index('tandem_vault_audit_at_idx').on(t.at),
+  index('vault_audit_secret_idx').on(t.secretId),
+  index('vault_audit_at_idx').on(t.at),
 ])
 
 // Supervision is many-to-many: one employee may have many supervisors.
-// Users ARE employees, so both columns reference tandem_user.
+// Users ARE employees, so both columns reference user.
 // Self-supervision is structurally impossible (CHECK).
-export const employeeSupervisors = pgTable('tandem_employee_supervisors', {
+export const employeeSupervisors = pgTable('employee_supervisors', {
   employeeId: text('employee_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
   supervisorId: text('supervisor_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
 }, (t) => [
   primaryKey({ columns: [t.employeeId, t.supervisorId] }),
   check('no_self_supervision', sql`${t.supervisorId} <> ${t.employeeId}`),
-  index('tandem_employee_supervisors_supervisor_idx').on(t.supervisorId),
+  index('employee_supervisors_supervisor_idx').on(t.supervisorId),
 ])
 
 // Model providers: curated catalog of OpenAI/Anthropic-compatible endpoints.
 // API keys are NEVER stored here — per-agent in the vault (fleet law).
-export const modelProviders = pgTable('tandem_model_providers', {
+export const modelProviders = pgTable('model_providers', {
   id: text('id').primaryKey(),
   label: text('label').notNull(),
   baseUrl: text('base_url').notNull(),
@@ -109,7 +109,7 @@ export const modelProviders = pgTable('tandem_model_providers', {
 
 // AI extension (1:1 with user): row existence marks the employee as an AI
 // agent; absence = human employee. No kind column anywhere.
-export const aiEmployees = pgTable('tandem_ai_employees', {
+export const aiEmployees = pgTable('ai_employees', {
   userId: text('user_id').primaryKey().references(() => user.id, { onDelete: 'cascade' }),
   environmentId: text('environment_id').notNull().references(() => environments.id, { onDelete: 'restrict' }),
   instructions: text('instructions').notNull().default(''),
@@ -126,7 +126,7 @@ export const aiEmployees = pgTable('tandem_ai_employees', {
 
 // Tasks: work items assigned to employees (human or AI). AI assignees get
 // dispatched to their environment by the runner (M5).
-export const projects = pgTable('tandem_projects', {
+export const projects = pgTable('projects', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   description: text('description').notNull().default(''),
@@ -139,7 +139,7 @@ export const projects = pgTable('tandem_projects', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
-  index('tandem_projects_parent_idx').on(t.parentId),
+  index('projects_parent_idx').on(t.parentId),
 ])
 
 
@@ -147,7 +147,7 @@ export const projects = pgTable('tandem_projects', {
 // transitions (nextIds). Seeded with todo/doing/done; tasks keep a text
 // status referencing taskStatuses.id (no hard FK: deleting a status moves
 // its tasks back to the first status).
-export const taskStatuses = pgTable('tandem_task_statuses', {
+export const taskStatuses = pgTable('task_statuses', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   /** tailwind badge color: neutral | primary | success | warning | error | info */
@@ -162,11 +162,11 @@ export const taskStatuses = pgTable('tandem_task_statuses', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
-export const tasks = pgTable('tandem_tasks', {
+export const tasks = pgTable('tasks', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   description: text('description').notNull().default(''),
-  // references tandem_task_statuses.id (seeded: todo/doing/done)
+  // references task_statuses.id (seeded: todo/doing/done)
   status: text('status').notNull().default('01a14743-43f4-7053-a698-5b4ef36ed046'),
   projectId: text('project_id').references(() => projects.id, { onDelete: 'set null' }),
   assigneeId: text('assignee_id').references(() => user.id, { onDelete: 'set null' }),
@@ -189,15 +189,15 @@ export const tasks = pgTable('tandem_tasks', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
-  index('tandem_tasks_assignee_idx').on(t.assigneeId),
-  index('tandem_tasks_project_idx').on(t.projectId),
-  index('tandem_tasks_status_idx').on(t.status),
+  index('tasks_assignee_idx').on(t.assigneeId),
+  index('tasks_project_idx').on(t.projectId),
+  index('tasks_status_idx').on(t.status),
 ])
 
 // One row per agent dispatch over SSH. Output is the capped tail.
 /** pending obligations: who owes what on a task — answers, approvals. Single source
  * for "who acts next" (the waiting-on-you inbox + badge). answer role moves on forward. */
-export const taskObligations = pgTable('tandem_task_obligations', {
+export const taskObligations = pgTable('task_obligations', {
   id: text('id').primaryKey(),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
   employeeId: text('employee_id').references(() => user.id, { onDelete: 'cascade' }),
@@ -209,12 +209,12 @@ export const taskObligations = pgTable('tandem_task_obligations', {
   resolvedAt: timestamp('resolved_at', { withTimezone: true }),
   resolvedBy: text('resolved_by').references(() => user.id, { onDelete: 'set null' }),
 }, (t) => [
-  index('tandem_task_obligations_task_idx').on(t.taskId, t.role, t.status),
-  index('tandem_task_obligations_employee_idx').on(t.employeeId, t.status),
+  index('task_obligations_task_idx').on(t.taskId, t.role, t.status),
+  index('task_obligations_employee_idx').on(t.employeeId, t.status),
 ])
 
 /** append-only assignee history; the current assignee stays denormalized on the task */
-export const taskAssignments = pgTable('tandem_task_assignments', {
+export const taskAssignments = pgTable('task_assignments', {
   id: text('id').primaryKey(),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
   employeeId: text('employee_id').references(() => user.id, { onDelete: 'set null' }),
@@ -223,11 +223,11 @@ export const taskAssignments = pgTable('tandem_task_assignments', {
   startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   endedAt: timestamp('ended_at', { withTimezone: true }),
 }, (t) => [
-  index('tandem_task_assignments_task_idx').on(t.taskId, t.startedAt),
+  index('task_assignments_task_idx').on(t.taskId, t.startedAt),
 ])
 
 /** agent proposals from run envelopes ([SUBTASKS]/[REASSIGN]) awaiting confirmation */
-export const taskProposals = pgTable('tandem_task_proposals', {
+export const taskProposals = pgTable('task_proposals', {
   id: text('id').primaryKey(),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
   runId: text('run_id').references(() => taskRuns.id, { onDelete: 'cascade' }),
@@ -241,10 +241,10 @@ export const taskProposals = pgTable('tandem_task_proposals', {
   decidedAt: timestamp('decided_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
-  index('tandem_task_proposals_task_idx').on(t.taskId, t.status),
+  index('task_proposals_task_idx').on(t.taskId, t.status),
 ])
 
-export const taskRuns = pgTable('tandem_task_runs', {
+export const taskRuns = pgTable('task_runs', {
   id: text('id').primaryKey(),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
   employeeId: text('employee_id').references(() => user.id, { onDelete: 'set null' }),
@@ -261,13 +261,13 @@ export const taskRuns = pgTable('tandem_task_runs', {
   startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 }, (t) => [
-  index('tandem_task_runs_task_idx').on(t.taskId, t.startedAt),
+  index('task_runs_task_idx').on(t.taskId, t.startedAt),
 ])
 
 // REVIEW LAW (2026-10-16): one row per reviewer per review round — the single source
 // of truth for who approved what. pending -> approved | change_requested | rejected;
 // rejected is a HUMAN-only verdict and cancels the task.
-export const taskReviews = pgTable('tandem_task_reviews', {
+export const taskReviews = pgTable('task_reviews', {
   id: text('id').primaryKey(),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
   reviewerId: text('reviewer_id').references(() => user.id, { onDelete: 'set null' }),
@@ -281,11 +281,11 @@ export const taskReviews = pgTable('tandem_task_reviews', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   decidedAt: timestamp('decided_at', { withTimezone: true }),
 }, (t) => [
-  index('tandem_task_reviews_task_idx').on(t.taskId, t.round),
+  index('task_reviews_task_idx').on(t.taskId, t.round),
 ])
 
 // Task activity feed: questions, answers, forwards, verdicts, status notes.
-export const taskAttachments = pgTable('tandem_task_attachments', {
+export const taskAttachments = pgTable('task_attachments', {
   id: text('id').primaryKey(),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
   /** set for agent-produced files: the run that produced them */
@@ -299,10 +299,10 @@ export const taskAttachments = pgTable('tandem_task_attachments', {
   createdBy: text('created_by'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
-  index('tandem_task_attachments_task_idx').on(t.taskId, t.createdAt),
+  index('task_attachments_task_idx').on(t.taskId, t.createdAt),
 ])
 
-export const taskActivity = pgTable('tandem_task_activity', {
+export const taskActivity = pgTable('task_activity', {
   id: text('id').primaryKey(),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
   /** question | answer | forward | note | verdict | status */
@@ -312,7 +312,7 @@ export const taskActivity = pgTable('tandem_task_activity', {
   meta: jsonb('meta').notNull().default({}),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
-  index('tandem_task_activity_task_idx').on(t.taskId, t.createdAt),
+  index('task_activity_task_idx').on(t.taskId, t.createdAt),
 ])
 
 // ---------- relations ----------

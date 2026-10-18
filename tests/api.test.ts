@@ -60,7 +60,7 @@ async function call(modPath: string, req: FakeReq) {
 beforeEach(async () => {
   await resetSchema()
   await applyMigrations()
-  await sqlClient`delete from tandem_user`
+  await sqlClient`delete from "user"`
 })
 
 describe('meta.version (oRPC)', () => {

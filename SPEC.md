@@ -28,9 +28,9 @@ Remote-only: the agent never runs on the Tandem server itself.
 environments(id, name, host, port, username, created_at, updated_at)
 employees(id, name, kind: human|ai, title, manager_id -> employees.id, environment_id -> environments.id, instructions, created_at, updated_at)
 tasks(id, title, description, assignee_id -> employees.id, status, created_at, updated_at)
-runs(id, task_id -> tasks.id cascade, employee_id -> tandem_user.id set null, environment_id, status running|done|failed, exit_code, output (full — no truncation), prompt (the exact brief sent for the turn, null on pre-2.26 rows), started_at, finished_at)
+runs(id, task_id -> tasks.id cascade, employee_id -> user.id set null, environment_id, status running|done|failed, exit_code, output (full — no truncation), prompt (the exact brief sent for the turn, null on pre-2.26 rows), started_at, finished_at)
 tasks.workflow: owner_id, reviewers text[], question_chain text[] (loop guard state)
-task_obligations(id, task_id -> tasks.id cascade, employee_id -> tandem_user.id, role: answer|approval, status: pending|fulfilled|cancelled, created_at, resolved_at, resolved_by) — single source of "who acts next"; replaces question_holder_id + review_approvals (one migration backfills and drops both). answer moves on forward (old row resolved, new row pending); approvals spawn one row per reviewer per round (shared timestamp = round identity; a round with any cancelled row is dead -> request-changes resets approvals); drives the waiting-on-you inbox + badge (tasks.inbox: items + counts by role)
+task_obligations(id, task_id -> tasks.id cascade, employee_id -> user.id, role: answer|approval, status: pending|fulfilled|cancelled, created_at, resolved_at, resolved_by) — single source of "who acts next"; replaces question_holder_id + review_approvals (one migration backfills and drops both). answer moves on forward (old row resolved, new row pending); approvals spawn one row per reviewer per round (shared timestamp = round identity; a round with any cancelled row is dead -> request-changes resets approvals); drives the waiting-on-you inbox + badge (tasks.inbox: items + counts by role)
 task_assignments(id, task_id cascade, employee_id set null, reason, actor_id, started_at, ended_at) — append-only assignee ledger; current assignee stays denormalized on tasks.assignee_id; every change (create/update/reassign) flows through recordAssignment; derived "X -> Y" activity; recent rows feed the reassign ping-pong loop guard
 tasks.parent_task_id -> tasks.id (set null), tasks.pre_block_status — subtask nesting, unlimited depth; children are full tasks (own assignee/runs/reviewers); parent auto-blocks while any child is non-terminal (done or cancelled-category), restoring pre_block_status when all children land terminal — derived, no drift; submit is refused while children are open; child briefs carry "This is a subtask of: <parent title>"
 task_proposals(id, task_id cascade, run_id cascade, kind: subtasks|reassign, payload jsonb, status: proposed|executed|rejected, decision_note, decided_by, decided_at, created_at) — agent routing proposals parsed from run output on settle ([SUBTASKS] title :: desc :: assignee | … / [REASSIGN] Name — reason); human confirms via tasks.confirmProposal/rejectProposal — the confirm flow is the single structural writer. AUTO-EXECUTION LAW (2026-10-16): when EVERY routing target of a proposal resolves inside the proposing agent's own supervision chain, the proposal executes immediately at settle (no approval) through the same confirm path; outside-chain targets or unnamed routing still wait for a human, and the ping-pong loop guard still applies (a guarded target stays proposed rather than executing): subtasks are created full (assignee kept when inside the agent's supervision chain, else escalated to the agent's supervisor; unknown names land unassigned), reassigns write through the ledger with a loop guard refusing recent assignees; rejected notes ride the next brief to prevent re-propose loops
@@ -63,7 +63,7 @@ ssh -p <port> <user>@<host> hermes chat -q --query-file - --format stream-json
 
 ## Auth
 
-- better-auth + drizzle adapter; canonical tables `tandem_user`, `tandem_session`, `tandem_account`, `tandem_verification`
+- better-auth + drizzle adapter; canonical tables `user`, `session`, `account`, `verification`
 - password email + generic OIDC (any count, discovery via `issuer/.well-known/openid-configuration`)
 - sign-up is **closed** after any user exists (403 `sign-up is closed`); the FIRST user (boot-seeded admin) holds the instance; the first user to sign up is promoted to `admin` via the user.create after hook
 - OIDC user creation is never gated
@@ -185,8 +185,8 @@ secrets are never returned.
 ## Boot sequence
 
 1. module init: `sqlClient` built from `DATABASE_URL`; missing env → process exits 1
-2. `tandem_migrations` ledger table is created; bundled drizzle SQL is applied in name order
-3. no users & `tandem_user` rows → seed admin (`ADMIN_EMAIL`/`ADMIN_PASSWORD`, defaults `admin@tandem.local` / tandem-admin); seed never runs when users exists
+2. `migrations` ledger table is created; bundled drizzle SQL is applied in name order
+3. no users & `user` rows → seed admin (`ADMIN_EMAIL`/`ADMIN_PASSWORD`, defaults `admin@tandem.local` / tandem-admin); seed never runs when users exists
 4. password stored as better-auth scrypt (`salt:hash`, no prefix label)
 
 ## UI laws

@@ -1,5 +1,5 @@
 // REVIEW LAW (2026-10-16): reviews happen ON the task — never a subtask.
-// tandem_task_reviews is the single source of truth for per-reviewer verdicts:
+// task_reviews is the single source of truth for per-reviewer verdicts:
 //   pending -> approved | change_requested | rejected
 //   approved (unanimous) -> task done
 //   change_requested      -> task back to assignee (ready), note rides the next brief

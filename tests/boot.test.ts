@@ -17,10 +17,10 @@ describe('boot plugin', () => {
     const mod = await bootModule()
     const plugin = mod.default as () => Promise<unknown>
     await plugin()
-    const users = await sqlClient`select email, role from tandem_user`
+    const users = await sqlClient`select email, role from "user"`
     expect(users).toHaveLength(1)
     expect(users[0]).toMatchObject({ email: 'admin@tandem.local', role: 'admin' })
-    const accounts = await sqlClient`select provider_id, password from tandem_account`
+    const accounts = await sqlClient`select provider_id, password from account`
     expect(accounts).toHaveLength(1)
     expect(accounts[0]!.password).toMatch(/^[0-9a-f]{32}:/)
   })
@@ -31,10 +31,10 @@ describe('boot plugin', () => {
     try {
       const mod = await bootModule()
       await (mod.default as () => Promise<unknown>)()
-      const users = await sqlClient`select email from tandem_user`
+      const users = await sqlClient`select email from "user"`
       expect(users[0]!.email).toBe('root@corp.example')
       const { verifyPassword } = await import('better-auth/crypto')
-      const acct = (await sqlClient`select password from tandem_account`)[0]!
+      const acct = (await sqlClient`select password from account`)[0]!
       expect(await verifyPassword({ hash: acct.password, password: 'sup3r-secret' })).toBe(true)
     }
     finally {
@@ -44,13 +44,13 @@ describe('boot plugin', () => {
   })
 
   it('skips seeding when users already exist', async () => {
-    await sqlClient`insert into tandem_user (id, name, email, email_verified, created_at, updated_at, role)
+    await sqlClient`insert into "user" (id, name, email, email_verified, created_at, updated_at, role)
       values ('u-existing', 'Existing', 'e@x.co', true, now(), now(), 'viewer')`
     const mod = await bootModule()
     await (mod.default as () => Promise<unknown>)()
-    const users = await sqlClient`select count(*)::int as n from tandem_user`
+    const users = await sqlClient`select count(*)::int as n from "user"`
     expect(users[0]!.n).toBe(1)
-    const accounts = await sqlClient`select count(*)::int as n from tandem_account`
+    const accounts = await sqlClient`select count(*)::int as n from account`
     expect(accounts[0]!.n).toBe(0)
   })
 })

@@ -13,7 +13,7 @@ beforeEach(async () => {
 
 describe('auth route gates', () => {
   it('blocks password sign-up once any user exists (403)', async () => {
-    await sqlClient`insert into tandem_user (id, name, email, email_verified, created_at, updated_at, role)
+    await sqlClient`insert into "user" (id, name, email, email_verified, created_at, updated_at, role)
       values ('u1', 'U', 'u@x.co', true, now(), now(), 'viewer')`
     await expect(call('../server/routes/auth/[...].ts', { method: 'POST', url: '/auth/sign-up/email', body: { email: 'a@b.co', password: 'pw12345678', name: 'A' } }))
       .rejects.toMatchObject({ statusCode: 403 })

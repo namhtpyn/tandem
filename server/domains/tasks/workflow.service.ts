@@ -109,7 +109,7 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
 /** REVIEW LAW (2026-10-16): a submitted result defaults to the assignee's SUPERVISOR
  * for review — humans and AI employees are equal reviewers. Explicit reviewers (if
  * set) win; a lone top-of-org agent with no supervisor completes as before. Review
- * happens ON the task (never a subtask): tandem_task_reviews records per-reviewer
+ * happens ON the task (never a subtask): task_reviews records per-reviewer
  * verdicts; AI reviewers get a review turn dispatched on this same task. */
 async function defaultReviewer(assigneeId: string): Promise<string | null> {
   const rows = await db.select({ supervisorId: employeeSupervisors.supervisorId })
@@ -140,7 +140,7 @@ export async function submitResult(taskId: string, authorId: string, body: strin
   return { status: nextStatus }
 }
 
-/** reviewer approves — writes the tandem_task_reviews row via recordVerdict */
+/** reviewer approves — writes the task_reviews row via recordVerdict */
 export async function approveReview(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId)
   if (task.status !== IN_REVIEW_STATUS) throw new Error('task is not in review')
