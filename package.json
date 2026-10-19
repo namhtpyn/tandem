@@ -7,7 +7,7 @@
     "dev": "nuxt dev",
     "build": "nuxt build",
     "start": "bun .output/server/index.mjs",
-    "typecheck": "bunx vue-tsc --noEmit -p tsconfig.json",
+    "typecheck": "bunx vue-tsc --noEmit -p tsconfig.json && bunx tsc --noEmit -p scripts/tsconfig.json",
     "db:generate": "drizzle-kit generate",
     "test": "vitest run",
     "test:watch": "vitest",

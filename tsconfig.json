@@ -7,7 +7,6 @@
     "noFallthroughCasesInSwitch": true,
     "forceConsistentCasingInFileNames": true,
     "types": [
-      "node",
       "bun-types"
     ]
   }
