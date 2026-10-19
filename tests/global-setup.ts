@@ -75,7 +75,7 @@ catch { /* best effort */ }
   if (!containerRunning()) {
     try { run(`docker rm -f ${NAME}`) } catch { /* none */ }
     const port = String(39000 + Math.floor(Math.random() * 1000))
-    run(`docker run -d --rm --name ${NAME} -e POSTGRES_USER=tandem -e POSTGRES_PASSWORD=tandem -e POSTGRES_DB=tandem_test -p ${port}:5432 postgres:17-alpine`)
+    run(`docker run -d --rm --name ${NAME} -e POSTGRES_USER=tandem -e POSTGRES_PASSWORD=tandem -e POSTGRES_DB=tandem_test -p ${port}:5432 postgres:18-alpine`)
   }
   await waitForReadiness()
   const port = await discoverPort()
