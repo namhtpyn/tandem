@@ -59,7 +59,7 @@ DO $$
 DECLARE r record; newid text;
 BEGIN
   FOR r IN SELECT id FROM "user" WHERE id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' LOOP
-    newid := gen_random_uuid()::text;
+    newid := uuidv7()::text;
     UPDATE account SET user_id = newid WHERE user_id = r.id;
     UPDATE ai_employees SET user_id = newid WHERE user_id = r.id;
     UPDATE apikey SET reference_id = newid WHERE reference_id = r.id;
@@ -81,10 +81,10 @@ BEGIN
     UPDATE "user" SET id = newid WHERE id = r.id;
   END LOOP;
   -- auth tables' OWN legacy ids (no inbound FKs reference them)
-  UPDATE session SET id = gen_random_uuid()::text WHERE id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
-  UPDATE account SET id = gen_random_uuid()::text WHERE id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
-  UPDATE apikey SET id = gen_random_uuid()::text WHERE id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
-  UPDATE verification SET id = gen_random_uuid()::text WHERE id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+  UPDATE session SET id = uuidv7()::text WHERE id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+  UPDATE account SET id = uuidv7()::text WHERE id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+  UPDATE apikey SET id = uuidv7()::text WHERE id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+  UPDATE verification SET id = uuidv7()::text WHERE id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 END $$;
 
 --> statement-breakpoint

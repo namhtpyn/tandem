@@ -20,8 +20,8 @@ let gen = readFileSync(OUT, 'utf8')
 
 // --- post-process ---
 // auth ids are NATIVE uuid columns (Nam's law), minted at runtime by
-// better-auth's generateId (our uuidv7) — DB defaults are stripped:
-// gen_random_uuid() is v4-only, uuidv7() exists only on PG18 (local/e2e run 17)
+// better-auth's generateId (our uuidv7) — DB defaults are stripped: the
+// generator's gen_random_uuid() is v4, and the estate mints v7 only
 gen = gen.replaceAll('.default(sql`pg_catalog.gen_random_uuid()`)', '')
 gen = gen.replaceAll('.default(sql`gen_random_uuid()`)', '')
 gen = gen.replaceAll('.default(sql`uuidv7()`)', '')
