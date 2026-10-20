@@ -173,7 +173,7 @@ describe('jev auto-assign', () => {
 
   it('assign: with mocked jev response assigns the chosen employee', async () => {
     // create a vault secret as the jev key holder
-    const sec = await callProc('vault.create', { name: 'jev-key', value: 'sk-jev-test' })
+    const sec = await callProc('vault.secrets.create', { name: 'jev-key', value: 'sk-jev-test' })
     await wireDecisionProvider(sec.id)
     // an employee candidate
     const emp = await callProc('employees.create', { name: 'Jev Bot', email: 'jevbot@tandem.local', kind: 'human', title: 'Runner', supervisorIds: [] })
@@ -207,7 +207,7 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: low confidence leaves task unassigned', async () => {
-    const sec = await callProc('vault.create', { name: 'jev-key2', value: 'sk-jev-test2' })
+    const sec = await callProc('vault.secrets.create', { name: 'jev-key2', value: 'sk-jev-test2' })
     await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'Unclear task' })
     const origFetch = globalThis.fetch
@@ -221,7 +221,7 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: jev failure arms (http error, no choice, unknown id, network throw)', async () => {
-    const sec = await callProc('vault.create', { name: 'jev-key3', value: 'sk-jev-3' })
+    const sec = await callProc('vault.secrets.create', { name: 'jev-key3', value: 'sk-jev-3' })
     await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'Arms' })
     const origFetch = globalThis.fetch
@@ -260,7 +260,7 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: candidate state string includes title/load/description arms', async () => {
-    const sec = await callProc('vault.create', { name: 'jev-key4', value: 'sk-jev-4' })
+    const sec = await callProc('vault.secrets.create', { name: 'jev-key4', value: 'sk-jev-4' })
     await wireDecisionProvider(sec.id)
     // AI employee with a title + open task load; human without title
     const d = await dbm()
@@ -290,7 +290,7 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: minimal jev answer (no confidence/probabilities) still assigns', async () => {
-    const sec = await callProc('vault.create', { name: 'jev-key5', value: 'sk-jev-5' })
+    const sec = await callProc('vault.secrets.create', { name: 'jev-key5', value: 'sk-jev-5' })
     await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'Minimal' })
     const origFetch = globalThis.fetch
@@ -304,7 +304,7 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: untitled AI candidate + task with project covers remaining arms', async () => {
-    const sec = await callProc('vault.create', { name: 'jev-key6', value: 'sk-jev-6' })
+    const sec = await callProc('vault.secrets.create', { name: 'jev-key6', value: 'sk-jev-6' })
     await wireDecisionProvider(sec.id)
     const d = await dbm()
     const { environments } = await import('../server/db/schema')
@@ -344,7 +344,7 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: unassigned choice with probabilities present', async () => {
-    const sec = await callProc('vault.create', { name: 'jev-key7', value: 'sk-jev-7' })
+    const sec = await callProc('vault.secrets.create', { name: 'jev-key7', value: 'sk-jev-7' })
     await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'Unassign me' })
     const origFetch = globalThis.fetch
@@ -360,7 +360,7 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: low-confidence choice with probabilities + missing model', async () => {
-    const sec = await callProc('vault.create', { name: 'jev-key8', value: 'sk-jev-8' })
+    const sec = await callProc('vault.secrets.create', { name: 'jev-key8', value: 'sk-jev-8' })
     await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'Lowconf' })
     const origFetch = globalThis.fetch
@@ -375,7 +375,7 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: no-choice response without model falls back to unknown', async () => {
-    const sec = await callProc('vault.create', { name: 'jev-key9', value: 'sk-jev-9' })
+    const sec = await callProc('vault.secrets.create', { name: 'jev-key9', value: 'sk-jev-9' })
     await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'NoModel' })
     const origFetch = globalThis.fetch
@@ -390,7 +390,7 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: task with dangling project id yields no project name', async () => {
-    const sec = await callProc('vault.create', { name: 'jev-keyA', value: 'sk-jev-A' })
+    const sec = await callProc('vault.secrets.create', { name: 'jev-keyA', value: 'sk-jev-A' })
     await wireDecisionProvider(sec.id)
     const t = await callProc('tasks.create', { title: 'Ghost proj' })
     // simulate a dangling project reference (FK normally prevents it; guards the lookup)
@@ -413,7 +413,7 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: OPENAI-DECISIONS style routes to the /decisions adapter (array answers)', async () => {
-    const sec = await callProc('vault.create', { name: 'jev-keyOA', value: 'sk-jev-OA' })
+    const sec = await callProc('vault.secrets.create', { name: 'jev-keyOA', value: 'sk-jev-OA' })
     const d = await dbm()
     const { modelProviders } = await import('../server/db/schema')
     await d.db.insert(modelProviders)
@@ -442,7 +442,7 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: OPENAI-DECISIONS failure arms (http error, no matching name)', async () => {
-    const sec = await callProc('vault.create', { name: 'jev-keyOB', value: 'sk-jev-OB' })
+    const sec = await callProc('vault.secrets.create', { name: 'jev-keyOB', value: 'sk-jev-OB' })
     const d = await dbm()
     const { modelProviders } = await import('../server/db/schema')
     await d.db.insert(modelProviders)
@@ -463,7 +463,7 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: OPENAI-DECISIONS url/answer edge arms (trailing slash, no confidence/probs)', async () => {
-    const sec = await callProc('vault.create', { name: 'jev-keyOC', value: 'sk-jev-OC' })
+    const sec = await callProc('vault.secrets.create', { name: 'jev-keyOC', value: 'sk-jev-OC' })
     const d = await dbm()
     const { modelProviders } = await import('../server/db/schema')
     // baseUrl already ending in /decisions AND with trailing slash
@@ -490,7 +490,7 @@ describe('jev auto-assign', () => {
   })
 
   it('assign: OPENAI-DECISIONS no-model + boolean probability values arms', async () => {
-    const sec = await callProc('vault.create', { name: 'jev-keyOD', value: 'sk-jev-OD' })
+    const sec = await callProc('vault.secrets.create', { name: 'jev-keyOD', value: 'sk-jev-OD' })
     const d = await dbm()
     const { modelProviders } = await import('../server/db/schema')
     await d.db.insert(modelProviders)

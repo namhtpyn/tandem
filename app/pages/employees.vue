@@ -276,7 +276,7 @@ watch([() => form.providerId, () => form.apiKeySecretId], async ([providerId, ke
     modelLoading.value = false
   }
 }, { immediate: false })
-const secretsLive = useQuery(($orpc.vault.list as any).queryOptions({ queryKey: ['vault'] }))
+const secretsLive = useQuery(($orpc.vault.secrets.list as any).queryOptions({ queryKey: ['vault'] }))
 const secretItems = computed((): any => groupedSecretOptions(((unref(secretsLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string, folder: string | null }>)))
 const environmentItems = computed(() =>
   environments.value.map(e => ({ label: e.name, value: e.id })),

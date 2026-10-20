@@ -162,8 +162,8 @@ describe('conventional GET list procs (the first-load half)', () => {
     expect(oidc).toEqual([])
   })
 
-  it('vault.list + vault.folders.list return the GET snapshots', async () => {
-    expect(await callProc('vault.list')).toEqual([])
+  it('vault.secrets.list + vault.folders.list return the GET snapshots', async () => {
+    expect(await callProc('vault.secrets.list')).toEqual([])
     expect(await callProc('vault.folders.list').then((r: any) => r.folders)).toEqual([])
   })
 

@@ -45,7 +45,7 @@ async function userFactory(id: string): Promise<string> {
 
 /** factory: a persisted secret via the API; returns the API row */
 async function secretFactory(name: string, value = 'super-secret-value', description = '') {
-  return await callProc('vault.create', { name, value, description })
+  return await callProc('vault.secrets.create', { name, value, description })
 }
 
 beforeEach(async () => {
@@ -107,7 +107,7 @@ describe('vault-crypto (module)', () => {
 describe('vault API', () => {
   it('live lists metadata only — no ciphertext, no plaintext', async () => {
     await secretFactory('ssh-prod-key', 'AKIAIOSFODNN7EXAMPLE')
-    const iter = await callProc('vault.live')
+    const iter = await callProc('vault.secrets.live')
     const snap = await iter.next()
     const rows = snap.value as any[]
     expect(rows).toHaveLength(1)
@@ -132,8 +132,8 @@ describe('vault API', () => {
   })
 
   it('allows duplicate names (non-unique by design)', async () => {
-    const a = await callProc('vault.create', { name: 'dup', value: 'x', description: 'first' })
-    const b = await callProc('vault.create', { name: 'dup', value: 'y', description: 'second' })
+    const a = await callProc('vault.secrets.create', { name: 'dup', value: 'x', description: 'first' })
+    const b = await callProc('vault.secrets.create', { name: 'dup', value: 'y', description: 'second' })
     expect(a.id).not.toBe(b.id)
     expect(a.description).toBe('first')
     expect(b.description).toBe('second')
@@ -143,7 +143,7 @@ describe('vault API', () => {
     const { db } = await dbm()
     const { vaultSecrets } = await schema()
     const created = await secretFactory('rotate-me', 'old-value-123')
-    await callProc('vault.update', { id: created.id, name: 'rotate-me', description: 'rotated note', value: 'new-value-456' })
+    await callProc('vault.secrets.update', { id: created.id, name: 'rotate-me', description: 'rotated note', value: 'new-value-456' })
     const raw = await db.select().from(vaultSecrets)
     expect(decryptSecret(raw[0]!.ciphertext)).toBe('new-value-456')
     expect(raw[0]!.lastFour).toBe('-456')
@@ -152,18 +152,18 @@ describe('vault API', () => {
 
   it('update persists description; missing id 404s', async () => {
     const secret = await secretFactory('desc-test')
-    const updated = await callProc('vault.update', { id: secret.id, name: 'desc-test', description: 'new note', value: 'v2' })
+    const updated = await callProc('vault.secrets.update', { id: secret.id, name: 'desc-test', description: 'new note', value: 'v2' })
     expect(updated.description).toBe('new note')
-    await expect(callProc('vault.update', { id: 'missing', name: 'x', description: '', value: 'v' })).rejects.toThrowError(/not found/)
+    await expect(callProc('vault.secrets.update', { id: 'missing', name: 'x', description: '', value: 'v' })).rejects.toThrowError(/not found/)
   })
 
   it('remove of a missing secret 404s', async () => {
-    await expect(callProc('vault.remove', { id: 'nope' })).rejects.toThrowError(/not found/)
+    await expect(callProc('vault.secrets.remove', { id: 'nope' })).rejects.toThrowError(/not found/)
   })
 
   it('unauthenticated calls are rejected', async () => {
     const { appRouter: router } = await import('../server/domains/app.router')
-    const node = (router as any).vault.create['~orpc']
+    const node = (router as any).vault.secrets.create['~orpc']
     const context = buildAnonContext()
     const res = await node.handler({ input: { name: 'x', value: 'y', description: '' }, context, signal: new AbortController().signal }).catch(e => e)
     expect(String(res?.message ?? res)).toMatch(/authentication required|Cannot read|session/)

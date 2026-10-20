@@ -89,7 +89,7 @@ describe('providers', () => {
   })
 
   it('models: probes endpoint with vault key, audits use, caches, paginates', async () => {
-    const sec = await callProc('vault.create', { name: 'probe-key', value: 'sk-probe' })
+    const sec = await callProc('vault.secrets.create', { name: 'probe-key', value: 'sk-probe' })
     const prov = await callProc('providers.save', { label: 'ProbeSrc', baseUrl: 'https://probe.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'] })
     const origFetch = globalThis.fetch
     let calls = 0
@@ -126,7 +126,7 @@ describe('providers', () => {
   })
 
   it('models: anthropic style uses x-api-key + version header', async () => {
-    const sec = await callProc('vault.create', { name: 'ant2-key', value: 'sk-ant2' })
+    const sec = await callProc('vault.secrets.create', { name: 'ant2-key', value: 'sk-ant2' })
     const prov = await callProc('providers.save', { label: 'AntSrc', baseUrl: 'https://ant.example.com', endpoints: ['ANTHROPIC-MESSAGES'] })
     const origFetch = globalThis.fetch
     const seen: Array<Record<string, string>> = []
@@ -153,7 +153,7 @@ describe('providers', () => {
   })
 
   it('models: endpoint error mapped', async () => {
-    const sec = await callProc('vault.create', { name: 'err-key', value: 'sk-err' })
+    const sec = await callProc('vault.secrets.create', { name: 'err-key', value: 'sk-err' })
     const prov = await callProc('providers.save', { label: 'ErrSrc', baseUrl: 'https://err.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'] })
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: false, status: 403, json: async () => ({}) })) as typeof fetch
@@ -166,20 +166,20 @@ describe('providers', () => {
   it('model cache TTL sweeper clears the map', async () => {
     // warm a real cache entry (arms the sweeper), then use fake timers on a NEW interval
     const prov = await callProc('providers.save', { label: 'TTL', baseUrl: 'https://ttl.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'] })
-    const sec = await callProc('vault.create', { name: 'ttl-key', value: 'sk-ttl' })
+    const sec = await callProc('vault.secrets.create', { name: 'ttl-key', value: 'sk-ttl' })
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'm' }], has_more: false }) })) as typeof fetch
     try {
       // two probes exercise the already-armed guard
       await callProc('providers.models', { providerId: prov.id })
-      const sec2 = await callProc('vault.create', { name: 'ttl-key2', value: 'sk-ttl2' })
+      const sec2 = await callProc('vault.secrets.create', { name: 'ttl-key2', value: 'sk-ttl2' })
       await callProc('providers.models', { providerId: prov.id, keySecretId: sec2.id })
     }
     finally { globalThis.fetch = origFetch }
     const { modelCache, sweepModelCache } = await import('../server/domains/providers/models-cache')
     expect(modelCache.size).toBeGreaterThan(0)
     // second, uncached probe (different secret) exercises the sweeper-already-armed guard
-    const sec2 = await callProc('vault.create', { name: 'ttl-key2', value: 'sk-ttl2' })
+    const sec2 = await callProc('vault.secrets.create', { name: 'ttl-key2', value: 'sk-ttl2' })
     const origFetch2 = globalThis.fetch
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'm2' }], has_more: false }) })) as typeof fetch
     try {
@@ -192,7 +192,7 @@ describe('providers', () => {
   })
 
   it('models: network failure wrapped', async () => {
-    const sec = await callProc('vault.create', { name: 'net-key', value: 'sk-net' })
+    const sec = await callProc('vault.secrets.create', { name: 'net-key', value: 'sk-net' })
     const prov = await callProc('providers.save', { label: 'NetSrc', baseUrl: 'https://net.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'] })
     const origFetch = globalThis.fetch
     globalThis.fetch = (async () => { throw new TypeError('fetch failed') }) as typeof fetch
@@ -203,7 +203,7 @@ describe('providers', () => {
   })
 
   it('models: no-extraHeaders arm + malformed payload arm', async () => {
-    const sec = await callProc('vault.create', { name: 'bare-key', value: 'sk-bare' })
+    const sec = await callProc('vault.secrets.create', { name: 'bare-key', value: 'sk-bare' })
     const prov = await callProc('providers.save', { label: 'BareSrc', baseUrl: 'https://bare2.example.com/v1', endpoints: ['OPENAI-COMPLETIONS'], extraHeaders: { 'X-Probe': '1' } })
     const origFetch = globalThis.fetch
     let malformed = false
@@ -257,7 +257,7 @@ describe('employees model access', () => {
     await expect(callProc('employees.update', { id: bot.id, name: 'R Bot', title: 'B', supervisorIds: [], providerId: 'ghost-prov' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(callProc('employees.update', { id: bot.id, name: 'R Bot', title: 'B', supervisorIds: [], apiKeySecretId: 'ghost-sec' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     // freetext model accepted as-is; valid provider + secret pass the update-path checks
-    const sec = await callProc('vault.create', { name: 'r-key', value: 'sk-1' })
+    const sec = await callProc('vault.secrets.create', { name: 'r-key', value: 'sk-1' })
     await callProc('employees.update', { id: bot.id, name: 'R Bot', title: 'B', supervisorIds: [], model: 'any-model-name', providerId: 'seed-openai', apiKeySecretId: sec.id })
     const { aiEmployees } = await import('../server/db/schema')
     const ai = (await db.select().from(aiEmployees))[0]!
@@ -269,7 +269,7 @@ describe('employees model access', () => {
     const { db } = await dbm()
     const { environments } = await import('../server/db/schema')
     await db.insert(environments).values({ id: 'env-m', name: 'env-m', host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
-    const sec = await callProc('vault.create', { name: 'bot-key', value: 'sk-test-123' })
+    const sec = await callProc('vault.secrets.create', { name: 'bot-key', value: 'sk-test-123' })
     const bot = await callProc('employees.create', { name: 'M Bot', email: 'mbot@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-m', providerId: 'seed-openai', model: 'gpt-5.2', apiKeySecretId: sec.id , executable: 'hermes acp' })
     const { aiEmployees } = await import('../server/db/schema')
     let ai = (await db.select().from(aiEmployees))[0]!
@@ -323,9 +323,9 @@ describe('employees model access', () => {
     const { db } = await dbm()
     const { environments } = await import('../server/db/schema')
     await db.insert(environments).values({ id: 'env-s', name: 'env-s', host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
-    const sec = await callProc('vault.create', { name: 'gone-key', value: 'sk-gone' })
+    const sec = await callProc('vault.secrets.create', { name: 'gone-key', value: 'sk-gone' })
     const bot = await callProc('employees.create', { name: 'S Bot', email: 'sbot@tandem.local', kind: 'ai', title: 'B', environmentId: 'env-s', apiKeySecretId: sec.id , executable: 'hermes acp' })
-    await callProc('vault.remove', { id: sec.id })
+    await callProc('vault.secrets.remove', { id: sec.id })
     const { aiEmployees } = await import('../server/db/schema')
     const ai = (await db.select().from(aiEmployees))[0]!
     expect(ai.apiKeySecretId).toBeNull()
@@ -347,7 +347,7 @@ describe('provider styles', () => {
   })
 
   it('a provider can carry many styles incl. decision + llm together', async () => {
-    const sec = await callProc('vault.create', { name: 'prov-key', value: 'sk-1' })
+    const sec = await callProc('vault.secrets.create', { name: 'prov-key', value: 'sk-1' })
     await callProc('providers.save', { label: 'Kitchen sink', baseUrl: 'https://api.example.com', endpoints: ['OPENAI-COMPLETIONS', 'OPENAI-RESPONSES', 'OPENAI-MODELS', 'OPENAI-DECISIONS'] })
     await callProc('providers.save', { label: 'Plain LLM', baseUrl: 'https://llm.example.com/v1', endpoints: ['ANTHROPIC-MESSAGES'] })
     const iter = await callProc('providers.live')
@@ -374,7 +374,7 @@ describe('provider styles', () => {
 
 describe('models probe payload arms', () => {
   it('typesafe models shape parsed (models[].name)', async () => {
-    const sec = await callProc('vault.create', { name: 'ts-key', value: 'sk-ts' })
+    const sec = await callProc('vault.secrets.create', { name: 'ts-key', value: 'sk-ts' })
     const prov = await callProc('providers.save', { label: 'TsSrc', baseUrl: 'https://ts.example.com', endpoints: ['TYPESAFE-SYSTEMONE', 'TYPESAFE-MODELS'] })
     const origFetch = globalThis.fetch
     let hitUrl = ''
@@ -391,7 +391,7 @@ describe('models probe payload arms', () => {
   })
 
   it('openai url arm + non-array data payload tolerated', async () => {
-    const sec = await callProc('vault.create', { name: 'arm-key', value: 'sk-arm' })
+    const sec = await callProc('vault.secrets.create', { name: 'arm-key', value: 'sk-arm' })
     const prov = await callProc('providers.save', { label: 'ArmSrc', baseUrl: 'https://arm.example.com', endpoints: ['OPENAI-COMPLETIONS'], extraHeaders: { 'X-Probe': '1' } })
     const origFetch = globalThis.fetch
     let hitUrl = ''

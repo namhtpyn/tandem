@@ -8,7 +8,7 @@ import type { VaultSecretRow } from '~/../shared/types'
 const { $orpc } = useNuxtApp()
 const queryClient = useQueryClient()
 
-const liveQuery = useQuery<VaultSecretRow[]>(($orpc.vault.list as any).queryOptions({ queryKey: ['vault'] }))
+const liveQuery = useQuery<VaultSecretRow[]>(($orpc.vault.secrets.list as any).queryOptions({ queryKey: ['vault'] }))
 const foldersQuery = useQuery(($orpc.vault.folders.list as any).queryOptions({ queryKey: ['vault', 'folders'] }))
 const folders = computed(() => (foldersQuery.data.value as { folders: Array<{ id: string, name: string, secrets: number }> } | undefined)?.folders ?? [])
 
@@ -74,9 +74,9 @@ const showValue = ref(false)
 
 const confirmingRow = computed(() => rows.value.find(r => r.id === confirming.value) ?? null)
 
-const createMutation = useMutation({ ...$orpc.vault.create.mutationOptions() })
-const updateMutation = useMutation({ ...$orpc.vault.update.mutationOptions() })
-const removeMutation = useMutation({ ...$orpc.vault.remove.mutationOptions() })
+const createMutation = useMutation({ ...$orpc.vault.secrets.create.mutationOptions() })
+const updateMutation = useMutation({ ...$orpc.vault.secrets.update.mutationOptions() })
+const removeMutation = useMutation({ ...$orpc.vault.secrets.remove.mutationOptions() })
 
 function openEditor(row?: VaultSecretRow) {
   formError.value = null

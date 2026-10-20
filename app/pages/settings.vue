@@ -117,7 +117,7 @@ async function saveCompanyPrompt() {
   }
 }
 // ---- Workspace AI: internal LLM + decision assignments ----
-const vaultLive = useQuery(($orpc.vault.list as any).queryOptions({ queryKey: ['vault'] }))
+const vaultLive = useQuery(($orpc.vault.secrets.list as any).queryOptions({ queryKey: ['vault'] }))
 const vaultItems = computed((): any => groupedSecretOptions(((unref(vaultLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string, folder: string | null }>)))
 interface AiAssignmentForm { providerId: string | null, model: string, keySecretId: string | null }
 const llmForm = reactive<AiAssignmentForm>({ providerId: null, model: '', keySecretId: null })

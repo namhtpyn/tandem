@@ -12,7 +12,7 @@ const liveQuery = useQuery(($orpc.environments.list as any).queryOptions({ query
 const rows = computed<EnvironmentRow[]>(() => (unref(liveQuery.data) ?? []) as EnvironmentRow[])
 
 // vault secrets for the SSH key picker (metadata only)
-const secretsQuery = useQuery<VaultSecretRow[]>(($orpc.vault.list as any).queryOptions({ queryKey: ['vault'] }))
+const secretsQuery = useQuery<VaultSecretRow[]>(($orpc.vault.secrets.list as any).queryOptions({ queryKey: ['vault'] }))
 const secrets = computed<VaultSecretRow[]>(() => (unref(secretsQuery.data) ?? []) as VaultSecretRow[])
 const secretOptions = computed((): any => [
   { label: 'No key (agent default)', value: '__none__' },
