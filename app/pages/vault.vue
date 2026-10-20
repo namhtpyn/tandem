@@ -3,7 +3,7 @@
 // once and never displayed again — only a last-4 hint. Mobile-first cards.
 import { computed, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import type { VaultAuditRow, VaultSecretRow } from '~/../shared/types'
+import type { VaultSecretRow } from '~/../shared/types'
 
 const { $orpc } = useNuxtApp()
 const queryClient = useQueryClient()
@@ -62,9 +62,7 @@ async function removeFolder(id: string) {
     folderBusy.value = false
   }
 }
-const auditQuery = useQuery<VaultAuditRow[]>(($orpc.vault.audit as any).queryOptions({}))
 const rows = computed(() => liveQuery.data.value ?? [])
-const audit = computed(() => auditQuery.data.value ?? [])
 const busy = ref(false)
 
 const editorOpen = ref(false)
@@ -74,13 +72,11 @@ const form = ref({ name: '', description: '', value: '', folderName: '' })
 const formError = ref<string | null>(null)
 const showValue = ref(false)
 
-const auditOpen = ref(false)
 const confirmingRow = computed(() => rows.value.find(r => r.id === confirming.value) ?? null)
 
-const invalidateAudit = () => { void auditQuery.refetch() }
-const createMutation = useMutation({ ...$orpc.vault.create.mutationOptions(), onSuccess: invalidateAudit })
-const updateMutation = useMutation({ ...$orpc.vault.update.mutationOptions(), onSuccess: invalidateAudit })
-const removeMutation = useMutation({ ...$orpc.vault.remove.mutationOptions(), onSuccess: invalidateAudit })
+const createMutation = useMutation({ ...$orpc.vault.create.mutationOptions() })
+const updateMutation = useMutation({ ...$orpc.vault.update.mutationOptions() })
+const removeMutation = useMutation({ ...$orpc.vault.remove.mutationOptions() })
 
 function openEditor(row?: VaultSecretRow) {
   formError.value = null
@@ -162,7 +158,6 @@ function kindIcon(): string {
       </div>
       <div class="flex items-center gap-2">
         <UPopover mode="hover">
-          <UButton icon="i-lucide-history" variant="ghost" color="neutral" aria-label="Audit log" @click="auditOpen = true" />
           <template #content>
             <div class="px-3 py-1.5 text-xs">Audit log</div>
           </template>
@@ -313,21 +308,6 @@ function kindIcon(): string {
       </template>
     </UModal>
 
-    <!-- audit drawer -->
-    <UModal v-model:open="auditOpen" title="Vault audit log" :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }">
-      <template #body>
-        <div class="space-y-2">
-          <p v-if="!audit.length" class="py-4 text-center text-sm text-zinc-500">No audit entries yet.</p>
-          <div v-for="entry in audit" :key="entry.id" class="flex items-center justify-between gap-2 border-b border-zinc-100 pb-2 text-sm dark:border-zinc-800">
-            <div class="min-w-0">
-              <p class="truncate font-medium text-zinc-900 dark:text-white">{{ entry.secretName }}</p>
-              <p class="text-xs text-zinc-400">{{ entry.actorId }} · {{ new Date(entry.createdAt).toLocaleString() }}</p>
-            </div>
-            <UBadge :color="entry.action === 'delete' ? 'error' : entry.action === 'use' ? 'warning' : 'neutral'" variant="subtle" size="sm">{{ entry.action }}</UBadge>
-          </div>
-        </div>
-      </template>
-    </UModal>
 
     <!-- delete confirm -->
     <UModal :open="confirming !== null" title="Delete secret" @update:open="(o: boolean) => { if (!o) confirming = null }">

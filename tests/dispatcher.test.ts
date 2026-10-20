@@ -266,7 +266,7 @@ describe('runner ssh-config paths', () => {
   it('password auth + llm env from provider/key secrets', async () => {
     await mkAiAgent()
     const { db } = await dbm()
-    const { environments, vaultSecrets, modelProviders, aiEmployees, vaultAudit } = await schema()
+    const { environments, vaultSecrets, modelProviders, aiEmployees } = await schema()
     const { encryptSecret } = await import('../server/domains/vault/secret/secret-crypto.service')
     await db.insert(vaultSecrets).values({ id: 'sec-pw', name: 'pw', ciphertext: encryptSecret('hunter2'), lastFour: 'er2', createdBy: '00000000-0000-7000-8000-cd5fca5e2d34', createdAt: new Date(), updatedAt: new Date() })
     await db.update(environments).set({ secretId: 'sec-pw', secretUsage: 'password' }).where(eq(environments.id, 'env-1'))
@@ -284,9 +284,6 @@ describe('runner ssh-config paths', () => {
     expect(plan.llmEnv).toEqual({ CUSTOM_API_KEY: 'sk-123', CUSTOM_BASE_URL: 'https://api.example.com', HERMES_MODEL: 'gpt-test' })
     const blob = buildEnvBlob(plan, 'http://t.local')
     expect(blob).toContain(`CUSTOM_API_KEY='sk-123'`)
-    const audits = await db.select().from(vaultAudit)
-    expect(audits.filter(a => a.secretId === 'sec-pw').length).toBeGreaterThan(0)
-    expect(audits.filter(a => a.secretId === 'sec-llm').length).toBeGreaterThan(0)
   })
 
   it('short outputs pass through the tail untouched', async () => {

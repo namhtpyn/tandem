@@ -3,16 +3,14 @@
 // leaves the server (list returns metadata + last-four hint only).
 import { desc, eq } from 'drizzle-orm'
 import { db } from '../../../db'
-import {
-  vaultAudit as vaultAuditTable, vaultSecrets as vaultSecretsTable, vaultFolders as vaultFoldersTable,
-} from '../../../db/schema'
-import type { VaultSecretRow, VaultAuditRow } from '../../../../shared/types'
+import { vaultSecrets as vaultSecretsTable, vaultFolders as vaultFoldersTable } from '../../../db/schema'
+import type { VaultSecretRow } from '../../../../shared/types'
 import { v7 as uuidv7 } from 'uuid'
 import { encryptSecret, lastFourHint } from './secret-crypto.service'
 import { folderExists } from '../folder/folder.service'
 import { ORPCError, publishChange } from '../../kernel/kernel'
 
-export function toVaultRow(r: typeof vaultSecretsTable.$inferSelect): VaultSecretRow {
+export function toVaultRow(r: typeof vaultSecretsTable.$inferSelect) {
   return {
     id: r.id,
     name: r.name,
@@ -25,7 +23,7 @@ export function toVaultRow(r: typeof vaultSecretsTable.$inferSelect): VaultSecre
   }
 }
 
-export async function listVaultSecrets(): Promise<VaultSecretRow[]> {
+export async function listVaultSecrets() {
   const rows = await db.select({ s: vaultSecretsTable, folderName: vaultFoldersTable.name })
     .from(vaultSecretsTable)
     .leftJoin(vaultFoldersTable, eq(vaultSecretsTable.folderId, vaultFoldersTable.id))
@@ -33,23 +31,7 @@ export async function listVaultSecrets(): Promise<VaultSecretRow[]> {
   return rows.map(({ s, folderName }) => ({ ...toVaultRow(s), folder: folderName }))
 }
 
-export async function listAudit(): Promise<VaultAuditRow[]> {
-  const rows = await db.select().from(vaultAuditTable).orderBy(desc(vaultAuditTable.createdAt)).limit(200)
-  return rows.map((r): VaultAuditRow => ({
-    id: r.id,
-    secretId: r.secretId,
-    secretName: r.secretName,
-    action: r.action as VaultAuditRow['action'],
-    actorId: r.actorId,
-    createdAt: r.createdAt.toISOString(),
-  }))
-}
-
-async function audit(secretId: string | null, secretName: string, action: VaultAuditRow['action'], actorId: string): Promise<void> {
-  await db.insert(vaultAuditTable).values({ id: uuidv7(), secretId, secretName, action, actorId })
-}
-
-export async function createSecret(input: { name: string, description: string, value: string, folderId: string | null }, actorId: string): Promise<VaultSecretRow> {
+export async function createSecret(input: { name: string, description: string, value: string, folderId: string | null }, actorId: string) {
   if (input.folderId != null && !(await folderExists(input.folderId))) {
     throw new ORPCError('BAD_REQUEST', { message: 'folder not found' })
   }
@@ -62,13 +44,12 @@ export async function createSecret(input: { name: string, description: string, v
     lastFour: lastFourHint(input.value),
     createdBy: actorId,
   }).returning()
-  await audit(inserted[0]!.id, input.name, 'create', actorId)
   await publishChange('vault', 'create')
   return toVaultRow(inserted[0]!)
 }
 
 /** value can be replaced but NEVER read back through the API; leaving it empty keeps the stored secret */
-export async function updateSecret(input: { id: string, name: string, description: string, value?: string, folderId: string | null }, actorId: string): Promise<VaultSecretRow> {
+export async function updateSecret(input: { id: string, name: string, description: string, value?: string, folderId: string | null }, actorId: string) {
   const { id, value, ...meta } = input
   if (meta.folderId != null && !(await folderExists(meta.folderId))) {
     throw new ORPCError('BAD_REQUEST', { message: 'folder not found' })
@@ -81,17 +62,15 @@ export async function updateSecret(input: { id: string, name: string, descriptio
   if (updated.length === 0) {
     throw new ORPCError('NOT_FOUND', { message: 'secret not found' })
   }
-  await audit(id, meta.name, 'update', actorId)
   await publishChange('vault', 'update')
   return toVaultRow(updated[0]!)
 }
 
-export async function removeSecret(input: { id: string }, actorId: string): Promise<{ ok: true }> {
+export async function removeSecret(input: { id: string }, actorId: string) {
   const deleted = await db.delete(vaultSecretsTable).where(eq(vaultSecretsTable.id, input.id)).returning({ id: vaultSecretsTable.id, name: vaultSecretsTable.name })
   if (deleted.length === 0) {
     throw new ORPCError('NOT_FOUND', { message: 'secret not found' })
   }
-  await audit(null, deleted[0]!.name, 'delete', actorId)
   await publishChange('vault', 'delete')
   return { ok: true }
 }

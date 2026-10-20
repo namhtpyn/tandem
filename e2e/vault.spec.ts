@@ -44,13 +44,6 @@ test.describe('vault', () => {
     await expect(page.locator('tr:visible', { hasText: secName }).getByText('•••• -999')).toBeVisible({ timeout: 15_000 })
     await expect(page.getByText('e2e-rotated-value-999')).toHaveCount(0)
 
-    // audit log records create + update
-    await page.getByRole('button', { name: 'Audit log' }).click()
-    await expect(page.getByText('Vault audit log')).toBeVisible()
-    await expect(page.getByRole('dialog').getByText(secName).first()).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByText('update', { exact: true }).first()).toBeVisible({ timeout: 15_000 })
-    await dismiss(page, 'Vault audit log')
-
     // delete with confirmation
     await page.locator('tr:visible', { hasText: secName }).getByRole('button', { name: 'Delete secret' }).click()
     await page.getByRole('button', { name: 'Delete', exact: true }).click()

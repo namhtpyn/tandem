@@ -11,7 +11,7 @@
 // local e2e can exercise the full dispatch→stream→finish loop with no host.
 import {eq, and, desc, ne} from 'drizzle-orm'
 import { db } from '../../db'
-import { tasks, taskRuns, taskActivity, taskAttachments, aiEmployees, environments, modelProviders, vaultSecrets, vaultAudit, user as userTable } from '../../db/schema'
+import { tasks, taskRuns, taskActivity, taskAttachments, aiEmployees, environments, modelProviders, vaultSecrets, user as userTable } from '../../db/schema'
 import { decryptSecret } from '../vault/secret/secret-crypto.service'
 import { publishChange } from '../kernel/kernel'
 
@@ -159,8 +159,7 @@ export async function loadDispatchPlan(taskId: string) {
     const plain = decryptSecret(secret.ciphertext)
     if (env.secretUsage === 'password') sshPassword = plain
     else sshKey = plain
-    await db.insert(vaultAudit).values({ id: uuidv7(), secretId: secret.id, secretName: secret.name, action: 'use', actorId })
-  }
+    }
 
   // agent LLM access: provider endpoint + key + pinned model
   let llmEnv: Record<string, string> = {}
@@ -169,8 +168,7 @@ export async function loadDispatchPlan(taskId: string) {
     const provider = (await db.select().from(modelProviders).where(eq(modelProviders.id, ai.providerId)))[0]!
     const keySecret = (await db.select().from(vaultSecrets).where(eq(vaultSecrets.id, ai.apiKeySecretId)))[0]!
     const key = decryptSecret(keySecret.ciphertext)
-    await db.insert(vaultAudit).values({ id: uuidv7(), secretId: keySecret.id, secretName: keySecret.name, action: 'use', actorId })
-    llmEnv = {
+      llmEnv = {
       CUSTOM_API_KEY: key,
       CUSTOM_BASE_URL: provider.baseUrl,
       HERMES_MODEL: ai.model,
@@ -224,15 +222,13 @@ async function loadDispatchPlanFor(employeeId: string, taskId: string) {
     const plain = decryptSecret(secret.ciphertext)
     if (env.secretUsage === 'password') sshPassword = plain
     else sshKey = plain
-    await db.insert(vaultAudit).values({ id: uuidv7(), secretId: secret.id, secretName: secret.name, action: 'use', actorId })
-  }
+    }
   let llmEnv: Record<string, string> = {}
   if (ai.providerId && ai.model && ai.apiKeySecretId) {
     const provider = (await db.select().from(modelProviders).where(eq(modelProviders.id, ai.providerId)))[0]!
     const keySecret = (await db.select().from(vaultSecrets).where(eq(vaultSecrets.id, ai.apiKeySecretId)))[0]!
     const key = decryptSecret(keySecret.ciphertext)
-    await db.insert(vaultAudit).values({ id: uuidv7(), secretId: keySecret.id, secretName: keySecret.name, action: 'use', actorId })
-    llmEnv = { CUSTOM_API_KEY: key, CUSTOM_BASE_URL: provider.baseUrl, HERMES_MODEL: ai.model }
+      llmEnv = { CUSTOM_API_KEY: key, CUSTOM_BASE_URL: provider.baseUrl, HERMES_MODEL: ai.model }
   }
   /* v8 ignore next -- ?? 'reviewer' arm is FK-protected (ai row implies user row) */
   return { task, ai, env, envName: env.name, agentName: empRows[0]?.name ?? 'reviewer', sshKey, sshPassword, llmEnv }

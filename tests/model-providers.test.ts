@@ -108,11 +108,6 @@ describe('providers', () => {
       expect(r.models).toEqual(['m1', 'm2'])
       expect(calls).toBe(2)
       expect(seen[0]!.auth).toBe('Bearer sk-probe')
-      // audit logged
-      const { db } = await dbm()
-      const { vaultAudit } = await import('../server/db/schema')
-      const audits = await db.select().from(vaultAudit).where(eq(vaultAudit.secretId, sec.id))
-      expect(audits.some(a => a.action === 'use')).toBe(true)
       // second call served from cache (no extra fetch)
       const r2 = await callProc('providers.models', { providerId: prov.id, keySecretId: sec.id })
       expect(r2.models).toEqual(['m1', 'm2'])

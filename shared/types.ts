@@ -128,11 +128,3 @@ export interface VaultSecretRow {
   folder: string | null
 }
 
-export interface VaultAuditRow {
-  id: string
-  secretId: string | null
-  secretName: string
-  action: 'create' | 'update' | 'delete' | 'use'
-  actorId: string
-  createdAt: string
-}

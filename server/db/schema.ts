@@ -69,19 +69,6 @@ export const vaultSecrets = pgTable('vault_secrets', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().$default(() => new Date()).$onUpdate(() => new Date()),
 })
 
-// Audit trail: every vault write and every server-side decrypt ("use").
-export const vaultAudit = pgTable('vault_audit', {
-  id: text('id').primaryKey().$default(() => uuidv7()),
-  secretId: text('secret_id').references(() => vaultSecrets.id, { onDelete: 'cascade' }),
-  secretName: text('secret_name').notNull(),
-  action: text('action').notNull(), // create | update | delete | use
-  actorId: text('actor_id').notNull().default('system'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().$default(() => new Date()),
-}, (t) => [
-  index('vault_audit_secret_idx').on(t.secretId),
-  index('vault_audit_created_at_idx').on(t.createdAt),
-])
-
 // Supervision is many-to-many: one employee may have many supervisors.
 // Users ARE employees, so both columns reference user.
 // Self-supervision is structurally impossible (CHECK).
@@ -319,7 +306,7 @@ export const taskActivity = pgTable('task_activity', {
 // ---------- relations ----------
 
 export const relations = defineRelations(
-  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultAudit, vaultFolders, employeeTitles, tasks, taskActivity, taskRuns, taskReviews, taskStatuses, modelProviders, projects },
+  { user, session, account, verification, settings, environments, employeeSupervisors, aiEmployees, apikey, vaultSecrets, vaultFolders, employeeTitles, tasks, taskActivity, taskRuns, taskReviews, taskStatuses, modelProviders, projects },
   (helpers) => ({
     user: {
       sessions: helpers.many.session({ from: helpers.user.id, to: helpers.session.userId }),
@@ -349,7 +336,6 @@ export const relations = defineRelations(
     environments: {},
     settings: {},
     vaultSecrets: {},
-    vaultAudit: {},
     verification: {},
   }),
 )

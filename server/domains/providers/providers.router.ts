@@ -7,7 +7,7 @@ import { ALL_ENDPOINTS, isAnthropicWire, atMostOneModelsEndpoint } from '#shared
 import { modelCache, armCacheSweeper } from './models-cache'
 import { decryptSecret } from '../vault/secret/secret-crypto.service'
 import {
-  modelProviders as modelProvidersTable, vaultAudit as vaultAuditTable, vaultSecrets as vaultSecretsTable,
+  modelProviders as modelProvidersTable, vaultSecrets as vaultSecretsTable,
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 import { v7 as uuidv7 } from 'uuid'
@@ -81,13 +81,6 @@ export const providersRouter = os.router({
       const secret = secRows[0]
       if (!secret) throw new ORPCError('BAD_REQUEST', { message: 'api key secret not found' })
       const key = decryptSecret(secret.ciphertext)
-      await db.insert(vaultAuditTable).values({
-        id: uuidv7(),
-        secretId: secret.id,
-        secretName: secret.name,
-        action: 'use',
-        actorId: context.session.user.id,
-      })
 
       const provEndpoints = prov.endpoints as string[]
       const base = prov.baseUrl.replace(/\/$/, '')

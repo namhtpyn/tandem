@@ -7,7 +7,7 @@ import { environmentInput } from './environments.util'
 import { probeSsh } from './ssh-probe.service'
 import { decryptSecret } from '../vault/secret/secret-crypto.service'
 import {
-  environments as environmentsTable, vaultAudit as vaultAuditTable, vaultSecrets as vaultSecretsTable,
+  environments as environmentsTable, vaultSecrets as vaultSecretsTable,
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 import { toRow, listEnvironments } from './environments.service'
@@ -88,13 +88,6 @@ export const environmentsRouter = os.router({
         if (secret) {
           privateKey = decryptSecret(secret.ciphertext)
           usage = env.secretUsage === 'password' ? 'password' : 'ssh-key'
-          await db.insert(vaultAuditTable).values({
-            id: uuidv7(),
-            secretId: secret.id,
-            secretName: secret.name,
-            action: 'use',
-            actorId: context.session.user.id,
-          })
         }
       }
       const started = Date.now()

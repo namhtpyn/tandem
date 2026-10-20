@@ -157,46 +157,6 @@ describe('vault API', () => {
     await expect(callProc('vault.update', { id: 'missing', name: 'x', description: '', value: 'v' })).rejects.toThrowError(/not found/)
   })
 
-  it('remove deletes the secret and leaves a tombstone audit row', async () => {
-    const created = await secretFactory('doomed', 'x')
-    await callProc('vault.remove', { id: created.id })
-    const iter = await callProc('vault.live')
-    const snap = await iter.next()
-    expect(snap.value).toEqual([])
-    await iter.return?.()
-    const audit = await callProc('vault.audit')
-    // create row cascaded away with the secret; the delete TOMBSTONE survives
-    expect(audit).toHaveLength(1)
-    expect(audit[0]!.action).toBe('delete')
-    expect(audit[0]!.secretName).toBe('doomed')
-    expect(audit[0]!.secretId).toBeNull()
-  })
-
-  it('audit records every action with actor and newest-first order', async () => {
-    const a = await secretFactory('first')
-    await secretFactory('second')
-    await callProc('vault.update', { id: a.id, name: 'first', description: '', value: 'rotated' })
-    const audit = await callProc('vault.audit')
-    expect(audit.map((r: any) => r.action)).toEqual(['update', 'create', 'create'])
-    expect(audit.every((r: any) => r.actorId === '00000000-0000-7000-8000-c5ea71554c77')).toBe(true)
-  })
-
-  it('cascade: deleting the creator removes their secrets but keeps audit tombstones', async () => {
-    await userFactory('00000000-0000-7000-8000-b9c69e5488ff')
-    const { db } = await dbm()
-    const { vaultSecrets, user } = await schema()
-    // create as u2
-    const { appRouter: router } = await import('../server/domains/app.router')
-    const node = (router as any).vault.create['~orpc']
-    const row = await node.handler({ input: { name: 'u2-secret', value: 'v', description: '' }, context: { ...(await ctx({ id: '00000000-0000-7000-8000-b9c69e5488ff', name: 'B', email: 'b@x', role: 'admin' })), session: { user: { id: '00000000-0000-7000-8000-b9c69e5488ff', name: 'B', email: 'b@x', role: 'admin' } } }, signal: new AbortController().signal })
-    await db.delete(user).where(eq(user.id, '00000000-0000-7000-8000-b9c69e5488ff'))
-    const remaining = await db.select().from(vaultSecrets)
-    expect(remaining).toHaveLength(0)
-    const audit = await callProc('vault.audit')
-    // u2's audit rows cascade with their user; vault is empty, no tombstones lie
-    expect(audit).toHaveLength(0)
-  })
-
   it('remove of a missing secret 404s', async () => {
     await expect(callProc('vault.remove', { id: 'nope' })).rejects.toThrowError(/not found/)
   })

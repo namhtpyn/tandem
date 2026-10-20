@@ -3,16 +3,13 @@
 // procedures flat (wire paths stay /rpc/vault/list, /rpc/vault/create, ...).
 import { z } from 'zod'
 import { protectedProcedure, liveGenerator } from '../../kernel/kernel'
-import { listVaultSecrets, listAudit, createSecret, updateSecret, removeSecret } from './secret.service'
+import { listVaultSecrets, createSecret, updateSecret, removeSecret } from './secret.service'
 
 export const secretProcs = {
   /** live list — metadata only; ciphertext never leaves the server */
   list: protectedProcedure.handler(() => listVaultSecrets()),
 
   live: protectedProcedure.handler(() => liveGenerator(['vault'], listVaultSecrets)),
-
-  /** audit trail, newest first */
-  audit: protectedProcedure.handler(() => listAudit()),
 
   create: protectedProcedure
     .input(z.strictObject({

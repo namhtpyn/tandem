@@ -72,9 +72,6 @@ describe('environment secret linkage', () => {
     const env = await callProc('environments.create', { name: 'pw-probe-box', host: '127.0.0.1', port: '59999', username: '00000000-0000-7000-8000-51e69892ab49', secretId: secret.id, secretUsage: 'password' })
     const result = await callProc('environments.probe', { id: env.id })
     expect(result.ok).toBe(false) // dead port, but the password path ran
-    const audit = await callProc('vault.audit')
-    const use = audit.find((r: any) => r.action === 'use' && r.secretName === 'pw-probe')
-    expect(use).toBeDefined()
   })
 
   it('create with unknown secretId 404s', async () => {
@@ -111,11 +108,6 @@ describe('environment secret linkage', () => {
     // decrypted + audited BEFORE the ssh attempt
     const result = await callProc('environments.probe', { id: env.id })
     expect(result.ok).toBe(false)
-    const audit = await callProc('vault.audit')
-    const use = audit.find((r: any) => r.action === 'use')
-    expect(use).toBeDefined()
-    expect(use.secretName).toBe('probe-key')
-    expect(use.actorId).toBe('00000000-0000-7000-8000-c5ea71554c77')
   })
 
   it('probe tolerates a dangling secretId (secret row gone)', async () => {
@@ -129,14 +121,10 @@ describe('environment secret linkage', () => {
     await postgres.unsafe('delete from vault_secrets where id = $1', [secret.id])
     const result = await callProc('environments.probe', { id: env.id })
     expect(result.ok).toBe(false)
-    const audit = await callProc('vault.audit')
-    expect(audit.filter((r: any) => r.action === 'use')).toHaveLength(0)
   })
 
   it('probe without a linked secret audits nothing', async () => {
     const env = await callProc('environments.create', { name: 'probe-box2', host: '127.0.0.1', port: '59999', username: '00000000-0000-7000-8000-51e69892ab49' })
     await callProc('environments.probe', { id: env.id })
-    const audit = await callProc('vault.audit')
-    expect(audit.filter((r: any) => r.action === 'use')).toHaveLength(0)
   })
 })
