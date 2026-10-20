@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { db } from '../../db'
 import { ALL_ENDPOINTS, isAnthropicWire, atMostOneModelsEndpoint } from '#shared/api-styles'
 import { modelCache, armCacheSweeper } from './models-cache'
-import { decryptSecret } from '../vault/vault-crypto.service'
+import { decryptSecret } from '../vault/secret/secret-crypto.service'
 import {
   modelProviders as modelProvidersTable, vaultAudit as vaultAuditTable, vaultSecrets as vaultSecretsTable,
 } from '../../db/schema'

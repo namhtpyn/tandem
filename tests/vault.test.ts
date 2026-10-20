@@ -6,7 +6,7 @@ import { eq } from 'drizzle-orm'
 import './api-harness'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
-import { decryptSecret, encryptSecret, lastFourHint } from '../server/domains/vault/vault-crypto.service'
+import { decryptSecret, encryptSecret, lastFourHint } from '../server/domains/vault/secret/secret-crypto.service'
 
 const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' }
 
@@ -80,7 +80,7 @@ describe('vault-crypto (module)', () => {
   })
 
   it('rejects wrong-size TANDEM_VAULT_KEY; generateVaultKeyB64 gives 32 bytes', async () => {
-    const mod = await import('../server/domains/vault/vault-crypto.service')
+    const mod = await import('../server/domains/vault/secret/secret-crypto.service')
     process.env.TANDEM_VAULT_KEY = Buffer.alloc(16).toString('base64')
     mod.resetVaultKeyCache()
     expect(() => mod.getVaultKey()).toThrowError(/32 bytes/)

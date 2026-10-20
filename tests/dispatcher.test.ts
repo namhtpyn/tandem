@@ -267,7 +267,7 @@ describe('runner ssh-config paths', () => {
     await mkAiAgent()
     const { db } = await dbm()
     const { environments, vaultSecrets, modelProviders, aiEmployees, vaultAudit } = await schema()
-    const { encryptSecret } = await import('../server/domains/vault/vault-crypto.service')
+    const { encryptSecret } = await import('../server/domains/vault/secret/secret-crypto.service')
     await db.insert(vaultSecrets).values({ id: 'sec-pw', name: 'pw', ciphertext: encryptSecret('hunter2'), lastFour: 'er2', createdBy: '00000000-0000-7000-8000-cd5fca5e2d34', createdAt: new Date(), updatedAt: new Date() })
     await db.update(environments).set({ secretId: 'sec-pw', secretUsage: 'password' }).where(eq(environments.id, 'env-1'))
     await db.insert(modelProviders).values({ id: 'prov-1', label: 'P1', baseUrl: 'https://api.example.com' })
@@ -380,7 +380,7 @@ describe('runner failure + fallback arms', () => {
   it('env secret with ssh-key usage lands in sshKey', async () => {
     const { db } = await dbm()
     const { environments, vaultSecrets } = await schema()
-    const { encryptSecret } = await import('../server/domains/vault/vault-crypto.service')
+    const { encryptSecret } = await import('../server/domains/vault/secret/secret-crypto.service')
     await mkAiAgent()
     await db.insert(vaultSecrets).values({ id: 'sec-key', name: 'key', ciphertext: encryptSecret('-----BEGIN KEY-----'), lastFour: 'KEY-', createdBy: '00000000-0000-7000-8000-cd5fca5e2d34', createdAt: new Date(), updatedAt: new Date() })
     await db.update(environments).set({ secretId: 'sec-key', secretUsage: 'ssh-key' }).where(eq(environments.id, 'env-1'))
@@ -581,7 +581,7 @@ describe('host-derived key env (hermes host-gated credentials)', () => {
     await callProc('tasks.create', { title: 'Host key', assigneeId: agentId })
     const d = await dbm()
     const sch = await schema()
-    const { encryptSecret } = await import('../server/domains/vault/vault-crypto.service')
+    const { encryptSecret } = await import('../server/domains/vault/secret/secret-crypto.service')
     await d.db.insert(sch.modelProviders).values({ id: 'prov-h', label: 'PH', baseUrl: 'https://ai.example.net' })
     await d.db.insert(sch.vaultSecrets).values({ id: 'sec-h', name: 'kh', ciphertext: encryptSecret('sk-h'), createdBy: '00000000-0000-7000-8000-cd5fca5e2d34' })
     await d.db.update(sch.aiEmployees).set({ providerId: 'prov-h', model: 'm-h', apiKeySecretId: 'sec-h' }).where(eq(sch.aiEmployees.userId, agentId))
@@ -600,7 +600,7 @@ describe('env blob quoting', () => {
     await callProc('tasks.create', { title: `Find out who's your supervior today`, assigneeId: agentId })
     const d = await dbm()
     const sch = await schema()
-    const { encryptSecret } = await import('../server/domains/vault/vault-crypto.service')
+    const { encryptSecret } = await import('../server/domains/vault/secret/secret-crypto.service')
     await d.db.insert(sch.modelProviders).values({ id: 'prov-q', label: 'PQ', baseUrl: 'https://pq.example.com' })
     await d.db.insert(sch.vaultSecrets).values({ id: 'sec-q', name: 'kq', ciphertext: encryptSecret('sk-q'), createdBy: '00000000-0000-7000-8000-cd5fca5e2d34' })
     await d.db.update(sch.aiEmployees).set({ providerId: 'prov-q', model: 'm-q', apiKeySecretId: 'sec-q' }).where(eq(sch.aiEmployees.userId, agentId))
@@ -902,7 +902,7 @@ describe('dispatcher', () => {
     // reviewer with password-secret env + provider/LLM key -> full loadDispatchPlanFor arms
     process.env.TANDEM_FAKE_SCRIPT = 'done\n{"kind": "result", "body": "shipped"}'
     process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'ok\n{"kind": "result", "body": "fine"}'
-    const { encryptSecret } = await import('../server/domains/vault/vault-crypto.service')
+    const { encryptSecret } = await import('../server/domains/vault/secret/secret-crypto.service')
     const pwSecret = await db.insert(vaultSecrets).values({ id: 'sec-pw', name: 'pw', ciphertext: encryptSecret('hunter2'), createdBy: '00000000-0000-7000-8000-cd5fca5e2d34', createdAt: new Date(), updatedAt: new Date() }).returning()
     void pwSecret
     const keySecret = await db.insert(vaultSecrets).values({ id: 'sec-key', name: 'key', ciphertext: encryptSecret('ssh-key-bytes'), createdBy: '00000000-0000-7000-8000-cd5fca5e2d34', createdAt: new Date(), updatedAt: new Date() }).returning()

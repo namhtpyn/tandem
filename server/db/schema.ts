@@ -37,7 +37,7 @@ export const settings = pgTable('settings', {
 
 // Secret vault: AES-256-GCM encrypted values. Secrets are write-only from the
 // API — plaintext never leaves the server after create; only server-side
-// consumers (M5 SSH runner) import vault-crypto and decrypt.
+// consumers (M5 SSH runner) import secret-crypto and decrypt.
 // Vault folders: pure metadata for categorizing secrets. Deleting a folder
 // never deletes secrets (FK SET NULL -> uncategorized).
 export const vaultFolders = pgTable('vault_folders', {

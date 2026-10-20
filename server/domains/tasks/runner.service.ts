@@ -12,7 +12,7 @@
 import {eq, and, desc, ne} from 'drizzle-orm'
 import { db } from '../../db'
 import { tasks, taskRuns, taskActivity, taskAttachments, aiEmployees, environments, modelProviders, vaultSecrets, vaultAudit, user as userTable } from '../../db/schema'
-import { decryptSecret } from '../vault/vault-crypto.service'
+import { decryptSecret } from '../vault/secret/secret-crypto.service'
 import { publishChange } from '../kernel/kernel'
 
 // FULL output is kept on the run row (user law 2026-10-15: "the task output must
