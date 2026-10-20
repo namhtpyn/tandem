@@ -2,6 +2,7 @@
 import { type AnyPgColumn, pgTable, text, timestamp, boolean, integer, index, primaryKey, check, jsonb, uuid } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 import { defineRelations } from 'drizzle-orm'
+import { v7 as uuidv7 } from 'uuid'
 
 // Auth tables (user/session/account/verification/apikey) are GENERATED
 // by the better-auth CLI into ./schema.auth.ts — regenerate with `bun run
@@ -14,7 +15,7 @@ export * from './schema.auth'
 
 // SSH targets that run the Hermes agent (M2).
 export const environments = pgTable('environments', {
-  id: text('id').primaryKey(),
+  id: text('id').primaryKey().$default(() => uuidv7()),
   name: text('name').notNull().unique(),
   host: text('host').notNull(),
   port: text('port').notNull().default('22'),
@@ -23,15 +24,15 @@ export const environments = pgTable('environments', {
   secretId: text('secret_id').references(() => vaultSecrets.id, { onDelete: 'set null' }),
   // how the linked secret is used: as an SSH identity file or as a password
   secretUsage: text('secret_usage').notNull().default('ssh-key'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().$default(() => new Date()),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().$default(() => new Date()).$onUpdate(() => new Date()),
 })
 
 // runtime key/value settings (oidc providers JSON, flags, …)
 export const settings = pgTable('settings', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().$default(() => new Date()).$onUpdate(() => new Date()),
 })
 
 // Secret vault: AES-256-GCM encrypted values. Secrets are write-only from the
@@ -40,42 +41,42 @@ export const settings = pgTable('settings', {
 // Vault folders: pure metadata for categorizing secrets. Deleting a folder
 // never deletes secrets (FK SET NULL -> uncategorized).
 export const vaultFolders = pgTable('vault_folders', {
-  id: text('id').primaryKey(),
+  id: text('id').primaryKey().$default(() => uuidv7()),
   name: text('name').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().$default(() => new Date()),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().$default(() => new Date()).$onUpdate(() => new Date()),
 })
 
 // Employee title catalog: offered in the employee form picker. Employees keep
 // title as free text (no FK); renaming a catalog entry rewrites matching
 // employees so the org chart stays consistent.
 export const employeeTitles = pgTable('employee_titles', {
-  id: text('id').primaryKey(),
+  id: text('id').primaryKey().$default(() => uuidv7()),
   name: text('name').notNull().unique(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().$default(() => new Date()),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().$default(() => new Date()).$onUpdate(() => new Date()),
 })
 
 export const vaultSecrets = pgTable('vault_secrets', {
-  id: text('id').primaryKey(),
+  id: text('id').primaryKey().$default(() => uuidv7()),
   name: text('name').notNull(),
   description: text('description').notNull().default(''),
   folderId: text('folder_id').references(() => vaultFolders.id, { onDelete: 'set null' }),
   ciphertext: text('ciphertext').notNull(), // v1:<b64 iv>:<b64 tag>:<b64 ct>
   lastFour: text('last_four').notNull().default(''), // display hint only
   createdBy: uuid('created_by').notNull().references(() => user.id, { onDelete: 'cascade' }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().$default(() => new Date()),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().$default(() => new Date()).$onUpdate(() => new Date()),
 })
 
 // Audit trail: every vault write and every server-side decrypt ("use").
 export const vaultAudit = pgTable('vault_audit', {
-  id: text('id').primaryKey(),
+  id: text('id').primaryKey().$default(() => uuidv7()),
   secretId: text('secret_id').references(() => vaultSecrets.id, { onDelete: 'cascade' }),
   secretName: text('secret_name').notNull(),
   action: text('action').notNull(), // create | update | delete | use
   actorId: text('actor_id').notNull().default('system'),
-  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+  at: timestamp('at', { withTimezone: true }).notNull().$default(() => new Date()),
 }, (t) => [
   index('vault_audit_secret_idx').on(t.secretId),
   index('vault_audit_at_idx').on(t.at),
@@ -96,15 +97,15 @@ export const employeeSupervisors = pgTable('employee_supervisors', {
 // Model providers: curated catalog of OpenAI/Anthropic-compatible endpoints.
 // API keys are NEVER stored here — per-agent in the vault (fleet law).
 export const modelProviders = pgTable('model_providers', {
-  id: text('id').primaryKey(),
+  id: text('id').primaryKey().$default(() => uuidv7()),
   label: text('label').notNull(),
   baseUrl: text('base_url').notNull(),
   /** set of API styles this endpoint speaks (see shared/api-styles.ts) */
   endpoints: jsonb('endpoints').notNull().default(sql`'["OPENAI-COMPLETIONS"]'::jsonb`),
   extraHeaders: text('extra_headers'),
   notes: text('notes'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().$default(() => new Date()),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().$default(() => new Date()).$onUpdate(() => new Date()),
 })
 
 // AI extension (1:1 with user): row existence marks the employee as an AI
@@ -120,14 +121,14 @@ export const aiEmployees = pgTable('ai_employees', {
   providerId: text('provider_id').references(() => modelProviders.id, { onDelete: 'set null' }),
   model: text('model'),
   apiKeySecretId: text('api_key_secret_id').references(() => vaultSecrets.id, { onDelete: 'set null' }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().$default(() => new Date()),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().$default(() => new Date()).$onUpdate(() => new Date()),
 })
 
 // Tasks: work items assigned to employees (human or AI). AI assignees get
 // dispatched to their environment by the runner (M5).
 export const projects = pgTable('projects', {
-  id: text('id').primaryKey(),
+  id: text('id').primaryKey().$default(() => uuidv7()),
   name: text('name').notNull(),
   description: text('description').notNull().default(''),
   // active | archived
@@ -136,8 +137,8 @@ export const projects = pgTable('projects', {
   prompt: text('prompt').notNull().default(''),
   // nesting: parent project (self-reference); deleting a parent orphans children to root
   parentId: text('parent_id').references((): AnyPgColumn => projects.id, { onDelete: 'set null' }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().$default(() => new Date()),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().$default(() => new Date()).$onUpdate(() => new Date()),
 }, (t) => [
   index('projects_parent_idx').on(t.parentId),
 ])
@@ -148,7 +149,7 @@ export const projects = pgTable('projects', {
 // status referencing taskStatuses.id (no hard FK: deleting a status moves
 // its tasks back to the first status).
 export const taskStatuses = pgTable('task_statuses', {
-  id: text('id').primaryKey(),
+  id: text('id').primaryKey().$default(() => uuidv7()),
   name: text('name').notNull(),
   /** tailwind badge color: neutral | primary | success | warning | error | info */
   color: text('color').notNull().default('neutral'),
@@ -158,12 +159,12 @@ export const taskStatuses = pgTable('task_statuses', {
   category: text('category').notNull().default('backlog'),
   /** allowed transitions: array of status ids */
   nextIds: text('next_ids').array().notNull().default(sql`'{}'::text[]`),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().$default(() => new Date()),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().$default(() => new Date()).$onUpdate(() => new Date()),
 })
 
 export const tasks = pgTable('tasks', {
-  id: text('id').primaryKey(),
+  id: text('id').primaryKey().$default(() => uuidv7()),
   title: text('title').notNull(),
   description: text('description').notNull().default(''),
   // references task_statuses.id (seeded: todo/doing/done)
@@ -186,8 +187,8 @@ export const tasks = pgTable('tasks', {
   /** status to restore when the auto-block (open children) lifts; null = not auto-blocked */
   preBlockStatus: text('pre_block_status'),
   createdBy: uuid('created_by').references(() => user.id, { onDelete: 'set null' }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().$default(() => new Date()),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().$default(() => new Date()).$onUpdate(() => new Date()),
 }, (t) => [
   index('tasks_assignee_idx').on(t.assigneeId),
   index('tasks_project_idx').on(t.projectId),
@@ -198,14 +199,14 @@ export const tasks = pgTable('tasks', {
 /** pending obligations: who owes what on a task — answers, approvals. Single source
  * for "who acts next" (the waiting-on-you inbox + badge). answer role moves on forward. */
 export const taskObligations = pgTable('task_obligations', {
-  id: text('id').primaryKey(),
+  id: text('id').primaryKey().$default(() => uuidv7()),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
   employeeId: uuid('employee_id').references(() => user.id, { onDelete: 'cascade' }),
   /** answer | approval (future roles just add values) */
   role: text('role').notNull(),
   /** pending | fulfilled | cancelled */
   status: text('status').notNull().default('pending'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().$default(() => new Date()),
   resolvedAt: timestamp('resolved_at', { withTimezone: true }),
   resolvedBy: uuid('resolved_by').references(() => user.id, { onDelete: 'set null' }),
 }, (t) => [
@@ -215,12 +216,12 @@ export const taskObligations = pgTable('task_obligations', {
 
 /** append-only assignee history; the current assignee stays denormalized on the task */
 export const taskAssignments = pgTable('task_assignments', {
-  id: text('id').primaryKey(),
+  id: text('id').primaryKey().$default(() => uuidv7()),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
   employeeId: uuid('employee_id').references(() => user.id, { onDelete: 'set null' }),
   reason: text('reason').notNull().default(''),
   actorId: uuid('actor_id').references(() => user.id, { onDelete: 'set null' }),
-  startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull().$default(() => new Date()),
   endedAt: timestamp('ended_at', { withTimezone: true }),
 }, (t) => [
   index('task_assignments_task_idx').on(t.taskId, t.startedAt),
@@ -228,7 +229,7 @@ export const taskAssignments = pgTable('task_assignments', {
 
 /** agent proposals from run envelopes ([SUBTASKS]/[REASSIGN]) awaiting confirmation */
 export const taskProposals = pgTable('task_proposals', {
-  id: text('id').primaryKey(),
+  id: text('id').primaryKey().$default(() => uuidv7()),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
   runId: text('run_id').references(() => taskRuns.id, { onDelete: 'cascade' }),
   /** subtasks | reassign */
@@ -239,13 +240,13 @@ export const taskProposals = pgTable('task_proposals', {
   decisionNote: text('decision_note').notNull().default(''),
   decidedBy: uuid('decided_by').references(() => user.id, { onDelete: 'set null' }),
   decidedAt: timestamp('decided_at', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().$default(() => new Date()),
 }, (t) => [
   index('task_proposals_task_idx').on(t.taskId, t.status),
 ])
 
 export const taskRuns = pgTable('task_runs', {
-  id: text('id').primaryKey(),
+  id: text('id').primaryKey().$default(() => uuidv7()),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
   employeeId: uuid('employee_id').references(() => user.id, { onDelete: 'set null' }),
   /** REVIEW LAW: the ACP session this run used — review turns by OTHER employees must
@@ -258,7 +259,7 @@ export const taskRuns = pgTable('task_runs', {
   output: text('output').notNull().default(''),
   /** the exact brief (prompt) sent to the agent for this turn; null on pre-2.26 rows */
   prompt: text('prompt'),
-  startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull().$default(() => new Date()),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 }, (t) => [
   index('task_runs_task_idx').on(t.taskId, t.startedAt),
@@ -268,7 +269,7 @@ export const taskRuns = pgTable('task_runs', {
 // of truth for who approved what. pending -> approved | change_requested | rejected;
 // rejected is a HUMAN-only verdict and cancels the task.
 export const taskReviews = pgTable('task_reviews', {
-  id: text('id').primaryKey(),
+  id: text('id').primaryKey().$default(() => uuidv7()),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
   reviewerId: uuid('reviewer_id').references(() => user.id, { onDelete: 'set null' }),
   /** 1, 2, … — increments on resubmission after change_requested */
@@ -278,7 +279,7 @@ export const taskReviews = pgTable('task_reviews', {
   note: text('note'),
   /** human click | ai review turn */
   source: text('source'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().$default(() => new Date()),
   decidedAt: timestamp('decided_at', { withTimezone: true }),
 }, (t) => [
   index('task_reviews_task_idx').on(t.taskId, t.round),
@@ -286,7 +287,7 @@ export const taskReviews = pgTable('task_reviews', {
 
 // Task activity feed: questions, answers, forwards, verdicts, status notes.
 export const taskAttachments = pgTable('task_attachments', {
-  id: text('id').primaryKey(),
+  id: text('id').primaryKey().$default(() => uuidv7()),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
   /** set for agent-produced files: the run that produced them */
   runId: text('run_id'),
@@ -297,20 +298,20 @@ export const taskAttachments = pgTable('task_attachments', {
   size: integer('size').notNull(),
   sha256: text('sha256').notNull(),
   createdBy: text('created_by'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().$default(() => new Date()),
 }, (t) => [
   index('task_attachments_task_idx').on(t.taskId, t.createdAt),
 ])
 
 export const taskActivity = pgTable('task_activity', {
-  id: text('id').primaryKey(),
+  id: text('id').primaryKey().$default(() => uuidv7()),
   taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
   /** question | answer | forward | note | verdict | status */
   kind: text('kind').notNull(),
   authorId: uuid('author_id').references(() => user.id, { onDelete: 'set null' }),
   body: text('body').notNull().default(''),
   meta: jsonb('meta').notNull().default({}),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().$default(() => new Date()),
 }, (t) => [
   index('task_activity_task_idx').on(t.taskId, t.createdAt),
 ])

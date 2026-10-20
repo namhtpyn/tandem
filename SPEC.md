@@ -24,6 +24,14 @@ Remote-only: the agent never runs on the Tandem server itself.
 
 ## Domain model
 
+Default minting law (2026-10-20): every id and every timestamp is minted by the
+APP, never the DB — drizzle `.$default(() => uuidv7())` on ids (v7 from the
+`uuid` package), `.$default(() => new Date())` on created/started timestamps,
+`.$default(...).$onUpdate(() => new Date())` on updated_at. Legacy DB-level
+`DEFAULT now()` columns remain in the DDL but are dormant (drizzle always
+supplies values). Applies to both schema.ts and the generated schema.auth.ts.
+
+
 ```
 environments(id, name, host, port, username, created_at, updated_at)
 employees(id, name, kind: human|ai, title, manager_id -> employees.id, environment_id -> environments.id, instructions, created_at, updated_at)
