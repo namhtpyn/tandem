@@ -31,7 +31,7 @@ browser, navigating and interacting like a human user:**
 3. **Cover the human path**: login → navigate → create → edit → delete → error
    cases (duplicate names, invalid input) → empty states → realtime updates
    where applicable.
-3a. **MOBILE FIRST — non-negotiable.** The UI is designed for phones first:
+   3a. **MOBILE FIRST — non-negotiable.** The UI is designed for phones first:
    every manual pass and every e2e visual check must run at a mobile viewport
    (e.g. 390x844) BEFORE desktop. Tables must collapse to card/stacked layouts
    on small screens (no horizontal scroll), modals must be bottom-sheet-like
@@ -42,7 +42,7 @@ browser, navigating and interacting like a human user:**
 5. **Then update the e2e suite accordingly**: encode what the manual pass taught
    (correct selectors, real flows, caught bugs) into `e2e/*.spec.ts`. The manual
    pass is the source of truth; the e2e suite is its automated memory.
-5. Record the outcome in the commit/PR description: what was manually tested,
+6. Record the outcome in the commit/PR description: what was manually tested,
    what the vision review flagged, what was fixed.
 
 curl/health checks and unit tests do NOT substitute for this rule. A feature is
@@ -104,19 +104,20 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
   with `satisfies`:
 
   ```ts
-  const PROVIDER_KIND = { LLM: 'LLM', DECISION: 'DECISION' } as const
-  type ProviderKind = ValueOf<typeof PROVIDER_KIND>
+  const PROVIDER_KIND = { LLM: 'LLM', DECISION: 'DECISION' } as const;
+  type ProviderKind = ValueOf<typeof PROVIDER_KIND>;
 
   const PROVIDER_API_STYLE = {
-    [PROVIDER_KIND.LLM]: { 'OPENAI-COMPLETIONS': 'OPENAI-COMPLETIONS', /* … */ },
-    [PROVIDER_KIND.DECISION]: { 'TYPESAFE-SYSTEMONE': 'TYPESAFE-SYSTEMONE', /* … */ },
-  } as const satisfies Record<ProviderKind, Record<string, string>>
+    [PROVIDER_KIND.LLM]: { 'OPENAI-COMPLETIONS': 'OPENAI-COMPLETIONS' /* … */ },
+    [PROVIDER_KIND.DECISION]: { 'TYPESAFE-SYSTEMONE': 'TYPESAFE-SYSTEMONE' /* … */ },
+  } as const satisfies Record<ProviderKind, Record<string, string>>;
   ```
 
   Why: single source of truth (add a value once, every type, zod schema, and
   reverse lookup update), grouping keys stay valid `ProviderKind`s at compile
   time, and lookups (`styleKind(s)`) replace scattered string-literal switches.
   Store the leaf value in the DB; derive the group by lookup, never store both.
+
 - **Enum constants are `SCREAMING_SNAKE_CASE`, for BOTH properties and values**
   (`PROVIDER_API_STYLE.LLM['ANTHROPIC-MESSAGES'] === 'ANTHROPIC-MESSAGES'`;
   `PROVIDER_KIND.DECISION === 'DECISION'`). Lowercase/camelCase const-object
@@ -181,7 +182,6 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
 - CI regenerates and fails on any diff (drift guard) — regen must be idempotent.
 - Relations are hand-owned via `defineRelations` in schema.ts; the CLI's
   `defineRelationsPart` block is stripped by the script.
-
 
 ## Task workflow (user laws, 2026-10-13)
 

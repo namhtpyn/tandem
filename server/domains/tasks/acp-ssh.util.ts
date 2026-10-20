@@ -5,13 +5,13 @@
 // Byte-count framing: `eval "$(head -c N)"` reads EXACTLY N bytes of stdin as
 // the env blob; everything written after those N bytes is the ACP JSON-RPC
 // stream for the exec'd agent process.
-import type { AcpStream } from './acp.client'
-import type { SshPlan } from './ssh-exec.util'
+import type { AcpStream } from './acp.client';
+import type { SshPlan } from './ssh-exec.util';
 
 /** remote wrapper: source the blob, then hand the pipe to the ACP server */
 export function acpRemoteCommand(envBlobBytes: number, acpExecutable: string): string {
   // acpExecutable is router-validated shell-word-safe (letters/digits/_@/.- and spaces)
-  return `bash -c 'eval "$(head -c ${envBlobBytes})" && exec ${acpExecutable}'`
+  return `bash -c 'eval "$(head -c ${envBlobBytes})" && exec ${acpExecutable}'`;
 }
 
 /** ssh2-backed AcpStream; exported seam for tests to mock the transport */
@@ -21,79 +21,114 @@ export async function openAcpSshStream(
   acpExecutable: string,
   onLine: (line: string) => void,
 ): Promise<AcpStream> {
-  const { loadClient } = await import('./ssh-exec.util')
-  const ClientCtor = await loadClient()
-  const conn = new ClientCtor()
+  const { loadClient } = await import('./ssh-exec.util');
+  const ClientCtor = await loadClient();
+  const conn = new ClientCtor();
 
-  let stdoutCb: ((line: string) => void) | null = null
-  let stderrCb: ((line: string) => void) | null = null
-  let closeCb: ((code: number | null) => void) | null = null
-  let stream: { write: (d: Buffer | string) => void, close: () => void, signal: (s: string) => void } | null = null
-  let stdoutBuf = ''
-  let stderrBuf = ''
-  let ready: ((v: void) => void) | null = null
-  let fail: ((e: Error) => void) | null = null
-  const readyPromise = new Promise<void>((resolve, reject) => { ready = resolve, fail = reject })
+  let stdoutCb: ((line: string) => void) | null = null;
+  let stderrCb: ((line: string) => void) | null = null;
+  let closeCb: ((code: number | null) => void) | null = null;
+  let stream: { write: (d: Buffer | string) => void; close: () => void; signal: (s: string) => void } | null = null;
+  let stdoutBuf = '';
+  let stderrBuf = '';
+  let ready: ((v: void) => void) | null = null;
+  let fail: ((e: Error) => void) | null = null;
+  const readyPromise = new Promise<void>((resolve, reject) => {
+    ((ready = resolve), (fail = reject));
+  });
 
   const splitLines = (buf: string, chunk: string, emit: (l: string) => void): string => {
-    const all = buf + chunk
-    const parts = all.split('\n')
-    for (const p of parts.slice(0, -1)) if (p.trim()) emit(p)
-    return parts[parts.length - 1]! // split always yields a tail element
-  }
+    const all = buf + chunk;
+    const parts = all.split('\n');
+    for (const p of parts.slice(0, -1)) if (p.trim()) emit(p);
+    return parts[parts.length - 1]!; // split always yields a tail element
+  };
 
-  conn.on('ready', () => {
-    conn.exec(acpRemoteCommand(Buffer.byteLength(envBlob), acpExecutable), (err: Error | undefined, s: {
-      write: (d: Buffer | string) => void,
-      close: () => void,
-      signal: (s: string) => void,
-      on: (ev: 'data' | 'stderr' | 'exit' | 'close', cb: (arg: unknown) => void) => void,
-    }) => {
-      if (err) {
-        fail!(new Error(`acp exec error: ${err.message}`))
-        try { conn.end() } catch { /* already gone */ }
-        return
-      }
-      stream = s
-      s.on('data', (d: unknown) => {
-        stdoutBuf = splitLines(stdoutBuf, String(d), l => stdoutCb?.(l))
-      })
-      s.on('stderr', (d: unknown) => {
-        stderrBuf = splitLines(stderrBuf, String(d), l => stderrCb?.(l))
-      })
-      s.on('exit', (code: unknown) => closeCb?.(typeof code === 'number' ? code : null))
-      s.on('close', () => { closeCb?.(null) })
-      // env blob first (consumed by head -c N), then the channel stays open for
-      // JSON-RPC — written synchronously here, so every later write is protocol
-      s.write(envBlob)
-      ready!()
+  conn
+    .on('ready', () => {
+      conn.exec(
+        acpRemoteCommand(Buffer.byteLength(envBlob), acpExecutable),
+        (
+          err: Error | undefined,
+          s: {
+            write: (d: Buffer | string) => void;
+            close: () => void;
+            signal: (s: string) => void;
+            on: (ev: 'data' | 'stderr' | 'exit' | 'close', cb: (arg: unknown) => void) => void;
+          },
+        ) => {
+          if (err) {
+            fail!(new Error(`acp exec error: ${err.message}`));
+            try {
+              conn.end();
+            } catch {
+              /* already gone */
+            }
+            return;
+          }
+          stream = s;
+          s.on('data', (d: unknown) => {
+            stdoutBuf = splitLines(stdoutBuf, String(d), (l) => stdoutCb?.(l));
+          });
+          s.on('stderr', (d: unknown) => {
+            stderrBuf = splitLines(stderrBuf, String(d), (l) => stderrCb?.(l));
+          });
+          s.on('exit', (code: unknown) => closeCb?.(typeof code === 'number' ? code : null));
+          s.on('close', () => {
+            closeCb?.(null);
+          });
+          // env blob first (consumed by head -c N), then the channel stays open for
+          // JSON-RPC — written synchronously here, so every later write is protocol
+          s.write(envBlob);
+          ready!();
+        },
+      );
     })
-  }).on('error', (err: Error) => {
-    fail!(new Error(`acp ssh error: ${err.message}`))
-  }).connect({
-    host: plan.env.host,
-    port: Number(plan.env.port) || 22,
-    username: plan.env.username,
-    privateKey: plan.sshKey,
-    password: plan.sshPassword,
-    keepaliveInterval: 15_000,
-    keepaliveCountMax: 4,
-    readyTimeout: 20_000,
-  })
+    .on('error', (err: Error) => {
+      fail!(new Error(`acp ssh error: ${err.message}`));
+    })
+    .connect({
+      host: plan.env.host,
+      port: Number(plan.env.port) || 22,
+      username: plan.env.username,
+      privateKey: plan.sshKey,
+      password: plan.sshPassword,
+      keepaliveInterval: 15_000,
+      keepaliveCountMax: 4,
+      readyTimeout: 20_000,
+    });
 
-  await readyPromise
+  await readyPromise;
 
   return {
     write: (message: unknown) => {
-      stream?.write(`${JSON.stringify(message)}\n`)
+      stream?.write(`${JSON.stringify(message)}\n`);
     },
     close: () => {
-      try { stream?.signal('KILL') } catch { /* not supported / gone */ }
-      try { stream?.close() } catch { /* already gone */ }
-      try { conn.end() } catch { /* already gone */ }
+      try {
+        stream?.signal('KILL');
+      } catch {
+        /* not supported / gone */
+      }
+      try {
+        stream?.close();
+      } catch {
+        /* already gone */
+      }
+      try {
+        conn.end();
+      } catch {
+        /* already gone */
+      }
     },
-    onStdoutLine: (cb: (line: string) => void) => { stdoutCb = cb },
-    onStderrLine: (cb: (line: string) => void) => { stderrCb = cb },
-    onClose: (cb: (code: number | null) => void) => { closeCb = cb },
-  }
+    onStdoutLine: (cb: (line: string) => void) => {
+      stdoutCb = cb;
+    },
+    onStderrLine: (cb: (line: string) => void) => {
+      stderrCb = cb;
+    },
+    onClose: (cb: (code: number | null) => void) => {
+      closeCb = cb;
+    },
+  };
 }

@@ -12,15 +12,15 @@ Remote-only: the agent never runs on the Tandem server itself.
 
 ## Milestones
 
-| id | scope | status |
-|---|---|---|
-| M1 | foundation: schema, auth, settings, health, admin shell, boot migrations + admin seed | shipped |
-| M2 | environments: oRPC v2 live API, realtime admin UI, SSH probe (Bun Shell) | shipped |
-| M3 | employees (human/AI, title, managerId, org view | planned |
-| M4 | tasks CRUD, assignee, status | shipped |
-| M4+ | workflow (question chain, unanimous review), agent dispatcher + streamed runs | shipped |
-| M5 | runner: per-env serial queue, SSH one-shot Hermes, stream capture | shipped |
-| M6 | ship: tests at 100%, CI, semantic-release, GHCR, docs | shipped |
+| id  | scope                                                                                 | status  |
+| --- | ------------------------------------------------------------------------------------- | ------- |
+| M1  | foundation: schema, auth, settings, health, admin shell, boot migrations + admin seed | shipped |
+| M2  | environments: oRPC v2 live API, realtime admin UI, SSH probe (Bun Shell)              | shipped |
+| M3  | employees (human/AI, title, managerId, org view                                       | planned |
+| M4  | tasks CRUD, assignee, status                                                          | shipped |
+| M4+ | workflow (question chain, unanimous review), agent dispatcher + streamed runs         | shipped |
+| M5  | runner: per-env serial queue, SSH one-shot Hermes, stream capture                     | shipped |
+| M6  | ship: tests at 100%, CI, semantic-release, GHCR, docs                                 | shipped |
 
 ## Domain model
 
@@ -30,7 +30,6 @@ APP, never the DB — drizzle `.$default(() => uuidv7())` on ids (v7 from the
 `.$default(...).$onUpdate(() => new Date())` on updated_at. Legacy DB-level
 `DEFAULT now()` columns remain in the DDL but are dormant (drizzle always
 supplies values). Applies to both schema.ts and the generated schema.auth.ts.
-
 
 ```
 environments(id, name, host, port, username, created_at, updated_at)
@@ -131,22 +130,22 @@ better-auth's own `/auth/**` protocol and the `/health/*` infra probes. Rules:
 
 ### Procedures (complete list)
 
-| procedure | auth | input | result |
-|---|---|---|---|
-| `meta.version` | none | — | `{version}` |
-| `changes.live` | session | — | SSE stream of `{resource, action}` change events (post-load invalidation only — never carries data) |
-| `auth.config` | none | — | plain GET `{passwordEnabled, oidcEnabled, providers:[{id,label}]}` |
-| `auth.configLive` | none | — | live `{passwordEnabled, oidcEnabled, providers:[{id,label}]}` |
-| `auth.session` | none | — | session payload or null |
-| `settings.live` | session | — | live `{disablePasswordLogin}` |
-| `settings.update` | session | `{disablePasswordLogin?}` | `{ok}` (400 when disabling with no OIDC provider) |
-| `oidc.live` | session | — | live provider list with `hasSecret`, never secrets |
-| `oidc.replace` | session | `{providers:[{id?,label,issuer,clientId,clientSecret?}]}` | `{ok,count}` (secrets write-only; ids server-generated for new providers) |
-| `environments.live` | session | — | live snapshot of all environments |
-| `environments.create` | session | `{name,host,port?,username}` | created row |
-| `environments.update` | session | `{id,name,host,port?,username}` | updated row |
-| `environments.remove` | session | `{id}` | `{ok}` |
-| `environments.probe` | session | `{id}` | `{ok,detail,durationMs}` |
+| procedure             | auth    | input                                                     | result                                                                                              |
+| --------------------- | ------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `meta.version`        | none    | —                                                         | `{version}`                                                                                         |
+| `changes.live`        | session | —                                                         | SSE stream of `{resource, action}` change events (post-load invalidation only — never carries data) |
+| `auth.config`         | none    | —                                                         | plain GET `{passwordEnabled, oidcEnabled, providers:[{id,label}]}`                                  |
+| `auth.configLive`     | none    | —                                                         | live `{passwordEnabled, oidcEnabled, providers:[{id,label}]}`                                       |
+| `auth.session`        | none    | —                                                         | session payload or null                                                                             |
+| `settings.live`       | session | —                                                         | live `{disablePasswordLogin}`                                                                       |
+| `settings.update`     | session | `{disablePasswordLogin?}`                                 | `{ok}` (400 when disabling with no OIDC provider)                                                   |
+| `oidc.live`           | session | —                                                         | live provider list with `hasSecret`, never secrets                                                  |
+| `oidc.replace`        | session | `{providers:[{id?,label,issuer,clientId,clientSecret?}]}` | `{ok,count}` (secrets write-only; ids server-generated for new providers)                           |
+| `environments.live`   | session | —                                                         | live snapshot of all environments                                                                   |
+| `environments.create` | session | `{name,host,port?,username}`                              | created row                                                                                         |
+| `environments.update` | session | `{id,name,host,port?,username}`                           | updated row                                                                                         |
+| `environments.remove` | session | `{id}`                                                    | `{ok}`                                                                                              |
+| `environments.probe`  | session | `{id}`                                                    | `{ok,detail,durationMs}`                                                                            |
 
 Wiring follows the official oRPC docs: Nuxt adapter (`toWebRequest` +
 `RPCHandler` with `onError` interceptor), Better Auth lazy `getSession`
@@ -156,13 +155,13 @@ HTTP hop; per-request so cookies stay current).
 
 ### Environments procedures
 
-| procedure | input | result |
-|---|---|---|
-| `environments.live` | — | live snapshot stream of all environments |
-| `environments.create` | `{name,host,port?,username}` | created row |
-| `environments.update` | `{id,name,host,port?,username}` | updated row |
-| `environments.remove` | `{id}` | `{ok:true}` |
-| `environments.probe` | `{id}` | `{ok,detail,durationMs}` |
+| procedure             | input                           | result                                   |
+| --------------------- | ------------------------------- | ---------------------------------------- |
+| `environments.live`   | —                               | live snapshot stream of all environments |
+| `environments.create` | `{name,host,port?,username}`    | created row                              |
+| `environments.update` | `{id,name,host,port?,username}` | updated row                              |
+| `environments.remove` | `{id}`                          | `{ok:true}`                              |
+| `environments.probe`  | `{id}`                          | `{ok,detail,durationMs}`                 |
 
 - names unique (409 on clash, including rename onto another row)
 - probe: BatchMode ssh (`StrictHostKeyChecking=accept-new`, ConnectTimeout 5),
@@ -206,19 +205,19 @@ secrets are never returned.
 
 ## Routes table
 
-| method | path | auth | purpose |
-|---|---|---|---|
-| POST/GET | `/auth/**` | public (policy gates inside) | better-auth handler |
-| GET | `/health/live` | none | liveness |
-| GET | `/health/ready` | none | readiness |
-| GET | `/api/auth-config` | none | login capabilities |
-| POST | `/rpc/**` | varies (see API law) | all application procedures |
-| POST | `/rpc/**` | session (oRPC middleware) | oRPC v2 procedures (see API law) |
-| POST | `/api/tasks/:id/attachments` | session | multipart attachment upload (REST exception, like avatar) |
-| GET | `/api/attachments/:id` | session | serve attachment bytes (etag = sha256, 304 revalidation) |
-| GET | `/` | none | 302 → `/admin` |
-| GET | `/tasks` | session | task list/board (mobile-first cards; titles link to the task page) |
-| GET | `/tasks/:id` | session | task info page: header + workflow actions + agent runs (full output) + activity feed; data loads via GET procs and refetches on change events |
+| method   | path                         | auth                         | purpose                                                                                                                                       |
+| -------- | ---------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST/GET | `/auth/**`                   | public (policy gates inside) | better-auth handler                                                                                                                           |
+| GET      | `/health/live`               | none                         | liveness                                                                                                                                      |
+| GET      | `/health/ready`              | none                         | readiness                                                                                                                                     |
+| GET      | `/api/auth-config`           | none                         | login capabilities                                                                                                                            |
+| POST     | `/rpc/**`                    | varies (see API law)         | all application procedures                                                                                                                    |
+| POST     | `/rpc/**`                    | session (oRPC middleware)    | oRPC v2 procedures (see API law)                                                                                                              |
+| POST     | `/api/tasks/:id/attachments` | session                      | multipart attachment upload (REST exception, like avatar)                                                                                     |
+| GET      | `/api/attachments/:id`       | session                      | serve attachment bytes (etag = sha256, 304 revalidation)                                                                                      |
+| GET      | `/`                          | none                         | 302 → `/admin`                                                                                                                                |
+| GET      | `/tasks`                     | session                      | task list/board (mobile-first cards; titles link to the task page)                                                                            |
+| GET      | `/tasks/:id`                 | session                      | task info page: header + workflow actions + agent runs (full output) + activity feed; data loads via GET procs and refetches on change events |
 
 ## Testing contract
 

@@ -5,24 +5,24 @@
 // Collect: everything the agent left in out/ comes back and becomes run outputs.
 // Cleanup: the task dir is removed once no run of that task is still running.
 // Exported as an object so tests can mock the whole shuttle.
-import type { Client } from 'ssh2'
+import type { Client } from 'ssh2';
 
 export type SshFilePlan = {
-  env: { host: string, port: string, username: string }
-  sshKey?: string
-  sshPassword?: string
-}
+  env: { host: string; port: string; username: string };
+  sshKey?: string;
+  sshPassword?: string;
+};
 
 /** agent-side staging subtree, relative to the environment SSH user's home */
-export const TASK_FILES_HOME = '.tandem'
+export const TASK_FILES_HOME = '.tandem';
 
 /** ~/.tandem/<taskId>/attachments (relative form works in both exec and sftp) */
 export function taskFilesDir(taskId: string): string {
-  return `${TASK_FILES_HOME}/${taskId}/attachments`
+  return `${TASK_FILES_HOME}/${taskId}/attachments`;
 }
 
 export function taskFilesOutDir(taskId: string): string {
-  return `${taskFilesDir(taskId)}/out`
+  return `${taskFilesDir(taskId)}/out`;
 }
 
 /** ALWAYS create ~/.tandem/<taskId>/attachments/out before a turn — even when the
@@ -35,23 +35,39 @@ export async function ensureOutDir(
   taskId: string,
   timeoutMs?: number,
 ): Promise<void> {
-  const conn = await connect(ClientCtor, plan, timeoutMs)
+  const conn = await connect(ClientCtor, plan, timeoutMs);
   try {
-    const out = taskFilesOutDir(taskId)
-    await exec(conn, `mkdir -p ${out}`)
-    await exec(conn, `chown -R 10000:10000 ${TASK_FILES_HOME}/${taskId} 2>/dev/null || chmod -R a+rwX ${TASK_FILES_HOME}/${taskId}`)
-  }
-  finally {
-    conn.end()
+    const out = taskFilesOutDir(taskId);
+    await exec(conn, `mkdir -p ${out}`);
+    await exec(
+      conn,
+      `chown -R 10000:10000 ${TASK_FILES_HOME}/${taskId} 2>/dev/null || chmod -R a+rwX ${TASK_FILES_HOME}/${taskId}`,
+    );
+  } finally {
+    conn.end();
   }
 }
 
 function connect(ClientCtor: typeof Client, plan: SshFilePlan, timeoutMs = 20_000): Promise<Client> {
   return new Promise((resolve, reject) => {
-    const conn = new ClientCtor()
-    const t = setTimeout(() => { try { conn.end() } catch { /* not connected */ } reject(new Error('sftp connect timeout')) }, timeoutMs)
-    conn.on('ready', () => { clearTimeout(t); resolve(conn as unknown as Client) })
-      .on('error', (e: Error) => { clearTimeout(t); reject(e) })
+    const conn = new ClientCtor();
+    const t = setTimeout(() => {
+      try {
+        conn.end();
+      } catch {
+        /* not connected */
+      }
+      reject(new Error('sftp connect timeout'));
+    }, timeoutMs);
+    conn
+      .on('ready', () => {
+        clearTimeout(t);
+        resolve(conn as unknown as Client);
+      })
+      .on('error', (e: Error) => {
+        clearTimeout(t);
+        reject(e);
+      })
       .connect({
         host: plan.env.host,
         port: Number(plan.env.port) || 22,
@@ -59,35 +75,40 @@ function connect(ClientCtor: typeof Client, plan: SshFilePlan, timeoutMs = 20_00
         privateKey: plan.sshKey,
         password: plan.sshPassword,
         readyTimeout: 20_000,
-      })
-  })
+      });
+  });
 }
 
 function sftpOf(conn: Client): Promise<import('ssh2').SFTPWrapper> {
   return new Promise((resolve, reject) => {
-    conn.sftp((err, sftp) => (err ? reject(err) : resolve(sftp)))
-  })
+    conn.sftp((err, sftp) => (err ? reject(err) : resolve(sftp)));
+  });
 }
 
 function fastPut(sftp: import('ssh2').SFTPWrapper, local: string, remote: string): Promise<void> {
-  return new Promise((resolve, reject) => sftp.fastPut(local, remote, err => (err ? reject(err) : resolve())))
+  return new Promise((resolve, reject) => sftp.fastPut(local, remote, (err) => (err ? reject(err) : resolve())));
 }
 
 function fastGet(sftp: import('ssh2').SFTPWrapper, remote: string, local: string): Promise<void> {
-  return new Promise((resolve, reject) => sftp.fastGet(remote, local, err => (err ? reject(err) : resolve())))
+  return new Promise((resolve, reject) => sftp.fastGet(remote, local, (err) => (err ? reject(err) : resolve())));
 }
 
 function exec(conn: Client, cmd: string): Promise<string> {
   return new Promise((resolve, reject) => {
     conn.exec(cmd, (err, stream) => {
-      if (err) { reject(err); return }
-      let out = ''
-      stream.on('data', (d: Buffer) => { out += d.toString() })
-      stream.on('close', () => resolve(out.trim()))
-      stream.stderr?.on('data', () => {}) // best-effort; errors surface via close
-      stream.end()
-    })
-  })
+      if (err) {
+        reject(err);
+        return;
+      }
+      let out = '';
+      stream.on('data', (d: Buffer) => {
+        out += d.toString();
+      });
+      stream.on('close', () => resolve(out.trim()));
+      stream.stderr?.on('data', () => {}); // best-effort; errors surface via close
+      stream.end();
+    });
+  });
 }
 
 /** push input files to the sandbox: mkdir + scp each + chown to uid 10000 (hermes shim) */
@@ -95,27 +116,33 @@ export async function pushTaskFiles(
   ClientCtor: typeof Client,
   plan: SshFilePlan,
   taskId: string,
-  files: Array<{ localPath: string, remoteName: string }>,
+  files: Array<{ localPath: string; remoteName: string }>,
   timeoutMs?: number,
 ): Promise<void> {
-  if (!files.length) return
-  const conn = await connect(ClientCtor, plan, timeoutMs)
+  if (!files.length) return;
+  const conn = await connect(ClientCtor, plan, timeoutMs);
   try {
-    const dir = taskFilesDir(taskId)
-    await exec(conn, `mkdir -p ${dir}`)
-    const sftp = await sftpOf(conn)
+    const dir = taskFilesDir(taskId);
+    await exec(conn, `mkdir -p ${dir}`);
+    const sftp = await sftpOf(conn);
     for (const f of files) {
-      await fastPut(sftp, f.localPath, `${dir}/${f.remoteName}`)
+      await fastPut(sftp, f.localPath, `${dir}/${f.remoteName}`);
     }
     // hermes shim drops to uid 10000 — the files must be readable/writable by it
-    await exec(conn, `chown -R 10000:10000 ${TASK_FILES_HOME}/${taskId} 2>/dev/null || chmod -R a+rwX ${TASK_FILES_HOME}/${taskId}`)
-  }
-  finally {
-    try { conn.end() } catch { /* already gone */ }
+    await exec(
+      conn,
+      `chown -R 10000:10000 ${TASK_FILES_HOME}/${taskId} 2>/dev/null || chmod -R a+rwX ${TASK_FILES_HOME}/${taskId}`,
+    );
+  } finally {
+    try {
+      conn.end();
+    } catch {
+      /* already gone */
+    }
   }
 }
 
-export type CollectedFile = { localPath: string, filename: string, size: number }
+export type CollectedFile = { localPath: string; filename: string; size: number };
 
 /** collect files the agent left in out/: returns local copies (caller stores them) */
 export async function collectRunOutputs(
@@ -126,40 +153,54 @@ export async function collectRunOutputs(
   maxBytes: number,
   timeoutMs?: number,
 ) {
-  const out = []
-  const conn = await connect(ClientCtor, plan, timeoutMs)
+  const out = [];
+  const conn = await connect(ClientCtor, plan, timeoutMs);
   try {
-    const outDir = taskFilesOutDir(taskId)
-    let names: string[] = []
-    const listing = await exec(conn, `find ${outDir} -maxdepth 1 -type f -printf '%f\\n' 2>/dev/null || true`)
-    names = listing ? listing.split('\n').filter(Boolean) : []
-    if (!names.length) return []
+    const outDir = taskFilesOutDir(taskId);
+    let names: string[] = [];
+    const listing = await exec(conn, `find ${outDir} -maxdepth 1 -type f -printf '%f\\n' 2>/dev/null || true`);
+    names = listing ? listing.split('\n').filter(Boolean) : [];
+    if (!names.length) return [];
     // size check first — an agent dumping node_modules gets truncated, not stored
-    const duRaw = await exec(conn, `du -cb ${names.map(n => `'${outDir}/${n.replace(/'/g, "'\\''")}'`).join(' ')} 2>/dev/null | tail -1`)
-    const total = Number((duRaw.match(/(\d+)\s+total$/) || [])[1] ?? '0')
-    if (total > maxBytes) return []
-    const fs = await import('node:fs')
-    fs.mkdirSync(tmpDir, { recursive: true })
-    const sftp = await sftpOf(conn)
+    const duRaw = await exec(
+      conn,
+      `du -cb ${names.map((n) => `'${outDir}/${n.replace(/'/g, "'\\''")}'`).join(' ')} 2>/dev/null | tail -1`,
+    );
+    const total = Number((duRaw.match(/(\d+)\s+total$/) || [])[1] ?? '0');
+    if (total > maxBytes) return [];
+    const fs = await import('node:fs');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const sftp = await sftpOf(conn);
     for (const name of names) {
-      const local = `${tmpDir}/${taskId}-out-${name.replace(/[/\\]/g, '_')}`
-      await fastGet(sftp, `${outDir}/${name}`, local)
-      out.push({ localPath: local, filename: name, size: fs.statSync(local).size })
+      const local = `${tmpDir}/${taskId}-out-${name.replace(/[/\\]/g, '_')}`;
+      await fastGet(sftp, `${outDir}/${name}`, local);
+      out.push({ localPath: local, filename: name, size: fs.statSync(local).size });
+    }
+  } finally {
+    try {
+      conn.end();
+    } catch {
+      /* already gone */
     }
   }
-  finally {
-    try { conn.end() } catch { /* already gone */ }
-  }
-  return out
+  return out;
 }
 
 /** remove the task's sandbox dir (call only when no run of the task is active) */
-export async function cleanupTaskFiles(ClientCtor: typeof Client, plan: SshFilePlan, taskId: string, timeoutMs?: number) {
-  const conn = await connect(ClientCtor, plan, timeoutMs)
+export async function cleanupTaskFiles(
+  ClientCtor: typeof Client,
+  plan: SshFilePlan,
+  taskId: string,
+  timeoutMs?: number,
+) {
+  const conn = await connect(ClientCtor, plan, timeoutMs);
   try {
-    await exec(conn, `rm -rf ${TASK_FILES_HOME}/${taskId}`)
-  }
-  finally {
-    try { conn.end() } catch { /* already gone */ }
+    await exec(conn, `rm -rf ${TASK_FILES_HOME}/${taskId}`);
+  } finally {
+    try {
+      conn.end();
+    } catch {
+      /* already gone */
+    }
   }
 }
