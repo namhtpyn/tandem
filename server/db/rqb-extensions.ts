@@ -51,7 +51,7 @@ interface BuilderCtx {
   count: (filter?: unknown) => CountQueryPromise,
 }
 
-function toCtx(builder: AnyBuilder): BuilderCtx {
+function toCtx(builder: AnyBuilder) {
   return builder as unknown as BuilderCtx
 }
 
@@ -64,7 +64,7 @@ function buildCountQuery(ctx: BuilderCtx, filter?: AnyFilter) {
   return query
 }
 
-RelationalQueryBuilder.prototype.count = function count(this: AnyBuilder, filter?: AnyFilter): CountQueryPromise {
+RelationalQueryBuilder.prototype.count = function count(this: AnyBuilder, filter?: AnyFilter) {
   const ctx = toCtx(this)
   const query = buildCountQuery(ctx, filter)
   const { dialect, session } = ctx
