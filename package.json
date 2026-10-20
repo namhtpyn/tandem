@@ -17,10 +17,10 @@
     "test:e2e:ui": "playwright test --ui",
     "postinstall": "nuxt prepare",
     "gen:auth": "bun run scripts/gen-auth-schema.ts",
-    "lint": "oxlint",
-    "lint:fix": "oxlint --fix",
-    "format": "oxfmt",
-    "format:check": "oxfmt --check"
+    "lint": "oxlint -c .oxlintrc.ts",
+    "lint:fix": "oxlint -c .oxlintrc.ts --fix",
+    "format": "oxfmt -c .oxfmtrc.ts",
+    "format:check": "oxfmt -c .oxfmtrc.ts --check"
   },
   "dependencies": {
     "@better-auth/api-key": "1.7.11",
