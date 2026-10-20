@@ -76,10 +76,10 @@ export const vaultAudit = pgTable('vault_audit', {
   secretName: text('secret_name').notNull(),
   action: text('action').notNull(), // create | update | delete | use
   actorId: text('actor_id').notNull().default('system'),
-  at: timestamp('at', { withTimezone: true }).notNull().$default(() => new Date()),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().$default(() => new Date()),
 }, (t) => [
   index('vault_audit_secret_idx').on(t.secretId),
-  index('vault_audit_at_idx').on(t.at),
+  index('vault_audit_created_at_idx').on(t.createdAt),
 ])
 
 // Supervision is many-to-many: one employee may have many supervisors.

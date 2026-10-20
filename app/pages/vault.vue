@@ -321,7 +321,7 @@ function kindIcon(): string {
           <div v-for="entry in audit" :key="entry.id" class="flex items-center justify-between gap-2 border-b border-zinc-100 pb-2 text-sm dark:border-zinc-800">
             <div class="min-w-0">
               <p class="truncate font-medium text-zinc-900 dark:text-white">{{ entry.secretName }}</p>
-              <p class="text-xs text-zinc-400">{{ entry.actorId }} · {{ new Date(entry.at).toLocaleString() }}</p>
+              <p class="text-xs text-zinc-400">{{ entry.actorId }} · {{ new Date(entry.createdAt).toLocaleString() }}</p>
             </div>
             <UBadge :color="entry.action === 'delete' ? 'error' : entry.action === 'use' ? 'warning' : 'neutral'" variant="subtle" size="sm">{{ entry.action }}</UBadge>
           </div>

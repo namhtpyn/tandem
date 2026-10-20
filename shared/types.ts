@@ -134,5 +134,5 @@ export interface VaultAuditRow {
   secretName: string
   action: 'create' | 'update' | 'delete' | 'use'
   actorId: string
-  at: string
+  createdAt: string
 }

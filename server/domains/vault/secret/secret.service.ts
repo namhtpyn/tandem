@@ -34,14 +34,14 @@ export async function listVaultSecrets(): Promise<VaultSecretRow[]> {
 }
 
 export async function listAudit(): Promise<VaultAuditRow[]> {
-  const rows = await db.select().from(vaultAuditTable).orderBy(desc(vaultAuditTable.at)).limit(200)
+  const rows = await db.select().from(vaultAuditTable).orderBy(desc(vaultAuditTable.createdAt)).limit(200)
   return rows.map((r): VaultAuditRow => ({
     id: r.id,
     secretId: r.secretId,
     secretName: r.secretName,
     action: r.action as VaultAuditRow['action'],
     actorId: r.actorId,
-    at: r.at.toISOString(),
+    createdAt: r.createdAt.toISOString(),
   }))
 }
 
