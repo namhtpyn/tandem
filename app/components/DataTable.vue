@@ -57,7 +57,7 @@ function cellValue(row: T, col: TableColumn<T>) {
   </UCard>
 
   <div v-if="data.length" class="space-y-3 md:hidden">
-    <template v-for="row in data" :key="String((row as Record<string, unknown>)[titleKey ?? 'id'] ?? JSON.stringify(row))">
+    <template v-for="(row, idx) in data" :key="String((row as Record<string, unknown>).id ?? idx)">
       <slot name="mobile-item" :row="row">
       <UCard :ui="{ root: 'shadow-sm' }">
         <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">
