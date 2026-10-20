@@ -6,6 +6,7 @@
 //
 // Migrations are drizzle-kit SQL folders applied at boot, tracked in the migrations table.
 import { drizzle } from 'drizzle-orm/postgres-js'
+import './rqb-extensions'
 import postgres from 'postgres'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'

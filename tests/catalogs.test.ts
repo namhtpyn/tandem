@@ -41,7 +41,7 @@ describe('vault folders', () => {
     expect(live.folders.map(f => f.name)).toEqual(['CI tokens', 'Production keys']) // alphabetical
     expect(live.folders.every(f => f.secrets === 0)).toBe(true)
 
-    const secret = await proc(['vault', 'create'], { name: 'aws', value: 'sk-1', folderId: id }) as { id: string }
+    const secret = await proc(['vault', 'secrets', 'create'], { name: 'aws', value: 'sk-1', folderId: id }) as { id: string }
     void secret
     const live2 = await firstSnapshot(['vault', 'folders', 'live']) as { folders: Array<{ name: string, secrets: number }> }
     expect(live2.folders.find(f => f.name === 'Production keys')?.secrets).toBe(1)
@@ -64,43 +64,43 @@ describe('vault folders', () => {
 
   it('secrets survive folder deletion (FK SET NULL) and live rows carry folder name', async () => {
     const { id } = await proc(['vault', 'folders', 'save'], { name: 'Prod' }) as { id: string }
-    const created = await proc(['vault', 'create'], { name: 'aws-key', value: 'sk-1', folderId: id }) as { id: string }
-    let live = await firstSnapshot(['vault', 'live']) as Array<{ id: string, folder: string | null }>
+    const created = await proc(['vault', 'secrets', 'create'], { name: 'aws-key', value: 'sk-1', folderId: id }) as { id: string }
+    let live = await firstSnapshot(['vault', 'secrets', 'live']) as Array<{ id: string, folder: string | null }>
     expect(live.find(r => r.id === created.id)?.folder).toBe('Prod')
 
     await proc(['vault', 'folders', 'remove'], { id })
-    live = await firstSnapshot(['vault', 'live']) as Array<{ id: string, folder: string | null }>
+    live = await firstSnapshot(['vault', 'secrets', 'live']) as Array<{ id: string, folder: string | null }>
     expect(live.find(r => r.id === created.id)?.folder).toBeNull()
 
     // update can move a secret into an existing folder
     const f2 = await proc(['vault', 'folders', 'save'], { name: 'Other' }) as { id: string }
-    await proc(['vault', 'update'], { id: created.id, name: 'aws-key', value: 'sk-2', folderId: f2.id })
-    live = await firstSnapshot(['vault', 'live']) as Array<{ id: string, folder: string | null }>
+    await proc(['vault', 'secrets', 'update'], { id: created.id, name: 'aws-key', value: 'sk-2', folderId: f2.id })
+    live = await firstSnapshot(['vault', 'secrets', 'live']) as Array<{ id: string, folder: string | null }>
     expect(live.find(r => r.id === created.id)?.folder).toBe('Other')
   })
 
   it('secret create/update reject a folderId that does not exist', async () => {
-    await expect(proc(['vault', 'create'], { name: 'x', value: 'v', folderId: 'ghost' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
-    const s = await proc(['vault', 'create'], { name: 'y', value: 'v' }) as { id: string }
-    await expect(proc(['vault', 'update'], { id: s.id, name: 'y', value: 'v2', folderId: 'ghost' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    await expect(proc(['vault', 'secrets', 'create'], { name: 'x', value: 'v', folderId: 'ghost' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    const s = await proc(['vault', 'secrets', 'create'], { name: 'y', value: 'v' }) as { id: string }
+    await expect(proc(['vault', 'secrets', 'update'], { id: s.id, name: 'y', value: 'v2', folderId: 'ghost' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
   it('metadata-only update keeps the stored secret (empty value)', async () => {
     const { id } = await proc(['vault', 'folders', 'save'], { name: 'Keep' }) as { id: string }
-    const s = await proc(['vault', 'create'], { name: 'k', value: 'secret-1', folderId: id }) as { id: string, lastFour: string }
+    const s = await proc(['vault', 'secrets', 'create'], { name: 'k', value: 'secret-1', folderId: id }) as { id: string, lastFour: string }
     expect(s.lastFour).toBe('et-1')
-    const upd = await proc(['vault', 'update'], { id: s.id, name: 'k-renamed', folderId: null }) as { lastFour: string }
+    const upd = await proc(['vault', 'secrets', 'update'], { id: s.id, name: 'k-renamed', folderId: null }) as { lastFour: string }
     expect(upd.lastFour).toBe('et-1') // hint unchanged => ciphertext untouched
     // rotating still works
-    const rot = await proc(['vault', 'update'], { id: s.id, name: 'k-renamed', value: 'secret-2-xyz', folderId: null }) as { lastFour: string }
+    const rot = await proc(['vault', 'secrets', 'update'], { id: s.id, name: 'k-renamed', value: 'secret-2-xyz', folderId: null }) as { lastFour: string }
     expect(rot.lastFour).toBe('-xyz')
   })
 
   it('folder rename is reflected in joined secret rows', async () => {
     const { id } = await proc(['vault', 'folders', 'save'], { name: 'Before' }) as { id: string }
-    const s = await proc(['vault', 'create'], { name: 'k', value: 'v', folderId: id }) as { id: string }
+    const s = await proc(['vault', 'secrets', 'create'], { name: 'k', value: 'v', folderId: id }) as { id: string }
     await proc(['vault', 'folders', 'save'], { id, name: 'After' })
-    const live = await firstSnapshot(['vault', 'live']) as Array<{ id: string, folder: string | null }>
+    const live = await firstSnapshot(['vault', 'secrets', 'live']) as Array<{ id: string, folder: string | null }>
     expect(live.find(r => r.id === s.id)?.folder).toBe('After')
   })
 })
