@@ -710,8 +710,9 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), runsQuery.suspense(), 
                 </p>
                 <span v-else class="text-[11px] text-zinc-400 dark:text-zinc-500">⏎ submit · ▶ dispatch agent</span>
                 <div class="ml-auto flex items-center gap-1.5">
-                  <UTooltip text="Dispatch to the AI assignee"
-                    ><UButton
+                  <UPopover mode="hover" enable-touch>
+                    <template #content><div class="px-3 py-1.5 text-xs">Dispatch to the AI assignee</div></template>
+                    <UButton
                       size="lg"
                       color="primary"
                       variant="soft"
@@ -720,9 +721,10 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), runsQuery.suspense(), 
                       class="size-10"
                       :disabled="workflowBusy || !task.assigneeKind || task.assigneeKind !== 'ai'"
                       @click="wfAction('dispatch')"
-                  /></UTooltip>
-                  <UTooltip text="Submit note to the thread"
-                    ><UButton
+                    /></UPopover>
+                  <UPopover mode="hover" enable-touch>
+                    <template #content><div class="px-3 py-1.5 text-xs">Submit note to the thread</div></template>
+                    <UButton
                       size="lg"
                       color="primary"
                       icon="i-lucide-arrow-up"
@@ -730,7 +732,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), runsQuery.suspense(), 
                       class="size-10"
                       :disabled="workflowBusy"
                       @click="wfAction('submit', { body: workflowNote || undefined })"
-                  /></UTooltip>
+                    /></UPopover>
                 </div>
               </div>
             </div>
