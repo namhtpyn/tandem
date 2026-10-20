@@ -50,8 +50,7 @@ function cellValue(row: T, col: TableColumn<T>) {
   <UCard v-if="data.length || loading" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
     <UTable :data="data" :columns="columns" :loading="loading">
       <template v-for="name in desktopSlotNames" :key="name" #[name]="slotProps">
-        <!-- oxlint-disable-next-line no-explicit-any -->
-        <slot :name="name" v-bind="((slotProps ?? {}) as any)" />
+        <slot :name="name" v-bind="slotProps ?? {}" />
       </template>
     </UTable>
   </UCard>
