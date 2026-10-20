@@ -181,51 +181,23 @@ function kindIcon(): string {
         />
       </div>
 
-      <div v-if="filteredRows.length" class="space-y-3 md:hidden">
-        <UCard v-for="row in filteredRows" :key="row.id" :ui="{ root: 'shadow-sm' }">
-          <div class="flex items-start justify-between gap-2">
-            <div class="min-w-0">
-              <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
-              <p class="mt-1 font-mono text-xs text-zinc-400">•••• {{ row.lastFour }}</p>
-            </div>
-          </div>
-          <p v-if="row.description" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ row.description }}</p>
-          <div class="mt-3 flex justify-end gap-1">
-            <UPopover mode="hover">
-              <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Replace secret" :disabled="busy" @click="openEditor(row)" />
-              <template #content>
-                <div class="px-3 py-1.5 text-xs">Replace secret</div>
-              </template>
-            </UPopover>
-            <UPopover mode="hover">
-              <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete secret" :disabled="busy" @click="askRemove(row)" />
-              <template #content>
-                <div class="px-3 py-1.5 text-xs">Delete secret</div>
-              </template>
-            </UPopover>
-          </div>
-        </UCard>
-      </div>
-
-      <!-- Desktop: table -->
-      <UCard v-if="rows.length" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
-        <UTable :data="filteredRows" :columns="[
+      <DataTable v-if="filteredRows.length" :data="filteredRows" :columns="[
           { accessorKey: 'name', header: 'Name' },
           { accessorKey: 'description', header: 'Description' },
           { accessorKey: 'lastFour', header: 'Value' },
           { accessorKey: 'updatedAt', header: 'Updated' },
           { id: 'actions', header: '' },
         ]">
-          <template #description-cell="{ row }">
+        <template #description-cell="{ row }">
             <span class="text-xs text-zinc-500 dark:text-zinc-400">{{ row.original.description || '—' }}</span>
           </template>
-          <template #lastFour-cell="{ row }">
+        <template #lastFour-cell="{ row }">
             <span class="font-mono text-xs text-zinc-400">•••• {{ row.original.lastFour }}</span>
           </template>
-          <template #updatedAt-cell="{ row }">
+        <template #updatedAt-cell="{ row }">
             <span class="text-xs text-zinc-500">{{ new Date(row.original.updatedAt).toLocaleString() }}</span>
           </template>
-          <template #actions-cell="{ row }">
+        <template #actions-cell="{ row }">
             <div class="flex justify-end gap-1">
               <UPopover mode="hover">
                 <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Replace secret" :disabled="busy" @click="openEditor(row.original)" />
@@ -241,8 +213,34 @@ function kindIcon(): string {
               </UPopover>
             </div>
           </template>
-        </UTable>
-      </UCard>
+        <template #mobile-item="{ row }">
+          <UCard :ui="{ root: 'shadow-sm' }">
+                  <div class="flex items-start justify-between gap-2">
+                    <div class="min-w-0">
+                      <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
+                      <p class="mt-1 font-mono text-xs text-zinc-400">•••• {{ row.lastFour }}</p>
+                    </div>
+                  </div>
+                  <p v-if="row.description" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ row.description }}</p>
+                  <div class="mt-3 flex justify-end gap-1">
+                    <UPopover mode="hover">
+                      <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Replace secret" :disabled="busy" @click="openEditor(row)" />
+                      <template #content>
+                        <div class="px-3 py-1.5 text-xs">Replace secret</div>
+                      </template>
+                    </UPopover>
+                    <UPopover mode="hover">
+                      <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete secret" :disabled="busy" @click="askRemove(row)" />
+                      <template #content>
+                        <div class="px-3 py-1.5 text-xs">Delete secret</div>
+                      </template>
+                    </UPopover>
+                  </div>
+        
+          </UCard>
+        </template>
+      </DataTable>
+
 
       <UCard v-if="!filteredRows.length" :ui="{ root: 'shadow-sm' }">
         <template #body>

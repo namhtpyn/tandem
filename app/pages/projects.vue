@@ -140,49 +140,12 @@ const statusColor = (s: string) => (s === 'archived' ? 'neutral' : 'success')
         <p v-if="message && !editorOpen" class="text-sm text-error">{{ message }}</p>
 
         <!-- Mobile: stacked tree cards -->
-        <div v-if="flat.length" class="space-y-3 md:hidden">
-          <UCard v-for="row in flat" :key="row.id" :ui="{ root: 'shadow-sm' }" :class="row.depth > 0 ? 'ml-4' : ''">
-            <div class="flex items-start justify-between gap-2">
-              <div class="min-w-0">
-                <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">
-                  <UIcon v-if="row.depth > 0" name="i-lucide-corner-down-right" class="mr-1 size-3.5 text-zinc-400" />
-                  {{ row.name }}
-                </p>
-                <p v-if="row.description" class="mt-0.5 line-clamp-2 text-xs text-zinc-500">{{ row.description }}</p>
-              </div>
-              <UBadge :color="statusColor(row.status)" variant="subtle" size="sm">{{ row.status }}</UBadge>
-            </div>
-            <div class="mt-3 flex justify-end gap-1">
-              <UPopover mode="hover">
-                <UButton icon="i-lucide-plus" variant="ghost" color="neutral" size="sm" aria-label="Add subproject" @click="openEditor(undefined); form.parentId = row.id" />
-                <template #content>
-                  <div class="px-3 py-1.5 text-xs">Add subproject</div>
-                </template>
-              </UPopover>
-              <UPopover mode="hover">
-                <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit project" @click="openEditor(row)" />
-                <template #content>
-                  <div class="px-3 py-1.5 text-xs">Edit project</div>
-                </template>
-              </UPopover>
-              <UPopover mode="hover">
-                <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete project" :disabled="busy" @click="askRemove(row)" />
-                <template #content>
-                  <div class="px-3 py-1.5 text-xs">Delete project</div>
-                </template>
-              </UPopover>
-            </div>
-          </UCard>
-        </div>
-
-        <!-- Desktop: table -->
-        <UCard v-if="flat.length" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
-          <UTable :data="flat" :columns="[
+        <DataTable v-if="flat.length" :data="flat" :columns="[
             { accessorKey: 'name', header: 'Project' },
             { accessorKey: 'status', header: 'Status' },
             { accessorKey: 'actions', header: '' },
           ]">
-            <template #name-cell="{ row }">
+          <template #name-cell="{ row }">
               <div class="min-w-0" :style="{ paddingLeft: `${row.original.depth * 1.25}rem` }">
                 <p class="truncate font-medium text-zinc-900 dark:text-white">
                   <UIcon v-if="row.original.depth > 0" name="i-lucide-corner-down-right" class="mr-1 size-3.5 text-zinc-400" />
@@ -191,10 +154,10 @@ const statusColor = (s: string) => (s === 'archived' ? 'neutral' : 'success')
                 <p v-if="row.original.description" class="truncate text-xs text-zinc-400">{{ row.original.description }}</p>
               </div>
             </template>
-            <template #status-cell="{ row }">
+          <template #status-cell="{ row }">
               <UBadge :color="statusColor(row.original.status)" variant="subtle" size="sm">{{ row.original.status }}</UBadge>
             </template>
-            <template #actions-cell="{ row }">
+          <template #actions-cell="{ row }">
               <div class="flex justify-end gap-1">
                 <UPopover mode="hover">
                   <UButton icon="i-lucide-plus" variant="ghost" color="neutral" size="xs" aria-label="Add subproject" @click="openEditor(undefined); form.parentId = row.original.id" />
@@ -216,8 +179,44 @@ const statusColor = (s: string) => (s === 'archived' ? 'neutral' : 'success')
                 </UPopover>
               </div>
             </template>
-          </UTable>
-        </UCard>
+          <template #mobile-item="{ row }">
+            <UCard :ui="{ root: 'shadow-sm' }" :class="row.depth > 0 ? 'ml-4' : ''">
+           0 ? 'ml-4' : ''">
+                      <div class="flex items-start justify-between gap-2">
+                        <div class="min-w-0">
+                          <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">
+                            <UIcon v-if="row.depth > 0" name="i-lucide-corner-down-right" class="mr-1 size-3.5 text-zinc-400" />
+                            {{ row.name }}
+                          </p>
+                          <p v-if="row.description" class="mt-0.5 line-clamp-2 text-xs text-zinc-500">{{ row.description }}</p>
+                        </div>
+                        <UBadge :color="statusColor(row.status)" variant="subtle" size="sm">{{ row.status }}</UBadge>
+                      </div>
+                      <div class="mt-3 flex justify-end gap-1">
+                        <UPopover mode="hover">
+                          <UButton icon="i-lucide-plus" variant="ghost" color="neutral" size="sm" aria-label="Add subproject" @click="openEditor(undefined); form.parentId = row.id" />
+                          <template #content>
+                            <div class="px-3 py-1.5 text-xs">Add subproject</div>
+                          </template>
+                        </UPopover>
+                        <UPopover mode="hover">
+                          <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit project" @click="openEditor(row)" />
+                          <template #content>
+                            <div class="px-3 py-1.5 text-xs">Edit project</div>
+                          </template>
+                        </UPopover>
+                        <UPopover mode="hover">
+                          <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete project" :disabled="busy" @click="askRemove(row)" />
+                          <template #content>
+                            <div class="px-3 py-1.5 text-xs">Delete project</div>
+                          </template>
+                        </UPopover>
+                      </div>
+          
+            </UCard>
+          </template>
+        </DataTable>
+
 
         <p v-else class="py-8 text-center text-sm text-zinc-500">No projects yet.</p>
       </div>

@@ -546,57 +546,8 @@ const columns = [
     <p v-if="message && !editorOpen" class="text-sm text-error">{{ message }}</p>
 
     <!-- Mobile: stacked cards (list view) -->
-    <div v-if="rows.length && view === 'list'" class="space-y-3 md:hidden">
-      <UCard v-for="row in rows" :key="row.id" :ui="{ root: 'shadow-sm' }">
-        <div class="flex items-start justify-between gap-2">
-          <div class="flex min-w-0 items-center gap-2">
-            <img v-if="row.hasAvatar" :src="`/api/employees/${row.id}/avatar`" :alt="row.name" class="size-8 shrink-0 rounded-full object-cover">
-            <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
-            <p class="truncate font-mono text-xs text-zinc-400">{{ row.email }}</p>
-            <p v-if="row.title" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ row.title }}</p>
-          </div>
-          <UBadge :color="row.kind === 'ai' ? 'primary' : 'neutral'" variant="subtle" size="sm" :icon="row.kind === 'ai' ? 'i-lucide-bot' : 'i-lucide-user'">
-            {{ row.kind }}
-          </UBadge>
-        </div>
-        <div v-if="row.supervisorIds.length || (row.kind === 'ai' && row.environmentId)" class="mt-2 flex flex-wrap gap-1">
-          <UBadge v-for="sid in row.supervisorIds" :key="sid" color="neutral" variant="soft" size="sm">
-            {{ byId.get(sid)?.name ?? sid.slice(0, 8) }}
-          </UBadge>
-          <UBadge v-if="row.kind === 'ai' && row.environmentId" color="info" variant="soft" size="sm" icon="i-lucide-server">
-            {{ envName(row.environmentId) }}
-          </UBadge>
-        </div>
-        <div class="mt-3 flex justify-end gap-1">
-          <UPopover mode="hover">
-            <UButton
-            icon="i-lucide-key-round" variant="ghost" color="neutral" size="sm"
-            aria-label="Access keys" :disabled="busy" @click="openKeys(row)"
-          />
-            <template #content>
-              <div class="px-3 py-1.5 text-xs">Access keys</div>
-            </template>
-          </UPopover>
-          <UPopover mode="hover">
-            <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit employee" :disabled="busy" @click="openEditor(row)" />
-            <template #content>
-              <div class="px-3 py-1.5 text-xs">Edit employee</div>
-            </template>
-          </UPopover>
-          <UPopover mode="hover">
-            <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete employee" :disabled="busy" @click="askRemove(row)" />
-            <template #content>
-              <div class="px-3 py-1.5 text-xs">Delete employee</div>
-            </template>
-          </UPopover>
-        </div>
-      </UCard>
-    </div>
-
-    <!-- Desktop: table -->
-    <UCard v-if="rows.length && view === 'list'" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
-      <UTable :data="rows" :columns="columns">
-        <template #name-cell="{ row }">
+    <DataTable v-if="rows.length && view === 'list'" :data="rows" :columns="columns">
+      <template #name-cell="{ row }">
           <div class="flex items-center gap-2">
             <span class="flex items-center gap-2">
               <img v-if="row.original.hasAvatar" :src="`/api/employees/${row.original.id}/avatar`" :alt="row.original.name" class="size-6 shrink-0 rounded-full object-cover">
@@ -605,15 +556,15 @@ const columns = [
             <span class="truncate font-mono text-xs text-zinc-400">{{ row.original.email }}</span>
           </div>
         </template>
-        <template #title-cell="{ row }">
+      <template #title-cell="{ row }">
           <span class="text-sm text-zinc-600 dark:text-zinc-300">{{ row.original.title }}</span>
         </template>
-        <template #kind-cell="{ row }">
+      <template #kind-cell="{ row }">
           <UBadge :color="row.original.kind === 'ai' ? 'primary' : 'neutral'" variant="subtle" size="sm" :icon="row.original.kind === 'ai' ? 'i-lucide-bot' : 'i-lucide-user'">
             {{ row.original.kind }}
           </UBadge>
         </template>
-        <template #supervisors-cell="{ row }">
+      <template #supervisors-cell="{ row }">
           <div class="flex flex-wrap gap-1">
             <template v-if="row.original.supervisorIds.length">
               <UBadge v-for="sid in row.original.supervisorIds" :key="sid" color="neutral" variant="soft" size="sm">
@@ -623,11 +574,11 @@ const columns = [
             <span v-else class="text-xs text-zinc-400">—</span>
           </div>
         </template>
-        <template #environment-cell="{ row }">
+      <template #environment-cell="{ row }">
           <span v-if="row.original.kind === 'ai' && row.original.environmentId" class="font-mono text-xs text-zinc-500">{{ envName(row.original.environmentId) }}</span>
           <span v-else class="text-xs text-zinc-400">—</span>
         </template>
-        <template #actions-cell="{ row }">
+      <template #actions-cell="{ row }">
           <div class="flex justify-end gap-1">
             <UPopover mode="hover">
               <UButton
@@ -657,8 +608,55 @@ const columns = [
             </UPopover>
           </div>
         </template>
-            </UTable>
-    </UCard>
+      <template #mobile-item="{ row }">
+        <UCard :ui="{ root: 'shadow-sm' }">
+              <div class="flex items-start justify-between gap-2">
+                <div class="flex min-w-0 items-center gap-2">
+                  <img v-if="row.hasAvatar" :src="`/api/employees/${row.id}/avatar`" :alt="row.name" class="size-8 shrink-0 rounded-full object-cover">
+                  <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
+                  <p class="truncate font-mono text-xs text-zinc-400">{{ row.email }}</p>
+                  <p v-if="row.title" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ row.title }}</p>
+                </div>
+                <UBadge :color="row.kind === 'ai' ? 'primary' : 'neutral'" variant="subtle" size="sm" :icon="row.kind === 'ai' ? 'i-lucide-bot' : 'i-lucide-user'">
+                  {{ row.kind }}
+                </UBadge>
+              </div>
+              <div v-if="row.supervisorIds.length || (row.kind === 'ai' && row.environmentId)" class="mt-2 flex flex-wrap gap-1">
+                <UBadge v-for="sid in row.supervisorIds" :key="sid" color="neutral" variant="soft" size="sm">
+                  {{ byId.get(sid)?.name ?? sid.slice(0, 8) }}
+                </UBadge>
+                <UBadge v-if="row.kind === 'ai' && row.environmentId" color="info" variant="soft" size="sm" icon="i-lucide-server">
+                  {{ envName(row.environmentId) }}
+                </UBadge>
+              </div>
+              <div class="mt-3 flex justify-end gap-1">
+                <UPopover mode="hover">
+                  <UButton
+                  icon="i-lucide-key-round" variant="ghost" color="neutral" size="sm"
+                  aria-label="Access keys" :disabled="busy" @click="openKeys(row)"
+                />
+                  <template #content>
+                    <div class="px-3 py-1.5 text-xs">Access keys</div>
+                  </template>
+                </UPopover>
+                <UPopover mode="hover">
+                  <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit employee" :disabled="busy" @click="openEditor(row)" />
+                  <template #content>
+                    <div class="px-3 py-1.5 text-xs">Edit employee</div>
+                  </template>
+                </UPopover>
+                <UPopover mode="hover">
+                  <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete employee" :disabled="busy" @click="askRemove(row)" />
+                  <template #content>
+                    <div class="px-3 py-1.5 text-xs">Delete employee</div>
+                  </template>
+                </UPopover>
+              </div>
+      
+        </UCard>
+      </template>
+    </DataTable>
+
 
     <UCard v-else-if="view === 'list'" :ui="{ root: 'shadow-sm' }">
       <div class="flex flex-col items-center gap-2 py-8 text-center">

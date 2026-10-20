@@ -137,55 +137,14 @@ async function probe(row: EnvironmentRow) {
     <p v-if="message && !editorOpen" class="text-sm text-error">{{ message }}</p>
 
     <!-- Mobile: stacked cards -->
-    <div v-if="rows.length" class="space-y-3 md:hidden">
-      <UCard v-for="row in rows" :key="row.id" :ui="{ root: 'shadow-sm' }">
-        <div class="flex items-start justify-between gap-2">
-          <div class="min-w-0">
-            <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
-            <p class="truncate font-mono text-xs text-zinc-400">{{ row.username }}@{{ row.host }}:{{ row.port }}</p>
-          </div>
-          <div class="flex flex-col items-end gap-1">
-            <UBadge v-if="probeResults[row.id]" :color="probeResults[row.id]!.ok ? 'success' : 'error'" variant="subtle" size="sm">
-              {{ probeResults[row.id]!.ok ? 'ok' : 'failed' }}
-            </UBadge>
-          </div>
-        </div>
-        <p v-if="probeResults[row.id]" class="mt-1 truncate text-xs text-zinc-400" :title="probeResults[row.id]!.detail">
-          {{ probeResults[row.id]!.detail }} · {{ probeResults[row.id]!.durationMs }}ms
-        </p>
-        <div class="mt-3 flex justify-end gap-1">
-          <UPopover mode="hover">
-            <UButton icon="i-lucide-plug-zap" variant="ghost" color="neutral" size="sm" aria-label="Test connection" :loading="probingId === row.id" :disabled="busy || probingId !== null" @click="probe(row)" />
-            <template #content>
-              <div class="px-3 py-1.5 text-xs">Test connection</div>
-            </template>
-          </UPopover>
-          <UPopover mode="hover">
-            <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit environment" :disabled="busy" @click="openEditor(row)" />
-            <template #content>
-              <div class="px-3 py-1.5 text-xs">Edit environment</div>
-            </template>
-          </UPopover>
-          <UPopover mode="hover">
-            <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete environment" :disabled="busy" @click="askRemove(row)" />
-            <template #content>
-              <div class="px-3 py-1.5 text-xs">Delete environment</div>
-            </template>
-          </UPopover>
-        </div>
-      </UCard>
-    </div>
-
-    <!-- Desktop: table -->
-    <UCard v-if="rows.length" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
-      <UTable :data="rows" :columns="columns">
-        <template #name-cell="{ row }">
+    <DataTable v-if="rows.length" :data="rows" :columns="columns">
+      <template #name-cell="{ row }">
           <span class="text-sm font-medium text-zinc-900 dark:text-white">{{ row.original.name }}</span>
         </template>
-        <template #host-cell="{ row }">
+      <template #host-cell="{ row }">
           <span class="font-mono text-xs text-zinc-500">{{ row.original.username }}@{{ row.original.host }}:{{ row.original.port }}</span>
         </template>
-        <template #probe-cell="{ row }">
+      <template #probe-cell="{ row }">
           <div class="flex items-center gap-2">
             <template v-if="probeResults[row.original.id]">
               <UBadge :color="probeResults[row.original.id]!.ok ? 'success' : 'error'" variant="subtle" size="sm">
@@ -198,7 +157,7 @@ async function probe(row: EnvironmentRow) {
             <span v-else class="text-xs text-zinc-400">not probed</span>
           </div>
         </template>
-        <template #actions-cell="{ row }">
+      <template #actions-cell="{ row }">
           <div class="flex justify-end gap-1">
             <UPopover mode="hover">
               <UButton
@@ -229,8 +188,47 @@ async function probe(row: EnvironmentRow) {
             </UPopover>
           </div>
         </template>
-            </UTable>
-    </UCard>
+      <template #mobile-item="{ row }">
+        <UCard :ui="{ root: 'shadow-sm' }">
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
+                  <p class="truncate font-mono text-xs text-zinc-400">{{ row.username }}@{{ row.host }}:{{ row.port }}</p>
+                </div>
+                <div class="flex flex-col items-end gap-1">
+                  <UBadge v-if="probeResults[row.id]" :color="probeResults[row.id]!.ok ? 'success' : 'error'" variant="subtle" size="sm">
+                    {{ probeResults[row.id]!.ok ? 'ok' : 'failed' }}
+                  </UBadge>
+                </div>
+              </div>
+              <p v-if="probeResults[row.id]" class="mt-1 truncate text-xs text-zinc-400" :title="probeResults[row.id]!.detail">
+                {{ probeResults[row.id]!.detail }} · {{ probeResults[row.id]!.durationMs }}ms
+              </p>
+              <div class="mt-3 flex justify-end gap-1">
+                <UPopover mode="hover">
+                  <UButton icon="i-lucide-plug-zap" variant="ghost" color="neutral" size="sm" aria-label="Test connection" :loading="probingId === row.id" :disabled="busy || probingId !== null" @click="probe(row)" />
+                  <template #content>
+                    <div class="px-3 py-1.5 text-xs">Test connection</div>
+                  </template>
+                </UPopover>
+                <UPopover mode="hover">
+                  <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" size="sm" aria-label="Edit environment" :disabled="busy" @click="openEditor(row)" />
+                  <template #content>
+                    <div class="px-3 py-1.5 text-xs">Edit environment</div>
+                  </template>
+                </UPopover>
+                <UPopover mode="hover">
+                  <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="sm" aria-label="Delete environment" :disabled="busy" @click="askRemove(row)" />
+                  <template #content>
+                    <div class="px-3 py-1.5 text-xs">Delete environment</div>
+                  </template>
+                </UPopover>
+              </div>
+      
+        </UCard>
+      </template>
+    </DataTable>
+
 
     <UCard v-else :ui="{ root: 'shadow-sm' }">
       <div class="flex flex-col items-center gap-2 py-8 text-center">
