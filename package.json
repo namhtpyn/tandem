@@ -2,11 +2,18 @@
   "name": "tandem",
   "version": "0.0.0",
   "description": "Company workspace where human and AI employees work together \u2014 SSH environments run the Hermes agent as the task runner.",
+  "license": "MIT",
+  "author": "namhtpyn",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/namhtpyn/tandem.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "nuxt dev",
     "build": "nuxt build",
     "start": "bun .output/server/index.mjs",
+    "check": " bun format && bun lint:check && bun typecheck",
     "typecheck": "bunx vue-tsc --noEmit -p tsconfig.json && bunx tsc --noEmit -p scripts/tsconfig.json",
     "db:generate": "drizzle-kit generate",
     "test": "vitest run",
@@ -17,10 +24,10 @@
     "test:e2e:ui": "playwright test --ui",
     "postinstall": "nuxt prepare",
     "gen:auth": "bun run scripts/gen-auth-schema.ts",
-    "lint": "oxlint -c .oxlintrc.ts",
-    "lint:fix": "oxlint -c .oxlintrc.ts --fix",
-    "format": "oxfmt -c .oxfmtrc.ts",
-    "format:check": "oxfmt -c .oxfmtrc.ts --check"
+    "lint": "oxlint --fix",
+    "lint:check": "oxlint",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check"
   },
   "dependencies": {
     "@better-auth/api-key": "1.7.11",
@@ -48,9 +55,6 @@
     "uuid": "14.0.3",
     "zod": "4.6.7"
   },
-  "engines": {
-    "bun": ">=1.1"
-  },
   "devDependencies": {
     "@dxup/nuxt": "0.5.10",
     "@nuxt/test-utils": "4.3.4",
@@ -74,15 +78,12 @@
     "vitest": "5.0.5",
     "vue-tsc": "3.3.13"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/namhtpyn/tandem.git"
-  },
-  "author": "namhtpyn",
-  "license": "MIT",
-  "packageManager": "bun@1.4.2",
   "overrides": {
     "esbuild": "0.25.12",
     "typescript": "$typescript"
-  }
+  },
+  "engines": {
+    "bun": ">=1.1"
+  },
+  "packageManager": "bun@1.4.2"
 }
