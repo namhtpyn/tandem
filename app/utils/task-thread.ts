@@ -7,8 +7,8 @@
  *  - 'run'      an agent dispatch turn (status pill + output bubble)
  *  - 'note'     human/system activity (questions, verdicts, status changes...)
  */
-export interface ThreadBriefItem { kind: 'brief'; id: string; body: string; createdAt: string; /** task creator shown as the brief author */ authorName?: string | null; /** creator's user id — avatar lookup via /api/employees/:userId/avatar */ authorId?: string | null }
-export interface ThreadRunItem {
+export type ThreadBriefItem = { kind: 'brief'; id: string; body: string; createdAt: string; /** task creator shown as the brief author */ authorName?: string | null; /** creator's user id — avatar lookup via /api/employees/:userId/avatar */ authorId?: string | null }
+export type ThreadRunItem = {
   kind: 'run'
   id: string
   status: 'running' | 'done' | 'failed'
@@ -21,7 +21,7 @@ export interface ThreadRunItem {
   startedAt: string
   finishedAt: string | null
 }
-export interface ThreadNoteItem {
+export type ThreadNoteItem = {
   kind: 'note'
   id: string
   noteKind: string
@@ -33,7 +33,7 @@ export interface ThreadNoteItem {
 }
 export type ThreadItem = ThreadBriefItem | ThreadRunItem | ThreadNoteItem
 
-export interface ThreadSource {
+export type ThreadSource = {
   description?: string | null
   createdAt?: string | null
   briefAuthorName?: string | null
@@ -44,7 +44,7 @@ export interface ThreadSource {
 
 /** Envelope of the output contract: last [RESULT]/[QUESTION]/[BLOCKED] line wins. */
 export type EnvelopeKind = 'result' | 'run' | 'question' | 'blocked'
-export interface RunEnvelope { kind: EnvelopeKind; text: string }
+export type RunEnvelope = { kind: EnvelopeKind; text: string }
 
 // verdict parsing lives in shared/run-verdict (zod schema + marker fallback) —
 // re-exported here so the UI thread and the runner share one implementation.
@@ -56,7 +56,7 @@ export { parseRunEnvelope, RunVerdictSchema } from '#shared/run-verdict'
  *  [SUBTASKS] title :: description :: assignee | title2 :: ...
  *  [REASSIGN] Employee Name — reason
  * These are proposals only — the confirm flow (human/decision model) executes them. */
-export interface SubtaskProposalItem { title: string, description?: string, assigneeName?: string }
+export type SubtaskProposalItem = { title: string, description?: string, assigneeName?: string }
 export type RoutingProposal =
   | { kind: 'subtasks', items: SubtaskProposalItem[] }
   | { kind: 'reassign', targetName: string, reason?: string }

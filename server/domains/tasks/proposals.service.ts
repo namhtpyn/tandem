@@ -13,7 +13,7 @@ import { refreshParentGating } from './gating.service'
 import { v7 as uuidv7 } from 'uuid'
 import { STATUS } from '#shared/status'
 
-export interface SubtaskItem { title: string, description?: string, assigneeName?: string }
+export type SubtaskItem = { title: string, description?: string, assigneeName?: string }
 export type ProposalPayload =
   | { kind: 'subtasks', items: SubtaskItem[] }
   | { kind: 'reassign', targetName?: string, reason?: string }

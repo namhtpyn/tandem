@@ -5,7 +5,7 @@
 // the single source of truth for both the instruction and the validation.
 import { z } from 'zod'
 
-export interface OutputContractOptions {
+export type OutputContractOptions = {
   /** replaces the default intro line */
   intro?: string
   /** concrete example lines shown to the agent (strongly recommended — agents

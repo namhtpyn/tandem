@@ -3,14 +3,14 @@
 // desktop table; create/edit modal follows the #footer submit law.
 import { computed, reactive, ref, unref } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import type { ProjectRow } from '~/../shared/types'
+import type { ProjectRow } from '~/utils/orpc-types'
 
 useSeoMeta({ title: 'Projects · Tandem' })
 
 const { $orpc, $client } = useNuxtApp()
 const queryClient = useQueryClient()
 
-const liveQuery = useQuery(($orpc.projects.list as any).queryOptions({ queryKey: ['projects'] }))
+const liveQuery = useQuery(($orpc.projects.list).queryOptions({ queryKey: ['projects'] }))
 const rows = computed(() => (unref(liveQuery.data) ?? []) as ProjectRow[])
 const busy = ref(false)
 const message = ref('')
@@ -87,8 +87,8 @@ async function save() {
       parentId: form.parentId === '__none__' ? null : form.parentId,
       ...(editingId.value ? { status: form.status } : {}),
     }
-    if (editingId.value) await ($client as any).projects.update({ id: editingId.value, ...payload })
-    else await ($client as any).projects.create(payload)
+    if (editingId.value) await $client.projects.update({ id: editingId.value, ...payload })
+    else await $client.projects.create(payload)
     editorOpen.value = false
   }
   catch (e) {
@@ -107,7 +107,7 @@ async function remove_() {
   if (!confirmId.value) return
   busy.value = true
   try {
-    await ($client as any).projects.remove({ id: confirmId.value })
+    await $client.projects.remove({ id: confirmId.value })
     confirmId.value = null
   }
   catch (e) {

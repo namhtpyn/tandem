@@ -1,14 +1,14 @@
 // Vault secret picker options grouped by folder. Shared by every "pick a secret"
 // select in the app — environments (SSH keys), employees (AI API keys) and
 // settings (workspace AI assignments).
-export interface VaultSecretOptionRow {
+export type VaultSecretOptionRow = {
   id: string
   name: string
   lastFour: string
   folder: string | null
 }
 
-interface FlatOption { label: string, value: string }
+type FlatOption = { label: string, value: string }
 
 /** flat list -> USelectMenu items with folder headers (type:'label'), folders first */
 export function groupedSecretOptions(rows: VaultSecretOptionRow[]): Array<FlatOption | { label: string, type: 'label' }> {

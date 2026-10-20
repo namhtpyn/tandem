@@ -5,7 +5,7 @@
 // sidebar collapses into a sheet. Streams stay persistent (one per feed, aborted
 // on unmount) — see the stream law in AGENTS.md.
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
-import type { EmployeeRow, TaskRow } from '~/../shared/types'
+import type { EmployeeRow, TaskRow } from '~/utils/orpc-types'
 import { STATUS } from '~/../shared/status'
 import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '~/utils/task-thread'
 import type { ThreadItem } from '~/utils/task-thread'
@@ -13,7 +13,7 @@ import type { ThreadItem } from '~/utils/task-thread'
 const route = useRoute()
 const { $orpc, $client } = useNuxtApp()
 
-const tasksLive = useQuery<TaskRow[]>(($orpc.tasks.list as any).queryOptions({ queryKey: ['tasks'] }))
+const tasksLive = useQuery(($orpc.tasks.list).queryOptions({ queryKey: ['tasks'] }))
 
 const tasks = computed(() => (unref(tasksLive.data) ?? []) as TaskRow[])
 
@@ -31,19 +31,19 @@ const workflowMessage = ref('')
 // skipToken symbol (oRPC vs vue-query chunks) defeat oRPC's skip detection and
 // the queries fire with a serialized-away input (server: BAD_REQUEST).
 const taskIdRef = computed(() => task.value?.id ?? '')
-const runsQuery = useQuery(computed(() => ($orpc.tasks.runsList as any).queryOptions({
+const runsQuery = useQuery(computed(() => ($orpc.tasks.runsList).queryOptions({
   input: { taskId: taskIdRef.value },
   queryKey: ['runs', taskIdRef.value],
   enabled: !!taskIdRef.value,
 })))
 const runFeed = computed(() => (unref(runsQuery.data) ?? []) as unknown as Array<{ id: string, status: string, output: string, prompt?: string | null, agentName?: string | null, exitCode: number | null, startedAt: string, outputs?: Array<{ id: string, filename: string, mime: string, size: number }> }>)
 
-const activityQuery = useQuery(computed(() => ($orpc.tasks.activityList as any).queryOptions({
+const activityQuery = useQuery(computed(() => ($orpc.tasks.activityList).queryOptions({
   input: { taskId: taskIdRef.value },
   queryKey: ['taskActivity', taskIdRef.value],
   enabled: !!taskIdRef.value,
 })))
-const reviewsQuery = useQuery(computed(() => ($orpc.tasks.reviews as any).queryOptions({
+const reviewsQuery = useQuery(computed(() => ($orpc.tasks.reviews).queryOptions({
   input: { taskId: taskIdRef.value },
   queryKey: ['taskReviews', taskIdRef.value],
   enabled: !!taskIdRef.value,
@@ -167,26 +167,26 @@ async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
 }
 
 // ---- subtasks, agent proposals, assignment history ---------------------------
-const employeesLive = useQuery(($orpc.employees.list as any).queryOptions({ queryKey: ['employees'] }))
+const employeesLive = useQuery(($orpc.employees.list).queryOptions({ queryKey: ['employees'] }))
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[])
 const employeeName = computed(() => new Map(employees.value.map(e => [e.id, e.name])))
 /** userId -> hasAvatar: chat avatars render via /api/employees/:userId/avatar, initials otherwise */
 const hasAvatarByUserId = computed(() => new Map(employees.value.map(e => [e.userId, e.hasAvatar])))
 
 // ---- editable details (assignee / project / status) — reviewers deliberately excluded ----
-const statusesLive = useQuery<import('~/../shared/types').TaskStatusRow[]>(($orpc.statuses.list as any).queryOptions({ queryKey: ['statuses'] }))
-const statuses = computed(() => (unref(statusesLive.data) ?? []) as import('~/../shared/types').TaskStatusRow[])
+const statusesLive = useQuery(($orpc.statuses.list).queryOptions({ queryKey: ['statuses'] }))
+const statuses = computed(() => unref(statusesLive.data) ?? [])
 const statusById = computed(() => new Map(statuses.value.map(x => [x.id, x])))
-const projectsLive = useQuery(($orpc.projects.list as any).queryOptions({ queryKey: ['projects'] }))
+const projectsLive = useQuery(($orpc.projects.list).queryOptions({ queryKey: ['projects'] }))
 const projects = computed(() => (unref(projectsLive.data) ?? []) as Array<{ id: string, name: string }>)
-const updateMutation = useMutation<any, any, any>(($orpc.tasks.update as any).mutationOptions())
+const updateMutation = useMutation(($orpc.tasks.update).mutationOptions())
 const fieldBusy = ref(false)
 const fieldError = ref('')
 /** status select: current + the workflow-allowed next statuses (server enforces the same rule) */
 const selectableStatuses = computed(() => {
   const cur = task.value?.status ? statusById.value.get(task.value.status) : null
   if (!cur) return []
-  return [cur, ...cur.nextIds.filter(id => id !== cur.id).map(id => statusById.value.get(id)).filter(Boolean)] as import('~/../shared/types').TaskStatusRow[]
+  return [cur, ...cur.nextIds.filter(id => id !== cur.id).map(id => statusById.value.get(id)).filter(s => !!s)]
 })
 const statusOptions = computed(() => selectableStatuses.value.map(s => ({ label: s.name, value: s.id })))
 const assigneeOptions = computed(() => [

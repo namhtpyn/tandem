@@ -22,13 +22,13 @@ import { v7 as uuidv7 } from 'uuid'
 
 type WorkflowSession = { getSession: () => Promise<{ user: { id: string } } | null> }
 
-async function selfIdOf(context: unknown): Promise<string> {
+async function selfIdOf(context: unknown) {
   const session = await (context as unknown as WorkflowSession).getSession()
   return session?.user?.id ?? ''
 }
 
 /** run a workflow action, mapping service errors (all Error) to BAD_REQUEST */
-async function runWorkflow(fn: () => Promise<unknown>): Promise<unknown> {
+async function runWorkflow(fn: () => Promise<unknown>) {
   try {
     return await fn()
   } catch (e) {

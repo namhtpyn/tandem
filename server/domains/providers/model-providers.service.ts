@@ -6,7 +6,7 @@ import { db } from '../../db'
 import { modelProviders } from '../../db/schema'
 import { ALL_ENDPOINTS } from '#shared/api-styles'
 
-export interface ModelProviderRow {
+export type ModelProviderRow = {
   id: string
   label: string
   baseUrl: string
@@ -25,7 +25,7 @@ export const modelProviderInputSchema = z.strictObject({
   notes: z.string().max(500).optional(),
 })
 
-export async function listModelProviders(): Promise<ModelProviderRow[]> {
+export async function listModelProviders() {
   const provs = await db.select().from(modelProviders)
   return provs.map(p => ({
     id: p.id,
@@ -37,7 +37,7 @@ export async function listModelProviders(): Promise<ModelProviderRow[]> {
   }))
 }
 
-export async function providerInUse(providerId: string): Promise<boolean> {
+export async function providerInUse(providerId: string) {
   const { aiEmployees } = await import('../../db/schema')
   const rows = await db.select({ userId: aiEmployees.userId }).from(aiEmployees).where(eq(aiEmployees.providerId, providerId))
   return rows.length > 0

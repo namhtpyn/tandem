@@ -6,7 +6,7 @@
 import { z } from 'zod'
 import { getSetting, setSetting } from '../settings/settings.service'
 
-export interface OidcProvider {
+export type OidcProvider = {
   id: string
   label: string
   issuer: string
@@ -24,7 +24,7 @@ export const oidcProviderSchema = z.strictObject({
 
 const REGISTRY_KEY = 'oidc_providers'
 
-export async function getOidcProviders(): Promise<OidcProvider[]> {
+export async function getOidcProviders() {
   const raw = await getSetting(REGISTRY_KEY)
   if (raw) {
     try {
@@ -50,6 +50,6 @@ export async function getOidcProviders(): Promise<OidcProvider[]> {
   return []
 }
 
-export async function saveOidcProviders(providers: OidcProvider[]): Promise<void> {
+export async function saveOidcProviders(providers: OidcProvider[]) {
   await setSetting(REGISTRY_KEY, JSON.stringify(providers))
 }

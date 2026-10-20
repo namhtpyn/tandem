@@ -15,7 +15,7 @@ import { renderOutputContract, parseStructuredOutput } from '#shared/structured-
 //   replaces ran with full tool access in the employee's own sandboxed host
 //   (headless parity — there is no human at this keyboard)
 
-export interface AcpStream {
+export type AcpStream = {
   /** send one JSON-RPC message (newline appended here) */
   write(message: unknown): void
   /** tear down the underlying process/connection */
@@ -30,7 +30,7 @@ export interface AcpStream {
 
 export type StopReason = 'end_turn' | 'refusal' | 'cancelled' | 'max_tokens' | 'max_turn_requests' | `_${string}`
 
-export interface AcpTurnResult {
+export type AcpTurnResult = {
   sessionId: string
   stopReason: StopReason
   /** final agent message text (chunks concatenated in arrival order) */
@@ -44,7 +44,7 @@ export interface AcpStructuredTurnResult<S extends import('zod').ZodType> extend
   structured: import('zod').infer<S> | null
 }
 
-interface RpcMessage {
+type RpcMessage = {
   jsonrpc: '2.0'
   id?: number | string
   method?: string

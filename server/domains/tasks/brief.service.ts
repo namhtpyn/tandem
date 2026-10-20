@@ -7,7 +7,7 @@ import { stripAttachments } from './attachments.util'
 import { renderOutputContract } from '#shared/structured-output'
 import { RunVerdictSchema } from '#shared/run-verdict'
 
-export interface BriefPerson { id: string, name: string, title: string | null, kind: string }
+export type BriefPerson = { id: string, name: string, title: string | null, kind: string }
 
 /** mentions in the description: @[Label](id) tiptap links, HTML spans, or plain @Label tokens.
  * Labels resolve against known employee names (mention menu only offers employees), so

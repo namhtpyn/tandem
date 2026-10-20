@@ -3,13 +3,13 @@
 // once and never displayed again — only a last-4 hint. Mobile-first cards.
 import { computed, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import type { VaultSecretRow } from '~/../shared/types'
+import type { VaultSecretRow } from '~/utils/orpc-types'
 
 const { $orpc } = useNuxtApp()
 const queryClient = useQueryClient()
 
-const liveQuery = useQuery<VaultSecretRow[]>(($orpc.vault.secrets.list as any).queryOptions({ queryKey: ['vault'] }))
-const foldersQuery = useQuery(($orpc.vault.folders.list as any).queryOptions({ queryKey: ['vault', 'folders'] }))
+const liveQuery = useQuery(($orpc.vault.secrets.list).queryOptions({ queryKey: ['vault'] }))
+const foldersQuery = useQuery(($orpc.vault.folders.list).queryOptions({ queryKey: ['vault', 'folders'] }))
 const folders = computed(() => (foldersQuery.data.value as { folders: Array<{ id: string, name: string, secrets: number }> } | undefined)?.folders ?? [])
 
 // ---- folder filter chip row ----

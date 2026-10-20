@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { ModelProviderRow, ProviderSaveInput } from '~/utils/orpc-types'
 import { groupedSecretOptions } from '~/utils/vault-options'
 import { useQuery } from '@tanstack/vue-query'
 import { PROVIDER_KIND, endpointKind, isAnthropicWire, ENDPOINT_OPTIONS, PROVIDER_ENDPOINT_LABEL, isModelsEndpoint } from '#shared/api-styles'
@@ -15,9 +16,9 @@ interface OidcProviderRow {
 
 const { $orpc, $client } = useNuxtApp()
 
-const oidcLive = useQuery(($orpc.oidc.list as any).queryOptions({ queryKey: ['oidc'] }))
-const providersLive = useQuery(($orpc.providers.list as any).queryOptions({ queryKey: ['providers'] }))
-const mProvList = computed(() => (unref(providersLive.data) ?? []) as Array<{ id: string, label: string, baseUrl: string, endpoints: string[], extraHeaders: Record<string, string> | null, notes: string | null }>)
+const oidcLive = useQuery(($orpc.oidc.list).queryOptions({ queryKey: ['oidc'] }))
+const providersLive = useQuery(($orpc.providers.list).queryOptions({ queryKey: ['providers'] }))
+const mProvList = computed(() => unref(providersLive.data) ?? [])
 
 const mProvEditorOpen = ref(false)
 const mProvEditingId = ref<string | null>(null)
@@ -37,7 +38,7 @@ function onEndpointsChange(next: Array<string | undefined>) {
 const mProvBusy = ref(false)
 const mProvMessage = ref('')
 
-function openMProvEditor(row?: { id: string, label: string, baseUrl: string, endpoints: string[], extraHeaders: Record<string, string> | null, notes: string | null }) {
+function openMProvEditor(row?: ModelProviderRow) {
   mProvEditingId.value = row?.id ?? null
   mProvForm.label = row?.label ?? ''
   mProvForm.baseUrl = row?.baseUrl ?? ''
@@ -55,11 +56,11 @@ async function saveMProv() {
     const headers = mProvForm.extraHeaders.trim()
       ? Object.fromEntries(mProvForm.extraHeaders.split('\n').map(l => l.split(':').map(p => p.trim())).filter(p => p.length === 2).map(p => [p[0]!, p[1]!]))
       : undefined
-    await ($client as any).providers.save({
+    await $client.providers.save({
       ...(mProvEditingId.value ? { id: mProvEditingId.value } : {}),
       label: mProvForm.label,
       baseUrl: mProvForm.baseUrl,
-      endpoints: mProvForm.endpoints,
+      endpoints: mProvForm.endpoints as ProviderSaveInput['endpoints'],
       ...(headers && Object.keys(headers).length ? { extraHeaders: headers } : {}),
       ...(mProvForm.notes ? { notes: mProvForm.notes } : {}),
     })
@@ -77,7 +78,7 @@ async function removeMProv(id: string) {
   mProvBusy.value = true
   mProvMessage.value = ''
   try {
-    await ($client as any).providers.remove({ id })
+    await $client.providers.remove({ id })
   }
   catch (e) {
     mProvMessage.value = e instanceof Error ? e.message : 'delete failed'
@@ -87,7 +88,7 @@ async function removeMProv(id: string) {
   }
 }
 
-const settingsLive = useQuery(($orpc.settings.list as any).queryOptions({ queryKey: ['settings'] }))
+const settingsLive = useQuery(($orpc.settings.list).queryOptions({ queryKey: ['settings'] }))
 
 const providers = computed<OidcProviderRow[]>(() => ((unref(oidcLive.data) ?? []) as Array<{ id: string, label: string, issuer: string, clientId: string, hasSecret: boolean }>)
   .map(p => ({ id: p.id, label: p.label, issuer: p.issuer, clientId: p.clientId, secretSet: p.hasSecret })))
@@ -108,7 +109,7 @@ async function saveCompanyPrompt() {
       companyPromptMessage.value = 'Keep it under 8000 characters'
       return
     }
-    await ($client as any).settings.update({ companyPrompt: text })
+    await $client.settings.update({ companyPrompt: text })
     companyPromptMessage.value = 'Saved'
   } catch (e: any) {
     companyPromptMessage.value = e?.message ?? 'Save failed'
@@ -117,7 +118,7 @@ async function saveCompanyPrompt() {
   }
 }
 // ---- Workspace AI: internal LLM + decision assignments ----
-const vaultLive = useQuery(($orpc.vault.secrets.list as any).queryOptions({ queryKey: ['vault'] }))
+const vaultLive = useQuery(($orpc.vault.secrets.list).queryOptions({ queryKey: ['vault'] }))
 const vaultItems = computed((): any => groupedSecretOptions(((unref(vaultLive.data) ?? []) as Array<{ id: string, name: string, lastFour: string, folder: string | null }>)))
 interface AiAssignmentForm { providerId: string | null, model: string, keySecretId: string | null }
 const llmForm = reactive<AiAssignmentForm>({ providerId: null, model: '', keySecretId: null })
@@ -157,7 +158,7 @@ function aiModelsState(form: AiAssignmentForm) {
     if (!p || !(p.endpoints ?? []).some(st => isModelsEndpoint(st))) return
     loading.value = true
     try {
-      const res = await ($client as any).providers.models({ providerId, keySecretId })
+      const res = await $client.providers.models({ providerId, keySecretId })
       items.value = res.models ?? []
     }
     catch { /* best-effort; freetext still allowed */ }
@@ -183,7 +184,7 @@ async function saveAssignment(kind: 'internalLlm' | 'internalDecision') {
     const value = form.providerId && form.keySecretId
       ? { providerId: form.providerId, model: form.model.trim(), keySecretId: form.keySecretId }
       : null
-    await ($client as any).settings.update({ [kind]: value })
+    await $client.settings.update({ [kind]: value })
     aiMessage.value = 'Saved'
   }
   catch (e) {
@@ -215,7 +216,7 @@ async function saveTasksPerAgent() {
       tasksPerAgentMessage.value = 'Enter a whole number between 1 and 32'
       return
     }
-    await ($client as any).settings.update({ tasksPerAgent: n })
+    await $client.settings.update({ tasksPerAgent: n })
     tasksPerAgentMessage.value = 'Saved'
   } catch (e: any) {
     tasksPerAgentMessage.value = e?.message ?? 'Save failed'
@@ -235,7 +236,7 @@ async function saveRunTimeout() {
       runTimeoutMessage.value = 'Enter at least 1 minute'
       return
     }
-    await ($client as any).settings.update({ runTimeoutMs: Math.round(minutes * 60_000) })
+    await $client.settings.update({ runTimeoutMs: Math.round(minutes * 60_000) })
     runTimeoutMessage.value = 'Saved'
   } catch (e: any) {
     runTimeoutMessage.value = e?.message ?? 'Save failed'
@@ -250,7 +251,7 @@ async function saveCompanyName() {
   savingName.value = true
   nameMessage.value = ''
   try {
-    await ($client as any).settings.update({ companyName: companyName.value })
+    await $client.settings.update({ companyName: companyName.value })
     nameMessage.value = 'Saved'
   } catch (e: any) {
     nameMessage.value = e?.message ?? 'Save failed'
@@ -300,7 +301,7 @@ async function saveProvider() {
       clientId: form.clientId,
       ...(form.clientSecret ? { clientSecret: form.clientSecret } : {}),
     })
-    await ($client as any).oidc.replace({ providers: list2 })
+    await $client.oidc.replace({ providers: list2 })
     editorOpen.value = false
   }
   catch (e) {
@@ -315,13 +316,13 @@ async function removeProvider(row: OidcProviderRow) {
   const list = providers.value
     .filter(p => p.id !== row.id)
     .map(p => ({ id: p.id, label: p.label, issuer: p.issuer, clientId: p.clientId }))
-  await ($client as any).oidc.replace({ providers: list })
+  await $client.oidc.replace({ providers: list })
 }
 
 async function savePasswordPolicy() {
   busy.value = true
   try {
-    await ($client as any).settings.update({ disablePasswordLogin: disablePasswordLogin.value })
+    await $client.settings.update({ disablePasswordLogin: disablePasswordLogin.value })
     message.value = 'Saved'
   }
   catch (e) {

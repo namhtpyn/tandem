@@ -34,12 +34,12 @@ export const sqlClient = postgres(url, {
 
 // ---------- boot migrations ----------
 
-interface MigrationSource {
+type MigrationSource = {
   name: string // folder name, e.g. 20261009133348_hard_weapon_omega
   sql: string
 }
 
-async function listMigrations(): Promise<MigrationSource[]> {
+async function listMigrations() {
   // bundled nitro serverAssets: mounted at /assets, keys like "drizzle:2026...:migration.sql"
   /* v8 ignore start -- nitro-runtime branch: exercised by the real server in E2E */
   try {
@@ -75,7 +75,7 @@ async function listMigrations(): Promise<MigrationSource[]> {
 
 export const MIGRATIONS_TABLE = 'migrations'
 
-export async function applyMigrations(): Promise<string[]> {
+export async function applyMigrations() {
   const applied: string[] = []
   // one-time ledger rename (tandem_migrations -> migrations): keep the applied
   // history so already-run migrations never re-run; fresh databases start on

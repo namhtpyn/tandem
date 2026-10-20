@@ -8,7 +8,7 @@ import { decryptSecret } from '../vault/secret/secret-crypto.service'
 import { PROVIDER_ENDPOINT, PROVIDER_KIND, endpointKind, ENDPOINT_PATH, type DecisionEndpoint } from '#shared/api-styles'
 import { v7 as uuidv7 } from 'uuid'
 
-export interface JevAssignCandidate {
+export type JevAssignCandidate = {
   id: string
   name: string
   kind: 'human' | 'ai'
@@ -17,7 +17,7 @@ export interface JevAssignCandidate {
   openTasks: number
 }
 
-export interface JevAssignResult {
+export type JevAssignResult = {
   employeeId: string | null
   confidence: number
   probabilities: Record<string, number>
@@ -26,7 +26,7 @@ export interface JevAssignResult {
 }
 
 /** Normalized pick returned by every decision adapter. */
-export interface DecisionPick {
+export type DecisionPick = {
   employeeId: string | null
   confidence: number
   probabilities: Record<string, number>
@@ -52,7 +52,7 @@ export async function pickAssignee(params: {
   keySecretId: string | null
   /** model pin from the Workspace AI assignment (null = the endpoint default) */
   model: string | null
-}): Promise<JevAssignResult> {
+}) {
   if (params.candidates.length === 0) {
     return { employeeId: null, confidence: 0, probabilities: {}, model: 'none', fallbackReason: 'no assignee candidates' }
   }
@@ -125,7 +125,7 @@ export async function pickAssignee(params: {
 const INSTRUCTIONS = 'Which employee should be assigned this task? Consider skills implied by the title, current workload, and whether an AI agent or human fits better. AI agents suit autonomous digital work; humans suit judgment, external communication, or physical tasks.'
 
 /** TypeSafe System One: state + questions map, answers map keyed by question id. */
-async function askTypesafeSystemOne(baseUrl: string, key: string, state: string, instructions: string, criteria: Record<string, string>, model: string | null): Promise<DecisionPick> {
+async function askTypesafeSystemOne(baseUrl: string, key: string, state: string, instructions: string, criteria: Record<string, string>, model: string | null) {
   const url = buildEndpointUrl(baseUrl, PROVIDER_ENDPOINT.DECISION['TYPESAFE-SYSTEMONE'])
   const res = await fetch(url, {
     method: 'POST',
@@ -158,7 +158,7 @@ async function askTypesafeSystemOne(baseUrl: string, key: string, state: string,
 }
 
 /** OpenAI Decisions: input + questions array, answers array (name-keyed). */
-async function askOpenAIDecisions(baseUrl: string, key: string, state: string, instructions: string, criteria: Record<string, string>, model: string | null): Promise<DecisionPick> {
+async function askOpenAIDecisions(baseUrl: string, key: string, state: string, instructions: string, criteria: Record<string, string>, model: string | null) {
   const url = buildEndpointUrl(baseUrl, PROVIDER_ENDPOINT.DECISION['OPENAI-DECISIONS'])
   const choices = Object.entries(criteria).map(([value, description]) => ({ value, description }))
   const res = await fetch(url, {

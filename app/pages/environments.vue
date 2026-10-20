@@ -3,16 +3,16 @@ import { groupedSecretOptions } from '~/utils/vault-options'
 // Environments (LIVE): oRPC live query — the table is a streaming snapshot;
 // mutations go through oRPC and every client (this tab or another) updates
 // instantly via the change bus + SSE.
-import type { EnvironmentRow, VaultSecretRow } from '~/../shared/types'
+import type { EnvironmentRow, VaultSecretRow } from '~/utils/orpc-types'
 import { useQuery, useMutation } from '@tanstack/vue-query'
 
 const { $orpc } = useNuxtApp()
 
-const liveQuery = useQuery(($orpc.environments.list as any).queryOptions({ queryKey: ['environments'] }))
+const liveQuery = useQuery(($orpc.environments.list).queryOptions({ queryKey: ['environments'] }))
 const rows = computed<EnvironmentRow[]>(() => (unref(liveQuery.data) ?? []) as EnvironmentRow[])
 
 // vault secrets for the SSH key picker (metadata only)
-const secretsQuery = useQuery<VaultSecretRow[]>(($orpc.vault.secrets.list as any).queryOptions({ queryKey: ['vault'] }))
+const secretsQuery = useQuery(($orpc.vault.secrets.list).queryOptions({ queryKey: ['vault'] }))
 const secrets = computed<VaultSecretRow[]>(() => (unref(secretsQuery.data) ?? []) as VaultSecretRow[])
 const secretOptions = computed((): any => [
   { label: 'No key (agent default)', value: '__none__' },
@@ -33,10 +33,10 @@ const deleteOpen = computed({
 })
 const probeResults = ref<Record<string, { ok: boolean, detail: string, durationMs: number }>>({})
 
-const createMutation = useMutation<any, any, any>(($orpc as any).environments.create.mutationOptions())
-const updateMutation = useMutation<any, any, any>(($orpc as any).environments.update.mutationOptions())
-const removeMutation = useMutation<any, any, any>(($orpc as any).environments.remove.mutationOptions())
-const probeCall = ($orpc as any).environments.probe.call
+const createMutation = useMutation($orpc.environments.create.mutationOptions())
+const updateMutation = useMutation($orpc.environments.update.mutationOptions())
+const removeMutation = useMutation($orpc.environments.remove.mutationOptions())
+const probeCall = $orpc.environments.probe.call
 
 const columns = [
   { accessorKey: 'name', header: 'Name' },

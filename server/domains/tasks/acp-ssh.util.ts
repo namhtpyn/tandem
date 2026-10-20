@@ -92,8 +92,8 @@ export async function openAcpSshStream(
       try { stream?.close() } catch { /* already gone */ }
       try { conn.end() } catch { /* already gone */ }
     },
-    onStdoutLine: (cb) => { stdoutCb = cb },
-    onStderrLine: (cb) => { stderrCb = cb },
-    onClose: (cb) => { closeCb = cb },
+    onStdoutLine: (cb: (line: string) => void) => { stdoutCb = cb },
+    onStderrLine: (cb: (line: string) => void) => { stderrCb = cb },
+    onClose: (cb: (code: number | null) => void) => { closeCb = cb },
   }
 }

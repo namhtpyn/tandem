@@ -4,7 +4,7 @@
 // the real stream/finish logic.
 import type { Client } from 'ssh2'
 
-export interface SshPlan {
+export type SshPlan = {
   env: { host: string, port: string, username: string }
   sshKey?: string
   sshPassword?: string

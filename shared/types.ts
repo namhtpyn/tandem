@@ -1,5 +1,5 @@
 // Shared client/server types (importable from app/ and server/).
-export interface EnvironmentRow {
+export type EnvironmentRow = {
   id: string
   name: string
   host: string
@@ -13,7 +13,7 @@ export interface EnvironmentRow {
   updatedAt: string
 }
 
-export interface EmployeeRow {
+export type EmployeeRow = {
   id: string
   userId: string
   name: string
@@ -39,7 +39,7 @@ export interface EmployeeRow {
   updatedAt: string
 }
 
-export interface ProjectRow {
+export type ProjectRow = {
   id: string
   name: string
   description: string
@@ -51,7 +51,7 @@ export interface ProjectRow {
   updatedAt: string
 }
 
-export interface TaskStatusRow {
+export type TaskStatusRow = {
   id: string
   name: string
   color: string
@@ -60,7 +60,7 @@ export interface TaskStatusRow {
   nextIds: string[]
 }
 
-export interface TaskRow {
+export type TaskRow = {
   id: string
   title: string
   description: string
@@ -93,7 +93,7 @@ export interface TaskRow {
   updatedAt: string
 }
 
-export interface TaskActivityRow {
+export type TaskActivityRow = {
   id: string
   taskId: string
   kind: 'question' | 'answer' | 'forward' | 'note' | 'verdict' | 'status'
@@ -104,7 +104,7 @@ export interface TaskActivityRow {
   createdAt: string
 }
 
-export interface ApiKeyRow {
+export type ApiKeyRow = {
   id: string
   name: string | null
   start: string | null
@@ -115,7 +115,7 @@ export interface ApiKeyRow {
   createdAt: string
 }
 
-export interface VaultSecretRow {
+export type VaultSecretRow = {
   id: string
   name: string
   description: string

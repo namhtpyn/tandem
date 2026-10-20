@@ -20,13 +20,13 @@ import { v7 as uuidv7 } from 'uuid'
 
 const env = process.env
 
-export interface AuthPolicy {
+export type AuthPolicy = {
   oidcEnabled: boolean
   passwordEnabled: boolean
   oidcProviders: OidcProvider[]
 }
 
-export async function resolveAuthPolicy(): Promise<AuthPolicy> {
+export async function resolveAuthPolicy() {
   const s = await getSettings()
   const providers = await getOidcProviders()
   const oidcEnabled = providers.length > 0
@@ -34,12 +34,12 @@ export async function resolveAuthPolicy(): Promise<AuthPolicy> {
   return { passwordEnabled, oidcEnabled, oidcProviders: providers }
 }
 
-export async function anyUserExists(): Promise<boolean> {
+export async function anyUserExists() {
   const rows = await db.select({ id: userTable.id }).from(userTable).limit(1)
   return rows.length > 0
 }
 
-interface Auth {
+type Auth = {
   handler: (request: Request) => Promise<Response>
   api: {
     getSession: (opts: { headers: Headers }) => Promise<{
@@ -58,7 +58,7 @@ function policyKey(p: AuthPolicy): string {
   return JSON.stringify([p.oidcProviders.map(x => [x.id, x.issuer, x.clientId, x.clientSecret]), p.passwordEnabled])
 }
 
-async function buildAuth(options: { includeTestUtils?: boolean } = {}): Promise<Auth> {
+async function buildAuth(options: { includeTestUtils?: boolean } = {}) {
   const p = await resolveAuthPolicy()
   builtWith = policyKey(p)
   return betterAuth({
@@ -147,11 +147,11 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}): Promise<
  * the plugin, so ctx.test stays typed and no privileged helper ever ships in the
  * production singleton. Used by the e2e login helper against the e2e database.
  */
-export async function buildAuthForTest(): Promise<Auth> {
+export async function buildAuthForTest() {
   return await buildAuth({ includeTestUtils: true })
 }
 
-export async function getAuth(): Promise<Auth> {
+export async function getAuth() {
   const p = await resolveAuthPolicy()
   const key = policyKey(p)
   if (!instance || builtWith !== key) {
@@ -160,7 +160,7 @@ export async function getAuth(): Promise<Auth> {
   return instance
 }
 
-export async function rebuildAuth(): Promise<Auth> {
+export async function rebuildAuth() {
   instance = null
   return getAuth()
 }

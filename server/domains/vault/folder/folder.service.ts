@@ -8,7 +8,7 @@ import { vaultSecrets as vaultSecretsTable, vaultFolders as vaultFoldersTable } 
 import { v7 as uuidv7 } from 'uuid'
 import { ORPCError, publishChange } from '../../kernel/kernel'
 
-export interface FolderWithCount { id: string, name: string, secrets: number }
+export type FolderWithCount = { id: string, name: string, secrets: number }
 
 export async function listFolders() {
   const rows = await db.select().from(vaultFoldersTable).orderBy(asc(vaultFoldersTable.name))

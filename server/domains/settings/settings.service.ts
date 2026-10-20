@@ -4,18 +4,18 @@ import { eq } from 'drizzle-orm'
 import { db } from '../../db'
 import { settings } from '../../db/schema'
 
-export async function getSetting(key: string): Promise<string | null> {
+export async function getSetting(key: string) {
   const rows = await db.select().from(settings).where(eq(settings.key, key)).limit(1)
   return rows[0]?.value ?? null
 }
 
-export async function setSetting(key: string, value: string): Promise<void> {
+export async function setSetting(key: string, value: string) {
   const now = new Date()
   await db.insert(settings).values({ key, value, updatedAt: now })
     .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: now } })
 }
 
-export async function deleteSetting(key: string): Promise<void> {
+export async function deleteSetting(key: string) {
   await db.delete(settings).where(eq(settings.key, key))
 }
 
@@ -24,7 +24,7 @@ export const DEFAULT_RUN_TIMEOUT_MS = 30 * 60_000
 
 /** The run timeout setting in ms; falls back to the 30 min default. The 1-min
  * minimum is enforced at the boundary (settings.update zod), not here. */
-export async function getRunTimeoutMs(): Promise<number> {
+export async function getRunTimeoutMs() {
   const v = await getSetting('run_timeout_ms')
   const n = v === null ? NaN : Number(v)
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_RUN_TIMEOUT_MS
@@ -35,25 +35,25 @@ export const DEFAULT_TASKS_PER_AGENT = 1
 
 /** The tasks-per-agent setting; falls back to 1. The 1..32 range is enforced at
  * the boundary (settings.update zod), not here. */
-export async function getTasksPerAgent(): Promise<number> {
+export async function getTasksPerAgent() {
   const v = await getSetting('tasks_per_agent')
   const n = v === null ? NaN : Number(v)
   return Number.isInteger(n) && n >= 1 ? n : DEFAULT_TASKS_PER_AGENT
 }
 
 /** The company prompt — prepended to EVERY agent brief (Settings page; 8k cap at the boundary). */
-export async function getCompanyPrompt(): Promise<string> {
+export async function getCompanyPrompt() {
   return ((await getSetting('company_prompt')) ?? '').trim()
 }
 
 /** One Workspace AI assignment: provider + optional model + vault key (internal use only). */
-export interface InternalAiAssignment {
+export type InternalAiAssignment = {
   providerId: string
   model: string | null
   keySecretId: string
 }
 
-export interface AppSettings {
+export type AppSettings = {
   disablePasswordLogin: boolean
   companyName: string
   /** hard cap for one agent run (ms) */
@@ -83,7 +83,7 @@ function parseAssignment(raw: string | null): InternalAiAssignment | null {
   }
 }
 
-export async function getSettings(): Promise<AppSettings> {
+export async function getSettings() {
   const v = await getSetting('disablePasswordLogin')
   const name = await getSetting('companyName')
   const llm = parseAssignment(await getSetting('internal_llm'))

@@ -14,7 +14,7 @@ export const RunVerdictSchema = z.object({
 export type RunVerdict = z.infer<typeof RunVerdictSchema>
 
 export type EnvelopeKind = RunVerdict['kind']
-export interface RunEnvelope { kind: EnvelopeKind, text: string }
+export type RunEnvelope = { kind: EnvelopeKind, text: string }
 
 /**
  * The single verdict parser — used by the runner AND the UI thread. SYNC

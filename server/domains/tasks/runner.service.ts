@@ -37,7 +37,7 @@ export function backoffFor(failStreak: number, output: string): number {
   return BACKOFF_STEPS_MS[Math.min(Math.max(failStreak - 1, 0), BACKOFF_STEPS_MS.length - 1)]!
 }
 
-export interface RunHandle {
+export type RunHandle = {
   runId: string
   finished: Promise<{ status: 'done' | 'failed', exitCode: number | null }>
 }
@@ -181,7 +181,7 @@ export async function loadDispatchPlan(taskId: string) {
 
 /** the employee's latest ACP session on this task (per task PER EMPLOYEE —
  * reviewers and assignees never share a session). Null = first turn: session/new. */
-async function lastSessionFor(taskId: string, employeeId: string, excludeRunId?: string): Promise<string | null> {
+async function lastSessionFor(taskId: string, employeeId: string, excludeRunId?: string) {
   // excludeRunId: the CURRENT run's own row (inserted before the turn, sessionId
   // still null) would otherwise shadow the previous run's session.
   const conds = [eq(taskRuns.taskId, taskId), eq(taskRuns.employeeId, employeeId)]
@@ -356,7 +356,7 @@ function fakeRun(onLine: (line: string) => void, scriptOverride?: string[]): Run
 }
 
 /** dispatch a task to its AI assignee. Records the run row, streams output into it. */
-export async function dispatchTask(taskId: string, tandemUrl: string, opts?: { reviewBy?: string, resultBody?: string }): Promise<RunHandle> {
+export async function dispatchTask(taskId: string, tandemUrl: string, opts?: { reviewBy?: string, resultBody?: string }) {
   const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & { review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'] }
     = opts?.reviewBy // eslint-disable-line @typescript-eslint/consistent-type-definitions -- union widening
       ? await loadReviewPlan(taskId, opts.reviewBy, opts.resultBody ?? '')

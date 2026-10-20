@@ -2,7 +2,7 @@
 // app.vue and consumed by the layout/pages (NuxtLayout/NuxtPage forward nothing).
 import type { AuthConfig } from '~/types/auth'
 
-export interface AppSessionPayload {
+export type AppSessionPayload = {
   user: { id: string, name: string, email: string, role: string }
   session: { expiresAt: string }
 }

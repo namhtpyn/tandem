@@ -7,7 +7,7 @@
 // Exported as an object so tests can mock the whole shuttle.
 import type { Client } from 'ssh2'
 
-export interface SshFilePlan {
+export type SshFilePlan = {
   env: { host: string, port: string, username: string }
   sshKey?: string
   sshPassword?: string
@@ -115,7 +115,7 @@ export async function pushTaskFiles(
   }
 }
 
-export interface CollectedFile { localPath: string, filename: string, size: number }
+export type CollectedFile = { localPath: string, filename: string, size: number }
 
 /** collect files the agent left in out/: returns local copies (caller stores them) */
 export async function collectRunOutputs(
@@ -125,7 +125,7 @@ export async function collectRunOutputs(
   tmpDir: string,
   maxBytes: number,
   timeoutMs?: number,
-): Promise<CollectedFile[]> {
+) {
   const out = []
   const conn = await connect(ClientCtor, plan, timeoutMs)
   try {
@@ -154,7 +154,7 @@ export async function collectRunOutputs(
 }
 
 /** remove the task's sandbox dir (call only when no run of the task is active) */
-export async function cleanupTaskFiles(ClientCtor: typeof Client, plan: SshFilePlan, taskId: string, timeoutMs?: number): Promise<void> {
+export async function cleanupTaskFiles(ClientCtor: typeof Client, plan: SshFilePlan, taskId: string, timeoutMs?: number) {
   const conn = await connect(ClientCtor, plan, timeoutMs)
   try {
     await exec(conn, `rm -rf ${TASK_FILES_HOME}/${taskId}`)

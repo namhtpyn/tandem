@@ -6,7 +6,7 @@ import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView, ClipboardEventLike, DragEventLike } from '~/editor-typing'
-import type { EmployeeRow, TaskRow } from '~/../shared/types'
+import type { EmployeeRow, TaskRow } from '~/utils/orpc-types'
 import { STATUS } from '~/../shared/status'
 
 /** paste/drop images in the description editor -> attachments pipeline.
@@ -45,22 +45,22 @@ const ImagePaste = Extension.create<{ onImage: (file: File) => Promise<void> }>(
 
 
 const { $orpc, $client } = useNuxtApp()
-const tasksLive = useQuery<TaskRow[]>(($orpc.tasks.list as any).queryOptions({ queryKey: ['tasks'] }))
-const statusesLive = useQuery<import('~/../shared/types').TaskStatusRow[]>(($orpc.statuses.list as any).queryOptions({ queryKey: ['statuses'] }))
-const employeesLive = useQuery<import('~/../shared/types').EmployeeRow[]>(($orpc.employees.list as any).queryOptions({ queryKey: ['employees'] }))
-const projectsLive = useQuery(($orpc.projects.list as any).queryOptions({ queryKey: ['projects'] }))
+const tasksLive = useQuery(($orpc.tasks.list).queryOptions({ queryKey: ['tasks'] }))
+const statusesLive = useQuery(($orpc.statuses.list).queryOptions({ queryKey: ['statuses'] }))
+const employeesLive = useQuery(($orpc.employees.list).queryOptions({ queryKey: ['employees'] }))
+const projectsLive = useQuery(($orpc.projects.list).queryOptions({ queryKey: ['projects'] }))
 
 const tasks = computed(() => (unref(tasksLive.data) ?? []) as TaskRow[])
 
 // ---- "needs my decision" inbox (pending obligations on me) ----
-const inboxQuery = useQuery(($orpc.tasks.inbox as any).queryOptions({ queryKey: ['tasks', 'inbox'] }))
+const inboxQuery = useQuery(($orpc.tasks.inbox).queryOptions({ queryKey: ['tasks', 'inbox'] }))
 interface InboxItem { taskId: string, role: string, title: string, status: string }
 const inboxItems = computed<InboxItem[]>(() => ((unref(inboxQuery.data) as { items?: InboxItem[] } | undefined)?.items ?? []))
 const inboxCount = computed(() => inboxItems.value.length)
 const inboxTaskIds = computed(() => new Set(inboxItems.value.map(i => i.taskId)))
 const needsDecision = ref(false)
 const visibleTasks = computed(() => needsDecision.value ? tasks.value.filter(t => inboxTaskIds.value.has(t.id)) : tasks.value)
-const statuses = computed(() => (unref(statusesLive.data) ?? []) as import('~/../shared/types').TaskStatusRow[])
+const statuses = computed(() => unref(statusesLive.data) ?? [])
 const statusById = computed(() => new Map(statuses.value.map(x => [x.id, x])))
 const firstStatusId = computed(() => statuses.value[0]?.id ?? STATUS.todo)
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[])
@@ -144,7 +144,7 @@ const deleteOpen = computed({
 const form = reactive({ title: '', description: '', assigneeId: '__none__' as string, status: STATUS.todo as string, projectId: '__none__' as string, ownerId: '__none__' as string, reviewers: [] as string[] })
 const isEdit = computed(() => editingId.value !== null)
 
-const assignMutation = useMutation<any, any, any>(($orpc.statuses.assign as any).mutationOptions())
+const assignMutation = useMutation(($orpc.statuses.assign).mutationOptions())
 
 async function autoAssign(row: TaskRow) {
   message.value = ''
@@ -162,9 +162,9 @@ async function autoAssign(row: TaskRow) {
   }
 }
 
-const createMutation = useMutation<any, any, any>(($orpc.tasks.create as any).mutationOptions())
-const updateMutation = useMutation<any, any, any>(($orpc.tasks.update as any).mutationOptions())
-const removeMutation = useMutation<any, any, any>(($orpc.tasks.remove as any).mutationOptions())
+const createMutation = useMutation(($orpc.tasks.create).mutationOptions())
+const updateMutation = useMutation(($orpc.tasks.update).mutationOptions())
+const removeMutation = useMutation(($orpc.tasks.remove).mutationOptions())
 
 const assigneeOptions = computed(() => [
   { label: 'Unassigned', value: '__none__' },
@@ -192,15 +192,15 @@ const statusMessage = ref('')
 const editingStatusId = ref<string | null>(null)
 const statusForm = reactive({ name: '', color: 'neutral' as 'neutral' | 'primary' | 'success' | 'warning' | 'error' | 'info', position: 0, category: 'backlog' as 'backlog' | 'ready' | 'working' | 'paused' | 'waiting_answer' | 'in_review' | 'done' | 'cancelled', nextIds: [] as string[] })
 
-const statusSaveMutation = useMutation<any, any, any>(($orpc.statuses.save as any).mutationOptions())
-const statusRemoveMutation = useMutation<any, any, any>(($orpc.statuses.remove as any).mutationOptions())
+const statusSaveMutation = useMutation(($orpc.statuses.save).mutationOptions())
+const statusRemoveMutation = useMutation(($orpc.statuses.remove).mutationOptions())
 
-function openStatusEditor(row?: import('~/../shared/types').TaskStatusRow) {
+function openStatusEditor(row?: import('~/utils/orpc-types').TaskStatusRow) {
   editingStatusId.value = row?.id ?? null
   statusForm.name = row?.name ?? ''
-  statusForm.color = (row?.color as any) ?? 'neutral'
+  statusForm.color = (row?.color as typeof statusForm.color | undefined) ?? 'neutral'
   statusForm.position = row?.position ?? statuses.value.length
-  statusForm.category = row?.category ?? 'backlog'
+  statusForm.category = (row?.category as typeof statusForm.category | undefined) ?? 'backlog'
   statusForm.nextIds = row ? [...row.nextIds] : (statuses.value.length > 0 ? [statuses.value[0]!.id] : [])
   statusMessage.value = ''
   statusEditorTouched.value = true
@@ -342,18 +342,18 @@ const forwardTo = ref('__none__')
 // oRPC's own skip detection and the query fires with a serialized-away input.
 const queryClient = useQueryClient()
 const drawerTaskId = computed(() => (workflowOpen.value && workflowTask.value ? workflowTask.value.id : ''))
-const drawerRunsQuery = useQuery(computed(() => ($orpc.tasks.runsList as any).queryOptions({
+const drawerRunsQuery = useQuery(computed(() => ($orpc.tasks.runsList).queryOptions({
   input: { taskId: drawerTaskId.value },
   queryKey: ['runs', drawerTaskId.value],
   enabled: !!drawerTaskId.value,
 })))
 const runFeed = computed(() => (unref(drawerRunsQuery.data) ?? []) as unknown as Array<{ id: string, status: string, output: string, exitCode: number | null, startedAt: string }>)
-const drawerActivityQuery = useQuery(computed(() => ($orpc.tasks.activityList as any).queryOptions({
+const drawerActivityQuery = useQuery(computed(() => ($orpc.tasks.activityList).queryOptions({
   input: { taskId: drawerTaskId.value },
   queryKey: ['taskActivity', drawerTaskId.value],
   enabled: !!drawerTaskId.value,
 })))
-const workflowFeed = computed(() => (unref(drawerActivityQuery.data) ?? []) as unknown as import('~/../shared/types').TaskActivityRow[])
+const workflowFeed = computed(() => unref(drawerActivityQuery.data) ?? [])
 
 const retryInMin = computed(() => {
   const t = workflowTask.value
@@ -740,7 +740,7 @@ function statusColor(s: string) {
               <div v-for="st in statuses" :key="st.id" class="flex items-center justify-between gap-2 py-2">
                 <div class="min-w-0">
                   <p class="flex items-center gap-2 truncate text-sm font-medium text-zinc-900 dark:text-white">
-                    <UBadge :color="(st.color as any)" variant="subtle" size="sm">{{ st.name }}</UBadge>
+                    <UBadge :color="(st.color as typeof statusForm.color)" variant="subtle" size="sm">{{ st.name }}</UBadge>
                     <UBadge :color="categoryColor(st.category)" variant="subtle" size="sm">{{ st.category }}</UBadge>
                   </p>
                   <p class="truncate text-xs text-zinc-400">{{ st.nextIds.length ? `→ ${st.nextIds.map(n => statusById.get(n)?.name ?? n).join(', ')}` : 'no transitions' }}</p>

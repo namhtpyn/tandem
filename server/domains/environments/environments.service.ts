@@ -18,7 +18,7 @@ export function toRow(r: typeof environmentsTable.$inferSelect): EnvironmentRow 
   }
 }
 
-export async function listEnvironments(): Promise<EnvironmentRow[]> {
+export async function listEnvironments() {
   const rows = await db.select().from(environmentsTable).orderBy(desc(environmentsTable.createdAt))
   return rows.map(toRow)
 }
