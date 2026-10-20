@@ -49,7 +49,9 @@ describe('settings store', () => {
     await setSetting('companyName', 'Kept Name')
     const ctx = buildServerContext(new Headers())
     ;(ctx as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({ user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' } })
-    const node = (router as any).settings.update['~orpc']
+    let cur: Record<string, unknown> = router as unknown as Record<string, unknown>
+    for (const k of ['settings', 'update']) cur = cur[k] as Record<string, unknown>
+    const node = cur['~orpc'] as { handler: (o: unknown) => Promise<unknown> }
     await node.handler({ input: { disablePasswordLogin: false }, context: { ...ctx, session: { user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' } } }, signal: new AbortController().signal })
     expect((await getSettings()).companyName).toBe('Kept Name')
     // and with a value present it persists (trims)
@@ -119,7 +121,7 @@ describe('settings: workspace ai assignments', () => {
     const sec = await callProc('vault.secrets.create', { name: 'dec9-key', value: 'sk-9' })
     // harness calls the handler directly (zod only guards real transports); the
     // zod layer rejects this shape on the wire, the service layer degrades it
-    await callProc('settings.update', { internalDecision: { providerId: 'dec-9', model: null, keySecretId: sec.id } } as any)
+    await callProc('settings.update', { internalDecision: { providerId: 'dec-9', model: null, keySecretId: sec.id } })
     expect((await getSettings()).internalDecision).toBeNull()
   })
 

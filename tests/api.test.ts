@@ -8,7 +8,7 @@ import { createEvent, defineEventHandler, setResponseStatus, setResponseHeader, 
 
 // ---- harness: real h3 events + nitro auto-import aliases ----
 
-interface FakeReq {
+type FakeReq = {
   method: string
   url: string
   headers?: Record<string, string | string[] | undefined>

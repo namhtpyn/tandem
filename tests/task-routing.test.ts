@@ -16,6 +16,8 @@ import { recentAssignees } from '../server/domains/tasks/assignments.service'
 import { recordProposals } from '../server/domains/tasks/proposals.service'
 import { parseRoutingProposals } from '../app/utils/task-thread'
 import { STATUS } from '../shared/status'
+import type { TaskRow } from '../shared/types'
+import type { PgTable } from 'drizzle-orm/pg-core'
 
 const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 const worker = { id: '00000000-0000-7000-8000-bccb5af49873', name: 'Worker', email: 'worker@tandem.local', role: 'member' }
@@ -60,14 +62,14 @@ async function getTask(id: string) {
 async function dbRow(table: string, id: string) {
   const { db } = await import('../server/db')
   const mod = await import('../server/db/schema')
-  const rows = await db.select().from((mod as any)[table])
-  return rows.find((r: any) => r.id === id)
+  const rows = await db.select().from((mod as unknown as Record<string, PgTable>)[table]) as Array<Record<string, unknown>>
+  return rows.find(r => r.id === id)
 }
 
 async function dbRows(table: string) {
   const { db } = await import('../server/db')
   const mod = await import('../server/db/schema')
-  return db.select().from((mod as any)[table])
+  return await db.select().from((mod as unknown as Record<string, PgTable>)[table]) as Array<Record<string, unknown>>
 }
 
 async function mkProposal(taskId: string, kind: 'subtasks' | 'reassign', payload: unknown) {
@@ -141,9 +143,9 @@ describe('obligations', () => {
     expect((await pendingForUser(idMap.get('peer')!)).length).toBe(1) // inbox ping per reviewer
 
     // verdict checklist: one pending row per reviewer in round 1
-    const revs1 = await callProc('tasks.reviews', { taskId })
-    expect(revs1.map((r: any) => r.status)).toEqual(['pending', 'pending'])
-    expect(revs1.every((r: any) => r.round === 1)).toBe(true)
+    const revs1 = await callProc('tasks.reviews', { taskId }) as Array<{ round: number, status: string }>
+    expect(revs1.map(r => r.status)).toEqual(['pending', 'pending'])
+    expect(revs1.every(r => r.round === 1)).toBe(true)
 
     await asEmp('peer', () => callProc('tasks.approve', { taskId, body: 'ok' }))
     expect((await getTask(taskId)).status).toBe(STATUS.inReview) // not unanimous yet
@@ -153,14 +155,14 @@ describe('obligations', () => {
     // resubmit opens round 2; round 1 history kept
     await callProc('tasks.update', { id: taskId, status: STATUS.doing })
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'v2' }))
-    const revs2 = await callProc('tasks.reviews', { taskId })
-    expect(revs2.filter((r: any) => r.round === 2)).toHaveLength(2)
-    expect(revs2.filter((r: any) => r.round === 1).some((r: any) => r.status === 'change_requested')).toBe(true)
+    const revs2 = await callProc('tasks.reviews', { taskId }) as Array<{ round: number, status: string }>
+    expect(revs2.filter(r => r.round === 2)).toHaveLength(2)
+    expect(revs2.filter(r => r.round === 1).some(r => r.status === 'change_requested')).toBe(true)
     await asEmp('peer', () => callProc('tasks.approve', { taskId, body: 'ok2' }))
     await asEmp('report', () => callProc('tasks.approve', { taskId, body: 'ok3' }))
     expect((await getTask(taskId)).status).toBe(STATUS.done)
-    const revs3 = await callProc('tasks.reviews', { taskId })
-    expect(revs3.filter((r: any) => r.round === 2).every((r: any) => r.status === 'approved')).toBe(true)
+    const revs3 = await callProc('tasks.reviews', { taskId }) as Array<{ round: number, status: string }>
+    expect(revs3.filter(r => r.round === 2).every(r => r.status === 'approved')).toBe(true)
   })
 
   it('REVIEW LAW: approvalsInRoundBatch fulfilled arm — approved round reads as approvals', async () => {
@@ -208,7 +210,7 @@ describe('obligations', () => {
     await asEmp('worker', () => callProc('tasks.submit', { taskId: taskId2, body: 'done' }))
     await asEmp('peer', () => callProc('tasks.reject', { taskId: taskId2 }))
     expect((await getTask(taskId)).status).toBe(STATUS.cancelled)
-    const revs = await callProc('tasks.reviews', { taskId })
+    const revs = await callProc('tasks.reviews', { taskId }) as Array<{ status: string, note: string }>
     expect(revs[0].status).toBe('rejected')
     expect(revs[0].note).toContain('wrong scope')
   })
@@ -220,7 +222,7 @@ describe('obligations', () => {
       await callProc('tasks.update', { id, status: STATUS.doing })
       await asEmp('worker', () => callProc('tasks.ask', { taskId: id, body: 'q' }))
     }
-    let inbox: any
+    let inbox!: { items: unknown[], counts: Record<string, unknown> }
     await asEmp('peer', async () => { inbox = await callProc('tasks.inbox') })
     expect(inbox.items.length).toBe(2)
     expect(inbox.counts).toEqual({ answer: 2 })
@@ -245,8 +247,8 @@ describe('assignee history', () => {
   })
 
   async function listIds(taskId: string) {
-    const rows = await callProc('tasks.assignments', { taskId })
-    return rows.items.map((i: any) => i.id) as string[]
+    const rows = await callProc('tasks.assignments', { taskId }) as { items: Array<{ id: string }> }
+    return rows.items.map(i => i.id)
   }
 })
 
@@ -298,8 +300,8 @@ describe('subtask gating', () => {
 
     await callProc('tasks.update', { id: c1, status: STATUS.cancelled })
     await asEmp('worker', async () => { expect(await callProc('tasks.submit', { taskId: parentId, body: 'x' })).toBeTruthy() })
-    const st = await callProc('tasks.subtasks', { taskId: parentId })
-    expect(st.items.map((i: any) => i.title)).toEqual(['Open child'])
+    const st = await callProc('tasks.subtasks', { taskId: parentId }) as { items: Array<{ title: string }> }
+    expect(st.items.map(i => i.title)).toEqual(['Open child'])
   })
 })
 
@@ -312,12 +314,12 @@ describe('proposal confirm flow', () => {
       { title: 'Outside chain', description: 'd2', assigneeName: 'Solo Person' },
     ] })
     await callProc('tasks.confirmProposal', { proposalId: pid })
-    const st = await callProc('tasks.subtasks', { taskId })
+    const st = await callProc('tasks.subtasks', { taskId }) as { items: Array<{ title: string, assigneeId: string | null }> }
     expect(st.items.length).toBe(2)
-    const byTitle = new Map(st.items.map((i: any) => [i.title, i]))
-    expect(byTitle.get('In chain').assigneeId).toBe(idMap.get('peer')!)
+    const byTitle = new Map(st.items.map(i => [i.title, i] as const))
+    expect(byTitle.get('In chain')!.assigneeId).toBe(idMap.get('peer')!)
     // outside worker's chain -> escalates to worker's supervisor (chief)
-    expect(byTitle.get('Outside chain').assigneeId).toBe(idMap.get('chief')!)
+    expect(byTitle.get('Outside chain')!.assigneeId).toBe(idMap.get('chief')!)
     // parent auto-blocked now
     expect((await getTask(taskId)).status).toBe(STATUS.blocked)
     const done = await dbRow('taskProposals', pid)
@@ -328,7 +330,7 @@ describe('proposal confirm flow', () => {
     const taskId = await mkTask({ title: 'T2', assigneeId: idMap.get('worker')! })
     const pid = await mkProposal(taskId, 'subtasks', { items: [{ title: 'No name' }] })
     await callProc('tasks.confirmProposal', { proposalId: pid })
-    const st = await callProc('tasks.subtasks', { taskId })
+    const st = await callProc('tasks.subtasks', { taskId }) as { items: Array<{ assigneeId: string | null }> }
     expect(st.items[0].assigneeId).toBeNull()
   })
 
@@ -421,7 +423,7 @@ describe('routing coverage arms', () => {
     await asEmp('worker', () => callProc('tasks.ask', { taskId: a, body: 'q' }))
     await callProc('tasks.update', { id: b, status: STATUS.doing })
     await asEmp('worker', () => callProc('tasks.submit', { taskId: b, body: 's' }))
-    let counts: any
+    let counts!: { counts: Record<string, unknown> }
     await asEmp('peer', async () => { counts = await callProc('tasks.inbox') })
     expect(counts.counts).toEqual({ answer: 1, approval: 1 })
 
@@ -523,8 +525,8 @@ describe('routing coverage arms II', () => {
     expect(createdBy.length).toBe(1)
     const cid = await mkProposal(owned, 'subtasks', { items: [{ title: 'Far2', assigneeName: 'Report Guy' }] })
     await callProc('tasks.confirmProposal', { proposalId: cid })
-    const st3 = await callProc('tasks.subtasks', { taskId: owned })
-    expect(st3.items.map((i: any) => i.title)).toContain('Far2')
+    const st3 = await callProc('tasks.subtasks', { taskId: owned }) as { items: Array<{ title: string }> }
+    expect(st3.items.map(i => i.title)).toContain('Far2')
   })
 
   it('escalated reassign without a reason still executes', async () => {
@@ -540,7 +542,7 @@ describe('routing coverage arms II', () => {
     // worker's chain includes Peer Person; Solo Person is outside
     const taskId = await mkTask({ title: 'AutoExec', assigneeId: idMap.get('worker')! })
     await recordProposals(taskId, null as unknown as string, [{ kind: 'subtasks', items: [{ title: 'Mine to Peer', description: 'd', assigneeName: 'Peer Person' }] }])
-    let rows = (await dbRows('taskProposals')).filter((p: any) => p.taskId === taskId)
+    let rows = (await dbRows('taskProposals')).filter(p => p.taskId === taskId)
     expect(rows).toHaveLength(1)
     expect(rows[0].status).toBe('executed') // no human touched it
     const st = await callProc('tasks.subtasks', { taskId })
@@ -550,7 +552,7 @@ describe('routing coverage arms II', () => {
     // outside the chain -> still a proposal awaiting a human
     const taskId2 = await mkTask({ title: 'AutoKeep', assigneeId: idMap.get('worker')! })
     await recordProposals(taskId2, null as unknown as string, [{ kind: 'subtasks', items: [{ title: 'Out', description: 'd', assigneeName: 'Solo Person' }] }])
-    rows = (await dbRows('taskProposals')).filter((p: any) => p.taskId === taskId2)
+    rows = (await dbRows('taskProposals')).filter(p => p.taskId === taskId2)
     expect(rows).toHaveLength(1)
     expect(rows[0].status).toBe('proposed')
   })
@@ -559,12 +561,12 @@ describe('routing coverage arms II', () => {
     const taskId = await mkTask({ title: 'AutoRe', assigneeId: idMap.get('worker')! })
     await recordProposals(taskId, null as unknown as string, [{ kind: 'reassign', targetName: 'Peer Person', reason: 'their domain' }])
     expect((await getTask(taskId)).assigneeId).toBe(idMap.get('peer')!)
-    const rows = (await dbRows('taskProposals')).filter((p: any) => p.taskId === taskId)
+    const rows = (await dbRows('taskProposals')).filter(p => p.taskId === taskId)
     expect(rows[0].status).toBe('executed')
 
     // peer is now the assignee; routing BACK to worker (recent) trips the loop guard -> stays proposed
     await recordProposals(taskId, null as unknown as string, [{ kind: 'reassign', targetName: 'Worker', reason: 'back' }])
-    const back = (await dbRows('taskProposals')).filter((p: any) => p.taskId === taskId && p.status === 'proposed')
+    const back = (await dbRows('taskProposals')).filter(p => p.taskId === taskId && p.status === 'proposed')
     expect(back).toHaveLength(1)
   })
 
@@ -583,8 +585,8 @@ describe('routing coverage arms II', () => {
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 's' }))
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
-    const rows = (snap.value as any).rows ?? snap.value
-    const mine = rows.find((r: any) => r.id === taskId)
+    const rows = (snap.value as { rows?: TaskRow[] }).rows ?? (snap.value as TaskRow[])
+    const mine = rows.find(r => r.id === taskId)!
     expect(mine.questionHolderId).toBeNull()
     expect(mine.reviewApprovals).toEqual([])
     await iter.return?.()
@@ -604,8 +606,8 @@ describe('routing coverage arms II', () => {
 
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
-    const rows = (snap.value as any).rows ?? snap.value
-    const mine = rows.find((r: any) => r.id === taskId)
+    const rows = (snap.value as { rows?: TaskRow[] }).rows ?? (snap.value as TaskRow[])
+    const mine = rows.find(r => r.id === taskId)!
     expect(mine.reviewApprovals).toEqual([idMap.get('report')!])
     expect(mine.parentTaskId).toBeNull()
     await iter.return?.()

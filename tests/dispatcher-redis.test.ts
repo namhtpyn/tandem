@@ -8,7 +8,7 @@ import { STATUS } from '../shared/status'
 
 const REDIS_URL = 'redis://127.0.0.1:6399'
 
-async function redisUp(): Promise<boolean> {
+async function redisUp() {
   try {
     const { default: Redis } = await import('ioredis')
     const r = new Redis(REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 500 })

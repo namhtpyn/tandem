@@ -30,7 +30,7 @@ vi.mock('../server/domains/auth/auth.service', async (importOriginal) => {
   return { ...actual, getAuth: wrappedGetAuth, __resetAuthSingleton: () => { singleton = null } }
 })
 
-export interface FakeReq {
+export type FakeReq = {
   method: string
   url?: string
   headers?: Record<string, string | string[] | undefined>

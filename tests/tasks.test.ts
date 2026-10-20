@@ -5,6 +5,7 @@ import './api-harness'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 import { STATUS } from '../shared/status'
+import type { TaskRow } from '../shared/types'
 
 async function dbm() {
   return await import('../server/db')
@@ -32,7 +33,7 @@ async function callProc(path: string, input?: unknown): Promise<any> {
   return await internals.handler({ input, context: await ctx(), signal: new AbortController().signal })
 }
 
-async function seedEnv(id: string): Promise<void> {
+async function seedEnv(id: string) {
   const { db } = await dbm()
   const { environments } = await schema()
   await db.insert(environments).values({ id, name: id, host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
@@ -67,7 +68,7 @@ describe('tasks', () => {
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
     await iter.return?.()
-    const rows = snap.value as any[]
+    const rows = snap.value as TaskRow[]
     expect(rows).toHaveLength(1)
     expect(rows[0].title).toBe('First task')
     expect(rows[0].status).toBe(STATUS.todo)
@@ -81,7 +82,7 @@ describe('tasks', () => {
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
     await iter.return?.()
-    const rows = snap.value as any[]
+    const rows = snap.value as TaskRow[]
     expect(rows[0].assigneeId).toBeNull()
     expect(rows[0].assigneeName).toBeNull()
     expect(rows[0].assigneeKind).toBeNull()
@@ -99,7 +100,7 @@ describe('tasks', () => {
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
     await iter.return?.()
-    const row = (snap.value as any[])[0]
+    const row = (snap.value as TaskRow[])[0]
     expect(row.title).toBe('T1 renamed')
     expect(row.status).toBe(STATUS.doing)
     expect(row.assigneeName).toBe('B')
@@ -117,7 +118,7 @@ describe('tasks', () => {
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
     await iter.return?.()
-    expect((snap.value as any[])[0].assigneeId).toBeNull()
+    expect((snap.value as TaskRow[])[0].assigneeId).toBeNull()
   })
 
   it('update rejects unknown task and bad assignee', async () => {
@@ -142,12 +143,12 @@ describe('tasks', () => {
     let iter = await callProc('tasks.live')
     let snap = await iter.next()
     await iter.return?.()
-    expect((snap.value as any[])[0].description).toBe('keep me')
+    expect((snap.value as TaskRow[])[0].description).toBe('keep me')
     await callProc('tasks.update', { id: r.id, description: 'replaced', status: STATUS.todo })
     iter = await callProc('tasks.live')
     snap = await iter.next()
     await iter.return?.()
-    expect((snap.value as any[])[0].description).toBe('replaced')
+    expect((snap.value as TaskRow[])[0].description).toBe('replaced')
   })
 
   it('AI assignee maps assigneeKind ai', async () => {
@@ -157,7 +158,7 @@ describe('tasks', () => {
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
     await iter.return?.()
-    const row = (snap.value as any[]).find((x: any) => x.id === r.id)!
+    const row = (snap.value as TaskRow[]).find(x => x.id === r.id)!
     expect(row.assigneeKind).toBe('ai')
   })
 
@@ -168,7 +169,7 @@ describe('tasks', () => {
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
     await iter.return?.()
-    const row = (snap.value as any[]).find((x: any) => x.id === r.id)!
+    const row = (snap.value as TaskRow[]).find(x => x.id === r.id)!
     expect(row.assigneeId).toBeNull()
   })
 })

@@ -9,9 +9,27 @@ const NL_SRC = String.fromCharCode(10) // a real newline byte on the wire
 /** the connect is async — poll for the NEWLY constructed client instead of a fixed
  * sleep (a fixed 10ms raced under CI load: FakeClient.last was still undefined, and
  * a stale .last from the previous test would ready the WRONG connection). */
-let lastReturnedClient: any = null
-async function lastClient(): Promise<any> {
-  const FakeClient = ((await import('ssh2')).default as any).Client
+type FakeSshClient = {
+  stream: {
+    blob: string
+    writes: string[]
+    emitStdout(t: string): void
+    emitStderr(t: string): void
+    emitExit(c: unknown): void
+    close(): void
+    signal(s: string): void
+  }
+  emitReady(): void
+  emitError(e: Error): void
+  execError: Error | null
+  ended: boolean
+}
+
+let lastReturnedClient: FakeSshClient | null = null
+async function lastClient() {
+  // the vi.mock'd ssh2 module exposes the fake's statics, not the real Client type
+  const { default: { Client } } = await import('ssh2')
+  const FakeClient = Client as unknown as { last?: FakeSshClient }
   for (let i = 0; i < 400; i++) {
     const candidate = FakeClient.last
     if (candidate && candidate !== lastReturnedClient) {
@@ -593,7 +611,7 @@ describe('acp-ssh transport', () => {
     const plan = { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' }, sshKey: 'k', sshPassword: undefined }
     const blob = 'set -a\nCUSTOM_API_KEY=\'k\'\nset +a\n'
     const p = openAcpSshStream(plan, blob, 'hermes acp', () => {})
-    const client: any = await lastClient()
+    const client = await lastClient()
     client.emitReady()
     const stream = await p
     expect(client.stream.blob).toBe(blob) // exactly the blob, nothing more
@@ -630,7 +648,7 @@ describe('acp-ssh transport', () => {
     const { openAcpSshStream } = await import('../server/domains/tasks/acp-ssh.util')
     const plan = { env: { host: 'h', port: '', username: '00000000-0000-7000-8000-51e69892ab49' }, sshKey: undefined, sshPassword: 'pw' }
     const p = openAcpSshStream(plan, 'blob', 'hermes acp', () => {})
-    const client: any = await lastClient()
+    const client = await lastClient()
     client.emitReady()
     await p // default port 22 + password arm exercised through connect()
     expect(client.stream.blob).toBe('blob')
@@ -640,7 +658,7 @@ describe('acp-ssh transport', () => {
     const { openAcpSshStream } = await import('../server/domains/tasks/acp-ssh.util')
     const plan = { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' }, sshKey: 'k', sshPassword: undefined }
     const p = openAcpSshStream(plan, 'blob', 'hermes acp', () => {})
-    const client: any = await lastClient()
+    const client = await lastClient()
     client.emitReady()
     const stream = await p
     // write before the blob: impossible via runAcpTurn (open resolves after blob) —
@@ -653,7 +671,7 @@ describe('acp-ssh transport', () => {
     client.stream.emitExit('SIGKILL' as unknown as number)
     expect(exitCode).toBe(null)
     // close() swallows throwing signal()/close() on the ssh stream
-    const throwing: any = client.stream
+    const throwing = client.stream
     throwing.signal = () => { throw new Error('no signal support') }
     throwing.close = () => { throw new Error('already closed') }
     expect(() => stream.close()).not.toThrow()
@@ -663,11 +681,9 @@ describe('acp-ssh transport', () => {
   it('ssh/exec errors reject the open', async () => {
     const { openAcpSshStream } = await import('../server/domains/tasks/acp-ssh.util')
     const plan = { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const FakeClient = ((await import('ssh2')).default as any).Client
     // exec error
     let p = openAcpSshStream(plan, 'blob', 'hermes acp', () => {})
-    let client: any = await lastClient()
+    let client = await lastClient()
     client.execError = new Error('exec nope')
     client.emitReady()
     await expect(p).rejects.toThrow('exec nope')

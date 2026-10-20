@@ -6,6 +6,7 @@ import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 import { eq } from 'drizzle-orm'
 import { STATUS } from '../shared/status'
+import type { TaskRow } from '../shared/types'
 
 // mock ssh2: connect+exec succeed; the stream never closes on its own, so tests
 // drive terminal events explicitly (error emit) or rely on the run-timeout timer
@@ -228,7 +229,7 @@ describe('double settle', () => {
     const iter = await callProc('tasks.live', {})
     const snap = await iter.next()
     await iter.return?.()
-    const rows = snap.value as any[]
+    const rows = snap.value as TaskRow[]
     const row = rows.find(r => r.id === 't-1')!
     expect(row.dispatchAfter).not.toBeNull()
     expect(row.failStreak).toBe(2)

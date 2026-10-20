@@ -11,6 +11,7 @@ import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 import { answerHolder, spawnObligation } from '../server/domains/tasks/obligations.service'
 import { STATUS } from '../shared/status'
+import type { TaskRow, TaskActivityRow } from '../shared/types'
 
 const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 const worker = { id: '00000000-0000-7000-8000-bccb5af49873', name: 'Worker', email: 'worker@tandem.local', role: 'member' }
@@ -70,7 +71,7 @@ async function activity(id: string) {
   const iter = await callProc('tasks.activity', { taskId: id })
   const snap = await iter.next()
   await iter.return?.()
-  return snap.value as any[]
+  return snap.value as TaskActivityRow[]
 }
 
 beforeEach(async () => {
@@ -198,8 +199,8 @@ describe('task workflow — review gate', () => {
     t = await getTask(taskId)
     expect(t.status).toBe(STATUS.done)
     // REVIEW LAW: both verdict rows approved in round 1
-    const revs = await callProc('tasks.reviews', { taskId })
-    expect(revs.filter((r: any) => r.round === 1).every((r: any) => r.status === 'approved')).toBe(true)
+    const revs = await callProc('tasks.reviews', { taskId }) as Array<{ round: number, status: string }>
+    expect(revs.filter(r => r.round === 1).every(r => r.status === 'approved')).toBe(true)
   })
 
   it('request-changes sends it back to working and resets approvals', async () => {
@@ -361,7 +362,7 @@ describe('task workflow — guard rails', () => {
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
     await iter.return?.()
-    const row = (snap.value as any[]).find(r => r.id === taskId)
+    const row = (snap.value as TaskRow[]).find(r => r.id === taskId)!
     expect(row.reviewerNames).toEqual(['Rev One', '00000000-0000-7000-8000-05db3a00ee3e'])
   })
 
@@ -372,8 +373,9 @@ describe('task workflow — guard rails', () => {
     ;(context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => null
     const procs = ['ask', 'forward', 'answer', 'submit', 'approve', 'requestChanges', 'abandon']
     for (const p of procs) {
-      const node = (appRouter as any).tasks[p]
-      const internals = node['~orpc']
+      let cur: Record<string, unknown> = appRouter as unknown as Record<string, unknown>
+      for (const key of ['tasks', p]) cur = cur[key] as Record<string, unknown>
+      const internals = cur['~orpc'] as { handler: (o: unknown) => Promise<unknown> }
       const base = { taskId: 't-x', toEmployeeId: '00000000-0000-7000-8000-f20d9b639839', body: 'x' }
       await expect(internals.handler({ input: base, context, signal: new AbortController().signal })).rejects.toMatchObject({ code: 'UNAUTHORIZED' })
     }
@@ -474,7 +476,7 @@ describe('task workflow — guard rails', () => {
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
     await iter.return?.()
-    const row = (snap.value as any[]).find(x => x.id === taskId)
+    const row = (snap.value as TaskRow[]).find(x => x.id === taskId)!
     expect(row.assigneeKind).toBe('ai')
     expect(row.projectName).toBeNull()
     expect(row.assigneeName).toBe('Robo')
@@ -485,7 +487,7 @@ describe('task workflow — guard rails', () => {
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
     await iter.return?.()
-    const row = (snap.value as any[]).find(r => r.id === taskId)
+    const row = (snap.value as TaskRow[]).find(r => r.id === taskId)!
     expect(row).toMatchObject({ projectId: null, projectName: null, assigneeId: null, assigneeName: null, assigneeKind: null, ownerId: '00000000-0000-7000-8000-cd5fca5e2d34', ownerName: 'Admin', reviewers: [], reviewerNames: [], reviewApprovals: [], questionHolderId: null, questionHolderName: null })
   })
 
@@ -500,7 +502,7 @@ describe('task workflow — guard rails', () => {
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
     await iter.return?.()
-    const row = (snap.value as any[]).find(r => r.id === 't-raw')
+    const row = (snap.value as TaskRow[]).find(r => r.id === 't-raw')!
     expect(row.ownerId).toBeNull()
     expect(row.ownerName).toBeNull()
     expect(row.questionHolderName).toBe('Owner')
@@ -511,12 +513,14 @@ describe('task workflow — guard rails', () => {
     const { buildServerContext } = await import('../server/domains/kernel/context')
     const context = buildServerContext(new Headers())
     ;(context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => null
-    const node = (appRouter as any).tasks.create
-    const r = await node['~orpc'].handler({ input: { title: 'NoSession task' }, context, signal: new AbortController().signal })
+    let cur: Record<string, unknown> = appRouter as unknown as Record<string, unknown>
+    for (const key of ['tasks', 'create']) cur = cur[key] as Record<string, unknown>
+    const proc = cur['~orpc'] as { handler: (o: unknown) => Promise<{ id: string }> }
+    const r = await proc.handler({ input: { title: 'NoSession task' }, context, signal: new AbortController().signal })
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
     await iter.return?.()
-    const row = (snap.value as any[]).find(x => x.id === r.id)
+    const row = (snap.value as TaskRow[]).find(x => x.id === r.id)!
     expect(row.ownerId).toBeNull()
     expect(row.createdBy).toBeNull()
   })

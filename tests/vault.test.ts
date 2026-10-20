@@ -7,6 +7,7 @@ import './api-harness'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 import { decryptSecret, encryptSecret, lastFourHint } from '../server/domains/vault/secret/secret-crypto.service'
+import type { VaultSecretRow } from '../shared/types'
 
 const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' }
 
@@ -36,7 +37,7 @@ async function schema() {
 }
 
 /** factory: a user row (vault secrets FK-require one) */
-async function userFactory(id: string): Promise<string> {
+async function userFactory(id: string) {
   const { db } = await dbm()
   const { user } = await schema()
   await db.insert(user).values({ id, name: id, email: `${id}@tandem.local`, emailVerified: true, role: 'admin', createdAt: new Date(), updatedAt: new Date() })
@@ -109,7 +110,7 @@ describe('vault API', () => {
     await secretFactory('ssh-prod-key', 'AKIAIOSFODNN7EXAMPLE')
     const iter = await callProc('vault.secrets.live')
     const snap = await iter.next()
-    const rows = snap.value as any[]
+    const rows = snap.value as VaultSecretRow[]
     expect(rows).toHaveLength(1)
     expect(rows[0]!.name).toBe('ssh-prod-key')
     expect(rows[0]!.lastFour).toBe('MPLE')
@@ -163,9 +164,11 @@ describe('vault API', () => {
 
   it('unauthenticated calls are rejected', async () => {
     const { appRouter: router } = await import('../server/domains/app.router')
-    const node = (router as any).vault.secrets.create['~orpc']
+    let cur: Record<string, unknown> = router as unknown as Record<string, unknown>
+    for (const k of ['vault', 'secrets', 'create']) cur = cur[k] as Record<string, unknown>
+    const node = cur['~orpc'] as { handler: (o: unknown) => Promise<unknown> }
     const context = buildAnonContext()
-    const res = await node.handler({ input: { name: 'x', value: 'y', description: '' }, context, signal: new AbortController().signal }).catch(e => e)
+    const res = await node.handler({ input: { name: 'x', value: 'y', description: '' }, context, signal: new AbortController().signal }).catch(e => e) as { message?: string }
     expect(String(res?.message ?? res)).toMatch(/authentication required|Cannot read|session/)
   })
 })

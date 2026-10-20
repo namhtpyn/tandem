@@ -84,6 +84,8 @@ process.env.TANDEM_FAKE_RUNNER = '1'
 
 const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 
+type RunRow = { id: string, status: string, output: string, prompt: string | null, agentName: string | null, finishedAt: string | null }
+
 async function dbm() {
   return await import('../server/db')
 }
@@ -103,7 +105,7 @@ async function callProc(path: string, input?: unknown): Promise<any> {
 }
 
 let agentSeq = 0
-async function mkAiAgent(): Promise<string> {
+async function mkAiAgent() {
   const { db } = await dbm()
   const { environments, user, aiEmployees } = await schema()
   const n = ++agentSeq
@@ -243,7 +245,7 @@ describe('dispatcher extras', () => {
     const iter = await callProc('tasks.runs', { taskId: t.id })
     const snap = await iter.next()
     await iter.return?.()
-    const rows = snap.value as any[]
+    const rows = snap.value as RunRow[]
     expect(rows.map(r => r.id)).toEqual(['r-new', 'r-old'])
   })
 
@@ -256,7 +258,7 @@ describe('dispatcher extras', () => {
     const iter = await callProc('tasks.runs', { taskId: t.id })
     const snap = await iter.next()
     await iter.return?.()
-    const rows = snap.value as any[]
+    const rows = snap.value as RunRow[]
     expect(rows[0].finishedAt).toBeNull()
     expect(rows[0].status).toBe('running')
   })
@@ -329,7 +331,7 @@ describe('runner failure + fallback arms', () => {
     const iter = await callProc('tasks.runs', { taskId: taskRow.id })
     const snap = await iter.next()
     await iter.return?.()
-    const rows = snap.value as any[]
+    const rows = snap.value as RunRow[]
     // stored raw; the run row itself holds the tail — here we just assert the endpoint returns it
     expect(rows[0].output.split('\n').length).toBe(150)
   })
@@ -352,8 +354,10 @@ describe('runner failure + fallback arms', () => {
     const { buildServerContext } = await import('../server/domains/kernel/context')
     const context = buildServerContext(new Headers())
     ;(context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => null
-    const node = (appRouter as any).tasks.dispatch
-    await expect(node['~orpc'].handler({ input: { taskId: t.id }, context, signal: new AbortController().signal })).rejects.toMatchObject({ code: 'UNAUTHORIZED' })
+    let cur: Record<string, unknown> = appRouter as unknown as Record<string, unknown>
+    for (const key of ['tasks', 'dispatch']) cur = cur[key] as Record<string, unknown>
+    const proc = cur['~orpc'] as { handler: (o: unknown) => Promise<unknown> }
+    await expect(proc.handler({ input: { taskId: t.id }, context, signal: new AbortController().signal })).rejects.toMatchObject({ code: 'UNAUTHORIZED' })
   })
 
   it('agent without an employee name row falls back to a generic name; custom executable wins', async () => {
@@ -396,8 +400,12 @@ describe('runner real-ssh path (mocked ssh2)', () => {
   it('full ACP turn: session persisted on the run, envelope streamed, run done', async () => {
     const prev = process.env.TANDEM_FAKE_RUNNER
     delete process.env.TANDEM_FAKE_RUNNER
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const FakeClientMod = ((await import('ssh2')).default as any).Client
+    const { default: { Client } } = await import('ssh2')
+    // the vi.mock'd Client carries test-driving statics the real class lacks
+    const FakeClientMod = Client as unknown as {
+      autoReady: boolean
+      defaultAgent: (msg: Record<string, unknown>, send: (o: unknown) => void) => void
+    }
     const prevAuto = FakeClientMod.autoReady
     const prevAgent = FakeClientMod.defaultAgent
     try {
@@ -1144,7 +1152,7 @@ describe('dispatcher', () => {
     const iter = await callProc('tasks.runs', { taskId: t.id })
     const snap = await iter.next()
     await iter.return?.()
-    const rows = snap.value as any[]
+    const rows = snap.value as RunRow[]
     expect(rows.length).toBeGreaterThan(0)
     expect(rows[0].status).toBe('done')
     expect(rows[0].output).toContain('working')
@@ -1152,7 +1160,7 @@ describe('dispatcher', () => {
     expect(typeof rows[0].prompt).toBe('string')
     expect(rows[0].prompt).toContain('Stream me')
 
-    const listRows = (await callProc('tasks.runsList', { taskId: t.id })) as any[]
+    const listRows = (await callProc('tasks.runsList', { taskId: t.id })) as RunRow[]
     expect(listRows[0].prompt).toEqual(rows[0].prompt)
   }, 10_000)
 
@@ -1163,7 +1171,7 @@ describe('dispatcher', () => {
     const { taskRuns } = await schema()
     await db.insert(taskRuns).values({ id: 'run-legacy', taskId: t.id, employeeId: agentId, status: 'done', output: 'old' })
     await db.insert(taskRuns).values({ id: 'run-ghost', taskId: t.id, employeeId: null, status: 'done', output: 'old' })
-    const rows = (await callProc('tasks.runsList', { taskId: t.id })) as any[]
+    const rows = (await callProc('tasks.runsList', { taskId: t.id })) as RunRow[]
     expect(rows).toHaveLength(2)
     // newest first: the employeeless ghost run lands first
     expect(rows[0].agentName).toBeNull()
@@ -1231,7 +1239,7 @@ describe('runner proposal recording', () => {
     const proposals = await db.select().from(tp)
     expect(proposals.length).toBe(1)
     expect(proposals[0].kind).toBe('subtasks')
-    expect((proposals[0].payload as any).items[0].title).toBe('Draft docs')
+    expect((proposals[0].payload as { items: Array<{ title: string }> }).items[0].title).toBe('Draft docs')
     const acts = await db.select().from(ta)
     expect(acts.some(a => a.body!.includes('proposed 1 subtask'))).toBe(true)
   }, 15_000)

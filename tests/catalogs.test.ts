@@ -113,7 +113,7 @@ describe('employee titles', () => {
     expect(live.titles.map(t => t.name)).toEqual(['Accountant', 'Senior Engineer'])
 
     // one employee holding the title bumps the count
-    const emp = await proc(['employees', 'create'], { name: 'Jane', email: 'jane@t.local', title: 'Senior Engineer', kind: 'human' } as any) as { id: string }
+    const emp = await proc(['employees', 'create'], { name: 'Jane', email: 'jane@t.local', title: 'Senior Engineer', kind: 'human' }) as { id: string }
     void emp
     const live2 = await firstSnapshot(['employees', 'titles', 'live']) as { titles: Array<{ name: string, employees: number }> }
     expect(live2.titles.find(t => t.name === 'Senior Engineer')?.employees).toBe(1)
@@ -135,14 +135,14 @@ describe('employee titles', () => {
 
   it('rename cascades to employees holding the old title', async () => {
     const { id } = await proc(['employees', 'titles', 'save'], { name: 'Old Title' }) as { id: string }
-    const e1 = await proc(['employees', 'create'], { name: 'A', email: 'a@t.local', title: 'Old Title', kind: 'human' } as any) as { id: string }
-    const e2 = await proc(['employees', 'create'], { name: 'B', email: 'b@t.local', title: 'Old Title', kind: 'human' } as any) as { id: string }
+    const e1 = await proc(['employees', 'create'], { name: 'A', email: 'a@t.local', title: 'Old Title', kind: 'human' }) as { id: string }
+    const e2 = await proc(['employees', 'create'], { name: 'B', email: 'b@t.local', title: 'Old Title', kind: 'human' }) as { id: string }
     await proc(['employees', 'titles', 'save'], { id, name: 'New Title' })
     const live = await firstSnapshot(['employees', 'live']) as Array<{ id: string, title: string | null }>
     expect(live.find(e => e.id === e1.id)?.title).toBe('New Title')
     expect(live.find(e => e.id === e2.id)?.title).toBe('New Title')
     // employees with other/empty titles untouched
-    const e3 = await proc(['employees', 'create'], { name: 'C', email: 'c@t.local', title: 'Unrelated Role', kind: 'human' } as any) as { id: string }
+    const e3 = await proc(['employees', 'create'], { name: 'C', email: 'c@t.local', title: 'Unrelated Role', kind: 'human' }) as { id: string }
     const live2 = await firstSnapshot(['employees', 'live']) as Array<{ id: string, title: string | null }>
     expect(live2.find(e => e.id === e3.id)?.title).toBe('Unrelated Role')
   })

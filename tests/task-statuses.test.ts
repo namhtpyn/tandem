@@ -5,6 +5,7 @@ import './api-harness'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
 import { STATUS } from '../shared/status'
+import type { TaskStatusRow } from '../shared/types'
 
 
 async function wireDecisionProvider(secretId: string | null) {
@@ -60,13 +61,13 @@ beforeEach(async () => {
 describe('task statuses', () => {
   it('live returns seeded statuses ordered with transitions', async () => {
     const iter = await callProc('statuses.live')
-    const snap = (await iter.next()).value
-    const rows = (snap as any).status === 'pending' ? (await iter.next()).value : snap
-    const list = Array.isArray(rows) ? rows : (rows as any).rows ?? rows
-    const ids = (list as any[]).map(x => x.id)
+    const snap = (await iter.next()).value as { status?: string }
+    const rows = snap.status === 'pending' ? (await iter.next()).value : snap
+    const list = (Array.isArray(rows) ? rows : (rows as { rows?: TaskStatusRow[] }).rows ?? rows) as TaskStatusRow[]
+    const ids = list.map(x => x.id)
     expect(ids).toEqual([STATUS.todo, STATUS.doing, STATUS.done, STATUS.waitingAnswer, STATUS.inReview, STATUS.blocked, STATUS.cancelled])
-    expect((list as any[]).find(x => x.id === STATUS.doing)!.nextIds).toContain(STATUS.done)
-    expect((list as any[]).find(x => x.id === STATUS.todo)!.category).toBe('ready')
+    expect(list.find(x => x.id === STATUS.doing)!.nextIds).toContain(STATUS.done)
+    expect(list.find(x => x.id === STATUS.todo)!.category).toBe('ready')
   })
 
   it('save creates a status with transitions; unknown transition rejected', async () => {
@@ -189,7 +190,7 @@ describe('jev auto-assign', () => {
       if (target) {
         return { ok: true, status: 200, json: async () => ({ model: 'jev-test', answers: { assignee: { type: 'choice', choice: emp.id, confidence: 0.9, probabilities: { [emp.id]: 0.9 } } } }) }
       }
-      return origFetch(url as any, init as any)
+      return origFetch(url as RequestInfo | URL, init as RequestInit)
     }) as typeof fetch
     try {
       const r = await callProc('statuses.assign', { taskId: t.id })
@@ -423,7 +424,7 @@ describe('jev auto-assign', () => {
     const t = await callProc('tasks.create', { title: 'OA decision task' })
     const origFetch = globalThis.fetch
     let hitUrl = ''
-    let body: any = {}
+    let body: Record<string, unknown> = {}
     globalThis.fetch = (async (u: unknown, init?: unknown) => {
       hitUrl = String(u)
       body = JSON.parse(String((init as { body?: string })?.body ?? '{}'))

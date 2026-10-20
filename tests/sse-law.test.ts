@@ -99,22 +99,22 @@ describe('conventional GET list procs (the first-load half)', () => {
     expect(emp.id).toBeTruthy()
     const rows = await callProc('employees.list')
     expect(rows).toHaveLength(2) // seeded admin user + Kai
-    expect(rows.map((r: any) => r.name)).toContain('Kai')
+    expect(rows.map(r => r.name)).toContain('Kai')
     const titlesList = await callProc('employees.titles.list')
     const titlesLiveIter = await callProc('employees.titles.live')
     const snap = await titlesLiveIter.next()
     await titlesLiveIter.return?.()
     expect(titlesList).toEqual(snap.value) // list == live snapshot (identical plumbing)
-    expect(snap.value.titles.find((t: any) => t.name === 'Dev').employees).toBe(1)
+    expect(snap.value.titles.find(t => t.name === 'Dev').employees).toBe(1)
   })
 
   it('project prompt roundtrips through create + update; company prompt persists', async () => {
     const made = await callProc('projects.create', { name: 'P Prompt', description: '', prompt: 'v9 only.' })
     let rows = await callProc('projects.list')
-    expect(rows.find((r: any) => r.id === made.id).prompt).toBe('v9 only.')
+    expect(rows.find(r => r.id === made.id).prompt).toBe('v9 only.')
     await callProc('projects.update', { id: made.id, prompt: 'v10 now.' })
     rows = await callProc('projects.list')
-    expect(rows.find((r: any) => r.id === made.id).prompt).toBe('v10 now.')
+    expect(rows.find(r => r.id === made.id).prompt).toBe('v10 now.')
     await callProc('settings.update', { companyPrompt: 'English only.' })
     const { getCompanyPrompt } = await import('../server/domains/settings/settings.service')
     expect(await getCompanyPrompt()).toBe('English only.')
@@ -164,7 +164,7 @@ describe('conventional GET list procs (the first-load half)', () => {
 
   it('vault.secrets.list + vault.folders.list return the GET snapshots', async () => {
     expect(await callProc('vault.secrets.list')).toEqual([])
-    expect(await callProc('vault.folders.list').then((r: any) => r.folders)).toEqual([])
+    expect(await callProc('vault.folders.list').then(r => r.folders)).toEqual([])
   })
 
   it('auth.config is a plain GET (no stream) matching configLive data', async () => {

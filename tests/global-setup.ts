@@ -10,11 +10,11 @@ const NAME = 'tandem-test-pg'
 const needsLocalContainer =
   !process.env.TANDEM_TEST_DATABASE_URL && !process.env.CI
 
-function run(cmd: string): string {
+function run(cmd: string) {
   return execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()
 }
 
-function containerRunning(): boolean {
+function containerRunning() {
   try {
     return run(`docker inspect -f {{.State.Running}} ${NAME}`) === 'true'
   } catch {
@@ -22,7 +22,7 @@ function containerRunning(): boolean {
   }
 }
 
-async function waitForReadiness(): Promise<void> {
+async function waitForReadiness() {
   // pg_isready rc=0 during init even though logins are rejected — probe a
   // real authenticated query through the mapped port instead.
   const deadline = Date.now() + 30_000
@@ -37,7 +37,7 @@ async function waitForReadiness(): Promise<void> {
   }
 }
 
-async function discoverPort(): Promise<string> {
+async function discoverPort() {
   const deadline = Date.now() + 30_000
   for (;;) {
     try {
@@ -49,7 +49,7 @@ async function discoverPort(): Promise<string> {
   }
 }
 
-export async function setup({ provide }: GlobalSetupContext): Promise<void> {
+export async function setup({ provide }: GlobalSetupContext) {
   if (!needsLocalContainer) {
     const url = process.env.TANDEM_TEST_DATABASE_URL
       || 'postgresql://tandem:tandem@127.0.0.1:5432/tandem_test'
@@ -84,7 +84,7 @@ catch { /* best effort */ }
   provide('testDatabaseUrl', url)
 }
 
-export async function teardown(): Promise<void> {
+export async function teardown() {
   if (!needsLocalContainer) return
   try { run(`docker rm -f ${NAME}`) } catch { /* already gone */ }
 }

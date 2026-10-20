@@ -29,6 +29,8 @@ async function dbm() {
   return await import('../server/db')
 }
 
+type ProviderRow = { id: string, label: string, baseUrl: string, endpoints: string[], extraHeaders: Record<string, string> | null }
+
 beforeEach(async () => {
   const { modelCache } = await import('../server/domains/providers/models-cache')
   modelCache.clear()
@@ -84,7 +86,7 @@ describe('providers', () => {
     const iter = await callProc('providers.live')
     const snap = await iter.next()
     await iter.return?.()
-    const p = (snap.value as any[]).find(r => r.label === 'HdrRead')!
+    const p = (snap.value as ProviderRow[]).find(r => r.label === 'HdrRead')!
     expect(p.extraHeaders).toEqual({ 'X-Probe': '1' })
   })
 
@@ -232,7 +234,7 @@ describe('providers', () => {
     const iter = await callProc('providers.live')
     const snap = await iter.next()
     await iter.return?.()
-    expect((snap.value as any[]).find((p: any) => p.id === r.id)).toBeUndefined()
+    expect((snap.value as ProviderRow[]).find(p => p.id === r.id)).toBeUndefined()
     const { db } = await dbm()
     const { models } = await import('../server/db/schema')
   })
@@ -340,8 +342,8 @@ describe('provider styles', () => {
     const iter = await callProc('providers.live')
     const snap = await iter.next()
     await iter.return?.()
-    const list = snap.value as any[]
-    const jev = list.find(p => p.id === 'seed-jev')
+    const list = snap.value as ProviderRow[]
+    const jev = list.find(p => p.id === 'seed-jev')!
     expect(jev.endpoints).toEqual(['TYPESAFE-SYSTEMONE'])
         expect(jev.baseUrl).toBe('https://api.typesafe.ai')
   })
@@ -353,21 +355,21 @@ describe('provider styles', () => {
     const iter = await callProc('providers.live')
     const snap = await iter.next()
     await iter.return?.()
-    const list = snap.value as any[]
-    const sink = list.find(p => p.label === 'Kitchen sink')
+    const list = snap.value as ProviderRow[]
+    const sink = list.find(p => p.label === 'Kitchen sink')!
     expect(sink.endpoints).toEqual(['OPENAI-COMPLETIONS', 'OPENAI-RESPONSES', 'OPENAI-MODELS', 'OPENAI-DECISIONS'])
-        const plain = list.find(p => p.label === 'Plain LLM')
+        const plain = list.find(p => p.label === 'Plain LLM')!
     expect(plain.endpoints).toEqual(['ANTHROPIC-MESSAGES'])
       })
 
   it('rejects an unknown style value', async () => {
-    await expect(callProc('providers.save', { label: 'Bad', baseUrl: 'https://x.example.com', endpoints: ['NOPE'] } as any)).rejects.toThrow()
+    await expect(callProc('providers.save', { label: 'Bad', baseUrl: 'https://x.example.com', endpoints: ['NOPE'] })).rejects.toThrow()
   })
 
   it('decision styles save keylessly (key provided per call at use time)', async () => {
     const r = await callProc('providers.save', { label: 'Keyless', baseUrl: 'https://x.example.com', endpoints: ['OPENAI-DECISIONS'] })
     expect(r.id).toBeTruthy()
-    await expect(callProc('providers.save', { label: 'Bad', baseUrl: 'https://x.example.com', endpoints: ['TYPESAFE-SYSTEMONE'], keySecretId: 'ghost' } as any)).rejects.toThrow()
+    await expect(callProc('providers.save', { label: 'Bad', baseUrl: 'https://x.example.com', endpoints: ['TYPESAFE-SYSTEMONE'], keySecretId: 'ghost' })).rejects.toThrow()
   })
 })
 

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import './api-harness'
 import { resetSchema } from './helpers/pg'
 import { applyMigrations } from '../server/db/index'
+import type { ProjectRow, TaskRow } from '../shared/types'
 
 const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' }
 
@@ -37,7 +38,7 @@ describe('projects crud', () => {
     const iter = await callProc('projects.live')
     const snap = await iter.next()
     await iter.return?.()
-    const row = (snap.value as any[]).find(r => r.id === p.id)!
+    const row = (snap.value as ProjectRow[]).find(r => r.id === p.id)!
     expect(row.name).toBe('Apollo')
     expect(row.status).toBe('active')
     expect(row.parentId).toBeNull()
@@ -49,7 +50,7 @@ describe('projects crud', () => {
     const iter = await callProc('projects.live')
     const snap = await iter.next()
     await iter.return?.()
-    const row = (snap.value as any[]).find(r => r.id === p.id)!
+    const row = (snap.value as ProjectRow[]).find(r => r.id === p.id)!
     expect(row.name).toBe('New')
     expect(row.status).toBe('archived')
     expect(row.description).toBe('x')
@@ -63,7 +64,7 @@ describe('projects crud', () => {
     const iter = await callProc('tasks.live')
     const snap = await iter.next()
     await iter.return?.()
-    const task = (snap.value as any[]).find(r => r.id === t.id)!
+    const task = (snap.value as TaskRow[]).find(r => r.id === t.id)!
     expect(task.projectId).toBeNull()
     expect(task.projectName).toBeNull()
   })
@@ -77,7 +78,7 @@ describe('nesting', () => {
     const iter = await callProc('projects.live')
     const snap = await iter.next()
     await iter.return?.()
-    const row = (snap.value as any[]).find(r => r.id === child.id)!
+    const row = (snap.value as ProjectRow[]).find(r => r.id === child.id)!
     expect(row.parentId).toBeNull()
   })
 
@@ -108,7 +109,7 @@ describe('nesting', () => {
     const iter = await callProc('projects.live')
     const snap = await iter.next()
     await iter.return?.()
-    const row = (snap.value as any[]).find(r => r.id === c.id)!
+    const row = (snap.value as ProjectRow[]).find(r => r.id === c.id)!
     expect(row.parentId).toBe(b.id)
   })
 
@@ -119,7 +120,7 @@ describe('nesting', () => {
     const iter = await callProc('projects.live')
     const snap = await iter.next()
     await iter.return?.()
-    const row = (snap.value as any[]).find(r => r.id === child.id)!
+    const row = (snap.value as ProjectRow[]).find(r => r.id === child.id)!
     expect(row.parentId).toBeNull()
   })
 })
@@ -132,20 +133,20 @@ describe('task project linkage', () => {
     let iter = await callProc('tasks.live')
     let snap = await iter.next()
     await iter.return?.()
-    let task = (snap.value as any[]).find(r => r.id === t.id)!
+    let task = (snap.value as TaskRow[]).find(r => r.id === t.id)!
     expect(task.projectName).toBe('One')
     await callProc('tasks.update', { id: t.id, projectId: p2.id })
     iter = await callProc('tasks.live')
     snap = await iter.next()
     await iter.return?.()
-    task = (snap.value as any[]).find(r => r.id === t.id)!
+    task = (snap.value as TaskRow[]).find(r => r.id === t.id)!
     expect(task.projectName).toBe('Two')
     // clear
     await callProc('tasks.update', { id: t.id, projectId: null })
     iter = await callProc('tasks.live')
     snap = await iter.next()
     await iter.return?.()
-    task = (snap.value as any[]).find(r => r.id === t.id)!
+    task = (snap.value as TaskRow[]).find(r => r.id === t.id)!
     expect(task.projectId).toBeNull()
   })
 

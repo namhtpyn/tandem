@@ -6,12 +6,12 @@ import { call } from '@orpc/server'
 
 type SessionUser = { id: string, name: string, email: string, role: 'admin' | 'employee' | 'viewer' }
 
-export interface ProcCaller {
+export type ProcCaller = {
   <T = unknown>(path: string, input?: unknown): Promise<T>
   as<T = unknown>(user: SessionUser | null, path: string, input?: unknown): Promise<T>
 }
 
-export async function makeProcCaller(sessionUser: SessionUser | null): Promise<ProcCaller> {
+export async function makeProcCaller(sessionUser: SessionUser | null) {
   const { appRouter } = await import('../../server/domains/app.router')
   const { buildServerContext } = await import('../../server/domains/kernel/context')
   let current: SessionUser | null = sessionUser
@@ -32,7 +32,7 @@ export async function makeProcCaller(sessionUser: SessionUser | null): Promise<P
     return await call(resolve(path), input ?? {}, { context: await contextFor() }) as T
   }) as ProcCaller
   ;(fn as unknown as { __setUser: (u: SessionUser | null) => void }).__setUser = (u) => { current = u }
-  fn.as = async <T>(user: SessionUser | null, path: string, input?: unknown): Promise<T> => {
+  fn.as = async <T>(user: SessionUser | null, path: string, input?: unknown) => {
     const prev = current
     current = user
     try {

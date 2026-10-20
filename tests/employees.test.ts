@@ -9,6 +9,10 @@ import './api-harness'
 import { resetSchema } from './helpers/pg'
 import { eq } from 'drizzle-orm'
 import { applyMigrations } from '../server/db/index'
+import type { EmployeeRow, ApiKeyRow } from '../shared/types'
+
+// live rows intentionally drop the legacy harness field — the test asserts its absence
+type LiveEmployee = EmployeeRow & { harness?: string }
 
 const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' }
 
@@ -37,7 +41,7 @@ async function schema() {
   return await import('../server/db/schema')
 }
 
-async function seedEnv(id: string): Promise<string> {
+async function seedEnv(id: string) {
   const { db } = await dbm()
   const { environments } = await schema()
   await db.insert(environments).values({ id, name: id, host: '127.0.0.1', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' })
@@ -69,7 +73,7 @@ describe('employees.live', () => {
 
     const iter = await callProc('employees.live')
     const snap = await iter.next()
-    const rows = snap.value as any[]
+    const rows = snap.value as LiveEmployee[]
     const botRow = rows.find(r => r.kind === 'ai')!
     expect(botRow.name).toBe('Bot One')
     expect(botRow.supervisorIds).toEqual([boss.id])
@@ -285,7 +289,9 @@ describe('employees.remove', () => {
     const { user } = await schema()
     await db.insert(user).values({ id: '00000000-0000-7000-8000-c5ea71554c77', name: 'Sess', email: 'sess@tandem.local', role: 'viewer' })
     // call the handler with a session present (as requireSession middleware provides)
-    const node = (router as any).employees.remove['~orpc']
+    let cur: Record<string, unknown> = router as unknown as Record<string, unknown>
+    for (const k of ['employees', 'remove']) cur = cur[k] as Record<string, unknown>
+    const node = cur['~orpc'] as { handler: (o: unknown) => Promise<unknown> }
     await expect(node.handler({
       input: { id: '00000000-0000-7000-8000-c5ea71554c77' },
       context: { ...(await ctx()), session: { user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'Sess', email: 'sess@tandem.local', role: 'viewer' } } },
@@ -351,13 +357,13 @@ describe('employees API keys', () => {
     await seedEnv('env-lst')
     const ai = await callProc('employees.create', { name: 'AI', email: 'l-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-lst', executable: 'hermes acp' })
     const minted = await callProc('employees.createApiKey', { employeeId: ai.id })
-    const keys = await callProc('employees.listApiKeys', { employeeId: ai.id })
+    const keys = await callProc('employees.listApiKeys', { employeeId: ai.id }) as ApiKeyRow[]
     expect(keys).toHaveLength(2) // creation key + minted
     for (const k of keys) {
       expect(k.key).toBeUndefined()
       expect(k.prefix).toBe('tandem_')
     }
-    expect(keys.some((k: any) => k.id === minted.id)).toBe(true)
+    expect(keys.some(k => k.id === minted.id)).toBe(true)
   })
 
   it('listApiKeys 404s unknown employee', async () => {
@@ -369,7 +375,7 @@ describe('employees API keys', () => {
     const ai = await callProc('employees.create', { name: 'AI', email: 'r-ai@tandem.local', kind: 'ai', title: 'A', environmentId: 'env-rev', executable: 'hermes acp' })
     const minted = await callProc('employees.createApiKey', { employeeId: ai.id })
     await callProc('employees.revokeApiKey', { keyId: minted.id })
-    const keys = await callProc('employees.listApiKeys', { employeeId: ai.id })
+    const keys = await callProc('employees.listApiKeys', { employeeId: ai.id }) as ApiKeyRow[]
     expect(keys).toHaveLength(1) // only the creation key remains
   })
 
@@ -422,7 +428,7 @@ describe('ACP executable', () => {
     const iter = await callProc('employees.live')
     const snap = await iter.next()
     await iter.return?.()
-    const row = (snap.value as any[]).find(x => x.id === r.id)!
+    const row = (snap.value as LiveEmployee[]).find(x => x.id === r.id)!
     expect(row.executable).toBe('gemini --acp')
     expect(row.harness).toBeUndefined()
   })
@@ -450,7 +456,7 @@ describe('ACP executable', () => {
     const iter = await callProc('employees.live')
     const snap = await iter.next()
     await iter.return?.()
-    const rows = snap.value as any[]
+    const rows = snap.value as LiveEmployee[]
     const ai = rows.find(x => x.id === r.id)!
     const hu = rows.find(x => x.kind === 'human')!
     expect(ai.executable).toBe('hermes acp')
