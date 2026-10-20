@@ -12,16 +12,16 @@ import {
 } from 'drizzle-orm'
 import { RelationalQueryBuilder } from 'drizzle-orm/pg-core/query-builders/query'
 
-export interface FindManyAndCountResult<T> {
+export type FindManyAndCountResult<T> = {
   data: T[]
   total: number
 }
 
-interface CountQueryPromise extends PromiseLike<number> {
+type CountQueryPromise = PromiseLike<number> & {
   toSQL: () => { params: unknown[], sql: string }
 }
 
-interface FindManyAndCountQueryPromise<T> extends PromiseLike<FindManyAndCountResult<T>> {
+type FindManyAndCountQueryPromise<T> = PromiseLike<FindManyAndCountResult<T>> & {
   toSQL: () => {
     count: { params: unknown[], sql: string },
     findMany: { params: unknown[], sql: string },
@@ -43,7 +43,7 @@ declare module 'drizzle-orm/pg-core/query-builders/query' {
   }
 }
 
-interface BuilderCtx {
+type BuilderCtx = {
   table: Parameters<typeof relationsFilterToSQL>[0],
   dialect: { sqlToQuery: (q: unknown) => { params: unknown[], sql: string } },
   session: { execute: (q: unknown) => Promise<{ count: string | number }[]> },
