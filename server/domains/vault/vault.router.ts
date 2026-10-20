@@ -3,10 +3,10 @@
 // `folders` (/rpc/vault/folders/...). Business logic lives in the
 // secret/ and folder/ services; crypto in secret/secret-crypto.service.
 import { os } from '@orpc/server'
-import { secretProcs } from './secret/secret.router'
+import { secretRouter } from './secret/secret.router'
 import { folderRouter } from './folder/folder.router'
 
 export const vaultRouter = os.router({
-  ...secretProcs,
+  ...secretRouter,
   folders: folderRouter,
 })

@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { protectedProcedure, liveGenerator } from '../../kernel/kernel'
 import { listVaultSecrets, createSecret, updateSecret, removeSecret } from './secret.service'
 
-export const secretProcs = {
+export const secretRouter = {
   /** live list — metadata only; ciphertext never leaves the server */
   list: protectedProcedure.handler(() => listVaultSecrets()),
 
