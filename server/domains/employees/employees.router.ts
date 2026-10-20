@@ -9,7 +9,7 @@ import {
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 import type { ApiKeyRow, EmployeeRow } from '../../../shared/types'
-import { uuidv7 } from '../kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/
 

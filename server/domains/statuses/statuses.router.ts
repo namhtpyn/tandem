@@ -7,7 +7,7 @@ import {
   aiEmployees as aiEmployeesTable, projects as projectsTable, taskStatuses as taskStatusesTable, tasks as tasksTable, user as userTable,
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
-import { uuidv7 } from '../kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 
 async function listStatuses() {
     const rows = await db.select().from(taskStatusesTable).orderBy(asc(taskStatusesTable.position))

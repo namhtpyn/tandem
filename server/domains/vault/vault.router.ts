@@ -10,7 +10,7 @@ import {
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 import type { VaultAuditRow } from '../../../shared/types'
-import { uuidv7 } from '../kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 
 export const vaultRouter = os.router({
   /** live list — metadata only; ciphertext never leaves the server */

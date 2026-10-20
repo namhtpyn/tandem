@@ -10,7 +10,7 @@ import { tasks, taskActivity, taskProposals, user as userTable, employeeSupervis
 import { publishChange } from '../kernel/kernel'
 import { recordAssignment, recentAssignees, assignTask } from './assignments.service'
 import { refreshParentGating } from './gating.service'
-import { uuidv7 } from '../kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 import { STATUS } from '#shared/status'
 
 export interface SubtaskItem { title: string, description?: string, assigneeName?: string }

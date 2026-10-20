@@ -6,7 +6,7 @@ import { vaultSecrets, modelProviders, vaultAudit } from '../../db/schema'
 import { eq } from 'drizzle-orm'
 import { decryptSecret } from '../vault/vault-crypto.service'
 import { PROVIDER_ENDPOINT, PROVIDER_KIND, endpointKind, ENDPOINT_PATH, type DecisionEndpoint } from '#shared/api-styles'
-import { uuidv7 } from '../kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 
 export interface JevAssignCandidate {
   id: string

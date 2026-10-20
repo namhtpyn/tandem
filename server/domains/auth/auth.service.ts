@@ -16,7 +16,7 @@ import { user as userTable } from '../../db/schema'
 import { authSchema } from '../../db/schema'
 import { getSettings } from '../settings/settings.service'
 import { getOidcProviders, type OidcProvider } from './oidc.service'
-import { uuidv7 } from '../kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 
 const env = process.env
 

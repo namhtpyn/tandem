@@ -6,7 +6,7 @@ import { betterAuth } from 'better-auth'
 import { apiKey } from '@better-auth/api-key'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2'
-import { uuidv7 } from '../server/domains/kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 export const auth = betterAuth({
   database: drizzleAdapter(drizzle('postgresql://generate:generate@127.0.0.1:1/generate'), { provider: 'pg' }),
   advanced: { database: { generateId: 'uuid' } },

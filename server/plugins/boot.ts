@@ -6,7 +6,7 @@
 import { db } from '../db'
 import { user, account } from '../db/schema'
 import { applyMigrations } from '../db'
-import { uuidv7 } from '../domains/kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 
 // Bun.serve idle timeout, in the code (was stack env). 255s = Bun's max: without it
 // the default (10s) kills idle SSE feeds mid-stream. Runs before Bun.serve reads it

@@ -12,7 +12,7 @@ import { tasks, taskActivity, user as userTable, employeeSupervisors } from '../
 import { publishChange } from '../kernel/kernel'
 import { spawnObligation, resolveObligation, cancelObligations, answerHolder } from './obligations.service'
 import { refreshParentGating, hasOpenChildren } from './gating.service'
-import { uuidv7 } from '../kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 import { STATUS } from '#shared/status'
 import { openRoundLive, dispatchAiReviewTurns, openReviewRound, recordVerdict } from './review.service'
 

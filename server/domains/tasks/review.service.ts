@@ -13,7 +13,7 @@ import { tasks, taskReviews, taskRuns, aiEmployees } from '../../db/schema'
 import { spawnObligation, cancelObligations, cancelAllObligations, resolveObligation } from './obligations.service'
 import { dispatchTask } from './runner.service'
 import { publishChange } from '../kernel/kernel'
-import { uuidv7 } from '../kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 
 export type ReviewVerdict = 'approved' | 'change_requested' | 'rejected'
 

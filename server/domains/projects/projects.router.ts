@@ -8,7 +8,7 @@ import {
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 import type { ProjectRow } from '../../../shared/types'
-import { uuidv7 } from '../kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 
 export const projectsRouter = os.router({
   /** live list — flat rows; nesting resolved client-side from parentId */

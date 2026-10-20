@@ -7,7 +7,7 @@
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import { db } from '../../db'
 import { tasks, taskObligations } from '../../db/schema'
-import { uuidv7 } from '../kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 
 export type ObligationRole = 'answer' | 'approval'
 

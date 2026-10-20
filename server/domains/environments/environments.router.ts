@@ -11,7 +11,7 @@ import {
 } from '../../db/schema'
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
 import { toRow, listEnvironments } from './environments.service'
-import { uuidv7 } from '../kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 
 export const environmentsRouter = os.router({
   /** plain GET list (first-load data per the SSE law) */

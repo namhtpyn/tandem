@@ -7,7 +7,7 @@ import { and, eq } from 'drizzle-orm'
 import { db } from '../../../../db'
 import { tasks, taskAttachments } from '../../../../db/schema'
 import { buildServerContext } from '../../../../domains/kernel/context'
-import { uuidv7 } from '../../../../domains/kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 import {
   ATTACHMENT_MAX_BYTES, mimeAllowed, normalizeMime, sanitizeFilename,
   saveAttachmentBytes, sha256Hex,

@@ -9,7 +9,7 @@ import { and, eq, inArray, ne } from 'drizzle-orm'
 import { db } from '../../db'
 import { tasks, taskActivity, taskStatuses } from '../../db/schema'
 import { publishChange } from '../kernel/kernel'
-import { uuidv7 } from '../kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 
 import { STATUS } from '#shared/status'
 

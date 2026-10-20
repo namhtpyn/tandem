@@ -18,7 +18,7 @@ import { askQuestion, forwardQuestion, answerQuestion, submitResult, approveRevi
 import { listReviews } from './review.service'
 import { dispatchTask, listRuns } from './runner.service'
 import type { TaskRow } from '../../../shared/types'
-import { uuidv7 } from '../kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 
 type WorkflowSession = { getSession: () => Promise<{ user: { id: string } } | null> }
 

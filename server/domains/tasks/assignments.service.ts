@@ -4,7 +4,7 @@
 import { and, desc, eq, isNull } from 'drizzle-orm'
 import { db } from '../../db'
 import { taskAssignments, tasks } from '../../db/schema'
-import { uuidv7 } from '../kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 
 /** close the open row (if any) and open a new one for the new assignee */
 export async function recordAssignment(taskId: string, employeeId: string | null, reason: string, actorId: string | null) {

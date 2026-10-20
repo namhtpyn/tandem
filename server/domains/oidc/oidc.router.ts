@@ -2,7 +2,7 @@ import { os } from '@orpc/server'
 import { z } from 'zod'
 // oidc router — business logic lives in services/utils; this file only wires procedures
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel'
-import { uuidv7 } from '../kernel/ids'
+import { v7 as uuidv7 } from 'uuid'
 
 async function listOidcProviders() {
   const { getOidcProviders } = await import('../auth/oidc.service')
