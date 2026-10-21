@@ -49,7 +49,11 @@ async function appliedNames(): Promise<string[]> {
 async function adoptLegacyLedger(migrationsFolder: string) {
   const old = await sqlClient`select 1 from information_schema.tables where table_schema = 'public' and table_name = 'tandem_migrations'`;
   const cur = await sqlClient`select 1 from information_schema.tables where table_schema = 'public' and table_name = 'migrations'`;
-  if (old.length > 0 && cur.length === 0) await sqlClient`alter table tandem_migrations rename to migrations`;
+  if (old.length > 0 && cur.length === 0) {
+    // COPY (not rename): keeps tandem_migrations readable by the old image so a
+    // rollback to the pre-upgrade version still boots
+    await sqlClient`create table migrations as table tandem_migrations`;
+  }
   const legacy = await sqlClient`select 1 from information_schema.tables where table_schema = 'public' and table_name = 'migrations'`;
   if (legacy.length === 0) return;
   const rows = await sqlClient`select name from migrations`;

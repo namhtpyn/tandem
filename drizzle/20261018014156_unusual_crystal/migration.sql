@@ -1,49 +1,67 @@
 ALTER TABLE "account" DROP CONSTRAINT IF EXISTS tandem_account_user_id_tandem_user_id_fkey;
+ALTER TABLE "account" DROP CONSTRAINT IF EXISTS tandem_account_user_id_fkey;
 
 --> statement-breakpoint
 ALTER TABLE "ai_employees" DROP CONSTRAINT IF EXISTS tandem_ai_employees_user_id_tandem_user_id_fkey;
+ALTER TABLE "ai_employees" DROP CONSTRAINT IF EXISTS tandem_ai_employees_user_id_fkey;
 
 --> statement-breakpoint
 ALTER TABLE "apikey" DROP CONSTRAINT IF EXISTS tandem_apikey_reference_id_tandem_user_id_fkey;
+ALTER TABLE "apikey" DROP CONSTRAINT IF EXISTS tandem_apikey_reference_id_fkey;
 
 --> statement-breakpoint
 ALTER TABLE "employee_supervisors" DROP CONSTRAINT IF EXISTS tandem_employee_supervisors_employee_id_tandem_user_id_fkey;
+ALTER TABLE "employee_supervisors" DROP CONSTRAINT IF EXISTS tandem_employee_supervisors_employee_id_fkey;
+ALTER TABLE "employee_supervisors" DROP CONSTRAINT IF EXISTS tandem_employee_supervisors_supervisor_id_fkey;
 
 --> statement-breakpoint
 ALTER TABLE "employee_supervisors" DROP CONSTRAINT IF EXISTS tandem_employee_supervisors_supervisor_id_tandem_user_id_fkey;
 
 --> statement-breakpoint
 ALTER TABLE "session" DROP CONSTRAINT IF EXISTS tandem_session_user_id_tandem_user_id_fkey;
+ALTER TABLE "session" DROP CONSTRAINT IF EXISTS tandem_session_user_id_fkey;
 
 --> statement-breakpoint
 ALTER TABLE "vault_secrets" DROP CONSTRAINT IF EXISTS tandem_vault_secrets_created_by_tandem_user_id_fkey;
+ALTER TABLE "vault_secrets" DROP CONSTRAINT IF EXISTS tandem_vault_secrets_created_by_fkey;
 
 --> statement-breakpoint
 ALTER TABLE "task_activity" DROP CONSTRAINT IF EXISTS tandem_task_activity_author_id_tandem_user_id_fkey;
+ALTER TABLE "task_activity" DROP CONSTRAINT IF EXISTS tandem_task_activity_author_id_fkey;
 
 --> statement-breakpoint
 ALTER TABLE "task_assignments" DROP CONSTRAINT IF EXISTS tandem_task_assignments_employee_id_tandem_user_id_fkey;
+ALTER TABLE "task_assignments" DROP CONSTRAINT IF EXISTS tandem_task_assignments_employee_id_fkey;
+ALTER TABLE "task_assignments" DROP CONSTRAINT IF EXISTS tandem_task_assignments_actor_id_fkey;
 
 --> statement-breakpoint
 ALTER TABLE "task_assignments" DROP CONSTRAINT IF EXISTS tandem_task_assignments_actor_id_tandem_user_id_fkey;
 
 --> statement-breakpoint
 ALTER TABLE "task_obligations" DROP CONSTRAINT IF EXISTS tandem_task_obligations_employee_id_tandem_user_id_fkey;
+ALTER TABLE "task_obligations" DROP CONSTRAINT IF EXISTS tandem_task_obligations_employee_id_fkey;
+ALTER TABLE "task_obligations" DROP CONSTRAINT IF EXISTS tandem_task_obligations_resolved_by_fkey;
 
 --> statement-breakpoint
 ALTER TABLE "task_obligations" DROP CONSTRAINT IF EXISTS tandem_task_obligations_resolved_by_tandem_user_id_fkey;
 
 --> statement-breakpoint
 ALTER TABLE "task_proposals" DROP CONSTRAINT IF EXISTS tandem_task_proposals_decided_by_tandem_user_id_fkey;
+ALTER TABLE "task_proposals" DROP CONSTRAINT IF EXISTS tandem_task_proposals_decided_by_fkey;
 
 --> statement-breakpoint
 ALTER TABLE "task_reviews" DROP CONSTRAINT IF EXISTS tandem_task_reviews_reviewer_id_tandem_user_id_fkey;
+ALTER TABLE "task_reviews" DROP CONSTRAINT IF EXISTS tandem_task_reviews_reviewer_id_fkey;
 
 --> statement-breakpoint
 ALTER TABLE "task_runs" DROP CONSTRAINT IF EXISTS tandem_task_runs_employee_id_tandem_user_id_fkey;
+ALTER TABLE "task_runs" DROP CONSTRAINT IF EXISTS tandem_task_runs_employee_id_fkey;
 
 --> statement-breakpoint
 ALTER TABLE "tasks" DROP CONSTRAINT IF EXISTS tandem_tasks_assignee_id_tandem_user_id_fkey;
+ALTER TABLE "tasks" DROP CONSTRAINT IF EXISTS tandem_tasks_assignee_id_fkey;
+ALTER TABLE "tasks" DROP CONSTRAINT IF EXISTS tandem_tasks_created_by_fkey;
+ALTER TABLE "tasks" DROP CONSTRAINT IF EXISTS tandem_tasks_owner_id_fkey;
 
 --> statement-breakpoint
 ALTER TABLE "tasks" DROP CONSTRAINT IF EXISTS tandem_tasks_created_by_tandem_user_id_fkey;
