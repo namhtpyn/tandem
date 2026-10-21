@@ -1,3 +1,10 @@
+# [2.40.0](https://github.com/namhtpyn/tandem/compare/v2.39.1...v2.40.0) (2026-10-21)
+
+
+### Features
+
+* **db:** drizzle-orm + drizzle-kit 1.0.0-rc.5 ([d025cce](https://github.com/namhtpyn/tandem/commit/d025cce298ee891c78e9e15cc6ca992e0fd10fe3))
+
 ## [2.39.1](https://github.com/namhtpyn/tandem/compare/v2.39.0...v2.39.1) (2026-10-21)
 
 
