@@ -21,6 +21,8 @@ export default defineNuxtConfig({
     // bun runtime in dev, test and prod — the bun preset bundles bun-specific package
     // exports correctly (default node preset can mis-bundle them) and emits a leaner server
     preset: 'bun',
+    // `import { SQL } from 'bun'` (native db client) is a runtime builtin, not a package
+    externals: { external: ['bun'] },
     compatibilityDate: '2026-01-01',
     // default es2019 target rejects top-level await; the bun runtime is modern
     esbuild: { options: { target: 'es2022' } },

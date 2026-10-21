@@ -1,4 +1,3 @@
-import postgresDriver from 'postgres';
 // Shared vitest helper: a REAL Postgres (Docker tandem-pg). Each test FILE gets
 // its OWN DATABASE — created on import, dropped on afterAll — so parallel files
 // never collide and the app's pooled client needs zero search_path hacks.
@@ -13,15 +12,13 @@ const DB_NAME = `t_${Math.random().toString(36).slice(2, 10)}`;
 export const TEST_DATABASE_URL = `${u.protocol}//${u.username}:${u.password}@${u.hostname}:${u.port}/${DB_NAME}`;
 
 // admin client on the server (connect to the root/test database)
-const admin = postgresDriver(ROOT_URL, { max: 1, onnotice: () => {} });
+const admin = new Bun.SQL(ROOT_URL, { max: 1 });
 
 // our raw client into the fresh database
-export const postgres = postgresDriver(TEST_DATABASE_URL, {
+export const postgres = new Bun.SQL(TEST_DATABASE_URL, {
   max: 5,
-  idle_timeout: 5,
-  connect_timeout: 10,
-  prepare: false,
-  onnotice: () => {},
+  idleTimeout: 5,
+  connectionTimeout: 10,
 });
 
 export async function resetSchema() {
@@ -40,7 +37,7 @@ await applyMigrations();
 
 afterAll(async () => {
   try {
-    await postgres.end();
+    await postgres.close();
     await sqlClient.end();
   } catch {
     /* pool may already be gone */
@@ -57,7 +54,7 @@ afterAll(async () => {
     /* best effort — sweep catches it */
   }
   try {
-    await admin.end();
+    await admin.close();
   } catch {
     /* best effort */
   }
