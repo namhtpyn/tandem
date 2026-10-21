@@ -25,7 +25,7 @@ import { ROLE } from '#shared/enums';
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/;
 
 const listEmployeesSnapshot = async () => {
-  const rows = await db.query.user.findMany({ orderBy: (u, { asc }) => [asc(u.createdAt)] });
+  const rows = await db.query.user.findMany({ orderBy: { createdAt: 'asc' } });
   const supRows = await db.query.employeeSupervisors.findMany();
   const aiRows = await db.query.aiEmployees.findMany();
   const sups = new Map<string, string[]>();
@@ -349,7 +349,7 @@ export const employeesRouter = os.router({
 
   titles: {
     list: protectedProcedure.handler(async () => {
-      const rows = await db.query.employeeTitles.findMany({ orderBy: (t, { asc }) => [asc(t.name)] });
+      const rows = await db.query.employeeTitles.findMany({ orderBy: { name: 'asc' } });
       const counts = await db
         .select({ title: userTable.title, count: count() })
         .from(userTable)
@@ -360,7 +360,7 @@ export const employeesRouter = os.router({
 
     live: protectedProcedure.handler(() =>
       liveGenerator([CHANGE_RESOURCE.EMPLOYEES], async () => {
-        const rows = await db.query.employeeTitles.findMany({ orderBy: (t, { asc }) => [asc(t.name)] });
+        const rows = await db.query.employeeTitles.findMany({ orderBy: { name: 'asc' } });
         const counts = await db
           .select({ title: userTable.title, count: count() })
           .from(userTable)

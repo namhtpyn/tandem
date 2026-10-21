@@ -2,9 +2,8 @@
 // Duplicate folder names are allowed (the unique constraint was dropped);
 // deleting a folder never deletes secrets — they fall back to uncategorized
 // (FK SET NULL).
-import { asc, count, eq, inArray } from 'drizzle-orm';
+import { eq, sql, type SQL } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
-import { z } from 'zod';
 
 import { db } from '../../../db';
 import { vaultSecrets as vaultSecretsTable, vaultFolders as vaultFoldersTable } from '../../../db/schema';
@@ -13,43 +12,41 @@ import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 export type FolderWithCount = { id: string; name: string; secrets: number };
 
-export const listFoldersPagedInput = z.object({
-  page: z.number().int().min(1).default(1),
-  pageSize: z.number().int().min(1).max(100).default(10),
-  q: z.string().trim().max(60).optional(),
-});
+export type ListFoldersPagedInput = { page?: number; pageSize?: number; q?: string };
 
-export async function listFoldersPaged(input: z.input<typeof listFoldersPagedInput> = {}) {
-  const { page, pageSize, q } = listFoldersPagedInput.parse(input);
-  const { data, total } = await db.query.vaultFolders.findManyAndCount({
-    where: q ? { name: { ilike: `%${q}%` } } : undefined,
-    orderBy: (f, { asc }) => [asc(f.name)],
-    limit: pageSize,
-    offset: (page - 1) * pageSize,
-  });
-  const ids = data.map((f) => f.id);
-  const counts = ids.length
-    ? await db
-        .select({ folderId: vaultSecretsTable.folderId, count: count() })
-        .from(vaultSecretsTable)
-        .where(inArray(vaultSecretsTable.folderId, ids))
-        .groupBy(vaultSecretsTable.folderId)
-    : [];
-  const byFolder = new Map(counts.map((c) => [c.folderId, Number(c.count)]));
+export async function listFoldersPaged(input: ListFoldersPagedInput = {}) {
+  const page = input.page ?? 1;
+  const pageSize = input.pageSize ?? 10;
+  const q = input.q;
+  const where = q ? { name: { ilike: `%${q}%` } } : undefined;
+  const [rows, total] = await Promise.all([
+    db.query.vaultFolders.findMany({
+      where,
+      orderBy: { name: 'asc' },
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      extras: {
+        secrets: sql<number>`(select count(*) from ${vaultSecretsTable} where ${vaultSecretsTable.folderId} = "d0"."id")`.mapWith(
+          Number,
+        ),
+      },
+    }),
+    db.query.vaultFolders.count(where),
+  ]);
   return {
-    folders: data.map((f) => ({ id: f.id, name: f.name, secrets: byFolder.get(f.id) ?? 0 })),
+    folders: rows.map((f) => ({ id: f.id, name: f.name, secrets: Number(f.secrets ?? 0) })),
     total,
   };
 }
 
 export async function listFolders() {
-  const rows = await db.query.vaultFolders.findMany({ orderBy: (f, { asc }) => [asc(f.name)] });
-  const counts = await db
-    .select({ folderId: vaultSecretsTable.folderId, count: count() })
-    .from(vaultSecretsTable)
-    .groupBy(vaultSecretsTable.folderId);
-  const byFolder = new Map(counts.map((c) => [c.folderId, Number(c.count)]));
-  return { folders: rows.map((f) => ({ id: f.id, name: f.name, secrets: byFolder.get(f.id) ?? 0 })) };
+  const rows = await db.query.vaultFolders.findMany({
+    orderBy: { name: 'asc' },
+    with: { secrets: { columns: { id: true } } },
+  });
+  return {
+    folders: rows.map((f) => ({ id: f.id, name: f.name, secrets: f.secrets.length })),
+  };
 }
 
 export async function folderExists(id: string) {

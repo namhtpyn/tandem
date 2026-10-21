@@ -212,7 +212,7 @@ export async function recordVerdict(
 
 /** reviews list for the task page checklist */
 export async function listReviews(taskId: string) {
-  const rows = await db.query.taskReviews.findMany({ where: { taskId: { eq: taskId } }, orderBy: (r, { asc }) => [asc(r.round)] });
+  const rows = await db.query.taskReviews.findMany({ where: { taskId: { eq: taskId } }, orderBy: { round: 'asc' } });
   return rows.map((r) => ({
     reviewerId: r.reviewerId,
     round: r.round,

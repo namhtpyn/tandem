@@ -16,7 +16,7 @@ import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } fro
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 async function listStatuses() {
-  const rows = await db.query.taskStatuses.findMany({ orderBy: (s, { asc }) => [asc(s.position)] });
+  const rows = await db.query.taskStatuses.findMany({ orderBy: { position: 'asc' } });
   return rows.map((r) => ({
     id: r.id,
     name: r.name,

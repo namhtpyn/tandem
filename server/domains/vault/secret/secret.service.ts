@@ -3,7 +3,6 @@
 // leaves the server (list returns metadata + last-four hint only).
 import { desc, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
-import { z } from 'zod';
 
 import type { VaultSecretRow } from '../../../../shared/types';
 import { db } from '../../../db';
@@ -26,15 +25,13 @@ export function toVaultRow(r: typeof vaultSecretsTable.$inferSelect) {
   };
 }
 
-export const listVaultSecretsInput = z.object({
-  page: z.number().int().min(1).default(1),
-  pageSize: z.number().int().min(1).max(100).default(20),
-  folderId: z.string().min(1).nullish(),
-  q: z.string().trim().max(200).optional(),
-});
+export type ListVaultSecretsInput = { page?: number; pageSize?: number; folderId?: string | null; q?: string };
 
-export async function listVaultSecrets(input: z.input<typeof listVaultSecretsInput> = {}) {
-  const { page, pageSize, folderId, q } = listVaultSecretsInput.parse(input);
+export async function listVaultSecrets(input: ListVaultSecretsInput = {}) {
+  const page = input.page ?? 1;
+  const pageSize = input.pageSize ?? 20;
+  const folderId = input.folderId;
+  const q = input.q?.trim() || undefined;
   const folderFilter = folderId ? { folderId: { eq: folderId } } : undefined;
   const searchFilter = q
     ? { OR: [{ name: { ilike: `%${q}%` } }, { description: { ilike: `%${q}%` } }] }
@@ -44,7 +41,7 @@ export async function listVaultSecrets(input: z.input<typeof listVaultSecretsInp
   const { data, total } = await db.query.vaultSecrets.findManyAndCount({
     with: { folder: true },
     where: where as never,
-    orderBy: (s, { desc }) => [desc(s.createdAt)],
+    orderBy: { createdAt: 'desc' },
     limit: pageSize,
     offset: (page - 1) * pageSize,
   });

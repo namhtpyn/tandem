@@ -68,7 +68,7 @@ export function groupOutputsByRun(
 }
 
 const listTasksSnapshot = async (): Promise<TaskRow[]> => {
-  const rows = await db.query.tasks.findMany({ orderBy: (t, { desc }) => [desc(t.createdAt)] });
+  const rows = await db.query.tasks.findMany({ orderBy: { createdAt: 'desc' } });
   const open = await openObligations(rows.map((r) => r.id));
   const holders = new Map<string, string>();
   for (const [tid, o] of open) if (o.holders[0]) holders.set(tid, o.holders[0]);
@@ -183,7 +183,7 @@ export const tasksRouter = os.router({
           .where(eq(projectsTable.id, input.projectId));
         if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'project does not exist' });
       }
-      const statusRows = await db.query.taskStatuses.findMany({ orderBy: (s, { asc }) => [asc(s.position)] });
+      const statusRows = await db.query.taskStatuses.findMany({ orderBy: { position: 'asc' } });
       if (statusRows.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'no task statuses defined' });
       let status = statusRows[0]!.id;
       if (input.status) {

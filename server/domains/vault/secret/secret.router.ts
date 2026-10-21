@@ -3,8 +3,15 @@
 // procedures flat (wire paths stay /rpc/vault/list, /rpc/vault/create, ...).
 import { z } from 'zod';
 
+const listVaultSecretsInput = z.object({
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(100).default(20),
+  folderId: z.string().min(1).nullish(),
+  q: z.string().trim().max(200).optional(),
+});
+
 import { protectedProcedure, liveGenerator } from '../../kernel/kernel';
-import { listVaultSecrets, listVaultSecretsInput, createSecret, updateSecret, removeSecret } from './secret.service';
+import { listVaultSecrets, createSecret, updateSecret, removeSecret } from './secret.service';
 import { CHANGE_RESOURCE } from '#shared/enums';
 
 export const secretRouter = {

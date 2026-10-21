@@ -4,8 +4,14 @@
 import { os } from '@orpc/server';
 import { z } from 'zod';
 
+const listFoldersPagedInput = z.object({
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(100).default(10),
+  q: z.string().trim().max(60).optional(),
+});
+
 import { protectedProcedure, liveGenerator } from '../../kernel/kernel';
-import { listFolders, listFoldersPaged, listFoldersPagedInput, saveFolder, removeFolder } from './folder.service';
+import { listFolders, listFoldersPaged, saveFolder, removeFolder } from './folder.service';
 import { CHANGE_RESOURCE } from '#shared/enums';
 
 export const folderRouter = os.router({

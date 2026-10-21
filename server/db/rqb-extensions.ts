@@ -5,7 +5,6 @@ import {
   type AnyTableFilter,
   type DBQueryConfig,
   type BuildQueryResult,
-  type KnownKeysOnly,
   type RelationsFilter,
   type TableRelationalConfig,
   type TablesRelationalConfig,
@@ -44,7 +43,7 @@ declare module 'drizzle-orm/pg-core/query-builders/query' {
   > {
     count: (filter?: RelationsFilter<TFields, TSchema>) => CountQueryPromise;
     findManyAndCount: <TConfig extends DBQueryConfig<'many', TSchema, TFields>>(
-      config?: KnownKeysOnly<TConfig, DBQueryConfig<'many', TSchema, TFields>>,
+      config?: TConfig,
     ) => FindManyAndCountQueryPromise<BuildQueryResult<TSchema, TFields, TConfig>>;
   }
 }
