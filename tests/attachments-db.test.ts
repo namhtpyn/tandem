@@ -93,12 +93,12 @@ describe('attachment storage round-trip', () => {
     const id = crypto.randomUUID();
     const bytes = Buffer.from('hello attachment');
     await saveAttachmentBytes('t-bytes', id, bytes);
-    expect(attachmentExists('t-bytes', id)).toBe(true);
-    expect(readAttachmentBytes('t-bytes', id).toString()).toBe('hello attachment');
-    expect(() => readAttachmentBytes('../escape', id)).toThrow();
-    deleteAttachmentBytes('t-bytes', id);
-    expect(attachmentExists('t-bytes', id)).toBe(false);
-    expect(() => deleteAttachmentBytes('../escape', id)).not.toThrow();
+    expect(await attachmentExists('t-bytes', id)).toBe(true);
+    expect((await readAttachmentBytes('t-bytes', id)).toString()).toBe('hello attachment');
+    await expect(readAttachmentBytes('../escape', id)).rejects.toThrow();
+    await deleteAttachmentBytes('t-bytes', id);
+    expect(await attachmentExists('t-bytes', id)).toBe(false);
+    await expect(deleteAttachmentBytes('../escape', id)).resolves.toBeUndefined();
   });
 });
 

@@ -30,10 +30,10 @@ describe('attachmentPath guards', () => {
     expect(mod.taskAttachmentsDir('t1')).toBe(`${mod.dataRoot()}/tasks/t1/attachments`);
     expect(() => mod.attachmentPath('t1', 'a b')).toThrow('bad attachment id');
     // delete with unsafe ids is a no-op, never a throw
-    expect(() => mod.deleteAttachmentBytes('../escape', 'x')).not.toThrow();
-    expect(() => mod.deleteAttachmentBytes('t1', '../escape')).not.toThrow();
-    expect(mod.attachmentExists('../escape', 'x')).toBe(false);
-    expect(mod.attachmentExists('t1', 'x')).toBe(false);
+    await expect(mod.deleteAttachmentBytes('../escape', 'x')).resolves.toBeUndefined();
+    await expect(mod.deleteAttachmentBytes('t1', '../escape')).resolves.toBeUndefined();
+    expect(await mod.attachmentExists('../escape', 'x')).toBe(false);
+    expect(await mod.attachmentExists('t1', 'x')).toBe(false);
   });
 });
 

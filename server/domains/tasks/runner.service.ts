@@ -75,12 +75,11 @@ export async function pushInputAttachments(
   onLine: (line: string) => void,
 ) {
   try {
-    const inputFiles = (briefData.attachments ?? [])
-      .filter((a) => attachmentExists(taskId, a.id))
-      .map((a) => ({
-        localPath: attachmentPath(taskId, a.id),
-        remoteName: a.filename,
-      }));
+    const inputFiles: Array<{ localPath: string; remoteName: string }> = [];
+    for (const a of briefData.attachments ?? []) {
+      if (await attachmentExists(taskId, a.id))
+        inputFiles.push({ localPath: attachmentPath(taskId, a.id), remoteName: a.filename });
+    }
     if (inputFiles.length) {
       const ClientCtor = await loadSshClient();
       await pushTaskFiles(ClientCtor, sshPlan, taskId, inputFiles);
@@ -129,7 +128,7 @@ export async function settleAttachments(
         await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
       }
     } finally {
-      rmSync(tmp, { recursive: true, force: true });
+      await rm(tmp, { recursive: true, force: true });
     }
   } catch {
     /* collection is best-effort; never fail a finished run over it */
@@ -168,7 +167,8 @@ export function guessMime(filename: string): string {
   return map[ext] ?? 'application/octet-stream';
 }
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

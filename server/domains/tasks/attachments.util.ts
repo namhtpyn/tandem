@@ -6,8 +6,7 @@
 // (collected from the agent sandbox after a run).
 // The agent-side staging mirror uses the same per-task shape: ~/.tandem/<taskId>/attachments/.
 import { createHash } from 'node:crypto';
-import { readFileSync, existsSync, rmSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { env } from '../kernel/env';
@@ -73,16 +72,16 @@ export async function saveAttachmentBytes(taskId: string, id: string, bytes: Buf
   await Bun.write(attachmentPath(taskId, id), bytes);
 }
 
-export function readAttachmentBytes(taskId: string, id: string): Buffer {
-  return readFileSync(attachmentPath(taskId, id));
+export async function readAttachmentBytes(taskId: string, id: string): Promise<Buffer> {
+  return Buffer.from(await Bun.file(attachmentPath(taskId, id)).arrayBuffer());
 }
 
-export function attachmentExists(taskId: string, id: string): boolean {
-  return idSafe(taskId) && idSafe(id) && existsSync(attachmentPath(taskId, id));
+export async function attachmentExists(taskId: string, id: string): Promise<boolean> {
+  return idSafe(taskId) && idSafe(id) && (await Bun.file(attachmentPath(taskId, id)).exists());
 }
 
-export function deleteAttachmentBytes(taskId: string, id: string): void {
-  if (idSafe(taskId) && idSafe(id)) rmSync(attachmentPath(taskId, id), { force: true });
+export async function deleteAttachmentBytes(taskId: string, id: string): Promise<void> {
+  if (idSafe(taskId) && idSafe(id)) await rm(attachmentPath(taskId, id), { force: true });
 }
 
 export function sha256Hex(bytes: Buffer): string {
