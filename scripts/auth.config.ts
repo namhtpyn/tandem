@@ -5,10 +5,12 @@ import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 // this file mirrors the plugin set so generated tables always match.
 // Regenerate with: bun run gen:auth
 import { betterAuth } from 'better-auth';
-import { drizzle } from 'drizzle-orm/bun-sql';
 import { v7 as uuidv7 } from 'uuid';
+// `bunx auth` loads this file under node/jiti — drizzle-orm/bun-sql imports the
+// `bun` builtin there and dies. Generate never queries; an inert handle is enough.
+const inertDb = {} as never;
 export const auth = betterAuth({
-  database: drizzleAdapter(drizzle('postgresql://generate:generate@127.0.0.1:1/generate'), { provider: 'pg' }),
+  database: drizzleAdapter(inertDb, { provider: 'pg' }),
   advanced: { database: { generateId: 'uuid' } },
   basePath: '/auth',
   user: {
