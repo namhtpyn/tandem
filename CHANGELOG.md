@@ -1,3 +1,10 @@
+## [2.37.3](https://github.com/namhtpyn/tandem/compare/v2.37.2...v2.37.3) (2026-10-21)
+
+
+### Bug Fixes
+
+* **ci:** unit tests pointed at redis 6379 — the service maps 6399 ([58c182e](https://github.com/namhtpyn/tandem/commit/58c182e449df4f8fb506496ce8cbcd5680c062f4))
+
 ## [2.37.2](https://github.com/namhtpyn/tandem/compare/v2.37.1...v2.37.2) (2026-10-21)
 
 
