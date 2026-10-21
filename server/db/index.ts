@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 // Postgres client (postgres.js) + drizzle rc (Relations v2) + boot-applied migrations.
@@ -44,41 +43,11 @@ async function appliedNames(): Promise<string[]> {
   return rows.map((r) => r.name as string);
 }
 
-/** earlier custom runner tracked by folder name in public.tandem_migrations / public.migrations —
- * adopt those rows into drizzle's ledger so already-run folders never re-run */
-async function adoptLegacyLedger(migrationsFolder: string) {
-  const old = await sqlClient`select 1 from information_schema.tables where table_schema = 'public' and table_name = 'tandem_migrations'`;
-  const cur = await sqlClient`select 1 from information_schema.tables where table_schema = 'public' and table_name = 'migrations'`;
-  if (old.length > 0 && cur.length === 0) {
-    // COPY (not rename): keeps tandem_migrations readable by the old image so a
-    // rollback to the pre-upgrade version still boots
-    await sqlClient`create table migrations as table tandem_migrations`;
-  }
-  const legacy = await sqlClient`select 1 from information_schema.tables where table_schema = 'public' and table_name = 'migrations'`;
-  if (legacy.length === 0) return;
-  const rows = await sqlClient`select name from migrations`;
-  if (rows.length === 0 || (await appliedNames()).length > 0) return;
-  await sqlClient`create schema if not exists drizzle`;
-  await sqlClient`create table if not exists drizzle.__drizzle_migrations (
-    id serial primary key,
-    hash text not null,
-    created_at bigint,
-    name text,
-    applied_at timestamptz default now()
-  )`;
-  for (const { name } of rows) {
-    const file = join(migrationsFolder, name as string, 'migration.sql');
-    if (!existsSync(file)) continue;
-    const hash = createHash('sha256').update(readFileSync(file)).digest('hex');
-    await sqlClient`insert into drizzle.__drizzle_migrations (hash, created_at, name) values (${hash}, ${folderMillis(name as string)}, ${name as string})`;
-  }
-}
 
 /** apply pending drizzle migrations; returns the folders applied this boot */
 export async function applyMigrations(): Promise<string[]> {
   const migrationsFolder = env.TANDEM_DRIZZLE_DIR || join(process.cwd(), 'drizzle');
   if (!existsSync(migrationsFolder)) return [];
-  await adoptLegacyLedger(migrationsFolder);
   const before = new Set(await appliedNames());
   await migrate(db, { migrationsFolder });
   return (await appliedNames()).filter((n) => !before.has(n));

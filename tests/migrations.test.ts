@@ -31,20 +31,6 @@ describe('applyMigrations', () => {
     expect(recorded.map((r) => r.name as string).sort()).toEqual(applied.slice().sort());
   });
 
-  it('adopts the old public.migrations ledger (no replay on an existing DB)', async () => {
-    const all = readdirSync(join(process.cwd(), 'drizzle'))
-      .filter((d) => /^\d+_/.test(d))
-      .sort();
-    await applyMigrations(); // a real DB carrying tables
-    await postgres.unsafe('drop schema drizzle cascade'); // pre-migrator DB: no drizzle ledger
-    await postgres.unsafe('create table public.migrations (name text primary key, applied_at timestamptz not null default now())');
-    for (const name of all) await postgres`insert into public.migrations (name) values (${name})`;
-    const applied = await applyMigrations();
-    expect(applied).toEqual([]); // every row adopted — nothing replays
-    const recorded = await postgres`select name from drizzle.__drizzle_migrations where name is not null`;
-    expect(recorded.length).toBe(all.length);
-  });
-
   it('is idempotent — second run applies nothing', async () => {
     await applyMigrations();
     const again = await applyMigrations();
