@@ -6,7 +6,10 @@
 // per-suite before their own imports.
 import { z } from 'zod';
 
-const envSchema = z.object({
+// env vars arrive as strings — '' means "unset" for every field
+const envSchema = z.preprocess(
+  (raw) => Object.fromEntries(Object.entries(raw ?? {}).filter(([, v]) => v !== '')),
+  z.object({
   DATABASE_URL: z.string().url(),
   TANDEM_VAULT_KEY: z
     .string()
@@ -20,21 +23,10 @@ const envSchema = z.object({
   TANDEM_DISABLE_PASSWORD_LOGIN: z.string().optional(),
   ADMIN_EMAIL: z.string().email().optional(),
   ADMIN_PASSWORD: z.string().min(8).optional(),
-});
+  }),
+);
 
-const parsed = await envSchema.safeParseAsync({
-  DATABASE_URL: process.env.DATABASE_URL,
-  TANDEM_VAULT_KEY: process.env.TANDEM_VAULT_KEY,
-  REDIS_URL: process.env.REDIS_URL,
-  TANDEM_PUBLIC_URL: process.env.TANDEM_PUBLIC_URL || undefined,
-  BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET || undefined,
-  BETTER_AUTH_URL: process.env.BETTER_AUTH_URL || undefined,
-  TANDEM_DISABLE_PASSWORD_LOGIN: process.env.TANDEM_DISABLE_PASSWORD_LOGIN || undefined,
-  TANDEM_ATTACHMENTS_DIR: process.env.TANDEM_ATTACHMENTS_DIR || undefined,
-  TANDEM_DRIZZLE_DIR: process.env.TANDEM_DRIZZLE_DIR || undefined,
-  ADMIN_EMAIL: process.env.ADMIN_EMAIL || undefined,
-  ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || undefined,
-});
+const parsed = await envSchema.safeParseAsync(process.env);
 
 if (!parsed.success) {
   // eslint-disable-next-line no-console
