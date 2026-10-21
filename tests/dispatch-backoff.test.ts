@@ -4,12 +4,12 @@ import './api-harness';
 // Backoff ladder, quota-jump, dispatchAfter gating, reaper, and run timeout settle.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { env, setEnv } from '../server/domains/kernel/env';
 import { ROLE, RUN_STATUS } from '../shared/enums';
 import { STATUS } from '../shared/status';
 import type { TaskRow } from '../shared/types';
-import { resetSchema } from './helpers/pg';
 import { makeProcCaller } from './helpers/procs';
 
 // mock ssh2: connect+exec succeed; the stream never closes on its own, so tests

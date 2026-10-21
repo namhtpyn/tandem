@@ -3,10 +3,10 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 import './api-harness';
+import { resetSchema } from './helpers/pg';
 import { applyMigrations, sqlClient } from '../server/db/index';
 import { ROLE } from '../shared/enums';
 import { call } from './api-harness';
-import { resetSchema } from './helpers/pg';
 
 beforeEach(async () => {
   await resetSchema();
@@ -16,7 +16,7 @@ beforeEach(async () => {
 describe('auth route gates', () => {
   it('blocks password sign-up once any user exists (403)', async () => {
     await sqlClient`insert into "user" (id, name, email, email_verified, created_at, updated_at, role)
-      values ('00000000-0000-7000-8000-c5ea71554c77', 'U', 'u@x.co', true, now(), now(), ROLE.VIEWER)`;
+      values ('00000000-0000-7000-8000-c5ea71554c77', 'U', 'u@x.co', true, now(), now(), ${ROLE.VIEWER})`;
     await expect(
       call('../server/routes/auth/[...].ts', {
         method: 'POST',

@@ -744,7 +744,7 @@ describe('acp.client turns', () => {
         send({
           jsonrpc: '2.0',
           method: 'session/update',
-          params: { update: { sessionUpdate: 'tool_call_update', status: OBLIGATION_STATUS.PENDING } },
+          params: { update: { sessionUpdate: 'tool_call_update', status: 'pending' } }, // ACP wire status
         });
         // usage with only one field (each side)
         send({

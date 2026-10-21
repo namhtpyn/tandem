@@ -9,11 +9,11 @@ import './api-harness';
 // against the throwaway DB (createApiKey writes a hashed row).
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
 import { ROLE } from '../shared/enums';
 import type { EmployeeRow, ApiKeyRow } from '../shared/types';
-import { resetSchema } from './helpers/pg';
 
 // live rows intentionally drop the legacy harness field — the test asserts its absence
 type LiveEmployee = EmployeeRow & { harness?: string };

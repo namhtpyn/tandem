@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { groupedSecretOptions } from '../app/utils/vault-options';
 import './api-harness';
-import { applyMigrations } from '../server/db/index';
 import { resetSchema } from './helpers/pg';
+import { applyMigrations } from '../server/db/index';
 
 beforeEach(async () => {
   await resetSchema();

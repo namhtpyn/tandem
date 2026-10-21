@@ -24,6 +24,7 @@ import {
   REVIEW_STATUS,
   OBLIGATION_ROLE,
   ACTIVITY_KIND,
+  type ActivityKind,
   type ReviewStatus,
   RUN_STATUS,
 } from '#shared/enums';
@@ -36,7 +37,7 @@ const CANCELLED_STATUS = STATUS.cancelled;
 
 async function logActivity(
   taskId: string,
-  kind: string,
+  kind: ActivityKind,
   authorId: string | null,
   body: string,
   meta: Record<string, unknown>,
@@ -71,7 +72,7 @@ export async function openReviewRound(taskId: string, reviewers: string[], resul
   }
   await logActivity(
     taskId,
-    'status',
+    ACTIVITY_KIND.STATUS,
     null,
     `review round ${round} opened — waiting on ${reviewers.length} reviewer(s)`,
     { reviewRound: round },
@@ -106,7 +107,7 @@ async function latestSubmittedBody(taskId: string): Promise<string> {
     .where(eq(taskActivity.taskId, taskId))
     .orderBy(desc(taskActivity.createdAt))
     .limit(50);
-  const submitted = rows.find((a) => a.kind === 'verdict' && (a.meta as Record<string, unknown> | null)?.submitted);
+  const submitted = rows.find((a) => a.kind === ACTIVITY_KIND.VERDICT && (a.meta as Record<string, unknown> | null)?.submitted);
   /* v8 ignore next -- the submit activity always carries a body in practice */
   return submitted?.body ?? '';
 }
@@ -154,7 +155,7 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
       /* v8 ignore next 2 -- best-effort: a review-dispatch failure logs and the human card remains */
       await logActivity(
         taskId,
-        'status',
+        ACTIVITY_KIND.STATUS,
         null,
         `review turn failed to dispatch: ${e instanceof Error ? e.message : String(e)}`,
         { reviewTurnFailed: true, reviewerId: row.reviewerId, round },
@@ -201,7 +202,7 @@ export async function recordVerdict(
     await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
     await db.update(tasks).set({ status: CANCELLED_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     /* v8 ignore next -- tests always pass a note; the fallback text is defensive */
-    await logActivity(taskId, 'verdict', reviewerId, note || 'rejected — task cancelled', { rejected: true, round });
+    await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || 'rejected — task cancelled', { rejected: true, round });
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'cancelled' };
   }
@@ -210,7 +211,7 @@ export async function recordVerdict(
     // back to ready so the assignee resumes with the note riding the next brief
     await db.update(tasks).set({ status: TODO_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     /* v8 ignore next -- tests always pass a note; the fallback text is defensive */
-    await logActivity(taskId, 'verdict', reviewerId, note || 'changes requested', { changeRequested: true, round });
+    await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || 'changes requested', { changeRequested: true, round });
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'returned' };
   }
@@ -218,7 +219,7 @@ export async function recordVerdict(
   if (unanimous) {
     await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
     await db.update(tasks).set({ status: DONE_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
-    await logActivity(taskId, 'verdict', reviewerId, note || REVIEW_STATUS.APPROVED, {
+    await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || REVIEW_STATUS.APPROVED, {
       approved: true,
       unanimous: true,
       round,
@@ -226,7 +227,7 @@ export async function recordVerdict(
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'done' };
   }
-  await logActivity(taskId, 'verdict', reviewerId, note || REVIEW_STATUS.APPROVED, { approved: true, round });
+  await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || REVIEW_STATUS.APPROVED, { approved: true, round });
   return { outcome: 'waiting' };
 }
 

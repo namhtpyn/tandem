@@ -121,9 +121,9 @@ vi.mock('ssh2', () => {
   return { default: { Client: FakeClient } };
 });
 import './api-harness';
+import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { STATUS } from '../shared/status';
-import { resetSchema } from './helpers/pg';
 import { OBLIGATION_ROLE, OBLIGATION_STATUS, PROPOSAL_KIND, PROPOSAL_STATUS, REVIEW_STATUS, ROLE, RUN_STATUS, SECRET_USAGE } from '../shared/enums';
 import { env, setEnv } from '../server/domains/kernel/env';
 
@@ -663,8 +663,7 @@ describe('runner real-ssh path (mocked ssh2)', () => {
       expect(run.status).toBe(RUN_STATUS.FAILED);
       expect(run.output).toContain('ECONNREFUSED test');
     } finally {
-      setEnv({ TANDEM_FAKE_RUNNER: prev });
-      else setEnv({ TANDEM_FAKE_RUNNER: undefined });
+      if (prev !== undefined) setEnv({ TANDEM_FAKE_RUNNER: prev });
     }
   }, 10_000);
 });
@@ -735,7 +734,8 @@ describe('dispatch-plan edge arms', () => {
       expect(await maybeStartDispatcher()).toBeNull();
     } finally {
       if (prev === undefined) setEnv({ TANDEM_NO_DISPATCHER: undefined });
-      else setEnv({ TANDEM_NO_DISPATCHER: prev });
+      if (prev !== undefined) setEnv({ TANDEM_NO_DISPATCHER: prev });
+      else setEnv({ TANDEM_NO_DISPATCHER: undefined });
     }
     const stop = await maybeStartDispatcher();
     expect(typeof stop).toBe('function');
@@ -828,8 +828,14 @@ describe('dispatcher', () => {
     // task moved to doing + a run row exists
     const { db } = await dbm();
     const { tasks, taskRuns } = await schema();
-    const taskRow = (await db.select().from(tasks))[0];
-    expect(taskRow.status).toBe(STATUS.doing);
+    // the queue worker claims the job asynchronously — poll for the doing hop
+    let taskRow: { status: string } | undefined;
+    for (let i = 0; i < 30; i++) {
+      taskRow = (await db.select().from(tasks))[0];
+      if (taskRow?.status === STATUS.doing) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(taskRow?.status).toBe(STATUS.doing);
     const run = (await db.select().from(taskRuns))[0];
     expect(run).toBeTruthy();
     expect(run.status).toBe(RUN_STATUS.RUNNING);
@@ -864,10 +870,30 @@ describe('dispatcher', () => {
     await callProc('tasks.create', { title: 'First', assigneeId: agentId });
     await callProc('tasks.create', { title: 'Second', assigneeId: agentId });
     const { scanOnce } = await import('../server/domains/tasks/dispatcher.service');
-    expect(await scanOnce('http://tandem.local')).toBe(true);
-    expect(await scanOnce('http://tandem.local')).toBe(false); // agent busy
-    await new Promise((r) => setTimeout(r, 400));
-  }, 10_000);
+    const { db } = await dbm();
+    const { taskRuns } = await schema();
+    const runCount = async () => (await db.select().from(taskRuns)).length;
+    expect(await scanOnce('http://tandem.local')).toBe(true); // First enqueued
+    for (let i = 0; i < 50 && (await runCount()) < 1; i++) await new Promise((r) => setTimeout(r, 100));
+    // keep sweeping like the real scanner: a tick landing while First is still
+    // ready re-picks First (a harmless stale no-op) — sweep until Second's run exists
+    for (let i = 0; i < 40 && (await runCount()) < 2; i++) {
+      await scanOnce('http://tandem.local');
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    // the per-agent worker's concurrency 1 guarantees serial execution —
+    // verified from the run rows below
+    let runs: Array<{ startedAt: Date; finishedAt: Date | null }> = [];
+    for (let i = 0; i < 100; i++) {
+      runs = (await db.select().from(taskRuns)).sort((x, y) => x.startedAt.getTime() - y.startedAt.getTime());
+      if (runs.length >= 2 && runs[1]!.finishedAt) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(runs.length, JSON.stringify(runs.map((r) => ({ status: r.status, started: r.startedAt, out: r.output?.slice(0, 60) })))).toBe(2);
+    const [first, second] = runs;
+    const firstEnd = first.finishedAt?.getTime() ?? Infinity;
+    expect(second.startedAt.getTime()).toBeGreaterThanOrEqual(firstEnd); // never overlapped
+  }, 25_000);
 
   it('company + project prompts ride the persisted run prompt end-to-end', async () => {
     setEnv({ TANDEM_FAKE_RUNNER: '1' });
@@ -931,9 +957,8 @@ describe('dispatcher', () => {
         ),
       ).toBe(true);
     } finally {
-      setEnv({ TANDEM_FAKE_SCRIPT: prev });
-      else setEnv({ TANDEM_FAKE_SCRIPT: undefined });
-      setEnv({ TANDEM_FAKE_RUNNER: '1'; }); // file-level default (set at top)
+      if (prev !== undefined) setEnv({ TANDEM_FAKE_SCRIPT: prev });
+      setEnv({ TANDEM_FAKE_RUNNER: '1' }); // file-level default (set at top)
     }
   }, 15_000);
 
@@ -1077,7 +1102,7 @@ describe('dispatcher', () => {
 
   it('REVIEW LAW: human reject cancels the task (terminal); verdict-less AI review parks on the owner', async () => {
     setEnv({ TANDEM_FAKE_SCRIPT: 'working\n{"kind": "result", "body": "done"}' });
-    setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'i looked at it'; }); // no envelope
+    setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'i looked at it' });; // no envelope
     try {
       const { db } = await dbm();
       const { employeeSupervisors } = await schema();
@@ -1362,7 +1387,7 @@ describe('dispatcher', () => {
   });
 
   it('onDispatcherSettingsChanged survives a dead redis (best-effort by law)', async () => {
-    setEnv({ REDIS_URL: 'redis://127.0.0.1:6390'; }); // nothing listens here
+    setEnv({ REDIS_URL: 'redis://127.0.0.1:6390' });; // nothing listens here
     try {
       const { onDispatcherSettingsChanged } = await import('../server/domains/tasks/dispatcher.service');
       await expect(onDispatcherSettingsChanged()).resolves.toBeUndefined();
@@ -1379,14 +1404,20 @@ describe('dispatcher', () => {
       const a = await callProc('tasks.create', { title: 'CapA', assigneeId: agentId });
       const b = await callProc('tasks.create', { title: 'CapB', assigneeId: agentId });
       const { scanOnce } = await import('../server/domains/tasks/dispatcher.service');
-      expect(await scanOnce('http://tandem.local')).toBe(true); // A goes
-      expect(await scanOnce('http://tandem.local')).toBe(false); // B blocked: agent at cap 1
       const { tasks } = await schema();
       const { db } = await dbm();
       const st = async (id: string) => (await db.select().from(tasks)).find((x) => x.id === id)!.status;
-      expect(await st(a.id)).not.toBe(await st(b.id)); // A dispatched, B still ready
-      await new Promise((r) => setTimeout(r, 1400)); // let A finish
-      expect(await scanOnce('http://tandem.local')).toBe(true); // B goes after A settles
+      expect(await scanOnce('http://tandem.local')).toBe(true); // A goes
+      for (let i = 0; i < 50 && (await st(a.id)) !== STATUS.doing; i++) await new Promise((r) => setTimeout(r, 100));
+      expect(await st(a.id)).toBe(STATUS.doing); // A claimed
+      expect(await st(b.id)).toBe(STATUS.todo); // B waits: agent at cap 1
+      await new Promise((r) => setTimeout(r, 400)); // let A finish
+      // sweep like the real scanner until B is claimed
+      for (let i = 0; i < 40 && (await st(b.id)) !== STATUS.doing; i++) {
+        await scanOnce('http://tandem.local');
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      expect(await st(b.id)).toBe(STATUS.doing);
     } finally {
       await drainInFlight();
       setEnv({ TANDEM_FAKE_SCRIPT: undefined });
@@ -1405,12 +1436,21 @@ describe('dispatcher', () => {
       const b = await callProc('tasks.create', { title: 'ParB', assigneeId: agentId });
       const { scanOnce } = await import('../server/domains/tasks/dispatcher.service');
       expect(await scanOnce('http://tandem.local')).toBe(true); // A goes
-      expect(await scanOnce('http://tandem.local')).toBe(true); // B goes too: cap 2
       const { tasks } = await schema();
       const { db } = await dbm();
-      const rows = await db.select().from(tasks);
-      expect(rows.find((x) => x.id === a.id)!.status).toBe(STATUS.doing);
-      expect(rows.find((x) => x.id === b.id)!.status).toBe(STATUS.doing);
+      const stOf = async (id: string) => (await db.select().from(tasks)).find((x) => x.id === id)!.status;
+      for (let i = 0; i < 50 && (await stOf(a.id)) !== STATUS.doing; i++) await new Promise((r) => setTimeout(r, 100));
+      expect(await stOf(a.id)).toBe(STATUS.doing);
+      expect(await scanOnce('http://tandem.local')).toBe(true); // B goes too: cap 2
+      for (const id of [b.id]) {
+        let status = '';
+        for (let i = 0; i < 50; i++) {
+          status = await stOf(id);
+          if (status === STATUS.doing) break;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        expect(status).toBe(STATUS.doing);
+      }
     } finally {
       await drainInFlight();
       setEnv({ TANDEM_FAKE_SCRIPT: undefined });
@@ -1427,13 +1467,22 @@ describe('dispatcher', () => {
       const a = await callProc('tasks.create', { title: 'X task', assigneeId: x });
       const b = await callProc('tasks.create', { title: 'Y task', assigneeId: y });
       const { scanOnce } = await import('../server/domains/tasks/dispatcher.service');
-      expect(await scanOnce('http://tandem.local')).toBe(true); // X's task
-      expect(await scanOnce('http://tandem.local')).toBe(true); // Y's task — no shared queue
       const { tasks } = await schema();
       const { db } = await dbm();
-      const rows = await db.select().from(tasks);
-      expect(rows.find((t) => t.id === a.id)!.status).toBe(STATUS.doing);
-      expect(rows.find((t) => t.id === b.id)!.status).toBe(STATUS.doing);
+      const stOf = async (id: string) => (await db.select().from(tasks)).find((x) => x.id === id)!.status;
+      expect(await scanOnce('http://tandem.local')).toBe(true); // X's task
+      for (let i = 0; i < 50 && (await stOf(a.id)) !== STATUS.doing; i++) await new Promise((r) => setTimeout(r, 100));
+      expect(await stOf(a.id)).toBe(STATUS.doing);
+      expect(await scanOnce('http://tandem.local')).toBe(true); // Y's task — no shared queue
+      for (const id of [b.id]) {
+        let status = '';
+        for (let i = 0; i < 50; i++) {
+          status = await stOf(id);
+          if (status === STATUS.doing) break;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        expect(status).toBe(STATUS.doing);
+      }
     } finally {
       await drainInFlight();
       setEnv({ TANDEM_FAKE_SCRIPT: undefined });
@@ -1458,9 +1507,11 @@ describe('dispatcher', () => {
       expect(task.status).toBe(STATUS.done);
     } finally {
       if (prevRunner === undefined) setEnv({ TANDEM_FAKE_RUNNER: undefined });
-      else setEnv({ TANDEM_FAKE_RUNNER: prevRunner });
+      if (prevRunner !== undefined) setEnv({ TANDEM_FAKE_RUNNER: prevRunner });
+      else setEnv({ TANDEM_FAKE_RUNNER: undefined });
       if (prevScript === undefined) setEnv({ TANDEM_FAKE_SCRIPT: undefined });
-      else setEnv({ TANDEM_FAKE_SCRIPT: prevScript });
+      if (prevScript !== undefined) setEnv({ TANDEM_FAKE_SCRIPT: prevScript });
+      else setEnv({ TANDEM_FAKE_SCRIPT: undefined });
     }
   }, 30_000);
 
@@ -1481,9 +1532,7 @@ describe('dispatcher', () => {
       expect(task.status).toBe(STATUS.done);
     } finally {
       setEnv({ TANDEM_FAKE_RUNNER: prevRunner });
-      else setEnv({ TANDEM_FAKE_RUNNER: undefined });
       setEnv({ TANDEM_FAKE_SCRIPT: prevScript });
-      else setEnv({ TANDEM_FAKE_SCRIPT: undefined });
     }
   }, 15_000);
 

@@ -3,11 +3,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './api-harness';
+import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { env, setEnv } from '../server/domains/kernel/env';
 import { ROLE, RUN_STATUS } from '../shared/enums';
 import { STATUS } from '../shared/status';
-import { resetSchema } from './helpers/pg';
 
 setEnv({ TANDEM_FAKE_RUNNER: '' });
 

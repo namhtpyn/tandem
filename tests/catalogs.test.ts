@@ -24,8 +24,8 @@ async function proc(path: string[], input?: unknown) {
   const context = buildServerContext(new Headers());
   (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => admin;
   (context as unknown as { session: typeof admin }).session = admin;
-  return (node['~orpc'] as { handler: (o: unknown) => Promise<unknown> }).handler({
-    input,
+  const { call } = await import('@orpc/server');
+  return await call(node as unknown as Parameters<typeof call>[0], input ?? {}, {
     context,
     signal: new AbortController().signal,
   });
@@ -93,17 +93,18 @@ describe('vault folders', () => {
     const created = (await proc(['vault', 'secrets', 'create'], { name: 'aws-key', value: 'sk-1', folderId: id })) as {
       id: string;
     };
-    let live = (await firstSnapshot(['vault', 'secrets', 'live'])) as Array<{ id: string; folder: string | null }>;
+    const snap = (await firstSnapshot(['vault', 'secrets', 'live'])) as { data: Array<{ id: string; folder: string | null }> };
+    let live = snap.data;
     expect(live.find((r) => r.id === created.id)?.folder).toBe('Prod');
 
     await proc(['vault', 'folders', 'remove'], { id });
-    live = (await firstSnapshot(['vault', 'secrets', 'live'])) as Array<{ id: string; folder: string | null }>;
+    live = ((await firstSnapshot(['vault', 'secrets', 'live'])) as { data: Array<{ id: string; folder: string | null }> }).data;
     expect(live.find((r) => r.id === created.id)?.folder).toBeNull();
 
     // update can move a secret into an existing folder
     const f2 = (await proc(['vault', 'folders', 'save'], { name: 'Other' })) as { id: string };
     await proc(['vault', 'secrets', 'update'], { id: created.id, name: 'aws-key', value: 'sk-2', folderId: f2.id });
-    live = (await firstSnapshot(['vault', 'secrets', 'live'])) as Array<{ id: string; folder: string | null }>;
+    live = ((await firstSnapshot(['vault', 'secrets', 'live'])) as { data: Array<{ id: string; folder: string | null }> }).data;
     expect(live.find((r) => r.id === created.id)?.folder).toBe('Other');
   });
 
@@ -142,7 +143,7 @@ describe('vault folders', () => {
     const { id } = (await proc(['vault', 'folders', 'save'], { name: 'Before' })) as { id: string };
     const s = (await proc(['vault', 'secrets', 'create'], { name: 'k', value: 'v', folderId: id })) as { id: string };
     await proc(['vault', 'folders', 'save'], { id, name: 'After' });
-    const live = (await firstSnapshot(['vault', 'secrets', 'live'])) as Array<{ id: string; folder: string | null }>;
+    const live = ((await firstSnapshot(['vault', 'secrets', 'live'])) as { data: Array<{ id: string; folder: string | null }> }).data;
     expect(live.find((r) => r.id === s.id)?.folder).toBe('After');
   });
 });

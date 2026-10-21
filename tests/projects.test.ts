@@ -2,10 +2,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
+import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { PROJECT_STATUS, ROLE } from '../shared/enums';
 import type { ProjectRow, TaskRow } from '../shared/types';
-import { resetSchema } from './helpers/pg';
 
 const admin = {
   id: '00000000-0000-7000-8000-cd5fca5e2d34',

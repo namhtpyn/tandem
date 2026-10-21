@@ -5,11 +5,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
+import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
 import { ROLE } from '../shared/enums';
 import { STATUS } from '../shared/status';
-import { resetSchema } from './helpers/pg';
 
 async function dbm() {
   return await import('../server/db');

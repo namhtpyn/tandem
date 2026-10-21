@@ -3,11 +3,11 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
+import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { ROLE } from '../shared/enums';
 import { STATUS } from '../shared/status';
 import type { TaskRow } from '../shared/types';
-import { resetSchema } from './helpers/pg';
 
 async function dbm() {
   return await import('../server/db');
