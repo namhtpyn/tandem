@@ -1,9 +1,7 @@
 import { eq } from 'drizzle-orm';
 // Model provider + model catalog (model_providers).
 // API keys are NEVER stored here — per-agent in the vault (fleet law).
-import { z } from 'zod';
 
-import { ALL_ENDPOINTS } from '#shared/api-styles';
 
 import { db } from '../../db';
 import { modelProviders } from '../../db/schema';
@@ -17,15 +15,6 @@ export type ModelProviderRow = {
   extraHeaders: Record<string, string> | null;
   notes: string | null;
 };
-
-export const modelProviderInputSchema = z.strictObject({
-  id: z.string().min(1).max(64).optional(),
-  label: z.string().min(1).max(64),
-  baseUrl: z.string().url(),
-  endpoints: z.array(z.enum(ALL_ENDPOINTS)).min(1),
-  extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
-  notes: z.string().max(500).optional(),
-});
 
 export async function listModelProviders() {
   const provs = await db.query.modelProviders.findMany();

@@ -44,8 +44,6 @@ export const providersRouter = os.router({
       }),
     )
     .handler(async ({ input }) => {
-      const { modelProviderInputSchema } = await import('./model-providers.service');
-      modelProviderInputSchema.parse(input);
       const id = input.id?.trim() || uuidv7();
       const now = new Date();
       const values = {
