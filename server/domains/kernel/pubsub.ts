@@ -2,6 +2,7 @@
 // @orpc/publisher. Null when REDIS_URL is unset — the local memory bus alone
 // already serves single-replica deployments.
 import { RedisPublisher } from '@orpc/publisher/redis';
+import { env } from './env';
 
 export type PubsubDomain = {
   publish: (channel: string, message: string) => Promise<void>;

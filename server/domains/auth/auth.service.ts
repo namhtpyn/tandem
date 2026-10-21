@@ -14,13 +14,14 @@ import { eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { db } from '../../db';
+import { env as sharedEnv } from '../kernel/env';
 import { user as userTable } from '../../db/schema';
 import { authSchema } from '../../db/schema';
 import { getSettings } from '../settings/settings.service';
 import { getOidcProviders, type OidcProvider } from './oidc.service';
 import { ROLE, type Role } from '#shared/enums';
 
-const env = process.env;
+const env = sharedEnv;
 
 export type AuthPolicy = {
   oidcEnabled: boolean;

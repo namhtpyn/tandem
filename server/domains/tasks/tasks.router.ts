@@ -24,6 +24,7 @@ import { confirmProposal, rejectProposal } from './proposals.service';
 import { listReviews } from './review.service';
 import { dispatchTask, listRuns } from './runner.service';
 import { CHANGE_RESOURCE, CHANGE_ACTION, type RunStatus, type ActivityKind} from '#shared/enums';
+import { env } from '../kernel/env';
 import {
   askQuestion,
   forwardQuestion,
@@ -486,7 +487,7 @@ export const tasksRouter = os.router({
       const selfId = session?.user?.id ?? null;
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
       return await runWorkflow(async () => {
-        const tandemUrl = process.env.TANDEM_PUBLIC_URL || 'http://localhost:3000';
+        const tandemUrl = env.TANDEM_PUBLIC_URL ?? 'http://localhost:3000';
         const handle = await dispatchTask(input.taskId, tandemUrl);
         return { runId: handle.runId };
       });

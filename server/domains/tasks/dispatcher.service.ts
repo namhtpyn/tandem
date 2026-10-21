@@ -12,6 +12,7 @@ import { publishChange } from '../kernel/change-bus';
 import { redisQueue } from '../kernel/queue';
 import { dispatchTask } from './runner.service';
 import { CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS} from '#shared/enums';
+import { env } from '../kernel/env';
 
 const inFlight = new Map<string, Set<Promise<unknown>>>(); // employeeId -> live run promises
 
@@ -223,7 +224,7 @@ export async function onDispatcherSettingsChanged(): Promise<void> {
  * sweep for tasks queued while redis was down. */
 export async function maybeStartDispatcher(): Promise<(() => void) | null> {
   if (process.env.TANDEM_NO_DISPATCHER) return null;
-  const url = process.env.TANDEM_PUBLIC_URL || 'http://localhost:3000';
+  const url = env.TANDEM_PUBLIC_URL ?? 'http://localhost:3000';
   const hub = await redisQueue();
   if (hub) {
     await syncDispatchWorkers(hub);

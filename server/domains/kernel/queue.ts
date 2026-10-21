@@ -1,6 +1,7 @@
 // Message-queue domain: BullMQ per-agent dispatch queues (durable, retrying).
 // Null when REDIS_URL is unset — callers keep their in-memory fallback paths.
 import type { ChangeAction, ChangeResource } from './change-bus';
+import { env } from './env';
 
 export type QueueDomain = {
   queue: <T>(

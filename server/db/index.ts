@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 
 import { installRqbExtensions } from './rqb-extensions';
+import { env } from '../domains/kernel/env';
 import { join } from 'node:path';
 
 // Postgres client (postgres.js) + drizzle rc (Relations v2) + boot-applied migrations.
@@ -15,14 +16,7 @@ import postgres from 'postgres';
 
 import { user, session, account, verification, settings, relations } from './schema';
 
-const url = process.env.DATABASE_URL;
-/* v8 ignore start -- unit tests exercise this via a child process */
-if (!url) {
-  // eslint-disable-next-line no-console
-  console.error('[tandem] DATABASE_URL is required');
-  process.exit(1);
-}
-/* v8 ignore stop */
+const url = env.DATABASE_URL;
 
 // runner-side client: prepare false keeps boot-time DDL safe with pgbouncer-ish pools
 export const sqlClient = postgres(url, {

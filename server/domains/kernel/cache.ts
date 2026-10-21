@@ -3,6 +3,7 @@
 import { createCache } from 'cache-manager';
 import { Keyv } from 'keyv';
 import KeyvRedis from '@keyv/redis';
+import { env } from './env';
 
 export type CacheDomain = {
   get: <T>(key: string) => Promise<T | undefined>;
