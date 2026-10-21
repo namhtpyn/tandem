@@ -1,3 +1,10 @@
+## [2.37.1](https://github.com/namhtpyn/tandem/compare/v2.37.0...v2.37.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **tests:** finish the merge-era suite repair — 618/618 ([048a1fa](https://github.com/namhtpyn/tandem/commit/048a1fa46c9718873d4832c960b23575bc0b6c14))
+
 # [2.37.0](https://github.com/namhtpyn/tandem/compare/v2.36.0...v2.37.0) (2026-10-21)
 
 
