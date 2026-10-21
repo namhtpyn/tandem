@@ -8,6 +8,7 @@ import { v7 as uuidv7 } from 'uuid';
 import { db } from '../db';
 import { applyMigrations } from '../db';
 import { user, account } from '../db/schema';
+import { ROLE } from '#shared/enums';
 
 // Bun.serve idle timeout, in the code (was stack env). 255s = Bun's max: without it
 // the default (10s) kills idle SSE feeds mid-stream. Runs before Bun.serve reads it
@@ -39,7 +40,7 @@ export default defineNitroPlugin(async () => {
     emailVerified: true,
     createdAt: now,
     updatedAt: now,
-    role: 'admin',
+    role: ROLE.ADMIN,
   });
   // password hash via better-auth's own hasher for compatibility
   const { hashPassword } = await import('../domains/auth/auth-hash.util');

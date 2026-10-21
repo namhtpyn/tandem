@@ -59,6 +59,7 @@ export type RunEnvelope = { kind: EnvelopeKind; text: string };
 // re-exported here so the UI thread and the runner share one implementation.
 // (the file's own EnvelopeKind/RunEnvelope below include the 'run' thread kind)
 import { parseRunEnvelope } from '#shared/run-verdict';
+import { PROPOSAL_KIND } from '~/../shared/enums';
 export { parseRunEnvelope, RunVerdictSchema } from '#shared/run-verdict';
 
 /** Parse routing proposals from run output (structural markers, scanned anywhere):
@@ -67,8 +68,8 @@ export { parseRunEnvelope, RunVerdictSchema } from '#shared/run-verdict';
  * These are proposals only — the confirm flow (human/decision model) executes them. */
 export type SubtaskProposalItem = { title: string; description?: string; assigneeName?: string };
 export type RoutingProposal =
-  | { kind: 'subtasks'; items: SubtaskProposalItem[] }
-  | { kind: 'reassign'; targetName: string; reason?: string };
+  | { kind: typeof PROPOSAL_KIND.SUBTASKS; items: SubtaskProposalItem[] }
+  | { kind: typeof PROPOSAL_KIND.REASSIGN; targetName: string; reason?: string };
 
 export function parseRoutingProposals(output: string | null | undefined): RoutingProposal[] {
   if (!output) return [];
@@ -84,14 +85,14 @@ export function parseRoutingProposals(output: string | null | undefined): Routin
           return { title: seg[0]!.slice(0, 200), description: seg[1] || undefined, assigneeName: seg[2] || undefined };
         })
         .filter((i) => i.title.length > 0);
-      if (items.length) out.push({ kind: 'subtasks', items });
+      if (items.length) out.push({ kind: PROPOSAL_KIND.SUBTASKS, items });
       continue;
     }
     const re = line.match(/^\[REASSIGN\]\s*(.+)$/);
     if (re) {
       const m = re[1]!.split(/\s+—\s+|\s+--\s+/);
       const targetName = m[0]!.trim(); // the marker regex guarantees non-empty here
-      out.push({ kind: 'reassign', targetName, reason: m[1]?.trim() });
+      out.push({ kind: PROPOSAL_KIND.REASSIGN, targetName, reason: m[1]?.trim() });
     }
   }
   return out;

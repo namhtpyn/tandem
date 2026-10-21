@@ -10,6 +10,7 @@ import { resolveAuthPolicy, anyUserExists, getAuth, rebuildAuth } from '../serve
 import { saveOidcProviders } from '../server/domains/auth/oidc.service';
 import { setSetting } from '../server/domains/settings/settings.service';
 import { resetSchema } from './helpers/pg';
+import { ROLE } from '../shared/enums';
 
 describe('auth policy', () => {
   beforeEach(async () => {
@@ -116,7 +117,7 @@ describe('auth instance', () => {
       emailVerified: true,
       createdAt: new Date(),
       updatedAt: new Date(),
-      role: 'viewer',
+      role: ROLE.VIEWER,
     });
     expect(await anyUserExists()).toBe(true);
   });

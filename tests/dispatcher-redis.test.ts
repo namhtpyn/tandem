@@ -7,6 +7,7 @@ import { applyMigrations } from '../server/db/index';
 import { STATUS } from '../shared/status';
 import { resetSchema } from './helpers/pg';
 import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
+import { ROLE, RUN_STATUS } from '../shared/enums';
 
 const REDIS_URL = 'redis://127.0.0.1:6399';
 
@@ -34,7 +35,7 @@ const dispatched: string[] = [];
 vi.mock('../server/domains/tasks/runner.service', () => ({
   dispatchTask: async (taskId: string) => {
     dispatched.push(taskId);
-    return { finished: Promise.resolve({ status: 'done', exitCode: 0 }) };
+    return { finished: Promise.resolve({ status: RUN_STATUS.DONE, exitCode: 0 }) };
   },
 }));
 
@@ -56,7 +57,7 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
       name: 'Admin',
       email: 'admin@tandem.local',
       emailVerified: true,
-      role: 'admin',
+      role: ROLE.ADMIN,
       createdAt: new Date(),
       updatedAt: new Date(),
     });

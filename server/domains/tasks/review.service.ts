@@ -16,10 +16,10 @@ import { publishChange } from '../kernel/kernel';
 import { spawnObligation, cancelObligations, cancelAllObligations, resolveObligation } from './obligations.service';
 import { dispatchTask } from './runner.service';
 
-export type ReviewVerdict = 'approved' | 'change_requested' | 'rejected';
+export type ReviewVerdict = Exclude<ReviewStatus, typeof REVIEW_STATUS.PENDING>;
 
 import { STATUS } from '#shared/status';
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { CHANGE_RESOURCE, CHANGE_ACTION, REVIEW_STATUS, OBLIGATION_ROLE, ACTIVITY_KIND, type ReviewStatus } from '#shared/enums';
 
 const TODO_STATUS = STATUS.todo;
 const IN_REVIEW_STATUS = STATUS.inReview;
@@ -56,8 +56,8 @@ export async function openReviewRound(taskId: string, reviewers: string[], resul
   const round = (await currentRound(taskId)) + 1;
   const now = new Date();
   for (const reviewerId of reviewers) {
-    await db.insert(taskReviews).values({ id: uuidv7(), taskId, reviewerId, round, status: 'pending', createdAt: now });
-    await spawnObligation(taskId, reviewerId, 'approval', now);
+    await db.insert(taskReviews).values({ id: uuidv7(), taskId, reviewerId, round, status: REVIEW_STATUS.PENDING, createdAt: now });
+    await spawnObligation(taskId, reviewerId, OBLIGATION_ROLE.APPROVAL, now);
   }
   await logActivity(
     taskId,
@@ -82,8 +82,8 @@ export async function openRoundLive(taskId: string): Promise<boolean> {
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
   return (
     rows.length > 0 &&
-    rows.some((r) => r.status === 'pending') &&
-    !rows.some((r) => r.status === 'change_requested' || r.status === 'rejected')
+    rows.some((r) => r.status === REVIEW_STATUS.PENDING) &&
+    !rows.some((r) => r.status === REVIEW_STATUS.CHANGE_REQUESTED || r.status === REVIEW_STATUS.REJECTED)
   );
 }
 
@@ -110,7 +110,7 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
   const rows = await db
     .select()
     .from(taskReviews)
-    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round), eq(taskReviews.status, 'pending')));
+    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
   const aiRows = await db.select({ userId: aiEmployees.userId }).from(aiEmployees);
   const aiIds = new Set(aiRows.map((r) => r.userId));
   const body = resultBody ?? (await latestSubmittedBody(taskId));
@@ -129,7 +129,7 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
     if (running) continue;
     try {
       await dispatchTask(taskId, 'http://tandem.internal', { reviewBy: row.reviewerId, resultBody: body });
-      await logActivity(taskId, 'status', null, `review turn dispatched to reviewer ${row.reviewerId}`, {
+      await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review turn dispatched to reviewer ${row.reviewerId}`, {
         reviewTurn: true,
         reviewerId: row.reviewerId,
         round,
@@ -164,33 +164,33 @@ export async function recordVerdict(
       .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round), eq(taskReviews.reviewerId, reviewerId)))
   )[0];
   if (!row) throw new Error('not a reviewer in the current round');
-  if (row.status !== 'pending') throw new Error('verdict already recorded for this round');
+  if (row.status !== REVIEW_STATUS.PENDING) throw new Error('verdict already recorded for this round');
   await db
     .update(taskReviews)
     .set({ status: verdict, note: note || null, decidedAt: new Date(), source })
     .where(eq(taskReviews.id, row.id));
   /* v8 ignore next -- the obligation always exists for a verdict author; the
    * catch only guards a race with a concurrent round close */
-  await resolveObligation(taskId, reviewerId, 'approval', reviewerId).catch(() => {});
+  await resolveObligation(taskId, reviewerId, OBLIGATION_ROLE.APPROVAL, reviewerId).catch(() => {});
 
   const roundRows = await db
     .select()
     .from(taskReviews)
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
-  const all = roundRows.filter((r) => r.status === 'approved');
-  const unanimous = roundRows.length > 0 && roundRows.every((r) => r.status === 'approved');
+  const all = roundRows.filter((r) => r.status === REVIEW_STATUS.APPROVED);
+  const unanimous = roundRows.length > 0 && roundRows.every((r) => r.status === REVIEW_STATUS.APPROVED);
 
-  if (verdict === 'rejected') {
+  if (verdict === REVIEW_STATUS.REJECTED) {
     // HUMAN-only terminal verdict: task cancelled, round closed
-    await cancelAllObligations(taskId, 'approval');
+    await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
     await db.update(tasks).set({ status: CANCELLED_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     /* v8 ignore next -- tests always pass a note; the fallback text is defensive */
     await logActivity(taskId, 'verdict', reviewerId, note || 'rejected — task cancelled', { rejected: true, round });
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'cancelled' };
   }
-  if (verdict === 'change_requested') {
-    await cancelAllObligations(taskId, 'approval');
+  if (verdict === REVIEW_STATUS.CHANGE_REQUESTED) {
+    await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
     // back to ready so the assignee resumes with the note riding the next brief
     await db.update(tasks).set({ status: TODO_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     /* v8 ignore next -- tests always pass a note; the fallback text is defensive */
@@ -200,13 +200,13 @@ export async function recordVerdict(
   }
   // approved
   if (unanimous) {
-    await cancelObligations(taskId, 'approval');
+    await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
     await db.update(tasks).set({ status: DONE_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
-    await logActivity(taskId, 'verdict', reviewerId, note || 'approved', { approved: true, unanimous: true, round });
+    await logActivity(taskId, 'verdict', reviewerId, note || REVIEW_STATUS.APPROVED, { approved: true, unanimous: true, round });
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'done' };
   }
-  await logActivity(taskId, 'verdict', reviewerId, note || 'approved', { approved: true, round });
+  await logActivity(taskId, 'verdict', reviewerId, note || REVIEW_STATUS.APPROVED, { approved: true, round });
   return { outcome: 'waiting' };
 }
 
@@ -216,7 +216,7 @@ export async function listReviews(taskId: string) {
   return rows.map((r) => ({
     reviewerId: r.reviewerId,
     round: r.round,
-    status: r.status as ReviewVerdict | 'pending',
+    status: r.status as ReviewStatus,
     note: r.note,
     source: r.source,
     decidedAt: r.decidedAt?.toISOString() ?? null,

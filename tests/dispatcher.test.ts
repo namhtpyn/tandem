@@ -124,10 +124,11 @@ import './api-harness';
 import { applyMigrations } from '../server/db/index';
 import { STATUS } from '../shared/status';
 import { resetSchema } from './helpers/pg';
+import { OBLIGATION_ROLE, OBLIGATION_STATUS, PROPOSAL_KIND, PROPOSAL_STATUS, REVIEW_STATUS, ROLE, RUN_STATUS, SECRET_USAGE } from '../shared/enums';
 
 process.env.TANDEM_FAKE_RUNNER = '1';
 
-const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' };
+const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
 
 type RunRow = {
   id: string;
@@ -184,7 +185,7 @@ async function mkAiAgent() {
   return id;
 }
 
-/** wait until NO run row is still 'running' (async review-settle must not leak
+/** wait until NO run row is still RUN_STATUS.RUNNING (async review-settle must not leak
  * writes into the next test's fresh schema — the 42P01 teardown race) */
 async function drainRuns(maxMs = 8000) {
   const { db } = await dbm();
@@ -194,7 +195,7 @@ async function drainRuns(maxMs = 8000) {
   while (stable < 3 && Date.now() - t0 < maxMs) {
     // settle cascades (submit -> review dispatch -> new run) can spawn a NEW running
     // row moments after the last one flipped — require 3 consecutive zero polls
-    const running = (await db.select().from(taskRuns)).filter((r) => r.status === 'running');
+    const running = (await db.select().from(taskRuns)).filter((r) => r.status === RUN_STATUS.RUNNING);
     stable = running.length === 0 ? stable + 1 : 0;
     await new Promise((r) => setTimeout(r, 200));
   }
@@ -222,7 +223,7 @@ beforeEach(async () => {
     name: 'Admin',
     email: 'admin@tandem.local',
     emailVerified: true,
-    role: 'admin',
+    role: ROLE.ADMIN,
     createdAt: new Date(),
     updatedAt: new Date(),
   });
@@ -294,7 +295,7 @@ describe('runner service guards', () => {
     const taskRow = (await d.db.select().from(sch.tasks))[0]!;
     const handle = await dispatchTask(taskRow.id, 'http://t.local');
     const r = await handle.finished;
-    expect(r.status).toBe('done');
+    expect(r.status).toBe(RUN_STATUS.DONE);
   }, 10_000);
 });
 
@@ -336,7 +337,7 @@ describe('dispatcher extras', () => {
       taskId: t.id,
       employeeId: agentId,
       environmentId: 'env-1',
-      status: 'done',
+      status: RUN_STATUS.DONE,
       exitCode: 0,
       output: '',
       startedAt: new Date(base),
@@ -347,7 +348,7 @@ describe('dispatcher extras', () => {
       taskId: t.id,
       employeeId: agentId,
       environmentId: 'env-1',
-      status: 'running',
+      status: RUN_STATUS.RUNNING,
       output: '',
       startedAt: new Date(),
     });
@@ -365,13 +366,13 @@ describe('dispatcher extras', () => {
     const { taskRuns } = await schema();
     await db
       .insert(taskRuns)
-      .values({ id: 'r-x', taskId: t.id, employeeId: agentId, environmentId: 'env-1', status: 'running', output: '' });
+      .values({ id: 'r-x', taskId: t.id, employeeId: agentId, environmentId: 'env-1', status: RUN_STATUS.RUNNING, output: '' });
     const iter = await callProc('tasks.runs', { taskId: t.id });
     const snap = await iter.next();
     await iter.return?.();
     const rows = snap.value as RunRow[];
     expect(rows[0].finishedAt).toBeNull();
-    expect(rows[0].status).toBe('running');
+    expect(rows[0].status).toBe(RUN_STATUS.RUNNING);
   });
 });
 
@@ -392,7 +393,7 @@ describe('runner ssh-config paths', () => {
     });
     await db
       .update(environments)
-      .set({ secretId: 'sec-pw', secretUsage: 'password' })
+      .set({ secretId: 'sec-pw', secretUsage: SECRET_USAGE.PASSWORD })
       .where(eq(environments.id, 'env-1'));
     await db.insert(modelProviders).values({ id: 'prov-1', label: 'P1', baseUrl: 'https://api.example.com' });
     await db.insert(vaultSecrets).values({
@@ -434,7 +435,7 @@ describe('runner ssh-config paths', () => {
     const taskRow = (await d.db.select().from(sch.tasks))[0]!;
     const h = await dispatchTask(taskRow.id, 'http://t.local');
     const r = await h.finished;
-    expect(r.status).toBe('done');
+    expect(r.status).toBe(RUN_STATUS.DONE);
     const { taskRuns } = await schema();
     const run = (await d.db.select().from(taskRuns))[0];
     expect(run.output.split('\n').length).toBeLessThanOrEqual(100);
@@ -446,13 +447,13 @@ describe('runner failure + fallback arms', () => {
     const agentId = await mkAiAgent();
     const t = await callProc('tasks.create', { title: 'Failing', assigneeId: agentId });
     // force failure: fake runner that ends non-zero — monkeypatch fakeRun via env? simplest: call
-    // dispatchTask, then simulate finish('failed') by driving the run row through the service API:
+    // dispatchTask, then simulate finish(RUN_STATUS.FAILED) by driving the run row through the service API:
     const { dispatchTask } = await import('../server/domains/tasks/runner.service');
     const handle = await dispatchTask(t.id, 'http://t.local');
     // while running, mark the underlying run failed by making the fake script fail: we can't reach
     // in; instead exercise the failed path via ssh-exec mock suite. Here: wait for success.
     const r = await handle.finished;
-    expect(r.status).toBe('done');
+    expect(r.status).toBe(RUN_STATUS.DONE);
   }, 10_000);
 
   it('long stored outputs are returned in full by the runs procs', async () => {
@@ -471,7 +472,7 @@ describe('runner failure + fallback arms', () => {
       taskId: taskRow.id,
       employeeId: agentId,
       environmentId: 'env-1',
-      status: 'done',
+      status: RUN_STATUS.DONE,
       exitCode: 0,
       output: Array.from({ length: 150 }, (_, i) => `line-${i}`).join('\n'),
       finishedAt: new Date(),
@@ -547,7 +548,7 @@ describe('runner failure + fallback arms', () => {
     });
     await db
       .update(environments)
-      .set({ secretId: 'sec-key', secretUsage: 'ssh-key' })
+      .set({ secretId: 'sec-key', secretUsage: SECRET_USAGE.SSH_KEY })
       .where(eq(environments.id, 'env-1'));
     await callProc('tasks.create', { title: 'KeyAuth', assigneeId: '00000000-0000-7000-8000-79d931929132' });
     const d = await dbm();
@@ -604,11 +605,11 @@ describe('runner real-ssh path (mocked ssh2)', () => {
       const { dispatchTask } = await import('../server/domains/tasks/runner.service');
       const handle = await dispatchTask(t.id, 'http://t.local');
       const res = await handle.finished;
-      expect(res.status).toBe('done');
+      expect(res.status).toBe(RUN_STATUS.DONE);
       const d = await dbm();
       const sch = await schema();
       const run = (await d.db.select().from(sch.taskRuns))[0]!;
-      expect(run.status).toBe('done');
+      expect(run.status).toBe(RUN_STATUS.DONE);
       expect(run.sessionId).toBe('sess-acp-1'); // session lives on the run (per task x employee)
       expect(run.output).toContain('{"kind": "result", "body": "all done"}');
 
@@ -623,7 +624,7 @@ describe('runner real-ssh path (mocked ssh2)', () => {
       try {
         const handle2 = await dispatchTask(t.id, 'http://t.local');
         const res2 = await handle2.finished;
-        expect(res2.status).toBe('done');
+        expect(res2.status).toBe(RUN_STATUS.DONE);
         expect(seen2).toContain('session/resume');
         expect(seen2).not.toContain('session/new');
       } finally {
@@ -653,12 +654,12 @@ describe('runner real-ssh path (mocked ssh2)', () => {
       for (let i = 0; i < 40 && FakeClient.last === stale; i++) await new Promise((r) => setTimeout(r, 5));
       FakeClient.last!.emitError(new Error('ECONNREFUSED test'));
       const res = await handle.finished;
-      expect(res.status).toBe('failed');
+      expect(res.status).toBe(RUN_STATUS.FAILED);
       await new Promise((r) => setTimeout(r, 100)); // finish() runs async after resolve in the err path
       const task = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
       expect(task.status).toBe(STATUS.todo);
       const run = (await db.select().from(taskRuns))[0]!;
-      expect(run.status).toBe('failed');
+      expect(run.status).toBe(RUN_STATUS.FAILED);
       expect(run.output).toContain('ECONNREFUSED test');
     } finally {
       if (prev !== undefined) process.env.TANDEM_FAKE_RUNNER = prev;
@@ -677,7 +678,7 @@ describe('full output via long fake script', () => {
       const { dispatchTask } = await import('../server/domains/tasks/runner.service');
       const handle = await dispatchTask(t.id, 'http://t.local');
       const res = await handle.finished;
-      expect(res.status).toBe('done');
+      expect(res.status).toBe(RUN_STATUS.DONE);
       const { db } = await dbm();
       const { taskRuns } = await schema();
       const run = (await db.select().from(taskRuns))[0]!;
@@ -830,13 +831,13 @@ describe('dispatcher', () => {
     expect(taskRow.status).toBe(STATUS.doing);
     const run = (await db.select().from(taskRuns))[0];
     expect(run).toBeTruthy();
-    expect(run.status).toBe('running');
+    expect(run.status).toBe(RUN_STATUS.RUNNING);
     // wait for the fake run to finish, then the task is submitted (done: no reviewers)
     await new Promise((r) => setTimeout(r, 400));
     const after = (await db.select().from(tasks))[0];
     expect(after.status).toBe(STATUS.done);
     const runAfter = (await db.select().from(taskRuns))[0];
-    expect(runAfter.status).toBe('done');
+    expect(runAfter.status).toBe(RUN_STATUS.DONE);
     expect(runAfter.exitCode).toBe(0);
     expect(runAfter.output).toContain('RESULT');
   }, 10_000);
@@ -917,7 +918,7 @@ describe('dispatcher', () => {
       });
       const { dispatchTask } = await import('../server/domains/tasks/runner.service');
       const handle = await dispatchTask(t.id, 'http://tandem.local');
-      expect((await handle.finished).status).toBe('done');
+      expect((await handle.finished).status).toBe(RUN_STATUS.DONE);
       const { tasks, taskObligations } = await schema();
       const task = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
       expect(task.status).toBe(STATUS.waitingAnswer);
@@ -925,7 +926,7 @@ describe('dispatcher', () => {
       expect(
         obl.some(
           (o) =>
-            o.role === 'answer' && o.status === 'pending' && o.employeeId === '00000000-0000-7000-8000-820caae75a5f',
+            o.role === OBLIGATION_ROLE.ANSWER && o.status === OBLIGATION_STATUS.PENDING && o.employeeId === '00000000-0000-7000-8000-820caae75a5f',
         ),
       ).toBe(true);
     } finally {
@@ -964,14 +965,14 @@ describe('dispatcher', () => {
       expect(row.reviewers).toEqual(['00000000-0000-7000-8000-b09d13ad1a84']);
       const rev = (await db.select().from(taskReviews)).filter((r) => r.taskId === t.id);
       expect(rev).toHaveLength(1);
-      expect(rev[0]!.status).toBe('pending'); // human: waits for the card, no auto run
+      expect(rev[0]!.status).toBe(OBLIGATION_STATUS.PENDING); // human: waits for the card, no auto run
       expect(rev[0]!.round).toBe(1);
       expect((await db.select().from(taskRuns)).filter((r) => r.taskId === t.id)).toHaveLength(1); // assignee run only
       const obl = (await db.select().from(taskObligations)).filter((o) => o.taskId === t.id);
       expect(
         obl.some(
           (o) =>
-            o.role === 'approval' && o.employeeId === '00000000-0000-7000-8000-b09d13ad1a84' && o.status === 'pending',
+            o.role === OBLIGATION_ROLE.APPROVAL && o.employeeId === '00000000-0000-7000-8000-b09d13ad1a84' && o.status === OBLIGATION_STATUS.PENDING,
         ),
       ).toBe(true);
     } finally {
@@ -1006,7 +1007,7 @@ describe('dispatcher', () => {
       expect(done).toBe(true);
       const rev = (await db.select().from(taskReviews)).filter((r) => r.taskId === t.id);
       expect(rev).toHaveLength(1);
-      expect(rev[0]!.status).toBe('approved');
+      expect(rev[0]!.status).toBe(REVIEW_STATUS.APPROVED);
       expect(rev[0]!.source).toBe('ai');
       expect(rev[0]!.note).toContain('nice work');
       const runs = (await db.select().from(taskRuns)).filter((r) => r.taskId === t.id);
@@ -1054,7 +1055,7 @@ describe('dispatcher', () => {
       }
       expect(back).toBe(true); // ready: the assignee resumes with the feedback
       const rev = (await db.select().from(taskReviews)).filter((r) => r.taskId === t.id);
-      expect(rev[0]!.status).toBe('change_requested');
+      expect(rev[0]!.status).toBe(REVIEW_STATUS.CHANGE_REQUESTED);
       expect(rev[0]!.note).toContain('e2e coverage');
       // resubmit after rework: round 2 opens
       process.env.TANDEM_FAKE_SCRIPT = 'fixed\n{"kind": "result", "body": "v2 with e2e"}';
@@ -1099,7 +1100,7 @@ describe('dispatcher', () => {
       }
       expect(waiting).toBe(true); // never silently approved
       const rev = (await db.select().from(taskReviews)).filter((r) => r.taskId === t.id);
-      expect(rev[0]!.status).toBe('pending'); // verdict row untouched
+      expect(rev[0]!.status).toBe(OBLIGATION_STATUS.PENDING); // verdict row untouched
 
       // answer the question -> back to in-review, review re-arms
       const { answerQuestion } = await import('../server/domains/tasks/workflow.service');
@@ -1114,7 +1115,7 @@ describe('dispatcher', () => {
         const after = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
         expect(after.status).toBe(STATUS.cancelled);
         const revAfter = (await db.select().from(taskReviews)).filter((r) => r.taskId === t.id);
-        expect(revAfter.some((r) => r.status === 'rejected')).toBe(true);
+        expect(revAfter.some((r) => r.status === PROPOSAL_STATUS.REJECTED)).toBe(true);
       }
     } finally {
       await drainRuns();
@@ -1152,7 +1153,7 @@ describe('dispatcher', () => {
     ).rejects.toThrow(/not an AI employee/i);
 
     // recordVerdict guards: no round yet / double verdict
-    await expect(recordVerdict(t.id, '00000000-0000-7000-8000-28d0c73631ec', 'approved', '', 'human')).rejects.toThrow(
+    await expect(recordVerdict(t.id, '00000000-0000-7000-8000-28d0c73631ec', REVIEW_STATUS.APPROVED, '', 'human')).rejects.toThrow(
       /no open review round/i,
     );
     expect(await currentRound(t.id)).toBe(0);
@@ -1212,7 +1213,7 @@ describe('dispatcher', () => {
       port: '2222',
       username: '00000000-0000-7000-8000-51e69892ab49',
       secretId: 'sec-pw',
-      secretUsage: 'password',
+      secretUsage: SECRET_USAGE.PASSWORD,
     });
     await db.insert(user).values({
       id: '00000000-0000-7000-8000-fe1cc20db501',
@@ -1249,7 +1250,7 @@ describe('dispatcher', () => {
     expect(done).toBe(true);
     // double-verdict guard on the decided round
     await expect(
-      recordVerdict(t2.id, '00000000-0000-7000-8000-fe1cc20db501', 'approved', 'again', 'human'),
+      recordVerdict(t2.id, '00000000-0000-7000-8000-fe1cc20db501', REVIEW_STATUS.APPROVED, 'again', 'human'),
     ).rejects.toThrow(/already recorded|no open review round/i);
     // the review brief carried the parent description
     const { taskRuns } = await schema();
@@ -1313,12 +1314,12 @@ describe('dispatcher', () => {
       expect(waiting).toBe(true);
       // while the review turn's run is settling, a manual re-arm skips live runs
       const { dispatchAiReviewTurns } = await import('../server/domains/tasks/review.service');
-      await db.update(taskRuns).set({ status: 'running' }).where(eq(taskRuns.taskId, t.id));
+      await db.update(taskRuns).set({ status: RUN_STATUS.RUNNING }).where(eq(taskRuns.taskId, t.id));
       await dispatchAiReviewTurns(t.id); // running arm: no extra run row appears
       const runCount = (await db.select().from(taskRuns)).filter(
         (r) => r.taskId === t.id && r.employeeId === ash,
       ).length;
-      await db.update(taskRuns).set({ status: 'done' }).where(eq(taskRuns.taskId, t.id));
+      await db.update(taskRuns).set({ status: RUN_STATUS.DONE }).where(eq(taskRuns.taskId, t.id));
       // answer -> re-arm without an explicit body (fetches from activity)
       process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'ok now\n{"kind": "result", "body": "approved after the answer"}';
       const { answerQuestion } = await import('../server/domains/tasks/workflow.service');
@@ -1449,7 +1450,7 @@ describe('dispatcher', () => {
       const t = await callProc('tasks.create', { title: 'J task', assigneeId: agentId });
       const { dispatchTask } = await import('../server/domains/tasks/runner.service');
       const handle = await dispatchTask(t.id, 'http://tandem.local');
-      expect((await handle.finished).status).toBe('done');
+      expect((await handle.finished).status).toBe(RUN_STATUS.DONE);
       const { tasks } = await schema();
       const { db } = await dbm();
       const task = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
@@ -1472,7 +1473,7 @@ describe('dispatcher', () => {
       const t = await callProc('tasks.create', { title: 'R task', assigneeId: agentId });
       const { dispatchTask } = await import('../server/domains/tasks/runner.service');
       const handle = await dispatchTask(t.id, 'http://tandem.local');
-      expect((await handle.finished).status).toBe('done');
+      expect((await handle.finished).status).toBe(RUN_STATUS.DONE);
       const { tasks } = await schema();
       const { db } = await dbm();
       const task = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
@@ -1496,7 +1497,7 @@ describe('dispatcher', () => {
     await iter.return?.();
     const rows = snap.value as RunRow[];
     expect(rows.length).toBeGreaterThan(0);
-    expect(rows[0].status).toBe('done');
+    expect(rows[0].status).toBe(RUN_STATUS.DONE);
     expect(rows[0].output).toContain('working');
     // the exact prompt (brief) sent is persisted and surfaced with the run
     expect(typeof rows[0].prompt).toBe('string');
@@ -1513,10 +1514,10 @@ describe('dispatcher', () => {
     const { taskRuns } = await schema();
     await db
       .insert(taskRuns)
-      .values({ id: 'run-legacy', taskId: t.id, employeeId: agentId, status: 'done', output: 'old' });
+      .values({ id: 'run-legacy', taskId: t.id, employeeId: agentId, status: RUN_STATUS.DONE, output: 'old' });
     await db
       .insert(taskRuns)
-      .values({ id: 'run-ghost', taskId: t.id, employeeId: null, status: 'done', output: 'old' });
+      .values({ id: 'run-ghost', taskId: t.id, employeeId: null, status: RUN_STATUS.DONE, output: 'old' });
     const rows = (await callProc('tasks.runsList', { taskId: t.id })) as RunRow[];
     expect(rows).toHaveLength(2);
     // newest first: the employeeless ghost run lands first
@@ -1560,7 +1561,7 @@ describe('dispatcher', () => {
     // dispatchTask then mark the run failed through the service's finish contract:
     const handle = await dispatchTask(t.id, 'http://tandem.local');
     const r = await handle.finished;
-    expect(r.status).toBe('done'); // fake runner succeeds; failure path exercised in service unit below
+    expect(r.status).toBe(RUN_STATUS.DONE); // fake runner succeeds; failure path exercised in service unit below
     // the 'dispatched to' note must sort BEFORE the run card: it is created before
     // the run row exists, so its createdAt is strictly under the run's startedAt
     const { db } = await dbm();
@@ -1597,7 +1598,7 @@ describe('runner proposal recording', () => {
     const { db } = await dbm();
     const proposals = await db.select().from(tp);
     expect(proposals.length).toBe(1);
-    expect(proposals[0].kind).toBe('subtasks');
+    expect(proposals[0].kind).toBe(PROPOSAL_KIND.SUBTASKS);
     expect((proposals[0].payload as { items: Array<{ title: string }> }).items[0].title).toBe('Draft docs');
     const acts = await db.select().from(ta);
     expect(acts.some((a) => a.body!.includes('proposed 1 subtask'))).toBe(true);

@@ -3,7 +3,7 @@
 // Exported separately so tests can mock the ssh2 transport while exercising
 // the real stream/finish logic.
 import type { Client } from 'ssh2';
-import { FINISH_STATUS, type FinishStatus } from '#shared/enums';
+import { RUN_STATUS, type FinishedStatus } from '#shared/enums';
 
 export type SshPlan = {
   env: { host: string; port: string; username: string };
@@ -11,8 +11,8 @@ export type SshPlan = {
   sshPassword?: string;
 };
 
-type Finish = (status: FinishStatus, exitCode: number | null) => Promise<void>;
-type Resolve = (v: { status: FinishStatus; exitCode: number | null }) => void;
+type Finish = (status: FinishedStatus, exitCode: number | null) => Promise<void>;
+type Resolve = (v: { status: FinishedStatus; exitCode: number | null }) => void;
 type OnLine = (line: string) => void;
 
 /** dynamically imported so tests can vi.mock('ssh2') before first call */
@@ -40,7 +40,7 @@ export async function runOverSsh(
   const ClientCtor = await loadClient();
   const conn = new ClientCtor();
   let settled = false;
-  const settle = (s: FinishStatus, code: number | null, why?: string) => {
+  const settle = (s: FinishedStatus, code: number | null, why?: string) => {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
@@ -57,7 +57,7 @@ export async function runOverSsh(
   };
   const timeoutMs = await runTimeoutMs();
   const timer = setTimeout(
-    () => settle(FINISH_STATUS.FAILED, null, `[dispatch] run timed out after ${Math.round(timeoutMs / 1000)}s`),
+    () => settle(RUN_STATUS.FAILED, null, `[dispatch] run timed out after ${Math.round(timeoutMs / 1000)}s`),
     timeoutMs,
   );
   conn
@@ -66,7 +66,7 @@ export async function runOverSsh(
         `cat > /tmp/tandem-env.$$ && . /tmp/tandem-env.$$ && rm -f /tmp/tandem-env.$$ && ${command}`,
         (err, stream) => {
           if (err) {
-            settle(FINISH_STATUS.FAILED, null, `[dispatch] exec error: ${err.message}`);
+            settle(RUN_STATUS.FAILED, null, `[dispatch] exec error: ${err.message}`);
             return;
           }
           stream.on('data', (d: Buffer) => {
@@ -77,12 +77,12 @@ export async function runOverSsh(
               for (const line of d.toString().split('\n')) if (line) onLine(`[stderr] ${line}`);
             });
           }
-          stream.on('close', (code: number | null) => settle(code === 0 ? FINISH_STATUS.DONE : FINISH_STATUS.FAILED, code));
+          stream.on('close', (code: number | null) => settle(code === 0 ? RUN_STATUS.DONE : RUN_STATUS.FAILED, code));
           stream.end(envBlob);
         },
       );
     })
-    .on('error', (err: Error) => settle(FINISH_STATUS.FAILED, null, `[dispatch] ssh error: ${err.message}`))
+    .on('error', (err: Error) => settle(RUN_STATUS.FAILED, null, `[dispatch] ssh error: ${err.message}`))
     .connect({
       host: plan.env.host,
       port: Number(plan.env.port) || 22,

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import './helpers/pg';
 import { getSetting, setSetting, deleteSetting, getSettings } from '../server/domains/settings/settings.service';
 import { postgres } from './helpers/pg';
+import { ROLE } from '../shared/enums';
 
 describe('settings store', () => {
   it('returns null for a missing key', async () => {
@@ -66,7 +67,7 @@ describe('settings store', () => {
     await setSetting('companyName', 'Kept Name');
     const ctx = buildServerContext(new Headers());
     (ctx as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({
-      user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' },
+      user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN },
     });
     let cur: Record<string, unknown> = router as unknown as Record<string, unknown>;
     for (const k of ['settings', 'update']) cur = cur[k] as Record<string, unknown>;
@@ -75,7 +76,7 @@ describe('settings store', () => {
       input: { disablePasswordLogin: false },
       context: {
         ...ctx,
-        session: { user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' } },
+        session: { user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN } },
       },
       signal: new AbortController().signal,
     });
@@ -85,7 +86,7 @@ describe('settings store', () => {
       input: { companyName: '  New Name  ' },
       context: {
         ...ctx,
-        session: { user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' } },
+        session: { user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN } },
       },
       signal: new AbortController().signal,
     });
@@ -103,7 +104,7 @@ describe('settings: workspace ai assignments', () => {
     id: '00000000-0000-7000-8000-cd5fca5e2d34',
     name: 'Admin',
     email: 'admin@tandem.local',
-    role: 'admin',
+    role: ROLE.ADMIN,
   };
 
   beforeEach(async () => {
@@ -111,7 +112,7 @@ describe('settings: workspace ai assignments', () => {
     const { user } = await import('../server/db/schema');
     await db
       .insert(user)
-      .values({ id: admin.id, name: 'Admin', email: 'admin@tandem.local', role: 'admin', title: 'T' })
+      .values({ id: admin.id, name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN, title: 'T' })
       .onConflictDoNothing();
   });
 

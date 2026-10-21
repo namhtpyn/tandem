@@ -12,6 +12,7 @@ import { toRow, listEnvironments } from './environments.service';
 import { environmentInput } from './environments.util';
 import { probeSsh } from './ssh-probe.service';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
 
 export const environmentsRouter = os.router({
   /** plain GET list (first-load data per the SSE law) */
@@ -97,13 +98,13 @@ export const environmentsRouter = os.router({
     }
     // Linked vault secret: decrypt server-side (never exposed) and audit the use.
     let privateKey: string | undefined;
-    let usage: 'ssh-key' | 'password' = 'ssh-key';
+    let usage: SecretUsage = SECRET_USAGE.SSH_KEY;
     if (env.secretId) {
       const secretRows = await db.select().from(vaultSecretsTable).where(eq(vaultSecretsTable.id, env.secretId));
       const secret = secretRows[0];
       if (secret) {
         privateKey = decryptSecret(secret.ciphertext);
-        usage = env.secretUsage === 'password' ? 'password' : 'ssh-key';
+        usage = env.secretUsage === SECRET_USAGE.PASSWORD ? SECRET_USAGE.PASSWORD : SECRET_USAGE.SSH_KEY;
       }
     }
     const started = Date.now();

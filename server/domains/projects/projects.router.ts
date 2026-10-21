@@ -9,6 +9,7 @@ import { db } from '../../db';
 import { projects as projectsTable } from '../../db/schema';
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { PROJECT_STATUS, type ProjectStatus } from '#shared/enums';
 
 export const projectsRouter = os.router({
   /** live list — flat rows; nesting resolved client-side from parentId */
@@ -19,7 +20,7 @@ export const projectsRouter = os.router({
       name: r.name,
       description: r.description,
       prompt: r.prompt,
-      status: r.status as 'active' | 'archived',
+      status: r.status as ProjectStatus,
       parentId: r.parentId,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
@@ -34,7 +35,7 @@ export const projectsRouter = os.router({
         name: r.name,
         description: r.description,
         prompt: r.prompt,
-        status: r.status as 'active' | 'archived',
+        status: r.status as ProjectStatus,
         parentId: r.parentId,
         createdAt: r.createdAt.toISOString(),
         updatedAt: r.updatedAt.toISOString(),
@@ -80,7 +81,7 @@ export const projectsRouter = os.router({
         name: z.string().min(1).max(120).optional(),
         description: z.string().max(2000).optional(),
         prompt: z.string().max(8000).optional(),
-        status: z.enum(['active', 'archived']).optional(),
+        status: z.enum(PROJECT_STATUS).optional(),
         parentId: z.string().min(1).nullable().optional(),
       }),
     )

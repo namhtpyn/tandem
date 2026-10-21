@@ -1,6 +1,6 @@
 // Structured-output contract rendering comes from the generic shared module.
 import { renderOutputContract, parseStructuredOutput } from '#shared/structured-output';
-import { FINISH_STATUS, type FinishStatus } from '#shared/enums';
+import { RUN_STATUS, type FinishedStatus } from '#shared/enums';
 
 // Minimal ACP v1 client for task dispatch: newline-delimited JSON-RPC 2.0 over
 // any byte duplex — an SSH exec stream in production, PassThrough pairs in
@@ -301,7 +301,7 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
 }
 
 /** map an ACP stopReason to the run verdict */
-export function verdictFor(stopReason: string): { status: FinishStatus; exitCode: number } {
-  if (stopReason === 'end_turn') return { status: FINISH_STATUS.DONE, exitCode: 0 };
-  return { status: FINISH_STATUS.FAILED, exitCode: 1 };
+export function verdictFor(stopReason: string): { status: FinishedStatus; exitCode: number } {
+  if (stopReason === 'end_turn') return { status: RUN_STATUS.DONE, exitCode: 0 };
+  return { status: RUN_STATUS.FAILED, exitCode: 1 };
 }

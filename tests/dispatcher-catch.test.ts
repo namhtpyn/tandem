@@ -6,6 +6,7 @@ import './api-harness';
 import { applyMigrations } from '../server/db/index';
 import { STATUS } from '../shared/status';
 import { resetSchema } from './helpers/pg';
+import { ROLE } from '../shared/enums';
 
 vi.mock('../server/domains/tasks/runner.service', () => ({
   dispatchTask: async () => {
@@ -23,7 +24,7 @@ beforeEach(async () => {
     name: 'Admin',
     email: 'admin@tandem.local',
     emailVerified: true,
-    role: 'admin',
+    role: ROLE.ADMIN,
     createdAt: new Date(),
     updatedAt: new Date(),
   });

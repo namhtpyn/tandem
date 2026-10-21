@@ -7,6 +7,7 @@ import { applyMigrations } from '../server/db/index';
 import { resetSchema } from './helpers/pg';
 import { makeProcCaller } from './helpers/procs';
 import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
+import { ROLE } from '../shared/enums';
 
 async function ctx(sessionUser: { id: string; name: string; email: string; role: string } | null) {
   const { buildServerContext } = await import('../server/domains/kernel/context');
@@ -18,7 +19,7 @@ async function ctx(sessionUser: { id: string; name: string; email: string; role:
   return context;
 }
 
-const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' };
+const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 
 async function callRouter() {
   const { appRouter: router } = await import('../server/domains/app.router');
@@ -203,7 +204,7 @@ describe('buildServerContext', () => {
           name: 'Nine',
           email: 'n@x',
           emailVerified: true,
-          role: 'viewer',
+          role: ROLE.VIEWER,
         },
         session: { id: 's1', userId: '00000000-0000-7000-8000-98b6e4e77966', expiresAt: new Date() },
       };
@@ -214,7 +215,7 @@ describe('buildServerContext', () => {
       const a = await c.getSession();
       const b = await c.getSession();
       expect(a).toEqual({
-        user: { id: '00000000-0000-7000-8000-98b6e4e77966', name: 'Nine', email: 'n@x', role: 'viewer' },
+        user: { id: '00000000-0000-7000-8000-98b6e4e77966', name: 'Nine', email: 'n@x', role: ROLE.VIEWER },
       });
       expect(b).toBe(a); // cached — one lookup per request
       expect(calls).toBe(1);
@@ -234,7 +235,7 @@ describe('buildServerContext', () => {
       const { buildServerContext } = await import('../server/domains/kernel/context');
       const c = buildServerContext(undefined); // <- no headers at all
       expect(await c.getSession()).toEqual({
-        user: { id: '00000000-0000-7000-8000-b9c69e5488ff', name: 'B', email: 'b@x', role: 'viewer' },
+        user: { id: '00000000-0000-7000-8000-b9c69e5488ff', name: 'B', email: 'b@x', role: ROLE.VIEWER },
       });
     } finally {
       inst.api.getSession = realGetSession;

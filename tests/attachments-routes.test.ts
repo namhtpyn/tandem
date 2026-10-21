@@ -13,6 +13,7 @@ import { tasks, taskAttachments, user as userTable } from '../server/db/schema';
 import { saveAttachmentBytes, sha256Hex } from '../server/domains/tasks/attachments.util';
 import { STATUS } from '../shared/status';
 import { resetSchema } from './helpers/pg';
+import { ROLE } from '../shared/enums';
 
 /** minimal node IncomingMessage carrying a raw body buffer + content-type */
 function fakeNodeReq(url: string, body: Buffer, contentType: string, method = 'POST'): IncomingMessage {
@@ -48,7 +49,7 @@ beforeEach(async () => {
     name: 'Att Admin',
     email: 'att-admin@tandem.local',
     emailVerified: true,
-    role: 'admin',
+    role: ROLE.ADMIN,
     createdAt: new Date(),
     updatedAt: new Date(),
   });

@@ -18,6 +18,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 
 import { applyMigrations, sqlClient } from '../server/db/index';
 import { resetSchema } from './helpers/pg';
+import { ROLE } from '../shared/enums';
 
 // ---- harness: real h3 events + nitro auto-import aliases ----
 
@@ -236,6 +237,6 @@ describe('oRPC session surface', () => {
       context: buildServerContext(new Headers({ cookie })),
       signal: new AbortController().signal,
     })) as { user: { email: string; role: string } };
-    expect(res).toMatchObject({ user: { email: 's@x.co', role: 'admin' } });
+    expect(res).toMatchObject({ user: { email: 's@x.co', role: ROLE.ADMIN } });
   });
 });

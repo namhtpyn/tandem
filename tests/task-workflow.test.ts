@@ -13,8 +13,9 @@ import { STATUS } from '../shared/status';
 import type { TaskRow, TaskActivityRow } from '../shared/types';
 import { resetSchema } from './helpers/pg';
 import { makeProcCaller } from './helpers/procs';
+import { ACTIVITY_KIND, OBLIGATION_ROLE, REVIEW_STATUS, ROLE } from '../shared/enums';
 
-const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' };
+const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
 const worker = {
   id: '00000000-0000-7000-8000-bccb5af49873',
   name: 'Worker',
@@ -112,7 +113,7 @@ beforeEach(async () => {
     name: 'Admin',
     email: 'admin@tandem.local',
     emailVerified: true,
-    role: 'admin',
+    role: ROLE.ADMIN,
     createdAt: new Date(),
     updatedAt: new Date(),
   });
@@ -196,7 +197,7 @@ describe('task workflow — question chain', () => {
     expect(await answerHolder(t.id)).toBeNull();
     expect(t.questionChain).toEqual([]);
     const feed = await activity(taskId);
-    expect(feed.map((a) => a.kind)).toEqual(['status', 'question', 'answer']);
+    expect(feed.map((a) => a.kind)).toEqual(['status', ACTIVITY_KIND.QUESTION, OBLIGATION_ROLE.ANSWER]);
   });
 
   it('outsider cannot answer', async () => {
@@ -253,7 +254,7 @@ describe('task workflow — review gate', () => {
     expect(t.status).toBe(STATUS.done);
     // REVIEW LAW: both verdict rows approved in round 1
     const revs = (await callProc('tasks.reviews', { taskId })) as Array<{ round: number; status: string }>;
-    expect(revs.filter((r) => r.round === 1).every((r) => r.status === 'approved')).toBe(true);
+    expect(revs.filter((r) => r.round === 1).every((r) => r.status === REVIEW_STATUS.APPROVED)).toBe(true);
   });
 
   it('request-changes sends it back to working and resets approvals', async () => {
@@ -290,7 +291,7 @@ describe('task workflow — review gate', () => {
     t = await getTask(taskId);
     expect(t.status).toBe(STATUS.todo);
     const feed = await activity(taskId);
-    const verdicts = feed.filter((a) => a.kind === 'verdict');
+    const verdicts = feed.filter((a) => a.kind === ACTIVITY_KIND.VERDICT);
     expect(verdicts.some((v) => v.body.includes('redo the thing'))).toBe(true);
   });
 
@@ -478,7 +479,7 @@ describe('task workflow — guard rails', () => {
     const { buildServerContext } = await import('../server/domains/kernel/context');
     const context = buildServerContext(new Headers());
     (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => null;
-    const procs = ['ask', 'forward', 'answer', 'submit', 'approve', 'requestChanges', 'abandon'];
+    const procs = ['ask', ACTIVITY_KIND.FORWARD, OBLIGATION_ROLE.ANSWER, 'submit', 'approve', 'requestChanges', 'abandon'];
     for (const p of procs) {
       let cur: Record<string, unknown> = appRouter as unknown as Record<string, unknown>;
       for (const key of ['tasks', p]) cur = cur[key] as Record<string, unknown>;
@@ -516,7 +517,7 @@ describe('task workflow — guard rails', () => {
       expect(r.holderId).toBe(idMap.get('mid')!);
     });
     const feed = await activity(taskId);
-    expect(feed.some((a) => a.kind === 'forward' && a.body === '')).toBe(true);
+    expect(feed.some((a) => a.kind === ACTIVITY_KIND.FORWARD && a.body === '')).toBe(true);
   });
 
   it('activity tolerates a null author (system entries)', async () => {
@@ -666,7 +667,7 @@ describe('task workflow — guard rails', () => {
       ownerId: null,
       createdBy: null,
     });
-    await spawnObligation('t-raw', idMap.get('owner')!, 'answer');
+    await spawnObligation('t-raw', idMap.get('owner')!, OBLIGATION_ROLE.ANSWER);
     const iter = await callProc('tasks.live');
     const snap = await iter.next();
     await iter.return?.();

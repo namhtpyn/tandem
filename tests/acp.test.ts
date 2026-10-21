@@ -4,6 +4,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { AcpStream } from '../server/domains/tasks/acp.client';
+import { OBLIGATION_STATUS, RUN_STATUS } from '../shared/enums';
 
 const NL_SRC = String.fromCharCode(10); // a real newline byte on the wire
 
@@ -439,13 +440,13 @@ describe('acp.client turns', () => {
         send({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: 's' } });
         send({ jsonrpc: '2.0', id: msg.id, result: {} });
       } else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's' } });
-      else if (method === 'session/prompt') send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'cancelled' } });
+      else if (method === 'session/prompt') send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: OBLIGATION_STATUS.CANCELLED } });
     });
     const lines: string[] = [];
     const res = await turn(stream, { onLine: (l) => lines.push(l) });
     expect(lines.some((l) => l === '[acp] adapter log line')).toBe(true);
     expect(lines.some((l) => l.includes('agent cancelled the turn'))).toBe(true);
-    expect(res.stopReason).toBe('cancelled');
+    expect(res.stopReason).toBe(OBLIGATION_STATUS.CANCELLED);
   });
 
   it('non-JSON stdout lines are logged, never crash the turn', async () => {
@@ -567,11 +568,11 @@ describe('acp.client turns', () => {
         if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} });
         else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's' } });
         else if (method === 'session/prompt')
-          setTimeout(() => send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'cancelled' } }), 40);
+          setTimeout(() => send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: OBLIGATION_STATUS.CANCELLED } }), 40);
       });
       const lines: string[] = [];
       const res = await turn(stream, { timeoutMs: 20, onLine: (l) => lines.push(l) });
-      expect(res.stopReason).toBe('cancelled');
+      expect(res.stopReason).toBe(OBLIGATION_STATUS.CANCELLED);
       await new Promise((r) => setTimeout(r, 120)); // let the grace timer observe settled=true
     } finally {
       delete process.env.TANDEM_ACP_CANCEL_GRACE_MS;
@@ -738,7 +739,7 @@ describe('acp.client turns', () => {
         send({
           jsonrpc: '2.0',
           method: 'session/update',
-          params: { update: { sessionUpdate: 'tool_call_update', status: 'pending' } },
+          params: { update: { sessionUpdate: 'tool_call_update', status: OBLIGATION_STATUS.PENDING } },
         });
         // usage with only one field (each side)
         send({
@@ -811,10 +812,10 @@ describe('acp.client turns', () => {
 
   it('verdictFor maps stop reasons to run verdicts', async () => {
     const { verdictFor } = await import('../server/domains/tasks/acp.client');
-    expect(verdictFor('end_turn')).toEqual({ status: 'done', exitCode: 0 });
-    expect(verdictFor('refusal')).toEqual({ status: 'failed', exitCode: 1 });
-    expect(verdictFor('cancelled')).toEqual({ status: 'failed', exitCode: 1 });
-    expect(verdictFor('_custom')).toEqual({ status: 'failed', exitCode: 1 });
+    expect(verdictFor('end_turn')).toEqual({ status: RUN_STATUS.DONE, exitCode: 0 });
+    expect(verdictFor('refusal')).toEqual({ status: RUN_STATUS.FAILED, exitCode: 1 });
+    expect(verdictFor(OBLIGATION_STATUS.CANCELLED)).toEqual({ status: RUN_STATUS.FAILED, exitCode: 1 });
+    expect(verdictFor('_custom')).toEqual({ status: RUN_STATUS.FAILED, exitCode: 1 });
   });
 });
 

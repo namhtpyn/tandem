@@ -5,10 +5,11 @@ import { ORPCError, os } from '@orpc/server';
 import type { RequestHeadersHandlerPluginContext } from '@orpc/server/plugins';
 
 import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from './change-bus';
+import type { Role } from '#shared/enums';
 
 export interface ServerContext extends RequestHeadersHandlerPluginContext {
   getSession: () => Promise<{
-    user: { id: string; name: string; email: string; role: 'admin' | 'employee' | 'viewer' };
+    user: { id: string; name: string; email: string; role: Role };
   } | null>;
 }
 

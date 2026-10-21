@@ -20,6 +20,7 @@ import {
 } from '../../db/schema';
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { ROLE } from '#shared/enums';
 
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/;
 
@@ -136,7 +137,7 @@ export const employeesRouter = os.router({
         id: userId,
         name: input.name,
         email: input.email,
-        role: 'employee',
+        role: ROLE.EMPLOYEE,
         title: input.title,
         ...(input.image !== undefined && input.image !== null ? { image: input.image } : {}),
       });
@@ -432,8 +433,8 @@ export const employeesRouter = os.router({
     if (!target) {
       throw new ORPCError('NOT_FOUND', { message: 'employee not found' });
     }
-    if (target.role === 'admin') {
-      const admins = await db.select({ id: userTable.id }).from(userTable).where(eq(userTable.role, 'admin'));
+    if (target.role === ROLE.ADMIN) {
+      const admins = await db.select({ id: userTable.id }).from(userTable).where(eq(userTable.role, ROLE.ADMIN));
       if (admins.length <= 1) {
         throw new ORPCError('BAD_REQUEST', { message: 'cannot delete the last admin' });
       }

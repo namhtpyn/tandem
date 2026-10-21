@@ -37,7 +37,7 @@ export const environments = pgTable('environments', {
   // optional vault secret used for SSH auth by probe + runner
   secretId: text('secret_id').references(() => vaultSecrets.id, { onDelete: 'set null' }),
   // how the linked secret is used: as an SSH identity file or as a password
-  secretUsage: text('secret_usage').notNull().default('ssh-key'),
+  secretUsage: text('secret_usage').notNull().default('SSH_KEY'),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .$default(() => new Date()),
@@ -193,8 +193,7 @@ export const projects = pgTable(
       .$default(() => uuidv7()),
     name: text('name').notNull(),
     description: text('description').notNull().default(''),
-    // active | archived
-    status: text('status').notNull().default('active'),
+    status: text('status').notNull().default('ACTIVE'),
     /** project prompt — added to every brief of this project's tasks (empty = omitted) */
     prompt: text('prompt').notNull().default(''),
     // nesting: parent project (self-reference); deleting a parent orphans children to root
@@ -301,10 +300,8 @@ export const taskObligations = pgTable(
       .notNull()
       .references(() => tasks.id, { onDelete: 'cascade' }),
     employeeId: uuid('employee_id').references(() => user.id, { onDelete: 'cascade' }),
-    /** answer | approval (future roles just add values) */
     role: text('role').notNull(),
-    /** pending | fulfilled | cancelled */
-    status: text('status').notNull().default('pending'),
+    status: text('status').notNull().default('PENDING'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .$default(() => new Date()),
@@ -349,11 +346,9 @@ export const taskProposals = pgTable(
       .notNull()
       .references(() => tasks.id, { onDelete: 'cascade' }),
     runId: text('run_id').references(() => taskRuns.id, { onDelete: 'cascade' }),
-    /** subtasks | reassign */
     kind: text('kind').notNull(),
     payload: jsonb('payload').notNull().default({}),
-    /** proposed | executed | rejected */
-    status: text('status').notNull().default('proposed'),
+    status: text('status').notNull().default('PROPOSED'),
     decisionNote: text('decision_note').notNull().default(''),
     decidedBy: uuid('decided_by').references(() => user.id, { onDelete: 'set null' }),
     decidedAt: timestamp('decided_at', { withTimezone: true }),
@@ -378,8 +373,7 @@ export const taskRuns = pgTable(
      * never resume the assignee's session (one session per task PER EMPLOYEE, not per task) */
     sessionId: text('session_id'),
     environmentId: text('environment_id'),
-    /** running | done | failed */
-    status: text('status').notNull().default('running'),
+    status: text('status').notNull().default('RUNNING'),
     exitCode: integer('exit_code'),
     output: text('output').notNull().default(''),
     /** the exact brief (prompt) sent to the agent for this turn; null on pre-2.26 rows */
@@ -407,8 +401,7 @@ export const taskReviews = pgTable(
     reviewerId: uuid('reviewer_id').references(() => user.id, { onDelete: 'set null' }),
     /** 1, 2, … — increments on resubmission after change_requested */
     round: integer('round').notNull(),
-    /** pending | approved | change_requested | rejected */
-    status: text('status').notNull().default('pending'),
+    status: text('status').notNull().default('PENDING'),
     note: text('note'),
     /** human click | ai review turn */
     source: text('source'),

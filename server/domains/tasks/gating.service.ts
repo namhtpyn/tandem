@@ -14,6 +14,7 @@ import { db } from '../../db';
 import { tasks, taskActivity, taskStatuses } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { OBLIGATION_STATUS } from '#shared/enums';
 
 export const BLOCKED_STATUS = STATUS.blocked;
 
@@ -28,7 +29,7 @@ export async function terminalStatusIds() {
   const rows = await db
     .select({ id: taskStatuses.id, category: taskStatuses.category })
     .from(taskStatuses)
-    .where(inArray(taskStatuses.category, ['done', 'cancelled']));
+    .where(inArray(taskStatuses.category, ['done', OBLIGATION_STATUS.CANCELLED]));
   return new Set(rows.map((r) => r.id));
 }
 

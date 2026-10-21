@@ -18,6 +18,7 @@ import { user as userTable } from '../../db/schema';
 import { authSchema } from '../../db/schema';
 import { getSettings } from '../settings/settings.service';
 import { getOidcProviders, type OidcProvider } from './oidc.service';
+import { ROLE, type Role } from '#shared/enums';
 
 const env = process.env;
 
@@ -92,7 +93,7 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}) {
               if (rows.length === 1) {
                 await db
                   .update(userTable)
-                  .set({ role: 'admin' })
+                  .set({ role: ROLE.ADMIN })
                   .where(eq(userTable.id, (u as { id: string }).id));
               }
             }
@@ -105,7 +106,7 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}) {
       additionalFields: {
         // union type (docs: type: ["user", "admin"]) — inferred end-to-end;
         // input:false = server-owned, users can't self-promote
-        role: { type: ['admin', 'employee', 'viewer'] as const, required: false, defaultValue: 'viewer', input: false },
+        role: { type: [...Object.values(ROLE)] as Role[], required: false, defaultValue: ROLE.VIEWER, input: false },
         // employment title rides the identity row; AI-ness is derived from
         // the ai_employees extension row, never a user column
         title: { type: 'string', required: false, defaultValue: '', input: false },

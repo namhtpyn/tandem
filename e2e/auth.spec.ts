@@ -4,6 +4,7 @@
 import { expect, test } from '@playwright/test';
 
 import { login } from './helpers/login';
+import { ROLE } from '../shared/enums';
 
 /** POST an oRPC live procedure, read the FIRST SSE data event, abort the
  * stream. Never await the full body — live streams never end. */
@@ -79,7 +80,7 @@ test.describe('auth flow', () => {
   test('admin login lands on the dashboard and shows the session', async ({ page }) => {
     // hydration-safe login (raw fill+click races Vue hydration under load)
     await login(page);
-    await expect(page.getByText('admin', { exact: true })).toBeVisible();
+    await expect(page.getByText(ROLE.ADMIN, { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: /sign in/i })).toHaveCount(0);
   });
 

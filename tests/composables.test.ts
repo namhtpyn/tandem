@@ -2,6 +2,7 @@
 // and the focus-refresh lifecycle. happy-dom environment; Nuxt auto-imports
 // (useState, onMounted…) are stubbed globally in this file's harness.
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { ROLE } from '../shared/enums';
 
 // ---- Nuxt runtime stubs ----
 type Ref<T> = { value: T };
@@ -49,7 +50,7 @@ describe('useAppSession', () => {
   it('shares one state instance per key', async () => {
     const m = await import('../app/composables/useAppSession');
     m.useAppSession().value = {
-      user: { id: 'x', name: 'X', email: 'x@x', role: 'admin' },
+      user: { id: 'x', name: 'X', email: 'x@x', role: ROLE.ADMIN },
       session: { expiresAt: 'later' },
     };
     expect(m.useAppSession().value?.user.id).toBe('x');
@@ -60,7 +61,7 @@ describe('useSessionRefreshing', () => {
   it('refreshSession clears the session when the client throws', async () => {
     const m = await import('../app/composables/useAppSession');
     m.useAppSession().value = {
-      user: { id: 'old', name: 'Old', email: 'o@x', role: 'admin' },
+      user: { id: 'old', name: 'Old', email: 'o@x', role: ROLE.ADMIN },
       session: { expiresAt: 't' },
     };
     (g.useNuxtApp as () => unknown) = () => ({
@@ -83,7 +84,7 @@ describe('useSessionRefreshing', () => {
 
   it('refreshSession updates the session via oRPC auth.session', async () => {
     currentSession = {
-      user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'U', email: 'u@x', role: 'viewer' },
+      user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'U', email: 'u@x', role: ROLE.VIEWER },
       session: { expiresAt: 't' },
     };
     const m = await import('../app/composables/useAppSession');
@@ -98,7 +99,7 @@ describe('useSessionRefreshing', () => {
     };
     const m = await import('../app/composables/useAppSession');
     m.useAppSession().value = {
-      user: { id: 'old', name: 'O', email: 'o@x', role: 'admin' },
+      user: { id: 'old', name: 'O', email: 'o@x', role: ROLE.ADMIN },
       session: { expiresAt: 't' },
     };
     const { refreshSession } = m.useSessionRefreshing();

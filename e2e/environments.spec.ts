@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { login } from './helpers/login';
+import { RUN_STATUS } from '../shared/enums';
 
 async function dismiss(page: any, text: string) {
   await page.keyboard.press('Escape');
@@ -96,7 +97,7 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
 
   // probe (refused port -> failed badge with detail), scoped to the row
   await row.getByRole('button', { name: 'Test connection' }).click();
-  await expect(page.locator('tr:visible', { hasText: rowName }).getByText('failed')).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('tr:visible', { hasText: rowName }).getByText(RUN_STATUS.FAILED)).toBeVisible({ timeout: 20_000 });
 
   // delete requires confirmation, scoped to this row
   await page.locator('tr:visible', { hasText: rowName }).getByRole('button', { name: 'Delete environment' }).click();

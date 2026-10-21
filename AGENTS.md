@@ -51,6 +51,13 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
 
 ## Standing engineering laws
 
+- **Enum law:** every enum is an `as const` object in `shared/enums/<name>.ts`,
+  SCREAMING_SNAKE_CASE for BOTH property and value
+  (`const ROLE = { ADMIN: 'ADMIN' } as const`), one file per enum owning the
+  enum plus its related types/variables; derive the union type with
+  `ValuesOf<typeof X>`; zod edges use `z.enum(X)` directly; never TS `enum`.
+  Changing a DB-stored enum value ships a guarded `UPDATE ... WHERE old-value`
+  remap in the same migration as the default flip.
 - **MOBILE FIRST — the UI is designed for phones.** Every screen is built and
   verified at a mobile viewport (390x844) before desktop: tables collapse to
   cards/stacked layouts (no horizontal scrolling), modals are reachable and

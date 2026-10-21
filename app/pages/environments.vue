@@ -6,7 +6,7 @@ import { useQuery, useMutation } from '@tanstack/vue-query';
 // instantly via the change bus + SSE.
 import type { EnvironmentRow, VaultSecretRow } from '~/utils/orpc-types';
 import { groupedSecretOptions } from '~/utils/vault-options';
-import { CHANGE_RESOURCE } from '~/../shared/enums';
+import { CHANGE_RESOURCE, SECRET_USAGE, type SecretUsage } from '~/../shared/enums';
 
 const { $orpc } = useNuxtApp();
 
@@ -30,7 +30,7 @@ const form = reactive({
   port: '22',
   username: '',
   secretId: '__none__',
-  secretUsage: 'ssh-key' as 'ssh-key' | 'password',
+  secretUsage: SECRET_USAGE.SSH_KEY as SecretUsage,
 });
 const busy = ref(false);
 const message = ref('');
@@ -65,7 +65,7 @@ function openEditor(row?: EnvironmentRow) {
   form.port = row?.port ?? '22';
   form.username = row?.username ?? '';
   form.secretId = row?.secretId ?? '__none__';
-  form.secretUsage = row?.secretUsage ?? 'ssh-key';
+  form.secretUsage = row?.secretUsage ?? SECRET_USAGE.SSH_KEY;
   message.value = '';
   editorOpen.value = true;
 }
@@ -77,7 +77,7 @@ async function save() {
     const payload = {
       ...form,
       secretId: form.secretId === '__none__' ? null : form.secretId,
-      secretUsage: form.secretId === '__none__' ? 'ssh-key' : form.secretUsage,
+      secretUsage: form.secretId === '__none__' ? SECRET_USAGE.SSH_KEY : form.secretUsage,
     };
     if (editingId.value) {
       await updateMutation.mutateAsync({ id: editingId.value, ...payload });

@@ -110,7 +110,7 @@ export function buildBrief(input: {
     lines.push('');
     lines.push('Recent activity on this task (oldest first):');
     for (const a of input.recentActivity)
-      lines.push(`- ${a.kind} by ${a.authorName ?? 'system'}: ${trunc(a.body ?? '', 200)}`);
+      lines.push(`- ${a.kind.toLowerCase()} by ${a.authorName ?? 'system'}: ${trunc(a.body ?? '', 200)}`);
   }
   if (input.attachments?.length) {
     lines.push('');

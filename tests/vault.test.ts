@@ -9,8 +9,9 @@ import { applyMigrations } from '../server/db/index';
 import { decryptSecret, encryptSecret, lastFourHint } from '../server/domains/vault/secret/secret-crypto.service';
 import type { VaultSecretRow } from '../shared/types';
 import { resetSchema } from './helpers/pg';
+import { ROLE } from '../shared/enums';
 
-const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' };
+const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 
 async function ctx(sessionUser: { id: string; name: string; email: string; role: string } | null = admin) {
   const { buildServerContext } = await import('../server/domains/kernel/context');
@@ -55,7 +56,7 @@ async function userFactory(id: string) {
     name: id,
     email: `${id}@tandem.local`,
     emailVerified: true,
-    role: 'admin',
+    role: ROLE.ADMIN,
     createdAt: new Date(),
     updatedAt: new Date(),
   });

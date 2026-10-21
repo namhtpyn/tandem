@@ -17,7 +17,7 @@ import { publishChange } from '../kernel/kernel';
 import { refreshParentGating, hasOpenChildren } from './gating.service';
 import { spawnObligation, resolveObligation, cancelObligations, answerHolder } from './obligations.service';
 import { openRoundLive, dispatchAiReviewTurns, openReviewRound, recordVerdict } from './review.service';
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { CHANGE_RESOURCE, CHANGE_ACTION, REVIEW_STATUS, OBLIGATION_ROLE, ACTIVITY_KIND, type ActivityKind, type ObligationRole } from '#shared/enums';
 
 export const WAITING_ANSWER_STATUS = STATUS.waitingAnswer;
 export const IN_REVIEW_STATUS = STATUS.inReview;
@@ -28,7 +28,7 @@ export const CANCELLED_STATUS = STATUS.cancelled;
 
 async function logActivity(
   taskId: string,
-  kind: 'question' | 'answer' | 'forward' | 'note' | 'verdict' | 'status',
+  kind: ActivityKind,
   authorId: string | null,
   body: string,
   meta: Record<string, unknown> = {},
@@ -62,8 +62,8 @@ export async function askQuestion(taskId: string, authorId: string, body: string
   // (the round stays open — answering flips back to in-review, the review continues)
   if (task.status !== DOING_STATUS && task.status !== IN_REVIEW_STATUS)
     throw new Error('only a task in progress or review can ask');
-  await cancelObligations(taskId, 'answer');
-  await spawnObligation(taskId, holder, 'answer');
+  await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
+  await spawnObligation(taskId, holder, OBLIGATION_ROLE.ANSWER);
   await db
     .update(tasks)
     .set({
@@ -72,7 +72,7 @@ export async function askQuestion(taskId: string, authorId: string, body: string
       updatedAt: new Date(),
     })
     .where(eq(tasks.id, taskId));
-  await logActivity(taskId, 'question', authorId, body, { holderId: holder });
+  await logActivity(taskId, ACTIVITY_KIND.QUESTION, authorId, body, { holderId: holder });
   return { holderId: holder };
 }
 
@@ -88,7 +88,7 @@ export async function forwardQuestion(taskId: string, authorId: string, toEmploy
   if (target.length === 0) throw new Error('employee does not exist');
   if (!(await hasSupervisors(toEmployeeId)))
     throw new Error('that person is the top of the hierarchy — they should answer');
-  await resolveObligation(taskId, holder!, 'answer', authorId);
+  await resolveObligation(taskId, holder!, OBLIGATION_ROLE.ANSWER, authorId);
   await db
     .update(tasks)
     .set({
@@ -96,8 +96,8 @@ export async function forwardQuestion(taskId: string, authorId: string, toEmploy
       updatedAt: new Date(),
     })
     .where(eq(tasks.id, taskId));
-  await spawnObligation(taskId, toEmployeeId, 'answer');
-  await logActivity(taskId, 'forward', authorId, body, { toId: toEmployeeId, toName: target[0]!.name });
+  await spawnObligation(taskId, toEmployeeId, OBLIGATION_ROLE.ANSWER);
+  await logActivity(taskId, ACTIVITY_KIND.FORWARD, authorId, body, { toId: toEmployeeId, toName: target[0]!.name });
   return { holderId: toEmployeeId };
 }
 
@@ -107,7 +107,7 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
   if (task.status !== WAITING_ANSWER_STATUS) throw new Error('task is not waiting for an answer');
   const chain = task.questionChain;
   if (!chain.includes(authorId)) throw new Error('only someone in the question chain can answer');
-  await cancelObligations(taskId, 'answer');
+  await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
   // a LIVE review round returns to in-review (the round is still open); the
   // assignee's own question returns to todo so the agent resumes with the answer
   const backTo = (await openRoundLive(taskId)) ? IN_REVIEW_STATUS : TODO_STATUS;
@@ -123,7 +123,7 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
     // a review-round question was answered — the AI reviewer's turn re-arms
     await dispatchAiReviewTurns(taskId);
   }
-  await logActivity(taskId, 'answer', authorId, body, {});
+  await logActivity(taskId, OBLIGATION_ROLE.ANSWER, authorId, body, {});
   await refreshParentGating(taskId);
   return { ok: true };
 }
@@ -159,7 +159,7 @@ export async function submitResult(taskId: string, authorId: string, body: strin
   const nextStatus = reviewers.length > 0 ? IN_REVIEW_STATUS : DONE_STATUS;
   await db.update(tasks).set({ status: nextStatus, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   if (reviewers.length > 0) await openReviewRound(taskId, reviewers, body);
-  await logActivity(taskId, 'verdict', authorId, body, { submitted: true, reviewers });
+  await logActivity(taskId, ACTIVITY_KIND.VERDICT, authorId, body, { submitted: true, reviewers });
   await refreshParentGating(taskId);
   return { status: nextStatus };
 }
@@ -168,7 +168,7 @@ export async function submitResult(taskId: string, authorId: string, body: strin
 export async function approveReview(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId);
   if (task.status !== IN_REVIEW_STATUS) throw new Error('task is not in review');
-  await recordVerdict(taskId, authorId, 'approved', body, 'human');
+  await recordVerdict(taskId, authorId, REVIEW_STATUS.APPROVED, body, 'human');
   await refreshParentGating(taskId);
   return { ok: true };
 }
@@ -177,7 +177,7 @@ export async function approveReview(taskId: string, authorId: string, body: stri
 export async function rejectReview(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId);
   if (task.status !== IN_REVIEW_STATUS) throw new Error('task is not in review');
-  await recordVerdict(taskId, authorId, 'rejected', body, 'human');
+  await recordVerdict(taskId, authorId, REVIEW_STATUS.REJECTED, body, 'human');
   return { ok: true };
 }
 
@@ -185,7 +185,7 @@ export async function rejectReview(taskId: string, authorId: string, body: strin
 export async function requestChanges(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId);
   if (task.status !== IN_REVIEW_STATUS) throw new Error('task is not in review');
-  await recordVerdict(taskId, authorId, 'change_requested', body, 'human');
+  await recordVerdict(taskId, authorId, REVIEW_STATUS.CHANGE_REQUESTED, body, 'human');
   await refreshParentGating(taskId);
   return { ok: true };
 }
@@ -198,11 +198,11 @@ export async function abandonReview(taskId: string, authorId: string, body: stri
   const isReviewer = reviewers.includes(authorId);
   const isOwner = task.ownerId === authorId || task.createdBy === authorId;
   if (!isReviewer && !isOwner) throw new Error('only a reviewer or the owner can abandon');
-  await cancelObligations(taskId, 'approval');
-  await cancelObligations(taskId, 'answer');
+  await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+  await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
   // abandoned == cancelled (one terminal, no fake distinction)
   await db.update(tasks).set({ status: CANCELLED_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
-  await logActivity(taskId, 'verdict', authorId, body || 'cancelled', { abandon: true });
+  await logActivity(taskId, ACTIVITY_KIND.VERDICT, authorId, body || 'cancelled', { abandon: true });
   await refreshParentGating(taskId);
   return { ok: true };
 }

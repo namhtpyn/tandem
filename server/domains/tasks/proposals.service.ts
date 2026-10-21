@@ -14,12 +14,12 @@ import { tasks, taskActivity, taskProposals, user as userTable, employeeSupervis
 import { publishChange } from '../kernel/kernel';
 import { recordAssignment, recentAssignees, assignTask } from './assignments.service';
 import { refreshParentGating } from './gating.service';
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { CHANGE_RESOURCE, CHANGE_ACTION, PROPOSAL_STATUS, PROPOSAL_KIND, ACTIVITY_KIND, type ProposalKind } from '#shared/enums';
 
 export type SubtaskItem = { title: string; description?: string; assigneeName?: string };
 export type ProposalPayload =
-  | { kind: 'subtasks'; items: SubtaskItem[] }
-  | { kind: 'reassign'; targetName?: string; reason?: string };
+  | { kind: typeof PROPOSAL_KIND.SUBTASKS; items: SubtaskItem[] }
+  | { kind: typeof PROPOSAL_KIND.REASSIGN; targetName?: string; reason?: string };
 
 /** the agent's own supervision chain: self + everyone above + everyone below (direct+indirect) */
 export async function supervisionChain(employeeId: string) {
@@ -65,7 +65,7 @@ async function findByName(name: string | undefined) {
 }
 
 async function logActivity(taskId: string, authorId: string | null, body: string, meta: Record<string, unknown> = {}) {
-  await db.insert(taskActivity).values({ id: uuidv7(), taskId, kind: 'note', authorId, body, meta });
+  await db.insert(taskActivity).values({ id: uuidv7(), taskId, kind: ACTIVITY_KIND.NOTE, authorId, body, meta });
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
@@ -78,13 +78,13 @@ export async function confirmProposal(proposalId: string, confirmedBy: string, n
   const rows = await db.select().from(taskProposals).where(eq(taskProposals.id, proposalId));
   const p = rows[0];
   if (!p) throw new Error('proposal not found');
-  if (p.status !== 'proposed') throw new Error('proposal already decided');
+  if (p.status !== PROPOSAL_STATUS.PROPOSED) throw new Error('proposal already decided');
   // task row is guaranteed by the proposal's FK (cascade delete removes proposals with tasks)
   const task = (await db.select().from(tasks).where(eq(tasks.id, p.taskId)))[0]!;
   const proposingAgent = task.assigneeId;
 
   const events: string[] = [];
-  if (p.kind === 'subtasks') {
+  if (p.kind === PROPOSAL_KIND.SUBTASKS) {
     const payload = p.payload as { items?: SubtaskItem[] };
     for (const item of payload.items ?? []) {
       // resolve proposed assignee; escalate outside the agent's chain to its supervisor
@@ -120,7 +120,7 @@ export async function confirmProposal(proposalId: string, confirmedBy: string, n
       });
     }
     await refreshParentGating(task.id);
-  } else if (p.kind === 'reassign') {
+  } else if (p.kind === PROPOSAL_KIND.REASSIGN) {
     const payload = p.payload as { targetName?: string; reason?: string };
     const target = await findByName(payload.targetName);
     if (!target) throw new Error(`employee "${payload.targetName}" not found`);
@@ -161,7 +161,7 @@ async function doReassign(taskId: string, employeeId: string, actorId: string, r
 async function markExecuted(proposalId: string, decidedBy: string, note: string, summary: string) {
   await db
     .update(taskProposals)
-    .set({ status: 'executed', decidedBy, decidedAt: new Date(), decisionNote: note || summary })
+    .set({ status: PROPOSAL_STATUS.EXECUTED, decidedBy, decidedAt: new Date(), decisionNote: note || summary })
     .where(eq(taskProposals.id, proposalId));
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
@@ -170,10 +170,10 @@ export async function rejectProposal(proposalId: string, decidedBy: string, note
   const rows = await db.select().from(taskProposals).where(eq(taskProposals.id, proposalId));
   const p = rows[0];
   if (!p) throw new Error('proposal not found');
-  if (p.status !== 'proposed') throw new Error('proposal already decided');
+  if (p.status !== PROPOSAL_STATUS.PROPOSED) throw new Error('proposal already decided');
   await db
     .update(taskProposals)
-    .set({ status: 'rejected', decidedBy, decidedAt: new Date(), decisionNote: note })
+    .set({ status: PROPOSAL_STATUS.REJECTED, decidedBy, decidedAt: new Date(), decisionNote: note })
     .where(eq(taskProposals.id, proposalId));
   await logActivity(p.taskId, decidedBy, `proposal rejected${note ? `: ${note}` : ''}`, { proposalId, kind: p.kind });
   return { ok: true };
@@ -196,12 +196,12 @@ export async function recordProposals(taskId: string, runId: string, payloads: A
       runId,
       kind: payload.kind,
       payload: payload as unknown as Record<string, unknown>,
-      status: 'proposed',
+      status: PROPOSAL_STATUS.PROPOSED,
     });
     // every routing target named and inside the agent's own chain -> auto-execute
     let inChain = false;
     if (agent && chain.size > 1) {
-      if (payload.kind === 'reassign') {
+      if (payload.kind === PROPOSAL_KIND.REASSIGN) {
         const target = await findByName(payload.targetName);
         inChain = !!target && chain.has(target.id);
       } else {
@@ -226,7 +226,7 @@ export async function recordProposals(taskId: string, runId: string, payloads: A
       }
     }
     const summary =
-      payload.kind === 'subtasks'
+      payload.kind === PROPOSAL_KIND.SUBTASKS
         ? `proposed ${payload.items.length} subtask(s): ${payload.items.map((i) => i.title).join(', ')}`
         : `proposed reassigning to ${payload.targetName}${payload.reason ? ` — ${payload.reason}` : ''}`;
     await logActivity(taskId, null, summary, { proposal: true, kind: payload.kind });

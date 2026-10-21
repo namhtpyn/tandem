@@ -10,7 +10,7 @@ import { STATUS } from '~/../shared/status';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '~/utils/task-thread';
 import type { ThreadItem } from '~/utils/task-thread';
-import { CHANGE_RESOURCE } from '~/../shared/enums';
+import { CHANGE_RESOURCE, PROPOSAL_KIND, type ProposalKind } from '~/../shared/enums';
 
 const route = useRoute();
 const { $orpc, $client } = useNuxtApp();
@@ -282,7 +282,7 @@ interface ChildRow {
 }
 interface ProposalRow {
   id: string;
-  kind: 'subtasks' | 'reassign';
+  kind: ProposalKind;
   payload: Record<string, any>;
   status: string;
   decisionNote: string;
@@ -854,12 +854,12 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), runsQuery.suspense(), 
                   >
                     <p class="mb-1 flex items-center gap-1.5 font-medium text-zinc-800 dark:text-zinc-200">
                       <UIcon
-                        :name="p.kind === 'subtasks' ? 'i-lucide-git-branch' : 'i-lucide-corner-up-right'"
+                        :name="p.kind === PROPOSAL_KIND.SUBTASKS ? 'i-lucide-git-branch' : 'i-lucide-corner-up-right'"
                         class="text-primary size-3.5"
                       />
-                      {{ p.kind === 'subtasks' ? 'Split into subtasks' : 'Reassign ticket' }}
+                      {{ p.kind === PROPOSAL_KIND.SUBTASKS ? 'Split into subtasks' : 'Reassign ticket' }}
                     </p>
-                    <ul v-if="p.kind === 'subtasks'" class="mb-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+                    <ul v-if="p.kind === PROPOSAL_KIND.SUBTASKS" class="mb-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
                       <li v-for="(item, i) in p.payload.items ?? []" :key="i" class="truncate">
                         • {{ item.title
                         }}<span v-if="item.assigneeName" class="text-zinc-400"> — {{ item.assigneeName }}</span>
@@ -1134,12 +1134,12 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), runsQuery.suspense(), 
                   >
                     <p class="mb-1 flex items-center gap-1.5 font-medium text-zinc-800 dark:text-zinc-200">
                       <UIcon
-                        :name="p.kind === 'subtasks' ? 'i-lucide-git-branch' : 'i-lucide-corner-up-right'"
+                        :name="p.kind === PROPOSAL_KIND.SUBTASKS ? 'i-lucide-git-branch' : 'i-lucide-corner-up-right'"
                         class="text-primary size-3.5"
                       />
-                      {{ p.kind === 'subtasks' ? 'Split into subtasks' : 'Reassign ticket' }}
+                      {{ p.kind === PROPOSAL_KIND.SUBTASKS ? 'Split into subtasks' : 'Reassign ticket' }}
                     </p>
-                    <ul v-if="p.kind === 'subtasks'" class="mb-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+                    <ul v-if="p.kind === PROPOSAL_KIND.SUBTASKS" class="mb-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
                       <li v-for="(item, i) in p.payload.items ?? []" :key="i" class="truncate">
                         • {{ item.title
                         }}<span v-if="item.assigneeName" class="text-zinc-400"> — {{ item.assigneeName }}</span>

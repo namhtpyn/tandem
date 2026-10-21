@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildBrief, chainToRoot, extractMentionedEmployeeIds } from '../server/domains/tasks/brief.service';
+import { ACTIVITY_KIND } from '../shared/enums';
 
 const P = (id: string, name: string, title: string | null = null) => ({ id, name, title, kind: 'human' });
 
@@ -80,7 +81,7 @@ describe('buildBrief', () => {
       projectName: 'Tandem',
     },
     outDir: '~/.tandem/t-123/attachments/out/',
-    recentActivity: [{ kind: 'question', authorName: 'Nam Hoang', body: 'Which format?' }],
+    recentActivity: [{ kind: ACTIVITY_KIND.QUESTION, authorName: 'Nam Hoang', body: 'Which format?' }],
   };
   it('contains identity, chains, task, contract', () => {
     const b = buildBrief(base);

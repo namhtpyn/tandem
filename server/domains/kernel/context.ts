@@ -1,7 +1,8 @@
 // Per-request server context: lazily-resolved better-auth session.
 import type { ServerContext } from './kernel';
+import { ROLE, type Role } from '#shared/enums';
 type AuthSessionPayload = {
-  user: { id: string; name: string; email: string; role: 'admin' | 'employee' | 'viewer' };
+  user: { id: string; name: string; email: string; role: Role };
 };
 
 export function buildServerContext(headers: Headers | undefined): ServerContext {
@@ -19,10 +20,10 @@ export function buildServerContext(headers: Headers | undefined): ServerContext 
         cached = null;
         return null;
       }
-      const rawRole = session.user.role ?? 'viewer';
+      const rawRole = session.user.role ?? ROLE.VIEWER;
       // DB column is text; the additionalField union guards writes, this
       // guard keeps reads honest
-      const role: 'admin' | 'employee' | 'viewer' = rawRole === 'admin' || rawRole === 'employee' ? rawRole : 'viewer';
+      const role: Role = rawRole === ROLE.ADMIN || rawRole === ROLE.EMPLOYEE ? rawRole : ROLE.VIEWER;
       cached = {
         user: {
           id: session.user.id,

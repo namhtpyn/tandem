@@ -4,6 +4,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest';
 import './api-harness';
 import { sqlClient } from '../server/db/index';
 import { resetSchema } from './helpers/pg';
+import { ROLE } from '../shared/enums';
 
 const bootModule = () => import('../server/plugins/boot');
 
@@ -20,7 +21,7 @@ describe('boot plugin', () => {
     await plugin();
     const users = await sqlClient`select email, role from "user"`;
     expect(users).toHaveLength(1);
-    expect(users[0]).toMatchObject({ email: 'admin@tandem.local', role: 'admin' });
+    expect(users[0]).toMatchObject({ email: 'admin@tandem.local', role: ROLE.ADMIN });
     const accounts = await sqlClient`select provider_id, password from account`;
     expect(accounts).toHaveLength(1);
     expect(accounts[0]!.password).toMatch(/^[0-9a-f]{32}:/);
@@ -45,7 +46,7 @@ describe('boot plugin', () => {
 
   it('skips seeding when users already exist', async () => {
     await sqlClient`insert into "user" (id, name, email, email_verified, created_at, updated_at, role)
-      values ('00000000-0000-7000-8000-c188c39acb1b', 'Existing', 'e@x.co', true, now(), now(), 'viewer')`;
+      values ('00000000-0000-7000-8000-c188c39acb1b', 'Existing', 'e@x.co', true, now(), now(), ROLE.VIEWER)`;
     const mod = await bootModule();
     await (mod.default as () => Promise<unknown>)();
     const users = await sqlClient`select count(*)::int as n from "user"`;

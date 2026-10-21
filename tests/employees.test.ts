@@ -13,11 +13,12 @@ import { applyMigrations } from '../server/db/index';
 import type { EmployeeRow, ApiKeyRow } from '../shared/types';
 import { resetSchema } from './helpers/pg';
 import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
+import { ROLE } from '../shared/enums';
 
 // live rows intentionally drop the legacy harness field — the test asserts its absence
 type LiveEmployee = EmployeeRow & { harness?: string };
 
-const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' };
+const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 
 async function ctx(sessionUser: { id: string; name: string; email: string; role: string } | null = admin) {
   const { buildServerContext } = await import('../server/domains/kernel/context');
@@ -120,7 +121,7 @@ describe('employees.create', () => {
     // human = NO extension row
     const { aiEmployees } = await schema();
     expect(await db.select().from(aiEmployees)).toHaveLength(0);
-    expect(users[0]!.role).toBe('employee');
+    expect(users[0]!.role).toBe(ROLE.EMPLOYEE);
     expect(users[0]!.email).toBe('h@tandem.local');
   });
 
@@ -569,7 +570,7 @@ describe('employees.remove', () => {
     const { user } = await schema();
     await db
       .insert(user)
-      .values({ id: '00000000-0000-7000-8000-c5ea71554c77', name: 'Sess', email: 'sess@tandem.local', role: 'viewer' });
+      .values({ id: '00000000-0000-7000-8000-c5ea71554c77', name: 'Sess', email: 'sess@tandem.local', role: ROLE.VIEWER });
     // call the handler with a session present (as requireSession middleware provides)
     let cur: Record<string, unknown> = router as unknown as Record<string, unknown>;
     for (const k of ['employees', 'remove']) cur = cur[k] as Record<string, unknown>;
@@ -584,7 +585,7 @@ describe('employees.remove', () => {
               id: '00000000-0000-7000-8000-c5ea71554c77',
               name: 'Sess',
               email: 'sess@tandem.local',
-              role: 'viewer',
+              role: ROLE.VIEWER,
             },
           },
         },
@@ -603,14 +604,14 @@ describe('employees.remove', () => {
     // For the guard: single-admin case. Remove the second user; target = the only admin.
     await db
       .insert(user)
-      .values({ id: '00000000-0000-7000-8000-d331665e11c9', name: 'OA', email: 'oa@tandem.local', role: 'admin' });
+      .values({ id: '00000000-0000-7000-8000-d331665e11c9', name: 'OA', email: 'oa@tandem.local', role: ROLE.ADMIN });
     await expect(callProc('employees.remove', { id: '00000000-0000-7000-8000-d331665e11c9' })).rejects.toThrow(
       /last admin/i,
     );
     // now add another admin -> deletion allowed
     await db
       .insert(user)
-      .values({ id: '00000000-0000-7000-8000-169e12499691', name: 'A2', email: 'a2@tandem.local', role: 'admin' });
+      .values({ id: '00000000-0000-7000-8000-169e12499691', name: 'A2', email: 'a2@tandem.local', role: ROLE.ADMIN });
     await expect(callProc('employees.remove', { id: '00000000-0000-7000-8000-d331665e11c9' })).resolves.toMatchObject({
       ok: true,
     });

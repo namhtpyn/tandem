@@ -6,10 +6,11 @@ import './api-harness';
 import { applyMigrations } from '../server/db/index';
 import { STATUS } from '../shared/status';
 import { resetSchema } from './helpers/pg';
+import { ROLE, RUN_STATUS } from '../shared/enums';
 
 process.env.TANDEM_FAKE_RUNNER = '';
 
-const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' };
+const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
 
 vi.mock('../server/domains/tasks/ssh-exec.util', () => ({
   // the ACP transport opens through loadClient — a throwing client loader is
@@ -29,7 +30,7 @@ beforeEach(async () => {
     name: 'Admin',
     email: 'admin@tandem.local',
     emailVerified: true,
-    role: 'admin',
+    role: ROLE.ADMIN,
     createdAt: new Date(),
     updatedAt: new Date(),
   });
@@ -68,11 +69,11 @@ describe('dispatchTask catch arm', () => {
     const { dispatchTask } = await import('../server/domains/tasks/runner.service');
     const handle = await dispatchTask('t-1', 'http://t.local');
     const res = await handle.finished;
-    expect(res.status).toBe('failed');
+    expect(res.status).toBe(RUN_STATUS.FAILED);
     const { db } = await import('../server/db');
     const { taskRuns } = await import('../server/db/schema');
     const run = (await db.select().from(taskRuns))[0]!;
     expect(run.output).toContain('ssh exploded');
-    expect(run.status).toBe('failed');
+    expect(run.status).toBe(RUN_STATUS.FAILED);
   }, 10_000);
 });

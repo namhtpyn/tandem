@@ -5,8 +5,9 @@ import './api-harness';
 import { applyMigrations } from '../server/db/index';
 import type { ProjectRow, TaskRow } from '../shared/types';
 import { resetSchema } from './helpers/pg';
+import { PROJECT_STATUS, ROLE } from '../shared/enums';
 
-const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' };
+const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
 
 async function ctx() {
   const { buildServerContext } = await import('../server/domains/kernel/context');
@@ -29,7 +30,7 @@ beforeEach(async () => {
   await applyMigrations();
   const { db } = await import('../server/db');
   const { user } = await import('../server/db/schema');
-  await db.insert(user).values({ id: admin.id, name: 'Admin', email: 'admin@tandem.local', role: 'admin', title: 'T' });
+  await db.insert(user).values({ id: admin.id, name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN, title: 'T' });
 });
 
 describe('projects crud', () => {
@@ -41,19 +42,19 @@ describe('projects crud', () => {
     await iter.return?.();
     const row = (snap.value as ProjectRow[]).find((r) => r.id === p.id)!;
     expect(row.name).toBe('Apollo');
-    expect(row.status).toBe('active');
+    expect(row.status).toBe(PROJECT_STATUS.ACTIVE);
     expect(row.parentId).toBeNull();
   });
 
   it('update name/status/description', async () => {
     const p = await callProc('projects.create', { name: 'Old' });
-    await callProc('projects.update', { id: p.id, name: 'New', status: 'archived', description: 'x' });
+    await callProc('projects.update', { id: p.id, name: 'New', status: PROJECT_STATUS.ARCHIVED, description: 'x' });
     const iter = await callProc('projects.live');
     const snap = await iter.next();
     await iter.return?.();
     const row = (snap.value as ProjectRow[]).find((r) => r.id === p.id)!;
     expect(row.name).toBe('New');
-    expect(row.status).toBe('archived');
+    expect(row.status).toBe(PROJECT_STATUS.ARCHIVED);
     expect(row.description).toBe('x');
   });
 

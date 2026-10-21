@@ -7,6 +7,7 @@ import './api-harness';
 import { sqlClient } from '../server/db/index';
 import { call } from './api-harness';
 import { resetSchema } from './helpers/pg';
+import { ROLE } from '../shared/enums';
 
 beforeEach(async () => {
   await resetSchema();
@@ -138,7 +139,7 @@ describe('oidc.replace edit-failure arm', () => {
     for (const k of ['oidc', 'replace']) node = node[k] as Record<string, unknown>;
     const context = buildServerContext(new Headers());
     (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({
-      user: { id: 'a', name: 'A', email: 'a@x', role: 'admin' },
+      user: { id: 'a', name: 'A', email: 'a@x', role: ROLE.ADMIN },
     });
     await expect(
       (node['~orpc'] as { handler: (o: unknown) => Promise<unknown> }).handler({
@@ -171,7 +172,7 @@ describe('settings.update payload arms (oRPC)', () => {
     });
     const { response } = await handler.handle(req, {
       prefix: '/rpc',
-      context: { getSession: async () => ({ user: { id: 'a', name: 'A', email: 'a@x', role: 'admin' } }) },
+      context: { getSession: async () => ({ user: { id: 'a', name: 'A', email: 'a@x', role: ROLE.ADMIN } }) },
     });
     const body = (await response!.json()) as { json?: { code?: string } };
     if (!response!.ok) throw Object.assign(new Error(body.json?.code ?? 'BAD_REQUEST'), { code: body.json?.code });
@@ -206,7 +207,7 @@ describe('remaining branch arms', () => {
         context: buildServerContext(new Headers()),
         signal: new AbortController().signal,
       });
-      expect(result).toMatchObject({ user: { role: 'viewer' } });
+      expect(result).toMatchObject({ user: { role: ROLE.VIEWER } });
     } finally {
       inst.api.getSession = realGetSession;
     }
@@ -225,7 +226,7 @@ describe('remaining branch arms', () => {
     });
     const { response } = await handler.handle(req, {
       prefix: '/rpc',
-      context: { getSession: async () => ({ user: { id: 'a', name: 'A', email: 'a@x', role: 'admin' } }) },
+      context: { getSession: async () => ({ user: { id: 'a', name: 'A', email: 'a@x', role: ROLE.ADMIN } }) },
     });
     expect(response!.status).toBe(400);
   });
@@ -241,7 +242,7 @@ describe('remaining branch arms', () => {
     });
     const { response } = await handler.handle(req, {
       prefix: '/rpc',
-      context: { getSession: async () => ({ user: { id: 'a', name: 'A', email: 'a@x', role: 'admin' } }) },
+      context: { getSession: async () => ({ user: { id: 'a', name: 'A', email: 'a@x', role: ROLE.ADMIN } }) },
     });
     expect(response!.status).toBe(400);
   });
@@ -325,7 +326,7 @@ describe('fallback branch arms', () => {
     });
     const { response } = await handler.handle(req, {
       prefix: '/rpc',
-      context: { getSession: async () => ({ user: { id: 'a', name: 'A', email: 'a@x', role: 'admin' } }) },
+      context: { getSession: async () => ({ user: { id: 'a', name: 'A', email: 'a@x', role: ROLE.ADMIN } }) },
     });
     expect(response!.status).toBe(400);
   });
@@ -362,7 +363,7 @@ describe('auth route fallback arms (real coverage)', () => {
   it('POST sign-up/email closed once a user exists (403)', async () => {
     const { sqlClient } = await import('../server/db/index');
     await sqlClient`insert into "user" (id, name, email, email_verified, created_at, updated_at, role)
-      values ('00000000-0000-7000-8000-55749737aa07', 'Closer', 'c@x.co', true, now(), now(), 'viewer')`;
+      values ('00000000-0000-7000-8000-55749737aa07', 'Closer', 'c@x.co', true, now(), now(), ROLE.VIEWER)`;
     await expect(
       call('../server/routes/auth/[...].ts', {
         method: 'POST',

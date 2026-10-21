@@ -9,6 +9,7 @@ import { STATUS } from '../shared/status';
 import type { TaskRow } from '../shared/types';
 import { resetSchema } from './helpers/pg';
 import { makeProcCaller } from './helpers/procs';
+import { ROLE, RUN_STATUS } from '../shared/enums';
 
 // mock ssh2: connect+exec succeed; the stream never closes on its own, so tests
 // drive terminal events explicitly (error emit) or rely on the run-timeout timer
@@ -72,14 +73,14 @@ vi.mock('ssh2', () => {
   return { default: { Client: FakeClient } };
 });
 
-const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' };
+const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
 
 // official oRPC call() helper — replaces hand-rolled ['~orpc'] internals poking
 const procAdmin = await makeProcCaller({
   id: '00000000-0000-7000-8000-c5ea71554c77',
   name: 'A',
   email: 'a@x',
-  role: 'admin',
+  role: ROLE.ADMIN,
 });
 const callProc = procAdmin as unknown as (path: string, input?: unknown) => Promise<any>;
 
@@ -93,7 +94,7 @@ beforeEach(async () => {
     name: 'Admin',
     email: 'admin@tandem.local',
     emailVerified: true,
-    role: 'admin',
+    role: ROLE.ADMIN,
     createdAt: new Date(),
     updatedAt: new Date(),
   });
@@ -157,7 +158,7 @@ describe('backoff ladder', () => {
       const { dispatchTask } = await import('../server/domains/tasks/runner.service');
       const handle = await dispatchTask('t-1', 'http://t.local');
       const res = await handle.finished;
-      expect(res.status).toBe('failed');
+      expect(res.status).toBe(RUN_STATUS.FAILED);
       const task = (await db.select().from(tasks).where(eq(tasks.id, 't-1')))[0]!;
       expect(task.status).toBe(STATUS.todo);
       expect(task.failStreak).toBe(1);
@@ -167,7 +168,7 @@ describe('backoff ladder', () => {
       await db.update(tasks).set({ failStreak: 5, dispatchAfter: new Date() }).where(eq(tasks.id, 't-1'));
       process.env.TANDEM_FAKE_FAIL = '0';
       const handle2 = await dispatchTask('t-1', 'http://t.local');
-      expect((await handle2.finished).status).toBe('done');
+      expect((await handle2.finished).status).toBe(RUN_STATUS.DONE);
       const after = (await db.select().from(tasks).where(eq(tasks.id, 't-1')))[0]!;
       expect(after.failStreak).toBe(0);
       expect(after.dispatchAfter).toBeNull();
@@ -205,7 +206,7 @@ describe('stale-run reaper', () => {
       taskId: 't-1',
       employeeId: '00000000-0000-7000-8000-79d931929132',
       environmentId: 'env-1',
-      status: 'running',
+      status: RUN_STATUS.RUNNING,
       output: 'partial output',
       startedAt: new Date(Date.now() - 3 * 60 * 60_000),
     });
@@ -213,7 +214,7 @@ describe('stale-run reaper', () => {
     const { reapStaleRuns } = await import('../server/domains/tasks/dispatcher.service');
     expect(await reapStaleRuns()).toBe(1);
     const run = (await db.select().from(taskRuns)).find((r) => r.id === 'r-old')!;
-    expect(run.status).toBe('failed');
+    expect(run.status).toBe(RUN_STATUS.FAILED);
     expect(run.output).toContain('[reaper]');
     const task = (await db.select().from(tasks)).find((x) => x.id === 't-1')!;
     expect(task.status).toBe(STATUS.todo);
@@ -225,7 +226,7 @@ describe('stale-run reaper', () => {
       taskId: 't-1',
       employeeId: '00000000-0000-7000-8000-79d931929132',
       environmentId: 'env-1',
-      status: 'running',
+      status: RUN_STATUS.RUNNING,
       output: '',
       startedAt: new Date(),
     });
@@ -241,7 +242,7 @@ describe('stale-run reaper', () => {
       taskId: 't-1',
       employeeId: '00000000-0000-7000-8000-79d931929132',
       environmentId: 'env-1',
-      status: 'running',
+      status: RUN_STATUS.RUNNING,
       output: '',
       startedAt: old,
     });
@@ -250,7 +251,7 @@ describe('stale-run reaper', () => {
       taskId: 't-1',
       employeeId: '00000000-0000-7000-8000-79d931929132',
       environmentId: 'env-1',
-      status: 'running',
+      status: RUN_STATUS.RUNNING,
       output: '',
       startedAt: new Date(Date.now() - 2 * 60 * 60_000),
     });
@@ -263,7 +264,7 @@ describe('stale-run reaper', () => {
       taskId: 't-1',
       employeeId: '00000000-0000-7000-8000-79d931929132',
       environmentId: 'env-1',
-      status: 'running',
+      status: RUN_STATUS.RUNNING,
       output: '',
       startedAt: new Date(Date.now() - 3 * 60 * 60_000),
     });
@@ -272,15 +273,15 @@ describe('stale-run reaper', () => {
       taskId: 't-1',
       employeeId: '00000000-0000-7000-8000-79d931929132',
       environmentId: 'env-1',
-      status: 'done',
+      status: RUN_STATUS.DONE,
       exitCode: 0,
       output: '',
       startedAt: new Date(),
     });
-    await db.update(tasks).set({ status: 'done', failStreak: 0, dispatchAfter: null }).where(eq(tasks.id, 't-1'));
+    await db.update(tasks).set({ status: RUN_STATUS.DONE, failStreak: 0, dispatchAfter: null }).where(eq(tasks.id, 't-1'));
     expect(await reapStaleRuns()).toBe(1); // r-c reaped
     const task = (await db.select().from(tasks)).find((x) => x.id === 't-1')!;
-    expect(task.status).toBe('done'); // NOT bounced: r-d is newer
+    expect(task.status).toBe(RUN_STATUS.DONE); // NOT bounced: r-d is newer
   });
 });
 
@@ -305,7 +306,7 @@ describe('double settle', () => {
         );
       });
       const res = await done;
-      expect(res.status).toBe('failed');
+      expect(res.status).toBe(RUN_STATUS.FAILED);
       // error arriving after timeout must not double-finish
       const clientMod = (await import('ssh2')).default;
       const FakeClient = clientMod.Client as unknown as { last?: { emitError(e: Error): void } };
@@ -336,7 +337,7 @@ describe('double settle', () => {
       await db.delete(tasks).where(eq(tasks.id, 't-1'));
       const handle = await handleP;
       const res = await handle.finished;
-      expect(res.status).toBe('failed'); // the run itself failed; the bounce no-ops on the missing row
+      expect(res.status).toBe(RUN_STATUS.FAILED); // the run itself failed; the bounce no-ops on the missing row
     } finally {
       delete process.env.TANDEM_FAKE_SCRIPT;
       delete process.env.TANDEM_FAKE_DELAY_MS;
@@ -383,7 +384,7 @@ describe('ssh run timeout', () => {
         );
       });
       const res = await done;
-      expect(res.status).toBe('failed');
+      expect(res.status).toBe(RUN_STATUS.FAILED);
       expect(finished).toBe(true);
       expect(lines.some((l) => l.includes('timed out'))).toBe(true);
     } finally {

@@ -6,9 +6,10 @@ import './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { resetSchema } from './helpers/pg';
 import './api-harness';
+import { ROLE } from '../shared/enums';
 
 const admin = {
-  user: { id: '00000000-0000-7000-8000-3f18cbc16519', name: 'Test Admin', email: 'test@tandem.local', role: 'admin' },
+  user: { id: '00000000-0000-7000-8000-3f18cbc16519', name: 'Test Admin', email: 'test@tandem.local', role: ROLE.ADMIN },
 };
 
 async function proc(path: string[], input?: unknown) {

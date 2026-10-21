@@ -7,8 +7,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import './api-harness';
 import { applyMigrations } from '../server/db/index';
 import { resetSchema } from './helpers/pg';
+import { ROLE, SECRET_USAGE } from '../shared/enums';
 
-const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: 'admin' };
+const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 
 async function ctx(sessionUser: { id: string; name: string; email: string; role: string } | null = admin) {
   const { buildServerContext } = await import('../server/domains/kernel/context');
@@ -50,7 +51,7 @@ beforeEach(async () => {
     name: 'A',
     email: 'a@x',
     emailVerified: true,
-    role: 'admin',
+    role: ROLE.ADMIN,
     createdAt: new Date(),
     updatedAt: new Date(),
   });
@@ -85,7 +86,7 @@ describe('environment secret linkage', () => {
       username: '00000000-0000-7000-8000-51e69892ab49',
     });
     expect(env.secretId).toBeNull();
-    expect(env.secretUsage).toBe('ssh-key');
+    expect(env.secretUsage).toBe(SECRET_USAGE.SSH_KEY);
   });
 
   it('persists secretUsage=password and can switch back', async () => {
@@ -96,9 +97,9 @@ describe('environment secret linkage', () => {
       port: '59999',
       username: '00000000-0000-7000-8000-51e69892ab49',
       secretId: secret.id,
-      secretUsage: 'password',
+      secretUsage: SECRET_USAGE.PASSWORD,
     });
-    expect(env.secretUsage).toBe('password');
+    expect(env.secretUsage).toBe(SECRET_USAGE.PASSWORD);
     const back = await callProc('environments.update', {
       id: env.id,
       name: 'pw-box',
@@ -106,9 +107,9 @@ describe('environment secret linkage', () => {
       port: '59999',
       username: '00000000-0000-7000-8000-51e69892ab49',
       secretId: secret.id,
-      secretUsage: 'ssh-key',
+      secretUsage: SECRET_USAGE.SSH_KEY,
     });
-    expect(back.secretUsage).toBe('ssh-key');
+    expect(back.secretUsage).toBe(SECRET_USAGE.SSH_KEY);
   });
 
   it('password-mode probe uses askpass path and audits the use', async () => {
@@ -119,7 +120,7 @@ describe('environment secret linkage', () => {
       port: '59999',
       username: '00000000-0000-7000-8000-51e69892ab49',
       secretId: secret.id,
-      secretUsage: 'password',
+      secretUsage: SECRET_USAGE.PASSWORD,
     });
     const result = await callProc('environments.probe', { id: env.id });
     expect(result.ok).toBe(false); // dead port, but the password path ran

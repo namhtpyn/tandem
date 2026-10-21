@@ -4,6 +4,7 @@ import { desc } from 'drizzle-orm';
 import type { EnvironmentRow } from '../../../shared/types';
 import { db } from '../../db';
 import { environments as environmentsTable } from '../../db/schema';
+import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
 
 export function toRow(r: typeof environmentsTable.$inferSelect): EnvironmentRow {
   return {
@@ -13,7 +14,7 @@ export function toRow(r: typeof environmentsTable.$inferSelect): EnvironmentRow 
     port: r.port,
     username: r.username,
     secretId: r.secretId,
-    secretUsage: r.secretUsage as 'ssh-key' | 'password',
+    secretUsage: r.secretUsage as SecretUsage,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   };

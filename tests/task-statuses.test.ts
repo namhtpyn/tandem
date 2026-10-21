@@ -7,6 +7,7 @@ import { applyMigrations } from '../server/db/index';
 import { STATUS } from '../shared/status';
 import type { TaskStatusRow } from '../shared/types';
 import { resetSchema } from './helpers/pg';
+import { OBLIGATION_STATUS, ROLE } from '../shared/enums';
 
 async function wireDecisionProvider(secretId: string | null) {
   const d = await dbm();
@@ -36,7 +37,7 @@ async function wireInternalDecisionSetting(secretId: string | null) {
   }
 }
 
-const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' };
+const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
 
 async function ctx() {
   const { buildServerContext } = await import('../server/domains/kernel/context');
@@ -63,14 +64,14 @@ beforeEach(async () => {
   await applyMigrations();
   const { db } = await import('../server/db');
   const { user } = await import('../server/db/schema');
-  await db.insert(user).values({ id: admin.id, name: 'Admin', email: 'admin@tandem.local', role: 'admin', title: 'T' });
+  await db.insert(user).values({ id: admin.id, name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN, title: 'T' });
 });
 
 describe('task statuses', () => {
   it('live returns seeded statuses ordered with transitions', async () => {
     const iter = await callProc('statuses.live');
     const snap = (await iter.next()).value as { status?: string };
-    const rows = snap.status === 'pending' ? (await iter.next()).value : snap;
+    const rows = snap.status === OBLIGATION_STATUS.PENDING ? (await iter.next()).value : snap;
     const list = (Array.isArray(rows) ? rows : ((rows as { rows?: TaskStatusRow[] }).rows ?? rows)) as TaskStatusRow[];
     const ids = list.map((x) => x.id);
     expect(ids).toEqual([

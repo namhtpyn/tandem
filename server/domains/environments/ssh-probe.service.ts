@@ -1,3 +1,4 @@
+import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
 // SSH probe — Bun Shell first (cross-OS, no shell interpolation); node
 // child_process fallback for non-bun runtimes (vitest workers are node).
 // BatchMode ssh with strict options; never prompts.
@@ -31,19 +32,18 @@ function sshArgs(host: string, port: string, username: string, identityFile?: st
   ];
 }
 
-export type SecretUsage = 'ssh-key' | 'password';
 
 export async function probeSsh(
   host: string,
   port: string,
   username: string,
   secret?: string,
-  usage: SecretUsage = 'ssh-key',
+  usage: SecretUsage = SECRET_USAGE.SSH_KEY,
 ) {
-  const identityFile = usage === 'ssh-key' ? await writeIdentity(secret) : undefined;
+  const identityFile = usage === SECRET_USAGE.SSH_KEY ? await writeIdentity(secret) : undefined;
   const passwordEnv: Record<string, string> = {};
-  if (usage === 'password' && secret) passwordEnv.SSHPASSWORD = secret;
-  const askpassDir = usage === 'password' && secret ? await writeAskpass() : undefined;
+  if (usage === SECRET_USAGE.PASSWORD && secret) passwordEnv.SSHPASSWORD = secret;
+  const askpassDir = usage === SECRET_USAGE.PASSWORD && secret ? await writeAskpass() : undefined;
   try {
     /* v8 ignore start -- bun-runtime-only lines; exercised by `bun run` integration, unreachable under vitest/node */
     const bunModule = 'bun';

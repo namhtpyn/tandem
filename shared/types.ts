@@ -1,3 +1,4 @@
+import type { ObligationRole, ObligationStatus, ProjectStatus, ProposalStatus, ReviewStatus, Role, RunStatus, SecretUsage } from './enums';
 // Shared client/server types (importable from app/ and server/).
 export type EnvironmentRow = {
   id: string;
@@ -8,7 +9,7 @@ export type EnvironmentRow = {
   /** optional vault secret used for SSH auth (never the value itself) */
   secretId: string | null;
   /** how the linked secret is used */
-  secretUsage: 'ssh-key' | 'password';
+  secretUsage: SecretUsage;
   createdAt: string;
   updatedAt: string;
 };
@@ -45,7 +46,7 @@ export type ProjectRow = {
   description: string;
   /** project prompt — added to every brief of this project's tasks */
   prompt: string;
-  status: 'active' | 'archived';
+  status: ProjectStatus;
   parentId: string | null;
   createdAt: string;
   updatedAt: string;

@@ -79,6 +79,7 @@ vi.mock('ssh2', () => {
 });
 
 import { runOverSsh } from '../server/domains/tasks/ssh-exec.util';
+import { RUN_STATUS } from '../shared/enums';
 
 const plan = {
   env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' },
@@ -90,7 +91,7 @@ async function collected() {
   const lines: string[] = [];
   let finishState: { status: string; exitCode: number | null } | null = null;
   let resolved: { status: string; exitCode: number | null } | null = null;
-  const finish = async (status: 'done' | 'failed', exitCode: number | null) => {
+  const finish = async (status: RUN_STATUS.DONE | RUN_STATUS.FAILED, exitCode: number | null) => {
     finishState = { status, exitCode };
   };
   const resolve = (v: { status: string; exitCode: number | null }) => {
@@ -118,8 +119,8 @@ describe('runOverSsh (mocked ssh2)', () => {
     await p;
     const s = state();
     expect(lines).toEqual(['line1', 'line2', '[stderr] warn']);
-    expect(s.finishState).toEqual({ status: 'done', exitCode: 0 });
-    expect(s.resolved).toEqual({ status: 'done', exitCode: 0 });
+    expect(s.finishState).toEqual({ status: RUN_STATUS.DONE, exitCode: 0 });
+    expect(s.resolved).toEqual({ status: RUN_STATUS.DONE, exitCode: 0 });
   });
 
   it('nonzero exit marks the run failed', async () => {
@@ -131,7 +132,7 @@ describe('runOverSsh (mocked ssh2)', () => {
     FakeClient.last.stream.close(3);
     await p;
     const s = state();
-    expect(s.finishState).toEqual({ status: 'failed', exitCode: 3 });
+    expect(s.finishState).toEqual({ status: RUN_STATUS.FAILED, exitCode: 3 });
   });
 
   it('exec error fails the run without streaming', async () => {
@@ -147,7 +148,7 @@ describe('runOverSsh (mocked ssh2)', () => {
     await new Promise((r) => setTimeout(r, 20));
     await p;
     const s = state();
-    expect(s.finishState).toEqual({ status: 'failed', exitCode: null });
+    expect(s.finishState).toEqual({ status: RUN_STATUS.FAILED, exitCode: null });
   });
 
   it('connection error surfaces as failed with the message on the stream', async () => {
@@ -160,7 +161,7 @@ describe('runOverSsh (mocked ssh2)', () => {
     await p;
     const s = state();
     expect(lines.some((l) => l.includes('ECONNREFUSED'))).toBe(true);
-    expect(s.finishState).toEqual({ status: 'failed', exitCode: null });
+    expect(s.finishState).toEqual({ status: RUN_STATUS.FAILED, exitCode: null });
   });
 
   it('port defaults to 22 on garbage', async () => {

@@ -15,7 +15,7 @@ export const user = pgTable("user", {
  image: text('image'),
  createdAt: timestamp('created_at', { withTimezone: true }).$default(() => new Date()).notNull(),
  updatedAt: timestamp('updated_at', { withTimezone: true }).$default(() => new Date()).$onUpdate(() => /* @__PURE__ */ new Date()).notNull(),
- role: text('role', { enum: ['admin', 'employee', 'viewer'] }).default("viewer"),
+ role: text('role', { enum: ['ADMIN', 'EMPLOYEE', 'VIEWER'] }).default('VIEWER'),
  title: text('title').default("")
 					});
 

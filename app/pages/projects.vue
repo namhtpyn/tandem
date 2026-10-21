@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import { computed, reactive, ref, unref } from 'vue';
 
 import type { ProjectRow } from '~/utils/orpc-types';
-import { CHANGE_RESOURCE } from '~/../shared/enums';
+import { CHANGE_RESOURCE, PROJECT_STATUS, type ProjectStatus } from '~/../shared/enums';
 
 useSeoMeta({ title: 'Projects · Tandem' });
 
@@ -24,7 +24,7 @@ const form = reactive({
   description: '',
   prompt: '',
   parentId: '__none__' as string,
-  status: 'active' as 'active' | 'archived',
+  status: PROJECT_STATUS.ACTIVE as ProjectStatus,
 });
 
 // flattened tree with depth for indentation
@@ -82,7 +82,7 @@ function openEditor(row?: FlatRow) {
   form.description = row?.description ?? '';
   form.prompt = row?.prompt ?? '';
   form.parentId = row?.parentId ?? '__none__';
-  form.status = row?.status ?? 'active';
+  form.status = row?.status ?? PROJECT_STATUS.ACTIVE;
   message.value = '';
   editorOpen.value = true;
 }
@@ -125,7 +125,7 @@ async function remove_() {
   }
 }
 
-const statusColor = (s: string) => (s === 'archived' ? 'neutral' : 'success');
+const statusColor = (s: string) => (s === PROJECT_STATUS.ARCHIVED ? 'neutral' : 'success');
 
 onServerPrefetch(() => Promise.all([liveQuery.suspense()]))
 </script>
@@ -317,8 +317,8 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense()]))
               <USelect
                 v-model="form.status"
                 :items="[
-                  { label: 'Active', value: 'active' },
-                  { label: 'Archived', value: 'archived' },
+                  { label: 'Active', value: PROJECT_STATUS.ACTIVE },
+                  { label: 'Archived', value: PROJECT_STATUS.ARCHIVED },
                 ]"
                 value-key="value"
                 icon="i-lucide-circle-dot"

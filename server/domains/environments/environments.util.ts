@@ -1,5 +1,6 @@
 // Environment validation + serialization shared by the API routes.
 import { z } from 'zod';
+import { SECRET_USAGE } from '#shared/enums';
 
 export const environmentInput = z.strictObject({
   name: z.string().min(1).max(64),
@@ -11,7 +12,7 @@ export const environmentInput = z.strictObject({
     .default('22'),
   username: z.string().min(1).max(64),
   secretId: z.string().min(1).nullable().default(null),
-  secretUsage: z.enum(['ssh-key', 'password']).default('ssh-key'),
+  secretUsage: z.enum(SECRET_USAGE).default(SECRET_USAGE.SSH_KEY),
 });
 
 export type EnvironmentInput = z.infer<typeof environmentInput>;

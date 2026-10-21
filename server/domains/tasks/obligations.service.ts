@@ -1,5 +1,5 @@
 // Pending obligations — the single source for "who acts next" on a task.
-// Roles today: 'answer' (question chain), 'approval' (unanimous review gate).
+// Roles today: OBLIGATION_ROLE.ANSWER (question chain), OBLIGATION_ROLE.APPROVAL (unanimous review gate).
 // Drives the waiting-on-you inbox + badge. Laws (user, 2026-10-15):
 //   - replaces question_holder_id and review_approvals
 //   - the answer obligation MOVES on forward (old row cancelled, new row pending)
@@ -9,8 +9,8 @@ import { v7 as uuidv7 } from 'uuid';
 
 import { db } from '../../db';
 import { tasks, taskObligations } from '../../db/schema';
+import { OBLIGATION_ROLE, OBLIGATION_STATUS, type ObligationRole } from '#shared/enums';
 
-export type ObligationRole = 'answer' | 'approval';
 
 function id() {
   return uuidv7();
@@ -26,7 +26,7 @@ export async function spawnObligation(taskId: string, employeeId: string, role: 
         eq(taskObligations.taskId, taskId),
         eq(taskObligations.employeeId, employeeId),
         eq(taskObligations.role, role),
-        eq(taskObligations.status, 'pending'),
+        eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
       ),
     );
   if (existing.length > 0) return existing[0]!.id;
@@ -35,8 +35,8 @@ export async function spawnObligation(taskId: string, employeeId: string, role: 
     .insert(taskObligations)
     .values(
       at
-        ? { id: rowId, taskId, employeeId, role, status: 'pending', createdAt: at }
-        : { id: rowId, taskId, employeeId, role, status: 'pending' },
+        ? { id: rowId, taskId, employeeId, role, status: OBLIGATION_STATUS.PENDING, createdAt: at }
+        : { id: rowId, taskId, employeeId, role, status: OBLIGATION_STATUS.PENDING },
     );
   return rowId;
 }
@@ -50,13 +50,13 @@ export async function resolveObligation(
 ) {
   await db
     .update(taskObligations)
-    .set({ status: 'fulfilled', resolvedAt: new Date(), resolvedBy })
+    .set({ status: OBLIGATION_STATUS.FULFILLED, resolvedAt: new Date(), resolvedBy })
     .where(
       and(
         eq(taskObligations.taskId, taskId),
         eq(taskObligations.employeeId, employeeId),
         eq(taskObligations.role, role),
-        eq(taskObligations.status, 'pending'),
+        eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
       ),
     );
 }
@@ -65,9 +65,9 @@ export async function resolveObligation(
 export async function cancelObligations(taskId: string, role: ObligationRole) {
   await db
     .update(taskObligations)
-    .set({ status: 'cancelled', resolvedAt: new Date() })
+    .set({ status: OBLIGATION_STATUS.CANCELLED, resolvedAt: new Date() })
     .where(
-      and(eq(taskObligations.taskId, taskId), eq(taskObligations.role, role), eq(taskObligations.status, 'pending')),
+      and(eq(taskObligations.taskId, taskId), eq(taskObligations.role, role), eq(taskObligations.status, OBLIGATION_STATUS.PENDING)),
     );
 }
 
@@ -76,7 +76,7 @@ export async function cancelObligations(taskId: string, role: ObligationRole) {
 export async function cancelAllObligations(taskId: string, role: ObligationRole) {
   await db
     .update(taskObligations)
-    .set({ status: 'cancelled', resolvedAt: new Date() })
+    .set({ status: OBLIGATION_STATUS.CANCELLED, resolvedAt: new Date() })
     .where(and(eq(taskObligations.taskId, taskId), eq(taskObligations.role, role)));
 }
 
@@ -88,8 +88,8 @@ export async function answerHolder(taskId: string) {
     .where(
       and(
         eq(taskObligations.taskId, taskId),
-        eq(taskObligations.role, 'answer'),
-        eq(taskObligations.status, 'pending'),
+        eq(taskObligations.role, OBLIGATION_ROLE.ANSWER),
+        eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
       ),
     )
     .orderBy(desc(taskObligations.createdAt));
@@ -105,20 +105,20 @@ export async function approvalsInRoundBatch(taskIds: string[]) {
   const rows = await db
     .select()
     .from(taskObligations)
-    .where(and(inArray(taskObligations.taskId, taskIds), eq(taskObligations.role, 'approval')));
+    .where(and(inArray(taskObligations.taskId, taskIds), eq(taskObligations.role, OBLIGATION_ROLE.APPROVAL)));
   const byTask = new Map<string, typeof rows>();
   for (const r of rows) byTask.set(r.taskId, [...(byTask.get(r.taskId) ?? []), r]);
   const out = new Map<string, string[]>();
   for (const [tid, list] of byTask) {
     const latest = Math.max(...list.map((r) => r.createdAt.getTime()));
     const roundRows = list.filter((r) => r.createdAt.getTime() === latest);
-    if (roundRows.some((r) => r.status === 'cancelled')) {
+    if (roundRows.some((r) => r.status === OBLIGATION_STATUS.CANCELLED)) {
       out.set(tid, []);
       continue;
     }
     out.set(
       tid,
-      roundRows.filter((r) => r.status === 'fulfilled').map((r) => r.employeeId!),
+      roundRows.filter((r) => r.status === OBLIGATION_STATUS.FULFILLED).map((r) => r.employeeId!),
     );
   }
   return out;
@@ -135,7 +135,7 @@ export async function pendingForUser(employeeId: string) {
     })
     .from(taskObligations)
     .innerJoin(tasks, eq(tasks.id, taskObligations.taskId))
-    .where(and(eq(taskObligations.employeeId, employeeId), eq(taskObligations.status, 'pending')))
+    .where(and(eq(taskObligations.employeeId, employeeId), eq(taskObligations.status, OBLIGATION_STATUS.PENDING)))
     .orderBy(desc(taskObligations.createdAt));
 }
 
@@ -144,7 +144,7 @@ export async function pendingCounts(employeeId: string) {
   const rows = await db
     .select({ role: taskObligations.role })
     .from(taskObligations)
-    .where(and(eq(taskObligations.employeeId, employeeId), eq(taskObligations.status, 'pending')));
+    .where(and(eq(taskObligations.employeeId, employeeId), eq(taskObligations.status, OBLIGATION_STATUS.PENDING)));
   const counts: Record<string, number> = {};
   for (const r of rows) counts[r.role] = (counts[r.role] ?? 0) + 1;
   return counts;
@@ -156,12 +156,12 @@ export async function openObligations(taskIds: string[]) {
   const rows = await db
     .select()
     .from(taskObligations)
-    .where(and(inArray(taskObligations.taskId, taskIds), eq(taskObligations.status, 'pending')));
+    .where(and(inArray(taskObligations.taskId, taskIds), eq(taskObligations.status, OBLIGATION_STATUS.PENDING)));
   const map = new Map<string, { holders: string[]; approvers: string[] }>();
   for (const r of rows) {
     const entry = map.get(r.taskId) ?? { holders: [], approvers: [] };
-    if (r.role === 'answer' && r.employeeId) entry.holders.push(r.employeeId);
-    if (r.role === 'approval' && r.employeeId) entry.approvers.push(r.employeeId);
+    if (r.role === OBLIGATION_ROLE.ANSWER && r.employeeId) entry.holders.push(r.employeeId);
+    if (r.role === OBLIGATION_ROLE.APPROVAL && r.employeeId) entry.approvers.push(r.employeeId);
     map.set(r.taskId, entry);
   }
   return map;

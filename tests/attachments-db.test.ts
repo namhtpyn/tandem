@@ -53,6 +53,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { STATUS } from '../shared/status';
+import { ROLE, RUN_STATUS } from '../shared/enums';
 
 async function seed() {
   const envId = `env-${crypto.randomUUID().slice(0, 8)}`;
@@ -65,7 +66,7 @@ async function seed() {
     name: `Att ${uid.slice(0, 6)}`,
     email: `att-${uid}@t.test`,
     emailVerified: true,
-    role: 'admin',
+    role: ROLE.ADMIN,
     createdAt: new Date(),
     updatedAt: new Date(),
   });
@@ -152,7 +153,7 @@ describe('dispatch attachment push (runner integration)', () => {
       id: runId,
       taskId: tid,
       employeeId: uid,
-      status: 'done',
+      status: RUN_STATUS.DONE,
       exitCode: 0,
       output: '{"kind": "result", "body": "ok"}',
       finishedAt: new Date(),
@@ -189,7 +190,7 @@ describe('settleAttachments (runner integration)', () => {
       id: runId,
       taskId: tid,
       employeeId: uid,
-      status: 'done',
+      status: RUN_STATUS.DONE,
       exitCode: 0,
       output: '{"kind": "result", "body": "ok"}',
       finishedAt: new Date(),
@@ -202,7 +203,7 @@ describe('settleAttachments (runner integration)', () => {
       tid,
       runId,
       { env: { host: 'x', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } },
-      'done',
+      RUN_STATUS.DONE,
     );
 
     const outs = await db
@@ -237,14 +238,14 @@ describe('settleAttachments edge arms', () => {
       id: runDone,
       taskId: tid,
       employeeId: uid,
-      status: 'done',
+      status: RUN_STATUS.DONE,
       exitCode: 0,
       output: '{"kind": "result", "body": "ok"}',
       finishedAt: new Date(),
     });
     await db
       .insert(taskRuns)
-      .values({ id: runActive, taskId: tid, employeeId: uid, status: 'running', startedAt: new Date() });
+      .values({ id: runActive, taskId: tid, employeeId: uid, status: RUN_STATUS.RUNNING, startedAt: new Date() });
     // ssh-files mock: collect returns [] for this call? module mock returns files... override per-call impossible.
     // Instead verify settle resolves and no output rows/activity appear when collect returns [].
     // Temporarily swap the mock impl:
@@ -256,7 +257,7 @@ describe('settleAttachments edge arms', () => {
         tid,
         runDone,
         { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } },
-        'done',
+        RUN_STATUS.DONE,
       );
     } finally {
       (filesMod as unknown as { collectRunOutputs: unknown }).collectRunOutputs = orig;
@@ -282,7 +283,7 @@ describe('settleAttachments rejection safety', () => {
         't-no-task',
         'r-no-run',
         { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } },
-        'done',
+        RUN_STATUS.DONE,
       ),
     ).resolves.toBeUndefined();
   });

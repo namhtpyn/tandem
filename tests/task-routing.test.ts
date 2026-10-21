@@ -26,8 +26,9 @@ import { STATUS } from '../shared/status';
 import type { TaskRow } from '../shared/types';
 import { resetSchema } from './helpers/pg';
 import { makeProcCaller } from './helpers/procs';
+import { OBLIGATION_ROLE, OBLIGATION_STATUS, PROPOSAL_KIND, PROPOSAL_STATUS, REVIEW_STATUS, ROLE, RUN_STATUS } from '../shared/enums';
 
-const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: 'admin' };
+const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
 const worker = {
   id: '00000000-0000-7000-8000-bccb5af49873',
   name: 'Worker',
@@ -104,13 +105,13 @@ async function dbRows(table: string) {
   return (await db.select().from((mod as unknown as Record<string, PgTable>)[table])) as Array<Record<string, unknown>>;
 }
 
-async function mkProposal(taskId: string, kind: 'subtasks' | 'reassign', payload: unknown) {
+async function mkProposal(taskId: string, kind: PROPOSAL_KIND.SUBTASKS | PROPOSAL_KIND.REASSIGN, payload: unknown) {
   const { db } = await import('../server/db');
   const { taskProposals } = await import('../server/db/schema');
   const id = crypto.randomUUID();
   await db
     .insert(taskProposals)
-    .values({ id, taskId, kind, payload: payload as Record<string, unknown>, status: 'proposed' });
+    .values({ id, taskId, kind, payload: payload as Record<string, unknown>, status: PROPOSAL_STATUS.PROPOSED });
   return id;
 }
 
@@ -125,7 +126,7 @@ beforeEach(async () => {
     name: 'Admin',
     email: 'admin@tandem.local',
     emailVerified: true,
-    role: 'admin',
+    role: ROLE.ADMIN,
     createdAt: new Date(),
     updatedAt: new Date(),
   });
@@ -146,20 +147,20 @@ describe('parseRoutingProposals', () => {
     ].join('\n');
     expect(parseRoutingProposals(out)).toEqual([
       {
-        kind: 'subtasks',
+        kind: PROPOSAL_KIND.SUBTASKS,
         items: [
           { title: 'Draft legal review', description: 'contract clauses', assigneeName: 'Peer Person' },
           { title: 'Fix CSS', description: 'layout bugs', assigneeName: 'Report Guy' },
         ],
       },
-      { kind: 'reassign', targetName: 'Peer Person', reason: 'the whole thing is legal work' },
+      { kind: PROPOSAL_KIND.REASSIGN, targetName: 'Peer Person', reason: 'the whole thing is legal work' },
     ]);
   });
 
   it('empty titles filtered; missing reason optional; no markers = no proposals', () => {
     expect(parseRoutingProposals('[SUBTASKS] :: desc :: Someone')).toEqual([]);
     expect(parseRoutingProposals('[REASSIGN] Nobody')).toEqual([
-      { kind: 'reassign', targetName: 'Nobody', reason: undefined },
+      { kind: PROPOSAL_KIND.REASSIGN, targetName: 'Nobody', reason: undefined },
     ]);
     expect(parseRoutingProposals('plain output\n{"kind": "result", "body": "done"}')).toEqual([]);
     expect(parseRoutingProposals(null)).toEqual([]);
@@ -190,14 +191,14 @@ describe('obligations', () => {
       reviewers: [idMap.get('peer')!, idMap.get('report')!],
     });
     await callProc('tasks.update', { id: taskId, status: STATUS.doing });
-    await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'done' }));
+    await asEmp('worker', () => callProc('tasks.submit', { taskId, body: RUN_STATUS.DONE }));
     const t1 = await getTask(taskId);
     expect(t1.status).toBe(STATUS.inReview);
     expect((await pendingForUser(idMap.get('peer')!)).length).toBe(1); // inbox ping per reviewer
 
     // verdict checklist: one pending row per reviewer in round 1
     const revs1 = (await callProc('tasks.reviews', { taskId })) as Array<{ round: number; status: string }>;
-    expect(revs1.map((r) => r.status)).toEqual(['pending', 'pending']);
+    expect(revs1.map((r) => r.status)).toEqual([OBLIGATION_STATUS.PENDING, OBLIGATION_STATUS.PENDING]);
     expect(revs1.every((r) => r.round === 1)).toBe(true);
 
     await asEmp('peer', () => callProc('tasks.approve', { taskId, body: 'ok' }));
@@ -210,12 +211,12 @@ describe('obligations', () => {
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'v2' }));
     const revs2 = (await callProc('tasks.reviews', { taskId })) as Array<{ round: number; status: string }>;
     expect(revs2.filter((r) => r.round === 2)).toHaveLength(2);
-    expect(revs2.filter((r) => r.round === 1).some((r) => r.status === 'change_requested')).toBe(true);
+    expect(revs2.filter((r) => r.round === 1).some((r) => r.status === REVIEW_STATUS.CHANGE_REQUESTED)).toBe(true);
     await asEmp('peer', () => callProc('tasks.approve', { taskId, body: 'ok2' }));
     await asEmp('report', () => callProc('tasks.approve', { taskId, body: 'ok3' }));
     expect((await getTask(taskId)).status).toBe(STATUS.done);
     const revs3 = (await callProc('tasks.reviews', { taskId })) as Array<{ round: number; status: string }>;
-    expect(revs3.filter((r) => r.round === 2).every((r) => r.status === 'approved')).toBe(true);
+    expect(revs3.filter((r) => r.round === 2).every((r) => r.status === REVIEW_STATUS.APPROVED)).toBe(true);
   });
 
   it('REVIEW LAW: approvalsInRoundBatch fulfilled arm — approved round reads as approvals', async () => {
@@ -256,8 +257,8 @@ describe('obligations', () => {
         id: crypto.randomUUID(),
         taskId,
         employeeId: idMap.get('peer')!,
-        role: 'approval',
-        status: 'fulfilled',
+        role: OBLIGATION_ROLE.APPROVAL,
+        status: OBLIGATION_STATUS.FULFILLED,
         createdAt: now,
         resolvedAt: now,
       },
@@ -265,8 +266,8 @@ describe('obligations', () => {
         id: crypto.randomUUID(),
         taskId,
         employeeId: idMap.get('report')!,
-        role: 'approval',
-        status: 'fulfilled',
+        role: OBLIGATION_ROLE.APPROVAL,
+        status: OBLIGATION_STATUS.FULFILLED,
         createdAt: now,
         resolvedAt: now,
       },
@@ -289,16 +290,16 @@ describe('obligations', () => {
       reviewers: [idMap.get('peer')!],
     });
     await callProc('tasks.update', { id: taskId, status: STATUS.doing });
-    await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'done' }));
+    await asEmp('worker', () => callProc('tasks.submit', { taskId, body: RUN_STATUS.DONE }));
     await asEmp('peer', () => callProc('tasks.reject', { taskId, body: 'wrong scope entirely' }));
     // body-omitted arm: reject without a note (default body '')
     const taskId2 = await mkTask({ title: 'RJ2', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!] });
     await callProc('tasks.update', { id: taskId2, status: STATUS.doing });
-    await asEmp('worker', () => callProc('tasks.submit', { taskId: taskId2, body: 'done' }));
+    await asEmp('worker', () => callProc('tasks.submit', { taskId: taskId2, body: RUN_STATUS.DONE }));
     await asEmp('peer', () => callProc('tasks.reject', { taskId: taskId2 }));
     expect((await getTask(taskId)).status).toBe(STATUS.cancelled);
     const revs = (await callProc('tasks.reviews', { taskId })) as Array<{ status: string; note: string }>;
-    expect(revs[0].status).toBe('rejected');
+    expect(revs[0].status).toBe(PROPOSAL_STATUS.REJECTED);
     expect(revs[0].note).toContain('wrong scope');
   });
 
@@ -412,7 +413,7 @@ describe('proposal confirm flow', () => {
   it('subtasks: within-chain assignee kept; outside-chain escalated to supervisor', async () => {
     const taskId = await mkTask({ title: 'T1', assigneeId: idMap.get('worker')! });
     // worker's chain: chief (above), peer+report (below). 'Solo Person' is unrelated => escalation.
-    const pid = await mkProposal(taskId, 'subtasks', {
+    const pid = await mkProposal(taskId, PROPOSAL_KIND.SUBTASKS, {
       items: [
         { title: 'In chain', description: 'd1', assigneeName: 'Peer Person' },
         { title: 'Outside chain', description: 'd2', assigneeName: 'Solo Person' },
@@ -430,12 +431,12 @@ describe('proposal confirm flow', () => {
     // parent auto-blocked now
     expect((await getTask(taskId)).status).toBe(STATUS.blocked);
     const done = await dbRow('taskProposals', pid);
-    expect(done.status).toBe('executed');
+    expect(done.status).toBe(PROPOSAL_STATUS.EXECUTED);
   });
 
   it('subtasks: assignee names that do not exist land unassigned', async () => {
     const taskId = await mkTask({ title: 'T2', assigneeId: idMap.get('worker')! });
-    const pid = await mkProposal(taskId, 'subtasks', { items: [{ title: 'No name' }] });
+    const pid = await mkProposal(taskId, PROPOSAL_KIND.SUBTASKS, { items: [{ title: 'No name' }] });
     await callProc('tasks.confirmProposal', { proposalId: pid });
     const st = (await callProc('tasks.subtasks', { taskId })) as { items: Array<{ assigneeId: string | null }> };
     expect(st.items[0].assigneeId).toBeNull();
@@ -443,24 +444,24 @@ describe('proposal confirm flow', () => {
 
   it('reassign: within chain goes through with history; ping-pong refused', async () => {
     const taskId = await mkTask({ title: 'T3', assigneeId: idMap.get('worker')! });
-    const pid = await mkProposal(taskId, 'reassign', { targetName: 'Peer Person', reason: 'their domain' });
+    const pid = await mkProposal(taskId, PROPOSAL_KIND.REASSIGN, { targetName: 'Peer Person', reason: 'their domain' });
     await callProc('tasks.confirmProposal', { proposalId: pid });
     expect((await getTask(taskId)).assigneeId).toBe(idMap.get('peer')!);
     expect(await recentAssignees(taskId, 2)).toContain(idMap.get('peer')!);
 
     // peer is now assignee; proposing reassign BACK to worker (recent) is refused
-    const back = await mkProposal(taskId, 'reassign', { targetName: 'Worker', reason: 'back' });
+    const back = await mkProposal(taskId, PROPOSAL_KIND.REASSIGN, { targetName: 'Worker', reason: 'back' });
     await expect(callProc('tasks.confirmProposal', { proposalId: back })).rejects.toThrow(/loop guard/i);
   });
 
   it('reassign: unknown employee rejected; double-confirm rejected; reject keeps task and rides the brief', async () => {
     const taskId = await mkTask({ title: 'T4', assigneeId: idMap.get('worker')! });
-    const bad = await mkProposal(taskId, 'reassign', { targetName: 'Ghost', reason: 'x' });
+    const bad = await mkProposal(taskId, PROPOSAL_KIND.REASSIGN, { targetName: 'Ghost', reason: 'x' });
     await expect(callProc('tasks.confirmProposal', { proposalId: bad })).rejects.toThrow(/not found/i);
 
-    const pid = await mkProposal(taskId, 'reassign', { targetName: 'Peer Person', reason: 'r' });
+    const pid = await mkProposal(taskId, PROPOSAL_KIND.REASSIGN, { targetName: 'Peer Person', reason: 'r' });
     await callProc('tasks.rejectProposal', { proposalId: pid, note: 'stay on it' });
-    expect((await dbRow('taskProposals', pid)).status).toBe('rejected');
+    expect((await dbRow('taskProposals', pid)).status).toBe(PROPOSAL_STATUS.REJECTED);
     // decided proposals cannot be confirmed
     await expect(callProc('tasks.confirmProposal', { proposalId: pid })).rejects.toThrow(/already decided/i);
 
@@ -473,7 +474,7 @@ describe('proposal confirm flow', () => {
 
   it('rejected reassign keeps the current assignee', async () => {
     const taskId = await mkTask({ title: 'T5', assigneeId: idMap.get('worker')! });
-    const pid = await mkProposal(taskId, 'reassign', { targetName: 'Peer Person', reason: 'r' });
+    const pid = await mkProposal(taskId, PROPOSAL_KIND.REASSIGN, { targetName: 'Peer Person', reason: 'r' });
     await callProc('tasks.rejectProposal', { proposalId: pid });
     expect((await getTask(taskId)).assigneeId).toBe(idMap.get('worker')!);
   });
@@ -485,18 +486,18 @@ describe('routing coverage arms', () => {
     const taskId = await mkTask({ title: 'Cov', assigneeId: idMap.get('worker')! });
     // outside-chain target stays proposed (the list still surfaces proposals)
     await recordProposals(taskId, null as unknown as string, [
-      { kind: 'subtasks', items: [{ title: 'Only', description: 'd', assigneeName: 'Solo Person' }] },
+      { kind: PROPOSAL_KIND.SUBTASKS, items: [{ title: 'Only', description: 'd', assigneeName: 'Solo Person' }] },
     ]);
     const list = await callProc('tasks.proposals', { taskId });
     expect(list.items.length).toBe(1);
-    expect(list.items[0].kind).toBe('subtasks');
-    expect(list.items[0].status).toBe('proposed');
+    expect(list.items[0].kind).toBe(PROPOSAL_KIND.SUBTASKS);
+    expect(list.items[0].status).toBe(PROPOSAL_STATUS.PROPOSED);
   });
 
   it('reassign escalation: outside-chain target lands on the agent supervisor', async () => {
     const taskId = await mkTask({ title: 'Esc', assigneeId: idMap.get('worker')!, ownerId: idMap.get('chief')! });
     // Solo Person is outside worker's chain (chief above, peer/report below)
-    const pid = await mkProposal(taskId, 'reassign', { targetName: 'Solo Person', reason: 'their specialty' });
+    const pid = await mkProposal(taskId, PROPOSAL_KIND.REASSIGN, { targetName: 'Solo Person', reason: 'their specialty' });
     await callProc('tasks.confirmProposal', { proposalId: pid });
     expect((await getTask(taskId)).assigneeId).toBe(idMap.get('chief')!);
     const hist = await callProc('tasks.assignments', { taskId });
@@ -505,14 +506,14 @@ describe('routing coverage arms', () => {
 
   it('reassign on an unassigned task writes through directly', async () => {
     const taskId = await mkTask({ title: 'Unassigned' });
-    const pid = await mkProposal(taskId, 'reassign', { targetName: 'Peer Person' });
+    const pid = await mkProposal(taskId, PROPOSAL_KIND.REASSIGN, { targetName: 'Peer Person' });
     await callProc('tasks.confirmProposal', { proposalId: pid });
     expect((await getTask(taskId)).assigneeId).toBe(idMap.get('peer')!);
   });
 
   it('reassign without a reason still records', async () => {
     const taskId = await mkTask({ title: 'NoReason', assigneeId: idMap.get('worker')! });
-    const pid = await mkProposal(taskId, 'reassign', { targetName: 'Peer Person' });
+    const pid = await mkProposal(taskId, PROPOSAL_KIND.REASSIGN, { targetName: 'Peer Person' });
     await callProc('tasks.confirmProposal', { proposalId: pid });
     const hist = await callProc('tasks.assignments', { taskId });
     expect(hist.items[0].reason).toBe('reassign: ');
@@ -520,8 +521,8 @@ describe('routing coverage arms', () => {
 
   it('spawnObligation is idempotent for identical pending rows', async () => {
     const taskId = await mkTask({ title: 'Idem' });
-    const a = await spawnObligation(taskId, idMap.get('peer')!, 'answer');
-    const b = await spawnObligation(taskId, idMap.get('peer')!, 'answer');
+    const a = await spawnObligation(taskId, idMap.get('peer')!, OBLIGATION_ROLE.ANSWER);
+    const b = await spawnObligation(taskId, idMap.get('peer')!, OBLIGATION_ROLE.ANSWER);
     expect(a).toBe(b);
   });
 
@@ -564,10 +565,10 @@ describe('routing coverage arms', () => {
 
   it('parser: empty segments become undefined; multiple items; reassign without reason', () => {
     expect(parseRoutingProposals('[SUBTASKS] A :: :: Peer Person')).toEqual([
-      { kind: 'subtasks', items: [{ title: 'A', description: undefined, assigneeName: 'Peer Person' }] },
+      { kind: PROPOSAL_KIND.SUBTASKS, items: [{ title: 'A', description: undefined, assigneeName: 'Peer Person' }] },
     ]);
     expect(parseRoutingProposals('[SUBTASKS] B')).toEqual([
-      { kind: 'subtasks', items: [{ title: 'B', description: undefined, assigneeName: undefined }] },
+      { kind: PROPOSAL_KIND.SUBTASKS, items: [{ title: 'B', description: undefined, assigneeName: undefined }] },
     ]);
   });
 });
@@ -595,7 +596,7 @@ describe('routing coverage arms II', () => {
     await expect(callProc('tasks.rejectProposal', { proposalId: 'ghost' })).rejects.toThrow(/not found/i);
 
     const taskId = await mkTask({ title: 'Gone', assigneeId: idMap.get('worker')! });
-    const pid = await mkProposal(taskId, 'reassign', { targetName: 'Peer Person', reason: 'r' });
+    const pid = await mkProposal(taskId, PROPOSAL_KIND.REASSIGN, { targetName: 'Peer Person', reason: 'r' });
     await callProc('tasks.rejectProposal', { proposalId: pid });
     await expect(callProc('tasks.rejectProposal', { proposalId: pid })).rejects.toThrow(/already decided/i);
   });
@@ -609,28 +610,28 @@ describe('routing coverage arms II', () => {
   it('reassign outside chain with no supervisor falls through to the loop guard / direct write', async () => {
     // solo has no supervisor: escalation block skipped entirely
     const taskId = await mkTask({ title: 'Lonely', assigneeId: idMap.get('solo')! });
-    const pid = await mkProposal(taskId, 'reassign', { targetName: 'Peer Person', reason: 'help' });
+    const pid = await mkProposal(taskId, PROPOSAL_KIND.REASSIGN, { targetName: 'Peer Person', reason: 'help' });
     await callProc('tasks.confirmProposal', { proposalId: pid });
     expect((await getTask(taskId)).assigneeId).toBe(idMap.get('peer')!);
   });
 
   it('reassign to the supervisor itself skips the escalation write but still lands on the supervisor', async () => {
     const taskId = await mkTask({ title: 'ToSup', assigneeId: idMap.get('worker')! });
-    const pid = await mkProposal(taskId, 'reassign', { targetName: 'Chief Person', reason: 'above me' });
+    const pid = await mkProposal(taskId, PROPOSAL_KIND.REASSIGN, { targetName: 'Chief Person', reason: 'above me' });
     await callProc('tasks.confirmProposal', { proposalId: pid });
     expect((await getTask(taskId)).assigneeId).toBe(idMap.get('chief')!);
   });
 
   it('subtasks proposal with no items executes as a no-op; owner fallbacks cover cleared owners', async () => {
     const taskId = await mkTask({ title: 'NoItems', assigneeId: idMap.get('worker')! });
-    const pid = await mkProposal(taskId, 'subtasks', {});
+    const pid = await mkProposal(taskId, PROPOSAL_KIND.SUBTASKS, {});
     await callProc('tasks.confirmProposal', { proposalId: pid });
     const st = await callProc('tasks.subtasks', { taskId });
     expect(st.items.length).toBe(0);
 
     // escalation with NO supervisor (solo) falls back to the task owner
     const owned = await mkTask({ title: 'OwnFall', assigneeId: idMap.get('solo')!, ownerId: idMap.get('chief')! });
-    const oid = await mkProposal(owned, 'subtasks', { items: [{ title: 'Far', assigneeName: 'Peer Person' }] });
+    const oid = await mkProposal(owned, PROPOSAL_KIND.SUBTASKS, { items: [{ title: 'Far', assigneeName: 'Peer Person' }] });
     await callProc('tasks.confirmProposal', { proposalId: oid });
     const st2 = await callProc('tasks.subtasks', { taskId: owned });
     expect(st2.items[0].assigneeId).toBe(idMap.get('chief')!);
@@ -640,7 +641,7 @@ describe('routing coverage arms II', () => {
     const { tasks: tasksTable } = await import('../server/db/schema');
     const createdBy = await db.update(tasksTable).set({ ownerId: null }).where(eq(tasksTable.id, owned)).returning();
     expect(createdBy.length).toBe(1);
-    const cid = await mkProposal(owned, 'subtasks', { items: [{ title: 'Far2', assigneeName: 'Report Guy' }] });
+    const cid = await mkProposal(owned, PROPOSAL_KIND.SUBTASKS, { items: [{ title: 'Far2', assigneeName: 'Report Guy' }] });
     await callProc('tasks.confirmProposal', { proposalId: cid });
     const st3 = (await callProc('tasks.subtasks', { taskId: owned })) as { items: Array<{ title: string }> };
     expect(st3.items.map((i) => i.title)).toContain('Far2');
@@ -648,7 +649,7 @@ describe('routing coverage arms II', () => {
 
   it('escalated reassign without a reason still executes', async () => {
     const taskId = await mkTask({ title: 'EscNoReason', assigneeId: idMap.get('worker')! });
-    const pid = await mkProposal(taskId, 'reassign', { targetName: 'Solo Person' });
+    const pid = await mkProposal(taskId, PROPOSAL_KIND.REASSIGN, { targetName: 'Solo Person' });
     await callProc('tasks.confirmProposal', { proposalId: pid });
     expect((await getTask(taskId)).assigneeId).toBe(idMap.get('chief')!);
     const hist = await callProc('tasks.assignments', { taskId });
@@ -659,11 +660,11 @@ describe('routing coverage arms II', () => {
     // worker's chain includes Peer Person; Solo Person is outside
     const taskId = await mkTask({ title: 'AutoExec', assigneeId: idMap.get('worker')! });
     await recordProposals(taskId, null as unknown as string, [
-      { kind: 'subtasks', items: [{ title: 'Mine to Peer', description: 'd', assigneeName: 'Peer Person' }] },
+      { kind: PROPOSAL_KIND.SUBTASKS, items: [{ title: 'Mine to Peer', description: 'd', assigneeName: 'Peer Person' }] },
     ]);
     let rows = (await dbRows('taskProposals')).filter((p) => p.taskId === taskId);
     expect(rows).toHaveLength(1);
-    expect(rows[0].status).toBe('executed'); // no human touched it
+    expect(rows[0].status).toBe(PROPOSAL_STATUS.EXECUTED); // no human touched it
     const st = await callProc('tasks.subtasks', { taskId });
     expect(st.items[0].title).toBe('Mine to Peer');
     expect(st.items[0].assigneeId).toBe(idMap.get('peer')!);
@@ -671,34 +672,34 @@ describe('routing coverage arms II', () => {
     // outside the chain -> still a proposal awaiting a human
     const taskId2 = await mkTask({ title: 'AutoKeep', assigneeId: idMap.get('worker')! });
     await recordProposals(taskId2, null as unknown as string, [
-      { kind: 'subtasks', items: [{ title: 'Out', description: 'd', assigneeName: 'Solo Person' }] },
+      { kind: PROPOSAL_KIND.SUBTASKS, items: [{ title: 'Out', description: 'd', assigneeName: 'Solo Person' }] },
     ]);
     rows = (await dbRows('taskProposals')).filter((p) => p.taskId === taskId2);
     expect(rows).toHaveLength(1);
-    expect(rows[0].status).toBe('proposed');
+    expect(rows[0].status).toBe(PROPOSAL_STATUS.PROPOSED);
   });
 
   it('AUTO-LAW: in-chain reassign executes immediately; loop-guard target stays proposed (no throw)', async () => {
     const taskId = await mkTask({ title: 'AutoRe', assigneeId: idMap.get('worker')! });
     await recordProposals(taskId, null as unknown as string, [
-      { kind: 'reassign', targetName: 'Peer Person', reason: 'their domain' },
+      { kind: PROPOSAL_KIND.REASSIGN, targetName: 'Peer Person', reason: 'their domain' },
     ]);
     expect((await getTask(taskId)).assigneeId).toBe(idMap.get('peer')!);
     const rows = (await dbRows('taskProposals')).filter((p) => p.taskId === taskId);
-    expect(rows[0].status).toBe('executed');
+    expect(rows[0].status).toBe(PROPOSAL_STATUS.EXECUTED);
 
     // peer is now the assignee; routing BACK to worker (recent) trips the loop guard -> stays proposed
     await recordProposals(taskId, null as unknown as string, [
-      { kind: 'reassign', targetName: 'Worker', reason: 'back' },
+      { kind: PROPOSAL_KIND.REASSIGN, targetName: 'Worker', reason: 'back' },
     ]);
-    const back = (await dbRows('taskProposals')).filter((p) => p.taskId === taskId && p.status === 'proposed');
+    const back = (await dbRows('taskProposals')).filter((p) => p.taskId === taskId && p.status === PROPOSAL_STATUS.PROPOSED);
     expect(back).toHaveLength(1);
   });
 
   it('recordProposals reassign summary includes the reason', async () => {
     const taskId = await mkTask({ title: 'ReasonSum' });
     await recordProposals(taskId, null as unknown as string, [
-      { kind: 'reassign', targetName: 'Peer Person', reason: 'legal work' },
+      { kind: PROPOSAL_KIND.REASSIGN, targetName: 'Peer Person', reason: 'legal work' },
     ]);
     const { db } = await import('../server/db');
     const { taskActivity } = await import('../server/db/schema');
@@ -731,7 +732,7 @@ describe('routing coverage arms II', () => {
       reviewers: [idMap.get('report')!],
     });
     // outside-chain target: stays proposed (in-chain routing auto-executes by law and would move the assignee)
-    await recordProposals(taskId, null as unknown as string, [{ kind: 'reassign', targetName: 'Solo Person' }]);
+    await recordProposals(taskId, null as unknown as string, [{ kind: PROPOSAL_KIND.REASSIGN, targetName: 'Solo Person' }]);
 
     await callProc('tasks.update', { id: taskId, status: STATUS.doing });
     await asEmp('worker', () => callProc('tasks.ask', { taskId, body: 'q' }));
