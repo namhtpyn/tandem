@@ -14,6 +14,7 @@ import { tasks, taskActivity, taskProposals, user as userTable, employeeSupervis
 import { publishChange } from '../kernel/kernel';
 import { recordAssignment, recentAssignees, assignTask } from './assignments.service';
 import { refreshParentGating } from './gating.service';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 export type SubtaskItem = { title: string; description?: string; assigneeName?: string };
 export type ProposalPayload =
@@ -65,8 +66,8 @@ async function findByName(name: string | undefined) {
 
 async function logActivity(taskId: string, authorId: string | null, body: string, meta: Record<string, unknown> = {}) {
   await db.insert(taskActivity).values({ id: uuidv7(), taskId, kind: 'note', authorId, body, meta });
-  await publishChange('taskActivity', 'create');
-  await publishChange('tasks', 'update');
+  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
 
 /**
@@ -162,7 +163,7 @@ async function markExecuted(proposalId: string, decidedBy: string, note: string,
     .update(taskProposals)
     .set({ status: 'executed', decidedBy, decidedAt: new Date(), decisionNote: note || summary })
     .where(eq(taskProposals.id, proposalId));
-  await publishChange('tasks', 'update');
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
 
 export async function rejectProposal(proposalId: string, decidedBy: string, note = '') {

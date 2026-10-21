@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 // oidc router — business logic lives in services/utils; this file only wires procedures
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 async function listOidcProviders() {
   const { getOidcProviders } = await import('../auth/oidc.service');
@@ -22,7 +23,7 @@ export const oidcRouter = os.router({
   list: protectedProcedure.handler(() => listOidcProviders()),
 
   /** live provider list (secrets never leave the server) */
-  live: protectedProcedure.handler(() => liveGenerator(['oidc'], listOidcProviders)),
+  live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.OIDC], listOidcProviders)),
 
   /** replace the provider registry (secrets write-only) */
   replace: protectedProcedure
@@ -69,7 +70,7 @@ export const oidcRouter = os.router({
       }
       await saveOidcProviders(result);
       await rebuildAuth();
-      await publishChange('oidc', 'update');
+      await publishChange(CHANGE_RESOURCE.OIDC, CHANGE_ACTION.UPDATE);
       return { ok: true, count: result.length };
     }),
 });

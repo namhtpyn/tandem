@@ -2,6 +2,9 @@
 // Every mutation publishes; live generators re-emit fresh snapshots over SSE.
 import { MemoryPublisher } from '@orpc/publisher/memory';
 
+import { CHANGE_ACTION, type ChangeAction, CHANGE_RESOURCE, type ChangeResource } from '#shared/enums';
+
+export type { ChangeAction, ChangeResource };
 import { redisPubsub } from './pubsub';
 
 /** change-bus fanout channel + wire codec (encoded change events over pub/sub) */
@@ -15,19 +18,6 @@ export function decodeChange(raw: string): ChangeEvent {
   return { id: e.id, resource: e.resource, action: e.action, at: e.at };
 }
 
-export type ChangeResource =
-  | 'environments'
-  | 'settings'
-  | 'oidc'
-  | 'providers'
-  | 'projects'
-  | 'employees'
-  | 'tasks'
-  | 'taskActivity'
-  | 'statuses'
-  | 'runs'
-  | 'vault';
-export type ChangeAction = 'create' | 'update' | 'remove' | 'delete';
 
 export type ChangeEvent = {
   id: string;

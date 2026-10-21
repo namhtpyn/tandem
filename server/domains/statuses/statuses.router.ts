@@ -13,6 +13,7 @@ import {
   user as userTable,
 } from '../../db/schema';
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 async function listStatuses() {
   const rows = await db.select().from(taskStatusesTable).orderBy(asc(taskStatusesTable.position));
@@ -31,7 +32,7 @@ export const statusesRouter = os.router({
   list: protectedProcedure.handler(() => listStatuses()),
 
   /** live task-status list (ordered) */
-  live: protectedProcedure.handler(() => liveGenerator(['statuses'], listStatuses)),
+  live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.STATUSES], listStatuses)),
 
   /** create or update a status (upsert by id) */
   save: protectedProcedure
@@ -80,7 +81,7 @@ export const statusesRouter = os.router({
             updatedAt: now,
           },
         });
-      await publishChange('statuses', 'update');
+      await publishChange(CHANGE_RESOURCE.STATUSES, CHANGE_ACTION.UPDATE);
       return { id };
     }),
 
@@ -93,7 +94,7 @@ export const statusesRouter = os.router({
       .where(eq(taskStatusesTable.id, input.id))
       .returning({ id: taskStatusesTable.id });
     if (del.length === 0) throw new ORPCError('NOT_FOUND', { message: 'status not found' });
-    await publishChange('statuses', 'update');
+    await publishChange(CHANGE_RESOURCE.STATUSES, CHANGE_ACTION.UPDATE);
     return { ok: true };
   }),
 
@@ -160,7 +161,7 @@ export const statusesRouter = os.router({
       .update(tasksTable)
       .set({ assigneeId: result.employeeId, updatedAt: new Date() })
       .where(eq(tasksTable.id, task.id));
-    await publishChange('tasks', 'update');
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return {
       assigned: true as const,
       employeeId: result.employeeId,

@@ -17,6 +17,7 @@ import { publishChange } from '../kernel/kernel';
 import { refreshParentGating, hasOpenChildren } from './gating.service';
 import { spawnObligation, resolveObligation, cancelObligations, answerHolder } from './obligations.service';
 import { openRoundLive, dispatchAiReviewTurns, openReviewRound, recordVerdict } from './review.service';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 export const WAITING_ANSWER_STATUS = STATUS.waitingAnswer;
 export const IN_REVIEW_STATUS = STATUS.inReview;
@@ -33,8 +34,8 @@ async function logActivity(
   meta: Record<string, unknown> = {},
 ) {
   await db.insert(taskActivity).values({ id: uuidv7(), taskId, kind, authorId, body, meta });
-  await publishChange('taskActivity', 'create');
-  await publishChange('tasks', 'update');
+  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
 
 async function getTask(id: string) {

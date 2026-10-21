@@ -8,6 +8,7 @@ import type { ProjectRow } from '../../../shared/types';
 import { db } from '../../db';
 import { projects as projectsTable } from '../../db/schema';
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 export const projectsRouter = os.router({
   /** live list — flat rows; nesting resolved client-side from parentId */
@@ -26,7 +27,7 @@ export const projectsRouter = os.router({
   }),
 
   live: protectedProcedure.handler(() =>
-    liveGenerator(['projects'], async (): Promise<ProjectRow[]> => {
+    liveGenerator([CHANGE_RESOURCE.PROJECTS], async (): Promise<ProjectRow[]> => {
       const rows = await db.select().from(projectsTable).orderBy(asc(projectsTable.name));
       return rows.map((r) => ({
         id: r.id,
@@ -67,7 +68,7 @@ export const projectsRouter = os.router({
         prompt: input.prompt,
         parentId: input.parentId ?? null,
       });
-      await publishChange('projects', 'create');
+      await publishChange(CHANGE_RESOURCE.PROJECTS, CHANGE_ACTION.CREATE);
       return { id };
     }),
 
@@ -122,14 +123,14 @@ export const projectsRouter = os.router({
         }
       }
       await db.update(projectsTable).set(patch).where(eq(projectsTable.id, input.id));
-      await publishChange('projects', 'update');
+      await publishChange(CHANGE_RESOURCE.PROJECTS, CHANGE_ACTION.UPDATE);
       return { ok: true };
     }),
 
   /** delete — tasks orphan to no-project (set null); children orphan to root (set null) */
   remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
     await db.delete(projectsTable).where(eq(projectsTable.id, input.id));
-    await publishChange('projects', 'remove');
+    await publishChange(CHANGE_RESOURCE.PROJECTS, CHANGE_ACTION.REMOVE);
     return { ok: true };
   }),
 });

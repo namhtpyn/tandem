@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { db } from '../../db';
 import { modelProviders as modelProvidersTable, vaultSecrets as vaultSecretsTable } from '../../db/schema';
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 async function getSettingsSnapshot() {
   const { getSettings } = await import('./settings.service');
@@ -17,7 +18,7 @@ export const settingsRouter = os.router({
   list: protectedProcedure.handler(() => getSettingsSnapshot()),
 
   /** live app settings */
-  live: protectedProcedure.handler(() => liveGenerator(['settings'], getSettingsSnapshot)),
+  live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.SETTINGS], getSettingsSnapshot)),
 
   /** update settings (strict input) */
   update: protectedProcedure
@@ -108,7 +109,7 @@ export const settingsRouter = os.router({
         }
       }
       await rebuildAuth();
-      await publishChange('settings', 'update');
+      await publishChange(CHANGE_RESOURCE.SETTINGS, CHANGE_ACTION.UPDATE);
       return { ok: true };
     }),
 });

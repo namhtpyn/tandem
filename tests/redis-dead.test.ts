@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import './api-harness';
 import './helpers/pg';
+import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
 
 describe('redis failure arms', () => {
   it('queue domain rejects and clears the cache on connection failure', async () => {
@@ -28,8 +29,8 @@ describe('redis failure arms', () => {
     const { publishChange, changeBus } = await import('../server/domains/kernel/change-bus');
     const seen: string[] = [];
     const unsub = await changeBus.subscribe('change', (e) => seen.push(e.resource));
-    await publishChange('tasks', 'update'); // hub.publish rejects -> caught -> local bus still fired
-    expect(seen).toContain('tasks');
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE); // hub.publish rejects -> caught -> local bus still fired
+    expect(seen).toContain('TASKS');
     unsub();
     delete process.env.REDIS_URL;
   });

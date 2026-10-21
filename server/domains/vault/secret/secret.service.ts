@@ -10,6 +10,7 @@ import { vaultSecrets as vaultSecretsTable, vaultFolders as vaultFoldersTable } 
 import { ORPCError, publishChange } from '../../kernel/kernel';
 import { folderExists } from '../folder/folder.service';
 import { encryptSecret, lastFourHint } from './secret-crypto.service';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 export function toVaultRow(r: typeof vaultSecretsTable.$inferSelect) {
   return {
@@ -52,7 +53,7 @@ export async function createSecret(
       createdBy: actorId,
     })
     .returning();
-  await publishChange('vault', 'create');
+  await publishChange(CHANGE_RESOURCE.VAULT, CHANGE_ACTION.CREATE);
   return toVaultRow(inserted[0]!);
 }
 
@@ -79,7 +80,7 @@ export async function updateSecret(
   if (updated.length === 0) {
     throw new ORPCError('NOT_FOUND', { message: 'secret not found' });
   }
-  await publishChange('vault', 'update');
+  await publishChange(CHANGE_RESOURCE.VAULT, CHANGE_ACTION.UPDATE);
   return toVaultRow(updated[0]!);
 }
 
@@ -91,6 +92,6 @@ export async function removeSecret(input: { id: string }, actorId: string) {
   if (deleted.length === 0) {
     throw new ORPCError('NOT_FOUND', { message: 'secret not found' });
   }
-  await publishChange('vault', 'delete');
+  await publishChange(CHANGE_RESOURCE.VAULT, CHANGE_ACTION.DELETE);
   return { ok: true };
 }

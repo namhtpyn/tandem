@@ -4,6 +4,7 @@
 // Nuxt globals (useNuxtApp/useQueryClient/onScopeDispose) are stubbed as
 // globalThis bindings so the composable runs under the plain unit project.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
 
 type ChangeEvt = { resource: string; action: string };
 type LiveMode = 'fail' | 'open-empty' | { events: ChangeEvt[] };
@@ -74,8 +75,8 @@ describe('useChangeEvents', () => {
       capturedSignal = opts.signal;
       return Promise.resolve({
         async *[Symbol.asyncIterator]() {
-          yield { resource: 'tasks', action: 'create' };
-          yield { resource: 'vault', action: 'update' };
+          yield { resource: CHANGE_RESOURCE.TASKS, action: CHANGE_ACTION.CREATE };
+          yield { resource: CHANGE_RESOURCE.VAULT, action: CHANGE_ACTION.UPDATE };
           await new Promise<void>((resolve) => {
             if (opts.signal.aborted) resolve();
           });
@@ -89,8 +90,8 @@ describe('useChangeEvents', () => {
     expect(live).toHaveBeenCalledTimes(1);
     expect(capturedSignal!.aborted).toBe(false);
     // resource keys are invalidated — GET queries with matching prefixes refetch
-    expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['tasks'] });
-    expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['vault'] });
+    expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: [CHANGE_RESOURCE.TASKS] });
+    expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: [CHANGE_RESOURCE.VAULT] });
     expect(qc.invalidateQueries).toHaveBeenCalledTimes(2);
     await disposers[0]?.();
     expect(capturedSignal!.aborted).toBe(true);

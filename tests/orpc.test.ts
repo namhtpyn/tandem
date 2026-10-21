@@ -6,6 +6,7 @@ import './api-harness';
 import { applyMigrations } from '../server/db/index';
 import { resetSchema } from './helpers/pg';
 import { makeProcCaller } from './helpers/procs';
+import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
 
 async function ctx(sessionUser: { id: string; name: string; email: string; role: string } | null) {
   const { buildServerContext } = await import('../server/domains/kernel/context');
@@ -169,19 +170,19 @@ describe('environments.live', () => {
     await iter.next();
     // park the generator in subscribe(), publish an unrelated event
     await new Promise((r) => setTimeout(r, 100));
-    await publishChange('settings', 'update');
+    await publishChange(CHANGE_RESOURCE.SETTINGS, CHANGE_ACTION.UPDATE);
     await new Promise((r) => setTimeout(r, 100));
     // pending next + another settings-only publish: must stay pending
     const pending = iter.next();
     await new Promise((r) => setTimeout(r, 50));
-    await publishChange('settings', 'update');
+    await publishChange(CHANGE_RESOURCE.SETTINGS, CHANGE_ACTION.UPDATE);
     const winner = await Promise.race([
       pending.then(() => 'emitted' as const),
       new Promise((r) => setTimeout(() => r('silent' as const), 400)),
     ]);
     expect(winner).toBe('silent');
     // environments publish resolves it
-    await publishChange('environments', 'update');
+    await publishChange(CHANGE_RESOURCE.ENVIRONMENTS, CHANGE_ACTION.UPDATE);
     const next = (await pending).value as Array<{ name: string }>;
     expect(Array.isArray(next)).toBe(true);
     await iter.return?.();

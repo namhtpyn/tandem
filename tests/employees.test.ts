@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { applyMigrations } from '../server/db/index';
 import type { EmployeeRow, ApiKeyRow } from '../shared/types';
 import { resetSchema } from './helpers/pg';
+import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
 
 // live rows intentionally drop the legacy harness field — the test asserts its absence
 type LiveEmployee = EmployeeRow & { harness?: string };
@@ -87,7 +88,7 @@ describe('employees.live', () => {
     const { db } = await dbm();
     await db.insert(employeeSupervisors).values({ employeeId: bot.id, supervisorId: boss.id });
     const { publishChange } = await import('../server/domains/kernel/change-bus');
-    publishChange('employees', 'update');
+    publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.UPDATE);
 
     const iter = await callProc('employees.live');
     const snap = await iter.next();

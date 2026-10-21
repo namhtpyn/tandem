@@ -19,6 +19,7 @@ import { dispatchTask } from './runner.service';
 export type ReviewVerdict = 'approved' | 'change_requested' | 'rejected';
 
 import { STATUS } from '#shared/status';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 const TODO_STATUS = STATUS.todo;
 const IN_REVIEW_STATUS = STATUS.inReview;
@@ -34,8 +35,8 @@ async function logActivity(
 ) {
   const { taskActivity } = await import('../../db/schema');
   await db.insert(taskActivity).values({ id: uuidv7(), taskId, authorId, kind, body, meta });
-  await publishChange('taskActivity', 'create');
-  await publishChange('tasks', 'update');
+  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
 
 /** current (max) round for a task; 0 when never reviewed */
@@ -185,7 +186,7 @@ export async function recordVerdict(
     await db.update(tasks).set({ status: CANCELLED_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     /* v8 ignore next -- tests always pass a note; the fallback text is defensive */
     await logActivity(taskId, 'verdict', reviewerId, note || 'rejected — task cancelled', { rejected: true, round });
-    await publishChange('tasks', 'update');
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'cancelled' };
   }
   if (verdict === 'change_requested') {
@@ -194,7 +195,7 @@ export async function recordVerdict(
     await db.update(tasks).set({ status: TODO_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     /* v8 ignore next -- tests always pass a note; the fallback text is defensive */
     await logActivity(taskId, 'verdict', reviewerId, note || 'changes requested', { changeRequested: true, round });
-    await publishChange('tasks', 'update');
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'returned' };
   }
   // approved
@@ -202,7 +203,7 @@ export async function recordVerdict(
     await cancelObligations(taskId, 'approval');
     await db.update(tasks).set({ status: DONE_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     await logActivity(taskId, 'verdict', reviewerId, note || 'approved', { approved: true, unanimous: true, round });
-    await publishChange('tasks', 'update');
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'done' };
   }
   await logActivity(taskId, 'verdict', reviewerId, note || 'approved', { approved: true, round });

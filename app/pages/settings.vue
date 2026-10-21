@@ -11,6 +11,7 @@ import {
 } from '#shared/api-styles';
 import type { ModelProviderRow, ProviderSaveInput } from '~/utils/orpc-types';
 import { groupedSecretOptions } from '~/utils/vault-options';
+import { CHANGE_RESOURCE } from '~/../shared/enums';
 // Settings: auth policy for this Tandem instance. OIDC provider list is a
 // UTable with a single add/edit modal (no v-model over v-for aliases — the
 // dxup page transform breaks that pattern; pathbridge table+modal law).
@@ -24,8 +25,8 @@ interface OidcProviderRow {
 
 const { $orpc, $client } = useNuxtApp();
 
-const oidcLive = useQuery($orpc.oidc.list.queryOptions({ queryKey: ['oidc'] }));
-const providersLive = useQuery($orpc.providers.list.queryOptions({ queryKey: ['providers'] }));
+const oidcLive = useQuery($orpc.oidc.list.queryOptions({ queryKey: [CHANGE_RESOURCE.OIDC] }));
+const providersLive = useQuery($orpc.providers.list.queryOptions({ queryKey: [CHANGE_RESOURCE.PROVIDERS] }));
 const mProvList = computed(() => unref(providersLive.data) ?? []);
 
 const mProvEditorOpen = ref(false);
@@ -108,7 +109,7 @@ async function removeMProv(id: string) {
   }
 }
 
-const settingsLive = useQuery($orpc.settings.list.queryOptions({ queryKey: ['settings'] }));
+const settingsLive = useQuery($orpc.settings.list.queryOptions({ queryKey: [CHANGE_RESOURCE.SETTINGS] }));
 
 const providers = computed<OidcProviderRow[]>(() =>
   (
@@ -147,7 +148,7 @@ async function saveCompanyPrompt() {
   }
 }
 // ---- Workspace AI: internal LLM + decision assignments ----
-const vaultLive = useQuery($orpc.vault.secrets.list.queryOptions({ queryKey: ['vault'] }));
+const vaultLive = useQuery($orpc.vault.secrets.list.queryOptions({ queryKey: [CHANGE_RESOURCE.VAULT] }));
 const vaultItems = computed((): any =>
   groupedSecretOptions(
     (unref(vaultLive.data) ?? []) as Array<{ id: string; name: string; lastFour: string; folder: string | null }>,

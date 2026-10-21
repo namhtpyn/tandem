@@ -51,15 +51,15 @@ export function backoffFor(failStreak: number, output: string): number {
 
 export type RunHandle = {
   runId: string;
-  finished: Promise<{ status: 'done' | 'failed'; exitCode: number | null }>;
+  finished: Promise<{ status: FinishStatus; exitCode: number | null }>;
 };
 
 async function logRun(taskId: string, runId: string, body: string, meta: Record<string, unknown> = {}) {
   await db
     .insert(taskActivity)
     .values({ id: uuidv7(), taskId, kind: 'status', authorId: null, body, meta: { ...meta, runId } });
-  await publishChange('taskActivity', 'create');
-  await publishChange('runs', 'update');
+  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+  await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
 }
 
 /** push the task's input attachments to the sandbox; failures are logged, never fatal */
@@ -93,7 +93,7 @@ export async function settleAttachments(
   taskId: string,
   runId: string,
   sshPlan: { env: { host: string; port: string; username: string }; sshKey?: string; sshPassword?: string },
-  _status: 'done' | 'failed',
+  _status: FinishStatus,
 ) {
   try {
     const { loadClient } = await import('./ssh-exec.util');
@@ -123,7 +123,7 @@ export async function settleAttachments(
         await logRun(taskId, runId, `collected ${collected.length} output file(s)`, {
           outputs: collected.map((c) => c.filename),
         });
-        await publishChange('taskActivity', 'create');
+        await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
       }
     } finally {
       rmSync(tmp, { recursive: true, force: true });
@@ -188,6 +188,8 @@ import { recordProposals } from './proposals.service';
 import { recordVerdict } from './review.service';
 import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles, ensureOutDir } from './ssh-files.util';
 import { submitResult, askQuestion } from './workflow.service';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { FINISH_STATUS, type FinishStatus } from '#shared/enums';
 
 export async function loadDispatchPlan(taskId: string) {
   const taskRows = await db.select().from(tasks).where(eq(tasks.id, taskId));
@@ -403,8 +405,8 @@ function fakeRun(onLine: (line: string) => void, scriptOverride?: string[]): Run
     ];
 
   const runId = uuidv7();
-  let finished: (v: { status: 'done' | 'failed'; exitCode: number | null }) => void;
-  const promise = new Promise<{ status: 'done' | 'failed'; exitCode: number | null }>((resolve) => {
+  let finished: (v: { status: FinishStatus; exitCode: number | null }) => void;
+  const promise = new Promise<{ status: FinishStatus; exitCode: number | null }>((resolve) => {
     finished = resolve;
   });
   void (async () => {
@@ -416,7 +418,7 @@ function fakeRun(onLine: (line: string) => void, scriptOverride?: string[]): Run
     // TANDEM_FAKE_FAIL=1: the fake run FAILS (drives the backoff ladder in tests
     // without the ssh emitError choreography, which hung under CI coverage runs)
     const failed = process.env.TANDEM_FAKE_FAIL === '1';
-    finished!({ status: failed ? 'failed' : 'done', exitCode: failed ? 1 : 0 });
+    finished!({ status: failed ? FINISH_STATUS.FAILED : FINISH_STATUS.DONE, exitCode: failed ? 1 : 0 });
   })();
   return { runId, finished: promise };
 }
@@ -447,7 +449,7 @@ export async function dispatchTask(
     output: '',
   });
   await db.update(tasks).set({ status: STATUS.doing, updatedAt: new Date() }).where(eq(tasks.id, taskId));
-  await publishChange('tasks', 'update');
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 
   let buffer = '';
   let lastFlush = 0;
@@ -464,7 +466,7 @@ export async function dispatchTask(
         .update(taskRuns)
         .set({ output: buffer })
         .where(and(eq(taskRuns.id, runId), eq(taskRuns.status, 'running')))
-        .then(() => publishChange('runs', 'update'))
+        .then(() => publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE))
         // flush is best-effort; finish() writes the final tail. A late flush can
         // race teardown (test DB drops, shutdown) — swallow, never an unhandled rejection.
         .catch(
@@ -477,7 +479,7 @@ export async function dispatchTask(
     }
   };
 
-  const finish = async (status: 'done' | 'failed', exitCode: number | null) => {
+  const finish = async (status: FinishStatus, exitCode: number | null) => {
     await db
       .update(taskRuns)
       .set({ status, exitCode, output: buffer, finishedAt: new Date() })
@@ -487,7 +489,7 @@ export async function dispatchTask(
     // verdict: the envelope decides the workflow. [QUESTION]/[BLOCKED] park the
     // task on the owner (waiting-answer + answer obligation) instead of completing
     // it; [RESULT] (or none) submits for review / completes as before.
-    if (status === 'done') {
+    if (status === FINISH_STATUS.DONE) {
       // routing proposals ([SUBTASKS]/[REASSIGN]) ride the output — record before submit
       try {
         const { parseRoutingProposals } = await import('../../../app/utils/task-thread');
@@ -521,7 +523,7 @@ export async function dispatchTask(
           } else {
             await askQuestion(taskId, plan.ai.userId, 'review finished without a verdict — approve or request changes');
           }
-          await publishChange('tasks', 'update');
+          await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
         } else if (envelope && (envelope.kind === 'question' || envelope.kind === 'blocked')) {
           // empty-text envelopes fall back to the kind as the question body
           /* v8 ignore next */
@@ -560,9 +562,9 @@ export async function dispatchTask(
       await logRun(taskId, runId, `retry scheduled in ${Math.round(waitMs / 60_000)} min (streak ${streak})`, {
         backoffMs: waitMs,
       }).catch(() => {});
-      await publishChange('tasks', 'update');
+      await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     }
-    await publishChange('runs', 'update');
+    await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
   };
 
   const handle: RunHandle = {
@@ -627,8 +629,8 @@ export async function dispatchTask(
         } catch (e) {
           /* v8 ignore next -- service throws are Error by construction */
           onLine(`[dispatch] ${e instanceof Error ? e.message : String(e)}`);
-          await finish('failed', null);
-          resolve({ status: 'failed', exitCode: null });
+          await finish(FINISH_STATUS.FAILED, null);
+          resolve({ status: FINISH_STATUS.FAILED, exitCode: null });
         }
       })();
     }),

@@ -9,6 +9,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { STATUS } from '~/../shared/status';
 import type { EditorView, ClipboardEventLike, DragEventLike } from '~/editor-typing';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
+import { CHANGE_RESOURCE } from '~/../shared/enums';
 
 /** paste/drop images in the description editor -> attachments pipeline.
  *  Bytes NEVER ride ACP: upload lands them in /api/tasks/:id/attachments, the
@@ -52,15 +53,15 @@ const ImagePaste = Extension.create<{ onImage: (file: File) => Promise<void> }>(
 });
 
 const { $orpc, $client } = useNuxtApp();
-const tasksLive = useQuery($orpc.tasks.list.queryOptions({ queryKey: ['tasks'] }));
-const statusesLive = useQuery($orpc.statuses.list.queryOptions({ queryKey: ['statuses'] }));
-const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: ['employees'] }));
-const projectsLive = useQuery($orpc.projects.list.queryOptions({ queryKey: ['projects'] }));
+const tasksLive = useQuery($orpc.tasks.list.queryOptions({ queryKey: [CHANGE_RESOURCE.TASKS] }));
+const statusesLive = useQuery($orpc.statuses.list.queryOptions({ queryKey: [CHANGE_RESOURCE.STATUSES] }));
+const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES] }));
+const projectsLive = useQuery($orpc.projects.list.queryOptions({ queryKey: [CHANGE_RESOURCE.PROJECTS] }));
 
 const tasks = computed(() => (unref(tasksLive.data) ?? []) as TaskRow[]);
 
 // ---- "needs my decision" inbox (pending obligations on me) ----
-const inboxQuery = useQuery($orpc.tasks.inbox.queryOptions({ queryKey: ['tasks', 'inbox'] }));
+const inboxQuery = useQuery($orpc.tasks.inbox.queryOptions({ queryKey: [CHANGE_RESOURCE.TASKS, 'inbox'] }));
 interface InboxItem {
   taskId: string;
   role: string;
@@ -418,7 +419,7 @@ const drawerRunsQuery = useQuery(
   computed(() =>
     $orpc.tasks.runsList.queryOptions({
       input: { taskId: drawerTaskId.value },
-      queryKey: ['runs', drawerTaskId.value],
+      queryKey: [CHANGE_RESOURCE.RUNS, drawerTaskId.value],
       enabled: !!drawerTaskId.value,
     }),
   ),
@@ -437,7 +438,7 @@ const drawerActivityQuery = useQuery(
   computed(() =>
     $orpc.tasks.activityList.queryOptions({
       input: { taskId: drawerTaskId.value },
-      queryKey: ['taskActivity', drawerTaskId.value],
+      queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, drawerTaskId.value],
       enabled: !!drawerTaskId.value,
     }),
   ),
@@ -465,7 +466,7 @@ async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
   try {
     await $fetch(`/rpc/tasks/${proc}`, { method: 'POST', body: { json: { taskId: workflowTask.value.id, ...extra } } });
     workflowNote.value = '';
-    void queryClient.invalidateQueries({ queryKey: ['taskActivity', workflowTask.value.id] });
+    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, workflowTask.value.id] });
     workflowMessage.value = 'done';
   } catch (e) {
     // surface the server's oRPC message, not ofetch's generic '[POST] …: 400'

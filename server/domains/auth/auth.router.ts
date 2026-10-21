@@ -2,6 +2,7 @@ import { os } from '@orpc/server';
 
 // auth router — business logic lives in services/utils; this file only wires procedures
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { CHANGE_RESOURCE } from '#shared/enums';
 
 async function resolveAuthConfig() {
   const { resolveAuthPolicy } = await import('./auth.service');
@@ -20,7 +21,7 @@ export const authRouter = os.router({
   config: base.handler(() => resolveAuthConfig()),
 
   /** live auth capabilities (SSE updater only) */
-  configLive: base.handler(() => liveGenerator(['settings', 'oidc'], resolveAuthConfig)),
+  configLive: base.handler(() => liveGenerator([CHANGE_RESOURCE.SETTINGS, CHANGE_RESOURCE.OIDC], resolveAuthConfig)),
 
   /** current session (null when anonymous) */
   session: base.handler(async ({ context }) => {

@@ -19,6 +19,7 @@ import {
   vaultSecrets as vaultSecretsTable,
 } from '../../db/schema';
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/;
 
@@ -60,7 +61,7 @@ export const employeesRouter = os.router({
   /** plain GET list (first-load data per the SSE law) */
   list: protectedProcedure.handler(() => listEmployeesSnapshot()),
 
-  live: protectedProcedure.handler(() => liveGenerator(['employees'], listEmployeesSnapshot)),
+  live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.EMPLOYEES], listEmployeesSnapshot)),
 
   /** create an employee AND its login user. kind=ai also mints an API key
    *  (returned once) and the AI extension row. */
@@ -187,7 +188,7 @@ export const employeesRouter = os.router({
         });
         apiKey = created.key;
       }
-      await publishChange('employees', 'create');
+      await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.CREATE);
       return { id: userId, userId, apiKey };
     }),
 
@@ -341,7 +342,7 @@ export const employeesRouter = os.router({
           .insert(supervisorsTable)
           .values(input.supervisorIds.map((s) => ({ employeeId: input.id, supervisorId: s })));
       }
-      await publishChange('employees', 'update');
+      await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.UPDATE);
       return { ok: true };
     }),
 
@@ -357,7 +358,7 @@ export const employeesRouter = os.router({
     }),
 
     live: protectedProcedure.handler(() =>
-      liveGenerator(['employees'], async () => {
+      liveGenerator([CHANGE_RESOURCE.EMPLOYEES], async () => {
         const rows = await db.select().from(employeeTitlesTable).orderBy(asc(employeeTitlesTable.name));
         const counts = await db
           .select({ title: userTable.title, count: count() })
@@ -383,7 +384,7 @@ export const employeesRouter = os.router({
             .where(eq(employeeTitlesTable.name, input.name));
           if (dupe.length > 0) throw new ORPCError('BAD_REQUEST', { message: 'a title with that name already exists' });
           const inserted = await db.insert(employeeTitlesTable).values({ id: uuidv7(), name: input.name }).returning();
-          await publishChange('employees', 'create');
+          await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.CREATE);
           return { id: inserted[0]!.id };
         }
         const existing = (
@@ -402,7 +403,7 @@ export const employeesRouter = os.router({
           .update(employeeTitlesTable)
           .set({ name: input.name, updatedAt: new Date() })
           .where(eq(employeeTitlesTable.id, input.id));
-        await publishChange('employees', 'update');
+        await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.UPDATE);
         return { id: input.id };
       }),
 
@@ -413,7 +414,7 @@ export const employeesRouter = os.router({
         .where(eq(employeeTitlesTable.id, input.id))
         .returning({ id: employeeTitlesTable.id });
       if (deleted.length === 0) throw new ORPCError('NOT_FOUND', { message: 'title not found' });
-      await publishChange('employees', 'remove');
+      await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.REMOVE);
       return { ok: true };
     }),
   },
@@ -440,7 +441,7 @@ export const employeesRouter = os.router({
     // deleting the user cascades supervisors, ai extension, api keys
     // (existence already verified above — no race window worth a second check)
     await db.delete(userTable).where(eq(userTable.id, input.id));
-    await publishChange('employees', 'delete');
+    await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.DELETE);
     return { ok: true };
   }),
 

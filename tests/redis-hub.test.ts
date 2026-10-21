@@ -1,5 +1,6 @@
 // Redis hub integration tests — real redis on 127.0.0.1:6399 (docker redis-spike), skipped when unreachable.
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
 
 const REDIS_URL = 'redis://127.0.0.1:6399';
 
@@ -51,7 +52,7 @@ describe.skipIf(!up)('redis hub (integration)', () => {
 
   it('change encoding round-trips', async () => {
     const { encodeChange, decodeChange } = await import('../server/domains/kernel/change-bus');
-    const e = { id: '1', resource: 'tasks' as const, action: 'update' as const, at: '2026-10-13T00:00:00Z' };
+    const e = { id: '1', resource: CHANGE_RESOURCE.TASKS as const, action: CHANGE_ACTION.UPDATE as const, at: '2026-10-13T00:00:00Z' };
     expect(decodeChange(encodeChange(e))).toEqual(e);
   });
 

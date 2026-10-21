@@ -10,11 +10,12 @@ import { STATUS } from '~/../shared/status';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '~/utils/task-thread';
 import type { ThreadItem } from '~/utils/task-thread';
+import { CHANGE_RESOURCE } from '~/../shared/enums';
 
 const route = useRoute();
 const { $orpc, $client } = useNuxtApp();
 
-const tasksLive = useQuery($orpc.tasks.list.queryOptions({ queryKey: ['tasks'] }));
+const tasksLive = useQuery($orpc.tasks.list.queryOptions({ queryKey: [CHANGE_RESOURCE.TASKS] }));
 
 const tasks = computed(() => (unref(tasksLive.data) ?? []) as TaskRow[]);
 
@@ -36,7 +37,7 @@ const runsQuery = useQuery(
   computed(() =>
     $orpc.tasks.runsList.queryOptions({
       input: { taskId: taskIdRef.value },
-      queryKey: ['runs', taskIdRef.value],
+      queryKey: [CHANGE_RESOURCE.RUNS, taskIdRef.value],
       enabled: !!taskIdRef.value,
     }),
   ),
@@ -59,7 +60,7 @@ const activityQuery = useQuery(
   computed(() =>
     $orpc.tasks.activityList.queryOptions({
       input: { taskId: taskIdRef.value },
-      queryKey: ['taskActivity', taskIdRef.value],
+      queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, taskIdRef.value],
       enabled: !!taskIdRef.value,
     }),
   ),
@@ -210,7 +211,7 @@ async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
   try {
     await $fetch(`/rpc/tasks/${proc}`, { method: 'POST', body: { json: { taskId: task.value.id, ...extra } } });
     workflowNote.value = '';
-    void queryClient.invalidateQueries({ queryKey: ['taskActivity', task.value.id] });
+    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, task.value.id] });
     void queryClient.invalidateQueries({ queryKey: ['taskReviews', task.value.id] });
     workflowMessage.value = 'done';
   } catch (e) {
@@ -222,17 +223,17 @@ async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
 }
 
 // ---- subtasks, agent proposals, assignment history ---------------------------
-const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: ['employees'] }));
+const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES] }));
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[]);
 const employeeName = computed(() => new Map(employees.value.map((e) => [e.id, e.name])));
 /** userId -> hasAvatar: chat avatars render via /api/employees/:userId/avatar, initials otherwise */
 const hasAvatarByUserId = computed(() => new Map(employees.value.map((e) => [e.userId, e.hasAvatar])));
 
 // ---- editable details (assignee / project / status) — reviewers deliberately excluded ----
-const statusesLive = useQuery($orpc.statuses.list.queryOptions({ queryKey: ['statuses'] }));
+const statusesLive = useQuery($orpc.statuses.list.queryOptions({ queryKey: [CHANGE_RESOURCE.STATUSES] }));
 const statuses = computed(() => unref(statusesLive.data) ?? []);
 const statusById = computed(() => new Map(statuses.value.map((x) => [x.id, x])));
-const projectsLive = useQuery($orpc.projects.list.queryOptions({ queryKey: ['projects'] }));
+const projectsLive = useQuery($orpc.projects.list.queryOptions({ queryKey: [CHANGE_RESOURCE.PROJECTS] }));
 const projects = computed(() => (unref(projectsLive.data) ?? []) as Array<{ id: string; name: string }>);
 const updateMutation = useMutation($orpc.tasks.update.mutationOptions());
 const fieldBusy = ref(false);
@@ -264,7 +265,7 @@ async function updateField(patch: { status?: string; assigneeId?: string | null;
   fieldError.value = '';
   try {
     await updateMutation.mutateAsync({ id: task.value.id, ...patch });
-    await queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    await queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
   } catch (e) {
     const err = e as { data?: { json?: { message?: string } }; message?: string };
     fieldError.value = err.data?.json?.message ?? err.message ?? 'update failed';
@@ -364,8 +365,8 @@ async function decideProposal(id: string, action: 'confirmProposal' | 'rejectPro
     };
     proposalMessage.value = r.json.events?.length ? r.json.events.join('; ') : 'done';
     await refreshRoutingPanels(task.value!.id);
-    void queryClient.invalidateQueries({ queryKey: ['taskActivity', task.value!.id] });
-    void queryClient.invalidateQueries({ queryKey: ['runs', task.value!.id] });
+    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, task.value!.id] });
+    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.RUNS, task.value!.id] });
   } catch (e) {
     proposalMessage.value =
       (e as { data?: { json?: { message?: string } }; message?: string }).data?.json?.message ?? (e as Error).message;

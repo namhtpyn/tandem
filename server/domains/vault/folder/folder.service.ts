@@ -8,6 +8,7 @@ import { v7 as uuidv7 } from 'uuid';
 import { db } from '../../../db';
 import { vaultSecrets as vaultSecretsTable, vaultFolders as vaultFoldersTable } from '../../../db/schema';
 import { ORPCError, publishChange } from '../../kernel/kernel';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 export type FolderWithCount = { id: string; name: string; secrets: number };
 
@@ -32,7 +33,7 @@ export async function folderExists(id: string) {
 export async function saveFolder(input: { id?: string; name: string }) {
   if (input.id === undefined) {
     const inserted = await db.insert(vaultFoldersTable).values({ id: uuidv7(), name: input.name }).returning();
-    await publishChange('vault', 'create');
+    await publishChange(CHANGE_RESOURCE.VAULT, CHANGE_ACTION.CREATE);
     return { id: inserted[0]!.id };
   }
   const updated = await db
@@ -41,7 +42,7 @@ export async function saveFolder(input: { id?: string; name: string }) {
     .where(eq(vaultFoldersTable.id, input.id))
     .returning();
   if (updated.length === 0) throw new ORPCError('NOT_FOUND', { message: 'folder not found' });
-  await publishChange('vault', 'update');
+  await publishChange(CHANGE_RESOURCE.VAULT, CHANGE_ACTION.UPDATE);
   return { id: updated[0]!.id };
 }
 
@@ -51,6 +52,6 @@ export async function removeFolder(input: { id: string }) {
     .where(eq(vaultFoldersTable.id, input.id))
     .returning({ id: vaultFoldersTable.id });
   if (deleted.length === 0) throw new ORPCError('NOT_FOUND', { message: 'folder not found' });
-  await publishChange('vault', 'remove');
+  await publishChange(CHANGE_RESOURCE.VAULT, CHANGE_ACTION.REMOVE);
   return { ok: true };
 }

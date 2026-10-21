@@ -8,13 +8,14 @@ import { PROVIDER_KIND, endpointKind, isModelsEndpoint } from '#shared/api-style
 // column, and kind is immutable after create.
 import type { ApiKeyRow, EmployeeRow, EnvironmentRow } from '~/utils/orpc-types';
 import { groupedSecretOptions } from '~/utils/vault-options';
+import { CHANGE_RESOURCE } from '~/../shared/enums';
 
 const { $orpc, $client } = useNuxtApp();
 
-const liveQuery = useQuery($orpc.employees.list.queryOptions({ queryKey: ['employees'] }));
+const liveQuery = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES] }));
 const rows = computed<EmployeeRow[]>(() => (unref(liveQuery.data) ?? []) as EmployeeRow[]);
 
-const envQuery = useQuery($orpc.environments.list.queryOptions({ queryKey: ['environments'] }));
+const envQuery = useQuery($orpc.environments.list.queryOptions({ queryKey: [CHANGE_RESOURCE.ENVIRONMENTS] }));
 const environments = computed<EnvironmentRow[]>(() => (unref(envQuery.data) ?? []) as EnvironmentRow[]);
 
 const byId = computed(() => new Map(rows.value.map((r) => [r.id, r])));
@@ -177,7 +178,7 @@ const revokeKeyMutation = useMutation($orpc.employees.revokeApiKey.mutationOptio
 const listKeysCall = $orpc.employees.listApiKeys.call;
 
 // ---- editor ----
-const titlesQuery = useQuery($orpc.employees.titles.list.queryOptions({ queryKey: ['employees', 'titles'] }));
+const titlesQuery = useQuery($orpc.employees.titles.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES, 'titles'] }));
 const titles = computed(
   () =>
     (titlesQuery.data.value as { titles: Array<{ id: string; name: string; employees: number }> } | undefined)
@@ -284,7 +285,7 @@ const supervisorItems = computed(() =>
   rows.value.filter((r) => r.id !== editingId.value).map((r) => ({ label: r.name, value: r.id })),
 );
 
-const providersLive = useQuery($orpc.providers.list.queryOptions({ queryKey: ['providers'] }));
+const providersLive = useQuery($orpc.providers.list.queryOptions({ queryKey: [CHANGE_RESOURCE.PROVIDERS] }));
 const modelProviders = computed(() =>
   ((unref(providersLive.data) ?? []) as Array<{ id: string; label: string; endpoints: string[] }>).filter((p) =>
     (p.endpoints ?? []).some((st) => endpointKind(st) === PROVIDER_KIND.LLM),
@@ -318,7 +319,7 @@ watch(
   },
   { immediate: false },
 );
-const secretsLive = useQuery($orpc.vault.secrets.list.queryOptions({ queryKey: ['vault'] }));
+const secretsLive = useQuery($orpc.vault.secrets.list.queryOptions({ queryKey: [CHANGE_RESOURCE.VAULT] }));
 const secretItems = computed((): any =>
   groupedSecretOptions(
     (unref(secretsLive.data) ?? []) as Array<{ id: string; name: string; lastFour: string; folder: string | null }>,

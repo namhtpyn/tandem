@@ -13,13 +13,14 @@ import { STATUS } from '#shared/status';
 import { db } from '../../db';
 import { tasks, taskActivity, taskStatuses } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 export const BLOCKED_STATUS = STATUS.blocked;
 
 async function logActivity(taskId: string, body: string, meta: Record<string, unknown> = {}) {
   await db.insert(taskActivity).values({ id: uuidv7(), taskId, kind: 'status', authorId: null, body, meta });
-  await publishChange('taskActivity', 'create');
-  await publishChange('tasks', 'update');
+  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
 
 /** status ids whose category is terminal (done | cancelled) */

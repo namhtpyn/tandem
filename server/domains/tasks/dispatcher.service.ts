@@ -11,6 +11,7 @@ import { tasks, taskRuns, taskStatuses, aiEmployees } from '../../db/schema';
 import { publishChange } from '../kernel/change-bus';
 import { redisQueue } from '../kernel/queue';
 import { dispatchTask } from './runner.service';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 const inFlight = new Map<string, Set<Promise<unknown>>>(); // employeeId -> live run promises
 
@@ -88,8 +89,8 @@ async function reapStaleRunsInner(): Promise<number> {
         })
         .where(eq(tasks.id, run.taskId));
     }
-    await publishChange('runs', 'update');
-    await publishChange('tasks', 'update');
+    await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     reaped += 1;
   }
   return reaped;

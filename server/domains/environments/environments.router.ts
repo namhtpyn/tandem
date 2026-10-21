@@ -11,13 +11,14 @@ import { decryptSecret } from '../vault/secret/secret-crypto.service';
 import { toRow, listEnvironments } from './environments.service';
 import { environmentInput } from './environments.util';
 import { probeSsh } from './ssh-probe.service';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 export const environmentsRouter = os.router({
   /** plain GET list (first-load data per the SSE law) */
   list: protectedProcedure.handler(() => listEnvironments()),
 
   /** live list — pushes a fresh snapshot on every environments change */
-  live: protectedProcedure.handler(() => liveGenerator(['environments'], listEnvironments)),
+  live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.ENVIRONMENTS], listEnvironments)),
 
   create: protectedProcedure.input(environmentInput).handler(async ({ input }) => {
     const clash = await db
@@ -40,7 +41,7 @@ export const environmentsRouter = os.router({
       .insert(environmentsTable)
       .values({ id: uuidv7(), ...input })
       .returning();
-    await publishChange('environments', 'create');
+    await publishChange(CHANGE_RESOURCE.ENVIRONMENTS, CHANGE_ACTION.CREATE);
     return toRow(inserted[0]!);
   }),
 
@@ -72,7 +73,7 @@ export const environmentsRouter = os.router({
       if (updated.length === 0) {
         throw new ORPCError('NOT_FOUND', { message: 'environment not found' });
       }
-      await publishChange('environments', 'update');
+      await publishChange(CHANGE_RESOURCE.ENVIRONMENTS, CHANGE_ACTION.UPDATE);
       return toRow(updated[0]!);
     }),
 
@@ -84,7 +85,7 @@ export const environmentsRouter = os.router({
     if (deleted.length === 0) {
       throw new ORPCError('NOT_FOUND', { message: 'environment not found' });
     }
-    await publishChange('environments', 'delete');
+    await publishChange(CHANGE_RESOURCE.ENVIRONMENTS, CHANGE_ACTION.DELETE);
     return { ok: true };
   }),
 

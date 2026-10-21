@@ -8,6 +8,7 @@ import './api-harness';
 import { applyMigrations } from '../server/db/index';
 import { STATUS } from '../shared/status';
 import { resetSchema } from './helpers/pg';
+import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
 
 async function dbm() {
   return await import('../server/db');
@@ -62,12 +63,12 @@ describe('changes.live — the SSE half (post-load events only)', () => {
     ]);
     expect(winner).toBe('idle'); // no initial snapshot on the events channel
     const { publishChange } = await import('../server/domains/kernel/kernel');
-    await publishChange('tasks', 'create');
-    await publishChange('statuses', 'update');
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.CREATE);
+    await publishChange(CHANGE_RESOURCE.STATUSES, CHANGE_ACTION.UPDATE);
     const e1 = await nextP; // resolves on the channel only after a real change
-    expect(e1.value).toMatchObject({ resource: 'tasks', action: 'create' });
+    expect(e1.value).toMatchObject({ resource: CHANGE_RESOURCE.TASKS, action: CHANGE_ACTION.CREATE });
     const e2 = await iter.next();
-    expect(e2.value).toMatchObject({ resource: 'statuses', action: 'update' });
+    expect(e2.value).toMatchObject({ resource: CHANGE_RESOURCE.STATUSES, action: CHANGE_ACTION.UPDATE });
     await iter.return?.();
   });
 

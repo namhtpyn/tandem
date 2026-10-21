@@ -6,6 +6,7 @@ import './api-harness';
 import { applyMigrations } from '../server/db/index';
 import { STATUS } from '../shared/status';
 import { resetSchema } from './helpers/pg';
+import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
 
 const REDIS_URL = 'redis://127.0.0.1:6399';
 
@@ -91,7 +92,7 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
 
   it('the queue worker dispatches a job end-to-end (redis path)', async () => {
     const { redisQueue } = await import('../server/domains/kernel/queue');
-    const hub = await redisHub();
+    const hub = await redisQueue();
     const { scanOnce } = await import('../server/domains/tasks/dispatcher.service');
     expect(await scanOnce('http://t.local')).toBe(true);
     const { maybeStartDispatcher } = await import('../server/domains/tasks/dispatcher.service');
@@ -123,27 +124,28 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
 
   it('publishChange fans out over redis and the bridge re-publishes locally', async () => {
     const { publishChange, changeBus, bridgeRedisChanges } = await import('../server/domains/kernel/change-bus');
-    const { redisHub, CHANGE_CHANNEL, encodeChange } = await import('../server/domains/kernel/queue');
+    const { CHANGE_CHANNEL, encodeChange } = await import('../server/domains/kernel/change-bus');
+    const { redisPubsub } = await import('../server/domains/kernel/pubsub');
     const seen: string[] = [];
     const unsub = await changeBus.subscribe('change', (e) => seen.push(e.resource));
     await bridgeRedisChanges();
-    await publishChange('tasks', 'update'); // local publish + redis echo (deduped: same id)
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE); // local publish + redis echo (deduped: same id)
     await new Promise((r) => setTimeout(r, 300));
     // external replica event: different id -> bridged onto the local bus
-    const hub = await redisHub();
-    await hub!.publish(
+    const pub = await redisPubsub();
+    await pub!.publish(
       CHANGE_CHANNEL,
-      encodeChange({ id: 'external-1', resource: 'runs', action: 'update', at: new Date().toISOString() }),
+      encodeChange({ id: 'external-1', resource: CHANGE_RESOURCE.RUNS, action: CHANGE_ACTION.UPDATE, at: new Date().toISOString() }),
     );
     await new Promise((r) => setTimeout(r, 300));
-    expect(seen.filter((r) => r === 'tasks').length).toBe(1); // echo deduped
-    expect(seen).toContain('runs'); // external event bridged
+    expect(seen.filter((r) => r === 'TASKS').length).toBe(1); // echo deduped
+    expect(seen).toContain('RUNS'); // external event bridged
     unsub();
   });
 
   it('enqueue with the same jobId dedupes (stale dispatch floods cannot stack)', async () => {
     const { redisQueue } = await import('../server/domains/kernel/queue');
-    const hub = (await redisHub())!;
+    const hub = (await redisQueue())!;
     const id1 = await hub.enqueue('tandem-dedup', { taskId: 't-x' }, { jobId: 't-x' });
     const id2 = await hub.enqueue('tandem-dedup', { taskId: 't-x' }, { jobId: 't-x' });
     expect(id1).toBe(id2); // bullmq returned the existing job, no duplicate stacked
@@ -160,7 +162,7 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
 
   it('syncDispatchWorkers spawns per-agent workers and resyncs on cap change', async () => {
     const { redisQueue } = await import('../server/domains/kernel/queue');
-    const hub = (await redisHub())!;
+    const hub = (await redisQueue())!;
     const { setSetting } = await import('../server/domains/settings/settings.service');
     const { syncDispatchWorkers, onDispatcherSettingsChanged } =
       await import('../server/domains/tasks/dispatcher.service');
@@ -173,16 +175,18 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
 
   it('second enqueue on the same queue reuses the cached Queue instance', async () => {
     const { redisQueue } = await import('../server/domains/kernel/queue');
-    const hub = await redisHub();
+    const hub = await redisQueue();
     await hub!.enqueue('tandem-reuse', { n: 1 });
     await hub!.enqueue('tandem-reuse', { n: 2 }); // binary-expr arm: queues.get fallback
-    const again = await redisHub(); // cached-hub arm: same instance, no reconnect
+    const again = await redisQueue(); // cached-hub arm: same instance, no reconnect
     expect(again).toBe(hub);
   });
 
   afterAll(async () => {
     const { redisQueue } = await import('../server/domains/kernel/queue');
-    await (await redisHub())?.close();
+    const { redisPubsub } = await import('../server/domains/kernel/pubsub');
+    await (await redisQueue())?.close();
+    await (await redisPubsub())?.close();
     delete process.env.REDIS_URL;
   });
 });

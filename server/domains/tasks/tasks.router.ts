@@ -23,6 +23,7 @@ import { approvalsInRoundBatch, openObligations, pendingForUser, pendingCounts }
 import { confirmProposal, rejectProposal } from './proposals.service';
 import { listReviews } from './review.service';
 import { dispatchTask, listRuns } from './runner.service';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import {
   askQuestion,
   forwardQuestion,
@@ -154,7 +155,7 @@ export const tasksRouter = os.router({
   /** plain GET list (first-load data per the SSE law) */
   list: protectedProcedure.handler(() => listTasksSnapshot()),
 
-  live: protectedProcedure.handler(() => liveGenerator(['tasks'], listTasksSnapshot)),
+  live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.TASKS], listTasksSnapshot)),
 
   /** create a task */
   create: protectedProcedure
@@ -223,8 +224,8 @@ export const tasksRouter = os.router({
         });
         await refreshParentGating(id);
       }
-      await publishChange('tasks', 'create');
-      await publishChange('taskActivity', 'create');
+      await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.CREATE);
+      await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
       return { id };
     }),
 
@@ -292,8 +293,8 @@ export const tasksRouter = os.router({
         });
         await refreshParentGating(input.id);
       }
-      await publishChange('tasks', 'update');
-      await publishChange('taskActivity', 'create');
+      await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+      await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
       return { ok: true };
     }),
 
@@ -464,7 +465,7 @@ export const tasksRouter = os.router({
 
   activity: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))
-    .handler(({ input }) => liveGenerator(['taskActivity', 'tasks'], () => activitySnapshot(input.taskId))),
+    .handler(({ input }) => liveGenerator([CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_RESOURCE.TASKS], () => activitySnapshot(input.taskId))),
 
   /** runs for a task (live) — streaming output tail from agent dispatches */
   runsList: protectedProcedure
@@ -473,7 +474,7 @@ export const tasksRouter = os.router({
 
   runs: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))
-    .handler(({ input }) => liveGenerator(['runs', 'tasks'], () => runsSnapshot(input.taskId))),
+    .handler(({ input }) => liveGenerator([CHANGE_RESOURCE.RUNS, CHANGE_RESOURCE.TASKS], () => runsSnapshot(input.taskId))),
 
   /** manually dispatch a task to its AI assignee (the dispatcher also fires automatically) */
   dispatch: protectedProcedure
@@ -496,7 +497,7 @@ export const tasksRouter = os.router({
     const rows = await db.select({ id: tasksTable.id }).from(tasksTable).where(eq(tasksTable.id, input.id));
     if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
     await db.delete(tasksTable).where(eq(tasksTable.id, input.id));
-    await publishChange('tasks', 'delete');
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.DELETE);
     return { ok: true };
   }),
 });

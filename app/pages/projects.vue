@@ -5,13 +5,14 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import { computed, reactive, ref, unref } from 'vue';
 
 import type { ProjectRow } from '~/utils/orpc-types';
+import { CHANGE_RESOURCE } from '~/../shared/enums';
 
 useSeoMeta({ title: 'Projects · Tandem' });
 
 const { $orpc, $client } = useNuxtApp();
 const queryClient = useQueryClient();
 
-const liveQuery = useQuery($orpc.projects.list.queryOptions({ queryKey: ['projects'] }));
+const liveQuery = useQuery($orpc.projects.list.queryOptions({ queryKey: [CHANGE_RESOURCE.PROJECTS] }));
 const rows = computed(() => (unref(liveQuery.data) ?? []) as ProjectRow[]);
 const busy = ref(false);
 const message = ref('');

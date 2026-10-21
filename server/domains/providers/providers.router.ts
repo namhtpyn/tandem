@@ -11,6 +11,7 @@ import { modelProviders as modelProvidersTable, vaultSecrets as vaultSecretsTabl
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
 import { modelCache, armCacheSweeper } from './models-cache';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 export const providersRouter = os.router({
   /** live model-provider catalog (connection info only — no keys, no models) */
@@ -20,7 +21,7 @@ export const providersRouter = os.router({
   }),
 
   live: protectedProcedure.handler(() =>
-    liveGenerator(['providers'], async () => {
+    liveGenerator([CHANGE_RESOURCE.PROVIDERS], async () => {
       const { listModelProviders } = await import('./model-providers.service');
       return await listModelProviders();
     }),
@@ -70,7 +71,7 @@ export const providersRouter = os.router({
             updatedAt: now,
           },
         });
-      await publishChange('providers', 'update');
+      await publishChange(CHANGE_RESOURCE.PROVIDERS, CHANGE_ACTION.UPDATE);
       return { id };
     }),
 
@@ -161,7 +162,7 @@ export const providersRouter = os.router({
       throw new ORPCError('BAD_REQUEST', { message: 'provider is in use by AI employees' });
     }
     await db.delete(modelProvidersTable).where(eq(modelProvidersTable.id, input.id));
-    await publishChange('providers', 'update');
+    await publishChange(CHANGE_RESOURCE.PROVIDERS, CHANGE_ACTION.UPDATE);
     return { ok: true };
   }),
 });

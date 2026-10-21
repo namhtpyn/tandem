@@ -5,12 +5,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 import { computed, ref } from 'vue';
 
 import type { VaultSecretRow } from '~/utils/orpc-types';
+import { CHANGE_RESOURCE } from '~/../shared/enums';
 
 const { $orpc } = useNuxtApp();
 const queryClient = useQueryClient();
 
-const liveQuery = useQuery($orpc.vault.secrets.list.queryOptions({ queryKey: ['vault'] }));
-const foldersQuery = useQuery($orpc.vault.folders.list.queryOptions({ queryKey: ['vault', 'folders'] }));
+const liveQuery = useQuery($orpc.vault.secrets.list.queryOptions({ queryKey: [CHANGE_RESOURCE.VAULT] }));
+const foldersQuery = useQuery($orpc.vault.folders.list.queryOptions({ queryKey: [CHANGE_RESOURCE.VAULT, 'folders'] }));
 const folders = computed(
   () =>
     (foldersQuery.data.value as { folders: Array<{ id: string; name: string; secrets: number }> } | undefined)
