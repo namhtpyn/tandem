@@ -6,22 +6,17 @@ import { applyMigrations } from '../server/db/index';
 import { STATUS } from '../shared/status';
 import { resetSchema } from './helpers/pg';
 
-vi.mock('../server/domains/kernel/redis', () => ({
-  redisHub: async () => ({
+vi.mock('../server/domains/kernel/queue', () => ({
+  redisQueue: async () => ({
     queue: async () => ({ close: async () => {} }),
     enqueue: async () => {
       throw new Error('ECONNREFUSED');
     },
-    publish: async () => {},
-    subscribe: async () => {},
-    cacheGet: async () => null,
-    cacheSet: async () => {},
     close: async () => {},
   }),
-  redisUrl: () => 'redis://mocked',
-  CHANGE_CHANNEL: 'tandem:changes',
-  encodeChange: (e: unknown) => JSON.stringify(e),
-  decodeChange: (raw: string) => JSON.parse(raw),
+}));
+vi.mock('../server/domains/kernel/pubsub', () => ({
+  redisPubsub: async () => null,
 }));
 
 beforeEach(async () => {

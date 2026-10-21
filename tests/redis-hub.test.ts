@@ -5,8 +5,9 @@ const REDIS_URL = 'redis://127.0.0.1:6399';
 
 async function redisUp() {
   try {
-    const { default: Redis } = await import('ioredis');
-    const r = new Redis(REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 500 });
+    const { createClient } = await import('redis');
+    const r = createClient({ url: REDIS_URL, socket: { connectTimeout: 500, reconnectStrategy: () => new Error('no-retry') } });
+    r.on('error', () => {});
     await r.connect();
     await r.disconnect();
     return true;
@@ -23,8 +24,8 @@ describe.skipIf(!up)('redis hub (integration)', () => {
   });
 
   it('enqueues and processes a job through the queue', async () => {
-    const { redisHub } = await import('../server/domains/kernel/redis');
-    const hub = await redisHub();
+    const { redisQueue } = await import('../server/domains/kernel/queue');
+    const hub = await redisQueue();
     expect(hub).toBeTruthy();
     const got: number[] = [];
     let resolveDone: () => void = () => {};
@@ -40,31 +41,23 @@ describe.skipIf(!up)('redis hub (integration)', () => {
     expect(got).toContain(42);
   });
 
-  it('pub/sub delivers messages across connections', async () => {
-    const { redisHub } = await import('../server/domains/kernel/redis');
-    const hub = await redisHub();
-    const got = new Promise<string>((r) => void hub!.subscribe('itest-chan', (m) => r(m)));
-    await new Promise((rs) => setTimeout(rs, 100));
-    await hub!.publish('itest-chan', 'ping');
-    expect(await got).toBe('ping');
-  });
-
-  it('cache set/get round-trips with TTL', async () => {
-    const { redisHub } = await import('../server/domains/kernel/redis');
-    const hub = await redisHub();
-    await hub!.cacheSet('itest-k', 'v', 30);
-    expect(await hub!.cacheGet('itest-k')).toBe('v');
+  it('cache set/get round-trips with TTL (cache domain)', async () => {
+    const { appCache } = await import('../server/domains/kernel/cache');
+    const cache = await appCache();
+    await cache.set('itest-k', 'v', 30);
+    expect(await cache.get('itest-k')).toBe('v');
+    expect(await cache.get<string>('itest-miss')).toBeUndefined();
   });
 
   it('change encoding round-trips', async () => {
-    const { encodeChange, decodeChange } = await import('../server/domains/kernel/redis');
+    const { encodeChange, decodeChange } = await import('../server/domains/kernel/change-bus');
     const e = { id: '1', resource: 'tasks' as const, action: 'update' as const, at: '2026-10-13T00:00:00Z' };
     expect(decodeChange(encodeChange(e))).toEqual(e);
   });
 
   afterAll(async () => {
-    const { redisHub } = await import('../server/domains/kernel/redis');
-    const hub = await redisHub();
+    const { redisQueue } = await import('../server/domains/kernel/queue');
+    const hub = await redisQueue();
     await hub?.close();
     delete process.env.REDIS_URL;
   });

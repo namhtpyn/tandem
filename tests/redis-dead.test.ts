@@ -6,12 +6,20 @@ import './api-harness';
 import './helpers/pg';
 
 describe('redis failure arms', () => {
-  it('redisHub rejects and clears the cache on connection failure', async () => {
+  it('queue domain rejects and clears the cache on connection failure', async () => {
     process.env.REDIS_URL = 'redis://127.0.0.1:6390'; // nothing listens here
-    const { redisHub } = await import('../server/domains/kernel/redis');
-    await expect(redisHub()).rejects.toThrow();
+    const { redisQueue } = await import('../server/domains/kernel/queue');
+    await expect(redisQueue()).rejects.toThrow();
     // cache was cleared by the rejection: a second call retries (and fails) fresh
-    await expect(redisHub()).rejects.toThrow();
+    await expect(redisQueue()).rejects.toThrow();
+    delete process.env.REDIS_URL;
+  });
+
+  it('pubsub domain rejects and clears the cache on connection failure', async () => {
+    process.env.REDIS_URL = 'redis://127.0.0.1:6390';
+    const { redisPubsub } = await import('../server/domains/kernel/pubsub');
+    await expect(redisPubsub()).rejects.toThrow();
+    await expect(redisPubsub()).rejects.toThrow();
     delete process.env.REDIS_URL;
   });
 

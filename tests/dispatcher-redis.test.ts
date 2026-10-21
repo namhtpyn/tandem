@@ -9,11 +9,17 @@ import { resetSchema } from './helpers/pg';
 
 const REDIS_URL = 'redis://127.0.0.1:6399';
 
+async function nr() {
+  const { createClient } = await import('redis');
+  const r = createClient({ url: REDIS_URL, socket: { connectTimeout: 500, reconnectStrategy: () => new Error('no-retry') } });
+  r.on('error', () => {});
+  await r.connect();
+  return r;
+}
+
 async function redisUp() {
   try {
-    const { default: Redis } = await import('ioredis');
-    const r = new Redis(REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 500 });
-    await r.connect();
+    const r = await nr();
     await r.disconnect();
     return true;
   } catch {
@@ -36,10 +42,9 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
     process.env.REDIS_URL = REDIS_URL;
     // redis state persists across runs; leftover jobs (incl. deduped ids) must not
     // leak between tests — flush bullmq keys for a hermetic suite
-    const { default: Redis } = await import('ioredis');
-    const flush = new Redis(REDIS_URL);
+    const flush = await nr();
     const keys = await flush.keys('bull:*');
-    if (keys.length) await flush.del(...keys);
+    if (keys.length) await flush.del(keys);
     await flush.disconnect();
     await resetSchema();
     await applyMigrations();
@@ -85,7 +90,7 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
   });
 
   it('the queue worker dispatches a job end-to-end (redis path)', async () => {
-    const { redisHub } = await import('../server/domains/kernel/redis');
+    const { redisQueue } = await import('../server/domains/kernel/queue');
     const hub = await redisHub();
     const { scanOnce } = await import('../server/domains/tasks/dispatcher.service');
     expect(await scanOnce('http://t.local')).toBe(true);
@@ -103,12 +108,9 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
     expect(await scanOnce('http://t.local')).toBe(true);
     // job lands in the queue; the worker started by maybeStartDispatcher would consume it,
     // but here just assert the queue received it
-    const { default: Redis } = await import('ioredis');
-    const r = new Redis(REDIS_URL);
-    const counts = await new Promise<string>((resolve) => {
-      void r.keys('bull:tandem:dispatch:*').then((ks) => resolve(String(ks.length)));
-    });
-    expect(Number(counts)).toBeGreaterThanOrEqual(0); // drained or waiting — no throw
+    const r = await nr();
+    const counts = await r.keys('bull:tandem:dispatch:*');
+    expect(counts.length).toBeGreaterThanOrEqual(0); // drained or waiting — no throw
     await r.disconnect();
   });
 
@@ -121,7 +123,7 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
 
   it('publishChange fans out over redis and the bridge re-publishes locally', async () => {
     const { publishChange, changeBus, bridgeRedisChanges } = await import('../server/domains/kernel/change-bus');
-    const { redisHub, CHANGE_CHANNEL, encodeChange } = await import('../server/domains/kernel/redis');
+    const { redisHub, CHANGE_CHANNEL, encodeChange } = await import('../server/domains/kernel/queue');
     const seen: string[] = [];
     const unsub = await changeBus.subscribe('change', (e) => seen.push(e.resource));
     await bridgeRedisChanges();
@@ -140,25 +142,24 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
   });
 
   it('enqueue with the same jobId dedupes (stale dispatch floods cannot stack)', async () => {
-    const { redisHub } = await import('../server/domains/kernel/redis');
+    const { redisQueue } = await import('../server/domains/kernel/queue');
     const hub = (await redisHub())!;
     const id1 = await hub.enqueue('tandem-dedup', { taskId: 't-x' }, { jobId: 't-x' });
     const id2 = await hub.enqueue('tandem-dedup', { taskId: 't-x' }, { jobId: 't-x' });
     expect(id1).toBe(id2); // bullmq returned the existing job, no duplicate stacked
-    const { Queue } = await import('bullmq');
-    const { default: Redis } = await import('ioredis');
-    const q = new Queue('tandem-dedup', { connection: { url: REDIS_URL, maxRetriesPerRequest: null } });
+    const { Queue, createNodeRedisClient } = await import('bullmq');
+    const q = new Queue('tandem-dedup', { connection: createNodeRedisClient(await nr()) });
     const counts = await q.getJobCounts();
     expect(counts.waiting + counts.active + counts.delayed).toBe(1);
     await q.drain();
     await q.close();
-    const r = new Redis(REDIS_URL);
-    await r.del('bull:tandem-dedup:wait', 'bull:tandem-dedup:meta');
+    const r = await nr();
+    await r.del(['bull:tandem-dedup:wait', 'bull:tandem-dedup:meta']);
     await r.disconnect();
   });
 
   it('syncDispatchWorkers spawns per-agent workers and resyncs on cap change', async () => {
-    const { redisHub } = await import('../server/domains/kernel/redis');
+    const { redisQueue } = await import('../server/domains/kernel/queue');
     const hub = (await redisHub())!;
     const { setSetting } = await import('../server/domains/settings/settings.service');
     const { syncDispatchWorkers, onDispatcherSettingsChanged } =
@@ -171,7 +172,7 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
   }, 20_000);
 
   it('second enqueue on the same queue reuses the cached Queue instance', async () => {
-    const { redisHub } = await import('../server/domains/kernel/redis');
+    const { redisQueue } = await import('../server/domains/kernel/queue');
     const hub = await redisHub();
     await hub!.enqueue('tandem-reuse', { n: 1 });
     await hub!.enqueue('tandem-reuse', { n: 2 }); // binary-expr arm: queues.get fallback
@@ -180,7 +181,7 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
   });
 
   afterAll(async () => {
-    const { redisHub } = await import('../server/domains/kernel/redis');
+    const { redisQueue } = await import('../server/domains/kernel/queue');
     await (await redisHub())?.close();
     delete process.env.REDIS_URL;
   });

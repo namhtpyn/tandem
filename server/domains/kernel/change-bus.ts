@@ -2,7 +2,18 @@
 // Every mutation publishes; live generators re-emit fresh snapshots over SSE.
 import { MemoryPublisher } from '@orpc/publisher/memory';
 
-import { CHANGE_CHANNEL, decodeChange, encodeChange, redisHub } from './redis';
+import { redisPubsub } from './pubsub';
+
+/** change-bus fanout channel + wire codec (encoded change events over pub/sub) */
+export const CHANGE_CHANNEL = 'tandem:changes';
+
+export function encodeChange(e: ChangeEvent): string {
+  return JSON.stringify(e);
+}
+export function decodeChange(raw: string): ChangeEvent {
+  const e = JSON.parse(raw) as ChangeEvent;
+  return { id: e.id, resource: e.resource, action: e.action, at: e.at };
+}
 
 export type ChangeResource =
   | 'environments'
@@ -45,10 +56,10 @@ export async function publishChange(resource: ChangeResource, action: ChangeActi
   };
   await changeBus.publish('change', event);
   try {
-    const hub = await redisHub();
-    if (hub) {
+    const pubsub = await redisPubsub();
+    if (pubsub) {
       lastPublishedId = event.id; // redis echoes this back to us; bridge skips own events
-      await hub.publish(CHANGE_CHANNEL, encodeChange(event)); // best-effort
+      await pubsub.publish(CHANGE_CHANNEL, encodeChange(event)); // best-effort
     }
   } catch {
     /* redis down: local bus already got the event */
@@ -57,9 +68,9 @@ export async function publishChange(resource: ChangeResource, action: ChangeActi
 
 /** boot hook: bridge Redis pub/sub -> local memory bus (no-op without REDIS_URL) */
 export async function bridgeRedisChanges(): Promise<void> {
-  const hub = await redisHub();
-  if (!hub) return;
-  await hub.subscribe(CHANGE_CHANNEL, (raw) => {
+  const pubsub = await redisPubsub();
+  if (!pubsub) return;
+  await pubsub.subscribe(CHANGE_CHANNEL, (raw) => {
     const e = decodeChange(raw);
     if (e.id === lastPublishedId) return; // own echo: already on the local bus
     void changeBus.publish('change', e);

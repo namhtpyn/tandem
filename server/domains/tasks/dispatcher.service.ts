@@ -9,7 +9,7 @@ import { STATUS } from '#shared/status';
 import { db } from '../../db';
 import { tasks, taskRuns, taskStatuses, aiEmployees } from '../../db/schema';
 import { publishChange } from '../kernel/change-bus';
-import { redisHub } from '../kernel/redis';
+import { redisQueue } from '../kernel/queue';
 import { dispatchTask } from './runner.service';
 
 const inFlight = new Map<string, Set<Promise<unknown>>>(); // employeeId -> live run promises
@@ -123,7 +123,7 @@ export async function findEligible(): Promise<{ taskId: string; employeeId: stri
 export async function scanOnce(tandemUrl: string): Promise<boolean> {
   const hit = await findEligible();
   if (!hit) return false;
-  const hub = await redisHub();
+  const hub = await redisQueue();
   if (hub) {
     try {
       /* v8 ignore next -- lazy resync; the catch arrow only fires on a redis failure */
@@ -178,7 +178,7 @@ export async function dispatchIfEligible(taskId: string, tandemUrl: string): Pro
   await run.finished;
 }
 
-export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<typeof redisHub>>>): Promise<void> {
+export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<typeof redisQueue>>>): Promise<void> {
   const { getTasksPerAgent } = await import('../settings/settings.service');
   const cap = await getTasksPerAgent();
   const aiRows = await db.select({ userId: aiEmployees.userId }).from(aiEmployees);
@@ -207,7 +207,7 @@ export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<ty
  * Best-effort: no redis or a resync failure must never fail the settings write. */
 export async function onDispatcherSettingsChanged(): Promise<void> {
   try {
-    const hub = await redisHub();
+    const hub = await redisQueue();
     if (!hub) return;
     await syncDispatchWorkers(hub);
   } catch (e) {
@@ -223,7 +223,7 @@ export async function onDispatcherSettingsChanged(): Promise<void> {
 export async function maybeStartDispatcher(): Promise<(() => void) | null> {
   if (process.env.TANDEM_NO_DISPATCHER) return null;
   const url = process.env.TANDEM_PUBLIC_URL || 'http://localhost:3000';
-  const hub = await redisHub();
+  const hub = await redisQueue();
   if (hub) {
     await syncDispatchWorkers(hub);
     console.log(`[tandem] dispatch queue workers started (redis, per-agent)`);
