@@ -1,169 +1,1857 @@
 {
-  "version": "8",
+  "type": "base",
+  "version": "9",
   "dialect": "postgres",
   "id": "01625021-d687-48a2-8ede-65dd19d89922",
   "prevIds": [
     "00000000-0000-0000-0000-000000000000"
   ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_ai_employees"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_ai_employees",
+        "n|tbl|public.tandem_ai_employees",
+        "e|tbl|public.tandem_ai_employees",
+        "n|rel|public.tandem_ai_employees",
+        "n|type|public.tandem_ai_employees",
+        "n|rel|public.tandem_ai_employees_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_employee_supervisors"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_employee_supervisors",
+        "n|tbl|public.tandem_employee_supervisors",
+        "e|tbl|public.tandem_employee_supervisors",
+        "n|rel|public.tandem_employee_supervisors",
+        "n|type|public.tandem_employee_supervisors",
+        "n|rel|public.tandem_employee_supervisors_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_employee_titles"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_employee_titles",
+        "n|tbl|public.tandem_employee_titles",
+        "e|tbl|public.tandem_employee_titles",
+        "n|rel|public.tandem_employee_titles",
+        "n|type|public.tandem_employee_titles",
+        "n|rel|public.tandem_employee_titles_pkey",
+        "n|rel|public.tandem_employee_titles_name_key"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_environments"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_environments",
+        "n|tbl|public.tandem_environments",
+        "e|tbl|public.tandem_environments",
+        "n|rel|public.tandem_environments",
+        "n|type|public.tandem_environments",
+        "n|rel|public.tandem_environments_pkey",
+        "n|rel|public.tandem_environments_name_key"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_model_providers"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_model_providers",
+        "n|tbl|public.tandem_model_providers",
+        "e|tbl|public.tandem_model_providers",
+        "n|rel|public.tandem_model_providers",
+        "n|type|public.tandem_model_providers",
+        "n|rel|public.tandem_model_providers_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_projects"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_projects",
+        "n|tbl|public.tandem_projects",
+        "e|tbl|public.tandem_projects",
+        "n|rel|public.tandem_projects",
+        "n|type|public.tandem_projects",
+        "n|rel|public.tandem_projects_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_settings"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_settings",
+        "n|tbl|public.tandem_settings",
+        "e|tbl|public.tandem_settings",
+        "n|rel|public.tandem_settings",
+        "n|type|public.tandem_settings",
+        "n|rel|public.tandem_settings_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_activity"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_task_activity",
+        "n|tbl|public.tandem_task_activity",
+        "e|tbl|public.tandem_task_activity",
+        "n|rel|public.tandem_task_activity",
+        "n|type|public.tandem_task_activity",
+        "n|rel|public.tandem_task_activity_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_assignments"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_task_assignments",
+        "n|tbl|public.tandem_task_assignments",
+        "e|tbl|public.tandem_task_assignments",
+        "n|rel|public.tandem_task_assignments",
+        "n|type|public.tandem_task_assignments",
+        "n|rel|public.tandem_task_assignments_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_attachments"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_task_attachments",
+        "n|tbl|public.tandem_task_attachments",
+        "e|tbl|public.tandem_task_attachments",
+        "n|rel|public.tandem_task_attachments",
+        "n|type|public.tandem_task_attachments",
+        "n|rel|public.tandem_task_attachments_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_obligations"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_task_obligations",
+        "n|tbl|public.tandem_task_obligations",
+        "e|tbl|public.tandem_task_obligations",
+        "n|rel|public.tandem_task_obligations",
+        "n|type|public.tandem_task_obligations",
+        "n|rel|public.tandem_task_obligations_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_proposals"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_task_proposals",
+        "n|tbl|public.tandem_task_proposals",
+        "e|tbl|public.tandem_task_proposals",
+        "n|rel|public.tandem_task_proposals",
+        "n|type|public.tandem_task_proposals",
+        "n|rel|public.tandem_task_proposals_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_reviews"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_task_reviews",
+        "n|tbl|public.tandem_task_reviews",
+        "e|tbl|public.tandem_task_reviews",
+        "n|rel|public.tandem_task_reviews",
+        "n|type|public.tandem_task_reviews",
+        "n|rel|public.tandem_task_reviews_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_runs"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_task_runs",
+        "n|tbl|public.tandem_task_runs",
+        "e|tbl|public.tandem_task_runs",
+        "n|rel|public.tandem_task_runs",
+        "n|type|public.tandem_task_runs",
+        "n|rel|public.tandem_task_runs_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_statuses"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_task_statuses",
+        "n|tbl|public.tandem_task_statuses",
+        "e|tbl|public.tandem_task_statuses",
+        "n|rel|public.tandem_task_statuses",
+        "n|type|public.tandem_task_statuses",
+        "n|rel|public.tandem_task_statuses_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_tasks"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_tasks",
+        "n|tbl|public.tandem_tasks",
+        "e|tbl|public.tandem_tasks",
+        "n|rel|public.tandem_tasks",
+        "n|type|public.tandem_tasks",
+        "n|rel|public.tandem_tasks_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_vault_audit"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_vault_audit",
+        "n|tbl|public.tandem_vault_audit",
+        "e|tbl|public.tandem_vault_audit",
+        "n|rel|public.tandem_vault_audit",
+        "n|type|public.tandem_vault_audit",
+        "n|rel|public.tandem_vault_audit_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_vault_folders"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_vault_folders",
+        "n|tbl|public.tandem_vault_folders",
+        "e|tbl|public.tandem_vault_folders",
+        "n|rel|public.tandem_vault_folders",
+        "n|type|public.tandem_vault_folders",
+        "n|rel|public.tandem_vault_folders_pkey",
+        "n|rel|public.tandem_vault_folders_name_key"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_vault_secrets"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_vault_secrets",
+        "n|tbl|public.tandem_vault_secrets",
+        "e|tbl|public.tandem_vault_secrets",
+        "n|rel|public.tandem_vault_secrets",
+        "n|type|public.tandem_vault_secrets",
+        "n|rel|public.tandem_vault_secrets_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_account"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_account",
+        "n|tbl|public.tandem_account",
+        "e|tbl|public.tandem_account",
+        "n|rel|public.tandem_account",
+        "n|type|public.tandem_account",
+        "n|rel|public.tandem_account_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_apikey"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_apikey",
+        "n|tbl|public.tandem_apikey",
+        "e|tbl|public.tandem_apikey",
+        "n|rel|public.tandem_apikey",
+        "n|type|public.tandem_apikey",
+        "n|rel|public.tandem_apikey_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_session"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_session",
+        "n|tbl|public.tandem_session",
+        "e|tbl|public.tandem_session",
+        "n|rel|public.tandem_session",
+        "n|type|public.tandem_session",
+        "n|rel|public.tandem_session_pkey",
+        "n|rel|public.tandem_session_token_key"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_user"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_user",
+        "n|tbl|public.tandem_user",
+        "e|tbl|public.tandem_user",
+        "n|rel|public.tandem_user",
+        "n|type|public.tandem_user",
+        "n|rel|public.tandem_user_pkey",
+        "n|rel|public.tandem_user_email_key"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_verification"
+      ],
+      "writes": [
+        "s|tbl|public.tandem_verification",
+        "n|tbl|public.tandem_verification",
+        "e|tbl|public.tandem_verification",
+        "n|rel|public.tandem_verification",
+        "n|type|public.tandem_verification",
+        "n|rel|public.tandem_verification_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_employee_supervisors",
+        "tandem_employee_supervisors_supervisor_idx"
+      ],
+      "writes": [
+        "s|idx|public.tandem_employee_supervisors_supervisor_idx",
+        "n|idx|public.tandem_employee_supervisors_supervisor_idx",
+        "e|idx|public.tandem_employee_supervisors_supervisor_idx",
+        "n|rel|public.tandem_employee_supervisors_supervisor_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_employee_supervisors",
+        "n|sch|public",
+        "n|col|public.tandem_employee_supervisors.supervisor_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_projects",
+        "tandem_projects_parent_idx"
+      ],
+      "writes": [
+        "s|idx|public.tandem_projects_parent_idx",
+        "n|idx|public.tandem_projects_parent_idx",
+        "e|idx|public.tandem_projects_parent_idx",
+        "n|rel|public.tandem_projects_parent_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_projects",
+        "n|sch|public",
+        "n|col|public.tandem_projects.parent_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_task_activity",
+        "tandem_task_activity_task_idx"
+      ],
+      "writes": [
+        "s|idx|public.tandem_task_activity_task_idx",
+        "n|idx|public.tandem_task_activity_task_idx",
+        "e|idx|public.tandem_task_activity_task_idx",
+        "n|rel|public.tandem_task_activity_task_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_activity",
+        "n|sch|public",
+        "n|col|public.tandem_task_activity.task_id",
+        "n|col|public.tandem_task_activity.created_at"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_task_assignments",
+        "tandem_task_assignments_task_idx"
+      ],
+      "writes": [
+        "s|idx|public.tandem_task_assignments_task_idx",
+        "n|idx|public.tandem_task_assignments_task_idx",
+        "e|idx|public.tandem_task_assignments_task_idx",
+        "n|rel|public.tandem_task_assignments_task_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_assignments",
+        "n|sch|public",
+        "n|col|public.tandem_task_assignments.task_id",
+        "n|col|public.tandem_task_assignments.started_at"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_task_attachments",
+        "tandem_task_attachments_task_idx"
+      ],
+      "writes": [
+        "s|idx|public.tandem_task_attachments_task_idx",
+        "n|idx|public.tandem_task_attachments_task_idx",
+        "e|idx|public.tandem_task_attachments_task_idx",
+        "n|rel|public.tandem_task_attachments_task_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_attachments",
+        "n|sch|public",
+        "n|col|public.tandem_task_attachments.task_id",
+        "n|col|public.tandem_task_attachments.created_at"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_task_obligations",
+        "tandem_task_obligations_task_idx"
+      ],
+      "writes": [
+        "s|idx|public.tandem_task_obligations_task_idx",
+        "n|idx|public.tandem_task_obligations_task_idx",
+        "e|idx|public.tandem_task_obligations_task_idx",
+        "n|rel|public.tandem_task_obligations_task_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_obligations",
+        "n|sch|public",
+        "n|col|public.tandem_task_obligations.task_id",
+        "n|col|public.tandem_task_obligations.role",
+        "n|col|public.tandem_task_obligations.status"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_task_obligations",
+        "tandem_task_obligations_employee_idx"
+      ],
+      "writes": [
+        "s|idx|public.tandem_task_obligations_employee_idx",
+        "n|idx|public.tandem_task_obligations_employee_idx",
+        "e|idx|public.tandem_task_obligations_employee_idx",
+        "n|rel|public.tandem_task_obligations_employee_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_obligations",
+        "n|sch|public",
+        "n|col|public.tandem_task_obligations.employee_id",
+        "n|col|public.tandem_task_obligations.status"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_task_proposals",
+        "tandem_task_proposals_task_idx"
+      ],
+      "writes": [
+        "s|idx|public.tandem_task_proposals_task_idx",
+        "n|idx|public.tandem_task_proposals_task_idx",
+        "e|idx|public.tandem_task_proposals_task_idx",
+        "n|rel|public.tandem_task_proposals_task_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_proposals",
+        "n|sch|public",
+        "n|col|public.tandem_task_proposals.task_id",
+        "n|col|public.tandem_task_proposals.status"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_task_reviews",
+        "tandem_task_reviews_task_idx"
+      ],
+      "writes": [
+        "s|idx|public.tandem_task_reviews_task_idx",
+        "n|idx|public.tandem_task_reviews_task_idx",
+        "e|idx|public.tandem_task_reviews_task_idx",
+        "n|rel|public.tandem_task_reviews_task_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_reviews",
+        "n|sch|public",
+        "n|col|public.tandem_task_reviews.task_id",
+        "n|col|public.tandem_task_reviews.round"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_task_runs",
+        "tandem_task_runs_task_idx"
+      ],
+      "writes": [
+        "s|idx|public.tandem_task_runs_task_idx",
+        "n|idx|public.tandem_task_runs_task_idx",
+        "e|idx|public.tandem_task_runs_task_idx",
+        "n|rel|public.tandem_task_runs_task_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_runs",
+        "n|sch|public",
+        "n|col|public.tandem_task_runs.task_id",
+        "n|col|public.tandem_task_runs.started_at"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_tasks",
+        "tandem_tasks_assignee_idx"
+      ],
+      "writes": [
+        "s|idx|public.tandem_tasks_assignee_idx",
+        "n|idx|public.tandem_tasks_assignee_idx",
+        "e|idx|public.tandem_tasks_assignee_idx",
+        "n|rel|public.tandem_tasks_assignee_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_tasks",
+        "n|sch|public",
+        "n|col|public.tandem_tasks.assignee_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_tasks",
+        "tandem_tasks_project_idx"
+      ],
+      "writes": [
+        "s|idx|public.tandem_tasks_project_idx",
+        "n|idx|public.tandem_tasks_project_idx",
+        "e|idx|public.tandem_tasks_project_idx",
+        "n|rel|public.tandem_tasks_project_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_tasks",
+        "n|sch|public",
+        "n|col|public.tandem_tasks.project_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_tasks",
+        "tandem_tasks_status_idx"
+      ],
+      "writes": [
+        "s|idx|public.tandem_tasks_status_idx",
+        "n|idx|public.tandem_tasks_status_idx",
+        "e|idx|public.tandem_tasks_status_idx",
+        "n|rel|public.tandem_tasks_status_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_tasks",
+        "n|sch|public",
+        "n|col|public.tandem_tasks.status"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_vault_audit",
+        "tandem_vault_audit_secret_idx"
+      ],
+      "writes": [
+        "s|idx|public.tandem_vault_audit_secret_idx",
+        "n|idx|public.tandem_vault_audit_secret_idx",
+        "e|idx|public.tandem_vault_audit_secret_idx",
+        "n|rel|public.tandem_vault_audit_secret_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_vault_audit",
+        "n|sch|public",
+        "n|col|public.tandem_vault_audit.secret_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_vault_audit",
+        "tandem_vault_audit_at_idx"
+      ],
+      "writes": [
+        "s|idx|public.tandem_vault_audit_at_idx",
+        "n|idx|public.tandem_vault_audit_at_idx",
+        "e|idx|public.tandem_vault_audit_at_idx",
+        "n|rel|public.tandem_vault_audit_at_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_vault_audit",
+        "n|sch|public",
+        "n|col|public.tandem_vault_audit.at"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_account",
+        "account_userId_idx"
+      ],
+      "writes": [
+        "s|idx|public.account_userId_idx",
+        "n|idx|public.account_userId_idx",
+        "e|idx|public.account_userId_idx",
+        "n|rel|public.account_userId_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_account",
+        "n|sch|public",
+        "n|col|public.tandem_account.user_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_apikey",
+        "apikey_configId_idx"
+      ],
+      "writes": [
+        "s|idx|public.apikey_configId_idx",
+        "n|idx|public.apikey_configId_idx",
+        "e|idx|public.apikey_configId_idx",
+        "n|rel|public.apikey_configId_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_apikey",
+        "n|sch|public",
+        "n|col|public.tandem_apikey.config_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_apikey",
+        "apikey_referenceId_idx"
+      ],
+      "writes": [
+        "s|idx|public.apikey_referenceId_idx",
+        "n|idx|public.apikey_referenceId_idx",
+        "e|idx|public.apikey_referenceId_idx",
+        "n|rel|public.apikey_referenceId_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_apikey",
+        "n|sch|public",
+        "n|col|public.tandem_apikey.reference_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_apikey",
+        "apikey_key_idx"
+      ],
+      "writes": [
+        "s|idx|public.apikey_key_idx",
+        "n|idx|public.apikey_key_idx",
+        "e|idx|public.apikey_key_idx",
+        "n|rel|public.apikey_key_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_apikey",
+        "n|sch|public",
+        "n|col|public.tandem_apikey.key"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_session",
+        "session_userId_idx"
+      ],
+      "writes": [
+        "s|idx|public.session_userId_idx",
+        "n|idx|public.session_userId_idx",
+        "e|idx|public.session_userId_idx",
+        "n|rel|public.session_userId_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_session",
+        "n|sch|public",
+        "n|col|public.tandem_session.user_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tandem_verification",
+        "verification_identifier_idx"
+      ],
+      "writes": [
+        "s|idx|public.verification_identifier_idx",
+        "n|idx|public.verification_identifier_idx",
+        "e|idx|public.verification_identifier_idx",
+        "n|rel|public.verification_identifier_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_verification",
+        "n|sch|public",
+        "n|col|public.tandem_verification.identifier"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_ai_employees"
+      ],
+      "writes": [
+        "s|fk|public.tandem_ai_employees.tandem_ai_employees_user_id_tandem_user_id_fkey",
+        "n|fk|public.tandem_ai_employees.tandem_ai_employees_user_id_tandem_user_id_fkey",
+        "e|fk|public.tandem_ai_employees.tandem_ai_employees_user_id_tandem_user_id_fkey",
+        "n|con|public.tandem_ai_employees.tandem_ai_employees_user_id_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_ai_employees",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_ai_employees.user_id",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_ai_employees"
+      ],
+      "writes": [
+        "s|fk|public.tandem_ai_employees.tandem_ai_employees_environment_id_tandem_environments_id_fkey",
+        "n|fk|public.tandem_ai_employees.tandem_ai_employees_environment_id_tandem_environments_id_fkey",
+        "e|fk|public.tandem_ai_employees.tandem_ai_employees_environment_id_tandem_environments_id_fkey",
+        "n|con|public.tandem_ai_employees.tandem_ai_employees_environment_id_tandem_environments_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_ai_employees",
+        "n|sch|public",
+        "n|tbl|public.tandem_environments",
+        "n|sch|public",
+        "n|col|public.tandem_ai_employees.environment_id",
+        "n|col|public.tandem_environments.id",
+        "e|uniqueness|public.tandem_environments.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_ai_employees"
+      ],
+      "writes": [
+        "s|fk|public.tandem_ai_employees.tandem_ai_employees_provider_id_tandem_model_providers_id_fkey",
+        "n|fk|public.tandem_ai_employees.tandem_ai_employees_provider_id_tandem_model_providers_id_fkey",
+        "e|fk|public.tandem_ai_employees.tandem_ai_employees_provider_id_tandem_model_providers_id_fkey",
+        "n|con|public.tandem_ai_employees.tandem_ai_employees_provider_id_tandem_model_providers_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_ai_employees",
+        "n|sch|public",
+        "n|tbl|public.tandem_model_providers",
+        "n|sch|public",
+        "n|col|public.tandem_ai_employees.provider_id",
+        "n|col|public.tandem_model_providers.id",
+        "e|uniqueness|public.tandem_model_providers.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_ai_employees"
+      ],
+      "writes": [
+        "s|fk|public.tandem_ai_employees.tandem_ai_employees_CYYLotA3fNSf_fkey",
+        "n|fk|public.tandem_ai_employees.tandem_ai_employees_CYYLotA3fNSf_fkey",
+        "e|fk|public.tandem_ai_employees.tandem_ai_employees_CYYLotA3fNSf_fkey",
+        "n|con|public.tandem_ai_employees.tandem_ai_employees_CYYLotA3fNSf_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_ai_employees",
+        "n|sch|public",
+        "n|tbl|public.tandem_vault_secrets",
+        "n|sch|public",
+        "n|col|public.tandem_ai_employees.api_key_secret_id",
+        "n|col|public.tandem_vault_secrets.id",
+        "e|uniqueness|public.tandem_vault_secrets.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_employee_supervisors"
+      ],
+      "writes": [
+        "s|fk|public.tandem_employee_supervisors.tandem_employee_supervisors_employee_id_tandem_user_id_fkey",
+        "n|fk|public.tandem_employee_supervisors.tandem_employee_supervisors_employee_id_tandem_user_id_fkey",
+        "e|fk|public.tandem_employee_supervisors.tandem_employee_supervisors_employee_id_tandem_user_id_fkey",
+        "n|con|public.tandem_employee_supervisors.tandem_employee_supervisors_employee_id_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_employee_supervisors",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_employee_supervisors.employee_id",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_employee_supervisors"
+      ],
+      "writes": [
+        "s|fk|public.tandem_employee_supervisors.tandem_employee_supervisors_supervisor_id_tandem_user_id_fkey",
+        "n|fk|public.tandem_employee_supervisors.tandem_employee_supervisors_supervisor_id_tandem_user_id_fkey",
+        "e|fk|public.tandem_employee_supervisors.tandem_employee_supervisors_supervisor_id_tandem_user_id_fkey",
+        "n|con|public.tandem_employee_supervisors.tandem_employee_supervisors_supervisor_id_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_employee_supervisors",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_employee_supervisors.supervisor_id",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_environments"
+      ],
+      "writes": [
+        "s|fk|public.tandem_environments.tandem_environments_secret_id_tandem_vault_secrets_id_fkey",
+        "n|fk|public.tandem_environments.tandem_environments_secret_id_tandem_vault_secrets_id_fkey",
+        "e|fk|public.tandem_environments.tandem_environments_secret_id_tandem_vault_secrets_id_fkey",
+        "n|con|public.tandem_environments.tandem_environments_secret_id_tandem_vault_secrets_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_environments",
+        "n|sch|public",
+        "n|tbl|public.tandem_vault_secrets",
+        "n|sch|public",
+        "n|col|public.tandem_environments.secret_id",
+        "n|col|public.tandem_vault_secrets.id",
+        "e|uniqueness|public.tandem_vault_secrets.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_projects"
+      ],
+      "writes": [
+        "s|fk|public.tandem_projects.tandem_projects_parent_id_tandem_projects_id_fkey",
+        "n|fk|public.tandem_projects.tandem_projects_parent_id_tandem_projects_id_fkey",
+        "e|fk|public.tandem_projects.tandem_projects_parent_id_tandem_projects_id_fkey",
+        "n|con|public.tandem_projects.tandem_projects_parent_id_tandem_projects_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_projects",
+        "n|sch|public",
+        "n|tbl|public.tandem_projects",
+        "n|sch|public",
+        "n|col|public.tandem_projects.parent_id",
+        "n|col|public.tandem_projects.id",
+        "e|uniqueness|public.tandem_projects.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_activity"
+      ],
+      "writes": [
+        "s|fk|public.tandem_task_activity.tandem_task_activity_task_id_tandem_tasks_id_fkey",
+        "n|fk|public.tandem_task_activity.tandem_task_activity_task_id_tandem_tasks_id_fkey",
+        "e|fk|public.tandem_task_activity.tandem_task_activity_task_id_tandem_tasks_id_fkey",
+        "n|con|public.tandem_task_activity.tandem_task_activity_task_id_tandem_tasks_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_activity",
+        "n|sch|public",
+        "n|tbl|public.tandem_tasks",
+        "n|sch|public",
+        "n|col|public.tandem_task_activity.task_id",
+        "n|col|public.tandem_tasks.id",
+        "e|uniqueness|public.tandem_tasks.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_activity"
+      ],
+      "writes": [
+        "s|fk|public.tandem_task_activity.tandem_task_activity_author_id_tandem_user_id_fkey",
+        "n|fk|public.tandem_task_activity.tandem_task_activity_author_id_tandem_user_id_fkey",
+        "e|fk|public.tandem_task_activity.tandem_task_activity_author_id_tandem_user_id_fkey",
+        "n|con|public.tandem_task_activity.tandem_task_activity_author_id_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_activity",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_task_activity.author_id",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_assignments"
+      ],
+      "writes": [
+        "s|fk|public.tandem_task_assignments.tandem_task_assignments_task_id_tandem_tasks_id_fkey",
+        "n|fk|public.tandem_task_assignments.tandem_task_assignments_task_id_tandem_tasks_id_fkey",
+        "e|fk|public.tandem_task_assignments.tandem_task_assignments_task_id_tandem_tasks_id_fkey",
+        "n|con|public.tandem_task_assignments.tandem_task_assignments_task_id_tandem_tasks_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_assignments",
+        "n|sch|public",
+        "n|tbl|public.tandem_tasks",
+        "n|sch|public",
+        "n|col|public.tandem_task_assignments.task_id",
+        "n|col|public.tandem_tasks.id",
+        "e|uniqueness|public.tandem_tasks.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_assignments"
+      ],
+      "writes": [
+        "s|fk|public.tandem_task_assignments.tandem_task_assignments_employee_id_tandem_user_id_fkey",
+        "n|fk|public.tandem_task_assignments.tandem_task_assignments_employee_id_tandem_user_id_fkey",
+        "e|fk|public.tandem_task_assignments.tandem_task_assignments_employee_id_tandem_user_id_fkey",
+        "n|con|public.tandem_task_assignments.tandem_task_assignments_employee_id_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_assignments",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_task_assignments.employee_id",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_assignments"
+      ],
+      "writes": [
+        "s|fk|public.tandem_task_assignments.tandem_task_assignments_actor_id_tandem_user_id_fkey",
+        "n|fk|public.tandem_task_assignments.tandem_task_assignments_actor_id_tandem_user_id_fkey",
+        "e|fk|public.tandem_task_assignments.tandem_task_assignments_actor_id_tandem_user_id_fkey",
+        "n|con|public.tandem_task_assignments.tandem_task_assignments_actor_id_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_assignments",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_task_assignments.actor_id",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_attachments"
+      ],
+      "writes": [
+        "s|fk|public.tandem_task_attachments.tandem_task_attachments_task_id_tandem_tasks_id_fkey",
+        "n|fk|public.tandem_task_attachments.tandem_task_attachments_task_id_tandem_tasks_id_fkey",
+        "e|fk|public.tandem_task_attachments.tandem_task_attachments_task_id_tandem_tasks_id_fkey",
+        "n|con|public.tandem_task_attachments.tandem_task_attachments_task_id_tandem_tasks_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_attachments",
+        "n|sch|public",
+        "n|tbl|public.tandem_tasks",
+        "n|sch|public",
+        "n|col|public.tandem_task_attachments.task_id",
+        "n|col|public.tandem_tasks.id",
+        "e|uniqueness|public.tandem_tasks.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_obligations"
+      ],
+      "writes": [
+        "s|fk|public.tandem_task_obligations.tandem_task_obligations_task_id_tandem_tasks_id_fkey",
+        "n|fk|public.tandem_task_obligations.tandem_task_obligations_task_id_tandem_tasks_id_fkey",
+        "e|fk|public.tandem_task_obligations.tandem_task_obligations_task_id_tandem_tasks_id_fkey",
+        "n|con|public.tandem_task_obligations.tandem_task_obligations_task_id_tandem_tasks_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_obligations",
+        "n|sch|public",
+        "n|tbl|public.tandem_tasks",
+        "n|sch|public",
+        "n|col|public.tandem_task_obligations.task_id",
+        "n|col|public.tandem_tasks.id",
+        "e|uniqueness|public.tandem_tasks.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_obligations"
+      ],
+      "writes": [
+        "s|fk|public.tandem_task_obligations.tandem_task_obligations_employee_id_tandem_user_id_fkey",
+        "n|fk|public.tandem_task_obligations.tandem_task_obligations_employee_id_tandem_user_id_fkey",
+        "e|fk|public.tandem_task_obligations.tandem_task_obligations_employee_id_tandem_user_id_fkey",
+        "n|con|public.tandem_task_obligations.tandem_task_obligations_employee_id_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_obligations",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_task_obligations.employee_id",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_obligations"
+      ],
+      "writes": [
+        "s|fk|public.tandem_task_obligations.tandem_task_obligations_resolved_by_tandem_user_id_fkey",
+        "n|fk|public.tandem_task_obligations.tandem_task_obligations_resolved_by_tandem_user_id_fkey",
+        "e|fk|public.tandem_task_obligations.tandem_task_obligations_resolved_by_tandem_user_id_fkey",
+        "n|con|public.tandem_task_obligations.tandem_task_obligations_resolved_by_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_obligations",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_task_obligations.resolved_by",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_proposals"
+      ],
+      "writes": [
+        "s|fk|public.tandem_task_proposals.tandem_task_proposals_task_id_tandem_tasks_id_fkey",
+        "n|fk|public.tandem_task_proposals.tandem_task_proposals_task_id_tandem_tasks_id_fkey",
+        "e|fk|public.tandem_task_proposals.tandem_task_proposals_task_id_tandem_tasks_id_fkey",
+        "n|con|public.tandem_task_proposals.tandem_task_proposals_task_id_tandem_tasks_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_proposals",
+        "n|sch|public",
+        "n|tbl|public.tandem_tasks",
+        "n|sch|public",
+        "n|col|public.tandem_task_proposals.task_id",
+        "n|col|public.tandem_tasks.id",
+        "e|uniqueness|public.tandem_tasks.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_proposals"
+      ],
+      "writes": [
+        "s|fk|public.tandem_task_proposals.tandem_task_proposals_run_id_tandem_task_runs_id_fkey",
+        "n|fk|public.tandem_task_proposals.tandem_task_proposals_run_id_tandem_task_runs_id_fkey",
+        "e|fk|public.tandem_task_proposals.tandem_task_proposals_run_id_tandem_task_runs_id_fkey",
+        "n|con|public.tandem_task_proposals.tandem_task_proposals_run_id_tandem_task_runs_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_proposals",
+        "n|sch|public",
+        "n|tbl|public.tandem_task_runs",
+        "n|sch|public",
+        "n|col|public.tandem_task_proposals.run_id",
+        "n|col|public.tandem_task_runs.id",
+        "e|uniqueness|public.tandem_task_runs.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_proposals"
+      ],
+      "writes": [
+        "s|fk|public.tandem_task_proposals.tandem_task_proposals_decided_by_tandem_user_id_fkey",
+        "n|fk|public.tandem_task_proposals.tandem_task_proposals_decided_by_tandem_user_id_fkey",
+        "e|fk|public.tandem_task_proposals.tandem_task_proposals_decided_by_tandem_user_id_fkey",
+        "n|con|public.tandem_task_proposals.tandem_task_proposals_decided_by_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_proposals",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_task_proposals.decided_by",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_reviews"
+      ],
+      "writes": [
+        "s|fk|public.tandem_task_reviews.tandem_task_reviews_task_id_tandem_tasks_id_fkey",
+        "n|fk|public.tandem_task_reviews.tandem_task_reviews_task_id_tandem_tasks_id_fkey",
+        "e|fk|public.tandem_task_reviews.tandem_task_reviews_task_id_tandem_tasks_id_fkey",
+        "n|con|public.tandem_task_reviews.tandem_task_reviews_task_id_tandem_tasks_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_reviews",
+        "n|sch|public",
+        "n|tbl|public.tandem_tasks",
+        "n|sch|public",
+        "n|col|public.tandem_task_reviews.task_id",
+        "n|col|public.tandem_tasks.id",
+        "e|uniqueness|public.tandem_tasks.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_reviews"
+      ],
+      "writes": [
+        "s|fk|public.tandem_task_reviews.tandem_task_reviews_reviewer_id_tandem_user_id_fkey",
+        "n|fk|public.tandem_task_reviews.tandem_task_reviews_reviewer_id_tandem_user_id_fkey",
+        "e|fk|public.tandem_task_reviews.tandem_task_reviews_reviewer_id_tandem_user_id_fkey",
+        "n|con|public.tandem_task_reviews.tandem_task_reviews_reviewer_id_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_reviews",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_task_reviews.reviewer_id",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_runs"
+      ],
+      "writes": [
+        "s|fk|public.tandem_task_runs.tandem_task_runs_task_id_tandem_tasks_id_fkey",
+        "n|fk|public.tandem_task_runs.tandem_task_runs_task_id_tandem_tasks_id_fkey",
+        "e|fk|public.tandem_task_runs.tandem_task_runs_task_id_tandem_tasks_id_fkey",
+        "n|con|public.tandem_task_runs.tandem_task_runs_task_id_tandem_tasks_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_runs",
+        "n|sch|public",
+        "n|tbl|public.tandem_tasks",
+        "n|sch|public",
+        "n|col|public.tandem_task_runs.task_id",
+        "n|col|public.tandem_tasks.id",
+        "e|uniqueness|public.tandem_tasks.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_task_runs"
+      ],
+      "writes": [
+        "s|fk|public.tandem_task_runs.tandem_task_runs_employee_id_tandem_user_id_fkey",
+        "n|fk|public.tandem_task_runs.tandem_task_runs_employee_id_tandem_user_id_fkey",
+        "e|fk|public.tandem_task_runs.tandem_task_runs_employee_id_tandem_user_id_fkey",
+        "n|con|public.tandem_task_runs.tandem_task_runs_employee_id_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_task_runs",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_task_runs.employee_id",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_tasks"
+      ],
+      "writes": [
+        "s|fk|public.tandem_tasks.tandem_tasks_project_id_tandem_projects_id_fkey",
+        "n|fk|public.tandem_tasks.tandem_tasks_project_id_tandem_projects_id_fkey",
+        "e|fk|public.tandem_tasks.tandem_tasks_project_id_tandem_projects_id_fkey",
+        "n|con|public.tandem_tasks.tandem_tasks_project_id_tandem_projects_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_tasks",
+        "n|sch|public",
+        "n|tbl|public.tandem_projects",
+        "n|sch|public",
+        "n|col|public.tandem_tasks.project_id",
+        "n|col|public.tandem_projects.id",
+        "e|uniqueness|public.tandem_projects.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_tasks"
+      ],
+      "writes": [
+        "s|fk|public.tandem_tasks.tandem_tasks_assignee_id_tandem_user_id_fkey",
+        "n|fk|public.tandem_tasks.tandem_tasks_assignee_id_tandem_user_id_fkey",
+        "e|fk|public.tandem_tasks.tandem_tasks_assignee_id_tandem_user_id_fkey",
+        "n|con|public.tandem_tasks.tandem_tasks_assignee_id_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_tasks",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_tasks.assignee_id",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_tasks"
+      ],
+      "writes": [
+        "s|fk|public.tandem_tasks.tandem_tasks_owner_id_tandem_user_id_fkey",
+        "n|fk|public.tandem_tasks.tandem_tasks_owner_id_tandem_user_id_fkey",
+        "e|fk|public.tandem_tasks.tandem_tasks_owner_id_tandem_user_id_fkey",
+        "n|con|public.tandem_tasks.tandem_tasks_owner_id_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_tasks",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_tasks.owner_id",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_tasks"
+      ],
+      "writes": [
+        "s|fk|public.tandem_tasks.tandem_tasks_parent_task_id_tandem_tasks_id_fkey",
+        "n|fk|public.tandem_tasks.tandem_tasks_parent_task_id_tandem_tasks_id_fkey",
+        "e|fk|public.tandem_tasks.tandem_tasks_parent_task_id_tandem_tasks_id_fkey",
+        "n|con|public.tandem_tasks.tandem_tasks_parent_task_id_tandem_tasks_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_tasks",
+        "n|sch|public",
+        "n|tbl|public.tandem_tasks",
+        "n|sch|public",
+        "n|col|public.tandem_tasks.parent_task_id",
+        "n|col|public.tandem_tasks.id",
+        "e|uniqueness|public.tandem_tasks.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_tasks"
+      ],
+      "writes": [
+        "s|fk|public.tandem_tasks.tandem_tasks_created_by_tandem_user_id_fkey",
+        "n|fk|public.tandem_tasks.tandem_tasks_created_by_tandem_user_id_fkey",
+        "e|fk|public.tandem_tasks.tandem_tasks_created_by_tandem_user_id_fkey",
+        "n|con|public.tandem_tasks.tandem_tasks_created_by_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_tasks",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_tasks.created_by",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_vault_audit"
+      ],
+      "writes": [
+        "s|fk|public.tandem_vault_audit.tandem_vault_audit_secret_id_tandem_vault_secrets_id_fkey",
+        "n|fk|public.tandem_vault_audit.tandem_vault_audit_secret_id_tandem_vault_secrets_id_fkey",
+        "e|fk|public.tandem_vault_audit.tandem_vault_audit_secret_id_tandem_vault_secrets_id_fkey",
+        "n|con|public.tandem_vault_audit.tandem_vault_audit_secret_id_tandem_vault_secrets_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_vault_audit",
+        "n|sch|public",
+        "n|tbl|public.tandem_vault_secrets",
+        "n|sch|public",
+        "n|col|public.tandem_vault_audit.secret_id",
+        "n|col|public.tandem_vault_secrets.id",
+        "e|uniqueness|public.tandem_vault_secrets.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_vault_secrets"
+      ],
+      "writes": [
+        "s|fk|public.tandem_vault_secrets.tandem_vault_secrets_folder_id_tandem_vault_folders_id_fkey",
+        "n|fk|public.tandem_vault_secrets.tandem_vault_secrets_folder_id_tandem_vault_folders_id_fkey",
+        "e|fk|public.tandem_vault_secrets.tandem_vault_secrets_folder_id_tandem_vault_folders_id_fkey",
+        "n|con|public.tandem_vault_secrets.tandem_vault_secrets_folder_id_tandem_vault_folders_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_vault_secrets",
+        "n|sch|public",
+        "n|tbl|public.tandem_vault_folders",
+        "n|sch|public",
+        "n|col|public.tandem_vault_secrets.folder_id",
+        "n|col|public.tandem_vault_folders.id",
+        "e|uniqueness|public.tandem_vault_folders.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_vault_secrets"
+      ],
+      "writes": [
+        "s|fk|public.tandem_vault_secrets.tandem_vault_secrets_created_by_tandem_user_id_fkey",
+        "n|fk|public.tandem_vault_secrets.tandem_vault_secrets_created_by_tandem_user_id_fkey",
+        "e|fk|public.tandem_vault_secrets.tandem_vault_secrets_created_by_tandem_user_id_fkey",
+        "n|con|public.tandem_vault_secrets.tandem_vault_secrets_created_by_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_vault_secrets",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_vault_secrets.created_by",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_account"
+      ],
+      "writes": [
+        "s|fk|public.tandem_account.tandem_account_user_id_tandem_user_id_fkey",
+        "n|fk|public.tandem_account.tandem_account_user_id_tandem_user_id_fkey",
+        "e|fk|public.tandem_account.tandem_account_user_id_tandem_user_id_fkey",
+        "n|con|public.tandem_account.tandem_account_user_id_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_account",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_account.user_id",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_apikey"
+      ],
+      "writes": [
+        "s|fk|public.tandem_apikey.tandem_apikey_reference_id_tandem_user_id_fkey",
+        "n|fk|public.tandem_apikey.tandem_apikey_reference_id_tandem_user_id_fkey",
+        "e|fk|public.tandem_apikey.tandem_apikey_reference_id_tandem_user_id_fkey",
+        "n|con|public.tandem_apikey.tandem_apikey_reference_id_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_apikey",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_apikey.reference_id",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "tandem_session"
+      ],
+      "writes": [
+        "s|fk|public.tandem_session.tandem_session_user_id_tandem_user_id_fkey",
+        "n|fk|public.tandem_session.tandem_session_user_id_tandem_user_id_fkey",
+        "e|fk|public.tandem_session.tandem_session_user_id_tandem_user_id_fkey",
+        "n|con|public.tandem_session.tandem_session_user_id_tandem_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.tandem_session",
+        "n|sch|public",
+        "n|tbl|public.tandem_user",
+        "n|sch|public",
+        "n|col|public.tandem_session.user_id",
+        "n|col|public.tandem_user.id",
+        "e|uniqueness|public.tandem_user.id"
+      ]
+    }
+  ],
   "ddl": [
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_ai_employees",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_employee_supervisors",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_employee_titles",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_environments",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_model_providers",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_projects",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_settings",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_task_activity",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_task_assignments",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_task_attachments",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_task_obligations",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_task_proposals",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_task_reviews",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_task_runs",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_task_statuses",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_tasks",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_vault_audit",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_vault_folders",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_vault_secrets",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_account",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_apikey",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_session",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "isRlsEnabled": false,
+      "schema": "public",
       "name": "tandem_user",
-      "entityType": "tables",
-      "schema": "public"
-    },
-    {
       "isRlsEnabled": false,
+      "entityType": "tables"
+    },
+    {
+      "schema": "public",
       "name": "tandem_verification",
-      "entityType": "tables",
-      "schema": "public"
+      "isRlsEnabled": false,
+      "entityType": "tables"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_ai_employees",
       "name": "user_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_ai_employees"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -171,12 +1859,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "environment_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_ai_employees"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_ai_employees",
+      "name": "environment_id",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_ai_employees",
+      "name": "instructions",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -184,38 +1885,25 @@
       "default": "''",
       "generated": null,
       "identity": null,
-      "name": "instructions",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_ai_employees"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_ai_employees",
       "name": "executable",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_ai_employees"
-    },
-    {
       "type": "text",
       "typeSchema": null,
-      "notNull": false,
+      "notNull": true,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_ai_employees",
       "name": "provider_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_ai_employees"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -223,12 +1911,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_ai_employees",
       "name": "model",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_ai_employees"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -236,51 +1924,51 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_ai_employees",
       "name": "api_key_secret_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_ai_employees"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_ai_employees"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_ai_employees"
-    },
-    {
       "type": "text",
       "typeSchema": null,
-      "notNull": true,
+      "notNull": false,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_ai_employees",
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_ai_employees",
+      "name": "updated_at",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_employee_supervisors",
       "name": "employee_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_employee_supervisors"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -288,12 +1976,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_employee_supervisors",
       "name": "supervisor_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_employee_supervisors"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -301,12 +1989,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_employee_titles",
       "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_employee_titles"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -314,25 +2002,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "name",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_employee_titles"
+      "entityType": "columns"
     },
     {
-      "type": "timestamp with time zone",
+      "schema": "public",
+      "table": "tandem_employee_titles",
+      "name": "name",
+      "type": "text",
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": "now()",
+      "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_employee_titles",
       "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_employee_titles"
-    },
-    {
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -340,25 +2028,25 @@
       "default": "now()",
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_employee_titles",
       "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_employee_titles"
-    },
-    {
-      "type": "text",
+      "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": null,
+      "default": "now()",
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_environments",
       "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_environments"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -366,12 +2054,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_environments",
       "name": "name",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_environments"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -379,12 +2067,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "host",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_environments"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_environments",
+      "name": "host",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_environments",
+      "name": "port",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -392,12 +2093,12 @@
       "default": "'22'",
       "generated": null,
       "identity": null,
-      "name": "port",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_environments"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_environments",
+      "name": "username",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -405,12 +2106,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "username",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_environments"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_environments",
+      "name": "secret_id",
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -418,12 +2119,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "secret_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_environments"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_environments",
+      "name": "secret_usage",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -431,25 +2132,12 @@
       "default": "'ssh-key'",
       "generated": null,
       "identity": null,
-      "name": "secret_usage",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_environments"
+      "entityType": "columns"
     },
     {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_environments",
       "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_environments"
-    },
-    {
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -457,25 +2145,25 @@
       "default": "now()",
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_environments",
       "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_environments"
-    },
-    {
-      "type": "text",
+      "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": null,
+      "default": "now()",
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_model_providers",
       "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_model_providers"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -483,12 +2171,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_model_providers",
       "name": "label",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_model_providers"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -496,12 +2184,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "base_url",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_model_providers"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_model_providers",
+      "name": "base_url",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_model_providers",
+      "name": "endpoints",
       "type": "jsonb",
       "typeSchema": null,
       "notNull": true,
@@ -509,25 +2210,12 @@
       "default": "'[\"OPENAI-COMPLETIONS\"]'",
       "generated": null,
       "identity": null,
-      "name": "endpoints",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_model_providers"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_model_providers",
       "name": "extra_headers",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_model_providers"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -535,25 +2223,25 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_model_providers",
       "name": "notes",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_model_providers"
-    },
-    {
-      "type": "timestamp with time zone",
+      "type": "text",
       "typeSchema": null,
-      "notNull": true,
+      "notNull": false,
       "dimensions": 0,
-      "default": "now()",
+      "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_model_providers",
       "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_model_providers"
-    },
-    {
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -561,25 +2249,25 @@
       "default": "now()",
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_model_providers",
       "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_model_providers"
-    },
-    {
-      "type": "text",
+      "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": null,
+      "default": "now()",
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_projects",
       "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_projects"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -587,12 +2275,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "name",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_projects"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_projects",
+      "name": "name",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_projects",
+      "name": "description",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -600,12 +2301,12 @@
       "default": "''",
       "generated": null,
       "identity": null,
-      "name": "description",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_projects"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_projects",
+      "name": "status",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -613,155 +2314,12 @@
       "default": "'active'",
       "generated": null,
       "identity": null,
-      "name": "status",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_projects"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "''",
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_projects",
       "name": "prompt",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_projects"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "parent_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_projects"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_projects"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_projects"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "key",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_settings"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "value",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_settings"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_settings"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_activity"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "task_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_activity"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "kind",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_activity"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "author_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_activity"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -769,12 +2327,155 @@
       "default": "''",
       "generated": null,
       "identity": null,
-      "name": "body",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_activity"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_projects",
+      "name": "parent_id",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_projects",
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_projects",
+      "name": "updated_at",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_settings",
+      "name": "key",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_settings",
+      "name": "value",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_settings",
+      "name": "updated_at",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_activity",
+      "name": "id",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_activity",
+      "name": "task_id",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_activity",
+      "name": "kind",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_activity",
+      "name": "author_id",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_activity",
+      "name": "body",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "''",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_activity",
+      "name": "meta",
       "type": "jsonb",
       "typeSchema": null,
       "notNull": true,
@@ -782,12 +2483,12 @@
       "default": "'{}'",
       "generated": null,
       "identity": null,
-      "name": "meta",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_activity"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_activity",
+      "name": "created_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -795,25 +2496,12 @@
       "default": "now()",
       "generated": null,
       "identity": null,
-      "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_activity"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_task_assignments",
       "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_assignments"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -821,12 +2509,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "task_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_assignments"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_assignments",
+      "name": "task_id",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_assignments",
+      "name": "employee_id",
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -834,12 +2535,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "employee_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_assignments"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_assignments",
+      "name": "reason",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -847,12 +2548,12 @@
       "default": "''",
       "generated": null,
       "identity": null,
-      "name": "reason",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_assignments"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_assignments",
+      "name": "actor_id",
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -860,12 +2561,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "actor_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_assignments"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_assignments",
+      "name": "started_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -873,12 +2574,12 @@
       "default": "now()",
       "generated": null,
       "identity": null,
-      "name": "started_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_assignments"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_assignments",
+      "name": "ended_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": false,
@@ -886,25 +2587,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "ended_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_assignments"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_task_attachments",
       "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_attachments"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -912,12 +2600,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "task_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_attachments"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_attachments",
+      "name": "task_id",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_attachments",
+      "name": "run_id",
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -925,12 +2626,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "run_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_attachments"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_attachments",
+      "name": "kind",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -938,25 +2639,12 @@
       "default": "'input'",
       "generated": null,
       "identity": null,
-      "name": "kind",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_attachments"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_task_attachments",
       "name": "filename",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_attachments"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -964,12 +2652,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "mime",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_attachments"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_attachments",
+      "name": "mime",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_attachments",
+      "name": "size",
       "type": "integer",
       "typeSchema": null,
       "notNull": true,
@@ -977,12 +2678,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "size",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_attachments"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_attachments",
+      "name": "sha256",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -990,12 +2691,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "sha256",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_attachments"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_attachments",
+      "name": "created_by",
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -1003,12 +2704,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "created_by",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_attachments"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_attachments",
+      "name": "created_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -1016,25 +2717,12 @@
       "default": "now()",
       "generated": null,
       "identity": null,
-      "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_attachments"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_task_obligations",
       "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_obligations"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1042,12 +2730,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "task_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_obligations"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_obligations",
+      "name": "task_id",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_obligations",
+      "name": "employee_id",
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -1055,12 +2756,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "employee_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_obligations"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_obligations",
+      "name": "role",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1068,12 +2769,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "role",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_obligations"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_obligations",
+      "name": "status",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1081,12 +2782,12 @@
       "default": "'pending'",
       "generated": null,
       "identity": null,
-      "name": "status",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_obligations"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_obligations",
+      "name": "created_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -1094,12 +2795,12 @@
       "default": "now()",
       "generated": null,
       "identity": null,
-      "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_obligations"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_obligations",
+      "name": "resolved_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": false,
@@ -1107,51 +2808,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "resolved_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_obligations"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_task_obligations",
       "name": "resolved_by",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_obligations"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_proposals"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "task_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_proposals"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -1159,12 +2821,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "run_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_proposals"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_proposals",
+      "name": "id",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1172,12 +2834,51 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "kind",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_proposals"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_proposals",
+      "name": "task_id",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_proposals",
+      "name": "run_id",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_proposals",
+      "name": "kind",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_proposals",
+      "name": "payload",
       "type": "jsonb",
       "typeSchema": null,
       "notNull": true,
@@ -1185,12 +2886,12 @@
       "default": "'{}'",
       "generated": null,
       "identity": null,
-      "name": "payload",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_proposals"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_proposals",
+      "name": "status",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1198,12 +2899,12 @@
       "default": "'proposed'",
       "generated": null,
       "identity": null,
-      "name": "status",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_proposals"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_proposals",
+      "name": "decision_note",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1211,12 +2912,12 @@
       "default": "''",
       "generated": null,
       "identity": null,
-      "name": "decision_note",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_proposals"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_proposals",
+      "name": "decided_by",
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -1224,12 +2925,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "decided_by",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_proposals"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_proposals",
+      "name": "decided_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": false,
@@ -1237,12 +2938,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "decided_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_proposals"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_proposals",
+      "name": "created_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -1250,25 +2951,12 @@
       "default": "now()",
       "generated": null,
       "identity": null,
-      "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_proposals"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_task_reviews",
       "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_reviews"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1276,12 +2964,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "task_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_reviews"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_reviews",
+      "name": "task_id",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_reviews",
+      "name": "reviewer_id",
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -1289,12 +2990,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "reviewer_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_reviews"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_reviews",
+      "name": "round",
       "type": "integer",
       "typeSchema": null,
       "notNull": true,
@@ -1302,12 +3003,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "round",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_reviews"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_reviews",
+      "name": "status",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1315,25 +3016,12 @@
       "default": "'pending'",
       "generated": null,
       "identity": null,
-      "name": "status",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_reviews"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_task_reviews",
       "name": "note",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_reviews"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -1341,12 +3029,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "source",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_reviews"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_reviews",
+      "name": "source",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_reviews",
+      "name": "created_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -1354,12 +3055,12 @@
       "default": "now()",
       "generated": null,
       "identity": null,
-      "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_reviews"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_reviews",
+      "name": "decided_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": false,
@@ -1367,25 +3068,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "decided_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_reviews"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_task_runs",
       "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_runs"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1393,25 +3081,25 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_runs",
       "name": "task_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_runs"
-    },
-    {
       "type": "text",
       "typeSchema": null,
-      "notNull": false,
+      "notNull": true,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_runs",
       "name": "employee_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_runs"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -1419,12 +3107,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_runs",
       "name": "session_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_runs"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -1432,12 +3120,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "environment_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_runs"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_runs",
+      "name": "environment_id",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_runs",
+      "name": "status",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1445,12 +3146,12 @@
       "default": "'running'",
       "generated": null,
       "identity": null,
-      "name": "status",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_runs"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_runs",
+      "name": "exit_code",
       "type": "integer",
       "typeSchema": null,
       "notNull": false,
@@ -1458,12 +3159,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "exit_code",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_runs"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_runs",
+      "name": "output",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1471,12 +3172,12 @@
       "default": "''",
       "generated": null,
       "identity": null,
-      "name": "output",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_runs"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_runs",
+      "name": "prompt",
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -1484,12 +3185,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "prompt",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_runs"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_runs",
+      "name": "started_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -1497,12 +3198,12 @@
       "default": "now()",
       "generated": null,
       "identity": null,
-      "name": "started_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_runs"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_runs",
+      "name": "finished_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": false,
@@ -1510,25 +3211,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "finished_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_runs"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_task_statuses",
       "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_statuses"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1536,12 +3224,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "name",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_statuses"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_statuses",
+      "name": "name",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_statuses",
+      "name": "color",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1549,12 +3250,12 @@
       "default": "'neutral'",
       "generated": null,
       "identity": null,
-      "name": "color",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_statuses"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_statuses",
+      "name": "position",
       "type": "integer",
       "typeSchema": null,
       "notNull": true,
@@ -1562,12 +3263,12 @@
       "default": "0",
       "generated": null,
       "identity": null,
-      "name": "position",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_statuses"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_statuses",
+      "name": "category",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1575,12 +3276,12 @@
       "default": "'backlog'",
       "generated": null,
       "identity": null,
-      "name": "category",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_statuses"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_statuses",
+      "name": "next_ids",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1588,25 +3289,12 @@
       "default": "'{}'",
       "generated": null,
       "identity": null,
-      "name": "next_ids",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_statuses"
+      "entityType": "columns"
     },
     {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_task_statuses",
       "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_statuses"
-    },
-    {
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -1614,25 +3302,25 @@
       "default": "now()",
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_statuses",
       "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_task_statuses"
-    },
-    {
-      "type": "text",
+      "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": null,
+      "default": "now()",
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_tasks",
       "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1640,12 +3328,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "title",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_tasks",
+      "name": "title",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_tasks",
+      "name": "description",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1653,12 +3354,12 @@
       "default": "''",
       "generated": null,
       "identity": null,
-      "name": "description",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_tasks",
+      "name": "status",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1666,25 +3367,12 @@
       "default": "'todo'",
       "generated": null,
       "identity": null,
-      "name": "status",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_tasks",
       "name": "project_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -1692,12 +3380,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_tasks",
       "name": "assignee_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -1705,25 +3393,25 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_tasks",
       "name": "owner_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
-    },
-    {
       "type": "text",
       "typeSchema": null,
-      "notNull": true,
-      "dimensions": 1,
-      "default": "'{}'",
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_tasks",
       "name": "reviewers",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1731,12 +3419,25 @@
       "default": "'{}'",
       "generated": null,
       "identity": null,
-      "name": "question_chain",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_tasks",
+      "name": "question_chain",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 1,
+      "default": "'{}'",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_tasks",
+      "name": "dispatch_after",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": false,
@@ -1744,12 +3445,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "dispatch_after",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_tasks",
+      "name": "fail_streak",
       "type": "integer",
       "typeSchema": null,
       "notNull": true,
@@ -1757,25 +3458,12 @@
       "default": "0",
       "generated": null,
       "identity": null,
-      "name": "fail_streak",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_tasks",
       "name": "parent_task_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -1783,12 +3471,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_tasks",
       "name": "acp_session_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -1796,12 +3484,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_tasks",
       "name": "pre_block_status",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -1809,51 +3497,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_tasks",
       "name": "created_by",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_tasks"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_audit"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -1861,25 +3510,64 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_tasks",
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_tasks",
+      "name": "updated_at",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_vault_audit",
+      "name": "id",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_vault_audit",
       "name": "secret_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_audit"
-    },
-    {
       "type": "text",
       "typeSchema": null,
-      "notNull": true,
+      "notNull": false,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_vault_audit",
       "name": "secret_name",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_audit"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1887,12 +3575,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "action",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_audit"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_vault_audit",
+      "name": "action",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_vault_audit",
+      "name": "actor_id",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1900,51 +3601,12 @@
       "default": "'system'",
       "generated": null,
       "identity": null,
-      "name": "actor_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_audit"
+      "entityType": "columns"
     },
     {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_vault_audit",
       "name": "at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_audit"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_folders"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "name",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_folders"
-    },
-    {
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -1952,12 +3614,38 @@
       "default": "now()",
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_vault_folders",
+      "name": "id",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_vault_folders",
+      "name": "name",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_vault_folders",
       "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_folders"
-    },
-    {
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -1965,25 +3653,25 @@
       "default": "now()",
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_vault_folders",
       "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_folders"
-    },
-    {
-      "type": "text",
+      "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": null,
+      "default": "now()",
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_vault_secrets",
       "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_secrets"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1991,51 +3679,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "name",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_secrets"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_vault_secrets",
+      "name": "name",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": "''",
+      "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_vault_secrets",
       "name": "description",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_secrets"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "folder_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_secrets"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "ciphertext",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_secrets"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -2043,38 +3705,64 @@
       "default": "''",
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_vault_secrets",
+      "name": "folder_id",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_vault_secrets",
+      "name": "ciphertext",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_vault_secrets",
       "name": "last_four",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_secrets"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": null,
+      "default": "''",
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_vault_secrets",
       "name": "created_by",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_secrets"
-    },
-    {
-      "type": "timestamp with time zone",
+      "type": "text",
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": "now()",
+      "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_vault_secrets",
       "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_secrets"
-    },
-    {
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -2082,25 +3770,25 @@
       "default": "now()",
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_vault_secrets",
       "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_vault_secrets"
-    },
-    {
-      "type": "text",
+      "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": null,
+      "default": "now()",
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_account",
       "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_account"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -2108,12 +3796,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_account",
       "name": "account_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_account"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -2121,12 +3809,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_account",
       "name": "provider_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_account"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -2134,25 +3822,25 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_account",
       "name": "user_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_account"
-    },
-    {
       "type": "text",
       "typeSchema": null,
-      "notNull": false,
+      "notNull": true,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_account",
       "name": "access_token",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_account"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -2160,12 +3848,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_account",
       "name": "refresh_token",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_account"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -2173,25 +3861,25 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_account",
       "name": "id_token",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_account"
-    },
-    {
-      "type": "timestamp with time zone",
+      "type": "text",
       "typeSchema": null,
       "notNull": false,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_account",
       "name": "access_token_expires_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_account"
-    },
-    {
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": false,
@@ -2199,25 +3887,25 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_account",
       "name": "refresh_token_expires_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_account"
-    },
-    {
-      "type": "text",
+      "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": false,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_account",
       "name": "scope",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_account"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -2225,12 +3913,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "password",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_account"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_account",
+      "name": "password",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_account",
+      "name": "created_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -2238,12 +3939,12 @@
       "default": "now()",
       "generated": null,
       "identity": null,
-      "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_account"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_account",
+      "name": "updated_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -2251,12 +3952,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_account"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "id",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -2264,12 +3965,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "config_id",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -2277,25 +3978,12 @@
       "default": "'default'",
       "generated": null,
       "identity": null,
-      "name": "config_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_apikey",
       "name": "name",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -2303,38 +3991,25 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_apikey",
       "name": "start",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
-    },
-    {
       "type": "text",
       "typeSchema": null,
-      "notNull": true,
+      "notNull": false,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_apikey",
       "name": "reference_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "prefix",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -2342,25 +4017,38 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "prefix",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_apikey",
       "name": "key",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
-    },
-    {
-      "type": "integer",
+      "type": "text",
       "typeSchema": null,
-      "notNull": false,
+      "notNull": true,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_apikey",
       "name": "refill_interval",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
-    },
-    {
       "type": "integer",
       "typeSchema": null,
       "notNull": false,
@@ -2368,12 +4056,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "refill_amount",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "refill_amount",
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "last_refill_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": false,
@@ -2381,25 +4082,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "last_refill_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
+      "entityType": "columns"
     },
     {
-      "type": "boolean",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": "true",
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_apikey",
       "name": "enabled",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
-    },
-    {
       "type": "boolean",
       "typeSchema": null,
       "notNull": false,
@@ -2407,12 +4095,25 @@
       "default": "true",
       "generated": null,
       "identity": null,
-      "name": "rate_limit_enabled",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "rate_limit_enabled",
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": "true",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "rate_limit_time_window",
       "type": "integer",
       "typeSchema": null,
       "notNull": false,
@@ -2420,12 +4121,12 @@
       "default": "86400000",
       "generated": null,
       "identity": null,
-      "name": "rate_limit_time_window",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "rate_limit_max",
       "type": "integer",
       "typeSchema": null,
       "notNull": false,
@@ -2433,12 +4134,12 @@
       "default": "10",
       "generated": null,
       "identity": null,
-      "name": "rate_limit_max",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "request_count",
       "type": "integer",
       "typeSchema": null,
       "notNull": false,
@@ -2446,12 +4147,12 @@
       "default": "0",
       "generated": null,
       "identity": null,
-      "name": "request_count",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "remaining",
       "type": "integer",
       "typeSchema": null,
       "notNull": false,
@@ -2459,25 +4160,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "remaining",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
+      "entityType": "columns"
     },
     {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_apikey",
       "name": "last_request",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
-    },
-    {
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": false,
@@ -2485,25 +4173,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "expires_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "expires_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
-      "notNull": true,
+      "notNull": false,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_apikey",
       "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
-    },
-    {
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -2511,51 +4199,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_apikey",
       "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "permissions",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "metadata",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_apikey"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_session"
-    },
-    {
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -2563,12 +4212,38 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "expires_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_session"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "permissions",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "metadata",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_session",
+      "name": "id",
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -2576,12 +4251,38 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "token",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_session"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_session",
+      "name": "expires_at",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_session",
+      "name": "token",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_session",
+      "name": "created_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -2589,12 +4290,12 @@
       "default": "now()",
       "generated": null,
       "identity": null,
-      "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_session"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_session",
+      "name": "updated_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -2602,25 +4303,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_session"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_session",
       "name": "ip_address",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_session"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -2628,25 +4316,25 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_session",
       "name": "user_agent",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_session"
-    },
-    {
       "type": "text",
       "typeSchema": null,
-      "notNull": true,
+      "notNull": false,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_session",
       "name": "user_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_session"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -2654,12 +4342,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_user",
       "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_user"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -2667,12 +4355,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_user",
       "name": "name",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_user"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -2680,12 +4368,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "email",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_user"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_user",
+      "name": "email",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_user",
+      "name": "email_verified",
       "type": "boolean",
       "typeSchema": null,
       "notNull": true,
@@ -2693,12 +4394,12 @@
       "default": "false",
       "generated": null,
       "identity": null,
-      "name": "email_verified",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_user"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_user",
+      "name": "image",
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -2706,25 +4407,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "image",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_user"
+      "entityType": "columns"
     },
     {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_user",
       "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_user"
-    },
-    {
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -2732,12 +4420,25 @@
       "default": "now()",
       "generated": null,
       "identity": null,
-      "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_user"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_user",
+      "name": "updated_at",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_user",
+      "name": "role",
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -2745,12 +4446,12 @@
       "default": "'viewer'",
       "generated": null,
       "identity": null,
-      "name": "role",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_user"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_user",
+      "name": "title",
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -2758,25 +4459,12 @@
       "default": "''",
       "generated": null,
       "identity": null,
-      "name": "title",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_user"
+      "entityType": "columns"
     },
     {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_verification",
       "name": "id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_verification"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -2784,12 +4472,12 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_verification",
       "name": "identifier",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_verification"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -2797,12 +4485,25 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "value",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_verification"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_verification",
+      "name": "value",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_verification",
+      "name": "expires_at",
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -2810,25 +4511,12 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "expires_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_verification"
+      "entityType": "columns"
     },
     {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
+      "schema": "public",
+      "table": "tandem_verification",
       "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_verification"
-    },
-    {
       "type": "timestamp with time zone",
       "typeSchema": null,
       "notNull": true,
@@ -2836,12 +4524,25 @@
       "default": "now()",
       "generated": null,
       "identity": null,
-      "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "tandem_verification"
+      "entityType": "columns"
     },
     {
+      "schema": "public",
+      "table": "tandem_verification",
+      "name": "updated_at",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_employee_supervisors",
+      "name": "tandem_employee_supervisors_supervisor_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -2857,12 +4558,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "tandem_employee_supervisors_supervisor_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_employee_supervisors"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_projects",
+      "name": "tandem_projects_parent_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -2878,12 +4579,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "tandem_projects_parent_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_projects"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_activity",
+      "name": "tandem_task_activity_task_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -2906,12 +4607,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "tandem_task_activity_task_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_task_activity"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_assignments",
+      "name": "tandem_task_assignments_task_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -2934,12 +4635,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "tandem_task_assignments_task_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_task_assignments"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_attachments",
+      "name": "tandem_task_attachments_task_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -2962,12 +4663,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "tandem_task_attachments_task_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_task_attachments"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_obligations",
+      "name": "tandem_task_obligations_task_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -2997,12 +4698,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "tandem_task_obligations_task_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_task_obligations"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_obligations",
+      "name": "tandem_task_obligations_employee_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -3025,12 +4726,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "tandem_task_obligations_employee_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_task_obligations"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_proposals",
+      "name": "tandem_task_proposals_task_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -3053,12 +4754,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "tandem_task_proposals_task_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_task_proposals"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_reviews",
+      "name": "tandem_task_reviews_task_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -3081,12 +4782,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "tandem_task_reviews_task_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_task_reviews"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_runs",
+      "name": "tandem_task_runs_task_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -3109,12 +4810,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "tandem_task_runs_task_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_task_runs"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_tasks",
+      "name": "tandem_tasks_assignee_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -3130,12 +4831,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "tandem_tasks_assignee_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_tasks"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_tasks",
+      "name": "tandem_tasks_project_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -3151,12 +4852,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "tandem_tasks_project_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_tasks"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_tasks",
+      "name": "tandem_tasks_status_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -3172,12 +4873,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "tandem_tasks_status_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_tasks"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_vault_audit",
+      "name": "tandem_vault_audit_secret_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -3193,12 +4894,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "tandem_vault_audit_secret_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_vault_audit"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_vault_audit",
+      "name": "tandem_vault_audit_at_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -3214,12 +4915,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "tandem_vault_audit_at_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_vault_audit"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_account",
+      "name": "account_userId_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -3235,12 +4936,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "account_userId_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_account"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "apikey_configId_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -3256,12 +4957,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "apikey_configId_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_apikey"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "apikey_referenceId_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -3277,12 +4978,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "apikey_referenceId_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_apikey"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "apikey_key_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -3298,12 +4999,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "apikey_key_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_apikey"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_session",
+      "name": "session_userId_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -3319,12 +5020,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "session_userId_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_session"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_verification",
+      "name": "verification_identifier_idx",
       "nameExplicit": true,
       "columns": [
         {
@@ -3340,12 +5041,12 @@
       "with": "",
       "method": "btree",
       "concurrently": false,
-      "name": "verification_identifier_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "tandem_verification"
+      "entityType": "indexes"
     },
     {
+      "schema": "public",
+      "table": "tandem_ai_employees",
+      "name": "tandem_ai_employees_user_id_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "user_id"
@@ -3357,12 +5058,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_ai_employees_user_id_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_ai_employees"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_ai_employees",
+      "name": "tandem_ai_employees_environment_id_tandem_environments_id_fkey",
       "nameExplicit": false,
       "columns": [
         "environment_id"
@@ -3374,12 +5075,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "RESTRICT",
-      "name": "tandem_ai_employees_environment_id_tandem_environments_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_ai_employees"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_ai_employees",
+      "name": "tandem_ai_employees_provider_id_tandem_model_providers_id_fkey",
       "nameExplicit": false,
       "columns": [
         "provider_id"
@@ -3391,12 +5092,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_ai_employees_provider_id_tandem_model_providers_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_ai_employees"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_ai_employees",
+      "name": "tandem_ai_employees_CYYLotA3fNSf_fkey",
       "nameExplicit": false,
       "columns": [
         "api_key_secret_id"
@@ -3408,12 +5109,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_ai_employees_CYYLotA3fNSf_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_ai_employees"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_employee_supervisors",
+      "name": "tandem_employee_supervisors_employee_id_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "employee_id"
@@ -3425,12 +5126,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_employee_supervisors_employee_id_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_employee_supervisors"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_employee_supervisors",
+      "name": "tandem_employee_supervisors_supervisor_id_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "supervisor_id"
@@ -3442,12 +5143,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_employee_supervisors_supervisor_id_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_employee_supervisors"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_environments",
+      "name": "tandem_environments_secret_id_tandem_vault_secrets_id_fkey",
       "nameExplicit": false,
       "columns": [
         "secret_id"
@@ -3459,12 +5160,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_environments_secret_id_tandem_vault_secrets_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_environments"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_projects",
+      "name": "tandem_projects_parent_id_tandem_projects_id_fkey",
       "nameExplicit": false,
       "columns": [
         "parent_id"
@@ -3476,12 +5177,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_projects_parent_id_tandem_projects_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_projects"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_activity",
+      "name": "tandem_task_activity_task_id_tandem_tasks_id_fkey",
       "nameExplicit": false,
       "columns": [
         "task_id"
@@ -3493,12 +5194,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_task_activity_task_id_tandem_tasks_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_task_activity"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_activity",
+      "name": "tandem_task_activity_author_id_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "author_id"
@@ -3510,12 +5211,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_task_activity_author_id_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_task_activity"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_assignments",
+      "name": "tandem_task_assignments_task_id_tandem_tasks_id_fkey",
       "nameExplicit": false,
       "columns": [
         "task_id"
@@ -3527,12 +5228,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_task_assignments_task_id_tandem_tasks_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_task_assignments"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_assignments",
+      "name": "tandem_task_assignments_employee_id_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "employee_id"
@@ -3544,12 +5245,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_task_assignments_employee_id_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_task_assignments"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_assignments",
+      "name": "tandem_task_assignments_actor_id_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "actor_id"
@@ -3561,29 +5262,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_task_assignments_actor_id_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_task_assignments"
+      "entityType": "fks"
     },
     {
-      "nameExplicit": false,
-      "columns": [
-        "task_id"
-      ],
-      "schemaTo": "public",
-      "tableTo": "tandem_tasks",
-      "columnsTo": [
-        "id"
-      ],
-      "onUpdate": "NO ACTION",
-      "onDelete": "CASCADE",
+      "schema": "public",
+      "table": "tandem_task_attachments",
       "name": "tandem_task_attachments_task_id_tandem_tasks_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_task_attachments"
-    },
-    {
       "nameExplicit": false,
       "columns": [
         "task_id"
@@ -3595,12 +5279,29 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_task_obligations_task_id_tandem_tasks_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_task_obligations"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_obligations",
+      "name": "tandem_task_obligations_task_id_tandem_tasks_id_fkey",
+      "nameExplicit": false,
+      "columns": [
+        "task_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "tandem_tasks",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "entityType": "fks"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_task_obligations",
+      "name": "tandem_task_obligations_employee_id_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "employee_id"
@@ -3612,12 +5313,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_task_obligations_employee_id_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_task_obligations"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_obligations",
+      "name": "tandem_task_obligations_resolved_by_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "resolved_by"
@@ -3629,12 +5330,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_task_obligations_resolved_by_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_task_obligations"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_proposals",
+      "name": "tandem_task_proposals_task_id_tandem_tasks_id_fkey",
       "nameExplicit": false,
       "columns": [
         "task_id"
@@ -3646,12 +5347,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_task_proposals_task_id_tandem_tasks_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_task_proposals"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_proposals",
+      "name": "tandem_task_proposals_run_id_tandem_task_runs_id_fkey",
       "nameExplicit": false,
       "columns": [
         "run_id"
@@ -3663,12 +5364,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_task_proposals_run_id_tandem_task_runs_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_task_proposals"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_proposals",
+      "name": "tandem_task_proposals_decided_by_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "decided_by"
@@ -3680,12 +5381,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_task_proposals_decided_by_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_task_proposals"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_reviews",
+      "name": "tandem_task_reviews_task_id_tandem_tasks_id_fkey",
       "nameExplicit": false,
       "columns": [
         "task_id"
@@ -3697,12 +5398,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_task_reviews_task_id_tandem_tasks_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_task_reviews"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_reviews",
+      "name": "tandem_task_reviews_reviewer_id_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "reviewer_id"
@@ -3714,12 +5415,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_task_reviews_reviewer_id_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_task_reviews"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_runs",
+      "name": "tandem_task_runs_task_id_tandem_tasks_id_fkey",
       "nameExplicit": false,
       "columns": [
         "task_id"
@@ -3731,12 +5432,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_task_runs_task_id_tandem_tasks_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_task_runs"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_task_runs",
+      "name": "tandem_task_runs_employee_id_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "employee_id"
@@ -3748,12 +5449,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_task_runs_employee_id_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_task_runs"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_tasks",
+      "name": "tandem_tasks_project_id_tandem_projects_id_fkey",
       "nameExplicit": false,
       "columns": [
         "project_id"
@@ -3765,12 +5466,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_tasks_project_id_tandem_projects_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_tasks"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_tasks",
+      "name": "tandem_tasks_assignee_id_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "assignee_id"
@@ -3782,12 +5483,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_tasks_assignee_id_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_tasks"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_tasks",
+      "name": "tandem_tasks_owner_id_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "owner_id"
@@ -3799,12 +5500,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_tasks_owner_id_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_tasks"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_tasks",
+      "name": "tandem_tasks_parent_task_id_tandem_tasks_id_fkey",
       "nameExplicit": false,
       "columns": [
         "parent_task_id"
@@ -3816,12 +5517,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_tasks_parent_task_id_tandem_tasks_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_tasks"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_tasks",
+      "name": "tandem_tasks_created_by_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "created_by"
@@ -3833,12 +5534,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_tasks_created_by_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_tasks"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_vault_audit",
+      "name": "tandem_vault_audit_secret_id_tandem_vault_secrets_id_fkey",
       "nameExplicit": false,
       "columns": [
         "secret_id"
@@ -3850,12 +5551,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_vault_audit_secret_id_tandem_vault_secrets_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_vault_audit"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_vault_secrets",
+      "name": "tandem_vault_secrets_folder_id_tandem_vault_folders_id_fkey",
       "nameExplicit": false,
       "columns": [
         "folder_id"
@@ -3867,12 +5568,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
-      "name": "tandem_vault_secrets_folder_id_tandem_vault_folders_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_vault_secrets"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_vault_secrets",
+      "name": "tandem_vault_secrets_created_by_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "created_by"
@@ -3884,12 +5585,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_vault_secrets_created_by_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_vault_secrets"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_account",
+      "name": "tandem_account_user_id_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "user_id"
@@ -3901,12 +5602,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_account_user_id_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_account"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_apikey",
+      "name": "tandem_apikey_reference_id_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "reference_id"
@@ -3918,12 +5619,12 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_apikey_reference_id_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_apikey"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_session",
+      "name": "tandem_session_user_id_tandem_user_id_fkey",
       "nameExplicit": false,
       "columns": [
         "user_id"
@@ -3935,314 +5636,310 @@
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "tandem_session_user_id_tandem_user_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "tandem_session"
+      "entityType": "fks"
     },
     {
+      "schema": "public",
+      "table": "tandem_employee_supervisors",
+      "name": "tandem_employee_supervisors_pkey",
       "columns": [
         "employee_id",
         "supervisor_id"
       ],
       "nameExplicit": false,
-      "name": "tandem_employee_supervisors_pkey",
-      "entityType": "pks",
-      "schema": "public",
-      "table": "tandem_employee_supervisors"
+      "entityType": "pks"
     },
     {
+      "schema": "public",
+      "table": "tandem_ai_employees",
+      "name": "tandem_ai_employees_pkey",
       "columns": [
         "user_id"
       ],
       "nameExplicit": false,
-      "name": "tandem_ai_employees_pkey",
-      "schema": "public",
-      "table": "tandem_ai_employees",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
-      "nameExplicit": false,
-      "name": "tandem_employee_titles_pkey",
       "schema": "public",
       "table": "tandem_employee_titles",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_employee_titles_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_environments_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_environments",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_environments_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_model_providers_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_model_providers",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_model_providers_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_projects_pkey",
-      "schema": "public",
-      "table": "tandem_projects",
       "entityType": "pks"
     },
     {
+      "schema": "public",
+      "table": "tandem_projects",
+      "name": "tandem_projects_pkey",
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "entityType": "pks"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_settings",
+      "name": "tandem_settings_pkey",
       "columns": [
         "key"
       ],
       "nameExplicit": false,
-      "name": "tandem_settings_pkey",
-      "schema": "public",
-      "table": "tandem_settings",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
-      "nameExplicit": false,
-      "name": "tandem_task_activity_pkey",
       "schema": "public",
       "table": "tandem_task_activity",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_task_activity_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_task_assignments_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_task_assignments",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_task_assignments_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_task_attachments_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_task_attachments",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_task_attachments_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_task_obligations_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_task_obligations",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_task_obligations_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_task_proposals_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_task_proposals",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_task_proposals_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_task_reviews_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_task_reviews",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_task_reviews_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_task_runs_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_task_runs",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_task_runs_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_task_statuses_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_task_statuses",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_task_statuses_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_tasks_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_tasks",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_tasks_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_vault_audit_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_vault_audit",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_vault_audit_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_vault_folders_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_vault_folders",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_vault_folders_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_vault_secrets_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_vault_secrets",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_vault_secrets_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_account_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_account",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_account_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_apikey_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_apikey",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_apikey_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_session_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_session",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_session_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_user_pkey",
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_user",
-      "entityType": "pks"
-    },
-    {
+      "name": "tandem_user_pkey",
       "columns": [
         "id"
       ],
       "nameExplicit": false,
-      "name": "tandem_verification_pkey",
-      "schema": "public",
-      "table": "tandem_verification",
       "entityType": "pks"
     },
     {
-      "nameExplicit": false,
+      "schema": "public",
+      "table": "tandem_verification",
+      "name": "tandem_verification_pkey",
       "columns": [
-        "name"
+        "id"
       ],
-      "nullsNotDistinct": false,
-      "name": "tandem_employee_titles_name_key",
+      "nameExplicit": false,
+      "entityType": "pks"
+    },
+    {
       "schema": "public",
       "table": "tandem_employee_titles",
-      "entityType": "uniques"
-    },
-    {
+      "name": "tandem_employee_titles_name_key",
       "nameExplicit": false,
       "columns": [
         "name"
       ],
       "nullsNotDistinct": false,
-      "name": "tandem_environments_name_key",
+      "entityType": "uniques"
+    },
+    {
       "schema": "public",
       "table": "tandem_environments",
-      "entityType": "uniques"
-    },
-    {
+      "name": "tandem_environments_name_key",
       "nameExplicit": false,
       "columns": [
         "name"
       ],
       "nullsNotDistinct": false,
-      "name": "tandem_vault_folders_name_key",
-      "schema": "public",
-      "table": "tandem_vault_folders",
       "entityType": "uniques"
     },
     {
+      "schema": "public",
+      "table": "tandem_vault_folders",
+      "name": "tandem_vault_folders_name_key",
+      "nameExplicit": false,
+      "columns": [
+        "name"
+      ],
+      "nullsNotDistinct": false,
+      "entityType": "uniques"
+    },
+    {
+      "schema": "public",
+      "table": "tandem_session",
+      "name": "tandem_session_token_key",
       "nameExplicit": false,
       "columns": [
         "token"
       ],
       "nullsNotDistinct": false,
-      "name": "tandem_session_token_key",
-      "schema": "public",
-      "table": "tandem_session",
       "entityType": "uniques"
     },
     {
+      "schema": "public",
+      "table": "tandem_user",
+      "name": "tandem_user_email_key",
       "nameExplicit": false,
       "columns": [
         "email"
       ],
       "nullsNotDistinct": false,
-      "name": "tandem_user_email_key",
-      "schema": "public",
-      "table": "tandem_user",
       "entityType": "uniques"
     },
     {
-      "value": "\"supervisor_id\" <> \"employee_id\"",
-      "name": "no_self_supervision",
-      "entityType": "checks",
       "schema": "public",
-      "table": "tandem_employee_supervisors"
+      "table": "tandem_employee_supervisors",
+      "name": "no_self_supervision",
+      "value": "\"supervisor_id\" <> \"employee_id\"",
+      "entityType": "checks"
     }
-  ],
-  "renames": []
+  ]
 }
