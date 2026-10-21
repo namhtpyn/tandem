@@ -6,6 +6,7 @@ import { v7 as uuidv7 } from 'uuid';
 //   password = env ADMIN_PASSWORD (default tandem-admin)
 // Skipped when any user row exists — restarts never overwrite real accounts.
 import { db } from '../db';
+import { env } from '../domains/kernel/env';
 import { applyMigrations } from '../db';
 import { user, account } from '../db/schema';
 import { ROLE } from '#shared/enums';
@@ -29,8 +30,8 @@ export default defineNitroPlugin(async () => {
   const existing = await db.query.user.findFirst({ columns: { id: true } });
   if (existing) return;
 
-  const email = process.env.ADMIN_EMAIL || 'admin@tandem.local';
-  const password = process.env.ADMIN_PASSWORD || 'tandem-admin';
+  const email = env.ADMIN_EMAIL ?? 'admin@tandem.local';
+  const password = env.ADMIN_PASSWORD ?? 'tandem-admin';
   const id = uuidv7();
   const now = new Date();
   await db.insert(user).values({

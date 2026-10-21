@@ -51,7 +51,7 @@ async function listMigrations() {
     // no nitro storage context (standalone scripts) — fall through
   }
   // 2) filesystem fallback (dev / TANDEM_DRIZZLE_DIR override)
-  const drizzleDir = process.env.TANDEM_DRIZZLE_DIR || join(process.cwd(), 'drizzle');
+  const drizzleDir = env.TANDEM_DRIZZLE_DIR || join(process.cwd(), 'drizzle');
   try {
     const dirs = readdirSync(drizzleDir)
       .filter((d) => /^\d+_/.test(d))

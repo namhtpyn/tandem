@@ -8,16 +8,14 @@
 // Ciphertext format: v1:<b64 iv>:<b64 authTag>:<b64 ciphertext>
 // The key NEVER ships to the client; decrypt() is server-import-only.
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { env } from '../../kernel/env';
 
 let cachedKey: Buffer | null = null;
 
 export function getVaultKey(): Buffer {
   if (cachedKey) return cachedKey;
-  const b64 = process.env.TANDEM_VAULT_KEY;
-  if (!b64) {
-    throw new Error('TANDEM_VAULT_KEY is required — set it to a 32-byte base64 key (openssl rand -base64 32)');
-  }
-  const key = Buffer.from(b64, 'base64');
+  // env.TANDEM_VAULT_KEY is boot-validated (32-byte base64)
+  const key = Buffer.from(env.TANDEM_VAULT_KEY, 'base64');
   if (key.length !== 32) {
     throw new Error(`TANDEM_VAULT_KEY must decode to 32 bytes (got ${key.length})`);
   }

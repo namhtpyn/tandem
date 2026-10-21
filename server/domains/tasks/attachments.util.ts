@@ -8,8 +8,9 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { env } from '../kernel/env';
 
-export const TANDEM_DATA_ROOT = process.env.TANDEM_ATTACHMENTS_DIR || '/tandem';
+export const TANDEM_DATA_ROOT = env.TANDEM_ATTACHMENTS_DIR || '/tandem';
 
 export const ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024; // 20MB per input upload
 export const COLLECTION_MAX_BYTES = 50 * 1024 * 1024; // 50MB total collected output per run

@@ -15,6 +15,10 @@ export default defineConfig({
     'eslint/no-eq-null': 'off',
 
     'import/no-default-export': 'off',
+    'node/no-top-level-await': 'off',
+
+    'node/no-process-env': 'off',
+    'unicorn/no-process-exit': 'off',
   },
   env: {
     builtin: true,
