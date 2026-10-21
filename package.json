@@ -1,7 +1,7 @@
 {
   "name": "tandem",
   "version": "0.0.0",
-  "description": "Company workspace where human and AI employees work together — SSH environments run the Hermes agent as the task runner.",
+  "description": "Company workspace where human and AI employees work together \u2014 SSH environments run the Hermes agent as the task runner.",
   "license": "MIT",
   "author": "namhtpyn",
   "repository": {
@@ -16,10 +16,10 @@
     "check": " bun format && bun lint:check && bun typecheck",
     "typecheck": "bunx vue-tsc --noEmit -p tsconfig.json && bunx tsc --noEmit -p scripts/tsconfig.json",
     "db:generate": "drizzle-kit generate",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:ui": "vitest --ui",
-    "test:coverage": "vitest run --coverage",
+    "test": "bun --bun vitest run",
+    "test:watch": "bun --bun vitest",
+    "test:ui": "bun --bun vitest --ui",
+    "test:coverage": "bun --bun vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "postinstall": "nuxt prepare",

@@ -51,6 +51,10 @@ describe('ssh-probe probeViaNode (mocked child_process)', () => {
   it('timeout path: timer kills a hung child (null exit)', async () => {
     setEnv({ TANDEM_SSH_TIMEOUT_MS: '50' });
     vi.resetModules();
+    // force the node fallback even under Bun: the probe prefers `import('bun')`
+    vi.doMock('bun', () => {
+      throw new Error('bun unavailable in this test');
+    });
     vi.doMock('node:child_process', () => ({
       spawn: () => {
         const mkStream = () => {
@@ -87,12 +91,17 @@ describe('ssh-probe probeViaNode (mocked child_process)', () => {
     } finally {
       setEnv({ TANDEM_SSH_TIMEOUT_MS: undefined });
       vi.doUnmock('node:child_process');
+      vi.doUnmock('bun');
       vi.resetModules();
     }
   }, 10_000);
 
   it('killed child (null exit) with stderr -> ok:false, last stderr line', async () => {
     vi.resetModules();
+    // force the node fallback even under Bun: the probe prefers `import('bun')`
+    vi.doMock('bun', () => {
+      throw new Error('bun unavailable in this test');
+    });
     vi.doMock('node:child_process', () => ({
       spawn: () => {
         const mkStream = (data: string | null) => {
@@ -132,12 +141,17 @@ describe('ssh-probe probeViaNode (mocked child_process)', () => {
       expect(r).toEqual({ ok: false, detail: 'ssh: killed by timeout' });
     } finally {
       vi.doUnmock('node:child_process');
+      vi.doUnmock('bun');
       vi.resetModules();
     }
   }, 10_000);
 
   it('interprets a successful ssh run end-to-end', async () => {
     vi.resetModules();
+    // force the node fallback even under Bun: the probe prefers `import('bun')`
+    vi.doMock('bun', () => {
+      throw new Error('bun unavailable in this test');
+    });
     vi.doMock('node:child_process', () => ({
       spawn: () => {
         const mkStream = (data: string | null) => {
@@ -178,6 +192,7 @@ describe('ssh-probe probeViaNode (mocked child_process)', () => {
       expect(r).toEqual({ ok: true, detail: 'SSH key auth works' });
     } finally {
       vi.doUnmock('node:child_process');
+      vi.doUnmock('bun');
       vi.resetModules();
     }
   }, 10_000);
@@ -186,6 +201,10 @@ describe('ssh-probe probeViaNode (mocked child_process)', () => {
 describe('ssh-probe node fallback arms', () => {
   it('non-Error throw surfaces generic detail', async () => {
     vi.resetModules();
+    // force the node fallback even under Bun: the probe prefers `import('bun')`
+    vi.doMock('bun', () => {
+      throw new Error('bun unavailable in this test');
+    });
     vi.doMock('node:child_process', () => ({
       spawn: () => {
         throw 'plain string failure';
