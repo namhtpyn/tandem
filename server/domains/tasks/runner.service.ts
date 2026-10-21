@@ -10,6 +10,7 @@
 // TANDEM_FAKE_RUNNER=1 short-circuits SSH with a synthetic emitter so CI and
 // local e2e can exercise the full dispatch→stream→finish loop with no host.
 import { eq, and, desc, ne } from 'drizzle-orm';
+import { env } from '../kernel/env';
 
 import { db } from '../../db';
 import {
@@ -31,7 +32,9 @@ import { decryptSecret } from '../vault/secret/secret-crypto.service';
 // agent produced.
 
 // stream-flush cadence; overridable so tests can exercise the flush path quickly
-const FLUSH_MS = Number(process.env.TANDEM_RUN_FLUSH_MS ?? 500);
+function flushMs() {
+  return Number(env.TANDEM_RUN_FLUSH_MS ?? 500);
+}
 
 // hard cap on one run; a hung agent (frozen process, TCP never drops) becomes a failure
 import { getRunTimeoutMs } from '../settings/settings.service';
@@ -387,8 +390,8 @@ export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>,
 }
 
 /** fake runner: synthetic streaming emitter for tests/CI */
-export function fakeScriptFromEnv(envName?: string): string[] | null {
-  const raw = process.env[envName ?? 'TANDEM_FAKE_SCRIPT'];
+export function fakeScriptFromEnv(envName?: 'TANDEM_FAKE_SCRIPT' | 'TANDEM_FAKE_SCRIPT_REVIEW'): string[] | null {
+  const raw = env[envName ?? 'TANDEM_FAKE_SCRIPT'];
   if (!raw) return null;
   return raw.split('\n');
 }
@@ -410,14 +413,14 @@ function fakeRun(onLine: (line: string) => void, scriptOverride?: string[]): Run
     finished = resolve;
   });
   void (async () => {
-    const delay = Number(process.env.TANDEM_FAKE_DELAY_MS ?? 30);
+    const delay = Number(env.TANDEM_FAKE_DELAY_MS ?? 30);
     for (const line of script) {
       await new Promise((r) => setTimeout(r, delay));
       onLine(line);
     }
     // TANDEM_FAKE_FAIL=1: the fake run FAILS (drives the backoff ladder in tests
     // without the ssh emitError choreography, which hung under CI coverage runs)
-    const failed = process.env.TANDEM_FAKE_FAIL === '1';
+    const failed = env.TANDEM_FAKE_FAIL === '1';
     finished!({ status: failed ? RUN_STATUS.FAILED : RUN_STATUS.DONE, exitCode: failed ? 1 : 0 });
   })();
   return { runId, finished: promise };
@@ -457,7 +460,7 @@ export async function dispatchTask(
   const onLine = (line: string) => {
     buffer = `${buffer}${buffer ? '\n' : ''}${line}`;
     const now = Date.now();
-    if (now - lastFlush > FLUSH_MS && !flushing) {
+    if (now - lastFlush > flushMs() && !flushing) {
       lastFlush = now;
       flushing = true;
       // flush only while the run row is still RUN_STATUS.RUNNING: once finish() flips the status,
@@ -578,7 +581,7 @@ export async function dispatchTask(
             : buildBrief({ ...briefData, outDir: `~/.tandem/${taskId}/attachments/out/` });
           // persist the exact prompt so the run is auditable from the task page
           await db.update(taskRuns).set({ prompt: brief }).where(eq(taskRuns.id, runId));
-          if (process.env.TANDEM_FAKE_RUNNER === '1') {
+          if (env.TANDEM_FAKE_RUNNER === '1') {
             // fake path: deterministic per-(task, employee) session so resume
             // separation (assignee vs reviewer) is exercised without a real ACP host
             const fakeSession = `${plan.review ? 'rev' : 'sess'}-${taskId}-${plan.ai.userId}`;

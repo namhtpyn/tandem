@@ -85,17 +85,16 @@ only on a fresh database — never on restarts.
 
 ## Configuration
 
-| env                                                                 | required    | purpose                                                                                                                                   |
-| ------------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                                                      | yes         | Postgres connection string                                                                                                                |
-| `BETTER_AUTH_SECRET`                                                | in prod     | session signing                                                                                                                           |
-| `BETTER_AUTH_URL`                                                   | no          | canonical origin override                                                                                                                 |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD`                                    | no          | first-boot seed overrides                                                                                                                 |
-| `REDIS_URL`                                                         | **required** | Redis for the durable dispatch queue, live updates, and cache — validated at boot; the app refuses to start without it                     |
-| `TANDEM_ATTACHMENTS_DIR`                                            | no          | Tandem data root (default `/tandem`; attachment bytes live under `/tandem/tasks/<taskId>/attachments/` — mount one volume at the root)    |
-| `NITRO_BUN_IDLE_TIMEOUT`                                            | no          | Bun.serve idle timeout — code defaults to 255s (Bun's max) so idle SSE streams survive; env overrides                                     |
-| `TANDEM_VAULT_KEY`                                                  | **yes**     | 32-byte base64 key for vault envelope encryption — REQUIRED, no fallback (`openssl rand -base64 32`); losing it loses every stored secret |
-| `TANDEM_OIDC_ISSUER` + `_CLIENT_ID` + `_CLIENT_SECRET` (+ `_LABEL`) | no          | env-fallback single OIDC provider; more via admin UI                                                                                      |
+| env                                                                 | required     | purpose                                                                                                                                   |
+| ------------------------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                                                      | yes          | Postgres connection string                                                                                                                |
+| `BETTER_AUTH_SECRET`                                                | in prod      | session signing                                                                                                                           |
+| `BETTER_AUTH_URL`                                                   | no           | canonical origin override                                                                                                                 |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD`                                    | no           | first-boot seed overrides                                                                                                                 |
+| `REDIS_URL`                                                         | **required** | Redis for the durable dispatch queue, live updates, and cache — validated at boot; the app refuses to start without it                    |
+| `TANDEM_ATTACHMENTS_DIR`                                            | no           | Tandem data root (default `/tandem`; attachment bytes live under `/tandem/tasks/<taskId>/attachments/` — mount one volume at the root)    |
+| `TANDEM_VAULT_KEY`                                                  | **yes**      | 32-byte base64 key for vault envelope encryption — REQUIRED, no fallback (`openssl rand -base64 32`); losing it loses every stored secret |
+| `TANDEM_OIDC_ISSUER` + `_CLIENT_ID` + `_CLIENT_SECRET` (+ `_LABEL`) | no           | env-fallback single OIDC provider; more via admin UI                                                                                      |
 
 Migrations apply at boot (bundled with the server; no CLI step).
 

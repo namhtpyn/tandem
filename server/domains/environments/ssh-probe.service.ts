@@ -1,4 +1,5 @@
 import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
+import { env } from '../kernel/env';
 // SSH probe — Bun Shell first (cross-OS, no shell interpolation); node
 // child_process fallback for non-bun runtimes (vitest workers are node).
 // BatchMode ssh with strict options; never prompts.
@@ -41,32 +42,20 @@ export async function probeSsh(
   usage: SecretUsage = SECRET_USAGE.SSH_KEY,
 ) {
   const identityFile = usage === SECRET_USAGE.SSH_KEY ? await writeIdentity(secret) : undefined;
-  const passwordEnv: Record<string, string> = {};
-  if (usage === SECRET_USAGE.PASSWORD && secret) passwordEnv.SSHPASSWORD = secret;
-  const askpassDir = usage === SECRET_USAGE.PASSWORD && secret ? await writeAskpass() : undefined;
+  // OpenSSH has no --password flag: SSH_ASKPASS (+ REQUIRE=force, + the DISPLAY
+  // sentinel) is the only non-interactive password feed. The askpass script
+  // embeds the secret (b64) so no env var carries it; the `env` prefix scopes
+  // the vars to the ssh child — the app process env is never touched.
+  const askpassDir = usage === SECRET_USAGE.PASSWORD && secret ? await writeAskpass(secret) : undefined;
   try {
     /* v8 ignore start -- bun-runtime-only lines; exercised by `bun run` integration, unreachable under vitest/node */
     const bunModule = 'bun';
     const mod = (await import(/* @vite-ignore */ bunModule)) as typeof import('bun');
-    const prevAskpass = process.env.SSH_ASKPASS;
-    const prevRequire = process.env.SSH_ASKPASS_REQUIRE;
-    if (askpassDir) {
-      process.env.SSH_ASKPASS = `${askpassDir}/askpass.sh`;
-      process.env.SSH_ASKPASS_REQUIRE = 'force';
-      process.env.SSHPASSWORD = passwordEnv.SSHPASSWORD ?? '';
-      process.env.DISPLAY = process.env.DISPLAY ?? ':0';
-    }
     let r;
-    try {
+    if (askpassDir) {
+      r = await mod.$`env SSH_ASKPASS=${askpassDir}/askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 ssh ${sshArgs(host, port, username, identityFile, askpassDir)}`.nothrow().quiet();
+    } else {
       r = await mod.$`ssh ${sshArgs(host, port, username, identityFile, askpassDir)}`.nothrow().quiet();
-    } finally {
-      if (askpassDir) {
-        if (prevAskpass === undefined) delete process.env.SSH_ASKPASS;
-        else process.env.SSH_ASKPASS = prevAskpass;
-        if (prevRequire === undefined) delete process.env.SSH_ASKPASS_REQUIRE;
-        else process.env.SSH_ASKPASS_REQUIRE = prevRequire;
-        delete process.env.SSHPASSWORD;
-      }
     }
     return interpret(r.exitCode, String(r.stdout), String(r.stderr));
     /* v8 ignore stop */
@@ -74,7 +63,7 @@ export async function probeSsh(
     // non-bun runtime (vitest/node): 'bun' import fails -> node fallback.
     // bun present but shell threw -> also try node, then surface the error.
     try {
-      return await probeViaNode(host, port, username, identityFile, askpassDir, passwordEnv);
+      return await probeViaNode(host, port, username, identityFile, askpassDir);
     } catch (nodeError) {
       return { ok: false, detail: pickFailureDetail(bunError, nodeError) };
     }
@@ -84,14 +73,15 @@ export async function probeSsh(
   }
 }
 
-/** 0700 temp dir with an askpass script that echoes $SSHPASSWORD. */
-async function writeAskpass() {
+/** 0700 temp dir with an askpass script that prints the b64-embedded secret. */
+async function writeAskpass(password: string) {
   const { mkdtemp, writeFile, chmod } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const path = await import('node:path');
   const dir = await mkdtemp(path.join(tmpdir(), 'tandem-askpass-'));
   const script = path.join(dir, 'askpass.sh');
-  await writeFile(script, '#!/bin/sh\necho "$SSHPASSWORD"\n', { mode: 0o700 });
+  const encoded = Buffer.from(password, 'utf8').toString('base64');
+  await writeFile(script, `#!/bin/sh\nprintf %s ${encoded} | base64 -d\n`, { mode: 0o700 });
   await chmod(script, 0o700);
   return dir;
 }
@@ -146,28 +136,18 @@ export function pickFailureDetail(bunError: unknown, nodeError: unknown): string
 const TIMEOUT_DEFAULT_MS = 10_000;
 
 function sshTimeoutMs(): number {
-  const v = Number.parseInt(process.env.TANDEM_SSH_TIMEOUT_MS ?? '', 10);
+  const v = Number.parseInt(env.TANDEM_SSH_TIMEOUT_MS ?? '', 10);
   return Number.isFinite(v) && v > 0 ? v : TIMEOUT_DEFAULT_MS;
 }
 
-async function probeViaNode(
-  host: string,
-  port: string,
-  username: string,
-  identityFile?: string,
-  askpassDir?: string,
-  passwordEnv: Record<string, string> = {},
-) {
+async function probeViaNode(host: string, port: string, username: string, identityFile?: string, askpassDir?: string) {
   const { spawn } = await import('node:child_process');
-  const env: Record<string, string> = { ...(process.env as Record<string, string>), ...passwordEnv };
-  if (askpassDir) {
-    env.SSH_ASKPASS = `${askpassDir}/askpass.sh`;
-    env.SSH_ASKPASS_REQUIRE = 'force';
-    env.DISPLAY = env.DISPLAY ?? ':0';
-  }
-  const child = spawn('ssh', sshArgs(host, port, username, identityFile, askpassDir), {
+  // `env` prefix scopes the askpass vars to the child; the rest inherits
+  const argv: string[] = [];
+  if (askpassDir) argv.push('env', `SSH_ASKPASS=${askpassDir}/askpass.sh`, 'SSH_ASKPASS_REQUIRE=force', 'DISPLAY=:0');
+  argv.push('ssh', ...sshArgs(host, port, username, identityFile, askpassDir));
+  const child = spawn(argv[0]!, argv.slice(1), {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env,
   });
   const timer = setTimeout(() => child.kill('SIGKILL'), sshTimeoutMs());
   try {

@@ -10,6 +10,7 @@ import type { TaskRow } from '../shared/types';
 import { resetSchema } from './helpers/pg';
 import { makeProcCaller } from './helpers/procs';
 import { ROLE, RUN_STATUS } from '../shared/enums';
+import { env, setEnv } from '../server/domains/kernel/env';
 
 // mock ssh2: connect+exec succeed; the stream never closes on its own, so tests
 // drive terminal events explicitly (error emit) or rely on the run-timeout timer
@@ -151,9 +152,9 @@ describe('backoff ladder', () => {
     const { tasks } = await import('../server/db/schema');
     // deterministic fake failure — the ssh emitError choreography hung under CI
     // coverage runs (the mocked connect never readied there)
-    process.env.TANDEM_FAKE_RUNNER = '1';
-    process.env.TANDEM_FAKE_SCRIPT = 'ERR: 429 rate limit exceeded';
-    process.env.TANDEM_FAKE_FAIL = '1';
+    setEnv({ TANDEM_FAKE_RUNNER: '1' });
+    setEnv({ TANDEM_FAKE_SCRIPT: 'ERR: 429 rate limit exceeded' });
+    setEnv({ TANDEM_FAKE_FAIL: '1' });
     try {
       const { dispatchTask } = await import('../server/domains/tasks/runner.service');
       const handle = await dispatchTask('t-1', 'http://t.local');
@@ -166,16 +167,16 @@ describe('backoff ladder', () => {
       expect(task.dispatchAfter!.getTime()).toBeGreaterThan(Date.now() + 50_000);
       // success resets both
       await db.update(tasks).set({ failStreak: 5, dispatchAfter: new Date() }).where(eq(tasks.id, 't-1'));
-      process.env.TANDEM_FAKE_FAIL = '0';
+      setEnv({ TANDEM_FAKE_FAIL: '0' });
       const handle2 = await dispatchTask('t-1', 'http://t.local');
       expect((await handle2.finished).status).toBe(RUN_STATUS.DONE);
       const after = (await db.select().from(tasks).where(eq(tasks.id, 't-1')))[0]!;
       expect(after.failStreak).toBe(0);
       expect(after.dispatchAfter).toBeNull();
     } finally {
-      delete process.env.TANDEM_FAKE_SCRIPT;
-      delete process.env.TANDEM_FAKE_FAIL;
-      process.env.TANDEM_FAKE_RUNNER = '1';
+      setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+      setEnv({ TANDEM_FAKE_FAIL: undefined });
+      setEnv({ TANDEM_FAKE_RUNNER: '1' });
     }
   }, 30_000);
 
@@ -323,10 +324,10 @@ describe('double settle', () => {
   it('a failed run on a deleted task does not crash (failStreak default arm)', async () => {
     // task vanishes MID-RUN (fake run still ticking): finish must not crash on the
     // missing row — same ssh-error coverage as before, without the emitError dance
-    process.env.TANDEM_FAKE_RUNNER = '1';
-    process.env.TANDEM_FAKE_SCRIPT = 'working slowly';
-    process.env.TANDEM_FAKE_DELAY_MS = '120';
-    process.env.TANDEM_FAKE_FAIL = '1';
+    setEnv({ TANDEM_FAKE_RUNNER: '1' });
+    setEnv({ TANDEM_FAKE_SCRIPT: 'working slowly' });
+    setEnv({ TANDEM_FAKE_DELAY_MS: '120' });
+    setEnv({ TANDEM_FAKE_FAIL: '1' });
     try {
       const { dispatchTask } = await import('../server/domains/tasks/runner.service');
       const handleP = dispatchTask('t-1', 'http://t.local');
@@ -339,10 +340,10 @@ describe('double settle', () => {
       const res = await handle.finished;
       expect(res.status).toBe(RUN_STATUS.FAILED); // the run itself failed; the bounce no-ops on the missing row
     } finally {
-      delete process.env.TANDEM_FAKE_SCRIPT;
-      delete process.env.TANDEM_FAKE_DELAY_MS;
-      delete process.env.TANDEM_FAKE_FAIL;
-      process.env.TANDEM_FAKE_RUNNER = '1';
+      setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+      setEnv({ TANDEM_FAKE_DELAY_MS: undefined });
+      setEnv({ TANDEM_FAKE_FAIL: undefined });
+      setEnv({ TANDEM_FAKE_RUNNER: '1' });
     }
   }, 30_000);
 

@@ -125,8 +125,9 @@ import { applyMigrations } from '../server/db/index';
 import { STATUS } from '../shared/status';
 import { resetSchema } from './helpers/pg';
 import { OBLIGATION_ROLE, OBLIGATION_STATUS, PROPOSAL_KIND, PROPOSAL_STATUS, REVIEW_STATUS, ROLE, RUN_STATUS, SECRET_USAGE } from '../shared/enums';
+import { env, setEnv } from '../server/domains/kernel/env';
 
-process.env.TANDEM_FAKE_RUNNER = '1';
+setEnv({ TANDEM_FAKE_RUNNER: '1' });
 
 const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
 
@@ -563,8 +564,8 @@ describe('runner failure + fallback arms', () => {
 
 describe('runner real-ssh path (mocked ssh2)', () => {
   it('full ACP turn: session persisted on the run, envelope streamed, run done', async () => {
-    const prev = process.env.TANDEM_FAKE_RUNNER;
-    delete process.env.TANDEM_FAKE_RUNNER;
+    const prev = env.TANDEM_FAKE_RUNNER;
+    setEnv({ TANDEM_FAKE_RUNNER: undefined });
     const {
       default: { Client },
     } = await import('ssh2');
@@ -631,15 +632,15 @@ describe('runner real-ssh path (mocked ssh2)', () => {
         FakeClientMod.defaultAgent = agent1;
       }
     } finally {
-      process.env.TANDEM_FAKE_RUNNER = prev ?? '1';
+      setEnv({ TANDEM_FAKE_RUNNER: prev ?? '1' });
       FakeClientMod.autoReady = prevAuto;
       FakeClientMod.defaultAgent = prevAgent;
     }
   }, 20_000);
 
   it('connection error fails the run and bounces the task to ready', async () => {
-    const prev = process.env.TANDEM_FAKE_RUNNER;
-    delete process.env.TANDEM_FAKE_RUNNER;
+    const prev = env.TANDEM_FAKE_RUNNER;
+    setEnv({ TANDEM_FAKE_RUNNER: undefined });
     try {
       const agentId = await mkAiAgent();
       const t = await callProc('tasks.create', { title: 'SSH fail', assigneeId: agentId });
@@ -662,16 +663,16 @@ describe('runner real-ssh path (mocked ssh2)', () => {
       expect(run.status).toBe(RUN_STATUS.FAILED);
       expect(run.output).toContain('ECONNREFUSED test');
     } finally {
-      if (prev !== undefined) process.env.TANDEM_FAKE_RUNNER = prev;
-      else delete process.env.TANDEM_FAKE_RUNNER;
+      setEnv({ TANDEM_FAKE_RUNNER: prev });
+      else setEnv({ TANDEM_FAKE_RUNNER: undefined });
     }
   }, 10_000);
 });
 
 describe('full output via long fake script', () => {
   it('keeps every line — no tail truncation', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = Array.from({ length: 130 }, (_, i) => `out-${i}`).join('\n');
-    process.env.TANDEM_FAKE_DELAY_MS = '1';
+    setEnv({ TANDEM_FAKE_SCRIPT: Array.from({ length: 130 }, (_, i) => `out-${i}`).join('\n') });
+    setEnv({ TANDEM_FAKE_DELAY_MS: '1' });
     try {
       const agentId = await mkAiAgent();
       const t = await callProc('tasks.create', { title: 'Long3', assigneeId: agentId });
@@ -687,8 +688,8 @@ describe('full output via long fake script', () => {
       expect(lines[0]).toBe('out-0');
       expect(lines[129]).toBe('out-129');
     } finally {
-      delete process.env.TANDEM_FAKE_SCRIPT;
-      delete process.env.TANDEM_FAKE_DELAY_MS;
+      setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+      setEnv({ TANDEM_FAKE_DELAY_MS: undefined });
     }
   }, 15_000);
 });
@@ -715,26 +716,26 @@ describe('dispatch-plan edge arms', () => {
 
   it('maybeStartDispatcher falls back to a default URL without TANDEM_PUBLIC_URL', async () => {
     const { maybeStartDispatcher } = await import('../server/domains/tasks/dispatcher.service');
-    const prev = process.env.TANDEM_PUBLIC_URL;
-    delete process.env.TANDEM_PUBLIC_URL;
+    const prev = env.TANDEM_PUBLIC_URL;
+    setEnv({ TANDEM_PUBLIC_URL: undefined });
     try {
       const stop = await maybeStartDispatcher();
       expect(typeof stop).toBe('function');
       stop!();
     } finally {
-      if (prev !== undefined) process.env.TANDEM_PUBLIC_URL = prev;
+      setEnv({ TANDEM_PUBLIC_URL: prev });
     }
   });
 
   it('maybeStartDispatcher respects TANDEM_NO_DISPATCHER', async () => {
     const { maybeStartDispatcher } = await import('../server/domains/tasks/dispatcher.service');
-    const prev = process.env.TANDEM_NO_DISPATCHER;
-    process.env.TANDEM_NO_DISPATCHER = '1';
+    const prev = env.TANDEM_NO_DISPATCHER;
+    setEnv({ TANDEM_NO_DISPATCHER: '1' });
     try {
       expect(await maybeStartDispatcher()).toBeNull();
     } finally {
-      if (prev === undefined) delete process.env.TANDEM_NO_DISPATCHER;
-      else process.env.TANDEM_NO_DISPATCHER = prev;
+      if (prev === undefined) setEnv({ TANDEM_NO_DISPATCHER: undefined });
+      else setEnv({ TANDEM_NO_DISPATCHER: prev });
     }
     const stop = await maybeStartDispatcher();
     expect(typeof stop).toBe('function');
@@ -869,8 +870,8 @@ describe('dispatcher', () => {
   }, 10_000);
 
   it('company + project prompts ride the persisted run prompt end-to-end', async () => {
-    process.env.TANDEM_FAKE_RUNNER = '1';
-    process.env.TANDEM_FAKE_SCRIPT = 'ok\n{"kind": "result", "body": "done"}';
+    setEnv({ TANDEM_FAKE_RUNNER: '1' });
+    setEnv({ TANDEM_FAKE_SCRIPT: 'ok\n{"kind": "result", "body": "done"}' });
     try {
       const { setSetting } = await import('../server/domains/settings/settings.service');
       await setSetting('company_prompt', 'English only, pinned deps.');
@@ -890,15 +891,15 @@ describe('dispatcher', () => {
       expect(row.prompt).toContain('PROJECT — FedEx\nFedEx API v9, never log labels.');
       expect(row.prompt).toContain('Project: FedEx');
     } finally {
-      delete process.env.TANDEM_FAKE_SCRIPT;
-      process.env.TANDEM_FAKE_RUNNER = '1';
+      setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+      setEnv({ TANDEM_FAKE_RUNNER: '1' });
     }
   }, 15_000);
 
   it('a run ending {"kind": "question", "body": "parks the task on the owner, not done"}', async () => {
-    const prev = process.env.TANDEM_FAKE_SCRIPT;
-    process.env.TANDEM_FAKE_RUNNER = '1';
-    process.env.TANDEM_FAKE_SCRIPT = 'working on it\n{"kind": "question", "body": "which database should I seed?"}';
+    const prev = env.TANDEM_FAKE_SCRIPT;
+    setEnv({ TANDEM_FAKE_RUNNER: '1' });
+    setEnv({ TANDEM_FAKE_SCRIPT: 'working on it\n{"kind": "question", "body": "which database should I seed?"}' });
     try {
       const agentId = await mkAiAgent();
       const { db } = await dbm();
@@ -930,14 +931,14 @@ describe('dispatcher', () => {
         ),
       ).toBe(true);
     } finally {
-      if (prev !== undefined) process.env.TANDEM_FAKE_SCRIPT = prev;
-      else delete process.env.TANDEM_FAKE_SCRIPT;
-      process.env.TANDEM_FAKE_RUNNER = '1'; // file-level default (set at top)
+      setEnv({ TANDEM_FAKE_SCRIPT: prev });
+      else setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+      setEnv({ TANDEM_FAKE_RUNNER: '1'; }); // file-level default (set at top)
     }
   }, 15_000);
 
   it('REVIEW LAW: human supervisor default — pending row + obligation, no run', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = 'done\n{"kind": "result", "body": "shipped"}';
+    setEnv({ TANDEM_FAKE_SCRIPT: 'done\n{"kind": "result", "body": "shipped"}' });
     try {
       const { db } = await dbm();
       const { user, employeeSupervisors, taskReviews, taskObligations } = await schema();
@@ -977,15 +978,15 @@ describe('dispatcher', () => {
       ).toBe(true);
     } finally {
       await drainRuns();
-      delete process.env.TANDEM_FAKE_SCRIPT;
-      delete process.env.TANDEM_FAKE_SCRIPT_REVIEW;
-      process.env.TANDEM_FAKE_RUNNER = '1';
+      setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+      setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: undefined });
+      setEnv({ TANDEM_FAKE_RUNNER: '1' });
     }
   }, 15_000);
 
   it('REVIEW LAW: AI reviewer gets a review TURN on the same task; {"kind": "result", "body": "approves; separate session"}', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = 'working\n{"kind": "result", "body": "PR #42 done, tests green"}';
-    process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'looked good\n{"kind": "result", "body": "approved — nice work"}';
+    setEnv({ TANDEM_FAKE_SCRIPT: 'working\n{"kind": "result", "body": "PR #42 done, tests green"}' });
+    setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'looked good\n{"kind": "result", "body": "approved — nice work"}' });
     try {
       const { db } = await dbm();
       const { employeeSupervisors } = await schema();
@@ -1027,15 +1028,15 @@ describe('dispatcher', () => {
       ).toHaveLength(0);
     } finally {
       await drainRuns();
-      delete process.env.TANDEM_FAKE_SCRIPT;
-      delete process.env.TANDEM_FAKE_SCRIPT_REVIEW;
-      process.env.TANDEM_FAKE_RUNNER = '1';
+      setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+      setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: undefined });
+      setEnv({ TANDEM_FAKE_RUNNER: '1' });
     }
   }, 20_000);
 
   it('REVIEW LAW: AI {"kind": "blocked", "body": "= change_requested — task back to ready, round increments on resubmit"}', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = 'working\n{"kind": "result", "body": "v1 shipped"}';
-    process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'nope\n{"kind": "blocked", "body": "missing e2e coverage"}';
+    setEnv({ TANDEM_FAKE_SCRIPT: 'working\n{"kind": "result", "body": "v1 shipped"}' });
+    setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'nope\n{"kind": "blocked", "body": "missing e2e coverage"}' });
     try {
       const { db } = await dbm();
       const { employeeSupervisors } = await schema();
@@ -1058,8 +1059,8 @@ describe('dispatcher', () => {
       expect(rev[0]!.status).toBe(REVIEW_STATUS.CHANGE_REQUESTED);
       expect(rev[0]!.note).toContain('e2e coverage');
       // resubmit after rework: round 2 opens
-      process.env.TANDEM_FAKE_SCRIPT = 'fixed\n{"kind": "result", "body": "v2 with e2e"}';
-      process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'lgtm\n{"kind": "result", "body": "approved"}';
+      setEnv({ TANDEM_FAKE_SCRIPT: 'fixed\n{"kind": "result", "body": "v2 with e2e"}' });
+      setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'lgtm\n{"kind": "result", "body": "approved"}' });
       await callProc('tasks.update', { id: t.id, status: STATUS.doing });
       const { submitResult } = await import('../server/domains/tasks/workflow.service');
       await submitResult(t.id, jay, 'v2 with e2e');
@@ -1068,15 +1069,15 @@ describe('dispatcher', () => {
       expect(rounds).toContain(2);
     } finally {
       await drainRuns();
-      delete process.env.TANDEM_FAKE_SCRIPT;
-      delete process.env.TANDEM_FAKE_SCRIPT_REVIEW;
-      process.env.TANDEM_FAKE_RUNNER = '1';
+      setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+      setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: undefined });
+      setEnv({ TANDEM_FAKE_RUNNER: '1' });
     }
   }, 20_000);
 
   it('REVIEW LAW: human reject cancels the task (terminal); verdict-less AI review parks on the owner', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = 'working\n{"kind": "result", "body": "done"}';
-    process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'i looked at it'; // no envelope
+    setEnv({ TANDEM_FAKE_SCRIPT: 'working\n{"kind": "result", "body": "done"}' });
+    setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'i looked at it'; }); // no envelope
     try {
       const { db } = await dbm();
       const { employeeSupervisors } = await schema();
@@ -1105,7 +1106,7 @@ describe('dispatcher', () => {
       // answer the question -> back to in-review, review re-arms
       const { answerQuestion } = await import('../server/domains/tasks/workflow.service');
       await answerQuestion(t.id, '00000000-0000-7000-8000-cd5fca5e2d34', 'proceed as you see fit');
-      process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'ok now\n{"kind": "result", "body": "approved after clarification"}';
+      setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'ok now\n{"kind": "result", "body": "approved after clarification"}' });
       await new Promise((r) => setTimeout(r, 800));
       // now the human-only REJECT path on a fresh round state
       const before = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
@@ -1119,9 +1120,9 @@ describe('dispatcher', () => {
       }
     } finally {
       await drainRuns();
-      delete process.env.TANDEM_FAKE_SCRIPT;
-      delete process.env.TANDEM_FAKE_SCRIPT_REVIEW;
-      process.env.TANDEM_FAKE_RUNNER = '1';
+      setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+      setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: undefined });
+      setEnv({ TANDEM_FAKE_RUNNER: '1' });
     }
   }, 25_000);
 
@@ -1160,8 +1161,8 @@ describe('dispatcher', () => {
     await dispatchAiReviewTurns(t.id); // round 0: no-op arm
 
     // reviewer with password-secret env + provider/LLM key -> full loadDispatchPlanFor arms
-    process.env.TANDEM_FAKE_SCRIPT = 'done\n{"kind": "result", "body": "shipped"}';
-    process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'ok\n{"kind": "result", "body": "fine"}';
+    setEnv({ TANDEM_FAKE_SCRIPT: 'done\n{"kind": "result", "body": "shipped"}' });
+    setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'ok\n{"kind": "result", "body": "fine"}' });
     const { encryptSecret } = await import('../server/domains/vault/secret/secret-crypto.service');
     const pwSecret = await db
       .insert(vaultSecrets)
@@ -1283,13 +1284,13 @@ describe('dispatcher', () => {
     });
     const planK = await loadReviewPlan(t2.id, '00000000-0000-7000-8000-2e718e818929', 'body');
     expect(planK.sshKey).toBe('ssh-key-bytes');
-    delete process.env.TANDEM_FAKE_SCRIPT;
-    delete process.env.TANDEM_FAKE_SCRIPT_REVIEW;
+    setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+    setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: undefined });
   }, 20_000);
 
   it('REVIEW LAW: re-arm after answer fetches the submitted body from activity; running review is not double-dispatched', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = 'done\n{"kind": "result", "body": "body v1"}';
-    process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'hmm\n{"kind": "question", "body": "which color?"}';
+    setEnv({ TANDEM_FAKE_SCRIPT: 'done\n{"kind": "result", "body": "body v1"}' });
+    setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'hmm\n{"kind": "question", "body": "which color?"}' });
     try {
       const { db } = await dbm();
       const { employeeSupervisors } = await schema();
@@ -1321,7 +1322,7 @@ describe('dispatcher', () => {
       ).length;
       await db.update(taskRuns).set({ status: RUN_STATUS.DONE }).where(eq(taskRuns.taskId, t.id));
       // answer -> re-arm without an explicit body (fetches from activity)
-      process.env.TANDEM_FAKE_SCRIPT_REVIEW = 'ok now\n{"kind": "result", "body": "approved after the answer"}';
+      setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'ok now\n{"kind": "result", "body": "approved after the answer"}' });
       const { answerQuestion } = await import('../server/domains/tasks/workflow.service');
       await answerQuestion(t.id, '00000000-0000-7000-8000-cd5fca5e2d34', 'blue');
       let done = false;
@@ -1337,14 +1338,14 @@ describe('dispatcher', () => {
       expect(last.prompt).toContain('body v1');
     } finally {
       await drainRuns();
-      delete process.env.TANDEM_FAKE_SCRIPT;
-      delete process.env.TANDEM_FAKE_SCRIPT_REVIEW;
-      process.env.TANDEM_FAKE_RUNNER = '1';
+      setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+      setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: undefined });
+      setEnv({ TANDEM_FAKE_RUNNER: '1' });
     }
   }, 25_000);
 
   it('STALE-JOB LAW: dispatchIfEligible skips a task that is not ready (no run row)', async () => {
-    process.env.TANDEM_FAKE_RUNNER = '1';
+    setEnv({ TANDEM_FAKE_RUNNER: '1' });
     const agentId = await mkAiAgent();
     const t = await callProc('tasks.create', { title: 'Stale', assigneeId: agentId });
     await callProc('tasks.update', { id: t.id, status: STATUS.doing }); // worker busy elsewhere flipped nothing; a stale job arrives now
@@ -1361,18 +1362,18 @@ describe('dispatcher', () => {
   });
 
   it('onDispatcherSettingsChanged survives a dead redis (best-effort by law)', async () => {
-    process.env.REDIS_URL = 'redis://127.0.0.1:6390'; // nothing listens here
+    setEnv({ REDIS_URL: 'redis://127.0.0.1:6390'; }); // nothing listens here
     try {
       const { onDispatcherSettingsChanged } = await import('../server/domains/tasks/dispatcher.service');
       await expect(onDispatcherSettingsChanged()).resolves.toBeUndefined();
     } finally {
-      delete process.env.REDIS_URL;
+      setEnv({ REDIS_URL: undefined });
     }
   });
 
   it('CAP LAW: default 1 task per agent — second ready task waits', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = 'step 1\nstep 2\n{"kind": "result", "body": "done"}';
-    process.env.TANDEM_FAKE_DELAY_MS = '120';
+    setEnv({ TANDEM_FAKE_SCRIPT: 'step 1\nstep 2\n{"kind": "result", "body": "done"}' });
+    setEnv({ TANDEM_FAKE_DELAY_MS: '120' });
     try {
       const agentId = await mkAiAgent();
       const a = await callProc('tasks.create', { title: 'CapA', assigneeId: agentId });
@@ -1388,14 +1389,14 @@ describe('dispatcher', () => {
       expect(await scanOnce('http://tandem.local')).toBe(true); // B goes after A settles
     } finally {
       await drainInFlight();
-      delete process.env.TANDEM_FAKE_SCRIPT;
-      delete process.env.TANDEM_FAKE_DELAY_MS;
+      setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+      setEnv({ TANDEM_FAKE_DELAY_MS: undefined });
     }
   }, 20_000);
 
   it('CAP LAW: tasksPerAgent=2 lets the same agent run two tasks at once', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = 'step 1\nstep 2\n{"kind": "result", "body": "done"}';
-    process.env.TANDEM_FAKE_DELAY_MS = '120';
+    setEnv({ TANDEM_FAKE_SCRIPT: 'step 1\nstep 2\n{"kind": "result", "body": "done"}' });
+    setEnv({ TANDEM_FAKE_DELAY_MS: '120' });
     try {
       const { setSetting } = await import('../server/domains/settings/settings.service');
       await setSetting('tasks_per_agent', '2');
@@ -1412,14 +1413,14 @@ describe('dispatcher', () => {
       expect(rows.find((x) => x.id === b.id)!.status).toBe(STATUS.doing);
     } finally {
       await drainInFlight();
-      delete process.env.TANDEM_FAKE_SCRIPT;
-      delete process.env.TANDEM_FAKE_DELAY_MS;
+      setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+      setEnv({ TANDEM_FAKE_DELAY_MS: undefined });
     }
   }, 20_000);
 
   it('CAP LAW: different agents always run in parallel (cap applies per agent)', async () => {
-    process.env.TANDEM_FAKE_SCRIPT = 'step 1\nstep 2\n{"kind": "result", "body": "done"}';
-    process.env.TANDEM_FAKE_DELAY_MS = '120';
+    setEnv({ TANDEM_FAKE_SCRIPT: 'step 1\nstep 2\n{"kind": "result", "body": "done"}' });
+    setEnv({ TANDEM_FAKE_DELAY_MS: '120' });
     try {
       const x = await mkAiAgent();
       const y = await mkAiAgent();
@@ -1435,16 +1436,16 @@ describe('dispatcher', () => {
       expect(rows.find((t) => t.id === b.id)!.status).toBe(STATUS.doing);
     } finally {
       await drainInFlight();
-      delete process.env.TANDEM_FAKE_SCRIPT;
-      delete process.env.TANDEM_FAKE_DELAY_MS;
+      setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+      setEnv({ TANDEM_FAKE_DELAY_MS: undefined });
     }
   }, 20_000);
 
   it('a run ending in a JSON verdict completes the task (structured output)', async () => {
-    const prevRunner = process.env.TANDEM_FAKE_RUNNER;
-    const prevScript = process.env.TANDEM_FAKE_SCRIPT;
-    process.env.TANDEM_FAKE_RUNNER = '1';
-    process.env.TANDEM_FAKE_SCRIPT = 'all done\n{"kind": "result", "body": "shipped"}';
+    const prevRunner = env.TANDEM_FAKE_RUNNER;
+    const prevScript = env.TANDEM_FAKE_SCRIPT;
+    setEnv({ TANDEM_FAKE_RUNNER: '1' });
+    setEnv({ TANDEM_FAKE_SCRIPT: 'all done\n{"kind": "result", "body": "shipped"}' });
     try {
       const agentId = await mkAiAgent();
       const t = await callProc('tasks.create', { title: 'J task', assigneeId: agentId });
@@ -1456,18 +1457,18 @@ describe('dispatcher', () => {
       const task = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
       expect(task.status).toBe(STATUS.done);
     } finally {
-      if (prevRunner === undefined) delete process.env.TANDEM_FAKE_RUNNER;
-      else process.env.TANDEM_FAKE_RUNNER = prevRunner;
-      if (prevScript === undefined) delete process.env.TANDEM_FAKE_SCRIPT;
-      else process.env.TANDEM_FAKE_SCRIPT = prevScript;
+      if (prevRunner === undefined) setEnv({ TANDEM_FAKE_RUNNER: undefined });
+      else setEnv({ TANDEM_FAKE_RUNNER: prevRunner });
+      if (prevScript === undefined) setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+      else setEnv({ TANDEM_FAKE_SCRIPT: prevScript });
     }
   }, 30_000);
 
   it('a run ending {"kind": "result", "body": "completes the task as before"}', async () => {
-    const prevRunner = process.env.TANDEM_FAKE_RUNNER;
-    const prevScript = process.env.TANDEM_FAKE_SCRIPT;
-    process.env.TANDEM_FAKE_RUNNER = '1';
-    process.env.TANDEM_FAKE_SCRIPT = 'all done\n{"kind": "result", "body": "shipped"}';
+    const prevRunner = env.TANDEM_FAKE_RUNNER;
+    const prevScript = env.TANDEM_FAKE_SCRIPT;
+    setEnv({ TANDEM_FAKE_RUNNER: '1' });
+    setEnv({ TANDEM_FAKE_SCRIPT: 'all done\n{"kind": "result", "body": "shipped"}' });
     try {
       const agentId = await mkAiAgent();
       const t = await callProc('tasks.create', { title: 'R task', assigneeId: agentId });
@@ -1479,10 +1480,10 @@ describe('dispatcher', () => {
       const task = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
       expect(task.status).toBe(STATUS.done);
     } finally {
-      if (prevRunner !== undefined) process.env.TANDEM_FAKE_RUNNER = prevRunner;
-      else delete process.env.TANDEM_FAKE_RUNNER;
-      if (prevScript !== undefined) process.env.TANDEM_FAKE_SCRIPT = prevScript;
-      else delete process.env.TANDEM_FAKE_SCRIPT;
+      setEnv({ TANDEM_FAKE_RUNNER: prevRunner });
+      else setEnv({ TANDEM_FAKE_RUNNER: undefined });
+      setEnv({ TANDEM_FAKE_SCRIPT: prevScript });
+      else setEnv({ TANDEM_FAKE_SCRIPT: undefined });
     }
   }, 15_000);
 
@@ -1582,17 +1583,19 @@ describe('runner proposal recording', () => {
   it('a finished run with [SUBTASKS] output records proposals + activity', async () => {
     const agentId = await mkAiAgent();
     const t = await callProc('tasks.create', { title: 'PropRun', assigneeId: agentId });
-    process.env.TANDEM_FAKE_SCRIPT = [
-      'thinking…',
-      '[SUBTASKS] Draft docs :: write :: Peer Person',
-      '{"kind": "result", "body": "done"}',
-    ].join('\n');
+    setEnv({
+      TANDEM_FAKE_SCRIPT: [
+        'thinking…',
+        '[SUBTASKS] Draft docs :: write :: Peer Person',
+        '{"kind": "result", "body": "done"}',
+      ].join('\n'),
+    });
     try {
       const { dispatchTask } = await import('../server/domains/tasks/runner.service');
       const h = await dispatchTask(t.id, 'http://t.local');
       await h.finished;
     } finally {
-      delete process.env.TANDEM_FAKE_SCRIPT;
+      setEnv({ TANDEM_FAKE_SCRIPT: undefined });
     }
     const { taskProposals: tp, taskActivity: ta } = await schema();
     const { db } = await dbm();

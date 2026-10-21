@@ -7,8 +7,9 @@ import { applyMigrations } from '../server/db/index';
 import { STATUS } from '../shared/status';
 import { resetSchema } from './helpers/pg';
 import { ROLE, RUN_STATUS } from '../shared/enums';
+import { env, setEnv } from '../server/domains/kernel/env';
 
-process.env.TANDEM_FAKE_RUNNER = '';
+setEnv({ TANDEM_FAKE_RUNNER: '' });
 
 const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
 

@@ -5,6 +5,7 @@ import './api-harness';
 import { sqlClient } from '../server/db/index';
 import { resetSchema } from './helpers/pg';
 import { ROLE } from '../shared/enums';
+import { env, setEnv } from '../server/domains/kernel/env';
 
 const bootModule = () => import('../server/plugins/boot');
 
@@ -28,8 +29,8 @@ describe('boot plugin', () => {
   });
 
   it('seeds with ADMIN_EMAIL/ADMIN_PASSWORD overrides', async () => {
-    process.env.ADMIN_EMAIL = 'root@corp.example';
-    process.env.ADMIN_PASSWORD = 'sup3r-secret';
+    setEnv({ ADMIN_EMAIL: 'root@corp.example' });
+    setEnv({ ADMIN_PASSWORD: 'sup3r-secret' });
     try {
       const mod = await bootModule();
       await (mod.default as () => Promise<unknown>)();
@@ -39,8 +40,8 @@ describe('boot plugin', () => {
       const acct = (await sqlClient`select password from account`)[0]!;
       expect(await verifyPassword({ hash: acct.password, password: 'sup3r-secret' })).toBe(true);
     } finally {
-      delete process.env.ADMIN_EMAIL;
-      delete process.env.ADMIN_PASSWORD;
+      setEnv({ ADMIN_EMAIL: undefined });
+      setEnv({ ADMIN_PASSWORD: undefined });
     }
   });
 

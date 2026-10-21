@@ -1,20 +1,16 @@
 import { v7 as uuidv7 } from 'uuid';
 
+import { ROLE } from '#shared/enums';
+
 // Boot: apply migrations, then seed the default admin when the instance has NO
 // users. A brand-new deployment therefore always has a known login:
 //   email    = env ADMIN_EMAIL    (default admin@tandem.local)
 //   password = env ADMIN_PASSWORD (default tandem-admin)
 // Skipped when any user row exists — restarts never overwrite real accounts.
 import { db } from '../db';
-import { env } from '../domains/kernel/env';
 import { applyMigrations } from '../db';
 import { user, account } from '../db/schema';
-import { ROLE } from '#shared/enums';
-
-// Bun.serve idle timeout, in the code (was stack env). 255s = Bun's max: without it
-// the default (10s) kills idle SSE feeds mid-stream. Runs before Bun.serve reads it
-// (plugins init before the serve call in the generated entry). Env still wins if set.
-process.env.NITRO_BUN_IDLE_TIMEOUT ||= '255';
+import { env } from '../domains/kernel/env';
 
 export default defineNitroPlugin(async () => {
   const applied = await applyMigrations();

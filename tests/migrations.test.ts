@@ -9,6 +9,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 
 import { applyMigrations } from '../server/db/index';
 import { resetSchema, postgres } from './helpers/pg';
+import { env, setEnv } from '../server/domains/kernel/env';
 
 describe('applyMigrations', () => {
   beforeEach(async () => {
@@ -45,7 +46,7 @@ describe('applyMigrations', () => {
         join(one, 'migration.sql'),
         'create table fs_probe (id text);--> statement-breakpoint\ncreate table fs_probe2 (id text);',
       );
-      process.env.TANDEM_DRIZZLE_DIR = dir;
+      setEnv({ TANDEM_DRIZZLE_DIR: dir });
       // listMigrations prefers nitro storage when present (it is, under vitest?
       // no — useStorage is nitro-only; outside nitro the fs path runs)
       const applied = await applyMigrations();
@@ -53,17 +54,17 @@ describe('applyMigrations', () => {
       const probe = await postgres`select count(*)::int as n from fs_probe`;
       expect(probe[0]!.n).toBe(0); // table exists — query succeeded
     } finally {
-      delete process.env.TANDEM_DRIZZLE_DIR;
+      setEnv({ TANDEM_DRIZZLE_DIR: undefined });
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   it('returns [] when the migrations dir does not exist', async () => {
-    process.env.TANDEM_DRIZZLE_DIR = '/nonexistent-tandem-dir';
+    setEnv({ TANDEM_DRIZZLE_DIR: '/nonexistent-tandem-dir' });
     try {
       expect(await applyMigrations()).toEqual([]);
     } finally {
-      delete process.env.TANDEM_DRIZZLE_DIR;
+      setEnv({ TANDEM_DRIZZLE_DIR: undefined });
     }
   });
 });

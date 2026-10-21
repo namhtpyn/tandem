@@ -33,7 +33,7 @@ async function createQueueDomain(): Promise<QueueDomain> {
     import('redis'),
     import('bullmq'),
   ]); // dynamic form keeps cold-start lazy when REDIS_URL is unset
-  const url = process.env.REDIS_URL ?? '';
+  const url = env.REDIS_URL;
 
   const makeRaw = () =>
     createClient({

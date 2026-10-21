@@ -14,7 +14,7 @@ import {
   aiEmployees,
   environments,
 } from '../server/db/schema';
-import { TANDEM_DATA_ROOT } from '../server/domains/tasks/attachments.util';
+import { dataRoot } from '../server/domains/tasks/attachments.util';
 
 const settleTmp = mkdtempSync(join(tmpdir(), 'settle-'));
 writeFileSync(join(settleTmp, 'report.md'), '# findings\n');
@@ -107,8 +107,8 @@ describe('dispatch attachment push (runner integration)', () => {
     const { uid, tid } = await seed();
     // input attachment row + bytes
     const attId = crypto.randomUUID();
-    mkdirSync(TANDEM_DATA_ROOT, { recursive: true });
-    writeFileSync(join(TANDEM_DATA_ROOT, attId), 'PNGDATA');
+    mkdirSync(dataRoot(), { recursive: true });
+    writeFileSync(join(dataRoot(), attId), 'PNGDATA');
     await db.insert(taskAttachments).values({
       id: attId,
       taskId: tid,
@@ -159,7 +159,7 @@ describe('dispatch attachment push (runner integration)', () => {
       finishedAt: new Date(),
     });
     const outId = crypto.randomUUID();
-    writeFileSync(join(TANDEM_DATA_ROOT, outId), 'RESULTBYTES');
+    writeFileSync(join(dataRoot(), outId), 'RESULTBYTES');
     await db.insert(taskAttachments).values({
       id: outId,
       taskId: tid,
@@ -177,8 +177,8 @@ describe('dispatch attachment push (runner integration)', () => {
       .from(taskAttachments)
       .where(and(eq(taskAttachments.taskId, tid), eq(taskAttachments.kind, 'output')));
     expect(outs.map((o) => o.filename)).toEqual(['report.md']);
-    expect(existsSync(join(TANDEM_DATA_ROOT, outId))).toBe(true);
-    expect(readFileSync(join(TANDEM_DATA_ROOT, outId), 'utf8')).toBe('RESULTBYTES');
+    expect(existsSync(join(dataRoot(), outId))).toBe(true);
+    expect(readFileSync(join(dataRoot(), outId), 'utf8')).toBe('RESULTBYTES');
   });
 });
 

@@ -10,6 +10,7 @@ import { decryptSecret, encryptSecret, lastFourHint } from '../server/domains/va
 import type { VaultSecretRow } from '../shared/types';
 import { resetSchema } from './helpers/pg';
 import { ROLE } from '../shared/enums';
+import { env, setEnv } from '../server/domains/kernel/env';
 
 const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 
@@ -101,19 +102,19 @@ describe('vault-crypto (module)', () => {
 
   it('rejects wrong-size TANDEM_VAULT_KEY; generateVaultKeyB64 gives 32 bytes', async () => {
     const mod = await import('../server/domains/vault/secret/secret-crypto.service');
-    process.env.TANDEM_VAULT_KEY = Buffer.alloc(16).toString('base64');
+    setEnv({ TANDEM_VAULT_KEY: Buffer.alloc(16).toString('base64') });
     mod.resetVaultKeyCache();
     expect(() => mod.getVaultKey()).toThrowError(/32 bytes/);
     const fresh = mod.generateVaultKeyB64();
     expect(Buffer.from(fresh, 'base64')).toHaveLength(32);
-    process.env.TANDEM_VAULT_KEY = fresh;
+    setEnv({ TANDEM_VAULT_KEY: fresh });
     mod.resetVaultKeyCache();
     expect(mod.getVaultKey()).toHaveLength(32);
     // REQUIRED: no env -> hard throw, never a fallback key
-    delete process.env.TANDEM_VAULT_KEY;
+    setEnv({ TANDEM_VAULT_KEY: undefined });
     mod.resetVaultKeyCache();
     expect(() => mod.getVaultKey()).toThrowError(/TANDEM_VAULT_KEY is required/);
-    process.env.TANDEM_VAULT_KEY = fresh;
+    setEnv({ TANDEM_VAULT_KEY: fresh });
     mod.resetVaultKeyCache();
   });
 

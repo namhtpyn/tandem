@@ -8,6 +8,7 @@ import { STATUS } from '../shared/status';
 import { resetSchema } from './helpers/pg';
 import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
 import { ROLE, RUN_STATUS } from '../shared/enums';
+import { env, setEnv } from '../server/domains/kernel/env';
 
 const REDIS_URL = 'redis://127.0.0.1:6399';
 
@@ -41,7 +42,7 @@ vi.mock('../server/domains/tasks/runner.service', () => ({
 
 describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
   beforeEach(async () => {
-    process.env.REDIS_URL = REDIS_URL;
+    setEnv({ REDIS_URL: REDIS_URL });
     // redis state persists across runs; leftover jobs (incl. deduped ids) must not
     // leak between tests — flush bullmq keys for a hermetic suite
     const flush = await nr();
@@ -188,6 +189,6 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
     const { redisPubsub } = await import('../server/domains/kernel/pubsub');
     await (await redisQueue())?.close();
     await (await redisPubsub())?.close();
-    delete process.env.REDIS_URL;
+    setEnv({ REDIS_URL: undefined });
   });
 });

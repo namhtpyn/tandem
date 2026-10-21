@@ -1,5 +1,6 @@
 // Structured-output contract rendering comes from the generic shared module.
 import { renderOutputContract, parseStructuredOutput } from '#shared/structured-output';
+import { env } from '../kernel/env';
 import { RUN_STATUS, type FinishedStatus } from '#shared/enums';
 
 // Minimal ACP v1 client for task dispatch: newline-delimited JSON-RPC 2.0 over
@@ -56,7 +57,9 @@ type RpcMessage = {
 
 const PROTOCOL_VERSION = 1;
 /** grace after session/cancel before we hard-kill the stream */
-const CANCEL_GRACE_MS = Number(process.env.TANDEM_ACP_CANCEL_GRACE_MS ?? 5_000);
+function cancelGraceMs() {
+  return Number(env.TANDEM_ACP_CANCEL_GRACE_MS ?? 5_000);
+}
 
 export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: {
   stream: AcpStream;
@@ -267,7 +270,7 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
           onLine?.('[acp] cancel grace elapsed — killing the agent process');
           teardown();
         }
-      }, CANCEL_GRACE_MS).unref?.();
+      }, cancelGraceMs()).unref?.();
     }, timeoutMs);
     turnTimer.unref?.();
 

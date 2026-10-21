@@ -19,6 +19,8 @@ export default defineConfig({
 
     'node/no-process-env': 'off',
     'unicorn/no-process-exit': 'off',
+
+    'eslint/no-use-before-define': 'off',
   },
   env: {
     builtin: true,

@@ -6,6 +6,7 @@ import './api-harness';
 import { applyMigrations } from '../server/db/index';
 import { makeEvent } from './api-harness';
 import { resetSchema } from './helpers/pg';
+import { env, setEnv } from '../server/domains/kernel/env';
 
 beforeEach(async () => {
   await resetSchema();
@@ -48,7 +49,7 @@ describe('pickFailureDetail', () => {
 
 describe('ssh-probe probeViaNode (mocked child_process)', () => {
   it('timeout path: timer kills a hung child (null exit)', async () => {
-    process.env.TANDEM_SSH_TIMEOUT_MS = '50';
+    setEnv({ TANDEM_SSH_TIMEOUT_MS: '50' });
     vi.resetModules();
     vi.doMock('node:child_process', () => ({
       spawn: () => {
@@ -84,7 +85,7 @@ describe('ssh-probe probeViaNode (mocked child_process)', () => {
       const r = await mod.probeSsh('h', '22', '00000000-0000-7000-8000-51e69892ab49');
       expect(r.ok).toBe(false);
     } finally {
-      delete process.env.TANDEM_SSH_TIMEOUT_MS;
+      setEnv({ TANDEM_SSH_TIMEOUT_MS: undefined });
       vi.doUnmock('node:child_process');
       vi.resetModules();
     }

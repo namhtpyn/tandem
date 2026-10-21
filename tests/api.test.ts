@@ -19,6 +19,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { applyMigrations, sqlClient } from '../server/db/index';
 import { resetSchema } from './helpers/pg';
 import { ROLE } from '../shared/enums';
+import { env, setEnv } from '../server/domains/kernel/env';
 
 // ---- harness: real h3 events + nitro auto-import aliases ----
 
@@ -99,9 +100,9 @@ describe('meta.version (oRPC)', () => {
       });
     };
     expect(await callProc(['meta', 'version'])).toEqual({ version: 'dev' });
-    process.env.APP_VERSION = '1.2.3';
+    setEnv({ APP_VERSION: '1.2.3' });
     expect(await callProc(['meta', 'version'])).toEqual({ version: '1.2.3' });
-    delete process.env.APP_VERSION;
+    setEnv({ APP_VERSION: undefined });
   });
 });
 

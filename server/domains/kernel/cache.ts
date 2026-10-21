@@ -25,7 +25,7 @@ export function appCache(): Promise<CacheDomain> {
 }
 
 async function createCacheDomain(): Promise<CacheDomain> {
-  const url = process.env.REDIS_URL!;
+  const url = env.REDIS_URL;
   const raws: Array<{ disconnect: () => void }> = [];
   // fail fast: verify the connection works before handing out the domain
   const { createClient } = await import('redis');

@@ -11,12 +11,13 @@ import { saveOidcProviders } from '../server/domains/auth/oidc.service';
 import { setSetting } from '../server/domains/settings/settings.service';
 import { resetSchema } from './helpers/pg';
 import { ROLE } from '../shared/enums';
+import { env, setEnv } from '../server/domains/kernel/env';
 
 describe('auth policy', () => {
   beforeEach(async () => {
     await resetSchema();
     await applyMigrations();
-    delete process.env.TANDEM_DISABLE_PASSWORD_LOGIN;
+    setEnv({ TANDEM_DISABLE_PASSWORD_LOGIN: undefined });
     await saveOidcProviders([]);
   });
 
@@ -60,19 +61,19 @@ describe('auth policy', () => {
   it('env TANDEM_DISABLE_PASSWORD_LOGIN respected with env provider', async () => {
     const { deleteSetting } = await import('../server/domains/settings/settings.service');
     await deleteSetting('oidc_providers');
-    process.env.TANDEM_OIDC_ISSUER = 'https://env.example.com';
-    process.env.TANDEM_OIDC_CLIENT_ID = 'env-client';
-    process.env.TANDEM_OIDC_CLIENT_SECRET = 'env-secret';
-    process.env.TANDEM_DISABLE_PASSWORD_LOGIN = 'true';
+    setEnv({ TANDEM_OIDC_ISSUER: 'https://env.example.com' });
+    setEnv({ TANDEM_OIDC_CLIENT_ID: 'env-client' });
+    setEnv({ TANDEM_OIDC_CLIENT_SECRET: 'env-secret' });
+    setEnv({ TANDEM_DISABLE_PASSWORD_LOGIN: 'true' });
     try {
       const p = await resolveAuthPolicy();
       expect(p.passwordEnabled).toBe(false);
       expect(p.oidcEnabled).toBe(true);
     } finally {
-      delete process.env.TANDEM_OIDC_ISSUER;
-      delete process.env.TANDEM_OIDC_CLIENT_ID;
-      delete process.env.TANDEM_OIDC_CLIENT_SECRET;
-      delete process.env.TANDEM_DISABLE_PASSWORD_LOGIN;
+      setEnv({ TANDEM_OIDC_ISSUER: undefined });
+      setEnv({ TANDEM_OIDC_CLIENT_ID: undefined });
+      setEnv({ TANDEM_OIDC_CLIENT_SECRET: undefined });
+      setEnv({ TANDEM_DISABLE_PASSWORD_LOGIN: undefined });
     }
   });
 });
@@ -136,14 +137,14 @@ describe('hashPassword (better-auth compatible)', () => {
 
 describe('auth baseURL env branch', () => {
   it('honors BETTER_AUTH_URL when set', async () => {
-    process.env.BETTER_AUTH_URL = 'https://auth.example.com';
+    setEnv({ BETTER_AUTH_URL: 'https://auth.example.com' });
     try {
       await rebuildAuth();
       const { getAuth } = await import('../server/domains/auth/auth.service');
       const auth = await getAuth();
       expect((auth.options as { baseURL?: string }).baseURL).toBe('https://auth.example.com');
     } finally {
-      delete process.env.BETTER_AUTH_URL;
+      setEnv({ BETTER_AUTH_URL: undefined });
       await rebuildAuth();
     }
   });

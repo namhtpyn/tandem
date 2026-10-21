@@ -5,6 +5,7 @@ import './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { getOidcProviders, saveOidcProviders } from '../server/domains/auth/oidc.service';
 import { resetSchema } from './helpers/pg';
+import { env, setEnv } from '../server/domains/kernel/env';
 
 describe('oidc registry', () => {
   beforeEach(async () => {
@@ -13,15 +14,15 @@ describe('oidc registry', () => {
   });
 
   it('is empty when nothing stored and no env', async () => {
-    delete process.env.TANDEM_OIDC_ISSUER;
+    setEnv({ TANDEM_OIDC_ISSUER: undefined });
     expect(await getOidcProviders()).toEqual([]);
   });
 
   it('falls back to env provider when nothing stored', async () => {
-    process.env.TANDEM_OIDC_ISSUER = 'https://env.example.com';
-    process.env.TANDEM_OIDC_CLIENT_ID = 'env-client';
-    process.env.TANDEM_OIDC_CLIENT_SECRET = 'env-secret';
-    process.env.TANDEM_OIDC_LABEL = 'EnvSSO';
+    setEnv({ TANDEM_OIDC_ISSUER: 'https://env.example.com' });
+    setEnv({ TANDEM_OIDC_CLIENT_ID: 'env-client' });
+    setEnv({ TANDEM_OIDC_CLIENT_SECRET: 'env-secret' });
+    setEnv({ TANDEM_OIDC_LABEL: 'EnvSSO' });
     try {
       const providers = await getOidcProviders();
       expect(providers).toEqual([
@@ -34,10 +35,10 @@ describe('oidc registry', () => {
         },
       ]);
     } finally {
-      delete process.env.TANDEM_OIDC_ISSUER;
-      delete process.env.TANDEM_OIDC_CLIENT_ID;
-      delete process.env.TANDEM_OIDC_CLIENT_SECRET;
-      delete process.env.TANDEM_OIDC_LABEL;
+      setEnv({ TANDEM_OIDC_ISSUER: undefined });
+      setEnv({ TANDEM_OIDC_CLIENT_ID: undefined });
+      setEnv({ TANDEM_OIDC_CLIENT_SECRET: undefined });
+      setEnv({ TANDEM_OIDC_LABEL: undefined });
     }
   });
 
@@ -51,34 +52,34 @@ describe('oidc registry', () => {
         clientSecret: 's1',
       },
     ]);
-    process.env.TANDEM_OIDC_ISSUER = 'https://env.example.com';
-    process.env.TANDEM_OIDC_CLIENT_ID = 'env-client';
-    process.env.TANDEM_OIDC_CLIENT_SECRET = 'env-secret';
+    setEnv({ TANDEM_OIDC_ISSUER: 'https://env.example.com' });
+    setEnv({ TANDEM_OIDC_CLIENT_ID: 'env-client' });
+    setEnv({ TANDEM_OIDC_CLIENT_SECRET: 'env-secret' });
     try {
       const providers = await getOidcProviders();
       expect(providers).toHaveLength(1);
       expect(providers[0]!.id).toBe('p1');
     } finally {
-      delete process.env.TANDEM_OIDC_ISSUER;
-      delete process.env.TANDEM_OIDC_CLIENT_ID;
-      delete process.env.TANDEM_OIDC_CLIENT_SECRET;
+      setEnv({ TANDEM_OIDC_ISSUER: undefined });
+      setEnv({ TANDEM_OIDC_CLIENT_ID: undefined });
+      setEnv({ TANDEM_OIDC_CLIENT_SECRET: undefined });
     }
   });
 
   it('ignores a corrupted stored registry and falls through to env', async () => {
     const { setSetting } = await import('../server/domains/settings/settings.service');
     await setSetting('oidc_providers', 'not json {{{');
-    process.env.TANDEM_OIDC_ISSUER = 'https://env.example.com';
-    process.env.TANDEM_OIDC_CLIENT_ID = 'env-client';
-    process.env.TANDEM_OIDC_CLIENT_SECRET = 'env-secret';
+    setEnv({ TANDEM_OIDC_ISSUER: 'https://env.example.com' });
+    setEnv({ TANDEM_OIDC_CLIENT_ID: 'env-client' });
+    setEnv({ TANDEM_OIDC_CLIENT_SECRET: 'env-secret' });
     try {
       const providers = await getOidcProviders();
       expect(providers).toHaveLength(1);
       expect(providers[0]!.issuer).toBe('https://env.example.com');
     } finally {
-      delete process.env.TANDEM_OIDC_ISSUER;
-      delete process.env.TANDEM_OIDC_CLIENT_ID;
-      delete process.env.TANDEM_OIDC_CLIENT_SECRET;
+      setEnv({ TANDEM_OIDC_ISSUER: undefined });
+      setEnv({ TANDEM_OIDC_CLIENT_ID: undefined });
+      setEnv({ TANDEM_OIDC_CLIENT_SECRET: undefined });
     }
   });
 

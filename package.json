@@ -12,7 +12,7 @@
   "scripts": {
     "dev": "nuxt dev",
     "build": "nuxt build",
-    "start": "bun .output/server/index.mjs",
+    "start": "NITRO_BUN_IDLE_TIMEOUT=255 bun .output/server/index.mjs",
     "check": " bun format && bun lint:check && bun typecheck",
     "typecheck": "bunx vue-tsc --noEmit -p tsconfig.json && bunx tsc --noEmit -p scripts/tsconfig.json",
     "db:generate": "drizzle-kit generate",

@@ -10,7 +10,10 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node
 import { join } from 'node:path';
 import { env } from '../kernel/env';
 
-export const TANDEM_DATA_ROOT = env.TANDEM_ATTACHMENTS_DIR || '/tandem';
+/** data root — lazy so setEnv() overrides land without module reloads */
+export function dataRoot(): string {
+  return env.TANDEM_ATTACHMENTS_DIR || '/tandem';
+}
 
 export const ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024; // 20MB per input upload
 export const COLLECTION_MAX_BYTES = 50 * 1024 * 1024; // 50MB total collected output per run
@@ -55,12 +58,12 @@ function idSafe(id: string): boolean {
 export function attachmentPath(taskId: string, id: string): string {
   if (!idSafe(taskId)) throw new Error('bad task id');
   if (!idSafe(id)) throw new Error('bad attachment id');
-  return join(TANDEM_DATA_ROOT, 'tasks', taskId, 'attachments', id);
+  return join(dataRoot(), 'tasks', taskId, 'attachments', id);
 }
 
 export function taskAttachmentsDir(taskId: string): string {
   if (!idSafe(taskId)) throw new Error('bad task id');
-  return join(TANDEM_DATA_ROOT, 'tasks', taskId, 'attachments');
+  return join(dataRoot(), 'tasks', taskId, 'attachments');
 }
 
 export function saveAttachmentBytes(taskId: string, id: string, bytes: Buffer): void {

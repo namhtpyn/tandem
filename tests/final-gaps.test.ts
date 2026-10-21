@@ -8,6 +8,7 @@ import { sqlClient } from '../server/db/index';
 import { call } from './api-harness';
 import { resetSchema } from './helpers/pg';
 import { ROLE } from '../shared/enums';
+import { env, setEnv } from '../server/domains/kernel/env';
 
 beforeEach(async () => {
   await resetSchema();
@@ -376,7 +377,7 @@ describe('auth route fallback arms (real coverage)', () => {
   it('oidc route 404 when no provider configured (real registry empty)', async () => {
     const { saveOidcProviders } = await import('../server/domains/auth/oidc.service');
     await saveOidcProviders([]);
-    delete process.env.TANDEM_OIDC_ISSUER;
+    setEnv({ TANDEM_OIDC_ISSUER: undefined });
     await expect(
       call('../server/routes/auth/[...].ts', { method: 'GET', url: '/auth/oauth2/testprovider' }),
     ).rejects.toMatchObject({ statusCode: 404 });
@@ -387,7 +388,7 @@ describe('auth route fallback arms (real coverage)', () => {
     await saveOidcProviders([
       { id: 'p1', label: 'SSO', issuer: 'https://sso.example.com', clientId: 'c', clientSecret: 's' },
     ]);
-    delete process.env.TANDEM_OIDC_ISSUER;
+    setEnv({ TANDEM_OIDC_ISSUER: undefined });
     // passes our gate; the real better-auth handler then responds (likely 400/404
     // for an unknown provider id — anything but OUR 404 gate is fine)
     const r = await call('../server/routes/auth/[...].ts', { method: 'GET', url: '/auth/oauth2/p1' }).catch((e) => e);

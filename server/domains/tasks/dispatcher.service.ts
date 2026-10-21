@@ -212,7 +212,7 @@ export async function onDispatcherSettingsChanged(): Promise<void> {
  * tasksPerAgent (default 1). Agents run in parallel; the scan loop still runs as a
  * sweep for tasks queued while redis was down. */
 export async function maybeStartDispatcher(): Promise<(() => void) | null> {
-  if (process.env.TANDEM_NO_DISPATCHER) return null;
+  if (env.TANDEM_NO_DISPATCHER) return null;
   const url = env.TANDEM_PUBLIC_URL ?? 'http://localhost:3000';
   const hub = await redisQueue();
   await syncDispatchWorkers(hub);

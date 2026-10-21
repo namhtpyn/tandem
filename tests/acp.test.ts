@@ -5,6 +5,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { AcpStream } from '../server/domains/tasks/acp.client';
 import { OBLIGATION_STATUS, RUN_STATUS } from '../shared/enums';
+import { env, setEnv } from '../server/domains/kernel/env';
 
 const NL_SRC = String.fromCharCode(10); // a real newline byte on the wire
 
@@ -501,7 +502,7 @@ describe('acp.client turns', () => {
   });
 
   it('timeout: session/cancel sent, grace kills the stream, prompt rejects', async () => {
-    process.env.TANDEM_ACP_CANCEL_GRACE_MS = '40';
+    setEnv({ TANDEM_ACP_CANCEL_GRACE_MS: '40' });
     try {
       const stream = fakeAgent((msg, send) => {
         const method = msg.method as string | undefined;
@@ -517,7 +518,7 @@ describe('acp.client turns', () => {
       expect(stream.closed).toBe(true);
       expect(lines.some((l) => l.includes('timed out'))).toBe(true);
     } finally {
-      delete process.env.TANDEM_ACP_CANCEL_GRACE_MS;
+      setEnv({ TANDEM_ACP_CANCEL_GRACE_MS: undefined });
     }
   }, 10_000);
 
@@ -559,7 +560,7 @@ describe('acp.client turns', () => {
   });
 
   it('cancel grace skips the kill when the agent settles after cancel', async () => {
-    process.env.TANDEM_ACP_CANCEL_GRACE_MS = '100';
+    setEnv({ TANDEM_ACP_CANCEL_GRACE_MS: '100' });
     try {
       // timeout fires -> session/cancel sent -> agent answers (settled) BEFORE grace -> no kill
       const stream = fakeAgent((msg, send) => {
@@ -575,7 +576,7 @@ describe('acp.client turns', () => {
       expect(res.stopReason).toBe(OBLIGATION_STATUS.CANCELLED);
       await new Promise((r) => setTimeout(r, 120)); // let the grace timer observe settled=true
     } finally {
-      delete process.env.TANDEM_ACP_CANCEL_GRACE_MS;
+      setEnv({ TANDEM_ACP_CANCEL_GRACE_MS: undefined });
     }
   });
 
@@ -800,13 +801,13 @@ describe('acp.client turns', () => {
       if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} });
       else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's' } });
     });
-    process.env.TANDEM_ACP_CANCEL_GRACE_MS = '30';
+    setEnv({ TANDEM_ACP_CANCEL_GRACE_MS: '30' });
     try {
       await expect(turn(silent, { timeoutMs: 15 })).rejects.toThrow();
       await new Promise((r) => setTimeout(r, 60));
       expect(silent.closed).toBe(true);
     } finally {
-      delete process.env.TANDEM_ACP_CANCEL_GRACE_MS;
+      setEnv({ TANDEM_ACP_CANCEL_GRACE_MS: undefined });
     }
   }, 10_000);
 
