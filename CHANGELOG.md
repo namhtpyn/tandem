@@ -1,3 +1,10 @@
+## [2.37.4](https://github.com/namhtpyn/tandem/compare/v2.37.3...v2.37.4) (2026-10-21)
+
+
+### Bug Fixes
+
+* **tests:** restore closing braces in sse-law-composable ([41cded3](https://github.com/namhtpyn/tandem/commit/41cded3b747635404b602a63e6ce608fb5f10b7e))
+
 ## [2.37.3](https://github.com/namhtpyn/tandem/compare/v2.37.2...v2.37.3) (2026-10-21)
 
 
