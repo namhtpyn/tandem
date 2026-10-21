@@ -13,8 +13,14 @@ const queryClient = useQueryClient();
 
 const page = ref(1);
 const pageSize = ref(20);
-// ---- folder filter chip row (server-side filter) ----
-const activeFolder = ref<string | null>(null); // null = All
+// ---- folder filter (server-side USelect) ----
+const ALL_FOLDERS = '__all__'; // USelect forbids '' values (reka throws) — sentinel for "no filter"
+const folderFilterModel = ref<string>(ALL_FOLDERS);
+const activeFolder = computed(() => (folderFilterModel.value === ALL_FOLDERS ? null : folderFilterModel.value));
+const folderItems = computed(() => [
+  { label: 'All folders', value: ALL_FOLDERS },
+  ...folders.value.map((f) => ({ label: `${f.name} (${f.secrets})`, value: f.id })),
+]);
 const search = ref('');
 const searchDebounced = ref('');
 watchDebounced(
@@ -53,7 +59,7 @@ const folders = computed(
 );
 
 // server-side pagination: rows come pre-filtered by folder from the API
-watch(activeFolder, () => {
+watch(folderFilterModel, () => {
   page.value = 1;
 });
 const rows = computed(() => liveQuery.data.value?.data ?? []);
@@ -150,7 +156,7 @@ async function removeFolder(id: string) {
   try {
     await folderRemoveMutation.mutateAsync({ id });
     folderConfirmId.value = null;
-    if (activeFolder.value === id) activeFolder.value = null;
+    if (activeFolder.value === id) folderFilterModel.value = ALL_FOLDERS;
   } finally {
     folderBusy.value = false;
   }
@@ -302,22 +308,12 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
           ]"
         >
           <template #toolbar>
-            <UButton
-              size="xs"
-              :color="activeFolder === null ? 'primary' : 'neutral'"
-              :variant="activeFolder === null ? 'solid' : 'soft'"
-              label="All"
-              @click="activeFolder = null"
-            />
-            <UButton
-              v-for="f in folders"
-              :key="f.id"
-              size="xs"
-              :color="activeFolder === f.id ? 'primary' : 'neutral'"
-              :variant="activeFolder === f.id ? 'solid' : 'soft'"
-              :icon="activeFolder === f.id ? 'i-lucide-folder-open' : 'i-lucide-folder'"
-              :label="`${f.name} (${f.secrets})`"
-              @click="activeFolder = activeFolder === f.id ? null : f.id"
+            <USelect
+              v-model="folderFilterModel"
+              :items="folderItems"
+              icon="i-lucide-folder"
+              size="sm"
+              class="w-44"
             />
             <span class="flex-1" />
             <UButton icon="i-lucide-plus" size="sm" label="New secret" @click="openEditor()" />
