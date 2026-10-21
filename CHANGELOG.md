@@ -1,3 +1,46 @@
+# [2.37.0](https://github.com/namhtpyn/tandem/compare/v2.36.0...v2.37.0) (2026-10-21)
+
+
+### Bug Fixes
+
+* **auth:** role enum SCREAMING in the auth config — the floating auth CLI drifted to lowercase output ([452a3d0](https://github.com/namhtpyn/tandem/commit/452a3d0e0688a34acb5bf1c94e9144524ff48f81))
+* **build:** shared/run-verdict via the #shared alias in app utils ([642ef0d](https://github.com/namhtpyn/tandem/commit/642ef0dfe990c11ba4dc0b8c351290b6c3e63101))
+* **db:** legacy-id remap mints uuidv7, not gen_random_uuid ([d8f6802](https://github.com/namhtpyn/tandem/commit/d8f6802e72267b95f0f08263a2df704c2f6d6dc7))
+* **deps:** oRPC beta.44 for vue-query 5.104.3 typing; coverage for outputSchema arm ([b2332ed](https://github.com/namhtpyn/tandem/commit/b2332ed4defc74f71c36287f34783c3062447551))
+* **deps:** pin @types/bun 1.4.3 — tsconfig types:['bun'] had no lockfile entry ([9d67253](https://github.com/namhtpyn/tandem/commit/9d67253d552c3d88ceaa8a0dd4dff7ca1d9f2f6b))
+* **deps:** restore the kernel deps the merge dropped (redis stack, cache-manager, oxlint) ([885f923](https://github.com/namhtpyn/tandem/commit/885f923572a24113518c793547c53297df4b647d))
+* **e2e:** gating spec matches the status NAME (ids are uuids now) ([eb48ddb](https://github.com/namhtpyn/tandem/commit/eb48ddb59dcbd866b2934d68a2f46afba8e6dddc))
+* **tasks:** gate runs/activity/reviews queries with enabled flag, not skipToken ([bec5599](https://github.com/namhtpyn/tandem/commit/bec559985e1b520baee4c8508e3cf04a07d8d912))
+* **test:** same-millisecond note/run timestamps are admissible ([acd9d0a](https://github.com/namhtpyn/tandem/commit/acd9d0a40fe25ef7016c4eeae5528b861a3b581e))
+* **ui:** description editor renders with input chrome + min height ([64278e9](https://github.com/namhtpyn/tandem/commit/64278e92fcab54d9e671affcaf4a488b62c92fce))
+* **ui:** every capped modal gets a scrolling body — editors no longer clip ([708d9e6](https://github.com/namhtpyn/tandem/commit/708d9e6f4193ba24fbaaa159fd373a264003a1b8))
+* **ui:** key mobile rows by id, not title value ([2a9a480](https://github.com/namhtpyn/tandem/commit/2a9a480bfab5adca51bad0c35ba24c3cf4c5997b))
+
+
+### Features
+
+* **app:** vue-query SSR — dehydrate/hydrate + onServerPrefetch ([e126bdd](https://github.com/namhtpyn/tandem/commit/e126bdd16c331f3d1c25bf7810d22bbd1a0ecb77))
+* **db:** better-auth ids become native uuid columns ([ce5875b](https://github.com/namhtpyn/tandem/commit/ce5875b944cc6b2483102ccbb6bc2d8e4ee6101e))
+* **db:** count + findManyAndCount on relational query builder ([5cceaa1](https://github.com/namhtpyn/tandem/commit/5cceaa1b639c7b487ac060804b8aeb570a3ebc1a))
+* **db:** drop the tandem_ table prefix estate-wide ([12093fd](https://github.com/namhtpyn/tandem/commit/12093fd7b07b8958f836d80217490475d6dbd9df))
+* **db:** schema.ts mints ids and timestamps at the app, like schema.auth.ts ([931df16](https://github.com/namhtpyn/tandem/commit/931df16ad6b0b03999a4bf64c6403af0249b1444))
+* **db:** vault_audit.at -> created_at; DB defaults converge to nothing ([d476ab3](https://github.com/namhtpyn/tandem/commit/d476ab34c2e7a50b9c203764fd717080111285f0))
+* **editor:** paste or drop images into task descriptions as attachments ([0c9d0b4](https://github.com/namhtpyn/tandem/commit/0c9d0b4685c666b86ad28feb5df036574cdc3fd4))
+* **ids:** UUIDv7 for all Tandem-minted ids ([4e02274](https://github.com/namhtpyn/tandem/commit/4e02274495318d61c3fbef46244b7aa7a87b4d0a))
+* **kernel:** Redis is REQUIRED — drop null/memory fallbacks ([0cb9093](https://github.com/namhtpyn/tandem/commit/0cb90938c0006c78278df94d17de365c69680630))
+* **kernel:** zod-validated env contract — fail fast at boot ([5b49597](https://github.com/namhtpyn/tandem/commit/5b49597c478105da664c1363a9ec66b9c234a506))
+* **runner:** zod-validated structured verdicts replace envelope markers ([dbd14ad](https://github.com/namhtpyn/tandem/commit/dbd14ad9362287e96dcf2c2fcb18f02313f628f9))
+* **sessions:** drop tasks.acp_session_id — sessions are per (task, employee) on run rows ([b759e66](https://github.com/namhtpyn/tandem/commit/b759e663856ce0c6bcd591afda60cefcfdb0c5b7))
+* **statuses:** task status ids become fixed uuidv7 constants ([27bb2e7](https://github.com/namhtpyn/tandem/commit/27bb2e74cc7cf378522d0ac5d2791c73eb06accc))
+* **ui:** DataTable — desktop table + mobile card list from one definition ([eaf7bd5](https://github.com/namhtpyn/tandem/commit/eaf7bd5e2402f7abb074aa6c10cb2bd9b116e22f))
+* **ui:** DataTable toolbar — built-in search + slot for filters and actions ([d07a316](https://github.com/namhtpyn/tandem/commit/d07a31600dd79c69f6e00478761ac44ddbbc0b24))
+* **vault:** folder filter as USelect in the table toolbar (replaces chips) ([095768a](https://github.com/namhtpyn/tandem/commit/095768a85594051cf5ffec2acf16b06c84d588e8))
+* **vault:** paginated folder manager table (findManyAndCount + counts per page) ([4654111](https://github.com/namhtpyn/tandem/commit/4654111b5b18d6546cbdc4f03c5019163c0be9ca))
+* **vault:** remove the audit trail ([6e524c6](https://github.com/namhtpyn/tandem/commit/6e524c6b4d423c45e265e74f69f9aff18f072ef7))
+* **vault:** server-side pagination via findManyAndCount ([c3ae016](https://github.com/namhtpyn/tandem/commit/c3ae016ea37cef86c87e301aba089ee314bd9123))
+* **vault:** server-side search on secrets and folders tables ([363fb6e](https://github.com/namhtpyn/tandem/commit/363fb6e5cf9af671716897ba59dade0c01c71d13))
+* **verdicts:** generic structured output + no-compat JSON estate ([d8a959c](https://github.com/namhtpyn/tandem/commit/d8a959cb6e4bdcd10ddf8d094caab8078e529d06))
+
 # [2.36.0](https://github.com/namhtpyn/tandem/compare/v2.35.1...v2.36.0) (2026-10-17)
 
 
