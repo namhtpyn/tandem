@@ -25,7 +25,7 @@
 import { $, file, write } from 'bun';
 
 const OUT = '/tmp/tandem-auth-schema.ts';
-await $`bunx auth generate --config scripts/auth.config.ts --output ${OUT} -y`.quiet();
+await $`bunx --bun auth generate --config scripts/auth.config.ts --output ${OUT} -y`.quiet();
 let gen = await file(OUT).text();
 
 // --- semantic patches (each asserts it matched) ---
@@ -58,29 +58,29 @@ gen = gen.replace(/timestamp\((['"])([a-z_]+)\1\)/g, "timestamp('$2', { withTime
 if (tzCount === 0) throw new Error('gen:auth post-process missed: timestamp columns');
 
 // 4) timestamps mint at the APP (like ids and $onUpdate) — never the DB clock.
-// The CLI is ragged per table (session/account omit the updatedAt default,
-// apikey omits both + $onUpdate) — normalize every table to the same shape:
+// CLI shape (bun runtime, driver-connected): created_at bare notNull, updated_at
+// $onUpdate(() => new Date).notNull() — normalize every table to:
 // created_at $default().notNull(), updated_at $default().$onUpdate().notNull()
-const nowCount = gen.split('.defaultNow()').length - 1;
-gen = gen.split('.defaultNow()').join('.$default(() => new Date())');
-if (nowCount === 0) throw new Error('gen:auth post-process missed: defaultNow columns');
-const uOnUpdate = gen.split("timestamp('updated_at', { withTimezone: true }).$onUpdate").length - 1;
+const bareUpdated = gen.split("timestamp('updated_at', { withTimezone: true }).$onUpdate(() => new Date).notNull()").length - 1;
 gen = gen
-  .split("timestamp('updated_at', { withTimezone: true }).$onUpdate")
-  .join("timestamp('updated_at', { withTimezone: true }).$default(() => new Date()).$onUpdate");
-if (uOnUpdate === 0) throw new Error('gen:auth post-process missed: updatedAt $onUpdate-only columns');
-const bareUpdated = gen.split("timestamp('updated_at', { withTimezone: true }).notNull()").length - 1;
+  .split("timestamp('updated_at', { withTimezone: true }).$onUpdate(() => new Date).notNull()")
+  .join(
+    "timestamp('updated_at', { withTimezone: true }).$default(() => new Date()).$onUpdate(() => /* @__PURE__ */ new Date()).notNull()",
+  );
+if (bareUpdated === 0) throw new Error('gen:auth post-process missed: updatedAt columns');
+// apikey omits $onUpdate entirely — its bare updatedAt gets the full triple
+const apikeyUpdated = gen.split("timestamp('updated_at', { withTimezone: true }).notNull()").length - 1;
 gen = gen
   .split("timestamp('updated_at', { withTimezone: true }).notNull()")
   .join(
     "timestamp('updated_at', { withTimezone: true }).$default(() => new Date()).$onUpdate(() => /* @__PURE__ */ new Date()).notNull()",
   );
-if (bareUpdated === 0) throw new Error('gen:auth post-process missed: bare updatedAt columns');
+if (apikeyUpdated === 0) throw new Error('gen:auth post-process missed: bare updatedAt columns');
 const bareCreated = gen.split("timestamp('created_at', { withTimezone: true }).notNull()").length - 1;
 gen = gen
   .split("timestamp('created_at', { withTimezone: true }).notNull()")
   .join("timestamp('created_at', { withTimezone: true }).$default(() => new Date()).notNull()");
-if (bareCreated === 0) throw new Error('gen:auth post-process missed: bare createdAt columns');
+if (bareCreated === 0) throw new Error('gen:auth post-process missed: createdAt columns');
 
 // 5) drop the relations part — the app owns relations via defineRelations
 const relIdx = gen.indexOf('export const authRelations');

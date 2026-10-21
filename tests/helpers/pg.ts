@@ -4,6 +4,7 @@
 // App modules are imported lazily (in beforeAll) AFTER DATABASE_URL is pointed
 // at this file's database, because server/db/index.ts reads DATABASE_URL at
 // module scope.
+import { SQL } from 'bun';
 import { afterAll, beforeAll } from 'vitest';
 
 const ROOT_URL = process.env.TANDEM_TEST_DATABASE_URL || 'postgresql://tandem:tandem@127.0.0.1:55432/tandem_test';
@@ -12,10 +13,10 @@ const DB_NAME = `t_${Math.random().toString(36).slice(2, 10)}`;
 export const TEST_DATABASE_URL = `${u.protocol}//${u.username}:${u.password}@${u.hostname}:${u.port}/${DB_NAME}`;
 
 // admin client on the server (connect to the root/test database)
-const admin = new Bun.SQL(ROOT_URL, { max: 1 });
+const admin = new SQL(ROOT_URL, { max: 1 });
 
 // our raw client into the fresh database
-export const postgres = new Bun.SQL(TEST_DATABASE_URL, {
+export const postgres = new SQL(TEST_DATABASE_URL, {
   max: 5,
   idleTimeout: 5,
   connectionTimeout: 10,

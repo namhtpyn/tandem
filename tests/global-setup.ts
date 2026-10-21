@@ -95,7 +95,8 @@ export async function setup(ctx: GlobalSetupContext) {
       const url = new URL(
         process.env.TANDEM_TEST_DATABASE_URL || 'postgresql://tandem:tandem@127.0.0.1:55432/tandem_test',
       );
-      const admin = new Bun.SQL(url.href, { max: 1 });
+      const { SQL } = await import('bun');
+      const admin = new SQL(url.href, { max: 1 });
       const rows = await admin.unsafe<{ datname: string }>(
         "select datname from pg_database where datname like 't\\_%' escape '\\' and pg_get_userbyid(datdba) = current_user",
       );
