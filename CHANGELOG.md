@@ -1,3 +1,10 @@
+# [2.39.0](https://github.com/namhtpyn/tandem/compare/v2.38.1...v2.39.0) (2026-10-21)
+
+
+### Features
+
+* **db:** import { SQL } from 'bun' — the import pattern everywhere; every CLI runs under bun ([f45e612](https://github.com/namhtpyn/tandem/commit/f45e6122bae5e96bf499934c5aa63a0321f1f720))
+
 ## [2.38.1](https://github.com/namhtpyn/tandem/compare/v2.38.0...v2.38.1) (2026-10-21)
 
 
