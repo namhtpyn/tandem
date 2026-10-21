@@ -1,7 +1,7 @@
 {
   "name": "tandem",
   "version": "0.0.0",
-  "description": "Company workspace where human and AI employees work together — SSH environments run the Hermes agent as the task runner.",
+  "description": "Company workspace where human and AI employees work together \u2014 SSH environments run the Hermes agent as the task runner.",
   "type": "module",
   "scripts": {
     "dev": "nuxt dev",
@@ -37,12 +37,15 @@
     "bullmq": "6.3.16",
     "drizzle-orm": "1.0.0-rc.4",
     "es-toolkit": "1.52.0",
-    "ioredis": "6.0.0",
     "nuxt": "4.6.2",
     "postgres": "3.4.9",
     "ssh2": "1.17.0",
     "uuid": "14.0.3",
-    "zod": "4.6.7"
+    "zod": "4.6.7",
+    "@keyv/redis": "5.1.6",
+    "cache-manager": "7.2.9",
+    "keyv": "5.6.0",
+    "redis": "6.3.0"
   },
   "engines": {
     "bun": ">=1.1"
@@ -67,7 +70,9 @@
     "typescript": "npm:typescript-native-bridge@6.0.3-bridge.18.tsgo.7.0.2",
     "typescript-native-bridge": "6.0.3-bridge.18.tsgo.7.0.2",
     "vitest": "5.0.5",
-    "vue-tsc": "3.3.13"
+    "vue-tsc": "3.3.13",
+    "oxfmt": "0.74.0",
+    "oxlint": "1.89.0"
   },
   "repository": {
     "type": "git",
