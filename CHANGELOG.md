@@ -1,3 +1,10 @@
+## [2.37.5](https://github.com/namhtpyn/tandem/compare/v2.37.4...v2.37.5) (2026-10-21)
+
+
+### Bug Fixes
+
+* **db:** prod-shaped migration repair — drop short-named FKs before the uuid remap, copy the legacy ledger instead of renaming so rollback to the old image still boots ([3bf034b](https://github.com/namhtpyn/tandem/commit/3bf034b721772dbcba04685557954da99ba367c2))
+
 ## [2.37.4](https://github.com/namhtpyn/tandem/compare/v2.37.3...v2.37.4) (2026-10-21)
 
 
