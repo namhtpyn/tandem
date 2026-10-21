@@ -319,10 +319,10 @@ watch(
   },
   { immediate: false },
 );
-const secretsLive = useQuery($orpc.vault.secrets.list.queryOptions({ queryKey: [CHANGE_RESOURCE.VAULT] }));
+const secretsLive = useQuery($orpc.vault.secrets.list.queryOptions({ input: { page: 1, pageSize: 100 }, queryKey: [CHANGE_RESOURCE.VAULT, 'all'] }));
 const secretItems = computed((): any =>
   groupedSecretOptions(
-    (unref(secretsLive.data) ?? []) as Array<{ id: string; name: string; lastFour: string; folder: string | null }>,
+    (unref(secretsLive.data)?.data ?? []) as Array<{ id: string; name: string; lastFour: string; folder: string | null }>,
   ),
 );
 const environmentItems = computed(() => environments.value.map((e) => ({ label: e.name, value: e.id })));

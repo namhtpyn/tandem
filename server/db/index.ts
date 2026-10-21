@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 
-import './rqb-extensions';
+import { installRqbExtensions } from './rqb-extensions';
 import { join } from 'node:path';
 
 // Postgres client (postgres.js) + drizzle rc (Relations v2) + boot-applied migrations.
@@ -109,3 +109,6 @@ export async function applyMigrations() {
 }
 
 export const db = drizzle({ client: sqlClient, relations });
+
+// install count/findManyAndCount on the live query builders (chunker drops bare side-effect imports)
+installRqbExtensions(db.query);

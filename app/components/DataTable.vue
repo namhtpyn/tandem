@@ -10,13 +10,24 @@ const props = withDefaults(
     loading?: boolean;
     mobileTitleKey?: string;
     mobileHideKeys?: string[];
+    /** server-side pagination: 1-based page + total pages; omit for unpaginated tables */
+    page?: number;
+    pageCount?: number;
+    pageSize?: number;
   }>(),
   {
     loading: false,
     mobileTitleKey: undefined,
     mobileHideKeys: () => [],
+    page: undefined,
+    pageCount: undefined,
+    pageSize: 10,
   },
 );
+
+const emit = defineEmits<{ 'update:page': [page: number] }>();
+const paginated = computed(() => props.pageCount !== undefined && props.page !== undefined);
+const pagination = computed(() => ({ pageIndex: (props.page ?? 1) - 1, pageSize: props.pageSize }));
 
 defineSlots<
   Record<`${string}-cell` | `${string}-header` | (string & {}), (props: CellContext<T, unknown>) => VNode[]> & {
@@ -53,11 +64,24 @@ function cellValue(row: T, col: TableColumn<T>) {
 
 <template>
   <UCard v-if="data.length || loading" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
-    <UTable :data="data" :columns="columns" :loading="loading">
+    <UTable
+      :data="data"
+      :columns="columns"
+      :loading="loading"
+      :pagination="paginated ? pagination : undefined"
+      :pagination-options="paginated ? { getPaginationRowModel: undefined, manualPagination: true, pageCount } : undefined"
+    >
       <template v-for="name in desktopSlotNames" :key="name" #[name]="slotProps">
         <slot :name="name" v-bind="slotProps ?? {}" />
       </template>
     </UTable>
+    <div v-if="paginated && (pageCount ?? 0) > 1" class="flex justify-end border-t border-default p-3">
+      <UPagination
+        :page="page"
+        :page-count="pageCount"
+        @update:page="(p: number) => emit('update:page', p)"
+      />
+    </div>
   </UCard>
 
   <div v-if="data.length" class="space-y-3 md:hidden">
@@ -78,5 +102,12 @@ function cellValue(row: T, col: TableColumn<T>) {
         </UCard>
       </slot>
     </template>
+    <div v-if="paginated && (pageCount ?? 0) > 1" class="flex justify-center pt-1">
+      <UPagination
+        :page="page"
+        :page-count="pageCount"
+        @update:page="(p: number) => emit('update:page', p)"
+      />
+    </div>
   </div>
 </template>

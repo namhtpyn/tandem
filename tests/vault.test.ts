@@ -126,16 +126,46 @@ describe('vault-crypto (module)', () => {
 
 describe('vault API', () => {
   it('live lists metadata only — no ciphertext, no plaintext', async () => {
-    await secretFactory('ssh-prod-key', 'AKIAIOSFODNN7EXAMPLE');
+    await secretFactory('ssh-prod-key', 'AKIAIO...MPLE');
     const iter = await callProc('vault.secrets.live');
     const snap = await iter.next();
-    const rows = snap.value as VaultSecretRow[];
+    const rows = (snap.value as { data: VaultSecretRow[] }).data;
     expect(rows).toHaveLength(1);
     expect(rows[0]!.name).toBe('ssh-prod-key');
     expect(rows[0]!.lastFour).toBe('MPLE');
     expect(JSON.stringify(rows)).not.toContain('AKIA');
     expect(JSON.stringify(rows)).not.toContain('ciphertext');
     await iter.return?.();
+  });
+
+  it('list paginates server-side via findManyAndCount (page, pageSize, folderId)', async () => {
+    const folder = await callProc('vault.folders.save', { name: 'Paged' }) as { id: string };
+    for (let i = 0; i < 3; i++) {
+      await callProc('vault.secrets.create', {
+        name: `paged-${i}`,
+        value: `v-${i}`,
+        description: '',
+        folderId: i < 2 ? folder.id : null,
+      });
+    }
+    const page1 = await callProc('vault.secrets.list', { page: 1, pageSize: 2 }) as {
+      data: VaultSecretRow[];
+      total: number;
+    };
+    expect(page1.total).toBe(3);
+    expect(page1.data).toHaveLength(2);
+    const page2 = await callProc('vault.secrets.list', { page: 2, pageSize: 2 }) as {
+      data: VaultSecretRow[];
+      total: number;
+    };
+    expect(page2.data).toHaveLength(1);
+    // folder filter narrows both data and total
+    const filtered = await callProc('vault.secrets.list', { page: 1, pageSize: 20, folderId: folder.id }) as {
+      data: VaultSecretRow[];
+      total: number;
+    };
+    expect(filtered.total).toBe(2);
+    expect(filtered.data.every((r) => r.folder === 'Paged')).toBe(true);
   });
 
   it('create stores an encrypted envelope the API cannot read back', async () => {

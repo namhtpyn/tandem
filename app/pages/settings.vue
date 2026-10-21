@@ -148,10 +148,10 @@ async function saveCompanyPrompt() {
   }
 }
 // ---- Workspace AI: internal LLM + decision assignments ----
-const vaultLive = useQuery($orpc.vault.secrets.list.queryOptions({ queryKey: [CHANGE_RESOURCE.VAULT] }));
+const vaultLive = useQuery($orpc.vault.secrets.list.queryOptions({ input: { page: 1, pageSize: 100 }, queryKey: [CHANGE_RESOURCE.VAULT, 'all'] }));
 const vaultItems = computed((): any =>
   groupedSecretOptions(
-    (unref(vaultLive.data) ?? []) as Array<{ id: string; name: string; lastFour: string; folder: string | null }>,
+    (unref(vaultLive.data)?.data ?? []) as Array<{ id: string; name: string; lastFour: string; folder: string | null }>,
   ),
 );
 interface AiAssignmentForm {

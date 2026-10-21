@@ -2,7 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 // Secret vault: write-only secrets (AES-256-GCM server-side). Values are set
 // once and never displayed again — only a last-4 hint. Mobile-first cards.
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 import type { VaultSecretRow } from '~/utils/orpc-types';
 import { CHANGE_RESOURCE } from '~/../shared/enums';
@@ -10,7 +10,19 @@ import { CHANGE_RESOURCE } from '~/../shared/enums';
 const { $orpc } = useNuxtApp();
 const queryClient = useQueryClient();
 
-const liveQuery = useQuery($orpc.vault.secrets.list.queryOptions({ queryKey: [CHANGE_RESOURCE.VAULT] }));
+const page = ref(1);
+const pageSize = ref(20);
+// ---- folder filter chip row (server-side filter) ----
+const activeFolder = ref<string | null>(null); // null = All
+
+const liveQuery = useQuery(
+  computed(() =>
+    $orpc.vault.secrets.list.queryOptions({
+      input: { page: page.value, pageSize: pageSize.value, folderId: activeFolder.value },
+      queryKey: [CHANGE_RESOURCE.VAULT, page.value, pageSize.value, activeFolder.value ?? 'all'],
+    }),
+  ),
+);
 const foldersQuery = useQuery($orpc.vault.folders.list.queryOptions({ queryKey: [CHANGE_RESOURCE.VAULT, 'folders'] }));
 const folders = computed(
   () =>
@@ -18,13 +30,19 @@ const folders = computed(
       ?.folders ?? [],
 );
 
-// ---- folder filter chip row ----
-const activeFolder = ref<string | null>(null); // null = All
-const filteredRows = computed(() =>
-  activeFolder.value === null
-    ? rows.value
-    : rows.value.filter((r) => r.folder === folders.value.find((f) => f.id === activeFolder.value)?.name),
-);
+// server-side pagination: rows come pre-filtered by folder from the API
+watch(activeFolder, () => {
+  page.value = 1;
+});
+const rows = computed(() => liveQuery.data.value?.data ?? []);
+const total = computed(() => liveQuery.data.value?.total ?? 0);
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
+
+// deleting the last row of a high page clamps back into range
+watch(total, (t) => {
+  const maxPage = Math.max(1, Math.ceil(t / pageSize.value));
+  if (page.value > maxPage) page.value = maxPage;
+});
 
 // ---- folders manager modal (statuses-style) ----
 const folderManagerOpen = ref(false);
@@ -76,7 +94,6 @@ async function removeFolder(id: string) {
     folderBusy.value = false;
   }
 }
-const rows = computed(() => liveQuery.data.value ?? []);
 const busy = ref(false);
 
 const editorOpen = ref(false);
@@ -229,8 +246,11 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
         </div>
 
         <DataTable
-          v-if="filteredRows.length"
-          :data="filteredRows"
+          v-if="rows.length"
+          :data="rows"
+          v-model:page="page"
+          :page-count="pageCount"
+          :page-size="pageSize"
           :columns="[
             { accessorKey: 'name', header: 'Name' },
             { accessorKey: 'description', header: 'Description' },
@@ -323,7 +343,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
           </template>
         </DataTable>
 
-        <UCard v-if="!filteredRows.length" :ui="{ root: 'shadow-sm' }">
+        <UCard v-if="!rows.length" :ui="{ root: 'shadow-sm' }">
           <template #body>
             <div class="flex flex-col items-center gap-2 py-6 text-center">
               <UIcon name="i-lucide-shield" class="size-8 text-zinc-300 dark:text-zinc-600" />

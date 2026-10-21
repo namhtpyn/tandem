@@ -3,6 +3,7 @@
 // leaves the server (list returns metadata + last-four hint only).
 import { desc, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
+import { z } from 'zod';
 
 import type { VaultSecretRow } from '../../../../shared/types';
 import { db } from '../../../db';
@@ -25,13 +26,25 @@ export function toVaultRow(r: typeof vaultSecretsTable.$inferSelect) {
   };
 }
 
-export async function listVaultSecrets() {
-  const rows = await db
-    .select({ s: vaultSecretsTable, folderName: vaultFoldersTable.name })
-    .from(vaultSecretsTable)
-    .leftJoin(vaultFoldersTable, eq(vaultSecretsTable.folderId, vaultFoldersTable.id))
-    .orderBy(desc(vaultSecretsTable.createdAt));
-  return rows.map(({ s, folderName }) => ({ ...toVaultRow(s), folder: folderName }));
+export const listVaultSecretsInput = z.object({
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(100).default(20),
+  folderId: z.string().min(1).nullish(),
+});
+
+export async function listVaultSecrets(input: z.input<typeof listVaultSecretsInput> = {}) {
+  const { page, pageSize, folderId } = listVaultSecretsInput.parse(input);
+  const { data, total } = await db.query.vaultSecrets.findManyAndCount({
+    with: { folder: true },
+    where: folderId ? { folderId: { eq: folderId } } : undefined,
+    orderBy: (s, { desc }) => [desc(s.createdAt)],
+    limit: pageSize,
+    offset: (page - 1) * pageSize,
+  });
+  return {
+    data: data.map(({ folder, ...s }) => ({ ...toVaultRow(s), folder: folder?.name ?? null })),
+    total,
+  };
 }
 
 export async function createSecret(

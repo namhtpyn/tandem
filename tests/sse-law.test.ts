@@ -203,7 +203,7 @@ describe('conventional GET list procs (the first-load half)', () => {
   });
 
   it('vault.secrets.list + vault.folders.list return the GET snapshots', async () => {
-    expect(await callProc('vault.secrets.list')).toEqual([]);
+    expect(await callProc('vault.secrets.list')).toEqual({ data: [], total: 0 });
     expect(await callProc('vault.folders.list').then((r) => r.folders)).toEqual([]);
   });
 

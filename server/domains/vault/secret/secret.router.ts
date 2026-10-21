@@ -4,12 +4,12 @@
 import { z } from 'zod';
 
 import { protectedProcedure, liveGenerator } from '../../kernel/kernel';
-import { listVaultSecrets, createSecret, updateSecret, removeSecret } from './secret.service';
+import { listVaultSecrets, listVaultSecretsInput, createSecret, updateSecret, removeSecret } from './secret.service';
 import { CHANGE_RESOURCE } from '#shared/enums';
 
 export const secretRouter = {
   /** live list — metadata only; ciphertext never leaves the server */
-  list: protectedProcedure.handler(() => listVaultSecrets()),
+  list: protectedProcedure.input(listVaultSecretsInput).handler(({ input }) => listVaultSecrets(input)),
 
   live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.VAULT], listVaultSecrets)),
 

@@ -515,7 +515,18 @@ export const relations = defineRelations(
     },
     environments: {},
     settings: {},
-    vaultSecrets: {},
+    vaultSecrets: {
+      folder: helpers.one.vaultFolders({
+        from: helpers.vaultSecrets.folderId,
+        to: helpers.vaultFolders.id,
+      }),
+    },
+    vaultFolders: {
+      secrets: helpers.many.vaultSecrets({
+        from: helpers.vaultFolders.id,
+        to: helpers.vaultSecrets.folderId,
+      }),
+    },
     verification: {},
   }),
 );

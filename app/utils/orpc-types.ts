@@ -7,7 +7,8 @@ import type { appRouter } from '~/../server/domains/app.router';
 type Client = RouterClient<typeof appRouter>;
 type Outputs = InferClientOutputs<Client>;
 
-export type VaultSecretRow = Outputs['vault']['secrets']['list'][number];
+type VaultSecretList = Outputs['vault']['secrets']['list'];
+export type VaultSecretRow = VaultSecretList['data'][number];
 export type VaultFoldersSnapshot = Outputs['vault']['folders']['list'];
 export type TaskStatusRow = Outputs['statuses']['list'][number];
 export type EmployeeRow = Outputs['employees']['list'][number];
