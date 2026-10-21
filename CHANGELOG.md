@@ -1,3 +1,10 @@
+# [2.38.0](https://github.com/namhtpyn/tandem/compare/v2.37.5...v2.38.0) (2026-10-21)
+
+
+### Features
+
+* **db:** Bun SQL driver — drizzle-orm/bun-sql replaces postgres-js ([45acae4](https://github.com/namhtpyn/tandem/commit/45acae43f3088774be96d35f157cbb4bfb398986))
+
 ## [2.37.5](https://github.com/namhtpyn/tandem/compare/v2.37.4...v2.37.5) (2026-10-21)
 
 
