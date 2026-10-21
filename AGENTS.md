@@ -124,6 +124,12 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
 - **Roadmap:** M1 auth/settings/health/admin ✅ · M2 environments ✅ · M3 employees + org chart ✅ ·
   M4 tasks ✅ (+workflow, agent runs) · M5 SSH runner ✅ · M6 ship: CI/release/GHCR/docs ✅.
 - bun-only toolchain; Nuxt UI components; zod strict inputs on every procedure.
+  **Zod lives at the edge, and form schemas are separate from API schemas:**
+  validation runs only on user input in routers — never `.parse()` in services
+  (services take plain typed arguments). Frontend form schemas are LOOSE
+  (`.nullish()` + `.transform(v => (v ? v : null))` — UI inputs emit `undefined`/`''`,
+  never null); server oRPC input schemas are STRICT. Never validate a form with
+  the server schema; never loosen the API schema for a component.
 - **Const-object "enums", never TS `enum` nor bare string unions.** Define closed
   value sets as frozen const objects, derive types from them, and validate shape
   with `satisfies`:
