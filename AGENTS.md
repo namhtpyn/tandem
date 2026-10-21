@@ -51,6 +51,24 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
 
 ## Standing engineering laws
 
+- **Inferred DDD (architecture law, 2026-10-21):** domains are bounded contexts
+  (`server/domains/<x>/`); every layer's type is DERIVED, never declared
+  abstractly — no hand-written entity/DTO/interface/mapper layers:
+  - Entity = `typeof table.$inferSelect` (the drizzle schema IS the entity and
+    the ubiquitous language — intent-named tables/columns)
+  - Contract = the zod schema on the oRPC procedure (validated + typed once,
+    flows end to end; client types via `InferClientOutputs`)
+  - Repository = RQB (`db.query.<table>`) used directly inside the domain
+    service — drizzle IS the repository, no wrapper layer
+  - Aggregate = a service FUNCTION owning its invariant end to end (e.g.
+    `approveReview()` runs the whole review-round state machine), not a class
+  - Domain event = `publishChange()` on the change-bus
+  - Boundary: cross-domain calls go through the other domain's exported
+    service functions (`import type` for shapes); never touch another
+    domain's tables directly
+  Enforcement of the boundary is by convention + review, not the compiler.
+  Reach for classical DDD patterns (separate domain layer, repositories,
+  mappers) only when a domain's invariants outgrow single service functions.
 - **Enum law:** every enum is an `as const` object in `shared/enums/<name>.ts`,
   SCREAMING_SNAKE_CASE for BOTH property and value
   (`const ROLE = { ADMIN: 'ADMIN' } as const`), one file per enum owning the
