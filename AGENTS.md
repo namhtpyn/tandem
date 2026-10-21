@@ -7,9 +7,10 @@ Rules for any AI agent working in this repository. Human-readable name: tandem.
 Nuxt 4 + Nitro, Nuxt UI v4, better-auth, drizzle + postgres.js, **oRPC v2**
 (live queries over SSE — the app-wide API layer; only `/auth/**`, `/health/*`,
 `/api/employees/:id/avatar` are REST), TanStack Query, VueUse, es-toolkit,
-type-fest. bun-only toolchain (Bun Shell for all subprocess). Postgres is the
-only required backing service; Redis optional via REDIS_URL (BullMQ dispatch
-queue, pub/sub change-bus fan-out, cache).
+type-fest. bun-only toolchain (Bun Shell for all subprocess). Postgres AND Redis are
+required backing services (REDIS_URL — validated at boot by
+`server/domains/kernel/env.ts`; BullMQ dispatch queue, pub/sub change-bus
+fan-out, cache — no in-memory fallbacks).
 
 ## Mandated rule: manual browser test after every feature
 

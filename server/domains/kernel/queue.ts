@@ -1,5 +1,5 @@
 // Message-queue domain: BullMQ per-agent dispatch queues (durable, retrying).
-// Null when REDIS_URL is unset — callers keep their in-memory fallback paths.
+// REDIS_URL is REQUIRED (validated at boot) — redis is a hard dependency.
 import type { ChangeAction, ChangeResource } from './change-bus';
 import { env } from './env';
 
@@ -17,17 +17,15 @@ export type QueueDomain = {
   close: () => Promise<void>;
 };
 
-let domain: QueueDomain | null = null;
+let domainPromise: Promise<QueueDomain> | null = null;
 
-/** lazily create the queue domain; returns null when REDIS_URL is unset */
-export function redisQueue(): Promise<QueueDomain | null> {
-  if (!process.env.REDIS_URL) return Promise.resolve(null);
-  if (!domain)
-    domain = createQueueDomain().catch((e: unknown) => {
-      domain = null;
-      throw e;
-    }) as unknown as QueueDomain;
-  return Promise.resolve(domain);
+/** lazily create the queue domain; REDIS_URL is validated at boot */
+export function redisQueue(): Promise<QueueDomain> {
+  domainPromise ??= createQueueDomain().catch((e: unknown) => {
+    domainPromise = null;
+    throw e;
+  });
+  return domainPromise;
 }
 
 async function createQueueDomain(): Promise<QueueDomain> {
@@ -112,7 +110,7 @@ async function createQueueDomain(): Promise<QueueDomain> {
         ...[...queues.values()].map((q) => q.close()),
         ...raws.map((r) => r.disconnect()),
       ]);
-      domain = null;
+      domainPromise = null;
     },
   };
 }

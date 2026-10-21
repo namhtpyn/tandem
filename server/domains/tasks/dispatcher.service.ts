@@ -126,30 +126,20 @@ export async function scanOnce(tandemUrl: string): Promise<boolean> {
   const hit = await findEligible();
   if (!hit) return false;
   const hub = await redisQueue();
-  if (hub) {
-    try {
-      /* v8 ignore next -- lazy resync; the catch arrow only fires on a redis failure */
-      void syncDispatchWorkers(hub).catch(() => {});
-      // jobId = taskId: while a dispatch for this task waits or runs, duplicate
-      // enqueues (scanner ticks during a worker backlog) are rejected by bullmq
-      await hub.enqueue<DispatchJob>(
-        dispatchQueueName(hit.employeeId),
-        { taskId: hit.taskId, tandemUrl },
-        { attempts: 3, jobId: hit.taskId, removeOnComplete: true },
-      );
-      return true;
-    } catch (e) {
-      console.warn('[tandem] dispatch enqueue failed, retrying next scan:', (e as Error).message);
-      return false; // redis hiccup: try next scan
-    }
-  }
   try {
-    const handle = await dispatchTask(hit.taskId, tandemUrl);
-    trackInFlight(hit.employeeId, handle.finished);
+    /* v8 ignore next -- lazy resync; the catch arrow only fires on a redis failure */
+    void syncDispatchWorkers(hub).catch(() => {});
+    // jobId = taskId: while a dispatch for this task waits or runs, duplicate
+    // enqueues (scanner ticks during a worker backlog) are rejected by bullmq
+    await hub.enqueue<DispatchJob>(
+      dispatchQueueName(hit.employeeId),
+      { taskId: hit.taskId, tandemUrl },
+      { attempts: 3, jobId: hit.taskId, removeOnComplete: true },
+    );
     return true;
-  } catch {
-    // dispatchTask validates its own preconditions; misses just mean "try next scan"
-    return false;
+  } catch (e) {
+    console.warn('[tandem] dispatch enqueue failed, retrying next scan:', (e as Error).message);
+    return false; // redis hiccup: try next scan
   }
 }
 
@@ -210,7 +200,6 @@ export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<ty
 export async function onDispatcherSettingsChanged(): Promise<void> {
   try {
     const hub = await redisQueue();
-    if (!hub) return;
     await syncDispatchWorkers(hub);
   } catch (e) {
     console.warn('[tandem] dispatch worker resync failed:', (e as Error).message);
@@ -226,12 +215,10 @@ export async function maybeStartDispatcher(): Promise<(() => void) | null> {
   if (process.env.TANDEM_NO_DISPATCHER) return null;
   const url = env.TANDEM_PUBLIC_URL ?? 'http://localhost:3000';
   const hub = await redisQueue();
-  if (hub) {
-    await syncDispatchWorkers(hub);
-    console.log(`[tandem] dispatch queue workers started (redis, per-agent)`);
-  }
+  await syncDispatchWorkers(hub);
+  console.log(`[tandem] dispatch queue workers started (redis, per-agent)`);
   const stop = startDispatcher(url);
-  console.log(`[tandem] dispatcher started (${hub ? 'redis+interval' : 'interval'})`);
+  console.log(`[tandem] dispatcher started (redis+interval)`);
   return stop;
 }
 

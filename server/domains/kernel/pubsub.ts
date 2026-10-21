@@ -1,6 +1,6 @@
 // Pubsub domain: cross-replica change-event fanout over Redis pub/sub via
-// @orpc/publisher. Null when REDIS_URL is unset — the local memory bus alone
-// already serves single-replica deployments.
+// @orpc/publisher. REDIS_URL is REQUIRED (validated at boot) — redis is a
+// hard dependency.
 import { RedisPublisher } from '@orpc/publisher/redis';
 import { env } from './env';
 
@@ -10,23 +10,21 @@ export type PubsubDomain = {
   close: () => Promise<void>;
 };
 
-let domain: PubsubDomain | null = null;
+let domainPromise: Promise<PubsubDomain> | null = null;
 
-/** lazily create the pubsub domain; returns null when REDIS_URL is unset */
-export function redisPubsub(): Promise<PubsubDomain | null> {
-  if (!process.env.REDIS_URL) return Promise.resolve(null);
-  if (!domain)
-    domain = createPubsubDomain().catch((e: unknown) => {
-      domain = null;
-      throw e;
-    }) as unknown as PubsubDomain;
-  return Promise.resolve(domain);
+/** lazily create the pubsub domain; REDIS_URL is validated at boot */
+export function redisPubsub(): Promise<PubsubDomain> {
+  domainPromise ??= createPubsubDomain().catch((e: unknown) => {
+    domainPromise = null;
+    throw e;
+  });
+  return domainPromise;
 }
 
 async function createPubsubDomain(): Promise<PubsubDomain> {
   const [{ createClient }] = await Promise.all([import('redis')]);
 
-  const url = process.env.REDIS_URL ?? '';
+  const url = process.env.REDIS_URL!;
   // fail fast: verify the connection works before handing out the domain
   const ping = createClient({
     url,
@@ -62,7 +60,7 @@ async function createPubsubDomain(): Promise<PubsubDomain> {
     async close() {
       await Promise.allSettled(unsubs.map((u) => u()));
       raw.disconnect();
-      domain = null;
+      domainPromise = null;
     },
   };
 }

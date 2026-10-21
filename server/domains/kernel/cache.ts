@@ -1,5 +1,5 @@
-// Cache domain: cache-manager with a redis store when REDIS_URL is set, in-memory
-// otherwise. Always available — cache misses only cost performance, never function.
+// Cache domain: cache-manager over a redis store. REDIS_URL is REQUIRED
+// (validated at boot) — redis is a hard dependency.
 import { createCache } from 'cache-manager';
 import { Keyv } from 'keyv';
 import KeyvRedis from '@keyv/redis';
@@ -15,7 +15,7 @@ export type CacheDomain = {
 
 let domainPromise: Promise<CacheDomain> | null = null;
 
-/** lazily create the cache domain; memory store when REDIS_URL is unset */
+/** lazily create the cache domain */
 export function appCache(): Promise<CacheDomain> {
   domainPromise ??= createCacheDomain().catch((e: unknown) => {
     domainPromise = null;
@@ -25,30 +25,25 @@ export function appCache(): Promise<CacheDomain> {
 }
 
 async function createCacheDomain(): Promise<CacheDomain> {
-  const url = process.env.REDIS_URL ?? '';
+  const url = process.env.REDIS_URL!;
   const raws: Array<{ disconnect: () => void }> = [];
-  let store;
-  if (url) {
-    // fail fast: verify the connection works before handing out the domain
-    const { createClient } = await import('redis');
-    const ping = createClient({
-      url,
-      socket: { connectTimeout: 1500, reconnectStrategy: () => new Error('no-retry') },
-    });
-    ping.on('error', () => {});
-    try {
-      await ping.connect();
-      await ping.ping();
-    } finally {
-      ping.disconnect();
-    }
-
-    const keyvRedis = new KeyvRedis(url);
-    raws.push(keyvRedis);
-    store = new Keyv({ store: keyvRedis, ttl: 0 });
-  } else {
-    store = new Keyv();
+  // fail fast: verify the connection works before handing out the domain
+  const { createClient } = await import('redis');
+  const ping = createClient({
+    url,
+    socket: { connectTimeout: 1500, reconnectStrategy: () => new Error('no-retry') },
+  });
+  ping.on('error', () => {});
+  try {
+    await ping.connect();
+    await ping.ping();
+  } finally {
+    ping.disconnect();
   }
+
+  const keyvRedis = new KeyvRedis(url);
+  raws.push(keyvRedis);
+  const store = new Keyv({ store: keyvRedis, ttl: 0 });
   const cache = createCache({ stores: [store] });
 
   return {

@@ -8,6 +8,9 @@ import { execSync } from 'node:child_process';
 import type { GlobalSetupContext } from 'vitest/node';
 
 const NAME = 'tandem-test-pg';
+const REDIS_NAME = 'tandem-test-redis';
+const REDIS_IMAGE = 'redis:8-alpine';
+const REDIS_PORT = process.env.CI ? '6379' : String(6399);
 const needsLocalContainer = !process.env.TANDEM_TEST_DATABASE_URL && !process.env.CI;
 
 function run(cmd: string) {
@@ -53,7 +56,36 @@ async function discoverPort() {
   }
 }
 
-export async function setup({ provide }: GlobalSetupContext) {
+function redisRunning() {
+  try {
+    return run(`docker inspect -f {{.State.Running}} ${REDIS_NAME}`) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/** redis is a hard dependency — every suite run (dev or CI) gets a URL */
+async function ensureRedis({ provide }: GlobalSetupContext) {
+  if (process.env.CI) {
+    process.env.REDIS_URL = `redis://127.0.0.1:${REDIS_PORT}`;
+    provide('redisUrl', process.env.REDIS_URL);
+    return;
+  }
+  if (!redisRunning()) {
+    try {
+      run(`docker rm -f ${REDIS_NAME}`);
+    } catch {
+      /* none */
+    }
+    run(`docker run -d --rm --name ${REDIS_NAME} -p ${REDIS_PORT}:6379 ${REDIS_IMAGE}`);
+  }
+  process.env.REDIS_URL = `redis://127.0.0.1:${REDIS_PORT}`;
+  provide('redisUrl', process.env.REDIS_URL);
+}
+
+export async function setup(ctx: GlobalSetupContext) {
+  await ensureRedis(ctx);
+  const { provide } = ctx;
   if (!needsLocalContainer) {
     const url = process.env.TANDEM_TEST_DATABASE_URL || 'postgresql://tandem:tandem@127.0.0.1:5432/tandem_test';
     process.env.TANDEM_TEST_DATABASE_URL = url;
@@ -102,6 +134,11 @@ export async function teardown() {
   if (!needsLocalContainer) return;
   try {
     run(`docker rm -f ${NAME}`);
+  } catch {
+    /* already gone */
+  }
+  try {
+    run(`docker rm -f ${REDIS_NAME}`);
   } catch {
     /* already gone */
   }

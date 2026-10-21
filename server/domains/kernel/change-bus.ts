@@ -59,7 +59,6 @@ export async function publishChange(resource: ChangeResource, action: ChangeActi
 /** boot hook: bridge Redis pub/sub -> local memory bus (no-op without REDIS_URL) */
 export async function bridgeRedisChanges(): Promise<void> {
   const pubsub = await redisPubsub();
-  if (!pubsub) return;
   await pubsub.subscribe(CHANGE_CHANNEL, (raw) => {
     const e = decodeChange(raw);
     if (e.id === lastPublishedId) return; // own echo: already on the local bus

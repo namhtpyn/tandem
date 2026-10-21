@@ -9,7 +9,7 @@ const envSchema = z.object({
   TANDEM_VAULT_KEY: z
     .string()
     .refine((v) => Buffer.from(v, 'base64').length === 32, 'must decode to 32 bytes (openssl rand -base64 32)'),
-  REDIS_URL: z.string().url().optional(),
+  REDIS_URL: z.string().url(),
   TANDEM_PUBLIC_URL: z.string().url().optional(),
   TANDEM_ATTACHMENTS_DIR: z.string().optional(),
   TANDEM_DRIZZLE_DIR: z.string().optional(),
@@ -23,7 +23,7 @@ const envSchema = z.object({
 const parsed = envSchema.safeParse({
   DATABASE_URL: process.env.DATABASE_URL,
   TANDEM_VAULT_KEY: process.env.TANDEM_VAULT_KEY,
-  REDIS_URL: process.env.REDIS_URL || undefined,
+  REDIS_URL: process.env.REDIS_URL,
   TANDEM_PUBLIC_URL: process.env.TANDEM_PUBLIC_URL || undefined,
   BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET || undefined,
   BETTER_AUTH_URL: process.env.BETTER_AUTH_URL || undefined,
