@@ -1,3 +1,10 @@
+## [2.37.2](https://github.com/namhtpyn/tandem/compare/v2.37.1...v2.37.2) (2026-10-21)
+
+
+### Bug Fixes
+
+* **kernel:** redis boot ping timeout 1500 → 5000ms — coverage-instrumented runs exceeded 1.5s ([c9915d8](https://github.com/namhtpyn/tandem/commit/c9915d80753387bec60068b3317481347f5d20a2))
+
 ## [2.37.1](https://github.com/namhtpyn/tandem/compare/v2.37.0...v2.37.1) (2026-10-21)
 
 
