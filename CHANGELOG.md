@@ -1,3 +1,10 @@
+## [2.38.1](https://github.com/namhtpyn/tandem/compare/v2.38.0...v2.38.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **ci:** gen:auth under node/jiti — inert drizzle handle in the CLI auth config ([bbe9273](https://github.com/namhtpyn/tandem/commit/bbe92739945a72ff4f861d19eee546346a90077a))
+
 # [2.38.0](https://github.com/namhtpyn/tandem/compare/v2.37.5...v2.38.0) (2026-10-21)
 
 
