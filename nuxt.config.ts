@@ -17,6 +17,10 @@ export default defineNuxtConfig({
   modules: ['@vueuse/nuxt', '@nuxt/ui', '@nuxt/fonts', '@nuxt/icon', '@dxup/nuxt'],
   css: ['~/assets/css/main.css'],
   compatibilityDate: '2026-01-01',
+  vite: {
+    // server code imports the bun builtin (Bun SQL client) — the bundler must leave it alone
+    build: { rollupOptions: { external: ['bun'] } },
+  },
   nitro: {
     // bun runtime in dev, test and prod — the bun preset bundles bun-specific package
     // exports correctly (default node preset can mis-bundle them) and emits a leaner server

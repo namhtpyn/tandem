@@ -9,6 +9,7 @@ import { join } from 'node:path';
 //
 // Migrations are drizzle-kit SQL folders applied at boot by drizzle's own
 // migrator (drizzle.__drizzle_migrations ledger), not a hand-rolled runner.
+import { SQL } from 'bun';
 import { drizzle } from 'drizzle-orm/bun-sql';
 import { migrate } from 'drizzle-orm/bun-sql/migrator';
 
@@ -18,7 +19,7 @@ import { user, session, account, verification, settings, relations } from './sch
 
 const url = env.DATABASE_URL;
 
-export const sqlClient = new Bun.SQL(url, {
+export const sqlClient = new SQL(url, {
   max: 10,
   idleTimeout: 20,
   connectionTimeout: 10,
