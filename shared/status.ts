@@ -13,4 +13,4 @@ export const STATUS = {
   inReview: '01a14743-43f5-759d-a00e-a90831248ea5',
   blocked: '01a14743-43f5-759d-a00e-ada27e46c2f8',
   cancelled: '01a14743-43f5-759d-a00e-b0f2a5a04f4c',
-} as const
+} as const;

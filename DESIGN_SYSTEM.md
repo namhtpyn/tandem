@@ -6,24 +6,24 @@ imports. Dark mode is first-class (class strategy).
 
 ## Tokens
 
-| Token | Value | Used for |
-|---|---|---|
-| Primary color | `amber` | brand marks, primary buttons, focus rings, active nav |
-| Neutral color | `zinc` | text, borders, backgrounds, all neutral surfaces |
-| App background | `bg-zinc-50` / `dark:bg-zinc-950` | page canvas |
-| Body text | `text-zinc-900` / `dark:text-white` | headings + strong text |
-| Muted text | `text-zinc-500` / `text-zinc-400` | descriptions, secondary labels |
-| Version label | `font-mono text-xs text-zinc-400` | version chips (`v{{ appVersion }}`) |
-| Radius scale | Tailwind default (`rounded-xl`, `rounded-2xl`) | logo tiles `2xl`, cards/buttons via UCard/UButton |
-| Icons | Lucide (`i-lucide-*`) via @nuxt/icon | every icon, no other sets |
-| Fonts | Nuxt UI default stack + `font-mono` for versions/ids | — |
+| Token          | Value                                                | Used for                                              |
+| -------------- | ---------------------------------------------------- | ----------------------------------------------------- |
+| Primary color  | `amber`                                              | brand marks, primary buttons, focus rings, active nav |
+| Neutral color  | `zinc`                                               | text, borders, backgrounds, all neutral surfaces      |
+| App background | `bg-zinc-50` / `dark:bg-zinc-950`                    | page canvas                                           |
+| Body text      | `text-zinc-900` / `dark:text-white`                  | headings + strong text                                |
+| Muted text     | `text-zinc-500` / `text-zinc-400`                    | descriptions, secondary labels                        |
+| Version label  | `font-mono text-xs text-zinc-400`                    | version chips (`v{{ appVersion }}`)                   |
+| Radius scale   | Tailwind default (`rounded-xl`, `rounded-2xl`)       | logo tiles `2xl`, cards/buttons via UCard/UButton     |
+| Icons          | Lucide (`i-lucide-*`) via @nuxt/icon                 | every icon, no other sets                             |
+| Fonts          | Nuxt UI default stack + `font-mono` for versions/ids | —                                                     |
 
 Set in `app/app.config.ts`:
 
 ```ts
 export default defineAppConfig({
   ui: { colors: { primary: 'amber', neutral: 'zinc' } },
-})
+});
 ```
 
 ## Layout

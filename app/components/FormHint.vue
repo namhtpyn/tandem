@@ -1,12 +1,15 @@
 <script setup lang="ts">
 // Info icon with hover popover — drop-in for UFormField's #hint slot so field
 // descriptions render consistently across every form.
-const props = withDefaults(defineProps<{
-  /** popover text */
-  text: string
-  /** accessible label defaults to text */
-  label?: string
-}>(), {})
+const props = withDefaults(
+  defineProps<{
+    /** popover text */
+    text: string;
+    /** accessible label defaults to text */
+    label?: string;
+  }>(),
+  {},
+);
 </script>
 
 <template>

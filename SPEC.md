@@ -12,25 +12,32 @@ Remote-only: the agent never runs on the Tandem server itself.
 
 ## Milestones
 
-| id | scope | status |
-|---|---|---|
-| M1 | foundation: schema, auth, settings, health, admin shell, boot migrations + admin seed | shipped |
-| M2 | environments: oRPC v2 live API, realtime admin UI, SSH probe (Bun Shell) | shipped |
-| M3 | employees (human/AI, title, managerId, org view | planned |
-| M4 | tasks CRUD, assignee, status | shipped |
-| M4+ | workflow (question chain, unanimous review), agent dispatcher + streamed runs | shipped |
-| M5 | runner: per-env serial queue, SSH one-shot Hermes, stream capture | shipped |
-| M6 | ship: tests at 100%, CI, semantic-release, GHCR, docs | shipped |
+| id  | scope                                                                                 | status  |
+| --- | ------------------------------------------------------------------------------------- | ------- |
+| M1  | foundation: schema, auth, settings, health, admin shell, boot migrations + admin seed | shipped |
+| M2  | environments: oRPC v2 live API, realtime admin UI, SSH probe (Bun Shell)              | shipped |
+| M3  | employees (human/AI, title, managerId, org view                                       | planned |
+| M4  | tasks CRUD, assignee, status                                                          | shipped |
+| M4+ | workflow (question chain, unanimous review), agent dispatcher + streamed runs         | shipped |
+| M5  | runner: per-env serial queue, SSH one-shot Hermes, stream capture                     | shipped |
+| M6  | ship: tests at 100%, CI, semantic-release, GHCR, docs                                 | shipped |
 
 ## Domain model
+
+Default minting law (2026-10-20): every id and every timestamp is minted by the
+APP, never the DB — drizzle `.$default(() => uuidv7())` on ids (v7 from the
+`uuid` package), `.$default(() => new Date())` on created/started timestamps,
+`.$default(...).$onUpdate(() => new Date())` on updated_at. Legacy DB-level
+`DEFAULT now()` columns remain in the DDL but are dormant (drizzle always
+supplies values). Applies to both schema.ts and the generated schema.auth.ts.
 
 ```
 environments(id, name, host, port, username, created_at, updated_at)
 employees(id, name, kind: human|ai, title, manager_id -> employees.id, environment_id -> environments.id, instructions, created_at, updated_at)
 tasks(id, title, description, assignee_id -> employees.id, status, created_at, updated_at)
-runs(id, task_id -> tasks.id cascade, employee_id -> tandem_user.id set null, environment_id, status running|done|failed, exit_code, output (full — no truncation), prompt (the exact brief sent for the turn, null on pre-2.26 rows), started_at, finished_at)
+runs(id, task_id -> tasks.id cascade, employee_id -> user.id set null, environment_id, status running|done|failed, exit_code, output (full — no truncation), prompt (the exact brief sent for the turn, null on pre-2.26 rows), started_at, finished_at)
 tasks.workflow: owner_id, reviewers text[], question_chain text[] (loop guard state)
-task_obligations(id, task_id -> tasks.id cascade, employee_id -> tandem_user.id, role: answer|approval, status: pending|fulfilled|cancelled, created_at, resolved_at, resolved_by) — single source of "who acts next"; replaces question_holder_id + review_approvals (one migration backfills and drops both). answer moves on forward (old row resolved, new row pending); approvals spawn one row per reviewer per round (shared timestamp = round identity; a round with any cancelled row is dead -> request-changes resets approvals); drives the waiting-on-you inbox + badge (tasks.inbox: items + counts by role)
+task_obligations(id, task_id -> tasks.id cascade, employee_id -> user.id, role: answer|approval, status: pending|fulfilled|cancelled, created_at, resolved_at, resolved_by) — single source of "who acts next"; replaces question_holder_id + review_approvals (one migration backfills and drops both). answer moves on forward (old row resolved, new row pending); approvals spawn one row per reviewer per round (shared timestamp = round identity; a round with any cancelled row is dead -> request-changes resets approvals); drives the waiting-on-you inbox + badge (tasks.inbox: items + counts by role)
 task_assignments(id, task_id cascade, employee_id set null, reason, actor_id, started_at, ended_at) — append-only assignee ledger; current assignee stays denormalized on tasks.assignee_id; every change (create/update/reassign) flows through recordAssignment; derived "X -> Y" activity; recent rows feed the reassign ping-pong loop guard
 tasks.parent_task_id -> tasks.id (set null), tasks.pre_block_status — subtask nesting, unlimited depth; children are full tasks (own assignee/runs/reviewers); parent auto-blocks while any child is non-terminal (done or cancelled-category), restoring pre_block_status when all children land terminal — derived, no drift; submit is refused while children are open; child briefs carry "This is a subtask of: <parent title>"
 task_proposals(id, task_id cascade, run_id cascade, kind: subtasks|reassign, payload jsonb, status: proposed|executed|rejected, decision_note, decided_by, decided_at, created_at) — agent routing proposals parsed from run output on settle ([SUBTASKS] title :: desc :: assignee | … / [REASSIGN] Name — reason); human confirms via tasks.confirmProposal/rejectProposal — the confirm flow is the single structural writer. AUTO-EXECUTION LAW (2026-10-16): when EVERY routing target of a proposal resolves inside the proposing agent's own supervision chain, the proposal executes immediately at settle (no approval) through the same confirm path; outside-chain targets or unnamed routing still wait for a human, and the ping-pong loop guard still applies (a guarded target stays proposed rather than executing): subtasks are created full (assignee kept when inside the agent's supervision chain, else escalated to the agent's supervisor; unknown names land unassigned), reassigns write through the ledger with a loop guard refusing recent assignees; rejected notes ride the next brief to prevent re-propose loops
@@ -63,7 +70,7 @@ ssh -p <port> <user>@<host> hermes chat -q --query-file - --format stream-json
 
 ## Auth
 
-- better-auth + drizzle adapter; canonical tables `tandem_user`, `tandem_session`, `tandem_account`, `tandem_verification`
+- better-auth + drizzle adapter; canonical tables `user`, `session`, `account`, `verification`
 - password email + generic OIDC (any count, discovery via `issuer/.well-known/openid-configuration`)
 - sign-up is **closed** after any user exists (403 `sign-up is closed`); the FIRST user (boot-seeded admin) holds the instance; the first user to sign up is promoted to `admin` via the user.create after hook
 - OIDC user creation is never gated
@@ -123,22 +130,22 @@ better-auth's own `/auth/**` protocol and the `/health/*` infra probes. Rules:
 
 ### Procedures (complete list)
 
-| procedure | auth | input | result |
-|---|---|---|---|
-| `meta.version` | none | — | `{version}` |
-| `changes.live` | session | — | SSE stream of `{resource, action}` change events (post-load invalidation only — never carries data) |
-| `auth.config` | none | — | plain GET `{passwordEnabled, oidcEnabled, providers:[{id,label}]}` |
-| `auth.configLive` | none | — | live `{passwordEnabled, oidcEnabled, providers:[{id,label}]}` |
-| `auth.session` | none | — | session payload or null |
-| `settings.live` | session | — | live `{disablePasswordLogin}` |
-| `settings.update` | session | `{disablePasswordLogin?}` | `{ok}` (400 when disabling with no OIDC provider) |
-| `oidc.live` | session | — | live provider list with `hasSecret`, never secrets |
-| `oidc.replace` | session | `{providers:[{id?,label,issuer,clientId,clientSecret?}]}` | `{ok,count}` (secrets write-only; ids server-generated for new providers) |
-| `environments.live` | session | — | live snapshot of all environments |
-| `environments.create` | session | `{name,host,port?,username}` | created row |
-| `environments.update` | session | `{id,name,host,port?,username}` | updated row |
-| `environments.remove` | session | `{id}` | `{ok}` |
-| `environments.probe` | session | `{id}` | `{ok,detail,durationMs}` |
+| procedure             | auth    | input                                                     | result                                                                                              |
+| --------------------- | ------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `meta.version`        | none    | —                                                         | `{version}`                                                                                         |
+| `changes.live`        | session | —                                                         | SSE stream of `{resource, action}` change events (post-load invalidation only — never carries data) |
+| `auth.config`         | none    | —                                                         | plain GET `{passwordEnabled, oidcEnabled, providers:[{id,label}]}`                                  |
+| `auth.configLive`     | none    | —                                                         | live `{passwordEnabled, oidcEnabled, providers:[{id,label}]}`                                       |
+| `auth.session`        | none    | —                                                         | session payload or null                                                                             |
+| `settings.live`       | session | —                                                         | live `{disablePasswordLogin}`                                                                       |
+| `settings.update`     | session | `{disablePasswordLogin?}`                                 | `{ok}` (400 when disabling with no OIDC provider)                                                   |
+| `oidc.live`           | session | —                                                         | live provider list with `hasSecret`, never secrets                                                  |
+| `oidc.replace`        | session | `{providers:[{id?,label,issuer,clientId,clientSecret?}]}` | `{ok,count}` (secrets write-only; ids server-generated for new providers)                           |
+| `environments.live`   | session | —                                                         | live snapshot of all environments                                                                   |
+| `environments.create` | session | `{name,host,port?,username}`                              | created row                                                                                         |
+| `environments.update` | session | `{id,name,host,port?,username}`                           | updated row                                                                                         |
+| `environments.remove` | session | `{id}`                                                    | `{ok}`                                                                                              |
+| `environments.probe`  | session | `{id}`                                                    | `{ok,detail,durationMs}`                                                                            |
 
 Wiring follows the official oRPC docs: Nuxt adapter (`toWebRequest` +
 `RPCHandler` with `onError` interceptor), Better Auth lazy `getSession`
@@ -148,13 +155,13 @@ HTTP hop; per-request so cookies stay current).
 
 ### Environments procedures
 
-| procedure | input | result |
-|---|---|---|
-| `environments.live` | — | live snapshot stream of all environments |
-| `environments.create` | `{name,host,port?,username}` | created row |
-| `environments.update` | `{id,name,host,port?,username}` | updated row |
-| `environments.remove` | `{id}` | `{ok:true}` |
-| `environments.probe` | `{id}` | `{ok,detail,durationMs}` |
+| procedure             | input                           | result                                   |
+| --------------------- | ------------------------------- | ---------------------------------------- |
+| `environments.live`   | —                               | live snapshot stream of all environments |
+| `environments.create` | `{name,host,port?,username}`    | created row                              |
+| `environments.update` | `{id,name,host,port?,username}` | updated row                              |
+| `environments.remove` | `{id}`                          | `{ok:true}`                              |
+| `environments.probe`  | `{id}`                          | `{ok,detail,durationMs}`                 |
 
 - names unique (409 on clash, including rename onto another row)
 - probe: BatchMode ssh (`StrictHostKeyChecking=accept-new`, ConnectTimeout 5),
@@ -185,8 +192,8 @@ secrets are never returned.
 ## Boot sequence
 
 1. module init: `sqlClient` built from `DATABASE_URL`; missing env → process exits 1
-2. `tandem_migrations` ledger table is created; bundled drizzle SQL is applied in name order
-3. no users & `tandem_user` rows → seed admin (`ADMIN_EMAIL`/`ADMIN_PASSWORD`, defaults `admin@tandem.local` / tandem-admin); seed never runs when users exists
+2. `migrations` ledger table is created; bundled drizzle SQL is applied in name order
+3. no users & `user` rows → seed admin (`ADMIN_EMAIL`/`ADMIN_PASSWORD`, defaults `admin@tandem.local` / tandem-admin); seed never runs when users exists
 4. password stored as better-auth scrypt (`salt:hash`, no prefix label)
 
 ## UI laws
@@ -198,19 +205,19 @@ secrets are never returned.
 
 ## Routes table
 
-| method | path | auth | purpose |
-|---|---|---|---|
-| POST/GET | `/auth/**` | public (policy gates inside) | better-auth handler |
-| GET | `/health/live` | none | liveness |
-| GET | `/health/ready` | none | readiness |
-| GET | `/api/auth-config` | none | login capabilities |
-| POST | `/rpc/**` | varies (see API law) | all application procedures |
-| POST | `/rpc/**` | session (oRPC middleware) | oRPC v2 procedures (see API law) |
-| POST | `/api/tasks/:id/attachments` | session | multipart attachment upload (REST exception, like avatar) |
-| GET | `/api/attachments/:id` | session | serve attachment bytes (etag = sha256, 304 revalidation) |
-| GET | `/` | none | 302 → `/admin` |
-| GET | `/tasks` | session | task list/board (mobile-first cards; titles link to the task page) |
-| GET | `/tasks/:id` | session | task info page: header + workflow actions + agent runs (full output) + activity feed; data loads via GET procs and refetches on change events |
+| method   | path                         | auth                         | purpose                                                                                                                                       |
+| -------- | ---------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST/GET | `/auth/**`                   | public (policy gates inside) | better-auth handler                                                                                                                           |
+| GET      | `/health/live`               | none                         | liveness                                                                                                                                      |
+| GET      | `/health/ready`              | none                         | readiness                                                                                                                                     |
+| GET      | `/api/auth-config`           | none                         | login capabilities                                                                                                                            |
+| POST     | `/rpc/**`                    | varies (see API law)         | all application procedures                                                                                                                    |
+| POST     | `/rpc/**`                    | session (oRPC middleware)    | oRPC v2 procedures (see API law)                                                                                                              |
+| POST     | `/api/tasks/:id/attachments` | session                      | multipart attachment upload (REST exception, like avatar)                                                                                     |
+| GET      | `/api/attachments/:id`       | session                      | serve attachment bytes (etag = sha256, 304 revalidation)                                                                                      |
+| GET      | `/`                          | none                         | 302 → `/admin`                                                                                                                                |
+| GET      | `/tasks`                     | session                      | task list/board (mobile-first cards; titles link to the task page)                                                                            |
+| GET      | `/tasks/:id`                 | session                      | task info page: header + workflow actions + agent runs (full output) + activity feed; data loads via GET procs and refetches on change events |
 
 ## Testing contract
 

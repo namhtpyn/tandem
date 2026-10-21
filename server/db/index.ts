@@ -1,27 +1,24 @@
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 // Postgres client (postgres.js) + drizzle rc (Relations v2) + boot-applied migrations.
 //
 // Env:
 //   DATABASE_URL            — postgres://user:pass@host:port/db (required in prod)
 //   TANDEM_DRIZZLE_DIR      — migrations dir override (default ./drizzle)
 //
-// Migrations are drizzle-kit SQL folders applied at boot, tracked in tandem_migrations.
-import { drizzle } from 'drizzle-orm/postgres-js'
-import postgres from 'postgres'
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import {
-  user, session, account, verification, settings,
-  relations,
-} from './schema'
+// Migrations are drizzle-kit SQL folders applied at boot by drizzle's own
+// migrator (drizzle.__drizzle_migrations ledger), not a hand-rolled runner.
+import { drizzle } from 'drizzle-orm/postgres-js';
+import { migrate } from 'drizzle-orm/postgres-js/migrator';
+import postgres from 'postgres';
 
-const url = process.env.DATABASE_URL
-/* v8 ignore start -- unit tests exercise this via a child process */
-if (!url) {
-  // eslint-disable-next-line no-console
-  console.error('[tandem] DATABASE_URL is required')
-  process.exit(1)
-}
-/* v8 ignore stop */
+import { env } from '../domains/kernel/env';
+import { installRqbExtensions } from './rqb-extensions';
+import { user, session, account, verification, settings, relations } from './schema';
+
+const url = env.DATABASE_URL;
 
 // runner-side client: prepare false keeps boot-time DDL safe with pgbouncer-ish pools
 export const sqlClient = postgres(url, {
@@ -29,68 +26,61 @@ export const sqlClient = postgres(url, {
   idle_timeout: 20,
   connect_timeout: 10,
   prepare: false,
-})
+});
 
 // ---------- boot migrations ----------
 
-interface MigrationSource {
-  name: string // folder name, e.g. 20261009133348_hard_weapon_omega
-  sql: string
+/** drizzle's folderMillis convention: millis from the 14-digit folder prefix */
+function folderMillis(name: string): number {
+  const parts = [0, 4, 6, 8, 10, 12].map((i) => Number(name.slice(i, i + 2)));
+  if (parts.some((n) => Number.isNaN(n))) return 0; // non-timestamp folder names
+  return Date.UTC(2000 + parts[0]!, parts[1]! - 1, parts[2]!, parts[3]!, parts[4]!, parts[5]!);
 }
 
-async function listMigrations(): Promise<MigrationSource[]> {
-  // bundled nitro serverAssets: mounted at /assets, keys like "drizzle:2026...:migration.sql"
-  /* v8 ignore start -- nitro-runtime branch: exercised by the real server in E2E */
-  try {
-    const storage = useStorage()
-    const keys: string[] = await storage.getKeys('assets:drizzle:')
-    const sqlKeys = keys.filter(k => k.endsWith('.sql')).sort()
-    const out: MigrationSource[] = []
-    for (const key of sqlKeys) {
-      const name = key.replace(/^assets:drizzle:/, '').replace(/:migration\.sql$/, '')
-      const raw = await storage.getItem(key)
-      if (typeof raw === 'string') out.push({ name, sql: raw })
-    }
-    if (out.length > 0) return out
-  }
-  catch (e) {
-    // no nitro storage context (standalone scripts) — fall through
+async function appliedNames(): Promise<string[]> {
+  const t = await sqlClient`select to_regclass('drizzle.__drizzle_migrations') as t`;
+  if (!t[0]?.t) return [];
+  const rows = await sqlClient`select name from drizzle.__drizzle_migrations where name is not null`;
+  return rows.map((r) => r.name as string);
+}
 
-  }
-  // 2) filesystem fallback (dev / TANDEM_DRIZZLE_DIR override)
-  const drizzleDir = process.env.TANDEM_DRIZZLE_DIR || join(process.cwd(), 'drizzle')
-  try {
-    const dirs = readdirSync(drizzleDir).filter(d => /^\d+_/.test(d)).sort()
-    return dirs.flatMap((dir) => {
-      const sqlFile = readdirSync(join(drizzleDir, dir)).find(f => f.endsWith('.sql'))
-      if (!sqlFile) return []
-      return [{ name: dir, sql: readFileSync(join(drizzleDir, dir, sqlFile), 'utf8') }]
-    })
-  }
-  catch {
-    return []
+/** earlier custom runner tracked by folder name in public.tandem_migrations / public.migrations —
+ * adopt those rows into drizzle's ledger so already-run folders never re-run */
+async function adoptLegacyLedger(migrationsFolder: string) {
+  const old = await sqlClient`select 1 from information_schema.tables where table_schema = 'public' and table_name = 'tandem_migrations'`;
+  const cur = await sqlClient`select 1 from information_schema.tables where table_schema = 'public' and table_name = 'migrations'`;
+  if (old.length > 0 && cur.length === 0) await sqlClient`alter table tandem_migrations rename to migrations`;
+  const legacy = await sqlClient`select 1 from information_schema.tables where table_schema = 'public' and table_name = 'migrations'`;
+  if (legacy.length === 0) return;
+  const rows = await sqlClient`select name from migrations`;
+  if (rows.length === 0 || (await appliedNames()).length > 0) return;
+  await sqlClient`create schema if not exists drizzle`;
+  await sqlClient`create table if not exists drizzle.__drizzle_migrations (
+    id serial primary key,
+    hash text not null,
+    created_at bigint,
+    name text,
+    applied_at timestamptz default now()
+  )`;
+  for (const { name } of rows) {
+    const file = join(migrationsFolder, name as string, 'migration.sql');
+    if (!existsSync(file)) continue;
+    const hash = createHash('sha256').update(readFileSync(file)).digest('hex');
+    await sqlClient`insert into drizzle.__drizzle_migrations (hash, created_at, name) values (${hash}, ${folderMillis(name as string)}, ${name as string})`;
   }
 }
 
+/** apply pending drizzle migrations; returns the folders applied this boot */
 export async function applyMigrations(): Promise<string[]> {
-  const applied: string[] = []
-  await sqlClient`create table if not exists tandem_migrations (
-    name text primary key,
-    applied_at timestamptz not null default now()
-  )`
-  const migrations = await listMigrations()
-  for (const m of migrations) {
-    const already = await sqlClient`select 1 from tandem_migrations where name = ${m.name}`
-    if (already.length > 0) continue
-    const stmts = m.sql.split('--> statement-breakpoint').map(s => s.trim()).filter(Boolean)
-    // one transaction per migration folder
-    await sqlClient.begin(async (tx) => {
-      for (const stmt of stmts) await tx.unsafe(stmt)
-      await tx`insert into tandem_migrations (name) values (${m.name})`
-    })
-    applied.push(m.name)
-  }
-  return applied
+  const migrationsFolder = env.TANDEM_DRIZZLE_DIR || join(process.cwd(), 'drizzle');
+  if (!existsSync(migrationsFolder)) return [];
+  await adoptLegacyLedger(migrationsFolder);
+  const before = new Set(await appliedNames());
+  await migrate(db, { migrationsFolder });
+  return (await appliedNames()).filter((n) => !before.has(n));
 }
 
-export const db = drizzle({ client: sqlClient, relations })
+export const db = drizzle({ client: sqlClient, relations });
+
+// install count/findManyAndCount on the live query builders (chunker drops bare side-effect imports)
+installRqbExtensions(db.query);

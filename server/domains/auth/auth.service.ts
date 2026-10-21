@@ -1,3 +1,5 @@
+import { apiKey } from '@better-auth/api-key';
+import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 // better-auth with password login + runtime-configurable generic OIDC providers.
 // The instance is a lazily-built singleton that REBUILDS when the provider set or
 // password policy changes (OIDC discovery happens at build time; DB sessions survive).
@@ -5,62 +7,73 @@
 // Env:
 //   BETTER_AUTH_SECRET  — session signing (required)
 //   BETTER_AUTH_URL     — canonical origin override
-import { betterAuth } from 'better-auth'
-import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2'
-import { genericOAuth } from 'better-auth/plugins/generic-oauth'
-import { testUtils } from 'better-auth/plugins'
-import { apiKey } from '@better-auth/api-key'
-import { eq } from 'drizzle-orm'
-import { db } from '../../db'
-import { user as userTable } from '../../db/schema'
-import { authSchema } from '../../db/schema'
-import { getSettings } from '../settings/settings.service'
-import { getOidcProviders, type OidcProvider } from './oidc.service'
-import { uuidv7 } from '../kernel/ids'
+import { betterAuth } from 'better-auth';
+import { testUtils } from 'better-auth/plugins';
+import { genericOAuth } from 'better-auth/plugins/generic-oauth';
+import { eq } from 'drizzle-orm';
+import { v7 as uuidv7 } from 'uuid';
 
-const env = process.env
+import { ROLE, type Role } from '#shared/enums';
 
-export interface AuthPolicy {
-  oidcEnabled: boolean
-  passwordEnabled: boolean
-  oidcProviders: OidcProvider[]
+import { db } from '../../db';
+import { user as userTable } from '../../db/schema';
+import { authSchema } from '../../db/schema';
+import { env as sharedEnv } from '../kernel/env';
+import { getSettings } from '../settings/settings.service';
+import { getOidcProviders, type OidcProvider } from './oidc.service';
+
+const env = sharedEnv;
+
+export type AuthPolicy = {
+  oidcEnabled: boolean;
+  passwordEnabled: boolean;
+  oidcProviders: OidcProvider[];
+};
+
+export async function resolveAuthPolicy() {
+  const s = await getSettings();
+  const providers = await getOidcProviders();
+  const oidcEnabled = providers.length > 0;
+  const passwordEnabled = !(oidcEnabled && (s.disablePasswordLogin || env.TANDEM_DISABLE_PASSWORD_LOGIN === 'true'));
+  return { passwordEnabled, oidcEnabled, oidcProviders: providers };
 }
 
-export async function resolveAuthPolicy(): Promise<AuthPolicy> {
-  const s = await getSettings()
-  const providers = await getOidcProviders()
-  const oidcEnabled = providers.length > 0
-  const passwordEnabled = !(oidcEnabled && (s.disablePasswordLogin || env.TANDEM_DISABLE_PASSWORD_LOGIN === 'true'))
-  return { passwordEnabled, oidcEnabled, oidcProviders: providers }
+export async function anyUserExists() {
+  const row = await db.query.user.findFirst({ columns: { id: true } });
+  return row !== undefined;
 }
 
-export async function anyUserExists(): Promise<boolean> {
-  const rows = await db.select({ id: userTable.id }).from(userTable).limit(1)
-  return rows.length > 0
-}
-
-interface Auth {
-  handler: (request: Request) => Promise<Response>
+type Auth = {
+  handler: (request: Request) => Promise<Response>;
   api: {
     getSession: (opts: { headers: Headers }) => Promise<{
-      user: { id: string, name: string, email: string, emailVerified: boolean, image?: string | null, role?: string | null }
-      session: { id: string, userId: string, expiresAt: Date }
-    } | null>
-    createApiKey: (opts: { body: { name: string, userId: string, prefix?: string } }) => Promise<{ id: string, key: string }>
-  }
-}
+      user: {
+        id: string;
+        name: string;
+        email: string;
+        emailVerified: boolean;
+        image?: string | null;
+        role?: string | null;
+      };
+      session: { id: string; userId: string; expiresAt: Date };
+    } | null>;
+    createApiKey: (opts: {
+      body: { name: string; userId: string; prefix?: string };
+    }) => Promise<{ id: string; key: string }>;
+  };
+};
 
-let instance: Auth | null = null
-let builtWith = ''
+let instance: Auth | null = null;
+let builtWith = '';
 
 function policyKey(p: AuthPolicy): string {
   // everything that feeds betterAuth() config; in-memory only, never logged
-  return JSON.stringify([p.oidcProviders.map(x => [x.id, x.issuer, x.clientId, x.clientSecret]), p.passwordEnabled])
+  return JSON.stringify([p.oidcProviders.map((x) => [x.id, x.issuer, x.clientId, x.clientSecret]), p.passwordEnabled]);
 }
 
-async function buildAuth(options: { includeTestUtils?: boolean } = {}): Promise<Auth> {
-  const p = await resolveAuthPolicy()
-  builtWith = policyKey(p)
+async function buildAuth(options: { includeTestUtils?: boolean } = {}) {
+  const p = await resolveAuthPolicy();
+  builtWith = policyKey(p);
   return betterAuth({
     // UUIDv7 for auth tables (user/session/account/verification), same as every
     // Tandem-minted id — time-ordered, index-friendly.
@@ -78,9 +91,12 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}): Promise<
             // first user claims the instance -> admin role
             /* v8 ignore start -- defensive: better-auth always passes the created user */
             if (u && typeof u === 'object' && 'id' in u) {
-              const rows = await db.select({ id: userTable.id }).from(userTable).limit(2)
+              const rows = await db.query.user.findMany({ columns: { id: true }, limit: 2 });
               if (rows.length === 1) {
-                await db.update(userTable).set({ role: 'admin' }).where(eq(userTable.id, (u as { id: string }).id))
+                await db
+                  .update(userTable)
+                  .set({ role: ROLE.ADMIN })
+                  .where(eq(userTable.id, (u as { id: string }).id));
               }
             }
             /* v8 ignore stop */
@@ -92,9 +108,9 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}): Promise<
       additionalFields: {
         // union type (docs: type: ["user", "admin"]) — inferred end-to-end;
         // input:false = server-owned, users can't self-promote
-        role: { type: ['admin', 'employee', 'viewer'] as const, required: false, defaultValue: 'viewer', input: false },
+        role: { type: [...Object.values(ROLE)] as Role[], required: false, defaultValue: ROLE.VIEWER, input: false },
         // employment title rides the identity row; AI-ness is derived from
-        // the tandem_ai_employees extension row, never a user column
+        // the ai_employees extension row, never a user column
         title: { type: 'string', required: false, defaultValue: '', input: false },
       },
     },
@@ -106,7 +122,7 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}): Promise<
       // production singleton — buildAuthForTest() is the only caller with the flag.
       ...(options.includeTestUtils ? [testUtils({ captureOTP: true })] : []),
       // API keys: AI employees authenticate with x-api-key; keys live in the
-      // tandem_apikey table (hashed). enableSessionForAPIKeys makes
+      // apikey table (hashed). enableSessionForAPIKeys makes
       // getSession accept them, so the oRPC middleware needs no changes.
       apiKey({
         enableSessionForAPIKeys: true,
@@ -116,7 +132,7 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}): Promise<
       ...(p.oidcProviders.length > 0
         ? [
             genericOAuth({
-              config: p.oidcProviders.map(prov => ({
+              config: p.oidcProviders.map((prov) => ({
                 providerId: prov.id,
                 name: prov.label,
                 discoveryUrl: `${prov.issuer.replace(/\/+$/, '')}/.well-known/openid-configuration`,
@@ -134,10 +150,10 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}): Promise<
         // are trusted to link by email (custom providers are not in better-auth's
         // builtin trusted list; without this, auto-linking requires an
         // email_verified claim the IdP may not send)
-        trustedProviders: p.oidcProviders.map(x => x.id),
+        trustedProviders: p.oidcProviders.map((x) => x.id),
       },
     },
-  }) as unknown as Auth
+  }) as unknown as Auth;
 }
 
 /**
@@ -147,20 +163,20 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}): Promise<
  * the plugin, so ctx.test stays typed and no privileged helper ever ships in the
  * production singleton. Used by the e2e login helper against the e2e database.
  */
-export async function buildAuthForTest(): Promise<Auth> {
-  return await buildAuth({ includeTestUtils: true })
+export async function buildAuthForTest() {
+  return await buildAuth({ includeTestUtils: true });
 }
 
-export async function getAuth(): Promise<Auth> {
-  const p = await resolveAuthPolicy()
-  const key = policyKey(p)
+export async function getAuth() {
+  const p = await resolveAuthPolicy();
+  const key = policyKey(p);
   if (!instance || builtWith !== key) {
-    instance = await buildAuth()
+    instance = await buildAuth();
   }
-  return instance
+  return instance;
 }
 
-export async function rebuildAuth(): Promise<Auth> {
-  instance = null
-  return getAuth()
+export async function rebuildAuth() {
+  instance = null;
+  return getAuth();
 }

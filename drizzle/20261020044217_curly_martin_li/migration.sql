@@ -1,0 +1,35 @@
+ALTER TABLE "vault_audit" RENAME COLUMN "at" TO "created_at";--> statement-breakpoint
+ALTER INDEX "vault_audit_at_idx" RENAME TO "vault_audit_created_at_idx";--> statement-breakpoint
+ALTER TABLE "ai_employees" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "ai_employees" ALTER COLUMN "updated_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "employee_titles" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "employee_titles" ALTER COLUMN "updated_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "environments" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "environments" ALTER COLUMN "updated_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "model_providers" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "model_providers" ALTER COLUMN "updated_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "projects" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "projects" ALTER COLUMN "updated_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "settings" ALTER COLUMN "updated_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "task_activity" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "task_assignments" ALTER COLUMN "started_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "task_attachments" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "task_obligations" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "task_proposals" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "task_reviews" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "task_runs" ALTER COLUMN "started_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "task_statuses" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "task_statuses" ALTER COLUMN "updated_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "tasks" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "tasks" ALTER COLUMN "updated_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "vault_audit" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "vault_folders" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "vault_folders" ALTER COLUMN "updated_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "vault_secrets" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "vault_secrets" ALTER COLUMN "updated_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "account" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "session" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "user" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "user" ALTER COLUMN "updated_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "verification" ALTER COLUMN "created_at" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "verification" ALTER COLUMN "updated_at" DROP DEFAULT;
