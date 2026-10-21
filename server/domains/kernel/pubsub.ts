@@ -29,7 +29,7 @@ async function createPubsubDomain(): Promise<PubsubDomain> {
   // fail fast: verify the connection works before handing out the domain
   const ping = createClient({
     url,
-    socket: { connectTimeout: 1500, reconnectStrategy: () => new Error('no-retry') },
+    socket: { connectTimeout: 5000, reconnectStrategy: () => new Error('no-retry') },
   });
   ping.on('error', () => {});
   try {

@@ -32,7 +32,7 @@ async function createCacheDomain(): Promise<CacheDomain> {
   const { createClient } = await import('redis');
   const ping = createClient({
     url,
-    socket: { connectTimeout: 1500, reconnectStrategy: () => new Error('no-retry') },
+    socket: { connectTimeout: 5000, reconnectStrategy: () => new Error('no-retry') },
   });
   ping.on('error', () => {});
   try {
