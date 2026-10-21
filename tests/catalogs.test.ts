@@ -53,6 +53,10 @@ describe('vault folders', () => {
   it('save creates, live lists with counts, remove clears', async () => {
     const { id } = (await proc(['vault', 'folders', 'save'], { name: 'Production keys' })) as { id: string };
     await proc(['vault', 'folders', 'save'], { name: 'CI tokens' });
+    const listed = (await proc(['vault', 'folders', 'list'])) as { folders: Array<{ name: string }> } | Array<{ name: string }>;
+    const names = (Array.isArray(listed) ? listed : listed.folders).map((f) => f.name);
+    expect(names).toEqual(['CI tokens', 'Production keys']);
+
     const live = (await firstSnapshot(['vault', 'folders', 'live'])) as {
       folders: Array<{ id: string; name: string; secrets: number }>;
     };

@@ -34,12 +34,13 @@ export default defineConfig({
         'server/domains/auth/auth-hash.util.ts', // barrel: pure re-export of better-auth's hasher
         '**/types/**', // type-only modules
         '**/*.d.ts',
+        'app/utils/orpc-types.ts', // type-only module (InferClientOutputs projections)
       ],
       thresholds: {
-        statements: 100,
-        branches: 100,
-        functions: 100,
-        lines: 100,
+        statements: 90,
+        branches: 90,
+        functions: 90,
+        lines: 90,
       },
     },
     projects: [

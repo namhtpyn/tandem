@@ -46,20 +46,27 @@ const envSchema = z.preprocess(
 const parsed = await envSchema.safeParseAsync(process.env);
 
 if (!parsed.success) {
+  /* v8 ignore next 7 -- the report line is exercised by coverage-gaps' child-process test,
+     which v8 coverage cannot see; formatEnvIssues itself is unit-tested */
   // eslint-disable-next-line no-console
-  console.error(
-    '[tandem] invalid environment:\n' +
-      parsed.error.issues
-        .map((i) => {
-          const label = i.path.join('.') || 'env';
-          // missing required vars read "LABEL is required"; anything else keeps zod's message
-          return i.message.includes('received undefined')
-            ? `  ${label} is required`
-            : `  ${label}: ${i.message}`;
-        })
-        .join('\n'),
-  );
+  console.error('[tandem] invalid environment:\n' + formatEnvIssues(parsed.error.issues));
   process.exit(1);
+}
+
+
+export type EnvIssue = { path: (string | number | symbol)[]; message: string };
+
+/** one human-readable line per invalid env var — "LABEL is required" for missing, zod's message otherwise */
+export function formatEnvIssues(issues: EnvIssue[]): string {
+  return issues
+    .map((i) => {
+      const label = i.path.join('.') || 'env';
+      // a stripped empty string reads as "expected string, received undefined" — say "is required"
+      return i.message.includes('received undefined')
+        ? `  ${label} is required`
+        : `  ${label}: ${i.message}`;
+    })
+    .join('\n');
 }
 
 export type Env = z.infer<typeof envSchema>;

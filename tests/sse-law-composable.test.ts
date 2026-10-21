@@ -132,4 +132,5 @@ describe('useChangeEvents', () => {
     // loop saw stopped=true and exited — no reconnect attempt
     expect(live).toHaveBeenCalledTimes(1);
   });
-});
+
+

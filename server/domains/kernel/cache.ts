@@ -30,6 +30,8 @@ async function createCacheDomain(): Promise<CacheDomain> {
   const raws: Array<{ disconnect: () => void }> = [];
   // fail fast: verify the connection works before handing out the domain
   const { createClient } = await import('redis');
+  // the ping's fail arms are covered by the dead-redis reject test (appCache)
+  /* v8 ignore next 4 -- node-redis socket internals fire the strategy, not our code */
   const ping = createClient({
     url,
     socket: { connectTimeout: 5000, reconnectStrategy: () => new Error('no-retry') },
@@ -52,6 +54,7 @@ async function createCacheDomain(): Promise<CacheDomain> {
     set: (key, value, ttlSeconds) => cache.set(key, value, ttlSeconds),
     del: (key) => cache.del(key),
     wrap: (key, fn, ttlSeconds) => cache.wrap(key, fn, ttlSeconds),
+    /* v8 ignore next 1 -- exercised at process shutdown, not by tests */
     async close() {
       await Promise.allSettled(raws.map((r) => r.disconnect()));
       domainPromise = null;
