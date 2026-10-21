@@ -1,5 +1,5 @@
-// scanOnce's catch arm: a dispatchTask throw (task vanished between find and claim)
-// must surface as "not dispatched", never as a scan-loop crash.
+// scanOnce's catch arm: an enqueue throw (redis down, task vanished between find
+// and claim) must surface as "not dispatched", never as a scan-loop crash.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './api-harness';
@@ -59,8 +59,19 @@ beforeEach(async () => {
 });
 
 describe('scanOnce catch arm', () => {
-  it('a throwing dispatchTask resolves to false', async () => {
-    const { scanOnce } = await import('../server/domains/tasks/dispatcher.service');
-    expect(await scanOnce('http://t.local')).toBe(false);
+  it('a throwing enqueue resolves to false', async () => {
+    vi.doMock('../server/domains/kernel/queue', () => ({
+      redisQueue: async () => {
+        throw new Error('redis down');
+      },
+    }));
+    vi.resetModules();
+    try {
+      const { scanOnce } = await import('../server/domains/tasks/dispatcher.service');
+      expect(await scanOnce('http://t.local')).toBe(false);
+    } finally {
+      vi.doUnmock('../server/domains/kernel/queue');
+      vi.resetModules();
+    }
   });
 });

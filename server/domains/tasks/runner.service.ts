@@ -174,7 +174,7 @@ import { join } from 'node:path';
 
 import { v7 as uuidv7 } from 'uuid';
 
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { CHANGE_RESOURCE, CHANGE_ACTION , SECRET_USAGE } from '#shared/enums';
 import { RUN_STATUS, REVIEW_STATUS, type FinishedStatus } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
@@ -216,7 +216,7 @@ export async function loadDispatchPlan(taskId: string) {
     // FK is ON DELETE SET NULL: a present secretId implies the row exists
     const secret = (await db.query.vaultSecrets.findMany({ where: { id: { eq: env.secretId } } }))[0]!;
     const plain = decryptSecret(secret.ciphertext);
-    if (env.secretUsage === 'password') sshPassword = plain;
+    if (env.secretUsage === SECRET_USAGE.PASSWORD) sshPassword = plain;
     else sshKey = plain;
   }
 
@@ -285,7 +285,7 @@ async function loadDispatchPlanFor(employeeId: string, taskId: string) {
   if (env.secretId) {
     const secret = (await db.query.vaultSecrets.findMany({ where: { id: { eq: env.secretId } } }))[0]!;
     const plain = decryptSecret(secret.ciphertext);
-    if (env.secretUsage === 'password') sshPassword = plain;
+    if (env.secretUsage === SECRET_USAGE.PASSWORD) sshPassword = plain;
     else sshKey = plain;
   }
   let llmEnv: Record<string, string> = {};

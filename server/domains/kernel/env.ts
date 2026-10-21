@@ -49,7 +49,15 @@ if (!parsed.success) {
   // eslint-disable-next-line no-console
   console.error(
     '[tandem] invalid environment:\n' +
-      parsed.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n'),
+      parsed.error.issues
+        .map((i) => {
+          const label = i.path.join('.') || 'env';
+          // missing required vars read "LABEL is required"; anything else keeps zod's message
+          return i.message.includes('received undefined')
+            ? `  ${label} is required`
+            : `  ${label}: ${i.message}`;
+        })
+        .join('\n'),
   );
   process.exit(1);
 }

@@ -47,7 +47,7 @@ describe('boot plugin', () => {
 
   it('skips seeding when users already exist', async () => {
     await sqlClient`insert into "user" (id, name, email, email_verified, created_at, updated_at, role)
-      values ('00000000-0000-7000-8000-c188c39acb1b', 'Existing', 'e@x.co', true, now(), now(), ROLE.VIEWER)`;
+      values ('00000000-0000-7000-8000-c188c39acb1b', 'Existing', 'e@x.co', true, now(), now(), ${ROLE.VIEWER})`;
     const mod = await bootModule();
     await (mod.default as () => Promise<unknown>)();
     const users = await sqlClient`select count(*)::int as n from "user"`;

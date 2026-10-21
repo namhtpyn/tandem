@@ -26,10 +26,11 @@ async function logActivity(taskId: string, body: string, meta: Record<string, un
 
 /** status ids whose category is terminal (done | cancelled) */
 export async function terminalStatusIds() {
+  // seeded categories are lowercase ('done' | 'cancelled'); OBLIGATION_STATUS is a different key space
   const rows = await db
     .select({ id: taskStatuses.id, category: taskStatuses.category })
     .from(taskStatuses)
-    .where(inArray(taskStatuses.category, ['done', OBLIGATION_STATUS.CANCELLED]));
+    .where(inArray(taskStatuses.category, ['done', 'cancelled']));
   return new Set(rows.map((r) => r.id));
 }
 

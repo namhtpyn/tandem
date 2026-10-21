@@ -328,7 +328,7 @@ describe('obligations', () => {
       inbox = await callProc('tasks.inbox');
     });
     expect(inbox.items.length).toBe(2);
-    expect(inbox.counts).toEqual({ answer: 2 });
+    expect(inbox.counts).toEqual({ ANSWER: 2 });
   });
 });
 
@@ -553,7 +553,7 @@ describe('routing coverage arms', () => {
     await asEmp('peer', async () => {
       counts = await callProc('tasks.inbox');
     });
-    expect(counts.counts).toEqual({ answer: 1, approval: 1 });
+    expect(counts.counts).toEqual({ ANSWER: 1, APPROVAL: 1 });
 
     const open = await openObligations([a, b]);
     expect(open.get(a)!.holders).toEqual([idMap.get('peer')!]);

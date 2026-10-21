@@ -64,7 +64,7 @@ async function reapStaleRunsInner(): Promise<number> {
     await db
       .update(taskRuns)
       .set({
-        status: 'failed',
+        status: RUN_STATUS.FAILED,
         exitCode: null,
         output: run.output
           ? `${run.output}\n[reaper] run timed out after ${Math.round((Date.now() - run.startedAt.getTime()) / 60_000)} min`
@@ -125,8 +125,8 @@ export async function findEligible(): Promise<{ taskId: string; employeeId: stri
 export async function scanOnce(tandemUrl: string): Promise<boolean> {
   const hit = await findEligible();
   if (!hit) return false;
-  const hub = await redisQueue();
   try {
+    const hub = await redisQueue();
     /* v8 ignore next -- lazy resync; the catch arrow only fires on a redis failure */
     void syncDispatchWorkers(hub).catch(() => {});
     // jobId = taskId: while a dispatch for this task waits or runs, duplicate

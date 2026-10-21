@@ -122,7 +122,7 @@ describe('GET /health/ready 503 path', () => {
     // sabotage the ledger the ready check uses: point search_path at a dead
     // schema via a prepared sabotage — simplest: drop the migrations table so
     // the ledger count query throws inside the handler's try
-    await sqlClient`drop table migrations`;
+    await sqlClient`drop table if exists drizzle.__drizzle_migrations`;
     const { result, event } = await call('../server/routes/health/ready.get.ts', {
       method: 'GET',
       url: '/health/ready',
@@ -364,7 +364,7 @@ describe('auth route fallback arms (real coverage)', () => {
   it('POST sign-up/email closed once a user exists (403)', async () => {
     const { sqlClient } = await import('../server/db/index');
     await sqlClient`insert into "user" (id, name, email, email_verified, created_at, updated_at, role)
-      values ('00000000-0000-7000-8000-55749737aa07', 'Closer', 'c@x.co', true, now(), now(), ROLE.VIEWER)`;
+      values ('00000000-0000-7000-8000-55749737aa07', 'Closer', 'c@x.co', true, now(), now(), ${ROLE.VIEWER})`;
     await expect(
       call('../server/routes/auth/[...].ts', {
         method: 'POST',
