@@ -16,11 +16,13 @@ export type FolderWithCount = { id: string; name: string; secrets: number };
 export const listFoldersPagedInput = z.object({
   page: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(100).default(10),
+  q: z.string().trim().max(60).optional(),
 });
 
 export async function listFoldersPaged(input: z.input<typeof listFoldersPagedInput> = {}) {
-  const { page, pageSize } = listFoldersPagedInput.parse(input);
+  const { page, pageSize, q } = listFoldersPagedInput.parse(input);
   const { data, total } = await db.query.vaultFolders.findManyAndCount({
+    where: q ? { name: { ilike: `%${q}%` } } : undefined,
     orderBy: (f, { asc }) => [asc(f.name)],
     limit: pageSize,
     offset: (page - 1) * pageSize,

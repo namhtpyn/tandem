@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 // Secret vault: write-only secrets (AES-256-GCM server-side). Values are set
 // once and never displayed again — only a last-4 hint. Mobile-first cards.
 import { computed, ref, watch } from 'vue';
+import { watchDebounced } from '@vueuse/core';
 
 import type { VaultSecretRow } from '~/utils/orpc-types';
 import { CHANGE_RESOURCE } from '~/../shared/enums';
@@ -14,12 +15,33 @@ const page = ref(1);
 const pageSize = ref(20);
 // ---- folder filter chip row (server-side filter) ----
 const activeFolder = ref<string | null>(null); // null = All
+const search = ref('');
+const searchDebounced = ref('');
+watchDebounced(
+  search,
+  (v) => {
+    searchDebounced.value = v.trim();
+    page.value = 1;
+  },
+  { debounce: 300, maxWait: 1000 },
+);
 
 const liveQuery = useQuery(
   computed(() =>
     $orpc.vault.secrets.list.queryOptions({
-      input: { page: page.value, pageSize: pageSize.value, folderId: activeFolder.value },
-      queryKey: [CHANGE_RESOURCE.VAULT, page.value, pageSize.value, activeFolder.value ?? 'all'],
+      input: {
+        page: page.value,
+        pageSize: pageSize.value,
+        folderId: activeFolder.value,
+        q: searchDebounced.value || undefined,
+      },
+      queryKey: [
+        CHANGE_RESOURCE.VAULT,
+        page.value,
+        pageSize.value,
+        activeFolder.value ?? 'all',
+        searchDebounced.value,
+      ],
     }),
   ),
 );
@@ -48,11 +70,31 @@ watch(total, (t) => {
 const folderManagerOpen = ref(false);
 const folderPage = ref(1);
 const folderPageSize = ref(10);
+const folderSearch = ref('');
+const folderSearchDebounced = ref('');
+watchDebounced(
+  folderSearch,
+  (v) => {
+    folderSearchDebounced.value = v.trim();
+    folderPage.value = 1;
+  },
+  { debounce: 300, maxWait: 1000 },
+);
 const foldersPagedQuery = useQuery(
   computed(() =>
     $orpc.vault.folders.listPaged.queryOptions({
-      input: { page: folderPage.value, pageSize: folderPageSize.value },
-      queryKey: [CHANGE_RESOURCE.VAULT, 'folders-paged', folderPage.value, folderPageSize.value],
+      input: {
+        page: folderPage.value,
+        pageSize: folderPageSize.value,
+        q: folderSearchDebounced.value || undefined,
+      },
+      queryKey: [
+        CHANGE_RESOURCE.VAULT,
+        'folders-paged',
+        folderPage.value,
+        folderPageSize.value,
+        folderSearchDebounced.value,
+      ],
     }),
   ),
 );
@@ -241,6 +283,15 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
             <UButton icon="i-lucide-plus" label="New secret" @click="openEditor()" />
           </div>
         </div>
+
+        <!-- search (server-side, debounced) -->
+        <UInput
+          v-model="search"
+          icon="i-lucide-search"
+          placeholder="Search secrets…"
+          class="w-full sm:max-w-xs"
+          size="sm"
+        />
 
         <!-- Mobile: stacked cards -->
         <!-- folder filter chips: All + one per folder; manager defines the taxonomy -->
@@ -490,6 +541,13 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
           <div v-if="folderError" class="bg-error/10 text-error mb-3 rounded-md px-3 py-2 text-xs">
             {{ folderError }}
           </div>
+          <UInput
+            v-model="folderSearch"
+            icon="i-lucide-search"
+            placeholder="Search folders…"
+            class="w-full mb-3"
+            size="sm"
+          />
           <DataTable
             v-if="foldersPaged.length"
             :data="foldersPaged"

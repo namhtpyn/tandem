@@ -168,6 +168,26 @@ describe('vault API', () => {
     expect(filtered.data.every((r) => r.folder === 'Paged')).toBe(true);
   });
 
+  it('list searches server-side (q matches name or description, ilike)', async () => {
+    await callProc('vault.secrets.create', { name: 'github-pat-prod', value: 'v1', description: 'deploy key' });
+    await callProc('vault.secrets.create', { name: 'unrelated-row', value: 'v2', description: 'nothing here' });
+    const byName = await callProc('vault.secrets.list', { page: 1, pageSize: 20, q: 'github' }) as {
+      data: VaultSecretRow[];
+      total: number;
+    };
+    expect(byName.total).toBe(1);
+    expect(byName.data[0]!.name).toBe('github-pat-prod');
+    const byDesc = await callProc('vault.secrets.list', { page: 1, pageSize: 20, q: 'DEPLOY' }) as {
+      data: VaultSecretRow[];
+      total: number;
+    };
+    expect(byDesc.total).toBe(1);
+    const none = await callProc('vault.secrets.list', { page: 1, pageSize: 20, q: 'zzz-no-match' }) as {
+      total: number;
+    };
+    expect(none.total).toBe(0);
+  });
+
   it('create stores an encrypted envelope the API cannot read back', async () => {
     const row = await secretFactory('db-password', 'correct-horse-battery');
     expect(row.lastFour).toBe('tery');

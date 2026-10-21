@@ -30,13 +30,20 @@ export const listVaultSecretsInput = z.object({
   page: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(100).default(20),
   folderId: z.string().min(1).nullish(),
+  q: z.string().trim().max(200).optional(),
 });
 
 export async function listVaultSecrets(input: z.input<typeof listVaultSecretsInput> = {}) {
-  const { page, pageSize, folderId } = listVaultSecretsInput.parse(input);
+  const { page, pageSize, folderId, q } = listVaultSecretsInput.parse(input);
+  const folderFilter = folderId ? { folderId: { eq: folderId } } : undefined;
+  const searchFilter = q
+    ? { OR: [{ name: { ilike: `%${q}%` } }, { description: { ilike: `%${q}%` } }] }
+    : undefined;
+  const where =
+    folderFilter && searchFilter ? { AND: [folderFilter, searchFilter] } : (folderFilter ?? searchFilter);
   const { data, total } = await db.query.vaultSecrets.findManyAndCount({
     with: { folder: true },
-    where: folderId ? { folderId: { eq: folderId } } : undefined,
+    where: where as never,
     orderBy: (s, { desc }) => [desc(s.createdAt)],
     limit: pageSize,
     offset: (page - 1) * pageSize,
