@@ -103,6 +103,11 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
   schema via drizzle-kit pull/generate on 2026-10-16 — the 32 historical folders
   it replaced are gone. CI runs `bunx drizzle-kit check` as the drift guard. Hand-written
   migration folders are how the chain silently broke for 20 migrations.
+- **Boot applies migrations with drizzle's own migrator** (2026-10-21) —
+  `migrate()` from `drizzle-orm/postgres-js/migrator` at boot, ledger
+  `drizzle.__drizzle_migrations`, dedupe by folder name. No hand-rolled
+  scanner/ledger: the old `public.migrations` table is adopted into the
+  drizzle ledger once (adoptLegacyLedger) so applied folders never replay.
 - **Bun Shell for all subprocess** (multi-OS support law).
 - **Postgres, never SQLite.** better-auth tables are ALWAYS CLI-generated
   (`bun run gen:auth`); never hand-edit inside the GENERATED markers.

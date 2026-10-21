@@ -26,6 +26,7 @@ export const postgres = postgresDriver(TEST_DATABASE_URL, {
 
 export async function resetSchema() {
   await postgres.unsafe('drop schema if exists public cascade');
+  await postgres.unsafe('drop schema if exists drizzle cascade');
   await postgres.unsafe('create schema public authorization tandem');
 }
 
