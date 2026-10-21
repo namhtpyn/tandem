@@ -1,5 +1,6 @@
 import {
   relationsFilterToSQL,
+  SQL,
   sql,
   type AnyRelationsFilter,
   type AnyTableFilter,
@@ -51,9 +52,10 @@ declare module 'drizzle-orm/pg-core/query-builders/query' {
 function buildCountQuery(builder: AnyBuilder, filter?: AnyFilter) {
   const query = sql`select count(*) as count from ${builder.table}`;
   if (filter) {
-    const filterSQL = relationsFilterToSQL(builder.table, filter);
+    // rc.5: BuiltRelationsFilter { sql: SQLChunk[] | undefined, hasRelationFilters }
+    const built = relationsFilterToSQL(builder.table, filter);
     /* v8 ignore next 1 -- drizzle's helper only returns empty for filter ASTs we never build */
-    if (filterSQL) query.append(sql` where ${filterSQL}`);
+    if (built.sql?.length) query.append(sql` where ${new SQL(built.sql)}`);
   }
   return query;
 }

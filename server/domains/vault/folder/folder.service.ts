@@ -19,10 +19,10 @@ export async function listFoldersPaged(input: ListFoldersPagedInput = {}) {
   const page = input.page ?? 1;
   const pageSize = input.pageSize ?? 10;
   const q = input.q;
-  const where = q ? { name: { ilike: `%${q}%` } } : undefined;
+  // rc.5: `where: undefined` throws — omit the key when there is no filter
   const [rows, total] = await Promise.all([
     db.query.vaultFolders.findMany({
-      where,
+      ...(q ? { where: { name: { ilike: `%${q}%` } } } : {}),
       orderBy: { name: 'asc' },
       limit: pageSize,
       offset: (page - 1) * pageSize,
@@ -33,7 +33,7 @@ export async function listFoldersPaged(input: ListFoldersPagedInput = {}) {
           ),
       },
     }),
-    db.query.vaultFolders.count(where),
+    db.query.vaultFolders.count(q ? { name: { ilike: `%${q}%` } } : undefined),
   ]);
   return {
     folders: rows.map((f) => ({ id: f.id, name: f.name, secrets: Number(f.secrets ?? 0) })),

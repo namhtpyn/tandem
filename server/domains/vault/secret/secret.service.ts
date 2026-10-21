@@ -33,12 +33,13 @@ export async function listVaultSecrets(input: ListVaultSecretsInput = {}) {
   const pageSize = input.pageSize ?? 20;
   const folderId = input.folderId;
   const q = input.q?.trim() || undefined;
+  // rc.5: `where: undefined` throws — build the config and omit the key when absent
   const folderFilter = folderId ? { folderId: { eq: folderId } } : undefined;
   const searchFilter = q ? { OR: [{ name: { ilike: `%${q}%` } }, { description: { ilike: `%${q}%` } }] } : undefined;
   const where = folderFilter && searchFilter ? { AND: [folderFilter, searchFilter] } : (folderFilter ?? searchFilter);
   const { data, total } = await db.query.vaultSecrets.findManyAndCount({
     with: { folder: true },
-    where: where as never,
+    ...(where ? { where: where as never } : {}),
     orderBy: { createdAt: 'desc' },
     limit: pageSize,
     offset: (page - 1) * pageSize,
