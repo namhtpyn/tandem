@@ -483,6 +483,8 @@ export const relations = defineRelations(
     taskStatuses,
     modelProviders,
     projects,
+    taskProposals,
+    taskAttachments,
   },
   (helpers) => ({
     user: {

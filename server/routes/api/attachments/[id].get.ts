@@ -22,7 +22,7 @@ export default defineEventHandler(async (event) => {
   const session = await buildServerContext(headers).getSession();
   if (!session) throw createError({ statusCode: 401, statusMessage: 'unauthorized' });
 
-  const row = (await db.select().from(taskAttachments).where(eq(taskAttachments.id, id)))[0];
+  const row = await db.query.taskAttachments.findFirst({ where: { id: { eq: id } } });
   if (!row) throw createError({ statusCode: 404, statusMessage: 'attachment not found' });
   if (!attachmentExists(row.taskId, id))
     throw createError({ statusCode: 410, statusMessage: 'attachment bytes missing' });

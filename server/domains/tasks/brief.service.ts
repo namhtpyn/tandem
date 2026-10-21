@@ -17,6 +17,7 @@ import {
   projects,
 } from '../../db/schema';
 import { stripAttachments } from './attachments.util';
+import { PROPOSAL_STATUS } from '#shared/enums';
 
 export type BriefPerson = { id: string; name: string; title: string | null; kind: string };
 
@@ -163,24 +164,24 @@ function stripMentions(desc: string): string {
 
 /** gather everything the brief needs from the DB (single dispatch-time read) */
 export async function loadBriefData(taskId: string) {
-  const task = (await db.select().from(tasks).where(eq(tasks.id, taskId)))[0];
+  const task = await db.query.tasks.findFirst({ where: { id: { eq: taskId } } });
   if (!task) throw new Error('task not found');
   // FK invariant: parent_task_id set => the row exists (ON DELETE SET NULL keeps it true)
   const parentTitle = task.parentTaskId
-    ? (await db.select({ title: tasks.title }).from(tasks).where(eq(tasks.id, task.parentTaskId)))[0]!.title
+    ? (await db.query.tasks.findFirst({ columns: { title: true }, where: { id: { eq: task.parentTaskId } } }))!.title
     : null;
   const rejectedNotes = (
     await db
       .select()
       .from(taskProposals)
-      .where(and(eq(taskProposals.taskId, taskId), eq(taskProposals.status, 'rejected')))
+      .where(and(eq(taskProposals.taskId, taskId), eq(taskProposals.status, PROPOSAL_STATUS.REJECTED)))
   )
     .filter((p) => p.decisionNote)
     .map((p) => `- proposal declined: ${p.kind} — ${trunc(p.decisionNote, 200)}`);
   const assigneeId = task.assigneeId!;
-  const edges = await db.select().from(employeeSupervisors);
-  const users = await db.select({ id: userTable.id, name: userTable.name, title: userTable.title }).from(userTable);
-  const aiRows = await db.select().from(aiEmployees);
+  const edges = await db.query.employeeSupervisors.findMany();
+  const users = await db.query.user.findMany({ columns: { id: true, name: true, title: true } });
+  const aiRows = await db.query.aiEmployees.findMany();
   const aiById = new Map(aiRows.map((r) => [r.userId, r]));
   const person = (id: string): BriefPerson => {
     const u = users.find((x) => x.id === id)!;
@@ -196,7 +197,7 @@ export async function loadBriefData(taskId: string) {
     if (!users.some((u) => u.id === mid)) continue;
     extra.push({ person: person(mid), chain: chainToRoot(mid, edges).map(person) });
   }
-  const activity = await db.select().from(taskActivity).where(eq(taskActivity.taskId, taskId));
+  const activity = await db.query.taskActivity.findMany({ where: { taskId: { eq: taskId } } });
   activity.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   const nameById = new Map(users.map((u) => [u.id, u.name]));
   const recent = activity
@@ -207,9 +208,9 @@ export async function loadBriefData(taskId: string) {
   const { getCompanyPrompt } = await import('../settings/settings.service');
   const companyPrompt = await getCompanyPrompt();
   const projectRow = task.projectId
-    ? (await db.select().from(projects).where(eq(projects.id, task.projectId)))[0]
+    ? await db.query.projects.findFirst({ where: { id: { eq: task.projectId } } })
     : undefined;
-  const attachmentRows = await db.select().from(taskAttachments).where(eq(taskAttachments.taskId, taskId));
+  const attachmentRows = await db.query.taskAttachments.findMany({ where: { taskId: { eq: taskId } } });
   const attachments = attachmentRows
     .filter((a) => a.kind === 'input')
     .map((a) => ({

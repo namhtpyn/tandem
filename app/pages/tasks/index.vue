@@ -9,7 +9,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { STATUS } from '~/../shared/status';
 import type { EditorView, ClipboardEventLike, DragEventLike } from '~/editor-typing';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
-import { CHANGE_RESOURCE } from '~/../shared/enums';
+import { CHANGE_RESOURCE, ACTIVITY_KIND} from '~/../shared/enums';
 
 /** paste/drop images in the description editor -> attachments pipeline.
  *  Bytes NEVER ride ACP: upload lands them in /api/tasks/:id/attachments, the
@@ -1068,13 +1068,13 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                   <p class="flex items-center gap-1.5 font-medium text-zinc-600 dark:text-zinc-300">
                     <UIcon
                       :name="
-                        a.kind === 'question'
+                        a.kind === ACTIVITY_KIND.QUESTION
                           ? 'i-lucide-help-circle'
-                          : a.kind === 'answer'
+                          : a.kind === ACTIVITY_KIND.ANSWER
                             ? 'i-lucide-check-check'
-                            : a.kind === 'forward'
+                            : a.kind === ACTIVITY_KIND.FORWARD
                               ? 'i-lucide-corner-up-right'
-                              : a.kind === 'verdict'
+                              : a.kind === ACTIVITY_KIND.VERDICT
                                 ? 'i-lucide-gavel'
                                 : 'i-lucide-info'
                       "

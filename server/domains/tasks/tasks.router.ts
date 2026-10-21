@@ -23,7 +23,7 @@ import { approvalsInRoundBatch, openObligations, pendingForUser, pendingCounts }
 import { confirmProposal, rejectProposal } from './proposals.service';
 import { listReviews } from './review.service';
 import { dispatchTask, listRuns } from './runner.service';
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { CHANGE_RESOURCE, CHANGE_ACTION, type RunStatus, type ActivityKind} from '#shared/enums';
 import {
   askQuestion,
   forwardQuestion,
@@ -68,15 +68,15 @@ export function groupOutputsByRun(
 }
 
 const listTasksSnapshot = async (): Promise<TaskRow[]> => {
-  const rows = await db.select().from(tasksTable).orderBy(desc(tasksTable.createdAt));
+  const rows = await db.query.tasks.findMany({ orderBy: (t, { desc }) => [desc(t.createdAt)] });
   const open = await openObligations(rows.map((r) => r.id));
   const holders = new Map<string, string>();
   for (const [tid, o] of open) if (o.holders[0]) holders.set(tid, o.holders[0]);
   const approvalsByTask = await approvalsInRoundBatch(rows.map((r) => r.id));
-  const projRows = await db.select({ id: projectsTable.id, name: projectsTable.name }).from(projectsTable);
+  const projRows = await db.query.projects.findMany({ columns: { id: true, name: true } });
   const projNameById = new Map(projRows.map((p) => [p.id, p.name]));
-  const users = await db.select({ id: userTable.id, name: userTable.name }).from(userTable);
-  const aiRows = await db.select({ userId: aiEmployeesTable.userId }).from(aiEmployeesTable);
+  const users = await db.query.user.findMany({ columns: { id: true, name: true } });
+  const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true } });
   const aiIds = new Set(aiRows.map((r) => r.userId));
   const nameById = new Map(users.map((u) => [u.id, u.name]));
   return rows.map((r) => ({
@@ -108,9 +108,9 @@ const listTasksSnapshot = async (): Promise<TaskRow[]> => {
 
 async function runsSnapshot(taskId: string) {
   const rows = await listRuns(taskId);
-  const atts = await db.select().from(taskAttachments).where(eq(taskAttachments.taskId, taskId));
+  const atts = await db.query.taskAttachments.findMany({ where: { taskId: { eq: taskId } } });
   const outputsByRun = groupOutputsByRun(atts);
-  const users = await db.select({ id: userTable.id, name: userTable.name, title: userTable.title }).from(userTable);
+  const users = await db.query.user.findMany({ columns: { id: true, name: true, title: true } });
   const nameById = new Map(users.map((u) => [u.id, u.name]));
   const titleById = new Map(users.map((u) => [u.id, u.title]));
   return rows.map((r) => ({
@@ -124,7 +124,7 @@ async function runsSnapshot(taskId: string) {
     /* v8 ignore next */
     agentName: r.employeeId ? (nameById.get(r.employeeId) ?? null) : null,
     environmentId: r.environmentId,
-    status: r.status as 'running' | 'done' | 'failed',
+    status: r.status as RunStatus,
     exitCode: r.exitCode,
     output: r.output,
     prompt: r.prompt,
@@ -136,12 +136,12 @@ async function runsSnapshot(taskId: string) {
 
 async function activitySnapshot(taskId: string) {
   const rows = await listActivity(taskId);
-  const users = await db.select({ id: userTable.id, name: userTable.name }).from(userTable);
+  const users = await db.query.user.findMany({ columns: { id: true, name: true } });
   const nameById = new Map(users.map((u) => [u.id, u.name]));
   return rows.map((r) => ({
     id: r.id,
     taskId: r.taskId,
-    kind: r.kind as 'question' | 'answer' | 'forward' | 'note' | 'verdict' | 'status',
+    kind: r.kind as ActivityKind,
     authorId: r.authorId,
     authorName: (r.authorId && nameById.get(r.authorId)) || null,
     body: r.body,
@@ -173,8 +173,8 @@ export const tasksRouter = os.router({
     )
     .handler(async ({ input, context }) => {
       if (input.assigneeId) {
-        const u = await db.select({ id: userTable.id }).from(userTable).where(eq(userTable.id, input.assigneeId));
-        if (u.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'assignee does not exist' });
+        const u = await db.query.user.findFirst({ columns: { id: true }, where: { id: { eq: input.assigneeId } } });
+        if (!u) throw new ORPCError('BAD_REQUEST', { message: 'assignee does not exist' });
       }
       if (input.projectId) {
         const p = await db
@@ -183,7 +183,7 @@ export const tasksRouter = os.router({
           .where(eq(projectsTable.id, input.projectId));
         if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'project does not exist' });
       }
-      const statusRows = await db.select().from(taskStatusesTable).orderBy(asc(taskStatusesTable.position));
+      const statusRows = await db.query.taskStatuses.findMany({ orderBy: (s, { asc }) => [asc(s.position)] });
       if (statusRows.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'no task statuses defined' });
       let status = statusRows[0]!.id;
       if (input.status) {
@@ -196,8 +196,8 @@ export const tasksRouter = os.router({
       ).getSession();
       const selfId = session?.user?.id ?? null;
       if (input.parentId) {
-        const parent = await db.select({ id: tasksTable.id }).from(tasksTable).where(eq(tasksTable.id, input.parentId));
-        if (parent.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'parent task does not exist' });
+        const parent = await db.query.tasks.findFirst({ columns: { id: true }, where: { id: { eq: input.parentId } } });
+        if (!parent) throw new ORPCError('BAD_REQUEST', { message: 'parent task does not exist' });
       }
       const id = uuidv7();
       await db.insert(tasksTable).values({
@@ -244,11 +244,11 @@ export const tasksRouter = os.router({
       }),
     )
     .handler(async ({ input, context }) => {
-      const rows = await db.select().from(tasksTable).where(eq(tasksTable.id, input.id));
+      const rows = await db.query.tasks.findMany({ where: { id: { eq: input.id } } });
       if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
       if (input.assigneeId) {
-        const u = await db.select({ id: userTable.id }).from(userTable).where(eq(userTable.id, input.assigneeId));
-        if (u.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'assignee does not exist' });
+        const u = await db.query.user.findFirst({ columns: { id: true }, where: { id: { eq: input.assigneeId } } });
+        if (!u) throw new ORPCError('BAD_REQUEST', { message: 'assignee does not exist' });
       }
       if (input.projectId) {
         const p = await db
@@ -258,12 +258,12 @@ export const tasksRouter = os.router({
         if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'project does not exist' });
       }
       if (input.status !== undefined) {
-        const stRows = await db.select().from(taskStatusesTable).where(eq(taskStatusesTable.id, input.status));
+        const stRows = await db.query.taskStatuses.findMany({ where: { id: { eq: input.status } } });
         const target = stRows[0];
         if (!target) throw new ORPCError('BAD_REQUEST', { message: 'status does not exist' });
         // enforce the workflow: target must be reachable from the current status
         if (rows[0]!.status !== input.status) {
-          const cur = (await db.select().from(taskStatusesTable).where(eq(taskStatusesTable.id, rows[0]!.status)))[0];
+          const cur = await db.query.taskStatuses.findFirst({ where: { id: { eq: rows[0]!.status } } });
           if (cur && !cur.nextIds.includes(input.status)) {
             throw new ORPCError('BAD_REQUEST', { message: `cannot move from '${cur.name}' to '${target.name}'` });
           }
@@ -325,7 +325,7 @@ export const tasksRouter = os.router({
   /** assignment history for a task (append-only ledger) */
   assignments: protectedProcedure.input(z.object({ taskId: z.string().min(1) })).handler(async ({ input }) => {
     const rows = await listAssignments(input.taskId);
-    const users = await db.select({ id: userTable.id, name: userTable.name }).from(userTable);
+    const users = await db.query.user.findMany({ columns: { id: true, name: true } });
     const nameById = new Map(users.map((u) => [u.id, u.name]));
     return {
       items: rows.map((x) => ({
@@ -494,7 +494,7 @@ export const tasksRouter = os.router({
 
   /** delete a task */
   remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
-    const rows = await db.select({ id: tasksTable.id }).from(tasksTable).where(eq(tasksTable.id, input.id));
+    const rows = await db.query.tasks.findMany({ columns: { id: true }, where: { id: { eq: input.id } } });
     if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
     await db.delete(tasksTable).where(eq(tasksTable.id, input.id));
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.DELETE);

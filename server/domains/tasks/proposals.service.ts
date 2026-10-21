@@ -75,12 +75,12 @@ async function logActivity(taskId: string, authorId: string | null, body: string
  * Returns what happened per item, including escalation decisions.
  */
 export async function confirmProposal(proposalId: string, confirmedBy: string, note = '') {
-  const rows = await db.select().from(taskProposals).where(eq(taskProposals.id, proposalId));
+  const rows = await db.query.taskProposals.findMany({ where: { id: { eq: proposalId } } });
   const p = rows[0];
   if (!p) throw new Error('proposal not found');
   if (p.status !== PROPOSAL_STATUS.PROPOSED) throw new Error('proposal already decided');
   // task row is guaranteed by the proposal's FK (cascade delete removes proposals with tasks)
-  const task = (await db.select().from(tasks).where(eq(tasks.id, p.taskId)))[0]!;
+  const task = (await db.query.tasks.findMany({ where: { id: { eq: p.taskId } } }))[0]!;
   const proposingAgent = task.assigneeId;
 
   const events: string[] = [];
@@ -154,7 +154,7 @@ export async function confirmProposal(proposalId: string, confirmedBy: string, n
 
 async function doReassign(taskId: string, employeeId: string, actorId: string, reason: string, extra = '') {
   await assignTask(taskId, employeeId, `reassign: ${reason}${extra ? ` (${extra})` : ''}`, actorId);
-  const name = (await db.select({ name: userTable.name }).from(userTable).where(eq(userTable.id, employeeId)))[0]!.name;
+  const name = (await db.query.user.findFirst({ columns: { name: true }, where: { id: { eq: employeeId } } }))!.name;
   await logActivity(taskId, actorId, `reassigned to ${name}${extra ? ` (${extra})` : ''}`, { reassign: true, reason });
 }
 
@@ -167,7 +167,7 @@ async function markExecuted(proposalId: string, decidedBy: string, note: string,
 }
 
 export async function rejectProposal(proposalId: string, decidedBy: string, note = '') {
-  const rows = await db.select().from(taskProposals).where(eq(taskProposals.id, proposalId));
+  const rows = await db.query.taskProposals.findMany({ where: { id: { eq: proposalId } } });
   const p = rows[0];
   if (!p) throw new Error('proposal not found');
   if (p.status !== PROPOSAL_STATUS.PROPOSED) throw new Error('proposal already decided');
@@ -186,7 +186,7 @@ export async function rejectProposal(proposalId: string, decidedBy: string, note
  * the chain (or unnamed routing targets) still waits for a human. */
 export async function recordProposals(taskId: string, runId: string, payloads: Array<ProposalPayload>) {
   const agent =
-    (await db.select({ assigneeId: tasks.assigneeId }).from(tasks).where(eq(tasks.id, taskId)))[0]?.assigneeId ?? null;
+    (await db.query.tasks.findFirst({ columns: { assigneeId: true }, where: { id: { eq: taskId } } }))?.assigneeId ?? null;
   const chain = agent ? await supervisionChain(agent) : new Set<string>();
   for (const payload of payloads) {
     const proposalId = uuidv7();

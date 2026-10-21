@@ -91,7 +91,7 @@ export const environmentsRouter = os.router({
   }),
 
   probe: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input, context }) => {
-    const rows = await db.select().from(environmentsTable).where(eq(environmentsTable.id, input.id));
+    const rows = await db.query.environments.findMany({ where: { id: { eq: input.id } } });
     const env = rows[0];
     if (!env) {
       throw new ORPCError('NOT_FOUND', { message: 'environment not found' });
@@ -100,7 +100,7 @@ export const environmentsRouter = os.router({
     let privateKey: string | undefined;
     let usage: SecretUsage = SECRET_USAGE.SSH_KEY;
     if (env.secretId) {
-      const secretRows = await db.select().from(vaultSecretsTable).where(eq(vaultSecretsTable.id, env.secretId));
+      const secretRows = await db.query.vaultSecrets.findMany({ where: { id: { eq: env.secretId } } });
       const secret = secretRows[0];
       if (secret) {
         privateKey = decryptSecret(secret.ciphertext);

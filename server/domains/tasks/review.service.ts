@@ -19,7 +19,7 @@ import { dispatchTask } from './runner.service';
 export type ReviewVerdict = Exclude<ReviewStatus, typeof REVIEW_STATUS.PENDING>;
 
 import { STATUS } from '#shared/status';
-import { CHANGE_RESOURCE, CHANGE_ACTION, REVIEW_STATUS, OBLIGATION_ROLE, ACTIVITY_KIND, type ReviewStatus } from '#shared/enums';
+import { CHANGE_RESOURCE, CHANGE_ACTION, REVIEW_STATUS, OBLIGATION_ROLE, ACTIVITY_KIND, type ReviewStatus, RUN_STATUS} from '#shared/enums';
 
 const TODO_STATUS = STATUS.todo;
 const IN_REVIEW_STATUS = STATUS.inReview;
@@ -111,7 +111,7 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
     .select()
     .from(taskReviews)
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
-  const aiRows = await db.select({ userId: aiEmployees.userId }).from(aiEmployees);
+  const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true } });
   const aiIds = new Set(aiRows.map((r) => r.userId));
   const body = resultBody ?? (await latestSubmittedBody(taskId));
   for (const row of rows) {
@@ -123,7 +123,7 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
           .select({ id: taskRuns.id })
           .from(taskRuns)
           .where(
-            and(eq(taskRuns.taskId, taskId), eq(taskRuns.employeeId, row.reviewerId), eq(taskRuns.status, 'running')),
+            and(eq(taskRuns.taskId, taskId), eq(taskRuns.employeeId, row.reviewerId), eq(taskRuns.status, RUN_STATUS.RUNNING)),
           )
       ).length > 0;
     if (running) continue;
@@ -212,7 +212,7 @@ export async function recordVerdict(
 
 /** reviews list for the task page checklist */
 export async function listReviews(taskId: string) {
-  const rows = await db.select().from(taskReviews).where(eq(taskReviews.taskId, taskId)).orderBy(taskReviews.round);
+  const rows = await db.query.taskReviews.findMany({ where: { taskId: { eq: taskId } }, orderBy: (r, { asc }) => [asc(r.round)] });
   return rows.map((r) => ({
     reviewerId: r.reviewerId,
     round: r.round,

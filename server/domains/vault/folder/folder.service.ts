@@ -43,7 +43,7 @@ export async function listFoldersPaged(input: z.input<typeof listFoldersPagedInp
 }
 
 export async function listFolders() {
-  const rows = await db.select().from(vaultFoldersTable).orderBy(asc(vaultFoldersTable.name));
+  const rows = await db.query.vaultFolders.findMany({ orderBy: (f, { asc }) => [asc(f.name)] });
   const counts = await db
     .select({ folderId: vaultSecretsTable.folderId, count: count() })
     .from(vaultSecretsTable)

@@ -39,7 +39,7 @@ async function logActivity(
 }
 
 async function getTask(id: string) {
-  const rows = await db.select().from(tasks).where(eq(tasks.id, id));
+  const rows = await db.query.tasks.findMany({ where: { id: { eq: id } } });
   if (rows.length === 0) throw new Error('task not found');
   return rows[0]!;
 }
@@ -84,8 +84,8 @@ export async function forwardQuestion(taskId: string, authorId: string, toEmploy
   if (holder !== authorId) throw new Error('only the current holder can forward');
   const chain = task.questionChain;
   if (chain.includes(toEmployeeId)) throw new Error('already in the question chain');
-  const target = await db.select({ name: userTable.name }).from(userTable).where(eq(userTable.id, toEmployeeId));
-  if (target.length === 0) throw new Error('employee does not exist');
+  const target = await db.query.user.findFirst({ columns: { name: true }, where: { id: { eq: toEmployeeId } } });
+  if (!target) throw new Error('employee does not exist');
   if (!(await hasSupervisors(toEmployeeId)))
     throw new Error('that person is the top of the hierarchy — they should answer');
   await resolveObligation(taskId, holder!, OBLIGATION_ROLE.ANSWER, authorId);
@@ -97,7 +97,7 @@ export async function forwardQuestion(taskId: string, authorId: string, toEmploy
     })
     .where(eq(tasks.id, taskId));
   await spawnObligation(taskId, toEmployeeId, OBLIGATION_ROLE.ANSWER);
-  await logActivity(taskId, ACTIVITY_KIND.FORWARD, authorId, body, { toId: toEmployeeId, toName: target[0]!.name });
+  await logActivity(taskId, ACTIVITY_KIND.FORWARD, authorId, body, { toId: toEmployeeId, toName: target.name });
   return { holderId: toEmployeeId };
 }
 

@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 // POST /api/tasks/:id/attachments — multipart upload of a task input attachment.
 // REST exception (like the avatar route): multipart doesn't fit the oRPC proc surface.
 // Returns { id, filename, mime, size, sha256 } — the caller embeds
@@ -32,7 +32,7 @@ export default defineEventHandler(async (event) => {
   const session = await buildServerContext(headers).getSession();
   if (!session) throw createError({ statusCode: 401, statusMessage: 'unauthorized' });
 
-  const task = (await db.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, id)))[0];
+  const task = await db.query.tasks.findFirst({ columns: { id: true }, where: { id: { eq: id } } });
   if (!task) throw createError({ statusCode: 404, statusMessage: 'task not found' });
 
   const parts = await readMultipartFormData(event);

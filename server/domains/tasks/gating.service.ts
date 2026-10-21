@@ -5,7 +5,7 @@
 //   - last child lands terminal → parent restores pre_block_status (or 'todo')
 //   - recursive by construction: a child isn't complete while ITS children are open,
 //     because the same rule keeps that child non-terminal until its own gate lifts.
-import { and, eq, inArray, ne } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { STATUS } from '#shared/status';
@@ -41,10 +41,10 @@ export async function refreshParentGating(taskId: string) {
   const terminal = await terminalStatusIds();
   // gate the task itself, then every ancestor; guard against cycles defensively
   const seen = new Set<string>();
-  let cur = (await db.select().from(tasks).where(eq(tasks.id, taskId)))[0];
+  let cur = await db.query.tasks.findFirst({ where: { id: { eq: taskId } } });
   while (cur && !seen.has(cur.id)) {
     seen.add(cur.id);
-    const children = await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.parentTaskId, cur.id));
+    const children = await db.query.tasks.findMany({ columns: { status: true }, where: { parentTaskId: { eq: cur.id } } });
     const open = children.filter((c) => !terminal.has(c.status)).length;
     if (open > 0 && cur.status !== BLOCKED_STATUS) {
       const pre = cur.preBlockStatus ?? cur.status;
@@ -65,13 +65,13 @@ export async function refreshParentGating(taskId: string) {
       });
     }
     if (!cur.parentTaskId) break;
-    cur = (await db.select().from(tasks).where(eq(tasks.id, cur.parentTaskId)))[0];
+    cur = await db.query.tasks.findFirst({ where: { id: { eq: cur.parentTaskId } } });
   }
 }
 
 /** does this task have any open children? (review gate: can't submit while true) */
 export async function hasOpenChildren(taskId: string) {
-  const children = await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.parentTaskId, taskId));
+  const children = await db.query.tasks.findMany({ columns: { status: true }, where: { parentTaskId: { eq: taskId } } });
   if (children.length === 0) return false;
   const terminal = await terminalStatusIds();
   return children.some((c) => !terminal.has(c.status));

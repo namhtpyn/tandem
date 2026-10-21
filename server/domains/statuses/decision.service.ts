@@ -49,7 +49,7 @@ export async function getDecisionProvider(): Promise<{
   baseUrl: string;
   endpoints: string[];
 } | null> {
-  const rows = await db.select().from(modelProviders);
+  const rows = await db.query.modelProviders.findMany();
   const p = rows.find((r) => (r.endpoints as string[]).some((st) => endpointKind(st) === PROVIDER_KIND.DECISION));
   if (!p) return null;
   return { id: p.id, label: p.label, baseUrl: p.baseUrl, endpoints: p.endpoints as string[] };
@@ -87,7 +87,7 @@ export async function pickAssignee(params: {
   }
   let key: string | null = null;
   if (params.keySecretId) {
-    const secRows = await db.select().from(vaultSecrets).where(eq(vaultSecrets.id, params.keySecretId));
+    const secRows = await db.query.vaultSecrets.findMany({ where: { id: { eq: params.keySecretId } } });
     const secret = secRows[0];
     if (secret) {
       key = decryptSecret(secret.ciphertext);

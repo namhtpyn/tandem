@@ -75,7 +75,7 @@ export const settingsRouter = os.router({
       // Workspace AI assignments: provider must exist and speak the right kind;
       // key secret must exist (keys are write-only vault references).
       if (input.internalLlm !== undefined || input.internalDecision !== undefined) {
-        const provRows = await db.select().from(modelProvidersTable);
+        const provRows = await db.query.modelProviders.findMany();
         const validate = async (
           a: { providerId: string; model: string | null; keySecretId: string } | null,
           kind: 'LLM' | 'DECISION',

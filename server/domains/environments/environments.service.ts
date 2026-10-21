@@ -21,6 +21,6 @@ export function toRow(r: typeof environmentsTable.$inferSelect): EnvironmentRow 
 }
 
 export async function listEnvironments() {
-  const rows = await db.select().from(environmentsTable).orderBy(desc(environmentsTable.createdAt));
+  const rows = await db.query.environments.findMany({ orderBy: (t, { desc }) => [desc(t.createdAt)] });
   return rows.map(toRow);
 }

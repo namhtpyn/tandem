@@ -26,8 +26,8 @@ export default defineNitroPlugin(async () => {
   const { bridgeRedisChanges } = await import('../domains/kernel/change-bus');
   await bridgeRedisChanges();
 
-  const existing = await db.select({ id: user.id }).from(user).limit(1);
-  if (existing.length > 0) return;
+  const existing = await db.query.user.findFirst({ columns: { id: true } });
+  if (existing) return;
 
   const email = process.env.ADMIN_EMAIL || 'admin@tandem.local';
   const password = process.env.ADMIN_PASSWORD || 'tandem-admin';

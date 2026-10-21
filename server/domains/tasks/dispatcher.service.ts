@@ -11,7 +11,7 @@ import { tasks, taskRuns, taskStatuses, aiEmployees } from '../../db/schema';
 import { publishChange } from '../kernel/change-bus';
 import { redisQueue } from '../kernel/queue';
 import { dispatchTask } from './runner.service';
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS} from '#shared/enums';
 
 const inFlight = new Map<string, Set<Promise<unknown>>>(); // employeeId -> live run promises
 
@@ -56,7 +56,7 @@ async function reapStaleRunsInner(): Promise<number> {
   const { getRunTimeoutMs } = await import('../settings/settings.service');
   const grace = 2 * 60_000;
   const cutoff = new Date(Date.now() - (await getRunTimeoutMs()) - grace);
-  const stale = await db.select().from(taskRuns).where(eq(taskRuns.status, 'running'));
+  const stale = await db.query.taskRuns.findMany({ where: { status: { eq: RUN_STATUS.RUNNING } } });
   let reaped = 0;
   for (const run of stale) {
     if (run.startedAt.getTime() > cutoff.getTime()) continue;
@@ -72,11 +72,11 @@ async function reapStaleRunsInner(): Promise<number> {
       })
       .where(eq(taskRuns.id, run.id));
     // only bounce the task if this was its latest run
-    const latest = await db.select().from(taskRuns).where(eq(taskRuns.taskId, run.taskId));
+    const latest = await db.query.taskRuns.findMany({ where: { taskId: { eq: run.taskId } } });
     const newest = latest.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0];
     if (newest?.id === run.id) {
       // FK cascade: a present run implies its task row exists
-      const current = (await db.select().from(tasks).where(eq(tasks.id, run.taskId)))[0]!;
+      const current = (await db.query.tasks.findMany({ where: { id: { eq: run.taskId } } }))[0]!;
       const streak = current.failStreak + 1;
       const waitMs = 15 * 60_000; // timeout = worst tier; something is wrong with the agent
       await db
@@ -100,13 +100,13 @@ async function reapStaleRunsInner(): Promise<number> {
  * CAP LAW (2026-10-16): one concurrent task per agent by default; the Settings page's
  * tasksPerAgent raises it. Agents run in PARALLEL — the cap is per agent, never global. */
 export async function findEligible(): Promise<{ taskId: string; employeeId: string } | null> {
-  const statuses = await db.select().from(taskStatuses);
+  const statuses = await db.query.taskStatuses.findMany();
   const readyIds = statuses.filter((s) => s.category === 'ready').map((s) => s.id);
   if (readyIds.length === 0) return null;
   const { getTasksPerAgent } = await import('../settings/settings.service');
   const cap = await getTasksPerAgent();
-  const rows = await db.select().from(tasks);
-  const aiRows = await db.select({ userId: aiEmployees.userId }).from(aiEmployees);
+  const rows = await db.query.tasks.findMany();
+  const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true } });
   const aiIds = new Set(aiRows.map((r) => r.userId));
   const now = Date.now();
   const eligible = rows
@@ -171,9 +171,9 @@ const workers = new Map<string, { concurrency: number; close: () => Promise<void
  * stack while the worker was busy). The worker skips ineligible tasks quietly: no
  * re-run, no retry storm, no status flip back to doing. */
 export async function dispatchIfEligible(taskId: string, tandemUrl: string): Promise<void> {
-  const statuses = await db.select().from(taskStatuses);
+  const statuses = await db.query.taskStatuses.findMany();
   const readyIds = new Set(statuses.filter((s) => s.category === 'ready').map((s) => s.id));
-  const row = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  const row = await db.query.tasks.findFirst({ columns: { status: true }, where: { id: { eq: taskId } } });
   if (!row || !readyIds.has(row.status)) return; // stale duplicate: skip
   const run = await dispatchTask(taskId, tandemUrl);
   await run.finished;
@@ -182,7 +182,7 @@ export async function dispatchIfEligible(taskId: string, tandemUrl: string): Pro
 export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<typeof redisQueue>>>): Promise<void> {
   const { getTasksPerAgent } = await import('../settings/settings.service');
   const cap = await getTasksPerAgent();
-  const aiRows = await db.select({ userId: aiEmployees.userId }).from(aiEmployees);
+  const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true } });
   const wanted = new Set(aiRows.map((r) => r.userId));
   for (const [agentId, w] of workers) {
     if (!wanted.has(agentId) || w.concurrency !== cap) {

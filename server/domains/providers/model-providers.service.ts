@@ -28,7 +28,7 @@ export const modelProviderInputSchema = z.strictObject({
 });
 
 export async function listModelProviders() {
-  const provs = await db.select().from(modelProviders);
+  const provs = await db.query.modelProviders.findMany();
   return provs.map((p) => ({
     id: p.id,
     label: p.label,

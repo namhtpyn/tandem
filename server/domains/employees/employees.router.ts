@@ -25,9 +25,9 @@ import { ROLE } from '#shared/enums';
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/;
 
 const listEmployeesSnapshot = async () => {
-  const rows = await db.select().from(userTable).orderBy(userTable.createdAt);
-  const supRows = await db.select().from(supervisorsTable);
-  const aiRows = await db.select().from(aiEmployeesTable);
+  const rows = await db.query.user.findMany({ orderBy: (u, { asc }) => [asc(u.createdAt)] });
+  const supRows = await db.query.employeeSupervisors.findMany();
+  const aiRows = await db.query.aiEmployees.findMany();
   const sups = new Map<string, string[]>();
   for (const s of supRows) {
     (sups.get(s.employeeId) ?? sups.set(s.employeeId, []).get(s.employeeId)!).push(s.supervisorId);
@@ -107,7 +107,7 @@ export const employeesRouter = os.router({
         throw new ORPCError('BAD_REQUEST', { message: 'duplicate supervisor ids' });
       }
       if (supervisorIds.length > 0) {
-        const found = await db.select({ id: userTable.id }).from(userTable);
+        const found = await db.query.user.findMany({ columns: { id: true } });
         const ids = new Set(found.map((f) => f.id));
         for (const s of supervisorIds) {
           if (!ids.has(s)) {
@@ -126,7 +126,7 @@ export const employeesRouter = os.router({
         }
       }
       // email must be free
-      const clash = await db.select({ id: userTable.id }).from(userTable).where(eq(userTable.email, input.email));
+      const clash = await db.query.user.findMany({ columns: { id: true }, where: { email: { eq: input.email } } });
       if (clash.length > 0) {
         throw new ORPCError('CONFLICT', { message: `user ${input.email} already exists` });
       }
@@ -218,12 +218,12 @@ export const employeesRouter = os.router({
       }),
     )
     .handler(async ({ input }) => {
-      const rows = await db.select().from(userTable).where(eq(userTable.id, input.id));
+      const rows = await db.query.user.findMany({ where: { id: { eq: input.id } } });
       const emp = rows[0];
       if (!emp) {
         throw new ORPCError('NOT_FOUND', { message: 'employee not found' });
       }
-      const aiRow = (await db.select().from(aiEmployeesTable).where(eq(aiEmployeesTable.userId, input.id)))[0];
+      const aiRow = (await db.query.aiEmployees.findMany({ where: { userId: { eq: input.id } } }))[0];
       if (new Set(input.supervisorIds).size !== input.supervisorIds.length) {
         throw new ORPCError('BAD_REQUEST', { message: 'duplicate supervisor ids' });
       }
@@ -231,14 +231,14 @@ export const employeesRouter = os.router({
         throw new ORPCError('BAD_REQUEST', { message: 'an employee cannot supervise themselves' });
       }
       // supervisors must exist; cycle check over the supervision graph
-      const all = await db.select({ id: userTable.id }).from(userTable);
+      const all = await db.query.user.findMany({ columns: { id: true } });
       const ids = new Set(all.map((a) => a.id));
       for (const s of input.supervisorIds) {
         if (!ids.has(s)) {
           throw new ORPCError('BAD_REQUEST', { message: `supervisor ${s} does not exist` });
         }
       }
-      const supRows = await db.select().from(supervisorsTable);
+      const supRows = await db.query.employeeSupervisors.findMany();
       const graph = new Map<string, string[]>();
       for (const r of supRows) {
         if (r.employeeId === input.id) continue; // pretend the update applied
@@ -322,7 +322,7 @@ export const employeesRouter = os.router({
         await db.update(aiEmployeesTable).set(patch).where(eq(aiEmployeesTable.userId, aiRow.userId));
       }
       if (input.email !== undefined && input.email !== emp.email) {
-        const clash = await db.select({ id: userTable.id }).from(userTable).where(eq(userTable.email, input.email));
+        const clash = await db.query.user.findMany({ columns: { id: true }, where: { email: { eq: input.email } } });
         if (clash.length > 0) {
           throw new ORPCError('CONFLICT', { message: `user ${input.email} already exists` });
         }
@@ -349,7 +349,7 @@ export const employeesRouter = os.router({
 
   titles: {
     list: protectedProcedure.handler(async () => {
-      const rows = await db.select().from(employeeTitlesTable).orderBy(asc(employeeTitlesTable.name));
+      const rows = await db.query.employeeTitles.findMany({ orderBy: (t, { asc }) => [asc(t.name)] });
       const counts = await db
         .select({ title: userTable.title, count: count() })
         .from(userTable)
@@ -360,7 +360,7 @@ export const employeesRouter = os.router({
 
     live: protectedProcedure.handler(() =>
       liveGenerator([CHANGE_RESOURCE.EMPLOYEES], async () => {
-        const rows = await db.select().from(employeeTitlesTable).orderBy(asc(employeeTitlesTable.name));
+        const rows = await db.query.employeeTitles.findMany({ orderBy: (t, { asc }) => [asc(t.name)] });
         const counts = await db
           .select({ title: userTable.title, count: count() })
           .from(userTable)
@@ -427,14 +427,12 @@ export const employeesRouter = os.router({
       throw new ORPCError('BAD_REQUEST', { message: 'you cannot delete your own account' });
     }
     // guard: cannot delete the last admin (workspace lockout)
-    const target = (
-      await db.select({ id: userTable.id, role: userTable.role }).from(userTable).where(eq(userTable.id, input.id))
-    )[0];
+    const target = await db.query.user.findFirst({ columns: { id: true, role: true }, where: { id: { eq: input.id } } });
     if (!target) {
       throw new ORPCError('NOT_FOUND', { message: 'employee not found' });
     }
     if (target.role === ROLE.ADMIN) {
-      const admins = await db.select({ id: userTable.id }).from(userTable).where(eq(userTable.role, ROLE.ADMIN));
+      const admins = await db.query.user.findMany({ columns: { id: true }, where: { role: { eq: ROLE.ADMIN } } });
       if (admins.length <= 1) {
         throw new ORPCError('BAD_REQUEST', { message: 'cannot delete the last admin' });
       }
@@ -455,7 +453,7 @@ export const employeesRouter = os.router({
       }),
     )
     .handler(async ({ input }) => {
-      const rows = await db.select().from(userTable).where(eq(userTable.id, input.employeeId));
+      const rows = await db.query.user.findMany({ where: { id: { eq: input.employeeId } } });
       const emp = rows[0];
       if (!emp) throw new ORPCError('NOT_FOUND', { message: 'employee not found' });
       const { getAuth } = await import('../auth/auth.service');
@@ -490,7 +488,7 @@ export const employeesRouter = os.router({
   listApiKeys: protectedProcedure
     .input(z.strictObject({ employeeId: z.string().min(1) }))
     .handler(async ({ input }): Promise<ApiKeyRow[]> => {
-      const rows = await db.select().from(userTable).where(eq(userTable.id, input.employeeId));
+      const rows = await db.query.user.findMany({ where: { id: { eq: input.employeeId } } });
       const emp = rows[0];
       if (!emp) throw new ORPCError('NOT_FOUND', { message: 'employee not found' });
       const keys = await db
