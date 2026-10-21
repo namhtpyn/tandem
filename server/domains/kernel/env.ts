@@ -1,7 +1,9 @@
 // Boot-time env contract — validated ONCE at first import, fail fast with a
-// single report. Services read the typed `env` object, never process.env.
-// Test-only knobs (TANDEM_FAKE_*, TANDEM_TEST_DATABASE_URL) stay dynamic on
-// purpose: tests mutate them per-suite before their own imports.
+// single report. Parsed with safeParseAsync (top-level await) so async
+// refinements slot in later without touching consumers. Services read the
+// typed `env` object, never process.env. Test-only knobs (TANDEM_FAKE_*,
+// TANDEM_TEST_DATABASE_URL) stay dynamic on purpose: tests mutate them
+// per-suite before their own imports.
 import { z } from 'zod';
 
 const envSchema = z.object({
@@ -20,7 +22,7 @@ const envSchema = z.object({
   ADMIN_PASSWORD: z.string().min(8).optional(),
 });
 
-const parsed = envSchema.safeParse({
+const parsed = await envSchema.safeParseAsync({
   DATABASE_URL: process.env.DATABASE_URL,
   TANDEM_VAULT_KEY: process.env.TANDEM_VAULT_KEY,
   REDIS_URL: process.env.REDIS_URL,

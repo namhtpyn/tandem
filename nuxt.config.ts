@@ -22,6 +22,8 @@ export default defineNuxtConfig({
     // exports correctly (default node preset can mis-bundle them) and emits a leaner server
     preset: 'bun',
     compatibilityDate: '2026-01-01',
+    // default es2019 target rejects top-level await; the bun runtime is modern
+    esbuild: { options: { target: 'es2022' } },
     experimental: { openAPI: false },
     serverAssets: [{ baseName: 'drizzle', dir: './drizzle' }],
   },
