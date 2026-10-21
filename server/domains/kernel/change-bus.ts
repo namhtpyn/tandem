@@ -18,7 +18,6 @@ export function decodeChange(raw: string): ChangeEvent {
   return { id: e.id, resource: e.resource, action: e.action, at: e.at };
 }
 
-
 export type ChangeEvent = {
   id: string;
   resource: ChangeResource;

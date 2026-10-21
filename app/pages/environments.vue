@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { useQuery, useMutation } from '@tanstack/vue-query';
 
+import { CHANGE_RESOURCE, SECRET_USAGE, type SecretUsage } from '~/../shared/enums';
 // Environments (LIVE): oRPC live query — the table is a streaming snapshot;
 // mutations go through oRPC and every client (this tab or another) updates
 // instantly via the change bus + SSE.
 import type { EnvironmentRow, VaultSecretRow } from '~/utils/orpc-types';
 import { groupedSecretOptions } from '~/utils/vault-options';
-import { CHANGE_RESOURCE, SECRET_USAGE, type SecretUsage } from '~/../shared/enums';
 
 const { $orpc } = useNuxtApp();
 
@@ -14,7 +14,12 @@ const liveQuery = useQuery($orpc.environments.list.queryOptions({ queryKey: [CHA
 const rows = computed<EnvironmentRow[]>(() => (unref(liveQuery.data) ?? []) as EnvironmentRow[]);
 
 // vault secrets for the SSH key picker (metadata only)
-const secretsQuery = useQuery($orpc.vault.secrets.list.queryOptions({ input: { page: 1, pageSize: 100 }, queryKey: [CHANGE_RESOURCE.VAULT, 'all'] }));
+const secretsQuery = useQuery(
+  $orpc.vault.secrets.list.queryOptions({
+    input: { page: 1, pageSize: 100 },
+    queryKey: [CHANGE_RESOURCE.VAULT, 'all'],
+  }),
+);
 const secrets = computed<VaultSecretRow[]>(() => (unref(secretsQuery.data)?.data ?? []) as VaultSecretRow[]);
 const secretOptions = computed((): any => [
   { label: 'No key (agent default)', value: '__none__' },
@@ -125,7 +130,7 @@ async function probe(row: EnvironmentRow) {
   }
 }
 
-onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense()]))
+onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense()]));
 </script>
 
 <template>

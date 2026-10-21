@@ -81,9 +81,18 @@ describe('buildThread', () => {
       description: 'do the thing',
       createdAt: '2026-01-03T00:00:00Z',
       runs: [
-        { id: 'r1', status: RUN_STATUS.DONE, output: 'x', exitCode: 0, startedAt: '2026-01-01T00:00:00Z', finishedAt: null },
+        {
+          id: 'r1',
+          status: RUN_STATUS.DONE,
+          output: 'x',
+          exitCode: 0,
+          startedAt: '2026-01-01T00:00:00Z',
+          finishedAt: null,
+        },
       ],
-      activity: [{ id: 'a1', noteKind: ACTIVITY_KIND.QUESTION, body: 'q', authorName: 'Nam', createdAt: '2026-01-02T00:00:00Z' }],
+      activity: [
+        { id: 'a1', noteKind: ACTIVITY_KIND.QUESTION, body: 'q', authorName: 'Nam', createdAt: '2026-01-02T00:00:00Z' },
+      ],
     });
     expect(items[0]?.kind).toBe('brief');
     expect(items.map((i) => i.id)).toEqual(['brief', 'r1', 'a1']);
@@ -91,8 +100,22 @@ describe('buildThread', () => {
   it('interleaves runs and activity chronologically with id tiebreak', () => {
     const items = buildThread({
       runs: [
-        { id: 'r2', status: RUN_STATUS.DONE, output: '', exitCode: 0, startedAt: '2026-01-02T00:00:00Z', finishedAt: null },
-        { id: 'r1', status: RUN_STATUS.DONE, output: '', exitCode: 0, startedAt: '2026-01-01T00:00:00Z', finishedAt: null },
+        {
+          id: 'r2',
+          status: RUN_STATUS.DONE,
+          output: '',
+          exitCode: 0,
+          startedAt: '2026-01-02T00:00:00Z',
+          finishedAt: null,
+        },
+        {
+          id: 'r1',
+          status: RUN_STATUS.DONE,
+          output: '',
+          exitCode: 0,
+          startedAt: '2026-01-01T00:00:00Z',
+          finishedAt: null,
+        },
       ],
       activity: [{ id: 'a9', noteKind: 'status', body: '', authorName: null, createdAt: '2026-01-03T00:00:00Z' }],
     });
@@ -131,7 +154,14 @@ describe('buildThread', () => {
     expect(items[0].kind === 'run' && items[0].prompt).toBe('please do it');
     const none = buildThread({
       runs: [
-        { id: 'r2', status: RUN_STATUS.DONE, output: '', exitCode: 0, startedAt: '2026-01-01T00:00:00Z', finishedAt: null },
+        {
+          id: 'r2',
+          status: RUN_STATUS.DONE,
+          output: '',
+          exitCode: 0,
+          startedAt: '2026-01-01T00:00:00Z',
+          finishedAt: null,
+        },
       ],
     });
     expect(none[0].kind === 'run' && none[0].prompt).toBeUndefined();
@@ -139,7 +169,9 @@ describe('buildThread', () => {
 
   it('carries run fields through', () => {
     const [item] = buildThread({
-      runs: [{ id: 'r1', status: RUN_STATUS.RUNNING, output: 'partial', exitCode: null, startedAt: 't', finishedAt: null }],
+      runs: [
+        { id: 'r1', status: RUN_STATUS.RUNNING, output: 'partial', exitCode: null, startedAt: 't', finishedAt: null },
+      ],
     });
     expect(item).toMatchObject({ kind: 'run', status: RUN_STATUS.RUNNING, output: 'partial', exitCode: null });
   });
@@ -164,9 +196,16 @@ describe('envelope edge arms', () => {
   });
   it('note items carry kind and author fields', () => {
     const [n] = buildThread({
-      activity: [{ id: 'a1', noteKind: ACTIVITY_KIND.VERDICT, body: REVIEW_STATUS.APPROVED, authorName: 'Zed', createdAt: 't' }],
+      activity: [
+        { id: 'a1', noteKind: ACTIVITY_KIND.VERDICT, body: REVIEW_STATUS.APPROVED, authorName: 'Zed', createdAt: 't' },
+      ],
     });
-    expect(n).toMatchObject({ kind: 'note', noteKind: ACTIVITY_KIND.VERDICT, body: REVIEW_STATUS.APPROVED, authorName: 'Zed' });
+    expect(n).toMatchObject({
+      kind: 'note',
+      noteKind: ACTIVITY_KIND.VERDICT,
+      body: REVIEW_STATUS.APPROVED,
+      authorName: 'Zed',
+    });
   });
 });
 
@@ -188,8 +227,22 @@ describe('buildThread degenerate sources', () => {
   it('equal timestamps order by id (tiebreak arm)', () => {
     const items = buildThread({
       runs: [
-        { id: 'rb', status: RUN_STATUS.DONE, output: '', exitCode: 0, startedAt: '2026-01-01T00:00:00Z', finishedAt: null },
-        { id: 'ra', status: RUN_STATUS.DONE, output: '', exitCode: 0, startedAt: '2026-01-01T00:00:00Z', finishedAt: null },
+        {
+          id: 'rb',
+          status: RUN_STATUS.DONE,
+          output: '',
+          exitCode: 0,
+          startedAt: '2026-01-01T00:00:00Z',
+          finishedAt: null,
+        },
+        {
+          id: 'ra',
+          status: RUN_STATUS.DONE,
+          output: '',
+          exitCode: 0,
+          startedAt: '2026-01-01T00:00:00Z',
+          finishedAt: null,
+        },
       ],
     });
     expect(items.map((i) => i.id)).toEqual(['ra', 'rb']);

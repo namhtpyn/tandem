@@ -4,15 +4,15 @@
 // server-side interval (boot plugin), skippable in tests via env.
 import { eq } from 'drizzle-orm';
 
+import { CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 import { db } from '../../db';
 import { tasks, taskRuns, taskStatuses, aiEmployees } from '../../db/schema';
 import { publishChange } from '../kernel/change-bus';
+import { env } from '../kernel/env';
 import { redisQueue } from '../kernel/queue';
 import { dispatchTask } from './runner.service';
-import { CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS} from '#shared/enums';
-import { env } from '../kernel/env';
 
 const inFlight = new Map<string, Set<Promise<unknown>>>(); // employeeId -> live run promises
 

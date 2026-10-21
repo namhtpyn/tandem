@@ -4,10 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './api-harness';
 import { applyMigrations } from '../server/db/index';
-import { resetSchema } from './helpers/pg';
 import { ROLE } from '../shared/enums';
+import { resetSchema } from './helpers/pg';
 
-const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
+const admin = {
+  id: '00000000-0000-7000-8000-cd5fca5e2d34',
+  name: 'Admin',
+  email: 'admin@tandem.local',
+  role: ROLE.ADMIN,
+};
 
 async function ctx(sessionUser: { id: string; name: string; email: string; role: string } | null = admin) {
   const { buildServerContext } = await import('../server/domains/kernel/context');
@@ -48,7 +53,9 @@ beforeEach(async () => {
   // FK targets for createdBy / session user
   const { db } = await dbm();
   const { user } = await import('../server/db/schema');
-  await db.insert(user).values({ id: admin.id, name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN, title: 'T' });
+  await db
+    .insert(user)
+    .values({ id: admin.id, name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN, title: 'T' });
 });
 
 // BASELINE LAW (2026-10-16 squash): migrations seed statuses only — the provider

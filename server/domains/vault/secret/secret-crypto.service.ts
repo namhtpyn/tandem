@@ -8,6 +8,7 @@
 // Ciphertext format: v1:<b64 iv>:<b64 authTag>:<b64 ciphertext>
 // The key NEVER ships to the client; decrypt() is server-import-only.
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+
 import { env } from '../../kernel/env';
 
 let cachedKey: Buffer | null = null;

@@ -5,13 +5,13 @@ import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
 import { ALL_ENDPOINTS, isAnthropicWire, atMostOneModelsEndpoint } from '#shared/api-styles';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 import { db } from '../../db';
 import { modelProviders as modelProvidersTable, vaultSecrets as vaultSecretsTable } from '../../db/schema';
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
 import { modelCache, armCacheSweeper } from './models-cache';
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 export const providersRouter = os.router({
   /** live model-provider catalog (connection info only — no keys, no models) */

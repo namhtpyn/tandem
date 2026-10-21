@@ -5,10 +5,11 @@
 import { eq, sql, type SQL } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+
 import { db } from '../../../db';
 import { vaultSecrets as vaultSecretsTable, vaultFolders as vaultFoldersTable } from '../../../db/schema';
 import { ORPCError, publishChange } from '../../kernel/kernel';
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 export type FolderWithCount = { id: string; name: string; secrets: number };
 
@@ -26,9 +27,10 @@ export async function listFoldersPaged(input: ListFoldersPagedInput = {}) {
       limit: pageSize,
       offset: (page - 1) * pageSize,
       extras: {
-        secrets: sql<number>`(select count(*) from ${vaultSecretsTable} where ${vaultSecretsTable.folderId} = "d0"."id")`.mapWith(
-          Number,
-        ),
+        secrets:
+          sql<number>`(select count(*) from ${vaultSecretsTable} where ${vaultSecretsTable.folderId} = "d0"."id")`.mapWith(
+            Number,
+          ),
       },
     }),
     db.query.vaultFolders.count(where),

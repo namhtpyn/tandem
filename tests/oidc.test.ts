@@ -4,8 +4,8 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { getOidcProviders, saveOidcProviders } from '../server/domains/auth/oidc.service';
-import { resetSchema } from './helpers/pg';
 import { env, setEnv } from '../server/domains/kernel/env';
+import { resetSchema } from './helpers/pg';
 
 describe('oidc registry', () => {
   beforeEach(async () => {

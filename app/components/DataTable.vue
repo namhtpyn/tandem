@@ -73,10 +73,7 @@ function cellValue(row: T, col: TableColumn<T>) {
 
 <template>
   <div v-if="searchable || data.length || loading" class="space-y-3">
-    <div
-      v-if="searchable"
-      class="flex flex-wrap items-center gap-2"
-    >
+    <div v-if="searchable" class="flex flex-wrap items-center gap-2">
       <UInput
         :model-value="search"
         icon="i-lucide-search"
@@ -90,51 +87,45 @@ function cellValue(row: T, col: TableColumn<T>) {
     </div>
 
     <UCard v-if="data.length || loading" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
-    <UTable
-      :data="data"
-      :columns="columns"
-      :loading="loading"
-      :pagination="paginated ? pagination : undefined"
-      :pagination-options="paginated ? { getPaginationRowModel: undefined, manualPagination: true, pageCount } : undefined"
-    >
-      <template v-for="name in desktopSlotNames" :key="name" #[name]="slotProps">
-        <slot :name="name" v-bind="slotProps ?? {}" />
-      </template>
-    </UTable>
-    <div v-if="paginated && (pageCount ?? 0) > 1" class="flex justify-end border-t border-default p-3">
-      <UPagination
-        :page="page"
-        :page-count="pageCount"
-        @update:page="(p: number) => emit('update:page', p)"
-      />
-    </div>
-  </UCard>
+      <UTable
+        :data="data"
+        :columns="columns"
+        :loading="loading"
+        :pagination="paginated ? pagination : undefined"
+        :pagination-options="
+          paginated ? { getPaginationRowModel: undefined, manualPagination: true, pageCount } : undefined
+        "
+      >
+        <template v-for="name in desktopSlotNames" :key="name" #[name]="slotProps">
+          <slot :name="name" v-bind="slotProps ?? {}" />
+        </template>
+      </UTable>
+      <div v-if="paginated && (pageCount ?? 0) > 1" class="border-default flex justify-end border-t p-3">
+        <UPagination :page="page" :page-count="pageCount" @update:page="(p: number) => emit('update:page', p)" />
+      </div>
+    </UCard>
 
-  <div v-if="data.length" class="space-y-3 md:hidden">
-    <template v-for="(row, idx) in data" :key="String((row as Record<string, unknown>).id ?? idx)">
-      <slot name="mobile-item" :row="row">
-        <UCard :ui="{ root: 'shadow-sm' }">
-          <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">
-            {{ titleKey ? cellValue(row, { accessorKey: titleKey }) : '' }}
-          </p>
-          <dl v-if="detailColumns().length" class="mt-2 space-y-1">
-            <div v-for="col in detailColumns()" :key="col.id" class="flex items-baseline justify-between gap-3">
-              <dt class="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{{ col.header }}</dt>
-              <dd class="min-w-0 truncate text-right text-xs text-zinc-900 dark:text-white">
-                {{ cellValue(row, col) }}
-              </dd>
-            </div>
-          </dl>
-        </UCard>
-      </slot>
-    </template>
-    <div v-if="paginated && (pageCount ?? 0) > 1" class="flex justify-center pt-1">
-      <UPagination
-        :page="page"
-        :page-count="pageCount"
-        @update:page="(p: number) => emit('update:page', p)"
-      />
+    <div v-if="data.length" class="space-y-3 md:hidden">
+      <template v-for="(row, idx) in data" :key="String((row as Record<string, unknown>).id ?? idx)">
+        <slot name="mobile-item" :row="row">
+          <UCard :ui="{ root: 'shadow-sm' }">
+            <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">
+              {{ titleKey ? cellValue(row, { accessorKey: titleKey }) : '' }}
+            </p>
+            <dl v-if="detailColumns().length" class="mt-2 space-y-1">
+              <div v-for="col in detailColumns()" :key="col.id" class="flex items-baseline justify-between gap-3">
+                <dt class="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{{ col.header }}</dt>
+                <dd class="min-w-0 truncate text-right text-xs text-zinc-900 dark:text-white">
+                  {{ cellValue(row, col) }}
+                </dd>
+              </div>
+            </dl>
+          </UCard>
+        </slot>
+      </template>
+      <div v-if="paginated && (pageCount ?? 0) > 1" class="flex justify-center pt-1">
+        <UPagination :page="page" :page-count="pageCount" @update:page="(p: number) => emit('update:page', p)" />
+      </div>
     </div>
-  </div>
   </div>
 </template>

@@ -2,13 +2,13 @@
 import { useQuery, useMutation } from '@tanstack/vue-query';
 
 import { PROVIDER_KIND, endpointKind, isModelsEndpoint } from '#shared/api-styles';
+import { CHANGE_RESOURCE } from '~/../shared/enums';
 // Employees (LIVE): oRPC live query over user + supervision graph +
 // AI extension rows. Mutations ride the same change-bus — every client
 // updates instantly. AI-ness is derived (extension row exists), never a
 // column, and kind is immutable after create.
 import type { ApiKeyRow, EmployeeRow, EnvironmentRow } from '~/utils/orpc-types';
 import { groupedSecretOptions } from '~/utils/vault-options';
-import { CHANGE_RESOURCE } from '~/../shared/enums';
 
 const { $orpc, $client } = useNuxtApp();
 
@@ -178,7 +178,9 @@ const revokeKeyMutation = useMutation($orpc.employees.revokeApiKey.mutationOptio
 const listKeysCall = $orpc.employees.listApiKeys.call;
 
 // ---- editor ----
-const titlesQuery = useQuery($orpc.employees.titles.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES, 'titles'] }));
+const titlesQuery = useQuery(
+  $orpc.employees.titles.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES, 'titles'] }),
+);
 const titles = computed(
   () =>
     (titlesQuery.data.value as { titles: Array<{ id: string; name: string; employees: number }> } | undefined)
@@ -319,10 +321,20 @@ watch(
   },
   { immediate: false },
 );
-const secretsLive = useQuery($orpc.vault.secrets.list.queryOptions({ input: { page: 1, pageSize: 100 }, queryKey: [CHANGE_RESOURCE.VAULT, 'all'] }));
+const secretsLive = useQuery(
+  $orpc.vault.secrets.list.queryOptions({
+    input: { page: 1, pageSize: 100 },
+    queryKey: [CHANGE_RESOURCE.VAULT, 'all'],
+  }),
+);
 const secretItems = computed((): any =>
   groupedSecretOptions(
-    (unref(secretsLive.data)?.data ?? []) as Array<{ id: string; name: string; lastFour: string; folder: string | null }>,
+    (unref(secretsLive.data)?.data ?? []) as Array<{
+      id: string;
+      name: string;
+      lastFour: string;
+      folder: string | null;
+    }>,
   ),
 );
 const environmentItems = computed(() => environments.value.map((e) => ({ label: e.name, value: e.id })));
@@ -546,7 +558,15 @@ const columns = [
   { accessorKey: 'actions', header: '' },
 ];
 
-onServerPrefetch(() => Promise.all([liveQuery.suspense(), envQuery.suspense(), titlesQuery.suspense(), providersLive.suspense(), secretsLive.suspense()]))
+onServerPrefetch(() =>
+  Promise.all([
+    liveQuery.suspense(),
+    envQuery.suspense(),
+    titlesQuery.suspense(),
+    providersLive.suspense(),
+    secretsLive.suspense(),
+  ]),
+);
 </script>
 
 <template>

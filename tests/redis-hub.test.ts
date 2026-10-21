@@ -1,14 +1,18 @@
 // Redis hub integration tests — real redis on 127.0.0.1:6399 (docker redis-spike), skipped when unreachable.
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
-import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
+
 import { env, setEnv } from '../server/domains/kernel/env';
+import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
 
 const REDIS_URL = 'redis://127.0.0.1:6399';
 
 async function redisUp() {
   try {
     const { createClient } = await import('redis');
-    const r = createClient({ url: REDIS_URL, socket: { connectTimeout: 500, reconnectStrategy: () => new Error('no-retry') } });
+    const r = createClient({
+      url: REDIS_URL,
+      socket: { connectTimeout: 500, reconnectStrategy: () => new Error('no-retry') },
+    });
     r.on('error', () => {});
     await r.connect();
     await r.disconnect();
@@ -53,7 +57,12 @@ describe.skipIf(!up)('redis hub (integration)', () => {
 
   it('change encoding round-trips', async () => {
     const { encodeChange, decodeChange } = await import('../server/domains/kernel/change-bus');
-    const e = { id: '1', resource: CHANGE_RESOURCE.TASKS as const, action: CHANGE_ACTION.UPDATE as const, at: '2026-10-13T00:00:00Z' };
+    const e = {
+      id: '1',
+      resource: CHANGE_RESOURCE.TASKS as const,
+      action: CHANGE_ACTION.UPDATE as const,
+      at: '2026-10-13T00:00:00Z',
+    };
     expect(decodeChange(encodeChange(e))).toEqual(e);
   });
 

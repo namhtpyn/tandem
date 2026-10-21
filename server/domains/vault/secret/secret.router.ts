@@ -10,9 +10,10 @@ const listVaultSecretsInput = z.object({
   q: z.string().trim().max(200).optional(),
 });
 
+import { CHANGE_RESOURCE } from '#shared/enums';
+
 import { protectedProcedure, liveGenerator } from '../../kernel/kernel';
 import { listVaultSecrets, createSecret, updateSecret, removeSecret } from './secret.service';
-import { CHANGE_RESOURCE } from '#shared/enums';
 
 export const secretRouter = {
   /** live list — metadata only; ciphertext never leaves the server */

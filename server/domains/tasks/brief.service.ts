@@ -2,6 +2,7 @@
 // Pure functions — no I/O; loadBriefData gathers rows.
 import { and, eq } from 'drizzle-orm';
 
+import { PROPOSAL_STATUS } from '#shared/enums';
 import { RunVerdictSchema } from '#shared/run-verdict';
 import { renderOutputContract } from '#shared/structured-output';
 
@@ -17,7 +18,6 @@ import {
   projects,
 } from '../../db/schema';
 import { stripAttachments } from './attachments.util';
-import { PROPOSAL_STATUS } from '#shared/enums';
 
 export type BriefPerson = { id: string; name: string; title: string | null; kind: string };
 

@@ -18,8 +18,16 @@ import { dispatchTask } from './runner.service';
 
 export type ReviewVerdict = Exclude<ReviewStatus, typeof REVIEW_STATUS.PENDING>;
 
+import {
+  CHANGE_RESOURCE,
+  CHANGE_ACTION,
+  REVIEW_STATUS,
+  OBLIGATION_ROLE,
+  ACTIVITY_KIND,
+  type ReviewStatus,
+  RUN_STATUS,
+} from '#shared/enums';
 import { STATUS } from '#shared/status';
-import { CHANGE_RESOURCE, CHANGE_ACTION, REVIEW_STATUS, OBLIGATION_ROLE, ACTIVITY_KIND, type ReviewStatus, RUN_STATUS} from '#shared/enums';
 
 const TODO_STATUS = STATUS.todo;
 const IN_REVIEW_STATUS = STATUS.inReview;
@@ -56,7 +64,9 @@ export async function openReviewRound(taskId: string, reviewers: string[], resul
   const round = (await currentRound(taskId)) + 1;
   const now = new Date();
   for (const reviewerId of reviewers) {
-    await db.insert(taskReviews).values({ id: uuidv7(), taskId, reviewerId, round, status: REVIEW_STATUS.PENDING, createdAt: now });
+    await db
+      .insert(taskReviews)
+      .values({ id: uuidv7(), taskId, reviewerId, round, status: REVIEW_STATUS.PENDING, createdAt: now });
     await spawnObligation(taskId, reviewerId, OBLIGATION_ROLE.APPROVAL, now);
   }
   await logActivity(
@@ -110,7 +120,9 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
   const rows = await db
     .select()
     .from(taskReviews)
-    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
+    .where(
+      and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round), eq(taskReviews.status, REVIEW_STATUS.PENDING)),
+    );
   const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true } });
   const aiIds = new Set(aiRows.map((r) => r.userId));
   const body = resultBody ?? (await latestSubmittedBody(taskId));
@@ -123,7 +135,11 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
           .select({ id: taskRuns.id })
           .from(taskRuns)
           .where(
-            and(eq(taskRuns.taskId, taskId), eq(taskRuns.employeeId, row.reviewerId), eq(taskRuns.status, RUN_STATUS.RUNNING)),
+            and(
+              eq(taskRuns.taskId, taskId),
+              eq(taskRuns.employeeId, row.reviewerId),
+              eq(taskRuns.status, RUN_STATUS.RUNNING),
+            ),
           )
       ).length > 0;
     if (running) continue;
@@ -202,7 +218,11 @@ export async function recordVerdict(
   if (unanimous) {
     await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
     await db.update(tasks).set({ status: DONE_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
-    await logActivity(taskId, 'verdict', reviewerId, note || REVIEW_STATUS.APPROVED, { approved: true, unanimous: true, round });
+    await logActivity(taskId, 'verdict', reviewerId, note || REVIEW_STATUS.APPROVED, {
+      approved: true,
+      unanimous: true,
+      round,
+    });
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'done' };
   }

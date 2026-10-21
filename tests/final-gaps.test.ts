@@ -5,10 +5,10 @@ import { describe, expect, it, beforeEach } from 'vitest';
 
 import './api-harness';
 import { sqlClient } from '../server/db/index';
+import { env, setEnv } from '../server/domains/kernel/env';
+import { ROLE } from '../shared/enums';
 import { call } from './api-harness';
 import { resetSchema } from './helpers/pg';
-import { ROLE } from '../shared/enums';
-import { env, setEnv } from '../server/domains/kernel/env';
 
 beforeEach(async () => {
   await resetSchema();

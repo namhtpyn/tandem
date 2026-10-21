@@ -5,12 +5,12 @@ import './api-harness';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { applyMigrations } from '../server/db/index';
+import { env, setEnv } from '../server/domains/kernel/env';
+import { ROLE, RUN_STATUS } from '../shared/enums';
 import { STATUS } from '../shared/status';
 import type { TaskRow } from '../shared/types';
 import { resetSchema } from './helpers/pg';
 import { makeProcCaller } from './helpers/procs';
-import { ROLE, RUN_STATUS } from '../shared/enums';
-import { env, setEnv } from '../server/domains/kernel/env';
 
 // mock ssh2: connect+exec succeed; the stream never closes on its own, so tests
 // drive terminal events explicitly (error emit) or rely on the run-timeout timer
@@ -74,7 +74,12 @@ vi.mock('ssh2', () => {
   return { default: { Client: FakeClient } };
 });
 
-const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
+const admin = {
+  id: '00000000-0000-7000-8000-cd5fca5e2d34',
+  name: 'Admin',
+  email: 'admin@tandem.local',
+  role: ROLE.ADMIN,
+};
 
 // official oRPC call() helper — replaces hand-rolled ['~orpc'] internals poking
 const procAdmin = await makeProcCaller({
@@ -279,7 +284,10 @@ describe('stale-run reaper', () => {
       output: '',
       startedAt: new Date(),
     });
-    await db.update(tasks).set({ status: RUN_STATUS.DONE, failStreak: 0, dispatchAfter: null }).where(eq(tasks.id, 't-1'));
+    await db
+      .update(tasks)
+      .set({ status: RUN_STATUS.DONE, failStreak: 0, dispatchAfter: null })
+      .where(eq(tasks.id, 't-1'));
     expect(await reapStaleRuns()).toBe(1); // r-c reaped
     const task = (await db.select().from(tasks)).find((x) => x.id === 't-1')!;
     expect(task.status).toBe(RUN_STATUS.DONE); // NOT bounced: r-d is newer

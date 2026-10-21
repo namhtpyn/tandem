@@ -7,10 +7,10 @@
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
-import { db } from '../../db';
-import { tasks, taskObligations } from '../../db/schema';
 import { OBLIGATION_ROLE, OBLIGATION_STATUS, type ObligationRole } from '#shared/enums';
 
+import { db } from '../../db';
+import { tasks, taskObligations } from '../../db/schema';
 
 function id() {
   return uuidv7();
@@ -67,7 +67,11 @@ export async function cancelObligations(taskId: string, role: ObligationRole) {
     .update(taskObligations)
     .set({ status: OBLIGATION_STATUS.CANCELLED, resolvedAt: new Date() })
     .where(
-      and(eq(taskObligations.taskId, taskId), eq(taskObligations.role, role), eq(taskObligations.status, OBLIGATION_STATUS.PENDING)),
+      and(
+        eq(taskObligations.taskId, taskId),
+        eq(taskObligations.role, role),
+        eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
+      ),
     );
 }
 

@@ -1,8 +1,9 @@
+import KeyvRedis from '@keyv/redis';
 // Cache domain: cache-manager over a redis store. REDIS_URL is REQUIRED
 // (validated at boot) — redis is a hard dependency.
 import { createCache } from 'cache-manager';
 import { Keyv } from 'keyv';
-import KeyvRedis from '@keyv/redis';
+
 import { env } from './env';
 
 export type CacheDomain = {

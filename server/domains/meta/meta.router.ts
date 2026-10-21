@@ -1,6 +1,6 @@
 import { os } from '@orpc/server';
-import { env } from '../kernel/env';
 
+import { env } from '../kernel/env';
 // version endpoint (public)
 import { base } from '../kernel/kernel';
 

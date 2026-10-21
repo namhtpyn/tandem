@@ -8,10 +8,10 @@ import { user, account } from '../server/db/schema';
 import { hashPassword } from '../server/domains/auth/auth-hash.util';
 import { resolveAuthPolicy, anyUserExists, getAuth, rebuildAuth } from '../server/domains/auth/auth.service';
 import { saveOidcProviders } from '../server/domains/auth/oidc.service';
-import { setSetting } from '../server/domains/settings/settings.service';
-import { resetSchema } from './helpers/pg';
-import { ROLE } from '../shared/enums';
 import { env, setEnv } from '../server/domains/kernel/env';
+import { setSetting } from '../server/domains/settings/settings.service';
+import { ROLE } from '../shared/enums';
+import { resetSchema } from './helpers/pg';
 
 describe('auth policy', () => {
   beforeEach(async () => {

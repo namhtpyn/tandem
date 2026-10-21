@@ -4,13 +4,14 @@
 import { desc, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+
 import type { VaultSecretRow } from '../../../../shared/types';
 import { db } from '../../../db';
 import { vaultSecrets as vaultSecretsTable, vaultFolders as vaultFoldersTable } from '../../../db/schema';
 import { ORPCError, publishChange } from '../../kernel/kernel';
 import { folderExists } from '../folder/folder.service';
 import { encryptSecret, lastFourHint } from './secret-crypto.service';
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 export function toVaultRow(r: typeof vaultSecretsTable.$inferSelect) {
   return {
@@ -33,11 +34,8 @@ export async function listVaultSecrets(input: ListVaultSecretsInput = {}) {
   const folderId = input.folderId;
   const q = input.q?.trim() || undefined;
   const folderFilter = folderId ? { folderId: { eq: folderId } } : undefined;
-  const searchFilter = q
-    ? { OR: [{ name: { ilike: `%${q}%` } }, { description: { ilike: `%${q}%` } }] }
-    : undefined;
-  const where =
-    folderFilter && searchFilter ? { AND: [folderFilter, searchFilter] } : (folderFilter ?? searchFilter);
+  const searchFilter = q ? { OR: [{ name: { ilike: `%${q}%` } }, { description: { ilike: `%${q}%` } }] } : undefined;
+  const where = folderFilter && searchFilter ? { AND: [folderFilter, searchFilter] } : (folderFilter ?? searchFilter);
   const { data, total } = await db.query.vaultSecrets.findManyAndCount({
     with: { folder: true },
     where: where as never,

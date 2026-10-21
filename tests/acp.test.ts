@@ -3,9 +3,9 @@
 // version of dispatcher.test's (both re-implemented because vi.mock is per-file).
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
+import { env, setEnv } from '../server/domains/kernel/env';
 import type { AcpStream } from '../server/domains/tasks/acp.client';
 import { OBLIGATION_STATUS, RUN_STATUS } from '../shared/enums';
-import { env, setEnv } from '../server/domains/kernel/env';
 
 const NL_SRC = String.fromCharCode(10); // a real newline byte on the wire
 
@@ -441,7 +441,8 @@ describe('acp.client turns', () => {
         send({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: 's' } });
         send({ jsonrpc: '2.0', id: msg.id, result: {} });
       } else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's' } });
-      else if (method === 'session/prompt') send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: OBLIGATION_STATUS.CANCELLED } });
+      else if (method === 'session/prompt')
+        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: OBLIGATION_STATUS.CANCELLED } });
     });
     const lines: string[] = [];
     const res = await turn(stream, { onLine: (l) => lines.push(l) });
@@ -569,7 +570,10 @@ describe('acp.client turns', () => {
         if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} });
         else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's' } });
         else if (method === 'session/prompt')
-          setTimeout(() => send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: OBLIGATION_STATUS.CANCELLED } }), 40);
+          setTimeout(
+            () => send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: OBLIGATION_STATUS.CANCELLED } }),
+            40,
+          );
       });
       const lines: string[] = [];
       const res = await turn(stream, { timeoutMs: 20, onLine: (l) => lines.push(l) });

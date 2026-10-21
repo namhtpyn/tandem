@@ -1,4 +1,13 @@
-import type { ObligationRole, ObligationStatus, ProjectStatus, ProposalStatus, ReviewStatus, Role, RunStatus, SecretUsage } from './enums';
+import type {
+  ObligationRole,
+  ObligationStatus,
+  ProjectStatus,
+  ProposalStatus,
+  ReviewStatus,
+  Role,
+  RunStatus,
+  SecretUsage,
+} from './enums';
 // Shared client/server types (importable from app/ and server/).
 export type EnvironmentRow = {
   id: string;

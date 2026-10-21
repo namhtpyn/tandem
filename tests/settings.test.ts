@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import './helpers/pg';
 import { getSetting, setSetting, deleteSetting, getSettings } from '../server/domains/settings/settings.service';
-import { postgres } from './helpers/pg';
 import { ROLE } from '../shared/enums';
+import { postgres } from './helpers/pg';
 
 describe('settings store', () => {
   it('returns null for a missing key', async () => {

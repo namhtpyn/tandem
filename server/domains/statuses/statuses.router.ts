@@ -4,6 +4,8 @@ import { asc, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+
 import { db } from '../../db';
 import {
   aiEmployees as aiEmployeesTable,
@@ -13,7 +15,6 @@ import {
   user as userTable,
 } from '../../db/schema';
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 async function listStatuses() {
   const rows = await db.query.taskStatuses.findMany({ orderBy: { position: 'asc' } });

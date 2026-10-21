@@ -9,9 +9,9 @@ import {
   PROVIDER_ENDPOINT_LABEL,
   isModelsEndpoint,
 } from '#shared/api-styles';
+import { CHANGE_RESOURCE } from '~/../shared/enums';
 import type { ModelProviderRow, ProviderSaveInput } from '~/utils/orpc-types';
 import { groupedSecretOptions } from '~/utils/vault-options';
-import { CHANGE_RESOURCE } from '~/../shared/enums';
 // Settings: auth policy for this Tandem instance. OIDC provider list is a
 // UTable with a single add/edit modal (no v-model over v-for aliases — the
 // dxup page transform breaks that pattern; pathbridge table+modal law).
@@ -148,7 +148,12 @@ async function saveCompanyPrompt() {
   }
 }
 // ---- Workspace AI: internal LLM + decision assignments ----
-const vaultLive = useQuery($orpc.vault.secrets.list.queryOptions({ input: { page: 1, pageSize: 100 }, queryKey: [CHANGE_RESOURCE.VAULT, 'all'] }));
+const vaultLive = useQuery(
+  $orpc.vault.secrets.list.queryOptions({
+    input: { page: 1, pageSize: 100 },
+    queryKey: [CHANGE_RESOURCE.VAULT, 'all'],
+  }),
+);
 const vaultItems = computed((): any =>
   groupedSecretOptions(
     (unref(vaultLive.data)?.data ?? []) as Array<{ id: string; name: string; lastFour: string; folder: string | null }>,
@@ -397,7 +402,9 @@ async function savePasswordPolicy() {
   }
 }
 
-onServerPrefetch(() => Promise.all([oidcLive.suspense(), providersLive.suspense(), settingsLive.suspense(), vaultLive.suspense()]))
+onServerPrefetch(() =>
+  Promise.all([oidcLive.suspense(), providersLive.suspense(), settingsLive.suspense(), vaultLive.suspense()]),
+);
 </script>
 
 <template>

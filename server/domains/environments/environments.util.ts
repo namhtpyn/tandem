@@ -1,5 +1,6 @@
 // Environment validation + serialization shared by the API routes.
 import { z } from 'zod';
+
 import { SECRET_USAGE } from '#shared/enums';
 
 export const environmentInput = z.strictObject({

@@ -6,11 +6,11 @@
 // on unmount) — see the stream law in AGENTS.md.
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query';
 
+import { CHANGE_RESOURCE, PROPOSAL_KIND, type ProposalKind } from '~/../shared/enums';
 import { STATUS } from '~/../shared/status';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '~/utils/task-thread';
 import type { ThreadItem } from '~/utils/task-thread';
-import { CHANGE_RESOURCE, PROPOSAL_KIND, type ProposalKind } from '~/../shared/enums';
 
 const route = useRoute();
 const { $orpc, $client } = useNuxtApp();
@@ -341,7 +341,11 @@ async function createSubtask() {
     await $fetch('/rpc/tasks/create', {
       method: 'POST',
       body: {
-        json: { title: subtaskTitle.value.trim(), parentId: task.value.id, assigneeId: subtaskAssignee.value === '__none__' ? null : subtaskAssignee.value },
+        json: {
+          title: subtaskTitle.value.trim(),
+          parentId: task.value.id,
+          assigneeId: subtaskAssignee.value === '__none__' ? null : subtaskAssignee.value,
+        },
       },
     });
     subtaskTitle.value = '';
@@ -391,7 +395,17 @@ const queryClient = useQueryClient();
 
 useHead({ title: () => (task.value ? `${task.value.title} · Tandem` : 'Task · Tandem') });
 
-onServerPrefetch(() => Promise.all([tasksLive.suspense(), runsQuery.suspense(), activityQuery.suspense(), reviewsQuery.suspense(), employeesLive.suspense(), statusesLive.suspense(), projectsLive.suspense()]))
+onServerPrefetch(() =>
+  Promise.all([
+    tasksLive.suspense(),
+    runsQuery.suspense(),
+    activityQuery.suspense(),
+    reviewsQuery.suspense(),
+    employeesLive.suspense(),
+    statusesLive.suspense(),
+    projectsLive.suspense(),
+  ]),
+);
 </script>
 
 <template>
@@ -722,7 +736,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), runsQuery.suspense(), 
                       class="size-10"
                       :disabled="workflowBusy || !task.assigneeKind || task.assigneeKind !== 'ai'"
                       @click="wfAction('dispatch')"
-                    /></UPopover>
+                  /></UPopover>
                   <UPopover mode="hover" enable-touch>
                     <template #content><div class="px-3 py-1.5 text-xs">Submit note to the thread</div></template>
                     <UButton
@@ -733,7 +747,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), runsQuery.suspense(), 
                       class="size-10"
                       :disabled="workflowBusy"
                       @click="wfAction('submit', { body: workflowNote || undefined })"
-                    /></UPopover>
+                  /></UPopover>
                 </div>
               </div>
             </div>
@@ -773,7 +787,9 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), runsQuery.suspense(), 
                         :disabled="fieldBusy"
                         aria-label="Task assignee"
                         class="w-40"
-                        @update:model-value="(v: string) => task && updateField({ assigneeId: v === '__none__' ? null : v })"
+                        @update:model-value="
+                          (v: string) => task && updateField({ assigneeId: v === '__none__' ? null : v })
+                        "
                       />
                     </dd>
                   </div>
@@ -797,7 +813,9 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), runsQuery.suspense(), 
                         :disabled="fieldBusy"
                         aria-label="Task project"
                         class="w-40"
-                        @update:model-value="(v: string) => task && updateField({ projectId: v === '__none__' ? null : v })"
+                        @update:model-value="
+                          (v: string) => task && updateField({ projectId: v === '__none__' ? null : v })
+                        "
                       />
                     </dd>
                   </div>
@@ -859,7 +877,10 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), runsQuery.suspense(), 
                       />
                       {{ p.kind === PROPOSAL_KIND.SUBTASKS ? 'Split into subtasks' : 'Reassign ticket' }}
                     </p>
-                    <ul v-if="p.kind === PROPOSAL_KIND.SUBTASKS" class="mb-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+                    <ul
+                      v-if="p.kind === PROPOSAL_KIND.SUBTASKS"
+                      class="mb-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400"
+                    >
                       <li v-for="(item, i) in p.payload.items ?? []" :key="i" class="truncate">
                         • {{ item.title
                         }}<span v-if="item.assigneeName" class="text-zinc-400"> — {{ item.assigneeName }}</span>
@@ -1055,7 +1076,9 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), runsQuery.suspense(), 
                         :disabled="fieldBusy"
                         aria-label="Task assignee"
                         class="w-40"
-                        @update:model-value="(v: string) => task && updateField({ assigneeId: v === '__none__' ? null : v })"
+                        @update:model-value="
+                          (v: string) => task && updateField({ assigneeId: v === '__none__' ? null : v })
+                        "
                       />
                     </dd>
                   </div>
@@ -1079,7 +1102,9 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), runsQuery.suspense(), 
                         :disabled="fieldBusy"
                         aria-label="Task project"
                         class="w-40"
-                        @update:model-value="(v: string) => task && updateField({ projectId: v === '__none__' ? null : v })"
+                        @update:model-value="
+                          (v: string) => task && updateField({ projectId: v === '__none__' ? null : v })
+                        "
                       />
                     </dd>
                   </div>
@@ -1139,7 +1164,10 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), runsQuery.suspense(), 
                       />
                       {{ p.kind === PROPOSAL_KIND.SUBTASKS ? 'Split into subtasks' : 'Reassign ticket' }}
                     </p>
-                    <ul v-if="p.kind === PROPOSAL_KIND.SUBTASKS" class="mb-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+                    <ul
+                      v-if="p.kind === PROPOSAL_KIND.SUBTASKS"
+                      class="mb-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400"
+                    >
                       <li v-for="(item, i) in p.payload.items ?? []" :key="i" class="truncate">
                         • {{ item.title
                         }}<span v-if="item.assigneeName" class="text-zinc-400"> — {{ item.assigneeName }}</span>

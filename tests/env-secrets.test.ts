@@ -6,8 +6,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
 import { applyMigrations } from '../server/db/index';
-import { resetSchema } from './helpers/pg';
 import { ROLE, SECRET_USAGE } from '../shared/enums';
+import { resetSchema } from './helpers/pg';
 
 const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 

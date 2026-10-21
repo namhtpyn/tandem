@@ -10,7 +10,6 @@
 // TANDEM_FAKE_RUNNER=1 short-circuits SSH with a synthetic emitter so CI and
 // local e2e can exercise the full dispatch→stream→finish loop with no host.
 import { eq, and, desc, ne } from 'drizzle-orm';
-import { env } from '../kernel/env';
 
 import { db } from '../../db';
 import {
@@ -24,6 +23,7 @@ import {
   vaultSecrets,
   user as userTable,
 } from '../../db/schema';
+import { env } from '../kernel/env';
 import { publishChange } from '../kernel/kernel';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
 
@@ -174,6 +174,8 @@ import { join } from 'node:path';
 
 import { v7 as uuidv7 } from 'uuid';
 
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { RUN_STATUS, REVIEW_STATUS, type FinishedStatus } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 import {
@@ -191,8 +193,6 @@ import { recordProposals } from './proposals.service';
 import { recordVerdict } from './review.service';
 import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles, ensureOutDir } from './ssh-files.util';
 import { submitResult, askQuestion } from './workflow.service';
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
-import { RUN_STATUS, REVIEW_STATUS, type FinishedStatus } from '#shared/enums';
 
 export async function loadDispatchPlan(taskId: string) {
   const taskRows = await db.query.tasks.findMany({ where: { id: { eq: taskId } } });
@@ -522,7 +522,13 @@ export async function dispatchTask(
             await askQuestion(taskId, plan.ai.userId, envelope.text || 'question during review');
           } else if (envelope?.kind === 'result') {
             /* v8 ignore next -- empty-text fallback */
-            await recordVerdict(taskId, plan.ai.userId, REVIEW_STATUS.APPROVED, envelope.text || 'approved by review', 'ai');
+            await recordVerdict(
+              taskId,
+              plan.ai.userId,
+              REVIEW_STATUS.APPROVED,
+              envelope.text || 'approved by review',
+              'ai',
+            );
           } else {
             await askQuestion(taskId, plan.ai.userId, 'review finished without a verdict — approve or request changes');
           }

@@ -4,10 +4,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
 import { applyMigrations } from '../server/db/index';
+import { ROLE } from '../shared/enums';
 import { STATUS } from '../shared/status';
 import type { TaskRow } from '../shared/types';
 import { resetSchema } from './helpers/pg';
-import { ROLE } from '../shared/enums';
 
 async function dbm() {
   return await import('../server/db');
@@ -16,7 +16,12 @@ async function schema() {
   return await import('../server/db/schema');
 }
 
-const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
+const admin = {
+  id: '00000000-0000-7000-8000-cd5fca5e2d34',
+  name: 'Admin',
+  email: 'admin@tandem.local',
+  role: ROLE.ADMIN,
+};
 
 async function ctx(sessionUser: { id: string; name: string; email: string; role: string } | null = admin) {
   const { buildServerContext } = await import('../server/domains/kernel/context');

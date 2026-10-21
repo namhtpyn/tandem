@@ -22,13 +22,26 @@ import {
   spawnObligation,
 } from '../server/domains/tasks/obligations.service';
 import { recordProposals } from '../server/domains/tasks/proposals.service';
+import {
+  OBLIGATION_ROLE,
+  OBLIGATION_STATUS,
+  PROPOSAL_KIND,
+  PROPOSAL_STATUS,
+  REVIEW_STATUS,
+  ROLE,
+  RUN_STATUS,
+} from '../shared/enums';
 import { STATUS } from '../shared/status';
 import type { TaskRow } from '../shared/types';
 import { resetSchema } from './helpers/pg';
 import { makeProcCaller } from './helpers/procs';
-import { OBLIGATION_ROLE, OBLIGATION_STATUS, PROPOSAL_KIND, PROPOSAL_STATUS, REVIEW_STATUS, ROLE, RUN_STATUS } from '../shared/enums';
 
-const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
+const admin = {
+  id: '00000000-0000-7000-8000-cd5fca5e2d34',
+  name: 'Admin',
+  email: 'admin@tandem.local',
+  role: ROLE.ADMIN,
+};
 const worker = {
   id: '00000000-0000-7000-8000-bccb5af49873',
   name: 'Worker',
@@ -497,7 +510,10 @@ describe('routing coverage arms', () => {
   it('reassign escalation: outside-chain target lands on the agent supervisor', async () => {
     const taskId = await mkTask({ title: 'Esc', assigneeId: idMap.get('worker')!, ownerId: idMap.get('chief')! });
     // Solo Person is outside worker's chain (chief above, peer/report below)
-    const pid = await mkProposal(taskId, PROPOSAL_KIND.REASSIGN, { targetName: 'Solo Person', reason: 'their specialty' });
+    const pid = await mkProposal(taskId, PROPOSAL_KIND.REASSIGN, {
+      targetName: 'Solo Person',
+      reason: 'their specialty',
+    });
     await callProc('tasks.confirmProposal', { proposalId: pid });
     expect((await getTask(taskId)).assigneeId).toBe(idMap.get('chief')!);
     const hist = await callProc('tasks.assignments', { taskId });
@@ -631,7 +647,9 @@ describe('routing coverage arms II', () => {
 
     // escalation with NO supervisor (solo) falls back to the task owner
     const owned = await mkTask({ title: 'OwnFall', assigneeId: idMap.get('solo')!, ownerId: idMap.get('chief')! });
-    const oid = await mkProposal(owned, PROPOSAL_KIND.SUBTASKS, { items: [{ title: 'Far', assigneeName: 'Peer Person' }] });
+    const oid = await mkProposal(owned, PROPOSAL_KIND.SUBTASKS, {
+      items: [{ title: 'Far', assigneeName: 'Peer Person' }],
+    });
     await callProc('tasks.confirmProposal', { proposalId: oid });
     const st2 = await callProc('tasks.subtasks', { taskId: owned });
     expect(st2.items[0].assigneeId).toBe(idMap.get('chief')!);
@@ -641,7 +659,9 @@ describe('routing coverage arms II', () => {
     const { tasks: tasksTable } = await import('../server/db/schema');
     const createdBy = await db.update(tasksTable).set({ ownerId: null }).where(eq(tasksTable.id, owned)).returning();
     expect(createdBy.length).toBe(1);
-    const cid = await mkProposal(owned, PROPOSAL_KIND.SUBTASKS, { items: [{ title: 'Far2', assigneeName: 'Report Guy' }] });
+    const cid = await mkProposal(owned, PROPOSAL_KIND.SUBTASKS, {
+      items: [{ title: 'Far2', assigneeName: 'Report Guy' }],
+    });
     await callProc('tasks.confirmProposal', { proposalId: cid });
     const st3 = (await callProc('tasks.subtasks', { taskId: owned })) as { items: Array<{ title: string }> };
     expect(st3.items.map((i) => i.title)).toContain('Far2');
@@ -660,7 +680,10 @@ describe('routing coverage arms II', () => {
     // worker's chain includes Peer Person; Solo Person is outside
     const taskId = await mkTask({ title: 'AutoExec', assigneeId: idMap.get('worker')! });
     await recordProposals(taskId, null as unknown as string, [
-      { kind: PROPOSAL_KIND.SUBTASKS, items: [{ title: 'Mine to Peer', description: 'd', assigneeName: 'Peer Person' }] },
+      {
+        kind: PROPOSAL_KIND.SUBTASKS,
+        items: [{ title: 'Mine to Peer', description: 'd', assigneeName: 'Peer Person' }],
+      },
     ]);
     let rows = (await dbRows('taskProposals')).filter((p) => p.taskId === taskId);
     expect(rows).toHaveLength(1);
@@ -692,7 +715,9 @@ describe('routing coverage arms II', () => {
     await recordProposals(taskId, null as unknown as string, [
       { kind: PROPOSAL_KIND.REASSIGN, targetName: 'Worker', reason: 'back' },
     ]);
-    const back = (await dbRows('taskProposals')).filter((p) => p.taskId === taskId && p.status === PROPOSAL_STATUS.PROPOSED);
+    const back = (await dbRows('taskProposals')).filter(
+      (p) => p.taskId === taskId && p.status === PROPOSAL_STATUS.PROPOSED,
+    );
     expect(back).toHaveLength(1);
   });
 
@@ -732,7 +757,9 @@ describe('routing coverage arms II', () => {
       reviewers: [idMap.get('report')!],
     });
     // outside-chain target: stays proposed (in-chain routing auto-executes by law and would move the assignee)
-    await recordProposals(taskId, null as unknown as string, [{ kind: PROPOSAL_KIND.REASSIGN, targetName: 'Solo Person' }]);
+    await recordProposals(taskId, null as unknown as string, [
+      { kind: PROPOSAL_KIND.REASSIGN, targetName: 'Solo Person' },
+    ]);
 
     await callProc('tasks.update', { id: taskId, status: STATUS.doing });
     await asEmp('worker', () => callProc('tasks.ask', { taskId, body: 'q' }));

@@ -4,14 +4,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './api-harness';
 import { applyMigrations } from '../server/db/index';
+import { env, setEnv } from '../server/domains/kernel/env';
+import { ROLE, RUN_STATUS } from '../shared/enums';
 import { STATUS } from '../shared/status';
 import { resetSchema } from './helpers/pg';
-import { ROLE, RUN_STATUS } from '../shared/enums';
-import { env, setEnv } from '../server/domains/kernel/env';
 
 setEnv({ TANDEM_FAKE_RUNNER: '' });
 
-const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
+const admin = {
+  id: '00000000-0000-7000-8000-cd5fca5e2d34',
+  name: 'Admin',
+  email: 'admin@tandem.local',
+  role: ROLE.ADMIN,
+};
 
 vi.mock('../server/domains/tasks/ssh-exec.util', () => ({
   // the ACP transport opens through loadClient — a throwing client loader is

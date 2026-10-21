@@ -5,6 +5,8 @@ import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
 import { endpointKind, PROVIDER_KIND } from '#shared/api-styles';
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { ROLE } from '#shared/enums';
 
 import type { ApiKeyRow, EmployeeRow } from '../../../shared/types';
 import { db } from '../../db';
@@ -19,8 +21,6 @@ import {
   vaultSecrets as vaultSecretsTable,
 } from '../../db/schema';
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
-import { ROLE } from '#shared/enums';
 
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/;
 
@@ -427,7 +427,10 @@ export const employeesRouter = os.router({
       throw new ORPCError('BAD_REQUEST', { message: 'you cannot delete your own account' });
     }
     // guard: cannot delete the last admin (workspace lockout)
-    const target = await db.query.user.findFirst({ columns: { id: true, role: true }, where: { id: { eq: input.id } } });
+    const target = await db.query.user.findFirst({
+      columns: { id: true, role: true },
+      where: { id: { eq: input.id } },
+    });
     if (!target) {
       throw new ORPCError('NOT_FOUND', { message: 'employee not found' });
     }

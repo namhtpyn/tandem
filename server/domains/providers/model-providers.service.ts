@@ -2,7 +2,6 @@ import { eq } from 'drizzle-orm';
 // Model provider + model catalog (model_providers).
 // API keys are NEVER stored here — per-agent in the vault (fleet law).
 
-
 import { db } from '../../db';
 import { modelProviders } from '../../db/schema';
 

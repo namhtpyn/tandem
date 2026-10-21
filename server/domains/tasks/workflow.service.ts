@@ -9,6 +9,15 @@
 import { eq, and, asc } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
+import {
+  CHANGE_RESOURCE,
+  CHANGE_ACTION,
+  REVIEW_STATUS,
+  OBLIGATION_ROLE,
+  ACTIVITY_KIND,
+  type ActivityKind,
+  type ObligationRole,
+} from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 import { db } from '../../db';
@@ -17,7 +26,6 @@ import { publishChange } from '../kernel/kernel';
 import { refreshParentGating, hasOpenChildren } from './gating.service';
 import { spawnObligation, resolveObligation, cancelObligations, answerHolder } from './obligations.service';
 import { openRoundLive, dispatchAiReviewTurns, openReviewRound, recordVerdict } from './review.service';
-import { CHANGE_RESOURCE, CHANGE_ACTION, REVIEW_STATUS, OBLIGATION_ROLE, ACTIVITY_KIND, type ActivityKind, type ObligationRole } from '#shared/enums';
 
 export const WAITING_ANSWER_STATUS = STATUS.waitingAnswer;
 export const IN_REVIEW_STATUS = STATUS.inReview;

@@ -4,6 +4,8 @@ import { asc, desc, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
+import { CHANGE_RESOURCE, CHANGE_ACTION, type RunStatus, type ActivityKind } from '#shared/enums';
+
 import type { TaskRow } from '../../../shared/types';
 import { db } from '../../db';
 import {
@@ -16,6 +18,7 @@ import {
   taskActivity,
   taskProposals,
 } from '../../db/schema';
+import { env } from '../kernel/env';
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 import { recordAssignment, listAssignments } from './assignments.service';
 import { refreshParentGating } from './gating.service';
@@ -23,8 +26,6 @@ import { approvalsInRoundBatch, openObligations, pendingForUser, pendingCounts }
 import { confirmProposal, rejectProposal } from './proposals.service';
 import { listReviews } from './review.service';
 import { dispatchTask, listRuns } from './runner.service';
-import { CHANGE_RESOURCE, CHANGE_ACTION, type RunStatus, type ActivityKind} from '#shared/enums';
-import { env } from '../kernel/env';
 import {
   askQuestion,
   forwardQuestion,
@@ -466,7 +467,9 @@ export const tasksRouter = os.router({
 
   activity: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))
-    .handler(({ input }) => liveGenerator([CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_RESOURCE.TASKS], () => activitySnapshot(input.taskId))),
+    .handler(({ input }) =>
+      liveGenerator([CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_RESOURCE.TASKS], () => activitySnapshot(input.taskId)),
+    ),
 
   /** runs for a task (live) — streaming output tail from agent dispatches */
   runsList: protectedProcedure
@@ -475,7 +478,9 @@ export const tasksRouter = os.router({
 
   runs: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))
-    .handler(({ input }) => liveGenerator([CHANGE_RESOURCE.RUNS, CHANGE_RESOURCE.TASKS], () => runsSnapshot(input.taskId))),
+    .handler(({ input }) =>
+      liveGenerator([CHANGE_RESOURCE.RUNS, CHANGE_RESOURCE.TASKS], () => runsSnapshot(input.taskId)),
+    ),
 
   /** manually dispatch a task to its AI assignee (the dispatcher also fires automatically) */
   dispatch: protectedProcedure

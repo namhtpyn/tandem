@@ -1,7 +1,4 @@
 import { readdirSync, readFileSync } from 'node:fs';
-
-import { installRqbExtensions } from './rqb-extensions';
-import { env } from '../domains/kernel/env';
 import { join } from 'node:path';
 
 // Postgres client (postgres.js) + drizzle rc (Relations v2) + boot-applied migrations.
@@ -14,6 +11,8 @@ import { join } from 'node:path';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 
+import { env } from '../domains/kernel/env';
+import { installRqbExtensions } from './rqb-extensions';
 import { user, session, account, verification, settings, relations } from './schema';
 
 const url = env.DATABASE_URL;

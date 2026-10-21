@@ -10,10 +10,10 @@ import './api-harness';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { applyMigrations } from '../server/db/index';
-import type { EmployeeRow, ApiKeyRow } from '../shared/types';
-import { resetSchema } from './helpers/pg';
 import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
 import { ROLE } from '../shared/enums';
+import type { EmployeeRow, ApiKeyRow } from '../shared/types';
+import { resetSchema } from './helpers/pg';
 
 // live rows intentionally drop the legacy harness field — the test asserts its absence
 type LiveEmployee = EmployeeRow & { harness?: string };
@@ -570,7 +570,12 @@ describe('employees.remove', () => {
     const { user } = await schema();
     await db
       .insert(user)
-      .values({ id: '00000000-0000-7000-8000-c5ea71554c77', name: 'Sess', email: 'sess@tandem.local', role: ROLE.VIEWER });
+      .values({
+        id: '00000000-0000-7000-8000-c5ea71554c77',
+        name: 'Sess',
+        email: 'sess@tandem.local',
+        role: ROLE.VIEWER,
+      });
     // call the handler with a session present (as requireSession middleware provides)
     let cur: Record<string, unknown> = router as unknown as Record<string, unknown>;
     for (const k of ['employees', 'remove']) cur = cur[k] as Record<string, unknown>;

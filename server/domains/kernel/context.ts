@@ -1,6 +1,7 @@
+import { ROLE, type Role } from '#shared/enums';
+
 // Per-request server context: lazily-resolved better-auth session.
 import type { ServerContext } from './kernel';
-import { ROLE, type Role } from '#shared/enums';
 type AuthSessionPayload = {
   user: { id: string; name: string; email: string; role: Role };
 };

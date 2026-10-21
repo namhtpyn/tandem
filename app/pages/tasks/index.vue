@@ -6,10 +6,10 @@ import { Extension } from '@tiptap/core';
 import type { Editor } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 
+import { CHANGE_RESOURCE, ACTIVITY_KIND } from '~/../shared/enums';
 import { STATUS } from '~/../shared/status';
 import type { EditorView, ClipboardEventLike, DragEventLike } from '~/editor-typing';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
-import { CHANGE_RESOURCE, ACTIVITY_KIND} from '~/../shared/enums';
 
 /** paste/drop images in the description editor -> attachments pipeline.
  *  Bytes NEVER ride ACP: upload lands them in /api/tasks/:id/attachments, the
@@ -512,7 +512,15 @@ function statusColor(s: string) {
   return 'neutral';
 }
 
-onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(), employeesLive.suspense(), projectsLive.suspense(), inboxQuery.suspense()]))
+onServerPrefetch(() =>
+  Promise.all([
+    tasksLive.suspense(),
+    statusesLive.suspense(),
+    employeesLive.suspense(),
+    projectsLive.suspense(),
+    inboxQuery.suspense(),
+  ]),
+);
 </script>
 
 <template>

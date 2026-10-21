@@ -4,6 +4,9 @@ import { eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
+
 import { db } from '../../db';
 import { environments as environmentsTable, vaultSecrets as vaultSecretsTable } from '../../db/schema';
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
@@ -11,8 +14,6 @@ import { decryptSecret } from '../vault/secret/secret-crypto.service';
 import { toRow, listEnvironments } from './environments.service';
 import { environmentInput } from './environments.util';
 import { probeSsh } from './ssh-probe.service';
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
-import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
 
 export const environmentsRouter = os.router({
   /** plain GET list (first-load data per the SSE law) */

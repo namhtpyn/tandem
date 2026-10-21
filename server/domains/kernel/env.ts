@@ -47,7 +47,10 @@ const parsed = await envSchema.safeParseAsync(process.env);
 
 if (!parsed.success) {
   // eslint-disable-next-line no-console
-  console.error('[tandem] invalid environment:\n' + parsed.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n'));
+  console.error(
+    '[tandem] invalid environment:\n' +
+      parsed.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n'),
+  );
   process.exit(1);
 }
 

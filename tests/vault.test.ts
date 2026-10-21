@@ -6,11 +6,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
 import { applyMigrations } from '../server/db/index';
+import { env, setEnv } from '../server/domains/kernel/env';
 import { decryptSecret, encryptSecret, lastFourHint } from '../server/domains/vault/secret/secret-crypto.service';
+import { ROLE } from '../shared/enums';
 import type { VaultSecretRow } from '../shared/types';
 import { resetSchema } from './helpers/pg';
-import { ROLE } from '../shared/enums';
-import { env, setEnv } from '../server/domains/kernel/env';
 
 const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 
@@ -140,7 +140,7 @@ describe('vault API', () => {
   });
 
   it('list paginates server-side via findManyAndCount (page, pageSize, folderId)', async () => {
-    const folder = await callProc('vault.folders.save', { name: 'Paged' }) as { id: string };
+    const folder = (await callProc('vault.folders.save', { name: 'Paged' })) as { id: string };
     for (let i = 0; i < 3; i++) {
       await callProc('vault.secrets.create', {
         name: `paged-${i}`,
@@ -149,19 +149,19 @@ describe('vault API', () => {
         folderId: i < 2 ? folder.id : null,
       });
     }
-    const page1 = await callProc('vault.secrets.list', { page: 1, pageSize: 2 }) as {
+    const page1 = (await callProc('vault.secrets.list', { page: 1, pageSize: 2 })) as {
       data: VaultSecretRow[];
       total: number;
     };
     expect(page1.total).toBe(3);
     expect(page1.data).toHaveLength(2);
-    const page2 = await callProc('vault.secrets.list', { page: 2, pageSize: 2 }) as {
+    const page2 = (await callProc('vault.secrets.list', { page: 2, pageSize: 2 })) as {
       data: VaultSecretRow[];
       total: number;
     };
     expect(page2.data).toHaveLength(1);
     // folder filter narrows both data and total
-    const filtered = await callProc('vault.secrets.list', { page: 1, pageSize: 20, folderId: folder.id }) as {
+    const filtered = (await callProc('vault.secrets.list', { page: 1, pageSize: 20, folderId: folder.id })) as {
       data: VaultSecretRow[];
       total: number;
     };
@@ -172,18 +172,18 @@ describe('vault API', () => {
   it('list searches server-side (q matches name or description, ilike)', async () => {
     await callProc('vault.secrets.create', { name: 'github-pat-prod', value: 'v1', description: 'deploy key' });
     await callProc('vault.secrets.create', { name: 'unrelated-row', value: 'v2', description: 'nothing here' });
-    const byName = await callProc('vault.secrets.list', { page: 1, pageSize: 20, q: 'github' }) as {
+    const byName = (await callProc('vault.secrets.list', { page: 1, pageSize: 20, q: 'github' })) as {
       data: VaultSecretRow[];
       total: number;
     };
     expect(byName.total).toBe(1);
     expect(byName.data[0]!.name).toBe('github-pat-prod');
-    const byDesc = await callProc('vault.secrets.list', { page: 1, pageSize: 20, q: 'DEPLOY' }) as {
+    const byDesc = (await callProc('vault.secrets.list', { page: 1, pageSize: 20, q: 'DEPLOY' })) as {
       data: VaultSecretRow[];
       total: number;
     };
     expect(byDesc.total).toBe(1);
-    const none = await callProc('vault.secrets.list', { page: 1, pageSize: 20, q: 'zzz-no-match' }) as {
+    const none = (await callProc('vault.secrets.list', { page: 1, pageSize: 20, q: 'zzz-no-match' })) as {
       total: number;
     };
     expect(none.total).toBe(0);

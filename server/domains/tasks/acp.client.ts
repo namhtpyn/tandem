@@ -1,7 +1,8 @@
+import { RUN_STATUS, type FinishedStatus } from '#shared/enums';
 // Structured-output contract rendering comes from the generic shared module.
 import { renderOutputContract, parseStructuredOutput } from '#shared/structured-output';
+
 import { env } from '../kernel/env';
-import { RUN_STATUS, type FinishedStatus } from '#shared/enums';
 
 // Minimal ACP v1 client for task dispatch: newline-delimited JSON-RPC 2.0 over
 // any byte duplex — an SSH exec stream in production, PassThrough pairs in

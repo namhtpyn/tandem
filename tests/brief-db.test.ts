@@ -15,8 +15,8 @@ import {
   environments,
 } from '../server/db/schema';
 import { buildBrief, loadBriefData } from '../server/domains/tasks/brief.service';
-import { STATUS } from '../shared/status';
 import { ACTIVITY_KIND, ROLE } from '../shared/enums';
+import { STATUS } from '../shared/status';
 
 describe('loadBriefData (real db)', () => {
   let agentId: string;
@@ -84,7 +84,9 @@ describe('loadBriefData (real db)', () => {
 
   it('covers long activity truncation, mention name stripping, populated reviewers', async () => {
     const long = 'x'.repeat(300);
-    await db.insert(taskActivity).values({ id: taskId + '-long', taskId, kind: ACTIVITY_KIND.NOTE, authorId: null, body: long });
+    await db
+      .insert(taskActivity)
+      .values({ id: taskId + '-long', taskId, kind: ACTIVITY_KIND.NOTE, authorId: null, body: long });
     await db
       .update(tasks)
       .set({ description: `ping @[Peer Three](mention-${peerId}) and [@ label="Chief Two"]`, reviewers: [chiefId] })

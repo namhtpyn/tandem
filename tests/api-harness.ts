@@ -13,6 +13,7 @@ import {
 } from 'h3';
 // Shared harness for authenticated API tests: real h3 events + vitest-mocked session.
 import { vi } from 'vitest';
+
 import { ROLE } from '../shared/enums';
 
 // Keep the REAL requireSession and the REAL auth singleton; stub only

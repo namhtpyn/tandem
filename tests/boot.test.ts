@@ -3,9 +3,9 @@ import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 import './api-harness';
 import { sqlClient } from '../server/db/index';
-import { resetSchema } from './helpers/pg';
-import { ROLE } from '../shared/enums';
 import { env, setEnv } from '../server/domains/kernel/env';
+import { ROLE } from '../shared/enums';
+import { resetSchema } from './helpers/pg';
 
 const bootModule = () => import('../server/plugins/boot');
 

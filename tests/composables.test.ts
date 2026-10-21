@@ -2,6 +2,7 @@
 // and the focus-refresh lifecycle. happy-dom environment; Nuxt auto-imports
 // (useState, onMounted…) are stubbed globally in this file's harness.
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+
 import { ROLE } from '../shared/enums';
 
 // ---- Nuxt runtime stubs ----

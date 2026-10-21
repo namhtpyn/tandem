@@ -10,9 +10,10 @@ const listFoldersPagedInput = z.object({
   q: z.string().trim().max(60).optional(),
 });
 
+import { CHANGE_RESOURCE } from '#shared/enums';
+
 import { protectedProcedure, liveGenerator } from '../../kernel/kernel';
 import { listFolders, listFoldersPaged, saveFolder, removeFolder } from './folder.service';
-import { CHANGE_RESOURCE } from '#shared/enums';
 
 export const folderRouter = os.router({
   list: protectedProcedure.handler(() => listFolders()),

@@ -1,8 +1,9 @@
 import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
+
 import { env } from '../kernel/env';
-// SSH probe — Bun Shell first (cross-OS, no shell interpolation); node
-// child_process fallback for non-bun runtimes (vitest workers are node).
-// BatchMode ssh with strict options; never prompts.
+// SSH probe — Bun-only: Bun.spawn with a hard timeout kill (the app and its
+// tests run on Bun; no node fallback). BatchMode ssh with strict options;
+// never prompts.
 
 export type ProbeResult = {
   ok: boolean;
@@ -33,7 +34,6 @@ function sshArgs(host: string, port: string, username: string, identityFile?: st
   ];
 }
 
-
 export async function probeSsh(
   host: string,
   port: string,
@@ -48,25 +48,12 @@ export async function probeSsh(
   // the vars to the ssh child — the app process env is never touched.
   const askpassDir = usage === SECRET_USAGE.PASSWORD && secret ? await writeAskpass(secret) : undefined;
   try {
-    /* v8 ignore start -- bun-runtime-only lines; exercised by `bun run` integration, unreachable under vitest/node */
-    const bunModule = 'bun';
-    const mod = (await import(/* @vite-ignore */ bunModule)) as typeof import('bun');
-    let r;
-    if (askpassDir) {
-      r = await mod.$`env SSH_ASKPASS=${askpassDir}/askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 ssh ${sshArgs(host, port, username, identityFile, askpassDir)}`.nothrow().quiet();
-    } else {
-      r = await mod.$`ssh ${sshArgs(host, port, username, identityFile, askpassDir)}`.nothrow().quiet();
-    }
-    return interpret(r.exitCode, String(r.stdout), String(r.stderr));
-    /* v8 ignore stop */
-  } catch (bunError) {
-    // non-bun runtime (vitest/node): 'bun' import fails -> node fallback.
-    // bun present but shell threw -> also try node, then surface the error.
-    try {
-      return await probeViaNode(host, port, username, identityFile, askpassDir);
-    } catch (nodeError) {
-      return { ok: false, detail: pickFailureDetail(bunError, nodeError) };
-    }
+    const argv: string[] = [];
+    if (askpassDir) argv.push('env', `SSH_ASKPASS=${askpassDir}/askpass.sh`, 'SSH_ASKPASS_REQUIRE=force', 'DISPLAY=:0');
+    argv.push('ssh', ...sshArgs(host, port, username, identityFile, askpassDir));
+    return await runSsh(argv, sshTimeoutMs());
+  } catch (e) {
+    return { ok: false, detail: e instanceof Error ? e.message : 'probe failed' };
   } finally {
     await cleanupIdentity(identityFile);
     await cleanupAskpass(askpassDir);
@@ -124,15 +111,6 @@ async function cleanupIdentity(file?: string) {
   }
 }
 
-/** when bun itself failed (not just unavailable), its error wins; otherwise
- * the node-path error; plain-string throws degrade to a generic message. */
-export function pickFailureDetail(bunError: unknown, nodeError: unknown): string {
-  const bunUnavailable =
-    bunError instanceof Error && /Cannot find package|Failed to resolve|ERR_MODULE_NOT_FOUND/.test(bunError.message);
-  const cause = bunError instanceof Error && !bunUnavailable ? bunError : nodeError;
-  return cause instanceof Error ? cause.message : 'probe failed';
-}
-
 const TIMEOUT_DEFAULT_MS = 10_000;
 
 function sshTimeoutMs(): number {
@@ -140,35 +118,15 @@ function sshTimeoutMs(): number {
   return Number.isFinite(v) && v > 0 ? v : TIMEOUT_DEFAULT_MS;
 }
 
-async function probeViaNode(host: string, port: string, username: string, identityFile?: string, askpassDir?: string) {
-  const { spawn } = await import('node:child_process');
-  // `env` prefix scopes the askpass vars to the child; the rest inherits
-  const argv: string[] = [];
-  if (askpassDir) argv.push('env', `SSH_ASKPASS=${askpassDir}/askpass.sh`, 'SSH_ASKPASS_REQUIRE=force', 'DISPLAY=:0');
-  argv.push('ssh', ...sshArgs(host, port, username, identityFile, askpassDir));
-  const child = spawn(argv[0]!, argv.slice(1), {
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  const timer = setTimeout(() => child.kill('SIGKILL'), sshTimeoutMs());
+/** Bun.spawn the ssh argv; a hung child is SIGKILLed at the timeout. */
+async function runSsh(argv: string[], timeoutMs: number): Promise<ProbeResult> {
+  const proc = Bun.spawn(argv, { stdout: 'pipe', stderr: 'pipe' });
+  const timer = setTimeout(() => proc.kill('SIGKILL'), timeoutMs);
   try {
     const [exitCode, stdout, stderr] = await Promise.all([
-      new Promise<number>((resolve) => {
-        child.on('close', (code) => resolve(code ?? -1));
-      }),
-      new Promise<string>((resolve) => {
-        let out = '';
-        child.stdout!.on('data', (d) => {
-          out += d;
-        });
-        child.stdout!.on('end', () => resolve(out));
-      }),
-      new Promise<string>((resolve) => {
-        let err = '';
-        child.stderr!.on('data', (d) => {
-          err += d;
-        });
-        child.stderr!.on('end', () => resolve(err));
-      }),
+      proc.exited,
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
     ]);
     return interpret(exitCode, stdout, stderr);
   } finally {

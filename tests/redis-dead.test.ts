@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 import './api-harness';
 import './helpers/pg';
-import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
 import { env, setEnv } from '../server/domains/kernel/env';
+import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
 
 describe('redis failure arms', () => {
   it('queue domain rejects and clears the cache on connection failure', async () => {

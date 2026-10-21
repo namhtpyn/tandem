@@ -7,6 +7,14 @@
 import { eq, inArray } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
+import {
+  CHANGE_RESOURCE,
+  CHANGE_ACTION,
+  PROPOSAL_STATUS,
+  PROPOSAL_KIND,
+  ACTIVITY_KIND,
+  type ProposalKind,
+} from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 import { db } from '../../db';
@@ -14,7 +22,6 @@ import { tasks, taskActivity, taskProposals, user as userTable, employeeSupervis
 import { publishChange } from '../kernel/kernel';
 import { recordAssignment, recentAssignees, assignTask } from './assignments.service';
 import { refreshParentGating } from './gating.service';
-import { CHANGE_RESOURCE, CHANGE_ACTION, PROPOSAL_STATUS, PROPOSAL_KIND, ACTIVITY_KIND, type ProposalKind } from '#shared/enums';
 
 export type SubtaskItem = { title: string; description?: string; assigneeName?: string };
 export type ProposalPayload =
@@ -186,7 +193,8 @@ export async function rejectProposal(proposalId: string, decidedBy: string, note
  * the chain (or unnamed routing targets) still waits for a human. */
 export async function recordProposals(taskId: string, runId: string, payloads: Array<ProposalPayload>) {
   const agent =
-    (await db.query.tasks.findFirst({ columns: { assigneeId: true }, where: { id: { eq: taskId } } }))?.assigneeId ?? null;
+    (await db.query.tasks.findFirst({ columns: { assigneeId: true }, where: { id: { eq: taskId } } }))?.assigneeId ??
+    null;
   const chain = agent ? await supervisionChain(agent) : new Set<string>();
   for (const payload of payloads) {
     const proposalId = uuidv7();

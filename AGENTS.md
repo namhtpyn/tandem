@@ -67,9 +67,9 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
   - Boundary: cross-domain calls go through the other domain's exported
     service functions (`import type` for shapes); never touch another
     domain's tables directly
-  Enforcement of the boundary is by convention + review, not the compiler.
-  Reach for classical DDD patterns (separate domain layer, repositories,
-  mappers) only when a domain's invariants outgrow single service functions.
+    Enforcement of the boundary is by convention + review, not the compiler.
+    Reach for classical DDD patterns (separate domain layer, repositories,
+    mappers) only when a domain's invariants outgrow single service functions.
 - **Enum law:** every enum is an `as const` object in `shared/enums/<name>.ts`,
   SCREAMING_SNAKE_CASE for BOTH property and value
   (`const ROLE = { ADMIN: 'ADMIN' } as const`), one file per enum owning the

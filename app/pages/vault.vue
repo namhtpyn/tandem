@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
+import { watchDebounced } from '@vueuse/core';
 // Secret vault: write-only secrets (AES-256-GCM server-side). Values are set
 // once and never displayed again — only a last-4 hint. Mobile-first cards.
 import { computed, ref, watch } from 'vue';
-import { watchDebounced } from '@vueuse/core';
 
-import type { VaultSecretRow } from '~/utils/orpc-types';
 import { CHANGE_RESOURCE } from '~/../shared/enums';
+import type { VaultSecretRow } from '~/utils/orpc-types';
 
 const { $orpc } = useNuxtApp();
 const queryClient = useQueryClient();
@@ -41,13 +41,7 @@ const liveQuery = useQuery(
         folderId: activeFolder.value,
         q: searchDebounced.value || undefined,
       },
-      queryKey: [
-        CHANGE_RESOURCE.VAULT,
-        page.value,
-        pageSize.value,
-        activeFolder.value ?? 'all',
-        searchDebounced.value,
-      ],
+      queryKey: [CHANGE_RESOURCE.VAULT, page.value, pageSize.value, activeFolder.value ?? 'all', searchDebounced.value],
     }),
   ),
 );
@@ -254,7 +248,7 @@ function kindIcon(): string {
   return 'i-lucide-shield';
 }
 
-onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense()]))
+onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense()]));
 </script>
 
 <template>
@@ -289,7 +283,6 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
           </div>
         </div>
 
-
         <!-- Mobile: stacked cards -->
         <DataTable
           v-model:search="search"
@@ -308,13 +301,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
           ]"
         >
           <template #toolbar>
-            <USelect
-              v-model="folderFilterModel"
-              :items="folderItems"
-              icon="i-lucide-folder"
-              size="sm"
-              class="w-44"
-            />
+            <USelect v-model="folderFilterModel" :items="folderItems" icon="i-lucide-folder" size="sm" class="w-44" />
             <span class="flex-1" />
             <UButton icon="i-lucide-plus" size="sm" label="New secret" @click="openEditor()" />
           </template>
@@ -549,7 +536,9 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
               <UButton icon="i-lucide-plus" size="sm" label="New folder" @click="openFolderEditor()" />
             </template>
             <template #secrets-cell="{ row }">
-              <span class="text-xs text-zinc-500">{{ row.original.secrets }} {{ row.original.secrets === 1 ? 'secret' : 'secrets' }}</span>
+              <span class="text-xs text-zinc-500"
+                >{{ row.original.secrets }} {{ row.original.secrets === 1 ? 'secret' : 'secrets' }}</span
+              >
             </template>
             <template #actions-cell="{ row }">
               <div class="flex justify-end gap-1">
@@ -584,10 +573,26 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
                 <div class="flex items-center gap-2">
                   <UBadge color="neutral" variant="subtle" icon="i-lucide-folder">{{ row.name }}</UBadge>
                   <span class="flex-1" />
-                  <UButton icon="i-lucide-pencil" size="xs" color="neutral" variant="ghost" aria-label="Rename folder" @click="openFolderEditor(row.id)" />
-                  <UButton icon="i-lucide-trash-2" size="xs" color="neutral" variant="ghost" aria-label="Delete folder" @click="folderConfirmId = row.id" />
+                  <UButton
+                    icon="i-lucide-pencil"
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    aria-label="Rename folder"
+                    @click="openFolderEditor(row.id)"
+                  />
+                  <UButton
+                    icon="i-lucide-trash-2"
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    aria-label="Delete folder"
+                    @click="folderConfirmId = row.id"
+                  />
                 </div>
-                <p class="mt-1 text-xs text-zinc-500">{{ row.secrets }} {{ row.secrets === 1 ? 'secret' : 'secrets' }}</p>
+                <p class="mt-1 text-xs text-zinc-500">
+                  {{ row.secrets }} {{ row.secrets === 1 ? 'secret' : 'secrets' }}
+                </p>
               </UCard>
             </template>
           </DataTable>

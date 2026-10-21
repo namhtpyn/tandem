@@ -1,12 +1,12 @@
 // Remaining branch arms for full coverage: rpc adapter GET/no-body arms and
 // ssh-probe node fallback (spawn error + null exit code).
-import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { afterEach, describe, expect, it, beforeEach, vi } from 'vitest';
 
 import './api-harness';
 import { applyMigrations } from '../server/db/index';
+import { env, setEnv } from '../server/domains/kernel/env';
 import { makeEvent } from './api-harness';
 import { resetSchema } from './helpers/pg';
-import { env, setEnv } from '../server/domains/kernel/env';
 
 beforeEach(async () => {
   await resetSchema();
@@ -30,195 +30,64 @@ describe('/rpc adapter branch arms', () => {
   });
 });
 
-describe('pickFailureDetail', () => {
-  it('prefers a real bun shell error over the node error', async () => {
-    const { pickFailureDetail } = await import('../server/domains/environments/ssh-probe.service');
-    expect(pickFailureDetail(new Error('shell exploded'), new Error('node fail'))).toBe('shell exploded');
+describe('ssh-probe (Bun.spawn)', () => {
+  const ENV_ID = '00000000-0000-7000-8000-51e69892ab49';
+  const realSpawn = Bun.spawn;
+
+  function fakeProc(stdout: string, stderr: string, exit: number) {
+    return {
+      exited: Promise.resolve(exit),
+      stdout: new Response(stdout).body!,
+      stderr: new Response(stderr).body!,
+      kill: vi.fn(),
+    };
+  }
+
+  afterEach(() => {
+    Bun.spawn = realSpawn;
+    setEnv({ TANDEM_SSH_TIMEOUT_MS: undefined });
   });
-
-  it('falls back to the node error when bun is unavailable', async () => {
-    const { pickFailureDetail } = await import('../server/domains/environments/ssh-probe.service');
-    expect(pickFailureDetail(new Error("Cannot find package 'bun'"), new Error('node fail'))).toBe('node fail');
-  });
-
-  it('degrades to a generic message for non-Error throws', async () => {
-    const { pickFailureDetail } = await import('../server/domains/environments/ssh-probe.service');
-    expect(pickFailureDetail('nope', 'also nope')).toBe('probe failed');
-  });
-});
-
-describe('ssh-probe probeViaNode (mocked child_process)', () => {
-  it('timeout path: timer kills a hung child (null exit)', async () => {
-    setEnv({ TANDEM_SSH_TIMEOUT_MS: '50' });
-    vi.resetModules();
-    // force the node fallback even under Bun: the probe prefers `import('bun')`
-    vi.doMock('bun', () => {
-      throw new Error('bun unavailable in this test');
-    });
-    vi.doMock('node:child_process', () => ({
-      spawn: () => {
-        const mkStream = () => {
-          const l: Record<string, Array<(...a: unknown[]) => void>> = {};
-          return {
-            on: (ev: string, fn: (...a: unknown[]) => void) => {
-              (l[ev] ??= []).push(fn);
-            },
-            fire: () => {
-              for (const fn of l.end ?? []) fn();
-            },
-          };
-        };
-        const procL: Record<string, Array<(...a: unknown[]) => void>> = {};
-        const child = {
-          stdout: mkStream(),
-          stderr: mkStream(),
-          kill: () => {
-            child.stdout.fire();
-            child.stderr.fire();
-            for (const fn of procL.close ?? []) fn(null);
-          },
-          on: (ev: string, fn: (...a: unknown[]) => void) => {
-            (procL[ev] ??= []).push(fn);
-          },
-        };
-        return child;
-      },
-    }));
-    try {
-      const mod = await import('../server/domains/environments/ssh-probe.service');
-      const r = await mod.probeSsh('h', '22', '00000000-0000-7000-8000-51e69892ab49');
-      expect(r.ok).toBe(false);
-    } finally {
-      setEnv({ TANDEM_SSH_TIMEOUT_MS: undefined });
-      vi.doUnmock('node:child_process');
-      vi.doUnmock('bun');
-      vi.resetModules();
-    }
-  }, 10_000);
-
-  it('killed child (null exit) with stderr -> ok:false, last stderr line', async () => {
-    vi.resetModules();
-    // force the node fallback even under Bun: the probe prefers `import('bun')`
-    vi.doMock('bun', () => {
-      throw new Error('bun unavailable in this test');
-    });
-    vi.doMock('node:child_process', () => ({
-      spawn: () => {
-        const mkStream = (data: string | null) => {
-          const l: Record<string, Array<(...a: unknown[]) => void>> = {};
-          return {
-            on: (ev: string, fn: (...a: unknown[]) => void) => {
-              (l[ev] ??= []).push(fn);
-            },
-            fire: () => {
-              if (data !== null) for (const fn of l.data ?? []) fn(Buffer.from(data));
-              for (const fn of l.end ?? []) fn();
-            },
-          };
-        };
-        const out = mkStream('partial-output');
-        const err = mkStream('first\nssh: killed by timeout');
-        const procL: Record<string, Array<(...a: unknown[]) => void>> = {};
-        const child = {
-          stdout: out,
-          stderr: err,
-          kill: () => {},
-          on: (ev: string, fn: (...a: unknown[]) => void) => {
-            (procL[ev] ??= []).push(fn);
-          },
-        };
-        setTimeout(() => {
-          out.fire();
-          err.fire();
-          for (const fn of procL.close ?? []) fn(null);
-        }, 5);
-        return child;
-      },
-    }));
-    try {
-      const mod = await import('../server/domains/environments/ssh-probe.service');
-      const r = await mod.probeSsh('h', '22', '00000000-0000-7000-8000-51e69892ab49');
-      expect(r).toEqual({ ok: false, detail: 'ssh: killed by timeout' });
-    } finally {
-      vi.doUnmock('node:child_process');
-      vi.doUnmock('bun');
-      vi.resetModules();
-    }
-  }, 10_000);
 
   it('interprets a successful ssh run end-to-end', async () => {
-    vi.resetModules();
-    // force the node fallback even under Bun: the probe prefers `import('bun')`
-    vi.doMock('bun', () => {
-      throw new Error('bun unavailable in this test');
-    });
-    vi.doMock('node:child_process', () => ({
-      spawn: () => {
-        const mkStream = (data: string | null) => {
-          const l: Record<string, Array<(...a: unknown[]) => void>> = {};
-          return {
-            on: (ev: string, fn: (...a: unknown[]) => void) => {
-              (l[ev] ??= []).push(fn);
-            },
-            fire: () => {
-              if (data !== null) for (const fn of l.data ?? []) fn(Buffer.from(data));
-              for (const fn of l.end ?? []) fn();
-            },
-          };
-        };
-        const out = mkStream('tandem-probe-ok');
-        const err = mkStream('ssh: banner warning');
-        const procL: Record<string, Array<(...a: unknown[]) => void>> = {};
-        const child = {
-          stdout: out,
-          stderr: err,
-          kill: () => {},
-          on: (ev: string, fn: (...a: unknown[]) => void) => {
-            (procL[ev] ??= []).push(fn);
-          },
-        };
-        setTimeout(() => {
-          out.fire();
-          err.fire();
-          for (const fn of procL.close ?? []) fn(0);
-        }, 5);
-        return child;
-      },
-    }));
-    try {
-      const mod = await import('../server/domains/environments/ssh-probe.service');
-      const r = await mod.probeSsh('h', '22', '00000000-0000-7000-8000-51e69892ab49');
-      // marker echoed + exit 0 -> ok even with stderr noise
-      expect(r).toEqual({ ok: true, detail: 'SSH key auth works' });
-    } finally {
-      vi.doUnmock('node:child_process');
-      vi.doUnmock('bun');
-      vi.resetModules();
-    }
-  }, 10_000);
-});
+    const spawn = vi.fn(() => fakeProc('tandem-probe-ok\n', '', 0));
+    Bun.spawn = spawn as unknown as typeof Bun.spawn;
+    const { probeSsh } = await import('../server/domains/environments/ssh-probe.service');
+    const r = await probeSsh('h', '22', ENV_ID);
+    expect(r).toEqual({ ok: true, detail: 'SSH key auth works' });
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
 
-describe('ssh-probe node fallback arms', () => {
-  it('non-Error throw surfaces generic detail', async () => {
-    vi.resetModules();
-    // force the node fallback even under Bun: the probe prefers `import('bun')`
-    vi.doMock('bun', () => {
-      throw new Error('bun unavailable in this test');
-    });
-    vi.doMock('node:child_process', () => ({
-      spawn: () => {
-        throw 'plain string failure';
-      },
-    }));
-    try {
-      const mod = await import('../server/domains/environments/ssh-probe.service');
-      const r = await mod.probeSsh('127.0.0.1', '22', '00000000-0000-7000-8000-51e69892ab49');
-      expect(r.ok).toBe(false);
-      expect(typeof r.detail).toBe('string');
-    } finally {
-      vi.doUnmock('node:child_process');
-      vi.doUnmock('bun');
-      vi.resetModules();
-    }
+  it('killed child with stderr -> ok:false, last stderr line', async () => {
+    Bun.spawn = (() => fakeProc('partial', 'first line\nssh: killed by timeout', 137)) as unknown as typeof Bun.spawn;
+    const { probeSsh } = await import('../server/domains/environments/ssh-probe.service');
+    const r = await probeSsh('h', '22', ENV_ID);
+    expect(r).toEqual({ ok: false, detail: 'ssh: killed by timeout' });
+  });
+
+  it('timeout path: timer SIGKILLs a hung child', async () => {
+    setEnv({ TANDEM_SSH_TIMEOUT_MS: '30' });
+    let resolveExit!: (n: number) => void;
+    const kill = vi.fn(() => resolveExit(137));
+    Bun.spawn = (() => ({
+      exited: new Promise<number>((r) => {
+        resolveExit = r;
+      }),
+      stdout: new Response('').body!,
+      stderr: new Response('ssh: hung').body!,
+      kill,
+    })) as unknown as typeof Bun.spawn;
+    const { probeSsh } = await import('../server/domains/environments/ssh-probe.service');
+    const r = await probeSsh('h', '22', ENV_ID);
+    expect(kill).toHaveBeenCalledWith('SIGKILL');
+    expect(r.ok).toBe(false);
   }, 10_000);
+
+  it('spawn throw degrades to a generic message for non-Error throws', async () => {
+    Bun.spawn = (() => {
+      throw 'plain string failure';
+    }) as unknown as typeof Bun.spawn;
+    const { probeSsh } = await import('../server/domains/environments/ssh-probe.service');
+    const r = await probeSsh('127.0.0.1', '22', ENV_ID);
+    expect(r).toEqual({ ok: false, detail: 'probe failed' });
+  });
 });

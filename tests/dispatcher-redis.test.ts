@@ -4,17 +4,20 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './api-harness';
 import { applyMigrations } from '../server/db/index';
-import { STATUS } from '../shared/status';
-import { resetSchema } from './helpers/pg';
+import { env, setEnv } from '../server/domains/kernel/env';
 import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
 import { ROLE, RUN_STATUS } from '../shared/enums';
-import { env, setEnv } from '../server/domains/kernel/env';
+import { STATUS } from '../shared/status';
+import { resetSchema } from './helpers/pg';
 
 const REDIS_URL = 'redis://127.0.0.1:6399';
 
 async function nr() {
   const { createClient } = await import('redis');
-  const r = createClient({ url: REDIS_URL, socket: { connectTimeout: 500, reconnectStrategy: () => new Error('no-retry') } });
+  const r = createClient({
+    url: REDIS_URL,
+    socket: { connectTimeout: 500, reconnectStrategy: () => new Error('no-retry') },
+  });
   r.on('error', () => {});
   await r.connect();
   return r;
@@ -137,7 +140,12 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
     const pub = await redisPubsub();
     await pub!.publish(
       CHANGE_CHANNEL,
-      encodeChange({ id: 'external-1', resource: CHANGE_RESOURCE.RUNS, action: CHANGE_ACTION.UPDATE, at: new Date().toISOString() }),
+      encodeChange({
+        id: 'external-1',
+        resource: CHANGE_RESOURCE.RUNS,
+        action: CHANGE_ACTION.UPDATE,
+        at: new Date().toISOString(),
+      }),
     );
     await new Promise((r) => setTimeout(r, 300));
     expect(seen.filter((r) => r === 'TASKS').length).toBe(1); // echo deduped

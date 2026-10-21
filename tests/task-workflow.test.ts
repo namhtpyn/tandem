@@ -9,13 +9,18 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import './api-harness';
 import { applyMigrations } from '../server/db/index';
 import { answerHolder, spawnObligation } from '../server/domains/tasks/obligations.service';
+import { ACTIVITY_KIND, OBLIGATION_ROLE, REVIEW_STATUS, ROLE } from '../shared/enums';
 import { STATUS } from '../shared/status';
 import type { TaskRow, TaskActivityRow } from '../shared/types';
 import { resetSchema } from './helpers/pg';
 import { makeProcCaller } from './helpers/procs';
-import { ACTIVITY_KIND, OBLIGATION_ROLE, REVIEW_STATUS, ROLE } from '../shared/enums';
 
-const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
+const admin = {
+  id: '00000000-0000-7000-8000-cd5fca5e2d34',
+  name: 'Admin',
+  email: 'admin@tandem.local',
+  role: ROLE.ADMIN,
+};
 const worker = {
   id: '00000000-0000-7000-8000-bccb5af49873',
   name: 'Worker',
@@ -479,7 +484,15 @@ describe('task workflow — guard rails', () => {
     const { buildServerContext } = await import('../server/domains/kernel/context');
     const context = buildServerContext(new Headers());
     (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => null;
-    const procs = ['ask', ACTIVITY_KIND.FORWARD, OBLIGATION_ROLE.ANSWER, 'submit', 'approve', 'requestChanges', 'abandon'];
+    const procs = [
+      'ask',
+      ACTIVITY_KIND.FORWARD,
+      OBLIGATION_ROLE.ANSWER,
+      'submit',
+      'approve',
+      'requestChanges',
+      'abandon',
+    ];
     for (const p of procs) {
       let cur: Record<string, unknown> = appRouter as unknown as Record<string, unknown>;
       for (const key of ['tasks', p]) cur = cur[key] as Record<string, unknown>;

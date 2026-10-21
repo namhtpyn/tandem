@@ -1,10 +1,11 @@
 // environments service: row mapping + list helpers
 import { desc } from 'drizzle-orm';
 
+import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
+
 import type { EnvironmentRow } from '../../../shared/types';
 import { db } from '../../db';
 import { environments as environmentsTable } from '../../db/schema';
-import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
 
 export function toRow(r: typeof environmentsTable.$inferSelect): EnvironmentRow {
   return {

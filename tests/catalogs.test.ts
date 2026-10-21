@@ -3,12 +3,17 @@ import { describe, expect, it, beforeEach } from 'vitest';
 
 import './helpers/pg';
 import { applyMigrations } from '../server/db/index';
-import { resetSchema } from './helpers/pg';
-import './api-harness';
 import { ROLE } from '../shared/enums';
+import './api-harness';
+import { resetSchema } from './helpers/pg';
 
 const admin = {
-  user: { id: '00000000-0000-7000-8000-3f18cbc16519', name: 'Test Admin', email: 'test@tandem.local', role: ROLE.ADMIN },
+  user: {
+    id: '00000000-0000-7000-8000-3f18cbc16519',
+    name: 'Test Admin',
+    email: 'test@tandem.local',
+    role: ROLE.ADMIN,
+  },
 };
 
 async function proc(path: string[], input?: unknown) {

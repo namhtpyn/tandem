@@ -8,8 +8,8 @@ import { join } from 'node:path';
 import { describe, expect, it, beforeEach } from 'vitest';
 
 import { applyMigrations } from '../server/db/index';
-import { resetSchema, postgres } from './helpers/pg';
 import { env, setEnv } from '../server/domains/kernel/env';
+import { resetSchema, postgres } from './helpers/pg';
 
 describe('applyMigrations', () => {
   beforeEach(async () => {

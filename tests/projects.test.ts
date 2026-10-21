@@ -3,11 +3,16 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
 import { applyMigrations } from '../server/db/index';
+import { PROJECT_STATUS, ROLE } from '../shared/enums';
 import type { ProjectRow, TaskRow } from '../shared/types';
 import { resetSchema } from './helpers/pg';
-import { PROJECT_STATUS, ROLE } from '../shared/enums';
 
-const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
+const admin = {
+  id: '00000000-0000-7000-8000-cd5fca5e2d34',
+  name: 'Admin',
+  email: 'admin@tandem.local',
+  role: ROLE.ADMIN,
+};
 
 async function ctx() {
   const { buildServerContext } = await import('../server/domains/kernel/context');
@@ -30,7 +35,9 @@ beforeEach(async () => {
   await applyMigrations();
   const { db } = await import('../server/db');
   const { user } = await import('../server/db/schema');
-  await db.insert(user).values({ id: admin.id, name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN, title: 'T' });
+  await db
+    .insert(user)
+    .values({ id: admin.id, name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN, title: 'T' });
 });
 
 describe('projects crud', () => {

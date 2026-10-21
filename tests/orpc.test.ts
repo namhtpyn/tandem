@@ -4,10 +4,10 @@ import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 import './api-harness';
 import { applyMigrations } from '../server/db/index';
-import { resetSchema } from './helpers/pg';
-import { makeProcCaller } from './helpers/procs';
 import { CHANGE_ACTION, CHANGE_RESOURCE } from '../shared/enums';
 import { ROLE } from '../shared/enums';
+import { resetSchema } from './helpers/pg';
+import { makeProcCaller } from './helpers/procs';
 
 async function ctx(sessionUser: { id: string; name: string; email: string; role: string } | null) {
   const { buildServerContext } = await import('../server/domains/kernel/context');

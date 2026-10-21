@@ -52,8 +52,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { STATUS } from '../shared/status';
 import { ROLE, RUN_STATUS } from '../shared/enums';
+import { STATUS } from '../shared/status';
 
 async function seed() {
   const envId = `env-${crypto.randomUUID().slice(0, 8)}`;

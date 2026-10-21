@@ -8,13 +8,13 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { OBLIGATION_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 import { db } from '../../db';
 import { tasks, taskActivity, taskStatuses } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
-import { OBLIGATION_STATUS } from '#shared/enums';
 
 export const BLOCKED_STATUS = STATUS.blocked;
 
@@ -44,7 +44,10 @@ export async function refreshParentGating(taskId: string) {
   let cur = await db.query.tasks.findFirst({ where: { id: { eq: taskId } } });
   while (cur && !seen.has(cur.id)) {
     seen.add(cur.id);
-    const children = await db.query.tasks.findMany({ columns: { status: true }, where: { parentTaskId: { eq: cur.id } } });
+    const children = await db.query.tasks.findMany({
+      columns: { status: true },
+      where: { parentTaskId: { eq: cur.id } },
+    });
     const open = children.filter((c) => !terminal.has(c.status)).length;
     if (open > 0 && cur.status !== BLOCKED_STATUS) {
       const pre = cur.preBlockStatus ?? cur.status;
@@ -71,7 +74,10 @@ export async function refreshParentGating(taskId: string) {
 
 /** does this task have any open children? (review gate: can't submit while true) */
 export async function hasOpenChildren(taskId: string) {
-  const children = await db.query.tasks.findMany({ columns: { status: true }, where: { parentTaskId: { eq: taskId } } });
+  const children = await db.query.tasks.findMany({
+    columns: { status: true },
+    where: { parentTaskId: { eq: taskId } },
+  });
   if (children.length === 0) return false;
   const terminal = await terminalStatusIds();
   return children.some((c) => !terminal.has(c.status));

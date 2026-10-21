@@ -3,6 +3,7 @@
 // Exported separately so tests can mock the ssh2 transport while exercising
 // the real stream/finish logic.
 import type { Client } from 'ssh2';
+
 import { RUN_STATUS, type FinishedStatus } from '#shared/enums';
 
 export type SshPlan = {
