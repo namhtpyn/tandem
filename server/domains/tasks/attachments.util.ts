@@ -6,7 +6,8 @@
 // (collected from the agent sandbox after a run).
 // The agent-side staging mirror uses the same per-task shape: ~/.tandem/<taskId>/attachments/.
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { env } from '../kernel/env';
@@ -67,9 +68,9 @@ export function taskAttachmentsDir(taskId: string): string {
   return join(dataRoot(), 'tasks', taskId, 'attachments');
 }
 
-export function saveAttachmentBytes(taskId: string, id: string, bytes: Buffer): void {
-  mkdirSync(taskAttachmentsDir(taskId), { recursive: true });
-  writeFileSync(attachmentPath(taskId, id), bytes);
+export async function saveAttachmentBytes(taskId: string, id: string, bytes: Buffer | Uint8Array): Promise<void> {
+  await mkdir(taskAttachmentsDir(taskId), { recursive: true });
+  await Bun.write(attachmentPath(taskId, id), bytes);
 }
 
 export function readAttachmentBytes(taskId: string, id: string): Buffer {

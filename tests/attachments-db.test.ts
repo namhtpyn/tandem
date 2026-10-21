@@ -92,7 +92,7 @@ describe('attachment storage round-trip', () => {
       await import('../server/domains/tasks/attachments.util');
     const id = crypto.randomUUID();
     const bytes = Buffer.from('hello attachment');
-    saveAttachmentBytes('t-bytes', id, bytes);
+    await saveAttachmentBytes('t-bytes', id, bytes);
     expect(attachmentExists('t-bytes', id)).toBe(true);
     expect(readAttachmentBytes('t-bytes', id).toString()).toBe('hello attachment');
     expect(() => readAttachmentBytes('../escape', id)).toThrow();
@@ -295,7 +295,7 @@ describe('pushInputAttachments', () => {
     const lines: string[] = [];
     const { saveAttachmentBytes } = await import('../server/domains/tasks/attachments.util');
     const id1 = crypto.randomUUID();
-    saveAttachmentBytes('t-push', id1, Buffer.from('A'));
+    await saveAttachmentBytes('t-push', id1, Buffer.from('A'));
     class FakeCtor {
       private h = new Map<string, Array<(a?: unknown) => void>>();
       connect() {
@@ -372,7 +372,7 @@ describe('pushInputAttachments', () => {
     const lines: string[] = [];
     const { saveAttachmentBytes } = await import('../server/domains/tasks/attachments.util');
     const id1 = crypto.randomUUID();
-    saveAttachmentBytes('t-push', id1, Buffer.from('A'));
+    await saveAttachmentBytes('t-push', id1, Buffer.from('A'));
     const boom = async () => {
       throw 'plain string failure';
     };
@@ -392,7 +392,7 @@ describe('pushInputAttachments', () => {
     const lines: string[] = [];
     const { saveAttachmentBytes } = await import('../server/domains/tasks/attachments.util');
     const id1 = crypto.randomUUID();
-    saveAttachmentBytes('t-push', id1, Buffer.from('A'));
+    await saveAttachmentBytes('t-push', id1, Buffer.from('A'));
     const boom = async () => {
       throw new Error('no route to host');
     };

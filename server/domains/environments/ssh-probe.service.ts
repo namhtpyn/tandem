@@ -62,13 +62,13 @@ export async function probeSsh(
 
 /** 0700 temp dir with an askpass script that prints the b64-embedded secret. */
 async function writeAskpass(password: string) {
-  const { mkdtemp, writeFile, chmod } = await import('node:fs/promises');
+  const { mkdtemp, chmod } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const path = await import('node:path');
   const dir = await mkdtemp(path.join(tmpdir(), 'tandem-askpass-'));
   const script = path.join(dir, 'askpass.sh');
   const encoded = Buffer.from(password, 'utf8').toString('base64');
-  await writeFile(script, `#!/bin/sh\nprintf %s ${encoded} | base64 -d\n`, { mode: 0o700 });
+  await Bun.write(script, `#!/bin/sh\nprintf %s ${encoded} | base64 -d\n`);
   await chmod(script, 0o700);
   return dir;
 }
@@ -86,12 +86,12 @@ async function cleanupAskpass(dir?: string) {
 /** Write an optional private key to a 0600 temp file; undefined when no key. */
 async function writeIdentity(privateKey?: string) {
   if (!privateKey) return undefined;
-  const { mkdtemp, writeFile, chmod, rm } = await import('node:fs/promises');
+  const { mkdtemp, chmod, rm } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const path = await import('node:path');
   const dir = await mkdtemp(path.join(tmpdir(), 'tandem-ssh-'));
   const file = path.join(dir, 'id');
-  await writeFile(file, ensureTrailingNewline(privateKey), { mode: 0o600 });
+  await Bun.write(file, ensureTrailingNewline(privateKey));
   await chmod(file, 0o600);
   return file;
 }

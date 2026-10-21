@@ -1,19 +1,12 @@
 import { eq } from 'drizzle-orm';
 // GET /api/attachments/:id — serve an attachment's bytes (authed; session-gated like
 // the avatar route, but NO immutable caching: outputs are re-uploaded per run).
-import {
-  defineEventHandler,
-  createError,
-  setResponseHeader,
-  getRequestHeader,
-  getRequestHeaders,
-  getRouterParam,
-} from 'h3';
+import { defineEventHandler, createError, getRequestHeader, getRequestHeaders, getRouterParam } from 'h3';
 
 import { db } from '../../../db';
 import { taskAttachments } from '../../../db/schema';
 import { buildServerContext } from '../../../domains/kernel/context';
-import { attachmentExists, mimeAllowed, readAttachmentBytes } from '../../../domains/tasks/attachments.util';
+import { attachmentPath, mimeAllowed } from '../../../domains/tasks/attachments.util';
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id') ?? '';
@@ -24,20 +17,24 @@ export default defineEventHandler(async (event) => {
 
   const row = await db.query.taskAttachments.findFirst({ where: { id: { eq: id } } });
   if (!row) throw createError({ statusCode: 404, statusMessage: 'attachment not found' });
-  if (!attachmentExists(row.taskId, id))
-    throw createError({ statusCode: 410, statusMessage: 'attachment bytes missing' });
+  // stream straight off disk (Bun.file = zero-copy sendfile); no buffer read
+  const file = Bun.file(attachmentPath(row.taskId, id));
+  if (!(await file.exists())) throw createError({ statusCode: 410, statusMessage: 'attachment bytes missing' });
 
-  const bytes = readAttachmentBytes(row.taskId, id);
   const mime = mimeAllowed(row.mime) ? row.mime : 'application/octet-stream';
-  setResponseHeader(event, 'content-type', mime);
-  setResponseHeader(event, 'content-length', bytes.byteLength);
-  setResponseHeader(event, 'etag', `"${row.sha256}"`);
-  if (getRequestHeader(event, 'if-none-match') === `"${row.sha256}"`) {
+  const etag = `"${row.sha256}"`;
+  if (getRequestHeader(event, 'if-none-match') === etag) {
     event.node.res.statusCode = 304;
     return '';
   }
-  setResponseHeader(event, 'content-disposition', `inline; filename="${row.filename.replace(/"/g, '')}"`);
-  setResponseHeader(event, 'cache-control', 'private, max-age=60');
-  setResponseHeader(event, 'x-content-type-options', 'nosniff');
-  return bytes;
+  return new Response(file, {
+    headers: {
+      'content-type': mime,
+      'content-length': String(file.size),
+      etag,
+      'content-disposition': `inline; filename="${row.filename.replace(/"/g, '')}"`,
+      'cache-control': 'private, max-age=60',
+      'x-content-type-options': 'nosniff',
+    },
+  });
 });

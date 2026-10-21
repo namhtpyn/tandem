@@ -105,11 +105,11 @@ export async function settleAttachments(
     try {
       const collected = await collectRunOutputs(ClientCtor, sshPlan, taskId, tmp, COLLECTION_MAX_BYTES);
       for (const f of collected) {
-        const bytes = readFileSync(f.localPath);
+        const bytes = Buffer.from(await Bun.file(f.localPath).arrayBuffer());
         const mime = normalizeMime(guessMime(f.filename));
         if (!mimeAllowed(mime)) continue;
         const id = uuidv7();
-        saveAttachmentBytes(taskId, id, bytes);
+        await saveAttachmentBytes(taskId, id, bytes);
         await db.insert(taskAttachments).values({
           id,
           taskId,

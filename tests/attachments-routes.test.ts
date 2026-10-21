@@ -203,7 +203,7 @@ describe('GET /api/attachments/:id', () => {
   it('serves bytes with etag; 304 on revalidation; 404 unknown', async () => {
     const { default: get } = await import('../server/routes/api/attachments/[id].get');
     const id = crypto.randomUUID();
-    saveAttachmentBytes('task-att-1', id, Buffer.from('BYTES-1'));
+    await saveAttachmentBytes('task-att-1', id, Buffer.from('BYTES-1'));
     await db.insert(taskAttachments).values({
       id,
       taskId: 'task-att-1',
@@ -221,13 +221,14 @@ describe('GET /api/attachments/:id', () => {
     ev.node.res.setHeader = (k: string, v: unknown) => {
       sent[k.toLowerCase()] = v;
     };
-    const body = (await get(ev as never)) as Buffer;
-    expect(body.toString()).toBe('BYTES-1');
-    expect(sent.etag).toBeDefined();
+    const res = (await get(ev as never)) as Response;
+    expect(await res.text()).toBe('BYTES-1');
+    const etag = res.headers.get('etag');
+    expect(etag).toBeDefined();
 
     const ev2 = evFor('/api/attachments/' + id, Buffer.alloc(0), 'text/plain', 'GET');
     ev2.context.params = { id };
-    (ev2.node.req.headers as Record<string, string>)['if-none-match'] = String(sent.etag);
+    (ev2.node.req.headers as Record<string, string>)['if-none-match'] = String(etag);
     ev2.node.res.statusCode = 0;
     ev2.node.res.setHeader = () => {};
     const r2 = await get(ev2 as never);
@@ -255,7 +256,7 @@ describe('GET /api/attachments/:id', () => {
 
     // disallowed row mime falls back to octet-stream download
     const octId = crypto.randomUUID();
-    saveAttachmentBytes('task-att-1', octId, Buffer.from('X'));
+    await saveAttachmentBytes('task-att-1', octId, Buffer.from('X'));
     await db.insert(taskAttachments).values({
       id: octId,
       taskId: 'task-att-1',
@@ -268,11 +269,7 @@ describe('GET /api/attachments/:id', () => {
     });
     const ev5 = evFor('/api/attachments/' + octId, Buffer.alloc(0), 'text/plain', 'GET');
     ev5.context.params = { id: octId };
-    const sent5: Record<string, unknown> = {};
-    ev5.node.res.setHeader = (k: string, v: unknown) => {
-      sent5[k.toLowerCase()] = v;
-    };
-    await get(ev5 as never);
-    expect(sent5['content-type']).toBe('application/octet-stream');
+    const res5 = (await get(ev5 as never)) as Response;
+    expect(res5.headers.get('content-type')).toBe('application/octet-stream');
   });
 });
