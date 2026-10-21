@@ -30,7 +30,7 @@ export const sqlClient = postgres(url, {
 // ---------- boot migrations ----------
 
 /** drizzle's folderMillis convention: millis from the 14-digit folder prefix */
-function folderMillis(name: string): number {
+export function folderMillis(name: string): number {
   const parts = [0, 4, 6, 8, 10, 12].map((i) => Number(name.slice(i, i + 2)));
   if (parts.some((n) => Number.isNaN(n))) return 0; // non-timestamp folder names
   return Date.UTC(2000 + parts[0]!, parts[1]! - 1, parts[2]!, parts[3]!, parts[4]!, parts[5]!);

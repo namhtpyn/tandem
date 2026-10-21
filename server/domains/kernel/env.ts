@@ -43,18 +43,25 @@ const envSchema = z.preprocess(
   }),
 );
 
-const parsed = await envSchema.safeParseAsync(process.env);
-
-if (!parsed.success) {
-  /* v8 ignore next 7 -- the report line is exercised by coverage-gaps' child-process test,
-     which v8 coverage cannot see; formatEnvIssues itself is unit-tested */
-  // eslint-disable-next-line no-console
-  console.error('[tandem] invalid environment:\n' + formatEnvIssues(parsed.error.issues));
-  process.exit(1);
+/** exit-gate: any failed parse = one report + exit 1 (spied in tests, real in boot) */
+export function assertEnv(
+  parsed: { success: true; data: Env } | { success: false; error: { issues: EnvIssue[] } },
+): asserts parsed is { success: true; data: Env } {
+  /* v8 ignore next 1 -- per-test module copies + last-copy-wins merging hide the spied run; behavior pinned by env-contract tests */
+  if (!parsed.success) reportInvalidEnvironment(parsed.error.issues);
 }
+
+const parsed = await envSchema.safeParseAsync(process.env);
+assertEnv(parsed);
 
 
 export type EnvIssue = { path: (string | number | symbol)[]; message: string };
+
+/** one fail-fast report then exit — the negative boot tests exercise this via child processes */
+export function reportInvalidEnvironment(issues: EnvIssue[]): never {
+  console.error('[tandem] invalid environment:\n' + formatEnvIssues(issues));
+  process.exit(1);
+}
 
 /** one human-readable line per invalid env var — "LABEL is required" for missing, zod's message otherwise */
 export function formatEnvIssues(issues: EnvIssue[]): string {

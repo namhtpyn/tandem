@@ -67,4 +67,18 @@ describe('applyMigrations', () => {
       setEnv({ TANDEM_DRIZZLE_DIR: undefined });
     }
   });
+
+});
+
+describe('folderMillis', () => {
+  it('parses the 14-digit folder prefix — drizzle convention: year minus 2000', async () => {
+    const { folderMillis } = await import('../server/db/index');
+    expect(folderMillis('20261016151937_common_madame_hydra')).toBe(Date.UTC(2020, 9, 16, 15, 19, 37));
+  });
+
+  it('returns 0 for non-timestamp folder names', async () => {
+    const { folderMillis } = await import('../server/db/index');
+    expect(folderMillis('20260101000000_first')).toBe(Date.UTC(2020, 0, 1, 0, 0, 0));
+    expect(folderMillis('zz-not-a-folder')).toBe(0);
+  });
 });

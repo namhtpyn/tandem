@@ -3,6 +3,11 @@
 import type { ChangeAction, ChangeResource } from './change-bus';
 import { env } from './env';
 
+/** node-redis emits 'error' on every dropped/reconnecting socket — swallow to keep the process alive */
+export function swallowRedisError(_e: unknown) {
+  /* a dead redis surfaces on the next await, not as an unhandled event */
+}
+
 export type QueueDomain = {
   queue: <T>(
     name: string,
@@ -44,7 +49,7 @@ async function createQueueDomain(): Promise<QueueDomain> {
 
   const connectRaw = async (): Promise<Raw> => {
     const raw = makeRaw();
-    raw.on('error', () => {});
+    raw.on('error', swallowRedisError);
     await raw.connect();
     return raw;
   };
@@ -55,7 +60,7 @@ async function createQueueDomain(): Promise<QueueDomain> {
 
   // fail fast: verify the connection works before handing out the domain
   const ping = createClient({ url, socket: { connectTimeout: 5000, reconnectStrategy: () => new Error('no-retry') } });
-  ping.on('error', () => {});
+  ping.on('error', swallowRedisError);
   try {
     await ping.connect();
     await ping.ping();

@@ -124,6 +124,25 @@ beforeEach(async () => {
   });
 });
 
+describe('workflow procs without a session', () => {
+  it('each workflow proc rejects UNAUTHORIZED when selfId is empty', async () => {
+    const caller = await makeProcCaller({ name: 'No Id' } as never);
+    const taskId = '00000000-0000-7000-8000-000000000001';
+    const paths: Array<[string, unknown]> = [
+      ['tasks.ask', { taskId, body: 'q' }],
+      ['tasks.forward', { taskId, toEmployeeId: '00000000-0000-7000-8000-000000000002', body: 'f' }],
+      ['tasks.answer', { taskId, body: 'a' }],
+      ['tasks.submit', { taskId, body: 's' }],
+      ['tasks.approve', { taskId, body: 'ok' }],
+      ['tasks.requestChanges', { taskId, body: 'rc' }],
+      ['tasks.abandon', { taskId, body: 'x' }],
+    ];
+    for (const [path, input] of paths) {
+      await expect(caller(path, input)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    }
+  });
+});
+
 describe('task workflow — question chain', () => {
   it('ask moves the task to waiting-answer and routes to the owner (not supervisor)', async () => {
     await mkEmployee('worker', worker.name, worker.email);

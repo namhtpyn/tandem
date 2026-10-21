@@ -53,6 +53,7 @@ export async function probeSsh(
     argv.push('ssh', ...sshArgs(host, port, username, identityFile, askpassDir));
     return await runSsh(argv, sshTimeoutMs());
   } catch (e) {
+    /* v8 ignore next 1 -- runSsh only rejects with Errors; the string fallback is defensive */
     return { ok: false, detail: e instanceof Error ? e.message : 'probe failed' };
   } finally {
     await cleanupIdentity(identityFile);

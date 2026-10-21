@@ -9,19 +9,19 @@ import { env } from './env';
 export type CacheDomain = {
   get: <T>(key: string) => Promise<T | undefined>;
   set: <T>(key: string, value: T, ttlSeconds?: number) => Promise<T>;
-  del: (key: string) => Promise<boolean>;
-  wrap: <T>(key: string, fn: () => Promise<T>, ttlSeconds?: number) => Promise<T>;
-  close: () => Promise<void>;
 };
 
 let domainPromise: Promise<CacheDomain> | null = null;
 
 /** lazily create the cache domain */
+/** drop the memoized domain so the next appCache() reconnects (dead-redis recovery) */
+export function resetCacheDomain(e: unknown): never {
+  domainPromise = null;
+  throw e;
+}
+
 export function appCache(): Promise<CacheDomain> {
-  domainPromise ??= createCacheDomain().catch((e: unknown) => {
-    domainPromise = null;
-    throw e;
-  });
+  domainPromise ??= createCacheDomain().catch(resetCacheDomain);
   return domainPromise;
 }
 
@@ -52,12 +52,5 @@ async function createCacheDomain(): Promise<CacheDomain> {
   return {
     get: (key) => cache.get(key),
     set: (key, value, ttlSeconds) => cache.set(key, value, ttlSeconds),
-    del: (key) => cache.del(key),
-    wrap: (key, fn, ttlSeconds) => cache.wrap(key, fn, ttlSeconds),
-    /* v8 ignore next 1 -- exercised at process shutdown, not by tests */
-    async close() {
-      await Promise.allSettled(raws.map((r) => r.disconnect()));
-      domainPromise = null;
-    },
   };
 }

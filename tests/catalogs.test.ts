@@ -55,6 +55,17 @@ describe('vault folders', () => {
     await proc(['vault', 'folders', 'save'], { name: 'CI tokens' });
     const listed = (await proc(['vault', 'folders', 'list'])) as { folders: Array<{ name: string }> } | Array<{ name: string }>;
     const names = (Array.isArray(listed) ? listed : listed.folders).map((f) => f.name);
+    const paged = (await proc(['vault', 'folders', 'listPaged'], { page: 1, pageSize: 5 })) as {
+      folders: Array<{ name: string }>;
+      total: number;
+    };
+    expect(paged.total).toBeGreaterThanOrEqual(2);
+    expect(paged.folders.length).toBeLessThanOrEqual(5);
+    const search = (await proc(['vault', 'folders', 'listPaged'], { page: 1, pageSize: 5, q: 'CI' })) as {
+      folders: Array<{ name: string }>;
+      total: number;
+    };
+    expect(search.folders.map((f) => f.name)).toEqual(['CI tokens']);
     expect(names).toEqual(['CI tokens', 'Production keys']);
 
     const live = (await firstSnapshot(['vault', 'folders', 'live'])) as {
