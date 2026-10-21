@@ -1,3 +1,26 @@
+# [2.36.0](https://github.com/namhtpyn/tandem/compare/v2.35.1...v2.36.0) (2026-10-17)
+
+
+### Bug Fixes
+
+* **build:** shared/run-verdict via the #shared alias in app utils ([60f4e7f](https://github.com/namhtpyn/tandem/commit/60f4e7fe949a1ce69f504e08bd6109243b1172f1))
+* **deps:** oRPC beta.44 for vue-query 5.104.3 typing; coverage for outputSchema arm ([51c72c1](https://github.com/namhtpyn/tandem/commit/51c72c12a1bcba7ff2a5762c72fccc1fa6e13a1c))
+* **e2e:** gating spec matches the status NAME (ids are uuids now) ([b021e99](https://github.com/namhtpyn/tandem/commit/b021e9909dd5f969fdb6331a34e4c84bb41eb4eb))
+* **tasks:** gate runs/activity/reviews queries with enabled flag, not skipToken ([5278a24](https://github.com/namhtpyn/tandem/commit/5278a243befd55ce5342b6d5f6c74456ec07653b))
+* **test:** same-millisecond note/run timestamps are admissible ([d8fbe2e](https://github.com/namhtpyn/tandem/commit/d8fbe2e9684d7f1322806d2698ede132ebcd638c))
+* **ui:** description editor renders with input chrome + min height ([04dc2a8](https://github.com/namhtpyn/tandem/commit/04dc2a86e063d3a6f85b3dfc3f78a51d9f03e39c))
+* **ui:** every capped modal gets a scrolling body — editors no longer clip ([ee3d643](https://github.com/namhtpyn/tandem/commit/ee3d6433f0ba2acdb204de3f26f38d9cc8e50f45))
+
+
+### Features
+
+* **editor:** paste or drop images into task descriptions as attachments ([37cdbd8](https://github.com/namhtpyn/tandem/commit/37cdbd893bd517dd5894407bba4e82c35841a25c))
+* **ids:** UUIDv7 for all Tandem-minted ids ([8b8cc21](https://github.com/namhtpyn/tandem/commit/8b8cc21c1747b50569af2b7485509ea5969cf0bc))
+* **runner:** zod-validated structured verdicts replace envelope markers ([9078b85](https://github.com/namhtpyn/tandem/commit/9078b85cc28459e642504d10065ebf9db0d7d903))
+* **sessions:** drop tasks.acp_session_id — sessions are per (task, employee) on run rows ([6e90262](https://github.com/namhtpyn/tandem/commit/6e90262cbc30bfc2ce12340eeccdba88a213dbb8))
+* **statuses:** task status ids become fixed uuidv7 constants ([9f8de74](https://github.com/namhtpyn/tandem/commit/9f8de7432dcdc08ee05dfcb77139a9ca3f591a13))
+* **verdicts:** generic structured output + no-compat JSON estate ([b235442](https://github.com/namhtpyn/tandem/commit/b235442f7b30b0648a39f9698aaac08267fc17f4))
+
 ## [2.35.1](https://github.com/namhtpyn/tandem/compare/v2.35.0...v2.35.1) (2026-10-16)
 
 
