@@ -70,7 +70,7 @@ export const employeesRouter = os.router({
     .input(
       z.strictObject({
         name: z.string().min(1).max(100),
-        email: z.string().email(),
+        email: z.email(),
         kind: z.enum(['human', 'ai']),
         image: z.string().max(300_000).nullable().optional(),
         title: z.string().min(1).max(100),
@@ -198,7 +198,7 @@ export const employeesRouter = os.router({
       z.strictObject({
         id: z.string().min(1),
         name: z.string().min(1).max(100),
-        email: z.string().email().optional(),
+        email: z.email().optional(),
         title: z.string().min(1).max(100),
         supervisorIds: z.array(z.string().min(1)).max(20),
         environmentId: z.string().min(1).nullable().optional(),

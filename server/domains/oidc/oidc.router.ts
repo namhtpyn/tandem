@@ -34,7 +34,7 @@ export const oidcRouter = os.router({
             z.strictObject({
               id: z.string().min(1).max(64).optional(),
               label: z.string().min(1).max(64),
-              issuer: z.string().url(),
+              issuer: z.url(),
               clientId: z.string().min(1).max(200),
               clientSecret: z.string().max(400).optional(),
             }),

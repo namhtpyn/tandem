@@ -10,18 +10,18 @@ import { z } from 'zod';
 const envSchema = z.preprocess(
   (raw) => Object.fromEntries(Object.entries(raw ?? {}).filter(([, v]) => v !== '')),
   z.object({
-  DATABASE_URL: z.string().url(),
+  DATABASE_URL: z.url(),
   TANDEM_VAULT_KEY: z
     .string()
     .refine((v) => Buffer.from(v, 'base64').length === 32, 'must decode to 32 bytes (openssl rand -base64 32)'),
-  REDIS_URL: z.string().url(),
-  TANDEM_PUBLIC_URL: z.string().url().optional(),
+  REDIS_URL: z.url(),
+  TANDEM_PUBLIC_URL: z.url().optional(),
   TANDEM_ATTACHMENTS_DIR: z.string().optional(),
   TANDEM_DRIZZLE_DIR: z.string().optional(),
   BETTER_AUTH_SECRET: z.string().optional(),
-  BETTER_AUTH_URL: z.string().url().optional(),
+  BETTER_AUTH_URL: z.url().optional(),
   TANDEM_DISABLE_PASSWORD_LOGIN: z.string().optional(),
-  ADMIN_EMAIL: z.string().email().optional(),
+  ADMIN_EMAIL: z.email().optional(),
   ADMIN_PASSWORD: z.string().min(8).optional(),
   }),
 );

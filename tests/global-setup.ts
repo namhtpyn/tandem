@@ -137,9 +137,6 @@ export async function teardown() {
   } catch {
     /* already gone */
   }
-  try {
-    run(`docker rm -f ${REDIS_NAME}`);
-  } catch {
-    /* already gone */
-  }
+  // redis container is left running: create-once + reused by the next suite
+  // run (and by the local dev server on the same port)
 }

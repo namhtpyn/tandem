@@ -33,7 +33,7 @@ export const providersRouter = os.router({
       z.strictObject({
         id: z.string().min(1).max(64).optional(),
         label: z.string().min(1).max(64),
-        baseUrl: z.string().url(),
+        baseUrl: z.url(),
         endpoints: z
           .array(z.enum(ALL_ENDPOINTS))
           .min(1)
