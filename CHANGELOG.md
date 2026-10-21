@@ -1,3 +1,10 @@
+## [2.39.1](https://github.com/namhtpyn/tandem/compare/v2.39.0...v2.39.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **ci:** playwright install runs plain bunx — bun's fetch trips the playwright CDN cert altnames ([94f7bc7](https://github.com/namhtpyn/tandem/commit/94f7bc79d13eea9783044107a64a02599d60cc58))
+
 # [2.39.0](https://github.com/namhtpyn/tandem/compare/v2.38.1...v2.39.0) (2026-10-21)
 
 
