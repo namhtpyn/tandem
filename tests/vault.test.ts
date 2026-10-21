@@ -186,6 +186,14 @@ describe('vault API', () => {
       total: number;
     };
     expect(none.total).toBe(0);
+    const both = (await callProc('vault.secrets.list', {
+      page: 1,
+      pageSize: 20,
+      folderId: 'API Tokens',
+      q: 'github',
+    })) as { data: Array<{ name: string }>; total: number };
+    expect(both.total).toBe(both.data.length);
+
   });
 
   it('create stores an encrypted envelope the API cannot read back', async () => {

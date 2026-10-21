@@ -5,6 +5,11 @@ import { RedisPublisher } from '@orpc/publisher/redis';
 
 import { env } from './env';
 
+/** node-redis emits 'error' on every dropped/reconnecting socket — swallow to keep the process alive */
+export function swallowRedisError(_e: unknown) {
+  /* a dead redis surfaces on the next await, not as an unhandled event */
+}
+
 export type PubsubDomain = {
   publish: (channel: string, message: string) => Promise<void>;
   subscribe: (channel: string, handler: (message: string) => void) => Promise<void>;
@@ -31,7 +36,7 @@ async function createPubsubDomain(): Promise<PubsubDomain> {
     url,
     socket: { connectTimeout: 5000, reconnectStrategy: () => new Error('no-retry') },
   });
-  ping.on('error', () => {});
+  ping.on('error', swallowRedisError);
   try {
     await ping.connect();
     await ping.ping();
@@ -40,7 +45,7 @@ async function createPubsubDomain(): Promise<PubsubDomain> {
   }
 
   const raw = createClient({ url, socket: { connectTimeout: 2000 } });
-  raw.on('error', () => {});
+  raw.on('error', swallowRedisError);
   await raw.connect();
   // pub/sub takes over a connection — publisher needs a dedicated subscriber
   // payload must be an object per @orpc/publisher — string message rides inside `raw`

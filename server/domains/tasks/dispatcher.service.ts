@@ -14,35 +14,6 @@ import { env } from '../kernel/env';
 import { redisQueue } from '../kernel/queue';
 import { dispatchTask } from './runner.service';
 
-const inFlight = new Map<string, Set<Promise<unknown>>>(); // employeeId -> live run promises
-
-export function activeRunCount(): number {
-  let n = 0;
-  for (const set of inFlight.values()) n += set.size;
-  return n;
-}
-
-/** how many runs of one agent are in flight right now (no-redis fallback) */
-export function inFlightCount(employeeId: string): number {
-  return inFlight.get(employeeId)?.size ?? 0;
-}
-
-function trackInFlight(employeeId: string, p: Promise<unknown>) {
-  let set = inFlight.get(employeeId);
-  if (!set) {
-    set = new Set();
-    inFlight.set(employeeId, set);
-  }
-  set.add(p);
-  void p.finally(() => {
-    const s = inFlight.get(employeeId);
-    /* v8 ignore next 1 -- two same-agent runs can settle in one microtask; the key is already gone */
-    if (!s) return;
-    s.delete(p);
-    if (s.size === 0) inFlight.delete(employeeId);
-  });
-}
-
 /** reap runs stuck in 'running' past the hard timeout + grace: mark failed, bounce task to
  * ready (with the normal backoff ladder), so orphaned rows never pin a task in doing forever. */
 export async function reapStaleRuns(): Promise<number> {
@@ -112,8 +83,6 @@ export async function findEligible(): Promise<{ taskId: string; employeeId: stri
   const now = Date.now();
   const eligible = rows
     .filter((t) => readyIds.includes(t.status) && t.assigneeId && aiIds.has(t.assigneeId))
-    // per-agent concurrency cap (in-memory slot count; the redis path counts its own workers)
-    .filter((t) => inFlightCount(t.assigneeId!) < cap)
     // failure backoff: not claimable until dispatch_after passes (null = immediately)
     .filter((t) => !t.dispatchAfter || t.dispatchAfter.getTime() <= now)
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());

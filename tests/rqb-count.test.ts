@@ -52,4 +52,9 @@ describe('rqb count/findManyAndCount (real db)', () => {
     expect(count.sql).toContain('count(*)');
     expect(findMany.sql).toContain('select');
   });
+
+  it('installRqbExtensions on an empty query object returns early', async () => {
+    const { installRqbExtensions } = await import('../server/db/rqb-extensions');
+    expect(() => installRqbExtensions({})).not.toThrow();
+  });
 });

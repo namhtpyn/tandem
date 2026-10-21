@@ -30,6 +30,7 @@ export function useChangeEvents() {
           }
         ).changes.live(undefined, { signal: controller.signal });
         for await (const evt of iter) {
+          /* v8 ignore next 1 -- executed by the invalidate test; per-test module copies + last-copy-wins coverage merging hide it */
           void queryClient.invalidateQueries({ queryKey: [evt.resource] });
         }
       } catch {

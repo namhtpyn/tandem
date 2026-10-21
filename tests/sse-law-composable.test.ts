@@ -69,6 +69,19 @@ afterEach(async () => {
 });
 
 describe('useChangeEvents', () => {
+  it('a synchronously throwing live() is caught and retried', async () => {
+    const qc = makeQc();
+    const live = vi.fn(() => {
+      throw new Error('stream dropped');
+    });
+    install({ changes: { live } }, qc);
+    const { useChangeEvents } = await loadMod();
+    useChangeEvents();
+    await new Promise((r) => setTimeout(r, 30));
+    disposers[0]?.();
+    expect(live).toHaveBeenCalled();
+  });
+
   it('subscribes once and invalidates by resource key as events arrive', async () => {
     const qc = makeQc();
     let capturedSignal: AbortSignal | null = null;

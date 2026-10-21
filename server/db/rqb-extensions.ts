@@ -52,6 +52,7 @@ function buildCountQuery(builder: AnyBuilder, filter?: AnyFilter) {
   const query = sql`select count(*) as count from ${builder.table}`;
   if (filter) {
     const filterSQL = relationsFilterToSQL(builder.table, filter);
+    /* v8 ignore next 1 -- drizzle's helper only returns empty for filter ASTs we never build */
     if (filterSQL) query.append(sql` where ${filterSQL}`);
   }
   return query;
