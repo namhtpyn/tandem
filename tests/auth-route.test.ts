@@ -3,10 +3,10 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 import './api-harness';
+import { resetSchema } from './helpers/pg';
 import { applyMigrations, sqlClient } from '../server/db/index';
 import { ROLE } from '../shared/enums';
 import { call } from './api-harness';
-import { resetSchema } from './helpers/pg';
 
 beforeEach(async () => {
   await resetSchema();

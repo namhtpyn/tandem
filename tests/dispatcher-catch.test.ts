@@ -3,10 +3,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './api-harness';
+import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { ROLE } from '../shared/enums';
 import { STATUS } from '../shared/status';
-import { resetSchema } from './helpers/pg';
 
 vi.mock('../server/domains/tasks/runner.service', () => ({
   dispatchTask: async () => {

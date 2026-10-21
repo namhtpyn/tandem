@@ -6,11 +6,11 @@ import './api-harness';
 // the real router; auth stubbed at the auth-instance level.
 import { describe, expect, it, beforeEach } from 'vitest';
 
+import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { appRouter as router } from '../server/domains/app.router';
 import { buildServerContext } from '../server/domains/kernel/context';
 import { makeEvent } from './api-harness';
-import { resetSchema } from './helpers/pg';
 
 beforeEach(async () => {
   await resetSchema();

@@ -5,12 +5,12 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
+import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { env, setEnv } from '../server/domains/kernel/env';
 import { decryptSecret, encryptSecret, lastFourHint } from '../server/domains/vault/secret/secret-crypto.service';
 import { ROLE } from '../shared/enums';
 import type { VaultSecretRow } from '../shared/types';
-import { resetSchema } from './helpers/pg';
 
 const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 
@@ -32,9 +32,8 @@ async function callProc(
   for (const key of path.split('.')) {
     node = node[key] as Record<string, unknown>;
   }
-  const internals = node['~orpc'] as { handler: (opts: unknown) => Promise<unknown> };
-  return await internals.handler({
-    input,
+  const { call } = await import('@orpc/server');
+  return await call(node as unknown as Parameters<typeof call>[0], input ?? {}, {
     context: { ...(await ctx()), session: { user: sessionUser ?? admin } },
     signal: new AbortController().signal,
   });
@@ -248,12 +247,13 @@ describe('vault API', () => {
     const { appRouter: router } = await import('../server/domains/app.router');
     let cur: Record<string, unknown> = router as unknown as Record<string, unknown>;
     for (const k of ['vault', 'secrets', 'create']) cur = cur[k] as Record<string, unknown>;
-    const node = cur['~orpc'] as { handler: (o: unknown) => Promise<unknown> };
+    const { call } = await import('@orpc/server');
     const context = buildAnonContext();
-    const res = (await node
-      .handler({ input: { name: 'x', value: 'y', description: '' }, context, signal: new AbortController().signal })
-      .catch((e) => e)) as { message?: string };
-    expect(String(res?.message ?? res)).toMatch(/authentication required|Cannot read|session/);
+    const res = (await call(cur as unknown as Parameters<typeof call>[0], { name: 'x', value: 'y', description: '' }, {
+      context,
+      signal: new AbortController().signal,
+    }).catch((e) => e)) as { code?: string; message?: string };
+    expect(String(res?.code ?? res?.message ?? res)).toMatch(/UNAUTHORIZED|authentication|session/i);
   });
 });
 

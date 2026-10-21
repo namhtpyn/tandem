@@ -12,6 +12,7 @@ import type { PgTable } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { parseRoutingProposals } from '../app/utils/task-thread';
+import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { recentAssignees } from '../server/domains/tasks/assignments.service';
 import {
@@ -33,7 +34,6 @@ import {
 } from '../shared/enums';
 import { STATUS } from '../shared/status';
 import type { TaskRow } from '../shared/types';
-import { resetSchema } from './helpers/pg';
 import { makeProcCaller } from './helpers/procs';
 
 const admin = {

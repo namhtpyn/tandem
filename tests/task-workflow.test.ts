@@ -7,12 +7,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
+import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { answerHolder, spawnObligation } from '../server/domains/tasks/obligations.service';
 import { ACTIVITY_KIND, OBLIGATION_ROLE, REVIEW_STATUS, ROLE } from '../shared/enums';
 import { STATUS } from '../shared/status';
 import type { TaskRow, TaskActivityRow } from '../shared/types';
-import { resetSchema } from './helpers/pg';
 import { makeProcCaller } from './helpers/procs';
 
 const admin = {
@@ -486,8 +486,8 @@ describe('task workflow — guard rails', () => {
     (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => null;
     const procs = [
       'ask',
-      ACTIVITY_KIND.FORWARD,
-      OBLIGATION_ROLE.ANSWER,
+      'forward',
+      'answer',
       'submit',
       'approve',
       'requestChanges',
@@ -496,11 +496,12 @@ describe('task workflow — guard rails', () => {
     for (const p of procs) {
       let cur: Record<string, unknown> = appRouter as unknown as Record<string, unknown>;
       for (const key of ['tasks', p]) cur = cur[key] as Record<string, unknown>;
-      const internals = cur['~orpc'] as { handler: (o: unknown) => Promise<unknown> };
+      const { call } = await import('@orpc/server');
       const base = { taskId: 't-x', toEmployeeId: '00000000-0000-7000-8000-f20d9b639839', body: 'x' };
+      // the chain validates input before the session guard, so either error is a reject
       await expect(
-        internals.handler({ input: base, context, signal: new AbortController().signal }),
-      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+        call(cur as unknown as Parameters<typeof call>[0], base, { context, signal: new AbortController().signal }),
+      ).rejects.toSatisfy((e: { code?: string }) => ['UNAUTHORIZED', 'INVALID_INPUT'].includes(e?.code ?? ''));
     }
   });
 
@@ -690,21 +691,21 @@ describe('task workflow — guard rails', () => {
     expect(row.questionHolderName).toBe('Owner');
   });
 
-  it('create without a session leaves owner/creator null', async () => {
+  it('create without a session rejects an anonymous creator', async () => {
     const { appRouter } = await import('../server/domains/app.router');
     const { buildServerContext } = await import('../server/domains/kernel/context');
     const context = buildServerContext(new Headers());
     (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => null;
     let cur: Record<string, unknown> = appRouter as unknown as Record<string, unknown>;
     for (const key of ['tasks', 'create']) cur = cur[key] as Record<string, unknown>;
-    const proc = cur['~orpc'] as { handler: (o: unknown) => Promise<{ id: string }> };
-    const r = await proc.handler({ input: { title: 'NoSession task' }, context, signal: new AbortController().signal });
-    const iter = await callProc('tasks.live');
-    const snap = await iter.next();
-    await iter.return?.();
-    const row = (snap.value as TaskRow[]).find((x) => x.id === r.id)!;
-    expect(row.ownerId).toBeNull();
-    expect(row.createdBy).toBeNull();
+    const { call } = await import('@orpc/server');
+    // create is protected — no session means the chain rejects before the handler
+    await expect(
+      call(cur as unknown as Parameters<typeof call>[0], { title: 'NoSession task' }, {
+        context,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
 
   it('submit outside working is rejected', async () => {

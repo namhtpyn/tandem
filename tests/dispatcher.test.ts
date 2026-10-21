@@ -121,9 +121,9 @@ vi.mock('ssh2', () => {
   return { default: { Client: FakeClient } };
 });
 import './api-harness';
+import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { STATUS } from '../shared/status';
-import { resetSchema } from './helpers/pg';
 import { OBLIGATION_ROLE, OBLIGATION_STATUS, PROPOSAL_KIND, PROPOSAL_STATUS, REVIEW_STATUS, ROLE, RUN_STATUS, SECRET_USAGE } from '../shared/enums';
 import { env, setEnv } from '../server/domains/kernel/env';
 

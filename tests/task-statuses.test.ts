@@ -3,11 +3,11 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
+import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { OBLIGATION_STATUS, ROLE } from '../shared/enums';
 import { STATUS } from '../shared/status';
 import type { TaskStatusRow } from '../shared/types';
-import { resetSchema } from './helpers/pg';
 
 async function wireDecisionProvider(secretId: string | null) {
   const d = await dbm();
@@ -60,8 +60,11 @@ async function callProc(path: string, input?: unknown): Promise<any> {
   const { appRouter: router } = await import('../server/domains/app.router');
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
   for (const key of path.split('.')) node = node[key] as Record<string, unknown>;
-  const internals = node['~orpc'] as { handler: (opts: unknown) => Promise<unknown> };
-  return await internals.handler({ input, context: await ctx(), signal: new AbortController().signal });
+  const { call } = await import('@orpc/server');
+  return await call(node as unknown as Parameters<typeof call>[0], input ?? {}, {
+    context: await ctx(),
+    signal: new AbortController().signal,
+  });
 }
 
 beforeEach(async () => {

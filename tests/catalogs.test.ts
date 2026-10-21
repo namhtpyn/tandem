@@ -24,8 +24,8 @@ async function proc(path: string[], input?: unknown) {
   const context = buildServerContext(new Headers());
   (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => admin;
   (context as unknown as { session: typeof admin }).session = admin;
-  return (node['~orpc'] as { handler: (o: unknown) => Promise<unknown> }).handler({
-    input,
+  const { call } = await import('@orpc/server');
+  return await call(node as unknown as Parameters<typeof call>[0], input ?? {}, {
     context,
     signal: new AbortController().signal,
   });

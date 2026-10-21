@@ -3,9 +3,9 @@ import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './api-harness';
+import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '../server/db/index';
 import { ROLE } from '../shared/enums';
-import { resetSchema } from './helpers/pg';
 
 const admin = {
   id: '00000000-0000-7000-8000-cd5fca5e2d34',
@@ -29,8 +29,11 @@ async function callProc(path: string, input?: unknown): Promise<any> {
   for (const key of path.split('.')) {
     node = node[key] as Record<string, unknown>;
   }
-  const internals = node['~orpc'] as { handler: (opts: unknown) => Promise<unknown> };
-  return await internals.handler({ input, context: await ctx(), signal: new AbortController().signal });
+  const { call } = await import('@orpc/server');
+  return await call(node as unknown as Parameters<typeof call>[0], input ?? {}, {
+    context: await ctx(),
+    signal: new AbortController().signal,
+  });
 }
 
 async function dbm() {
