@@ -46,6 +46,25 @@ watch(total, (t) => {
 
 // ---- folders manager modal (statuses-style) ----
 const folderManagerOpen = ref(false);
+const folderPage = ref(1);
+const folderPageSize = ref(10);
+const foldersPagedQuery = useQuery(
+  computed(() =>
+    $orpc.vault.folders.listPaged.queryOptions({
+      input: { page: folderPage.value, pageSize: folderPageSize.value },
+      queryKey: [CHANGE_RESOURCE.VAULT, 'folders-paged', folderPage.value, folderPageSize.value],
+    }),
+  ),
+);
+const foldersPaged = computed(() => foldersPagedQuery.data.value?.folders ?? []);
+const foldersTotal = computed(() => foldersPagedQuery.data.value?.total ?? 0);
+const folderPageCount = computed(() => Math.max(1, Math.ceil(foldersTotal.value / folderPageSize.value)));
+
+// deleting the last folder of a high page clamps back into range
+watch(foldersTotal, (t) => {
+  const maxPage = Math.max(1, Math.ceil(t / folderPageSize.value));
+  if (folderPage.value > maxPage) folderPage.value = maxPage;
+});
 const folderEditorOpen = ref(false);
 const folderEditingId = ref<string | null>(null);
 const folderForm = ref({ name: '' });
@@ -471,38 +490,63 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
           <div v-if="folderError" class="bg-error/10 text-error mb-3 rounded-md px-3 py-2 text-xs">
             {{ folderError }}
           </div>
-          <div v-if="folders.length" class="divide-default divide-y">
-            <div v-for="f in folders" :key="f.id" class="flex items-center gap-2 py-2.5">
-              <UBadge color="neutral" variant="subtle" icon="i-lucide-folder">{{ f.name }}</UBadge>
-              <span class="text-xs text-zinc-500">{{ f.secrets }} {{ f.secrets === 1 ? 'secret' : 'secrets' }}</span>
-              <span class="flex-1" />
-              <UPopover mode="hover">
-                <UButton
-                  icon="i-lucide-pencil"
-                  size="xs"
-                  color="neutral"
-                  variant="ghost"
-                  aria-label="Rename folder"
-                  :disabled="folderBusy"
-                  @click="openFolderEditor(f.id)"
-                />
-                <template #content><div class="px-3 py-1.5 text-xs">Rename</div></template>
-              </UPopover>
-              <UPopover mode="hover">
-                <UButton
-                  icon="i-lucide-trash-2"
-                  size="xs"
-                  color="neutral"
-                  variant="ghost"
-                  aria-label="Delete folder"
-                  :disabled="folderBusy"
-                  @click="folderConfirmId = f.id"
-                />
-                <template #content><div class="px-3 py-1.5 text-xs">Delete</div></template>
-              </UPopover>
-            </div>
-          </div>
-          <p v-else class="py-6 text-center text-sm text-zinc-500">
+          <DataTable
+            v-if="foldersPaged.length"
+            :data="foldersPaged"
+            :columns="[
+              { accessorKey: 'name', header: 'Folder' },
+              { accessorKey: 'secrets', header: 'Secrets' },
+              { id: 'actions', header: '' },
+            ]"
+            mobile-title-key="name"
+            v-model:page="folderPage"
+            :page-count="folderPageCount"
+            :page-size="folderPageSize"
+          >
+            <template #secrets-cell="{ row }">
+              <span class="text-xs text-zinc-500">{{ row.original.secrets }} {{ row.original.secrets === 1 ? 'secret' : 'secrets' }}</span>
+            </template>
+            <template #actions-cell="{ row }">
+              <div class="flex justify-end gap-1">
+                <UPopover mode="hover">
+                  <UButton
+                    icon="i-lucide-pencil"
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    aria-label="Rename folder"
+                    :disabled="folderBusy"
+                    @click="openFolderEditor(row.original.id)"
+                  />
+                  <template #content><div class="px-3 py-1.5 text-xs">Rename</div></template>
+                </UPopover>
+                <UPopover mode="hover">
+                  <UButton
+                    icon="i-lucide-trash-2"
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    aria-label="Delete folder"
+                    :disabled="folderBusy"
+                    @click="folderConfirmId = row.original.id"
+                  />
+                  <template #content><div class="px-3 py-1.5 text-xs">Delete</div></template>
+                </UPopover>
+              </div>
+            </template>
+            <template #mobile-item="{ row }">
+              <UCard :ui="{ root: 'shadow-sm' }">
+                <div class="flex items-center gap-2">
+                  <UBadge color="neutral" variant="subtle" icon="i-lucide-folder">{{ row.name }}</UBadge>
+                  <span class="flex-1" />
+                  <UButton icon="i-lucide-pencil" size="xs" color="neutral" variant="ghost" aria-label="Rename folder" @click="openFolderEditor(row.id)" />
+                  <UButton icon="i-lucide-trash-2" size="xs" color="neutral" variant="ghost" aria-label="Delete folder" @click="folderConfirmId = row.id" />
+                </div>
+                <p class="mt-1 text-xs text-zinc-500">{{ row.secrets }} {{ row.secrets === 1 ? 'secret' : 'secrets' }}</p>
+              </UCard>
+            </template>
+          </DataTable>
+          <p v-if="!foldersPaged.length" class="py-6 text-center text-sm text-zinc-500">
             No folders yet — create one to categorize secrets.
           </p>
         </template>

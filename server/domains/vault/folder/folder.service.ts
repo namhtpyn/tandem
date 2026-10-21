@@ -2,8 +2,9 @@
 // Duplicate folder names are allowed (the unique constraint was dropped);
 // deleting a folder never deletes secrets — they fall back to uncategorized
 // (FK SET NULL).
-import { asc, count, eq } from 'drizzle-orm';
+import { asc, count, eq, inArray } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
+import { z } from 'zod';
 
 import { db } from '../../../db';
 import { vaultSecrets as vaultSecretsTable, vaultFolders as vaultFoldersTable } from '../../../db/schema';
@@ -11,6 +12,33 @@ import { ORPCError, publishChange } from '../../kernel/kernel';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 export type FolderWithCount = { id: string; name: string; secrets: number };
+
+export const listFoldersPagedInput = z.object({
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(100).default(10),
+});
+
+export async function listFoldersPaged(input: z.input<typeof listFoldersPagedInput> = {}) {
+  const { page, pageSize } = listFoldersPagedInput.parse(input);
+  const { data, total } = await db.query.vaultFolders.findManyAndCount({
+    orderBy: (f, { asc }) => [asc(f.name)],
+    limit: pageSize,
+    offset: (page - 1) * pageSize,
+  });
+  const ids = data.map((f) => f.id);
+  const counts = ids.length
+    ? await db
+        .select({ folderId: vaultSecretsTable.folderId, count: count() })
+        .from(vaultSecretsTable)
+        .where(inArray(vaultSecretsTable.folderId, ids))
+        .groupBy(vaultSecretsTable.folderId)
+    : [];
+  const byFolder = new Map(counts.map((c) => [c.folderId, Number(c.count)]));
+  return {
+    folders: data.map((f) => ({ id: f.id, name: f.name, secrets: byFolder.get(f.id) ?? 0 })),
+    total,
+  };
+}
 
 export async function listFolders() {
   const rows = await db.select().from(vaultFoldersTable).orderBy(asc(vaultFoldersTable.name));

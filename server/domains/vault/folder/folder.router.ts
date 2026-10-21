@@ -5,11 +5,13 @@ import { os } from '@orpc/server';
 import { z } from 'zod';
 
 import { protectedProcedure, liveGenerator } from '../../kernel/kernel';
-import { listFolders, saveFolder, removeFolder } from './folder.service';
+import { listFolders, listFoldersPaged, listFoldersPagedInput, saveFolder, removeFolder } from './folder.service';
 import { CHANGE_RESOURCE } from '#shared/enums';
 
 export const folderRouter = os.router({
   list: protectedProcedure.handler(() => listFolders()),
+
+  listPaged: protectedProcedure.input(listFoldersPagedInput).handler(({ input }) => listFoldersPaged(input)),
 
   live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.VAULT], listFolders)),
 
