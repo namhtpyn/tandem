@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-// Postgres client (postgres.js) + drizzle rc (Relations v2) + boot-applied migrations.
+// Postgres client (Bun's native SQL) + drizzle rc (Relations v2) + boot-applied migrations.
 //
 // Env:
 //   DATABASE_URL            — postgres://user:pass@host:port/db (required in prod)
@@ -9,9 +9,8 @@ import { join } from 'node:path';
 //
 // Migrations are drizzle-kit SQL folders applied at boot by drizzle's own
 // migrator (drizzle.__drizzle_migrations ledger), not a hand-rolled runner.
-import { drizzle } from 'drizzle-orm/postgres-js';
-import { migrate } from 'drizzle-orm/postgres-js/migrator';
-import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/bun-sql';
+import { migrate } from 'drizzle-orm/bun-sql/migrator';
 
 import { env } from '../domains/kernel/env';
 import { installRqbExtensions } from './rqb-extensions';
@@ -19,12 +18,10 @@ import { user, session, account, verification, settings, relations } from './sch
 
 const url = env.DATABASE_URL;
 
-// runner-side client: prepare false keeps boot-time DDL safe with pgbouncer-ish pools
-export const sqlClient = postgres(url, {
+export const sqlClient = new Bun.SQL(url, {
   max: 10,
-  idle_timeout: 20,
-  connect_timeout: 10,
-  prepare: false,
+  idleTimeout: 20,
+  connectionTimeout: 10,
 });
 
 // ---------- boot migrations ----------
@@ -40,7 +37,7 @@ async function appliedNames(): Promise<string[]> {
   const t = await sqlClient`select to_regclass('drizzle.__drizzle_migrations') as t`;
   if (!t[0]?.t) return [];
   const rows = await sqlClient`select name from drizzle.__drizzle_migrations where name is not null`;
-  return rows.map((r) => r.name as string);
+  return rows.map((r: { name: string }) => r.name);
 }
 
 
