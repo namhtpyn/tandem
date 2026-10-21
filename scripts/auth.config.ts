@@ -13,7 +13,7 @@ export const auth = betterAuth({
   basePath: '/auth',
   user: {
     additionalFields: {
-      role: { type: ['admin', 'employee', 'viewer'] as const, required: false, defaultValue: 'viewer', input: false },
+      role: { type: ['ADMIN', 'EMPLOYEE', 'VIEWER'] as const, required: false, defaultValue: 'VIEWER', input: false }, // stored values are SCREAMING (enum law)
       title: { type: 'string', required: false, defaultValue: '', input: false },
     },
   },
