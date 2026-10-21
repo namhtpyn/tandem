@@ -10,7 +10,7 @@ import type { GlobalSetupContext } from 'vitest/node';
 const NAME = 'tandem-test-pg';
 const REDIS_NAME = 'tandem-test-redis';
 const REDIS_IMAGE = 'redis:8-alpine';
-const REDIS_PORT = process.env.CI ? '6379' : String(6399);
+const REDIS_PORT = '6399';
 const needsLocalContainer = !process.env.TANDEM_TEST_DATABASE_URL && !process.env.CI;
 
 function run(cmd: string) {
@@ -67,8 +67,8 @@ function redisRunning() {
 /** redis is a hard dependency — every suite run (dev or CI) gets a URL */
 async function ensureRedis({ provide }: GlobalSetupContext) {
   if (process.env.CI) {
-    process.env.REDIS_URL = `redis://127.0.0.1:${REDIS_PORT}`;
-    provide('redisUrl', process.env.REDIS_URL);
+    // the workflow's redis service is already up and REDIS_URL is in the job env
+    provide('redisUrl', process.env.REDIS_URL!);
     return;
   }
   if (!redisRunning()) {
