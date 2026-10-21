@@ -280,43 +280,15 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
               variant="outline"
               @click="folderManagerOpen = true"
             />
-            <UButton icon="i-lucide-plus" label="New secret" @click="openEditor()" />
           </div>
         </div>
 
-        <!-- search (server-side, debounced) -->
-        <UInput
-          v-model="search"
-          icon="i-lucide-search"
-          placeholder="Search secrets…"
-          class="w-full sm:max-w-xs"
-          size="sm"
-        />
 
         <!-- Mobile: stacked cards -->
-        <!-- folder filter chips: All + one per folder; manager defines the taxonomy -->
-        <div v-if="folders.length" class="flex flex-wrap items-center gap-1.5">
-          <UButton
-            size="xs"
-            :color="activeFolder === null ? 'primary' : 'neutral'"
-            :variant="activeFolder === null ? 'solid' : 'soft'"
-            label="All"
-            @click="activeFolder = null"
-          />
-          <UButton
-            v-for="f in folders"
-            :key="f.id"
-            size="xs"
-            :color="activeFolder === f.id ? 'primary' : 'neutral'"
-            :variant="activeFolder === f.id ? 'solid' : 'soft'"
-            :icon="activeFolder === f.id ? 'i-lucide-folder-open' : 'i-lucide-folder'"
-            :label="`${f.name} (${f.secrets})`"
-            @click="activeFolder = activeFolder === f.id ? null : f.id"
-          />
-        </div>
-
         <DataTable
-          v-if="rows.length"
+          v-model:search="search"
+          searchable
+          search-placeholder="Search secrets…"
           :data="rows"
           v-model:page="page"
           :page-count="pageCount"
@@ -329,6 +301,27 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
             { id: 'actions', header: '' },
           ]"
         >
+          <template #toolbar>
+            <UButton
+              size="xs"
+              :color="activeFolder === null ? 'primary' : 'neutral'"
+              :variant="activeFolder === null ? 'solid' : 'soft'"
+              label="All"
+              @click="activeFolder = null"
+            />
+            <UButton
+              v-for="f in folders"
+              :key="f.id"
+              size="xs"
+              :color="activeFolder === f.id ? 'primary' : 'neutral'"
+              :variant="activeFolder === f.id ? 'solid' : 'soft'"
+              :icon="activeFolder === f.id ? 'i-lucide-folder-open' : 'i-lucide-folder'"
+              :label="`${f.name} (${f.secrets})`"
+              @click="activeFolder = activeFolder === f.id ? null : f.id"
+            />
+            <span class="flex-1" />
+            <UButton icon="i-lucide-plus" size="sm" label="New secret" @click="openEditor()" />
+          </template>
           <template #description-cell="{ row }">
             <span class="text-xs text-zinc-500 dark:text-zinc-400">{{ row.original.description || '—' }}</span>
           </template>
@@ -541,15 +534,10 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
           <div v-if="folderError" class="bg-error/10 text-error mb-3 rounded-md px-3 py-2 text-xs">
             {{ folderError }}
           </div>
-          <UInput
-            v-model="folderSearch"
-            icon="i-lucide-search"
-            placeholder="Search folders…"
-            class="w-full mb-3"
-            size="sm"
-          />
           <DataTable
-            v-if="foldersPaged.length"
+            v-model:search="folderSearch"
+            searchable
+            search-placeholder="Search folders…"
             :data="foldersPaged"
             :columns="[
               { accessorKey: 'name', header: 'Folder' },
@@ -561,6 +549,9 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
             :page-count="folderPageCount"
             :page-size="folderPageSize"
           >
+            <template #toolbar>
+              <UButton icon="i-lucide-plus" size="sm" label="New folder" @click="openFolderEditor()" />
+            </template>
             <template #secrets-cell="{ row }">
               <span class="text-xs text-zinc-500">{{ row.original.secrets }} {{ row.original.secrets === 1 ? 'secret' : 'secrets' }}</span>
             </template>
@@ -609,9 +600,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
           </p>
         </template>
         <template #footer>
-          <div class="flex w-full items-center justify-between gap-2">
-            <UButton icon="i-lucide-plus" size="sm" label="New folder" @click="openFolderEditor()" />
-          </div>
+          <div class="flex w-full items-center justify-end" />
         </template>
       </UModal>
 

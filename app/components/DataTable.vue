@@ -14,6 +14,10 @@ const props = withDefaults(
     page?: number;
     pageCount?: number;
     pageSize?: number;
+    /** toolbar search box; the parent owns the query (server-side) — v-model:search */
+    searchable?: boolean;
+    searchPlaceholder?: string;
+    search?: string;
   }>(),
   {
     loading: false,
@@ -22,21 +26,26 @@ const props = withDefaults(
     page: undefined,
     pageCount: undefined,
     pageSize: 10,
+    searchable: false,
+    searchPlaceholder: 'Search…',
+    search: undefined,
   },
 );
 
-const emit = defineEmits<{ 'update:page': [page: number] }>();
+const emit = defineEmits<{ 'update:page': [page: number]; 'update:search': [q: string] }>();
 const paginated = computed(() => props.pageCount !== undefined && props.page !== undefined);
 const pagination = computed(() => ({ pageIndex: (props.page ?? 1) - 1, pageSize: props.pageSize }));
 
 defineSlots<
   Record<`${string}-cell` | `${string}-header` | (string & {}), (props: CellContext<T, unknown>) => VNode[]> & {
     'mobile-item'?: (props: { row: T }) => VNode[];
+    /** toolbar extras: filter chips, action buttons — rendered right of the search box */
+    toolbar?: () => VNode[];
   }
 >();
 
 const slots = useSlots();
-const desktopSlotNames = computed(() => Object.keys(slots).filter((n) => n !== 'mobile-item'));
+const desktopSlotNames = computed(() => Object.keys(slots).filter((n) => n !== 'mobile-item' && n !== 'toolbar'));
 
 const titleKey = computed(() => {
   if (props.mobileTitleKey) return props.mobileTitleKey;
@@ -63,7 +72,24 @@ function cellValue(row: T, col: TableColumn<T>) {
 </script>
 
 <template>
-  <UCard v-if="data.length || loading" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
+  <div v-if="searchable || data.length || loading" class="space-y-3">
+    <div
+      v-if="searchable"
+      class="flex flex-wrap items-center gap-2"
+    >
+      <UInput
+        :model-value="search"
+        icon="i-lucide-search"
+        :placeholder="searchPlaceholder"
+        size="sm"
+        class="w-full sm:max-w-xs"
+        @update:model-value="(v: string) => emit('update:search', v)"
+      />
+      <span class="flex-1" />
+      <slot name="toolbar" />
+    </div>
+
+    <UCard v-if="data.length || loading" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
     <UTable
       :data="data"
       :columns="columns"
@@ -109,5 +135,6 @@ function cellValue(row: T, col: TableColumn<T>) {
         @update:page="(p: number) => emit('update:page', p)"
       />
     </div>
+  </div>
   </div>
 </template>
