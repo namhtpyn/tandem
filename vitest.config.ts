@@ -20,8 +20,8 @@ export default defineConfig({
     // reset each other's tables mid-test (the 42P01 teardown-race family).
     // File parallelism off: the suite is stable, ~2min instead of ~70s.
     fileParallelism: false,
-    globalSetup: ['./tests/global-setup.ts'],
-    setupFiles: ['./tests/setup.ts'],
+    globalSetup: ['./test/global-setup.ts'],
+    setupFiles: ['./test/setup.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'json-summary', 'html'],
@@ -47,8 +47,8 @@ export default defineConfig({
       {
         test: {
           name: 'unit',
-          include: ['tests/**/*.test.ts'],
-          exclude: ['tests/nuxt/**'], // nuxt-env component tests live in their own project below
+          include: ['test/unit/**/*.test.ts'],
+          exclude: ['test/nuxt/**'], // nuxt-env component tests live in their own project below
         },
       },
       // component tests in a real Nuxt environment (auto-imports, plugins, injections)
@@ -57,7 +57,7 @@ export default defineConfig({
       await defineVitestProject({
         test: {
           name: 'nuxt',
-          include: ['tests/nuxt/**/*.test.ts'],
+          include: ['test/nuxt/**/*.test.ts'],
           environment: 'nuxt',
           coverage: { enabled: false, reporter: [], reportsDirectory: null, thresholds: {} },
         },
