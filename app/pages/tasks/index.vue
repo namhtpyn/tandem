@@ -8,7 +8,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state';
 
 import { CHANGE_RESOURCE, ACTIVITY_KIND } from '~/../shared/enums';
 import { STATUS } from '~/../shared/status';
-import type { EditorView, ClipboardEventLike, DragEventLike } from '~/editor-typing';
+import type { EditorView, ClipboardEventLike, DragEventLike } from '~/types/editor-typing';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 
 /** paste/drop images in the description editor -> attachments pipeline.
