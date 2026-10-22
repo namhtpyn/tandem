@@ -4,6 +4,7 @@
 // way app code sees configuration: services import this object, never
 // process.env (the sole allowed read is the safeParseAsync call below).
 // Tests mutate knobs after boot via setEnv — never process.env.
+import { consola } from 'consola';
 import { z } from 'zod';
 
 // env vars arrive as strings — '' means "unset" for every field
@@ -59,7 +60,7 @@ export type EnvIssue = { path: (string | number | symbol)[]; message: string };
 
 /** one fail-fast report then exit — the negative boot tests exercise this via child processes */
 export function reportInvalidEnvironment(issues: EnvIssue[]): never {
-  console.error('[tandem] invalid environment:\n' + formatEnvIssues(issues));
+  consola.error('[tandem] invalid environment:\n' + formatEnvIssues(issues));
   process.exit(1);
 }
 

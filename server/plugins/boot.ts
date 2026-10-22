@@ -1,3 +1,4 @@
+import { consola } from 'consola';
 import { v7 as uuidv7 } from 'uuid';
 
 import { ROLE } from '#shared/enums';
@@ -14,7 +15,7 @@ import { env } from '../domains/kernel/env';
 
 export default defineNitroPlugin(async () => {
   const applied = await applyMigrations();
-  if (applied.length > 0) console.log('[tandem] applied migrations:', applied.join(', '));
+  if (applied.length > 0) consola.withTag('tandem').info('applied migrations:', applied.join(', '));
 
   // agent dispatcher: eligible tasks (ready + AI assignee) fire automatically.
   // Opt out with TANDEM_NO_DISPATCHER=1 (tests); fake runner with TANDEM_FAKE_RUNNER=1.
@@ -50,5 +51,5 @@ export default defineNitroPlugin(async () => {
     createdAt: now,
     updatedAt: now,
   });
-  console.log(`[tandem] seeded admin ${email} (change the password after first login)`);
+  consola.withTag('tandem').info(`seeded admin ${email} (change the password after first login)`);
 });

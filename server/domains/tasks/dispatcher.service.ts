@@ -2,6 +2,7 @@
 // and dispatches them to the runner. One task at a time per agent (serial);
 // extra ready tasks queue until the agent is idle. Intended to run on a
 // server-side interval (boot plugin), skippable in tests via env.
+import { consola } from 'consola';
 import { eq } from 'drizzle-orm';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS } from '#shared/enums';
@@ -13,6 +14,8 @@ import { publishChange } from '../kernel/change-bus';
 import { env } from '../kernel/env';
 import { redisQueue } from '../kernel/queue';
 import { dispatchTask } from './runner.service';
+
+const log = consola.withTag('tandem');
 
 /** reap runs stuck in 'running' past the hard timeout + grace: mark failed, bounce task to
  * ready (with the normal backoff ladder), so orphaned rows never pin a task in doing forever. */
@@ -107,7 +110,7 @@ export async function scanOnce(tandemUrl: string) {
     );
     return true;
   } catch (e) {
-    console.warn('[tandem] dispatch enqueue failed, retrying next scan:', (e as Error).message);
+    log.warn('dispatch enqueue failed, retrying next scan:', (e as Error).message);
     return false; // redis hiccup: try next scan
   }
 }
@@ -171,7 +174,7 @@ export async function onDispatcherSettingsChanged() {
     const hub = await redisQueue();
     await syncDispatchWorkers(hub);
   } catch (e) {
-    console.warn('[tandem] dispatch worker resync failed:', (e as Error).message);
+    log.warn('dispatch worker resync failed:', (e as Error).message);
   }
 }
 
@@ -185,9 +188,9 @@ export async function maybeStartDispatcher(): Promise<(() => void) | null> {
   const url = env.TANDEM_PUBLIC_URL ?? 'http://localhost:3000';
   const hub = await redisQueue();
   await syncDispatchWorkers(hub);
-  console.log(`[tandem] dispatch queue workers started (redis, per-agent)`);
+  log.success('dispatch queue workers started (redis, per-agent)');
   const stop = startDispatcher(url);
-  console.log(`[tandem] dispatcher started (redis+interval)`);
+  log.success('dispatcher started (redis+interval)');
   return stop;
 }
 

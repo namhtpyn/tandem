@@ -5,14 +5,16 @@ import { onError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
 
 import { appRouter as router } from '../../domains/app.router';
+import { consola } from 'consola';
+
 import { buildServerContext } from '../../domains/kernel/context';
 
 const handler = new RPCHandler(router, {
   interceptors: [
     onError((error, { path }) => {
       /* v8 ignore start -- defensive: oRPC always sets code on mapped errors */
-      console.error(
-        `[orpc] ${path.join('.')}: ${(error as { code?: string }).code ?? 'UNKNOWN'} ${(error as Error).message}`,
+      consola.withTag('orpc').error(
+        `${path.join('.')} ${path.join('.')}: ${(error as { code?: string }).code ?? 'UNKNOWN'} ${(error as Error).message}`,
       );
       /* v8 ignore stop */
     }),

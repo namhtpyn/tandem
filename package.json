@@ -37,6 +37,7 @@
     "better-auth": "1.7.10",
     "bullmq": "6.3.16",
     "cache-manager": "7.2.9",
+    "consola": "^3.4.2",
     "drizzle-orm": "1.0.0-rc.5",
     "es-toolkit": "1.52.0",
     "keyv": "5.6.0",
