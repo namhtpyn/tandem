@@ -2,12 +2,17 @@
 // guards, resync catch, folder list
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import './helpers/pg';
+import { applyMigrations } from '#server/db';
 import { env, setEnv } from '#server/domains/kernel/env';
 
 import { resetSchema } from './helpers/pg.ts';
 
 const origRedis = env.REDIS_URL;
+
+beforeEach(async () => {
+  await resetSchema();
+  await applyMigrations();
+});
 
 describe('cache domain against a dead redis', () => {
   it('createCacheDomain rejects (fail-fast boot contract)', async () => {

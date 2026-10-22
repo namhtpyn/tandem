@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+
 import { defineVitestProject } from '@nuxt/test-utils/config';
 import { defineConfig } from 'vitest/config';
 
@@ -5,8 +7,8 @@ export default defineConfig({
   resolve: {
     alias: {
       // server code imports shared/ via nuxt's #shared alias — vitest needs it too
-      '#shared': new URL('./shared/', import.meta.url).pathname,
-      '#server': new URL('./server/', import.meta.url).pathname,
+      '#shared': fileURLToPath(new URL('./shared', import.meta.url)),
+      '#server': fileURLToPath(new URL('./server', import.meta.url)),
     },
   },
   define: {

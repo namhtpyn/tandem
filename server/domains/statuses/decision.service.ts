@@ -136,9 +136,7 @@ export async function pickAssignee(params: {
       case PROVIDER_ENDPOINT.DECISION['OPENAI-DECISIONS']:
         raw = await askOpenAIDecisions(provider.baseUrl, key, state, instructions, criteria, params.model);
         break;
-      case PROVIDER_ENDPOINT.DECISION['TYPESAFE-SYSTEMONE']:
-        raw = await askTypesafeSystemOne(provider.baseUrl, key, state, instructions, criteria, params.model);
-        break;
+      // TYPESAFE-SYSTEMONE is the fallback endpoint
       default:
         raw = await askTypesafeSystemOne(provider.baseUrl, key, state, instructions, criteria, params.model);
     }

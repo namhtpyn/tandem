@@ -1,16 +1,19 @@
 import { inArray } from 'drizzle-orm';
-
-import './helpers/pg';
 // db.query.count / findManyAndCount extensions against the real test DB
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { applyMigrations } from '#server/db';
 import { db } from '#server/db';
 import { tasks } from '#server/db/schema';
+
+import { resetSchema } from './helpers/pg';
 
 describe('rqb count/findManyAndCount (real db)', () => {
   let ids: string[] = [];
 
   beforeEach(async () => {
+    await resetSchema();
+    await applyMigrations();
     const rnd = Math.random().toString(16).slice(2, 8);
     ids = [1, 2, 3, 4, 5].map((n) => `rqb-${rnd}-${n}`);
     await db.insert(tasks).values(ids.map((id) => ({ id, title: `rqb ${rnd}` })));

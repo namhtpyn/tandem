@@ -1,9 +1,16 @@
 import { eq } from 'drizzle-orm';
-
-import './helpers/pg';
 // loadBriefData coverage against the real test DB: users, supervision edges, mentions,
 // activity, missing-task error arm.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { applyMigrations } from '#server/db';
+
+import { resetSchema } from './helpers/pg';
+
+beforeEach(async () => {
+  await resetSchema();
+  await applyMigrations();
+});
 
 import { db } from '#server/db';
 import {

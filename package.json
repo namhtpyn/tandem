@@ -73,6 +73,7 @@
     "drizzle-kit": "1.0.0-rc.5",
     "happy-dom": "21.0.4",
     "semantic-release": "25.0.9",
+    "testcontainers": "^12.2.1",
     "type-fest": "5.10.0",
     "typescript": "npm:typescript-native-bridge@6.0.3-bridge.18.tsgo.7.0.2",
     "typescript-native-bridge": "6.0.3-bridge.18.tsgo.7.0.2",

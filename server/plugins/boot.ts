@@ -5,6 +5,8 @@ import { ROLE } from '#shared/enums';
 
 export const log = consola.withTag('tandem');
 
+import { env } from '#server/domains/kernel/env';
+
 // Boot: apply migrations, then seed the default admin when the instance has NO
 // users. A brand-new deployment therefore always has a known login:
 //   email    = env ADMIN_EMAIL    (default admin@tandem.local)
@@ -13,7 +15,6 @@ export const log = consola.withTag('tandem');
 import { db } from '../db/index';
 import { applyMigrations } from '../db/index';
 import { user, account } from '../db/schema';
-import { env } from '#server/domains/kernel/env';
 
 export default defineNitroPlugin(async () => {
   const applied = await applyMigrations();

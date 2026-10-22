@@ -377,16 +377,14 @@ describe('dispatcher extras', () => {
     const t = await callProc('tasks.create', { title: 'Null fin', assigneeId: agentId });
     const { db } = await dbm();
     const { taskRuns } = await schema();
-    await db
-      .insert(taskRuns)
-      .values({
-        id: 'r-x',
-        taskId: t.id,
-        employeeId: agentId,
-        environmentId: 'env-1',
-        status: RUN_STATUS.RUNNING,
-        output: '',
-      });
+    await db.insert(taskRuns).values({
+      id: 'r-x',
+      taskId: t.id,
+      employeeId: agentId,
+      environmentId: 'env-1',
+      status: RUN_STATUS.RUNNING,
+      output: '',
+    });
     const iter = await callProc('tasks.runs', { taskId: t.id });
     const snap = await iter.next();
     await iter.return?.();

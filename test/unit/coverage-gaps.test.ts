@@ -1,13 +1,14 @@
 // Remaining coverage: ready-get catch path, db index branches,
 // boot log line, auth after-hook. This file closes the final gaps.
 import { consola } from 'consola';
-import { describe, expect, it, beforeEach , vi } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 import './api-harness';
-import { resetSchema } from './helpers/pg.ts';
 import { applyMigrations, sqlClient } from '#server/db/index';
 import { ROLE } from '#shared/enums';
+
 import { call } from './api-harness.ts';
+import { resetSchema } from './helpers/pg.ts';
 
 beforeEach(async () => {
   await resetSchema();
