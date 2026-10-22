@@ -205,19 +205,23 @@ async function drainRuns(maxMs = 8000) {
   const { db } = await dbm();
   const { taskRuns } = await schema();
   const t0 = Date.now();
-  let stable = 0;
-  while (stable < 3 && Date.now() - t0 < maxMs) {
-    // settle cascades (submit -> review dispatch -> new run) can spawn a NEW running
-    // row moments after the last one flipped — require 3 consecutive zero polls
+  while (Date.now() - t0 < maxMs) {
+    // settle cascades (submit -> review dispatch -> new run) can spawn a NEW
+    // running row right as the last one flips — one short recheck catches it.
+    // idle exits immediately: no sleep when nothing is running
     const running = (await db.select().from(taskRuns)).filter((r) => r.status === RUN_STATUS.RUNNING);
-    stable = running.length === 0 ? stable + 1 : 0;
+    if (running.length === 0) {
+      await new Promise((r) => setTimeout(r, 50));
+      const again = (await db.select().from(taskRuns)).filter((r) => r.status === RUN_STATUS.RUNNING);
+      if (again.length === 0) return;
+    }
     await new Promise((r) => setTimeout(r, 200));
   }
 }
 
 /** no-op placeholder: run state drains via the fake runner's own lifecycle */
 async function drainInFlight(_maxMs = 5000) {
-  await new Promise((r) => setTimeout(r, 50));
+  // no-op: run state drains via the fake runner's own lifecycle
 }
 
 afterEach(async () => {
@@ -366,6 +370,9 @@ describe('dispatcher extras', () => {
     await iter.return?.();
     const rows = snap.value as RunRow[];
     expect(rows.map((r) => r.id)).toEqual(['r-new', 'r-old']);
+    // close the run: the afterEach drain waits out its full budget on a
+    // RUNNING row, and this test never starts a runner that would finish it
+    await db.update(taskRuns).set({ status: RUN_STATUS.DONE, finishedAt: new Date() }).where(eq(taskRuns.id, 'r-new'));
   });
 
   it('runs live maps finishedAt null while running', async () => {
@@ -387,6 +394,9 @@ describe('dispatcher extras', () => {
     const rows = snap.value as RunRow[];
     expect(rows[0].finishedAt).toBeNull();
     expect(rows[0].status).toBe(RUN_STATUS.RUNNING);
+    // close the run: the afterEach drain waits out its full budget on a
+    // RUNNING row, and this test never starts a runner that would finish it
+    await db.update(taskRuns).set({ status: RUN_STATUS.DONE, finishedAt: new Date() }).where(eq(taskRuns.id, 'r-x'));
   });
 });
 
