@@ -1,7 +1,7 @@
 // Secret service — vault secret rows: list mapping, audit trail, CRUD.
 // Values are envelope-encrypted via ./secret-crypto.service; plaintext never
 // leaves the server (list returns metadata + last-four hint only).
-import { desc, eq } from 'drizzle-orm';
+import { EmptyFilter, desc, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
@@ -33,13 +33,14 @@ export async function listVaultSecrets(input: ListVaultSecretsInput = {}) {
   const pageSize = input.pageSize ?? 20;
   const folderId = input.folderId;
   const q = input.q?.trim() || undefined;
-  // rc.5: `where: undefined` throws — build the config and omit the key when absent
   const folderFilter = folderId ? { folderId: { eq: folderId } } : undefined;
   const searchFilter = q ? { OR: [{ name: { ilike: `%${q}%` } }, { description: { ilike: `%${q}%` } }] } : undefined;
-  const where = folderFilter && searchFilter ? { AND: [folderFilter, searchFilter] } : (folderFilter ?? searchFilter);
+  const where = folderFilter && searchFilter
+    ? { AND: [folderFilter, searchFilter] }
+    : (folderFilter ?? searchFilter ?? EmptyFilter);
   const { data, total } = await db.query.vaultSecrets.findManyAndCount({
     with: { folder: true },
-    ...(where ? { where: where as never } : {}),
+    where: where as never,
     orderBy: { createdAt: 'desc' },
     limit: pageSize,
     offset: (page - 1) * pageSize,
