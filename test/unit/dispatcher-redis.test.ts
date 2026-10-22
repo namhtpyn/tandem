@@ -138,9 +138,10 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
     const { publishChange, changeBus, bridgeRedisChanges } = await import('#server/domains/kernel/change-bus');
     const { CHANGE_CHANNEL, encodeChange } = await import('#server/domains/kernel/change-bus');
     const { redisPubsub } = await import('#server/domains/kernel/pubsub');
-    const seen: string[] = [];
-    const unsub = await changeBus.subscribe('change', (e) => seen.push(e.resource));
+    const seen: Array<{ id: string; resource: string }> = [];
+    const unsub = await changeBus.subscribe('change', (e) => seen.push({ id: e.id, resource: e.resource }));
     await bridgeRedisChanges();
+    const before = seen.length;
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE); // local publish + redis echo (deduped: same id)
     await new Promise((r) => setTimeout(r, 300));
     // external replica event: different id -> bridged onto the local bus
@@ -155,8 +156,12 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
       }),
     );
     await new Promise((r) => setTimeout(r, 300));
-    expect(seen.filter((r) => r === 'TASKS').length).toBe(1); // echo deduped
-    expect(seen).toContain('RUNS'); // external event bridged
+    // assert by event ID: zombie timers from sibling files share this worker's
+    // module-state bus, so counting by resource catches their noise
+    const own = seen[before];
+    expect(own?.resource).toBe('TASKS');
+    expect(seen.filter((e) => e.id === own.id).length).toBe(1); // echo deduped
+    expect(seen.some((e) => e.id === 'external-1')).toBe(true); // external event bridged
     unsub();
   });
 
