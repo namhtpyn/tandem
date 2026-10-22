@@ -6,13 +6,13 @@ import { applyMigrations } from '#server/db';
 import { db } from '#server/db';
 import { tasks } from '#server/db/schema';
 
-import { resetSchema } from './helpers/pg';
+import { resetData } from './helpers/pg';
 
 describe('rqb count/findManyAndCount (real db)', () => {
   let ids: string[] = [];
 
   beforeEach(async () => {
-    await resetSchema();
+    await resetData();
     await applyMigrations();
     const rnd = Math.random().toString(16).slice(2, 8);
     ids = [1, 2, 3, 4, 5].map((n) => `rqb-${rnd}-${n}`);

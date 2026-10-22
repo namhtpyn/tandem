@@ -3,13 +3,10 @@ import { eq } from 'drizzle-orm';
 // activity, missing-task error arm.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { applyMigrations } from '#server/db';
-
-import { resetSchema } from './helpers/pg';
+import { resetData } from './helpers/pg';
 
 beforeEach(async () => {
-  await resetSchema();
-  await applyMigrations();
+  await resetData();
 });
 
 import { db } from '#server/db';

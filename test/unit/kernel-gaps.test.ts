@@ -2,16 +2,14 @@
 // guards, resync catch, folder list
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { applyMigrations } from '#server/db';
 import { env, setEnv } from '#server/domains/kernel/env';
 
-import { resetSchema } from './helpers/pg.ts';
+import { resetData } from './helpers/pg.ts';
 
 const origRedis = env.REDIS_URL;
 
 beforeEach(async () => {
-  await resetSchema();
-  await applyMigrations();
+  await resetData();
 });
 
 describe('cache domain against a dead redis', () => {

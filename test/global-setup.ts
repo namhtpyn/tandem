@@ -64,7 +64,15 @@ export async function setup(ctx: GlobalSetupContext) {
   localPostgres = postgres;
   const url = `postgresql://tandem:tandem@${postgres.getHost()}:${postgres.getMappedPort(5432)}/tandem_test`;
   process.env.TANDEM_TEST_DATABASE_URL = url;
+  process.env.DATABASE_URL = url;
   await sweepPerFileDatabases(url);
+  // migrate ONCE for the whole run — tests only truncate data (resetData).
+  // server/db asserts env at import: mirror setup.ts's test defaults first.
+  process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET || 'test-secret-not-for-prod';
+  process.env.TANDEM_VAULT_KEY = process.env.TANDEM_VAULT_KEY || Buffer.alloc(32, 7).toString('base64');
+  const { applyMigrations, sqlClient } = await import('../server/db/index');
+  await applyMigrations();
+  await sqlClient.end();
   provide('testDatabaseUrl', url);
 }
 

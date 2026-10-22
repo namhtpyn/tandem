@@ -340,8 +340,13 @@ describe('double settle', () => {
     try {
       const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       const handleP = dispatchTask('t-1', 'http://t.local');
-      // delete the task while the fake run is still ticking
-      await new Promise((r) => setTimeout(r, 60));
+      // delete the task once the run row exists (mid-run), before the fake run ends
+      await vi.waitFor(async () => {
+        const { db } = await import('#server/db');
+        const { taskRuns } = await import('#server/db/schema');
+        const rows = await db.select({ id: taskRuns.id }).from(taskRuns).where(eq(taskRuns.taskId, 't-1'));
+        expect(rows.length).toBeGreaterThan(0);
+      });
       const { db } = await import('#server/db');
       const { tasks } = await import('#server/db/schema');
       await db.delete(tasks).where(eq(tasks.id, 't-1'));

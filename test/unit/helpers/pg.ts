@@ -15,13 +15,26 @@ export const postgres = new SQL(TEST_DATABASE_URL, {
   connectionTimeout: 10,
 });
 
+// fast per-test reset: TRUNCATE all data tables (drizzle-seed reset = TRUNCATE
+// ... CASCADE), keeping task_statuses — its rows are the fixed-id seed every
+// environment shares
+export async function resetData() {
+  const { reset } = await import('drizzle-seed');
+  const { db, applyMigrations } = await import('#server/db');
+  const schema = await import('#server/db/schema');
+  const { taskStatuses: _keepStatuses, ...dataTables } = schema;
+  try {
+    await reset(db, dataTables as typeof schema);
+  } catch {
+    // schema not there yet (fresh container raced a file-early reset) — migrate, retry once
+    await applyMigrations();
+    await reset(db, dataTables as typeof schema);
+  }
+}
+
 export async function resetSchema() {
   await postgres.unsafe('drop schema if exists public cascade');
   await postgres.unsafe('drop schema if exists drizzle cascade');
   await postgres.unsafe('create schema public authorization tandem');
 }
 
-// migrate once at import so files that never call applyMigrations still have the schema
-await resetSchema();
-const { applyMigrations } = await import('#server/db');
-await applyMigrations();
