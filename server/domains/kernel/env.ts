@@ -55,7 +55,6 @@ export function assertEnv(
 const parsed = await envSchema.safeParseAsync(process.env);
 assertEnv(parsed);
 
-
 export type EnvIssue = { path: (string | number | symbol)[]; message: string };
 
 /** one fail-fast report then exit — the negative boot tests exercise this via child processes */
@@ -70,9 +69,7 @@ export function formatEnvIssues(issues: EnvIssue[]) {
     .map((i) => {
       const label = i.path.join('.') || 'env';
       // a stripped empty string reads as "expected string, received undefined" — say "is required"
-      return i.message.includes('received undefined')
-        ? `  ${label} is required`
-        : `  ${label}: ${i.message}`;
+      return i.message.includes('received undefined') ? `  ${label} is required` : `  ${label}: ${i.message}`;
     })
     .join('\n');
 }

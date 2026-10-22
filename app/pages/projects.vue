@@ -1,4 +1,5 @@
 <script setup lang="ts">
+useHead({ title: 'Projects' });
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
 // Projects: nestable containers for tasks. Mobile-first: stacked tree cards,
 // desktop table; create/edit modal follows the #footer submit law.

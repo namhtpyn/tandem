@@ -1,4 +1,5 @@
 <script setup lang="ts">
+useHead({ title: 'Vault' });
 import { useMutation, useQuery, useQueryClient , keepPreviousData } from '@tanstack/vue-query';
 import { watchDebounced } from '@vueuse/core';
 // Secret vault: write-only secrets (AES-256-GCM server-side). Values are set

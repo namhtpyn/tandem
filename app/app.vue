@@ -20,13 +20,24 @@ authConfig.value = (await $client.auth.config()) as unknown as typeof authConfig
 useChangeEvents();
 
 const v = await $client.meta.version();
+
+useHead({ titleTemplate: (t) => (t ? `${t} - Tandem` : 'Tandem') });
 if (v.version) appVersion.value = v.version;
 </script>
 
 <template>
   <UApp>
+    <NuxtRouteAnnouncer />
+    <a
+      href="#main"
+      class="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-[100] focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-inverted"
+    >
+      Skip to main content
+    </a>
     <NuxtLayout>
-      <NuxtPage />
+      <main id="main" tabindex="-1" class="outline-none">
+        <NuxtPage />
+      </main>
     </NuxtLayout>
   </UApp>
 </template>

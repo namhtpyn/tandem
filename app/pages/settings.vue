@@ -1,4 +1,5 @@
 <script setup lang="ts">
+useHead({ title: 'Settings' });
 import { useQuery } from '@tanstack/vue-query';
 
 import {

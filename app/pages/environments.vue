@@ -1,4 +1,5 @@
 <script setup lang="ts">
+useHead({ title: 'Environments' });
 import { useQuery, useMutation } from '@tanstack/vue-query';
 
 import { CHANGE_RESOURCE, SECRET_USAGE, type SecretUsage } from '~/../shared/enums';

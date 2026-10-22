@@ -1,4 +1,5 @@
 <script setup lang="ts">
+useHead({ title: 'Tasks' });
 // Tasks: work items for human + AI employees. Mobile-first card list with
 // status pills; editor modal follows the shared structure (body + #footer).
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query';

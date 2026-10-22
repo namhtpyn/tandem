@@ -1,4 +1,5 @@
 <script setup lang="ts">
+useHead({ title: 'Employees' });
 import { useQuery, useMutation } from '@tanstack/vue-query';
 
 import { PROVIDER_KIND, endpointKind, isModelsEndpoint } from '#shared/api-styles';
