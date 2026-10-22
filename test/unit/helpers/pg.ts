@@ -56,7 +56,20 @@ async function reseedStatuses() {
 // ... CASCADE), then replay the status seed. Schema + migrations exist before
 // any worker — they are applied once in global-setup, so a truncate never
 // meets missing tables.
+let sp = 0;
+
 export async function resetData() {
+  // worker holds one transaction for its whole life (worker-setup.ts): rolling
+  // back to a fresh savepoint is the reset — ~1ms, and it also undoes whatever
+  // the previous test committed through any connection
+  const tx = await postgres`select current_setting('tandem.test_tx', true) as v`;
+  if (tx[0]?.v === '1') {
+    if (sp > 0) await postgres.unsafe(`rollback to savepoint s${sp}`);
+    sp += 1;
+    await postgres.unsafe(`savepoint s${sp}`);
+    await reseedStatuses();
+    return;
+  }
   await captureStatusSeed(); // pre-truncate: the only moment the rows exist
   const { reset } = await import('drizzle-seed');
   const { db, applyMigrations } = await import('#server/db');
@@ -90,4 +103,12 @@ export async function ensureMigrated() {
     await resetSchema();
     await applyMigrations();
   }
+}
+
+/** Pin the app's pooled connections into this worker's transaction. The app
+ * code under test opens its own pool (server/db) — without this, its writes
+ * commit for real and leak across tests. Called once per worker. */
+export async function joinWorkerTransaction() {
+  const { sqlClient } = await import('#server/db');
+  await sqlClient`select set_config('tandem.test_tx', '1', false)`;
 }

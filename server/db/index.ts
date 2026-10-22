@@ -22,7 +22,9 @@ import { relations } from './schema';
 const url = env.DATABASE_URL;
 
 export const sqlClient = new SQL(url, {
-  max: 10,
+  // TANDEM_DB_POOL_MAX: the test suite runs one DB per worker and shrinks
+  // pools so 8 workers stay under postgres's 100-connection cap
+  max: Number(process.env.TANDEM_DB_POOL_MAX ?? 10),
   idleTimeout: 20,
   connectionTimeout: 10,
 });

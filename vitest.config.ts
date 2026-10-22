@@ -18,9 +18,9 @@ export default defineConfig({
   test: {
     hookTimeout: 60_000,
     testTimeout: 15_000,
-    // test files share ONE postgres — parallel files would truncate each
-    // other's tables mid-test. File parallelism off keeps the truncate race-free.
-    fileParallelism: false,
+    // each worker owns its own database (test/unit/worker-setup.ts clones the
+    // migrated template), so files run in parallel without sharing rows
+    fileParallelism: true,
     globalSetup: ['./test/global-setup.ts'],
     setupFiles: ['./test/setup.ts'],
     coverage: {
@@ -50,7 +50,7 @@ export default defineConfig({
           name: 'unit',
           include: ['test/unit/**/*.test.ts'],
           exclude: ['test/nuxt/**'], // nuxt-env component tests live in their own project below
-          setupFiles: ['./test/setup.ts', './test/unit/setup.ts'],
+          setupFiles: ['./test/setup.ts', './test/unit/worker-setup.ts', './test/unit/setup.ts'],
         },
       },
       // component tests in a real Nuxt environment (auto-imports, plugins, injections)
