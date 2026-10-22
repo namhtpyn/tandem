@@ -4,7 +4,7 @@
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
-import { db } from '../../db';
+import { db } from '../../db/index';
 import { taskAssignments, tasks } from '../../db/schema';
 
 /** close the open row (if any) and open a new one for the new assignee */

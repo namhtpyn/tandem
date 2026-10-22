@@ -17,11 +17,11 @@ export type SshFilePlan = {
 export const TASK_FILES_HOME = '.tandem';
 
 /** ~/.tandem/<taskId>/attachments (relative form works in both exec and sftp) */
-export function taskFilesDir(taskId: string): string {
+export function taskFilesDir(taskId: string) {
   return `${TASK_FILES_HOME}/${taskId}/attachments`;
 }
 
-export function taskFilesOutDir(taskId: string): string {
+export function taskFilesOutDir(taskId: string) {
   return `${taskFilesDir(taskId)}/out`;
 }
 
@@ -29,12 +29,7 @@ export function taskFilesOutDir(taskId: string): string {
  * task has no input attachments. Without it the dir never exists, agents "write
  * deliverables" into a void (or mangle the path), and collection finds nothing.
  * (incident 7d06bae0, 2026-10-16: 9 screenshots claimed, 0 collected) */
-export async function ensureOutDir(
-  ClientCtor: typeof Client,
-  plan: SshFilePlan,
-  taskId: string,
-  timeoutMs?: number,
-): Promise<void> {
+export async function ensureOutDir(ClientCtor: typeof Client, plan: SshFilePlan, taskId: string, timeoutMs?: number) {
   const conn = await connect(ClientCtor, plan, timeoutMs);
   try {
     const out = taskFilesOutDir(taskId);
@@ -85,12 +80,12 @@ function sftpOf(conn: Client): Promise<import('ssh2').SFTPWrapper> {
   });
 }
 
-function fastPut(sftp: import('ssh2').SFTPWrapper, local: string, remote: string): Promise<void> {
-  return new Promise((resolve, reject) => sftp.fastPut(local, remote, (err) => (err ? reject(err) : resolve())));
+function fastPut(sftp: import('ssh2').SFTPWrapper, local: string, remote: string) {
+  return new Promise<void>((resolve, reject) => sftp.fastPut(local, remote, (err) => (err ? reject(err) : resolve())));
 }
 
-function fastGet(sftp: import('ssh2').SFTPWrapper, remote: string, local: string): Promise<void> {
-  return new Promise((resolve, reject) => sftp.fastGet(remote, local, (err) => (err ? reject(err) : resolve())));
+function fastGet(sftp: import('ssh2').SFTPWrapper, remote: string, local: string) {
+  return new Promise<void>((resolve, reject) => sftp.fastGet(remote, local, (err) => (err ? reject(err) : resolve())));
 }
 
 function exec(conn: Client, cmd: string): Promise<string> {
@@ -118,7 +113,7 @@ export async function pushTaskFiles(
   taskId: string,
   files: Array<{ localPath: string; remoteName: string }>,
   timeoutMs?: number,
-): Promise<void> {
+) {
   if (!files.length) return;
   const conn = await connect(ClientCtor, plan, timeoutMs);
   try {

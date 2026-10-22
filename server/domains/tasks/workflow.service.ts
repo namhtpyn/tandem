@@ -1,12 +1,4 @@
-// Task workflow service: question → forward chain → answer, and the review
-// gate (submit / approve / request-changes / abandon). Pure routing logic the
-// router and (later) the dispatcher both call. Laws (user, 2026-10-13):
-//   1. owner ≠ supervisor — no hierarchy coupling
-//   2. ALL reviewers must approve
-//   3. reviewer/assignee: AI or human, no restriction
-//   4. forward chain is free but stops at the top of the hierarchy (no
-//      supervisors left) — and can't revisit anyone already in the chain
-import { eq, and, asc } from 'drizzle-orm';
+import { eq, asc } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import {
@@ -16,12 +8,20 @@ import {
   OBLIGATION_ROLE,
   ACTIVITY_KIND,
   type ActivityKind,
-  type ObligationRole,
 } from '#shared/enums';
 import { STATUS } from '#shared/status';
+// Task workflow service: question → forward chain → answer, and the review
+// gate (submit / approve / request-changes / abandon). Pure routing logic the
+// router and (later) the dispatcher both call. Laws (user, 2026-10-13):
+//   1. owner ≠ supervisor — no hierarchy coupling
+//   2. ALL reviewers must approve
+//   3. reviewer/assignee: AI or human, no restriction
+//   4. forward chain is free but stops at the top of the hierarchy (no
+//      supervisors left) — and can't revisit anyone already in the chain
+import { nonNull } from '#shared/utils/non-null';
 
-import { db } from '../../db';
-import { tasks, taskActivity, user as userTable, employeeSupervisors } from '../../db/schema';
+import { db } from '../../db/index';
+import { tasks, taskActivity, employeeSupervisors } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { refreshParentGating, hasOpenChildren } from './gating.service';
 import { spawnObligation, resolveObligation, cancelObligations, answerHolder } from './obligations.service';
@@ -49,7 +49,7 @@ async function logActivity(
 async function getTask(id: string) {
   const rows = await db.query.tasks.findMany({ where: { id: { eq: id } } });
   if (rows.length === 0) throw new Error('task not found');
-  return rows[0]!;
+  return nonNull(rows[0]);
 }
 
 async function hasSupervisors(employeeId: string) {
@@ -96,7 +96,7 @@ export async function forwardQuestion(taskId: string, authorId: string, toEmploy
   if (!target) throw new Error('employee does not exist');
   if (!(await hasSupervisors(toEmployeeId)))
     throw new Error('that person is the top of the hierarchy — they should answer');
-  await resolveObligation(taskId, holder!, OBLIGATION_ROLE.ANSWER, authorId);
+  await resolveObligation(taskId, nonNull(holder), OBLIGATION_ROLE.ANSWER, authorId);
   await db
     .update(tasks)
     .set({

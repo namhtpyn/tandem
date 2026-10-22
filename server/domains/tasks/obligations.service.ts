@@ -1,15 +1,16 @@
+import { and, desc, eq, inArray } from 'drizzle-orm';
+import { v7 as uuidv7 } from 'uuid';
+
+import { OBLIGATION_ROLE, OBLIGATION_STATUS, type ObligationRole } from '#shared/enums';
 // Pending obligations — the single source for "who acts next" on a task.
 // Roles today: OBLIGATION_ROLE.ANSWER (question chain), OBLIGATION_ROLE.APPROVAL (unanimous review gate).
 // Drives the waiting-on-you inbox + badge. Laws (user, 2026-10-15):
 //   - replaces question_holder_id and review_approvals
 //   - the answer obligation MOVES on forward (old row cancelled, new row pending)
 //   - approvals re-round on request-changes (old rows cancelled, fresh rows spawned)
-import { and, desc, eq, inArray } from 'drizzle-orm';
-import { v7 as uuidv7 } from 'uuid';
+import { nonNull } from '#shared/utils/non-null';
 
-import { OBLIGATION_ROLE, OBLIGATION_STATUS, type ObligationRole } from '#shared/enums';
-
-import { db } from '../../db';
+import { db } from '../../db/index';
 import { tasks, taskObligations } from '../../db/schema';
 
 function id() {
@@ -29,7 +30,7 @@ export async function spawnObligation(taskId: string, employeeId: string, role: 
         eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
       ),
     );
-  if (existing.length > 0) return existing[0]!.id;
+  if (existing.length > 0) return nonNull(existing[0]).id;
   const rowId = id();
   await db
     .insert(taskObligations)
@@ -122,7 +123,7 @@ export async function approvalsInRoundBatch(taskIds: string[]) {
     }
     out.set(
       tid,
-      roundRows.filter((r) => r.status === OBLIGATION_STATUS.FULFILLED).map((r) => r.employeeId!),
+      roundRows.filter((r) => r.status === OBLIGATION_STATUS.FULFILLED).map((r) => nonNull(r.employeeId)),
     );
   }
   return out;

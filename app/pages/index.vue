@@ -1,4 +1,5 @@
 <script setup lang="ts">
+useHead({ title: 'Overview' });
 // M1 overview: placeholder cards until environments/employees/tasks land (M2-M4).
 </script>
 

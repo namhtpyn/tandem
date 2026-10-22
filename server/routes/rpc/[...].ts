@@ -3,17 +3,19 @@
 // interceptor for server-side error visibility. Live queries stream over SSE.
 import { onError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
+import { consola } from 'consola';
 
 import { appRouter as router } from '../../domains/app.router';
+
+export const log = consola.withTag('orpc');
+
 import { buildServerContext } from '../../domains/kernel/context';
 
 const handler = new RPCHandler(router, {
   interceptors: [
     onError((error, { path }) => {
       /* v8 ignore start -- defensive: oRPC always sets code on mapped errors */
-      console.error(
-        `[orpc] ${path.join('.')}: ${(error as { code?: string }).code ?? 'UNKNOWN'} ${(error as Error).message}`,
-      );
+      log.error(`${path.join('.')}: ${(error as { code?: string }).code ?? 'UNKNOWN'} ${(error as Error).message}`);
       /* v8 ignore stop */
     }),
   ],
@@ -22,7 +24,7 @@ const handler = new RPCHandler(router, {
 export default defineEventHandler(async (event) => {
   const request = toWebRequest(event);
   const headers = new Headers();
-  request.headers.forEach((v, k) => headers.set(k, v));
+  for (const [k, v] of request.headers) headers.set(k, v);
   const { response } = await handler.handle(request, {
     prefix: '/rpc',
     context: buildServerContext(headers),

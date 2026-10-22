@@ -1,22 +1,14 @@
-// Per-task brief: identity + org chains + task context + mention chains + output contract.
-// Pure functions — no I/O; loadBriefData gathers rows.
 import { and, eq } from 'drizzle-orm';
 
 import { PROPOSAL_STATUS } from '#shared/enums';
 import { RunVerdictSchema } from '#shared/run-verdict';
 import { renderOutputContract } from '#shared/structured-output';
+// Per-task brief: identity + org chains + task context + mention chains + output contract.
+// Pure functions — no I/O; loadBriefData gathers rows.
+import { nonNull } from '#shared/utils/non-null';
 
-import { db } from '../../db';
-import {
-  tasks,
-  user as userTable,
-  aiEmployees,
-  employeeSupervisors,
-  taskActivity,
-  taskAttachments,
-  taskProposals,
-  projects,
-} from '../../db/schema';
+import { db } from '../../db/index';
+import { taskProposals } from '../../db/schema';
 import { stripAttachments } from './attachments.util';
 
 export type BriefPerson = { id: string; name: string; title: string | null; kind: string };
@@ -24,11 +16,11 @@ export type BriefPerson = { id: string; name: string; title: string | null; kind
 /** mentions in the description: @[Label](id) tiptap links, HTML spans, or plain @Label tokens.
  * Labels resolve against known employee names (mention menu only offers employees), so
  * plain @Name matching is exact-by-construction, never fuzzy. */
-export function extractMentionedEmployeeIds(description: string, nameToId: Map<string, string>): string[] {
+export function extractMentionedEmployeeIds(description: string, nameToId: Map<string, string>) {
   const ids = new Set<string>();
-  for (const m of description.matchAll(/@\[[^\]]*\]\(mention-([^)]+)\)/g)) ids.add(m[1]!);
+  for (const m of description.matchAll(/@\[[^\]]*\]\(mention-([^)]+)\)/g)) ids.add(nonNull(m[1]));
   for (const m of description.matchAll(/\[@ label="([^"]+)"\]/g)) {
-    const id = nameToId.get(m[1]!);
+    const id = nameToId.get(nonNull(m[1]));
     if (id) ids.add(id);
   }
   const esc = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, '$&');
@@ -39,7 +31,7 @@ export function extractMentionedEmployeeIds(description: string, nameToId: Map<s
   return [...ids];
 }
 
-export function chainToRoot(startId: string, edges: Array<{ employeeId: string; supervisorId: string }>): string[] {
+export function chainToRoot(startId: string, edges: Array<{ employeeId: string; supervisorId: string }>) {
   const byEmployee = new Map(edges.map((e) => [e.employeeId, e.supervisorId]));
   const chain: string[] = [];
   let cur: string | undefined = byEmployee.get(startId);
@@ -52,7 +44,7 @@ export function chainToRoot(startId: string, edges: Array<{ employeeId: string; 
   return chain;
 }
 
-export function buildBrief(input: {
+type BriefInput = {
   companyPrompt?: string;
   projectPrompt?: string;
   agent: BriefPerson;
@@ -73,9 +65,22 @@ export function buildBrief(input: {
   outDir: string;
   recentActivity: Array<{ kind: string; authorName: string | null; body: string | null }>;
   attachments?: Array<{ id: string; filename: string; mime: string; size: number; remotePath: string }>;
-}): string {
-  const lines: string[] = [];
-  lines.push(`You are ${input.agent.name}${input.agent.title ? `, ${input.agent.title}` : ''}.`);
+};
+
+export function buildBrief(input: BriefInput) {
+  return [
+    ...orgSection(input),
+    ...contextSection(input),
+    ...taskSection(input),
+    ...activitySection(input),
+    ...attachmentsSection(input),
+    ...contractSection(input),
+  ].join('\n');
+}
+
+/** who the agent is and where it sits in the org */
+function orgSection(input: BriefInput) {
+  const lines = [`You are ${input.agent.name}${input.agent.title ? `, ${input.agent.title}` : ''}.`];
   if (input.upChain.length) lines.push(`You report to: ${input.upChain.map((p) => personLine(p)).join(' -> ')}.`);
   else lines.push('You report to: (nobody — top of organization).');
   if (input.directReports.length) lines.push(`Reports to you: ${input.directReports.map(personLine).join(', ')}.`);
@@ -85,6 +90,12 @@ export function buildBrief(input: {
       lines.push(`${c.person.name}: ${personLine(c.person)}; their chain: ${c.chain.map(personLine).join(' -> ')}.`);
     else lines.push(`${c.person.name}: ${personLine(c.person)}; their chain: (unknown).`);
   }
+  return lines;
+}
+
+/** layered standing context: company-wide, then project-specific prompts */
+function contextSection(input: BriefInput) {
+  const lines: string[] = [];
   if (input.companyPrompt?.trim()) {
     lines.push('');
     lines.push('COMPANY (applies to all your work)');
@@ -95,8 +106,12 @@ export function buildBrief(input: {
     lines.push(`PROJECT ${input.task.projectName ? `— ${input.task.projectName}` : ''}`.trim());
     lines.push(input.projectPrompt.trim());
   }
-  lines.push('');
-  lines.push('TASK');
+  return lines;
+}
+
+/** the TASK block: identity, description, people, project */
+function taskSection(input: BriefInput) {
+  const lines = ['', 'TASK'];
   if (input.task.parentTitle) lines.push(`This is a subtask of: ${input.task.parentTitle}`);
   lines.push(`Title: ${input.task.title}`);
   if (input.task.description.trim())
@@ -107,28 +122,35 @@ export function buildBrief(input: {
   if (input.task.reviewerNames.length)
     lines.push(`Reviewers (all must approve): ${input.task.reviewerNames.join(', ')}`);
   if (input.task.projectName) lines.push(`Project: ${input.task.projectName}`);
-  if (input.recentActivity.length) {
-    lines.push('');
-    lines.push('Recent activity on this task (oldest first):');
-    for (const a of input.recentActivity)
-      lines.push(`- ${a.kind.toLowerCase()} by ${a.authorName ?? 'system'}: ${trunc(a.body ?? '', 200)}`);
+  return lines;
+}
+
+/** what already happened on this task (loader keeps the newest 20) */
+function activitySection(input: BriefInput) {
+  if (!input.recentActivity.length) return [];
+  const lines = ['', 'Recent activity on this task (oldest first):'];
+  for (const a of input.recentActivity)
+    lines.push(`- ${a.kind.toLowerCase()} by ${a.authorName ?? 'system'}: ${trunc(a.body ?? '', 200)}`);
+  return lines;
+}
+
+/** files already staged on this machine for the run */
+function attachmentsSection(input: BriefInput) {
+  if (!input.attachments?.length) return [];
+  const lines = ['', 'ATTACHMENTS (already on this machine — do not re-download):'];
+  for (const a of input.attachments) {
+    const kind = a.mime.startsWith('image/') ? 'image — view with your image tool' : 'document — read with file tools';
+    lines.push(`- ${a.remotePath} (${a.filename}, ${kind}, ${Math.max(1, Math.round(a.size / 1024))}KB)`);
   }
-  if (input.attachments?.length) {
-    lines.push('');
-    lines.push('ATTACHMENTS (already on this machine — do not re-download):');
-    for (const a of input.attachments) {
-      const kind = a.mime.startsWith('image/')
-        ? 'image — view with your image tool'
-        : 'document — read with file tools';
-      lines.push(`- ${a.remotePath} (${a.filename}, ${kind}, ${Math.max(1, Math.round(a.size / 1024))}KB)`);
-    }
-  }
-  lines.push('');
-  lines.push(
+  return lines;
+}
+
+/** deliverable location + machine-readable output contract + routing syntax */
+function contractSection(input: BriefInput) {
+  return [
+    '',
     `DELIVERABLES — write any output files to ${input.outDir} (create it if needed; that EXACT path, not the environment name); everything left there when you exit is collected and attached to your result.`,
-  );
-  lines.push('');
-  lines.push(
+    '',
     renderOutputContract(RunVerdictSchema, {
       intro: 'OUTPUT CONTRACT — end your response with exactly one JSON line (no code fence):',
       examples: [
@@ -137,28 +159,23 @@ export function buildBrief(input: {
         '{"kind": "blocked", "body": "<what you need and from whom>"}',
       ],
     }),
-  );
-  lines.push('');
-  lines.push(
+    '',
     'ROUTING — if part of this task belongs to someone else, also add a routing line (routing to people inside your own supervision chain executes immediately; anything outside your chain goes to a human for confirmation):',
-  );
-  lines.push(
     '[SUBTASKS] <title> :: <description> :: <suggested assignee name> | <another subtask> (propose subtasks; suggest assignees from people you know above — outside your chain gets escalated to your supervisor)',
-  );
-  lines.push('[REASSIGN] <employee name> — <reason> (only when the WHOLE task belongs to someone else)');
-  return lines.join('\n');
+    '[REASSIGN] <employee name> — <reason> (only when the WHOLE task belongs to someone else)',
+  ];
 }
 
-function personLine(p: BriefPerson): string {
+function personLine(p: BriefPerson) {
   return p.title ? `${p.name} (${p.title})` : p.name;
 }
 
-function trunc(s: string, n: number): string {
+function trunc(s: string, n: number) {
   return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
 /** mentions -> plain Name refs for the prompt (agent sees names, not markdown ids) */
-function stripMentions(desc: string): string {
+function stripMentions(desc: string) {
   return desc.replace(/@\[([^\]]*)\]\(mention-[^)]+\)/g, (_m, label) => `${label}`).trim();
 }
 
@@ -168,7 +185,8 @@ export async function loadBriefData(taskId: string) {
   if (!task) throw new Error('task not found');
   // FK invariant: parent_task_id set => the row exists (ON DELETE SET NULL keeps it true)
   const parentTitle = task.parentTaskId
-    ? (await db.query.tasks.findFirst({ columns: { title: true }, where: { id: { eq: task.parentTaskId } } }))!.title
+    ? nonNull(await db.query.tasks.findFirst({ columns: { title: true }, where: { id: { eq: task.parentTaskId } } }))
+        .title
     : null;
   const rejectedNotes = (
     await db
@@ -178,14 +196,14 @@ export async function loadBriefData(taskId: string) {
   )
     .filter((p) => p.decisionNote)
     .map((p) => `- proposal declined: ${p.kind} — ${trunc(p.decisionNote, 200)}`);
-  const assigneeId = task.assigneeId!;
+  const assigneeId = nonNull(task.assigneeId);
   const edges = await db.query.employeeSupervisors.findMany();
   const users = await db.query.user.findMany({ columns: { id: true, name: true, title: true } });
   const aiRows = await db.query.aiEmployees.findMany();
   const aiById = new Map(aiRows.map((r) => [r.userId, r]));
   const person = (id: string): BriefPerson => {
-    const u = users.find((x) => x.id === id)!;
-    return { id, name: u!.name, title: u!.title || null, kind: aiById.has(id) ? 'ai' : 'human' };
+    const u = nonNull(users.find((x) => x.id === id));
+    return { id, name: nonNull(u).name, title: nonNull(u).title || null, kind: aiById.has(id) ? 'ai' : 'human' };
   };
   const upIds = chainToRoot(assigneeId, edges);
   const downIds = edges.filter((e) => e.supervisorId === assigneeId).map((e) => e.employeeId);
@@ -200,9 +218,11 @@ export async function loadBriefData(taskId: string) {
   const activity = await db.query.taskActivity.findMany({ where: { taskId: { eq: taskId } } });
   activity.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   const nameById = new Map(users.map((u) => [u.id, u.name]));
-  const recent = activity
-    .slice(-20)
-    .map((a) => ({ kind: a.kind, authorName: a.authorId ? nameById.get(a.authorId)! : null, body: a.body! }));
+  const recent = activity.slice(-20).map((a) => ({
+    kind: a.kind,
+    authorName: a.authorId ? nonNull(nameById.get(a.authorId)) : null,
+    body: nonNull(a.body),
+  }));
   const ai = aiById.get(assigneeId);
   // company + project prompts ride every brief (user law 2026-10-16: layered context)
   const { getCompanyPrompt } = await import('../settings/settings.service');
@@ -232,7 +252,7 @@ export async function loadBriefData(taskId: string) {
       parentTitle,
       title: task.title,
       description: task.description,
-      ownerName: task.ownerId ? nameById.get(task.ownerId)! : null,
+      ownerName: task.ownerId ? nonNull(nameById.get(task.ownerId)) : null,
       ownerId: task.ownerId,
       reviewerNames: task.reviewers.map((id) => nameById.get(id)).filter((n): n is string => Boolean(n)),
       projectName: projectRow?.name ?? null,

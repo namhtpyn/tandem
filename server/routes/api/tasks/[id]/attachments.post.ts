@@ -1,8 +1,3 @@
-import { eq } from 'drizzle-orm';
-// POST /api/tasks/:id/attachments — multipart upload of a task input attachment.
-// REST exception (like the avatar route): multipart doesn't fit the oRPC proc surface.
-// Returns { id, filename, mime, size, sha256 } — the caller embeds
-// ![filename](attachment-<id>) / @[filename](attachment-<id>) into the description.
 import {
   defineEventHandler,
   createError,
@@ -13,8 +8,14 @@ import {
 } from 'h3';
 import { v7 as uuidv7 } from 'uuid';
 
-import { db } from '../../../../db';
-import { tasks, taskAttachments } from '../../../../db/schema';
+// POST /api/tasks/:id/attachments — multipart upload of a task input attachment.
+// REST exception (like the avatar route): multipart doesn't fit the oRPC proc surface.
+// Returns { id, filename, mime, size, sha256 } — the caller embeds
+// ![filename](attachment-<id>) / @[filename](attachment-<id>) into the description.
+import { nonNull } from '#shared/utils/non-null';
+
+import { db } from '../../../../db/index';
+import { taskAttachments } from '../../../../db/schema';
 import { buildServerContext } from '../../../../domains/kernel/context';
 import {
   ATTACHMENT_MAX_BYTES,
@@ -44,7 +45,7 @@ export default defineEventHandler(async (event) => {
   const mime = normalizeMime(file.type);
   if (!mimeAllowed(mime)) throw createError({ statusCode: 415, statusMessage: `unsupported type: ${mime}` });
 
-  const filename = sanitizeFilename(file.filename!);
+  const filename = sanitizeFilename(nonNull(file.filename));
   const attachmentId = uuidv7();
   await saveAttachmentBytes(id, attachmentId, Buffer.from(file.data));
   const sha = sha256Hex(Buffer.from(file.data));

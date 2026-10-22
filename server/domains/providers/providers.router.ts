@@ -7,9 +7,9 @@ import { z } from 'zod';
 import { ALL_ENDPOINTS, isAnthropicWire, atMostOneModelsEndpoint } from '#shared/api-styles';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
-import { db } from '../../db';
-import { modelProviders as modelProvidersTable, vaultSecrets as vaultSecretsTable } from '../../db/schema';
-import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { db } from '../../db/index';
+import { modelProviders as modelProvidersTable } from '../../db/schema';
+import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
 import { modelCache, armCacheSweeper } from './models-cache';
 
@@ -84,7 +84,7 @@ export const providersRouter = os.router({
         keySecretId: z.string().min(1).optional(),
       }),
     )
-    .handler(async ({ input, context }): Promise<{ models: string[] }> => {
+    .handler(async ({ input }): Promise<{ models: string[] }> => {
       const provRows = await db.query.modelProviders.findMany({ where: { id: { eq: input.providerId } } });
       const prov = provRows[0];
       if (!prov) throw new ORPCError('BAD_REQUEST', { message: 'provider does not exist' });

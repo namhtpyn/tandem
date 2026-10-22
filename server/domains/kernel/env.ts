@@ -4,6 +4,7 @@
 // way app code sees configuration: services import this object, never
 // process.env (the sole allowed read is the safeParseAsync call below).
 // Tests mutate knobs after boot via setEnv — never process.env.
+import { consola } from 'consola';
 import { z } from 'zod';
 
 // env vars arrive as strings — '' means "unset" for every field
@@ -54,24 +55,21 @@ export function assertEnv(
 const parsed = await envSchema.safeParseAsync(process.env);
 assertEnv(parsed);
 
-
 export type EnvIssue = { path: (string | number | symbol)[]; message: string };
 
 /** one fail-fast report then exit — the negative boot tests exercise this via child processes */
 export function reportInvalidEnvironment(issues: EnvIssue[]): never {
-  console.error('[tandem] invalid environment:\n' + formatEnvIssues(issues));
+  consola.error('[tandem] invalid environment:\n' + formatEnvIssues(issues));
   process.exit(1);
 }
 
 /** one human-readable line per invalid env var — "LABEL is required" for missing, zod's message otherwise */
-export function formatEnvIssues(issues: EnvIssue[]): string {
+export function formatEnvIssues(issues: EnvIssue[]) {
   return issues
     .map((i) => {
       const label = i.path.join('.') || 'env';
       // a stripped empty string reads as "expected string, received undefined" — say "is required"
-      return i.message.includes('received undefined')
-        ? `  ${label} is required`
-        : `  ${label}: ${i.message}`;
+      return i.message.includes('received undefined') ? `  ${label} is required` : `  ${label}: ${i.message}`;
     })
     .join('\n');
 }
@@ -87,6 +85,6 @@ g.__tandemEnv ??= parsed.data;
 export const env = g.__tandemEnv;
 
 /** TEST-ONLY: override knobs after boot (env is frozen at first import otherwise). */
-export function setEnv(patch: Partial<Env>): void {
+export function setEnv(patch: Partial<Env>) {
   Object.assign(env, patch);
 }

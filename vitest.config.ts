@@ -1,12 +1,14 @@
+import { fileURLToPath } from 'node:url';
+
 import { defineVitestProject } from '@nuxt/test-utils/config';
-import { loadEnv } from 'vite';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   resolve: {
     alias: {
       // server code imports shared/ via nuxt's #shared alias — vitest needs it too
-      '#shared': new URL('./shared/', import.meta.url).pathname,
+      '#shared': fileURLToPath(new URL('./shared', import.meta.url)),
+      '#server': fileURLToPath(new URL('./server', import.meta.url)),
     },
   },
   define: {
@@ -16,12 +18,11 @@ export default defineConfig({
   test: {
     hookTimeout: 60_000,
     testTimeout: 15_000,
-    // test files share ONE postgres (resetSchema per beforeEach) — parallel files
-    // reset each other's tables mid-test (the 42P01 teardown-race family).
-    // File parallelism off: the suite is stable, ~2min instead of ~70s.
-    fileParallelism: false,
-    globalSetup: ['./tests/global-setup.ts'],
-    setupFiles: ['./tests/setup.ts'],
+    // each worker owns its own database (test/unit/worker-setup.ts clones the
+    // migrated template), so files run in parallel without sharing rows
+    fileParallelism: true,
+    globalSetup: ['./test/global-setup.ts'],
+    setupFiles: ['./test/setup.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'json-summary', 'html'],
@@ -47,8 +48,9 @@ export default defineConfig({
       {
         test: {
           name: 'unit',
-          include: ['tests/**/*.test.ts'],
-          exclude: ['tests/nuxt/**'], // nuxt-env component tests live in their own project below
+          include: ['test/unit/**/*.test.ts'],
+          exclude: ['test/nuxt/**'], // nuxt-env component tests live in their own project below
+          setupFiles: ['./test/setup.ts', './test/unit/worker-setup.ts', './test/unit/setup.ts'],
         },
       },
       // component tests in a real Nuxt environment (auto-imports, plugins, injections)
@@ -57,7 +59,7 @@ export default defineConfig({
       await defineVitestProject({
         test: {
           name: 'nuxt',
-          include: ['tests/nuxt/**/*.test.ts'],
+          include: ['test/nuxt/**/*.test.ts'],
           environment: 'nuxt',
           coverage: { enabled: false, reporter: [], reportsDirectory: null, thresholds: {} },
         },

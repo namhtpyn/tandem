@@ -3,7 +3,7 @@ import { os } from '@orpc/server';
 import { CHANGE_RESOURCE } from '#shared/enums';
 
 // auth router — business logic lives in services/utils; this file only wires procedures
-import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { base, liveGenerator } from '../kernel/kernel';
 
 async function resolveAuthConfig() {
   const { resolveAuthPolicy } = await import('./auth.service');

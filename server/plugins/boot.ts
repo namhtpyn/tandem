@@ -1,20 +1,24 @@
+import { consola } from 'consola';
 import { v7 as uuidv7 } from 'uuid';
 
 import { ROLE } from '#shared/enums';
+
+export const log = consola.withTag('tandem');
+
+import { env } from '#server/domains/kernel/env';
 
 // Boot: apply migrations, then seed the default admin when the instance has NO
 // users. A brand-new deployment therefore always has a known login:
 //   email    = env ADMIN_EMAIL    (default admin@tandem.local)
 //   password = env ADMIN_PASSWORD (default tandem-admin)
 // Skipped when any user row exists — restarts never overwrite real accounts.
-import { db } from '../db';
-import { applyMigrations } from '../db';
+import { db } from '../db/index';
+import { applyMigrations } from '../db/index';
 import { user, account } from '../db/schema';
-import { env } from '../domains/kernel/env';
 
 export default defineNitroPlugin(async () => {
   const applied = await applyMigrations();
-  if (applied.length > 0) console.log('[tandem] applied migrations:', applied.join(', '));
+  if (applied.length > 0) log.info('applied migrations:', applied.join(', '));
 
   // agent dispatcher: eligible tasks (ready + AI assignee) fire automatically.
   // Opt out with TANDEM_NO_DISPATCHER=1 (tests); fake runner with TANDEM_FAKE_RUNNER=1.
@@ -50,5 +54,5 @@ export default defineNitroPlugin(async () => {
     createdAt: now,
     updatedAt: now,
   });
-  console.log(`[tandem] seeded admin ${email} (change the password after first login)`);
+  log.info(`seeded admin ${email} (change the password after first login)`);
 });

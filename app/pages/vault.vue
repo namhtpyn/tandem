@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
+useHead({ title: 'Vault' });
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/vue-query';
 import { watchDebounced } from '@vueuse/core';
 // Secret vault: write-only secrets (AES-256-GCM server-side). Values are set
 // once and never displayed again — only a last-4 hint. Mobile-first cards.
 import { computed, ref, watch } from 'vue';
 
-import { CHANGE_RESOURCE } from '~/../shared/enums';
+import { CHANGE_RESOURCE } from '#shared/enums';
 import type { VaultSecretRow } from '~/utils/orpc-types';
 
 const { $orpc } = useNuxtApp();
@@ -42,6 +43,7 @@ const liveQuery = useQuery(
         q: searchDebounced.value || undefined,
       },
       queryKey: [CHANGE_RESOURCE.VAULT, page.value, pageSize.value, activeFolder.value ?? 'all', searchDebounced.value],
+      placeholderData: keepPreviousData,
     }),
   ),
 );
@@ -60,8 +62,11 @@ const rows = computed(() => liveQuery.data.value?.data ?? []);
 const total = computed(() => liveQuery.data.value?.total ?? 0);
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 
-// deleting the last row of a high page clamps back into range
+// deleting the last row of a high page clamps back into range — but only on a REAL
+// total: while a page switch is in flight data is undefined (total 0) and clamping
+// here would snap the page back to 1 before the fetch lands (the pagination bug)
 watch(total, (t) => {
+  if (!t) return;
   const maxPage = Math.max(1, Math.ceil(t / pageSize.value));
   if (page.value > maxPage) page.value = maxPage;
 });
@@ -138,8 +143,8 @@ async function saveFolder() {
       name: folderForm.value.name.trim(),
     });
     folderEditorOpen.value = false;
-  } catch (e: any) {
-    folderError.value = e?.message ?? 'Save failed';
+  } catch (e) {
+    folderError.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     folderBusy.value = false;
   }
@@ -223,8 +228,8 @@ async function save() {
       });
     }
     editorOpen.value = false;
-  } catch (e: any) {
-    formError.value = e?.message ?? 'Save failed';
+  } catch (e) {
+    formError.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     busy.value = false;
   }
@@ -388,6 +393,37 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
             </UCard>
           </template>
         </DataTable>
+        <div
+          v-if="(liveQuery.data.value?.total ?? 0) > pageSize"
+          class="border-default flex items-center justify-end gap-1 border-t p-3"
+        >
+          <UButton
+            icon="i-lucide:chevron-left"
+            color="neutral"
+            variant="outline"
+            :disabled="page <= 1"
+            aria-label="Previous page"
+            @click="page--"
+          />
+          <UButton
+            v-for="p in pageCount"
+            :key="p"
+            :color="p === page ? 'primary' : 'neutral'"
+            :variant="p === page ? 'solid' : 'outline'"
+            :label="String(p)"
+            :aria-label="`Page ${p}`"
+            :aria-current="p === page ? 'page' : undefined"
+            @click="page = p"
+          />
+          <UButton
+            icon="i-lucide:chevron-right"
+            color="neutral"
+            variant="outline"
+            :disabled="page >= pageCount"
+            aria-label="Next page"
+            @click="page++"
+          />
+        </div>
 
         <UCard v-if="!rows.length" :ui="{ root: 'shadow-sm' }">
           <template #body>

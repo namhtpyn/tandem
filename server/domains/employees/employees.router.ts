@@ -1,15 +1,15 @@
 import { os } from '@orpc/server';
 // employees router — business logic lives in services/utils; this file only wires procedures
-import { asc, count, desc, eq } from 'drizzle-orm';
+import { count, desc, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
-import { endpointKind, PROVIDER_KIND } from '#shared/api-styles';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { ROLE } from '#shared/enums';
+import type { ApiKeyRow, EmployeeRow } from '#shared/types';
+import { nonNull } from '#shared/utils/non-null';
 
-import type { ApiKeyRow, EmployeeRow } from '../../../shared/types';
-import { db } from '../../db';
+import { db } from '../../db/index';
 import {
   aiEmployees as aiEmployeesTable,
   apikey as apikeyTable,
@@ -20,9 +20,150 @@ import {
   user as userTable,
   vaultSecrets as vaultSecretsTable,
 } from '../../db/schema';
-import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/;
+
+const assertNoDuplicateSupervisors = (supervisorIds: string[]) => {
+  if (new Set(supervisorIds).size !== supervisorIds.length)
+    throw new ORPCError('BAD_REQUEST', { message: 'duplicate supervisor ids' });
+};
+
+const assertSupervisorsExist = async (supervisorIds: string[]) => {
+  if (supervisorIds.length === 0) return;
+  const found = await db.query.user.findMany({ columns: { id: true } });
+  const ids = new Set(found.map((f) => f.id));
+  for (const s of supervisorIds) {
+    if (!ids.has(s)) throw new ORPCError('BAD_REQUEST', { message: `supervisor ${s} does not exist` });
+  }
+};
+
+const assertEnvironmentExists = async (environmentId: string) => {
+  const env = await db
+    .select({ id: environmentsTable.id })
+    .from(environmentsTable)
+    .where(eq(environmentsTable.id, environmentId));
+  if (env.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'environment does not exist' });
+};
+
+const assertSecretExists = async (secretId: string) => {
+  const sec = await db
+    .select({ id: vaultSecretsTable.id })
+    .from(vaultSecretsTable)
+    .where(eq(vaultSecretsTable.id, secretId));
+  if (sec.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'api key secret not found' });
+};
+
+const assertProviderExists = async (providerId: string) => {
+  const prov = await db
+    .select({ id: modelProvidersTable.id })
+    .from(modelProvidersTable)
+    .where(eq(modelProvidersTable.id, providerId));
+  if (prov.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'provider does not exist' });
+};
+
+const assertEmailAvailable = async (email: string) => {
+  const clash = await db.query.user.findMany({ columns: { id: true }, where: { email: { eq: email } } });
+  if (clash.length > 0) throw new ORPCError('CONFLICT', { message: `user ${email} already exists` });
+};
+
+/** shell-safe ACP executable, trimmed */
+const trimmedExecutable = (executable: string) => {
+  if (!ACP_EXECUTABLE_RE.test(executable.trim()))
+    throw new ORPCError('BAD_REQUEST', {
+      message: 'ACP executable must be shell-safe command words, e.g. "hermes acp"',
+    });
+  return executable.trim();
+};
+
+/** create demands a non-blank ACP executable; update only re-validates a supplied one */
+const requiredExecutable = (executable: string | undefined) => {
+  if (!executable || !executable.trim())
+    throw new ORPCError('BAD_REQUEST', {
+      message: 'AI employees need an ACP executable (e.g. "hermes acp")',
+    });
+  return trimmedExecutable(executable);
+};
+
+/** mint an access key via better-auth (dynamic import keeps auth boot lazy) */
+const mintAccessKey = async (name: string, userId: string) => {
+  const { getAuth } = await import('../auth/auth.service');
+  const auth = await getAuth();
+  return auth.api.createApiKey({ body: { name, userId, prefix: 'tandem_' } });
+};
+
+/** candidate supervision edges on top of the existing graph (this employee's edges replaced) */
+const assertAcyclicSupervision = async (employeeId: string, supervisorIds: string[]) => {
+  const supRows = await db.query.employeeSupervisors.findMany();
+  const graph = new Map<string, string[]>();
+  for (const r of supRows) {
+    if (r.employeeId === employeeId) continue; // pretend the update applied
+    nonNull(graph.get(r.employeeId) ?? graph.set(r.employeeId, []).get(r.employeeId)).push(r.supervisorId);
+  }
+  graph.set(employeeId, [...supervisorIds]);
+  // DFS from each supervisor upward: reaching the employee again means a cycle
+  const seen = new Set<string>();
+  const stack = [...supervisorIds];
+  while (stack.length > 0) {
+    const cur = nonNull(stack.pop());
+    if (cur === employeeId) throw new ORPCError('BAD_REQUEST', { message: 'supervision cycle detected' });
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    stack.push(...(graph.get(cur) ?? []));
+  }
+};
+
+/** the AI-extendable slice of the update input */
+type AiExtensionPatchInput = {
+  environmentId?: string | null;
+  instructions?: string | null;
+  executable?: string | null;
+  providerId?: string | null;
+  model?: string | null;
+  apiKeySecretId?: string | null;
+};
+
+/** true when the update carries at least one AI extension field */
+const hasAiExtensionField = (input: AiExtensionPatchInput) =>
+  input.environmentId !== undefined ||
+  input.instructions !== undefined ||
+  input.executable !== undefined ||
+  input.providerId !== undefined ||
+  input.model !== undefined ||
+  input.apiKeySecretId !== undefined;
+
+/** validate + build the aiEmployees patch; absent fields stay untouched, nulls clear */
+const aiExtensionPatch = async (input: AiExtensionPatchInput) => {
+  const patch: {
+    environmentId?: string;
+    instructions?: string;
+    executable?: string;
+    providerId?: string | null;
+    model?: string | null;
+    apiKeySecretId?: string | null;
+    updatedAt: Date;
+  } = { updatedAt: new Date() };
+  if (input.environmentId !== undefined && input.environmentId !== null) {
+    await assertEnvironmentExists(input.environmentId);
+    patch.environmentId = input.environmentId;
+  }
+  if (input.instructions !== undefined && input.instructions !== null) {
+    patch.instructions = input.instructions;
+  }
+  if (input.executable !== undefined && input.executable !== null) {
+    patch.executable = trimmedExecutable(input.executable);
+  }
+  if (input.providerId !== undefined) {
+    if (input.providerId !== null) await assertProviderExists(input.providerId);
+    patch.providerId = input.providerId;
+  }
+  if (input.model !== undefined) patch.model = input.model;
+  if (input.apiKeySecretId !== undefined) {
+    if (input.apiKeySecretId !== null) await assertSecretExists(input.apiKeySecretId);
+    patch.apiKeySecretId = input.apiKeySecretId;
+  }
+  return patch;
+};
 
 const listEmployeesSnapshot = async () => {
   const rows = await db.query.user.findMany({ orderBy: { createdAt: 'asc' } });
@@ -30,7 +171,7 @@ const listEmployeesSnapshot = async () => {
   const aiRows = await db.query.aiEmployees.findMany();
   const sups = new Map<string, string[]>();
   for (const s of supRows) {
-    (sups.get(s.employeeId) ?? sups.set(s.employeeId, []).get(s.employeeId)!).push(s.supervisorId);
+    nonNull(sups.get(s.employeeId) ?? sups.set(s.employeeId, []).get(s.employeeId)).push(s.supervisorId);
   }
   const aiByUser = new Map(aiRows.map((r) => [r.userId, r]));
   return rows.map((r): EmployeeRow => {
@@ -88,7 +229,7 @@ export const employeesRouter = os.router({
         apiKeySecretId: z.string().min(1).nullable().optional(),
       }),
     )
-    .handler(async ({ input, context }) => {
+    .handler(async ({ input }) => {
       // AI employees REQUIRE an environment
       if (input.kind === 'ai' && !input.environmentId) {
         throw new ORPCError('BAD_REQUEST', { message: 'AI employees need an environment' });
@@ -103,33 +244,12 @@ export const employeesRouter = os.router({
       }
       // supervisors must exist and not include a duplicate (default fills [])
       const supervisorIds = input.supervisorIds ?? [];
-      if (new Set(supervisorIds).size !== supervisorIds.length) {
-        throw new ORPCError('BAD_REQUEST', { message: 'duplicate supervisor ids' });
-      }
-      if (supervisorIds.length > 0) {
-        const found = await db.query.user.findMany({ columns: { id: true } });
-        const ids = new Set(found.map((f) => f.id));
-        for (const s of supervisorIds) {
-          if (!ids.has(s)) {
-            throw new ORPCError('BAD_REQUEST', { message: `supervisor ${s} does not exist` });
-          }
-        }
-      }
+      assertNoDuplicateSupervisors(supervisorIds);
+      await assertSupervisorsExist(supervisorIds);
       // environment must exist for AI
-      if (input.environmentId) {
-        const env = await db
-          .select({ id: environmentsTable.id })
-          .from(environmentsTable)
-          .where(eq(environmentsTable.id, input.environmentId));
-        if (env.length === 0) {
-          throw new ORPCError('BAD_REQUEST', { message: 'environment does not exist' });
-        }
-      }
+      if (input.environmentId) await assertEnvironmentExists(input.environmentId);
       // email must be free
-      const clash = await db.query.user.findMany({ columns: { id: true }, where: { email: { eq: input.email } } });
-      if (clash.length > 0) {
-        throw new ORPCError('CONFLICT', { message: `user ${input.email} already exists` });
-      }
+      await assertEmailAvailable(input.email);
       // user IS the employee: one row carries identity + employment.
       // AI-ness = extension row, never a column.
       const userId = uuidv7();
@@ -146,49 +266,20 @@ export const employeesRouter = os.router({
       }
       let apiKey: string | undefined;
       if (input.kind === 'ai') {
-        if (input.apiKeySecretId) {
-          const sec = await db
-            .select({ id: vaultSecretsTable.id })
-            .from(vaultSecretsTable)
-            .where(eq(vaultSecretsTable.id, input.apiKeySecretId));
-          if (sec.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'api key secret not found' });
-        }
-        if (input.providerId) {
-          const prov = await db
-            .select({ id: modelProvidersTable.id })
-            .from(modelProvidersTable)
-            .where(eq(modelProvidersTable.id, input.providerId));
-          if (prov.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'provider does not exist' });
-        }
+        if (input.apiKeySecretId) await assertSecretExists(input.apiKeySecretId);
+        if (input.providerId) await assertProviderExists(input.providerId);
         await db.insert(aiEmployeesTable).values({
           userId,
-          environmentId: input.environmentId!,
+          environmentId: nonNull(input.environmentId),
           instructions: input.instructions ?? '',
-          executable: (() => {
-            if (!input.executable || !input.executable.trim())
-              throw new ORPCError('BAD_REQUEST', {
-                message: 'AI employees need an ACP executable (e.g. "hermes acp")',
-              });
-            if (!ACP_EXECUTABLE_RE.test(input.executable.trim()))
-              throw new ORPCError('BAD_REQUEST', {
-                message: 'ACP executable must be shell-safe command words, e.g. "hermes acp"',
-              });
-            return input.executable.trim();
-          })(),
+          executable: requiredExecutable(input.executable),
           providerId: input.providerId ?? null,
           model: input.model ?? null,
           apiKeySecretId: input.apiKeySecretId ?? null,
         });
       }
       // every new employee — AI or human — gets an initial access key (shown once)
-      {
-        const { getAuth } = await import('../auth/auth.service');
-        const auth = await getAuth();
-        const created = await auth.api.createApiKey({
-          body: { name: `${input.name.slice(0, 40)} access key`, userId, prefix: 'tandem_' },
-        });
-        apiKey = created.key;
-      }
+      apiKey = (await mintAccessKey(`${input.name.slice(0, 40)} access key`, userId)).key;
       await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.CREATE);
       return { id: userId, userId, apiKey };
     }),
@@ -224,108 +315,20 @@ export const employeesRouter = os.router({
         throw new ORPCError('NOT_FOUND', { message: 'employee not found' });
       }
       const aiRow = (await db.query.aiEmployees.findMany({ where: { userId: { eq: input.id } } }))[0];
-      if (new Set(input.supervisorIds).size !== input.supervisorIds.length) {
-        throw new ORPCError('BAD_REQUEST', { message: 'duplicate supervisor ids' });
-      }
+      assertNoDuplicateSupervisors(input.supervisorIds);
       if (input.supervisorIds.includes(input.id)) {
         throw new ORPCError('BAD_REQUEST', { message: 'an employee cannot supervise themselves' });
       }
       // supervisors must exist; cycle check over the supervision graph
-      const all = await db.query.user.findMany({ columns: { id: true } });
-      const ids = new Set(all.map((a) => a.id));
-      for (const s of input.supervisorIds) {
-        if (!ids.has(s)) {
-          throw new ORPCError('BAD_REQUEST', { message: `supervisor ${s} does not exist` });
-        }
-      }
-      const supRows = await db.query.employeeSupervisors.findMany();
-      const graph = new Map<string, string[]>();
-      for (const r of supRows) {
-        if (r.employeeId === input.id) continue; // pretend the update applied
-        (graph.get(r.employeeId) ?? graph.set(r.employeeId, []).get(r.employeeId)!).push(r.supervisorId);
-      }
-      graph.set(input.id, [...input.supervisorIds]);
-      // DFS from each supervisor upward: if we reach input.id -> cycle
-      const seen = new Set<string>();
-      const stack = [...input.supervisorIds];
-      while (stack.length > 0) {
-        const cur = stack.pop()!;
-        if (cur === input.id) {
-          throw new ORPCError('BAD_REQUEST', { message: 'supervision cycle detected' });
-        }
-        if (seen.has(cur)) continue;
-        seen.add(cur);
-        stack.push(...(graph.get(cur) ?? []));
-      }
+      await assertSupervisorsExist(input.supervisorIds);
+      await assertAcyclicSupervision(input.id, input.supervisorIds);
       // AI fields — only when this employee IS an AI (extension row exists)
-      if (
-        aiRow &&
-        (input.environmentId !== undefined ||
-          input.instructions !== undefined ||
-          input.executable !== undefined ||
-          input.providerId !== undefined ||
-          input.model !== undefined ||
-          input.apiKeySecretId !== undefined)
-      ) {
-        const patch: {
-          environmentId?: string;
-          instructions?: string;
-          executable?: string;
-          providerId?: string | null;
-          model?: string | null;
-          apiKeySecretId?: string | null;
-          updatedAt: Date;
-        } = { updatedAt: new Date() };
-        if (input.environmentId !== undefined && input.environmentId !== null) {
-          const env = await db
-            .select({ id: environmentsTable.id })
-            .from(environmentsTable)
-            .where(eq(environmentsTable.id, input.environmentId));
-          if (env.length === 0) {
-            throw new ORPCError('BAD_REQUEST', { message: 'environment does not exist' });
-          }
-          patch.environmentId = input.environmentId;
-        }
-        if (input.instructions !== undefined && input.instructions !== null) {
-          patch.instructions = input.instructions;
-        }
-        if (input.executable !== undefined && input.executable !== null) {
-          if (!ACP_EXECUTABLE_RE.test(input.executable.trim()))
-            throw new ORPCError('BAD_REQUEST', {
-              message: 'ACP executable must be shell-safe command words, e.g. "hermes acp"',
-            });
-          patch.executable = input.executable.trim();
-        }
-        if (input.providerId !== undefined) {
-          if (input.providerId !== null) {
-            const provs = await db
-              .select({ id: modelProvidersTable.id })
-              .from(modelProvidersTable)
-              .where(eq(modelProvidersTable.id, input.providerId));
-            if (provs.length === 0) {
-              throw new ORPCError('BAD_REQUEST', { message: 'provider does not exist' });
-            }
-          }
-          patch.providerId = input.providerId;
-        }
-        if (input.model !== undefined) patch.model = input.model;
-        if (input.apiKeySecretId !== undefined) {
-          if (input.apiKeySecretId !== null) {
-            const s = await db
-              .select({ id: vaultSecretsTable.id })
-              .from(vaultSecretsTable)
-              .where(eq(vaultSecretsTable.id, input.apiKeySecretId));
-            if (s.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'api key secret not found' });
-          }
-          patch.apiKeySecretId = input.apiKeySecretId;
-        }
+      if (aiRow && hasAiExtensionField(input)) {
+        const patch = await aiExtensionPatch(input);
         await db.update(aiEmployeesTable).set(patch).where(eq(aiEmployeesTable.userId, aiRow.userId));
       }
       if (input.email !== undefined && input.email !== emp.email) {
-        const clash = await db.query.user.findMany({ columns: { id: true }, where: { email: { eq: input.email } } });
-        if (clash.length > 0) {
-          throw new ORPCError('CONFLICT', { message: `user ${input.email} already exists` });
-        }
+        await assertEmailAvailable(input.email);
       }
       await db
         .update(userTable)
@@ -386,7 +389,7 @@ export const employeesRouter = os.router({
           if (dupe.length > 0) throw new ORPCError('BAD_REQUEST', { message: 'a title with that name already exists' });
           const inserted = await db.insert(employeeTitlesTable).values({ id: uuidv7(), name: input.name }).returning();
           await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.CREATE);
-          return { id: inserted[0]!.id };
+          return { id: nonNull(inserted[0]).id };
         }
         const existing = (
           await db
@@ -459,11 +462,7 @@ export const employeesRouter = os.router({
       const rows = await db.query.user.findMany({ where: { id: { eq: input.employeeId } } });
       const emp = rows[0];
       if (!emp) throw new ORPCError('NOT_FOUND', { message: 'employee not found' });
-      const { getAuth } = await import('../auth/auth.service');
-      const auth = await getAuth();
-      const created = await auth.api.createApiKey({
-        body: { name: input.name?.trim() || `${emp.name.slice(0, 40)} key`, userId: emp.id, prefix: 'tandem_' },
-      });
+      const created = await mintAccessKey(input.name?.trim() || `${emp.name.slice(0, 40)} key`, emp.id);
       return { key: created.key, id: created.id };
     }),
 

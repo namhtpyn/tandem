@@ -10,8 +10,8 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
-import { db } from '../../db';
-import { tasks, taskReviews, taskRuns, aiEmployees } from '../../db/schema';
+import { db } from '../../db/index';
+import { tasks, taskReviews, taskRuns } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { spawnObligation, cancelObligations, cancelAllObligations, resolveObligation } from './obligations.service';
 import { dispatchTask } from './runner.service';
@@ -31,7 +31,7 @@ import {
 import { STATUS } from '#shared/status';
 
 const TODO_STATUS = STATUS.todo;
-const IN_REVIEW_STATUS = STATUS.inReview;
+
 const DONE_STATUS = STATUS.done;
 const CANCELLED_STATUS = STATUS.cancelled;
 
@@ -49,7 +49,7 @@ async function logActivity(
 }
 
 /** current (max) round for a task; 0 when never reviewed */
-export async function currentRound(taskId: string): Promise<number> {
+export async function currentRound(taskId: string) {
   const rows = await db
     .select({ round: taskReviews.round })
     .from(taskReviews)
@@ -61,7 +61,7 @@ export async function currentRound(taskId: string): Promise<number> {
 
 /** open a fresh review round: one pending row per reviewer + inbox obligations.
  * Called by submitResult. The task parks in-review; AI reviewers get review turns. */
-export async function openReviewRound(taskId: string, reviewers: string[], resultBody: string): Promise<number> {
+export async function openReviewRound(taskId: string, reviewers: string[], resultBody: string) {
   const round = (await currentRound(taskId)) + 1;
   const now = new Date();
   for (const reviewerId of reviewers) {
@@ -84,7 +84,7 @@ export async function openReviewRound(taskId: string, reviewers: string[], resul
 /** is the current round still LIVE (pending reviewers, no bounce/cancel yet)?
  * Drives where an answered question returns: a live review round goes back to
  * in-review, everything else back to todo. */
-export async function openRoundLive(taskId: string): Promise<boolean> {
+export async function openRoundLive(taskId: string) {
   const round = await currentRound(taskId);
   if (round === 0) return false;
   const rows = await db
@@ -92,14 +92,13 @@ export async function openRoundLive(taskId: string): Promise<boolean> {
     .from(taskReviews)
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
   return (
-    rows.length > 0 &&
     rows.some((r) => r.status === REVIEW_STATUS.PENDING) &&
     !rows.some((r) => r.status === REVIEW_STATUS.CHANGE_REQUESTED || r.status === REVIEW_STATUS.REJECTED)
   );
 }
 
 /** the submitted result the current round is judging (latest submit activity body) */
-async function latestSubmittedBody(taskId: string): Promise<string> {
+async function latestSubmittedBody(taskId: string) {
   const { taskActivity } = await import('../../db/schema');
   const rows = await db
     .select()
@@ -107,7 +106,9 @@ async function latestSubmittedBody(taskId: string): Promise<string> {
     .where(eq(taskActivity.taskId, taskId))
     .orderBy(desc(taskActivity.createdAt))
     .limit(50);
-  const submitted = rows.find((a) => a.kind === ACTIVITY_KIND.VERDICT && (a.meta as Record<string, unknown> | null)?.submitted);
+  const submitted = rows.find(
+    (a) => a.kind === ACTIVITY_KIND.VERDICT && (a.meta as Record<string, unknown> | null)?.submitted,
+  );
   /* v8 ignore next -- the submit activity always carries a body in practice */
   return submitted?.body ?? '';
 }
@@ -115,7 +116,7 @@ async function latestSubmittedBody(taskId: string): Promise<string> {
 /** fire a review TURN on the task itself for every AI reviewer still pending this
  * round without a live run (re-dispatched after a round question is answered).
  * Sessions are per (task, reviewer) — never the assignee's session. */
-export async function dispatchAiReviewTurns(taskId: string, resultBody?: string): Promise<void> {
+export async function dispatchAiReviewTurns(taskId: string, resultBody?: string) {
   const round = await currentRound(taskId);
   if (round === 0) return;
   const rows = await db
@@ -194,7 +195,7 @@ export async function recordVerdict(
     .select()
     .from(taskReviews)
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
-  const all = roundRows.filter((r) => r.status === REVIEW_STATUS.APPROVED);
+
   const unanimous = roundRows.length > 0 && roundRows.every((r) => r.status === REVIEW_STATUS.APPROVED);
 
   if (verdict === REVIEW_STATUS.REJECTED) {
@@ -202,7 +203,10 @@ export async function recordVerdict(
     await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
     await db.update(tasks).set({ status: CANCELLED_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     /* v8 ignore next -- tests always pass a note; the fallback text is defensive */
-    await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || 'rejected — task cancelled', { rejected: true, round });
+    await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || 'rejected — task cancelled', {
+      rejected: true,
+      round,
+    });
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'cancelled' };
   }
@@ -211,7 +215,10 @@ export async function recordVerdict(
     // back to ready so the assignee resumes with the note riding the next brief
     await db.update(tasks).set({ status: TODO_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     /* v8 ignore next -- tests always pass a note; the fallback text is defensive */
-    await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || 'changes requested', { changeRequested: true, round });
+    await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || 'changes requested', {
+      changeRequested: true,
+      round,
+    });
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'returned' };
   }
@@ -227,7 +234,10 @@ export async function recordVerdict(
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'done' };
   }
-  await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || REVIEW_STATUS.APPROVED, { approved: true, round });
+  await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || REVIEW_STATUS.APPROVED, {
+    approved: true,
+    round,
+  });
   return { outcome: 'waiting' };
 }
 

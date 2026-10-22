@@ -19,4 +19,4 @@ COPY --from=build /app/package.json ./package.json
 # (ssh probe key material) — no privileged writes needed
 USER bun
 EXPOSE 3000
-CMD ["bun", ".output/server/index.mjs"]
+CMD ["bun", "start"]

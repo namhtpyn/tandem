@@ -3,7 +3,10 @@
 //   TANDEM_OIDC_ISSUER / TANDEM_OIDC_CLIENT_ID / TANDEM_OIDC_CLIENT_SECRET
 //   TANDEM_OIDC_LABEL (display name, default "SSO")
 // Runtime management lives at PUT/GET /api/oidc.
+import { consola } from 'consola';
 import { z } from 'zod';
+
+const log = consola.withTag('tandem');
 
 import { env } from '../kernel/env';
 import { getSetting, setSetting } from '../settings/settings.service';
@@ -32,9 +35,9 @@ export async function getOidcProviders() {
     try {
       const parsed = z.array(oidcProviderSchema).safeParse(JSON.parse(raw));
       if (parsed.success) return parsed.data;
-      console.warn('[tandem] stored OIDC registry failed validation — ignoring');
+      log.warn('stored OIDC registry failed validation — ignoring');
     } catch {
-      console.warn('[tandem] stored OIDC registry is not valid JSON — ignoring');
+      log.warn('stored OIDC registry is not valid JSON — ignoring');
     }
   }
   // env fallback (static vars from the boot contract)

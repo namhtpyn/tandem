@@ -6,5 +6,8 @@
   "editor.codeActionsOnSave": {
     "source.format.oxc": "always",
     "source.fixAll.oxc": "always"
-  }
+  },
+  "js/ts.preferences.importModuleSpecifier": "project-relative",
+  "js/ts.preferences.importModuleSpecifierEnding": "js",
+  "js/ts.tsdk.promptToUseWorkspaceVersion": true
 }

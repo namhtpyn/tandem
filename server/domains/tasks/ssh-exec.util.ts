@@ -25,7 +25,7 @@ export async function loadClient(): Promise<typeof Client> {
 }
 
 // a frozen agent (no TCP reset) must still terminate: cap the whole run.
-async function runTimeoutMs(): Promise<number> {
+async function runTimeoutMs() {
   const { getRunTimeoutMs } = await import('../settings/settings.service');
   return await getRunTimeoutMs();
 }
@@ -37,7 +37,7 @@ export async function runOverSsh(
   onLine: OnLine,
   finish: Finish,
   resolve: Resolve,
-): Promise<void> {
+) {
   const ClientCtor = await loadClient();
   const conn = new ClientCtor();
   let settled = false;

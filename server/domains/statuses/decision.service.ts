@@ -1,6 +1,3 @@
-import { eq } from 'drizzle-orm';
-import { v7 as uuidv7 } from 'uuid';
-
 import {
   PROVIDER_ENDPOINT,
   PROVIDER_KIND,
@@ -12,8 +9,7 @@ import {
 // Jev (TypeSafe AI System One) integration for task assignment.
 // Sends task state + employee candidates, gets a typed Choice back.
 // Never a hard dependency: unavailable/low-confidence -> caller keeps task unassigned.
-import { db } from '../../db';
-import { vaultSecrets, modelProviders } from '../../db/schema';
+import { db } from '../../db/index';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
 
 export type JevAssignCandidate = {
@@ -55,6 +51,47 @@ export async function getDecisionProvider(): Promise<{
   return { id: p.id, label: p.label, baseUrl: p.baseUrl, endpoints: p.endpoints as string[] };
 }
 
+/** the uniform "don't assign" result every failure path returns */
+function noPick(fallbackReason: string) {
+  return {
+    employeeId: null,
+    confidence: 0,
+    probabilities: {},
+    model: 'none',
+    fallbackReason,
+  };
+}
+
+/** serialize task + candidates into the model's state text */
+function decisionState(params: {
+  taskTitle: string;
+  taskDescription: string;
+  projectName: string | null;
+  candidates: JevAssignCandidate[];
+}) {
+  return [
+    `Task: ${params.taskTitle}`,
+    params.taskDescription ? `Description: ${params.taskDescription}` : '',
+    params.projectName ? `Project: ${params.projectName}` : '',
+    'Candidates (id | kind | title | open task load):',
+    ...params.candidates.map((c) => `- ${c.id} | ${c.kind} | ${c.title ?? 'no title'} | ${c.openTasks} open tasks`),
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/** one human-readable criterion per candidate, keyed by employee id */
+function candidateCriteria(candidates: JevAssignCandidate[]) {
+  const criteria: Record<string, string> = {
+    unassigned: 'No candidate fits; leave the task unassigned for a human decision',
+  };
+  for (const c of candidates) {
+    criteria[c.id] =
+      `${c.kind === 'ai' ? 'AI agent' : 'Human'} — ${c.name}${c.title ? `, ${c.title}` : ''}${c.openTasks > 0 ? `, currently ${c.openTasks} open task(s)` : ', no open tasks'}`;
+  }
+  return criteria;
+}
+
 /** Ask Jev which employee should take the task. Returns null employeeId on any failure/low confidence. */
 export async function pickAssignee(params: {
   taskTitle: string;
@@ -67,23 +104,11 @@ export async function pickAssignee(params: {
   model: string | null;
 }) {
   if (params.candidates.length === 0) {
-    return {
-      employeeId: null,
-      confidence: 0,
-      probabilities: {},
-      model: 'none',
-      fallbackReason: 'no assignee candidates',
-    };
+    return noPick('no assignee candidates');
   }
   const provider = await getDecisionProvider();
   if (!provider) {
-    return {
-      employeeId: null,
-      confidence: 0,
-      probabilities: {},
-      model: 'none',
-      fallbackReason: 'no decision provider configured',
-    };
+    return noPick('no decision provider configured');
   }
   let key: string | null = null;
   if (params.keySecretId) {
@@ -94,33 +119,13 @@ export async function pickAssignee(params: {
     }
   }
   if (!key) {
-    return {
-      employeeId: null,
-      confidence: 0,
-      probabilities: {},
-      model: 'none',
-      fallbackReason: 'no api key secret provided',
-    };
+    return noPick('no api key secret provided');
   }
 
-  const state = [
-    `Task: ${params.taskTitle}`,
-    params.taskDescription ? `Description: ${params.taskDescription}` : '',
-    params.projectName ? `Project: ${params.projectName}` : '',
-    'Candidates (id | kind | title | open task load):',
-    ...params.candidates.map((c) => `- ${c.id} | ${c.kind} | ${c.title ?? 'no title'} | ${c.openTasks} open tasks`),
-  ]
-    .filter(Boolean)
-    .join('\n');
+  const state = decisionState(params);
 
   const instructions = INSTRUCTIONS;
-  const criteria: Record<string, string> = {
-    unassigned: 'No candidate fits; leave the task unassigned for a human decision',
-  };
-  for (const c of params.candidates) {
-    criteria[c.id] =
-      `${c.kind === 'ai' ? 'AI agent' : 'Human'} — ${c.name}${c.title ? `, ${c.title}` : ''}${c.openTasks > 0 ? `, currently ${c.openTasks} open task(s)` : ', no open tasks'}`;
-  }
+  const criteria = candidateCriteria(params.candidates);
 
   try {
     let raw: DecisionPick;
@@ -131,9 +136,9 @@ export async function pickAssignee(params: {
       case PROVIDER_ENDPOINT.DECISION['OPENAI-DECISIONS']:
         raw = await askOpenAIDecisions(provider.baseUrl, key, state, instructions, criteria, params.model);
         break;
-      case PROVIDER_ENDPOINT.DECISION['TYPESAFE-SYSTEMONE']:
+      // TYPESAFE-SYSTEMONE is the fallback endpoint
+      default:
         raw = await askTypesafeSystemOne(provider.baseUrl, key, state, instructions, criteria, params.model);
-        break;
     }
     // compile-time exhaustiveness: adding a DecisionApiStyle without a case
     // above fails this assignment (raw stays undefined -> typed never match)
@@ -154,13 +159,7 @@ export async function pickAssignee(params: {
     }
     return raw;
   } catch {
-    return {
-      employeeId: null,
-      confidence: 0,
-      probabilities: {},
-      model: 'none',
-      fallbackReason: 'could not reach decision endpoint',
-    };
+    return noPick('could not reach decision endpoint');
   }
 }
 
@@ -295,7 +294,7 @@ async function askOpenAIDecisions(
 export function buildEndpointUrl(
   baseUrl: string,
   endpoint: DecisionEndpoint | import('#shared/api-styles').ProviderEndpoint,
-): string {
+) {
   const root = baseUrl.replace(/\/$/, '');
   const leaf = ENDPOINT_PATH[endpoint as keyof typeof ENDPOINT_PATH];
   return root.endsWith(leaf) ? root : `${root}${leaf}`;

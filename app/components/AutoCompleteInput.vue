@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { nonNull } from '#shared/utils/non-null';
 // Autocomplete input: free text always commits to v-model; matching suggestions
 // appear in a dropdown while typing. Unlike UInputMenu, typed text that matches
 // nothing is a first-class value (caller decides to create it as a record).
@@ -52,7 +53,7 @@ function onKeydown(e: KeyboardEvent) {
     activeIndex.value = (activeIndex.value - 1 + matches.value.length) % matches.value.length;
   } else if (e.key === 'Enter') {
     e.preventDefault();
-    pick(matches.value[activeIndex.value]!);
+    pick(nonNull(matches.value[activeIndex.value]));
   } else if (e.key === 'Escape') {
     open.value = false;
   }

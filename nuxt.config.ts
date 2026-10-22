@@ -14,7 +14,7 @@ export default defineNuxtConfig({
   typescript: {
     typeCheck: true,
   },
-  modules: ['@vueuse/nuxt', '@nuxt/ui', '@nuxt/fonts', '@nuxt/icon', '@dxup/nuxt'],
+  modules: ['@nuxt/test-utils/module', '@vueuse/nuxt', '@nuxt/ui', '@nuxt/fonts', '@nuxt/icon', '@dxup/nuxt'],
   css: ['~/assets/css/main.css'],
   compatibilityDate: '2026-01-01',
   vite: {

@@ -2,7 +2,7 @@
 // Every mutation publishes; live generators re-emit fresh snapshots over SSE.
 import { MemoryPublisher } from '@orpc/publisher/memory';
 
-import { CHANGE_ACTION, type ChangeAction, CHANGE_RESOURCE, type ChangeResource } from '#shared/enums';
+import type { ChangeAction, ChangeResource } from '#shared/enums';
 
 export type { ChangeAction, ChangeResource };
 import { redisPubsub } from './pubsub';
@@ -10,7 +10,7 @@ import { redisPubsub } from './pubsub';
 /** change-bus fanout channel + wire codec (encoded change events over pub/sub) */
 export const CHANGE_CHANNEL = 'tandem:changes';
 
-export function encodeChange(e: ChangeEvent): string {
+export function encodeChange(e: ChangeEvent) {
   return JSON.stringify(e);
 }
 export function decodeChange(raw: string): ChangeEvent {
@@ -35,7 +35,7 @@ export const changeBus = new MemoryPublisher<Events>({
 /** Publish a data-change event; live queries re-run and push fresh rows.
  * With REDIS_URL set, events also fan out over Redis pub/sub so every replica's
  * local memory bus sees them (multi-replica live queries). */
-export async function publishChange(resource: ChangeResource, action: ChangeAction): Promise<void> {
+export async function publishChange(resource: ChangeResource, action: ChangeAction) {
   seq += 1;
   const event: ChangeEvent = {
     id: `${Date.now()}-${seq}`,
@@ -56,7 +56,7 @@ export async function publishChange(resource: ChangeResource, action: ChangeActi
 }
 
 /** boot hook: bridge Redis pub/sub -> local memory bus (no-op without REDIS_URL) */
-export async function bridgeRedisChanges(): Promise<void> {
+export async function bridgeRedisChanges() {
   const pubsub = await redisPubsub();
   await pubsub.subscribe(CHANGE_CHANNEL, (raw) => {
     const e = decodeChange(raw);

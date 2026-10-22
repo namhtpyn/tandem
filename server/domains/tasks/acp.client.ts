@@ -1,6 +1,7 @@
 import { RUN_STATUS, type FinishedStatus } from '#shared/enums';
 // Structured-output contract rendering comes from the generic shared module.
 import { renderOutputContract, parseStructuredOutput } from '#shared/structured-output';
+import { nonNull } from '#shared/utils/non-null';
 
 import { env } from '../kernel/env';
 
@@ -60,6 +61,34 @@ const PROTOCOL_VERSION = 1;
 /** grace after session/cancel before we hard-kill the stream */
 function cancelGraceMs() {
   return Number(env.TANDEM_ACP_CANCEL_GRACE_MS ?? 5_000);
+}
+
+/** resume the harness session when one exists; a stale resume or absent session
+ * falls back to session/new. Returns the session id to prompt on. */
+async function resumeOrCreateSession(
+  request: (method: string, params: unknown) => Promise<RpcMessage>,
+  resumeSessionId: string | null | undefined,
+  onLine?: (line: string) => void,
+) {
+  let sessionId = resumeSessionId?.trim() || null;
+  if (sessionId) {
+    const res = await request('session/resume', { sessionId });
+    if (res.error) {
+      // stale/reset session on the agent side: fall back to a fresh one
+      onLine?.(`[acp] session resume failed (${res.error.message}); starting a new session`);
+      sessionId = null;
+    } else {
+      const sid = (res.result as { sessionId?: string } | undefined)?.sessionId;
+      if (sid) sessionId = sid;
+    }
+  }
+  if (!sessionId) {
+    const res = await request('session/new', { cwd: '/tmp', mcpServers: [] });
+    if (res.error) throw new Error(`acp session/new failed: ${res.error.message}`);
+    sessionId = (res.result as { sessionId?: string } | undefined)?.sessionId ?? null;
+    if (!sessionId) throw new Error('acp session/new returned no sessionId');
+  }
+  return sessionId;
 }
 
 export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: {
@@ -207,7 +236,8 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
     handleAgentMessage(msg);
     const mid = msg.id;
     if (typeof mid === 'number' && pending.has(mid)) {
-      pending.get(mid)!.resolve(msg);
+      const pendingEntry = nonNull(pending.get(mid));
+      pendingEntry.resolve(msg);
       pending.delete(mid);
     }
   };
@@ -243,24 +273,7 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
     if (init.error) throw new Error(`acp initialize failed: ${init.error.message}`);
 
     // 2. session: resume the task's session, or create the first one
-    let sessionId = opts.resumeSessionId?.trim() || null;
-    if (sessionId) {
-      const res = await request('session/resume', { sessionId });
-      if (res.error) {
-        // stale/reset session on the agent side: fall back to a fresh one
-        onLine?.(`[acp] session resume failed (${res.error.message}); starting a new session`);
-        sessionId = null;
-      } else {
-        const sid = (res.result as { sessionId?: string } | undefined)?.sessionId;
-        if (sid) sessionId = sid;
-      }
-    }
-    if (!sessionId) {
-      const res = await request('session/new', { cwd: '/tmp', mcpServers: [] });
-      if (res.error) throw new Error(`acp session/new failed: ${res.error.message}`);
-      sessionId = (res.result as { sessionId?: string } | undefined)?.sessionId ?? null;
-      if (!sessionId) throw new Error('acp session/new returned no sessionId');
-    }
+    const sessionId = await resumeOrCreateSession(request, opts.resumeSessionId, onLine);
 
     // 3. one prompt turn; v1 answers when the turn ends (stopReason)
     const turnTimer = setTimeout(() => {

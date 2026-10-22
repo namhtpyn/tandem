@@ -28,7 +28,7 @@ export function redisPubsub(): Promise<PubsubDomain> {
 }
 
 async function createPubsubDomain(): Promise<PubsubDomain> {
-  const [{ createClient }] = await Promise.all([import('redis')]);
+  const { createClient } = await import('redis');
 
   const url = env.REDIS_URL;
   // fail fast: verify the connection works before handing out the domain

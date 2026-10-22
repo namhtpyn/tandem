@@ -1,4 +1,5 @@
 <script setup lang="ts">
+useHead({ title: 'Settings' });
 import { useQuery } from '@tanstack/vue-query';
 
 import {
@@ -9,8 +10,10 @@ import {
   PROVIDER_ENDPOINT_LABEL,
   isModelsEndpoint,
 } from '#shared/api-styles';
-import { CHANGE_RESOURCE } from '~/../shared/enums';
+import { CHANGE_RESOURCE } from '#shared/enums';
+import { nonNull } from '#shared/utils/non-null';
 import type { ModelProviderRow, ProviderSaveInput } from '~/utils/orpc-types';
+import type { SecretOption } from '~/utils/vault-options';
 import { groupedSecretOptions } from '~/utils/vault-options';
 // Settings: auth policy for this Tandem instance. OIDC provider list is a
 // UTable with a single add/edit modal (no v-model over v-for aliases — the
@@ -44,7 +47,7 @@ function onEndpointsChange(next: Array<string | undefined>) {
   const all = next.filter((e): e is string => typeof e === 'string');
   const models = all.filter(isModelsEndpoint);
   if (models.length > 1) {
-    const kept = models[models.length - 1]!;
+    const kept = nonNull(models[models.length - 1]);
     mProvForm.endpoints = [...all.filter((e) => !isModelsEndpoint(e)), kept];
     return;
   }
@@ -78,7 +81,7 @@ async function saveMProv() {
             .split('\n')
             .map((l) => l.split(':').map((p) => p.trim()))
             .filter((p) => p.length === 2)
-            .map((p) => [p[0]!, p[1]!]),
+            .map((p) => [nonNull(p[0]), nonNull(p[1])]),
         )
       : undefined;
     await $client.providers.save({
@@ -141,8 +144,8 @@ async function saveCompanyPrompt() {
     }
     await $client.settings.update({ companyPrompt: text });
     companyPromptMessage.value = 'Saved';
-  } catch (e: any) {
-    companyPromptMessage.value = e?.message ?? 'Save failed';
+  } catch (e) {
+    companyPromptMessage.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     savingCompanyPrompt.value = false;
   }
@@ -154,30 +157,30 @@ const vaultLive = useQuery(
     queryKey: [CHANGE_RESOURCE.VAULT, 'all'],
   }),
 );
-const vaultItems = computed((): any =>
+const vaultItems = computed<SecretOption[]>(() =>
   groupedSecretOptions(
     (unref(vaultLive.data)?.data ?? []) as Array<{ id: string; name: string; lastFour: string; folder: string | null }>,
   ),
 );
 interface AiAssignmentForm {
-  providerId: string | null;
+  providerId: string | undefined;
   model: string;
   keySecretId: string | null;
 }
-const llmForm = reactive<AiAssignmentForm>({ providerId: null, model: '', keySecretId: null });
-const decisionForm = reactive<AiAssignmentForm>({ providerId: null, model: '', keySecretId: null });
+const llmForm = reactive<AiAssignmentForm>({ providerId: undefined, model: '', keySecretId: null });
+const decisionForm = reactive<AiAssignmentForm>({ providerId: undefined, model: '', keySecretId: null });
 const aiMessage = ref('');
 const llmSaving = ref(false);
 const decisionSaving = ref(false);
 
 const llmProviders = computed(() =>
-  ((unref(providersLive.data) ?? []) as Array<any>)
-    .filter((p) => (p.endpoints ?? []).some((st: string) => endpointKind(st) === PROVIDER_KIND.LLM))
+  ((unref(providersLive.data) ?? []) as Array<{ id: string; label: string; endpoints?: string[] }>)
+    .filter((p) => (p.endpoints ?? []).some((st) => endpointKind(st) === PROVIDER_KIND.LLM))
     .map((p) => ({ label: p.label, value: p.id })),
 );
 const decisionProviders = computed(() =>
-  ((unref(providersLive.data) ?? []) as Array<any>)
-    .filter((p) => (p.endpoints ?? []).some((st: string) => endpointKind(st) === PROVIDER_KIND.DECISION))
+  ((unref(providersLive.data) ?? []) as Array<{ id: string; label: string; endpoints?: string[] }>)
+    .filter((p) => (p.endpoints ?? []).some((st) => endpointKind(st) === PROVIDER_KIND.DECISION))
     .map((p) => ({ label: p.label, value: p.id })),
 );
 
@@ -189,10 +192,10 @@ watch(
       internalLlm?: { providerId: string; model: string | null; keySecretId: string } | null;
       internalDecision?: { providerId: string; model: string | null; keySecretId: string } | null;
     };
-    llmForm.providerId = v.internalLlm?.providerId ?? null;
+    llmForm.providerId = v.internalLlm?.providerId ?? undefined;
     llmForm.model = v.internalLlm?.model ?? '';
     llmForm.keySecretId = v.internalLlm?.keySecretId ?? null;
-    decisionForm.providerId = v.internalDecision?.providerId ?? null;
+    decisionForm.providerId = v.internalDecision?.providerId ?? undefined;
     decisionForm.model = v.internalDecision?.model ?? '';
     decisionForm.keySecretId = v.internalDecision?.keySecretId ?? null;
   },
@@ -285,8 +288,8 @@ async function saveTasksPerAgent() {
     }
     await $client.settings.update({ tasksPerAgent: n });
     tasksPerAgentMessage.value = 'Saved';
-  } catch (e: any) {
-    tasksPerAgentMessage.value = e?.message ?? 'Save failed';
+  } catch (e) {
+    tasksPerAgentMessage.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     savingTasksPerAgent.value = false;
   }
@@ -305,8 +308,8 @@ async function saveRunTimeout() {
     }
     await $client.settings.update({ runTimeoutMs: Math.round(minutes * 60_000) });
     runTimeoutMessage.value = 'Saved';
-  } catch (e: any) {
-    runTimeoutMessage.value = e?.message ?? 'Save failed';
+  } catch (e) {
+    runTimeoutMessage.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     savingRunTimeout.value = false;
   }
@@ -320,8 +323,8 @@ async function saveCompanyName() {
   try {
     await $client.settings.update({ companyName: companyName.value });
     nameMessage.value = 'Saved';
-  } catch (e: any) {
-    nameMessage.value = e?.message ?? 'Save failed';
+  } catch (e) {
+    nameMessage.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     savingName.value = false;
   }

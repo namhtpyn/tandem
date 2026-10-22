@@ -1,10 +1,12 @@
+import { z } from 'zod';
+
 // Tandem's run-verdict contract, built on the generic structured-output module.
 // The brief asks the agent to end its turn with a single JSON line
 // {"kind": "result" | "question" | "blocked", "body": "..."}; parsing is
 // zod-validated. No marker fallback: historical run outputs were migrated to
 // the JSON shape by migration 20261017030000 (one-time DML), so the whole
 // estate speaks one format.
-import { z } from 'zod';
+import { nonNull } from '#shared/utils/non-null';
 
 export const RunVerdictSchema = z.object({
   kind: z.enum(['result', 'question', 'blocked']),
@@ -29,7 +31,7 @@ export function parseRunEnvelope(output: string | null | undefined): RunEnvelope
   if (!output) return null;
   const lines = output.trimEnd().split('\n');
   for (let i = lines.length - 1; i >= Math.max(0, lines.length - 40); i--) {
-    let raw = lines[i]!.trim();
+    let raw = nonNull(lines[i]).trim();
     if (raw.startsWith('```'))
       raw = raw
         .replace(/^```(?:json)?\s*/i, '')

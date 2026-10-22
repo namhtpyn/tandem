@@ -1,11 +1,13 @@
 <script setup lang="ts">
+useHead({ title: 'Environments' });
 import { useQuery, useMutation } from '@tanstack/vue-query';
 
-import { CHANGE_RESOURCE, SECRET_USAGE, type SecretUsage } from '~/../shared/enums';
+import { CHANGE_RESOURCE, SECRET_USAGE, type SecretUsage } from '#shared/enums';
 // Environments (LIVE): oRPC live query — the table is a streaming snapshot;
 // mutations go through oRPC and every client (this tab or another) updates
 // instantly via the change bus + SSE.
 import type { EnvironmentRow, VaultSecretRow } from '~/utils/orpc-types';
+import type { SecretOption } from '~/utils/vault-options';
 import { groupedSecretOptions } from '~/utils/vault-options';
 
 const { $orpc } = useNuxtApp();
@@ -21,7 +23,7 @@ const secretsQuery = useQuery(
   }),
 );
 const secrets = computed<VaultSecretRow[]>(() => (unref(secretsQuery.data)?.data ?? []) as VaultSecretRow[]);
-const secretOptions = computed((): any => [
+const secretOptions = computed<SecretOption[]>(() => [
   { label: 'No key (agent default)', value: '__none__' },
   ...groupedSecretOptions(secrets.value),
 ]);

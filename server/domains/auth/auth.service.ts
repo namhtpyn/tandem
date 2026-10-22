@@ -15,7 +15,7 @@ import { v7 as uuidv7 } from 'uuid';
 
 import { ROLE, type Role } from '#shared/enums';
 
-import { db } from '../../db';
+import { db } from '../../db/index';
 import { user as userTable } from '../../db/schema';
 import { authSchema } from '../../db/schema';
 import { env as sharedEnv } from '../kernel/env';
@@ -66,7 +66,7 @@ type Auth = {
 let instance: Auth | null = null;
 let builtWith = '';
 
-function policyKey(p: AuthPolicy): string {
+function policyKey(p: AuthPolicy) {
   // everything that feeds betterAuth() config; in-memory only, never logged
   return JSON.stringify([p.oidcProviders.map((x) => [x.id, x.issuer, x.clientId, x.clientSecret]), p.passwordEnabled]);
 }
@@ -108,7 +108,7 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}) {
       additionalFields: {
         // union type (docs: type: ["user", "admin"]) — inferred end-to-end;
         // input:false = server-owned, users can't self-promote
-        role: { type: [...Object.values(ROLE)] as Role[], required: false, defaultValue: ROLE.VIEWER, input: false },
+        role: { type: Object.values(ROLE) as Role[], required: false, defaultValue: ROLE.VIEWER, input: false },
         // employment title rides the identity row; AI-ness is derived from
         // the ai_employees extension row, never a user column
         title: { type: 'string', required: false, defaultValue: '', input: false },

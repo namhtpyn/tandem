@@ -6,7 +6,6 @@ import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 // Regenerate with: bun run gen:auth
 import { betterAuth } from 'better-auth';
 import { drizzle } from 'drizzle-orm/bun-sql';
-import { v7 as uuidv7 } from 'uuid';
 export const auth = betterAuth({
   database: drizzleAdapter(drizzle('postgresql://generate:generate@127.0.0.1:1/generate'), { provider: 'pg' }),
   advanced: { database: { generateId: 'uuid' } },

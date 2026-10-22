@@ -1,16 +1,16 @@
 import { os } from '@orpc/server';
 // projects router — business logic lives in services/utils; this file only wires procedures
-import { asc, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { PROJECT_STATUS, type ProjectStatus } from '#shared/enums';
+import type { ProjectRow } from '#shared/types';
 
-import type { ProjectRow } from '../../../shared/types';
-import { db } from '../../db';
+import { db } from '../../db/index';
 import { projects as projectsTable } from '../../db/schema';
-import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 
 export const projectsRouter = os.router({
   /** live list — flat rows; nesting resolved client-side from parentId */
