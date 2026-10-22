@@ -147,6 +147,7 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
       }),
     );
     await new Promise((r) => setTimeout(r, 300));
+    if (seen.filter((r) => r === 'TASKS').length !== 1) console.log('[DIAG] seen =', JSON.stringify(seen));
     expect(seen.filter((r) => r === 'TASKS').length).toBe(1); // echo deduped
     expect(seen).toContain('RUNS'); // external event bridged
     unsub();
