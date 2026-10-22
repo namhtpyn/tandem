@@ -2,6 +2,14 @@
 // Mocks the runner so no SSH/DB dispatch happens — only queue mechanics are under test.
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Pin this file to its own redis DB before ANY import evaluates (vi.hoisted
+// runs above static imports, so before env.ts caches REDIS_URL): db 15 is
+// outside the per-worker range (0-14) and no other file uses it — parallel
+// workers can't leak publishes into this bus
+vi.hoisted(() => {
+  process.env.REDIS_URL = `${(process.env.REDIS_URL || 'redis://127.0.0.1:6399').replace(/\/\d*$/, '')}/15`;
+});
+
 import './api-harness';
 import { applyMigrations } from '#server/db/index';
 import { env, setEnv } from '#server/domains/kernel/env';
@@ -147,10 +155,6 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
       }),
     );
     await new Promise((r) => setTimeout(r, 300));
-    if (seen.filter((r) => r === 'TASKS').length !== 1) {
-      const { env: e } = await import('#server/domains/kernel/env');
-      console.log('[DIAG] env.REDIS_URL =', e.REDIS_URL, '| process =', process.env.REDIS_URL, '| seen =', JSON.stringify(seen));
-    }
     expect(seen.filter((r) => r === 'TASKS').length).toBe(1); // echo deduped
     expect(seen).toContain('RUNS'); // external event bridged
     unsub();

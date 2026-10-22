@@ -37,7 +37,6 @@ if (process.env.REDIS_URL) {
   const idx = (Number(workerId) || 0) % 15;
   const base = process.env.REDIS_URL.replace(/\/\d*$/, ''); // strip an existing /db too
   process.env.REDIS_URL = `${base}/${idx}`;
-  console.log(`[worker-setup] pool=${workerId} redis=${process.env.REDIS_URL}`);
 }
 
 // the transaction every connection of this worker joins
