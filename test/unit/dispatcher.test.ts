@@ -1,8 +1,7 @@
 import { eq } from 'drizzle-orm';
 // Dispatcher + runner: eligible-task scan, dispatch, stream tail, finish
 // verdict. Uses TANDEM_FAKE_RUNNER=1 so no SSH host is needed in tests.
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('ssh2', () => {
   // minimal ACP-capable fake stream: client writes are parsed as env blob +
@@ -1570,7 +1569,14 @@ describe('dispatcher', () => {
     const t = await callProc('tasks.create', { title: 'Stream me', assigneeId: agentId });
     const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
     await scanOnce('http://tandem.local');
-    await new Promise((r) => setTimeout(r, 400));
+    const { db } = await dbm();
+    const { taskRuns } = await schema();
+    // wait for the fake run to actually finish — a fixed sleep loses the race
+    // under full-suite load
+    await vi.waitFor(async () => {
+      const runs = await db.select().from(taskRuns);
+      expect(runs[0]?.status).toBe(RUN_STATUS.DONE);
+    });
     const iter = await callProc('tasks.runs', { taskId: t.id });
     const snap = await iter.next();
     await iter.return?.();

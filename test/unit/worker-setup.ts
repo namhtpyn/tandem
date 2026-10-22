@@ -35,7 +35,8 @@ process.env.TANDEM_DB_POOL_MAX = '3';
 // worker's publishes. Put each worker on its own redis DB index (0-14)
 if (process.env.REDIS_URL) {
   const idx = (Number(workerId) || 0) % 15;
-  process.env.REDIS_URL = process.env.REDIS_URL.replace(/\/(\d+)?$/, `/${idx}`);
+  const base = process.env.REDIS_URL.replace(/\/\d*$/, ''); // strip an existing /db too
+  process.env.REDIS_URL = `${base}/${idx}`;
 }
 
 // the transaction every connection of this worker joins
