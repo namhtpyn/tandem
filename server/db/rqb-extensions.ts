@@ -106,7 +106,6 @@ export function installRqbExtensions(query: Record<string, unknown>) {
       const findManyQuery = this.findMany(config);
       const countQuery = this.count(config?.where as AnyFilter);
       const findManyPromise = Promise.resolve(findManyQuery);
-      const { dialect } = this;
       return {
         // oxlint-disable-next-line no-thenable
         then<TResult1 = FindManyAndCountResult<unknown>, TResult2 = never>(

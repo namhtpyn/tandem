@@ -11,7 +11,8 @@ import { saveOidcProviders } from '#server/domains/auth/oidc.service';
 import { env, setEnv } from '#server/domains/kernel/env';
 import { setSetting } from '#server/domains/settings/settings.service';
 import { ROLE } from '#shared/enums';
-import { resetSchema } from './helpers/pg';
+
+import { resetSchema } from './helpers/pg.ts';
 
 describe('auth policy', () => {
   beforeEach(async () => {

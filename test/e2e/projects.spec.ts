@@ -1,7 +1,7 @@
 // E2E: projects — create, nest, task linkage.
 import { expect, test } from '@playwright/test';
 
-import { login } from './helpers/login';
+import { login } from './helpers/login.ts';
 
 test.describe('projects', () => {
   test('create a project, then a subproject, visible in tree', async ({ page }) => {

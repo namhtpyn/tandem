@@ -3,9 +3,10 @@ import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './api-harness';
-import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '#server/db/index';
 import { ROLE } from '#shared/enums';
+
+import { resetSchema } from './helpers/pg.ts';
 
 const admin = {
   id: '00000000-0000-7000-8000-cd5fca5e2d34',

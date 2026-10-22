@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { login } from './helpers/login';
+import { login } from './helpers/login.ts';
 
 // visible row/card: desktop tr or the mobile card stack (md:hidden)
 const VISIBLE_ROW = 'tr:visible';

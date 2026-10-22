@@ -1,13 +1,14 @@
+import { EmptyFilter, eq, sql } from 'drizzle-orm';
+import { v7 as uuidv7 } from 'uuid';
+
+import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 // Folder service — vault folders with per-folder secret counts.
 // Duplicate folder names are allowed (the unique constraint was dropped);
 // deleting a folder never deletes secrets — they fall back to uncategorized
 // (FK SET NULL).
-import { EmptyFilter, eq, sql, type SQL } from 'drizzle-orm';
-import { v7 as uuidv7 } from 'uuid';
+import { nonNull } from '#shared/utils/non-null';
 
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
-
-import { db } from '../../../db';
+import { db } from '../../../db/index';
 import { vaultSecrets as vaultSecretsTable, vaultFolders as vaultFoldersTable } from '../../../db/schema';
 import { ORPCError, publishChange } from '../../kernel/kernel';
 
@@ -62,7 +63,7 @@ export async function saveFolder(input: { id?: string; name: string }) {
   if (input.id === undefined) {
     const inserted = await db.insert(vaultFoldersTable).values({ id: uuidv7(), name: input.name }).returning();
     await publishChange(CHANGE_RESOURCE.VAULT, CHANGE_ACTION.CREATE);
-    return { id: inserted[0]!.id };
+    return { id: nonNull(inserted[0]).id };
   }
   const updated = await db
     .update(vaultFoldersTable)
@@ -71,7 +72,7 @@ export async function saveFolder(input: { id?: string; name: string }) {
     .returning();
   if (updated.length === 0) throw new ORPCError('NOT_FOUND', { message: 'folder not found' });
   await publishChange(CHANGE_RESOURCE.VAULT, CHANGE_ACTION.UPDATE);
-  return { id: updated[0]!.id };
+  return { id: nonNull(updated[0]).id };
 }
 
 export async function removeFolder(input: { id: string }) {

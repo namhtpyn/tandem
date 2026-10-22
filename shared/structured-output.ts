@@ -1,9 +1,11 @@
+import { z } from 'zod';
+
 // Generic structured output over ACP turns — application-agnostic.
 // Any zod schema can be turned into (a) the output-contract instruction appended
 // to an ACP prompt and (b) a parser for the agent's trailing JSON line.
 // The agent side is prompt + parse (ACP carries plain text); the zod schema is
 // the single source of truth for both the instruction and the validation.
-import { z } from 'zod';
+import { nonNull } from '#shared/utils/non-null';
 
 export type OutputContractOptions = {
   /** replaces the default intro line */
@@ -47,7 +49,7 @@ export async function parseStructuredOutput<T extends z.ZodType>(
   if (!output) return null;
   const lines = output.trimEnd().split('\n');
   for (let i = lines.length - 1; i >= Math.max(0, lines.length - window); i--) {
-    let raw = lines[i]!.trim();
+    let raw = nonNull(lines[i]).trim();
     if (raw.startsWith('```'))
       raw = raw
         .replace(/^```(?:json)?\s*/i, '')

@@ -1,7 +1,7 @@
 // E2E: model provider registry — seeds, CRUD, model sync placeholder, agent linkage.
 import { expect, test } from '@playwright/test';
 
-import { login } from './helpers/login';
+import { login } from './helpers/login.ts';
 
 async function dismiss(page: any, text: string) {
   await page.keyboard.press('Escape');

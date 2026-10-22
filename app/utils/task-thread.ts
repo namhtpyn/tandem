@@ -55,11 +55,12 @@ export type ThreadSource = {
 export type EnvelopeKind = 'result' | 'run' | 'question' | 'blocked';
 export type RunEnvelope = { kind: EnvelopeKind; text: string };
 
+import { PROPOSAL_KIND } from '#shared/enums';
 // verdict parsing lives in shared/run-verdict (zod schema + marker fallback) —
 // re-exported here so the UI thread and the runner share one implementation.
 // (the file's own EnvelopeKind/RunEnvelope below include the 'run' thread kind)
 import { parseRunEnvelope } from '#shared/run-verdict';
-import { PROPOSAL_KIND } from '#shared/enums';
+import { nonNull } from '#shared/utils/non-null';
 export { parseRunEnvelope, RunVerdictSchema } from '#shared/run-verdict';
 
 /** Parse routing proposals from run output (structural markers, scanned anywhere):
@@ -78,11 +79,15 @@ export function parseRoutingProposals(output: string | null | undefined): Routin
     const line = raw.trim();
     const st = line.match(/^\[SUBTASKS\]\s*(.+)$/);
     if (st) {
-      const items: SubtaskProposalItem[] = st[1]!
+      const items: SubtaskProposalItem[] = nonNull(st[1])
         .split('|')
         .map((part) => {
           const seg = part.split('::').map((p) => p.trim());
-          return { title: seg[0]!.slice(0, 200), description: seg[1] || undefined, assigneeName: seg[2] || undefined };
+          return {
+            title: nonNull(seg[0]).slice(0, 200),
+            description: seg[1] || undefined,
+            assigneeName: seg[2] || undefined,
+          };
         })
         .filter((i) => i.title.length > 0);
       if (items.length) out.push({ kind: PROPOSAL_KIND.SUBTASKS, items });
@@ -90,8 +95,8 @@ export function parseRoutingProposals(output: string | null | undefined): Routin
     }
     const re = line.match(/^\[REASSIGN\]\s*(.+)$/);
     if (re) {
-      const m = re[1]!.split(/\s+—\s+|\s+--\s+/);
-      const targetName = m[0]!.trim(); // the marker regex guarantees non-empty here
+      const m = nonNull(re[1]).split(/\s+—\s+|\s+--\s+/);
+      const targetName = nonNull(m[0]).trim(); // the marker regex guarantees non-empty here
       out.push({ kind: PROPOSAL_KIND.REASSIGN, targetName, reason: m[1]?.trim() });
     }
   }
@@ -103,10 +108,10 @@ export function runOutputWithoutEnvelope(output: string | null | undefined) {
   if (!output) return '';
   const lines = output.trimEnd().split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (parseRunEnvelope(lines[i]!.trim())) {
+    if (parseRunEnvelope((lines[i] ?? '').trim())) {
       let end = i;
       // drop the fence opener left dangling above a fenced JSON verdict
-      if (i > 0 && lines[i - 1]!.trim().startsWith('```')) end = i - 1;
+      if (i > 0 && lines[i - 1]?.trim().startsWith('```')) end = i - 1;
       return lines.slice(0, end).join('\n').trim();
     }
   }

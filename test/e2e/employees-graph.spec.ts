@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { login } from './helpers/login';
+import { login } from './helpers/login.ts';
 
 test('graph view renders the supervision hierarchy', async ({ page }) => {
   const suffix = Date.now().toString(36).slice(-6);

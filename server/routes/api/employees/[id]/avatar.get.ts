@@ -17,7 +17,9 @@ import {
   getRouterParam,
 } from 'h3';
 
-import { db } from '../../../../db';
+import { nonNull } from '#shared/utils/non-null';
+
+import { db } from '../../../../db/index';
 import { user as userTable } from '../../../../db/schema';
 
 export default defineEventHandler(async (event) => {
@@ -40,7 +42,7 @@ export default defineEventHandler(async (event) => {
   const m = /^data:image\/([a-z+]+);base64,(.+)$/s.exec(row.image);
   if (!m) throw createError({ statusCode: 422, statusMessage: 'avatar not a data url' });
   const [, mime, b64] = m;
-  const body = Buffer.from(b64!, 'base64');
+  const body = Buffer.from(nonNull(b64), 'base64');
   const etag = `"${createHash('sha1').update(`${id}:${row.updatedAt.toISOString()}:${body.length}`).digest('hex')}"`;
   if (getRequestHeader(event, 'if-none-match') === etag) {
     setResponseStatus(event, 304);

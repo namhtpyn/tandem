@@ -1,3 +1,5 @@
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+
 // Vault crypto: AES-256-GCM envelope encryption for tandem secrets.
 //
 // TANDEM_VAULT_KEY is REQUIRED — 32-byte key, base64. No hardcoded fallback:
@@ -7,7 +9,7 @@
 //
 // Ciphertext format: v1:<b64 iv>:<b64 authTag>:<b64 ciphertext>
 // The key NEVER ships to the client; decrypt() is server-import-only.
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { nonNull } from '#shared/utils/non-null';
 
 import { env } from '../../kernel/env';
 
@@ -49,9 +51,9 @@ export function decryptSecret(envelope: string) {
   if (parts.length !== 4 || parts[0] !== 'v1') {
     throw new Error('malformed vault envelope');
   }
-  const iv = Buffer.from(parts[1]!, 'base64');
-  const tag = Buffer.from(parts[2]!, 'base64');
-  const ct = Buffer.from(parts[3]!, 'base64');
+  const iv = Buffer.from(nonNull(parts[1]), 'base64');
+  const tag = Buffer.from(nonNull(parts[2]), 'base64');
+  const ct = Buffer.from(nonNull(parts[3]), 'base64');
   const decipher = createDecipheriv('aes-256-gcm', getVaultKey(), iv);
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');

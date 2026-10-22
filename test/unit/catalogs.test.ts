@@ -4,8 +4,9 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import './helpers/pg';
 import { applyMigrations } from '#server/db/index';
 import { ROLE } from '#shared/enums';
+
 import './api-harness';
-import { resetSchema } from './helpers/pg';
+import { resetSchema } from './helpers/pg.ts';
 
 const admin = {
   user: {
@@ -53,7 +54,9 @@ describe('vault folders', () => {
   it('save creates, live lists with counts, remove clears', async () => {
     const { id } = (await proc(['vault', 'folders', 'save'], { name: 'Production keys' })) as { id: string };
     await proc(['vault', 'folders', 'save'], { name: 'CI tokens' });
-    const listed = (await proc(['vault', 'folders', 'list'])) as { folders: Array<{ name: string }> } | Array<{ name: string }>;
+    const listed = (await proc(['vault', 'folders', 'list'])) as
+      | { folders: Array<{ name: string }> }
+      | Array<{ name: string }>;
     const names = (Array.isArray(listed) ? listed : listed.folders).map((f) => f.name);
     const paged = (await proc(['vault', 'folders', 'listPaged'], { page: 1, pageSize: 5 })) as {
       folders: Array<{ name: string }>;
@@ -108,18 +111,24 @@ describe('vault folders', () => {
     const created = (await proc(['vault', 'secrets', 'create'], { name: 'aws-key', value: 'sk-1', folderId: id })) as {
       id: string;
     };
-    const snap = (await firstSnapshot(['vault', 'secrets', 'live'])) as { data: Array<{ id: string; folder: string | null }> };
+    const snap = (await firstSnapshot(['vault', 'secrets', 'live'])) as {
+      data: Array<{ id: string; folder: string | null }>;
+    };
     let live = snap.data;
     expect(live.find((r) => r.id === created.id)?.folder).toBe('Prod');
 
     await proc(['vault', 'folders', 'remove'], { id });
-    live = ((await firstSnapshot(['vault', 'secrets', 'live'])) as { data: Array<{ id: string; folder: string | null }> }).data;
+    live = (
+      (await firstSnapshot(['vault', 'secrets', 'live'])) as { data: Array<{ id: string; folder: string | null }> }
+    ).data;
     expect(live.find((r) => r.id === created.id)?.folder).toBeNull();
 
     // update can move a secret into an existing folder
     const f2 = (await proc(['vault', 'folders', 'save'], { name: 'Other' })) as { id: string };
     await proc(['vault', 'secrets', 'update'], { id: created.id, name: 'aws-key', value: 'sk-2', folderId: f2.id });
-    live = ((await firstSnapshot(['vault', 'secrets', 'live'])) as { data: Array<{ id: string; folder: string | null }> }).data;
+    live = (
+      (await firstSnapshot(['vault', 'secrets', 'live'])) as { data: Array<{ id: string; folder: string | null }> }
+    ).data;
     expect(live.find((r) => r.id === created.id)?.folder).toBe('Other');
   });
 
@@ -158,7 +167,9 @@ describe('vault folders', () => {
     const { id } = (await proc(['vault', 'folders', 'save'], { name: 'Before' })) as { id: string };
     const s = (await proc(['vault', 'secrets', 'create'], { name: 'k', value: 'v', folderId: id })) as { id: string };
     await proc(['vault', 'folders', 'save'], { id, name: 'After' });
-    const live = ((await firstSnapshot(['vault', 'secrets', 'live'])) as { data: Array<{ id: string; folder: string | null }> }).data;
+    const live = (
+      (await firstSnapshot(['vault', 'secrets', 'live'])) as { data: Array<{ id: string; folder: string | null }> }
+    ).data;
     expect(live.find((r) => r.id === s.id)?.folder).toBe('After');
   });
 });

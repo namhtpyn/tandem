@@ -1,13 +1,14 @@
 <script setup lang="ts">
+import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query';
+
+import { CHANGE_RESOURCE, PROPOSAL_KIND, type ProposalKind } from '#shared/enums';
+import { STATUS } from '#shared/status';
 // Task detail — Paperclip-style layout: chat-like main content (description bubble,
 // run turns, activity notes, composer at the bottom) + right sidebar with task info
 // (status, assignee, reviewers, workflow actions). Mobile-first: single column,
 // sidebar collapses into a sheet. Streams stay persistent (one per feed, aborted
 // on unmount) — see the stream law in AGENTS.md.
-import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query';
-
-import { CHANGE_RESOURCE, PROPOSAL_KIND, type ProposalKind } from '#shared/enums';
-import { STATUS } from '#shared/status';
+import { nonNull } from '#shared/utils/non-null';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '~/utils/task-thread';
 import type { ThreadItem } from '~/utils/task-thread';
@@ -85,7 +86,8 @@ const reviewChecklist = computed(() => {
   }>;
   const employees = (unref(employeesLive.data) ?? []) as unknown as Array<{ userId: string; name: string }>;
   const nameOf = (id: string) => employees.find((e) => e.userId === id)?.name ?? 'reviewer';
-  const maxRound = rows.reduce((m, r) => Math.max(m, r.round), 0);
+  let maxRound = 0;
+  for (const r of rows) maxRound = Math.max(maxRound, r.round);
   return {
     current: rows.filter((r) => r.round === maxRound).map((r) => ({ ...r, name: nameOf(r.reviewerId) })),
     history: rows.filter((r) => r.round < maxRound).map((r) => ({ ...r, name: nameOf(r.reviewerId) })),
@@ -176,10 +178,10 @@ const briefParts = computed(() => {
   const re = /!\[([^\]]*)\]\(attachment-([^)]+)\)|@\[([^\]]*)\]\(attachment-([^)]+)\)/g;
   let last = 0;
   for (const m of desc.matchAll(re)) {
-    if (m.index! > last) pushText(desc.slice(last, m.index));
-    if (m[2] !== undefined) parts.push({ type: 'image', id: m[2]!, alt: m[1]! });
-    else parts.push({ type: 'file', id: m[4]!, name: m[3]! });
-    last = m.index! + m[0].length;
+    if (nonNull(m.index) > last) pushText(desc.slice(last, m.index));
+    if (m[2] !== undefined) parts.push({ type: 'image', id: nonNull(m[2]), alt: nonNull(m[1]) });
+    else parts.push({ type: 'file', id: nonNull(m[4]), name: nonNull(m[3]) });
+    last = nonNull(m.index) + m[0].length;
   }
   if (last < desc.length) pushText(desc.slice(last));
   return parts;
@@ -189,9 +191,9 @@ const briefParts = computed(() => {
     const re = /@\[([^\]]+)\]\(mention-[^)]+\)|\[@\s*id="[^"]*"\s+label="([^"]+)"\]/g;
     let at = 0;
     for (const m of text.matchAll(re)) {
-      if (m.index! > at) parts.push({ type: 'text', body: text.slice(at, m.index) });
+      if (nonNull(m.index) > at) parts.push({ type: 'text', body: text.slice(at, m.index) });
       parts.push({ type: 'mention', label: m[1] ?? m[2] ?? '' });
-      at = m.index! + m[0].length;
+      at = nonNull(m.index) + m[0].length;
     }
     if (at < text.length) parts.push({ type: 'text', body: text.slice(at) });
   }
@@ -283,7 +285,11 @@ interface ChildRow {
 interface ProposalRow {
   id: string;
   kind: ProposalKind;
-  payload: Record<string, any>;
+  payload: {
+    items?: Array<{ title: string; assigneeName?: string }>;
+    targetName?: string;
+    reason?: string;
+  };
   status: string;
   decisionNote: string;
   createdAt: string;
@@ -368,9 +374,9 @@ async function decideProposal(id: string, action: 'confirmProposal' | 'rejectPro
       json: { events?: string[] };
     };
     proposalMessage.value = r.json.events?.length ? r.json.events.join('; ') : 'done';
-    await refreshRoutingPanels(task.value!.id);
-    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, task.value!.id] });
-    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.RUNS, task.value!.id] });
+    await refreshRoutingPanels(nonNull(task.value).id);
+    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, nonNull(task.value).id] });
+    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.RUNS, nonNull(task.value).id] });
   } catch (e) {
     proposalMessage.value =
       (e as { data?: { json?: { message?: string } }; message?: string }).data?.json?.message ?? (e as Error).message;
@@ -380,13 +386,13 @@ async function decideProposal(id: string, action: 'confirmProposal' | 'rejectPro
 }
 
 const parentTask = computed(() =>
-  task.value?.parentTaskId ? (tasks.value.find((t) => t.id === task.value!.parentTaskId) ?? null) : null,
+  task.value?.parentTaskId ? (tasks.value.find((t) => t.id === nonNull(task.value).parentTaskId) ?? null) : null,
 );
 const openProposals = computed(() => proposalRows.value.filter((p) => p.status === 'proposed'));
 const assignmentLines = computed(() => {
   const rows = [...assignmentRows.value].reverse(); // oldest first
   return rows.map((r, i) => {
-    const from = i === 0 ? '∅' : (rows[i - 1]!.employeeName ?? '∅');
+    const from = i === 0 ? '∅' : rows[i - 1] ? nonNull(rows[i - 1]).employeeName : '∅';
     return `${from} → ${r.employeeName ?? '∅'}${r.reason ? ` (${r.reason})` : ''}`;
   });
 });

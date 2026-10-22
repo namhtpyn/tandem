@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
 
 import { RUN_STATUS } from '#shared/enums';
-import { login } from './helpers/login';
+
+import { login } from './helpers/login.ts';
 
 async function dismiss(page: any, text: string) {
   await page.keyboard.press('Escape');

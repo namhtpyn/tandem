@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { login } from './helpers/login';
+import { login } from './helpers/login.ts';
 
 test('board view renders columns from statuses and moves a task', async ({ page }) => {
   await login(page);

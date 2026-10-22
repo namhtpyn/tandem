@@ -2,7 +2,7 @@
 // defaults; OIDC providers live under key 'oidc_providers' as JSON.
 import { eq } from 'drizzle-orm';
 
-import { db } from '../../db';
+import { db } from '../../db/index';
 import { settings } from '../../db/schema';
 
 export async function getSetting(key: string) {

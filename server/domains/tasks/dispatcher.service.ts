@@ -1,15 +1,16 @@
-// Dispatcher: scans for eligible tasks (ready-category status + AI assignee)
-// and dispatches them to the runner. One task at a time per agent (serial);
-// extra ready tasks queue until the agent is idle. Intended to run on a
-// server-side interval (boot plugin), skippable in tests via env.
 import { consola } from 'consola';
 import { eq } from 'drizzle-orm';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
+// Dispatcher: scans for eligible tasks (ready-category status + AI assignee)
+// and dispatches them to the runner. One task at a time per agent (serial);
+// extra ready tasks queue until the agent is idle. Intended to run on a
+// server-side interval (boot plugin), skippable in tests via env.
+import { nonNull } from '#shared/utils/non-null';
 
-import { db } from '../../db';
-import { tasks, taskRuns, taskStatuses, aiEmployees } from '../../db/schema';
+import { db } from '../../db/index';
+import { tasks, taskRuns } from '../../db/schema';
 import { publishChange } from '../kernel/change-bus';
 import { env } from '../kernel/env';
 import { redisQueue } from '../kernel/queue';
@@ -51,7 +52,7 @@ async function reapStaleRunsInner() {
     const newest = latest.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0];
     if (newest?.id === run.id) {
       // FK cascade: a present run implies its task row exists
-      const current = (await db.query.tasks.findMany({ where: { id: { eq: run.taskId } } }))[0]!;
+      const current = nonNull((await db.query.tasks.findMany({ where: { id: { eq: run.taskId } } }))[0]);
       const streak = current.failStreak + 1;
       const waitMs = 15 * 60_000; // timeout = worst tier; something is wrong with the agent
       await db
@@ -78,8 +79,7 @@ export async function findEligible(): Promise<{ taskId: string; employeeId: stri
   const statuses = await db.query.taskStatuses.findMany();
   const readyIds = statuses.filter((s) => s.category === 'ready').map((s) => s.id);
   if (readyIds.length === 0) return null;
-  const { getTasksPerAgent } = await import('../settings/settings.service');
-  const cap = await getTasksPerAgent();
+
   const rows = await db.query.tasks.findMany();
   const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true } });
   const aiIds = new Set(aiRows.map((r) => r.userId));
@@ -90,7 +90,7 @@ export async function findEligible(): Promise<{ taskId: string; employeeId: stri
     .filter((t) => !t.dispatchAfter || t.dispatchAfter.getTime() <= now)
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   const first = eligible[0];
-  return first ? { taskId: first.id, employeeId: first.assigneeId! } : null;
+  return first ? { taskId: first.id, employeeId: nonNull(first.assigneeId) } : null;
 }
 
 /** one scan step: claim + dispatch at most one task. Returns true if dispatched. */

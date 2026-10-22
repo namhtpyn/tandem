@@ -5,9 +5,9 @@ import { z } from 'zod';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
-import { db } from '../../db';
-import { modelProviders as modelProvidersTable, vaultSecrets as vaultSecretsTable } from '../../db/schema';
-import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { db } from '../../db/index';
+import { vaultSecrets as vaultSecretsTable } from '../../db/schema';
+import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 
 async function getSettingsSnapshot() {
   const { getSettings } = await import('./settings.service');

@@ -2,7 +2,7 @@
 // with parent chip, parent auto-block while children are open (user laws, 2026-10-15).
 import { expect, test } from '@playwright/test';
 
-import { login } from './helpers/login';
+import { login } from './helpers/login.ts';
 
 test('inbox toggle filters to tasks pending on me and shows a badge', async ({ page }) => {
   const suffix = Date.now();

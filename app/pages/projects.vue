@@ -128,7 +128,7 @@ async function remove_() {
 
 const statusColor = (s: string) => (s === PROJECT_STATUS.ARCHIVED ? 'neutral' : 'success');
 
-onServerPrefetch(() => Promise.all([liveQuery.suspense()]));
+onServerPrefetch(() => liveQuery.suspense());
 </script>
 
 <template>

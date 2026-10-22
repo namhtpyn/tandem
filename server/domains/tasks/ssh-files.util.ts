@@ -29,12 +29,7 @@ export function taskFilesOutDir(taskId: string) {
  * task has no input attachments. Without it the dir never exists, agents "write
  * deliverables" into a void (or mangle the path), and collection finds nothing.
  * (incident 7d06bae0, 2026-10-16: 9 screenshots claimed, 0 collected) */
-export async function ensureOutDir(
-  ClientCtor: typeof Client,
-  plan: SshFilePlan,
-  taskId: string,
-  timeoutMs?: number,
-) {
+export async function ensureOutDir(ClientCtor: typeof Client, plan: SshFilePlan, taskId: string, timeoutMs?: number) {
   const conn = await connect(ClientCtor, plan, timeoutMs);
   try {
     const out = taskFilesOutDir(taskId);

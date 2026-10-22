@@ -1,6 +1,15 @@
 import { defineConfig } from 'oxlint';
 export default defineConfig({
-  plugins: ['typescript', 'unicorn', 'oxc', 'vue', 'typescript', 'vitest', 'eslint', 'import', 'promise', 'node'],
+  ignorePatterns: [
+    '**/test/**',
+    '**/.output/**',
+    '**/node_modules/**',
+    '**/.nuxt/**',
+    '**/converage/**',
+    '**/data/**',
+    '**/drizzle/**',
+  ],
+  plugins: ['typescript', 'unicorn', 'oxc', 'vue', 'typescript', 'vitest', 'eslint', 'promise', 'node'],
   categories: {
     restriction: 'error',
     correctness: 'error',
@@ -21,6 +30,12 @@ export default defineConfig({
     'unicorn/no-process-exit': 'off',
 
     'eslint/no-use-before-define': 'off',
+    'import/no-relative-parent-imports': 'off',
+    'eslint/no-void': 'off',
+    'eslint/no-empty-function': 'off',
+    'no-plusplus': 'off',
+
+    'vue/max-props': 'off',
   },
   env: {
     builtin: true,

@@ -1,7 +1,5 @@
 <script setup lang="ts">
 useHead({ title: 'Tasks' });
-// Tasks: work items for human + AI employees. Mobile-first card list with
-// status pills; editor modal follows the shared structure (body + #footer).
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query';
 import { Extension } from '@tiptap/core';
 import type { Editor } from '@tiptap/core';
@@ -9,6 +7,9 @@ import { Plugin, PluginKey } from '@tiptap/pm/state';
 
 import { CHANGE_RESOURCE, ACTIVITY_KIND } from '#shared/enums';
 import { STATUS } from '#shared/status';
+// Tasks: work items for human + AI employees. Mobile-first card list with
+// status pills; editor modal follows the shared structure (body + #footer).
+import { nonNull } from '#shared/utils/non-null';
 import type { EditorView, ClipboardEventLike, DragEventLike } from '~/types/editor-typing';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 
@@ -270,7 +271,7 @@ function openStatusEditor(row?: import('~/utils/orpc-types').TaskStatusRow) {
   statusForm.color = (row?.color as typeof statusForm.color | undefined) ?? 'neutral';
   statusForm.position = row?.position ?? statuses.value.length;
   statusForm.category = (row?.category as typeof statusForm.category | undefined) ?? 'backlog';
-  statusForm.nextIds = row ? [...row.nextIds] : statuses.value.length > 0 ? [statuses.value[0]!.id] : [];
+  statusForm.nextIds = row ? [...row.nextIds] : statuses.value.length > 0 ? [nonNull(statuses.value[0]).id] : [];
   statusMessage.value = '';
   statusEditorTouched.value = true;
   statusManagerOpen.value = false;

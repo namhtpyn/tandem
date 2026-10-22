@@ -10,8 +10,8 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
-import { db } from '../../db';
-import { tasks, taskReviews, taskRuns, aiEmployees } from '../../db/schema';
+import { db } from '../../db/index';
+import { tasks, taskReviews, taskRuns } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { spawnObligation, cancelObligations, cancelAllObligations, resolveObligation } from './obligations.service';
 import { dispatchTask } from './runner.service';
@@ -31,7 +31,7 @@ import {
 import { STATUS } from '#shared/status';
 
 const TODO_STATUS = STATUS.todo;
-const IN_REVIEW_STATUS = STATUS.inReview;
+
 const DONE_STATUS = STATUS.done;
 const CANCELLED_STATUS = STATUS.cancelled;
 
@@ -92,7 +92,6 @@ export async function openRoundLive(taskId: string) {
     .from(taskReviews)
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
   return (
-    rows.length > 0 &&
     rows.some((r) => r.status === REVIEW_STATUS.PENDING) &&
     !rows.some((r) => r.status === REVIEW_STATUS.CHANGE_REQUESTED || r.status === REVIEW_STATUS.REJECTED)
   );
@@ -107,7 +106,9 @@ async function latestSubmittedBody(taskId: string) {
     .where(eq(taskActivity.taskId, taskId))
     .orderBy(desc(taskActivity.createdAt))
     .limit(50);
-  const submitted = rows.find((a) => a.kind === ACTIVITY_KIND.VERDICT && (a.meta as Record<string, unknown> | null)?.submitted);
+  const submitted = rows.find(
+    (a) => a.kind === ACTIVITY_KIND.VERDICT && (a.meta as Record<string, unknown> | null)?.submitted,
+  );
   /* v8 ignore next -- the submit activity always carries a body in practice */
   return submitted?.body ?? '';
 }
@@ -194,7 +195,7 @@ export async function recordVerdict(
     .select()
     .from(taskReviews)
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
-  const all = roundRows.filter((r) => r.status === REVIEW_STATUS.APPROVED);
+
   const unanimous = roundRows.length > 0 && roundRows.every((r) => r.status === REVIEW_STATUS.APPROVED);
 
   if (verdict === REVIEW_STATUS.REJECTED) {
@@ -202,7 +203,10 @@ export async function recordVerdict(
     await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
     await db.update(tasks).set({ status: CANCELLED_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     /* v8 ignore next -- tests always pass a note; the fallback text is defensive */
-    await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || 'rejected — task cancelled', { rejected: true, round });
+    await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || 'rejected — task cancelled', {
+      rejected: true,
+      round,
+    });
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'cancelled' };
   }
@@ -211,7 +215,10 @@ export async function recordVerdict(
     // back to ready so the assignee resumes with the note riding the next brief
     await db.update(tasks).set({ status: TODO_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     /* v8 ignore next -- tests always pass a note; the fallback text is defensive */
-    await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || 'changes requested', { changeRequested: true, round });
+    await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || 'changes requested', {
+      changeRequested: true,
+      round,
+    });
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'returned' };
   }
@@ -227,7 +234,10 @@ export async function recordVerdict(
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'done' };
   }
-  await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || REVIEW_STATUS.APPROVED, { approved: true, round });
+  await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || REVIEW_STATUS.APPROVED, {
+    approved: true,
+    round,
+  });
   return { outcome: 'waiting' };
 }
 

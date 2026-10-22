@@ -56,7 +56,7 @@ function makeQc() {
 }
 
 async function loadMod() {
-  return await import('../../app/composables/useChangeEvents');
+  return await import('../../app/composables/useChangeEvents.ts');
 }
 
 beforeEach(() => {
@@ -145,6 +145,4 @@ describe('useChangeEvents', () => {
     // loop saw stopped=true and exited — no reconnect attempt
     expect(live).toHaveBeenCalledTimes(1);
   });
-
-
 });

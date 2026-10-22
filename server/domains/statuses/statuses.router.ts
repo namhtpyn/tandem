@@ -1,20 +1,15 @@
 import { os } from '@orpc/server';
 // statuses router — business logic lives in services/utils; this file only wires procedures
-import { asc, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { nonNull } from '#shared/utils/non-null';
 
-import { db } from '../../db';
-import {
-  aiEmployees as aiEmployeesTable,
-  projects as projectsTable,
-  taskStatuses as taskStatusesTable,
-  tasks as tasksTable,
-  user as userTable,
-} from '../../db/schema';
-import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { db } from '../../db/index';
+import { projects as projectsTable, taskStatuses as taskStatusesTable, tasks as tasksTable } from '../../db/schema';
+import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 
 async function listStatuses() {
   const rows = await db.query.taskStatuses.findMany({ orderBy: { position: 'asc' } });
@@ -128,7 +123,7 @@ export const statusesRouter = os.router({
         .select({ name: projectsTable.name })
         .from(projectsTable)
         .where(eq(projectsTable.id, task.projectId));
-      projName = projRows.length > 0 ? projRows[0]!.name : null;
+      projName = projRows.length > 0 ? nonNull(projRows[0]).name : null;
     }
 
     const { pickAssignee } = await import('./decision.service');

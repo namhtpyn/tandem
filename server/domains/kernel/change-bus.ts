@@ -2,7 +2,7 @@
 // Every mutation publishes; live generators re-emit fresh snapshots over SSE.
 import { MemoryPublisher } from '@orpc/publisher/memory';
 
-import { CHANGE_ACTION, type ChangeAction, CHANGE_RESOURCE, type ChangeResource } from '#shared/enums';
+import type { ChangeAction, ChangeResource } from '#shared/enums';
 
 export type { ChangeAction, ChangeResource };
 import { redisPubsub } from './pubsub';

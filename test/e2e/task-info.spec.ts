@@ -3,7 +3,7 @@
 // carries the same info, back link returns to the list.
 import { expect, test } from '@playwright/test';
 
-import { login } from './helpers/login';
+import { login } from './helpers/login.ts';
 
 test('task title click opens the task detail page', async ({ page }) => {
   await login(page);

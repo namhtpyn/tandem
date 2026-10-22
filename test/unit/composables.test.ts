@@ -42,14 +42,14 @@ beforeEach(() => {
 
 describe('useAppSession', () => {
   it('defaults: null session, null auth-config, dev version', async () => {
-    const m = await import('../../app/composables/useAppSession');
+    const m = await import('../../app/composables/useAppSession.ts');
     expect(m.useAppSession().value).toBeNull();
     expect(m.useAuthConfigState().value).toBeNull();
     expect(m.useAppVersion().value).toBe('dev');
   });
 
   it('shares one state instance per key', async () => {
-    const m = await import('../../app/composables/useAppSession');
+    const m = await import('../../app/composables/useAppSession.ts');
     m.useAppSession().value = {
       user: { id: 'x', name: 'X', email: 'x@x', role: ROLE.ADMIN },
       session: { expiresAt: 'later' },
@@ -60,7 +60,7 @@ describe('useAppSession', () => {
 
 describe('useSessionRefreshing', () => {
   it('refreshSession clears the session when the client throws', async () => {
-    const m = await import('../../app/composables/useAppSession');
+    const m = await import('../../app/composables/useAppSession.ts');
     m.useAppSession().value = {
       user: { id: 'old', name: 'Old', email: 'o@x', role: ROLE.ADMIN },
       session: { expiresAt: 't' },
@@ -88,7 +88,7 @@ describe('useSessionRefreshing', () => {
       user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'U', email: 'u@x', role: ROLE.VIEWER },
       session: { expiresAt: 't' },
     };
-    const m = await import('../../app/composables/useAppSession');
+    const m = await import('../../app/composables/useAppSession.ts');
     const { refreshSession } = m.useSessionRefreshing();
     await refreshSession();
     expect(m.useAppSession().value?.user.id).toBe('00000000-0000-7000-8000-c5ea71554c77');
@@ -98,7 +98,7 @@ describe('useSessionRefreshing', () => {
     currentFetch = async () => {
       throw new Error('network down');
     };
-    const m = await import('../../app/composables/useAppSession');
+    const m = await import('../../app/composables/useAppSession.ts');
     m.useAppSession().value = {
       user: { id: 'old', name: 'O', email: 'o@x', role: ROLE.ADMIN },
       session: { expiresAt: 't' },
@@ -109,7 +109,7 @@ describe('useSessionRefreshing', () => {
   });
 
   it('sees import.meta.client as true under the define', async () => {
-    const probe = await import('../../app/composables/useAppSession');
+    const probe = await import('../../app/composables/useAppSession.ts');
     // if define worked, useSessionRefreshing registers lifecycle hooks; assert via side effect
     const before = mounted.length;
     probe.useSessionRefreshing();
@@ -120,7 +120,7 @@ describe('useSessionRefreshing', () => {
     const add = vi.fn();
     const remove = vi.fn();
     (globalThis as unknown as { window: unknown }).window = { addEventListener: add, removeEventListener: remove };
-    const m = await import('../../app/composables/useAppSession');
+    const m = await import('../../app/composables/useAppSession.ts');
     m.useSessionRefreshing();
     expect(mounted).toHaveLength(1);
     mounted[0]!();

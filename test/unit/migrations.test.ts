@@ -9,7 +9,8 @@ import { describe, expect, it, beforeEach } from 'vitest';
 
 import { applyMigrations } from '#server/db/index';
 import { env, setEnv } from '#server/domains/kernel/env';
-import { resetSchema, postgres } from './helpers/pg';
+
+import { resetSchema, postgres } from './helpers/pg.ts';
 
 describe('applyMigrations', () => {
   beforeEach(async () => {
@@ -67,7 +68,6 @@ describe('applyMigrations', () => {
       setEnv({ TANDEM_DRIZZLE_DIR: undefined });
     }
   });
-
 });
 
 describe('folderMillis', () => {

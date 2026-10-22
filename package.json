@@ -22,7 +22,11 @@
     "test:e2e": "bunx --bun playwright test",
     "test:e2e:ui": "bunx --bun playwright test --ui",
     "postinstall": "nuxt prepare",
-    "gen:auth": "bun run scripts/gen-auth-schema.ts"
+    "gen:auth": "bun run scripts/gen-auth-schema.ts",
+    "lint:fix": "bunx --bun oxlint --fix",
+    "lint:check": "bunx --bun oxlint",
+    "format": "bunx --bun oxfmt",
+    "format:check": "bunx --bun oxfmt --check"
   },
   "dependencies": {
     "@better-auth/api-key": "1.7.12",
@@ -68,8 +72,6 @@
     "bun-types": "1.4.3",
     "drizzle-kit": "1.0.0-rc.5",
     "happy-dom": "21.0.4",
-    "oxfmt": "0.74.0",
-    "oxlint": "1.89.0",
     "semantic-release": "25.0.9",
     "type-fest": "5.10.0",
     "typescript": "npm:typescript-native-bridge@6.0.3-bridge.18.tsgo.7.0.2",

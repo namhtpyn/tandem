@@ -1,14 +1,14 @@
-// Secret service — vault secret rows: list mapping, audit trail, CRUD.
-// Values are envelope-encrypted via ./secret-crypto.service; plaintext never
-// leaves the server (list returns metadata + last-four hint only).
-import { EmptyFilter, desc, eq } from 'drizzle-orm';
+import { EmptyFilter, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+// Secret service — vault secret rows: list mapping, audit trail, CRUD.
+// Values are envelope-encrypted via ./secret-crypto.service; plaintext never
+// leaves the server (list returns metadata + last-four hint only).
+import { nonNull } from '#shared/utils/non-null';
 
-import type { VaultSecretRow } from '#shared/types';
-import { db } from '../../../db';
-import { vaultSecrets as vaultSecretsTable, vaultFolders as vaultFoldersTable } from '../../../db/schema';
+import { db } from '../../../db/index';
+import { vaultSecrets as vaultSecretsTable } from '../../../db/schema';
 import { ORPCError, publishChange } from '../../kernel/kernel';
 import { folderExists } from '../folder/folder.service';
 import { encryptSecret, lastFourHint } from './secret-crypto.service';
@@ -35,9 +35,10 @@ export async function listVaultSecrets(input: ListVaultSecretsInput = {}) {
   const q = input.q?.trim() || undefined;
   const folderFilter = folderId ? { folderId: { eq: folderId } } : undefined;
   const searchFilter = q ? { OR: [{ name: { ilike: `%${q}%` } }, { description: { ilike: `%${q}%` } }] } : undefined;
-  const where = folderFilter && searchFilter
-    ? { AND: [folderFilter, searchFilter] }
-    : (folderFilter ?? searchFilter ?? EmptyFilter);
+  const where =
+    folderFilter && searchFilter
+      ? { AND: [folderFilter, searchFilter] }
+      : (folderFilter ?? searchFilter ?? EmptyFilter);
   const { data, total } = await db.query.vaultSecrets.findManyAndCount({
     with: { folder: true },
     where: where as never,
@@ -71,13 +72,13 @@ export async function createSecret(
     })
     .returning();
   await publishChange(CHANGE_RESOURCE.VAULT, CHANGE_ACTION.CREATE);
-  return toVaultRow(inserted[0]!);
+  return toVaultRow(nonNull(inserted[0]));
 }
 
 /** value can be replaced but NEVER read back through the API; leaving it empty keeps the stored secret */
 export async function updateSecret(
   input: { id: string; name: string; description: string; value?: string; folderId: string | null },
-  actorId: string,
+  _actorId: string,
 ) {
   const { id, value, ...meta } = input;
   if (meta.folderId != null && !(await folderExists(meta.folderId))) {
@@ -98,10 +99,10 @@ export async function updateSecret(
     throw new ORPCError('NOT_FOUND', { message: 'secret not found' });
   }
   await publishChange(CHANGE_RESOURCE.VAULT, CHANGE_ACTION.UPDATE);
-  return toVaultRow(updated[0]!);
+  return toVaultRow(nonNull(updated[0]));
 }
 
-export async function removeSecret(input: { id: string }, actorId: string) {
+export async function removeSecret(input: { id: string }, _actorId: string) {
   const deleted = await db
     .delete(vaultSecretsTable)
     .where(eq(vaultSecretsTable.id, input.id))

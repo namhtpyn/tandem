@@ -30,7 +30,7 @@ if (v.version) appVersion.value = v.version;
     <NuxtRouteAnnouncer />
     <a
       href="#main"
-      class="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-[100] focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-inverted"
+      class="focus:bg-primary focus:text-inverted sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:rounded-md focus:px-3 focus:py-2"
     >
       Skip to main content
     </a>

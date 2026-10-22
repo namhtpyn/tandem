@@ -5,14 +5,13 @@
 //   - last child lands terminal → parent restores pre_block_status (or 'todo')
 //   - recursive by construction: a child isn't complete while ITS children are open,
 //     because the same rule keeps that child non-terminal until its own gate lifts.
-import { and, eq, inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
-import { OBLIGATION_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
-import { db } from '../../db';
+import { db } from '../../db/index';
 import { tasks, taskActivity, taskStatuses } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 

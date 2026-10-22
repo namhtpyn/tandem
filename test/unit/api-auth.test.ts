@@ -5,8 +5,9 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import './helpers/pg';
 import { applyMigrations } from '#server/db/index';
 import { ROLE } from '#shared/enums';
+
 import './api-harness';
-import { resetSchema } from './helpers/pg';
+import { resetSchema } from './helpers/pg.ts';
 
 const admin = {
   user: {

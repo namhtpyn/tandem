@@ -13,7 +13,8 @@ import { tasks, taskAttachments, user as userTable } from '#server/db/schema';
 import { saveAttachmentBytes, sha256Hex } from '#server/domains/tasks/attachments.util';
 import { ROLE } from '#shared/enums';
 import { STATUS } from '#shared/status';
-import { resetSchema } from './helpers/pg';
+
+import { resetSchema } from './helpers/pg.ts';
 
 /** minimal node IncomingMessage carrying a raw body buffer + content-type */
 function fakeNodeReq(url: string, body: Buffer, contentType: string, method = 'POST'): IncomingMessage {

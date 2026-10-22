@@ -5,7 +5,8 @@ import './helpers/pg';
 import { applyMigrations } from '#server/db/index';
 import { getOidcProviders, saveOidcProviders } from '#server/domains/auth/oidc.service';
 import { env, setEnv } from '#server/domains/kernel/env';
-import { resetSchema } from './helpers/pg';
+
+import { resetSchema } from './helpers/pg.ts';
 
 describe('oidc registry', () => {
   beforeEach(async () => {

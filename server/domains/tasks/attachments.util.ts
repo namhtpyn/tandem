@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto';
+import { mkdir, rm } from 'node:fs/promises';
+import path from 'node:path';
+
 // Task attachments: metadata rows in task_attachments, bytes on disk under
 // a per-task directory <DATA_ROOT>/tasks/<taskId>/attachments/<id> (DATA_ROOT
 // defaults to /tandem — all Tandem data lives under /tandem/**; mount one volume
@@ -5,9 +9,7 @@
 // Two kinds: 'input' (uploaded by a human into the task description) and 'output'
 // (collected from the agent sandbox after a run).
 // The agent-side staging mirror uses the same per-task shape: ~/.tandem/<taskId>/attachments/.
-import { createHash } from 'node:crypto';
-import { mkdir, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { nonNull } from '#shared/utils/non-null';
 
 import { env } from '../kernel/env';
 
@@ -34,7 +36,7 @@ export const ATTACHMENT_MIME_ALLOWLIST = new Set([
 
 /** normalize + allowlist a mime; unknown -> application/octet-stream (rejected by callers) */
 export function normalizeMime(raw: string | undefined | null) {
-  const m = (raw || '').toLowerCase().split(';')[0]!.trim();
+  const m = nonNull((raw || '').toLowerCase().split(';')[0]).trim();
   return m || 'application/octet-stream';
 }
 
@@ -59,12 +61,12 @@ function idSafe(id: string) {
 export function attachmentPath(taskId: string, id: string) {
   if (!idSafe(taskId)) throw new Error('bad task id');
   if (!idSafe(id)) throw new Error('bad attachment id');
-  return join(dataRoot(), 'tasks', taskId, 'attachments', id);
+  return path.join(dataRoot(), 'tasks', taskId, 'attachments', id);
 }
 
 export function taskAttachmentsDir(taskId: string) {
   if (!idSafe(taskId)) throw new Error('bad task id');
-  return join(dataRoot(), 'tasks', taskId, 'attachments');
+  return path.join(dataRoot(), 'tasks', taskId, 'attachments');
 }
 
 export async function saveAttachmentBytes(taskId: string, id: string, bytes: Buffer | Uint8Array) {
@@ -92,8 +94,8 @@ export function sha256Hex(bytes: Buffer) {
  *  ![label](attachment-<id>) for images, @[label](attachment-<id>) for files. */
 export function extractAttachmentIds(description: string) {
   const ids = new Set<string>();
-  for (const m of description.matchAll(/!\[[^\]]*\]\(attachment-([^)]+)\)/g)) ids.add(m[1]!);
-  for (const m of description.matchAll(/@\[[^\]]*\]\(attachment-([^)]+)\)/g)) ids.add(m[1]!);
+  for (const m of description.matchAll(/!\[[^\]]*\]\(attachment-([^)]+)\)/g)) ids.add(nonNull(m[1]));
+  for (const m of description.matchAll(/@\[[^\]]*\]\(attachment-([^)]+)\)/g)) ids.add(nonNull(m[1]));
   return [...ids];
 }
 

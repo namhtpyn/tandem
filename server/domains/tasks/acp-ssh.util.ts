@@ -5,6 +5,8 @@
 // Byte-count framing: `eval "$(head -c N)"` reads EXACTLY N bytes of stdin as
 // the env blob; everything written after those N bytes is the ACP JSON-RPC
 // stream for the exec'd agent process.
+import { nonNull } from '#shared/utils/non-null';
+
 import type { AcpStream } from './acp.client';
 import type { SshPlan } from './ssh-exec.util';
 
@@ -19,7 +21,7 @@ export async function openAcpSshStream(
   plan: SshPlan,
   envBlob: string,
   acpExecutable: string,
-  onLine: (line: string) => void,
+  _onLine: (line: string) => void,
 ): Promise<AcpStream> {
   const { loadClient } = await import('./ssh-exec.util');
   const ClientCtor = await loadClient();
@@ -31,17 +33,18 @@ export async function openAcpSshStream(
   let stream: { write: (d: Buffer | string) => void; close: () => void; signal: (s: string) => void } | null = null;
   let stdoutBuf = '';
   let stderrBuf = '';
-  let ready: ((v: void) => void) | null = null;
+  let ready: (() => void) | null = null;
   let fail: ((e: Error) => void) | null = null;
   const readyPromise = new Promise<void>((resolve, reject) => {
-    ((ready = resolve), (fail = reject));
+    ready = resolve;
+    fail = reject;
   });
 
   const splitLines = (buf: string, chunk: string, emit: (l: string) => void) => {
     const all = buf + chunk;
     const parts = all.split('\n');
     for (const p of parts.slice(0, -1)) if (p.trim()) emit(p);
-    return parts[parts.length - 1]!; // split always yields a tail element
+    return nonNull(parts[parts.length - 1]); // split always yields a tail element
   };
 
   conn
@@ -58,7 +61,7 @@ export async function openAcpSshStream(
           },
         ) => {
           if (err) {
-            fail!(new Error(`acp exec error: ${err.message}`));
+            nonNull(fail)(new Error(`acp exec error: ${err.message}`));
             try {
               conn.end();
             } catch {
@@ -80,12 +83,12 @@ export async function openAcpSshStream(
           // env blob first (consumed by head -c N), then the channel stays open for
           // JSON-RPC — written synchronously here, so every later write is protocol
           s.write(envBlob);
-          ready!();
+          nonNull(ready)();
         },
       );
     })
     .on('error', (err: Error) => {
-      fail!(new Error(`acp ssh error: ${err.message}`));
+      nonNull(fail)(new Error(`acp ssh error: ${err.message}`));
     })
     .connect({
       host: plan.env.host,

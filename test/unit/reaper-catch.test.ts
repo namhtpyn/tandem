@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 
 import './api-harness';
-import { resetSchema } from './helpers/pg';
+import { resetSchema } from './helpers/pg.ts';
 
 describe('reaper failure arm', () => {
   it('returns 0 when the DB schema is gone', async () => {

@@ -2,14 +2,15 @@
 // raw-body path), requireSession 401, auth-session success path, ready 503,
 // oidc edit-failure, settings payload arms.
 import { consola } from 'consola';
-import { describe, expect, it, beforeEach , vi } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 import './api-harness';
-import { resetSchema } from './helpers/pg';
 import { sqlClient } from '#server/db/index';
 import { env, setEnv } from '#server/domains/kernel/env';
 import { ROLE } from '#shared/enums';
-import { call } from './api-harness';
+
+import { call } from './api-harness.ts';
+import { resetSchema } from './helpers/pg.ts';
 
 beforeEach(async () => {
   await resetSchema();

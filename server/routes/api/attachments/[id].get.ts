@@ -1,10 +1,8 @@
-import { eq } from 'drizzle-orm';
 // GET /api/attachments/:id — serve an attachment's bytes (authed; session-gated like
 // the avatar route, but NO immutable caching: outputs are re-uploaded per run).
 import { defineEventHandler, createError, getRequestHeader, getRequestHeaders, getRouterParam } from 'h3';
 
-import { db } from '../../../db';
-import { taskAttachments } from '../../../db/schema';
+import { db } from '../../../db/index';
 import { buildServerContext } from '../../../domains/kernel/context';
 import { attachmentPath, mimeAllowed } from '../../../domains/tasks/attachments.util';
 

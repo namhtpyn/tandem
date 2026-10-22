@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
 
 import { env } from '../kernel/env';
@@ -65,7 +67,7 @@ export async function probeSsh(
 async function writeAskpass(password: string) {
   const { mkdtemp, chmod } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
-  const path = await import('node:path');
+
   const dir = await mkdtemp(path.join(tmpdir(), 'tandem-askpass-'));
   const script = path.join(dir, 'askpass.sh');
   const encoded = Buffer.from(password, 'utf8').toString('base64');
@@ -87,9 +89,9 @@ async function cleanupAskpass(dir?: string) {
 /** Write an optional private key to a 0600 temp file; undefined when no key. */
 async function writeIdentity(privateKey?: string) {
   if (!privateKey) return undefined;
-  const { mkdtemp, chmod, rm } = await import('node:fs/promises');
+  const { mkdtemp, chmod } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
-  const path = await import('node:path');
+
   const dir = await mkdtemp(path.join(tmpdir(), 'tandem-ssh-'));
   const file = path.join(dir, 'id');
   await Bun.write(file, ensureTrailingNewline(privateKey));
@@ -105,7 +107,7 @@ async function cleanupIdentity(file?: string) {
   if (!file) return;
   try {
     const { rm } = await import('node:fs/promises');
-    const path = await import('node:path');
+
     await rm(path.dirname(file), { recursive: true, force: true });
   } catch {
     /* best effort */

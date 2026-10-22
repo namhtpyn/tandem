@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { login } from './helpers/login';
+import { login } from './helpers/login.ts';
 
 // Task detail Details section: assignee / project / status are editable selects
 // (Nuxt UI USelect = role=combobox button + portal options). Status is

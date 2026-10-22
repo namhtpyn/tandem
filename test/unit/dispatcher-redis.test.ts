@@ -3,12 +3,13 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './api-harness';
-import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '#server/db/index';
 import { env, setEnv } from '#server/domains/kernel/env';
 import { CHANGE_ACTION, CHANGE_RESOURCE } from '#shared/enums';
 import { ROLE, RUN_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
+
+import { resetSchema } from './helpers/pg.ts';
 
 const REDIS_URL = 'redis://127.0.0.1:6399';
 

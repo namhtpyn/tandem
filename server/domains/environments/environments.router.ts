@@ -6,10 +6,11 @@ import { z } from 'zod';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
+import { nonNull } from '#shared/utils/non-null';
 
-import { db } from '../../db';
+import { db } from '../../db/index';
 import { environments as environmentsTable, vaultSecrets as vaultSecretsTable } from '../../db/schema';
-import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
 import { toRow, listEnvironments } from './environments.service';
 import { environmentInput } from './environments.util';
@@ -44,7 +45,7 @@ export const environmentsRouter = os.router({
       .values({ id: uuidv7(), ...input })
       .returning();
     await publishChange(CHANGE_RESOURCE.ENVIRONMENTS, CHANGE_ACTION.CREATE);
-    return toRow(inserted[0]!);
+    return toRow(nonNull(inserted[0]));
   }),
 
   update: protectedProcedure
@@ -76,7 +77,7 @@ export const environmentsRouter = os.router({
         throw new ORPCError('NOT_FOUND', { message: 'environment not found' });
       }
       await publishChange(CHANGE_RESOURCE.ENVIRONMENTS, CHANGE_ACTION.UPDATE);
-      return toRow(updated[0]!);
+      return toRow(nonNull(updated[0]));
     }),
 
   remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
@@ -91,7 +92,7 @@ export const environmentsRouter = os.router({
     return { ok: true };
   }),
 
-  probe: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input, context }) => {
+  probe: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
     const rows = await db.query.environments.findMany({ where: { id: { eq: input.id } } });
     const env = rows[0];
     if (!env) {

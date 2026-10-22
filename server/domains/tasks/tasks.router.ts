@@ -1,25 +1,17 @@
 import { os } from '@orpc/server';
 // tasks router — business logic lives in services/utils; this file only wires procedures
-import { asc, desc, eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION, type RunStatus, type ActivityKind } from '#shared/enums';
-
 import type { TaskRow } from '#shared/types';
-import { db } from '../../db';
-import {
-  aiEmployees as aiEmployeesTable,
-  projects as projectsTable,
-  taskStatuses as taskStatusesTable,
-  tasks as tasksTable,
-  user as userTable,
-  taskAttachments,
-  taskActivity,
-  taskProposals,
-} from '../../db/schema';
+import { nonNull } from '#shared/utils/non-null';
+
+import { db } from '../../db/index';
+import { projects as projectsTable, tasks as tasksTable, taskActivity, taskProposals } from '../../db/schema';
 import { env } from '../kernel/env';
-import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 import { recordAssignment, listAssignments } from './assignments.service';
 import { refreshParentGating } from './gating.service';
 import { approvalsInRoundBatch, openObligations, pendingForUser, pendingCounts } from './obligations.service';
@@ -98,7 +90,7 @@ const listTasksSnapshot = async (): Promise<TaskRow[]> => {
     creatorName: nameById.get(r.createdBy ?? '') ?? null,
     reviewApprovals: approvalsByTask.get(r.id) ?? [],
     questionHolderId: holders.get(r.id) ?? null,
-    questionHolderName: (holders.get(r.id) && nameById.get(holders.get(r.id)!)) || null,
+    questionHolderName: (holders.get(r.id) && nameById.get(nonNull(holders.get(r.id)))) || null,
     parentTaskId: r.parentTaskId,
     dispatchAfter: r.dispatchAfter ? r.dispatchAfter.toISOString() : null,
     failStreak: r.failStreak,
@@ -152,6 +144,77 @@ async function activitySnapshot(taskId: string) {
   }));
 }
 
+/** the referenced assignee/project must exist before a task write points at them */
+async function requireExistingRefs(input: { assigneeId?: string | null; projectId?: string | null }) {
+  if (input.assigneeId) {
+    const u = await db.query.user.findFirst({ columns: { id: true }, where: { id: { eq: input.assigneeId } } });
+    if (!u) throw new ORPCError('BAD_REQUEST', { message: 'assignee does not exist' });
+  }
+  if (input.projectId) {
+    const p = await db
+      .select({ id: projectsTable.id })
+      .from(projectsTable)
+      .where(eq(projectsTable.id, input.projectId));
+    if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'project does not exist' });
+  }
+}
+
+/** first status by position unless the caller names one; a named one must exist */
+async function resolveCreatedStatus(requested?: string) {
+  const statusRows = await db.query.taskStatuses.findMany({ orderBy: { position: 'asc' } });
+  if (statusRows.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'no task statuses defined' });
+  if (!requested) return nonNull(statusRows[0]).id;
+  const found = statusRows.find((r) => r.id === requested);
+  if (!found) throw new ORPCError('BAD_REQUEST', { message: 'status does not exist' });
+  return found.id;
+}
+
+/** the workflow graph must allow the move: unknown target or a forbidden jump is rejected */
+async function requireReachableStatus(currentStatus: string, requested: string) {
+  const stRows = await db.query.taskStatuses.findMany({ where: { id: { eq: requested } } });
+  const target = stRows[0];
+  if (!target) throw new ORPCError('BAD_REQUEST', { message: 'status does not exist' });
+  // enforce the workflow: target must be reachable from the current status
+  if (currentStatus === requested) return;
+  const cur = await db.query.taskStatuses.findFirst({ where: { id: { eq: currentStatus } } });
+  if (cur && !cur.nextIds.includes(requested)) {
+    throw new ORPCError('BAD_REQUEST', { message: `cannot move from '${cur.name}' to '${target.name}'` });
+  }
+}
+
+/** note a newly created subtask on the parent task's activity thread */
+async function logSubtaskCreation(parentTaskId: string, authorId: string | null, childId: string, childTitle: string) {
+  await db.insert(taskActivity).values({
+    id: uuidv7(),
+    taskId: parentTaskId,
+    kind: 'status',
+    authorId,
+    body: `subtask created: ${childTitle}`,
+    meta: { childId },
+  });
+}
+
+/** only fields the caller actually sent land in the patch; explicit nulls clear nothing */
+function buildUpdatePatch(input: {
+  title?: string;
+  description?: string | null;
+  status?: string;
+  projectId?: string | null;
+  assigneeId?: string | null;
+  ownerId?: string | null;
+  reviewers?: string[] | null;
+}) {
+  const patch: Record<string, unknown> = { updatedAt: new Date() };
+  if (input.projectId !== undefined) patch.projectId = input.projectId;
+  if (input.title !== undefined) patch.title = input.title;
+  if (input.description !== undefined && input.description !== null) patch.description = input.description;
+  if (input.status !== undefined) patch.status = input.status;
+  if (input.assigneeId !== undefined) patch.assigneeId = input.assigneeId;
+  if (input.ownerId !== undefined) patch.ownerId = input.ownerId;
+  if (input.reviewers !== undefined && input.reviewers !== null) patch.reviewers = input.reviewers;
+  return patch;
+}
+
 export const tasksRouter = os.router({
   /** live list — tasks with assignee info, newest first */
   /** plain GET list (first-load data per the SSE law) */
@@ -174,25 +237,8 @@ export const tasksRouter = os.router({
       }),
     )
     .handler(async ({ input, context }) => {
-      if (input.assigneeId) {
-        const u = await db.query.user.findFirst({ columns: { id: true }, where: { id: { eq: input.assigneeId } } });
-        if (!u) throw new ORPCError('BAD_REQUEST', { message: 'assignee does not exist' });
-      }
-      if (input.projectId) {
-        const p = await db
-          .select({ id: projectsTable.id })
-          .from(projectsTable)
-          .where(eq(projectsTable.id, input.projectId));
-        if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'project does not exist' });
-      }
-      const statusRows = await db.query.taskStatuses.findMany({ orderBy: { position: 'asc' } });
-      if (statusRows.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'no task statuses defined' });
-      let status = statusRows[0]!.id;
-      if (input.status) {
-        const found = statusRows.find((r) => r.id === input.status);
-        if (!found) throw new ORPCError('BAD_REQUEST', { message: 'status does not exist' });
-        status = found.id;
-      }
+      await requireExistingRefs(input);
+      const status = await resolveCreatedStatus(input.status);
       const session = await (
         context as unknown as { getSession: () => Promise<{ user: { id: string } } | null> }
       ).getSession();
@@ -216,14 +262,7 @@ export const tasksRouter = os.router({
       });
       if (input.assigneeId) await recordAssignment(id, input.assigneeId, 'created', selfId);
       if (input.parentId) {
-        await db.insert(taskActivity).values({
-          id: uuidv7(),
-          taskId: input.parentId,
-          kind: 'status',
-          authorId: selfId,
-          body: `subtask created: ${input.title}`,
-          meta: { childId: id },
-        });
+        await logSubtaskCreation(input.parentId, selfId, id, input.title);
         await refreshParentGating(id);
       }
       await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.CREATE);
@@ -248,49 +287,20 @@ export const tasksRouter = os.router({
     .handler(async ({ input, context }) => {
       const rows = await db.query.tasks.findMany({ where: { id: { eq: input.id } } });
       if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
-      if (input.assigneeId) {
-        const u = await db.query.user.findFirst({ columns: { id: true }, where: { id: { eq: input.assigneeId } } });
-        if (!u) throw new ORPCError('BAD_REQUEST', { message: 'assignee does not exist' });
-      }
-      if (input.projectId) {
-        const p = await db
-          .select({ id: projectsTable.id })
-          .from(projectsTable)
-          .where(eq(projectsTable.id, input.projectId));
-        if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'project does not exist' });
-      }
-      if (input.status !== undefined) {
-        const stRows = await db.query.taskStatuses.findMany({ where: { id: { eq: input.status } } });
-        const target = stRows[0];
-        if (!target) throw new ORPCError('BAD_REQUEST', { message: 'status does not exist' });
-        // enforce the workflow: target must be reachable from the current status
-        if (rows[0]!.status !== input.status) {
-          const cur = await db.query.taskStatuses.findFirst({ where: { id: { eq: rows[0]!.status } } });
-          if (cur && !cur.nextIds.includes(input.status)) {
-            throw new ORPCError('BAD_REQUEST', { message: `cannot move from '${cur.name}' to '${target.name}'` });
-          }
-        }
-      }
+      await requireExistingRefs(input);
+      if (input.status !== undefined) await requireReachableStatus(nonNull(rows[0]).status, input.status);
       const actorId = await selfIdOf(context);
-      const patch: Record<string, unknown> = { updatedAt: new Date() };
-      if (input.projectId !== undefined) patch.projectId = input.projectId;
-      if (input.title !== undefined) patch.title = input.title;
-      if (input.description !== undefined && input.description !== null) patch.description = input.description;
-      if (input.status !== undefined) patch.status = input.status;
-      if (input.assigneeId !== undefined) patch.assigneeId = input.assigneeId;
-      if (input.ownerId !== undefined) patch.ownerId = input.ownerId;
-      if (input.reviewers !== undefined && input.reviewers !== null) patch.reviewers = input.reviewers;
-      await db.update(tasksTable).set(patch).where(eq(tasksTable.id, input.id));
-      if (input.assigneeId !== undefined && input.assigneeId !== rows[0]!.assigneeId) {
+      await db.update(tasksTable).set(buildUpdatePatch(input)).where(eq(tasksTable.id, input.id));
+      if (input.assigneeId !== undefined && input.assigneeId !== nonNull(rows[0]).assigneeId) {
         await recordAssignment(input.id, input.assigneeId, 'manual', actorId);
       }
-      if (input.status !== undefined && input.status !== rows[0]!.status) {
+      if (input.status !== undefined && input.status !== nonNull(rows[0]).status) {
         await db.insert(taskActivity).values({
           id: uuidv7(),
           taskId: input.id,
           kind: 'status',
           authorId: actorId,
-          body: `status: ${rows[0]!.status} → ${input.status}`,
+          body: `status: ${nonNull(rows[0]).status} → ${input.status}`,
           meta: {},
         });
         await refreshParentGating(input.id);
@@ -333,7 +343,7 @@ export const tasksRouter = os.router({
       items: rows.map((x) => ({
         id: x.id,
         employeeId: x.employeeId,
-        employeeName: x.employeeId ? nameById.get(x.employeeId)! : null,
+        employeeName: x.employeeId ? nonNull(nameById.get(x.employeeId)) : null,
         reason: x.reason,
         actorId: x.actorId,
         startedAt: x.startedAt.toISOString(),

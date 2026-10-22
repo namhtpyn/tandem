@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 // oidc router — business logic lives in services/utils; this file only wires procedures
-import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 
 async function listOidcProviders() {
   const { getOidcProviders } = await import('../auth/oidc.service');

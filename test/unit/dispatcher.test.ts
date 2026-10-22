@@ -121,15 +121,30 @@ vi.mock('ssh2', () => {
   return { default: { Client: FakeClient } };
 });
 import './api-harness';
-import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '#server/db/index';
-import { STATUS } from '#shared/status';
-import { OBLIGATION_ROLE, OBLIGATION_STATUS, PROPOSAL_KIND, PROPOSAL_STATUS, REVIEW_STATUS, ROLE, RUN_STATUS, SECRET_USAGE } from '#shared/enums';
 import { env, setEnv } from '#server/domains/kernel/env';
+import {
+  OBLIGATION_ROLE,
+  OBLIGATION_STATUS,
+  PROPOSAL_KIND,
+  PROPOSAL_STATUS,
+  REVIEW_STATUS,
+  ROLE,
+  RUN_STATUS,
+  SECRET_USAGE,
+} from '#shared/enums';
+import { STATUS } from '#shared/status';
+
+import { resetSchema } from './helpers/pg.ts';
 
 setEnv({ TANDEM_FAKE_RUNNER: '1' });
 
-const admin = { id: '00000000-0000-7000-8000-cd5fca5e2d34', name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN };
+const admin = {
+  id: '00000000-0000-7000-8000-cd5fca5e2d34',
+  name: 'Admin',
+  email: 'admin@tandem.local',
+  role: ROLE.ADMIN,
+};
 
 type RunRow = {
   id: string;
@@ -364,7 +379,14 @@ describe('dispatcher extras', () => {
     const { taskRuns } = await schema();
     await db
       .insert(taskRuns)
-      .values({ id: 'r-x', taskId: t.id, employeeId: agentId, environmentId: 'env-1', status: RUN_STATUS.RUNNING, output: '' });
+      .values({
+        id: 'r-x',
+        taskId: t.id,
+        employeeId: agentId,
+        environmentId: 'env-1',
+        status: RUN_STATUS.RUNNING,
+        output: '',
+      });
     const iter = await callProc('tasks.runs', { taskId: t.id });
     const snap = await iter.next();
     await iter.return?.();
@@ -886,7 +908,10 @@ describe('dispatcher', () => {
       if (runs.length >= 2 && runs[1]!.finishedAt) break;
       await new Promise((r) => setTimeout(r, 100));
     }
-    expect(runs.length, JSON.stringify(runs.map((r) => ({ status: r.status, started: r.startedAt, out: r.output?.slice(0, 60) })))).toBe(2);
+    expect(
+      runs.length,
+      JSON.stringify(runs.map((r) => ({ status: r.status, started: r.startedAt, out: r.output?.slice(0, 60) }))),
+    ).toBe(2);
     const [first, second] = runs;
     const firstEnd = first.finishedAt?.getTime() ?? Infinity;
     expect(second.startedAt.getTime()).toBeGreaterThanOrEqual(firstEnd); // never overlapped
@@ -950,7 +975,9 @@ describe('dispatcher', () => {
       expect(
         obl.some(
           (o) =>
-            o.role === OBLIGATION_ROLE.ANSWER && o.status === OBLIGATION_STATUS.PENDING && o.employeeId === '00000000-0000-7000-8000-820caae75a5f',
+            o.role === OBLIGATION_ROLE.ANSWER &&
+            o.status === OBLIGATION_STATUS.PENDING &&
+            o.employeeId === '00000000-0000-7000-8000-820caae75a5f',
         ),
       ).toBe(true);
     } finally {
@@ -995,7 +1022,9 @@ describe('dispatcher', () => {
       expect(
         obl.some(
           (o) =>
-            o.role === OBLIGATION_ROLE.APPROVAL && o.employeeId === '00000000-0000-7000-8000-b09d13ad1a84' && o.status === OBLIGATION_STATUS.PENDING,
+            o.role === OBLIGATION_ROLE.APPROVAL &&
+            o.employeeId === '00000000-0000-7000-8000-b09d13ad1a84' &&
+            o.status === OBLIGATION_STATUS.PENDING,
         ),
       ).toBe(true);
     } finally {
@@ -1099,7 +1128,7 @@ describe('dispatcher', () => {
 
   it('REVIEW LAW: human reject cancels the task (terminal); verdict-less AI review parks on the owner', async () => {
     setEnv({ TANDEM_FAKE_SCRIPT: 'working\n{"kind": "result", "body": "done"}' });
-    setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'i looked at it' });; // no envelope
+    setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'i looked at it' }); // no envelope
     try {
       const { db } = await dbm();
       const { employeeSupervisors } = await schema();
@@ -1150,8 +1179,7 @@ describe('dispatcher', () => {
 
   it('REVIEW LAW: reviewer plan arms — ghost task, human reviewer, secrets + LLM, guards', async () => {
     const { loadReviewPlan, dispatchTask } = await import('#server/domains/tasks/runner.service');
-    const { recordVerdict, dispatchAiReviewTurns, currentRound } =
-      await import('#server/domains/tasks/review.service');
+    const { recordVerdict, dispatchAiReviewTurns, currentRound } = await import('#server/domains/tasks/review.service');
     const { db } = await dbm();
     const { user, aiEmployees, environments, vaultSecrets, modelProviders } = await schema();
 
@@ -1176,9 +1204,9 @@ describe('dispatcher', () => {
     ).rejects.toThrow(/not an AI employee/i);
 
     // recordVerdict guards: no round yet / double verdict
-    await expect(recordVerdict(t.id, '00000000-0000-7000-8000-28d0c73631ec', REVIEW_STATUS.APPROVED, '', 'human')).rejects.toThrow(
-      /no open review round/i,
-    );
+    await expect(
+      recordVerdict(t.id, '00000000-0000-7000-8000-28d0c73631ec', REVIEW_STATUS.APPROVED, '', 'human'),
+    ).rejects.toThrow(/no open review round/i);
     expect(await currentRound(t.id)).toBe(0);
     await dispatchAiReviewTurns(t.id); // round 0: no-op arm
 
@@ -1384,7 +1412,7 @@ describe('dispatcher', () => {
   });
 
   it('onDispatcherSettingsChanged survives a dead redis (best-effort by law)', async () => {
-    setEnv({ REDIS_URL: 'redis://127.0.0.1:6390' });; // nothing listens here
+    setEnv({ REDIS_URL: 'redis://127.0.0.1:6390' }); // nothing listens here
     try {
       const { onDispatcherSettingsChanged } = await import('#server/domains/tasks/dispatcher.service');
       await expect(onDispatcherSettingsChanged()).resolves.toBeUndefined();

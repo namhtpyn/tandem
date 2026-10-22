@@ -19,7 +19,8 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { applyMigrations, sqlClient } from '#server/db/index';
 import { env, setEnv } from '#server/domains/kernel/env';
 import { ROLE } from '#shared/enums';
-import { resetSchema } from './helpers/pg';
+
+import { resetSchema } from './helpers/pg.ts';
 
 // ---- harness: real h3 events + nitro auto-import aliases ----
 

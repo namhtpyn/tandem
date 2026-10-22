@@ -4,7 +4,7 @@
 // by unit tests against the ssh seam — e2e stays DB/UI only.)
 import { expect, test } from '@playwright/test';
 
-import { login } from './helpers/login';
+import { login } from './helpers/login.ts';
 
 const PNG = Buffer.from(
   '89504e470d0a1a0a0000000d4948445200000001000000010806000000' +

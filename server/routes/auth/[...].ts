@@ -64,7 +64,7 @@ export default defineEventHandler(async (event) => {
   const auth = await getAuth();
   const res = await auth.handler(buildIncomingRequest(event, body));
 
-  res.headers.forEach((v, k) => setResponseHeader(event, k, v));
+  for (const [k, v] of res.headers) setResponseHeader(event, k, v);
   setResponseStatus(event, res.status);
   if (res.body) {
     return new Uint8Array(await res.arrayBuffer());

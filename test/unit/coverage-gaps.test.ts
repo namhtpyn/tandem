@@ -4,10 +4,10 @@ import { consola } from 'consola';
 import { describe, expect, it, beforeEach , vi } from 'vitest';
 
 import './api-harness';
-import { resetSchema } from './helpers/pg';
+import { resetSchema } from './helpers/pg.ts';
 import { applyMigrations, sqlClient } from '#server/db/index';
 import { ROLE } from '#shared/enums';
-import { call } from './api-harness';
+import { call } from './api-harness.ts';
 
 beforeEach(async () => {
   await resetSchema();
@@ -28,7 +28,7 @@ describe('GET /health/ready failure path', () => {
     let result: unknown;
     let event: { node: { res: { statusCode: number } } } | undefined;
     try {
-      const { makeEvent } = await import('./api-harness');
+      const { makeEvent } = await import('./api-harness.ts');
       const mod = await import('#server/routes/health/ready.get.ts');
       const e = makeEvent({ method: 'GET', url: '/health/ready' });
       result = await (mod.default as (x: unknown) => unknown)(e);

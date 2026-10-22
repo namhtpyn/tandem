@@ -3,10 +3,11 @@
 import { afterEach, describe, expect, it, beforeEach, vi } from 'vitest';
 
 import './api-harness';
-import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '#server/db/index';
 import { env, setEnv } from '#server/domains/kernel/env';
-import { makeEvent } from './api-harness';
+
+import { makeEvent } from './api-harness.ts';
+import { resetSchema } from './helpers/pg.ts';
 
 beforeEach(async () => {
   await resetSchema();

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 useHead({ title: 'Vault' });
-import { useMutation, useQuery, useQueryClient , keepPreviousData } from '@tanstack/vue-query';
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/vue-query';
 import { watchDebounced } from '@vueuse/core';
 // Secret vault: write-only secrets (AES-256-GCM server-side). Values are set
 // once and never displayed again — only a last-4 hint. Mobile-first cards.
@@ -143,8 +143,8 @@ async function saveFolder() {
       name: folderForm.value.name.trim(),
     });
     folderEditorOpen.value = false;
-  } catch (e: any) {
-    folderError.value = e?.message ?? 'Save failed';
+  } catch (e) {
+    folderError.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     folderBusy.value = false;
   }
@@ -228,8 +228,8 @@ async function save() {
       });
     }
     editorOpen.value = false;
-  } catch (e: any) {
-    formError.value = e?.message ?? 'Save failed';
+  } catch (e) {
+    formError.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     busy.value = false;
   }
@@ -397,7 +397,14 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
           v-if="(liveQuery.data.value?.total ?? 0) > pageSize"
           class="border-default flex items-center justify-end gap-1 border-t p-3"
         >
-          <UButton icon="i-lucide:chevron-left" color="neutral" variant="outline" :disabled="page <= 1" aria-label="Previous page" @click="page--" />
+          <UButton
+            icon="i-lucide:chevron-left"
+            color="neutral"
+            variant="outline"
+            :disabled="page <= 1"
+            aria-label="Previous page"
+            @click="page--"
+          />
           <UButton
             v-for="p in pageCount"
             :key="p"
@@ -408,7 +415,14 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
             :aria-current="p === page ? 'page' : undefined"
             @click="page = p"
           />
-          <UButton icon="i-lucide:chevron-right" color="neutral" variant="outline" :disabled="page >= pageCount" aria-label="Next page" @click="page++" />
+          <UButton
+            icon="i-lucide:chevron-right"
+            color="neutral"
+            variant="outline"
+            :disabled="page >= pageCount"
+            aria-label="Next page"
+            @click="page++"
+          />
         </div>
 
         <UCard v-if="!rows.length" :ui="{ root: 'shadow-sm' }">

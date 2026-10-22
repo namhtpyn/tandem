@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '../../app/utils/task-thread';
 import { ACTIVITY_KIND, REVIEW_STATUS, RUN_STATUS } from '#shared/enums';
+
+import {
+  buildThread,
+  formatThreadTime,
+  parseRunEnvelope,
+  runOutputWithoutEnvelope,
+} from '../../app/utils/task-thread.ts';
 
 describe('parseRunEnvelope', () => {
   it('parses a JSON verdict on the last line', () => {

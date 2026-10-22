@@ -10,10 +10,10 @@ export const log = consola.withTag('tandem');
 //   email    = env ADMIN_EMAIL    (default admin@tandem.local)
 //   password = env ADMIN_PASSWORD (default tandem-admin)
 // Skipped when any user row exists — restarts never overwrite real accounts.
-import { db } from '../db';
-import { applyMigrations } from '../db';
+import { db } from '../db/index';
+import { applyMigrations } from '../db/index';
 import { user, account } from '../db/schema';
-import { env } from '../domains/kernel/env';
+import { env } from '#server/domains/kernel/env';
 
 export default defineNitroPlugin(async () => {
   const applied = await applyMigrations();

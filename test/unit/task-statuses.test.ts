@@ -3,11 +3,12 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
-import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '#server/db/index';
 import { OBLIGATION_STATUS, ROLE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import type { TaskStatusRow } from '#shared/types';
+
+import { resetSchema } from './helpers/pg.ts';
 
 async function wireDecisionProvider(secretId: string | null) {
   const d = await dbm();

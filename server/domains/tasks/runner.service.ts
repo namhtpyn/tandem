@@ -1,3 +1,5 @@
+import { eq, and, desc, ne } from 'drizzle-orm';
+
 // Agent runner: dispatch a task to its AI assignee over SSH as ONE ACP
 // prompt turn (Agent Client Protocol v1 over stdio), stream session updates
 // back, persist a capped tail on the run row. Secrets (SSH identity, agent
@@ -9,20 +11,10 @@
 //
 // TANDEM_FAKE_RUNNER=1 short-circuits SSH with a synthetic emitter so CI and
 // local e2e can exercise the full dispatch→stream→finish loop with no host.
-import { eq, and, desc, ne } from 'drizzle-orm';
+import { nonNull } from '#shared/utils/non-null';
 
-import { db } from '../../db';
-import {
-  tasks,
-  taskRuns,
-  taskActivity,
-  taskAttachments,
-  aiEmployees,
-  environments,
-  modelProviders,
-  vaultSecrets,
-  user as userTable,
-} from '../../db/schema';
+import { db } from '../../db/index';
+import { tasks, taskRuns, taskActivity, taskAttachments } from '../../db/schema';
 import { env } from '../kernel/env';
 import { publishChange } from '../kernel/kernel';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
@@ -48,8 +40,8 @@ const QUOTA_PATTERN =
 
 export function backoffFor(failStreak: number, output: string) {
   const quota = QUOTA_PATTERN.test(output);
-  if (quota) return BACKOFF_STEPS_MS[BACKOFF_STEPS_MS.length - 1]!;
-  return BACKOFF_STEPS_MS[Math.min(Math.max(failStreak - 1, 0), BACKOFF_STEPS_MS.length - 1)]!;
+  if (quota) return nonNull(BACKOFF_STEPS_MS[BACKOFF_STEPS_MS.length - 1]);
+  return nonNull(BACKOFF_STEPS_MS[Math.min(Math.max(failStreak - 1, 0), BACKOFF_STEPS_MS.length - 1)]);
 }
 
 export type RunHandle = {
@@ -100,7 +92,7 @@ export async function settleAttachments(
   try {
     const { loadClient } = await import('./ssh-exec.util');
     const ClientCtor = await loadClient();
-    const tmp = mkdtempSync(join(tmpdir(), 'tandem-out-'));
+    const tmp = mkdtempSync(path.join(tmpdir(), 'tandem-out-'));
     try {
       const collected = await collectRunOutputs(ClientCtor, sshPlan, taskId, tmp, COLLECTION_MAX_BYTES);
       for (const f of collected) {
@@ -170,12 +162,13 @@ export function guessMime(filename: string) {
 import { mkdtempSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import path from 'node:path';
 
 import { v7 as uuidv7 } from 'uuid';
 
-import { CHANGE_RESOURCE, CHANGE_ACTION , SECRET_USAGE } from '#shared/enums';
+import { CHANGE_RESOURCE, CHANGE_ACTION, SECRET_USAGE } from '#shared/enums';
 import { RUN_STATUS, REVIEW_STATUS, type FinishedStatus } from '#shared/enums';
+import type { RunEnvelope } from '#shared/run-verdict';
 import { STATUS } from '#shared/status';
 
 import {
@@ -207,14 +200,13 @@ export async function loadDispatchPlan(taskId: string) {
   /* v8 ignore next -- FK prevents a dangling environment_id; kept as defense */
   if (!env) throw new Error('agent environment not found');
   const empRows = await db.query.user.findMany({ columns: { name: true }, where: { id: { eq: ai.userId } } });
-  const actorId = 'system';
 
   // SSH secret (key or password)
   let sshKey: string | undefined;
   let sshPassword: string | undefined;
   if (env.secretId) {
     // FK is ON DELETE SET NULL: a present secretId implies the row exists
-    const secret = (await db.query.vaultSecrets.findMany({ where: { id: { eq: env.secretId } } }))[0]!;
+    const secret = nonNull((await db.query.vaultSecrets.findMany({ where: { id: { eq: env.secretId } } }))[0]);
     const plain = decryptSecret(secret.ciphertext);
     if (env.secretUsage === SECRET_USAGE.PASSWORD) sshPassword = plain;
     else sshKey = plain;
@@ -224,8 +216,8 @@ export async function loadDispatchPlan(taskId: string) {
   let llmEnv: Record<string, string> = {};
   if (ai.providerId && ai.model && ai.apiKeySecretId) {
     // all three FKs resolve (SET NULL on delete): present ids imply present rows
-    const provider = (await db.query.modelProviders.findMany({ where: { id: { eq: ai.providerId } } }))[0]!;
-    const keySecret = (await db.query.vaultSecrets.findMany({ where: { id: { eq: ai.apiKeySecretId } } }))[0]!;
+    const provider = nonNull((await db.query.modelProviders.findMany({ where: { id: { eq: ai.providerId } } }))[0]);
+    const keySecret = nonNull((await db.query.vaultSecrets.findMany({ where: { id: { eq: ai.apiKeySecretId } } }))[0]);
     const key = decryptSecret(keySecret.ciphertext);
     llmEnv = {
       CUSTOM_API_KEY: key,
@@ -279,19 +271,19 @@ async function loadDispatchPlanFor(employeeId: string, taskId: string) {
   /* v8 ignore next -- FK prevents a dangling environment_id; kept as defense */
   if (!env) throw new Error('agent environment not found');
   const empRows = await db.query.user.findMany({ columns: { name: true }, where: { id: { eq: employeeId } } });
-  const actorId = 'system';
+
   let sshKey: string | undefined;
   let sshPassword: string | undefined;
   if (env.secretId) {
-    const secret = (await db.query.vaultSecrets.findMany({ where: { id: { eq: env.secretId } } }))[0]!;
+    const secret = nonNull((await db.query.vaultSecrets.findMany({ where: { id: { eq: env.secretId } } }))[0]);
     const plain = decryptSecret(secret.ciphertext);
     if (env.secretUsage === SECRET_USAGE.PASSWORD) sshPassword = plain;
     else sshKey = plain;
   }
   let llmEnv: Record<string, string> = {};
   if (ai.providerId && ai.model && ai.apiKeySecretId) {
-    const provider = (await db.query.modelProviders.findMany({ where: { id: { eq: ai.providerId } } }))[0]!;
-    const keySecret = (await db.query.vaultSecrets.findMany({ where: { id: { eq: ai.apiKeySecretId } } }))[0]!;
+    const provider = nonNull((await db.query.modelProviders.findMany({ where: { id: { eq: ai.providerId } } }))[0]);
+    const keySecret = nonNull((await db.query.vaultSecrets.findMany({ where: { id: { eq: ai.apiKeySecretId } } }))[0]);
     const key = decryptSecret(keySecret.ciphertext);
     llmEnv = { CUSTOM_API_KEY: key, CUSTOM_BASE_URL: provider.baseUrl, HERMES_MODEL: ai.model };
   }
@@ -344,12 +336,14 @@ function reviewBrief(
 export function hostDerivedKeyEnv(baseUrl: string) {
   try {
     const host = new URL(baseUrl).hostname;
-    const tld = host.split('.').pop()!;
+    const tld = nonNull(host.split('.').pop());
     if (host === 'localhost' || /\d/.test(tld)) return 'CUSTOM_API_KEY';
     const labels = host.split('.').filter(Boolean);
-    while (labels.length && ['api', 'www'].includes(labels[0]!)) labels.shift();
+    while (labels.length && ['api', 'www'].includes(nonNull(labels[0]))) labels.shift();
     if (labels.length < 2) return 'CUSTOM_API_KEY';
-    const vendor = labels[labels.length - 2]!.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    const vendor = nonNull(labels[labels.length - 2])
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .toUpperCase();
     if (!vendor || !/^[A-Z]/.test(vendor) || ['OPENAI', 'OPENROUTER', 'OLLAMA'].includes(vendor))
       return 'CUSTOM_API_KEY';
     return `${vendor}_API_KEY`;
@@ -358,7 +352,7 @@ export function hostDerivedKeyEnv(baseUrl: string) {
   }
 }
 
-export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>, tandemUrl: string) {
+export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>, _tandemUrl: string) {
   return [
     // set -a: every assignment below is EXPORTED to the agent child process env
     // (plain `VAR=...` after `.` only sets shell vars, hermes would see nothing)
@@ -408,7 +402,8 @@ function fakeRun(onLine: (line: string) => void, scriptOverride?: string[]): Run
     ];
 
   const runId = uuidv7();
-  let finished: (v: { status: FinishedStatus; exitCode: number | null }) => void;
+  // executor assigns synchronously — definite-assignment asserted for the CFA
+  let finished!: (v: { status: FinishedStatus; exitCode: number | null }) => void;
   const promise = new Promise<{ status: FinishedStatus; exitCode: number | null }>((resolve) => {
     finished = resolve;
   });
@@ -421,7 +416,7 @@ function fakeRun(onLine: (line: string) => void, scriptOverride?: string[]): Run
     // TANDEM_FAKE_FAIL=1: the fake run FAILS (drives the backoff ladder in tests
     // without the ssh emitError choreography, which hung under CI coverage runs)
     const failed = env.TANDEM_FAKE_FAIL === '1';
-    finished!({ status: failed ? RUN_STATUS.FAILED : RUN_STATUS.DONE, exitCode: failed ? 1 : 0 });
+    finished({ status: failed ? RUN_STATUS.FAILED : RUN_STATUS.DONE, exitCode: failed ? 1 : 0 });
   })();
   return { runId, finished: promise };
 }
@@ -482,6 +477,91 @@ export async function dispatchTask(
     }
   };
 
+  // DONE verdict: the envelope decides the workflow. [QUESTION]/[BLOCKED] park the
+  // task on the owner (waiting-answer + answer obligation) instead of completing
+  // it; [RESULT] (or none) submits for review / completes as before.
+  const settleReviewVerdict = async (envelope: RunEnvelope | null) => {
+    // REVIEW LAW: this run WAS a review turn BY a reviewer on this task. The
+    // envelope writes their verdict row ([RESULT] approve / [BLOCKED] change request);
+    // a verdict-less review NEVER silently approves — it parks on the owner.
+    if (envelope?.kind === 'blocked') {
+      /* v8 ignore next -- empty-text fallback */
+      await recordVerdict(
+        taskId,
+        plan.ai.userId,
+        REVIEW_STATUS.CHANGE_REQUESTED,
+        envelope.text || 'changes requested by review',
+        'ai',
+      );
+    } else if (envelope?.kind === 'question') {
+      /* v8 ignore next -- empty-text fallback */
+      await askQuestion(taskId, plan.ai.userId, envelope.text || 'question during review');
+    } else if (envelope?.kind === 'result') {
+      /* v8 ignore next -- empty-text fallback */
+      await recordVerdict(taskId, plan.ai.userId, REVIEW_STATUS.APPROVED, envelope.text || 'approved by review', 'ai');
+    } else {
+      await askQuestion(taskId, plan.ai.userId, 'review finished without a verdict — approve or request changes');
+    }
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+  };
+
+  const settleDoneRun = async () => {
+    // routing proposals ([SUBTASKS]/[REASSIGN]) ride the output — record before submit
+    try {
+      const { parseRoutingProposals } = await import('../../../app/utils/task-thread');
+      const payloads = parseRoutingProposals(buffer);
+      if (payloads.length) await recordProposals(taskId, runId, payloads);
+    } catch {
+      /* proposal recording is best-effort */
+    }
+    const { parseRunEnvelope } = await import('#shared/run-verdict');
+    const envelope = parseRunEnvelope(buffer);
+    try {
+      if (plan.review) {
+        await settleReviewVerdict(envelope);
+      } else if (envelope && (envelope.kind === 'question' || envelope.kind === 'blocked')) {
+        // empty-text envelopes fall back to the kind as the question body
+        /* v8 ignore next */
+        await askQuestion(taskId, plan.ai.userId, envelope.text || envelope.kind);
+      } else {
+        // the REAL result rides the submit — the supervisor's review brief needs it
+        // (envelope text, else the tail of what the agent actually said)
+        /* v8 ignore next -- bare 'run complete' only when the agent said nothing at all */
+        const resultBody =
+          envelope?.text?.trim() || buffer.trim().split('\n').slice(-12).join('\n').slice(-2000) || 'run complete';
+        await submitResult(taskId, plan.ai.userId, resultBody);
+      }
+    } catch {
+      /* task may have moved on; leave as-is */
+    }
+    await db
+      .update(tasks)
+      .set({ failStreak: 0, dispatchAfter: null, updatedAt: new Date() })
+      .where(eq(tasks.id, taskId));
+  };
+
+  // bounce to ready, but back off: consecutive failures (and quota walls) must not
+  // turn into a 5s retry storm — see BACKOFF_STEPS_MS / QUOTA_PATTERN
+  const scheduleRetryBackoff = async () => {
+    const current = (await db.query.tasks.findMany({ where: { id: { eq: taskId } } }))[0];
+    const streak = (current?.failStreak ?? 0) + 1;
+    const waitMs = backoffFor(streak, buffer);
+    await db
+      .update(tasks)
+      .set({
+        status: STATUS.todo,
+        failStreak: streak,
+        dispatchAfter: new Date(Date.now() + waitMs),
+        updatedAt: new Date(),
+      })
+      .where(eq(tasks.id, taskId)); // no-op when the task was deleted mid-run
+    /* v8 ignore next -- the catch only guards a task deleted between the update and the log */
+    await logRun(taskId, runId, `retry scheduled in ${Math.round(waitMs / 60_000)} min (streak ${streak})`, {
+      backoffMs: waitMs,
+    }).catch(() => {});
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+  };
+
   const finish = async (status: FinishedStatus, exitCode: number | null) => {
     await db
       .update(taskRuns)
@@ -489,89 +569,10 @@ export async function dispatchTask(
       .where(eq(taskRuns.id, runId));
     // no settle note: the run card's status pill (completed / failed exit N) IS the
     // verdict — a separate 'run finished' pill only duplicated it in the thread
-    // verdict: the envelope decides the workflow. [QUESTION]/[BLOCKED] park the
-    // task on the owner (waiting-answer + answer obligation) instead of completing
-    // it; [RESULT] (or none) submits for review / completes as before.
     if (status === RUN_STATUS.DONE) {
-      // routing proposals ([SUBTASKS]/[REASSIGN]) ride the output — record before submit
-      try {
-        const { parseRoutingProposals } = await import('../../../app/utils/task-thread');
-        const payloads = parseRoutingProposals(buffer);
-        if (payloads.length) await recordProposals(taskId, runId, payloads);
-      } catch {
-        /* proposal recording is best-effort */
-      }
-      const { parseRunEnvelope } = await import('#shared/run-verdict');
-      const envelope = parseRunEnvelope(buffer);
-      try {
-        if (plan.review) {
-          // REVIEW LAW: this run WAS a review turn BY a reviewer on this task. The
-          // envelope writes their verdict row ([RESULT] approve / [BLOCKED] change request);
-          // a verdict-less review NEVER silently approves — it parks on the owner.
-          if (envelope?.kind === 'blocked') {
-            /* v8 ignore next -- empty-text fallback */
-            await recordVerdict(
-              taskId,
-              plan.ai.userId,
-              REVIEW_STATUS.CHANGE_REQUESTED,
-              envelope.text || 'changes requested by review',
-              'ai',
-            );
-          } else if (envelope?.kind === 'question') {
-            /* v8 ignore next -- empty-text fallback */
-            await askQuestion(taskId, plan.ai.userId, envelope.text || 'question during review');
-          } else if (envelope?.kind === 'result') {
-            /* v8 ignore next -- empty-text fallback */
-            await recordVerdict(
-              taskId,
-              plan.ai.userId,
-              REVIEW_STATUS.APPROVED,
-              envelope.text || 'approved by review',
-              'ai',
-            );
-          } else {
-            await askQuestion(taskId, plan.ai.userId, 'review finished without a verdict — approve or request changes');
-          }
-          await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
-        } else if (envelope && (envelope.kind === 'question' || envelope.kind === 'blocked')) {
-          // empty-text envelopes fall back to the kind as the question body
-          /* v8 ignore next */
-          await askQuestion(taskId, plan.ai.userId, envelope.text || envelope.kind);
-        } else {
-          // the REAL result rides the submit — the supervisor's review brief needs it
-          // (envelope text, else the tail of what the agent actually said)
-          /* v8 ignore next -- bare 'run complete' only when the agent said nothing at all */
-          const resultBody =
-            envelope?.text?.trim() || buffer.trim().split('\n').slice(-12).join('\n').slice(-2000) || 'run complete';
-          await submitResult(taskId, plan.ai.userId, resultBody);
-        }
-      } catch {
-        /* task may have moved on; leave as-is */
-      }
-      await db
-        .update(tasks)
-        .set({ failStreak: 0, dispatchAfter: null, updatedAt: new Date() })
-        .where(eq(tasks.id, taskId));
+      await settleDoneRun();
     } else {
-      // bounce to ready, but back off: consecutive failures (and quota walls) must not
-      // turn into a 5s retry storm — see BACKOFF_STEPS_MS / QUOTA_PATTERN
-      const current = (await db.query.tasks.findMany({ where: { id: { eq: taskId } } }))[0];
-      const streak = (current?.failStreak ?? 0) + 1;
-      const waitMs = backoffFor(streak, buffer);
-      await db
-        .update(tasks)
-        .set({
-          status: STATUS.todo,
-          failStreak: streak,
-          dispatchAfter: new Date(Date.now() + waitMs),
-          updatedAt: new Date(),
-        })
-        .where(eq(tasks.id, taskId)); // no-op when the task was deleted mid-run
-      /* v8 ignore next -- the catch only guards a task deleted between the update and the log */
-      await logRun(taskId, runId, `retry scheduled in ${Math.round(waitMs / 60_000)} min (streak ${streak})`, {
-        backoffMs: waitMs,
-      }).catch(() => {});
-      await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+      await scheduleRetryBackoff();
     }
     await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
   };

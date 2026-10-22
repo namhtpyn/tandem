@@ -4,11 +4,13 @@ import { useQuery, useMutation } from '@tanstack/vue-query';
 
 import { PROVIDER_KIND, endpointKind, isModelsEndpoint } from '#shared/api-styles';
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { nonNull } from '#shared/utils/non-null';
 // Employees (LIVE): oRPC live query over user + supervision graph +
 // AI extension rows. Mutations ride the same change-bus — every client
 // updates instantly. AI-ness is derived (extension row exists), never a
 // column, and kind is immutable after create.
 import type { ApiKeyRow, EmployeeRow, EnvironmentRow } from '~/utils/orpc-types';
+import type { SecretOption } from '~/utils/vault-options';
 import { groupedSecretOptions } from '~/utils/vault-options';
 
 const { $orpc, $client } = useNuxtApp();
@@ -76,11 +78,11 @@ const graphLayout = computed(() => {
   const widthCache = new Map<string, number>();
   const subtreeWidth = (r: EmployeeRow, path: Set<string>): number => {
     if (path.has(r.id)) return 1;
-    if (widthCache.has(r.id)) return widthCache.get(r.id)!;
+    if (widthCache.has(r.id)) return nonNull(widthCache.get(r.id));
     const next = new Set(path).add(r.id);
     const ch = (kids.get(r.id) ?? []).filter((c) => primaryOf(c) === r.id);
     let w = 1;
-    for (const c of ch) ((w += subtreeWidth(c, next) - 1 + 1), (w += 0));
+    for (const c of ch) w += subtreeWidth(c, next);
     // each child contributes max(1, its own width); accumulate:
     w = ch.length ? ch.reduce((acc, c) => acc + Math.max(1, subtreeWidth(c, next)), 0) : 1;
     widthCache.set(r.id, w);
@@ -133,8 +135,8 @@ const secondaryEdges = computed(() => {
   const indexById = new Map(nodes.map((n, i) => [n.row.id, i]));
   const edges: Array<{ fromIndex: number; toIndex: number }> = [];
   for (let i = 0; i < nodes.length; i++) {
-    const n = nodes[i]!;
-    const primaryId = n.parentIndex >= 0 ? nodes[n.parentIndex]!.row.id : null;
+    const n = nonNull(nodes[i]);
+    const primaryId = n.parentIndex >= 0 ? nonNull(nodes[n.parentIndex]).row.id : null;
     const drawn = new Set<number>();
     for (const sup of n.row.supervisorIds) {
       if (sup === primaryId) continue;
@@ -151,8 +153,8 @@ const graphWidth = computed(() => Math.max(360, ...graphLayout.value.map((n) => 
 const graphHeight = computed(() => (Math.max(0, ...graphLayout.value.map((n) => n.depth)) + 1) * (NODE_H + ROW_GAP));
 function primaryPath(i: number): string {
   const nodes = graphLayout.value;
-  const n = nodes[i]!;
-  const p = nodes[n.parentIndex]!;
+  const n = nonNull(nodes[i]);
+  const p = nonNull(nodes[n.parentIndex]);
   const px = p.x + NODE_W / 2;
   const py = p.y + NODE_H;
   const cx = n.x + NODE_W / 2;
@@ -161,8 +163,8 @@ function primaryPath(i: number): string {
 }
 function secondaryTopPath(fromIndex: number, toIndex: number): string {
   const nodes = graphLayout.value;
-  const p = nodes[fromIndex]!;
-  const c = nodes[toIndex]!;
+  const p = nonNull(nodes[fromIndex]);
+  const c = nonNull(nodes[toIndex]);
   const px = p.x + NODE_W / 2;
   const py = p.y + NODE_H;
   const cx = c.x + NODE_W / 2;
@@ -221,8 +223,8 @@ async function saveTitle() {
       name: titleForm.value.name.trim(),
     });
     titleEditorOpen.value = false;
-  } catch (e: any) {
-    titleError.value = e?.message ?? 'Save failed';
+  } catch (e) {
+    titleError.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     titleBusy.value = false;
   }
@@ -328,7 +330,7 @@ const secretsLive = useQuery(
     queryKey: [CHANGE_RESOURCE.VAULT, 'all'],
   }),
 );
-const secretItems = computed((): any =>
+const secretItems = computed<SecretOption[]>(() =>
   groupedSecretOptions(
     (unref(secretsLive.data)?.data ?? []) as Array<{
       id: string;
@@ -352,50 +354,107 @@ async function onAvatarPicked(ev: Event) {
   });
   const img = new Image();
   await new Promise((resolve, reject) => {
-    ((img.onload = resolve), (img.onerror = reject), (img.src = dataUrl));
+    img.onload = resolve;
+    img.onerror = reject;
+    img.src = dataUrl;
   });
   const size = 256;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
+  const ctx = nonNull(canvas.getContext('2d'));
   const side = Math.min(img.width, img.height);
   ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
   form.image = canvas.toDataURL('image/jpeg', 0.85);
   avatarDirty.value = true;
 }
 
-function openEditor(row?: EmployeeRow) {
-  editingId.value = row?.id ?? null;
+/** identity + catalog fields seeded from an employee row (undefined = create blank) */
+function applyIdentityToForm(row: EmployeeRow | undefined) {
   form.name = row?.name ?? '';
   form.email = row?.email ?? '';
   form.kind = row?.kind ?? 'human';
-  form.image = null;
-  avatarDirty.value = false;
-  if (row?.hasAvatar) {
-    // existing avatar only enters the form as the preview src; not re-uploaded unless replaced
-    avatarUrl.value = `/api/employees/${row.id}/avatar`;
-  } else {
-    avatarUrl.value = null;
-  }
   form.title = row?.title ?? '';
   form.supervisorIds = row?.supervisorIds ? [...row.supervisorIds] : [];
+}
+
+/** AI extension fields seeded from an employee row */
+function applyAiExtensionToForm(row: EmployeeRow | undefined) {
   form.environmentId = row?.environmentId ?? '';
   form.instructions = row?.instructions ?? '';
   form.executable = row?.executable ?? '';
   form.providerId = row?.providerId ?? '__none__';
   form.model = row?.model ?? '';
   form.apiKeySecretId = row?.apiKeySecretId ?? null;
+}
+
+/** existing avatar only enters the form as the preview src; not re-uploaded unless replaced */
+function syncAvatarPreview(row: EmployeeRow | undefined) {
+  avatarUrl.value = row?.hasAvatar ? `/api/employees/${row.id}/avatar` : null;
+}
+
+function openEditor(row?: EmployeeRow) {
+  editingId.value = row?.id ?? null;
+  applyIdentityToForm(row);
+  applyAiExtensionToForm(row);
+  form.image = null;
+  avatarDirty.value = false;
+  syncAvatarPreview(row);
   message.value = '';
   mintedKey.value = '';
   editorOpen.value = true;
+}
+
+/** AI create/edit requires an ACP executable before hitting the API */
+function aiNeedsExecutable() {
+  return (editingId.value ? showAiFields.value : form.kind === 'ai') && !form.executable.trim();
+}
+
+/** update call payload — avatar only when freshly picked, AI fields only when shown */
+function updateInput() {
+  return {
+    id: nonNull(editingId.value),
+    name: form.name,
+    email: form.email,
+    ...(avatarDirty.value ? { image: form.image } : {}),
+    title: form.title,
+    supervisorIds: form.supervisorIds,
+    ...(showAiFields.value && form.environmentId ? { environmentId: form.environmentId } : {}),
+    ...(showAiFields.value ? { instructions: form.instructions } : {}),
+    ...(showAiFields.value ? { executable: form.executable.trim() } : {}),
+    ...(showAiFields.value ? { providerId: form.providerId === '__none__' ? null : form.providerId } : {}),
+    ...(showAiFields.value ? { model: form.model || null } : {}),
+    ...(showAiFields.value ? { apiKeySecretId: form.apiKeySecretId ?? null } : {}),
+  };
+}
+
+/** create call payload — AI extension fields only when creating an AI */
+function createInput() {
+  return {
+    name: form.name,
+    email: form.email,
+    ...(form.image ? { image: form.image } : {}),
+    kind: form.kind,
+    title: form.title,
+    supervisorIds: form.supervisorIds,
+    ...(form.kind === 'ai'
+      ? {
+          environmentId: form.environmentId,
+          instructions: form.instructions,
+          executable: form.executable.trim(),
+          providerId: form.providerId === '__none__' ? null : form.providerId,
+          model: form.model || null,
+          apiKeySecretId: form.apiKeySecretId ?? null,
+        }
+      : {}),
+  };
 }
 
 async function save() {
   busy.value = true;
   message.value = '';
   try {
-    if ((editingId.value ? showAiFields.value : form.kind === 'ai') && !form.executable.trim()) {
+    if (aiNeedsExecutable()) {
       message.value = 'AI employees need an ACP executable (e.g. "hermes acp")';
       busy.value = false;
       return;
@@ -405,39 +464,9 @@ async function save() {
       await titleSaveMutation.mutateAsync({ name: form.title.trim() }).catch(() => {});
     }
     if (editingId.value) {
-      await updateMutation.mutateAsync({
-        id: editingId.value,
-        name: form.name,
-        email: form.email,
-        ...(avatarDirty.value ? { image: form.image } : {}),
-        title: form.title,
-        supervisorIds: form.supervisorIds,
-        ...(showAiFields.value && form.environmentId ? { environmentId: form.environmentId } : {}),
-        ...(showAiFields.value ? { instructions: form.instructions } : {}),
-        ...(showAiFields.value ? { executable: form.executable.trim() } : {}),
-        ...(showAiFields.value ? { providerId: form.providerId === '__none__' ? null : form.providerId } : {}),
-        ...(showAiFields.value ? { model: form.model || null } : {}),
-        ...(showAiFields.value ? { apiKeySecretId: form.apiKeySecretId ?? null } : {}),
-      });
+      await updateMutation.mutateAsync(updateInput());
     } else {
-      const res = await createMutation.mutateAsync({
-        name: form.name,
-        email: form.email,
-        ...(form.image ? { image: form.image } : {}),
-        kind: form.kind,
-        title: form.title,
-        supervisorIds: form.supervisorIds,
-        ...(form.kind === 'ai'
-          ? {
-              environmentId: form.environmentId,
-              instructions: form.instructions,
-              executable: form.executable.trim(),
-              providerId: form.providerId === '__none__' ? null : form.providerId,
-              model: form.model || null,
-              apiKeySecretId: form.apiKeySecretId ?? null,
-            }
-          : {}),
-      });
+      const res = await createMutation.mutateAsync(createInput());
       // the API key returns ONCE — surface it before the modal closes
       if (res?.apiKey) mintedKey.value = res.apiKey as string;
     }

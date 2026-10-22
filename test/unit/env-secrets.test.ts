@@ -5,9 +5,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
-import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '#server/db/index';
 import { ROLE, SECRET_USAGE } from '#shared/enums';
+
+import { resetSchema } from './helpers/pg.ts';
 
 const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 
@@ -216,7 +217,7 @@ describe('environment secret linkage', () => {
     // simulate a dangling link: create linked to a REAL secret, then hard-delete
     // the secret row bypassing the app (audit FK cascades; env FK set-null is a
     // POSTGRES rule — bypass by dropping the constraint in this throwaway DB)
-    const { postgres } = await import('./helpers/pg');
+    const { postgres } = await import('./helpers/pg.ts');
     const secret = await callProc('vault.secrets.create', { name: 'ghost-key', value: 'v', description: 'ssh key' });
     const env = await callProc('environments.create', {
       name: 'dangling',

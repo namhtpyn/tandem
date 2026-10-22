@@ -5,8 +5,8 @@ import { defineEventHandler, setResponseStatus } from 'h3';
 
 export const log = consola.withTag('tandem');
 
-import { sqlClient } from '../../db';
-import { applyMigrations } from '../../db';
+import { sqlClient } from '../../db/index';
+import { applyMigrations } from '../../db/index';
 
 let migrationsDone = false;
 

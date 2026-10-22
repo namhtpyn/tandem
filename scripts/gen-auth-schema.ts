@@ -1,3 +1,4 @@
+import { $, file, write } from 'bun';
 // Generate the better-auth tables into server/db/schema.auth.ts via the CLI,
 // then re-export them from server/db/schema.ts.
 //
@@ -23,7 +24,6 @@
 //
 // Usage: bun run gen:auth  (CI re-runs this and fails on any diff — drift guard)
 import { consola } from 'consola';
-import { $, file, write } from 'bun';
 
 const OUT = '/tmp/tandem-auth-schema.ts';
 await $`bunx --bun auth generate --config scripts/auth.config.ts --output ${OUT} -y`.quiet();
@@ -62,7 +62,8 @@ if (tzCount === 0) throw new Error('gen:auth post-process missed: timestamp colu
 // CLI shape (bun runtime, driver-connected): created_at bare notNull, updated_at
 // $onUpdate(() => new Date).notNull() — normalize every table to:
 // created_at $default().notNull(), updated_at $default().$onUpdate().notNull()
-const bareUpdated = gen.split("timestamp('updated_at', { withTimezone: true }).$onUpdate(() => new Date).notNull()").length - 1;
+const bareUpdated =
+  gen.split("timestamp('updated_at', { withTimezone: true }).$onUpdate(() => new Date).notNull()").length - 1;
 gen = gen
   .split("timestamp('updated_at', { withTimezone: true }).$onUpdate(() => new Date).notNull()")
   .join(

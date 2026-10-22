@@ -1,17 +1,18 @@
-import { consola } from 'consola';
 import { RPCHandler } from '@orpc/server/fetch';
+import { consola } from 'consola';
 
 import './api-harness';
 // /rpc route adapter tests: header forwarding (scalar/array/undefined), method,
 // SSE live streaming shape, 404 for unknown paths. RPCHandler end-to-end with
 // the real router; auth stubbed at the auth-instance level.
-import { describe, expect, it, beforeEach , vi } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 
-import { resetSchema } from './helpers/pg';
 import { applyMigrations } from '#server/db/index';
 import { appRouter as router } from '#server/domains/app.router';
 import { buildServerContext } from '#server/domains/kernel/context';
-import { makeEvent } from './api-harness';
+
+import { makeEvent } from './api-harness.ts';
+import { resetSchema } from './helpers/pg.ts';
 
 beforeEach(async () => {
   await resetSchema();
@@ -94,7 +95,9 @@ describe('the /rpc h3 route handler (real adapter)', () => {
     const mod = await import('#server/routes/rpc/[...]');
     const originalError = mod.log.error;
     const errors: string[][] = [];
-    mod.log.error = (...a: unknown[]) => { errors.push(a.map(String)); };
+    mod.log.error = (...a: unknown[]) => {
+      errors.push(a.map(String));
+    };
     try {
       const event = makeEvent({
         method: 'POST',
