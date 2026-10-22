@@ -1,3 +1,27 @@
+# [2.41.0](https://github.com/namhtpyn/tandem/compare/v2.40.0...v2.41.0) (2026-10-22)
+
+
+### Bug Fixes
+
+* **test:** per-worker redis DB index — pub/sub leaked across workers ([eec7464](https://github.com/namhtpyn/tandem/commit/eec7464d237d23ec174d048cc6ffe224f965f3a8))
+* **test:** pin dispatcher-redis to its own redis DB via vi.hoisted ([7a109b3](https://github.com/namhtpyn/tandem/commit/7a109b3aecd685e101b3476dd05213fe5a5fa89c))
+* **test:** redis DB rewrite matched no URL + state-based wait in runs-tail test ([1fe2bce](https://github.com/namhtpyn/tandem/commit/1fe2bce03faaa90ef4ec0caf9d2e71ae927213be))
+* **test:** redis fanout test asserts by event id — sibling files share the worker's bus ([9394c32](https://github.com/namhtpyn/tandem/commit/9394c321238bb4102184597a797dd4672742ff9f))
+* **vault:** pagination controls never advanced past page 1 ([bd8b5f6](https://github.com/namhtpyn/tandem/commit/bd8b5f6b24d22882525977053f61b361714eb6e3))
+
+
+### Features
+
+* **a11y:** Nuxt accessibility best practices — route announcer, skip link, page titles ([d831fd4](https://github.com/namhtpyn/tandem/commit/d831fd4067c73471633aa2833b46a35c979c40d5)), closes [#main](https://github.com/namhtpyn/tandem/issues/main)
+
+
+### Performance Improvements
+
+* **test:** dispatcher suite 62s -> 23s — drain exits on idle ([fe4e514](https://github.com/namhtpyn/tandem/commit/fe4e51407f145e6b3971229220de1259c9db7cd4))
+* **test:** drizzle-seed reset for data tests; migrations once in global setup ([e01fb5d](https://github.com/namhtpyn/tandem/commit/e01fb5d62a372e2aac22c404e679ecf7f4e140f4))
+* **test:** parallel workers, one DB per worker, savepoint resets ([bd5aa42](https://github.com/namhtpyn/tandem/commit/bd5aa429b53818a964039b75288017b2a95e4404))
+* **test:** template-clone worker DBs — setup no longer dump/restores ([354a0ad](https://github.com/namhtpyn/tandem/commit/354a0ad0af76583cf0be1e3f20b161e8a29ffbd7))
+
 # [2.40.0](https://github.com/namhtpyn/tandem/compare/v2.39.1...v2.40.0) (2026-10-21)
 
 
