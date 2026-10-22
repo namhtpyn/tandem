@@ -12,18 +12,18 @@ const workerId = process.env.VITEST_POOL_ID ?? '1';
 const dbName = `tandem_w${workerId}`;
 const workerUrl = base.replace(/\/[^/]*$/, `/${dbName}`);
 
-// dump/restore instead of CREATE DATABASE ... TEMPLATE: the template is locked
-// while any connection to it exists, and global-setup's migrate connection does
-const { execSync } = await import('node:child_process');
-const admin = new SQL(base, { max: 1 });
+// connect to the maintenance DB: terminate races between workers kill
+// connections that sit on the template itself
+const admin = new SQL(base.replace(/\/[^/]*$/, '/postgres'), { max: 1 });
 await admin.unsafe(`drop database if exists "${dbName}" with (force)`);
-await admin.unsafe(`create database "${dbName}"`);
-await admin.close();
-const pgUrl = (db: string) => base.replace(/\/[^/]*$/, `/${db}`);
-execSync(
-  `pg_dump --no-owner --no-privileges "${pgUrl('tandem_test')}" | psql -q "${pgUrl(dbName)}"`,
-  { stdio: 'ignore' },
+// a physical clone beats dump/restore (~100ms vs seconds). Nothing reconnects
+// to the template after global-setup migrates, but lingering pool sockets hold
+// the template lock — terminate them, then clone
+await admin.unsafe(
+  `select pg_terminate_backend(pid) from pg_stat_activity where datname = 'tandem_test' and pid <> pg_backend_pid()`,
 );
+await admin.unsafe(`create database "${dbName}" template tandem_test`);
+await admin.close();
 
 process.env.DATABASE_URL = workerUrl;
 process.env.TANDEM_TEST_DATABASE_URL = workerUrl;
