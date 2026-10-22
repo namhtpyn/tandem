@@ -2,7 +2,7 @@
 // Duplicate folder names are allowed (the unique constraint was dropped);
 // deleting a folder never deletes secrets — they fall back to uncategorized
 // (FK SET NULL).
-import { eq, sql, type SQL } from 'drizzle-orm';
+import { EmptyFilter, eq, sql, type SQL } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
@@ -19,10 +19,9 @@ export async function listFoldersPaged(input: ListFoldersPagedInput = {}) {
   const page = input.page ?? 1;
   const pageSize = input.pageSize ?? 10;
   const q = input.q;
-  // rc.5: `where: undefined` throws — omit the key when there is no filter
   const [rows, total] = await Promise.all([
     db.query.vaultFolders.findMany({
-      ...(q ? { where: { name: { ilike: `%${q}%` } } } : {}),
+      where: q ? { name: { ilike: `%${q}%` } } : EmptyFilter,
       orderBy: { name: 'asc' },
       limit: pageSize,
       offset: (page - 1) * pageSize,
@@ -33,7 +32,7 @@ export async function listFoldersPaged(input: ListFoldersPagedInput = {}) {
           ),
       },
     }),
-    db.query.vaultFolders.count(q ? { name: { ilike: `%${q}%` } } : undefined),
+    db.query.vaultFolders.count(q ? { name: { ilike: `%${q}%` } } : EmptyFilter),
   ]);
   return {
     folders: rows.map((f) => ({ id: f.id, name: f.name, secrets: Number(f.secrets ?? 0) })),
