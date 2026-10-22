@@ -29,7 +29,7 @@ await $`bunx --bun auth generate --config scripts/auth.config.ts --output ${OUT}
 let gen = await file(OUT).text();
 
 // --- semantic patches (each asserts it matched) ---
-function patched(needle: string, replacement: string, what: string): void {
+function patched(needle: string, replacement: string, what: string) {
   const before = gen;
   gen = gen.split(needle).join(replacement);
   if (gen === before) throw new Error(`gen:auth post-process missed: ${what}`);

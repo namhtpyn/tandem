@@ -16,7 +16,7 @@ import { dispatchTask } from './runner.service';
 
 /** reap runs stuck in 'running' past the hard timeout + grace: mark failed, bounce task to
  * ready (with the normal backoff ladder), so orphaned rows never pin a task in doing forever. */
-export async function reapStaleRuns(): Promise<number> {
+export async function reapStaleRuns() {
   try {
     return await reapStaleRunsInner();
   } catch {
@@ -24,7 +24,7 @@ export async function reapStaleRuns(): Promise<number> {
   }
 }
 
-async function reapStaleRunsInner(): Promise<number> {
+async function reapStaleRunsInner() {
   const { getRunTimeoutMs } = await import('../settings/settings.service');
   const grace = 2 * 60_000;
   const cutoff = new Date(Date.now() - (await getRunTimeoutMs()) - grace);
@@ -91,7 +91,7 @@ export async function findEligible(): Promise<{ taskId: string; employeeId: stri
 }
 
 /** one scan step: claim + dispatch at most one task. Returns true if dispatched. */
-export async function scanOnce(tandemUrl: string): Promise<boolean> {
+export async function scanOnce(tandemUrl: string) {
   const hit = await findEligible();
   if (!hit) return false;
   try {
@@ -113,7 +113,7 @@ export async function scanOnce(tandemUrl: string): Promise<boolean> {
 }
 
 /** per-agent dispatch queue name (bullmq forbids ':' in queue names) */
-export function dispatchQueueName(employeeId: string): string {
+export function dispatchQueueName(employeeId: string) {
   return `${DISPATCH_QUEUE_PREFIX}-${employeeId}`;
 }
 
@@ -130,7 +130,7 @@ const workers = new Map<string, { concurrency: number; close: () => Promise<void
 /** a queued job may be STALE (task already running/done/waiting — duplicates could
  * stack while the worker was busy). The worker skips ineligible tasks quietly: no
  * re-run, no retry storm, no status flip back to doing. */
-export async function dispatchIfEligible(taskId: string, tandemUrl: string): Promise<void> {
+export async function dispatchIfEligible(taskId: string, tandemUrl: string) {
   const statuses = await db.query.taskStatuses.findMany();
   const readyIds = new Set(statuses.filter((s) => s.category === 'ready').map((s) => s.id));
   const row = await db.query.tasks.findFirst({ columns: { status: true }, where: { id: { eq: taskId } } });
@@ -139,7 +139,7 @@ export async function dispatchIfEligible(taskId: string, tandemUrl: string): Pro
   await run.finished;
 }
 
-export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<typeof redisQueue>>>): Promise<void> {
+export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<typeof redisQueue>>>) {
   const { getTasksPerAgent } = await import('../settings/settings.service');
   const cap = await getTasksPerAgent();
   const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true } });
@@ -166,7 +166,7 @@ export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<ty
 
 /** settings.update calls this so a tasksPerAgent change applies without a redeploy.
  * Best-effort: no redis or a resync failure must never fail the settings write. */
-export async function onDispatcherSettingsChanged(): Promise<void> {
+export async function onDispatcherSettingsChanged() {
   try {
     const hub = await redisQueue();
     await syncDispatchWorkers(hub);

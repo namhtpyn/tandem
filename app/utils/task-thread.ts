@@ -99,7 +99,7 @@ export function parseRoutingProposals(output: string | null | undefined): Routin
 }
 
 /** Strip the JSON verdict line from displayed output so the bubble shows prose only. */
-export function runOutputWithoutEnvelope(output: string | null | undefined): string {
+export function runOutputWithoutEnvelope(output: string | null | undefined) {
   if (!output) return '';
   const lines = output.trimEnd().split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -114,7 +114,7 @@ export function runOutputWithoutEnvelope(output: string | null | undefined): str
 }
 
 /** Compact thread time: same-day -> "14:32", older -> "Oct 12". No seconds, no date spam. */
-export function formatThreadTime(iso: string, now: Date = new Date()): string {
+export function formatThreadTime(iso: string, now: Date = new Date()) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -166,8 +166,8 @@ export function buildThread(src: ThreadSource): ThreadItem[] {
     });
   }
   // brief first regardless of clock skew, then chronological by each item's own clock
-  const timeOf = (t: ThreadItem): string => (t.kind === 'run' ? t.startedAt : t.createdAt);
-  const briefFirst = (t: ThreadItem): number => (t.kind === 'brief' ? 0 : 1);
+  const timeOf = (t: ThreadItem) => (t.kind === 'run' ? t.startedAt : t.createdAt);
+  const briefFirst = (t: ThreadItem) => (t.kind === 'brief' ? 0 : 1);
   items.sort((a, b) => briefFirst(a) - briefFirst(b) || timeOf(a).localeCompare(timeOf(b)) || a.id.localeCompare(b.id));
   return items;
 }

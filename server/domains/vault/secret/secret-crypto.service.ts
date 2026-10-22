@@ -27,16 +27,16 @@ export function getVaultKey(): Buffer {
 }
 
 /** Generate a fresh vault key (base64) — for prod bootstrap. */
-export function generateVaultKeyB64(): string {
+export function generateVaultKeyB64() {
   return randomBytes(32).toString('base64');
 }
 
 /** Test hook: drop the cached key so env changes take effect. */
-export function resetVaultKeyCache(): void {
+export function resetVaultKeyCache() {
   cachedKey = null;
 }
 
-export function encryptSecret(plaintext: string): string {
+export function encryptSecret(plaintext: string) {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', getVaultKey(), iv);
   const ct = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
@@ -44,7 +44,7 @@ export function encryptSecret(plaintext: string): string {
   return `v1:${iv.toString('base64')}:${tag.toString('base64')}:${ct.toString('base64')}`;
 }
 
-export function decryptSecret(envelope: string): string {
+export function decryptSecret(envelope: string) {
   const parts = envelope.split(':');
   if (parts.length !== 4 || parts[0] !== 'v1') {
     throw new Error('malformed vault envelope');
@@ -58,6 +58,6 @@ export function decryptSecret(envelope: string): string {
 }
 
 /** Display hint: last 4 chars of the plaintext, never more. */
-export function lastFourHint(plaintext: string): string {
+export function lastFourHint(plaintext: string) {
   return plaintext.length <= 4 ? '••••' : plaintext.slice(-4);
 }

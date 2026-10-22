@@ -49,7 +49,7 @@ async function logActivity(
 }
 
 /** current (max) round for a task; 0 when never reviewed */
-export async function currentRound(taskId: string): Promise<number> {
+export async function currentRound(taskId: string) {
   const rows = await db
     .select({ round: taskReviews.round })
     .from(taskReviews)
@@ -61,7 +61,7 @@ export async function currentRound(taskId: string): Promise<number> {
 
 /** open a fresh review round: one pending row per reviewer + inbox obligations.
  * Called by submitResult. The task parks in-review; AI reviewers get review turns. */
-export async function openReviewRound(taskId: string, reviewers: string[], resultBody: string): Promise<number> {
+export async function openReviewRound(taskId: string, reviewers: string[], resultBody: string) {
   const round = (await currentRound(taskId)) + 1;
   const now = new Date();
   for (const reviewerId of reviewers) {
@@ -84,7 +84,7 @@ export async function openReviewRound(taskId: string, reviewers: string[], resul
 /** is the current round still LIVE (pending reviewers, no bounce/cancel yet)?
  * Drives where an answered question returns: a live review round goes back to
  * in-review, everything else back to todo. */
-export async function openRoundLive(taskId: string): Promise<boolean> {
+export async function openRoundLive(taskId: string) {
   const round = await currentRound(taskId);
   if (round === 0) return false;
   const rows = await db
@@ -99,7 +99,7 @@ export async function openRoundLive(taskId: string): Promise<boolean> {
 }
 
 /** the submitted result the current round is judging (latest submit activity body) */
-async function latestSubmittedBody(taskId: string): Promise<string> {
+async function latestSubmittedBody(taskId: string) {
   const { taskActivity } = await import('../../db/schema');
   const rows = await db
     .select()
@@ -115,7 +115,7 @@ async function latestSubmittedBody(taskId: string): Promise<string> {
 /** fire a review TURN on the task itself for every AI reviewer still pending this
  * round without a live run (re-dispatched after a round question is answered).
  * Sessions are per (task, reviewer) — never the assignee's session. */
-export async function dispatchAiReviewTurns(taskId: string, resultBody?: string): Promise<void> {
+export async function dispatchAiReviewTurns(taskId: string, resultBody?: string) {
   const round = await currentRound(taskId);
   if (round === 0) return;
   const rows = await db

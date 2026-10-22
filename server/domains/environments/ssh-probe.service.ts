@@ -10,7 +10,7 @@ export type ProbeResult = {
   detail: string;
 };
 
-function sshArgs(host: string, port: string, username: string, identityFile?: string, askpassDir?: string): string[] {
+function sshArgs(host: string, port: string, username: string, identityFile?: string, askpassDir?: string) {
   const identity = identityFile ? ['-i', identityFile, '-o', 'IdentitiesOnly=yes'] : [];
   // password mode: BatchMode must be OFF for askpass to run; a fake askpass
   // script echoes $SSHPASSWORD, forced by SSH_ASKPASS_REQUIRE=force
@@ -97,7 +97,7 @@ async function writeIdentity(privateKey?: string) {
   return file;
 }
 
-function ensureTrailingNewline(key: string): string {
+function ensureTrailingNewline(key: string) {
   return key.endsWith('\n') ? key : `${key}\n`;
 }
 
@@ -114,7 +114,7 @@ async function cleanupIdentity(file?: string) {
 
 const TIMEOUT_DEFAULT_MS = 10_000;
 
-function sshTimeoutMs(): number {
+function sshTimeoutMs() {
   const v = Number.parseInt(env.TANDEM_SSH_TIMEOUT_MS ?? '', 10);
   return Number.isFinite(v) && v > 0 ? v : TIMEOUT_DEFAULT_MS;
 }

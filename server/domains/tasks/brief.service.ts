@@ -24,7 +24,7 @@ export type BriefPerson = { id: string; name: string; title: string | null; kind
 /** mentions in the description: @[Label](id) tiptap links, HTML spans, or plain @Label tokens.
  * Labels resolve against known employee names (mention menu only offers employees), so
  * plain @Name matching is exact-by-construction, never fuzzy. */
-export function extractMentionedEmployeeIds(description: string, nameToId: Map<string, string>): string[] {
+export function extractMentionedEmployeeIds(description: string, nameToId: Map<string, string>) {
   const ids = new Set<string>();
   for (const m of description.matchAll(/@\[[^\]]*\]\(mention-([^)]+)\)/g)) ids.add(m[1]!);
   for (const m of description.matchAll(/\[@ label="([^"]+)"\]/g)) {
@@ -39,7 +39,7 @@ export function extractMentionedEmployeeIds(description: string, nameToId: Map<s
   return [...ids];
 }
 
-export function chainToRoot(startId: string, edges: Array<{ employeeId: string; supervisorId: string }>): string[] {
+export function chainToRoot(startId: string, edges: Array<{ employeeId: string; supervisorId: string }>) {
   const byEmployee = new Map(edges.map((e) => [e.employeeId, e.supervisorId]));
   const chain: string[] = [];
   let cur: string | undefined = byEmployee.get(startId);
@@ -73,7 +73,7 @@ export function buildBrief(input: {
   outDir: string;
   recentActivity: Array<{ kind: string; authorName: string | null; body: string | null }>;
   attachments?: Array<{ id: string; filename: string; mime: string; size: number; remotePath: string }>;
-}): string {
+}) {
   const lines: string[] = [];
   lines.push(`You are ${input.agent.name}${input.agent.title ? `, ${input.agent.title}` : ''}.`);
   if (input.upChain.length) lines.push(`You report to: ${input.upChain.map((p) => personLine(p)).join(' -> ')}.`);
@@ -149,16 +149,16 @@ export function buildBrief(input: {
   return lines.join('\n');
 }
 
-function personLine(p: BriefPerson): string {
+function personLine(p: BriefPerson) {
   return p.title ? `${p.name} (${p.title})` : p.name;
 }
 
-function trunc(s: string, n: number): string {
+function trunc(s: string, n: number) {
   return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
 /** mentions -> plain Name refs for the prompt (agent sees names, not markdown ids) */
-function stripMentions(desc: string): string {
+function stripMentions(desc: string) {
   return desc.replace(/@\[([^\]]*)\]\(mention-[^)]+\)/g, (_m, label) => `${label}`).trim();
 }
 

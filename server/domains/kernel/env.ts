@@ -64,7 +64,7 @@ export function reportInvalidEnvironment(issues: EnvIssue[]): never {
 }
 
 /** one human-readable line per invalid env var — "LABEL is required" for missing, zod's message otherwise */
-export function formatEnvIssues(issues: EnvIssue[]): string {
+export function formatEnvIssues(issues: EnvIssue[]) {
   return issues
     .map((i) => {
       const label = i.path.join('.') || 'env';
@@ -87,6 +87,6 @@ g.__tandemEnv ??= parsed.data;
 export const env = g.__tandemEnv;
 
 /** TEST-ONLY: override knobs after boot (env is frozen at first import otherwise). */
-export function setEnv(patch: Partial<Env>): void {
+export function setEnv(patch: Partial<Env>) {
   Object.assign(env, patch);
 }

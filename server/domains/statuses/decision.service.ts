@@ -295,7 +295,7 @@ async function askOpenAIDecisions(
 export function buildEndpointUrl(
   baseUrl: string,
   endpoint: DecisionEndpoint | import('#shared/api-styles').ProviderEndpoint,
-): string {
+) {
   const root = baseUrl.replace(/\/$/, '');
   const leaf = ENDPOINT_PATH[endpoint as keyof typeof ENDPOINT_PATH];
   return root.endsWith(leaf) ? root : `${root}${leaf}`;

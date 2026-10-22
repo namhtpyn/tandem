@@ -9,7 +9,7 @@ import type { AcpStream } from './acp.client';
 import type { SshPlan } from './ssh-exec.util';
 
 /** remote wrapper: source the blob, then hand the pipe to the ACP server */
-export function acpRemoteCommand(envBlobBytes: number, acpExecutable: string): string {
+export function acpRemoteCommand(envBlobBytes: number, acpExecutable: string) {
   // acpExecutable is router-validated shell-word-safe (letters/digits/_@/.- and spaces)
   return `bash -c 'eval "$(head -c ${envBlobBytes})" && exec ${acpExecutable}'`;
 }
@@ -37,7 +37,7 @@ export async function openAcpSshStream(
     ((ready = resolve), (fail = reject));
   });
 
-  const splitLines = (buf: string, chunk: string, emit: (l: string) => void): string => {
+  const splitLines = (buf: string, chunk: string, emit: (l: string) => void) => {
     const all = buf + chunk;
     const parts = all.split('\n');
     for (const p of parts.slice(0, -1)) if (p.trim()) emit(p);

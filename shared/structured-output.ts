@@ -16,7 +16,7 @@ export type OutputContractOptions = {
 };
 
 /** Render the output-contract instruction for a zod schema (JSON Schema form). */
-export function renderOutputContract<T extends z.ZodType>(schema: T, opts: OutputContractOptions = {}): string {
+export function renderOutputContract<T extends z.ZodType>(schema: T, opts: OutputContractOptions = {}) {
   const json = JSON.stringify(z.toJSONSchema(schema));
   const lines: string[] = [];
   lines.push(

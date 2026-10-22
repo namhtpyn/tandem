@@ -5,6 +5,6 @@
 import { v7 as uuidV7 } from 'uuid'
 
 /** mint a UUIDv7 (time-ordered) */
-export function uuidv7(): string {
+export function uuidv7() {
   return uuidV7()
 }

@@ -66,7 +66,7 @@ type Auth = {
 let instance: Auth | null = null;
 let builtWith = '';
 
-function policyKey(p: AuthPolicy): string {
+function policyKey(p: AuthPolicy) {
   // everything that feeds betterAuth() config; in-memory only, never logged
   return JSON.stringify([p.oidcProviders.map((x) => [x.id, x.issuer, x.clientId, x.clientSecret]), p.passwordEnabled]);
 }

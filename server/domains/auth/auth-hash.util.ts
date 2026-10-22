@@ -4,6 +4,6 @@
 // an empty module under nitro's rolldown bundling; the wrapper survives it.)
 import { hashPassword as baHashPassword } from 'better-auth/crypto';
 
-export async function hashPassword(password: string): Promise<string> {
+export async function hashPassword(password: string) {
   return await baHashPassword(password);
 }

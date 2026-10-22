@@ -46,7 +46,7 @@ const BACKOFF_STEPS_MS = [60_000, 5 * 60_000, 15 * 60_000]; // 1min, 5min, 15min
 const QUOTA_PATTERN =
   /(402|429|insufficient[ _]?(quota|credit)|rate.?limit|out of (usage|credits|quota)|exceeded your|billing)/i;
 
-export function backoffFor(failStreak: number, output: string): number {
+export function backoffFor(failStreak: number, output: string) {
   const quota = QUOTA_PATTERN.test(output);
   if (quota) return BACKOFF_STEPS_MS[BACKOFF_STEPS_MS.length - 1]!;
   return BACKOFF_STEPS_MS[Math.min(Math.max(failStreak - 1, 0), BACKOFF_STEPS_MS.length - 1)]!;
@@ -149,7 +149,7 @@ export async function settleAttachments(
   }
 }
 
-export function guessMime(filename: string): string {
+export function guessMime(filename: string) {
   const ext = (filename.split('.').pop() || '').toLowerCase();
   const map: Record<string, string> = {
     png: 'image/png',
@@ -307,7 +307,7 @@ function reviewBrief(
   taskDescription: string,
   briefData: { recentActivity: Array<{ kind: string; authorName: string | null; body: string | null }> },
   resultBody: string,
-): string {
+) {
   const lines: string[] = [];
   lines.push(
     `You are ${reviewerName}, reviewing a submitted result. This is a REVIEW turn — do the work again is NOT the goal; verify and verdict.`,
@@ -341,7 +341,7 @@ function reviewBrief(
  * derived from the endpoint HOST (registrable label, api./www. stripped, non-alnum -> _,
  * uppercase). Mirrors hermes_cli _host_derived_api_key; empty string when the host yields
  * nothing (IPs, loopback, single-label hosts). */
-export function hostDerivedKeyEnv(baseUrl: string): string {
+export function hostDerivedKeyEnv(baseUrl: string) {
   try {
     const host = new URL(baseUrl).hostname;
     const tld = host.split('.').pop()!;
@@ -358,7 +358,7 @@ export function hostDerivedKeyEnv(baseUrl: string): string {
   }
 }
 
-export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>, tandemUrl: string): string {
+export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>, tandemUrl: string) {
   return [
     // set -a: every assignment below is EXPORTED to the agent child process env
     // (plain `VAR=...` after `.` only sets shell vars, hermes would see nothing)

@@ -92,7 +92,7 @@ export const ALL_ENDPOINTS = [...LLM_ENDPOINTS, ...DECISION_ENDPOINTS, ...MODELS
 export const ALL_API_STYLES = ALL_ENDPOINTS;
 
 /** True when the set speaks an Anthropic wire (auth headers for /models probes). */
-export function isAnthropicWire(endpoints: string[]): boolean {
+export function isAnthropicWire(endpoints: string[]) {
   return (
     endpoints.includes(PROVIDER_ENDPOINT.LLM['ANTHROPIC-MESSAGES']) ||
     endpoints.includes(PROVIDER_ENDPOINT.MODELS['ANTHROPIC-MODELS'])
@@ -102,12 +102,12 @@ export function isAnthropicWire(endpoints: string[]): boolean {
 /** All catalog endpoints (/v1/models variants). */
 const MODELS_ENDPOINT_SET: ReadonlySet<string> = new Set(MODELS_ENDPOINTS);
 
-export function isModelsEndpoint(endpoint: string): boolean {
+export function isModelsEndpoint(endpoint: string) {
   return MODELS_ENDPOINT_SET.has(endpoint);
 }
 
 /** At most one /v1/models endpoint per provider (server-enforced in providers.save too). */
-export function atMostOneModelsEndpoint(endpoints: string[]): boolean {
+export function atMostOneModelsEndpoint(endpoints: string[]) {
   return endpoints.filter(isModelsEndpoint).length <= 1;
 }
 
