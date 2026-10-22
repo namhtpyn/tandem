@@ -100,9 +100,6 @@ function cellValue(row: T, col: TableColumn<T>) {
           <slot :name="name" v-bind="slotProps ?? {}" />
         </template>
       </UTable>
-      <div v-if="paginated && (pageCount ?? 0) > 1" class="border-default flex justify-end border-t p-3">
-        <UPagination :page="page" :page-count="pageCount" @update:page="(p: number) => emit('update:page', p)" />
-      </div>
     </UCard>
 
     <div v-if="data.length" class="space-y-3 md:hidden">
@@ -123,9 +120,6 @@ function cellValue(row: T, col: TableColumn<T>) {
           </UCard>
         </slot>
       </template>
-      <div v-if="paginated && (pageCount ?? 0) > 1" class="flex justify-center pt-1">
-        <UPagination :page="page" :page-count="pageCount" @update:page="(p: number) => emit('update:page', p)" />
-      </div>
     </div>
   </div>
 </template>
