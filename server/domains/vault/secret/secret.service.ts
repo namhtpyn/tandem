@@ -6,7 +6,7 @@ import { v7 as uuidv7 } from 'uuid';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
-import type { VaultSecretRow } from '../../../../shared/types';
+import type { VaultSecretRow } from '#shared/types';
 import { db } from '../../../db';
 import { vaultSecrets as vaultSecretsTable, vaultFolders as vaultFoldersTable } from '../../../db/schema';
 import { ORPCError, publishChange } from '../../kernel/kernel';

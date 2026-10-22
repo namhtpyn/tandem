@@ -7,12 +7,12 @@ import { Readable } from 'node:stream';
 import { createEvent } from 'h3';
 import { describe, expect, it, beforeEach } from 'vitest';
 
-import { db } from '../../server/db';
-import { applyMigrations } from '../../server/db/index';
-import { tasks, taskAttachments, user as userTable } from '../../server/db/schema';
-import { saveAttachmentBytes, sha256Hex } from '../../server/domains/tasks/attachments.util';
-import { ROLE } from '../../shared/enums';
-import { STATUS } from '../../shared/status';
+import { db } from '#server/db';
+import { applyMigrations } from '#server/db/index';
+import { tasks, taskAttachments, user as userTable } from '#server/db/schema';
+import { saveAttachmentBytes, sha256Hex } from '#server/domains/tasks/attachments.util';
+import { ROLE } from '#shared/enums';
+import { STATUS } from '#shared/status';
 import { resetSchema } from './helpers/pg';
 
 /** minimal node IncomingMessage carrying a raw body buffer + content-type */
@@ -65,10 +65,10 @@ beforeEach(async () => {
 
 describe('POST /api/tasks/:id/attachments', () => {
   it('422s when no multipart file is present', async () => {
-    const { default: ep } = await import('../../server/routes/api/tasks/[id]/attachments.post');
-    const viaRoutePath = await import('../../server/routes/api/tasks/[id]/attachments.post');
+    const { default: ep } = await import('#server/routes/api/tasks/[id]/attachments.post');
+    const viaRoutePath = await import('#server/routes/api/tasks/[id]/attachments.post');
     const routeDb = (viaRoutePath as unknown as { __x?: unknown }).__x;
-    const dbA = (await import('../../server/db')).db;
+    const dbA = (await import('#server/db')).db;
     console.log('SAME EP:', ep === (viaRoutePath as { default: unknown }).default);
     await expect(
       ep(evFor('/api/tasks/task-att-1/attachments', Buffer.from('not multipart'), 'text/plain') as never),
@@ -76,7 +76,7 @@ describe('POST /api/tasks/:id/attachments', () => {
   });
 
   it('stores an uploaded file: row + bytes, returns metadata', async () => {
-    const { default: ep } = await import('../../server/routes/api/tasks/[id]/attachments.post');
+    const { default: ep } = await import('#server/routes/api/tasks/[id]/attachments.post');
     const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
     const boundary = '----tandemtest';
     const mpBody = Buffer.from(
@@ -105,15 +105,15 @@ describe('POST /api/tasks/:id/attachments', () => {
   });
 
   it('treats a missing router param as an unknown task (defensive arm)', async () => {
-    const { default: ep } = await import('../../server/routes/api/tasks/[id]/attachments.post');
+    const { default: ep } = await import('#server/routes/api/tasks/[id]/attachments.post');
     const ev = evFor('/api/tasks//attachments', Buffer.from('x'), 'text/plain');
     delete (ev.context as { params?: Record<string, string> }).params;
     await expect(ep(ev as never)).rejects.toMatchObject({ statusCode: 404 });
   });
 
   it('401s without a session', async () => {
-    const { default: ep } = await import('../../server/routes/api/tasks/[id]/attachments.post');
-    const { getAuth } = await import('../../server/domains/auth/auth.service');
+    const { default: ep } = await import('#server/routes/api/tasks/[id]/attachments.post');
+    const { getAuth } = await import('#server/domains/auth/auth.service');
     const auth = await getAuth();
     const realGetSession = auth.api.getSession;
     (auth.api as unknown as { getSession: unknown }).getSession = async () => null;
@@ -127,8 +127,8 @@ describe('POST /api/tasks/:id/attachments', () => {
   });
 
   it('413s when the file exceeds the 20MB cap', async () => {
-    const { default: ep } = await import('../../server/routes/api/tasks/[id]/attachments.post');
-    const { ATTACHMENT_MAX_BYTES } = await import('../../server/domains/tasks/attachments.util');
+    const { default: ep } = await import('#server/routes/api/tasks/[id]/attachments.post');
+    const { ATTACHMENT_MAX_BYTES } = await import('#server/domains/tasks/attachments.util');
     const boundary = '----tandemtest';
     const big = Buffer.alloc(ATTACHMENT_MAX_BYTES + 1, 65);
     const mpBody = Buffer.concat([
@@ -145,7 +145,7 @@ describe('POST /api/tasks/:id/attachments', () => {
   });
 
   it('422s on disallowed mime type', async () => {
-    const { default: ep } = await import('../../server/routes/api/tasks/[id]/attachments.post');
+    const { default: ep } = await import('#server/routes/api/tasks/[id]/attachments.post');
     const boundary = '----tandemtest';
     const mpBody = Buffer.from(
       [
@@ -165,12 +165,12 @@ describe('POST /api/tasks/:id/attachments', () => {
   });
 
   it('413s when over the size cap (unit-level guard)', async () => {
-    const { ATTACHMENT_MAX_BYTES } = await import('../../server/domains/tasks/attachments.util');
+    const { ATTACHMENT_MAX_BYTES } = await import('#server/domains/tasks/attachments.util');
     expect(ATTACHMENT_MAX_BYTES).toBe(20 * 1024 * 1024);
   });
 
   it('404s for a missing task', async () => {
-    const { default: ep } = await import('../../server/routes/api/tasks/[id]/attachments.post');
+    const { default: ep } = await import('#server/routes/api/tasks/[id]/attachments.post');
     const ev = evFor('/api/tasks/nope/attachments', Buffer.from('x'), 'text/plain');
     ev.context.params = { id: 'nope' };
     await expect(ep(ev as never)).rejects.toMatchObject({ statusCode: 404 });
@@ -179,15 +179,15 @@ describe('POST /api/tasks/:id/attachments', () => {
 
 describe('GET /api/attachments/:id', () => {
   it('treats a missing router param as unknown (defensive arm)', async () => {
-    const { default: get } = await import('../../server/routes/api/attachments/[id].get');
+    const { default: get } = await import('#server/routes/api/attachments/[id].get');
     const ev = evFor('/api/attachments/', Buffer.alloc(0), 'text/plain', 'GET');
     delete (ev.context as { params?: Record<string, string> }).params;
     await expect(get(ev as never)).rejects.toMatchObject({ statusCode: 404 });
   });
 
   it('401s without a session', async () => {
-    const { default: get } = await import('../../server/routes/api/attachments/[id].get');
-    const { getAuth } = await import('../../server/domains/auth/auth.service');
+    const { default: get } = await import('#server/routes/api/attachments/[id].get');
+    const { getAuth } = await import('#server/domains/auth/auth.service');
     const auth = await getAuth();
     const realGetSession = auth.api.getSession;
     (auth.api as unknown as { getSession: unknown }).getSession = async () => null;
@@ -201,7 +201,7 @@ describe('GET /api/attachments/:id', () => {
   });
 
   it('serves bytes with etag; 304 on revalidation; 404 unknown', async () => {
-    const { default: get } = await import('../../server/routes/api/attachments/[id].get');
+    const { default: get } = await import('#server/routes/api/attachments/[id].get');
     const id = crypto.randomUUID();
     await saveAttachmentBytes('task-att-1', id, Buffer.from('BYTES-1'));
     await db.insert(taskAttachments).values({

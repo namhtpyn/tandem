@@ -30,10 +30,10 @@ export async function resetSchema() {
 
 // Top-level: create the per-file database and point DATABASE_URL at it BEFORE
 // any app module body executes (import order in test files puts this helper
-// before '../../../server/db/index').
+// before '#server/db/index').
 await admin.unsafe(`create database ${DB_NAME} owner tandem`);
 process.env.DATABASE_URL = TEST_DATABASE_URL;
-const { applyMigrations, sqlClient } = await import('../../../server/db/index');
+const { applyMigrations, sqlClient } = await import('#server/db/index');
 await applyMigrations();
 
 afterAll(async () => {

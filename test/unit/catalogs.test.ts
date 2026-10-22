@@ -2,8 +2,8 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 
 import './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { ROLE } from '../../shared/enums';
+import { applyMigrations } from '#server/db/index';
+import { ROLE } from '#shared/enums';
 import './api-harness';
 import { resetSchema } from './helpers/pg';
 
@@ -17,8 +17,8 @@ const admin = {
 };
 
 async function proc(path: string[], input?: unknown) {
-  const { appRouter: router } = await import('../../server/domains/app.router');
-  const { buildServerContext } = await import('../../server/domains/kernel/context');
+  const { appRouter: router } = await import('#server/domains/app.router');
+  const { buildServerContext } = await import('#server/domains/kernel/context');
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
   for (const k of path) node = node[k] as Record<string, unknown>;
   const context = buildServerContext(new Headers());
@@ -41,8 +41,8 @@ async function firstSnapshot(path: string[]) {
 beforeEach(async () => {
   await resetSchema();
   await applyMigrations();
-  const { db } = await import('../../server/db');
-  const { user } = await import('../../server/db/schema');
+  const { db } = await import('#server/db');
+  const { user } = await import('#server/db/schema');
   await db
     .insert(user)
     .values({ id: admin.user.id, name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN, title: 'T' })

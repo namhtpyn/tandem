@@ -10,7 +10,7 @@ import {
   PROVIDER_ENDPOINT_LABEL,
   isModelsEndpoint,
 } from '#shared/api-styles';
-import { CHANGE_RESOURCE } from '~/../shared/enums';
+import { CHANGE_RESOURCE } from '#shared/enums';
 import type { ModelProviderRow, ProviderSaveInput } from '~/utils/orpc-types';
 import { groupedSecretOptions } from '~/utils/vault-options';
 // Settings: auth policy for this Tandem instance. OIDC provider list is a

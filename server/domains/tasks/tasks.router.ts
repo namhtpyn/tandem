@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION, type RunStatus, type ActivityKind } from '#shared/enums';
 
-import type { TaskRow } from '../../../shared/types';
+import type { TaskRow } from '#shared/types';
 import { db } from '../../db';
 import {
   aiEmployees as aiEmployeesTable,

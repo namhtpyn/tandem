@@ -4,14 +4,14 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { OBLIGATION_STATUS, ROLE } from '../../shared/enums';
-import { STATUS } from '../../shared/status';
-import type { TaskStatusRow } from '../../shared/types';
+import { applyMigrations } from '#server/db/index';
+import { OBLIGATION_STATUS, ROLE } from '#shared/enums';
+import { STATUS } from '#shared/status';
+import type { TaskStatusRow } from '#shared/types';
 
 async function wireDecisionProvider(secretId: string | null) {
   const d = await dbm();
-  const { modelProviders } = await import('../../server/db/schema');
+  const { modelProviders } = await import('#server/db/schema');
   await d.db
     .insert(modelProviders)
     .values({
@@ -25,14 +25,14 @@ async function wireDecisionProvider(secretId: string | null) {
 }
 
 async function wireInternalDecisionSetting(secretId: string | null) {
-  const { setSetting } = await import('../../server/domains/settings/settings.service');
+  const { setSetting } = await import('#server/domains/settings/settings.service');
   if (secretId) {
     await setSetting(
       'internal_decision',
       JSON.stringify({ providerId: 'seed-jev', model: 'jev-latest', keySecretId: secretId }),
     );
   } else {
-    const { deleteSetting } = await import('../../server/domains/settings/settings.service');
+    const { deleteSetting } = await import('#server/domains/settings/settings.service');
     await deleteSetting('internal_decision');
   }
 }
@@ -45,7 +45,7 @@ const admin = {
 };
 
 async function ctx() {
-  const { buildServerContext } = await import('../../server/domains/kernel/context');
+  const { buildServerContext } = await import('#server/domains/kernel/context');
   const context = buildServerContext(new Headers()) as Record<string, unknown>;
   (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({ user: admin });
   context.session = { user: admin };
@@ -53,11 +53,11 @@ async function ctx() {
 }
 
 async function dbm() {
-  return await import('../../server/db');
+  return await import('#server/db');
 }
 
 async function callProc(path: string, input?: unknown): Promise<any> {
-  const { appRouter: router } = await import('../../server/domains/app.router');
+  const { appRouter: router } = await import('#server/domains/app.router');
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
   for (const key of path.split('.')) node = node[key] as Record<string, unknown>;
   const { call } = await import('@orpc/server');
@@ -70,8 +70,8 @@ async function callProc(path: string, input?: unknown): Promise<any> {
 beforeEach(async () => {
   await resetSchema();
   await applyMigrations();
-  const { db } = await import('../../server/db');
-  const { user } = await import('../../server/db/schema');
+  const { db } = await import('#server/db');
+  const { user } = await import('#server/db/schema');
   await db
     .insert(user)
     .values({ id: admin.id, name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN, title: 'T' });
@@ -122,7 +122,7 @@ describe('task statuses', () => {
     });
     expect(r.id).toBe(STATUS.todo);
     const { db } = await dbm();
-    const { taskStatuses } = await import('../../server/db/schema');
+    const { taskStatuses } = await import('#server/db/schema');
     const row = (await db.select().from(taskStatuses)).find((x) => x.id === STATUS.todo)!;
     expect(row.name).toBe('Backlog');
   });
@@ -165,7 +165,7 @@ describe('task statuses', () => {
   it('tasks.create validates status; default = first status', async () => {
     const t = await callProc('tasks.create', { title: 'A' });
     const { db } = await dbm();
-    const { tasks } = await import('../../server/db/schema');
+    const { tasks } = await import('#server/db/schema');
     const row = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
     expect(row.status).toBe(STATUS.todo);
     await expect(callProc('tasks.create', { title: 'B', status: 'ghost' })).rejects.toMatchObject({
@@ -199,7 +199,7 @@ describe('task statuses', () => {
 describe('jev auto-assign', () => {
   it('assign: no decision provider at all -> clear reason', async () => {
     const d = await dbm();
-    const { modelProviders } = await import('../../server/db/schema');
+    const { modelProviders } = await import('#server/db/schema');
     await d.db.delete(modelProviders);
     const t = await callProc('tasks.create', { title: 'NoProvider' });
     const r = await callProc('statuses.assign', { taskId: t.id });
@@ -220,7 +220,7 @@ describe('jev auto-assign', () => {
   it('assign: no key secret passed -> assigned false with reason', async () => {
     // no key secret WIRED (provider exists, setting has no keySecretId) -> assign refuses
     const d = await dbm();
-    const { modelProviders } = await import('../../server/db/schema');
+    const { modelProviders } = await import('#server/db/schema');
     await d.db
       .insert(modelProviders)
       .values({
@@ -230,7 +230,7 @@ describe('jev auto-assign', () => {
         endpoints: ['TYPESAFE-SYSTEMONE'],
       })
       .onConflictDoNothing();
-    const { setSetting } = await import('../../server/domains/settings/settings.service');
+    const { setSetting } = await import('#server/domains/settings/settings.service');
     await setSetting(
       'internal_decision',
       JSON.stringify({ providerId: 'seed-jev', model: 'jev-latest', keySecretId: null }),
@@ -243,8 +243,8 @@ describe('jev auto-assign', () => {
 
   it('assign: null model in a legacy stored assignment degrades to not-configured', async () => {
     const d = await dbm();
-    const { modelProviders, vaultSecrets } = await import('../../server/db/schema');
-    const { setSetting } = await import('../../server/domains/settings/settings.service');
+    const { modelProviders, vaultSecrets } = await import('#server/db/schema');
+    const { setSetting } = await import('#server/domains/settings/settings.service');
     const secId = 'sec-default-arm';
     await d.db
       .insert(vaultSecrets)
@@ -308,7 +308,7 @@ describe('jev auto-assign', () => {
       expect(seenBody).toContain('Write the docs');
       // task updated
       const { db } = await dbm();
-      const { tasks } = await import('../../server/db/schema');
+      const { tasks } = await import('#server/db/schema');
       const row = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
       expect(row.assigneeId).toBe(emp.id);
     } finally {
@@ -404,7 +404,7 @@ describe('jev auto-assign', () => {
     // create task first (created_by FK), then delete all users -> zero candidates
     const t1 = await callProc('tasks.create', { title: 'NoCandidates' });
     const { db } = await dbm();
-    const { user } = await import('../../server/db/schema');
+    const { user } = await import('#server/db/schema');
     await db.delete(user);
     const r = await callProc('statuses.assign', { taskId: t1.id });
     expect(r.assigned).toBe(false);
@@ -416,7 +416,7 @@ describe('jev auto-assign', () => {
     await wireDecisionProvider(sec.id);
     // AI employee with a title + open task load; human without title
     const d = await dbm();
-    const { environments } = await import('../../server/db/schema');
+    const { environments } = await import('#server/db/schema');
     await d.db.insert(environments).values({
       id: 'env-jev',
       name: 'env-jev',
@@ -488,7 +488,7 @@ describe('jev auto-assign', () => {
     const sec = await callProc('vault.secrets.create', { name: 'jev-key6', value: 'sk-jev-6' });
     await wireDecisionProvider(sec.id);
     const d = await dbm();
-    const { environments } = await import('../../server/db/schema');
+    const { environments } = await import('#server/db/schema');
     await d.db.insert(environments).values({
       id: 'env-j2',
       name: 'env-j2',
@@ -505,7 +505,7 @@ describe('jev auto-assign', () => {
       executable: 'hermes acp',
     });
     // null the title on the user row (candidates map reads user.title)
-    const { user } = await import('../../server/db/schema');
+    const { user } = await import('#server/db/schema');
     await d.db.update(user).set({ title: null }).where(eq(user.id, ai.id));
     const proj = await callProc('projects.create', { name: 'JevProj' });
     const t = await callProc('tasks.create', { title: 'Proj task', projectId: proj.id });
@@ -537,7 +537,7 @@ describe('jev auto-assign', () => {
     const t = await callProc('tasks.create', { title: 'GhostProj task', projectId: proj.id });
     // delete the project row directly -> task.projectId dangles (set null by FK in real flow; simulate)
     const d = await dbm();
-    const { projects } = await import('../../server/db/schema');
+    const { projects } = await import('#server/db/schema');
     await d.db.delete(projects).where(eq(projects.id, proj.id));
     // ghost secret id -> provider exists but key undecryptable/missing
     const r = await callProc('statuses.assign', { taskId: t.id });
@@ -627,7 +627,7 @@ describe('jev auto-assign', () => {
     const t = await callProc('tasks.create', { title: 'Ghost proj' });
     // simulate a dangling project reference (FK normally prevents it; guards the lookup)
     const d = await dbm();
-    const { tasks } = await import('../../server/db/schema');
+    const { tasks } = await import('#server/db/schema');
     await d.db.execute('ALTER TABLE tasks DROP CONSTRAINT tandem_tasks_project_id_tandem_projects_id_fkey');
     await d.db.update(tasks).set({ projectId: 'ghost-proj' }).where(eq(tasks.id, t.id));
     const origFetch = globalThis.fetch;
@@ -662,7 +662,7 @@ describe('jev auto-assign', () => {
   it('assign: OPENAI-DECISIONS style routes to the /decisions adapter (array answers)', async () => {
     const sec = await callProc('vault.secrets.create', { name: 'jev-keyOA', value: 'sk-jev-OA' });
     const d = await dbm();
-    const { modelProviders } = await import('../../server/db/schema');
+    const { modelProviders } = await import('#server/db/schema');
     await d.db
       .insert(modelProviders)
       .values({
@@ -716,7 +716,7 @@ describe('jev auto-assign', () => {
   it('assign: OPENAI-DECISIONS failure arms (http error, no matching name)', async () => {
     const sec = await callProc('vault.secrets.create', { name: 'jev-keyOB', value: 'sk-jev-OB' });
     const d = await dbm();
-    const { modelProviders } = await import('../../server/db/schema');
+    const { modelProviders } = await import('#server/db/schema');
     await d.db
       .insert(modelProviders)
       .values({
@@ -750,7 +750,7 @@ describe('jev auto-assign', () => {
   it('assign: OPENAI-DECISIONS url/answer edge arms (trailing slash, no confidence/probs)', async () => {
     const sec = await callProc('vault.secrets.create', { name: 'jev-keyOC', value: 'sk-jev-OC' });
     const d = await dbm();
-    const { modelProviders } = await import('../../server/db/schema');
+    const { modelProviders } = await import('#server/db/schema');
     // baseUrl already ending in /decisions AND with trailing slash
     await d.db
       .insert(modelProviders)
@@ -794,7 +794,7 @@ describe('jev auto-assign', () => {
   it('assign: OPENAI-DECISIONS no-model + boolean probability values arms', async () => {
     const sec = await callProc('vault.secrets.create', { name: 'jev-keyOD', value: 'sk-jev-OD' });
     const d = await dbm();
-    const { modelProviders } = await import('../../server/db/schema');
+    const { modelProviders } = await import('#server/db/schema');
     await d.db
       .insert(modelProviders)
       .values({

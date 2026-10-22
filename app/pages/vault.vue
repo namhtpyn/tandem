@@ -6,7 +6,7 @@ import { watchDebounced } from '@vueuse/core';
 // once and never displayed again — only a last-4 hint. Mobile-first cards.
 import { computed, ref, watch } from 'vue';
 
-import { CHANGE_RESOURCE } from '~/../shared/enums';
+import { CHANGE_RESOURCE } from '#shared/enums';
 import type { VaultSecretRow } from '~/utils/orpc-types';
 
 const { $orpc } = useNuxtApp();

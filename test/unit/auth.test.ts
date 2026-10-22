@@ -2,15 +2,15 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 
 import './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { db } from '../../server/db/index';
-import { user, account } from '../../server/db/schema';
-import { hashPassword } from '../../server/domains/auth/auth-hash.util';
-import { resolveAuthPolicy, anyUserExists, getAuth, rebuildAuth } from '../../server/domains/auth/auth.service';
-import { saveOidcProviders } from '../../server/domains/auth/oidc.service';
-import { env, setEnv } from '../../server/domains/kernel/env';
-import { setSetting } from '../../server/domains/settings/settings.service';
-import { ROLE } from '../../shared/enums';
+import { applyMigrations } from '#server/db/index';
+import { db } from '#server/db/index';
+import { user, account } from '#server/db/schema';
+import { hashPassword } from '#server/domains/auth/auth-hash.util';
+import { resolveAuthPolicy, anyUserExists, getAuth, rebuildAuth } from '#server/domains/auth/auth.service';
+import { saveOidcProviders } from '#server/domains/auth/oidc.service';
+import { env, setEnv } from '#server/domains/kernel/env';
+import { setSetting } from '#server/domains/settings/settings.service';
+import { ROLE } from '#shared/enums';
 import { resetSchema } from './helpers/pg';
 
 describe('auth policy', () => {
@@ -59,7 +59,7 @@ describe('auth policy', () => {
   });
 
   it('env TANDEM_DISABLE_PASSWORD_LOGIN respected with env provider', async () => {
-    const { deleteSetting } = await import('../../server/domains/settings/settings.service');
+    const { deleteSetting } = await import('#server/domains/settings/settings.service');
     await deleteSetting('oidc_providers');
     setEnv({ TANDEM_OIDC_ISSUER: 'https://env.example.com' });
     setEnv({ TANDEM_OIDC_CLIENT_ID: 'env-client' });
@@ -140,7 +140,7 @@ describe('auth baseURL env branch', () => {
     setEnv({ BETTER_AUTH_URL: 'https://auth.example.com' });
     try {
       await rebuildAuth();
-      const { getAuth } = await import('../../server/domains/auth/auth.service');
+      const { getAuth } = await import('#server/domains/auth/auth.service');
       const auth = await getAuth();
       expect((auth.options as { baseURL?: string }).baseURL).toBe('https://auth.example.com');
     } finally {

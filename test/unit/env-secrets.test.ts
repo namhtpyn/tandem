@@ -6,13 +6,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { ROLE, SECRET_USAGE } from '../../shared/enums';
+import { applyMigrations } from '#server/db/index';
+import { ROLE, SECRET_USAGE } from '#shared/enums';
 
 const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 
 async function ctx(sessionUser: { id: string; name: string; email: string; role: string } | null = admin) {
-  const { buildServerContext } = await import('../../server/domains/kernel/context');
+  const { buildServerContext } = await import('#server/domains/kernel/context');
   const context = buildServerContext(new Headers());
   (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () =>
     sessionUser ? { user: sessionUser } : null;
@@ -20,7 +20,7 @@ async function ctx(sessionUser: { id: string; name: string; email: string; role:
 }
 
 async function callProc(path: string, input?: unknown): Promise<any> {
-  const { appRouter: router } = await import('../../server/domains/app.router');
+  const { appRouter: router } = await import('#server/domains/app.router');
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
   for (const key of path.split('.')) {
     node = node[key] as Record<string, unknown>;
@@ -34,11 +34,11 @@ async function callProc(path: string, input?: unknown): Promise<any> {
 }
 
 async function dbm() {
-  return await import('../../server/db');
+  return await import('#server/db');
 }
 
 async function schema() {
-  return await import('../../server/db/schema');
+  return await import('#server/db/schema');
 }
 
 beforeEach(async () => {

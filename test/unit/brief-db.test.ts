@@ -5,7 +5,7 @@ import './helpers/pg';
 // activity, missing-task error arm.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { db } from '../../server/db';
+import { db } from '#server/db';
 import {
   tasks,
   user as userTable,
@@ -13,10 +13,10 @@ import {
   employeeSupervisors,
   taskActivity,
   environments,
-} from '../../server/db/schema';
-import { buildBrief, loadBriefData } from '../../server/domains/tasks/brief.service';
-import { ACTIVITY_KIND, ROLE } from '../../shared/enums';
-import { STATUS } from '../../shared/status';
+} from '#server/db/schema';
+import { buildBrief, loadBriefData } from '#server/domains/tasks/brief.service';
+import { ACTIVITY_KIND, ROLE } from '#shared/enums';
+import { STATUS } from '#shared/status';
 
 describe('loadBriefData (real db)', () => {
   let agentId: string;

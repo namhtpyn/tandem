@@ -4,11 +4,11 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { env, setEnv } from '../../server/domains/kernel/env';
-import { CHANGE_ACTION, CHANGE_RESOURCE } from '../../shared/enums';
-import { ROLE, RUN_STATUS } from '../../shared/enums';
-import { STATUS } from '../../shared/status';
+import { applyMigrations } from '#server/db/index';
+import { env, setEnv } from '#server/domains/kernel/env';
+import { CHANGE_ACTION, CHANGE_RESOURCE } from '#shared/enums';
+import { ROLE, RUN_STATUS } from '#shared/enums';
+import { STATUS } from '#shared/status';
 
 const REDIS_URL = 'redis://127.0.0.1:6399';
 
@@ -36,7 +36,7 @@ async function redisUp() {
 const up = await redisUp();
 
 const dispatched: string[] = [];
-vi.mock('../../server/domains/tasks/runner.service', () => ({
+vi.mock('#server/domains/tasks/runner.service', () => ({
   dispatchTask: async (taskId: string) => {
     dispatched.push(taskId);
     return { finished: Promise.resolve({ status: RUN_STATUS.DONE, exitCode: 0 }) };
@@ -54,8 +54,8 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
     await flush.disconnect();
     await resetSchema();
     await applyMigrations();
-    const { db } = await import('../../server/db');
-    const { user, environments, aiEmployees, tasks } = await import('../../server/db/schema');
+    const { db } = await import('#server/db');
+    const { user, environments, aiEmployees, tasks } = await import('#server/db/schema');
     await db.insert(user).values({
       id: '00000000-0000-7000-8000-cd5fca5e2d34',
       name: 'Admin',
@@ -96,11 +96,11 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
   });
 
   it('the queue worker dispatches a job end-to-end (redis path)', async () => {
-    const { redisQueue } = await import('../../server/domains/kernel/queue');
+    const { redisQueue } = await import('#server/domains/kernel/queue');
     const hub = await redisQueue();
-    const { scanOnce } = await import('../../server/domains/tasks/dispatcher.service');
+    const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
     expect(await scanOnce('http://t.local')).toBe(true);
-    const { maybeStartDispatcher } = await import('../../server/domains/tasks/dispatcher.service');
+    const { maybeStartDispatcher } = await import('#server/domains/tasks/dispatcher.service');
     const stop = await maybeStartDispatcher();
     // deterministic: the worker's job fn must actually invoke the mocked runner
     for (let i = 0; i < 100 && dispatched.length === 0; i++) await new Promise((r) => setTimeout(r, 100));
@@ -110,7 +110,7 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
   }, 20_000);
 
   it('scanOnce enqueues to the redis queue and the worker consumes it', async () => {
-    const { scanOnce } = await import('../../server/domains/tasks/dispatcher.service');
+    const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
     expect(await scanOnce('http://t.local')).toBe(true);
     // job lands in the queue; the worker started by maybeStartDispatcher would consume it,
     // but here just assert the queue received it
@@ -121,16 +121,16 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
   });
 
   it('maybeStartDispatcher starts a redis queue worker and returns a stop fn', async () => {
-    const { maybeStartDispatcher } = await import('../../server/domains/tasks/dispatcher.service');
+    const { maybeStartDispatcher } = await import('#server/domains/tasks/dispatcher.service');
     const stop = await maybeStartDispatcher();
     expect(typeof stop).toBe('function');
     stop!();
   });
 
   it('publishChange fans out over redis and the bridge re-publishes locally', async () => {
-    const { publishChange, changeBus, bridgeRedisChanges } = await import('../../server/domains/kernel/change-bus');
-    const { CHANGE_CHANNEL, encodeChange } = await import('../../server/domains/kernel/change-bus');
-    const { redisPubsub } = await import('../../server/domains/kernel/pubsub');
+    const { publishChange, changeBus, bridgeRedisChanges } = await import('#server/domains/kernel/change-bus');
+    const { CHANGE_CHANNEL, encodeChange } = await import('#server/domains/kernel/change-bus');
+    const { redisPubsub } = await import('#server/domains/kernel/pubsub');
     const seen: string[] = [];
     const unsub = await changeBus.subscribe('change', (e) => seen.push(e.resource));
     await bridgeRedisChanges();
@@ -154,7 +154,7 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
   });
 
   it('enqueue with the same jobId dedupes (stale dispatch floods cannot stack)', async () => {
-    const { redisQueue } = await import('../../server/domains/kernel/queue');
+    const { redisQueue } = await import('#server/domains/kernel/queue');
     const hub = (await redisQueue())!;
     const id1 = await hub.enqueue('tandem-dedup', { taskId: 't-x' }, { jobId: 't-x' });
     const id2 = await hub.enqueue('tandem-dedup', { taskId: 't-x' }, { jobId: 't-x' });
@@ -171,11 +171,11 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
   });
 
   it('syncDispatchWorkers spawns per-agent workers and resyncs on cap change', async () => {
-    const { redisQueue } = await import('../../server/domains/kernel/queue');
+    const { redisQueue } = await import('#server/domains/kernel/queue');
     const hub = (await redisQueue())!;
-    const { setSetting } = await import('../../server/domains/settings/settings.service');
+    const { setSetting } = await import('#server/domains/settings/settings.service');
     const { syncDispatchWorkers, onDispatcherSettingsChanged } =
-      await import('../../server/domains/tasks/dispatcher.service');
+      await import('#server/domains/tasks/dispatcher.service');
     await setSetting('tasks_per_agent', '1');
     await syncDispatchWorkers(hub);
     await setSetting('tasks_per_agent', '3');
@@ -184,7 +184,7 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
   }, 20_000);
 
   it('second enqueue on the same queue reuses the cached Queue instance', async () => {
-    const { redisQueue } = await import('../../server/domains/kernel/queue');
+    const { redisQueue } = await import('#server/domains/kernel/queue');
     const hub = await redisQueue();
     await hub!.enqueue('tandem-reuse', { n: 1 });
     await hub!.enqueue('tandem-reuse', { n: 2 }); // binary-expr arm: queues.get fallback
@@ -193,8 +193,8 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
   });
 
   afterAll(async () => {
-    const { redisQueue } = await import('../../server/domains/kernel/queue');
-    const { redisPubsub } = await import('../../server/domains/kernel/pubsub');
+    const { redisQueue } = await import('#server/domains/kernel/queue');
+    const { redisPubsub } = await import('#server/domains/kernel/pubsub');
     await (await redisQueue())?.close();
     await (await redisPubsub())?.close();
     setEnv({ REDIS_URL: undefined });

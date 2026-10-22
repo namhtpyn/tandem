@@ -6,8 +6,8 @@
 // on unmount) — see the stream law in AGENTS.md.
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query';
 
-import { CHANGE_RESOURCE, PROPOSAL_KIND, type ProposalKind } from '~/../shared/enums';
-import { STATUS } from '~/../shared/status';
+import { CHANGE_RESOURCE, PROPOSAL_KIND, type ProposalKind } from '#shared/enums';
+import { STATUS } from '#shared/status';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '~/utils/task-thread';
 import type { ThreadItem } from '~/utils/task-thread';

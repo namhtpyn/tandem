@@ -1,7 +1,7 @@
 // Pure check of extractMentionedEmployeeIds via vitest to isolate from db.
 import { describe, expect, it } from 'vitest';
 
-import { extractMentionedEmployeeIds } from '../../server/domains/tasks/brief.service';
+import { extractMentionedEmployeeIds } from '#server/domains/tasks/brief.service';
 
 describe('mention forms', () => {
   const map = new Map([

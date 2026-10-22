@@ -3,8 +3,8 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 
 import './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { ROLE } from '../../shared/enums';
+import { applyMigrations } from '#server/db/index';
+import { ROLE } from '#shared/enums';
 import './api-harness';
 import { resetSchema } from './helpers/pg';
 
@@ -18,8 +18,8 @@ const admin = {
 };
 
 async function proc(path: string[], input?: unknown) {
-  const { appRouter: router } = await import('../../server/domains/app.router');
-  const { buildServerContext } = await import('../../server/domains/kernel/context');
+  const { appRouter: router } = await import('#server/domains/app.router');
+  const { buildServerContext } = await import('#server/domains/kernel/context');
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
   for (const k of path) node = node[k] as Record<string, unknown>;
   const context = buildServerContext(new Headers());
@@ -34,7 +34,7 @@ async function proc(path: string[], input?: unknown) {
 /** Through RPCHandler — validation errors map to ORPCError codes (400s). */
 async function rpc(path: string, input?: unknown) {
   const { RPCHandler } = await import('@orpc/server/fetch');
-  const { appRouter: router } = await import('../../server/domains/app.router');
+  const { appRouter: router } = await import('#server/domains/app.router');
   const handler = new RPCHandler(router);
   const req = new Request(`http://x/rpc/${path}`, {
     method: 'POST',
@@ -94,7 +94,7 @@ describe('oidc.replace (authenticated)', () => {
       providers: [{ label: 'One', issuer: 'https://one.example.com', clientId: 'c1', clientSecret: 's1' }],
     })) as { ok: boolean; count: number };
     expect(r1).toEqual({ ok: true, count: 1 });
-    const { getOidcProviders } = await import('../../server/domains/auth/oidc.service');
+    const { getOidcProviders } = await import('#server/domains/auth/oidc.service');
     const stored = await getOidcProviders();
     expect(stored).toHaveLength(1);
     expect(stored[0]!.id).toMatch(/^[0-9a-f-]{36}$/);
@@ -140,7 +140,7 @@ describe('settings.update (authenticated)', () => {
     });
     const r = (await proc(['settings', 'update'], { disablePasswordLogin: true })) as { ok: boolean };
     expect(r).toEqual({ ok: true });
-    const { getSettings } = await import('../../server/domains/settings/settings.service');
+    const { getSettings } = await import('#server/domains/settings/settings.service');
     expect(await getSettings()).toEqual({
       disablePasswordLogin: true,
       companyName: 'Tandem',
@@ -177,7 +177,7 @@ describe('settings.update (authenticated)', () => {
   });
 
   it('run timeout setting: update + bounds (min 1 min, max 6h)', async () => {
-    const { getSettings } = await import('../../server/domains/settings/settings.service');
+    const { getSettings } = await import('#server/domains/settings/settings.service');
     await proc(['settings', 'update'], { runTimeoutMs: 3_600_000 });
     expect((await getSettings()).runTimeoutMs).toBe(3_600_000);
     // bounds enforced by zod — validated through RPCHandler (see rpc() note)
@@ -202,8 +202,8 @@ describe('auth.configLive (public snapshot content)', () => {
     await proc(['oidc', 'replace'], {
       providers: [{ label: 'SSO', issuer: 'https://sso.example.com', clientId: 'c', clientSecret: 's' }],
     });
-    const { appRouter: router } = await import('../../server/domains/app.router');
-    const { buildServerContext } = await import('../../server/domains/kernel/context');
+    const { appRouter: router } = await import('#server/domains/app.router');
+    const { buildServerContext } = await import('#server/domains/kernel/context');
     let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
     for (const k of ['auth', 'configLive']) node = node[k] as Record<string, unknown>;
     const gen = await (node['~orpc'] as { handler: (o: unknown) => Promise<AsyncGenerator<unknown>> }).handler({

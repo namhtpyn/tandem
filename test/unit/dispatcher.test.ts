@@ -122,10 +122,10 @@ vi.mock('ssh2', () => {
 });
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { STATUS } from '../../shared/status';
-import { OBLIGATION_ROLE, OBLIGATION_STATUS, PROPOSAL_KIND, PROPOSAL_STATUS, REVIEW_STATUS, ROLE, RUN_STATUS, SECRET_USAGE } from '../../shared/enums';
-import { env, setEnv } from '../../server/domains/kernel/env';
+import { applyMigrations } from '#server/db/index';
+import { STATUS } from '#shared/status';
+import { OBLIGATION_ROLE, OBLIGATION_STATUS, PROPOSAL_KIND, PROPOSAL_STATUS, REVIEW_STATUS, ROLE, RUN_STATUS, SECRET_USAGE } from '#shared/enums';
+import { env, setEnv } from '#server/domains/kernel/env';
 
 setEnv({ TANDEM_FAKE_RUNNER: '1' });
 
@@ -141,15 +141,15 @@ type RunRow = {
 };
 
 async function dbm() {
-  return await import('../../server/db');
+  return await import('#server/db');
 }
 async function schema() {
-  return await import('../../server/db/schema');
+  return await import('#server/db/schema');
 }
 
 async function callProc(path: string, input?: unknown): Promise<any> {
-  const { appRouter: router } = await import('../../server/domains/app.router');
-  const { buildServerContext } = await import('../../server/domains/kernel/context');
+  const { appRouter: router } = await import('#server/domains/app.router');
+  const { buildServerContext } = await import('#server/domains/kernel/context');
   const context = buildServerContext(new Headers());
   (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({ user: admin });
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
@@ -230,7 +230,7 @@ beforeEach(async () => {
 
 describe('runner service guards', () => {
   it('loadDispatchPlan refuses ghost task / human assignee / missing environment', async () => {
-    const { loadDispatchPlan } = await import('../../server/domains/tasks/runner.service');
+    const { loadDispatchPlan } = await import('#server/domains/tasks/runner.service');
     await expect(loadDispatchPlan('ghost')).rejects.toThrow(/task not found/i);
     const { db } = await dbm();
     const { user, tasks, environments, aiEmployees } = await schema();
@@ -256,8 +256,8 @@ describe('runner service guards', () => {
   });
 
   it('buildEnvBlob + acp remote command shape (no secrets on argv)', async () => {
-    const { loadDispatchPlan, buildEnvBlob } = await import('../../server/domains/tasks/runner.service');
-    const { acpRemoteCommand } = await import('../../server/domains/tasks/acp-ssh.util');
+    const { loadDispatchPlan, buildEnvBlob } = await import('#server/domains/tasks/runner.service');
+    const { acpRemoteCommand } = await import('#server/domains/tasks/acp-ssh.util');
     await mkAiAgent();
     await callProc('tasks.create', {
       title: `Quote's task`,
@@ -283,12 +283,12 @@ describe('runner service guards', () => {
   });
 
   it('tail keeps the last N lines', async () => {
-    const { TAIL_MAX_LINES } = await import('../../server/domains/tasks/runner.service');
+    const { TAIL_MAX_LINES } = await import('#server/domains/tasks/runner.service');
     void TAIL_MAX_LINES;
     // exercise via a long fake run
     const agentId = await mkAiAgent();
     await callProc('tasks.create', { title: 'Long', assigneeId: agentId });
-    const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+    const { dispatchTask } = await import('#server/domains/tasks/runner.service');
     const d = await dbm();
     const sch = await schema();
     const taskRow = (await d.db.select().from(sch.tasks))[0]!;
@@ -303,7 +303,7 @@ describe('dispatcher extras', () => {
     const { db } = await dbm();
     const { taskStatuses } = await schema();
     await db.delete(taskStatuses);
-    const { findEligible } = await import('../../server/domains/tasks/dispatcher.service');
+    const { findEligible } = await import('#server/domains/tasks/dispatcher.service');
     expect(await findEligible()).toBeNull();
   });
 
@@ -311,12 +311,12 @@ describe('dispatcher extras', () => {
     const { db } = await dbm();
     const { tasks } = await schema();
     await db.insert(tasks).values({ id: 't-h3', title: 'x', description: '', status: STATUS.todo });
-    const { scanOnce } = await import('../../server/domains/tasks/dispatcher.service');
+    const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
     expect(await scanOnce('http://t.local')).toBe(false);
   });
 
   it('startDispatcher scans on an interval and the stop function halts it', async () => {
-    const { startDispatcher } = await import('../../server/domains/tasks/dispatcher.service');
+    const { startDispatcher } = await import('#server/domains/tasks/dispatcher.service');
     const stop = startDispatcher('http://t.local', 20);
     expect(typeof stop).toBe('function');
     await new Promise((r) => setTimeout(r, 60)); // let at least one interval tick fire
@@ -379,7 +379,7 @@ describe('runner ssh-config paths', () => {
     await mkAiAgent();
     const { db } = await dbm();
     const { environments, vaultSecrets, modelProviders, aiEmployees } = await schema();
-    const { encryptSecret } = await import('../../server/domains/vault/secret/secret-crypto.service');
+    const { encryptSecret } = await import('#server/domains/vault/secret/secret-crypto.service');
     await db.insert(vaultSecrets).values({
       id: 'sec-pw',
       name: 'pw',
@@ -407,7 +407,7 @@ describe('runner ssh-config paths', () => {
       .update(aiEmployees)
       .set({ providerId: 'prov-1', model: 'gpt-test', apiKeySecretId: 'sec-llm' })
       .where(eq(aiEmployees.userId, '00000000-0000-7000-8000-79d931929132'));
-    const { loadDispatchPlan, buildEnvBlob } = await import('../../server/domains/tasks/runner.service');
+    const { loadDispatchPlan, buildEnvBlob } = await import('#server/domains/tasks/runner.service');
     await callProc('tasks.create', { title: 'Creds', assigneeId: '00000000-0000-7000-8000-79d931929132' });
     const d = await dbm();
     const sch = await schema();
@@ -427,7 +427,7 @@ describe('runner ssh-config paths', () => {
   it('short outputs pass through the tail untouched', async () => {
     const agentId = await mkAiAgent();
     await callProc('tasks.create', { title: 'Short', assigneeId: agentId });
-    const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+    const { dispatchTask } = await import('#server/domains/tasks/runner.service');
     const d = await dbm();
     const sch = await schema();
     const taskRow = (await d.db.select().from(sch.tasks))[0]!;
@@ -446,7 +446,7 @@ describe('runner failure + fallback arms', () => {
     const t = await callProc('tasks.create', { title: 'Failing', assigneeId: agentId });
     // force failure: fake runner that ends non-zero — monkeypatch fakeRun via env? simplest: call
     // dispatchTask, then simulate finish(RUN_STATUS.FAILED) by driving the run row through the service API:
-    const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+    const { dispatchTask } = await import('#server/domains/tasks/runner.service');
     const handle = await dispatchTask(t.id, 'http://t.local');
     // while running, mark the underlying run failed by making the fake script fail: we can't reach
     // in; instead exercise the failed path via ssh-exec mock suite. Here: wait for success.
@@ -487,7 +487,7 @@ describe('runner failure + fallback arms', () => {
     const { db } = await dbm();
     const { tasks } = await schema();
     // ghost task id: dispatchTask throws (task not found) -> scanOnce catch -> false
-    const { scanOnce } = await import('../../server/domains/tasks/dispatcher.service');
+    const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
     // nothing eligible at all
     expect(await scanOnce('http://t.local')).toBe(false);
     await db.insert(tasks).values({ id: 't-x9', title: 'x', description: '', status: STATUS.todo });
@@ -497,8 +497,8 @@ describe('runner failure + fallback arms', () => {
   it('dispatch endpoint rejects a missing session', async () => {
     const agentId = await mkAiAgent();
     const t = await callProc('tasks.create', { title: 'NoSess', assigneeId: agentId });
-    const { appRouter } = await import('../../server/domains/app.router');
-    const { buildServerContext } = await import('../../server/domains/kernel/context');
+    const { appRouter } = await import('#server/domains/app.router');
+    const { buildServerContext } = await import('#server/domains/kernel/context');
     const context = buildServerContext(new Headers());
     (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => null;
     let cur: Record<string, unknown> = appRouter as unknown as Record<string, unknown>;
@@ -517,8 +517,8 @@ describe('runner failure + fallback arms', () => {
       .update(aiEmployees)
       .set({ executable: 'agent-cli' })
       .where(eq(aiEmployees.userId, '00000000-0000-7000-8000-79d931929132'));
-    const { loadDispatchPlan, buildEnvBlob } = await import('../../server/domains/tasks/runner.service');
-    const { acpRemoteCommand } = await import('../../server/domains/tasks/acp-ssh.util');
+    const { loadDispatchPlan, buildEnvBlob } = await import('#server/domains/tasks/runner.service');
+    const { acpRemoteCommand } = await import('#server/domains/tasks/acp-ssh.util');
     await callProc('tasks.create', { title: 'Exe', assigneeId: '00000000-0000-7000-8000-79d931929132' });
     const d = await dbm();
     const sch = await schema();
@@ -533,7 +533,7 @@ describe('runner failure + fallback arms', () => {
   it('env secret with ssh-key usage lands in sshKey', async () => {
     const { db } = await dbm();
     const { environments, vaultSecrets } = await schema();
-    const { encryptSecret } = await import('../../server/domains/vault/secret/secret-crypto.service');
+    const { encryptSecret } = await import('#server/domains/vault/secret/secret-crypto.service');
     await mkAiAgent();
     await db.insert(vaultSecrets).values({
       id: 'sec-key',
@@ -552,7 +552,7 @@ describe('runner failure + fallback arms', () => {
     const d = await dbm();
     const sch = await schema();
     const taskRow = (await d.db.select().from(sch.tasks))[0]!;
-    const { loadDispatchPlan } = await import('../../server/domains/tasks/runner.service');
+    const { loadDispatchPlan } = await import('#server/domains/tasks/runner.service');
     const plan = await loadDispatchPlan(taskRow.id);
     expect(plan.sshKey).toBe('-----BEGIN KEY-----');
     expect(plan.sshPassword).toBeUndefined();
@@ -600,7 +600,7 @@ describe('runner real-ssh path (mocked ssh2)', () => {
       };
       const agentId = await mkAiAgent();
       const t = await callProc('tasks.create', { title: 'ACP happy', description: 'do it', assigneeId: agentId });
-      const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       const handle = await dispatchTask(t.id, 'http://t.local');
       const res = await handle.finished;
       expect(res.status).toBe(RUN_STATUS.DONE);
@@ -641,7 +641,7 @@ describe('runner real-ssh path (mocked ssh2)', () => {
     try {
       const agentId = await mkAiAgent();
       const t = await callProc('tasks.create', { title: 'SSH fail', assigneeId: agentId });
-      const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       const { db } = await dbm();
       const { tasks, taskRuns } = await schema();
       const handle = await dispatchTask(t.id, 'http://t.local');
@@ -672,7 +672,7 @@ describe('full output via long fake script', () => {
     try {
       const agentId = await mkAiAgent();
       const t = await callProc('tasks.create', { title: 'Long3', assigneeId: agentId });
-      const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       const handle = await dispatchTask(t.id, 'http://t.local');
       const res = await handle.finished;
       expect(res.status).toBe(RUN_STATUS.DONE);
@@ -704,14 +704,14 @@ describe('dispatch-plan edge arms', () => {
     const d = await dbm();
     const sch = await schema();
     const taskRow = (await d.db.select().from(sch.tasks))[0]!;
-    const { loadDispatchPlan } = await import('../../server/domains/tasks/runner.service');
+    const { loadDispatchPlan } = await import('#server/domains/tasks/runner.service');
     const plan = await loadDispatchPlan(taskRow.id);
     expect(plan.sshKey).toBeUndefined(); // env has no linked secret
     expect(plan.llmEnv).toEqual({}); // provider set but no key secret -> no llm env
   });
 
   it('maybeStartDispatcher falls back to a default URL without TANDEM_PUBLIC_URL', async () => {
-    const { maybeStartDispatcher } = await import('../../server/domains/tasks/dispatcher.service');
+    const { maybeStartDispatcher } = await import('#server/domains/tasks/dispatcher.service');
     const prev = env.TANDEM_PUBLIC_URL;
     setEnv({ TANDEM_PUBLIC_URL: undefined });
     try {
@@ -724,7 +724,7 @@ describe('dispatch-plan edge arms', () => {
   });
 
   it('maybeStartDispatcher respects TANDEM_NO_DISPATCHER', async () => {
-    const { maybeStartDispatcher } = await import('../../server/domains/tasks/dispatcher.service');
+    const { maybeStartDispatcher } = await import('#server/domains/tasks/dispatcher.service');
     const prev = env.TANDEM_NO_DISPATCHER;
     setEnv({ TANDEM_NO_DISPATCHER: '1' });
     try {
@@ -742,7 +742,7 @@ describe('dispatch-plan edge arms', () => {
 
 describe('host-derived key env (hermes host-gated credentials)', () => {
   it('mirrors hermes _host_derived_api_key', async () => {
-    const { hostDerivedKeyEnv } = await import('../../server/domains/tasks/runner.service');
+    const { hostDerivedKeyEnv } = await import('#server/domains/tasks/runner.service');
     expect(hostDerivedKeyEnv('https://ai.ultranomic.net')).toBe('ULTRANOMIC_API_KEY');
     expect(hostDerivedKeyEnv('https://api.deepseek.com')).toBe('DEEPSEEK_API_KEY');
     expect(hostDerivedKeyEnv('http://127.0.0.1:8080')).toBe('CUSTOM_API_KEY');
@@ -759,7 +759,7 @@ describe('host-derived key env (hermes host-gated credentials)', () => {
     await callProc('tasks.create', { title: 'Host key', assigneeId: agentId });
     const d = await dbm();
     const sch = await schema();
-    const { encryptSecret } = await import('../../server/domains/vault/secret/secret-crypto.service');
+    const { encryptSecret } = await import('#server/domains/vault/secret/secret-crypto.service');
     await d.db.insert(sch.modelProviders).values({ id: 'prov-h', label: 'PH', baseUrl: 'https://ai.example.net' });
     await d.db.insert(sch.vaultSecrets).values({
       id: 'sec-h',
@@ -772,7 +772,7 @@ describe('host-derived key env (hermes host-gated credentials)', () => {
       .set({ providerId: 'prov-h', model: 'm-h', apiKeySecretId: 'sec-h' })
       .where(eq(sch.aiEmployees.userId, agentId));
     const taskRow = (await d.db.select().from(sch.tasks))[0]!;
-    const { loadDispatchPlan, buildEnvBlob } = await import('../../server/domains/tasks/runner.service');
+    const { loadDispatchPlan, buildEnvBlob } = await import('#server/domains/tasks/runner.service');
     const plan = await loadDispatchPlan(taskRow.id);
     const blob = buildEnvBlob(plan, 'http://t.local');
     expect(blob).toContain(`CUSTOM_API_KEY='sk-h'`);
@@ -786,7 +786,7 @@ describe('env blob quoting', () => {
     await callProc('tasks.create', { title: `Find out who's your supervior today`, assigneeId: agentId });
     const d = await dbm();
     const sch = await schema();
-    const { encryptSecret } = await import('../../server/domains/vault/secret/secret-crypto.service');
+    const { encryptSecret } = await import('#server/domains/vault/secret/secret-crypto.service');
     await d.db.insert(sch.modelProviders).values({ id: 'prov-q', label: 'PQ', baseUrl: 'https://pq.example.com' });
     await d.db.insert(sch.vaultSecrets).values({
       id: 'sec-q',
@@ -799,7 +799,7 @@ describe('env blob quoting', () => {
       .set({ providerId: 'prov-q', model: 'm-q', apiKeySecretId: 'sec-q' })
       .where(eq(sch.aiEmployees.userId, agentId));
     const taskRow = (await d.db.select().from(sch.tasks))[0]!;
-    const { loadDispatchPlan, buildEnvBlob } = await import('../../server/domains/tasks/runner.service');
+    const { loadDispatchPlan, buildEnvBlob } = await import('#server/domains/tasks/runner.service');
     const plan = await loadDispatchPlan(taskRow.id);
     const blob = buildEnvBlob(plan, 'http://t.local');
     // prove it sources: run it through sh exactly like the remote side does
@@ -819,7 +819,7 @@ describe('dispatcher', () => {
   it('scanOnce dispatches an eligible task to the AI assignee (fake runner)', async () => {
     const agentId = await mkAiAgent();
     const t = await callProc('tasks.create', { title: 'Do things', assigneeId: agentId });
-    const { scanOnce } = await import('../../server/domains/tasks/dispatcher.service');
+    const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
     const fired = await scanOnce('http://tandem.local');
     expect(fired).toBe(true);
     // task moved to doing + a run row exists
@@ -858,7 +858,7 @@ describe('dispatcher', () => {
       updatedAt: new Date(),
     });
     await callProc('tasks.create', { title: 'Human work', assigneeId: '00000000-0000-7000-8000-b4b57f028566' });
-    const { scanOnce } = await import('../../server/domains/tasks/dispatcher.service');
+    const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
     expect(await scanOnce('http://tandem.local')).toBe(false);
   });
 
@@ -866,7 +866,7 @@ describe('dispatcher', () => {
     const agentId = await mkAiAgent();
     await callProc('tasks.create', { title: 'First', assigneeId: agentId });
     await callProc('tasks.create', { title: 'Second', assigneeId: agentId });
-    const { scanOnce } = await import('../../server/domains/tasks/dispatcher.service');
+    const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
     const { db } = await dbm();
     const { taskRuns } = await schema();
     const runCount = async () => (await db.select().from(taskRuns)).length;
@@ -896,7 +896,7 @@ describe('dispatcher', () => {
     setEnv({ TANDEM_FAKE_RUNNER: '1' });
     setEnv({ TANDEM_FAKE_SCRIPT: 'ok\n{"kind": "result", "body": "done"}' });
     try {
-      const { setSetting } = await import('../../server/domains/settings/settings.service');
+      const { setSetting } = await import('#server/domains/settings/settings.service');
       await setSetting('company_prompt', 'English only, pinned deps.');
       const { db } = await dbm();
       const { projects } = await schema();
@@ -905,7 +905,7 @@ describe('dispatcher', () => {
         .values({ id: 'p-1', name: 'FedEx', description: '', prompt: 'FedEx API v9, never log labels.' });
       const agentId = await mkAiAgent();
       const t = await callProc('tasks.create', { title: 'Prompted', assigneeId: agentId, projectId: 'p-1' });
-      const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       const handle = await dispatchTask(t.id, 'http://tandem.local');
       await handle.finished;
       const { taskRuns } = await schema();
@@ -940,7 +940,7 @@ describe('dispatcher', () => {
         assigneeId: agentId,
         ownerId: '00000000-0000-7000-8000-820caae75a5f',
       });
-      const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       const handle = await dispatchTask(t.id, 'http://tandem.local');
       expect((await handle.finished).status).toBe(RUN_STATUS.DONE);
       const { tasks, taskObligations } = await schema();
@@ -977,7 +977,7 @@ describe('dispatcher', () => {
         .insert(employeeSupervisors)
         .values({ employeeId: agentId, supervisorId: '00000000-0000-7000-8000-b09d13ad1a84' });
       const t = await callProc('tasks.create', { title: 'HReview', assigneeId: agentId });
-      const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       await (
         await dispatchTask(t.id, 'http://tandem.local')
       ).finished;
@@ -1016,7 +1016,7 @@ describe('dispatcher', () => {
       const ash = await mkAiAgent();
       await db.insert(employeeSupervisors).values({ employeeId: jay, supervisorId: ash });
       const t = await callProc('tasks.create', { title: 'AIReview', assigneeId: jay });
-      const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       await (
         await dispatchTask(t.id, 'http://tandem.local')
       ).finished;
@@ -1066,7 +1066,7 @@ describe('dispatcher', () => {
       const ash = await mkAiAgent();
       await db.insert(employeeSupervisors).values({ employeeId: jay, supervisorId: ash });
       const t = await callProc('tasks.create', { title: 'AIReject', assigneeId: jay });
-      const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       await (
         await dispatchTask(t.id, 'http://tandem.local')
       ).finished;
@@ -1084,7 +1084,7 @@ describe('dispatcher', () => {
       setEnv({ TANDEM_FAKE_SCRIPT: 'fixed\n{"kind": "result", "body": "v2 with e2e"}' });
       setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'lgtm\n{"kind": "result", "body": "approved"}' });
       await callProc('tasks.update', { id: t.id, status: STATUS.doing });
-      const { submitResult } = await import('../../server/domains/tasks/workflow.service');
+      const { submitResult } = await import('#server/domains/tasks/workflow.service');
       await submitResult(t.id, jay, 'v2 with e2e');
       await new Promise((r) => setTimeout(r, 600));
       const rounds = (await db.select().from(taskReviews)).filter((r) => r.taskId === t.id).map((r) => r.round);
@@ -1111,7 +1111,7 @@ describe('dispatcher', () => {
         assigneeId: jay,
         ownerId: '00000000-0000-7000-8000-cd5fca5e2d34',
       });
-      const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       await (
         await dispatchTask(t.id, 'http://tandem.local')
       ).finished;
@@ -1126,14 +1126,14 @@ describe('dispatcher', () => {
       expect(rev[0]!.status).toBe(OBLIGATION_STATUS.PENDING); // verdict row untouched
 
       // answer the question -> back to in-review, review re-arms
-      const { answerQuestion } = await import('../../server/domains/tasks/workflow.service');
+      const { answerQuestion } = await import('#server/domains/tasks/workflow.service');
       await answerQuestion(t.id, '00000000-0000-7000-8000-cd5fca5e2d34', 'proceed as you see fit');
       setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'ok now\n{"kind": "result", "body": "approved after clarification"}' });
       await new Promise((r) => setTimeout(r, 800));
       // now the human-only REJECT path on a fresh round state
       const before = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
       if (before.status === STATUS.inReview) {
-        const { rejectReview } = await import('../../server/domains/tasks/workflow.service');
+        const { rejectReview } = await import('#server/domains/tasks/workflow.service');
         await rejectReview(t.id, ash, 'wrong approach entirely');
         const after = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
         expect(after.status).toBe(STATUS.cancelled);
@@ -1149,9 +1149,9 @@ describe('dispatcher', () => {
   }, 25_000);
 
   it('REVIEW LAW: reviewer plan arms — ghost task, human reviewer, secrets + LLM, guards', async () => {
-    const { loadReviewPlan, dispatchTask } = await import('../../server/domains/tasks/runner.service');
+    const { loadReviewPlan, dispatchTask } = await import('#server/domains/tasks/runner.service');
     const { recordVerdict, dispatchAiReviewTurns, currentRound } =
-      await import('../../server/domains/tasks/review.service');
+      await import('#server/domains/tasks/review.service');
     const { db } = await dbm();
     const { user, aiEmployees, environments, vaultSecrets, modelProviders } = await schema();
 
@@ -1185,7 +1185,7 @@ describe('dispatcher', () => {
     // reviewer with password-secret env + provider/LLM key -> full loadDispatchPlanFor arms
     setEnv({ TANDEM_FAKE_SCRIPT: 'done\n{"kind": "result", "body": "shipped"}' });
     setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'ok\n{"kind": "result", "body": "fine"}' });
-    const { encryptSecret } = await import('../../server/domains/vault/secret/secret-crypto.service');
+    const { encryptSecret } = await import('#server/domains/vault/secret/secret-crypto.service');
     const pwSecret = await db
       .insert(vaultSecrets)
       .values({
@@ -1262,7 +1262,7 @@ describe('dispatcher', () => {
       reviewers: ['00000000-0000-7000-8000-fe1cc20db501'],
     });
     await callProc('tasks.update', { id: t2.id, status: STATUS.doing });
-    const { submitResult } = await import('../../server/domains/tasks/workflow.service');
+    const { submitResult } = await import('#server/domains/tasks/workflow.service');
     await submitResult(t2.id, agentId, 'real body');
     // review turn ran with the reviewer's secrets/LLM env loaded; verdict landed
     let done = false;
@@ -1324,7 +1324,7 @@ describe('dispatcher', () => {
         assigneeId: jay,
         ownerId: '00000000-0000-7000-8000-cd5fca5e2d34',
       });
-      const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       await (
         await dispatchTask(t.id, 'http://tandem.local')
       ).finished;
@@ -1336,7 +1336,7 @@ describe('dispatcher', () => {
       }
       expect(waiting).toBe(true);
       // while the review turn's run is settling, a manual re-arm skips live runs
-      const { dispatchAiReviewTurns } = await import('../../server/domains/tasks/review.service');
+      const { dispatchAiReviewTurns } = await import('#server/domains/tasks/review.service');
       await db.update(taskRuns).set({ status: RUN_STATUS.RUNNING }).where(eq(taskRuns.taskId, t.id));
       await dispatchAiReviewTurns(t.id); // running arm: no extra run row appears
       const runCount = (await db.select().from(taskRuns)).filter(
@@ -1345,7 +1345,7 @@ describe('dispatcher', () => {
       await db.update(taskRuns).set({ status: RUN_STATUS.DONE }).where(eq(taskRuns.taskId, t.id));
       // answer -> re-arm without an explicit body (fetches from activity)
       setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'ok now\n{"kind": "result", "body": "approved after the answer"}' });
-      const { answerQuestion } = await import('../../server/domains/tasks/workflow.service');
+      const { answerQuestion } = await import('#server/domains/tasks/workflow.service');
       await answerQuestion(t.id, '00000000-0000-7000-8000-cd5fca5e2d34', 'blue');
       let done = false;
       for (let i = 0; i < 100 && !done; i++) {
@@ -1371,7 +1371,7 @@ describe('dispatcher', () => {
     const agentId = await mkAiAgent();
     const t = await callProc('tasks.create', { title: 'Stale', assigneeId: agentId });
     await callProc('tasks.update', { id: t.id, status: STATUS.doing }); // worker busy elsewhere flipped nothing; a stale job arrives now
-    const { dispatchIfEligible } = await import('../../server/domains/tasks/dispatcher.service');
+    const { dispatchIfEligible } = await import('#server/domains/tasks/dispatcher.service');
     await dispatchIfEligible(t.id, 'http://tandem.local');
     const { db } = await dbm();
     const { taskRuns } = await schema();
@@ -1379,14 +1379,14 @@ describe('dispatcher', () => {
   });
 
   it('onDispatcherSettingsChanged is a no-op without redis', async () => {
-    const { onDispatcherSettingsChanged } = await import('../../server/domains/tasks/dispatcher.service');
+    const { onDispatcherSettingsChanged } = await import('#server/domains/tasks/dispatcher.service');
     await expect(onDispatcherSettingsChanged()).resolves.toBeUndefined();
   });
 
   it('onDispatcherSettingsChanged survives a dead redis (best-effort by law)', async () => {
     setEnv({ REDIS_URL: 'redis://127.0.0.1:6390' });; // nothing listens here
     try {
-      const { onDispatcherSettingsChanged } = await import('../../server/domains/tasks/dispatcher.service');
+      const { onDispatcherSettingsChanged } = await import('#server/domains/tasks/dispatcher.service');
       await expect(onDispatcherSettingsChanged()).resolves.toBeUndefined();
     } finally {
       setEnv({ REDIS_URL: undefined });
@@ -1400,7 +1400,7 @@ describe('dispatcher', () => {
       const agentId = await mkAiAgent();
       const a = await callProc('tasks.create', { title: 'CapA', assigneeId: agentId });
       const b = await callProc('tasks.create', { title: 'CapB', assigneeId: agentId });
-      const { scanOnce } = await import('../../server/domains/tasks/dispatcher.service');
+      const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
       const { tasks } = await schema();
       const { db } = await dbm();
       const st = async (id: string) => (await db.select().from(tasks)).find((x) => x.id === id)!.status;
@@ -1426,12 +1426,12 @@ describe('dispatcher', () => {
     setEnv({ TANDEM_FAKE_SCRIPT: 'step 1\nstep 2\n{"kind": "result", "body": "done"}' });
     setEnv({ TANDEM_FAKE_DELAY_MS: '120' });
     try {
-      const { setSetting } = await import('../../server/domains/settings/settings.service');
+      const { setSetting } = await import('#server/domains/settings/settings.service');
       await setSetting('tasks_per_agent', '2');
       const agentId = await mkAiAgent();
       const a = await callProc('tasks.create', { title: 'ParA', assigneeId: agentId });
       const b = await callProc('tasks.create', { title: 'ParB', assigneeId: agentId });
-      const { scanOnce } = await import('../../server/domains/tasks/dispatcher.service');
+      const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
       expect(await scanOnce('http://tandem.local')).toBe(true); // A goes
       const { tasks } = await schema();
       const { db } = await dbm();
@@ -1463,7 +1463,7 @@ describe('dispatcher', () => {
       const y = await mkAiAgent();
       const a = await callProc('tasks.create', { title: 'X task', assigneeId: x });
       const b = await callProc('tasks.create', { title: 'Y task', assigneeId: y });
-      const { scanOnce } = await import('../../server/domains/tasks/dispatcher.service');
+      const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
       const { tasks } = await schema();
       const { db } = await dbm();
       const stOf = async (id: string) => (await db.select().from(tasks)).find((x) => x.id === id)!.status;
@@ -1495,7 +1495,7 @@ describe('dispatcher', () => {
     try {
       const agentId = await mkAiAgent();
       const t = await callProc('tasks.create', { title: 'J task', assigneeId: agentId });
-      const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       const handle = await dispatchTask(t.id, 'http://tandem.local');
       expect((await handle.finished).status).toBe(RUN_STATUS.DONE);
       const { tasks } = await schema();
@@ -1520,7 +1520,7 @@ describe('dispatcher', () => {
     try {
       const agentId = await mkAiAgent();
       const t = await callProc('tasks.create', { title: 'R task', assigneeId: agentId });
-      const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       const handle = await dispatchTask(t.id, 'http://tandem.local');
       expect((await handle.finished).status).toBe(RUN_STATUS.DONE);
       const { tasks } = await schema();
@@ -1536,7 +1536,7 @@ describe('dispatcher', () => {
   it('runs live lists the run with its streaming tail', async () => {
     const agentId = await mkAiAgent();
     const t = await callProc('tasks.create', { title: 'Stream me', assigneeId: agentId });
-    const { scanOnce } = await import('../../server/domains/tasks/dispatcher.service');
+    const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
     await scanOnce('http://tandem.local');
     await new Promise((r) => setTimeout(r, 400));
     const iter = await callProc('tasks.runs', { taskId: t.id });
@@ -1603,7 +1603,7 @@ describe('dispatcher', () => {
   it('failed run bounces the task back to ready', async () => {
     const agentId = await mkAiAgent();
     const t = await callProc('tasks.create', { title: 'Boom', assigneeId: agentId });
-    const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+    const { dispatchTask } = await import('#server/domains/tasks/runner.service');
     // override fake script to a failure: emulate by monkeypatching finish path — instead call
     // dispatchTask then mark the run failed through the service's finish contract:
     const handle = await dispatchTask(t.id, 'http://tandem.local');
@@ -1637,7 +1637,7 @@ describe('runner proposal recording', () => {
       ].join('\n'),
     });
     try {
-      const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       const h = await dispatchTask(t.id, 'http://t.local');
       await h.finished;
     } finally {

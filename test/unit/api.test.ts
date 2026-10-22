@@ -16,9 +16,9 @@ import './helpers/pg';
 // Covers version, health live/ready, auth-config, session gates.
 import { describe, expect, it, beforeEach } from 'vitest';
 
-import { applyMigrations, sqlClient } from '../../server/db/index';
-import { env, setEnv } from '../../server/domains/kernel/env';
-import { ROLE } from '../../shared/enums';
+import { applyMigrations, sqlClient } from '#server/db/index';
+import { env, setEnv } from '#server/domains/kernel/env';
+import { ROLE } from '#shared/enums';
 import { resetSchema } from './helpers/pg';
 
 // ---- harness: real h3 events + nitro auto-import aliases ----
@@ -88,8 +88,8 @@ beforeEach(async () => {
 
 describe('meta.version (oRPC)', () => {
   it('returns APP_VERSION or dev', async () => {
-    const { appRouter: router } = await import('../../server/domains/app.router');
-    const { buildServerContext } = await import('../../server/domains/kernel/context');
+    const { appRouter: router } = await import('#server/domains/app.router');
+    const { buildServerContext } = await import('#server/domains/kernel/context');
     const callProc = (path: string[]) => {
       let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
       for (const k of path) node = node[k] as Record<string, unknown>;
@@ -108,7 +108,7 @@ describe('meta.version (oRPC)', () => {
 
 describe('GET /health/live', () => {
   it('is always ok (200, no DB touch)', async () => {
-    const { result, event } = await call('../../server/routes/health/live.get.ts', { method: 'GET', url: '/health/live' });
+    const { result, event } = await call('#server/routes/health/live.get.ts', { method: 'GET', url: '/health/live' });
     expect(result).toEqual({ ok: true });
     expect((event.node.res as unknown as { statusCode: number }).statusCode).toBe(200);
   });
@@ -116,15 +116,15 @@ describe('GET /health/live', () => {
 
 describe('GET /health/ready', () => {
   it('is ok when the DB answers', async () => {
-    const { result } = await call('../../server/routes/health/ready.get.ts', { method: 'GET', url: '/health/ready' });
+    const { result } = await call('#server/routes/health/ready.get.ts', { method: 'GET', url: '/health/ready' });
     expect(result).toEqual({ ok: true, migrations: 'complete' });
   });
 });
 
 describe('auth.configLive (oRPC, public)', () => {
   async function firstSnapshot() {
-    const { appRouter: router } = await import('../../server/domains/app.router');
-    const { buildServerContext } = await import('../../server/domains/kernel/context');
+    const { appRouter: router } = await import('#server/domains/app.router');
+    const { buildServerContext } = await import('#server/domains/kernel/context');
     let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
     for (const k of ['auth', 'configLive']) node = node[k] as Record<string, unknown>;
     const gen = await (node['~orpc'] as { handler: (o: unknown) => Promise<AsyncGenerator<unknown>> }).handler({
@@ -147,7 +147,7 @@ describe('auth.configLive (oRPC, public)', () => {
   });
 
   it('lists stored providers without secrets', async () => {
-    const { saveOidcProviders } = await import('../../server/domains/auth/oidc.service');
+    const { saveOidcProviders } = await import('#server/domains/auth/oidc.service');
     await saveOidcProviders([
       { id: 'p1', label: 'SSO', issuer: 'https://sso.example.com', clientId: 'cid', clientSecret: 'shh' },
     ]);
@@ -164,9 +164,9 @@ describe('oRPC session surface', () => {
   // The auth middleware runs inside RPCHandler — exercise through it.
   async function rpcPost(path: string, headers?: Record<string, string>) {
     const { RPCHandler } = await import('@orpc/server/fetch');
-    const { appRouter: router } = await import('../../server/domains/app.router');
-    const { buildServerContext } = await import('../../server/domains/kernel/context');
-    const { getAuth } = await import('../../server/domains/auth/auth.service');
+    const { appRouter: router } = await import('#server/domains/app.router');
+    const { buildServerContext } = await import('#server/domains/kernel/context');
+    const { getAuth } = await import('#server/domains/auth/auth.service');
     const inst = await getAuth();
     const realGetSession = inst.api.getSession.bind(inst.api);
     const original = inst.api.getSession;
@@ -202,8 +202,8 @@ describe('oRPC session surface', () => {
   });
 
   async function proc(path: string[]) {
-    const { appRouter: router } = await import('../../server/domains/app.router');
-    const { buildServerContext } = await import('../../server/domains/kernel/context');
+    const { appRouter: router } = await import('#server/domains/app.router');
+    const { buildServerContext } = await import('#server/domains/kernel/context');
     let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
     for (const k of path) node = node[k] as Record<string, unknown>;
     return (node['~orpc'] as { handler: (o: unknown) => Promise<unknown> }).handler({
@@ -218,9 +218,9 @@ describe('oRPC session surface', () => {
   });
 
   it('auth.session returns the session for a signed-in user', async () => {
-    const { getAuth } = await import('../../server/domains/auth/auth.service');
-    const { appRouter: router } = await import('../../server/domains/app.router');
-    const { buildServerContext } = await import('../../server/domains/kernel/context');
+    const { getAuth } = await import('#server/domains/auth/auth.service');
+    const { appRouter: router } = await import('#server/domains/app.router');
+    const { buildServerContext } = await import('#server/domains/kernel/context');
     const auth = await getAuth();
     await auth.api.signUpEmail({ body: { email: 's@x.co', password: 'password1234', name: 'S' } });
     const signIn = await auth.api.signInEmail({

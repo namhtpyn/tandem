@@ -1,11 +1,12 @@
 // Remaining coverage: ready-get catch path, db index branches,
 // boot log line, auth after-hook. This file closes the final gaps.
-import { describe, expect, it, beforeEach } from 'vitest';
+import { consola } from 'consola';
+import { describe, expect, it, beforeEach , vi } from 'vitest';
 
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { applyMigrations, sqlClient } from '../../server/db/index';
-import { ROLE } from '../../shared/enums';
+import { applyMigrations, sqlClient } from '#server/db/index';
+import { ROLE } from '#shared/enums';
 import { call } from './api-harness';
 
 beforeEach(async () => {
@@ -20,7 +21,7 @@ describe('GET /health/ready failure path', () => {
     // graph (ready.get.ts imports ../db at module scope).
     const { vi } = await import('vitest');
     vi.resetModules();
-    vi.doMock('../../server/db/index', () => {
+    vi.doMock('#server/db/index', () => {
       throw new Error('db down');
     });
     // re-import the route so it picks up the broken db module
@@ -28,7 +29,7 @@ describe('GET /health/ready failure path', () => {
     let event: { node: { res: { statusCode: number } } } | undefined;
     try {
       const { makeEvent } = await import('./api-harness');
-      const mod = await import('../../server/routes/health/ready.get.ts');
+      const mod = await import('#server/routes/health/ready.get.ts');
       const e = makeEvent({ method: 'GET', url: '/health/ready' });
       result = await (mod.default as (x: unknown) => unknown)(e);
       event = e as unknown as { node: { res: { statusCode: number } } };
@@ -39,10 +40,10 @@ describe('GET /health/ready failure path', () => {
     }
     expect(result).toMatchObject({ ok: false });
     if (event) expect(event.node.res.statusCode).toBe(503);
-    vi.doUnmock('../../server/db/index');
+    vi.doUnmock('#server/db/index');
     vi.resetModules();
     // warm the real modules again for later tests in this worker
-    await import('../../server/db/index');
+    await import('#server/db/index');
   });
 });
 
@@ -70,18 +71,16 @@ describe('boot plugin log line', () => {
   it('logs applied migrations when there are any', async () => {
     // nuke the schema so boot re-applies migrations (log line) and re-seeds
     await resetSchema();
-    const logs: string[] = [];
-    const orig = console.log;
-    console.log = (...a: unknown[]) => {
-      logs.push(a.join(' '));
-    };
+    const mod = await import('#server/plugins/boot');
+    const infoSpy = vi.spyOn(mod.log, 'info').mockImplementation(() => {});
+    let calls: string[][] = [];
     try {
-      const mod = await import('../../server/plugins/boot');
       await (mod.default as () => Promise<unknown>)();
+      calls = infoSpy.mock.calls.map((c) => c.map(String));
     } finally {
-      console.log = orig;
+      infoSpy.mockRestore();
     }
-    expect(logs.some((l) => l.includes('applied migrations'))).toBe(true);
+    expect(calls.some((c) => c.join(' ').includes('applied migrations'))).toBe(true);
   });
 });
 
@@ -89,7 +88,7 @@ describe('auth first-user-admin hook', () => {
   it('promotes the first created user to admin via the after hook', async () => {
     await resetSchema();
     await applyMigrations();
-    const { getAuth } = await import('../../server/domains/auth/auth.service');
+    const { getAuth } = await import('#server/domains/auth/auth.service');
     const auth = await getAuth();
     await auth.api.signUpEmail({ body: { email: 'first@x.co', password: 'password1234', name: 'First' } });
     const rows = await sqlClient`select email, role from "user"`;

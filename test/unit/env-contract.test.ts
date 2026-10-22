@@ -1,7 +1,7 @@
 // env contract report formatting — the boot failure output humans read
 import { consola } from 'consola';
 import { describe, expect, it, vi } from 'vitest';
-import { formatEnvIssues } from '../../server/domains/kernel/env';
+import { formatEnvIssues } from '#server/domains/kernel/env';
 
 describe('formatEnvIssues', () => {
   it('missing required vars read "LABEL is required"', () => {
@@ -26,7 +26,7 @@ describe('formatEnvIssues', () => {
 
 describe('reportInvalidEnvironment', () => {
   it('prints the report once and exits 1', async () => {
-    const { reportInvalidEnvironment } = await import('../../server/domains/kernel/env');
+    const { reportInvalidEnvironment } = await import('#server/domains/kernel/env');
     const errSpy = vi.spyOn(consola, 'error').mockImplementation(() => {});
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     reportInvalidEnvironment([{ path: ['DATABASE_URL'], message: 'DATABASE_URL is required' }]);
@@ -39,7 +39,7 @@ describe('reportInvalidEnvironment', () => {
 
 describe('assertEnv', () => {
   it('reports + exits on a failed parse; passes silently on success', async () => {
-    const { assertEnv } = await import('../../server/domains/kernel/env');
+    const { assertEnv } = await import('#server/domains/kernel/env');
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     assertEnv({ success: false, error: { issues: [{ path: ['REDIS_URL'], message: 'REDIS_URL is required' }] } });

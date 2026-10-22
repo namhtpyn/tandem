@@ -4,10 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { env, setEnv } from '../../server/domains/kernel/env';
-import { ROLE, RUN_STATUS } from '../../shared/enums';
-import { STATUS } from '../../shared/status';
+import { applyMigrations } from '#server/db/index';
+import { env, setEnv } from '#server/domains/kernel/env';
+import { ROLE, RUN_STATUS } from '#shared/enums';
+import { STATUS } from '#shared/status';
 
 setEnv({ TANDEM_FAKE_RUNNER: '' });
 
@@ -18,7 +18,7 @@ const admin = {
   role: ROLE.ADMIN,
 };
 
-vi.mock('../../server/domains/tasks/ssh-exec.util', () => ({
+vi.mock('#server/domains/tasks/ssh-exec.util', () => ({
   // the ACP transport opens through loadClient — a throwing client loader is
   // today's equivalent of the old throwing ssh exec
   loadClient: async () => {
@@ -29,8 +29,8 @@ vi.mock('../../server/domains/tasks/ssh-exec.util', () => ({
 beforeEach(async () => {
   await resetSchema();
   await applyMigrations();
-  const { db } = await import('../../server/db');
-  const { user, environments, aiEmployees, tasks } = await import('../../server/db/schema');
+  const { db } = await import('#server/db');
+  const { user, environments, aiEmployees, tasks } = await import('#server/db/schema');
   await db.insert(user).values({
     id: '00000000-0000-7000-8000-cd5fca5e2d34',
     name: 'Admin',
@@ -72,12 +72,12 @@ beforeEach(async () => {
 
 describe('dispatchTask catch arm', () => {
   it('a throwing ssh exec fails the run and logs the error', async () => {
-    const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+    const { dispatchTask } = await import('#server/domains/tasks/runner.service');
     const handle = await dispatchTask('t-1', 'http://t.local');
     const res = await handle.finished;
     expect(res.status).toBe(RUN_STATUS.FAILED);
-    const { db } = await import('../../server/db');
-    const { taskRuns } = await import('../../server/db/schema');
+    const { db } = await import('#server/db');
+    const { taskRuns } = await import('#server/db/schema');
     const run = (await db.select().from(taskRuns))[0]!;
     expect(run.output).toContain('ssh exploded');
     expect(run.status).toBe(RUN_STATUS.FAILED);

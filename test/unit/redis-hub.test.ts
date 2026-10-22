@@ -1,8 +1,8 @@
 // Redis hub integration tests — real redis on 127.0.0.1:6399 (docker redis-spike), skipped when unreachable.
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 
-import { env, setEnv } from '../../server/domains/kernel/env';
-import { CHANGE_ACTION, CHANGE_RESOURCE } from '../../shared/enums';
+import { env, setEnv } from '#server/domains/kernel/env';
+import { CHANGE_ACTION, CHANGE_RESOURCE } from '#shared/enums';
 
 const REDIS_URL = 'redis://127.0.0.1:6399';
 
@@ -30,7 +30,7 @@ describe.skipIf(!up)('redis hub (integration)', () => {
   });
 
   it('enqueues and processes a job through the queue', async () => {
-    const { redisQueue } = await import('../../server/domains/kernel/queue');
+    const { redisQueue } = await import('#server/domains/kernel/queue');
     const hub = await redisQueue();
     expect(hub).toBeTruthy();
     const got: number[] = [];
@@ -48,7 +48,7 @@ describe.skipIf(!up)('redis hub (integration)', () => {
   });
 
   it('cache set/get round-trips with TTL (cache domain)', async () => {
-    const { appCache } = await import('../../server/domains/kernel/cache');
+    const { appCache } = await import('#server/domains/kernel/cache');
     const cache = await appCache();
     await cache.set('itest-k', 'v', 30);
     expect(await cache.get('itest-k')).toBe('v');
@@ -56,7 +56,7 @@ describe.skipIf(!up)('redis hub (integration)', () => {
   });
 
   it('change encoding round-trips', async () => {
-    const { encodeChange, decodeChange } = await import('../../server/domains/kernel/change-bus');
+    const { encodeChange, decodeChange } = await import('#server/domains/kernel/change-bus');
     const e = {
       id: '1',
       resource: CHANGE_RESOURCE.TASKS as const,
@@ -67,7 +67,7 @@ describe.skipIf(!up)('redis hub (integration)', () => {
   });
 
   afterAll(async () => {
-    const { redisQueue } = await import('../../server/domains/kernel/queue');
+    const { redisQueue } = await import('#server/domains/kernel/queue');
     const hub = await redisQueue();
     await hub?.close();
     setEnv({ REDIS_URL: undefined });

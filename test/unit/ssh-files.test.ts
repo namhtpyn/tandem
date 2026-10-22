@@ -13,7 +13,7 @@ import {
   TASK_FILES_HOME,
   taskFilesOutDir,
   type SshFilePlan,
-} from '../../server/domains/tasks/ssh-files.util';
+} from '#server/domains/tasks/ssh-files.util';
 
 class FakeStream {
   private stderrCb: ((d: Buffer) => void) | null = null;

@@ -2,7 +2,7 @@
 import type { InferClientOutputs } from '@orpc/client';
 import type { RouterClient } from '@orpc/server';
 
-import type { appRouter } from '~/../server/domains/app.router';
+import type { appRouter } from '#server/domains/app.router';
 
 type Client = RouterClient<typeof appRouter>;
 type Outputs = InferClientOutputs<Client>;

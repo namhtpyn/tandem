@@ -3,9 +3,9 @@
 // version of dispatcher.test's (both re-implemented because vi.mock is per-file).
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-import { env, setEnv } from '../../server/domains/kernel/env';
-import type { AcpStream } from '../../server/domains/tasks/acp.client';
-import { OBLIGATION_STATUS, RUN_STATUS } from '../../shared/enums';
+import { env, setEnv } from '#server/domains/kernel/env';
+import type { AcpStream } from '#server/domains/tasks/acp.client';
+import { OBLIGATION_STATUS, RUN_STATUS } from '#shared/enums';
 
 const NL_SRC = String.fromCharCode(10); // a real newline byte on the wire
 
@@ -260,7 +260,7 @@ type TurnOpts = {
   onLine?: (line: string) => void;
 };
 const turn = (stream: AcpStream, extra: TurnOpts = {}) =>
-  import('../../server/domains/tasks/acp.client').then(({ runAcpTurn }) =>
+  import('#server/domains/tasks/acp.client').then(({ runAcpTurn }) =>
     runAcpTurn({ stream, prompt: 'do the thing', timeoutMs: 2_000, ...extra }),
   );
 
@@ -331,7 +331,7 @@ describe('acp.client turns', () => {
         send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
       }
     });
-    const { runAcpTurn } = await import('../../server/domains/tasks/acp.client');
+    const { runAcpTurn } = await import('#server/domains/tasks/acp.client');
     const res2 = await runAcpTurn({ stream: stream2, prompt: 'grade it', timeoutMs: 2_000, outputSchema: Report });
     expect(res2.structured).toEqual({ score: 8, notes: 'solid' });
     // the contract rode along on the prompt
@@ -585,7 +585,7 @@ describe('acp.client turns', () => {
   });
 
   it('degenerate agent answers: missing sessionId rejects, missing text maps to empty, missing stopReason defaults to end_turn', async () => {
-    const { runAcpTurn } = await import('../../server/domains/tasks/acp.client');
+    const { runAcpTurn } = await import('#server/domains/tasks/acp.client');
     // session/new without a sessionId rejects
     const noSid = fakeAgent((msg, send) => {
       const method = msg.method as string | undefined;
@@ -816,7 +816,7 @@ describe('acp.client turns', () => {
   }, 10_000);
 
   it('verdictFor maps stop reasons to run verdicts', async () => {
-    const { verdictFor } = await import('../../server/domains/tasks/acp.client');
+    const { verdictFor } = await import('#server/domains/tasks/acp.client');
     expect(verdictFor('end_turn')).toEqual({ status: RUN_STATUS.DONE, exitCode: 0 });
     expect(verdictFor('refusal')).toEqual({ status: RUN_STATUS.FAILED, exitCode: 1 });
     expect(verdictFor(OBLIGATION_STATUS.CANCELLED)).toEqual({ status: RUN_STATUS.FAILED, exitCode: 1 });
@@ -826,12 +826,12 @@ describe('acp.client turns', () => {
 
 describe('acp-ssh transport', () => {
   it('acpRemoteCommand frames the blob by byte count and execs the ACP server', async () => {
-    const { acpRemoteCommand } = await import('../../server/domains/tasks/acp-ssh.util');
+    const { acpRemoteCommand } = await import('#server/domains/tasks/acp-ssh.util');
     expect(acpRemoteCommand(1234, 'hermes acp')).toBe(`bash -c 'eval "$(head -c 1234)" && exec hermes acp'`);
   });
 
   it('openAcpSshStream: blob first, then JSON-RPC; stdout/stderr lines split; close tears down', async () => {
-    const { openAcpSshStream } = await import('../../server/domains/tasks/acp-ssh.util');
+    const { openAcpSshStream } = await import('#server/domains/tasks/acp-ssh.util');
     const plan = {
       env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' },
       sshKey: 'k',
@@ -877,7 +877,7 @@ describe('acp-ssh transport', () => {
   });
 
   it('connects on port 22 when the plan port is empty; password auth tolerated', async () => {
-    const { openAcpSshStream } = await import('../../server/domains/tasks/acp-ssh.util');
+    const { openAcpSshStream } = await import('#server/domains/tasks/acp-ssh.util');
     const plan = {
       env: { host: 'h', port: '', username: '00000000-0000-7000-8000-51e69892ab49' },
       sshKey: undefined,
@@ -891,7 +891,7 @@ describe('acp-ssh transport', () => {
   });
 
   it('write guards + close survives throwing signal/close + non-number exit codes', async () => {
-    const { openAcpSshStream } = await import('../../server/domains/tasks/acp-ssh.util');
+    const { openAcpSshStream } = await import('#server/domains/tasks/acp-ssh.util');
     const plan = {
       env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' },
       sshKey: 'k',
@@ -925,7 +925,7 @@ describe('acp-ssh transport', () => {
   });
 
   it('ssh/exec errors reject the open', async () => {
-    const { openAcpSshStream } = await import('../../server/domains/tasks/acp-ssh.util');
+    const { openAcpSshStream } = await import('#server/domains/tasks/acp-ssh.util');
     const plan = { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } };
     // exec error
     let p = openAcpSshStream(plan, 'blob', 'hermes acp', () => {});

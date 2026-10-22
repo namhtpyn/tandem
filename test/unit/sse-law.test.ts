@@ -6,16 +6,16 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { CHANGE_ACTION, CHANGE_RESOURCE } from '../../shared/enums';
-import { ROLE } from '../../shared/enums';
-import { STATUS } from '../../shared/status';
+import { applyMigrations } from '#server/db/index';
+import { CHANGE_ACTION, CHANGE_RESOURCE } from '#shared/enums';
+import { ROLE } from '#shared/enums';
+import { STATUS } from '#shared/status';
 
 async function dbm() {
-  return await import('../../server/db');
+  return await import('#server/db');
 }
 async function schema() {
-  return await import('../../server/db/schema');
+  return await import('#server/db/schema');
 }
 
 const admin = {
@@ -26,7 +26,7 @@ const admin = {
 };
 
 async function ctx(sessionUser: { id: string; name: string; email: string; role: string } | null = admin) {
-  const { buildServerContext } = await import('../../server/domains/kernel/context');
+  const { buildServerContext } = await import('#server/domains/kernel/context');
   const context = buildServerContext(new Headers());
   (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () =>
     sessionUser ? { user: sessionUser } : null;
@@ -34,7 +34,7 @@ async function ctx(sessionUser: { id: string; name: string; email: string; role:
 }
 
 async function callProc(path: string, input?: unknown): Promise<any> {
-  const { appRouter: router } = await import('../../server/domains/app.router');
+  const { appRouter: router } = await import('#server/domains/app.router');
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
   for (const key of path.split('.')) {
     node = node[key] as Record<string, unknown>;
@@ -68,7 +68,7 @@ describe('changes.live — the SSE half (post-load events only)', () => {
       new Promise((res) => setTimeout(() => res('idle' as const), 200)),
     ]);
     expect(winner).toBe('idle'); // no initial snapshot on the events channel
-    const { publishChange } = await import('../../server/domains/kernel/kernel');
+    const { publishChange } = await import('#server/domains/kernel/kernel');
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.CREATE);
     await publishChange(CHANGE_RESOURCE.STATUSES, CHANGE_ACTION.UPDATE);
     const e1 = await nextP; // resolves on the channel only after a real change
@@ -82,7 +82,7 @@ describe('changes.live — the SSE half (post-load events only)', () => {
     // callProc invokes `~orpc` handler internals directly, which skips the .use
     // middleware — 401 coverage lives in api-auth.test.ts / rpc-route.test.ts.
     // Pin the shape instead: changes.live is a proc on the protected router.
-    const { appRouter } = await import('../../server/domains/app.router');
+    const { appRouter } = await import('#server/domains/app.router');
     expect(Object.keys(appRouter)).toContain('changes');
   });
 });
@@ -147,7 +147,7 @@ describe('conventional GET list procs (the first-load half)', () => {
     rows = await callProc('projects.list');
     expect(rows.find((r) => r.id === made.id).prompt).toBe('v10 now.');
     await callProc('settings.update', { companyPrompt: 'English only.' });
-    const { getCompanyPrompt } = await import('../../server/domains/settings/settings.service');
+    const { getCompanyPrompt } = await import('#server/domains/settings/settings.service');
     expect(await getCompanyPrompt()).toBe('English only.');
     await callProc('settings.update', { companyPrompt: '' });
     expect(await getCompanyPrompt()).toBe('');
@@ -187,8 +187,8 @@ describe('conventional GET list procs (the first-load half)', () => {
 
   it('providers.list returns the seeded catalog; settings.list carries app config; oidc.list is empty without providers', async () => {
     // BASELINE LAW: no provider seeds — the test creates its own row
-    const d0 = await import('../../server/db');
-    const { modelProviders } = await import('../../server/db/schema');
+    const d0 = await import('#server/db');
+    const { modelProviders } = await import('#server/db/schema');
     await d0.db
       .insert(modelProviders)
       .values({

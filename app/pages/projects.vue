@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query';
 // desktop table; create/edit modal follows the #footer submit law.
 import { computed, reactive, ref, unref } from 'vue';
 
-import { CHANGE_RESOURCE, PROJECT_STATUS, type ProjectStatus } from '~/../shared/enums';
+import { CHANGE_RESOURCE, PROJECT_STATUS, type ProjectStatus } from '#shared/enums';
 import type { ProjectRow } from '~/utils/orpc-types';
 
 useSeoMeta({ title: 'Projects · Tandem' });

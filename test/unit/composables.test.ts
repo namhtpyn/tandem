@@ -3,7 +3,7 @@
 // (useState, onMounted…) are stubbed globally in this file's harness.
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-import { ROLE } from '../../shared/enums';
+import { ROLE } from '#shared/enums';
 
 // ---- Nuxt runtime stubs ----
 type Ref<T> = { value: T };

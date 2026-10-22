@@ -2,8 +2,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import './helpers/pg';
-import { getSetting, setSetting, deleteSetting, getSettings } from '../../server/domains/settings/settings.service';
-import { ROLE } from '../../shared/enums';
+import { getSetting, setSetting, deleteSetting, getSettings } from '#server/domains/settings/settings.service';
+import { ROLE } from '#shared/enums';
 import { postgres } from './helpers/pg';
 
 describe('settings store', () => {
@@ -62,8 +62,8 @@ describe('settings store', () => {
   });
 
   it('companyName undefined in update leaves the stored value untouched', async () => {
-    const { appRouter: router } = await import('../../server/domains/app.router');
-    const { buildServerContext } = await import('../../server/domains/kernel/context');
+    const { appRouter: router } = await import('#server/domains/app.router');
+    const { buildServerContext } = await import('#server/domains/kernel/context');
     await setSetting('companyName', 'Kept Name');
     const ctx = buildServerContext(new Headers());
     (ctx as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({
@@ -108,8 +108,8 @@ describe('settings: workspace ai assignments', () => {
   };
 
   beforeEach(async () => {
-    const { db } = await import('../../server/db');
-    const { user } = await import('../../server/db/schema');
+    const { db } = await import('#server/db');
+    const { user } = await import('#server/db/schema');
     await db
       .insert(user)
       .values({ id: admin.id, name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN, title: 'T' })
@@ -117,8 +117,8 @@ describe('settings: workspace ai assignments', () => {
   });
 
   async function callProc(path: string, input?: unknown): Promise<any> {
-    const { appRouter: router } = await import('../../server/domains/app.router');
-    const { buildServerContext } = await import('../../server/domains/kernel/context');
+    const { appRouter: router } = await import('#server/domains/app.router');
+    const { buildServerContext } = await import('#server/domains/kernel/context');
     let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
     for (const key of path.split('.')) node = node[key] as Record<string, unknown>;
     const internals = node['~orpc'] as { handler: (opts: unknown) => Promise<unknown> };
@@ -129,8 +129,8 @@ describe('settings: workspace ai assignments', () => {
   }
 
   it('internalDecision round-trips with provider + secret validation', async () => {
-    const { modelProviders } = await import('../../server/db/schema');
-    const { db } = await import('../../server/db');
+    const { modelProviders } = await import('#server/db/schema');
+    const { db } = await import('#server/db');
     await db
       .insert(modelProviders)
       .values({ id: 'dec-1', label: 'Decider', baseUrl: 'https://dec.example.com', endpoints: ['TYPESAFE-SYSTEMONE'] })
@@ -146,8 +146,8 @@ describe('settings: workspace ai assignments', () => {
   });
 
   it('rejects wrong-kind provider and ghost secret', async () => {
-    const { modelProviders } = await import('../../server/db/schema');
-    const { db } = await import('../../server/db');
+    const { modelProviders } = await import('#server/db/schema');
+    const { db } = await import('#server/db');
     await db
       .insert(modelProviders)
       .values({ id: 'llm-1', label: 'Chatty', baseUrl: 'https://llm.example.com', endpoints: ['OPENAI-COMPLETIONS'] })
@@ -167,8 +167,8 @@ describe('settings: workspace ai assignments', () => {
   });
 
   it('assignment without a model parses to null (model required once provider is set)', async () => {
-    const { modelProviders } = await import('../../server/db/schema');
-    const { db } = await import('../../server/db');
+    const { modelProviders } = await import('#server/db/schema');
+    const { db } = await import('#server/db');
     await db
       .insert(modelProviders)
       .values({ id: 'dec-9', label: 'Dec9', baseUrl: 'https://dec9.example.com', endpoints: ['TYPESAFE-SYSTEMONE'] })
@@ -192,8 +192,8 @@ describe('settings: workspace ai assignments', () => {
   });
 
   it('internalLlm saves and clears via the API', async () => {
-    const { modelProviders } = await import('../../server/db/schema');
-    const { db } = await import('../../server/db');
+    const { modelProviders } = await import('#server/db/schema');
+    const { db } = await import('#server/db');
     await db
       .insert(modelProviders)
       .values({

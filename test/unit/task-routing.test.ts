@@ -13,16 +13,16 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { parseRoutingProposals } from '../../app/utils/task-thread';
 import { resetSchema } from './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { recentAssignees } from '../../server/domains/tasks/assignments.service';
+import { applyMigrations } from '#server/db/index';
+import { recentAssignees } from '#server/domains/tasks/assignments.service';
 import {
   answerHolder,
   approvalsInRoundBatch,
   openObligations,
   pendingForUser,
   spawnObligation,
-} from '../../server/domains/tasks/obligations.service';
-import { recordProposals } from '../../server/domains/tasks/proposals.service';
+} from '#server/domains/tasks/obligations.service';
+import { recordProposals } from '#server/domains/tasks/proposals.service';
 import {
   OBLIGATION_ROLE,
   OBLIGATION_STATUS,
@@ -31,9 +31,9 @@ import {
   REVIEW_STATUS,
   ROLE,
   RUN_STATUS,
-} from '../../shared/enums';
-import { STATUS } from '../../shared/status';
-import type { TaskRow } from '../../shared/types';
+} from '#shared/enums';
+import { STATUS } from '#shared/status';
+import type { TaskRow } from '#shared/types';
 import { makeProcCaller } from './helpers/procs';
 
 const admin = {
@@ -97,15 +97,15 @@ async function mkTask(input: Record<string, unknown>): Promise<string> {
 }
 
 async function getTask(id: string) {
-  const { db } = await import('../../server/db');
-  const { tasks } = await import('../../server/db/schema');
+  const { db } = await import('#server/db');
+  const { tasks } = await import('#server/db/schema');
   const rows = await db.select().from(tasks);
   return rows.find((t) => t.id === id)!;
 }
 
 async function dbRow(table: string, id: string) {
-  const { db } = await import('../../server/db');
-  const mod = await import('../../server/db/schema');
+  const { db } = await import('#server/db');
+  const mod = await import('#server/db/schema');
   const rows = (await db.select().from((mod as unknown as Record<string, PgTable>)[table])) as Array<
     Record<string, unknown>
   >;
@@ -113,14 +113,14 @@ async function dbRow(table: string, id: string) {
 }
 
 async function dbRows(table: string) {
-  const { db } = await import('../../server/db');
-  const mod = await import('../../server/db/schema');
+  const { db } = await import('#server/db');
+  const mod = await import('#server/db/schema');
   return (await db.select().from((mod as unknown as Record<string, PgTable>)[table])) as Array<Record<string, unknown>>;
 }
 
 async function mkProposal(taskId: string, kind: PROPOSAL_KIND.SUBTASKS | PROPOSAL_KIND.REASSIGN, payload: unknown) {
-  const { db } = await import('../../server/db');
-  const { taskProposals } = await import('../../server/db/schema');
+  const { db } = await import('#server/db');
+  const { taskProposals } = await import('#server/db/schema');
   const id = crypto.randomUUID();
   await db
     .insert(taskProposals)
@@ -132,8 +132,8 @@ beforeEach(async () => {
   idMap.clear();
   await resetSchema();
   await applyMigrations();
-  const { db } = await import('../../server/db');
-  const { user } = await import('../../server/db/schema');
+  const { db } = await import('#server/db');
+  const { user } = await import('#server/db/schema');
   await db.insert(user).values({
     id: '00000000-0000-7000-8000-cd5fca5e2d34',
     name: 'Admin',
@@ -252,13 +252,13 @@ describe('obligations', () => {
       assigneeId: idMap.get('worker')!,
       reviewers: [idMap.get('peer')!],
     });
-    const { rejectReview } = await import('../../server/domains/tasks/workflow.service');
+    const { rejectReview } = await import('#server/domains/tasks/workflow.service');
     await expect(rejectReview(taskId, idMap.get('peer')!, 'nope')).rejects.toThrow(/not in review/i);
   });
 
   it('REVIEW LAW: approvalsInRoundBatch fulfilled arm (hand-inserted rows, no cancelled)', async () => {
-    const { db } = await import('../../server/db');
-    const { taskObligations } = await import('../../server/db/schema');
+    const { db } = await import('#server/db');
+    const { taskObligations } = await import('#server/db/schema');
     const taskId = await mkTask({
       title: 'BatchFul',
       assigneeId: idMap.get('worker')!,
@@ -395,8 +395,8 @@ describe('subtask gating', () => {
     await callProc('tasks.update', { id: parentId, status: STATUS.doing });
     // a raw child row (no router hook) keeps the parent STATUS.doing so the explicit
     // open-children submit guard is reachable — defense in depth for racing flips
-    const { db } = await import('../../server/db');
-    const { tasks: tasksTable } = await import('../../server/db/schema');
+    const { db } = await import('#server/db');
+    const { tasks: tasksTable } = await import('#server/db/schema');
     await db.insert(tasksTable).values({
       id: 'c-raw',
       title: 'Open child',
@@ -478,7 +478,7 @@ describe('proposal confirm flow', () => {
     // decided proposals cannot be confirmed
     await expect(callProc('tasks.confirmProposal', { proposalId: pid })).rejects.toThrow(/already decided/i);
 
-    const { loadBriefData, buildBrief } = await import('../../server/domains/tasks/brief.service');
+    const { loadBriefData, buildBrief } = await import('#server/domains/tasks/brief.service');
     const data = await loadBriefData(taskId);
     const brief = buildBrief(data);
     expect(brief).toContain('proposal declined');
@@ -565,7 +565,7 @@ describe('routing coverage arms', () => {
   });
 
   it('buildBrief renders parent context for children and omits it for roots', async () => {
-    const { loadBriefData, buildBrief } = await import('../../server/domains/tasks/brief.service');
+    const { loadBriefData, buildBrief } = await import('#server/domains/tasks/brief.service');
     const root = await mkTask({ title: 'Root task', assigneeId: idMap.get('worker')! });
     const child = await mkTask({ title: 'Child task', parentId: root, assigneeId: idMap.get('peer')! });
     const childBrief = buildBrief(await loadBriefData(child));
@@ -655,8 +655,8 @@ describe('routing coverage arms II', () => {
     expect(st2.items[0].assigneeId).toBe(idMap.get('chief')!);
 
     // owner cleared entirely -> createdBy fallback
-    const { db } = await import('../../server/db');
-    const { tasks: tasksTable } = await import('../../server/db/schema');
+    const { db } = await import('#server/db');
+    const { tasks: tasksTable } = await import('#server/db/schema');
     const createdBy = await db.update(tasksTable).set({ ownerId: null }).where(eq(tasksTable.id, owned)).returning();
     expect(createdBy.length).toBe(1);
     const cid = await mkProposal(owned, PROPOSAL_KIND.SUBTASKS, {
@@ -726,8 +726,8 @@ describe('routing coverage arms II', () => {
     await recordProposals(taskId, null as unknown as string, [
       { kind: PROPOSAL_KIND.REASSIGN, targetName: 'Peer Person', reason: 'legal work' },
     ]);
-    const { db } = await import('../../server/db');
-    const { taskActivity } = await import('../../server/db/schema');
+    const { db } = await import('#server/db');
+    const { taskActivity } = await import('#server/db/schema');
     const acts = await db.select().from(taskActivity);
     expect(acts.some((a) => a.body!.includes('legal work'))).toBe(true);
   });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { parseStructuredOutput, renderOutputContract } from '../../shared/structured-output';
+import { parseStructuredOutput, renderOutputContract } from '#shared/structured-output';
 
 // a deliberately NON-tandem schema proves the module is application-agnostic
 const ReportSchema = z.object({

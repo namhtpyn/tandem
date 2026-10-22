@@ -10,10 +10,10 @@ import './api-harness';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetSchema } from './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { CHANGE_ACTION, CHANGE_RESOURCE } from '../../shared/enums';
-import { ROLE } from '../../shared/enums';
-import type { EmployeeRow, ApiKeyRow } from '../../shared/types';
+import { applyMigrations } from '#server/db/index';
+import { CHANGE_ACTION, CHANGE_RESOURCE } from '#shared/enums';
+import { ROLE } from '#shared/enums';
+import type { EmployeeRow, ApiKeyRow } from '#shared/types';
 
 // live rows intentionally drop the legacy harness field — the test asserts its absence
 type LiveEmployee = EmployeeRow & { harness?: string };
@@ -21,7 +21,7 @@ type LiveEmployee = EmployeeRow & { harness?: string };
 const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 
 async function ctx(sessionUser: { id: string; name: string; email: string; role: string } | null = admin) {
-  const { buildServerContext } = await import('../../server/domains/kernel/context');
+  const { buildServerContext } = await import('#server/domains/kernel/context');
   const context = buildServerContext(new Headers());
   (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () =>
     sessionUser ? { user: sessionUser } : null;
@@ -29,7 +29,7 @@ async function ctx(sessionUser: { id: string; name: string; email: string; role:
 }
 
 async function callProc(path: string, input?: unknown): Promise<any> {
-  const { appRouter: router } = await import('../../server/domains/app.router');
+  const { appRouter: router } = await import('#server/domains/app.router');
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
   for (const key of path.split('.')) {
     node = node[key] as Record<string, unknown>;
@@ -39,11 +39,11 @@ async function callProc(path: string, input?: unknown): Promise<any> {
 }
 
 async function dbm() {
-  return await import('../../server/db');
+  return await import('#server/db');
 }
 
 async function schema() {
-  return await import('../../server/db/schema');
+  return await import('#server/db/schema');
 }
 
 async function seedEnv(id: string) {
@@ -88,7 +88,7 @@ describe('employees.live', () => {
     const { employeeSupervisors } = await schema();
     const { db } = await dbm();
     await db.insert(employeeSupervisors).values({ employeeId: bot.id, supervisorId: boss.id });
-    const { publishChange } = await import('../../server/domains/kernel/change-bus');
+    const { publishChange } = await import('#server/domains/kernel/change-bus');
     publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.UPDATE);
 
     const iter = await callProc('employees.live');
@@ -565,7 +565,7 @@ describe('employees.remove', () => {
   });
 
   it('refuses self-deletion', async () => {
-    const { appRouter: router } = await import('../../server/domains/app.router');
+    const { appRouter: router } = await import('#server/domains/app.router');
     const { db } = await dbm();
     const { user } = await schema();
     await db
@@ -744,7 +744,7 @@ describe('employees API keys', () => {
     const before = await callProc('employees.listApiKeys', { employeeId: ai.id });
     expect(before[0].expiresAt).toBeNull();
     // seed one WITH expiry via the real plugin (verifyApiKey path not needed)
-    const { getAuth } = await import('../../server/domains/auth/auth.service');
+    const { getAuth } = await import('#server/domains/auth/auth.service');
     const auth = await getAuth();
     const { db } = await dbm();
     const { apikey } = await schema();

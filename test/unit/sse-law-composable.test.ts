@@ -5,7 +5,7 @@
 // globalThis bindings so the composable runs under the plain unit project.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { CHANGE_ACTION, CHANGE_RESOURCE } from '../../shared/enums';
+import { CHANGE_ACTION, CHANGE_RESOURCE } from '#shared/enums';
 
 type ChangeEvt = { resource: string; action: string };
 type LiveMode = 'fail' | 'open-empty' | { events: ChangeEvt[] };

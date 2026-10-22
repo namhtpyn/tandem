@@ -3,6 +3,8 @@
 import { consola } from 'consola';
 import { defineEventHandler, setResponseStatus } from 'h3';
 
+export const log = consola.withTag('tandem');
+
 import { sqlClient } from '../../db';
 import { applyMigrations } from '../../db';
 
@@ -13,7 +15,7 @@ export default defineEventHandler(async (event) => {
     await sqlClient`select 1`;
     if (!migrationsDone) {
       const applied = await applyMigrations();
-      if (applied.length > 0) consola.withTag('tandem').info('applied migrations:', applied.join(', '));
+      if (applied.length > 0) log.info('applied migrations:', applied.join(', '));
       migrationsDone = true;
     }
     setResponseStatus(event, 200);

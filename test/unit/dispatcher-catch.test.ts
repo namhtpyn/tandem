@@ -4,11 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { ROLE } from '../../shared/enums';
-import { STATUS } from '../../shared/status';
+import { applyMigrations } from '#server/db/index';
+import { ROLE } from '#shared/enums';
+import { STATUS } from '#shared/status';
 
-vi.mock('../../server/domains/tasks/runner.service', () => ({
+vi.mock('#server/domains/tasks/runner.service', () => ({
   dispatchTask: async () => {
     throw new Error('task vanished');
   },
@@ -17,8 +17,8 @@ vi.mock('../../server/domains/tasks/runner.service', () => ({
 beforeEach(async () => {
   await resetSchema();
   await applyMigrations();
-  const { db } = await import('../../server/db');
-  const { user, tasks, environments, aiEmployees } = await import('../../server/db/schema');
+  const { db } = await import('#server/db');
+  const { user, tasks, environments, aiEmployees } = await import('#server/db/schema');
   await db.insert(user).values({
     id: '00000000-0000-7000-8000-cd5fca5e2d34',
     name: 'Admin',
@@ -60,17 +60,17 @@ beforeEach(async () => {
 
 describe('scanOnce catch arm', () => {
   it('a throwing enqueue resolves to false', async () => {
-    vi.doMock('../../server/domains/kernel/queue', () => ({
+    vi.doMock('#server/domains/kernel/queue', () => ({
       redisQueue: async () => {
         throw new Error('redis down');
       },
     }));
     vi.resetModules();
     try {
-      const { scanOnce } = await import('../../server/domains/tasks/dispatcher.service');
+      const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
       expect(await scanOnce('http://t.local')).toBe(false);
     } finally {
-      vi.doUnmock('../../server/domains/kernel/queue');
+      vi.doUnmock('#server/domains/kernel/queue');
       vi.resetModules();
     }
   });

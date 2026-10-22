@@ -3,7 +3,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 // runOverSsh lê o cap de run da Settings page — mock sem banco de dados
-vi.mock('../../server/domains/settings/settings.service', () => ({
+vi.mock('#server/domains/settings/settings.service', () => ({
   getRunTimeoutMs: async () => 10_000,
 }));
 
@@ -78,8 +78,8 @@ vi.mock('ssh2', () => {
   return { default: { Client: FakeClient } };
 });
 
-import { runOverSsh } from '../../server/domains/tasks/ssh-exec.util';
-import { RUN_STATUS } from '../../shared/enums';
+import { runOverSsh } from '#server/domains/tasks/ssh-exec.util';
+import { RUN_STATUS } from '#shared/enums';
 
 const plan = {
   env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' },

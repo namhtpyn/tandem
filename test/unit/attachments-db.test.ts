@@ -4,7 +4,7 @@ import './helpers/pg';
 import { and, eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
 
-import { db } from '../../server/db';
+import { db } from '#server/db';
 import {
   tasks,
   taskAttachments,
@@ -13,14 +13,14 @@ import {
   taskRuns,
   aiEmployees,
   environments,
-} from '../../server/db/schema';
-import { dataRoot } from '../../server/domains/tasks/attachments.util';
+} from '#server/db/schema';
+import { dataRoot } from '#server/domains/tasks/attachments.util';
 
 const settleTmp = mkdtempSync(join(tmpdir(), 'settle-'));
 writeFileSync(join(settleTmp, 'report.md'), '# findings\n');
 
-vi.mock('../../server/domains/tasks/ssh-files.util', async (importOriginal) => {
-  const orig = await importOriginal<typeof import('../../server/domains/tasks/ssh-files.util')>();
+vi.mock('#server/domains/tasks/ssh-files.util', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('#server/domains/tasks/ssh-files.util')>();
   return {
     ...orig,
     collectRunOutputs: vi.fn(async () => [
@@ -30,8 +30,8 @@ vi.mock('../../server/domains/tasks/ssh-files.util', async (importOriginal) => {
     cleanupTaskFiles: vi.fn(async () => {}),
   };
 });
-vi.mock('../../server/domains/tasks/ssh-exec.util', async (importOriginal) => {
-  const orig = await importOriginal<typeof import('../../server/domains/tasks/ssh-exec.util')>();
+vi.mock('#server/domains/tasks/ssh-exec.util', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('#server/domains/tasks/ssh-exec.util')>();
   return {
     ...orig,
     loadClient: vi.fn(
@@ -52,8 +52,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ROLE, RUN_STATUS } from '../../shared/enums';
-import { STATUS } from '../../shared/status';
+import { ROLE, RUN_STATUS } from '#shared/enums';
+import { STATUS } from '#shared/status';
 
 async function seed() {
   const envId = `env-${crypto.randomUUID().slice(0, 8)}`;
@@ -89,7 +89,7 @@ async function seed() {
 describe('attachment storage round-trip', () => {
   it('saves bytes under the attachments dir keyed by id and reads them back', async () => {
     const { saveAttachmentBytes, readAttachmentBytes, attachmentExists, deleteAttachmentBytes } =
-      await import('../../server/domains/tasks/attachments.util');
+      await import('#server/domains/tasks/attachments.util');
     const id = crypto.randomUUID();
     const bytes = Buffer.from('hello attachment');
     await saveAttachmentBytes('t-bytes', id, bytes);
@@ -121,13 +121,13 @@ describe('dispatch attachment push (runner integration)', () => {
     });
 
     // brief carries it with its sandbox path
-    const { loadBriefData } = await import('../../server/domains/tasks/brief.service');
+    const { loadBriefData } = await import('#server/domains/tasks/brief.service');
     const data = await loadBriefData(tid);
     expect(data.attachments).toEqual([
       expect.objectContaining({ filename: 'spec.png', remotePath: `~/.tandem/${tid}/attachments/spec.png` }),
     ]);
 
-    const { buildBrief } = await import('../../server/domains/tasks/brief.service');
+    const { buildBrief } = await import('#server/domains/tasks/brief.service');
     // document arm: swap mime to a non-image kind
     const brief = buildBrief({ ...data, attachments: data.attachments });
     expect(brief).toContain('ATTACHMENTS (already on this machine');
@@ -198,7 +198,7 @@ describe('settleAttachments (runner integration)', () => {
 
     // mocks hoisted to top level (see vi.mock calls above); tmp created there
     writeFileSync(join(settleTmp, 'evil.exe'), 'MZ');
-    const { settleAttachments } = await import('../../server/domains/tasks/runner.service');
+    const { settleAttachments } = await import('#server/domains/tasks/runner.service');
     await settleAttachments(
       tid,
       runId,
@@ -219,7 +219,7 @@ describe('settleAttachments (runner integration)', () => {
 
 describe('guessMime', () => {
   it('maps extensions and defaults unknown/extensionless to octet-stream', async () => {
-    const { guessMime } = await import('../../server/domains/tasks/runner.service');
+    const { guessMime } = await import('#server/domains/tasks/runner.service');
     expect(guessMime('a.png')).toBe('image/png');
     expect(guessMime('B.JPEG')).toBe('image/jpeg');
     expect(guessMime('noext')).toBe('application/octet-stream');
@@ -230,7 +230,7 @@ describe('guessMime', () => {
 
 describe('settleAttachments edge arms', () => {
   it('skips logRun when nothing collected, skips cleanup while a sibling runs', async () => {
-    const { settleAttachments } = await import('../../server/domains/tasks/runner.service');
+    const { settleAttachments } = await import('#server/domains/tasks/runner.service');
     const { uid, tid } = await seed();
     const runDone = crypto.randomUUID();
     const runActive = crypto.randomUUID();
@@ -249,7 +249,7 @@ describe('settleAttachments edge arms', () => {
     // ssh-files mock: collect returns [] for this call? module mock returns files... override per-call impossible.
     // Instead verify settle resolves and no output rows/activity appear when collect returns [].
     // Temporarily swap the mock impl:
-    const filesMod = await import('../../server/domains/tasks/ssh-files.util');
+    const filesMod = await import('#server/domains/tasks/ssh-files.util');
     const orig = (filesMod as unknown as { collectRunOutputs: unknown }).collectRunOutputs;
     (filesMod as unknown as { collectRunOutputs: unknown }).collectRunOutputs = async () => [];
     try {
@@ -274,7 +274,7 @@ describe('settleAttachments edge arms', () => {
 
 describe('settleAttachments rejection safety', () => {
   it('never throws to the caller', async () => {
-    const { settleAttachments } = await import('../../server/domains/tasks/runner.service');
+    const { settleAttachments } = await import('#server/domains/tasks/runner.service');
     // ssh-exec mock returns a ctor; ssh-files collect is mocked to return files incl. a
     // missing one -> readFileSync ENOENT inside try -> swallowed; call must resolve anyway
     writeFileSync(join(settleTmp, 'report.md'), '# x\n');
@@ -291,9 +291,9 @@ describe('settleAttachments rejection safety', () => {
 
 describe('pushInputAttachments', () => {
   it('pushes existing files and reports; skips missing bytes', async () => {
-    const { pushInputAttachments } = await import('../../server/domains/tasks/runner.service');
+    const { pushInputAttachments } = await import('#server/domains/tasks/runner.service');
     const lines: string[] = [];
-    const { saveAttachmentBytes } = await import('../../server/domains/tasks/attachments.util');
+    const { saveAttachmentBytes } = await import('#server/domains/tasks/attachments.util');
     const id1 = crypto.randomUUID();
     await saveAttachmentBytes('t-push', id1, Buffer.from('A'));
     class FakeCtor {
@@ -349,7 +349,7 @@ describe('pushInputAttachments', () => {
   });
 
   it('treats missing attachments key as empty (no push, no line)', async () => {
-    const { pushInputAttachments } = await import('../../server/domains/tasks/runner.service');
+    const { pushInputAttachments } = await import('#server/domains/tasks/runner.service');
     const lines: string[] = [];
     class NeverConnect {
       connect() {
@@ -368,9 +368,9 @@ describe('pushInputAttachments', () => {
   });
 
   it('renders non-Error throwables safely', async () => {
-    const { pushInputAttachments } = await import('../../server/domains/tasks/runner.service');
+    const { pushInputAttachments } = await import('#server/domains/tasks/runner.service');
     const lines: string[] = [];
-    const { saveAttachmentBytes } = await import('../../server/domains/tasks/attachments.util');
+    const { saveAttachmentBytes } = await import('#server/domains/tasks/attachments.util');
     const id1 = crypto.randomUUID();
     await saveAttachmentBytes('t-push', id1, Buffer.from('A'));
     const boom = async () => {
@@ -388,9 +388,9 @@ describe('pushInputAttachments', () => {
   });
 
   it('logs and swallows push failures', async () => {
-    const { pushInputAttachments } = await import('../../server/domains/tasks/runner.service');
+    const { pushInputAttachments } = await import('#server/domains/tasks/runner.service');
     const lines: string[] = [];
-    const { saveAttachmentBytes } = await import('../../server/domains/tasks/attachments.util');
+    const { saveAttachmentBytes } = await import('#server/domains/tasks/attachments.util');
     const id1 = crypto.randomUUID();
     await saveAttachmentBytes('t-push', id1, Buffer.from('A'));
     const boom = async () => {
@@ -411,7 +411,7 @@ describe('pushInputAttachments', () => {
 
 describe('tasks.runs payload mapping', () => {
   it('groups output attachments under their run id', async () => {
-    const { groupOutputsByRun } = await import('../../server/domains/tasks/tasks.router');
+    const { groupOutputsByRun } = await import('#server/domains/tasks/tasks.router');
     const m = groupOutputsByRun([
       { id: 'a1', runId: null, kind: 'input', filename: 'in.png', mime: 'image/png', size: 1 },
       { id: 'a2', runId: 'r1', kind: 'output', filename: 'o.md', mime: 'text/markdown', size: 2 },

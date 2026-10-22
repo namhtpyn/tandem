@@ -7,8 +7,8 @@ import { join } from 'node:path';
 // boot migrations: apply, idempotence, bundled-asset listing, fs fallback
 import { describe, expect, it, beforeEach } from 'vitest';
 
-import { applyMigrations } from '../../server/db/index';
-import { env, setEnv } from '../../server/domains/kernel/env';
+import { applyMigrations } from '#server/db/index';
+import { env, setEnv } from '#server/domains/kernel/env';
 import { resetSchema, postgres } from './helpers/pg';
 
 describe('applyMigrations', () => {
@@ -72,12 +72,12 @@ describe('applyMigrations', () => {
 
 describe('folderMillis', () => {
   it('parses the 14-digit folder prefix — drizzle convention: year minus 2000', async () => {
-    const { folderMillis } = await import('../../server/db/index');
+    const { folderMillis } = await import('#server/db/index');
     expect(folderMillis('20261016151937_common_madame_hydra')).toBe(Date.UTC(2020, 9, 16, 15, 19, 37));
   });
 
   it('returns 0 for non-timestamp folder names', async () => {
-    const { folderMillis } = await import('../../server/db/index');
+    const { folderMillis } = await import('#server/db/index');
     expect(folderMillis('20260101000000_first')).toBe(Date.UTC(2020, 0, 1, 0, 0, 0));
     expect(folderMillis('zz-not-a-folder')).toBe(0);
   });

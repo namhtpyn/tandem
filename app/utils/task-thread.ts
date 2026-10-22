@@ -59,7 +59,7 @@ export type RunEnvelope = { kind: EnvelopeKind; text: string };
 // re-exported here so the UI thread and the runner share one implementation.
 // (the file's own EnvelopeKind/RunEnvelope below include the 'run' thread kind)
 import { parseRunEnvelope } from '#shared/run-verdict';
-import { PROPOSAL_KIND } from '~/../shared/enums';
+import { PROPOSAL_KIND } from '#shared/enums';
 export { parseRunEnvelope, RunVerdictSchema } from '#shared/run-verdict';
 
 /** Parse routing proposals from run output (structural markers, scanned anywhere):

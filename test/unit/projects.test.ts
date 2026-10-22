@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { PROJECT_STATUS, ROLE } from '../../shared/enums';
-import type { ProjectRow, TaskRow } from '../../shared/types';
+import { applyMigrations } from '#server/db/index';
+import { PROJECT_STATUS, ROLE } from '#shared/enums';
+import type { ProjectRow, TaskRow } from '#shared/types';
 
 const admin = {
   id: '00000000-0000-7000-8000-cd5fca5e2d34',
@@ -15,7 +15,7 @@ const admin = {
 };
 
 async function ctx() {
-  const { buildServerContext } = await import('../../server/domains/kernel/context');
+  const { buildServerContext } = await import('#server/domains/kernel/context');
   const context = buildServerContext(new Headers()) as Record<string, unknown>;
   (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({ user: admin });
   context.session = { user: admin };
@@ -23,7 +23,7 @@ async function ctx() {
 }
 
 async function callProc(path: string, input?: unknown): Promise<any> {
-  const { appRouter: router } = await import('../../server/domains/app.router');
+  const { appRouter: router } = await import('#server/domains/app.router');
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
   for (const key of path.split('.')) node = node[key] as Record<string, unknown>;
   const internals = node['~orpc'] as { handler: (opts: unknown) => Promise<unknown> };
@@ -33,8 +33,8 @@ async function callProc(path: string, input?: unknown): Promise<any> {
 beforeEach(async () => {
   await resetSchema();
   await applyMigrations();
-  const { db } = await import('../../server/db');
-  const { user } = await import('../../server/db/schema');
+  const { db } = await import('#server/db');
+  const { user } = await import('#server/db/schema');
   await db
     .insert(user)
     .values({ id: admin.id, name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN, title: 'T' });

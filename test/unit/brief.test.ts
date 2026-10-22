@@ -1,8 +1,8 @@
 // Brief builder unit tests: pure functions (chains, mention extraction, brief shape).
 import { describe, expect, it } from 'vitest';
 
-import { buildBrief, chainToRoot, extractMentionedEmployeeIds } from '../../server/domains/tasks/brief.service';
-import { ACTIVITY_KIND } from '../../shared/enums';
+import { buildBrief, chainToRoot, extractMentionedEmployeeIds } from '#server/domains/tasks/brief.service';
+import { ACTIVITY_KIND } from '#shared/enums';
 
 const P = (id: string, name: string, title: string | null = null) => ({ id, name, title, kind: 'human' });
 

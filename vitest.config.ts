@@ -7,6 +7,7 @@ export default defineConfig({
     alias: {
       // server code imports shared/ via nuxt's #shared alias — vitest needs it too
       '#shared': new URL('./shared/', import.meta.url).pathname,
+      '#server': new URL('./server/', import.meta.url).pathname,
     },
   },
   define: {

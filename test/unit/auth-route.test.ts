@@ -4,8 +4,8 @@ import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { applyMigrations, sqlClient } from '../../server/db/index';
-import { ROLE } from '../../shared/enums';
+import { applyMigrations, sqlClient } from '#server/db/index';
+import { ROLE } from '#shared/enums';
 import { call } from './api-harness';
 
 beforeEach(async () => {
@@ -18,7 +18,7 @@ describe('auth route gates', () => {
     await sqlClient`insert into "user" (id, name, email, email_verified, created_at, updated_at, role)
       values ('00000000-0000-7000-8000-c5ea71554c77', 'U', 'u@x.co', true, now(), now(), ${ROLE.VIEWER})`;
     await expect(
-      call('../../server/routes/auth/[...].ts', {
+      call('#server/routes/auth/[...].ts', {
         method: 'POST',
         url: '/auth/sign-up/email',
         body: { email: 'a@b.co', password: 'pw12345678', name: 'A' },
@@ -28,18 +28,18 @@ describe('auth route gates', () => {
 
   it('404s OIDC endpoints when no provider is configured', async () => {
     await expect(
-      call('../../server/routes/auth/[...].ts', { method: 'GET', url: '/auth/oauth2/whatever' }),
+      call('#server/routes/auth/[...].ts', { method: 'GET', url: '/auth/oauth2/whatever' }),
     ).rejects.toMatchObject({ statusCode: 404 });
   });
 
   it('passes through to the auth handler for plain GETs (mocked auth instance)', async () => {
-    const authMod = await import('../../server/domains/auth/auth.service');
+    const authMod = await import('#server/domains/auth/auth.service');
     const inst = await authMod.getAuth();
     const originalHandler = inst.handler;
     inst.handler = async () =>
       new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } });
     try {
-      const { result, event } = await call('../../server/routes/auth/[...].ts', {
+      const { result, event } = await call('#server/routes/auth/[...].ts', {
         method: 'GET',
         url: '/auth/get-session',
       });

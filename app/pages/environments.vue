@@ -2,7 +2,7 @@
 useHead({ title: 'Environments' });
 import { useQuery, useMutation } from '@tanstack/vue-query';
 
-import { CHANGE_RESOURCE, SECRET_USAGE, type SecretUsage } from '~/../shared/enums';
+import { CHANGE_RESOURCE, SECRET_USAGE, type SecretUsage } from '#shared/enums';
 // Environments (LIVE): oRPC live query — the table is a streaming snapshot;
 // mutations go through oRPC and every client (this tab or another) updates
 // instantly via the change bus + SSE.

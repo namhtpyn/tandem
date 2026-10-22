@@ -1,18 +1,19 @@
 // Final coverage closure: auth route gates (header shapes, password-disabled,
 // raw-body path), requireSession 401, auth-session success path, ready 503,
 // oidc edit-failure, settings payload arms.
-import { describe, expect, it, beforeEach } from 'vitest';
+import { consola } from 'consola';
+import { describe, expect, it, beforeEach , vi } from 'vitest';
 
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { sqlClient } from '../../server/db/index';
-import { env, setEnv } from '../../server/domains/kernel/env';
-import { ROLE } from '../../shared/enums';
+import { sqlClient } from '#server/db/index';
+import { env, setEnv } from '#server/domains/kernel/env';
+import { ROLE } from '#shared/enums';
 import { call } from './api-harness';
 
 beforeEach(async () => {
   await resetSchema();
-  const { applyMigrations } = await import('../../server/db/index');
+  const { applyMigrations } = await import('#server/db/index');
   await applyMigrations();
   await sqlClient`delete from "user"`;
 });
@@ -21,7 +22,7 @@ describe('auth route header handling', () => {
   it('POST sign-in/email with multi-value + undefined headers passes the gate', async () => {
     // auth instance is real; without a user the underlying handler 401s — but our
     // route gate (passwordEnabled) must let it THROUGH to the handler.
-    const { getAuth } = await import('../../server/domains/auth/auth.service');
+    const { getAuth } = await import('#server/domains/auth/auth.service');
     const inst = await getAuth();
     const originalHandler = inst.handler;
     let captured: Request | undefined;
@@ -30,7 +31,7 @@ describe('auth route header handling', () => {
       return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
     };
     try {
-      const { event } = await call('../../server/routes/auth/[...].ts', {
+      const { event } = await call('#server/routes/auth/[...].ts', {
         method: 'POST',
         url: '/auth/sign-in/email',
         headers: { 'x-multi': ['a', 'b'], 'x-absent': undefined, 'content-type': 'application/json' },
@@ -45,7 +46,7 @@ describe('auth route header handling', () => {
   });
 
   it('GET with array cookie header: first value wins', async () => {
-    const { getAuth } = await import('../../server/domains/auth/auth.service');
+    const { getAuth } = await import('#server/domains/auth/auth.service');
     const inst = await getAuth();
     const originalHandler = inst.handler;
     inst.handler = async (req: Request) => {
@@ -53,7 +54,7 @@ describe('auth route header handling', () => {
       return new Response(JSON.stringify({ cookie }), { status: 200, headers: { 'content-type': 'application/json' } });
     };
     try {
-      const { result } = await call('../../server/routes/auth/[...].ts', {
+      const { result } = await call('#server/routes/auth/[...].ts', {
         method: 'GET',
         url: '/auth/get-session',
         headers: { cookie: ['sid=1', 'sid=2'] },
@@ -66,7 +67,7 @@ describe('auth route header handling', () => {
   });
 
   it('GET with undefined header value: header omitted', async () => {
-    const { getAuth } = await import('../../server/domains/auth/auth.service');
+    const { getAuth } = await import('#server/domains/auth/auth.service');
     const inst = await getAuth();
     const originalHandler = inst.handler;
     inst.handler = async (req: Request) => {
@@ -74,7 +75,7 @@ describe('auth route header handling', () => {
       return new Response(JSON.stringify({ has }), { status: 200, headers: { 'content-type': 'application/json' } });
     };
     try {
-      const { result } = await call('../../server/routes/auth/[...].ts', {
+      const { result } = await call('#server/routes/auth/[...].ts', {
         method: 'GET',
         url: '/auth/get-session',
         headers: { 'x-absent': undefined },
@@ -87,14 +88,14 @@ describe('auth route header handling', () => {
   });
 
   it('blocks password sign-in when password login is disabled (403)', async () => {
-    const { setSetting } = await import('../../server/domains/settings/settings.service');
+    const { setSetting } = await import('#server/domains/settings/settings.service');
     await setSetting('disablePasswordLogin', 'true');
-    const { saveOidcProviders } = await import('../../server/domains/auth/oidc.service');
+    const { saveOidcProviders } = await import('#server/domains/auth/oidc.service');
     await saveOidcProviders([
       { id: 'p1', label: 'SSO', issuer: 'https://sso.example.com', clientId: 'c', clientSecret: 's' },
     ]);
     await expect(
-      call('../../server/routes/auth/[...].ts', {
+      call('#server/routes/auth/[...].ts', {
         method: 'POST',
         url: '/auth/sign-in/email',
         body: { email: 'a@b.co', password: 'password1234' },
@@ -104,12 +105,12 @@ describe('auth route header handling', () => {
   });
 
   it('returns null body when the auth handler sends no body', async () => {
-    const { getAuth } = await import('../../server/domains/auth/auth.service');
+    const { getAuth } = await import('#server/domains/auth/auth.service');
     const inst = await getAuth();
     const originalHandler = inst.handler;
     inst.handler = async () => new Response(null, { status: 204 });
     try {
-      const { result } = await call('../../server/routes/auth/[...].ts', { method: 'GET', url: '/auth/get-session' });
+      const { result } = await call('#server/routes/auth/[...].ts', { method: 'GET', url: '/auth/get-session' });
       expect(result).toBeNull();
     } finally {
       inst.handler = originalHandler;
@@ -123,7 +124,7 @@ describe('GET /health/ready 503 path', () => {
     // schema via a prepared sabotage — simplest: drop the migrations table so
     // the ledger count query throws inside the handler's try
     await sqlClient`drop table if exists drizzle.__drizzle_migrations`;
-    const { result, event } = await call('../../server/routes/health/ready.get.ts', {
+    const { result, event } = await call('#server/routes/health/ready.get.ts', {
       method: 'GET',
       url: '/health/ready',
     });
@@ -134,8 +135,8 @@ describe('GET /health/ready 503 path', () => {
 
 describe('oidc.replace edit-failure arm', () => {
   it('rejects an edit whose merged provider fails schema (unknown id + no secret)', async () => {
-    const { appRouter: router } = await import('../../server/domains/app.router');
-    const { buildServerContext } = await import('../../server/domains/kernel/context');
+    const { appRouter: router } = await import('#server/domains/app.router');
+    const { buildServerContext } = await import('#server/domains/kernel/context');
     let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
     for (const k of ['oidc', 'replace']) node = node[k] as Record<string, unknown>;
     const context = buildServerContext(new Headers());
@@ -164,7 +165,7 @@ describe('oidc.replace edit-failure arm', () => {
 describe('settings.update payload arms (oRPC)', () => {
   async function rpcSettings(input: unknown) {
     const { RPCHandler } = await import('@orpc/server/fetch');
-    const { appRouter: router } = await import('../../server/domains/app.router');
+    const { appRouter: router } = await import('#server/domains/app.router');
     const handler = new RPCHandler(router);
     const req = new Request('http://x/rpc/settings/update', {
       method: 'POST',
@@ -191,9 +192,9 @@ describe('settings.update payload arms (oRPC)', () => {
 
 describe('remaining branch arms', () => {
   it('auth.session role fallback: null role maps to viewer (oRPC)', async () => {
-    const authMod = await import('../../server/domains/auth/auth.service');
-    const { appRouter: router } = await import('../../server/domains/app.router');
-    const { buildServerContext } = await import('../../server/domains/kernel/context');
+    const authMod = await import('#server/domains/auth/auth.service');
+    const { appRouter: router } = await import('#server/domains/app.router');
+    const { buildServerContext } = await import('#server/domains/kernel/context');
     const inst = await authMod.getAuth();
     const realGetSession = inst.api.getSession.bind(inst.api);
     inst.api.getSession = async () => ({
@@ -216,7 +217,7 @@ describe('remaining branch arms', () => {
 
   it('oidc.replace: schema failure arm (bad issuer on new provider)', async () => {
     const { RPCHandler } = await import('@orpc/server/fetch');
-    const { appRouter: router } = await import('../../server/domains/app.router');
+    const { appRouter: router } = await import('#server/domains/app.router');
     const handler = new RPCHandler(router);
     const req = new Request('http://x/rpc/oidc/replace', {
       method: 'POST',
@@ -234,7 +235,7 @@ describe('remaining branch arms', () => {
 
   it('settings.update: root-level type error arm (oRPC)', async () => {
     const { RPCHandler } = await import('@orpc/server/fetch');
-    const { appRouter: router } = await import('../../server/domains/app.router');
+    const { appRouter: router } = await import('#server/domains/app.router');
     const handler = new RPCHandler(router);
     const req = new Request('http://x/rpc/settings/update', {
       method: 'POST',
@@ -249,7 +250,7 @@ describe('remaining branch arms', () => {
   });
 
   it('auth route: headerValue single-value arm + sign-up gate passthrough with body', async () => {
-    const authMod = await import('../../server/domains/auth/auth.service');
+    const authMod = await import('#server/domains/auth/auth.service');
     const inst = await authMod.getAuth();
     const originalHandler = inst.handler;
     let captured: Request | undefined;
@@ -261,7 +262,7 @@ describe('remaining branch arms', () => {
       });
     };
     try {
-      const { event } = await call('../../server/routes/auth/[...].ts', {
+      const { event } = await call('#server/routes/auth/[...].ts', {
         method: 'POST',
         url: '/auth/sign-up/email',
         headers: { 'x-single': 'solo' },
@@ -279,27 +280,24 @@ describe('remaining branch arms', () => {
 
   it('health ready: first-hit migration log arm (fresh ledger)', async () => {
     await resetSchema();
-    const logs: string[] = [];
-    const orig = console.log;
-    console.log = (...a: unknown[]) => {
-      logs.push(a.join(' '));
-    };
+    const readyMod = await import('#server/routes/health/ready.get.ts');
+    const infoSpy = vi.spyOn(readyMod.log, 'info').mockImplementation(() => {});
     try {
-      const { result } = await call('../../server/routes/health/ready.get.ts', { method: 'GET', url: '/health/ready' });
+      const { result } = await call('#server/routes/health/ready.get.ts', { method: 'GET', url: '/health/ready' });
       expect(result).toMatchObject({ ok: true });
-      expect(logs.some((l) => l.includes('applied migrations'))).toBe(true);
+      expect(infoSpy.mock.calls.some((c) => c.map(String).join(' ').includes('applied migrations'))).toBe(true);
       // second hit: migrationsDone already true -> no log, still ok
-      const again = await call('../../server/routes/health/ready.get.ts', { method: 'GET', url: '/health/ready' });
+      const again = await call('#server/routes/health/ready.get.ts', { method: 'GET', url: '/health/ready' });
       expect(again.result).toMatchObject({ ok: true });
     } finally {
-      console.log = orig;
+      infoSpy.mockRestore();
     }
   });
 });
 
 describe('fallback branch arms', () => {
   it('auth route: host/proto/url fallbacks when headers absent', async () => {
-    const authMod = await import('../../server/domains/auth/auth.service');
+    const authMod = await import('#server/domains/auth/auth.service');
     const inst = await authMod.getAuth();
     const originalHandler = inst.handler;
     let capturedUrl = '';
@@ -309,7 +307,7 @@ describe('fallback branch arms', () => {
     };
     try {
       // event with NO host/proto headers and empty path
-      await call('../../server/routes/auth/[...].ts', { method: 'GET', url: '', headers: {} });
+      await call('#server/routes/auth/[...].ts', { method: 'GET', url: '', headers: {} });
       expect(capturedUrl).toMatch(/^http:\/\/localhost/);
     } finally {
       inst.handler = originalHandler;
@@ -318,7 +316,7 @@ describe('fallback branch arms', () => {
 
   it('oidc.replace: array input arm (oRPC 400)', async () => {
     const { RPCHandler } = await import('@orpc/server/fetch');
-    const { appRouter: router } = await import('../../server/domains/app.router');
+    const { appRouter: router } = await import('#server/domains/app.router');
     const handler = new RPCHandler(router);
     const req = new Request('http://x/rpc/oidc/replace', {
       method: 'POST',
@@ -335,7 +333,7 @@ describe('fallback branch arms', () => {
 
 describe('auth route fallback arms (real coverage)', () => {
   it('array x-forwarded-proto collapses to first value; undefined url falls back', async () => {
-    const authMod = await import('../../server/domains/auth/auth.service');
+    const authMod = await import('#server/domains/auth/auth.service');
     const inst = await authMod.getAuth();
     const originalHandler = inst.handler;
     let captured: Request | undefined;
@@ -345,14 +343,14 @@ describe('auth route fallback arms (real coverage)', () => {
     };
     try {
       // proto array arm
-      await call('../../server/routes/auth/[...].ts', {
+      await call('#server/routes/auth/[...].ts', {
         method: 'GET',
         url: '/auth/get-session',
         headers: { 'x-forwarded-proto': ['https', 'http'] },
       });
       expect(captured!.url.startsWith('https://')).toBe(true);
       // undefined-url arms (both routes' `req.url ?? fallback`)
-      await call('../../server/routes/auth/[...].ts', { method: 'GET', headers: { 'x-forwarded-proto': 'https' } });
+      await call('#server/routes/auth/[...].ts', { method: 'GET', headers: { 'x-forwarded-proto': 'https' } });
       expect(captured!.url.startsWith('https://')).toBe(true);
       // POST sign-up closed arm: a user already exists (seeded by beforeEach migrate+seed? none) —
       // create one first, then attempt sign-up
@@ -362,11 +360,11 @@ describe('auth route fallback arms (real coverage)', () => {
   });
 
   it('POST sign-up/email closed once a user exists (403)', async () => {
-    const { sqlClient } = await import('../../server/db/index');
+    const { sqlClient } = await import('#server/db/index');
     await sqlClient`insert into "user" (id, name, email, email_verified, created_at, updated_at, role)
       values ('00000000-0000-7000-8000-55749737aa07', 'Closer', 'c@x.co', true, now(), now(), ${ROLE.VIEWER})`;
     await expect(
-      call('../../server/routes/auth/[...].ts', {
+      call('#server/routes/auth/[...].ts', {
         method: 'POST',
         url: '/auth/sign-up/email',
         body: { email: 'a@b.co', password: 'password1234', name: 'A' },
@@ -375,23 +373,23 @@ describe('auth route fallback arms (real coverage)', () => {
   });
 
   it('oidc route 404 when no provider configured (real registry empty)', async () => {
-    const { saveOidcProviders } = await import('../../server/domains/auth/oidc.service');
+    const { saveOidcProviders } = await import('#server/domains/auth/oidc.service');
     await saveOidcProviders([]);
     setEnv({ TANDEM_OIDC_ISSUER: undefined });
     await expect(
-      call('../../server/routes/auth/[...].ts', { method: 'GET', url: '/auth/oauth2/testprovider' }),
+      call('#server/routes/auth/[...].ts', { method: 'GET', url: '/auth/oauth2/testprovider' }),
     ).rejects.toMatchObject({ statusCode: 404 });
   });
 
   it('oidc route passes the gate when a provider is configured', async () => {
-    const { saveOidcProviders } = await import('../../server/domains/auth/oidc.service');
+    const { saveOidcProviders } = await import('#server/domains/auth/oidc.service');
     await saveOidcProviders([
       { id: 'p1', label: 'SSO', issuer: 'https://sso.example.com', clientId: 'c', clientSecret: 's' },
     ]);
     setEnv({ TANDEM_OIDC_ISSUER: undefined });
     // passes our gate; the real better-auth handler then responds (likely 400/404
     // for an unknown provider id — anything but OUR 404 gate is fine)
-    const r = await call('../../server/routes/auth/[...].ts', { method: 'GET', url: '/auth/oauth2/p1' }).catch((e) => e);
+    const r = await call('#server/routes/auth/[...].ts', { method: 'GET', url: '/auth/oauth2/p1' }).catch((e) => e);
     expect(r).toBeDefined();
     expect((r as { statusCode?: number }).statusCode).not.toBe(404);
     await saveOidcProviders([]);

@@ -8,7 +8,7 @@ import { endpointKind, PROVIDER_KIND } from '#shared/api-styles';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { ROLE } from '#shared/enums';
 
-import type { ApiKeyRow, EmployeeRow } from '../../../shared/types';
+import type { ApiKeyRow, EmployeeRow } from '#shared/types';
 import { db } from '../../db';
 import {
   aiEmployees as aiEmployeesTable,

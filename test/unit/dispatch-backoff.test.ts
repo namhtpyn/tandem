@@ -5,11 +5,11 @@ import './api-harness';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetSchema } from './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { env, setEnv } from '../../server/domains/kernel/env';
-import { ROLE, RUN_STATUS } from '../../shared/enums';
-import { STATUS } from '../../shared/status';
-import type { TaskRow } from '../../shared/types';
+import { applyMigrations } from '#server/db/index';
+import { env, setEnv } from '#server/domains/kernel/env';
+import { ROLE, RUN_STATUS } from '#shared/enums';
+import { STATUS } from '#shared/status';
+import type { TaskRow } from '#shared/types';
 import { makeProcCaller } from './helpers/procs';
 
 // mock ssh2: connect+exec succeed; the stream never closes on its own, so tests
@@ -93,8 +93,8 @@ const callProc = procAdmin as unknown as (path: string, input?: unknown) => Prom
 beforeEach(async () => {
   await resetSchema();
   await applyMigrations();
-  const { db } = await import('../../server/db');
-  const { user, environments, aiEmployees, tasks } = await import('../../server/db/schema');
+  const { db } = await import('#server/db');
+  const { user, environments, aiEmployees, tasks } = await import('#server/db/schema');
   await db.insert(user).values({
     id: '00000000-0000-7000-8000-cd5fca5e2d34',
     name: 'Admin',
@@ -136,7 +136,7 @@ beforeEach(async () => {
 
 describe('backoff ladder', () => {
   it('1st/2nd/3rd+ failures map to 1m/5m/15m', async () => {
-    const { backoffFor } = await import('../../server/domains/tasks/runner.service');
+    const { backoffFor } = await import('#server/domains/tasks/runner.service');
     expect(backoffFor(1, 'boom')).toBe(60_000);
     expect(backoffFor(2, 'boom')).toBe(5 * 60_000);
     expect(backoffFor(3, 'boom')).toBe(15 * 60_000);
@@ -145,7 +145,7 @@ describe('backoff ladder', () => {
   });
 
   it('quota signatures jump straight to the 15m tier', async () => {
-    const { backoffFor } = await import('../../server/domains/tasks/runner.service');
+    const { backoffFor } = await import('#server/domains/tasks/runner.service');
     expect(backoffFor(1, 'Error: 429 Too Many Requests')).toBe(15 * 60_000);
     expect(backoffFor(1, 'insufficient_quota: add credits')).toBe(15 * 60_000);
     expect(backoffFor(2, 'You exceeded your current quota')).toBe(15 * 60_000);
@@ -153,15 +153,15 @@ describe('backoff ladder', () => {
   });
 
   it('a failed run sets failStreak + dispatchAfter; success resets both', async () => {
-    const { db } = await import('../../server/db');
-    const { tasks } = await import('../../server/db/schema');
+    const { db } = await import('#server/db');
+    const { tasks } = await import('#server/db/schema');
     // deterministic fake failure — the ssh emitError choreography hung under CI
     // coverage runs (the mocked connect never readied there)
     setEnv({ TANDEM_FAKE_RUNNER: '1' });
     setEnv({ TANDEM_FAKE_SCRIPT: 'ERR: 429 rate limit exceeded' });
     setEnv({ TANDEM_FAKE_FAIL: '1' });
     try {
-      const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       const handle = await dispatchTask('t-1', 'http://t.local');
       const res = await handle.finished;
       expect(res.status).toBe(RUN_STATUS.FAILED);
@@ -186,9 +186,9 @@ describe('backoff ladder', () => {
   }, 30_000);
 
   it('findEligible skips tasks still in backoff and picks them up after it passes', async () => {
-    const { db } = await import('../../server/db');
-    const { tasks } = await import('../../server/db/schema');
-    const { findEligible } = await import('../../server/domains/tasks/dispatcher.service');
+    const { db } = await import('#server/db');
+    const { tasks } = await import('#server/db/schema');
+    const { findEligible } = await import('#server/domains/tasks/dispatcher.service');
     await db
       .update(tasks)
       .set({ dispatchAfter: new Date(Date.now() + 60_000) })
@@ -205,8 +205,8 @@ describe('backoff ladder', () => {
 
 describe('stale-run reaper', () => {
   it('fails ancient running runs and bounces the task with a long backoff', async () => {
-    const { db } = await import('../../server/db');
-    const { tasks, taskRuns } = await import('../../server/db/schema');
+    const { db } = await import('#server/db');
+    const { tasks, taskRuns } = await import('#server/db/schema');
     await db.insert(taskRuns).values({
       id: 'r-old',
       taskId: 't-1',
@@ -217,7 +217,7 @@ describe('stale-run reaper', () => {
       startedAt: new Date(Date.now() - 3 * 60 * 60_000),
     });
     await db.update(tasks).set({ status: STATUS.doing }).where(eq(tasks.id, 't-1'));
-    const { reapStaleRuns } = await import('../../server/domains/tasks/dispatcher.service');
+    const { reapStaleRuns } = await import('#server/domains/tasks/dispatcher.service');
     expect(await reapStaleRuns()).toBe(1);
     const run = (await db.select().from(taskRuns)).find((r) => r.id === 'r-old')!;
     expect(run.status).toBe(RUN_STATUS.FAILED);
@@ -240,8 +240,8 @@ describe('stale-run reaper', () => {
   });
 
   it('leaves the task alone when the stale run is not the newest one', async () => {
-    const { db } = await import('../../server/db');
-    const { tasks, taskRuns } = await import('../../server/db/schema');
+    const { db } = await import('#server/db');
+    const { tasks, taskRuns } = await import('#server/db/schema');
     const old = new Date(Date.now() - 3 * 60 * 60_000);
     await db.insert(taskRuns).values({
       id: 'r-a',
@@ -262,7 +262,7 @@ describe('stale-run reaper', () => {
       startedAt: new Date(Date.now() - 2 * 60 * 60_000),
     });
     await db.update(tasks).set({ status: STATUS.doing }).where(eq(tasks.id, 't-1'));
-    const { reapStaleRuns } = await import('../../server/domains/tasks/dispatcher.service');
+    const { reapStaleRuns } = await import('#server/domains/tasks/dispatcher.service');
     expect(await reapStaleRuns()).toBe(2); // both stale -> both reaped
     // now only ONE new run: reaping it must NOT bounce when a newer done run exists
     await db.insert(taskRuns).values({
@@ -296,10 +296,10 @@ describe('stale-run reaper', () => {
 
 describe('double settle', () => {
   it('events after the timer are ignored (idempotent settle)', async () => {
-    const { setSetting } = await import('../../server/domains/settings/settings.service');
+    const { setSetting } = await import('#server/domains/settings/settings.service');
     await setSetting('run_timeout_ms', '60');
     try {
-      const { runOverSsh } = await import('../../server/domains/tasks/ssh-exec.util');
+      const { runOverSsh } = await import('#server/domains/tasks/ssh-exec.util');
       const lines: string[] = [];
       let finishCount = 0;
       const done = new Promise<{ status: string }>((r) => {
@@ -337,12 +337,12 @@ describe('double settle', () => {
     setEnv({ TANDEM_FAKE_DELAY_MS: '120' });
     setEnv({ TANDEM_FAKE_FAIL: '1' });
     try {
-      const { dispatchTask } = await import('../../server/domains/tasks/runner.service');
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       const handleP = dispatchTask('t-1', 'http://t.local');
       // delete the task while the fake run is still ticking
       await new Promise((r) => setTimeout(r, 60));
-      const { db } = await import('../../server/db');
-      const { tasks } = await import('../../server/db/schema');
+      const { db } = await import('#server/db');
+      const { tasks } = await import('#server/db/schema');
       await db.delete(tasks).where(eq(tasks.id, 't-1'));
       const handle = await handleP;
       const res = await handle.finished;
@@ -356,8 +356,8 @@ describe('double settle', () => {
   }, 30_000);
 
   it('live rows expose dispatchAfter when set (router non-null arm)', async () => {
-    const { db } = await import('../../server/db');
-    const { tasks } = await import('../../server/db/schema');
+    const { db } = await import('#server/db');
+    const { tasks } = await import('#server/db/schema');
     await db
       .update(tasks)
       .set({ dispatchAfter: new Date(Date.now() + 60_000), failStreak: 2 })
@@ -374,10 +374,10 @@ describe('double settle', () => {
 
 describe('ssh run timeout', () => {
   it('a run that never closes settles as failed via the timer', async () => {
-    const { setSetting } = await import('../../server/domains/settings/settings.service');
+    const { setSetting } = await import('#server/domains/settings/settings.service');
     await setSetting('run_timeout_ms', '80');
     try {
-      const { runOverSsh } = await import('../../server/domains/tasks/ssh-exec.util');
+      const { runOverSsh } = await import('#server/domains/tasks/ssh-exec.util');
       const lines: string[] = [];
       let finished = false;
       const done = new Promise<{ status: string }>((r) => {

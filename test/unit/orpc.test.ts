@@ -4,13 +4,13 @@ import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { CHANGE_ACTION, CHANGE_RESOURCE } from '../../shared/enums';
-import { ROLE } from '../../shared/enums';
+import { applyMigrations } from '#server/db/index';
+import { CHANGE_ACTION, CHANGE_RESOURCE } from '#shared/enums';
+import { ROLE } from '#shared/enums';
 import { makeProcCaller } from './helpers/procs';
 
 async function ctx(sessionUser: { id: string; name: string; email: string; role: string } | null) {
-  const { buildServerContext } = await import('../../server/domains/kernel/context');
+  const { buildServerContext } = await import('#server/domains/kernel/context');
   const headers = new Headers();
   const context = buildServerContext(headers);
   // replace the lazy resolver with a stub
@@ -22,7 +22,7 @@ async function ctx(sessionUser: { id: string; name: string; email: string; role:
 const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 
 async function callRouter() {
-  const { appRouter: router } = await import('../../server/domains/app.router');
+  const { appRouter: router } = await import('#server/domains/app.router');
   return router;
 }
 
@@ -38,7 +38,7 @@ const valid = { name: 'ct112', host: '192.168.3.108', port: '22', username: 'tan
 
 describe('test-only auth instance', () => {
   it('buildAuthForTest exposes ctx.test helpers; the production singleton does not', async () => {
-    const { buildAuthForTest, getAuth } = await import('../../server/domains/auth/auth.service');
+    const { buildAuthForTest, getAuth } = await import('#server/domains/auth/auth.service');
     const testAuth = (await buildAuthForTest()) as unknown as { $context: Promise<Record<string, unknown>> };
     const testCtx = await testAuth.$context;
     expect(typeof testCtx.test).toBe('object');
@@ -57,9 +57,9 @@ beforeEach(async () => {
 describe('session gate (via RPCHandler — middleware runs)', () => {
   it('rejects unauthenticated calls (UNAUTHORIZED)', async () => {
     const { RPCHandler } = await import('@orpc/server/fetch');
-    const { appRouter: router } = await import('../../server/domains/app.router');
-    const { buildServerContext } = await import('../../server/domains/kernel/context');
-    const { getAuth } = await import('../../server/domains/auth/auth.service');
+    const { appRouter: router } = await import('#server/domains/app.router');
+    const { buildServerContext } = await import('#server/domains/kernel/context');
+    const { getAuth } = await import('#server/domains/auth/auth.service');
     const inst = await getAuth();
     const realGetSession = inst.api.getSession.bind(inst.api);
     inst.api.getSession = async () => null;
@@ -166,7 +166,7 @@ describe('environments.live', () => {
   });
 
   it('does not re-emit for settings-only changes during an active subscription', async () => {
-    const { publishChange } = await import('../../server/domains/kernel/change-bus');
+    const { publishChange } = await import('#server/domains/kernel/change-bus');
     const iter = (await callProc(['environments', 'live'], undefined)) as AsyncGenerator<unknown>;
     await iter.next();
     // park the generator in subscribe(), publish an unrelated event
@@ -192,7 +192,7 @@ describe('environments.live', () => {
 
 describe('buildServerContext', () => {
   it('maps a real better-auth session to the trimmed payload, caches per call', async () => {
-    const { getAuth } = await import('../../server/domains/auth/auth.service');
+    const { getAuth } = await import('#server/domains/auth/auth.service');
     const inst = await getAuth();
     const realGetSession = inst.api.getSession.bind(inst.api);
     let calls = 0;
@@ -210,7 +210,7 @@ describe('buildServerContext', () => {
       };
     };
     try {
-      const { buildServerContext } = await import('../../server/domains/kernel/context');
+      const { buildServerContext } = await import('#server/domains/kernel/context');
       const c = buildServerContext(new Headers());
       const a = await c.getSession();
       const b = await c.getSession();
@@ -225,14 +225,14 @@ describe('buildServerContext', () => {
   });
 
   it('defaults a missing role to viewer and absent headers to empty', async () => {
-    const { getAuth } = await import('../../server/domains/auth/auth.service');
+    const { getAuth } = await import('#server/domains/auth/auth.service');
     const inst = await getAuth();
     const realGetSession = inst.api.getSession.bind(inst.api);
     inst.api.getSession = async () => ({
       user: { id: '00000000-0000-7000-8000-b9c69e5488ff', name: 'B', email: 'b@x', emailVerified: true },
     });
     try {
-      const { buildServerContext } = await import('../../server/domains/kernel/context');
+      const { buildServerContext } = await import('#server/domains/kernel/context');
       const c = buildServerContext(undefined); // <- no headers at all
       expect(await c.getSession()).toEqual({
         user: { id: '00000000-0000-7000-8000-b9c69e5488ff', name: 'B', email: 'b@x', role: ROLE.VIEWER },
@@ -243,12 +243,12 @@ describe('buildServerContext', () => {
   });
 
   it('returns null when no session', async () => {
-    const { getAuth } = await import('../../server/domains/auth/auth.service');
+    const { getAuth } = await import('#server/domains/auth/auth.service');
     const inst = await getAuth();
     const realGetSession = inst.api.getSession.bind(inst.api);
     inst.api.getSession = async () => null;
     try {
-      const { buildServerContext } = await import('../../server/domains/kernel/context');
+      const { buildServerContext } = await import('#server/domains/kernel/context');
       const c = buildServerContext(new Headers());
       expect(await c.getSession()).toBeNull();
     } finally {

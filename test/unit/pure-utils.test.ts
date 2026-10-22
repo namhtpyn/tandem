@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { groupedSecretOptions } from '../../app/utils/vault-options';
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
+import { applyMigrations } from '#server/db/index';
 
 beforeEach(async () => {
   await resetSchema();
@@ -43,9 +43,9 @@ describe('groupedSecretOptions', () => {
 
 describe('avatar endpoint', () => {
   it('401s without a session before touching the database', async () => {
-    const { default: avatarEndpoint } = await import('../../server/routes/api/employees/[id]/avatar.get');
-    const { buildServerContext } = await import('../../server/domains/kernel/context');
-    const { getAuth } = await import('../../server/domains/auth/auth.service');
+    const { default: avatarEndpoint } = await import('#server/routes/api/employees/[id]/avatar.get');
+    const { buildServerContext } = await import('#server/domains/kernel/context');
+    const { getAuth } = await import('#server/domains/auth/auth.service');
     // api-harness mocks getSession to a test admin — undo that for this case
     const auth = await getAuth();
     const realGetSession = auth.api.getSession;
@@ -74,9 +74,9 @@ describe('avatar endpoint', () => {
   });
 
   it('serves the stored avatar with etag + 304 revalidation', async () => {
-    const { default: avatarEndpoint } = await import('../../server/routes/api/employees/[id]/avatar.get');
-    const { db } = await import('../../server/db');
-    const { user } = await import('../../server/db/schema');
+    const { default: avatarEndpoint } = await import('#server/routes/api/employees/[id]/avatar.get');
+    const { db } = await import('#server/db');
+    const { user } = await import('#server/db/schema');
     const png =
       'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
     await db.insert(user).values({
@@ -129,7 +129,7 @@ describe('avatar endpoint', () => {
   });
 
   it('passes request headers through to the session lookup', async () => {
-    const { default: avatarEndpoint } = await import('../../server/routes/api/employees/[id]/avatar.get');
+    const { default: avatarEndpoint } = await import('#server/routes/api/employees/[id]/avatar.get');
     const state = { status: 200 };
     const headersOut: Array<[string, string]> = [];
     const reqHeaders = { 'x-multi': ['a', 'b'], 'x-single': 'v' };
@@ -161,9 +161,9 @@ describe('avatar endpoint', () => {
   });
 
   it('404s when the user has no avatar, 422 on a non-data-url image', async () => {
-    const { default: avatarEndpoint } = await import('../../server/routes/api/employees/[id]/avatar.get');
-    const { db } = await import('../../server/db');
-    const { user } = await import('../../server/db/schema');
+    const { default: avatarEndpoint } = await import('#server/routes/api/employees/[id]/avatar.get');
+    const { db } = await import('#server/db');
+    const { user } = await import('#server/db/schema');
     await db.insert(user).values({
       id: '00000000-0000-7000-8000-18e469eaa1e6',
       name: 'No',

@@ -4,7 +4,7 @@
 // protected-procedure middleware testable per-user.
 import { call } from '@orpc/server';
 
-import { ROLE } from '../../../shared/enums';
+import { ROLE } from '#shared/enums';
 
 type SessionUser = { id: string; name: string; email: string; role: ROLE.ADMIN | ROLE.EMPLOYEE | ROLE.VIEWER };
 
@@ -14,8 +14,8 @@ export type ProcCaller = {
 };
 
 export async function makeProcCaller(sessionUser: SessionUser | null) {
-  const { appRouter } = await import('../../../server/domains/app.router');
-  const { buildServerContext } = await import('../../../server/domains/kernel/context');
+  const { appRouter } = await import('#server/domains/app.router');
+  const { buildServerContext } = await import('#server/domains/kernel/context');
   let current: SessionUser | null = sessionUser;
 
   const contextFor = async () => {

@@ -7,8 +7,8 @@ import { Extension } from '@tiptap/core';
 import type { Editor } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 
-import { CHANGE_RESOURCE, ACTIVITY_KIND } from '~/../shared/enums';
-import { STATUS } from '~/../shared/status';
+import { CHANGE_RESOURCE, ACTIVITY_KIND } from '#shared/enums';
+import { STATUS } from '#shared/status';
 import type { EditorView, ClipboardEventLike, DragEventLike } from '~/types/editor-typing';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 

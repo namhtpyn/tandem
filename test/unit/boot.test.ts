@@ -3,15 +3,15 @@ import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { sqlClient } from '../../server/db/index';
-import { env, setEnv } from '../../server/domains/kernel/env';
-import { ROLE } from '../../shared/enums';
+import { sqlClient } from '#server/db/index';
+import { env, setEnv } from '#server/domains/kernel/env';
+import { ROLE } from '#shared/enums';
 
-const bootModule = () => import('../../server/plugins/boot');
+const bootModule = () => import('#server/plugins/boot');
 
 beforeEach(async () => {
   await resetSchema();
-  const { applyMigrations } = await import('../../server/db/index');
+  const { applyMigrations } = await import('#server/db/index');
   await applyMigrations();
 });
 

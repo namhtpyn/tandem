@@ -4,8 +4,8 @@ import './helpers/pg';
 // db.query.count / findManyAndCount extensions against the real test DB
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { db } from '../../server/db';
-import { tasks } from '../../server/db/schema';
+import { db } from '#server/db';
+import { tasks } from '#server/db/schema';
 
 describe('rqb count/findManyAndCount (real db)', () => {
   let ids: string[] = [];
@@ -54,7 +54,7 @@ describe('rqb count/findManyAndCount (real db)', () => {
   });
 
   it('installRqbExtensions on an empty query object returns early', async () => {
-    const { installRqbExtensions } = await import('../../server/db/rqb-extensions');
+    const { installRqbExtensions } = await import('#server/db/rqb-extensions');
     expect(() => installRqbExtensions({})).not.toThrow();
   });
 });

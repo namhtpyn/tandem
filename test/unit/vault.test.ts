@@ -6,16 +6,16 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { env, setEnv } from '../../server/domains/kernel/env';
-import { decryptSecret, encryptSecret, lastFourHint } from '../../server/domains/vault/secret/secret-crypto.service';
-import { ROLE } from '../../shared/enums';
-import type { VaultSecretRow } from '../../shared/types';
+import { applyMigrations } from '#server/db/index';
+import { env, setEnv } from '#server/domains/kernel/env';
+import { decryptSecret, encryptSecret, lastFourHint } from '#server/domains/vault/secret/secret-crypto.service';
+import { ROLE } from '#shared/enums';
+import type { VaultSecretRow } from '#shared/types';
 
 const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 
 async function ctx(sessionUser: { id: string; name: string; email: string; role: string } | null = admin) {
-  const { buildServerContext } = await import('../../server/domains/kernel/context');
+  const { buildServerContext } = await import('#server/domains/kernel/context');
   const context = buildServerContext(new Headers());
   (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () =>
     sessionUser ? { user: sessionUser } : null;
@@ -27,7 +27,7 @@ async function callProc(
   input?: unknown,
   sessionUser: { id: string; name: string; email: string; role: string } | null = admin,
 ): Promise<any> {
-  const { appRouter: router } = await import('../../server/domains/app.router');
+  const { appRouter: router } = await import('#server/domains/app.router');
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
   for (const key of path.split('.')) {
     node = node[key] as Record<string, unknown>;
@@ -40,11 +40,11 @@ async function callProc(
 }
 
 async function dbm() {
-  return await import('../../server/db');
+  return await import('#server/db');
 }
 
 async function schema() {
-  return await import('../../server/db/schema');
+  return await import('#server/db/schema');
 }
 
 /** factory: a user row (vault secrets FK-require one) */
@@ -100,7 +100,7 @@ describe('vault-crypto (module)', () => {
   });
 
   it('rejects wrong-size TANDEM_VAULT_KEY; generateVaultKeyB64 gives 32 bytes', async () => {
-    const mod = await import('../../server/domains/vault/secret/secret-crypto.service');
+    const mod = await import('#server/domains/vault/secret/secret-crypto.service');
     setEnv({ TANDEM_VAULT_KEY: Buffer.alloc(16).toString('base64') });
     mod.resetVaultKeyCache();
     expect(() => mod.getVaultKey()).toThrowError(/32 bytes/);
@@ -252,7 +252,7 @@ describe('vault API', () => {
   });
 
   it('unauthenticated calls are rejected', async () => {
-    const { appRouter: router } = await import('../../server/domains/app.router');
+    const { appRouter: router } = await import('#server/domains/app.router');
     let cur: Record<string, unknown> = router as unknown as Record<string, unknown>;
     for (const k of ['vault', 'secrets', 'create']) cur = cur[k] as Record<string, unknown>;
     const { call } = await import('@orpc/server');
@@ -266,7 +266,7 @@ describe('vault API', () => {
 });
 
 async function buildAnonContext() {
-  const { buildServerContext } = await import('../../server/domains/kernel/context');
+  const { buildServerContext } = await import('#server/domains/kernel/context');
   const context = buildServerContext(new Headers());
   (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => null;
   return context;

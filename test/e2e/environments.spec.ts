@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { RUN_STATUS } from '../../shared/enums';
+import { RUN_STATUS } from '#shared/enums';
 import { login } from './helpers/login';
 
 async function dismiss(page: any, text: string) {

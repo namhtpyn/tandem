@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { ROLE } from '../../shared/enums';
+import { applyMigrations } from '#server/db/index';
+import { ROLE } from '#shared/enums';
 
 const admin = {
   id: '00000000-0000-7000-8000-cd5fca5e2d34',
@@ -15,7 +15,7 @@ const admin = {
 };
 
 async function ctx(sessionUser: { id: string; name: string; email: string; role: string } | null = admin) {
-  const { buildServerContext } = await import('../../server/domains/kernel/context');
+  const { buildServerContext } = await import('#server/domains/kernel/context');
   const context = buildServerContext(new Headers()) as Record<string, unknown>;
   (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () =>
     sessionUser ? { user: sessionUser } : null;
@@ -24,7 +24,7 @@ async function ctx(sessionUser: { id: string; name: string; email: string; role:
 }
 
 async function callProc(path: string, input?: unknown): Promise<any> {
-  const { appRouter: router } = await import('../../server/domains/app.router');
+  const { appRouter: router } = await import('#server/domains/app.router');
   let node: Record<string, unknown> = router as unknown as Record<string, unknown>;
   for (const key of path.split('.')) {
     node = node[key] as Record<string, unknown>;
@@ -37,7 +37,7 @@ async function callProc(path: string, input?: unknown): Promise<any> {
 }
 
 async function dbm() {
-  return await import('../../server/db');
+  return await import('#server/db');
 }
 
 type ProviderRow = {
@@ -49,13 +49,13 @@ type ProviderRow = {
 };
 
 beforeEach(async () => {
-  const { modelCache } = await import('../../server/domains/providers/models-cache');
+  const { modelCache } = await import('#server/domains/providers/models-cache');
   modelCache.clear();
   await resetSchema();
   await applyMigrations();
   // FK targets for createdBy / session user
   const { db } = await dbm();
-  const { user } = await import('../../server/db/schema');
+  const { user } = await import('#server/db/schema');
   await db
     .insert(user)
     .values({ id: admin.id, name: 'Admin', email: 'admin@tandem.local', role: ROLE.ADMIN, title: 'T' });
@@ -65,7 +65,7 @@ beforeEach(async () => {
 // catalog starts EMPTY; tests create their own fixtures.
 async function ensureProvider(id: string, label: string, baseUrl: string, endpoints: string[]) {
   const d = await dbm();
-  const { modelProviders } = await import('../../server/db/schema');
+  const { modelProviders } = await import('#server/db/schema');
   await d.db.insert(modelProviders).values({ id, label, baseUrl, endpoints }).onConflictDoNothing();
 }
 
@@ -260,7 +260,7 @@ describe('providers', () => {
     } finally {
       globalThis.fetch = origFetch;
     }
-    const { modelCache, sweepModelCache } = await import('../../server/domains/providers/models-cache');
+    const { modelCache, sweepModelCache } = await import('#server/domains/providers/models-cache');
     expect(modelCache.size).toBeGreaterThan(0);
     // second, uncached probe (different secret) exercises the sweeper-already-armed guard
     const sec2 = await callProc('vault.secrets.create', { name: 'ttl-key2', value: 'sk-ttl2' });
@@ -347,13 +347,13 @@ describe('providers', () => {
     await iter.return?.();
     expect((snap.value as ProviderRow[]).find((p) => p.id === r.id)).toBeUndefined();
     const { db } = await dbm();
-    const { models } = await import('../../server/db/schema');
+    const { models } = await import('#server/db/schema');
   });
 
   it('remove is blocked while an AI employee uses the provider', async () => {
     await ensureProvider('seed-openai', 'OpenAI', 'https://api.openai.com', ['OPENAI-COMPLETIONS']);
     const { db } = await dbm();
-    const { environments } = await import('../../server/db/schema');
+    const { environments } = await import('#server/db/schema');
     await db.insert(environments).values({
       id: 'env-p',
       name: 'env-p',
@@ -378,7 +378,7 @@ describe('employees model access', () => {
   it('update rejects unknown provider / secret', async () => {
     await ensureProvider('seed-openai', 'OpenAI', 'https://api.openai.com', ['OPENAI-COMPLETIONS']);
     const { db } = await dbm();
-    const { environments } = await import('../../server/db/schema');
+    const { environments } = await import('#server/db/schema');
     await db.insert(environments).values({
       id: 'env-r',
       name: 'env-r',
@@ -423,7 +423,7 @@ describe('employees model access', () => {
       providerId: 'seed-openai',
       apiKeySecretId: sec.id,
     });
-    const { aiEmployees } = await import('../../server/db/schema');
+    const { aiEmployees } = await import('#server/db/schema');
     const ai = (await db.select().from(aiEmployees))[0]!;
     expect(ai.model).toBe('any-model-name');
   });
@@ -431,7 +431,7 @@ describe('employees model access', () => {
   it('create/update persist providerId + model + apiKeySecretId', async () => {
     await ensureProvider('seed-openai', 'OpenAI', 'https://api.openai.com', ['OPENAI-COMPLETIONS']);
     const { db } = await dbm();
-    const { environments } = await import('../../server/db/schema');
+    const { environments } = await import('#server/db/schema');
     await db.insert(environments).values({
       id: 'env-m',
       name: 'env-m',
@@ -451,7 +451,7 @@ describe('employees model access', () => {
       apiKeySecretId: sec.id,
       executable: 'hermes acp',
     });
-    const { aiEmployees } = await import('../../server/db/schema');
+    const { aiEmployees } = await import('#server/db/schema');
     let ai = (await db.select().from(aiEmployees))[0]!;
     expect(ai.providerId).toBe('seed-openai');
     expect(ai.model).toBe('gpt-5.2');
@@ -474,7 +474,7 @@ describe('employees model access', () => {
 
   it('rejects unknown provider / model / secret', async () => {
     const { db } = await dbm();
-    const { environments } = await import('../../server/db/schema');
+    const { environments } = await import('#server/db/schema');
     await db.insert(environments).values({
       id: 'env-x',
       name: 'env-x',
@@ -507,7 +507,7 @@ describe('employees model access', () => {
   it('update null-clear paths: provider null skips validation', async () => {
     await ensureProvider('seed-openai', 'OpenAI', 'https://api.openai.com', ['OPENAI-COMPLETIONS']);
     const { db } = await dbm();
-    const { environments } = await import('../../server/db/schema');
+    const { environments } = await import('#server/db/schema');
     await db.insert(environments).values({
       id: 'env-n',
       name: 'env-n',
@@ -553,7 +553,7 @@ describe('employees model access', () => {
       model: null,
       apiKeySecretId: null,
     });
-    const { aiEmployees } = await import('../../server/db/schema');
+    const { aiEmployees } = await import('#server/db/schema');
     const ai = (await db.select().from(aiEmployees))[0]!;
     expect(ai.providerId).toBeNull();
     expect(ai.model).toBeNull();
@@ -562,7 +562,7 @@ describe('employees model access', () => {
 
   it('update rejects unknown provider / secret (update-path validation)', async () => {
     const { db } = await dbm();
-    const { environments } = await import('../../server/db/schema');
+    const { environments } = await import('#server/db/schema');
     await db.insert(environments).values({
       id: 'env-u',
       name: 'env-u',
@@ -600,7 +600,7 @@ describe('employees model access', () => {
 
   it('deleting the key secret nulls the agent reference (set null)', async () => {
     const { db } = await dbm();
-    const { environments } = await import('../../server/db/schema');
+    const { environments } = await import('#server/db/schema');
     await db.insert(environments).values({
       id: 'env-s',
       name: 'env-s',
@@ -619,7 +619,7 @@ describe('employees model access', () => {
       executable: 'hermes acp',
     });
     await callProc('vault.secrets.remove', { id: sec.id });
-    const { aiEmployees } = await import('../../server/db/schema');
+    const { aiEmployees } = await import('#server/db/schema');
     const ai = (await db.select().from(aiEmployees))[0]!;
     expect(ai.apiKeySecretId).toBeNull();
     expect(bot.id).toBeTruthy();

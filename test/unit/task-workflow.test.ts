@@ -8,11 +8,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
 import { resetSchema } from './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { answerHolder, spawnObligation } from '../../server/domains/tasks/obligations.service';
-import { ACTIVITY_KIND, OBLIGATION_ROLE, REVIEW_STATUS, ROLE } from '../../shared/enums';
-import { STATUS } from '../../shared/status';
-import type { TaskRow, TaskActivityRow } from '../../shared/types';
+import { applyMigrations } from '#server/db/index';
+import { answerHolder, spawnObligation } from '#server/domains/tasks/obligations.service';
+import { ACTIVITY_KIND, OBLIGATION_ROLE, REVIEW_STATUS, ROLE } from '#shared/enums';
+import { STATUS } from '#shared/status';
+import type { TaskRow, TaskActivityRow } from '#shared/types';
 import { makeProcCaller } from './helpers/procs';
 
 const admin = {
@@ -48,10 +48,10 @@ const rev2 = {
 const top = { id: '00000000-0000-7000-8000-5ecc0b58a4f3', name: 'Top', email: 'top@tandem.local', role: 'member' };
 
 async function dbm() {
-  return await import('../../server/db');
+  return await import('#server/db');
 }
 async function schema() {
-  return await import('../../server/db/schema');
+  return await import('#server/db/schema');
 }
 
 // official oRPC call() helper (tests/helpers/procs) — same middleware/context path
@@ -499,8 +499,8 @@ describe('task workflow — guard rails', () => {
   });
 
   it('every workflow proc rejects a missing session', async () => {
-    const { appRouter } = await import('../../server/domains/app.router');
-    const { buildServerContext } = await import('../../server/domains/kernel/context');
+    const { appRouter } = await import('#server/domains/app.router');
+    const { buildServerContext } = await import('#server/domains/kernel/context');
     const context = buildServerContext(new Headers());
     (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => null;
     const procs = [
@@ -711,8 +711,8 @@ describe('task workflow — guard rails', () => {
   });
 
   it('create without a session rejects an anonymous creator', async () => {
-    const { appRouter } = await import('../../server/domains/app.router');
-    const { buildServerContext } = await import('../../server/domains/kernel/context');
+    const { appRouter } = await import('#server/domains/app.router');
+    const { buildServerContext } = await import('#server/domains/kernel/context');
     const context = buildServerContext(new Headers());
     (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () => null;
     let cur: Record<string, unknown> = appRouter as unknown as Record<string, unknown>;

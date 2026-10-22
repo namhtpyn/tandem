@@ -2,9 +2,9 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 
 import './helpers/pg';
-import { applyMigrations } from '../../server/db/index';
-import { getOidcProviders, saveOidcProviders } from '../../server/domains/auth/oidc.service';
-import { env, setEnv } from '../../server/domains/kernel/env';
+import { applyMigrations } from '#server/db/index';
+import { getOidcProviders, saveOidcProviders } from '#server/domains/auth/oidc.service';
+import { env, setEnv } from '#server/domains/kernel/env';
 import { resetSchema } from './helpers/pg';
 
 describe('oidc registry', () => {
@@ -67,7 +67,7 @@ describe('oidc registry', () => {
   });
 
   it('ignores a corrupted stored registry and falls through to env', async () => {
-    const { setSetting } = await import('../../server/domains/settings/settings.service');
+    const { setSetting } = await import('#server/domains/settings/settings.service');
     await setSetting('oidc_providers', 'not json {{{');
     setEnv({ TANDEM_OIDC_ISSUER: 'https://env.example.com' });
     setEnv({ TANDEM_OIDC_CLIENT_ID: 'env-client' });
@@ -84,7 +84,7 @@ describe('oidc registry', () => {
   });
 
   it('ignores a stored registry failing schema validation', async () => {
-    const { setSetting } = await import('../../server/domains/settings/settings.service');
+    const { setSetting } = await import('#server/domains/settings/settings.service');
     // valid JSON, but issuer is not a URL
     await setSetting(
       'oidc_providers',

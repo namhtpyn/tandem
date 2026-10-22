@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { PROJECT_STATUS, type ProjectStatus } from '#shared/enums';
 
-import type { ProjectRow } from '../../../shared/types';
+import type { ProjectRow } from '#shared/types';
 import { db } from '../../db';
 import { projects as projectsTable } from '../../db/schema';
 import { base, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';

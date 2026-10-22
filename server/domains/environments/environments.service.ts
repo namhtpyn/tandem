@@ -3,7 +3,7 @@ import { desc } from 'drizzle-orm';
 
 import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
 
-import type { EnvironmentRow } from '../../../shared/types';
+import type { EnvironmentRow } from '#shared/types';
 import { db } from '../../db';
 import { environments as environmentsTable } from '../../db/schema';
 
