@@ -31,6 +31,13 @@ process.env.TANDEM_DB_POOL_MAX = '3';
 // one DB per worker, up to 8 workers: the prod pool of 10 overflows postgres's
 // 100-connection cap. Read by server/db at construction (post-construct max is ignored).
 
+// redis pub/sub is shared per server — a worker's bus would count every other
+// worker's publishes. Put each worker on its own redis DB index (0-14)
+if (process.env.REDIS_URL) {
+  const idx = (Number(workerId) || 0) % 15;
+  process.env.REDIS_URL = process.env.REDIS_URL.replace(/\/(\d+)?$/, `/${idx}`);
+}
+
 // the transaction every connection of this worker joins
 const holder = new SQL(workerUrl, { max: 1 });
 await holder`begin`;
