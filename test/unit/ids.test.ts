@@ -4,7 +4,6 @@ import './helpers/pg';
 import { applyMigrations } from '#server/db/index';
 import { uuidv7 } from '#server/domains/kernel/ids';
 
-import { resetSchema } from './helpers/pg.ts';
 
 const UUID7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -38,8 +37,7 @@ describe('uuidv7 ids', () => {
   });
 
   it('domain minting goes through uuidv7 — created rows carry v7 ids', async () => {
-    await resetSchema();
-    await applyMigrations();
+      await applyMigrations();
     const res = (await proc(['vault', 'folders', 'save'], { name: 'v7 check' })) as { id: string };
     expect(res.id).toMatch(UUID7);
   });

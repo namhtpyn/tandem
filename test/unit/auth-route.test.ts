@@ -7,11 +7,8 @@ import { applyMigrations, sqlClient } from '#server/db/index';
 import { ROLE } from '#shared/enums';
 
 import { call } from './api-harness.ts';
-import { resetSchema } from './helpers/pg.ts';
 
 beforeEach(async () => {
-  await resetSchema();
-  await applyMigrations();
 });
 
 describe('auth route gates', () => {

@@ -7,13 +7,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
-import { applyMigrations } from '#server/db/index';
 import { answerHolder, spawnObligation } from '#server/domains/tasks/obligations.service';
 import { ACTIVITY_KIND, OBLIGATION_ROLE, REVIEW_STATUS, ROLE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import type { TaskRow, TaskActivityRow } from '#shared/types';
 
-import { resetSchema } from './helpers/pg.ts';
 import { makeProcCaller } from './helpers/procs.ts';
 
 const admin = {
@@ -110,8 +108,6 @@ async function activity(id: string) {
 
 beforeEach(async () => {
   idMap.clear();
-  await resetSchema();
-  await applyMigrations();
   const { db } = await dbm();
   const { user } = await schema();
   await db.insert(user).values({

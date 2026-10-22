@@ -11,23 +11,6 @@ const PG_IMAGE = 'postgres:18-alpine';
 const REDIS_IMAGE = 'redis:8-alpine';
 const needsLocalContainers = !process.env.TANDEM_TEST_DATABASE_URL && !process.env.CI;
 
-/** Sweep orphaned per-file test databases from a previous crashed run. */
-async function sweepPerFileDatabases(baseUrl: string) {
-  try {
-    const { SQL } = await import('bun');
-    const admin = new SQL(baseUrl, { max: 1 });
-    const rows = await admin.unsafe<{ datname: string }>(
-      "select datname from pg_database where datname like 't\\_%' escape '\\' and pg_get_userbyid(datdba) = current_user",
-    );
-    for (const r of rows) {
-      await admin.unsafe(`drop database if exists "${r.datname}" with (force)`);
-    }
-    await admin.close();
-  } catch {
-    /* best effort */
-  }
-}
-
 /** redis is a hard dependency — every suite run (dev or CI) gets a URL */
 async function ensureRedis(ctx: GlobalSetupContext) {
   if (process.env.CI) {
@@ -51,7 +34,6 @@ export async function setup(ctx: GlobalSetupContext) {
   if (!needsLocalContainers) {
     const url = process.env.TANDEM_TEST_DATABASE_URL!;
     process.env.TANDEM_TEST_DATABASE_URL = url;
-    await sweepPerFileDatabases(url);
     provide('testDatabaseUrl', url);
     return;
   }
@@ -65,7 +47,6 @@ export async function setup(ctx: GlobalSetupContext) {
   const url = `postgresql://tandem:tandem@${postgres.getHost()}:${postgres.getMappedPort(5432)}/tandem_test`;
   process.env.TANDEM_TEST_DATABASE_URL = url;
   process.env.DATABASE_URL = url;
-  await sweepPerFileDatabases(url);
   // migrate ONCE for the whole run — tests only truncate data (resetData).
   // server/db asserts env at import: mirror setup.ts's test defaults first.
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET || 'test-secret-not-for-prod';

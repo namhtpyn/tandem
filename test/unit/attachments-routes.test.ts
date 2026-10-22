@@ -8,13 +8,11 @@ import { createEvent } from 'h3';
 import { describe, expect, it, beforeEach } from 'vitest';
 
 import { db } from '#server/db';
-import { applyMigrations } from '#server/db/index';
 import { tasks, taskAttachments, user as userTable } from '#server/db/schema';
 import { saveAttachmentBytes, sha256Hex } from '#server/domains/tasks/attachments.util';
 import { ROLE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
-import { resetSchema } from './helpers/pg.ts';
 
 /** minimal node IncomingMessage carrying a raw body buffer + content-type */
 function fakeNodeReq(url: string, body: Buffer, contentType: string, method = 'POST'): IncomingMessage {
@@ -43,8 +41,6 @@ function evFor(url: string, body: Buffer, contentType: string, method = 'POST') 
 }
 
 beforeEach(async () => {
-  await resetSchema();
-  await applyMigrations();
   await db.insert(userTable).values({
     id: '00000000-0000-7000-8000-145adf11dba0',
     name: 'Att Admin',

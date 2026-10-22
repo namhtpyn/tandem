@@ -5,13 +5,11 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
-import { applyMigrations } from '#server/db/index';
 import { env, setEnv } from '#server/domains/kernel/env';
 import { decryptSecret, encryptSecret, lastFourHint } from '#server/domains/vault/secret/secret-crypto.service';
 import { ROLE } from '#shared/enums';
 import type { VaultSecretRow } from '#shared/types';
 
-import { resetSchema } from './helpers/pg.ts';
 
 const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 
@@ -70,8 +68,6 @@ async function secretFactory(name: string, value = 'super-secret-value', descrip
 }
 
 beforeEach(async () => {
-  await resetSchema();
-  await applyMigrations();
   await userFactory('00000000-0000-7000-8000-c5ea71554c77');
 });
 

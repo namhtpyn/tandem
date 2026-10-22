@@ -3,10 +3,8 @@ import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './api-harness';
-import { applyMigrations } from '#server/db/index';
 import { ROLE } from '#shared/enums';
 
-import { resetSchema } from './helpers/pg.ts';
 
 const admin = {
   id: '00000000-0000-7000-8000-cd5fca5e2d34',
@@ -52,8 +50,6 @@ type ProviderRow = {
 beforeEach(async () => {
   const { modelCache } = await import('#server/domains/providers/models-cache');
   modelCache.clear();
-  await resetSchema();
-  await applyMigrations();
   // FK targets for createdBy / session user
   const { db } = await dbm();
   const { user } = await import('#server/db/schema');

@@ -4,13 +4,11 @@ import './api-harness';
 // Backoff ladder, quota-jump, dispatchAfter gating, reaper, and run timeout settle.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { applyMigrations } from '#server/db/index';
 import { env, setEnv } from '#server/domains/kernel/env';
 import { ROLE, RUN_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import type { TaskRow } from '#shared/types';
 
-import { resetSchema } from './helpers/pg.ts';
 import { makeProcCaller } from './helpers/procs.ts';
 
 // mock ssh2: connect+exec succeed; the stream never closes on its own, so tests
@@ -92,8 +90,6 @@ const procAdmin = await makeProcCaller({
 const callProc = procAdmin as unknown as (path: string, input?: unknown) => Promise<any>;
 
 beforeEach(async () => {
-  await resetSchema();
-  await applyMigrations();
   const { db } = await import('#server/db');
   const { user, environments, aiEmployees, tasks } = await import('#server/db/schema');
   await db.insert(user).values({
@@ -342,6 +338,8 @@ describe('double settle', () => {
       const handleP = dispatchTask('t-1', 'http://t.local');
       // delete the task once the run row exists (mid-run), before the fake run ends
       await vi.waitFor(async () => {
+        // lazy imports: the file's own db destructures are lazy too — a static
+        // import here collides (TDZ) with them
         const { db } = await import('#server/db');
         const { taskRuns } = await import('#server/db/schema');
         const rows = await db.select({ id: taskRuns.id }).from(taskRuns).where(eq(taskRuns.taskId, 't-1'));

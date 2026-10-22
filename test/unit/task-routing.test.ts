@@ -11,7 +11,6 @@ import type { PgTable } from 'drizzle-orm/pg-core';
 //     outside-chain nominations escalate to the agent's supervisor; ping-pong refused
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { applyMigrations } from '#server/db/index';
 import { recentAssignees } from '#server/domains/tasks/assignments.service';
 import {
   answerHolder,
@@ -34,7 +33,6 @@ import { STATUS } from '#shared/status';
 import type { TaskRow } from '#shared/types';
 
 import { parseRoutingProposals } from '../../app/utils/task-thread.ts';
-import { resetSchema } from './helpers/pg.ts';
 import { makeProcCaller } from './helpers/procs.ts';
 
 const admin = {
@@ -131,8 +129,6 @@ async function mkProposal(taskId: string, kind: PROPOSAL_KIND.SUBTASKS | PROPOSA
 
 beforeEach(async () => {
   idMap.clear();
-  await resetSchema();
-  await applyMigrations();
   const { db } = await import('#server/db');
   const { user } = await import('#server/db/schema');
   await db.insert(user).values({

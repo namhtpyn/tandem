@@ -10,12 +10,11 @@ import { env, setEnv } from '#server/domains/kernel/env';
 import { ROLE } from '#shared/enums';
 
 import { call } from './api-harness.ts';
-import { resetSchema } from './helpers/pg.ts';
 
 beforeEach(async () => {
-  await resetSchema();
-  const { applyMigrations } = await import('#server/db/index');
-  await applyMigrations();
+  // the fresh-ledger arm wipes the migration ledger — heal before each test
+  const { ensureMigrated } = await import('./helpers/pg.ts');
+  await ensureMigrated();
   await sqlClient`delete from "user"`;
 });
 
@@ -280,6 +279,10 @@ describe('remaining branch arms', () => {
   });
 
   it('health ready: first-hit migration log arm (fresh ledger)', async () => {
+    // own premise: drop tables + ledger. The 503 test earlier in the file
+    // crashed inside applyMigrations BEFORE setting migrationsDone, so this
+    // call is still the handler's first hit — it rebuilds and logs.
+    const { resetSchema } = await import('./helpers/pg.ts');
     await resetSchema();
     const readyMod = await import('#server/routes/health/ready.get.ts');
     const infoSpy = vi.spyOn(readyMod.log, 'info').mockImplementation(() => {});

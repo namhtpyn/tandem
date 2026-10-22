@@ -3,11 +3,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './api-harness';
-import { applyMigrations } from '#server/db/index';
 import { ROLE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
-import { resetSchema } from './helpers/pg.ts';
 
 vi.mock('#server/domains/tasks/runner.service', () => ({
   dispatchTask: async () => {
@@ -16,8 +14,6 @@ vi.mock('#server/domains/tasks/runner.service', () => ({
 }));
 
 beforeEach(async () => {
-  await resetSchema();
-  await applyMigrations();
   const { db } = await import('#server/db');
   const { user, tasks, environments, aiEmployees } = await import('#server/db/schema');
   await db.insert(user).values({

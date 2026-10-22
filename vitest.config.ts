@@ -18,9 +18,8 @@ export default defineConfig({
   test: {
     hookTimeout: 60_000,
     testTimeout: 15_000,
-    // test files share ONE postgres (resetSchema per beforeEach) — parallel files
-    // reset each other's tables mid-test (the 42P01 teardown-race family).
-    // File parallelism off: the suite is stable, ~2min instead of ~70s.
+    // test files share ONE postgres — parallel files would truncate each
+    // other's tables mid-test. File parallelism off keeps the truncate race-free.
     fileParallelism: false,
     globalSetup: ['./test/global-setup.ts'],
     setupFiles: ['./test/setup.ts'],
@@ -51,6 +50,7 @@ export default defineConfig({
           name: 'unit',
           include: ['test/unit/**/*.test.ts'],
           exclude: ['test/nuxt/**'], // nuxt-env component tests live in their own project below
+          setupFiles: ['./test/setup.ts', './test/unit/setup.ts'],
         },
       },
       // component tests in a real Nuxt environment (auto-imports, plugins, injections)

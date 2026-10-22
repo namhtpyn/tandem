@@ -3,12 +3,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './api-harness';
-import { applyMigrations } from '#server/db/index';
 import { env, setEnv } from '#server/domains/kernel/env';
 import { ROLE, RUN_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
-import { resetSchema } from './helpers/pg.ts';
 
 setEnv({ TANDEM_FAKE_RUNNER: '' });
 
@@ -28,8 +26,6 @@ vi.mock('#server/domains/tasks/ssh-exec.util', () => ({
 }));
 
 beforeEach(async () => {
-  await resetSchema();
-  await applyMigrations();
   const { db } = await import('#server/db');
   const { user, environments, aiEmployees, tasks } = await import('#server/db/schema');
   await db.insert(user).values({

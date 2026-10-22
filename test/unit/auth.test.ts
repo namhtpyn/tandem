@@ -12,12 +12,10 @@ import { env, setEnv } from '#server/domains/kernel/env';
 import { setSetting } from '#server/domains/settings/settings.service';
 import { ROLE } from '#shared/enums';
 
-import { resetSchema } from './helpers/pg.ts';
 
 describe('auth policy', () => {
   beforeEach(async () => {
-    await resetSchema();
-    await applyMigrations();
+      await applyMigrations();
     setEnv({ TANDEM_DISABLE_PASSWORD_LOGIN: undefined });
     await saveOidcProviders([]);
   });
@@ -81,8 +79,7 @@ describe('auth policy', () => {
 
 describe('auth instance', () => {
   beforeEach(async () => {
-    await resetSchema();
-    await applyMigrations();
+      await applyMigrations();
     await saveOidcProviders([]);
   });
 

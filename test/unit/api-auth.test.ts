@@ -3,11 +3,9 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 
 import './helpers/pg';
-import { applyMigrations } from '#server/db/index';
 import { ROLE } from '#shared/enums';
 
 import './api-harness';
-import { resetSchema } from './helpers/pg.ts';
 
 const admin = {
   user: {
@@ -59,8 +57,6 @@ async function firstSnapshot(path: string[]) {
 }
 
 beforeEach(async () => {
-  await resetSchema();
-  await applyMigrations();
 });
 
 describe('oidc.replace (authenticated)', () => {

@@ -5,10 +5,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
-import { applyMigrations } from '#server/db/index';
 import { ROLE, SECRET_USAGE } from '#shared/enums';
 
-import { resetSchema } from './helpers/pg.ts';
 
 const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 
@@ -43,8 +41,6 @@ async function schema() {
 }
 
 beforeEach(async () => {
-  await resetSchema();
-  await applyMigrations();
   const { db } = await dbm();
   const { user } = await schema();
   await db.insert(user).values({

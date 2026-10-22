@@ -121,7 +121,6 @@ vi.mock('ssh2', () => {
   return { default: { Client: FakeClient } };
 });
 import './api-harness';
-import { applyMigrations } from '#server/db/index';
 import { env, setEnv } from '#server/domains/kernel/env';
 import {
   OBLIGATION_ROLE,
@@ -135,7 +134,6 @@ import {
 } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
-import { resetSchema } from './helpers/pg.ts';
 
 setEnv({ TANDEM_FAKE_RUNNER: '1' });
 
@@ -228,8 +226,6 @@ afterEach(async () => {
 
 beforeEach(async () => {
   agentSeq = 0; // ids are per-test: the DB resets but module vars do not
-  await resetSchema();
-  await applyMigrations();
   const { db } = await dbm();
   const { user } = await schema();
   await db.insert(user).values({

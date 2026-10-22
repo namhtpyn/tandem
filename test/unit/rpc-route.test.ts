@@ -7,16 +7,12 @@ import './api-harness';
 // the real router; auth stubbed at the auth-instance level.
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 
-import { applyMigrations } from '#server/db/index';
 import { appRouter as router } from '#server/domains/app.router';
 import { buildServerContext } from '#server/domains/kernel/context';
 
 import { makeEvent } from './api-harness.ts';
-import { resetSchema } from './helpers/pg.ts';
 
 beforeEach(async () => {
-  await resetSchema();
-  await applyMigrations();
 });
 
 async function rpc(event2: ReturnType<typeof makeEvent>, body?: unknown) {

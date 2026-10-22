@@ -2,11 +2,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
-import { applyMigrations } from '#server/db/index';
 import { PROJECT_STATUS, ROLE } from '#shared/enums';
 import type { ProjectRow, TaskRow } from '#shared/types';
 
-import { resetSchema } from './helpers/pg.ts';
 
 const admin = {
   id: '00000000-0000-7000-8000-cd5fca5e2d34',
@@ -32,8 +30,6 @@ async function callProc(path: string, input?: unknown): Promise<any> {
 }
 
 beforeEach(async () => {
-  await resetSchema();
-  await applyMigrations();
   const { db } = await import('#server/db');
   const { user } = await import('#server/db/schema');
   await db

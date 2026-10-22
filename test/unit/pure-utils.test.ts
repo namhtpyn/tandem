@@ -1,15 +1,11 @@
 // Pure helpers: vault secret picker grouping + avatar endpoint (REST).
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { applyMigrations } from '#server/db/index';
 
 import './api-harness';
 import { groupedSecretOptions } from '../../app/utils/vault-options.ts';
-import { resetSchema } from './helpers/pg.ts';
 
 beforeEach(async () => {
-  await resetSchema();
-  await applyMigrations();
 });
 
 describe('groupedSecretOptions', () => {

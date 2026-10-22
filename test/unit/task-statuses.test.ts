@@ -3,12 +3,10 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
-import { applyMigrations } from '#server/db/index';
 import { OBLIGATION_STATUS, ROLE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import type { TaskStatusRow } from '#shared/types';
 
-import { resetSchema } from './helpers/pg.ts';
 
 async function wireDecisionProvider(secretId: string | null) {
   const d = await dbm();
@@ -69,8 +67,6 @@ async function callProc(path: string, input?: unknown): Promise<any> {
 }
 
 beforeEach(async () => {
-  await resetSchema();
-  await applyMigrations();
   const { db } = await import('#server/db');
   const { user } = await import('#server/db/schema');
   await db

@@ -3,15 +3,11 @@
 import { afterEach, describe, expect, it, beforeEach, vi } from 'vitest';
 
 import './api-harness';
-import { applyMigrations } from '#server/db/index';
 import { env, setEnv } from '#server/domains/kernel/env';
 
 import { makeEvent } from './api-harness.ts';
-import { resetSchema } from './helpers/pg.ts';
 
 beforeEach(async () => {
-  await resetSchema();
-  await applyMigrations();
 });
 
 describe('/rpc adapter branch arms', () => {

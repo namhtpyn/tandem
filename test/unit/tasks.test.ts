@@ -3,12 +3,10 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
-import { applyMigrations } from '#server/db/index';
 import { ROLE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import type { TaskRow } from '#shared/types';
 
-import { resetSchema } from './helpers/pg.ts';
 
 async function dbm() {
   return await import('#server/db');
@@ -56,8 +54,6 @@ async function mkEmployee(name: string, email: string): Promise<string> {
 }
 
 beforeEach(async () => {
-  await resetSchema();
-  await applyMigrations();
   // tasks.created_by/owner_id FK target: the mocked session user must exist
   const { db } = await dbm();
   const { user } = await schema();
