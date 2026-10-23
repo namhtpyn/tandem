@@ -49,7 +49,10 @@ function reload() {
       Skip to main content
     </a>
     <NuxtLayout>
-      <main id="main" tabindex="-1" class="outline-none">
+      <!-- display:contents keeps the skip-link main without inserting a block
+         between UDashboardGroup's flex row and UDashboardPanel — the panel must
+         be a direct flex child or it grows past the viewport and never scrolls -->
+      <main id="main" tabindex="-1" class="contents">
         <NuxtPage />
       </main>
     </NuxtLayout>
