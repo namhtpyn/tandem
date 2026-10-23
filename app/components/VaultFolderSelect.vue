@@ -84,7 +84,7 @@ const selectModel = computed({
     :items="options"
     :create-item="creatable"
     :clear="clearable"
-    :filter="false"
+    ignore-filter
     :loading="pagesQuery.isFetching.value"
     value-key="id"
     icon="i-lucide-folder"
