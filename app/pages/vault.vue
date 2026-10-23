@@ -305,38 +305,6 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
             </UCard>
           </template>
         </DataTable>
-        <div
-          v-if="(liveQuery.data.value?.total ?? 0) > pageSize"
-          class="border-default flex items-center justify-end gap-1 border-t p-3"
-        >
-          <UButton
-            icon="i-lucide:chevron-left"
-            color="neutral"
-            variant="outline"
-            :disabled="page <= 1"
-            aria-label="Previous page"
-            @click="page--"
-          />
-          <UButton
-            v-for="p in pageCount"
-            :key="p"
-            :color="p === page ? 'primary' : 'neutral'"
-            :variant="p === page ? 'solid' : 'outline'"
-            :label="String(p)"
-            :aria-label="`Page ${p}`"
-            :aria-current="p === page ? 'page' : undefined"
-            @click="page = p"
-          />
-          <UButton
-            icon="i-lucide:chevron-right"
-            color="neutral"
-            variant="outline"
-            :disabled="page >= pageCount"
-            aria-label="Next page"
-            @click="page++"
-          />
-        </div>
-
         <UCard v-if="!rows.length" :ui="{ root: 'shadow-sm' }">
           <template #body>
             <div class="flex flex-col items-center gap-2 py-6 text-center">

@@ -1,6 +1,7 @@
 <script setup lang="ts" generic="T extends object">
 import type { TableColumn } from '@nuxt/ui';
 import type { CellContext } from '@tanstack/vue-table';
+import { computed, ref, watch } from 'vue';
 import type { VNode } from 'vue';
 
 const props = withDefaults(
@@ -35,6 +36,24 @@ const props = withDefaults(
 const emit = defineEmits<{ 'update:page': [page: number]; 'update:search': [q: string] }>();
 const paginated = computed(() => props.pageCount !== undefined && props.page !== undefined);
 const pagination = computed(() => ({ pageIndex: (props.page ?? 1) - 1, pageSize: props.pageSize }));
+
+// client-side pagination for small lists: internal page state, sliced rows —
+// no page/pageCount props needed (server-side lists pass them and slice themselves)
+const internalPage = ref(1);
+watch(() => props.data, () => {
+  internalPage.value = 1;
+});
+const internalPageCount = computed(() => Math.max(1, Math.ceil(props.data.length / props.pageSize)));
+const viewData = computed(() =>
+  paginated.value ? props.data : props.data.slice((internalPage.value - 1) * props.pageSize, internalPage.value * props.pageSize),
+);
+const showPager = computed(() => (paginated.value || props.data.length > props.pageSize) && props.data.length > 0);
+const displayPage = computed(() => (paginated.value ? (props.page ?? 1) : internalPage.value));
+const displayPageCount = computed(() => (paginated.value ? (props.pageCount ?? 1) : internalPageCount.value));
+function goPage(p: number) {
+  if (paginated.value) emit('update:page', p);
+  else internalPage.value = p;
+}
 
 defineSlots<
   Record<`${string}-cell` | `${string}-header` | (string & {}), (props: CellContext<T, unknown>) => VNode[]> & {
@@ -88,7 +107,7 @@ function cellValue(row: T, col: TableColumn<T>) {
 
     <UCard v-if="data.length || loading" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
       <UTable
-        :data="data"
+        :data="viewData"
         :columns="columns"
         :loading="loading"
         :pagination="paginated ? pagination : undefined"
@@ -120,6 +139,37 @@ function cellValue(row: T, col: TableColumn<T>) {
           </UCard>
         </slot>
       </template>
+    </div>
+
+    <!-- pagination footer: prev / numbered / next (UButton — reka UPagination
+         click handlers never fire in this app, proven in bd8b5f6) -->
+    <div v-if="showPager" class="border-default flex items-center justify-end gap-1 border-t p-3">
+      <UButton
+        icon="i-lucide:chevron-left"
+        color="neutral"
+        variant="outline"
+        :disabled="displayPage <= 1"
+        aria-label="Previous page"
+        @click="goPage(displayPage - 1)"
+      />
+      <UButton
+        v-for="p in displayPageCount"
+        :key="p"
+        :color="p === displayPage ? 'primary' : 'neutral'"
+        :variant="p === displayPage ? 'solid' : 'outline'"
+        :label="String(p)"
+        :aria-label="`Page ${p}`"
+        :aria-current="p === displayPage ? 'page' : undefined"
+        @click="goPage(p)"
+      />
+      <UButton
+        icon="i-lucide:chevron-right"
+        color="neutral"
+        variant="outline"
+        :disabled="displayPage >= displayPageCount"
+        aria-label="Next page"
+        @click="goPage(displayPage + 1)"
+      />
     </div>
   </div>
 </template>

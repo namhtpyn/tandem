@@ -16,53 +16,20 @@ const { editable = true } = defineProps<{ editable?: boolean }>();
 
 const { $orpc } = useNuxtApp();
 
-const page = ref(1);
 const pageSize = ref(10);
 const search = ref('');
-const searchDebounced = ref('');
-watchDebounced(
-  search,
-  (v) => {
-    searchDebounced.value = v.trim();
-    page.value = 1;
-  },
-  { debounce: 300, maxWait: 1000 },
-);
-const foldersPagedQuery = useQuery(
-  computed(() =>
-    $orpc.vault.folders.listPaged.queryOptions({
-      input: {
-        page: page.value,
-        pageSize: pageSize.value,
-        q: searchDebounced.value || undefined,
-      },
-      queryKey: [
-        CHANGE_RESOURCE.VAULT,
-        'folders-paged',
-        page.value,
-        pageSize.value,
-        searchDebounced.value,
-      ],
-    }),
-  ),
-);
-const foldersPaged = computed(() => foldersPagedQuery.data.value?.folders ?? []);
-const foldersTotal = computed(() => foldersPagedQuery.data.value?.total ?? 0);
-const pageCount = computed(() => Math.max(1, Math.ceil(foldersTotal.value / pageSize.value)));
-
-// deleting the last folder of a high page clamps back into range
-watch(foldersTotal, (t) => {
-  const maxPage = Math.max(1, Math.ceil(t / pageSize.value));
-  if (page.value > maxPage) page.value = maxPage;
-});
-
-// full list shares the folders.list cache — used for editor prefill + confirm name
+// the table pages the FULL list client-side (52 rows is nothing) and the same
+// folders.list cache serves the editor prefill + confirm name
 const foldersQuery = useQuery($orpc.vault.folders.list.queryOptions({ queryKey: [CHANGE_RESOURCE.VAULT, 'folders'] }));
-const folders = computed(
+const allFolders = computed(
   () =>
     (foldersQuery.data.value as { folders: Array<{ id: string; name: string; secrets: number }> } | undefined)
       ?.folders ?? [],
 );
+const folders = computed(() => {
+  const q = search.value.trim().toLowerCase();
+  return q ? allFolders.value.filter((f) => f.name.toLowerCase().includes(q)) : allFolders.value;
+});
 
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
@@ -127,15 +94,13 @@ async function removeFolder(id: string) {
           v-model:search="search"
           searchable
           search-placeholder="Search folders…"
-          :data="foldersPaged"
+          :data="folders"
           :columns="[
             { accessorKey: 'name', header: 'Folder' },
             { accessorKey: 'secrets', header: 'Secrets' },
             { id: 'actions', header: '' },
           ]"
           mobile-title-key="name"
-          v-model:page="page"
-          :page-count="pageCount"
           :page-size="pageSize"
         >
           <template #toolbar>
@@ -202,7 +167,7 @@ async function removeFolder(id: string) {
             </UCard>
           </template>
         </DataTable>
-        <p v-if="!foldersPaged.length" class="py-6 text-center text-sm text-zinc-500">
+        <p v-if="!folders.length" class="py-6 text-center text-sm text-zinc-500">
           No folders yet — create one to categorize secrets.
         </p>
       </template>
