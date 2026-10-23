@@ -55,13 +55,23 @@ const options = computed<FolderOption[]>(() =>
 
 const selectMenu = useTemplateRef('selectMenu');
 
+// fetchNextPage flips isFetchingNextPage only after a tick, so a scroll burst
+// can double-fire — this guard flips synchronously inside the handler
+const loadingMore = ref(false);
+
+function onLoadMore() {
+  if (loadingMore.value || !pagesQuery.hasNextPage.value) return;
+  loadingMore.value = true;
+  pagesQuery.fetchNextPage().finally(() => {
+    loadingMore.value = false;
+  });
+}
+
 onMounted(() => {
   useInfiniteScroll(
     () => selectMenu.value?.viewportRef,
-    () => {
-      if (pagesQuery.hasNextPage.value) pagesQuery.fetchNextPage();
-    },
-    { canLoadMore: () => pagesQuery.hasNextPage.value && !pagesQuery.isFetchingNextPage.value },
+    () => onLoadMore(),
+    { canLoadMore: () => pagesQuery.hasNextPage.value && !loadingMore.value },
   );
 });
 
