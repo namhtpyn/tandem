@@ -45,8 +45,6 @@ const liveQuery = useQuery(
     }),
   ),
 );
-// the secret editor resolves typed folder names and auto-creates unknown ones
-const folderSaveMutation = useMutation({ ...$orpc.vault.folders.save.mutationOptions() });
 // the folders manager needs the full list (VaultFolderSelect/manager load their own copies — same query key, one fetch)
 const foldersQuery = useQuery($orpc.vault.folders.list.queryOptions({ queryKey: [CHANGE_RESOURCE.VAULT, 'folders'] }));
 const folders = computed(
@@ -77,7 +75,7 @@ const busy = ref(false);
 const editorOpen = ref(false);
 const isEdit = ref(false);
 const editingId = ref<string | null>(null);
-const form = ref({ name: '', description: '', value: '', folderName: '' });
+const form = ref({ name: '', description: '', value: '', folderId: null as string | null });
 const formError = ref<string | null>(null);
 const showValue = ref(false);
 
@@ -93,11 +91,11 @@ function openEditor(row?: VaultSecretRow) {
   if (row) {
     isEdit.value = true;
     editingId.value = row.id;
-    form.value = { name: row.name, description: row.description, value: '', folderName: row.folder ?? '' };
+    form.value = { name: row.name, description: row.description, value: '', folderId: row.folderId ?? null };
   } else {
     isEdit.value = false;
     editingId.value = null;
-    form.value = { name: '', description: '', value: '', folderName: '' };
+    form.value = { name: '', description: '', value: '', folderId: null };
   }
   editorOpen.value = true;
 }
@@ -115,19 +113,12 @@ async function save() {
   }
   busy.value = true;
   try {
-    // resolve typed folder name -> id; unknown names become new folders
-    let folderId: string | null = null;
-    const wanted = form.value.folderName.trim();
-    if (wanted) {
-      const existing = folders.value.find((f) => f.name.toLowerCase() === wanted.toLowerCase());
-      folderId = existing?.id ?? ((await folderSaveMutation.mutateAsync({ name: wanted })) as { id: string }).id;
-    }
     if (isEdit.value && editingId.value) {
       const payload = {
         id: editingId.value,
         name: form.value.name.trim(),
         description: form.value.description.trim(),
-        folderId,
+        folderId: form.value.folderId,
         ...(form.value.value ? { value: form.value.value } : {}),
       };
       await updateMutation.mutateAsync(payload);
@@ -136,7 +127,7 @@ async function save() {
         name: form.value.name.trim(),
         description: form.value.description.trim(),
         value: form.value.value,
-        folderId,
+        folderId: form.value.folderId,
       });
     }
     editorOpen.value = false;
@@ -218,7 +209,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
           ]"
         >
           <template #toolbar>
-            <VaultFolderSelect v-model="activeFolder" />
+            <VaultFolderSelect v-model="activeFolder" clearable />
             <span class="flex-1" />
             <UButton icon="i-lucide-plus" size="sm" label="New secret" @click="openEditor()" />
           </template>
@@ -341,14 +332,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
               />
             </UFormField>
             <UFormField label="Folder" name="folder">
-              <AutoCompleteInput
-                v-model="form.folderName"
-                :items="folders.map((f) => f.name)"
-                icon="i-lucide-folder"
-                placeholder="No folder — type to search or create"
-                create-hint="A new folder will be created"
-                :disabled="busy"
-              />
+              <VaultFolderSelect v-model="form.folderId" creatable clearable class="w-full" />
             </UFormField>
             <UFormField label="Value" :error="formError && formError !== 'Name is required' ? formError : undefined">
               <template #hint>

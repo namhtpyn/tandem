@@ -15,7 +15,10 @@ export type ModelProviderRow = {
 };
 
 export async function listModelProviders() {
-  const provs = await db.query.modelProviders.findMany();
+  const provs = await db.query.modelProviders.findMany({
+    columns: { id: true, label: true, baseUrl: true, endpoints: true, extraHeaders: true, notes: true },
+    orderBy: { label: 'asc' },
+  });
   return provs.map((p) => ({
     id: p.id,
     label: p.label,

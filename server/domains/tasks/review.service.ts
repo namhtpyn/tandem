@@ -125,7 +125,7 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
     .where(
       and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round), eq(taskReviews.status, REVIEW_STATUS.PENDING)),
     );
-  const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true } });
+  const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true }, orderBy: { userId: 'asc' } });
   const aiIds = new Set(aiRows.map((r) => r.userId));
   const body = resultBody ?? (await latestSubmittedBody(taskId));
   for (const row of rows) {
@@ -243,7 +243,19 @@ export async function recordVerdict(
 
 /** reviews list for the task page checklist */
 export async function listReviews(taskId: string) {
-  const rows = await db.query.taskReviews.findMany({ where: { taskId: { eq: taskId } }, orderBy: { round: 'asc' } });
+  const rows = await db.query.taskReviews.findMany({
+    columns: {
+      reviewerId: true,
+      round: true,
+      status: true,
+      note: true,
+      source: true,
+      decidedAt: true,
+      createdAt: true,
+    },
+    where: { taskId: { eq: taskId } },
+    orderBy: { round: 'asc' },
+  });
   return rows.map((r) => ({
     reviewerId: r.reviewerId,
     round: r.round,

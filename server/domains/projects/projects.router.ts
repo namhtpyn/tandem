@@ -15,7 +15,19 @@ import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../
 export const projectsRouter = os.router({
   /** live list — flat rows; nesting resolved client-side from parentId */
   list: protectedProcedure.handler(async (): Promise<ProjectRow[]> => {
-    const rows = await db.query.projects.findMany({ orderBy: { name: 'asc' } });
+    const rows = await db.query.projects.findMany({
+      columns: {
+        id: true,
+        name: true,
+        description: true,
+        prompt: true,
+        status: true,
+        parentId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { name: 'asc' },
+    });
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
@@ -30,7 +42,19 @@ export const projectsRouter = os.router({
 
   live: protectedProcedure.handler(() =>
     liveGenerator([CHANGE_RESOURCE.PROJECTS], async (): Promise<ProjectRow[]> => {
-      const rows = await db.query.projects.findMany({ orderBy: { name: 'asc' } });
+      const rows = await db.query.projects.findMany({
+        columns: {
+          id: true,
+          name: true,
+          description: true,
+          prompt: true,
+          status: true,
+          parentId: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: { name: 'asc' },
+      });
       return rows.map((r) => ({
         id: r.id,
         name: r.name,

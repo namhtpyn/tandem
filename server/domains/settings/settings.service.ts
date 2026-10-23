@@ -6,7 +6,7 @@ import { db } from '../../db/index';
 import { settings } from '../../db/schema';
 
 export async function getSetting(key: string) {
-  const row = await db.query.settings.findFirst({ where: { key: { eq: key } } });
+  const row = await db.query.settings.findFirst({ columns: { value: true }, where: { key: { eq: key } } });
   return row?.value ?? null;
 }
 

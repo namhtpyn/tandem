@@ -12,7 +12,10 @@ import { projects as projectsTable, taskStatuses as taskStatusesTable, tasks as 
 import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 
 async function listStatuses() {
-  const rows = await db.query.taskStatuses.findMany({ orderBy: { position: 'asc' } });
+  const rows = await db.query.taskStatuses.findMany({
+    columns: { id: true, name: true, color: true, position: true, category: true, nextIds: true },
+    orderBy: { position: 'asc' },
+  });
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
@@ -48,7 +51,7 @@ export const statusesRouter = os.router({
       const id = input.id?.trim() || uuidv7();
       if (id === 'new') throw new ORPCError('BAD_REQUEST', { message: 'reserved status id' });
       // transitions must reference existing statuses (self ok)
-      const all = await db.query.taskStatuses.findMany({ columns: { id: true } });
+      const all = await db.query.taskStatuses.findMany({ columns: { id: true }, orderBy: { position: 'asc' } });
       const ids = new Set([...all.map((a) => a.id), id]);
       for (const n of input.nextIds) {
         if (!ids.has(n)) throw new ORPCError('BAD_REQUEST', { message: `unknown status in transitions: ${n}` });
@@ -83,7 +86,11 @@ export const statusesRouter = os.router({
 
   /** delete a status: blocked while in use; deletes nothing else */
   remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
-    const inUse = await db.query.tasks.findMany({ columns: { id: true }, where: { status: { eq: input.id } } });
+    const inUse = await db.query.tasks.findMany({
+      columns: { id: true },
+      where: { status: { eq: input.id } },
+      orderBy: { id: 'asc' },
+    });
     if (inUse.length > 0) throw new ORPCError('BAD_REQUEST', { message: `status is used by ${inUse.length} task(s)` });
     const del = await db
       .delete(taskStatusesTable)
@@ -98,19 +105,32 @@ export const statusesRouter = os.router({
    *  No-op when a Jev key isn't configured or Jev is unsure — the task
    *  stays unassigned for a human decision. */
   assign: protectedProcedure.input(z.strictObject({ taskId: z.string().min(1) })).handler(async ({ input }) => {
-    const tRows = await db.query.tasks.findMany({ where: { id: { eq: input.taskId } } });
+    const tRows = await db.query.tasks.findMany({
+      columns: { id: true, title: true, description: true, projectId: true },
+      where: { id: { eq: input.taskId } },
+      orderBy: { id: 'asc' },
+    });
     const task = tRows[0];
     if (!task) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
 
     // candidates: every employee, with open-task load (non-terminal statuses)
-    const users = await db.query.user.findMany();
-    const aiRows = await db.query.aiEmployees.findMany();
+    const users = await db.query.user.findMany({
+      columns: { id: true, name: true, title: true },
+      orderBy: { id: 'asc' },
+    });
+    const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true }, orderBy: { userId: 'asc' } });
     const aiByUser = new Map(aiRows.map((r) => [r.userId, r]));
-    const statusRows = await db.query.taskStatuses.findMany();
+    const statusRows = await db.query.taskStatuses.findMany({
+      columns: { id: true, category: true },
+      orderBy: { position: 'asc' },
+    });
     const terminal = new Set(
       statusRows.filter((s) => s.category === 'done' || s.category === 'cancelled').map((s) => s.id),
     );
-    const allTasks = await db.query.tasks.findMany({ columns: { assigneeId: true, status: true } });
+    const allTasks = await db.query.tasks.findMany({
+      columns: { assigneeId: true, status: true },
+      orderBy: { id: 'asc' },
+    });
     const openByAssignee = new Map<string, number>();
     for (const t of allTasks) {
       if (t.assigneeId && !terminal.has(t.status)) {

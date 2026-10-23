@@ -1,36 +1,88 @@
 <script setup lang="ts">
-// Self-loading vault-folder picker: owns its own folders query (same query key
-// the SSE invalidation rides), so any page drops it in with v-model — no prop
-// drilling. v-model is the folder id, or null for "all folders" (only offered
-// when allowClear — without it the select is a must-pick folder filter).
-import { useQuery } from '@tanstack/vue-query';
-import { computed } from 'vue';
+// Server-paged vault-folder picker (USelectMenu + infinite scroll, Nuxt UI docs
+// pattern): the first page loads on first open, scrolling the menu viewport
+// fetches the next. v-model is the folder id (value-key="id") or null when
+// cleared. creatable adds the create-item affordance backed by folders.save;
+// clearable adds the built-in trailing X (4.4+) that resets the model to null.
+import { useMutation } from '@tanstack/vue-query';
+import { useInfiniteScroll } from '@vueuse/core';
+import { computed, onMounted, ref, useTemplateRef, watch } from 'vue';
 
-import { CHANGE_RESOURCE } from '#shared/enums';
+type FolderOption = { id: string; name: string; label: string };
+type FolderOptionsPage = { options: Array<{ id: string; name: string }>; total: number };
 
 const model = defineModel<string | null>({ default: null });
-const { allowClear = true } = defineProps<{ allowClear?: boolean }>();
+const { creatable = false, clearable = false } = defineProps<{ creatable?: boolean; clearable?: boolean }>();
 
-const ALL = '__all__'; // USelect forbids '' values (reka throws) — sentinel for "no filter"
+const PAGE_SIZE = 50;
 const { $orpc } = useNuxtApp();
-const foldersQuery = useQuery($orpc.vault.folders.list.queryOptions({ queryKey: [CHANGE_RESOURCE.VAULT, 'folders'] }));
-const folders = computed(
-  () =>
-    (foldersQuery.data.value as { folders: Array<{ id: string; name: string; secrets: number }> } | undefined)
-      ?.folders ?? [],
-);
-const items = computed(() => [
-  ...(allowClear ? [{ label: 'All folders', value: ALL }] : []),
-  ...folders.value.map((f) => ({ label: `${f.name} (${f.secrets})`, value: f.id })),
-]);
+
+const page = ref(1);
+const total = ref(0);
+const options = ref<FolderOption[]>([]);
+
+const fetchQuery = computed(() => ({ data: JSON.stringify({ page: page.value, pageSize: PAGE_SIZE }) }));
+const { data, status, execute } = await useLazyFetch<FolderOptionsPage>('/rpc/vault/folders/options', {
+  key: 'vault-folder-options',
+  query: fetchQuery,
+  immediate: false,
+});
+
+watch(data, () => {
+  if (!data.value) return;
+  total.value = data.value.total;
+  options.value = [...options.value, ...data.value.options.map((o) => ({ ...o, label: o.name }))];
+});
+
+function onOpen() {
+  if (!options.value.length) execute();
+}
+
+const selectMenu = useTemplateRef('selectMenu');
+
+onMounted(() => {
+  useInfiniteScroll(
+    () => selectMenu.value?.viewportRef,
+    () => {
+      page.value += 1;
+    },
+    {
+      canLoadMore: () => status.value !== 'pending' && options.value.length < total.value,
+    },
+  );
+});
+
+const saveMutation = useMutation({ ...$orpc.vault.folders.save.mutationOptions() });
+
+async function onCreate(name: string) {
+  const { id } = await saveMutation.mutateAsync({ name });
+  total.value += 1;
+  options.value = [...options.value, { id, name, label: name }];
+  model.value = id;
+}
+
 const selectModel = computed({
-  get: () => model.value ?? (allowClear ? ALL : undefined),
-  set: (v: string) => {
-    model.value = v === ALL ? null : v;
+  get: () => model.value ?? undefined,
+  set: (v: string | undefined) => {
+    model.value = v ?? null;
   },
 });
 </script>
 
 <template>
-  <USelect v-model="selectModel" :items="items" icon="i-lucide-folder" size="sm" class="w-44" />
+  <USelectMenu
+    ref="selectMenu"
+    v-model="selectModel"
+    :items="options"
+    :create-item="creatable"
+    :clear="clearable"
+    value-key="id"
+    icon="i-lucide-folder"
+    size="sm"
+    placeholder="Folder"
+    class="w-44"
+    @update:open="onOpen"
+    @create="onCreate"
+    @clear="model = null"
+  />
 </template>

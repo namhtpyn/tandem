@@ -62,15 +62,33 @@ export function groupOutputsByRun(
 }
 
 const listTasksSnapshot = async (): Promise<TaskRow[]> => {
-  const rows = await db.query.tasks.findMany({ orderBy: { createdAt: 'desc' } });
+  const rows = await db.query.tasks.findMany({
+    columns: {
+      id: true,
+      title: true,
+      description: true,
+      status: true,
+      projectId: true,
+      assigneeId: true,
+      ownerId: true,
+      createdBy: true,
+      reviewers: true,
+      parentTaskId: true,
+      dispatchAfter: true,
+      failStreak: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
   const open = await openObligations(rows.map((r) => r.id));
   const holders = new Map<string, string>();
   for (const [tid, o] of open) if (o.holders[0]) holders.set(tid, o.holders[0]);
   const approvalsByTask = await approvalsInRoundBatch(rows.map((r) => r.id));
-  const projRows = await db.query.projects.findMany({ columns: { id: true, name: true } });
+  const projRows = await db.query.projects.findMany({ columns: { id: true, name: true }, orderBy: { name: 'asc' } });
   const projNameById = new Map(projRows.map((p) => [p.id, p.name]));
-  const users = await db.query.user.findMany({ columns: { id: true, name: true } });
-  const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true } });
+  const users = await db.query.user.findMany({ columns: { id: true, name: true }, orderBy: { name: 'asc' } });
+  const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true }, orderBy: { userId: 'asc' } });
   const aiIds = new Set(aiRows.map((r) => r.userId));
   const nameById = new Map(users.map((u) => [u.id, u.name]));
   return rows.map((r) => ({
@@ -102,9 +120,16 @@ const listTasksSnapshot = async (): Promise<TaskRow[]> => {
 
 async function runsSnapshot(taskId: string) {
   const rows = await listRuns(taskId);
-  const atts = await db.query.taskAttachments.findMany({ where: { taskId: { eq: taskId } } });
+  const atts = await db.query.taskAttachments.findMany({
+    columns: { id: true, runId: true, kind: true, filename: true, mime: true, size: true },
+    where: { taskId: { eq: taskId } },
+    orderBy: { createdAt: 'asc' },
+  });
   const outputsByRun = groupOutputsByRun(atts);
-  const users = await db.query.user.findMany({ columns: { id: true, name: true, title: true } });
+  const users = await db.query.user.findMany({
+    columns: { id: true, name: true, title: true },
+    orderBy: { name: 'asc' },
+  });
   const nameById = new Map(users.map((u) => [u.id, u.name]));
   const titleById = new Map(users.map((u) => [u.id, u.title]));
   return rows.map((r) => ({
@@ -130,7 +155,7 @@ async function runsSnapshot(taskId: string) {
 
 async function activitySnapshot(taskId: string) {
   const rows = await listActivity(taskId);
-  const users = await db.query.user.findMany({ columns: { id: true, name: true } });
+  const users = await db.query.user.findMany({ columns: { id: true, name: true }, orderBy: { name: 'asc' } });
   const nameById = new Map(users.map((u) => [u.id, u.name]));
   return rows.map((r) => ({
     id: r.id,
@@ -161,7 +186,10 @@ async function requireExistingRefs(input: { assigneeId?: string | null; projectI
 
 /** first status by position unless the caller names one; a named one must exist */
 async function resolveCreatedStatus(requested?: string) {
-  const statusRows = await db.query.taskStatuses.findMany({ orderBy: { position: 'asc' } });
+  const statusRows = await db.query.taskStatuses.findMany({
+    columns: { id: true },
+    orderBy: { position: 'asc' },
+  });
   if (statusRows.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'no task statuses defined' });
   if (!requested) return nonNull(statusRows[0]).id;
   const found = statusRows.find((r) => r.id === requested);
@@ -171,12 +199,19 @@ async function resolveCreatedStatus(requested?: string) {
 
 /** the workflow graph must allow the move: unknown target or a forbidden jump is rejected */
 async function requireReachableStatus(currentStatus: string, requested: string) {
-  const stRows = await db.query.taskStatuses.findMany({ where: { id: { eq: requested } } });
+  const stRows = await db.query.taskStatuses.findMany({
+    columns: { id: true, name: true },
+    where: { id: { eq: requested } },
+    orderBy: { position: 'asc' },
+  });
   const target = stRows[0];
   if (!target) throw new ORPCError('BAD_REQUEST', { message: 'status does not exist' });
   // enforce the workflow: target must be reachable from the current status
   if (currentStatus === requested) return;
-  const cur = await db.query.taskStatuses.findFirst({ where: { id: { eq: currentStatus } } });
+  const cur = await db.query.taskStatuses.findFirst({
+    columns: { id: true, name: true, nextIds: true },
+    where: { id: { eq: currentStatus } },
+  });
   if (cur && !cur.nextIds.includes(requested)) {
     throw new ORPCError('BAD_REQUEST', { message: `cannot move from '${cur.name}' to '${target.name}'` });
   }
@@ -285,7 +320,11 @@ export const tasksRouter = os.router({
       }),
     )
     .handler(async ({ input, context }) => {
-      const rows = await db.query.tasks.findMany({ where: { id: { eq: input.id } } });
+      const rows = await db.query.tasks.findMany({
+        columns: { status: true, assigneeId: true },
+        where: { id: { eq: input.id } },
+        orderBy: { createdAt: 'asc' },
+      });
       if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
       await requireExistingRefs(input);
       if (input.status !== undefined) await requireReachableStatus(nonNull(rows[0]).status, input.status);
@@ -337,7 +376,7 @@ export const tasksRouter = os.router({
   /** assignment history for a task (append-only ledger) */
   assignments: protectedProcedure.input(z.object({ taskId: z.string().min(1) })).handler(async ({ input }) => {
     const rows = await listAssignments(input.taskId);
-    const users = await db.query.user.findMany({ columns: { id: true, name: true } });
+    const users = await db.query.user.findMany({ columns: { id: true, name: true }, orderBy: { name: 'asc' } });
     const nameById = new Map(users.map((u) => [u.id, u.name]));
     return {
       items: rows.map((x) => ({
@@ -510,7 +549,11 @@ export const tasksRouter = os.router({
 
   /** delete a task */
   remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
-    const rows = await db.query.tasks.findMany({ columns: { id: true }, where: { id: { eq: input.id } } });
+    const rows = await db.query.tasks.findMany({
+      columns: { id: true },
+      where: { id: { eq: input.id } },
+      orderBy: { createdAt: 'asc' },
+    });
     if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
     await db.delete(tasksTable).where(eq(tasksTable.id, input.id));
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.DELETE);

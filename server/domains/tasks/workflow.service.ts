@@ -47,7 +47,11 @@ async function logActivity(
 }
 
 async function getTask(id: string) {
-  const rows = await db.query.tasks.findMany({ where: { id: { eq: id } } });
+  const rows = await db.query.tasks.findMany({
+    columns: { status: true, assigneeId: true, ownerId: true, createdBy: true, questionChain: true, reviewers: true },
+    where: { id: { eq: id } },
+    orderBy: { createdAt: 'asc' },
+  });
   if (rows.length === 0) throw new Error('task not found');
   return nonNull(rows[0]);
 }

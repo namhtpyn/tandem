@@ -13,7 +13,10 @@ export default defineEventHandler(async (event) => {
   const session = await buildServerContext(headers).getSession();
   if (!session) throw createError({ statusCode: 401, statusMessage: 'unauthorized' });
 
-  const row = await db.query.taskAttachments.findFirst({ where: { id: { eq: id } } });
+  const row = await db.query.taskAttachments.findFirst({
+    columns: { taskId: true, filename: true, mime: true, sha256: true },
+    where: { id: { eq: id } },
+  });
   if (!row) throw createError({ statusCode: 404, statusMessage: 'attachment not found' });
   // stream straight off disk (Bun.file = zero-copy sendfile); no buffer read
   const file = Bun.file(attachmentPath(row.taskId, id));

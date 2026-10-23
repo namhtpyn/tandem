@@ -31,7 +31,7 @@ const assertNoDuplicateSupervisors = (supervisorIds: string[]) => {
 
 const assertSupervisorsExist = async (supervisorIds: string[]) => {
   if (supervisorIds.length === 0) return;
-  const found = await db.query.user.findMany({ columns: { id: true } });
+  const found = await db.query.user.findMany({ columns: { id: true }, orderBy: { id: 'asc' } });
   const ids = new Set(found.map((f) => f.id));
   for (const s of supervisorIds) {
     if (!ids.has(s)) throw new ORPCError('BAD_REQUEST', { message: `supervisor ${s} does not exist` });
@@ -63,7 +63,11 @@ const assertProviderExists = async (providerId: string) => {
 };
 
 const assertEmailAvailable = async (email: string) => {
-  const clash = await db.query.user.findMany({ columns: { id: true }, where: { email: { eq: email } } });
+  const clash = await db.query.user.findMany({
+    columns: { id: true },
+    where: { email: { eq: email } },
+    orderBy: { id: 'asc' },
+  });
   if (clash.length > 0) throw new ORPCError('CONFLICT', { message: `user ${email} already exists` });
 };
 
@@ -94,7 +98,10 @@ const mintAccessKey = async (name: string, userId: string) => {
 
 /** candidate supervision edges on top of the existing graph (this employee's edges replaced) */
 const assertAcyclicSupervision = async (employeeId: string, supervisorIds: string[]) => {
-  const supRows = await db.query.employeeSupervisors.findMany();
+  const supRows = await db.query.employeeSupervisors.findMany({
+    columns: { employeeId: true, supervisorId: true },
+    orderBy: { employeeId: 'asc' },
+  });
   const graph = new Map<string, string[]>();
   for (const r of supRows) {
     if (r.employeeId === employeeId) continue; // pretend the update applied
@@ -166,9 +173,26 @@ const aiExtensionPatch = async (input: AiExtensionPatchInput) => {
 };
 
 const listEmployeesSnapshot = async () => {
-  const rows = await db.query.user.findMany({ orderBy: { createdAt: 'asc' } });
-  const supRows = await db.query.employeeSupervisors.findMany();
-  const aiRows = await db.query.aiEmployees.findMany();
+  const rows = await db.query.user.findMany({
+    columns: { id: true, name: true, email: true, image: true, title: true, createdAt: true, updatedAt: true },
+    orderBy: { createdAt: 'asc' },
+  });
+  const supRows = await db.query.employeeSupervisors.findMany({
+    columns: { employeeId: true, supervisorId: true },
+    orderBy: { employeeId: 'asc' },
+  });
+  const aiRows = await db.query.aiEmployees.findMany({
+    columns: {
+      userId: true,
+      environmentId: true,
+      executable: true,
+      providerId: true,
+      model: true,
+      apiKeySecretId: true,
+      instructions: true,
+    },
+    orderBy: { userId: 'asc' },
+  });
   const sups = new Map<string, string[]>();
   for (const s of supRows) {
     nonNull(sups.get(s.employeeId) ?? sups.set(s.employeeId, []).get(s.employeeId)).push(s.supervisorId);
@@ -309,12 +333,22 @@ export const employeesRouter = os.router({
       }),
     )
     .handler(async ({ input }) => {
-      const rows = await db.query.user.findMany({ where: { id: { eq: input.id } } });
+      const rows = await db.query.user.findMany({
+        columns: { email: true },
+        where: { id: { eq: input.id } },
+        orderBy: { id: 'asc' },
+      });
       const emp = rows[0];
       if (!emp) {
         throw new ORPCError('NOT_FOUND', { message: 'employee not found' });
       }
-      const aiRow = (await db.query.aiEmployees.findMany({ where: { userId: { eq: input.id } } }))[0];
+      const aiRow = (
+        await db.query.aiEmployees.findMany({
+          columns: { userId: true },
+          where: { userId: { eq: input.id } },
+          orderBy: { userId: 'asc' },
+        })
+      )[0];
       assertNoDuplicateSupervisors(input.supervisorIds);
       if (input.supervisorIds.includes(input.id)) {
         throw new ORPCError('BAD_REQUEST', { message: 'an employee cannot supervise themselves' });
@@ -352,7 +386,10 @@ export const employeesRouter = os.router({
 
   titles: {
     list: protectedProcedure.handler(async () => {
-      const rows = await db.query.employeeTitles.findMany({ orderBy: { name: 'asc' } });
+      const rows = await db.query.employeeTitles.findMany({
+        columns: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      });
       const counts = await db
         .select({ title: userTable.title, count: count() })
         .from(userTable)
@@ -363,7 +400,10 @@ export const employeesRouter = os.router({
 
     live: protectedProcedure.handler(() =>
       liveGenerator([CHANGE_RESOURCE.EMPLOYEES], async () => {
-        const rows = await db.query.employeeTitles.findMany({ orderBy: { name: 'asc' } });
+        const rows = await db.query.employeeTitles.findMany({
+          columns: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        });
         const counts = await db
           .select({ title: userTable.title, count: count() })
           .from(userTable)
@@ -438,7 +478,11 @@ export const employeesRouter = os.router({
       throw new ORPCError('NOT_FOUND', { message: 'employee not found' });
     }
     if (target.role === ROLE.ADMIN) {
-      const admins = await db.query.user.findMany({ columns: { id: true }, where: { role: { eq: ROLE.ADMIN } } });
+      const admins = await db.query.user.findMany({
+        columns: { id: true },
+        where: { role: { eq: ROLE.ADMIN } },
+        orderBy: { id: 'asc' },
+      });
       if (admins.length <= 1) {
         throw new ORPCError('BAD_REQUEST', { message: 'cannot delete the last admin' });
       }
@@ -459,7 +503,11 @@ export const employeesRouter = os.router({
       }),
     )
     .handler(async ({ input }) => {
-      const rows = await db.query.user.findMany({ where: { id: { eq: input.employeeId } } });
+      const rows = await db.query.user.findMany({
+        columns: { id: true, name: true },
+        where: { id: { eq: input.employeeId } },
+        orderBy: { id: 'asc' },
+      });
       const emp = rows[0];
       if (!emp) throw new ORPCError('NOT_FOUND', { message: 'employee not found' });
       const created = await mintAccessKey(input.name?.trim() || `${emp.name.slice(0, 40)} key`, emp.id);
@@ -490,7 +538,11 @@ export const employeesRouter = os.router({
   listApiKeys: protectedProcedure
     .input(z.strictObject({ employeeId: z.string().min(1) }))
     .handler(async ({ input }): Promise<ApiKeyRow[]> => {
-      const rows = await db.query.user.findMany({ where: { id: { eq: input.employeeId } } });
+      const rows = await db.query.user.findMany({
+        columns: { id: true },
+        where: { id: { eq: input.employeeId } },
+        orderBy: { id: 'asc' },
+      });
       const emp = rows[0];
       if (!emp) throw new ORPCError('NOT_FOUND', { message: 'employee not found' });
       const keys = await db

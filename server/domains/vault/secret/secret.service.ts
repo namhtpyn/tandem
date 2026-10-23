@@ -20,6 +20,7 @@ export function toVaultRow(r: typeof vaultSecretsTable.$inferSelect) {
     description: r.description,
     lastFour: r.lastFour,
     createdBy: r.createdBy,
+    folderId: r.folderId,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
     folder: null,

@@ -150,12 +150,24 @@ async function escalateReassignToSupervisor(
  * Returns what happened per item, including escalation decisions.
  */
 export async function confirmProposal(proposalId: string, confirmedBy: string, note = '') {
-  const rows = await db.query.taskProposals.findMany({ where: { id: { eq: proposalId } } });
+  const rows = await db.query.taskProposals.findMany({
+    columns: { taskId: true, kind: true, payload: true, status: true },
+    where: { id: { eq: proposalId } },
+    orderBy: { createdAt: 'asc' },
+  });
   const p = rows[0];
   if (!p) throw new Error('proposal not found');
   if (p.status !== PROPOSAL_STATUS.PROPOSED) throw new Error('proposal already decided');
   // task row is guaranteed by the proposal's FK (cascade delete removes proposals with tasks)
-  const task = nonNull((await db.query.tasks.findMany({ where: { id: { eq: p.taskId } } }))[0]);
+  const task = nonNull(
+    (
+      await db.query.tasks.findMany({
+        columns: { id: true, ownerId: true, createdBy: true, assigneeId: true },
+        where: { id: { eq: p.taskId } },
+        orderBy: { createdAt: 'asc' },
+      })
+    )[0],
+  );
 
   const events: string[] = [];
   if (p.kind === PROPOSAL_KIND.SUBTASKS) {
@@ -205,7 +217,11 @@ async function markExecuted(proposalId: string, decidedBy: string, note: string,
 }
 
 export async function rejectProposal(proposalId: string, decidedBy: string, note = '') {
-  const rows = await db.query.taskProposals.findMany({ where: { id: { eq: proposalId } } });
+  const rows = await db.query.taskProposals.findMany({
+    columns: { taskId: true, kind: true, status: true },
+    where: { id: { eq: proposalId } },
+    orderBy: { createdAt: 'asc' },
+  });
   const p = rows[0];
   if (!p) throw new Error('proposal not found');
   if (p.status !== PROPOSAL_STATUS.PROPOSED) throw new Error('proposal already decided');

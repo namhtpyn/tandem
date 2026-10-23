@@ -10,13 +10,21 @@ const listFoldersPagedInput = z.object({
   q: z.string().trim().max(60).optional(),
 });
 
+const listFolderOptionsInput = z.object({
+  page: z.number().int().min(1).optional(),
+  pageSize: z.number().int().min(1).max(100).optional(),
+});
+
 import { CHANGE_RESOURCE } from '#shared/enums';
 
 import { protectedProcedure, liveGenerator } from '../../kernel/kernel';
-import { listFolders, listFoldersPaged, saveFolder, removeFolder } from './folder.service';
+import { listFolders, listFoldersPaged, listFolderOptions, saveFolder, removeFolder } from './folder.service';
 
 export const folderRouter = os.router({
   list: protectedProcedure.handler(() => listFolders()),
+
+  /** paged {id,name} option rows for pickers — no secret counts */
+  options: protectedProcedure.input(listFolderOptionsInput).handler(({ input }) => listFolderOptions(input)),
 
   listPaged: protectedProcedure.input(listFoldersPagedInput).handler(({ input }) => listFoldersPaged(input)),
 

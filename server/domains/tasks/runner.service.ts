@@ -188,25 +188,56 @@ import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles, ensureOutDir } from
 import { submitResult, askQuestion } from './workflow.service';
 
 export async function loadDispatchPlan(taskId: string) {
-  const taskRows = await db.query.tasks.findMany({ where: { id: { eq: taskId } } });
+  const taskRows = await db.query.tasks.findMany({
+    columns: { id: true, title: true, description: true, assigneeId: true },
+    where: { id: { eq: taskId } },
+    orderBy: { createdAt: 'asc' },
+  });
   const task = taskRows[0];
   if (!task) throw new Error('task not found');
   if (!task.assigneeId) throw new Error('task has no assignee');
-  const aiRows = await db.query.aiEmployees.findMany({ where: { userId: { eq: task.assigneeId } } });
+  const aiRows = await db.query.aiEmployees.findMany({
+    columns: {
+      userId: true,
+      environmentId: true,
+      executable: true,
+      providerId: true,
+      model: true,
+      apiKeySecretId: true,
+    },
+    where: { userId: { eq: task.assigneeId } },
+    orderBy: { userId: 'asc' },
+  });
   const ai = aiRows[0];
   if (!ai) throw new Error('assignee is not an AI employee');
-  const envRows = await db.query.environments.findMany({ where: { id: { eq: ai.environmentId } } });
+  const envRows = await db.query.environments.findMany({
+    columns: { id: true, name: true, host: true, port: true, username: true, secretId: true, secretUsage: true },
+    where: { id: { eq: ai.environmentId } },
+    orderBy: { createdAt: 'asc' },
+  });
   const env = envRows[0];
   /* v8 ignore next -- FK prevents a dangling environment_id; kept as defense */
   if (!env) throw new Error('agent environment not found');
-  const empRows = await db.query.user.findMany({ columns: { name: true }, where: { id: { eq: ai.userId } } });
+  const empRows = await db.query.user.findMany({
+    columns: { name: true },
+    where: { id: { eq: ai.userId } },
+    orderBy: { createdAt: 'asc' },
+  });
 
   // SSH secret (key or password)
   let sshKey: string | undefined;
   let sshPassword: string | undefined;
   if (env.secretId) {
     // FK is ON DELETE SET NULL: a present secretId implies the row exists
-    const secret = nonNull((await db.query.vaultSecrets.findMany({ where: { id: { eq: env.secretId } } }))[0]);
+    const secret = nonNull(
+      (
+        await db.query.vaultSecrets.findMany({
+          columns: { ciphertext: true },
+          where: { id: { eq: env.secretId } },
+          orderBy: { createdAt: 'asc' },
+        })
+      )[0],
+    );
     const plain = decryptSecret(secret.ciphertext);
     if (env.secretUsage === SECRET_USAGE.PASSWORD) sshPassword = plain;
     else sshKey = plain;
@@ -216,8 +247,24 @@ export async function loadDispatchPlan(taskId: string) {
   let llmEnv: Record<string, string> = {};
   if (ai.providerId && ai.model && ai.apiKeySecretId) {
     // all three FKs resolve (SET NULL on delete): present ids imply present rows
-    const provider = nonNull((await db.query.modelProviders.findMany({ where: { id: { eq: ai.providerId } } }))[0]);
-    const keySecret = nonNull((await db.query.vaultSecrets.findMany({ where: { id: { eq: ai.apiKeySecretId } } }))[0]);
+    const provider = nonNull(
+      (
+        await db.query.modelProviders.findMany({
+          columns: { baseUrl: true },
+          where: { id: { eq: ai.providerId } },
+          orderBy: { createdAt: 'asc' },
+        })
+      )[0],
+    );
+    const keySecret = nonNull(
+      (
+        await db.query.vaultSecrets.findMany({
+          columns: { ciphertext: true },
+          where: { id: { eq: ai.apiKeySecretId } },
+          orderBy: { createdAt: 'asc' },
+        })
+      )[0],
+    );
     const key = decryptSecret(keySecret.ciphertext);
     llmEnv = {
       CUSTOM_API_KEY: key,
@@ -260,30 +307,77 @@ export async function loadReviewPlan(taskId: string, reviewerId: string, resultB
 /** loadDispatchPlan for a specific employee (the reviewer), not the task assignee.
  * Same secret/LLM loading as the assignee path — a reviewer turn is a real run. */
 async function loadDispatchPlanFor(employeeId: string, taskId: string) {
-  const taskRows = await db.query.tasks.findMany({ where: { id: { eq: taskId } } });
+  const taskRows = await db.query.tasks.findMany({
+    columns: { id: true, title: true, description: true, assigneeId: true },
+    where: { id: { eq: taskId } },
+    orderBy: { createdAt: 'asc' },
+  });
   const task = taskRows[0];
   if (!task) throw new Error('task not found');
-  const aiRows = await db.query.aiEmployees.findMany({ where: { userId: { eq: employeeId } } });
+  const aiRows = await db.query.aiEmployees.findMany({
+    columns: {
+      userId: true,
+      environmentId: true,
+      executable: true,
+      providerId: true,
+      model: true,
+      apiKeySecretId: true,
+    },
+    where: { userId: { eq: employeeId } },
+    orderBy: { userId: 'asc' },
+  });
   const ai = aiRows[0];
   if (!ai) throw new Error('reviewer is not an AI employee');
-  const envRows = await db.query.environments.findMany({ where: { id: { eq: ai.environmentId } } });
+  const envRows = await db.query.environments.findMany({
+    columns: { id: true, name: true, host: true, port: true, username: true, secretId: true, secretUsage: true },
+    where: { id: { eq: ai.environmentId } },
+    orderBy: { createdAt: 'asc' },
+  });
   const env = envRows[0];
   /* v8 ignore next -- FK prevents a dangling environment_id; kept as defense */
   if (!env) throw new Error('agent environment not found');
-  const empRows = await db.query.user.findMany({ columns: { name: true }, where: { id: { eq: employeeId } } });
+  const empRows = await db.query.user.findMany({
+    columns: { name: true },
+    where: { id: { eq: employeeId } },
+    orderBy: { createdAt: 'asc' },
+  });
 
   let sshKey: string | undefined;
   let sshPassword: string | undefined;
   if (env.secretId) {
-    const secret = nonNull((await db.query.vaultSecrets.findMany({ where: { id: { eq: env.secretId } } }))[0]);
+    const secret = nonNull(
+      (
+        await db.query.vaultSecrets.findMany({
+          columns: { ciphertext: true },
+          where: { id: { eq: env.secretId } },
+          orderBy: { createdAt: 'asc' },
+        })
+      )[0],
+    );
     const plain = decryptSecret(secret.ciphertext);
     if (env.secretUsage === SECRET_USAGE.PASSWORD) sshPassword = plain;
     else sshKey = plain;
   }
   let llmEnv: Record<string, string> = {};
   if (ai.providerId && ai.model && ai.apiKeySecretId) {
-    const provider = nonNull((await db.query.modelProviders.findMany({ where: { id: { eq: ai.providerId } } }))[0]);
-    const keySecret = nonNull((await db.query.vaultSecrets.findMany({ where: { id: { eq: ai.apiKeySecretId } } }))[0]);
+    const provider = nonNull(
+      (
+        await db.query.modelProviders.findMany({
+          columns: { baseUrl: true },
+          where: { id: { eq: ai.providerId } },
+          orderBy: { createdAt: 'asc' },
+        })
+      )[0],
+    );
+    const keySecret = nonNull(
+      (
+        await db.query.vaultSecrets.findMany({
+          columns: { ciphertext: true },
+          where: { id: { eq: ai.apiKeySecretId } },
+          orderBy: { createdAt: 'asc' },
+        })
+      )[0],
+    );
     const key = decryptSecret(keySecret.ciphertext);
     llmEnv = { CUSTOM_API_KEY: key, CUSTOM_BASE_URL: provider.baseUrl, HERMES_MODEL: ai.model };
   }
@@ -543,7 +637,13 @@ export async function dispatchTask(
   // bounce to ready, but back off: consecutive failures (and quota walls) must not
   // turn into a 5s retry storm — see BACKOFF_STEPS_MS / QUOTA_PATTERN
   const scheduleRetryBackoff = async () => {
-    const current = (await db.query.tasks.findMany({ where: { id: { eq: taskId } } }))[0];
+    const current = (
+      await db.query.tasks.findMany({
+        columns: { failStreak: true },
+        where: { id: { eq: taskId } },
+        orderBy: { createdAt: 'asc' },
+      })
+    )[0];
     const streak = (current?.failStreak ?? 0) + 1;
     const waitMs = backoffFor(streak, buffer);
     await db
@@ -650,6 +750,21 @@ export async function dispatchTask(
 
 /** runs for one task, newest first */
 export async function listRuns(taskId: string) {
-  const rows = await db.query.taskRuns.findMany({ where: { taskId: { eq: taskId } } });
+  const rows = await db.query.taskRuns.findMany({
+    columns: {
+      id: true,
+      taskId: true,
+      employeeId: true,
+      environmentId: true,
+      status: true,
+      exitCode: true,
+      output: true,
+      prompt: true,
+      startedAt: true,
+      finishedAt: true,
+    },
+    where: { taskId: { eq: taskId } },
+    orderBy: { startedAt: 'desc' },
+  });
   return rows.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
 }

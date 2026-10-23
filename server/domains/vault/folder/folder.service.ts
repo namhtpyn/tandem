@@ -20,29 +20,28 @@ export async function listFoldersPaged(input: ListFoldersPagedInput = {}) {
   const page = input.page ?? 1;
   const pageSize = input.pageSize ?? 10;
   const q = input.q;
-  const [rows, total] = await Promise.all([
-    db.query.vaultFolders.findMany({
-      where: q ? { name: { ilike: `%${q}%` } } : EmptyFilter,
-      orderBy: { name: 'asc' },
-      limit: pageSize,
-      offset: (page - 1) * pageSize,
-      extras: {
-        secrets:
-          sql<number>`(select count(*) from ${vaultSecretsTable} where ${vaultSecretsTable.folderId} = "d0"."id")`.mapWith(
-            Number,
-          ),
-      },
-    }),
-    db.query.vaultFolders.count(q ? { name: { ilike: `%${q}%` } } : EmptyFilter),
-  ]);
+  const { data, total } = await db.query.vaultFolders.findManyAndCount({
+    columns: { id: true, name: true },
+    where: q ? { name: { ilike: `%${q}%` } } : EmptyFilter,
+    orderBy: { name: 'asc' },
+    limit: pageSize,
+    offset: (page - 1) * pageSize,
+    extras: {
+      secrets:
+        sql<number>`(select count(*) from ${vaultSecretsTable} where ${vaultSecretsTable.folderId} = "d0"."id")`.mapWith(
+          Number,
+        ),
+    },
+  });
   return {
-    folders: rows.map((f) => ({ id: f.id, name: f.name, secrets: Number(f.secrets ?? 0) })),
+    folders: data.map((f) => ({ id: f.id, name: f.name, secrets: Number(f.secrets ?? 0) })),
     total,
   };
 }
 
 export async function listFolders() {
   const rows = await db.query.vaultFolders.findMany({
+    columns: { id: true, name: true },
     orderBy: { name: 'asc' },
     extras: {
       secrets:
@@ -54,6 +53,19 @@ export async function listFolders() {
   return {
     folders: rows.map((f) => ({ id: f.id, name: f.name, secrets: Number(f.secrets ?? 0) })),
   };
+}
+
+// Pickers page server-side (USelectMenu infinite scroll) — {id,name} only, no counts.
+export async function listFolderOptions(input: { page?: number; pageSize?: number } = {}) {
+  const page = input.page ?? 1;
+  const pageSize = input.pageSize ?? 50;
+  const { data, total } = await db.query.vaultFolders.findManyAndCount({
+    columns: { id: true, name: true },
+    orderBy: { name: 'asc' },
+    limit: pageSize,
+    offset: (page - 1) * pageSize,
+  });
+  return { options: data, total };
 }
 
 export async function folderExists(id: string) {

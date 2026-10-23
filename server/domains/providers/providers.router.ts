@@ -85,7 +85,11 @@ export const providersRouter = os.router({
       }),
     )
     .handler(async ({ input }): Promise<{ models: string[] }> => {
-      const provRows = await db.query.modelProviders.findMany({ where: { id: { eq: input.providerId } } });
+      const provRows = await db.query.modelProviders.findMany({
+        columns: { id: true, baseUrl: true, endpoints: true, extraHeaders: true },
+        where: { id: { eq: input.providerId } },
+        orderBy: { id: 'asc' },
+      });
       const prov = provRows[0];
       if (!prov) throw new ORPCError('BAD_REQUEST', { message: 'provider does not exist' });
 
@@ -97,7 +101,11 @@ export const providersRouter = os.router({
       const hit = modelCache.get(cacheKey);
       if (hit) return { models: hit };
 
-      const secRows = await db.query.vaultSecrets.findMany({ where: { id: { eq: input.keySecretId } } });
+      const secRows = await db.query.vaultSecrets.findMany({
+        columns: { ciphertext: true },
+        where: { id: { eq: input.keySecretId } },
+        orderBy: { id: 'asc' },
+      });
       const secret = secRows[0];
       if (!secret) throw new ORPCError('BAD_REQUEST', { message: 'api key secret not found' });
       const key = decryptSecret(secret.ciphertext);
