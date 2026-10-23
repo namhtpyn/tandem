@@ -16,5 +16,14 @@ export default defineAppConfig({
         },
       },
     },
+    // the app shell pins UDashboardGroup in a fixed viewport wrapper, so each
+    // panel must fill exactly that height — the stock min-h-svh lets the panel
+    // grow past the viewport and the body's overflow-y-auto never engages
+    // (every page stopped scrolling); h-full + min-h-0 cap it
+    dashboardPanel: {
+      slots: {
+        root: 'relative flex flex-col min-w-0 h-full min-h-0 overflow-hidden',
+      },
+    },
   },
 });
