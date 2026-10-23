@@ -14,14 +14,8 @@ const queryClient = useQueryClient();
 
 const page = ref(1);
 const pageSize = ref(20);
-// ---- folder filter (server-side USelect) ----
-const ALL_FOLDERS = '__all__'; // USelect forbids '' values (reka throws) — sentinel for "no filter"
-const folderFilterModel = ref<string>(ALL_FOLDERS);
-const activeFolder = computed(() => (folderFilterModel.value === ALL_FOLDERS ? null : folderFilterModel.value));
-const folderItems = computed(() => [
-  { label: 'All folders', value: ALL_FOLDERS },
-  ...folders.value.map((f) => ({ label: `${f.name} (${f.secrets})`, value: f.id })),
-]);
+// ---- folder filter: self-loading FolderSelect (v-model = folder id | null) ----
+const activeFolder = ref<string | null>(null);
 const search = ref('');
 const searchDebounced = ref('');
 watchDebounced(
@@ -47,6 +41,7 @@ const liveQuery = useQuery(
     }),
   ),
 );
+// the folders manager modal needs the full list (FolderSelect loads its own copy — same query key, one fetch)
 const foldersQuery = useQuery($orpc.vault.folders.list.queryOptions({ queryKey: [CHANGE_RESOURCE.VAULT, 'folders'] }));
 const folders = computed(
   () =>
@@ -55,7 +50,7 @@ const folders = computed(
 );
 
 // server-side pagination: rows come pre-filtered by folder from the API
-watch(folderFilterModel, () => {
+watch(activeFolder, () => {
   page.value = 1;
 });
 const rows = computed(() => liveQuery.data.value?.data ?? []);
@@ -155,7 +150,7 @@ async function removeFolder(id: string) {
   try {
     await folderRemoveMutation.mutateAsync({ id });
     folderConfirmId.value = null;
-    if (activeFolder.value === id) folderFilterModel.value = ALL_FOLDERS;
+    if (activeFolder.value === id) activeFolder.value = null;
   } finally {
     folderBusy.value = false;
   }
@@ -306,7 +301,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
           ]"
         >
           <template #toolbar>
-            <USelect v-model="folderFilterModel" :items="folderItems" icon="i-lucide-folder" size="sm" class="w-44" />
+            <FolderSelect v-model="activeFolder" />
             <span class="flex-1" />
             <UButton icon="i-lucide-plus" size="sm" label="New secret" @click="openEditor()" />
           </template>
