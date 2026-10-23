@@ -44,10 +44,15 @@ export async function listFoldersPaged(input: ListFoldersPagedInput = {}) {
 export async function listFolders() {
   const rows = await db.query.vaultFolders.findMany({
     orderBy: { name: 'asc' },
-    with: { secrets: { columns: { id: true } } },
+    extras: {
+      secrets:
+        sql<number>`(select count(*) from ${vaultSecretsTable} where ${vaultSecretsTable.folderId} = "d0"."id")`.mapWith(
+          Number,
+        ),
+    },
   });
   return {
-    folders: rows.map((f) => ({ id: f.id, name: f.name, secrets: f.secrets.length })),
+    folders: rows.map((f) => ({ id: f.id, name: f.name, secrets: Number(f.secrets ?? 0) })),
   };
 }
 
