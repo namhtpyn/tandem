@@ -11,6 +11,9 @@ import { CHANGE_RESOURCE } from '#shared/enums';
 const open = defineModel<boolean>('open', { default: false });
 const emit = defineEmits<{ deleted: [id: string] }>();
 
+// editable=false renders a read-only folder browser: no create/rename/delete UI
+const { editable = true } = defineProps<{ editable?: boolean }>();
+
 const { $orpc } = useNuxtApp();
 
 const page = ref(1);
@@ -136,14 +139,14 @@ async function removeFolder(id: string) {
           :page-size="pageSize"
         >
           <template #toolbar>
-            <UButton icon="i-lucide-plus" size="sm" label="New folder" @click="openEditor()" />
+            <UButton v-if="editable" icon="i-lucide-plus" size="sm" label="New folder" @click="openEditor()" />
           </template>
           <template #secrets-cell="{ row }">
             <span class="text-xs text-zinc-500"
               >{{ row.original.secrets }} {{ row.original.secrets === 1 ? 'secret' : 'secrets' }}</span
             >
           </template>
-          <template #actions-cell="{ row }">
+          <template v-if="editable" #actions-cell="{ row }">
             <div class="flex justify-end gap-1">
               <UPopover mode="hover">
                 <UButton
@@ -176,22 +179,24 @@ async function removeFolder(id: string) {
               <div class="flex items-center gap-2">
                 <UBadge color="neutral" variant="subtle" icon="i-lucide-folder">{{ row.name }}</UBadge>
                 <span class="flex-1" />
-                <UButton
-                  icon="i-lucide-pencil"
-                  size="xs"
-                  color="neutral"
-                  variant="ghost"
-                  aria-label="Rename folder"
-                  @click="openEditor(row.id)"
-                />
-                <UButton
-                  icon="i-lucide-trash-2"
-                  size="xs"
-                  color="neutral"
-                  variant="ghost"
-                  aria-label="Delete folder"
-                  @click="confirmId = row.id"
-                />
+                <template v-if="editable">
+                  <UButton
+                    icon="i-lucide-pencil"
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    aria-label="Rename folder"
+                    @click="openEditor(row.id)"
+                  />
+                  <UButton
+                    icon="i-lucide-trash-2"
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    aria-label="Delete folder"
+                    @click="confirmId = row.id"
+                  />
+                </template>
               </div>
               <p class="mt-1 text-xs text-zinc-500">{{ row.secrets }} {{ row.secrets === 1 ? 'secret' : 'secrets' }}</p>
             </UCard>
@@ -208,6 +213,7 @@ async function removeFolder(id: string) {
 
     <!-- folder editor (stacked on the manager) -->
     <UModal
+      v-if="editable"
       v-model:open="editorOpen"
       :title="editingId ? 'Rename folder' : 'New folder'"
       :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
