@@ -1,17 +1,19 @@
 <script setup lang="ts">
-// Server-paged vault-folder picker (USelectMenu + infinite scroll, Nuxt UI docs
-// pattern): the first page loads on first open, scrolling the menu viewport
-// fetches the next. v-model is the folder id (value-key="id") or null when
-// cleared. creatable adds the create-item affordance backed by folders.save;
-// clearable adds the built-in trailing X (4.4+) that resets the model to null.
-import { useMutation, useQuery } from '@tanstack/vue-query';
-import { useInfiniteScroll } from '@vueuse/core';
-import { computed, onMounted, ref, useTemplateRef, watch } from 'vue';
+// Server-paged vault-folder picker (USelectMenu + useInfiniteScroll, Nuxt UI
+// docs pattern) backed by a TanStack infinite query over the oRPC client:
+// pages accumulate via getNextPageParam, the menu viewport scroll calls
+// fetchNextPage, and the search box feeds the server-side q filter (debounced)
+// so typing never depends on what a page happens to hold — client filtering
+// is off. v-model is the folder id (value-key="id") or null when cleared.
+// creatable adds the create-item affordance backed by folders.save; clearable
+// adds the built-in trailing X (4.4+) that resets the model to null.
+import { useInfiniteQuery, useMutation } from '@tanstack/vue-query';
+import { useInfiniteScroll, watchDebounced } from '@vueuse/core';
+import { computed, onMounted, ref, useTemplateRef } from 'vue';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
 
 type FolderOption = { id: string; name: string; label: string };
-type FolderOptionsPage = { options: Array<{ id: string; name: string }>; total: number };
 
 const model = defineModel<string | null>({ default: null });
 const { creatable = false, clearable = false } = defineProps<{ creatable?: boolean; clearable?: boolean }>();
@@ -19,58 +21,43 @@ const { creatable = false, clearable = false } = defineProps<{ creatable?: boole
 const PAGE_SIZE = 20;
 const { $orpc } = useNuxtApp();
 
-// pages load through vue-query over the oRPC client and accumulate for the
-// infinite scroll — one query per page, keyed so SSE invalidation still hits
-const page = ref(1);
-const loaded = ref<FolderOption[]>([]);
+const searchTerm = ref('');
+const debouncedSearch = ref('');
+watchDebounced(
+  searchTerm,
+  (v) => {
+    debouncedSearch.value = v.trim();
+  },
+  { debounce: 300 },
+);
 
-const pagesQuery = useQuery(
+const pagesQuery = useInfiniteQuery(
   computed(() =>
-    $orpc.vault.folders.options.queryOptions({
-      input: { page: page.value, pageSize: PAGE_SIZE },
-      queryKey: [CHANGE_RESOURCE.VAULT, 'folder-options', page.value],
+    $orpc.vault.folders.options.infiniteOptions({
+      input: (page: number) => ({ page, pageSize: PAGE_SIZE, q: debouncedSearch.value || undefined }),
+      queryKey: [CHANGE_RESOURCE.VAULT, 'folder-options', debouncedSearch.value],
+      initialPageParam: 1,
+      getNextPageParam: (lastPage, allPages) => {
+        const loaded = allPages.reduce((n, p) => n + p.options.length, 0);
+        return loaded < lastPage.total ? allPages.length + 1 : undefined;
+      },
     }),
   ),
 );
 
-const total = computed(() => (pagesQuery.data.value as FolderOptionsPage | undefined)?.total ?? 0);
-const options = computed<FolderOption[]>(() => {
-  const d = pagesQuery.data.value as FolderOptionsPage | undefined;
-  const mapped = (d?.options ?? []).map((o) => ({ ...o, label: o.name }));
-  return page.value === 1 ? mapped : [...loaded.value, ...mapped];
-});
-const busy = computed(() => pagesQuery.isFetching.value);
-
-// accumulate finished pages so scroll load-more appends instead of replacing
-watch(
-  () => pagesQuery.data.value,
-  (d, prev) => {
-    if (!d || page.value === 1) {
-      loaded.value = [];
-      return;
-    }
-    if (!prev) return;
-    const mapped = d.options.map((o) => ({ ...o, label: o.name }));
-    const known = new Set(loaded.value.map((o) => o.id));
-    loaded.value = [...loaded.value, ...mapped.filter((o) => !known.has(o.id))];
-  },
+const options = computed<FolderOption[]>(() =>
+  (pagesQuery.data.value?.pages ?? []).flatMap((p) => p.options.map((o) => ({ ...o, label: o.name }))),
 );
-
-function loadMore() {
-  if (busy.value) return;
-  if (total.value > 0 && options.value.length >= total.value) return;
-  page.value += 1;
-}
 
 const selectMenu = useTemplateRef('selectMenu');
 
 onMounted(() => {
   useInfiniteScroll(
     () => selectMenu.value?.viewportRef,
-    () => loadMore(),
-    {
-      canLoadMore: () => !busy.value && (total.value === 0 || options.value.length < total.value),
+    () => {
+      if (pagesQuery.hasNextPage.value) pagesQuery.fetchNextPage();
     },
+    { canLoadMore: () => pagesQuery.hasNextPage.value && !pagesQuery.isFetchingNextPage.value },
   );
 });
 
@@ -78,8 +65,6 @@ const saveMutation = useMutation({ ...$orpc.vault.folders.save.mutationOptions()
 
 async function onCreate(name: string) {
   const { id } = await saveMutation.mutateAsync({ name });
-  // optimistic: the SSE vault invalidation refetches the option pages
-  loaded.value = [...loaded.value, { id, name, label: name }];
   model.value = id;
 }
 
@@ -95,9 +80,12 @@ const selectModel = computed({
   <USelectMenu
     ref="selectMenu"
     v-model="selectModel"
+    v-model:search-term="searchTerm"
     :items="options"
     :create-item="creatable"
     :clear="clearable"
+    :filter="false"
+    :loading="pagesQuery.isFetching.value"
     value-key="id"
     icon="i-lucide-folder"
     size="sm"
@@ -105,5 +93,11 @@ const selectModel = computed({
     class="w-44"
     @create="onCreate"
     @clear="model = null"
-  />
+  >
+    <template #content-bottom>
+      <div v-if="pagesQuery.isFetchingNextPage.value" class="flex w-full items-center justify-center py-2">
+        <UIcon name="i-lucide-loader-circle" class="size-4 animate-spin text-muted" />
+      </div>
+    </template>
+  </USelectMenu>
 </template>

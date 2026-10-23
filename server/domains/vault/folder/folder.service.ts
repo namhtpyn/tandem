@@ -56,11 +56,13 @@ export async function listFolders() {
 }
 
 // Pickers page server-side (USelectMenu infinite scroll) — {id,name} only, no counts.
-export async function listFolderOptions(input: { page?: number; pageSize?: number } = {}) {
+export async function listFolderOptions(input: { page?: number; pageSize?: number; q?: string } = {}) {
   const page = input.page ?? 1;
   const pageSize = input.pageSize ?? 50;
+  const q = input.q?.trim();
   const { data, total } = await db.query.vaultFolders.findManyAndCount({
     columns: { id: true, name: true },
+    where: q ? { name: { ilike: `%${q}%` } } : EmptyFilter,
     orderBy: { name: 'asc' },
     limit: pageSize,
     offset: (page - 1) * pageSize,
