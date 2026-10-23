@@ -16,7 +16,11 @@ import { CHANGE_RESOURCE } from '#shared/enums';
 type FolderOption = { id: string; name: string; label: string };
 
 const model = defineModel<string | null>({ default: null });
-const { creatable = false, clearable = false } = defineProps<{ creatable?: boolean; clearable?: boolean }>();
+const { creatable = false, clearable = false, size = 'sm' } = defineProps<{
+  creatable?: boolean;
+  clearable?: boolean;
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+}>();
 
 const PAGE_SIZE = 20;
 const { $orpc } = useNuxtApp();
@@ -88,7 +92,7 @@ const selectModel = computed({
     :loading="pagesQuery.isFetching.value"
     value-key="id"
     icon="i-lucide-folder"
-    size="sm"
+    :size="size"
     placeholder="Folder"
     class="w-44"
     @create="onCreate"
