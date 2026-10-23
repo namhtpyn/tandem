@@ -16,7 +16,7 @@ type FolderOptionsPage = { options: Array<{ id: string; name: string }>; total: 
 const model = defineModel<string | null>({ default: null });
 const { creatable = false, clearable = false } = defineProps<{ creatable?: boolean; clearable?: boolean }>();
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 20;
 const { $orpc } = useNuxtApp();
 
 // pages load through vue-query over the oRPC client and accumulate for the
