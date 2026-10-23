@@ -14,7 +14,7 @@ const queryClient = useQueryClient();
 
 const page = ref(1);
 const pageSize = ref(20);
-// ---- folder filter: self-loading FolderSelect (v-model = folder id | null) ----
+// ---- folder filter: self-loading VaultFolderSelect (v-model = folder id | null) ----
 const activeFolder = ref<string | null>(null);
 const folderManagerOpen = ref(false);
 function onFolderDeleted(id: string) {
@@ -47,7 +47,7 @@ const liveQuery = useQuery(
 );
 // the secret editor resolves typed folder names and auto-creates unknown ones
 const folderSaveMutation = useMutation({ ...$orpc.vault.folders.save.mutationOptions() });
-// the folders manager needs the full list (FolderSelect/manager load their own copies — same query key, one fetch)
+// the folders manager needs the full list (VaultFolderSelect/manager load their own copies — same query key, one fetch)
 const foldersQuery = useQuery($orpc.vault.folders.list.queryOptions({ queryKey: [CHANGE_RESOURCE.VAULT, 'folders'] }));
 const folders = computed(
   () =>
@@ -218,7 +218,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
           ]"
         >
           <template #toolbar>
-            <FolderSelect v-model="activeFolder" />
+            <VaultFolderSelect v-model="activeFolder" />
             <span class="flex-1" />
             <UButton icon="i-lucide-plus" size="sm" label="New secret" @click="openEditor()" />
           </template>
