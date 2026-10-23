@@ -74,6 +74,12 @@ describe('vault folders', () => {
     expect(options.total).toBe(2);
     expect(options.options.map((o) => o.name)).toEqual(['CI tokens']); // alphabetical, server-paged
     expect(options.options[0]).toEqual({ id: expect.any(String), name: 'CI tokens' }); // no secrets count key
+    const searched = (await proc(['vault', 'folders', 'options'], { page: 1, pageSize: 5, q: 'PRODUC' })) as {
+      options: Array<{ name: string }>;
+      total: number;
+    };
+    expect(searched.total).toBe(1);
+    expect(searched.options.map((o) => o.name)).toEqual(['Production keys']); // server-side q filter
     const page2 = (await proc(['vault', 'folders', 'options'], { page: 2, pageSize: 1 })) as {
       options: Array<{ name: string }>;
       total: number;
