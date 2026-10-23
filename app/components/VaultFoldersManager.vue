@@ -4,6 +4,7 @@
 // parent only toggles open. Deleting emits `deleted` so parents can drop the
 // folder from their own state (e.g. an active filter).
 import { useMutation, useQuery, keepPreviousData } from '@tanstack/vue-query';
+import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
@@ -17,18 +18,38 @@ const { editable = true } = defineProps<{ editable?: boolean }>();
 const { $orpc } = useNuxtApp();
 
 const pageSize = ref(10);
+const page = ref(1);
 const search = ref('');
-// the table pages the FULL list client-side (52 rows is nothing) and the same
-// folders.list cache serves the editor prefill + confirm name
-const foldersQuery = useQuery($orpc.vault.folders.list.queryOptions({ queryKey: [CHANGE_RESOURCE.VAULT, 'folders'] }));
-const allFolders = computed(
-  () =>
-    (foldersQuery.data.value as { folders: Array<{ id: string; name: string; secrets: number }> } | undefined)
-      ?.folders ?? [],
+const debouncedSearch = ref('');
+watchDebounced(
+  search,
+  (v) => {
+    debouncedSearch.value = v.trim();
+    page.value = 1;
+  },
+  { debounce: 300 },
 );
-const folders = computed(() => {
-  const q = search.value.trim().toLowerCase();
-  return q ? allFolders.value.filter((f) => f.name.toLowerCase().includes(q)) : allFolders.value;
+
+// server-side paging + search over folders.listPaged (findManyAndCount);
+// keepPreviousData keeps the table steady while the next page loads
+const foldersQuery = useQuery(
+  computed(() =>
+    $orpc.vault.folders.listPaged.queryOptions({
+      input: { page: page.value, pageSize: pageSize.value, q: debouncedSearch.value || undefined },
+      queryKey: [CHANGE_RESOURCE.VAULT, 'folders-paged', page.value, pageSize.value, debouncedSearch.value],
+      placeholderData: keepPreviousData,
+    }),
+  ),
+);
+const folders = computed(
+  () => (foldersQuery.data.value?.folders ?? []) as Array<{ id: string; name: string; secrets: number }>,
+);
+const total = computed(() => foldersQuery.data.value?.total ?? 0);
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
+
+// a delete or a narrowed search can shrink the total below the current page
+watch(pageCount, (pc) => {
+  if (page.value > pc) page.value = pc;
 });
 
 const editorOpen = ref(false);
@@ -92,16 +113,18 @@ async function removeFolder(id: string) {
         <div v-if="error" class="bg-error/10 text-error mb-3 rounded-md px-3 py-2 text-xs">{{ error }}</div>
         <DataTable
           v-model:search="search"
+          v-model:page="page"
           searchable
           search-placeholder="Search folders…"
           :data="folders"
+          :page-count="pageCount"
+          :page-size="pageSize"
           :columns="[
             { accessorKey: 'name', header: 'Folder' },
             { accessorKey: 'secrets', header: 'Secrets' },
             { id: 'actions', header: '' },
           ]"
           mobile-title-key="name"
-          :page-size="pageSize"
         >
           <template #toolbar>
             <UButton v-if="editable" icon="i-lucide-plus" size="sm" label="New folder" @click="openEditor()" />
