@@ -16,6 +16,10 @@ const page = ref(1);
 const pageSize = ref(20);
 // ---- folder filter: self-loading FolderSelect (v-model = folder id | null) ----
 const activeFolder = ref<string | null>(null);
+const folderManagerOpen = ref(false);
+function onFolderDeleted(id: string) {
+  if (activeFolder.value === id) activeFolder.value = null;
+}
 const search = ref('');
 const searchDebounced = ref('');
 watchDebounced(
@@ -41,7 +45,9 @@ const liveQuery = useQuery(
     }),
   ),
 );
-// the folders manager modal needs the full list (FolderSelect loads its own copy — same query key, one fetch)
+// the secret editor resolves typed folder names and auto-creates unknown ones
+const folderSaveMutation = useMutation({ ...$orpc.vault.folders.save.mutationOptions() });
+// the folders manager needs the full list (FolderSelect/manager load their own copies — same query key, one fetch)
 const foldersQuery = useQuery($orpc.vault.folders.list.queryOptions({ queryKey: [CHANGE_RESOURCE.VAULT, 'folders'] }));
 const folders = computed(
   () =>
@@ -66,95 +72,6 @@ watch(total, (t) => {
   if (page.value > maxPage) page.value = maxPage;
 });
 
-// ---- folders manager modal (statuses-style) ----
-const folderManagerOpen = ref(false);
-const folderPage = ref(1);
-const folderPageSize = ref(10);
-const folderSearch = ref('');
-const folderSearchDebounced = ref('');
-watchDebounced(
-  folderSearch,
-  (v) => {
-    folderSearchDebounced.value = v.trim();
-    folderPage.value = 1;
-  },
-  { debounce: 300, maxWait: 1000 },
-);
-const foldersPagedQuery = useQuery(
-  computed(() =>
-    $orpc.vault.folders.listPaged.queryOptions({
-      input: {
-        page: folderPage.value,
-        pageSize: folderPageSize.value,
-        q: folderSearchDebounced.value || undefined,
-      },
-      queryKey: [
-        CHANGE_RESOURCE.VAULT,
-        'folders-paged',
-        folderPage.value,
-        folderPageSize.value,
-        folderSearchDebounced.value,
-      ],
-    }),
-  ),
-);
-const foldersPaged = computed(() => foldersPagedQuery.data.value?.folders ?? []);
-const foldersTotal = computed(() => foldersPagedQuery.data.value?.total ?? 0);
-const folderPageCount = computed(() => Math.max(1, Math.ceil(foldersTotal.value / folderPageSize.value)));
-
-// deleting the last folder of a high page clamps back into range
-watch(foldersTotal, (t) => {
-  const maxPage = Math.max(1, Math.ceil(t / folderPageSize.value));
-  if (folderPage.value > maxPage) folderPage.value = maxPage;
-});
-const folderEditorOpen = ref(false);
-const folderEditingId = ref<string | null>(null);
-const folderForm = ref({ name: '' });
-const folderBusy = ref(false);
-const folderError = ref<string | null>(null);
-const folderConfirmId = ref<string | null>(null);
-const folderConfirming = computed(() => folders.value.find((f) => f.id === folderConfirmId.value) ?? null);
-
-const folderSaveMutation = useMutation({ ...$orpc.vault.folders.save.mutationOptions() });
-const folderRemoveMutation = useMutation({ ...$orpc.vault.folders.remove.mutationOptions() });
-
-function openFolderEditor(id?: string) {
-  folderError.value = null;
-  folderEditingId.value = id ?? null;
-  folderForm.value = { name: folders.value.find((f) => f.id === id)?.name ?? '' };
-  folderEditorOpen.value = true;
-}
-
-async function saveFolder() {
-  folderError.value = null;
-  if (!folderForm.value.name.trim()) {
-    folderError.value = 'Name is required';
-    return;
-  }
-  folderBusy.value = true;
-  try {
-    await folderSaveMutation.mutateAsync({
-      ...(folderEditingId.value ? { id: folderEditingId.value } : {}),
-      name: folderForm.value.name.trim(),
-    });
-    folderEditorOpen.value = false;
-  } catch (e) {
-    folderError.value = e instanceof Error ? e.message : 'Save failed';
-  } finally {
-    folderBusy.value = false;
-  }
-}
-
-async function removeFolder(id: string) {
-  folderBusy.value = true;
-  try {
-    await folderRemoveMutation.mutateAsync({ id });
-    folderConfirmId.value = null;
-    if (activeFolder.value === id) activeFolder.value = null;
-  } finally {
-    folderBusy.value = false;
-  }
-}
 const busy = ref(false);
 
 const editorOpen = ref(false);
@@ -538,158 +455,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
         </template>
       </UModal>
 
-      <!-- folders manager (statuses-style) -->
-      <UModal
-        v-model:open="folderManagerOpen"
-        title="Vault folders"
-        :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
-      >
-        <template #body>
-          <div v-if="folderError" class="bg-error/10 text-error mb-3 rounded-md px-3 py-2 text-xs">
-            {{ folderError }}
-          </div>
-          <DataTable
-            v-model:search="folderSearch"
-            searchable
-            search-placeholder="Search folders…"
-            :data="foldersPaged"
-            :columns="[
-              { accessorKey: 'name', header: 'Folder' },
-              { accessorKey: 'secrets', header: 'Secrets' },
-              { id: 'actions', header: '' },
-            ]"
-            mobile-title-key="name"
-            v-model:page="folderPage"
-            :page-count="folderPageCount"
-            :page-size="folderPageSize"
-          >
-            <template #toolbar>
-              <UButton icon="i-lucide-plus" size="sm" label="New folder" @click="openFolderEditor()" />
-            </template>
-            <template #secrets-cell="{ row }">
-              <span class="text-xs text-zinc-500"
-                >{{ row.original.secrets }} {{ row.original.secrets === 1 ? 'secret' : 'secrets' }}</span
-              >
-            </template>
-            <template #actions-cell="{ row }">
-              <div class="flex justify-end gap-1">
-                <UPopover mode="hover">
-                  <UButton
-                    icon="i-lucide-pencil"
-                    size="xs"
-                    color="neutral"
-                    variant="ghost"
-                    aria-label="Rename folder"
-                    :disabled="folderBusy"
-                    @click="openFolderEditor(row.original.id)"
-                  />
-                  <template #content><div class="px-3 py-1.5 text-xs">Rename</div></template>
-                </UPopover>
-                <UPopover mode="hover">
-                  <UButton
-                    icon="i-lucide-trash-2"
-                    size="xs"
-                    color="neutral"
-                    variant="ghost"
-                    aria-label="Delete folder"
-                    :disabled="folderBusy"
-                    @click="folderConfirmId = row.original.id"
-                  />
-                  <template #content><div class="px-3 py-1.5 text-xs">Delete</div></template>
-                </UPopover>
-              </div>
-            </template>
-            <template #mobile-item="{ row }">
-              <UCard :ui="{ root: 'shadow-sm' }">
-                <div class="flex items-center gap-2">
-                  <UBadge color="neutral" variant="subtle" icon="i-lucide-folder">{{ row.name }}</UBadge>
-                  <span class="flex-1" />
-                  <UButton
-                    icon="i-lucide-pencil"
-                    size="xs"
-                    color="neutral"
-                    variant="ghost"
-                    aria-label="Rename folder"
-                    @click="openFolderEditor(row.id)"
-                  />
-                  <UButton
-                    icon="i-lucide-trash-2"
-                    size="xs"
-                    color="neutral"
-                    variant="ghost"
-                    aria-label="Delete folder"
-                    @click="folderConfirmId = row.id"
-                  />
-                </div>
-                <p class="mt-1 text-xs text-zinc-500">
-                  {{ row.secrets }} {{ row.secrets === 1 ? 'secret' : 'secrets' }}
-                </p>
-              </UCard>
-            </template>
-          </DataTable>
-          <p v-if="!foldersPaged.length" class="py-6 text-center text-sm text-zinc-500">
-            No folders yet — create one to categorize secrets.
-          </p>
-        </template>
-        <template #footer>
-          <div class="flex w-full items-center justify-end" />
-        </template>
-      </UModal>
-
-      <!-- folder editor (stacked on the manager) -->
-      <UModal
-        v-model:open="folderEditorOpen"
-        :title="folderEditingId ? 'Rename folder' : 'New folder'"
-        :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
-      >
-        <template #body>
-          <UFormField label="Name" name="name" required>
-            <UInput
-              v-model="folderForm.name"
-              icon="i-lucide-folder"
-              placeholder="e.g. Production keys"
-              class="w-full"
-              :disabled="folderBusy"
-            />
-          </UFormField>
-        </template>
-        <template #footer>
-          <div class="flex w-full justify-end gap-2">
-            <UButton variant="ghost" color="neutral" @click="folderEditorOpen = false">Cancel</UButton>
-            <UButton icon="i-lucide-check" :loading="folderBusy" @click="saveFolder">Save</UButton>
-          </div>
-        </template>
-      </UModal>
-
-      <!-- folder delete confirm: secrets survive -->
-      <UModal
-        :open="folderConfirmId !== null"
-        @update:open="
-          (v: boolean) => {
-            if (!v) folderConfirmId = null;
-          }
-        "
-        title="Delete folder"
-      >
-        <template #body>
-          <p class="text-sm">
-            Delete <strong>{{ folderConfirming?.name }}</strong
-            >? Secrets in it stay — they just become uncategorized.
-          </p>
-        </template>
-        <template #footer>
-          <div class="flex w-full justify-end gap-2">
-            <UButton variant="ghost" color="neutral" @click="folderConfirmId = null">Cancel</UButton>
-            <UButton
-              color="error"
-              icon="i-lucide-trash-2"
-              :loading="folderBusy"
-              @click="removeFolder(folderConfirming!.id)"
-              >Delete</UButton
-            >
-          </div>
-        </template>
-      </UModal>
+      <VaultFoldersManager v-model:open="folderManagerOpen" @deleted="onFolderDeleted" />
     </template>
   </UDashboardPanel>
 </template>
