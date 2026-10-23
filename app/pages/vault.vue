@@ -332,7 +332,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
               />
             </UFormField>
             <UFormField label="Folder" name="folder">
-              <VaultFolderSelect v-model="form.folderId" creatable clearable class="w-full" />
+              <VaultFolderSelect v-model="form.folderId" creatable clearable size="md" class="w-full" />
             </UFormField>
             <UFormField label="Value" :error="formError && formError !== 'Name is required' ? formError : undefined">
               <template #hint>
