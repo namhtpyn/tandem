@@ -16,6 +16,12 @@ async function dismiss(page: any, text: string) {
 // M3: employees — live CRUD over oRPC /rpc, SSE realtime, AI keys.
 // Every run uses unique emails/names (leftover state must not break retries).
 
+// the list is server-paged (createdAt asc) — search surfaces fresh rows on page 1
+async function searchFor(page: any, text: string) {
+  await page.getByPlaceholder('Search employees…').fill(text);
+  await page.waitForTimeout(800);
+}
+
 test('human employee CRUD round-trip on the live page', async ({ page }) => {
   const suffix = Date.now().toString(36);
   const name = `E2E Human ${suffix}`;
@@ -32,27 +38,29 @@ test('human employee CRUD round-trip on the live page', async ({ page }) => {
   await page.getByRole('radio', { name: /Human/ }).check();
   await page.getByPlaceholder('Job title').fill('E2E Tester');
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
-  await expect(page.locator('tr:visible', { hasText: name })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
   // humans now also get an initial access key — dismiss the shown-once alert
   await page.getByRole('button', { name: /Done — I saved the key/ }).click();
-  await expect(page.locator('tr:visible', { hasText: email })).toBeVisible();
+  await searchFor(page, name);
+  await expect(page.locator('tr:visible', { hasText: name })).toBeVisible({ timeout: 15_000 });
 
   // edit title + email
   await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Edit employee' }).click();
   await page.getByPlaceholder('Job title').fill('Promoted Tester');
   await page.getByPlaceholder('name@company.com').fill(`renamed-${suffix}@tandem.local`);
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
-  await expect(page.locator('tr', { hasText: name }).getByText('Promoted Tester')).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator('tr', { hasText: name }).getByText(`renamed-${suffix}@tandem.local`)).toBeVisible({
+  await searchFor(page, name);
+  await expect(page.locator('tr:visible', { hasText: name }).getByText('Promoted Tester')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('tr:visible', { hasText: name }).getByText(`renamed-${suffix}@tandem.local`)).toBeVisible({
     timeout: 15_000,
   });
 
   // delete requires CONFIRMATION now: trash opens a dialog, not instant delete
   await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Delete employee' }).click();
   await expect(page.getByRole('dialog').getByText(/permanently/i)).toBeVisible();
-  await expect(page.locator('tr', { hasText: name })).toBeVisible(); // still there pre-confirm
+  await expect(page.locator('tr:visible', { hasText: name })).toBeVisible(); // still there pre-confirm
   await page.getByRole('button', { name: 'Delete', exact: true }).click();
-  await expect(page.locator('tr', { hasText: name })).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.locator('tr:visible', { hasText: name })).toHaveCount(0, { timeout: 15_000 });
 });
 
 test('AI employee create shows minted key once, kind immutable on edit', async ({ page }) => {
@@ -89,6 +97,7 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   // minted key surfaces once
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
   await page.getByRole('button', { name: /Done — I saved the key/ }).click();
+  await searchFor(page, name);
   await expect(page.locator('tr:visible', { hasText: name })).toBeVisible({ timeout: 15_000 });
 
   // edit: kind immutable badge, no kind radio
@@ -144,8 +153,10 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   await page.getByRole('radio', { name: /Human/ }).check();
   await page.getByPlaceholder('Job title').fill('Boss');
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
-  await expect(page.locator('tr:visible', { hasText: supName })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
   await page.getByRole('button', { name: /Done — I saved the key/ }).click();
+  await searchFor(page, supName);
+  await expect(page.locator('tr:visible', { hasText: supName })).toBeVisible({ timeout: 15_000 });
 
   // create the report with supervisor assigned
   const subName = `E2E Sub ${suffix}`;
@@ -155,8 +166,10 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   await page.getByRole('radio', { name: /Human/ }).check();
   await page.getByPlaceholder('Job title').fill('Report');
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
-  await expect(page.locator('tr:visible', { hasText: subName })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
   await page.getByRole('button', { name: /Done — I saved the key/ }).click();
+  await searchFor(page, subName);
+  await expect(page.locator('tr:visible', { hasText: subName })).toBeVisible({ timeout: 15_000 });
 
   // edit the report: pick the supervisor in the multi-select
   await page.locator('tr:visible', { hasText: subName }).getByRole('button', { name: 'Edit employee' }).click();
@@ -169,11 +182,13 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   const row = page.locator('tr', { hasText: subName });
   await expect(row.getByText(supName, { exact: true })).toBeVisible({ timeout: 15_000 });
 
-  // cleanup both rows (with confirmation)
+  // cleanup both rows (with confirmation); search keeps each target on page 1
+  await searchFor(page, subName);
   await page.locator('tr:visible', { hasText: subName }).getByRole('button', { name: 'Delete employee' }).click();
   await page.getByRole('button', { name: 'Delete', exact: true }).click();
-  await expect(page.locator('tr', { hasText: subName })).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.locator('tr:visible', { hasText: subName })).toHaveCount(0, { timeout: 15_000 });
+  await searchFor(page, supName);
   await page.locator('tr:visible', { hasText: supName }).getByRole('button', { name: 'Delete employee' }).click();
   await page.getByRole('button', { name: 'Delete', exact: true }).click();
-  await expect(page.locator('tr', { hasText: supName })).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.locator('tr:visible', { hasText: supName })).toHaveCount(0, { timeout: 15_000 });
 });

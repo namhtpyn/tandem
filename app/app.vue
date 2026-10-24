@@ -23,6 +23,20 @@ const v = await $client.meta.version();
 
 useHead({ titleTemplate: (t) => (t ? `${t} - Tandem` : 'Tandem') });
 if (v.version) appVersion.value = v.version;
+
+// Nuxt polls builds/latest.json (checkOutdatedBuildInterval) and fires this
+// hook when a newer build is deployed — offer a reload, client-side only
+const newVersion = ref(false);
+const dismissed = ref(false);
+if (import.meta.client) {
+  useNuxtApp().hooks.hookOnce('app:manifest:update', () => {
+    newVersion.value = true;
+  });
+}
+
+function reload() {
+  window.location.reload();
+}
 </script>
 
 <template>
@@ -35,9 +49,37 @@ if (v.version) appVersion.value = v.version;
       Skip to main content
     </a>
     <NuxtLayout>
-      <main id="main" tabindex="-1" class="outline-none">
+      <!-- display:contents keeps the skip-link main without inserting a block
+         between UDashboardGroup's flex row and UDashboardPanel — the panel must
+         be a direct flex child or it grows past the viewport and never scrolls -->
+      <main id="main" tabindex="-1" class="contents">
         <NuxtPage />
       </main>
     </NuxtLayout>
+
+    <Teleport to="body">
+      <div
+        v-if="newVersion && !dismissed"
+        class="fixed right-4 bottom-4 z-[9999] max-w-sm"
+        role="status"
+        aria-live="polite"
+      >
+        <UCard :ui="{ root: 'shadow-lg' }">
+          <div class="flex items-start gap-3">
+            <UIcon name="i-lucide-refresh-cw" class="text-primary mt-0.5 size-5 shrink-0" />
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium text-zinc-900 dark:text-white">New version available</p>
+              <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                A newer build of Tandem is deployed. Reload to update.
+              </p>
+              <div class="mt-3 flex gap-2">
+                <UButton size="xs" label="Reload" icon="i-lucide-rotate-cw" @click="reload" />
+                <UButton size="xs" color="neutral" variant="ghost" label="Later" @click="dismissed = true" />
+              </div>
+            </div>
+          </div>
+        </UCard>
+      </div>
+    </Teleport>
   </UApp>
 </template>

@@ -1,6 +1,6 @@
 import { os } from '@orpc/server';
 // tasks router — business logic lives in services/utils; this file only wires procedures
-import { desc, eq } from 'drizzle-orm';
+import { desc, EmptyFilter, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
@@ -62,15 +62,57 @@ export function groupOutputsByRun(
 }
 
 const listTasksSnapshot = async (): Promise<TaskRow[]> => {
-  const rows = await db.query.tasks.findMany({ orderBy: { createdAt: 'desc' } });
+  const rows = await db.query.tasks.findMany({
+    columns: {
+      id: true,
+      title: true,
+      description: true,
+      status: true,
+      projectId: true,
+      assigneeId: true,
+      ownerId: true,
+      createdBy: true,
+      reviewers: true,
+      parentTaskId: true,
+      dispatchAfter: true,
+      failStreak: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  return mapTaskRows(rows);
+};
+
+/** exact list column set — the snapshot and the paged variant share it */
+type TaskListRow = Pick<
+  typeof tasksTable.$inferSelect,
+  | 'id'
+  | 'title'
+  | 'description'
+  | 'status'
+  | 'projectId'
+  | 'assigneeId'
+  | 'ownerId'
+  | 'createdBy'
+  | 'reviewers'
+  | 'parentTaskId'
+  | 'dispatchAfter'
+  | 'failStreak'
+  | 'createdAt'
+  | 'updatedAt'
+>;
+
+/** shared row → payload mapping for every tasks list shape (snapshot + paged) */
+async function mapTaskRows(rows: TaskListRow[]): Promise<TaskRow[]> {
   const open = await openObligations(rows.map((r) => r.id));
   const holders = new Map<string, string>();
   for (const [tid, o] of open) if (o.holders[0]) holders.set(tid, o.holders[0]);
   const approvalsByTask = await approvalsInRoundBatch(rows.map((r) => r.id));
-  const projRows = await db.query.projects.findMany({ columns: { id: true, name: true } });
+  const projRows = await db.query.projects.findMany({ columns: { id: true, name: true }, orderBy: { name: 'asc' } });
   const projNameById = new Map(projRows.map((p) => [p.id, p.name]));
-  const users = await db.query.user.findMany({ columns: { id: true, name: true } });
-  const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true } });
+  const users = await db.query.user.findMany({ columns: { id: true, name: true }, orderBy: { name: 'asc' } });
+  const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true }, orderBy: { userId: 'asc' } });
   const aiIds = new Set(aiRows.map((r) => r.userId));
   const nameById = new Map(users.map((u) => [u.id, u.name]));
   return rows.map((r) => ({
@@ -98,13 +140,64 @@ const listTasksSnapshot = async (): Promise<TaskRow[]> => {
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   }));
-};
+}
+
+/** paged/searched/filtered variant of the snapshot; total reflects the same filters */
+async function listTasksPaged(
+  input: { page: number; pageSize: number; q?: string; statusId?: string; inboxOfMe?: boolean },
+  selfId: string,
+) {
+  const q = input.q?.trim();
+  const searchFilter = q ? { OR: [{ title: { ilike: `%${q}%` } }, { description: { ilike: `%${q}%` } }] } : undefined;
+  const statusFilter = input.statusId ? { status: { eq: input.statusId } } : undefined;
+  // inboxOfMe = tasks with a PENDING obligation on the caller — the same taskId
+  // set `inbox` items come from (pendingForUser); empty set short-circuits
+  let inboxFilter: { id: { inArray: string[] } } | undefined;
+  if (input.inboxOfMe) {
+    const pending = await pendingForUser(selfId);
+    const ids = [...new Set(pending.map((p) => p.taskId))];
+    if (ids.length === 0) return { data: [] as TaskRow[], total: 0 };
+    inboxFilter = { id: { inArray: ids } };
+  }
+  const filters = [searchFilter, statusFilter, inboxFilter].filter((f) => f !== undefined);
+  const where = filters.length === 0 ? EmptyFilter : filters.length === 1 ? nonNull(filters[0]) : { AND: filters };
+  const { data, total } = await db.query.tasks.findManyAndCount({
+    columns: {
+      id: true,
+      title: true,
+      description: true,
+      status: true,
+      projectId: true,
+      assigneeId: true,
+      ownerId: true,
+      createdBy: true,
+      reviewers: true,
+      parentTaskId: true,
+      dispatchAfter: true,
+      failStreak: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    where: where as never,
+    orderBy: { createdAt: 'desc' },
+    limit: input.pageSize,
+    offset: (input.page - 1) * input.pageSize,
+  });
+  return { data: await mapTaskRows(data), total };
+}
 
 async function runsSnapshot(taskId: string) {
   const rows = await listRuns(taskId);
-  const atts = await db.query.taskAttachments.findMany({ where: { taskId: { eq: taskId } } });
+  const atts = await db.query.taskAttachments.findMany({
+    columns: { id: true, runId: true, kind: true, filename: true, mime: true, size: true },
+    where: { taskId: { eq: taskId } },
+    orderBy: { createdAt: 'asc' },
+  });
   const outputsByRun = groupOutputsByRun(atts);
-  const users = await db.query.user.findMany({ columns: { id: true, name: true, title: true } });
+  const users = await db.query.user.findMany({
+    columns: { id: true, name: true, title: true },
+    orderBy: { name: 'asc' },
+  });
   const nameById = new Map(users.map((u) => [u.id, u.name]));
   const titleById = new Map(users.map((u) => [u.id, u.title]));
   return rows.map((r) => ({
@@ -130,7 +223,7 @@ async function runsSnapshot(taskId: string) {
 
 async function activitySnapshot(taskId: string) {
   const rows = await listActivity(taskId);
-  const users = await db.query.user.findMany({ columns: { id: true, name: true } });
+  const users = await db.query.user.findMany({ columns: { id: true, name: true }, orderBy: { name: 'asc' } });
   const nameById = new Map(users.map((u) => [u.id, u.name]));
   return rows.map((r) => ({
     id: r.id,
@@ -161,7 +254,10 @@ async function requireExistingRefs(input: { assigneeId?: string | null; projectI
 
 /** first status by position unless the caller names one; a named one must exist */
 async function resolveCreatedStatus(requested?: string) {
-  const statusRows = await db.query.taskStatuses.findMany({ orderBy: { position: 'asc' } });
+  const statusRows = await db.query.taskStatuses.findMany({
+    columns: { id: true },
+    orderBy: { position: 'asc' },
+  });
   if (statusRows.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'no task statuses defined' });
   if (!requested) return nonNull(statusRows[0]).id;
   const found = statusRows.find((r) => r.id === requested);
@@ -171,12 +267,19 @@ async function resolveCreatedStatus(requested?: string) {
 
 /** the workflow graph must allow the move: unknown target or a forbidden jump is rejected */
 async function requireReachableStatus(currentStatus: string, requested: string) {
-  const stRows = await db.query.taskStatuses.findMany({ where: { id: { eq: requested } } });
+  const stRows = await db.query.taskStatuses.findMany({
+    columns: { id: true, name: true },
+    where: { id: { eq: requested } },
+    orderBy: { position: 'asc' },
+  });
   const target = stRows[0];
   if (!target) throw new ORPCError('BAD_REQUEST', { message: 'status does not exist' });
   // enforce the workflow: target must be reachable from the current status
   if (currentStatus === requested) return;
-  const cur = await db.query.taskStatuses.findFirst({ where: { id: { eq: currentStatus } } });
+  const cur = await db.query.taskStatuses.findFirst({
+    columns: { id: true, name: true, nextIds: true },
+    where: { id: { eq: currentStatus } },
+  });
   if (cur && !cur.nextIds.includes(requested)) {
     throw new ORPCError('BAD_REQUEST', { message: `cannot move from '${cur.name}' to '${target.name}'` });
   }
@@ -219,6 +322,22 @@ export const tasksRouter = os.router({
   /** live list — tasks with assignee info, newest first */
   /** plain GET list (first-load data per the SSE law) */
   list: protectedProcedure.handler(() => listTasksSnapshot()),
+
+  /** paged + searched + filtered rows for the tasks manager table (same row shape as list) */
+  listPaged: protectedProcedure
+    .input(
+      z.object({
+        page: z.number().int().min(1).default(1),
+        pageSize: z.number().int().min(1).max(100).default(20),
+        q: z.string().trim().optional(),
+        statusId: z.string().min(1).optional(),
+        inboxOfMe: z.boolean().optional(),
+      }),
+    )
+    .handler(async ({ input, context }) =>
+      // the caller identity is only resolved when the inbox filter asks for it
+      listTasksPaged(input, input.inboxOfMe ? await selfIdOf(context) : ''),
+    ),
 
   live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.TASKS], listTasksSnapshot)),
 
@@ -285,7 +404,11 @@ export const tasksRouter = os.router({
       }),
     )
     .handler(async ({ input, context }) => {
-      const rows = await db.query.tasks.findMany({ where: { id: { eq: input.id } } });
+      const rows = await db.query.tasks.findMany({
+        columns: { status: true, assigneeId: true },
+        where: { id: { eq: input.id } },
+        orderBy: { createdAt: 'asc' },
+      });
       if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
       await requireExistingRefs(input);
       if (input.status !== undefined) await requireReachableStatus(nonNull(rows[0]).status, input.status);
@@ -337,7 +460,7 @@ export const tasksRouter = os.router({
   /** assignment history for a task (append-only ledger) */
   assignments: protectedProcedure.input(z.object({ taskId: z.string().min(1) })).handler(async ({ input }) => {
     const rows = await listAssignments(input.taskId);
-    const users = await db.query.user.findMany({ columns: { id: true, name: true } });
+    const users = await db.query.user.findMany({ columns: { id: true, name: true }, orderBy: { name: 'asc' } });
     const nameById = new Map(users.map((u) => [u.id, u.name]));
     return {
       items: rows.map((x) => ({
@@ -510,7 +633,11 @@ export const tasksRouter = os.router({
 
   /** delete a task */
   remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
-    const rows = await db.query.tasks.findMany({ columns: { id: true }, where: { id: { eq: input.id } } });
+    const rows = await db.query.tasks.findMany({
+      columns: { id: true },
+      where: { id: { eq: input.id } },
+      orderBy: { createdAt: 'asc' },
+    });
     if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
     await db.delete(tasksTable).where(eq(tasksTable.id, input.id));
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.DELETE);

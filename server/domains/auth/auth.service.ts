@@ -39,7 +39,7 @@ export async function resolveAuthPolicy() {
 }
 
 export async function anyUserExists() {
-  const row = await db.query.user.findFirst({ columns: { id: true } });
+  const row = await db.query.user.findFirst({ columns: { id: true }, orderBy: { id: 'asc' } });
   return row !== undefined;
 }
 
@@ -91,7 +91,7 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}) {
             // first user claims the instance -> admin role
             /* v8 ignore start -- defensive: better-auth always passes the created user */
             if (u && typeof u === 'object' && 'id' in u) {
-              const rows = await db.query.user.findMany({ columns: { id: true }, limit: 2 });
+              const rows = await db.query.user.findMany({ columns: { id: true }, orderBy: { id: 'asc' }, limit: 2 });
               if (rows.length === 1) {
                 await db
                   .update(userTable)

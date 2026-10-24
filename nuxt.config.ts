@@ -4,6 +4,8 @@ export default defineNuxtConfig({
     viteEnvironmentApi: true,
     typedPages: true,
     appManifest: true,
+    // poll builds/latest.json for a newer deployed build; app.vue offers reload
+    checkOutdatedBuildInterval: 60_000,
     watcher: 'builder',
   },
   dxup: {

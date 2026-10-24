@@ -41,12 +41,16 @@ export async function refreshParentGating(taskId: string) {
   const terminal = await terminalStatusIds();
   // gate the task itself, then every ancestor; guard against cycles defensively
   const seen = new Set<string>();
-  let cur = await db.query.tasks.findFirst({ where: { id: { eq: taskId } } });
+  let cur = await db.query.tasks.findFirst({
+    columns: { id: true, status: true, preBlockStatus: true, parentTaskId: true },
+    where: { id: { eq: taskId } },
+  });
   while (cur && !seen.has(cur.id)) {
     seen.add(cur.id);
     const children = await db.query.tasks.findMany({
       columns: { status: true },
       where: { parentTaskId: { eq: cur.id } },
+      orderBy: { createdAt: 'asc' },
     });
     const open = children.filter((c) => !terminal.has(c.status)).length;
     if (open > 0 && cur.status !== BLOCKED_STATUS) {
@@ -68,7 +72,10 @@ export async function refreshParentGating(taskId: string) {
       });
     }
     if (!cur.parentTaskId) break;
-    cur = await db.query.tasks.findFirst({ where: { id: { eq: cur.parentTaskId } } });
+    cur = await db.query.tasks.findFirst({
+      columns: { id: true, status: true, preBlockStatus: true, parentTaskId: true },
+      where: { id: { eq: cur.parentTaskId } },
+    });
   }
 }
 
@@ -77,6 +84,7 @@ export async function hasOpenChildren(taskId: string) {
   const children = await db.query.tasks.findMany({
     columns: { status: true },
     where: { parentTaskId: { eq: taskId } },
+    orderBy: { createdAt: 'asc' },
   });
   if (children.length === 0) return false;
   const terminal = await terminalStatusIds();

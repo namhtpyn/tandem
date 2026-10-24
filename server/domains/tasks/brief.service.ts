@@ -181,7 +181,18 @@ function stripMentions(desc: string) {
 
 /** gather everything the brief needs from the DB (single dispatch-time read) */
 export async function loadBriefData(taskId: string) {
-  const task = await db.query.tasks.findFirst({ where: { id: { eq: taskId } } });
+  const task = await db.query.tasks.findFirst({
+    columns: {
+      title: true,
+      description: true,
+      assigneeId: true,
+      ownerId: true,
+      reviewers: true,
+      projectId: true,
+      parentTaskId: true,
+    },
+    where: { id: { eq: taskId } },
+  });
   if (!task) throw new Error('task not found');
   // FK invariant: parent_task_id set => the row exists (ON DELETE SET NULL keeps it true)
   const parentTitle = task.parentTaskId
@@ -197,9 +208,18 @@ export async function loadBriefData(taskId: string) {
     .filter((p) => p.decisionNote)
     .map((p) => `- proposal declined: ${p.kind} — ${trunc(p.decisionNote, 200)}`);
   const assigneeId = nonNull(task.assigneeId);
-  const edges = await db.query.employeeSupervisors.findMany();
-  const users = await db.query.user.findMany({ columns: { id: true, name: true, title: true } });
-  const aiRows = await db.query.aiEmployees.findMany();
+  const edges = await db.query.employeeSupervisors.findMany({
+    columns: { employeeId: true, supervisorId: true },
+    orderBy: { employeeId: 'asc' },
+  });
+  const users = await db.query.user.findMany({
+    columns: { id: true, name: true, title: true },
+    orderBy: { name: 'asc' },
+  });
+  const aiRows = await db.query.aiEmployees.findMany({
+    columns: { userId: true, instructions: true },
+    orderBy: { userId: 'asc' },
+  });
   const aiById = new Map(aiRows.map((r) => [r.userId, r]));
   const person = (id: string): BriefPerson => {
     const u = nonNull(users.find((x) => x.id === id));
@@ -215,7 +235,11 @@ export async function loadBriefData(taskId: string) {
     if (!users.some((u) => u.id === mid)) continue;
     extra.push({ person: person(mid), chain: chainToRoot(mid, edges).map(person) });
   }
-  const activity = await db.query.taskActivity.findMany({ where: { taskId: { eq: taskId } } });
+  const activity = await db.query.taskActivity.findMany({
+    columns: { kind: true, authorId: true, body: true, createdAt: true },
+    where: { taskId: { eq: taskId } },
+    orderBy: { createdAt: 'asc' },
+  });
   activity.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   const nameById = new Map(users.map((u) => [u.id, u.name]));
   const recent = activity.slice(-20).map((a) => ({
@@ -228,9 +252,16 @@ export async function loadBriefData(taskId: string) {
   const { getCompanyPrompt } = await import('../settings/settings.service');
   const companyPrompt = await getCompanyPrompt();
   const projectRow = task.projectId
-    ? await db.query.projects.findFirst({ where: { id: { eq: task.projectId } } })
+    ? await db.query.projects.findFirst({
+        columns: { name: true, prompt: true },
+        where: { id: { eq: task.projectId } },
+      })
     : undefined;
-  const attachmentRows = await db.query.taskAttachments.findMany({ where: { taskId: { eq: taskId } } });
+  const attachmentRows = await db.query.taskAttachments.findMany({
+    columns: { id: true, kind: true, filename: true, mime: true, size: true },
+    where: { taskId: { eq: taskId } },
+    orderBy: { createdAt: 'asc' },
+  });
   const attachments = attachmentRows
     .filter((a) => a.kind === 'input')
     .map((a) => ({
