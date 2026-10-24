@@ -45,14 +45,6 @@ const liveQuery = useQuery(
     }),
   ),
 );
-// the folders manager needs the full list (VaultFolderSelect/manager load their own copies — same query key, one fetch)
-const foldersQuery = useQuery($orpc.vault.folders.list.queryOptions({ queryKey: [CHANGE_RESOURCE.VAULT, 'folders'] }));
-const folders = computed(
-  () =>
-    (foldersQuery.data.value as { folders: Array<{ id: string; name: string; secrets: number }> } | undefined)
-      ?.folders ?? [],
-);
-
 // server-side pagination: rows come pre-filtered by folder from the API
 watch(activeFolder, () => {
   page.value = 1;
@@ -156,7 +148,7 @@ function kindIcon(): string {
   return 'i-lucide-shield';
 }
 
-onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense()]));
+onServerPrefetch(() => liveQuery.suspense());
 </script>
 
 <template>
@@ -263,7 +255,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), foldersQuery.suspense(
                 </div>
               </div>
               <p v-if="row.description" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ row.description }}</p>
-              <div class="mt-3 flex justify-end gap-1">
+              <div class="mt-3 flex justify-end gap-3">
                 <UPopover mode="hover">
                   <UButton
                     icon="i-lucide-pencil"

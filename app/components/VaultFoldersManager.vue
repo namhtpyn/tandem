@@ -38,6 +38,7 @@ const foldersQuery = useQuery(
       input: { page: page.value, pageSize: pageSize.value, q: debouncedSearch.value || undefined },
       queryKey: [CHANGE_RESOURCE.VAULT, 'folders-paged', page.value, pageSize.value, debouncedSearch.value],
       placeholderData: keepPreviousData,
+      enabled: open.value,
     }),
   ),
 );

@@ -23,6 +23,7 @@ const { creatable = false, clearable = false, size = 'sm' } = defineProps<{
 }>();
 
 const PAGE_SIZE = 20;
+const opened = ref(false);
 const { $orpc } = useNuxtApp();
 
 const searchTerm = ref('');
@@ -40,6 +41,7 @@ const pagesQuery = useInfiniteQuery(
     $orpc.vault.folders.options.infiniteOptions({
       input: (page: number) => ({ page, pageSize: PAGE_SIZE, q: debouncedSearch.value || undefined }),
       queryKey: [CHANGE_RESOURCE.VAULT, 'folder-options', debouncedSearch.value],
+      enabled: opened.value,
       initialPageParam: 1,
       getNextPageParam: (lastPage, allPages) => {
         const loaded = allPages.reduce((n, p) => n + p.options.length, 0);
@@ -49,9 +51,25 @@ const pagesQuery = useInfiniteQuery(
   ),
 );
 
-const options = computed<FolderOption[]>(() =>
-  (pagesQuery.data.value?.pages ?? []).flatMap((p) => p.options.map((o) => ({ ...o, label: o.name }))),
-);
+// picking a folder found via search (or creating one) leaves it outside the
+// reset option pages once the search term clears — keep it so the trigger
+// resolves a label instead of the raw id
+const lastPicked = ref<FolderOption | null>(null);
+
+const options = computed<FolderOption[]>(() => {
+  const pages = (pagesQuery.data.value?.pages ?? []).flatMap((p) => p.options.map((o) => ({ ...o, label: o.name })));
+  if (lastPicked.value && !pages.some((o) => o.id === lastPicked.value!.id)) return [...pages, lastPicked.value];
+  return pages;
+});
+
+function onPick(v: string | null | undefined) {
+  if (!v) {
+    lastPicked.value = null;
+    return;
+  }
+  const hit = options.value.find((o) => o.id === v);
+  if (hit) lastPicked.value = hit;
+}
 
 const selectMenu = useTemplateRef('selectMenu');
 
@@ -62,7 +80,7 @@ const loadingMore = ref(false);
 function onLoadMore() {
   if (loadingMore.value || !pagesQuery.hasNextPage.value) return;
   loadingMore.value = true;
-  pagesQuery.fetchNextPage().finally(() => {
+  void pagesQuery.fetchNextPage().finally(() => {
     loadingMore.value = false;
   });
 }
@@ -79,6 +97,7 @@ const saveMutation = useMutation({ ...$orpc.vault.folders.save.mutationOptions()
 
 async function onCreate(name: string) {
   const { id } = await saveMutation.mutateAsync({ name });
+  lastPicked.value = { id, name, label: name };
   model.value = id;
 }
 
@@ -101,11 +120,17 @@ const selectModel = computed({
     ignore-filter
     :loading="pagesQuery.isFetching.value"
     value-key="id"
+    @update:open="
+      (v: boolean) => {
+        if (v) opened = true;
+      }
+    "
     icon="i-lucide-folder"
     :size="size"
     placeholder="Folder"
     class="w-44"
     @create="onCreate"
+    @update:model-value="onPick"
     @clear="model = null"
   >
     <template #content-bottom>
