@@ -19,6 +19,8 @@ const props = withDefaults(
     searchable?: boolean;
     searchPlaceholder?: string;
     search?: string;
+    /** tree data: rows carry `subRows`; UTable expands them natively */
+    getSubRows?: (row: T) => T[];
   }>(),
   {
     loading: false,
@@ -30,12 +32,28 @@ const props = withDefaults(
     searchable: false,
     searchPlaceholder: 'Search…',
     search: undefined,
+    getSubRows: undefined,
   },
 );
 
 const emit = defineEmits<{ 'update:page': [page: number]; 'update:search': [q: string] }>();
 const paginated = computed(() => props.pageCount !== undefined && props.page !== undefined);
 const pagination = computed(() => ({ pageIndex: (props.page ?? 1) - 1, pageSize: props.pageSize }));
+
+// tree data flattens (depth-annotated) for the mobile card list
+const mobileRows = computed<T[]>(() => {
+  const subRows = props.getSubRows;
+  if (!subRows) return props.data;
+  const out: T[] = [];
+  const walk = (rows: T[], depth: number) => {
+    for (const r of rows) {
+      out.push({ ...(r as object), depth } as T);
+      walk(subRows(r) ?? [], depth + 1);
+    }
+  };
+  walk(props.data, 0);
+  return out;
+});
 
 // client-side pagination for small lists: internal page state, sliced rows —
 // no page/pageCount props needed (server-side lists pass them and slice themselves)
@@ -110,6 +128,7 @@ function cellValue(row: T, col: TableColumn<T>) {
         :data="viewData"
         :columns="columns"
         :loading="loading"
+        :get-sub-rows="getSubRows"
         :pagination="paginated ? pagination : undefined"
         :pagination-options="
           paginated ? { getPaginationRowModel: undefined, manualPagination: true, pageCount } : undefined
@@ -122,7 +141,7 @@ function cellValue(row: T, col: TableColumn<T>) {
     </UCard>
 
     <div v-if="data.length" class="space-y-3 md:hidden">
-      <template v-for="(row, idx) in data" :key="String((row as Record<string, unknown>).id ?? idx)">
+      <template v-for="(row, idx) in mobileRows" :key="String((row as Record<string, unknown>).id ?? idx)">
         <slot name="mobile-item" :row="row">
           <UCard :ui="{ root: 'shadow-sm' }">
             <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">

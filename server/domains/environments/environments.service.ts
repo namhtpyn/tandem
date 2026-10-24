@@ -3,6 +3,8 @@
 import type { SecretUsage } from '#shared/enums';
 import type { EnvironmentRow } from '#shared/types';
 
+import { EmptyFilter } from 'drizzle-orm';
+
 import { db } from '../../db/index';
 import { environments as environmentsTable } from '../../db/schema';
 
@@ -41,4 +43,30 @@ export async function listEnvironments() {
     orderBy: { createdAt: 'desc' },
   });
   return rows.map(toRow);
+}
+
+export async function listEnvironmentsPaged(input: { page?: number; pageSize?: number; q?: string } = {}) {
+  const page = input.page ?? 1;
+  const pageSize = input.pageSize ?? 10;
+  const q = input.q?.trim();
+  const { data, total } = await db.query.environments.findManyAndCount({
+    columns: {
+      id: true,
+      name: true,
+      host: true,
+      port: true,
+      username: true,
+      secretId: true,
+      secretUsage: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    where: q
+      ? { OR: [{ name: { ilike: `%${q}%` } }, { host: { ilike: `%${q}%` } }, { username: { ilike: `%${q}%` } }] }
+      : EmptyFilter,
+    orderBy: { createdAt: 'desc' },
+    limit: pageSize,
+    offset: (page - 1) * pageSize,
+  });
+  return { environments: data.map(toRow), total };
 }

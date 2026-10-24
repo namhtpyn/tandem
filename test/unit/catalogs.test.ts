@@ -257,3 +257,46 @@ describe('employee titles', () => {
     expect(live2.find((e) => e.id === e3.id)?.title).toBe('Unrelated Role');
   });
 });
+
+describe('environments listPaged', () => {
+  it('pages, searches (q over name/host/username), and reports total', async () => {
+    for (const [i, name] of ['qa-alpha-host', 'qa-beta-host', 'unrelated'].entries()) {
+      await proc(['environments', 'create'], {
+        name,
+        host: `10.0.0.${i + 1}`,
+        port: '22',
+        username: name === 'unrelated' ? 'deploy' : `qa${i}`,
+      });
+    }
+    const page1 = (await proc(['environments', 'listPaged'], { page: 1, pageSize: 2 })) as {
+      environments: Array<{ name: string }>;
+      total: number;
+    };
+    expect(page1.total).toBe(3);
+    expect(page1.environments).toHaveLength(2);
+
+    const byName = (await proc(['environments', 'listPaged'], { page: 1, pageSize: 10, q: 'alpha' })) as {
+      environments: Array<{ name: string }>;
+      total: number;
+    };
+    expect(byName.total).toBe(1);
+    expect(byName.environments[0]!.name).toBe('qa-alpha-host');
+
+    const byHost = (await proc(['environments', 'listPaged'], { page: 1, pageSize: 10, q: '10.0.0.2' })) as {
+      environments: Array<{ name: string }>;
+      total: number;
+    };
+    expect(byHost.total).toBe(1);
+    expect(byHost.environments[0]!.name).toBe('qa-beta-host');
+
+    const byUser = (await proc(['environments', 'listPaged'], { page: 1, pageSize: 10, q: 'deploy' })) as {
+      environments: Array<{ name: string }>;
+      total: number;
+    };
+    expect(byUser.total).toBe(1);
+    expect(byUser.environments[0]!.name).toBe('unrelated');
+
+    const miss = (await proc(['environments', 'listPaged'], { page: 1, pageSize: 10, q: 'zzz' })) as { total: number };
+    expect(miss.total).toBe(0);
+  });
+});

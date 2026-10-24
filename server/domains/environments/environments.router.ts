@@ -12,13 +12,24 @@ import { db } from '../../db/index';
 import { environments as environmentsTable, vaultSecrets as vaultSecretsTable } from '../../db/schema';
 import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
-import { toRow, listEnvironments } from './environments.service';
+import { listEnvironments, listEnvironmentsPaged, toRow } from './environments.service';
 import { environmentInput } from './environments.util';
 import { probeSsh } from './ssh-probe.service';
 
 export const environmentsRouter = os.router({
   /** plain GET list (first-load data per the SSE law) */
   list: protectedProcedure.handler(() => listEnvironments()),
+
+  /** paged + searched rows for the environments manager table */
+  listPaged: protectedProcedure
+    .input(
+      z.object({
+        page: z.number().int().min(1).default(1),
+        pageSize: z.number().int().min(1).max(100).default(10),
+        q: z.string().trim().optional(),
+      }),
+    )
+    .handler(({ input }) => listEnvironmentsPaged(input)),
 
   /** live list — pushes a fresh snapshot on every environments change */
   live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.ENVIRONMENTS], listEnvironments)),
