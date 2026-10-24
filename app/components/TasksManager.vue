@@ -12,7 +12,7 @@ import { computed, ref, watch } from 'vue';
 import { ACTIVITY_KIND, CHANGE_RESOURCE } from '#shared/enums';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 
-const { $orpc } = useNuxtApp();
+const { $orpc, $client } = useNuxtApp();
 
 const page = ref(1);
 const pageSize = ref(20);
@@ -238,12 +238,37 @@ function openWorkflow(row: TaskRow) {
   workflowOpen.value = true;
 }
 
-async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
+// zod strips unknown keys, so optional extras ride along safely
+type WorkflowAction =
+  | 'dispatch'
+  | 'submit'
+  | 'ask'
+  | 'forward'
+  | 'answer'
+  | 'approve'
+  | 'requestChanges'
+  | 'reject'
+  | 'abandon';
+
+async function wfAction(action: WorkflowAction, extra: { body?: string; toEmployeeId?: string } = {}) {
   if (!workflowTask.value) return;
   workflowBusy.value = true;
   workflowMessage.value = '';
   try {
-    await $fetch(`/rpc/tasks/${proc}`, { method: 'POST', body: { json: { taskId: workflowTask.value.id, ...extra } } });
+    const input = { taskId: workflowTask.value.id, ...extra };
+    await (
+      {
+        dispatch: () => $client.tasks.dispatch({ taskId: input.taskId }),
+        submit: () => $client.tasks.submit({ ...input, body: nonNull(input.body) }),
+        ask: () => $client.tasks.ask({ ...input, body: nonNull(input.body) }),
+        forward: () => $client.tasks.forward({ ...input, toEmployeeId: nonNull(input.toEmployeeId) }),
+        answer: () => $client.tasks.answer({ ...input, body: nonNull(input.body) }),
+        approve: () => $client.tasks.approve(input),
+        requestChanges: () => $client.tasks.requestChanges({ ...input, body: nonNull(input.body) }),
+        reject: () => $client.tasks.reject(input),
+        abandon: () => $client.tasks.abandon(input),
+      }[action]
+    )();
     workflowNote.value = '';
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, workflowTask.value.id] });
     workflowMessage.value = 'done';

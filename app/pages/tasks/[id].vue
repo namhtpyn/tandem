@@ -206,12 +206,37 @@ function envelopeColor(kind: string) {
   return kind === 'question' ? 'warning' : kind === 'blocked' ? 'error' : 'success';
 }
 
-async function wfAction(proc: string, extra: Record<string, unknown> = {}) {
+// zod strips unknown keys, so optional extras ride along safely
+type WorkflowAction =
+  | 'dispatch'
+  | 'submit'
+  | 'ask'
+  | 'forward'
+  | 'answer'
+  | 'approve'
+  | 'requestChanges'
+  | 'reject'
+  | 'abandon';
+
+async function wfAction(action: WorkflowAction, extra: { body?: string; toEmployeeId?: string } = {}) {
   if (!task.value) return;
   workflowBusy.value = true;
   workflowMessage.value = '';
   try {
-    await $fetch(`/rpc/tasks/${proc}`, { method: 'POST', body: { json: { taskId: task.value.id, ...extra } } });
+    const input = { taskId: task.value.id, ...extra };
+    await (
+      {
+        dispatch: () => $client.tasks.dispatch({ taskId: input.taskId }),
+        submit: () => $client.tasks.submit({ ...input, body: nonNull(input.body) }),
+        ask: () => $client.tasks.ask({ ...input, body: nonNull(input.body) }),
+        forward: () => $client.tasks.forward({ ...input, toEmployeeId: nonNull(input.toEmployeeId) }),
+        answer: () => $client.tasks.answer({ ...input, body: nonNull(input.body) }),
+        approve: () => $client.tasks.approve(input),
+        requestChanges: () => $client.tasks.requestChanges({ ...input, body: nonNull(input.body) }),
+        reject: () => $client.tasks.reject(input),
+        abandon: () => $client.tasks.abandon(input),
+      }[action]
+    )();
     workflowNote.value = '';
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, task.value.id] });
     void queryClient.invalidateQueries({ queryKey: ['taskReviews', task.value.id] });
@@ -338,15 +363,10 @@ async function createSubtask() {
   proposalBusy.value = true;
   proposalMessage.value = '';
   try {
-    await $fetch('/rpc/tasks/create', {
-      method: 'POST',
-      body: {
-        json: {
-          title: subtaskTitle.value.trim(),
-          parentId: task.value.id,
-          assigneeId: subtaskAssignee.value === '__none__' ? null : subtaskAssignee.value,
-        },
-      },
+    await $client.tasks.create({
+      title: subtaskTitle.value.trim(),
+      parentId: task.value.id,
+      assigneeId: subtaskAssignee.value === '__none__' ? null : subtaskAssignee.value,
     });
     subtaskTitle.value = '';
     subtaskAssignee.value = '__none__';
@@ -364,10 +384,12 @@ async function decideProposal(id: string, action: 'confirmProposal' | 'rejectPro
   proposalBusy.value = true;
   proposalMessage.value = '';
   try {
-    const r = (await $fetch(`/rpc/tasks/${action}`, { method: 'POST', body: { json: { proposalId: id } } })) as {
-      json: { events?: string[] };
-    };
-    proposalMessage.value = r.json.events?.length ? r.json.events.join('; ') : 'done';
+    const r =
+      action === 'confirmProposal'
+        ? await $client.tasks.confirmProposal({ proposalId: id })
+        : await $client.tasks.rejectProposal({ proposalId: id });
+    const events: string[] = 'events' in r && Array.isArray(r.events) ? r.events : [];
+    proposalMessage.value = events.length ? events.join('; ') : 'done';
     await refreshRoutingPanels(nonNull(task.value).id);
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, nonNull(task.value).id] });
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.RUNS, nonNull(task.value).id] });
@@ -1014,7 +1036,7 @@ onServerPrefetch(() =>
                     icon="i-lucide-undo-2"
                     class="justify-start"
                     :disabled="workflowBusy"
-                    @click="wfAction('request-changes', { body: workflowNote || 'needs changes' })"
+                    @click="wfAction('requestChanges', { body: workflowNote || 'needs changes' })"
                     >Request changes</UButton
                   >
                   <UButton
@@ -1301,7 +1323,7 @@ onServerPrefetch(() =>
                     icon="i-lucide-undo-2"
                     class="justify-start"
                     :disabled="workflowBusy"
-                    @click="wfAction('request-changes', { body: workflowNote || 'needs changes' })"
+                    @click="wfAction('requestChanges', { body: workflowNote || 'needs changes' })"
                     >Request changes</UButton
                   >
                   <UButton
