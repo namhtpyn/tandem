@@ -58,7 +58,8 @@ const lastPicked = ref<FolderOption | null>(null);
 
 const options = computed<FolderOption[]>(() => {
   const pages = (pagesQuery.data.value?.pages ?? []).flatMap((p) => p.options.map((o) => ({ ...o, label: o.name })));
-  if (lastPicked.value && !pages.some((o) => o.id === lastPicked.value!.id)) return [...pages, lastPicked.value];
+  const picked = lastPicked.value;
+  if (picked && !pages.some((o) => o.id === picked.id)) return [...pages, picked];
   return pages;
 });
 
