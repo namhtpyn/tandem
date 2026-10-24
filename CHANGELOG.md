@@ -1,3 +1,34 @@
+# [2.42.0](https://github.com/namhtpyn/tandem/compare/v2.41.0...v2.42.0) (2026-10-24)
+
+
+### Bug Fixes
+
+* **app:** drop the non-null assertion in the picker fallback ([80ef966](https://github.com/namhtpyn/tandem/commit/80ef9667ab133ed175b3aa286050029ddc11fec7))
+* **app:** every page stopped scrolling — cap UDashboardPanel inside the fixed shell ([1faa0de](https://github.com/namhtpyn/tandem/commit/1faa0ded8095b911380f36bbab30f68ee7f985cb))
+* **app:** folder picker — ignore-filter is the actual off switch for client filtering ([26653c1](https://github.com/namhtpyn/tandem/commit/26653c1b4abcaf0ea769d12562478954079521fa))
+* **app:** folder picker loaded 2 pages per scroll — flip a sync guard in the handler ([35d78cd](https://github.com/namhtpyn/tandem/commit/35d78cdd36b9c2a351bac882b356285205abfbc9))
+* **app:** folder picker page size 50 -> 20 — first page should look like a page ([fd68540](https://github.com/namhtpyn/tandem/commit/fd685404b15e6ecc9a7b9ff78d2eb2d2236efb41))
+* **app:** kill the remaining direct $fetch RPC calls on the tasks pages ([5372c28](https://github.com/namhtpyn/tandem/commit/5372c2815f58e970d1d60c29d252e6da077ffaad))
+* **app:** pagination footer lives in DataTable — folders manager gets working pages ([80a7b1b](https://github.com/namhtpyn/tandem/commit/80a7b1b8bcdb8f262c413c3eb4f186d6859cb7e3))
+* **app:** restore documented dashboard layout instead of overriding the theme ([6c336db](https://github.com/namhtpyn/tandem/commit/6c336dbc037d9ca180738e5a9bc44efa0e4be7af))
+* **app:** secret modal folder select uses size=md to match the form inputs ([216465c](https://github.com/namhtpyn/tandem/commit/216465cbd398783e5e6708aab28d068f9f179793))
+* **app:** vault QA round — perf + picker label + destructive-action spacing ([54bf453](https://github.com/namhtpyn/tandem/commit/54bf453ca606d746ff039b59bee9fa878c371022))
+* **app:** VaultFolderSelect loads pages through vue-query over the oRPC client ([a3921a2](https://github.com/namhtpyn/tandem/commit/a3921a21b4a4f0e291668842e83b7f2f3d2ef214))
+
+
+### Features
+
+* **app:** capability flags on the vault folder components ([eb4aa6a](https://github.com/namhtpyn/tandem/commit/eb4aa6af7e50a660f657b040e522e6accb8778ca))
+* **app:** folder picker search filters on the server ([f7cf21a](https://github.com/namhtpyn/tandem/commit/f7cf21a01b5a6e455c77464afda170d84c12daac))
+* **app:** FolderSelect — self-loading vault folder picker component ([e961949](https://github.com/namhtpyn/tandem/commit/e96194983b9fcc401bcb05902c0c31de76c8925a))
+* **app:** reload prompt when a newer build is deployed ([dcc3d50](https://github.com/namhtpyn/tandem/commit/dcc3d50044b831a8f53e6bd3e2cb2da2b5b21fd5))
+* **app:** VaultFolderSelect gains a size prop (default sm, USelectMenu sizes) ([466e9c6](https://github.com/namhtpyn/tandem/commit/466e9c62e7ed35c6fc7a94590eed050656b276ed))
+
+
+### Performance Improvements
+
+* **vault:** folder secret counts via extras correlated subquery ([5d6ece0](https://github.com/namhtpyn/tandem/commit/5d6ece07ad89b6012aed335a259b27719301bd44))
+
 # [2.41.0](https://github.com/namhtpyn/tandem/compare/v2.40.0...v2.41.0) (2026-10-22)
 
 
