@@ -1,6 +1,6 @@
 import { os } from '@orpc/server';
 // tasks router — business logic lives in services/utils; this file only wires procedures
-import { desc, eq } from 'drizzle-orm';
+import { desc, EmptyFilter, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
@@ -81,6 +81,30 @@ const listTasksSnapshot = async (): Promise<TaskRow[]> => {
     },
     orderBy: { createdAt: 'desc' },
   });
+  return mapTaskRows(rows);
+};
+
+/** exact list column set — the snapshot and the paged variant share it */
+type TaskListRow = Pick<
+  typeof tasksTable.$inferSelect,
+  | 'id'
+  | 'title'
+  | 'description'
+  | 'status'
+  | 'projectId'
+  | 'assigneeId'
+  | 'ownerId'
+  | 'createdBy'
+  | 'reviewers'
+  | 'parentTaskId'
+  | 'dispatchAfter'
+  | 'failStreak'
+  | 'createdAt'
+  | 'updatedAt'
+>;
+
+/** shared row → payload mapping for every tasks list shape (snapshot + paged) */
+async function mapTaskRows(rows: TaskListRow[]): Promise<TaskRow[]> {
   const open = await openObligations(rows.map((r) => r.id));
   const holders = new Map<string, string>();
   for (const [tid, o] of open) if (o.holders[0]) holders.set(tid, o.holders[0]);
@@ -116,7 +140,51 @@ const listTasksSnapshot = async (): Promise<TaskRow[]> => {
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   }));
-};
+}
+
+/** paged/searched/filtered variant of the snapshot; total reflects the same filters */
+async function listTasksPaged(
+  input: { page: number; pageSize: number; q?: string; statusId?: string; inboxOfMe?: boolean },
+  selfId: string,
+) {
+  const q = input.q?.trim();
+  const searchFilter = q ? { OR: [{ title: { ilike: `%${q}%` } }, { description: { ilike: `%${q}%` } }] } : undefined;
+  const statusFilter = input.statusId ? { status: { eq: input.statusId } } : undefined;
+  // inboxOfMe = tasks with a PENDING obligation on the caller — the same taskId
+  // set `inbox` items come from (pendingForUser); empty set short-circuits
+  let inboxFilter: { id: { inArray: string[] } } | undefined;
+  if (input.inboxOfMe) {
+    const pending = await pendingForUser(selfId);
+    const ids = [...new Set(pending.map((p) => p.taskId))];
+    if (ids.length === 0) return { data: [] as TaskRow[], total: 0 };
+    inboxFilter = { id: { inArray: ids } };
+  }
+  const filters = [searchFilter, statusFilter, inboxFilter].filter((f) => f !== undefined);
+  const where = filters.length === 0 ? EmptyFilter : filters.length === 1 ? nonNull(filters[0]) : { AND: filters };
+  const { data, total } = await db.query.tasks.findManyAndCount({
+    columns: {
+      id: true,
+      title: true,
+      description: true,
+      status: true,
+      projectId: true,
+      assigneeId: true,
+      ownerId: true,
+      createdBy: true,
+      reviewers: true,
+      parentTaskId: true,
+      dispatchAfter: true,
+      failStreak: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    where: where as never,
+    orderBy: { createdAt: 'desc' },
+    limit: input.pageSize,
+    offset: (input.page - 1) * input.pageSize,
+  });
+  return { data: await mapTaskRows(data), total };
+}
 
 async function runsSnapshot(taskId: string) {
   const rows = await listRuns(taskId);
@@ -254,6 +322,22 @@ export const tasksRouter = os.router({
   /** live list — tasks with assignee info, newest first */
   /** plain GET list (first-load data per the SSE law) */
   list: protectedProcedure.handler(() => listTasksSnapshot()),
+
+  /** paged + searched + filtered rows for the tasks manager table (same row shape as list) */
+  listPaged: protectedProcedure
+    .input(
+      z.object({
+        page: z.number().int().min(1).default(1),
+        pageSize: z.number().int().min(1).max(100).default(20),
+        q: z.string().trim().optional(),
+        statusId: z.string().min(1).optional(),
+        inboxOfMe: z.boolean().optional(),
+      }),
+    )
+    .handler(async ({ input, context }) =>
+      // the caller identity is only resolved when the inbox filter asks for it
+      listTasksPaged(input, input.inboxOfMe ? await selfIdOf(context) : ''),
+    ),
 
   live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.TASKS], listTasksSnapshot)),
 

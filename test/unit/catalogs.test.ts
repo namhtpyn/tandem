@@ -3,6 +3,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 
 import './helpers/pg';
 import { ROLE } from '#shared/enums';
+import { STATUS } from '#shared/status';
 
 import './api-harness';
 
@@ -378,5 +379,83 @@ describe('employees listPaged', () => {
 
     const miss = (await proc(['employees', 'listPaged'], { page: 1, pageSize: 10, q: 'zzz' })) as { total: number };
     expect(miss.total).toBe(0);
+  });
+});
+
+describe('tasks listPaged', () => {
+  it('pages, searches (q over title/description), filters by status and inbox, and reports total', async () => {
+    const alpha = (await proc(['tasks', 'create'], { title: 'Pager Alpha', description: 'first' })) as { id: string };
+    // beta starts in doing WITH an assignee so `ask` can route a question to the owner (= admin)
+    const beta = (await proc(['tasks', 'create'], {
+      title: 'Pager Beta',
+      description: 'zebra sweep',
+      assigneeId: admin.user.id,
+      status: STATUS.doing,
+    })) as { id: string };
+    await proc(['tasks', 'create'], { title: 'Unrelated note' });
+
+    const page1 = (await proc(['tasks', 'listPaged'], { page: 1, pageSize: 2 })) as {
+      data: Array<{ id: string }>;
+      total: number;
+    };
+    expect(page1.total).toBe(3);
+    expect(page1.data).toHaveLength(2);
+
+    const byTitle = (await proc(['tasks', 'listPaged'], { page: 1, pageSize: 10, q: 'alpha' })) as {
+      data: Array<{ id: string; title: string }>;
+      total: number;
+    };
+    expect(byTitle.total).toBe(1);
+    expect(byTitle.data[0]!.id).toBe(alpha.id);
+
+    const byDescription = (await proc(['tasks', 'listPaged'], { page: 1, pageSize: 10, q: 'zebra' })) as {
+      data: Array<{ id: string }>;
+      total: number;
+    };
+    expect(byDescription.total).toBe(1);
+    expect(byDescription.data[0]!.id).toBe(beta.id);
+
+    const miss = (await proc(['tasks', 'listPaged'], { page: 1, pageSize: 10, q: 'zzz' })) as { total: number };
+    expect(miss.total).toBe(0);
+
+    const doing = (await proc(['tasks', 'listPaged'], { page: 1, pageSize: 10, statusId: STATUS.doing })) as {
+      data: Array<{ id: string; assigneeName: string | null; reviewerNames: string[]; createdAt: string }>;
+      total: number;
+    };
+    expect(doing.total).toBe(1);
+    expect(doing.data.map((t) => t.id)).toEqual([beta.id]);
+    // paged rows carry the same snapshot mapping (names joined, ISO dates)
+    expect(doing.data[0]).toMatchObject({
+      assigneeName: 'Admin',
+      reviewerNames: [],
+      createdAt: expect.any(String),
+    });
+
+    // combined filters land in the same AND group
+    const combo = (await proc(['tasks', 'listPaged'], { q: 'Pager', statusId: STATUS.doing })) as { total: number };
+    expect(combo.total).toBe(1);
+    const comboMiss = (await proc(['tasks', 'listPaged'], { q: 'Unrelated', statusId: STATUS.doing })) as {
+      total: number;
+    };
+    expect(comboMiss.total).toBe(0);
+
+    // inboxOfMe with NO pending obligations on the caller → empty set short-circuit
+    const emptyInbox = (await proc(['tasks', 'listPaged'], { page: 1, pageSize: 10, inboxOfMe: true })) as {
+      data: unknown[];
+      total: number;
+    };
+    expect(emptyInbox).toEqual({ data: [], total: 0 });
+
+    // a pending obligation on the caller (beta is doing + assigned → ask spawns it on the owner)
+    await proc(['tasks', 'ask'], { taskId: beta.id, body: 'which db?' });
+    const inbox = (await proc(['tasks', 'listPaged'], { page: 1, pageSize: 10, inboxOfMe: true })) as {
+      data: Array<{ id: string }>;
+      total: number;
+    };
+    expect(inbox.total).toBe(1);
+    expect(inbox.data.map((t) => t.id)).toEqual([beta.id]);
+    // semantics equal the inbox proc's taskId set
+    const inboxProc = (await proc(['tasks', 'inbox'])) as { items: Array<{ taskId: string }> };
+    expect(new Set(inboxProc.items.map((i) => i.taskId))).toEqual(new Set(inbox.data.map((t) => t.id)));
   });
 });

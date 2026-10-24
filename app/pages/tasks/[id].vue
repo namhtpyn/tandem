@@ -313,19 +313,13 @@ const subtaskAssignee = ref('__none__');
 async function refreshRoutingPanels(taskId: string) {
   try {
     const [st, pr, as] = await Promise.all([
-      $fetch('/rpc/tasks/subtasks', { method: 'POST', body: { json: { taskId } } }) as unknown as Promise<{
-        json: { items: ChildRow[] };
-      }>,
-      $fetch('/rpc/tasks/proposals', { method: 'POST', body: { json: { taskId } } }) as unknown as Promise<{
-        json: { items: ProposalRow[] };
-      }>,
-      $fetch('/rpc/tasks/assignments', { method: 'POST', body: { json: { taskId } } }) as unknown as Promise<{
-        json: { items: AssignmentRow[] };
-      }>,
+      $client.tasks.subtasks({ taskId }),
+      $client.tasks.proposals({ taskId }),
+      $client.tasks.assignments({ taskId }),
     ]);
-    subtaskRows.value = st.json.items;
-    proposalRows.value = pr.json.items;
-    assignmentRows.value = as.json.items;
+    subtaskRows.value = st.items as ChildRow[];
+    proposalRows.value = pr.items as ProposalRow[];
+    assignmentRows.value = as.items as AssignmentRow[];
   } catch {
     /* panels are best-effort; the thread still works */
   }
