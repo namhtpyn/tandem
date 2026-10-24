@@ -1,6 +1,6 @@
 import { os } from '@orpc/server';
 // employees router — business logic lives in services/utils; this file only wires procedures
-import { count, desc, eq } from 'drizzle-orm';
+import { count, desc, EmptyFilter, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
@@ -172,33 +172,25 @@ const aiExtensionPatch = async (input: AiExtensionPatchInput) => {
   return patch;
 };
 
-const listEmployeesSnapshot = async () => {
-  const rows = await db.query.user.findMany({
-    columns: { id: true, name: true, email: true, image: true, title: true, createdAt: true, updatedAt: true },
-    orderBy: { createdAt: 'asc' },
-  });
-  const supRows = await db.query.employeeSupervisors.findMany({
-    columns: { employeeId: true, supervisorId: true },
-    orderBy: { employeeId: 'asc' },
-  });
-  const aiRows = await db.query.aiEmployees.findMany({
-    columns: {
-      userId: true,
-      environmentId: true,
-      executable: true,
-      providerId: true,
-      model: true,
-      apiKeySecretId: true,
-      instructions: true,
-    },
-    orderBy: { userId: 'asc' },
-  });
+/** user rows: identity + employment columns as selected by the list queries */
+type EmployeeUserRow = Pick<
+  typeof userTable.$inferSelect,
+  'id' | 'name' | 'email' | 'image' | 'title' | 'createdAt' | 'updatedAt'
+>;
+type SupervisorEdge = Pick<typeof supervisorsTable.$inferSelect, 'employeeId' | 'supervisorId'>;
+type AiExtensionRow = Pick<
+  typeof aiEmployeesTable.$inferSelect,
+  'userId' | 'environmentId' | 'executable' | 'providerId' | 'model' | 'apiKeySecretId' | 'instructions'
+>;
+
+/** shared row mapping: user identity + supervision edges + AI extension -> EmployeeRow */
+const mapEmployeeRows = (users: EmployeeUserRow[], supRows: SupervisorEdge[], aiRows: AiExtensionRow[]) => {
   const sups = new Map<string, string[]>();
   for (const s of supRows) {
     nonNull(sups.get(s.employeeId) ?? sups.set(s.employeeId, []).get(s.employeeId)).push(s.supervisorId);
   }
   const aiByUser = new Map(aiRows.map((r) => [r.userId, r]));
-  return rows.map((r): EmployeeRow => {
+  return users.map((r): EmployeeRow => {
     const ai = aiByUser.get(r.id);
     return {
       id: r.id,
@@ -222,10 +214,66 @@ const listEmployeesSnapshot = async () => {
   });
 };
 
+/** supervision + AI extension rows are small — every list shape fetches them in full */
+const fetchSupervisionAndAi = async () => {
+  const supRows = await db.query.employeeSupervisors.findMany({
+    columns: { employeeId: true, supervisorId: true },
+    orderBy: { employeeId: 'asc' },
+  });
+  const aiRows = await db.query.aiEmployees.findMany({
+    columns: {
+      userId: true,
+      environmentId: true,
+      executable: true,
+      providerId: true,
+      model: true,
+      apiKeySecretId: true,
+      instructions: true,
+    },
+    orderBy: { userId: 'asc' },
+  });
+  return { supRows, aiRows };
+};
+
+const listEmployeesSnapshot = async () => {
+  const rows = await db.query.user.findMany({
+    columns: { id: true, name: true, email: true, image: true, title: true, createdAt: true, updatedAt: true },
+    orderBy: { createdAt: 'asc' },
+  });
+  const { supRows, aiRows } = await fetchSupervisionAndAi();
+  return mapEmployeeRows(rows, supRows, aiRows);
+};
+
+/** paged + searched variant of the snapshot; total counts users only */
+const listEmployeesPaged = async (input: { page: number; pageSize: number; q?: string }) => {
+  const q = input.q?.trim();
+  const { data, total } = await db.query.user.findManyAndCount({
+    columns: { id: true, name: true, email: true, image: true, title: true, createdAt: true, updatedAt: true },
+    where: q
+      ? { OR: [{ name: { ilike: `%${q}%` } }, { email: { ilike: `%${q}%` } }, { title: { ilike: `%${q}%` } }] }
+      : EmptyFilter,
+    orderBy: { createdAt: 'asc' },
+    limit: input.pageSize,
+    offset: (input.page - 1) * input.pageSize,
+  });
+  const { supRows, aiRows } = await fetchSupervisionAndAi();
+  return { employees: mapEmployeeRows(data, supRows, aiRows), total };
+};
+
 export const employeesRouter = os.router({
-  /** live list — every employee with supervisors + AI extension, one snapshot */
   /** plain GET list (first-load data per the SSE law) */
   list: protectedProcedure.handler(() => listEmployeesSnapshot()),
+
+  /** paged + searched rows for the employees manager table */
+  listPaged: protectedProcedure
+    .input(
+      z.object({
+        page: z.number().int().min(1).default(1),
+        pageSize: z.number().int().min(1).max(100).default(20),
+        q: z.string().trim().optional(),
+      }),
+    )
+    .handler(({ input }) => listEmployeesPaged(input)),
 
   live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.EMPLOYEES], listEmployeesSnapshot)),
 

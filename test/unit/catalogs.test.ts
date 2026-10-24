@@ -300,3 +300,83 @@ describe('environments listPaged', () => {
     expect(miss.total).toBe(0);
   });
 });
+
+describe('employees listPaged', () => {
+  it('pages, searches (q over name/email/title), and reports total', async () => {
+    // the harness seeds a session admin user that would sit in every count — sweep users for exact totals
+    const { db } = await import('#server/db');
+    const { user } = await import('#server/db/schema');
+    await db.delete(user);
+
+    const { id: envId } = (await proc(['environments', 'create'], {
+      name: 'pager-env',
+      host: '10.9.9.9',
+      port: '22',
+      username: 'deploy',
+    })) as { id: string };
+
+    const alpha = (await proc(['employees', 'create'], {
+      name: 'Page Alpha',
+      email: 'alpha@t.local',
+      title: 'Engineer',
+      kind: 'human',
+    })) as { id: string };
+    await proc(['employees', 'create'], {
+      name: 'Page Beta',
+      email: 'beta-page@t.local',
+      title: 'Designer',
+      kind: 'human',
+      supervisorIds: [alpha.id],
+    });
+    await proc(['employees', 'create'], {
+      name: 'Gamma Rematch',
+      email: 'gamma@t.local',
+      title: 'Wizard',
+      kind: 'ai',
+      environmentId: envId,
+      executable: 'hermes acp',
+    });
+
+    const page1 = (await proc(['employees', 'listPaged'], { page: 1, pageSize: 2 })) as {
+      employees: Array<{ id: string }>;
+      total: number;
+    };
+    expect(page1.total).toBe(3);
+    expect(page1.employees).toHaveLength(2);
+
+    const page2 = (await proc(['employees', 'listPaged'], { page: 2, pageSize: 2 })) as {
+      employees: Array<{ id: string }>;
+      total: number;
+    };
+    expect(page2.employees).toHaveLength(1);
+
+    const byName = (await proc(['employees', 'listPaged'], { page: 1, pageSize: 10, q: 'alpha' })) as {
+      employees: Array<{ name: string; kind: string }>;
+      total: number;
+    };
+    expect(byName.total).toBe(1);
+    expect(byName.employees[0]!.name).toBe('Page Alpha');
+
+    const byEmail = (await proc(['employees', 'listPaged'], { page: 1, pageSize: 10, q: 'beta-page' })) as {
+      employees: Array<{ name: string; supervisorIds: string[] }>;
+      total: number;
+    };
+    expect(byEmail.total).toBe(1);
+    expect(byEmail.employees[0]!.name).toBe('Page Beta');
+    // paged rows carry the same supervision mapping as the snapshot
+    expect(byEmail.employees[0]!.supervisorIds).toEqual([alpha.id]);
+
+    const byTitle = (await proc(['employees', 'listPaged'], { page: 1, pageSize: 10, q: 'wizar' })) as {
+      employees: Array<{ name: string; kind: string; executable: string | null }>;
+      total: number;
+    };
+    expect(byTitle.total).toBe(1);
+    expect(byTitle.employees[0]!.name).toBe('Gamma Rematch');
+    // AI extension mapped identically on paged rows
+    expect(byTitle.employees[0]!.kind).toBe('ai');
+    expect(byTitle.employees[0]!.executable).toBe('hermes acp');
+
+    const miss = (await proc(['employees', 'listPaged'], { page: 1, pageSize: 10, q: 'zzz' })) as { total: number };
+    expect(miss.total).toBe(0);
+  });
+});
