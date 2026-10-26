@@ -92,10 +92,23 @@ type BriefInput = {
   /** exact deliverable out-dir for this run's task — agents must not guess it */
   outDir: string;
   recentActivity: Array<{ kind: string; authorName: string | null; body: string | null }>;
+  /** reader already ran this task: the ticket lives in their session, prompt is a relay */
+  relay: boolean;
   attachments?: Array<{ id: string; filename: string; mime: string; size: number; remotePath: string }>;
 };
 
 export function buildBrief(input: BriefInput) {
+  if (input.relay) {
+    // continuation: the ticket already lives in this agent's session
+    return [
+      ...orgSection(input),
+      '',
+      'CONTINUATION — you worked on this task before; the messages below are everything new since your last turn. If you are missing earlier context (fresh session), ask for the full ticket via a blocked envelope.',
+      ...activitySection(input),
+      ...attachmentsSection(input),
+      ...contractSection(input),
+    ].join('\n');
+  }
   return [
     ...orgSection(input),
     ...contextSection(input),
@@ -208,7 +221,7 @@ function stripMentions(desc: string) {
 }
 
 /** gather everything the brief needs from the DB (single dispatch-time read) */
-export async function loadBriefData(taskId: string) {
+export async function loadBriefData(taskId: string, readerEmployeeId?: string) {
   const task = await db.query.tasks.findFirst({
     columns: {
       title: true,
@@ -263,16 +276,15 @@ export async function loadBriefData(taskId: string) {
     if (!users.some((u) => u.id === mid)) continue;
     extra.push({ person: person(mid), chain: chainToRoot(mid, edges).map(person) });
   }
-  // thread messages only (owner ruling 2026-10-26): STATUS bookkeeping and the
-  // run turns themselves are noise; rows newer than the agent's last finished
-  // run carry exactly the decisions the next turn needs (answers, verdicts, notes)
+  // prompt source = task_messages (owner ruling 2026-10-26); the relay filter
+  // below decides what actually ships
   const threadRows = await db.query.taskMessages.findMany({
     columns: { id: true, body: true, authorId: true, createdAt: true },
     where: { taskId: { eq: taskId } },
     orderBy: { createdAt: 'asc' },
     with: {
       author: { columns: { name: true } },
-      run: { columns: { finishedAt: true, startedAt: true } },
+      run: { columns: { finishedAt: true, employeeId: true } },
       activityExt: { columns: { payload: true } },
     },
   });
@@ -280,15 +292,29 @@ export async function loadBriefData(taskId: string) {
     .map((m) => m.run?.finishedAt)
     .filter((t): t is Date => t instanceof Date)
     .sort((a, b) => a.getTime() - b.getTime());
-  const lastFinished = finishedAts.at(-1) ?? null;
+  // relay law (owner ruling 2026-10-26): the prompt is a conversation relay, not a
+  // re-brief. The TASK block ships only on the reader's first run of the task; later
+  // prompts carry just the messages since the reader's own last finished turn —
+  // other agents' results are the relay, own turns live in session memory, STATUS
+  // bookkeeping never ships.
+  const ownFinished = finishedAts.filter(
+    (f) => !readerEmployeeId || threadRows.some((m) => m.run?.employeeId === readerEmployeeId && m.run.finishedAt?.getTime() === f.getTime()),
+  );
+  const hasPrior = ownFinished.length > 0;
+  const lastFinished = hasPrior ? (ownFinished.at(-1) ?? null) : null;
   const extKind = (m: (typeof threadRows)[number]) => activityKindOf(m.activityExt?.payload);
-  const convo = lastFinished
-    ? threadRows.filter((m) => m.createdAt > lastFinished && extKind(m) !== 'status' && !m.run)
-    : [];
+  const convo = threadRows.filter((m) => {
+    if (lastFinished && m.createdAt <= lastFinished) return false;
+    if (extKind(m) === 'status') return false;
+    // other agents' settled results relay; the reader's own turns live in session memory
+    if (m.run) return m.run.employeeId !== readerEmployeeId;
+    return true;
+  });
   const nameById = new Map(users.map((u) => [u.id, u.name]));
   const recent = convo.map((m) => ({
-    kind: extKind(m) || 'note',
-    authorName: m.author?.name ?? null,
+    kind: m.run ? 'result' : extKind(m) || 'note',
+    // run turns carry no message author; the employee user row names them
+    authorName: m.run ? (nameById.get(m.run.employeeId ?? '') ?? 'agent') : (m.author?.name ?? null),
     body: m.body,
   }));
   const ai = aiById.get(assigneeId);
@@ -333,6 +359,7 @@ export async function loadBriefData(taskId: string) {
       projectName: projectRow?.name ?? null,
     },
     recentActivity: [...recent, ...rejectedNotes.map((n) => ({ kind: 'note', authorName: 'system', body: n }))],
+    relay: hasPrior,
     attachments,
   };
 }

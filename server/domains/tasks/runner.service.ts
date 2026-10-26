@@ -405,18 +405,22 @@ function reviewBrief(
   reviewerName: string,
   taskTitle: string,
   taskDescription: string,
-  briefData: { recentActivity: Array<{ kind: string; authorName: string | null; body: string | null }> },
+  briefData: { recentActivity: Array<{ kind: string; authorName: string | null; body: string | null }>; relay: boolean },
   resultBody: string,
+  relay = false,
 ) {
   const lines: string[] = [];
   lines.push(
     `You are ${reviewerName}, reviewing a submitted result. This is a REVIEW turn — do the work again is NOT the goal; verify and verdict.`,
   );
   lines.push('');
-  lines.push('TASK UNDER REVIEW');
-  lines.push(`Title: ${taskTitle}`);
-  if (taskDescription.trim()) lines.push(`Description: ${taskDescription.trim().slice(0, 2000)}`);
-  lines.push('');
+  // relay law: on the reviewer's repeat turns the ticket lives in their session
+  if (!relay) {
+    lines.push('TASK UNDER REVIEW');
+    lines.push(`Title: ${taskTitle}`);
+    if (taskDescription.trim()) lines.push(`Description: ${taskDescription.trim().slice(0, 2000)}`);
+    lines.push('');
+  }
   lines.push('SUBMITTED RESULT (by the assignee)');
   /* v8 ignore next -- '(no result text)' is defensive; submits carry a body */
   lines.push(resultBody.slice(0, 4000) || '(no result text)');
@@ -718,9 +722,9 @@ export async function dispatchTask(
     finished: new Promise((resolve) => {
       void (async () => {
         try {
-          const briefData = await loadBriefData(taskId);
+          const briefData = await loadBriefData(taskId, plan.ai.userId);
           const brief = plan.review
-            ? reviewBrief(plan.agentName, plan.task.title, plan.task.description, briefData, plan.review.resultBody)
+            ? reviewBrief(plan.agentName, plan.task.title, plan.task.description, briefData, plan.review.resultBody, briefData.relay)
             : buildBrief({ ...briefData, outDir: `~/.tandem/${taskId}/attachments/out/` });
           // persist the exact prompt so the run is auditable from the task page
           await db.update(taskRuns).set({ prompt: brief }).where(eq(taskRuns.id, runId));

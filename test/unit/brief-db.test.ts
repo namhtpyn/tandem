@@ -98,38 +98,68 @@ describe('loadBriefData (real db)', () => {
     expect(d.recentActivity).toEqual([]);
   });
 
-  it('activity section only carries rows newer than the last finished run', async () => {
-    const { db: d2 } = await dbm();
-    const { taskMessages: msgs, taskRuns: runs } = await schema2();
-    const old = new Date(Date.now() - 60 * 60_000);
-    const mid = new Date(Date.now() - 30 * 60_000);
-    await d2.insert(msgs).values({ id: `m-old-${rnd()}`, taskId, authorId: chiefId, body: 'old note', createdAt: old });
-    const runId = `run-${rnd()}`;
-    await d2.insert(runs).values({
-      id: runId,
-      messageId: (
-        await d2.insert(msgs).values({ id: `m-run-${rnd()}`, taskId, body: '', createdAt: mid }).returning({ id: msgs.id })
-      )[0]!.id,
+  it('relay law: first run full ticket, later runs carry only the other side\'s messages', async () => {
+    const d0 = await loadBriefData(taskId, agentId);
+    // Jay #1: first dispatch — full ticket, no activity section
+    expect(d0.relay).toBe(false);
+    expect(d0.recentActivity).toEqual([]);
+
+    // Jay run 1 settles: body filled from the result envelope (updateRunMessageBody)
+    await db.insert(taskMessages).values({ id: 'msg-jay1', taskId, body: 'Jay: blocked, need cloudflare dns', createdAt: new Date(Date.now() - 95_000) });
+    await db.insert(taskRuns).values({
+      id: 'run-jay1',
+      messageId: 'msg-jay1',
       employeeId: agentId,
       environmentId: 'env-x',
       status: 'DONE',
       output: '',
-      startedAt: mid,
-      finishedAt: new Date(Date.now() - 10 * 60_000),
+      finishedAt: new Date(Date.now() - 90_000),
     });
-    await d2.insert(msgs).values({
-      id: `m-new-${rnd()}`,
-      taskId,
-      authorId: chiefId,
-      body: 'answer: use blue',
-      createdAt: new Date(Date.now() - 5 * 60_000),
+
+    // Ash #1 (takeover): first run — full ticket + Jay's result
+    const dAsh1 = await loadBriefData(taskId, chiefId);
+    expect(dAsh1.relay).toBe(false);
+    expect(dAsh1.recentActivity.map((a) => [a.kind, a.authorName, a.body])).toEqual([
+      ['result', 'Agent One', 'Jay: blocked, need cloudflare dns'],
+    ]);
+
+    // Ash run 1 settles
+    await db.insert(taskMessages).values({ id: 'msg-ash1', taskId, body: 'Ash: dns updated', createdAt: new Date(Date.now() - 65_000) });
+    await db.insert(taskRuns).values({
+      id: 'run-ash1',
+      messageId: 'msg-ash1',
+      employeeId: chiefId,
+      environmentId: 'env-x',
+      status: 'DONE',
+      output: '',
+      finishedAt: new Date(Date.now() - 60_000),
     });
-    const all = await d2.select().from(msgs);
-    console.log('DBG msgs:', JSON.stringify(all.map((m) => ({ id: m.id, body: m.body, at: m.createdAt }))));
-    const d = await loadBriefData(taskId);
-    console.log('DBG recent:', JSON.stringify(d.recentActivity));
-    // only the post-run message survives; the pre-run note is session memory now
-    expect(d.recentActivity.map((a) => a.body)).toEqual(['answer: use blue']);
+
+    // Jay #2 (handback): no ticket, only Ash's message — relay true
+    const dJay2 = await loadBriefData(taskId, agentId);
+    expect(dJay2.relay).toBe(true);
+    expect(dJay2.recentActivity.map((a) => a.body)).toEqual(['Ash: dns updated']);
+    const briefJay2 = buildBrief(dJay2);
+    expect(briefJay2).toContain('CONTINUATION');
+    expect(briefJay2).not.toContain('\nTASK\n'); // ticket block dropped on continuation
+    expect(briefJay2).toContain('OUTPUT CONTRACT'); // protocol still rides
+
+    // Jay run 2 settles
+    await db.insert(taskMessages).values({ id: 'msg-jay2', taskId, body: 'Jay: done, pr opened', createdAt: new Date(Date.now() - 35_000) });
+    await db.insert(taskRuns).values({
+      id: 'run-jay2',
+      messageId: 'msg-jay2',
+      employeeId: agentId,
+      environmentId: 'env-x',
+      status: 'DONE',
+      output: '',
+      finishedAt: new Date(Date.now() - 30_000),
+    });
+
+    // Ash #2 (review): only Jay's completion message
+    const dAsh2 = await loadBriefData(taskId, chiefId);
+    expect(dAsh2.relay).toBe(true);
+    expect(dAsh2.recentActivity.map((a) => a.body)).toEqual(['Jay: done, pr opened']);
   });
 
   it('covers long activity truncation, mention name stripping, populated reviewers', async () => {
@@ -150,7 +180,7 @@ describe('loadBriefData (real db)', () => {
       .update(tasks)
       .set({ description: `ping @[Peer Three](mention-${peerId}) and [@ label="Chief Two"]`, reviewers: [chiefId] })
       .where(eq(tasks.id, taskId));
-    const d = await loadBriefData(taskId);
+    const d = await loadBriefData(taskId, agentId);
     const brief = buildBrief(d);
     expect(brief).toContain('…'); // long activity truncated
     expect(brief).toContain('Peer Three'); // mention link stripped to the bare name
@@ -214,7 +244,7 @@ describe('loadBriefData (real db)', () => {
       finishedAt: new Date(Date.now() - 60_000),
     });
     await db.insert(taskMessages).values({ id: 'ghost-note', taskId, authorId: null, body: 'system did something' });
-    const d = await loadBriefData(taskId);
+    const d = await loadBriefData(taskId, agentId);
     expect(d.recentActivity.some((a) => a.authorName === null)).toBe(true);
   });
 
