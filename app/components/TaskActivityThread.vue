@@ -51,7 +51,8 @@ type ThreadRow = {
   activity: Record<string, unknown> | null;
 };
 const threadRows = computed(() => (unref(threadQuery.data) ?? []) as unknown as ThreadRow[]);
-const runFeed = computed(() => threadRows.value.flatMap((r) => (r.run ? [r.run] : [])));
+// the run's thread message carries the settled result body — attach it to the run feed
+const runFeed = computed(() => threadRows.value.flatMap((r) => (r.run ? [{ ...r.run, body: r.body }] : [])));
 const workflowFeed = computed(() =>
   threadRows.value
     .filter((r) => r.activity)
@@ -88,6 +89,7 @@ const thread = computed<ThreadItem[]>(() =>
           : 'failed') as 'running' | 'done' | 'failed',
       output: r.output,
       prompt: r.prompt,
+      body: r.body,
       agentName: r.agentName,
       exitCode: r.exitCode,
       startedAt: r.startedAt,
@@ -257,14 +259,14 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
             formatThreadTime(item.startedAt)
           }}</span>
         </p>
-        <!-- envelope: the decision-model line, integrated not alarmist (max-w for rhythm) -->
+        <!-- message: the settled result body; envelope parse only as a pre-settle fallback -->
         <div
-          v-if="envelopeOf(item)"
+          v-if="item.body || envelopeOf(item)"
           :class="[
             'max-w-[calc(100%-3rem)] rounded-xl rounded-tl-sm border-l-2 px-3.5 py-2.5 text-sm leading-relaxed',
-            envelopeOf(item)!.kind === 'question'
+            envelopeOf(item)?.kind === 'question'
               ? 'border-l-blue-400/70 bg-blue-50/40 text-zinc-800 dark:bg-blue-500/10 dark:text-zinc-200'
-              : envelopeOf(item)!.kind === 'blocked'
+              : envelopeOf(item)?.kind === 'blocked'
                 ? 'border-l-error/70 bg-error/5 dark:bg-error/5 text-zinc-800 dark:text-zinc-200'
                 : 'border-l-emerald-400/70 bg-emerald-50/40 text-zinc-800 dark:bg-emerald-500/10 dark:text-zinc-200',
           ]"
@@ -274,12 +276,12 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
               'mr-1.5 align-middle text-[9px] font-bold tracking-widest uppercase',
               envelopeOf(item)!.kind === 'question'
                 ? 'text-blue-500'
-                : envelopeOf(item)!.kind === 'blocked'
+                : envelopeOf(item)?.kind === 'blocked'
                   ? 'text-error'
                   : 'text-emerald-600 dark:text-emerald-400',
             ]"
-            >{{ envelopeOf(item)!.kind }}</span
-          ><span class="align-middle">{{ envelopeOf(item)!.text || '(empty)' }}</span>
+            >{{ envelopeOf(item)?.kind ?? 'result' }}</span
+          ><span class="align-middle">{{ item.body || envelopeOf(item)?.text || '(empty)' }}</span>
         </div>
         <!-- collected output files (agent deliverables) -->
         <div v-if="runOutputs(item).length" class="mt-1.5 flex flex-wrap gap-1.5">
@@ -305,11 +307,28 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
             >
           </template>
         </div>
-        <!-- raw output: FULL transcript, never trimmed, never folded -->
-        <pre
-          v-if="item.output"
-          class="mt-1 rounded-md bg-zinc-950 px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-zinc-200"
-          >{{ item.output }}</pre>
+        <!-- raw input: the exact brief, expandable below the message -->
+        <details v-if="item.prompt" class="mt-1">
+          <summary
+            class="cursor-pointer text-xs text-zinc-400 select-none hover:text-zinc-600 dark:hover:text-zinc-300"
+          >
+            input
+          </summary>
+          <pre
+            class="mt-1 rounded-md bg-zinc-100 px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-zinc-800 dark:bg-zinc-800/70 dark:text-zinc-300"
+            >{{ item.prompt }}</pre>
+        </details>
+        <!-- raw output: FULL transcript, expandable below the message -->
+        <details v-if="item.output" class="mt-1">
+          <summary
+            class="cursor-pointer text-xs text-zinc-400 select-none hover:text-zinc-600 dark:hover:text-zinc-300"
+          >
+            output
+          </summary>
+          <pre
+            class="mt-1 rounded-md bg-zinc-950 px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-zinc-200"
+            >{{ item.output }}</pre>
+        </details>
       </div>
     </div>
 
