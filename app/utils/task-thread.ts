@@ -25,6 +25,8 @@ export type ThreadRunItem = {
   agentName?: string | null;
   /** the exact prompt (brief) sent for this turn, when recorded */
   prompt?: string | null;
+  /** the parsed result the settle wrote onto the thread message */
+  body?: string | null;
   startedAt: string;
   finishedAt: string | null;
 };
@@ -46,7 +48,7 @@ export type ThreadSource = {
   briefAuthorName?: string | null;
   briefAuthorId?: string | null;
   runs?: Array<
-    Pick<ThreadRunItem, 'id' | 'status' | 'output' | 'exitCode' | 'prompt' | 'agentName' | 'startedAt' | 'finishedAt'>
+    Pick<ThreadRunItem, 'id' | 'status' | 'output' | 'exitCode' | 'prompt' | 'body' | 'agentName' | 'startedAt' | 'finishedAt'>
   >;
   activity?: Array<Pick<ThreadNoteItem, 'id' | 'noteKind' | 'body' | 'authorName' | 'authorId' | 'createdAt'>>;
 };
@@ -160,6 +162,7 @@ export function buildThread(src: ThreadSource): ThreadItem[] {
       exitCode: r.exitCode,
       output: r.output,
       prompt: r.prompt,
+      body: r.body,
       agentName: r.agentName,
       startedAt: r.startedAt,
       finishedAt: r.finishedAt,
