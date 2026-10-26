@@ -1,3 +1,23 @@
+# [2.43.0](https://github.com/namhtpyn/tandem/compare/v2.42.0...v2.43.0) (2026-10-26)
+
+
+### Bug Fixes
+
+* **app:** task sidebar status picker routes through tasks.setStatus ([b8199a0](https://github.com/namhtpyn/tandem/commit/b8199a0263428b62b314f79ae1de3860f7402370))
+* **db:** thread backfill payload carries the activity kind ([6dcc407](https://github.com/namhtpyn/tandem/commit/6dcc40735c0093f932cca6608cf85bd9d7cc0956))
+* **security:** close run-1 audit findings — role gates, secret-egress binding, exec escaping, workflow integrity ([d321913](https://github.com/namhtpyn/tandem/commit/d3219138827b7c680e2522769669cecac07dc216))
+
+
+### Features
+
+* **db:** task conversation tables — base thread + per-kind extensions (phase 1) ([7a9d4d7](https://github.com/namhtpyn/tandem/commit/7a9d4d7d9ea8b927ee5c2229a882644f01ec726e))
+* **tasks:** unified conversation thread — thread procs + dual-write + client swap (phases 2-3) ([67fb645](https://github.com/namhtpyn/tandem/commit/67fb645112607629d3258a4aa20fdb0efbba5394))
+
+
+### Reverts
+
+* **security:** drop role/permission gates — not needed yet (owner order) ([4048e60](https://github.com/namhtpyn/tandem/commit/4048e60794816a0d92fd8355734ab35df16fb442))
+
 # [2.42.0](https://github.com/namhtpyn/tandem/compare/v2.41.0...v2.42.0) (2026-10-24)
 
 
