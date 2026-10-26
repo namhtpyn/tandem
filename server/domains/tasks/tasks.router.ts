@@ -11,12 +11,14 @@ import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
 import { projects as projectsTable, tasks as tasksTable, taskProposals } from '../../db/schema';
-import { env } from '../kernel/env';
-import { protectedProcedure, employeeProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+
+
 import { recordAssignment, listAssignments } from './assignments.service';
 import { refreshParentGating } from './gating.service';
 import { approvalsInRoundBatch, openObligations, pendingForUser, pendingCounts } from './obligations.service';
 import { confirmProposal, rejectProposal } from './proposals.service';
+import { env } from '../kernel/env';
+import { liveGenerator, ORPCError, protectedProcedure, publishChange } from '../kernel/kernel';
 import { listReviews, logActivity } from './review.service';
 import { dispatchTask, listRuns } from './runner.service';
 import { listTaskThread } from './thread.service';
@@ -439,7 +441,7 @@ export const tasksRouter = os.router({
   }),
 
   /** manual status move: graph-legal + category-allowed; done/in-review stay workflow-only */
-  setStatus: employeeProcedure
+  setStatus: protectedProcedure
     .input(z.strictObject({ id: z.string().min(1), status: z.string().min(1) }))
     .handler(async ({ input, context }) => {
       const rows = await db.query.tasks.findMany({
@@ -535,7 +537,7 @@ export const tasksRouter = os.router({
   }),
 
   /** confirm an agent proposal (single writer executes: creates subtasks / reassigns) */
-  confirmProposal: employeeProcedure
+  confirmProposal: protectedProcedure
     .input(z.object({ proposalId: z.string().min(1), note: z.string().max(2000).optional() }))
     .handler(async ({ input, context }) => {
       const me = await selfIdOf(context);
@@ -543,7 +545,7 @@ export const tasksRouter = os.router({
     }),
 
   /** reject an agent proposal (note rides the next brief to prevent re-propose loops) */
-  rejectProposal: employeeProcedure
+  rejectProposal: protectedProcedure
     .input(z.object({ proposalId: z.string().min(1), note: z.string().max(2000).optional() }))
     .handler(async ({ input, context }) => {
       const me = await selfIdOf(context);

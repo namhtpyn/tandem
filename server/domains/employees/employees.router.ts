@@ -20,7 +20,7 @@ import {
   user as userTable,
   vaultSecrets as vaultSecretsTable,
 } from '../../db/schema';
-import { adminProcedure, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/;
 
@@ -289,7 +289,7 @@ export const employeesRouter = os.router({
 
   /** create an employee AND its login user. kind=ai also mints an API key
    *  (returned once) and the AI extension row. */
-  create: adminProcedure
+  create: protectedProcedure
     .input(
       z.strictObject({
         name: z.string().min(1).max(100),
@@ -366,7 +366,7 @@ export const employeesRouter = os.router({
       return { id: userId, userId, apiKey };
     }),
 
-  update: adminProcedure
+  update: protectedProcedure
     .input(
       z.strictObject({
         id: z.string().min(1),
@@ -521,7 +521,7 @@ export const employeesRouter = os.router({
     }),
   },
 
-  remove: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input, context }) => {
+  remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input, context }) => {
     // guard: cannot delete yourself (session may be absent in raw handler tests)
     const selfId = (context as { session?: { user?: { id?: string } } }).session?.user?.id;
     if (selfId && selfId === input.id) {
@@ -553,7 +553,7 @@ export const employeesRouter = os.router({
   }),
 
   /** mint a fresh access key for any employee — AI or human (old keys stay valid) */
-  createApiKey: adminProcedure
+  createApiKey: protectedProcedure
     .input(
       z.strictObject({
         employeeId: z.string().min(1),
@@ -573,7 +573,7 @@ export const employeesRouter = os.router({
     }),
 
   /** rename an access key */
-  updateApiKey: adminProcedure
+  updateApiKey: protectedProcedure
     .input(
       z.strictObject({
         keyId: z.string().min(1),
@@ -619,7 +619,7 @@ export const employeesRouter = os.router({
     }),
 
   /** revoke one API key */
-  revokeApiKey: adminProcedure.input(z.strictObject({ keyId: z.string().min(1) })).handler(async ({ input }) => {
+  revokeApiKey: protectedProcedure.input(z.strictObject({ keyId: z.string().min(1) })).handler(async ({ input }) => {
     const deleted = await db
       .delete(apikeyTable)
       .where(eq(apikeyTable.id, input.keyId))

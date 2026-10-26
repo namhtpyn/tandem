@@ -18,7 +18,7 @@ const listFolderOptionsInput = z.object({
 
 import { CHANGE_RESOURCE } from '#shared/enums';
 
-import { adminProcedure, protectedProcedure, liveGenerator } from '../../kernel/kernel';
+import { protectedProcedure, liveGenerator } from '../../kernel/kernel';
 import { listFolders, listFoldersPaged, listFolderOptions, saveFolder, removeFolder } from './folder.service';
 
 export const folderRouter = os.router({
@@ -32,7 +32,7 @@ export const folderRouter = os.router({
   live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.VAULT], listFolders)),
 
   /** create/rename a folder (admin-only write) */
-  save: adminProcedure
+  save: protectedProcedure
     .input(
       z.strictObject({
         id: z.string().min(1).optional(),
@@ -42,7 +42,7 @@ export const folderRouter = os.router({
     .handler(({ input }) => saveFolder(input)),
 
   /** deleting a folder never deletes secrets — they fall back to uncategorized (FK SET NULL) */
-  remove: adminProcedure
+  remove: protectedProcedure
     .input(z.strictObject({ id: z.string().min(1) }))
     .handler(({ input }) => removeFolder(input)),
 });

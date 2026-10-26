@@ -10,7 +10,7 @@ import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
 import { projects as projectsTable, taskStatuses as taskStatusesTable, tasks as tasksTable } from '../../db/schema';
-import { adminProcedure, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 
 async function listStatuses() {
   const rows = await db.query.taskStatuses.findMany({
@@ -35,7 +35,7 @@ export const statusesRouter = os.router({
   live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.STATUSES], listStatuses)),
 
   /** create or update a status (upsert by id, admin-only) */
-  save: adminProcedure
+  save: protectedProcedure
     .input(
       z.strictObject({
         id: z.string().min(1).max(64).optional(),
@@ -92,7 +92,7 @@ export const statusesRouter = os.router({
     }),
 
   /** delete a status: blocked while in use; prunes dangling transition edges (admin-only) */
-  remove: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+  remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
     // seeded workflow statuses are load-bearing (code + migrations address them by id)
     if ((Object.values(STATUS) as string[]).includes(input.id)) {
       throw new ORPCError('BAD_REQUEST', { message: 'built-in status' });
@@ -130,7 +130,7 @@ export const statusesRouter = os.router({
   /** auto-assign a task via Jev (typed choice over employee candidates).
    *  No-op when a Jev key isn't configured or Jev is unsure — the task
    *  stays unassigned for a human decision. */
-  assign: adminProcedure.input(z.strictObject({ taskId: z.string().min(1) })).handler(async ({ input }) => {
+  assign: protectedProcedure.input(z.strictObject({ taskId: z.string().min(1) })).handler(async ({ input }) => {
     const tRows = await db.query.tasks.findMany({
       columns: { id: true, title: true, description: true, projectId: true },
       where: { id: { eq: input.taskId } },

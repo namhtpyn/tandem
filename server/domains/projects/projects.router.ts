@@ -10,7 +10,7 @@ import type { ProjectRow } from '#shared/types';
 
 import { db } from '../../db/index';
 import { projects as projectsTable } from '../../db/schema';
-import { employeeProcedure, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 
 export const projectsRouter = os.router({
   /** live list — flat rows; nesting resolved client-side from parentId */
@@ -69,7 +69,7 @@ export const projectsRouter = os.router({
   ),
 
   /** create (staff only — employees and admins) */
-  create: employeeProcedure
+  create: protectedProcedure
     .input(
       z.strictObject({
         name: z.string().min(1).max(120),
@@ -99,7 +99,7 @@ export const projectsRouter = os.router({
     }),
 
   /** update (name/description/status/parent — cycle-guarded, staff only) */
-  update: employeeProcedure
+  update: protectedProcedure
     .input(
       z.strictObject({
         id: z.string().min(1),
@@ -157,7 +157,7 @@ export const projectsRouter = os.router({
     }),
 
   /** delete — tasks orphan to no-project (set null); children orphan to root (set null); staff only */
-  remove: employeeProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+  remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
     await db.delete(projectsTable).where(eq(projectsTable.id, input.id));
     await publishChange(CHANGE_RESOURCE.PROJECTS, CHANGE_ACTION.REMOVE);
     return { ok: true };

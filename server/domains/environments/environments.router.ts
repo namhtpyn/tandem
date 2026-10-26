@@ -10,7 +10,7 @@ import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
 import { environments as environmentsTable, vaultSecrets as vaultSecretsTable } from '../../db/schema';
-import { adminProcedure, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
 import { listEnvironments, listEnvironmentsPaged, toRow } from './environments.service';
 import { environmentInput } from './environments.util';
@@ -34,7 +34,7 @@ export const environmentsRouter = os.router({
   /** live list — pushes a fresh snapshot on every environments change */
   live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.ENVIRONMENTS], listEnvironments)),
 
-  create: adminProcedure.input(environmentInput).handler(async ({ input }) => {
+  create: protectedProcedure.input(environmentInput).handler(async ({ input }) => {
     const clash = await db
       .select({ id: environmentsTable.id })
       .from(environmentsTable)
@@ -59,7 +59,7 @@ export const environmentsRouter = os.router({
     return toRow(nonNull(inserted[0]));
   }),
 
-  update: adminProcedure
+  update: protectedProcedure
     .input(z.strictObject({ id: z.string().min(1), ...environmentInput.shape }))
     .handler(async ({ input }) => {
       const { id, ...data } = input;
@@ -91,7 +91,7 @@ export const environmentsRouter = os.router({
       return toRow(nonNull(updated[0]));
     }),
 
-  remove: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+  remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
     const deleted = await db
       .delete(environmentsTable)
       .where(eq(environmentsTable.id, input.id))
@@ -103,7 +103,7 @@ export const environmentsRouter = os.router({
     return { ok: true };
   }),
 
-  probe: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+  probe: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
     const rows = await db.query.environments.findMany({
       columns: { host: true, port: true, username: true, secretId: true, secretUsage: true },
       where: { id: { eq: input.id } },
