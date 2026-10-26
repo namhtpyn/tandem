@@ -1,4 +1,4 @@
-FROM oven/bun:1.4.2-alpine AS build
+FROM oven/bun:1.4.4-alpine AS build
 ARG APP_VERSION=dev
 WORKDIR /app
 COPY package.json bun.lock ./
@@ -6,7 +6,7 @@ RUN bun install --frozen-lockfile
 COPY . .
 RUN bun run build
 
-FROM oven/bun:1.4.2-alpine AS runtime
+FROM oven/bun:1.4.4-alpine AS runtime
 ARG APP_VERSION=dev
 WORKDIR /app
 # ssh client for the environment SSH probe (openssh-client, no server)
