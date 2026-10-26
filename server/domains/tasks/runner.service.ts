@@ -183,6 +183,7 @@ import {
 /** everything the dispatched agent needs, decrypted; returns null pieces when unconfigured */
 import { buildBrief, loadBriefData } from './brief.service';
 import { recordProposals } from './proposals.service';
+import { insertRunMessage } from './thread.service';
 import { recordVerdict } from './review.service';
 import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles, ensureOutDir } from './ssh-files.util';
 import { submitResult, askQuestion } from './workflow.service';
@@ -539,6 +540,14 @@ export async function dispatchTask(
     environmentId: plan.env.id,
     status: RUN_STATUS.RUNNING,
     output: '',
+  });
+  // the run's thread turn — output stays on the run row, the message links it
+  await insertRunMessage({
+    taskId,
+    authorId: plan.ai.userId,
+    body: '',
+    runId,
+    createdAt: new Date(),
   });
   await db.update(tasks).set({ status: STATUS.doing, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);

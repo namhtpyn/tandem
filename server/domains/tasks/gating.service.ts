@@ -6,21 +6,18 @@
 //   - recursive by construction: a child isn't complete while ITS children are open,
 //     because the same rule keeps that child non-terminal until its own gate lifts.
 import { eq, inArray } from 'drizzle-orm';
-import { v7 as uuidv7 } from 'uuid';
 
-import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 import { db } from '../../db/index';
-import { tasks, taskActivity, taskStatuses } from '../../db/schema';
-import { publishChange } from '../kernel/kernel';
+import { logActivity as publishActivity } from './review.service';
+import { tasks, taskStatuses } from '../../db/schema';
+import { ACTIVITY_KIND } from '#shared/enums';
 
 export const BLOCKED_STATUS = STATUS.blocked;
 
 async function logActivity(taskId: string, body: string, meta: Record<string, unknown> = {}) {
-  await db.insert(taskActivity).values({ id: uuidv7(), taskId, kind: 'status', authorId: null, body, meta });
-  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
-  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+  await publishActivity(taskId, ACTIVITY_KIND.STATUS, null, body, meta);
 }
 
 /** status ids whose category is terminal (done | cancelled) */

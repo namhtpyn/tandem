@@ -11,6 +11,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { db } from '../../db/index';
+import { insertActivityMessage } from './thread.service';
 import { tasks, taskReviews, taskRuns } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { spawnObligation, cancelObligations, cancelAllObligations, resolveObligation } from './obligations.service';
@@ -35,7 +36,7 @@ const TODO_STATUS = STATUS.todo;
 const DONE_STATUS = STATUS.done;
 const CANCELLED_STATUS = STATUS.cancelled;
 
-async function logActivity(
+export async function logActivity(
   taskId: string,
   kind: ActivityKind,
   authorId: string | null,
@@ -44,6 +45,8 @@ async function logActivity(
 ) {
   const { taskActivity } = await import('../../db/schema');
   await db.insert(taskActivity).values({ id: uuidv7(), taskId, authorId, kind, body, meta });
+  // dual-write: the conversation thread carries the same item (payload keeps the kind)
+  await insertActivityMessage({ taskId, authorId, body, payload: { kind, ...meta } });
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }

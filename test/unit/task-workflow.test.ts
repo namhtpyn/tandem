@@ -218,7 +218,7 @@ describe('task workflow — question chain', () => {
     expect(await answerHolder(t.id)).toBeNull();
     expect(t.questionChain).toEqual([]);
     const feed = await activity(taskId);
-    expect(feed.map((a) => a.kind)).toEqual(['status', ACTIVITY_KIND.QUESTION, OBLIGATION_ROLE.ANSWER]);
+    expect(feed.map((a) => a.kind)).toEqual([ACTIVITY_KIND.STATUS, ACTIVITY_KIND.QUESTION, OBLIGATION_ROLE.ANSWER]);
   });
 
   it('outsider cannot answer', async () => {

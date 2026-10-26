@@ -4,20 +4,21 @@ import { desc, EmptyFilter, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
-import { CHANGE_RESOURCE, CHANGE_ACTION, type RunStatus, type ActivityKind } from '#shared/enums';
+import { ACTIVITY_KIND, CHANGE_RESOURCE, CHANGE_ACTION, type RunStatus, type ActivityKind } from '#shared/enums';
 import type { TaskRow } from '#shared/types';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { projects as projectsTable, tasks as tasksTable, taskActivity, taskProposals } from '../../db/schema';
+import { projects as projectsTable, tasks as tasksTable, taskProposals } from '../../db/schema';
 import { env } from '../kernel/env';
 import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 import { recordAssignment, listAssignments } from './assignments.service';
 import { refreshParentGating } from './gating.service';
 import { approvalsInRoundBatch, openObligations, pendingForUser, pendingCounts } from './obligations.service';
 import { confirmProposal, rejectProposal } from './proposals.service';
-import { listReviews } from './review.service';
+import { listReviews, logActivity } from './review.service';
 import { dispatchTask, listRuns } from './runner.service';
+import { listTaskThread } from './thread.service';
 import {
   askQuestion,
   forwardQuestion,
@@ -287,14 +288,7 @@ async function requireReachableStatus(currentStatus: string, requested: string) 
 
 /** note a newly created subtask on the parent task's activity thread */
 async function logSubtaskCreation(parentTaskId: string, authorId: string | null, childId: string, childTitle: string) {
-  await db.insert(taskActivity).values({
-    id: uuidv7(),
-    taskId: parentTaskId,
-    kind: 'status',
-    authorId,
-    body: `subtask created: ${childTitle}`,
-    meta: { childId },
-  });
+  await logActivity(parentTaskId, ACTIVITY_KIND.STATUS, authorId, `subtask created: ${childTitle}`, { childId });
 }
 
 /** only fields the caller actually sent land in the patch; explicit nulls clear nothing */
@@ -418,14 +412,7 @@ export const tasksRouter = os.router({
         await recordAssignment(input.id, input.assigneeId, 'manual', actorId);
       }
       if (input.status !== undefined && input.status !== nonNull(rows[0]).status) {
-        await db.insert(taskActivity).values({
-          id: uuidv7(),
-          taskId: input.id,
-          kind: 'status',
-          authorId: actorId,
-          body: `status: ${nonNull(rows[0]).status} → ${input.status}`,
-          meta: {},
-        });
+        await logActivity(input.id, ACTIVITY_KIND.STATUS, actorId, `status: ${nonNull(rows[0]).status} → ${input.status}`, {});
         await refreshParentGating(input.id);
       }
       await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
@@ -608,6 +595,19 @@ export const tasksRouter = os.router({
   runsList: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))
     .handler(({ input }) => runsSnapshot(input.taskId)),
+
+  /** the unified conversation thread (snapshot) — base messages with their run/activity extension */
+  threadList: protectedProcedure
+    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .handler(({ input }) => listTaskThread(input.taskId)),
+
+  thread: protectedProcedure
+    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .handler(({ input }) =>
+      liveGenerator([CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_RESOURCE.RUNS, CHANGE_RESOURCE.TASKS], () =>
+        listTaskThread(input.taskId),
+      ),
+    ),
 
   runs: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))

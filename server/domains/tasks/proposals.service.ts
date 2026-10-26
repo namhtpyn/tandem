@@ -12,7 +12,8 @@ import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { tasks, taskActivity, taskProposals, user as userTable, employeeSupervisors } from '../../db/schema';
+import { logActivity as publishActivity } from './review.service';
+import { tasks, taskProposals, user as userTable, employeeSupervisors } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { recordAssignment, recentAssignees, assignTask } from './assignments.service';
 import { refreshParentGating } from './gating.service';
@@ -66,7 +67,7 @@ async function findByName(name: string | undefined) {
 }
 
 async function logActivity(taskId: string, authorId: string | null, body: string, meta: Record<string, unknown> = {}) {
-  await db.insert(taskActivity).values({ id: uuidv7(), taskId, kind: ACTIVITY_KIND.NOTE, authorId, body, meta });
+  await publishActivity(taskId, ACTIVITY_KIND.NOTE, authorId, body, meta);
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
