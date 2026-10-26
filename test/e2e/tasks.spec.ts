@@ -123,10 +123,10 @@ test('workflow drawer shows activity and lets the owner answer', async ({ page }
   const drawer = page.locator('[data-slot="content"]').first();
   await expect(drawer).toBeVisible();
   await expect(drawer.getByText(/no activity yet/i)).toBeVisible();
-  // note + Ask is rejected (admin is not assignee) -> error surfaces
+  // the composer posts a plain note (no state change, no verb picker)
   await drawer.locator('textarea').fill('who owns the spec?');
-  await drawer.getByRole('button', { name: 'Ask' }).click();
-  await expect(drawer.getByText(/only a task in progress|assignee/i).first()).toBeVisible({ timeout: 10_000 });
+  await drawer.getByRole('button', { name: 'Post note' }).click();
+  await expect(drawer.getByText('done', { exact: true })).toBeVisible({ timeout: 10_000 });
 });
 
 test('workflow drawer streams an agent run to completion', async ({ page }) => {

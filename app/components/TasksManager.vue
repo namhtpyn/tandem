@@ -10,6 +10,7 @@ import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
 
 import { ACTIVITY_KIND, CHANGE_RESOURCE } from '#shared/enums';
+import { STATUS } from '#shared/status';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 
 const { $orpc, $client } = useNuxtApp();
@@ -185,6 +186,15 @@ const workflowTask = ref<TaskRow | null>(null);
 const workflowNote = ref('');
 const workflowBusy = ref(false);
 const workflowMessage = ref('');
+// work-state ids where forward/abandon/submit apply (owner rulings 2026-10-26)
+const workingStatuses: string[] = [STATUS.todo, STATUS.doing, STATUS.blocked];
+
+/** drawer composer: send is the answer verb while the task waits for one */
+function sendDrawerNote() {
+  if (!workflowTask.value) return;
+  if (workflowTask.value.status === STATUS.waitingAnswer) wfAction('answer', { body: workflowNote.value });
+  else wfAction('note', { body: workflowNote.value });
+}
 const forwardTo = ref('__none__');
 
 // ---- drawer data: conventional GETs + change-event invalidation (SSE law) ----
@@ -241,6 +251,7 @@ function openWorkflow(row: TaskRow) {
 // zod strips unknown keys, so optional extras ride along safely
 type WorkflowAction =
   | 'dispatch'
+  | 'note'
   | 'submit'
   | 'ask'
   | 'forward'
@@ -259,6 +270,7 @@ async function wfAction(action: WorkflowAction, extra: { body?: string; toEmploy
     await (
       {
         dispatch: () => $client.tasks.dispatch({ taskId: input.taskId }),
+        note: () => $client.tasks.note({ ...input, body: nonNull(input.body) }),
         submit: () => $client.tasks.submit({ ...input, body: nonNull(input.body) }),
         ask: () => $client.tasks.ask({ ...input, body: nonNull(input.body) }),
         forward: () => $client.tasks.forward({ ...input, toEmployeeId: nonNull(input.toEmployeeId) }),
@@ -754,71 +766,42 @@ onServerPrefetch(() =>
               >
             </p>
           </div>
-          <div class="flex flex-wrap gap-2">
+          <!-- contextual verbs only (owner rulings 2026-10-26): notes/answers ride the composer -->
+          <div v-if="workingStatuses.includes(workflowTask.status)" class="flex flex-wrap gap-2">
             <UButton
+              v-if="workflowTask.assigneeKind !== 'ai'"
               size="xs"
-              color="warning"
+              color="primary"
               variant="soft"
-              icon="i-lucide-help-circle"
+              icon="i-lucide-send"
               :disabled="workflowBusy"
-              @click="wfAction('ask', { body: workflowNote || 'question' })"
-              >Ask</UButton
+              @click="wfAction('submit', { body: workflowNote })"
+              >Submit for review</UButton
             >
             <UButton
               size="xs"
               color="neutral"
               variant="soft"
               icon="i-lucide-corner-up-right"
-              :disabled="workflowBusy || !forwardTo"
-              @click="forwardTo && wfAction('forward', { toEmployeeId: forwardTo, body: workflowNote })"
+              :disabled="workflowBusy || !forwardTo || forwardTo === '__none__'"
+              @click="forwardTo && forwardTo !== '__none__' && wfAction('forward', { toEmployeeId: forwardTo, body: workflowNote })"
               >Forward</UButton
-            >
-            <UButton
-              size="xs"
-              color="primary"
-              variant="soft"
-              icon="i-lucide-check-check"
-              :disabled="workflowBusy"
-              @click="wfAction('answer', { body: workflowNote || 'answer' })"
-              >Answer</UButton
-            >
-            <UButton
-              size="xs"
-              color="info"
-              variant="soft"
-              icon="i-lucide-send"
-              :disabled="workflowBusy"
-              @click="wfAction('submit', { body: workflowNote })"
-              >Submit</UButton
-            >
-            <UButton
-              size="xs"
-              color="success"
-              variant="soft"
-              icon="i-lucide-thumbs-up"
-              :disabled="workflowBusy"
-              @click="wfAction('approve')"
-              >Approve</UButton
-            >
-            <UButton
-              size="xs"
-              color="warning"
-              variant="soft"
-              icon="i-lucide-undo-2"
-              :disabled="workflowBusy || !workflowNote"
-              @click="wfAction('requestChanges', { body: workflowNote })"
-              >Request changes</UButton
             >
             <UButton
               size="xs"
               color="error"
               variant="soft"
-              icon="i-lucide-x-circle"
+              icon="i-lucide-ban"
               :disabled="workflowBusy"
               @click="wfAction('abandon')"
               >Abandon</UButton
             >
           </div>
+          <TaskReviewBox
+            v-if="workflowTask.status === STATUS.inReview"
+            :busy="workflowBusy"
+            @verdict="(action: 'approve' | 'requestChanges' | 'reject', body?: string) => wfAction(action, { body: body || undefined })"
+          />
           <USelect
             v-model="forwardTo"
             :items="[
@@ -832,7 +815,22 @@ onServerPrefetch(() =>
             class="w-full"
             aria-label="Forward to"
           />
-          <UTextarea v-model="workflowNote" :rows="3" placeholder="Question / answer / review note" class="w-full" />
+          <UTextarea
+            v-model="workflowNote"
+            :rows="3"
+            :placeholder="workflowTask?.status === STATUS.waitingAnswer ? 'Write an answer — the agent resumes' : 'Write a note…'"
+            class="w-full"
+          />
+          <UButton
+            size="sm"
+            color="primary"
+            variant="soft"
+            icon="i-lucide-arrow-up"
+            :disabled="workflowBusy || !workflowNote.trim()"
+            @click="sendDrawerNote()"
+          >
+            {{ workflowTask?.status === STATUS.waitingAnswer ? 'Send answer' : 'Post note' }}
+          </UButton>
           <p v-if="workflowMessage" class="text-xs" :class="workflowMessage === 'done' ? 'text-success' : 'text-error'">
             {{ workflowMessage }}
           </p>
@@ -843,7 +841,7 @@ onServerPrefetch(() =>
                 size="xs"
                 variant="soft"
                 icon="i-lucide-play"
-                :disabled="workflowBusy || !workflowTask.assigneeKind || workflowTask.assigneeKind !== 'ai'"
+                :disabled="workflowBusy || workflowTask?.assigneeKind !== 'ai'"
                 @click="wfAction('dispatch')"
               >
                 Dispatch now

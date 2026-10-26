@@ -50,5 +50,5 @@ test('mobile: sidebar collapses into the info sheet', async ({ page }) => {
   // scope to the visible slideover (the desktop aside is display:none on mobile)
   await expect(page.getByLabel('Task info').getByText('Details', { exact: true })).toBeVisible();
   // a fresh task is To do: the contextual workflow verbs are work-state moves
-  await expect(page.getByLabel('Task info').getByRole('button', { name: 'Ask' })).toBeVisible();
+  await expect(page.getByLabel('Task info').getByRole('button', { name: 'Forward' })).toBeVisible();
 });

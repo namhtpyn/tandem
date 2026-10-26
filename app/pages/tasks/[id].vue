@@ -76,6 +76,12 @@ async function wfAction(action: WorkflowAction, extra: { body?: string; toEmploy
   }
 }
 
+/** while the task waits for an answer the composer's send IS the answer verb */
+function sendComposer() {
+  if (task.value?.status === STATUS.waitingAnswer) wfAction('answer', { body: workflowNote.value });
+  else wfAction('note', { body: workflowNote.value });
+}
+
 const infoSheetOpen = ref(false);
 
 const parentTask = computed(() =>
@@ -167,6 +173,14 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
             <!-- the thread (TaskActivityThread) -->
             <TaskActivityThread :task="task" />
 
+            <!-- GitHub-style review verdicts: own input, shown only while in review -->
+            <TaskReviewBox
+              v-if="task.status === STATUS.inReview"
+              class="mb-3"
+              :busy="workflowBusy"
+              @verdict="(action: 'approve' | 'requestChanges' | 'reject', body: string) => wfAction(action, { body: body || undefined })"
+            />
+
             <!-- composer: workflow note + primary actions -->
             <div
               class="mt-3 rounded-2xl border border-zinc-200 bg-white p-2.5 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
@@ -177,7 +191,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                 autoresize
                 :maxrows="6"
                 variant="none"
-                placeholder="Write a note…"
+                :placeholder="task.status === STATUS.waitingAnswer ? 'Write an answer…' : 'Write a note…'"
                 class="w-full"
                 :ui="{ base: 'px-1 py-1 text-sm placeholder:text-zinc-400' }"
               />
@@ -189,7 +203,9 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                 >
                   {{ workflowMessage }}
                 </p>
-                <span v-else class="text-[11px] text-zinc-400 dark:text-zinc-500">⏎ post note · ▶ dispatch agent</span>
+                <span v-else class="text-[11px] text-zinc-400 dark:text-zinc-500">
+                  ⏎ {{ task.status === STATUS.waitingAnswer ? 'send answer' : 'post note' }} · ▶ dispatch agent
+                </span>
                 <div class="ml-auto flex items-center gap-1.5">
                   <UPopover mode="hover" enable-touch>
                     <template #content><div class="px-3 py-1.5 text-xs">Dispatch to the AI assignee</div></template>
@@ -204,15 +220,19 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                       @click="wfAction('dispatch')"
                   /></UPopover>
                   <UPopover mode="hover" enable-touch>
-                    <template #content><div class="px-3 py-1.5 text-xs">Post note to the conversation</div></template>
+                    <template #content>
+                      <div class="px-3 py-1.5 text-xs">
+                        {{ task.status === STATUS.waitingAnswer ? 'Send answer — the agent resumes' : 'Post note to the conversation' }}
+                      </div>
+                    </template>
                     <UButton
                       size="lg"
                       color="primary"
-                      icon="i-lucide-arrow-up"
-                      aria-label="Send note"
+                      :icon="task.status === STATUS.waitingAnswer ? 'i-lucide-reply' : 'i-lucide-arrow-up'"
+                      :aria-label="task.status === STATUS.waitingAnswer ? 'Send answer' : 'Send note'"
                       class="size-10"
                       :disabled="workflowBusy || !workflowNote.trim()"
-                      @click="wfAction('note', { body: workflowNote })"
+                      @click="sendComposer()"
                   /></UPopover>
                 </div>
               </div>
@@ -231,6 +251,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                 :busy="workflowBusy"
                 :note="workflowNote"
                 :status-id="task.status"
+                :assignee-kind="task.assigneeKind"
                 @action="wfAction"
               />
             </div>
@@ -248,6 +269,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                 :busy="workflowBusy"
                 :note="workflowNote"
                 :status-id="task.status"
+                :assignee-kind="task.assigneeKind"
                 @action="wfAction"
               />
             </div>
