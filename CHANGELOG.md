@@ -1,3 +1,11 @@
+# [2.45.0](https://github.com/namhtpyn/tandem/compare/v2.44.1...v2.45.0) (2026-10-26)
+
+
+### Features
+
+* **app:** run turn shows the message body with expandable raw input + output ([edf8c14](https://github.com/namhtpyn/tandem/commit/edf8c14f3a86d35ac17f20eb309a4d74c1a4aac9))
+* **workflow:** explicit reviewers only — supervisor is not a quality gate ([bbe889e](https://github.com/namhtpyn/tandem/commit/bbe889e466ba6d2057451cf13b2813086d10f007))
+
 ## [2.44.1](https://github.com/namhtpyn/tandem/compare/v2.44.0...v2.44.1) (2026-10-26)
 
 
