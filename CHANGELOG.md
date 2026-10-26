@@ -1,3 +1,10 @@
+## [2.44.1](https://github.com/namhtpyn/tandem/compare/v2.44.0...v2.44.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **db:** drop legacy task_runs.task_id on upgraded DBs ([c9f7afa](https://github.com/namhtpyn/tandem/commit/c9f7afa541f77ae5d9204166beaf1b61862ec9fd))
+
 # [2.44.0](https://github.com/namhtpyn/tandem/compare/v2.43.0...v2.44.0) (2026-10-26)
 
 
