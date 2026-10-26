@@ -92,16 +92,16 @@ describe('task thread (task_messages base + extensions)', () => {
       payload: { kind: 'STATUS', dispatched: true },
     });
     const started = new Date();
+    const messageId = await svc.createRunMessage({ taskId: t.id, authorId: agentId, createdAt: started });
     await db.insert(taskRuns).values({
       id: 'r-thread-1',
-      taskId: t.id,
+      messageId,
       employeeId: agentId,
       environmentId: 'env-1',
       status: 'RUNNING',
       output: '',
       startedAt: started,
     });
-    await svc.insertRunMessage({ taskId: t.id, authorId: agentId, body: '', runId: 'r-thread-1', createdAt: started });
 
     const items = (await svc.listTaskThread(t.id)) as Array<Record<string, any>>;
     // STATUS row dropped, human note kept, run turn mapped
@@ -129,9 +129,10 @@ describe('task thread (task_messages base + extensions)', () => {
     const { taskRuns, taskAttachments } = await schema();
     const svc = await threadSvc();
     const started = new Date();
+    const messageId = await svc.createRunMessage({ taskId: t.id, authorId: agentId, createdAt: started });
     await db.insert(taskRuns).values({
       id: 'r-att',
-      taskId: t.id,
+      messageId,
       employeeId: agentId,
       environmentId: 'env-1',
       status: 'DONE',
@@ -139,7 +140,6 @@ describe('task thread (task_messages base + extensions)', () => {
       startedAt: started,
       finishedAt: started,
     });
-    await svc.insertRunMessage({ taskId: t.id, authorId: agentId, body: '', runId: 'r-att', createdAt: started });
     await db.insert(taskAttachments).values([
       { id: 'att-1', taskId: t.id, runId: 'r-att', kind: 'output', filename: 'a.txt', mime: 'text/plain', size: 3, sha256: 'aa' },
       // defensive arm: an output attachment with no run never reaches any payload

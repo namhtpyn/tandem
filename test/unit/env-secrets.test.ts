@@ -222,9 +222,11 @@ describe('environment secret linkage', () => {
       username: '00000000-0000-7000-8000-51e69892ab49',
       secretId: secret.id,
     });
-    await postgres.unsafe(
-      'alter table environments drop constraint tandem_environments_secret_id_tandem_vault_secrets_id_fkey',
-    );
+    // constraint names differ between the squashed baseline and prod's legacy objects
+    await postgres.unsafe(`do $$ begin execute 'alter table environments drop constraint ' || (
+      select conname from pg_constraint
+      where conrelid = 'environments'::regclass and confrelid = 'vault_secrets'::regclass limit 1
+    ); end $$;`);
     await postgres.unsafe('delete from vault_secrets where id = $1', [secret.id]);
     const result = await callProc('environments.probe', { id: env.id });
     expect(result.ok).toBe(false);

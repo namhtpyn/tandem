@@ -10,7 +10,7 @@ import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { tasks, taskRuns } from '../../db/schema';
+import { tasks, taskRuns, taskMessages } from '../../db/schema';
 import { publishChange } from '../kernel/change-bus';
 import { env } from '../kernel/env';
 import { redisQueue } from '../kernel/queue';
@@ -33,9 +33,10 @@ async function reapStaleRunsInner() {
   const grace = 2 * 60_000;
   const cutoff = new Date(Date.now() - (await getRunTimeoutMs()) - grace);
   const stale = await db.query.taskRuns.findMany({
-    columns: { id: true, taskId: true, output: true, startedAt: true },
+    columns: { id: true, output: true, startedAt: true },
     where: { status: { eq: RUN_STATUS.RUNNING } },
     orderBy: { startedAt: 'asc' },
+    with: { message: { columns: { taskId: true } } },
   });
   let reaped = 0;
   for (const run of stale) {
@@ -52,19 +53,20 @@ async function reapStaleRunsInner() {
       })
       .where(eq(taskRuns.id, run.id));
     // only bounce the task if this was its latest run
-    const latest = await db.query.taskRuns.findMany({
-      columns: { id: true, startedAt: true },
-      where: { taskId: { eq: run.taskId } },
-      orderBy: { startedAt: 'desc' },
-    });
+    const latest = await db
+      .select({ id: taskRuns.id, startedAt: taskRuns.startedAt })
+      .from(taskRuns)
+      .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+      .where(eq(taskMessages.taskId, nonNull(run.message).taskId));
     const newest = latest.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0];
     if (newest?.id === run.id) {
+      const taskId = nonNull(run.message).taskId;
       // FK cascade: a present run implies its task row exists
       const current = nonNull(
         (
           await db.query.tasks.findMany({
             columns: { failStreak: true },
-            where: { id: { eq: run.taskId } },
+            where: { id: { eq: taskId } },
             orderBy: { createdAt: 'asc' },
           })
         )[0],
@@ -79,7 +81,7 @@ async function reapStaleRunsInner() {
           dispatchAfter: new Date(Date.now() + waitMs),
           updatedAt: new Date(),
         })
-        .where(eq(tasks.id, run.taskId));
+        .where(eq(tasks.id, taskId));
     }
     await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);

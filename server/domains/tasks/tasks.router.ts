@@ -1,6 +1,6 @@
 import { os } from '@orpc/server';
 // tasks router — business logic lives in services/utils; this file only wires procedures
-import { desc, EmptyFilter, eq } from 'drizzle-orm';
+import { and, desc, EmptyFilter, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
@@ -10,7 +10,7 @@ import type { TaskRow } from '#shared/types';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { projects as projectsTable, tasks as tasksTable, taskProposals } from '../../db/schema';
+import { projects as projectsTable, taskRuns as taskRunsTable, tasks as tasksTable, taskProposals, taskMessages } from '../../db/schema';
 
 
 import { recordAssignment, listAssignments } from './assignments.service';
@@ -210,7 +210,7 @@ async function runsSnapshot(taskId: string) {
   const titleById = new Map(users.map((u) => [u.id, u.title]));
   return rows.map((r) => ({
     id: r.id,
-    taskId: r.taskId,
+    taskId,
     employeeId: r.employeeId,
     // `?? null` unreachable by FK (employee_id references user.id) — defensive only
     /* v8 ignore next */
@@ -318,11 +318,11 @@ async function requireDispatchable(taskId: string) {
       message: 'task is not dispatchable (needs a ready-category status and an AI assignee)',
     });
   }
-  const running = await db.query.taskRuns.findMany({
-    columns: { id: true },
-    where: { taskId: { eq: taskId }, status: { eq: RUN_STATUS.RUNNING } },
-    orderBy: { id: 'asc' },
-  });
+  const running = await db
+    .select({ id: taskRunsTable.id })
+    .from(taskRunsTable)
+    .innerJoin(taskMessages, eq(taskMessages.id, taskRunsTable.messageId))
+    .where(and(eq(taskMessages.taskId, taskId), eq(taskRunsTable.status, RUN_STATUS.RUNNING)));
   if (running.length > 0) throw new ORPCError('BAD_REQUEST', { message: 'task already has a running run' });
 }
 
@@ -696,11 +696,11 @@ export const tasksRouter = os.router({
       orderBy: { createdAt: 'asc' },
     });
     if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
-    const running = await db.query.taskRuns.findMany({
-      columns: { id: true },
-      where: { taskId: { eq: input.id }, status: { eq: RUN_STATUS.RUNNING } },
-      orderBy: { id: 'asc' },
-    });
+    const running = await db
+      .select({ id: taskRunsTable.id })
+      .from(taskRunsTable)
+      .innerJoin(taskMessages, eq(taskMessages.id, taskRunsTable.messageId))
+      .where(and(eq(taskMessages.taskId, input.id), eq(taskRunsTable.status, RUN_STATUS.RUNNING)));
     if (running.length > 0) throw new ORPCError('BAD_REQUEST', { message: 'cancel the running run first' });
     await db.delete(tasksTable).where(eq(tasksTable.id, input.id));
     // deleting a subtask can release the parent's auto-block

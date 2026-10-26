@@ -160,8 +160,9 @@ describe('admin-only writes', () => {
   it('tasks.remove refuses while a run is RUNNING and succeeds after it ends', async () => {
     const t = await call('tasks.create', { title: 'Busy' });
     const { db } = await dbm();
-    const { taskRuns } = await schema();
-    const run = await db.insert(taskRuns).values({ taskId: t.id }).returning();
+    const { taskRuns, taskMessages } = await schema();
+    const msg1 = (await db.insert(taskMessages).values({ taskId: t.id, body: '' }).returning({ id: taskMessages.id }))[0]!;
+const run = await db.insert(taskRuns).values({ messageId: msg1.id }).returning();
     await expect(call('tasks.remove', { id: t.id })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: 'cancel the running run first',
@@ -186,8 +187,9 @@ describe('admin-only writes', () => {
     await mkAiAssignee();
     const t = await call('tasks.create', { title: 'Running', assigneeId: employee.id });
     const { db } = await dbm();
-    const { taskRuns } = await schema();
-    await db.insert(taskRuns).values({ taskId: t.id });
+    const { taskRuns, taskMessages } = await schema();
+    const msg2 = (await db.insert(taskMessages).values({ taskId: t.id, body: '' }).returning({ id: taskMessages.id }))[0]!;
+    await db.insert(taskRuns).values({ messageId: msg2.id, status: 'RUNNING' });
     await expect(call('tasks.dispatch', { taskId: t.id })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: 'task already has a running run',

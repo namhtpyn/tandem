@@ -173,7 +173,7 @@ async function callProc(path: string, input?: unknown): Promise<any> {
 let agentSeq = 0;
 async function mkAiAgent() {
   const { db } = await dbm();
-  const { environments, user, aiEmployees } = await schema();
+  const { aiEmployees, environments, taskMessages, user } = await schema();
   const n = ++agentSeq;
   // first agent keeps the historical fixed ids — many tests assert against them
   const envId = n === 1 ? 'env-1' : `env-${n}`;
@@ -202,7 +202,7 @@ async function mkAiAgent() {
  * writes into the next test's fresh schema — the 42P01 teardown race) */
 async function drainRuns(maxMs = 8000) {
   const { db } = await dbm();
-  const { taskRuns } = await schema();
+  const { taskMessages, taskRuns } = await schema();
   const t0 = Date.now();
   while (Date.now() - t0 < maxMs) {
     // settle cascades (submit -> review dispatch -> new run) can spawn a NEW
@@ -230,7 +230,7 @@ afterEach(async () => {
 beforeEach(async () => {
   agentSeq = 0; // ids are per-test: the DB resets but module vars do not
   const { db } = await dbm();
-  const { user } = await schema();
+  const { taskMessages, user } = await schema();
   await db.insert(user).values({
     id: '00000000-0000-7000-8000-cd5fca5e2d34',
     name: 'Admin',
@@ -259,7 +259,7 @@ describe('runner service guards', () => {
     const { loadDispatchPlan } = await import('#server/domains/tasks/runner.service');
     await expect(loadDispatchPlan('ghost')).rejects.toThrow(/task not found/i);
     const { db } = await dbm();
-    const { user, tasks, environments, aiEmployees } = await schema();
+    const { aiEmployees, environments, taskMessages, tasks, user } = await schema();
     await db.insert(user).values({
       id: '00000000-0000-7000-8000-6ec8d637f32c',
       name: 'H2',
@@ -327,7 +327,7 @@ describe('runner service guards', () => {
 describe('dispatcher extras', () => {
   it('findEligible returns null with no ready statuses defined', async () => {
     const { db } = await dbm();
-    const { taskStatuses } = await schema();
+    const { taskMessages, taskStatuses } = await schema();
     await db.delete(taskStatuses);
     const { findEligible } = await import('#server/domains/tasks/dispatcher.service');
     expect(await findEligible()).toBeNull();
@@ -335,7 +335,7 @@ describe('dispatcher extras', () => {
 
   it('scanOnce returns false when nothing is eligible (no throw)', async () => {
     const { db } = await dbm();
-    const { tasks } = await schema();
+    const { taskMessages, tasks } = await schema();
     await db.insert(tasks).values({ id: 't-h3', title: 'x', description: '', status: STATUS.todo });
     const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
     expect(await scanOnce('http://t.local')).toBe(false);
@@ -354,11 +354,11 @@ describe('dispatcher extras', () => {
     const agentId = await mkAiAgent();
     const t = await callProc('tasks.create', { title: 'Sort', assigneeId: agentId });
     const { db } = await dbm();
-    const { taskRuns } = await schema();
+    const { taskMessages, taskRuns } = await schema();
     const base = Date.now() - 60_000;
-    await db.insert(taskRuns).values({
+    const msg1 = (await db.insert(taskMessages).values({ taskId: t.id, body: '' }).returning({ id: taskMessages.id }))[0]!;
+await db.insert(taskRuns).values({
       id: 'r-old',
-      taskId: t.id,
       employeeId: agentId,
       environmentId: 'env-1',
       status: RUN_STATUS.DONE,
@@ -366,16 +366,16 @@ describe('dispatcher extras', () => {
       output: '',
       startedAt: new Date(base),
       finishedAt: new Date(base + 1000),
-    });
-    await db.insert(taskRuns).values({
+     messageId: msg1.id, });
+    const msg2 = (await db.insert(taskMessages).values({ taskId: t.id, body: '' }).returning({ id: taskMessages.id }))[0]!;
+await db.insert(taskRuns).values({
       id: 'r-new',
-      taskId: t.id,
       employeeId: agentId,
       environmentId: 'env-1',
       status: RUN_STATUS.RUNNING,
       output: '',
       startedAt: new Date(),
-    });
+     messageId: msg2.id, });
     const iter = await callProc('tasks.runs', { taskId: t.id });
     const snap = await iter.next();
     await iter.return?.();
@@ -390,15 +390,15 @@ describe('dispatcher extras', () => {
     const agentId = await mkAiAgent();
     const t = await callProc('tasks.create', { title: 'Null fin', assigneeId: agentId });
     const { db } = await dbm();
-    const { taskRuns } = await schema();
-    await db.insert(taskRuns).values({
+    const { taskMessages, taskRuns } = await schema();
+    const msg3 = (await db.insert(taskMessages).values({ taskId: t.id, body: '' }).returning({ id: taskMessages.id }))[0]!;
+await db.insert(taskRuns).values({
       id: 'r-x',
-      taskId: t.id,
       employeeId: agentId,
       environmentId: 'env-1',
       status: RUN_STATUS.RUNNING,
       output: '',
-    });
+     messageId: msg3.id, });
     const iter = await callProc('tasks.runs', { taskId: t.id });
     const snap = await iter.next();
     await iter.return?.();
@@ -415,7 +415,7 @@ describe('runner ssh-config paths', () => {
   it('password auth + llm env from provider/key secrets', async () => {
     await mkAiAgent();
     const { db } = await dbm();
-    const { environments, vaultSecrets, modelProviders, aiEmployees } = await schema();
+    const { aiEmployees, environments, modelProviders, taskMessages, vaultSecrets } = await schema();
     const { encryptSecret } = await import('#server/domains/vault/secret/secret-crypto.service');
     await db.insert(vaultSecrets).values({
       id: 'sec-pw',
@@ -471,7 +471,7 @@ describe('runner ssh-config paths', () => {
     const h = await dispatchTask(taskRow.id, 'http://t.local');
     const r = await h.finished;
     expect(r.status).toBe(RUN_STATUS.DONE);
-    const { taskRuns } = await schema();
+    const { taskMessages, taskRuns } = await schema();
     const run = (await d.db.select().from(taskRuns))[0];
     expect(run.output.split('\n').length).toBeLessThanOrEqual(100);
   }, 10_000);
@@ -501,17 +501,18 @@ describe('runner failure + fallback arms', () => {
     const d = await dbm();
     const sch = await schema();
     const taskRow = (await d.db.select().from(sch.tasks))[0]!;
-    const { taskRuns } = await schema();
-    await d.db.insert(taskRuns).values({
+    const { taskMessages, taskRuns } = await schema();
+const msgX0 = (await d.db.insert(taskMessages).values({ taskId: taskRow.id, body: '' }).returning({ id: taskMessages.id }))[0]!;
+await d.db.insert(taskRuns).values({
       id: 'r-long',
-      taskId: taskRow.id,
-      employeeId: agentId,
+            employeeId: agentId,
       environmentId: 'env-1',
       status: RUN_STATUS.DONE,
       exitCode: 0,
       output: Array.from({ length: 150 }, (_, i) => `line-${i}`).join('\n'),
       finishedAt: new Date(),
-    });
+      messageId: msgX0.id,
+});
     const iter = await callProc('tasks.runs', { taskId: taskRow.id });
     const snap = await iter.next();
     await iter.return?.();
@@ -522,7 +523,7 @@ describe('runner failure + fallback arms', () => {
 
   it('scanOnce claim guards: unassigned task and busy agent return false', async () => {
     const { db } = await dbm();
-    const { tasks } = await schema();
+    const { taskMessages, tasks } = await schema();
     // ghost task id: dispatchTask throws (task not found) -> scanOnce catch -> false
     const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
     // nothing eligible at all
@@ -548,7 +549,7 @@ describe('runner failure + fallback arms', () => {
 
   it('agent without an employee name row falls back to a generic name; custom executable wins', async () => {
     const { db } = await dbm();
-    const { aiEmployees } = await schema();
+    const { aiEmployees, taskMessages } = await schema();
     await mkAiAgent();
     await db
       .update(aiEmployees)
@@ -569,7 +570,7 @@ describe('runner failure + fallback arms', () => {
 
   it('env secret with ssh-key usage lands in sshKey', async () => {
     const { db } = await dbm();
-    const { environments, vaultSecrets } = await schema();
+    const { environments, taskMessages, vaultSecrets } = await schema();
     const { encryptSecret } = await import('#server/domains/vault/secret/secret-crypto.service');
     await mkAiAgent();
     await db.insert(vaultSecrets).values({
@@ -680,7 +681,7 @@ describe('runner real-ssh path (mocked ssh2)', () => {
       const t = await callProc('tasks.create', { title: 'SSH fail', assigneeId: agentId });
       const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       const { db } = await dbm();
-      const { tasks, taskRuns } = await schema();
+      const { taskMessages, taskRuns, tasks } = await schema();
       const handle = await dispatchTask(t.id, 'http://t.local');
       const clientMod = (await import('ssh2')).default;
       const FakeClient = clientMod.Client as unknown as { last?: { emitError(e: Error): void } };
@@ -714,7 +715,7 @@ describe('full output via long fake script', () => {
       const res = await handle.finished;
       expect(res.status).toBe(RUN_STATUS.DONE);
       const { db } = await dbm();
-      const { taskRuns } = await schema();
+      const { taskMessages, taskRuns } = await schema();
       const run = (await db.select().from(taskRuns))[0]!;
       const lines = run.output.split('\n');
       expect(lines.length).toBe(130);
@@ -731,7 +732,7 @@ describe('dispatch-plan edge arms', () => {
   it('unlinked ssh secret and unconfigured llm key degrade gracefully', async () => {
     await mkAiAgent(); // env WITHOUT a secret; agent WITHOUT llm config at first
     const { db } = await dbm();
-    const { aiEmployees, modelProviders } = await schema();
+    const { aiEmployees, modelProviders, taskMessages } = await schema();
     await db.insert(modelProviders).values({ id: 'prov-9', label: 'P9', baseUrl: 'https://p9.example.com' });
     await db
       .update(aiEmployees)
@@ -875,7 +876,7 @@ describe('dispatcher', () => {
     expect(fired).toBe(true);
     // task moved to doing + a run row exists
     const { db } = await dbm();
-    const { tasks, taskRuns } = await schema();
+    const { taskMessages, taskRuns, tasks } = await schema();
     // the queue worker claims the job asynchronously — poll for the doing hop
     let taskRow: { status: string } | undefined;
     for (let i = 0; i < 30; i++) {
@@ -899,7 +900,7 @@ describe('dispatcher', () => {
 
   it('human assignees are never dispatched', async () => {
     const { db } = await dbm();
-    const { user } = await schema();
+    const { taskMessages, user } = await schema();
     await db.insert(user).values({
       id: '00000000-0000-7000-8000-b4b57f028566',
       name: 'Hu',
@@ -919,7 +920,7 @@ describe('dispatcher', () => {
     await callProc('tasks.create', { title: 'Second', assigneeId: agentId });
     const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
     const { db } = await dbm();
-    const { taskRuns } = await schema();
+    const { taskMessages, taskRuns } = await schema();
     const runCount = async () => (await db.select().from(taskRuns)).length;
     expect(await scanOnce('http://tandem.local')).toBe(true); // First enqueued
     for (let i = 0; i < 50 && (await runCount()) < 1; i++) await new Promise((r) => setTimeout(r, 100));
@@ -953,7 +954,7 @@ describe('dispatcher', () => {
       const { setSetting } = await import('#server/domains/settings/settings.service');
       await setSetting('company_prompt', 'English only, pinned deps.');
       const { db } = await dbm();
-      const { projects } = await schema();
+      const { projects, taskMessages } = await schema();
       await db
         .insert(projects)
         .values({ id: 'p-1', name: 'FedEx', description: '', prompt: 'FedEx API v9, never log labels.' });
@@ -963,10 +964,10 @@ describe('dispatcher', () => {
       const handle = await dispatchTask(t.id, 'http://tandem.local');
       await handle.finished;
       const { taskRuns } = await schema();
-      const row = (await db.select().from(taskRuns)).find((r) => r.taskId === t.id)!;
-      expect(row.prompt).toContain('COMPANY (applies to all your work)\nEnglish only, pinned deps.');
-      expect(row.prompt).toContain('PROJECT — FedEx\nFedEx API v9, never log labels.');
-      expect(row.prompt).toContain('Project: FedEx');
+      const row = (await db.select({ run: taskRuns, message: taskMessages }).from(taskRuns).innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))).find((r) => r.message.taskId === t.id)!;
+      expect(row.run.prompt).toContain('COMPANY (applies to all your work)\nEnglish only, pinned deps.');
+      expect(row.run.prompt).toContain('PROJECT — FedEx\nFedEx API v9, never log labels.');
+      expect(row.run.prompt).toContain('Project: FedEx');
     } finally {
       setEnv({ TANDEM_FAKE_SCRIPT: undefined });
       setEnv({ TANDEM_FAKE_RUNNER: '1' });
@@ -980,7 +981,7 @@ describe('dispatcher', () => {
     try {
       const agentId = await mkAiAgent();
       const { db } = await dbm();
-      const { user } = await schema();
+      const { taskMessages, user } = await schema();
       await db.insert(user).values({
         id: '00000000-0000-7000-8000-820caae75a5f',
         name: 'Owner',
@@ -997,7 +998,7 @@ describe('dispatcher', () => {
       const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       const handle = await dispatchTask(t.id, 'http://tandem.local');
       expect((await handle.finished).status).toBe(RUN_STATUS.DONE);
-      const { tasks, taskObligations } = await schema();
+      const { taskObligations, tasks } = await schema();
       const task = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
       expect(task.status).toBe(STATUS.waitingAnswer);
       const obl = (await db.select().from(taskObligations)).filter((o) => o.taskId === t.id);
@@ -1019,7 +1020,7 @@ describe('dispatcher', () => {
     setEnv({ TANDEM_FAKE_SCRIPT: 'done\n{"kind": "result", "body": "shipped"}' });
     try {
       const { db } = await dbm();
-      const { user, employeeSupervisors, taskReviews, taskObligations } = await schema();
+      const { employeeSupervisors, taskMessages, taskObligations, taskReviews, user } = await schema();
       await db.insert(user).values({
         id: '00000000-0000-7000-8000-b09d13ad1a84',
         name: 'Ash Boss',
@@ -1038,7 +1039,7 @@ describe('dispatcher', () => {
         await dispatchTask(t.id, 'http://tandem.local')
       ).finished;
       await new Promise((r) => setTimeout(r, 300)); // settle cascade
-      const { tasks, taskRuns } = await schema();
+      const { taskRuns, tasks } = await schema();
       const row = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
       expect(row.status).toBe(STATUS.inReview);
       expect(row.reviewers).toEqual(['00000000-0000-7000-8000-b09d13ad1a84']);
@@ -1046,7 +1047,7 @@ describe('dispatcher', () => {
       expect(rev).toHaveLength(1);
       expect(rev[0]!.status).toBe(OBLIGATION_STATUS.PENDING); // human: waits for the card, no auto run
       expect(rev[0]!.round).toBe(1);
-      expect((await db.select().from(taskRuns)).filter((r) => r.taskId === t.id)).toHaveLength(1); // assignee run only
+      expect((await db.select({ run: taskRuns, message: taskMessages }).from(taskRuns).innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))).filter((r) => r.message.taskId === t.id)).toHaveLength(1); // assignee run only
       const obl = (await db.select().from(taskObligations)).filter((o) => o.taskId === t.id);
       expect(
         obl.some(
@@ -1069,7 +1070,7 @@ describe('dispatcher', () => {
     setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'looked good\n{"kind": "result", "body": "approved — nice work"}' });
     try {
       const { db } = await dbm();
-      const { employeeSupervisors } = await schema();
+      const { employeeSupervisors, taskMessages } = await schema();
       const jay = await mkAiAgent();
       const ash = await mkAiAgent();
       await db.insert(employeeSupervisors).values({ employeeId: jay, supervisorId: ash });
@@ -1079,7 +1080,7 @@ describe('dispatcher', () => {
         await dispatchTask(t.id, 'http://tandem.local')
       ).finished;
       // review turn settles async: poll for the approved verdict + done
-      const { tasks, taskReviews, taskRuns } = await schema();
+      const { taskReviews, taskRuns, tasks } = await schema();
       let done = false;
       for (let i = 0; i < 100 && !done; i++) {
         await new Promise((r) => setTimeout(r, 100));
@@ -1091,17 +1092,17 @@ describe('dispatcher', () => {
       expect(rev[0]!.status).toBe(REVIEW_STATUS.APPROVED);
       expect(rev[0]!.source).toBe('ai');
       expect(rev[0]!.note).toContain('nice work');
-      const runs = (await db.select().from(taskRuns)).filter((r) => r.taskId === t.id);
+      const runs = (await db.select({ run: taskRuns, message: taskMessages }).from(taskRuns).innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))).filter((r) => r.message.taskId === t.id);
       expect(runs).toHaveLength(2); // assignee turn + review turn ON THE SAME TASK
-      expect(runs.some((r) => r.employeeId === ash)).toBe(true);
+      expect(runs.some((r) => r.run.employeeId === ash)).toBe(true);
       // sessions stay separate: the reviewer's session lives on their run, not the task
-      const reviewRun = runs.find((r) => r.employeeId === ash)!;
-      expect(reviewRun.sessionId).toBeTruthy();
+      const reviewRun = runs.find((r) => r.run.employeeId === ash)!;
+      expect(reviewRun.run.sessionId).toBeTruthy();
       // the review brief carried the REAL submitted result (7d06bae0 lesson)
-      expect(reviewRun.prompt).toContain('PR #42 done, tests green');
-      expect(reviewRun.prompt).toContain('REVIEW turn');
+      expect(reviewRun.run.prompt).toContain('PR #42 done, tests green');
+      expect(reviewRun.run.prompt).toContain('REVIEW turn');
       const assigneeRun = (await db.select().from(taskRuns)).find((r) => r.employeeId === jay)!;
-      expect(assigneeRun.sessionId).not.toBe(reviewRun.sessionId); // per (task, employee) sessions
+      expect(assigneeRun.sessionId).not.toBe(reviewRun.run.sessionId); // per (task, employee) sessions
       // no phantom task was created
       expect(
         (await db.select().from(tasks)).filter((x) => x.id !== t.id && x.title.startsWith('Review:')),
@@ -1119,7 +1120,7 @@ describe('dispatcher', () => {
     setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'nope\n{"kind": "blocked", "body": "missing e2e coverage"}' });
     try {
       const { db } = await dbm();
-      const { employeeSupervisors } = await schema();
+      const { employeeSupervisors, taskMessages } = await schema();
       const jay = await mkAiAgent();
       const ash = await mkAiAgent();
       await db.insert(employeeSupervisors).values({ employeeId: jay, supervisorId: ash });
@@ -1128,7 +1129,7 @@ describe('dispatcher', () => {
       await (
         await dispatchTask(t.id, 'http://tandem.local')
       ).finished;
-      const { tasks, taskReviews } = await schema();
+      const { taskReviews, tasks } = await schema();
       let back = false;
       for (let i = 0; i < 100 && !back; i++) {
         await new Promise((r) => setTimeout(r, 100));
@@ -1161,7 +1162,7 @@ describe('dispatcher', () => {
     setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'i looked at it' }); // no envelope
     try {
       const { db } = await dbm();
-      const { employeeSupervisors } = await schema();
+      const { employeeSupervisors, taskMessages } = await schema();
       const jay = await mkAiAgent();
       const ash = await mkAiAgent();
       await db.insert(employeeSupervisors).values({ employeeId: jay, supervisorId: ash });
@@ -1174,7 +1175,7 @@ describe('dispatcher', () => {
       await (
         await dispatchTask(t.id, 'http://tandem.local')
       ).finished;
-      const { tasks, taskReviews } = await schema();
+      const { taskReviews, tasks } = await schema();
       let waiting = false;
       for (let i = 0; i < 100 && !waiting; i++) {
         await new Promise((r) => setTimeout(r, 100));
@@ -1211,7 +1212,7 @@ describe('dispatcher', () => {
     const { loadReviewPlan, dispatchTask } = await import('#server/domains/tasks/runner.service');
     const { recordVerdict, dispatchAiReviewTurns, currentRound } = await import('#server/domains/tasks/review.service');
     const { db } = await dbm();
-    const { user, aiEmployees, environments, vaultSecrets, modelProviders } = await schema();
+    const { aiEmployees, environments, modelProviders, taskMessages, user, vaultSecrets } = await schema();
 
     // ghost task arm
     await expect(loadReviewPlan('ghost', '00000000-0000-7000-8000-f20d9b639839', '')).rejects.toThrow(
@@ -1376,7 +1377,7 @@ describe('dispatcher', () => {
     setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'hmm\n{"kind": "question", "body": "which color?"}' });
     try {
       const { db } = await dbm();
-      const { employeeSupervisors } = await schema();
+      const { employeeSupervisors, taskMessages } = await schema();
       const jay = await mkAiAgent();
       const ash = await mkAiAgent();
       await db.insert(employeeSupervisors).values({ employeeId: jay, supervisorId: ash });
@@ -1389,7 +1390,7 @@ describe('dispatcher', () => {
       await (
         await dispatchTask(t.id, 'http://tandem.local')
       ).finished;
-      const { tasks, taskRuns } = await schema();
+      const { taskRuns, tasks } = await schema();
       let waiting = false;
       for (let i = 0; i < 100 && !waiting; i++) {
         await new Promise((r) => setTimeout(r, 100));
@@ -1398,12 +1399,14 @@ describe('dispatcher', () => {
       expect(waiting).toBe(true);
       // while the review turn's run is settling, a manual re-arm skips live runs
       const { dispatchAiReviewTurns } = await import('#server/domains/tasks/review.service');
-      await db.update(taskRuns).set({ status: RUN_STATUS.RUNNING }).where(eq(taskRuns.taskId, t.id));
+      await db.execute(`update task_runs set status = 'RUNNING' where message_id in (select id from task_messages where task_id = '${t.id}')`);
       await dispatchAiReviewTurns(t.id); // running arm: no extra run row appears
-      const runCount = (await db.select().from(taskRuns)).filter(
-        (r) => r.taskId === t.id && r.employeeId === ash,
-      ).length;
-      await db.update(taskRuns).set({ status: RUN_STATUS.DONE }).where(eq(taskRuns.taskId, t.id));
+      const runCount = (await db
+        .select({ run: taskRuns, message: taskMessages })
+        .from(taskRuns)
+        .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId)))
+        .filter((r) => r.message.taskId === t.id && r.run.employeeId === ash).length;
+      await db.execute(`update task_runs set status = 'DONE' where message_id in (select id from task_messages where task_id = '${t.id}')`);
       // answer -> re-arm without an explicit body (fetches from activity)
       setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'ok now\n{"kind": "result", "body": "approved after the answer"}' });
       const { answerQuestion } = await import('#server/domains/tasks/workflow.service');
@@ -1414,7 +1417,12 @@ describe('dispatcher', () => {
         done = (await db.select().from(tasks)).find((x) => x.id === t.id)!.status === STATUS.done;
       }
       expect(done).toBe(true);
-      const ashRuns = (await db.select().from(taskRuns)).filter((r) => r.taskId === t.id && r.employeeId === ash);
+      const ashRuns = (await db
+        .select({ run: taskRuns, message: taskMessages })
+        .from(taskRuns)
+        .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId)))
+        .filter((r) => r.message.taskId === t.id && r.run.employeeId === ash)
+        .map((r) => r.run);
       expect(ashRuns.length).toBe(runCount + 1); // exactly one re-armed turn
       // the re-armed brief carried the submitted body fetched from activity
       const last = ashRuns.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0]!;
@@ -1433,13 +1441,13 @@ describe('dispatcher', () => {
     const t = await callProc('tasks.create', { title: 'Stale', assigneeId: agentId });
     // fixture: raw status writes left the API — arrange the non-ready status directly
     const { db: db3 } = await dbm();
-    const { tasks: tasksTable3 } = await schema();
+    const { taskMessages, tasks: tasksTable3 } = await schema();
     await db3.update(tasksTable3).set({ status: STATUS.doing, updatedAt: new Date() }).where(eq(tasksTable3.id, t.id));
     const { dispatchIfEligible } = await import('#server/domains/tasks/dispatcher.service');
     await dispatchIfEligible(t.id, 'http://tandem.local');
     const { db } = await dbm();
     const { taskRuns } = await schema();
-    expect((await db.select().from(taskRuns)).filter((r) => r.taskId === t.id)).toHaveLength(0);
+    expect((await db.select({ run: taskRuns, message: taskMessages }).from(taskRuns).innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))).filter((r) => r.message.taskId === t.id)).toHaveLength(0);
   });
 
   it('onDispatcherSettingsChanged is a no-op without redis', async () => {
@@ -1465,7 +1473,7 @@ describe('dispatcher', () => {
       const a = await callProc('tasks.create', { title: 'CapA', assigneeId: agentId });
       const b = await callProc('tasks.create', { title: 'CapB', assigneeId: agentId });
       const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
-      const { tasks } = await schema();
+      const { taskMessages, tasks } = await schema();
       const { db } = await dbm();
       const st = async (id: string) => (await db.select().from(tasks)).find((x) => x.id === id)!.status;
       expect(await scanOnce('http://tandem.local')).toBe(true); // A goes
@@ -1497,7 +1505,7 @@ describe('dispatcher', () => {
       const b = await callProc('tasks.create', { title: 'ParB', assigneeId: agentId });
       const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
       expect(await scanOnce('http://tandem.local')).toBe(true); // A goes
-      const { tasks } = await schema();
+      const { taskMessages, tasks } = await schema();
       const { db } = await dbm();
       const stOf = async (id: string) => (await db.select().from(tasks)).find((x) => x.id === id)!.status;
       for (let i = 0; i < 50 && (await stOf(a.id)) !== STATUS.doing; i++) await new Promise((r) => setTimeout(r, 100));
@@ -1528,7 +1536,7 @@ describe('dispatcher', () => {
       const a = await callProc('tasks.create', { title: 'X task', assigneeId: x });
       const b = await callProc('tasks.create', { title: 'Y task', assigneeId: y });
       const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
-      const { tasks } = await schema();
+      const { taskMessages, tasks } = await schema();
       const { db } = await dbm();
       const stOf = async (id: string) => (await db.select().from(tasks)).find((x) => x.id === id)!.status;
       expect(await scanOnce('http://tandem.local')).toBe(true); // X's task
@@ -1562,7 +1570,7 @@ describe('dispatcher', () => {
       const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       const handle = await dispatchTask(t.id, 'http://tandem.local');
       expect((await handle.finished).status).toBe(RUN_STATUS.DONE);
-      const { tasks } = await schema();
+      const { taskMessages, tasks } = await schema();
       const { db } = await dbm();
       const task = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
       expect(task.status).toBe(STATUS.done);
@@ -1587,7 +1595,7 @@ describe('dispatcher', () => {
       const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       const handle = await dispatchTask(t.id, 'http://tandem.local');
       expect((await handle.finished).status).toBe(RUN_STATUS.DONE);
-      const { tasks } = await schema();
+      const { taskMessages, tasks } = await schema();
       const { db } = await dbm();
       const task = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
       expect(task.status).toBe(STATUS.done);
@@ -1603,7 +1611,7 @@ describe('dispatcher', () => {
     const { scanOnce } = await import('#server/domains/tasks/dispatcher.service');
     await scanOnce('http://tandem.local');
     const { db } = await dbm();
-    const { taskRuns } = await schema();
+    const { taskMessages, taskRuns } = await schema();
     // wait for the fake run to actually finish — a fixed sleep loses the race
     // under full-suite load
     await vi.waitFor(async () => {
@@ -1629,13 +1637,15 @@ describe('dispatcher', () => {
     const agentId = await mkAiAgent();
     const t = await callProc('tasks.create', { title: 'Legacy', assigneeId: agentId });
     const { db } = await dbm();
-    const { taskRuns } = await schema();
+    const { taskMessages, taskRuns } = await schema();
+    const mLegacy = (await db.insert(taskMessages).values({ taskId: t.id, body: '' }).returning({ id: taskMessages.id }))[0]!;
+    const mGhost = (await db.insert(taskMessages).values({ taskId: t.id, authorId: null, body: '' }).returning({ id: taskMessages.id }))[0]!;
     await db
       .insert(taskRuns)
-      .values({ id: 'run-legacy', taskId: t.id, employeeId: agentId, status: RUN_STATUS.DONE, output: 'old' });
+      .values({ id: 'run-legacy', messageId: mLegacy.id, employeeId: agentId, status: RUN_STATUS.DONE, output: 'old' });
     await db
       .insert(taskRuns)
-      .values({ id: 'run-ghost', taskId: t.id, employeeId: null, status: RUN_STATUS.DONE, output: 'old' });
+      .values({ id: 'run-ghost', messageId: mGhost.id, employeeId: null, status: RUN_STATUS.DONE, output: 'old' });
     const rows = (await callProc('tasks.runsList', { taskId: t.id })) as RunRow[];
     expect(rows).toHaveLength(2);
     // newest first: the employeeless ghost run lands first
@@ -1651,14 +1661,14 @@ describe('dispatcher', () => {
     expect(r.runId).toBeTruthy();
     await new Promise((res) => setTimeout(res, 800));
     const { db } = await dbm();
-    const { tasks } = await schema();
+    const { taskMessages, tasks } = await schema();
     const after = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
     expect(after.status).toBe(STATUS.done);
   }, 10_000);
 
   it('dispatch to a human assignee is refused', async () => {
     const { db } = await dbm();
-    const { user } = await schema();
+    const { taskMessages, user } = await schema();
     await db.insert(user).values({
       id: '00000000-0000-7000-8000-b4b57f028566',
       name: 'Hu',
@@ -1683,11 +1693,16 @@ describe('dispatcher', () => {
     // the 'dispatched to' note must sort BEFORE the run card: it is created before
     // the run row exists, so its createdAt is strictly under the run's startedAt
     const { db } = await dbm();
-    const { taskActivity: ta } = await schema();
+    const { taskActivity: ta, taskMessages } = await schema();
     const notes = (await db.select().from(ta)).filter((x) => x.taskId === t.id);
     const dispatchNote = notes.find((n) => (n.meta as Record<string, unknown> | null)?.dispatched === true);
     const { taskRuns: tr } = await schema();
-    const run0 = (await db.select().from(tr)).find((x) => x.taskId === t.id)!;
+    const tm2 = await import('#server/db/schema');
+    const run0 = (await db
+      .select({ run: tr, message: tm2.taskMessages })
+      .from(tr)
+      .innerJoin(tm2.taskMessages, eq(tm2.taskMessages.id, tr.messageId)))
+      .find((x) => x.message.taskId === t.id)!.run;
     expect(dispatchNote).toBeTruthy();
     // strict < flaked in CI when both stamps landed in the same millisecond;
     // activity feeds order by createdAt only, so same-ms ties are admissible
@@ -1714,7 +1729,7 @@ describe('runner proposal recording', () => {
     } finally {
       setEnv({ TANDEM_FAKE_SCRIPT: undefined });
     }
-    const { taskProposals: tp, taskActivity: ta } = await schema();
+    const { taskActivity: ta, taskMessages, taskProposals: tp } = await schema();
     const { db } = await dbm();
     const proposals = await db.select().from(tp);
     expect(proposals.length).toBe(1);
