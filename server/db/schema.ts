@@ -364,9 +364,10 @@ export const taskRuns = pgTable(
     id: text('id')
       .primaryKey()
       .$default(() => uuidv7()),
-    taskId: text('task_id')
+    /** the run's thread turn — the task is reached via the message (user design, 2026-10-26) */
+    messageId: text('message_id')
       .notNull()
-      .references(() => tasks.id, { onDelete: 'cascade' }),
+      .references(() => taskMessages.id, { onDelete: 'cascade' }),
     employeeId: uuid('employee_id').references(() => user.id, { onDelete: 'set null' }),
     /** REVIEW LAW: the ACP session this run used — review turns by OTHER employees must
      * never resume the assignee's session (one session per task PER EMPLOYEE, not per task) */
@@ -382,7 +383,7 @@ export const taskRuns = pgTable(
       .$default(() => new Date()),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
   },
-  (t) => [index('task_runs_task_idx').on(t.taskId, t.startedAt)],
+  (t) => [index('task_runs_message_idx').on(t.messageId, t.startedAt)],
 );
 
 // REVIEW LAW (2026-10-16): one row per reviewer per review round — the single source
@@ -480,15 +481,6 @@ export const taskMessages = pgTable(
   (t) => [index('task_messages_task_idx').on(t.taskId, t.createdAt)],
 );
 
-export const taskMessageRuns = pgTable('task_message_runs', {
-  messageId: text('message_id')
-    .primaryKey()
-    .references(() => taskMessages.id, { onDelete: 'cascade' }),
-  runId: text('run_id')
-    .notNull()
-    .references(() => taskRuns.id, { onDelete: 'cascade' }),
-});
-
 export const taskMessageActivities = pgTable('task_message_activities', {
   messageId: text('message_id')
     .primaryKey()
@@ -516,7 +508,6 @@ export const relations = defineRelations(
     taskActivity,
     taskRuns,
     taskMessages,
-    taskMessageRuns,
     taskMessageActivities,
     taskReviews,
     taskStatuses,
@@ -571,24 +562,20 @@ export const relations = defineRelations(
     taskMessages: {
       task: helpers.one.tasks({ from: helpers.taskMessages.taskId, to: helpers.tasks.id }),
       author: helpers.one.user({ from: helpers.taskMessages.authorId, to: helpers.user.id }),
-      runExt: helpers.one.taskMessageRuns({
-        from: helpers.taskMessages.id,
-        to: helpers.taskMessageRuns.messageId,
-      }),
+      run: helpers.one.taskRuns({ from: helpers.taskMessages.id, to: helpers.taskRuns.messageId }),
       activityExt: helpers.one.taskMessageActivities({
         from: helpers.taskMessages.id,
         to: helpers.taskMessageActivities.messageId,
       }),
-    },
-    taskMessageRuns: {
-      message: helpers.one.taskMessages({ from: helpers.taskMessageRuns.messageId, to: helpers.taskMessages.id }),
-      run: helpers.one.taskRuns({ from: helpers.taskMessageRuns.runId, to: helpers.taskRuns.id }),
     },
     taskMessageActivities: {
       message: helpers.one.taskMessages({
         from: helpers.taskMessageActivities.messageId,
         to: helpers.taskMessages.id,
       }),
+    },
+    taskRuns: {
+      message: helpers.one.taskMessages({ from: helpers.taskRuns.messageId, to: helpers.taskMessages.id }),
     },
     verification: {},
   }),

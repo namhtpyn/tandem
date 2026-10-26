@@ -10,7 +10,7 @@ import { computed, nextTick, onServerPrefetch, ref, watch } from 'vue';
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
-import { buildThread, formatThreadTime, parseRunEnvelope, runOutputWithoutEnvelope } from '~/utils/task-thread';
+import { buildThread, formatThreadTime, parseRunEnvelope } from '~/utils/task-thread';
 import type { ThreadItem } from '~/utils/task-thread';
 
 const props = defineProps<{ task: TaskRow }>();
@@ -305,32 +305,11 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
             >
           </template>
         </div>
-        <!-- exact prompt (brief) sent for this turn -->
-        <details v-if="item.prompt" class="group mt-1">
-          <summary
-            class="cursor-pointer text-xs text-zinc-400 select-none hover:text-zinc-600 dark:hover:text-zinc-300"
-          >
-            input
-          </summary>
-          <pre
-            class="mt-1 max-h-64 overflow-y-auto rounded-md bg-zinc-100 px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-zinc-800 dark:bg-zinc-800/70 dark:text-zinc-300"
-            >{{ item.prompt }}</pre>
-        </details>
-        <!-- raw output (collapsed details keeps the thread chat-like; auto-open while the agent runs) -->
-        <details
-          v-if="runOutputWithoutEnvelope(item.output)"
-          class="group mt-1"
-          :open="item.status === 'running'"
-        >
-          <summary
-            class="cursor-pointer text-xs text-zinc-400 select-none hover:text-zinc-600 dark:hover:text-zinc-300"
-          >
-            output
-          </summary>
-          <pre
-            class="mt-1 max-h-96 overflow-y-auto rounded-md bg-zinc-950 px-2.5 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-zinc-200"
-            >{{ runOutputWithoutEnvelope(item.output) }}</pre>
-        </details>
+        <!-- raw output: FULL transcript, never trimmed, never folded -->
+        <pre
+          v-if="item.output"
+          class="mt-1 rounded-md bg-zinc-950 px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-zinc-200"
+          >{{ item.output }}</pre>
       </div>
     </div>
 

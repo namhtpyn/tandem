@@ -1,36 +1,32 @@
-// task thread: one ordered conversation per task — base message rows with
-// per-kind extension tables (run / activity). The kind is whichever extension
-// exists; emitters dual-write task_activity during the transition.
+// task thread: one ordered conversation per task — base message rows; a run's
+// thread presence is task_runs.message_id (the task is reached via the message).
+// Activity rows dual-write task_activity during the transition.
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 
 import { db, asDb, type DbExecutor } from '../../db/index';
 import { nonNull } from '#shared/utils/non-null';
-import { taskAttachments, taskMessageActivities, taskMessageRuns, taskMessages } from '../../db/schema';
+import { parseRunEnvelope } from '#shared/run-verdict';
+import { taskAttachments, taskMessageActivities, taskMessages } from '../../db/schema';
 
-type MessageInsert = {
-  taskId: string;
-  authorId: string | null;
-  body: string;
-  createdAt?: Date;
-};
-
-/** base row + run extension — the thread's run turn (output stays on task_runs) */
-export async function insertRunMessage(input: MessageInsert & { runId: string }) {
-  const rows = await db
+/** the blank-body message a dispatch creates before its run row exists */
+export async function createRunMessage(input: { taskId: string; authorId: string | null; createdAt?: Date }, ex: DbExecutor = db) {
+  const d = asDb(ex);
+  const rows = await d
     .insert(taskMessages)
     .values({
       taskId: input.taskId,
       authorId: input.authorId,
-      body: input.body,
+      body: '',
       createdAt: input.createdAt ?? new Date(),
     })
     .returning({ id: taskMessages.id });
   // insert...returning always yields the row — nonNull is a type guard only
-  await db.insert(taskMessageRuns).values({ messageId: nonNull(rows[0]).id, runId: input.runId });
+  return nonNull(rows[0]).id;
 }
 
-/** base row + activity extension — payload carries the activity kind + detail */
-export async function insertActivityMessage(input: MessageInsert & { payload: Record<string, unknown> }, ex: DbExecutor = db) {
+/** activity side of the thread — the structured payload lives in task_activity
+ * during the dual-write window, so this only places the base row */
+export async function insertActivityMessage(input: { taskId: string; authorId: string | null; body: string; payload: Record<string, unknown> }, ex: DbExecutor = db) {
   const d = asDb(ex);
   const rows = await d
     .insert(taskMessages)
@@ -38,41 +34,45 @@ export async function insertActivityMessage(input: MessageInsert & { payload: Re
       taskId: input.taskId,
       authorId: input.authorId,
       body: input.body,
-      createdAt: input.createdAt ?? new Date(),
+      createdAt: new Date(),
     })
     .returning({ id: taskMessages.id });
-  // insert...returning always yields the row — nonNull is a type guard only
   await d.insert(taskMessageActivities).values({ messageId: nonNull(rows[0]).id, payload: input.payload });
 }
 
-/** one ordered thread: base rows with their extension + run payload attached */
+/** the run settled: the thread message body becomes the parsed result */
+export async function updateRunMessageBody(messageId: string, output: string) {
+  const body = parseRunEnvelope((output ?? '').trimEnd())?.text ?? '';
+  await db.update(taskMessages).set({ body }).where(eq(taskMessages.id, messageId));
+}
+
+/** one ordered thread: base rows with their run + author attached */
 export async function listTaskThread(taskId: string) {
   const messages = await db.query.taskMessages.findMany({
     where: { taskId },
     orderBy: { createdAt: 'asc', id: 'asc' },
     with: {
       author: { columns: { name: true } },
-      runExt: {
-        with: {
-          run: {
-            columns: {
-              id: true,
-              status: true,
-              output: true,
-              prompt: true,
-              exitCode: true,
-              startedAt: true,
-              finishedAt: true,
-              employeeId: true,
-            },
-          },
+      run: {
+        columns: {
+          id: true,
+          status: true,
+          output: true,
+          prompt: true,
+          exitCode: true,
+          startedAt: true,
+          finishedAt: true,
+          employeeId: true,
         },
       },
       activityExt: { columns: { payload: true } },
     },
   });
 
-  const runIds = messages.flatMap((m) => (m.runExt?.run ? [m.runExt.run.id] : []));
+  // STATUS rows are pipeline chatter (dispatch/review bookkeeping) — never thread items
+  const visible = messages.filter((m) => (m.activityExt?.payload as { kind?: string } | null)?.kind !== 'STATUS');
+
+  const runIds = visible.flatMap((m) => (m.run ? [m.run.id] : []));
   const outputs = runIds.length
     ? await db
         .select({
@@ -91,9 +91,7 @@ export async function listTaskThread(taskId: string) {
         )
     : [];
   // run payload needs the same ISO + agent-name mapping the runs snapshot uses
-  const employeeIds = [
-    ...new Set(messages.flatMap((m) => (m.runExt?.run?.employeeId ? [m.runExt.run.employeeId] : []))),
-  ];
+  const employeeIds = [...new Set(visible.flatMap((m) => (m.run?.employeeId ? [m.run.employeeId] : [])))];
   const users = employeeIds.length
     ? await db.query.user.findMany({ columns: { id: true, name: true }, where: { id: { in: employeeIds } } })
     : [];
@@ -107,8 +105,8 @@ export async function listTaskThread(taskId: string) {
     outputsByRun.set(o.runId, list);
   }
 
-  return messages.map((m) => {
-    const runRow = m.runExt?.run;
+  return visible.map((m) => {
+    const runRow = m.run;
     const run = runRow
       ? {
           ...runRow,
@@ -133,4 +131,4 @@ export async function listTaskThread(taskId: string) {
 }
 
 // re-exported so callers of the old helper keep one import site
-export { taskMessageActivities, taskMessageRuns, taskMessages };
+export { taskMessageActivities, taskMessages };

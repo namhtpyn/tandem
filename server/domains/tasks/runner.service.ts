@@ -16,7 +16,7 @@ import { and, desc, eq, ne, sql } from 'drizzle-orm';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { tasks, taskRuns, taskActivity, taskAttachments } from '../../db/schema';
+import { tasks, taskRuns, taskActivity, taskAttachments, taskMessages } from '../../db/schema';
 import { env } from '../kernel/env';
 import { publishChange } from '../kernel/kernel';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
@@ -140,7 +140,8 @@ export async function settleAttachments(
     const active = await db
       .select({ id: taskRuns.id })
       .from(taskRuns)
-      .where(and(eq(taskRuns.taskId, taskId), eq(taskRuns.status, RUN_STATUS.RUNNING)));
+      .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+      .where(and(eq(taskRuns.status, RUN_STATUS.RUNNING), eq(taskMessages.taskId, taskId)));
     if (active.length === 0) {
       const { loadClient } = await import('./ssh-exec.util');
       const ClientCtor = await loadClient();
@@ -194,7 +195,7 @@ import {
 /** everything the dispatched agent needs, decrypted; returns null pieces when unconfigured */
 import { buildBrief, loadBriefData } from './brief.service';
 import { recordProposals } from './proposals.service';
-import { insertRunMessage } from './thread.service';
+import { createRunMessage, updateRunMessageBody } from './thread.service';
 import { recordVerdict } from './review.service';
 import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles, ensureOutDir } from './ssh-files.util';
 import { submitResult, askQuestion } from './workflow.service';
@@ -294,12 +295,13 @@ export async function loadDispatchPlan(taskId: string) {
 async function lastSessionFor(taskId: string, employeeId: string, excludeRunId?: string) {
   // excludeRunId: the CURRENT run's own row (inserted before the turn, sessionId
   // still null) would otherwise shadow the previous run's session.
-  const conds = [eq(taskRuns.taskId, taskId), eq(taskRuns.employeeId, employeeId)];
+  const conds = [eq(taskMessages.taskId, taskId), eq(taskRuns.employeeId, employeeId)];
   if (excludeRunId) conds.push(ne(taskRuns.id, excludeRunId));
   const row = (
     await db
       .select({ sessionId: taskRuns.sessionId })
       .from(taskRuns)
+      .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
       .where(and(...conds))
       .orderBy(desc(taskRuns.startedAt))
       .limit(1)
@@ -550,21 +552,16 @@ export async function dispatchTask(
   // result card, not after it
   const runId = uuidv7();
   await logRun(taskId, runId, `dispatched to ${plan.agentName} on ${plan.envName}`, { dispatched: true });
+  // the run's thread turn: message first (blank body — settle parses the result
+  // into it), the run row links the task through it
+  const messageId = await createRunMessage({ taskId, authorId: plan.ai.userId });
   await db.insert(taskRuns).values({
     id: runId,
-    taskId,
+    messageId,
     employeeId: plan.ai.userId,
     environmentId: plan.env.id,
     status: RUN_STATUS.RUNNING,
     output: '',
-  });
-  // the run's thread turn — output stays on the run row, the message links it
-  await insertRunMessage({
-    taskId,
-    authorId: plan.ai.userId,
-    body: '',
-    runId,
-    createdAt: new Date(),
   });
   await db.update(tasks).set({ status: STATUS.doing, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
@@ -704,6 +701,8 @@ export async function dispatchTask(
       .update(taskRuns)
       .set({ status, exitCode, output: buffer, finishedAt: new Date() })
       .where(eq(taskRuns.id, runId));
+    // the thread message body becomes the parsed result of the final output
+    await updateRunMessageBody(messageId, buffer);
     // no settle note: the run card's status pill (completed / failed exit N) IS the
     // verdict — a separate 'run finished' pill only duplicated it in the thread
     if (status === RUN_STATUS.DONE) {
@@ -787,21 +786,20 @@ export async function dispatchTask(
 
 /** runs for one task, newest first */
 export async function listRuns(taskId: string) {
-  const rows = await db.query.taskRuns.findMany({
-    columns: {
-      id: true,
-      taskId: true,
-      employeeId: true,
-      environmentId: true,
-      status: true,
-      exitCode: true,
-      output: true,
-      prompt: true,
-      startedAt: true,
-      finishedAt: true,
-    },
-    where: { taskId: { eq: taskId } },
-    orderBy: { startedAt: 'desc' },
-  });
+  const rows = await db
+    .select({
+      id: taskRuns.id,
+      employeeId: taskRuns.employeeId,
+      environmentId: taskRuns.environmentId,
+      status: taskRuns.status,
+      exitCode: taskRuns.exitCode,
+      output: taskRuns.output,
+      prompt: taskRuns.prompt,
+      startedAt: taskRuns.startedAt,
+      finishedAt: taskRuns.finishedAt,
+    })
+    .from(taskRuns)
+    .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+    .where(eq(taskMessages.taskId, taskId));
   return rows.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
 }

@@ -12,7 +12,7 @@ import { v7 as uuidv7 } from 'uuid';
 
 import { db, asDb, type DbExecutor } from '../../db/index';
 import { insertActivityMessage } from './thread.service';
-import { tasks, taskReviews, taskRuns } from '../../db/schema';
+import { tasks, taskReviews, taskRuns, taskMessages } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { spawnObligation, cancelObligations, cancelAllObligations, resolveObligation } from './obligations.service';
 import { dispatchTask } from './runner.service';
@@ -140,9 +140,10 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
         await db
           .select({ id: taskRuns.id })
           .from(taskRuns)
+          .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
           .where(
             and(
-              eq(taskRuns.taskId, taskId),
+              eq(taskMessages.taskId, taskId),
               eq(taskRuns.employeeId, row.reviewerId),
               eq(taskRuns.status, RUN_STATUS.RUNNING),
             ),

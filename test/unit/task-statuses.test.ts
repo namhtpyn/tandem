@@ -696,7 +696,11 @@ describe('jev auto-assign', () => {
     // simulate a dangling project reference (FK normally prevents it; guards the lookup)
     const d = await dbm();
     const { tasks } = await import('#server/db/schema');
-    await d.db.execute('ALTER TABLE tasks DROP CONSTRAINT tandem_tasks_project_id_tandem_projects_id_fkey');
+    // constraint names differ between the squashed baseline and prod's legacy objects
+    await d.db.execute(`do $$ begin execute 'alter table tasks drop constraint ' || (
+      select conname from pg_constraint
+      where conrelid = 'tasks'::regclass and confrelid = 'projects'::regclass limit 1
+    ); end $$;`);
     await d.db.update(tasks).set({ projectId: 'ghost-proj' }).where(eq(tasks.id, t.id));
     const origFetch = globalThis.fetch;
     let state = '';

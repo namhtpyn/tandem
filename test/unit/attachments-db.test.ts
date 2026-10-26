@@ -9,6 +9,7 @@ import {
   tasks,
   taskAttachments,
   taskActivity,
+  taskMessages,
   user as userTable,
   taskRuns,
   aiEmployees,
@@ -86,6 +87,14 @@ async function seed() {
   return { uid: `${uid}`, tid };
 }
 
+
+/** run fixture: the thread message is created first, the run links it via messageId */
+async function mkRun(values: { id: string; taskId: string; [k: string]: unknown }) {
+  const { id, taskId, ...rest } = values;
+  const msgs = await db.insert(taskMessages).values({ taskId, body: '' }).returning({ id: taskMessages.id });
+  return db.insert(taskRuns).values({ ...rest, id, messageId: msgs[0]!.id });
+}
+
 describe('attachment storage round-trip', () => {
   it('saves bytes under the attachments dir keyed by id and reads them back', async () => {
     const { saveAttachmentBytes, readAttachmentBytes, attachmentExists, deleteAttachmentBytes } =
@@ -149,10 +158,8 @@ describe('dispatch attachment push (runner integration)', () => {
 
     // simulate collected output -> the runner's settle writes kind='output' rows
     const runId = crypto.randomUUID();
-    await db.insert(taskRuns).values({
-      id: runId,
-      taskId: tid,
-      employeeId: uid,
+await mkRun({ id: runId, taskId: tid,
+                  employeeId: uid,
       status: RUN_STATUS.DONE,
       exitCode: 0,
       output: '{"kind": "result", "body": "ok"}',
@@ -186,10 +193,8 @@ describe('settleAttachments (runner integration)', () => {
   it('collects outputs, stores rows, logs activity, cleans up when idle', async () => {
     const { uid, tid } = await seed();
     const runId = crypto.randomUUID();
-    await db.insert(taskRuns).values({
-      id: runId,
-      taskId: tid,
-      employeeId: uid,
+await mkRun({ id: runId, taskId: tid,
+                  employeeId: uid,
       status: RUN_STATUS.DONE,
       exitCode: 0,
       output: '{"kind": "result", "body": "ok"}',
@@ -234,18 +239,14 @@ describe('settleAttachments edge arms', () => {
     const { uid, tid } = await seed();
     const runDone = crypto.randomUUID();
     const runActive = crypto.randomUUID();
-    await db.insert(taskRuns).values({
-      id: runDone,
-      taskId: tid,
-      employeeId: uid,
+await mkRun({ id: runDone, taskId: tid,
+                  employeeId: uid,
       status: RUN_STATUS.DONE,
       exitCode: 0,
       output: '{"kind": "result", "body": "ok"}',
       finishedAt: new Date(),
     });
-    await db
-      .insert(taskRuns)
-      .values({ id: runActive, taskId: tid, employeeId: uid, status: RUN_STATUS.RUNNING, startedAt: new Date() });
+    await mkRun({ id: runActive, taskId: tid,   employeeId: uid, status: RUN_STATUS.RUNNING, startedAt: new Date() });
     // ssh-files mock: collect returns [] for this call? module mock returns files... override per-call impossible.
     // Instead verify settle resolves and no output rows/activity appear when collect returns [].
     // Temporarily swap the mock impl:
@@ -466,10 +467,8 @@ describe('settleAttachments per-file store hardening', () => {
     const { uid, tid } = await seed();
     const { sanitizeFilename } = await import('#server/domains/tasks/attachments.util');
     const runId = crypto.randomUUID();
-    await db.insert(taskRuns).values({
-      id: runId,
-      taskId: tid,
-      employeeId: uid,
+await mkRun({ id: runId, taskId: tid,
+                  employeeId: uid,
       status: RUN_STATUS.DONE,
       exitCode: 0,
       output: '{"kind": "result", "body": "ok"}',
