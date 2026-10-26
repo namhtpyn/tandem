@@ -1,3 +1,11 @@
+# [2.44.0](https://github.com/namhtpyn/tandem/compare/v2.43.0...v2.44.0) (2026-10-26)
+
+
+### Features
+
+* **app:** thread shows raw run output, drops input fold and STATUS chatter ([a004bf5](https://github.com/namhtpyn/tandem/commit/a004bf59376fd1220566be0b679c4da14eab61a3))
+* **run:** runs link tasks via thread messages (user design, 2026-10-26) ([7ac32bb](https://github.com/namhtpyn/tandem/commit/7ac32bbc8a1c8d7acc6efdf9e4c2efa696b3269b))
+
 # [2.43.0](https://github.com/namhtpyn/tandem/compare/v2.42.0...v2.43.0) (2026-10-26)
 
 
