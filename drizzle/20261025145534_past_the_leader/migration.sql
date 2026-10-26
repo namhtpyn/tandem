@@ -26,7 +26,7 @@ ALTER TABLE "task_messages" ADD CONSTRAINT "task_messages_author_id_user_id_fkey
 INSERT INTO task_messages (id, task_id, author_id, body, created_at)
 SELECT id, task_id, author_id, body, created_at FROM task_activity;
 INSERT INTO task_message_activities (message_id, payload)
-SELECT id, meta FROM task_activity;
+SELECT id, jsonb_build_object('kind', kind, 'meta', meta) FROM task_activity;
 
 -- backfill: one thread message per run (body rendered from the run row; started_at keeps ordering)
 INSERT INTO task_messages (id, task_id, author_id, body, created_at)
