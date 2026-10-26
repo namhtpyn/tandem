@@ -162,7 +162,7 @@ describe('loadBriefData (real db)', () => {
     expect(dAsh2.recentActivity.map((a) => a.body)).toEqual(['Jay: done, pr opened']);
   });
 
-  it('covers long activity truncation, mention name stripping, populated reviewers', async () => {
+  it('ships long activity whole (never truncated), strips mention ids, populated reviewers', async () => {
     const long = 'x'.repeat(300);
     // a finished run first: the long note must land after the cutoff to ship
     await db.insert(taskMessages).values({ id: 'run-msg-long', taskId, body: '' });
@@ -182,7 +182,7 @@ describe('loadBriefData (real db)', () => {
       .where(eq(tasks.id, taskId));
     const d = await loadBriefData(taskId, agentId);
     const brief = buildBrief(d);
-    expect(brief).toContain('…'); // long activity truncated
+    expect(brief).toContain(long); // prompt message lines ship whole, uncut
     expect(brief).toContain('Peer Three'); // mention link stripped to the bare name
     expect(brief).not.toContain('mention-x'); // raw mention id never reaches the agent
     expect(d.task.reviewerNames).toContain('Chief Two');

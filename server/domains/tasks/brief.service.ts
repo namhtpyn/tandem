@@ -171,7 +171,8 @@ function activitySection(input: BriefInput) {
   if (!input.recentActivity.length) return [];
   const lines = ['', 'Recent activity on this task (oldest first):'];
   for (const a of input.recentActivity)
-    lines.push(`- ${a.kind.toLowerCase()} by ${a.authorName ?? 'system'}: ${trunc(a.body ?? '', 200)}`);
+    // owner law 2026-10-26: prompt message lines ship whole — never truncated
+    lines.push(`- ${a.kind.toLowerCase()} by ${a.authorName ?? 'system'}: ${a.body ?? ''}`);
   return lines;
 }
 
@@ -211,10 +212,6 @@ function personLine(p: BriefPerson) {
   return p.title ? `${p.name} (${p.title})` : p.name;
 }
 
-function trunc(s: string, n: number) {
-  return s.length > n ? `${s.slice(0, n)}…` : s;
-}
-
 /** mentions -> plain Name refs for the prompt (agent sees names, not markdown ids) */
 function stripMentions(desc: string) {
   return desc.replace(/@\[([^\]]*)\]\(mention-[^)]+\)/g, (_m, label) => `${label}`).trim();
@@ -247,7 +244,7 @@ export async function loadBriefData(taskId: string, readerEmployeeId?: string) {
       .where(and(eq(taskProposals.taskId, taskId), eq(taskProposals.status, PROPOSAL_STATUS.REJECTED)))
   )
     .filter((p) => p.decisionNote)
-    .map((p) => `- proposal declined: ${p.kind} — ${trunc(p.decisionNote, 200)}`);
+    .map((p) => `- proposal declined: ${p.kind} — ${p.decisionNote}`);
   const assigneeId = nonNull(task.assigneeId);
   const edges = await db.query.employeeSupervisors.findMany({
     columns: { employeeId: true, supervisorId: true },
