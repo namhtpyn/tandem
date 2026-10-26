@@ -140,34 +140,14 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
   return { ok: true };
 }
 
-/** REVIEW LAW (2026-10-16): a submitted result defaults to the assignee's SUPERVISOR
- * for review — humans and AI employees are equal reviewers. Explicit reviewers (if
- * set) win; a lone top-of-org agent with no supervisor completes as before. Review
- * happens ON the task (never a subtask): task_reviews records per-reviewer
- * verdicts; AI reviewers get a review turn dispatched on this same task. */
-async function defaultReviewer(assigneeId: string): Promise<string | null> {
-  const rows = await db
-    .select({ supervisorId: employeeSupervisors.supervisorId })
-    .from(employeeSupervisors)
-    .where(eq(employeeSupervisors.employeeId, assigneeId));
-  return rows[0]?.supervisorId ?? null;
-}
-
 export async function submitResult(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId);
   if (task.status !== DOING_STATUS) throw new Error('only a task in progress can submit');
   if (task.assigneeId !== authorId) throw new Error('only the assignee can submit');
   if (await hasOpenChildren(taskId)) throw new Error('task has open subtasks — they must be done or cancelled first');
-  let reviewers = task.reviewers;
-  if (reviewers.length === 0) {
-    /* v8 ignore next -- submit requires an assignee; the null arm is defensive */
-    const supervisor = task.assigneeId ? await defaultReviewer(task.assigneeId) : null;
-    if (supervisor) {
-      // persist so verdict author checks and the UI see the reviewer
-      reviewers = [supervisor];
-      await db.update(tasks).set({ reviewers, updatedAt: new Date() }).where(eq(tasks.id, taskId));
-    }
-  }
+  // explicit reviewers only (owner ruling 2026-10-26): the org supervisor is NOT a
+  // quality gate — a task with nobody set completes immediately
+  const reviewers = task.reviewers;
   const nextStatus = reviewers.length > 0 ? IN_REVIEW_STATUS : DONE_STATUS;
   await db.update(tasks).set({ status: nextStatus, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   if (reviewers.length > 0) await openReviewRound(taskId, reviewers, body);

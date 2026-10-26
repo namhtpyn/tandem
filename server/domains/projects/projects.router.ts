@@ -141,7 +141,9 @@ export const projectsRouter = os.router({
                 .where(eq(projectsTable.id, cursor));
               cursor = rows[0]?.parentId ?? null;
             }
-            if (cursor) throw new ORPCError('BAD_REQUEST', { message: 'project nesting too deep' });
+            if (cursor !== null) {
+              throw new ORPCError('BAD_REQUEST', { message: 'project nesting too deep' });
+            }
             const p = await tx
               .select({ id: projectsTable.id })
               .from(projectsTable)

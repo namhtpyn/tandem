@@ -1016,11 +1016,11 @@ describe('dispatcher', () => {
     }
   }, 15_000);
 
-  it('REVIEW LAW: human supervisor default — pending row + obligation, no run', async () => {
+  it('REVIEW LAW: supervisor is not a reviewer — a task with nobody set completes directly', async () => {
     setEnv({ TANDEM_FAKE_SCRIPT: 'done\n{"kind": "result", "body": "shipped"}' });
     try {
       const { db } = await dbm();
-      const { employeeSupervisors, taskMessages, taskObligations, taskReviews, user } = await schema();
+      const { employeeSupervisors, taskObligations, taskReviews, user } = await schema();
       await db.insert(user).values({
         id: '00000000-0000-7000-8000-b09d13ad1a84',
         name: 'Ash Boss',
@@ -1039,32 +1039,25 @@ describe('dispatcher', () => {
         await dispatchTask(t.id, 'http://tandem.local')
       ).finished;
       await new Promise((r) => setTimeout(r, 300)); // settle cascade
-      const { taskRuns, tasks } = await schema();
+      const { taskRuns, taskMessages, tasks } = await schema();
       const row = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
-      expect(row.status).toBe(STATUS.inReview);
-      expect(row.reviewers).toEqual(['00000000-0000-7000-8000-b09d13ad1a84']);
+      // owner ruling (2026-10-26): a supervised assignee does NOT auto-open a review round
+      expect(row.status).toBe(STATUS.done);
+      expect(row.reviewers).toEqual([]);
       const rev = (await db.select().from(taskReviews)).filter((r) => r.taskId === t.id);
-      expect(rev).toHaveLength(1);
-      expect(rev[0]!.status).toBe(OBLIGATION_STATUS.PENDING); // human: waits for the card, no auto run
-      expect(rev[0]!.round).toBe(1);
-      expect((await db.select({ run: taskRuns, message: taskMessages }).from(taskRuns).innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))).filter((r) => r.message.taskId === t.id)).toHaveLength(1); // assignee run only
+      expect(rev).toHaveLength(0);
       const obl = (await db.select().from(taskObligations)).filter((o) => o.taskId === t.id);
-      expect(
-        obl.some(
-          (o) =>
-            o.role === OBLIGATION_ROLE.APPROVAL &&
-            o.employeeId === '00000000-0000-7000-8000-b09d13ad1a84' &&
-            o.status === OBLIGATION_STATUS.PENDING,
-        ),
-      ).toBe(true);
+      expect(obl).toHaveLength(0);
+      const runs = (await db
+        .select({ run: taskRuns, message: taskMessages })
+        .from(taskRuns)
+        .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId)))
+        .filter((r) => r.message.taskId === t.id);
+      expect(runs).toHaveLength(1); // the assignee's turn only — no review turn
     } finally {
-      await drainRuns();
       setEnv({ TANDEM_FAKE_SCRIPT: undefined });
-      setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: undefined });
-      setEnv({ TANDEM_FAKE_RUNNER: '1' });
     }
   }, 15_000);
-
   it('REVIEW LAW: AI reviewer gets a review TURN on the same task; {"kind": "result", "body": "approves; separate session"}', async () => {
     setEnv({ TANDEM_FAKE_SCRIPT: 'working\n{"kind": "result", "body": "PR #42 done, tests green"}' });
     setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'looked good\n{"kind": "result", "body": "approved — nice work"}' });
@@ -1074,7 +1067,7 @@ describe('dispatcher', () => {
       const jay = await mkAiAgent();
       const ash = await mkAiAgent();
       await db.insert(employeeSupervisors).values({ employeeId: jay, supervisorId: ash });
-      const t = await callProc('tasks.create', { title: 'AIReview', assigneeId: jay });
+      const t = await callProc('tasks.create', { title: 'AIReview', assigneeId: jay, reviewers: [ash] });
       const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       await (
         await dispatchTask(t.id, 'http://tandem.local')
@@ -1124,7 +1117,7 @@ describe('dispatcher', () => {
       const jay = await mkAiAgent();
       const ash = await mkAiAgent();
       await db.insert(employeeSupervisors).values({ employeeId: jay, supervisorId: ash });
-      const t = await callProc('tasks.create', { title: 'AIReject', assigneeId: jay });
+      const t = await callProc('tasks.create', { title: 'AIReject', assigneeId: jay, reviewers: [ash] });
       const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       await (
         await dispatchTask(t.id, 'http://tandem.local')
@@ -1170,6 +1163,7 @@ describe('dispatcher', () => {
         title: 'AIVerdict',
         assigneeId: jay,
         ownerId: '00000000-0000-7000-8000-cd5fca5e2d34',
+        reviewers: [ash],
       });
       const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       await (
@@ -1385,6 +1379,7 @@ describe('dispatcher', () => {
         title: 'Rearm',
         assigneeId: jay,
         ownerId: '00000000-0000-7000-8000-cd5fca5e2d34',
+        reviewers: [ash],
       });
       const { dispatchTask } = await import('#server/domains/tasks/runner.service');
       await (

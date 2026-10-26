@@ -173,4 +173,29 @@ describe('task project linkage', () => {
       code: 'BAD_REQUEST',
     });
   });
+  it('fails CLOSED when the ancestor walk exits at the depth cap (101-deep chain)', async () => {
+    const { db } = await import('#server/db');
+    const { projects } = await import('#server/db/schema');
+    // chain of 101: deep-001 is the root, deep-101 the deepest (raw insert — one batch)
+    const rows = Array.from({ length: 101 }, (_, i) => ({
+      id: `deep-${String(i + 1).padStart(3, '0')}`,
+      name: `Deep ${i + 1}`,
+      parentId: i === 0 ? null : `deep-${String(i).padStart(3, '0')}`,
+    }));
+    await db.insert(projects).values(rows);
+    const mover = await callProc('projects.create', { name: 'Mover' });
+    // reparenting under the 101-deep leaf would take 101 walk steps > cap -> rejected
+    await expect(callProc('projects.update', { id: mover.id, parentId: 'deep-101' })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'project nesting too deep',
+    });
+    // nothing was written by the aborted update
+    const after = await db.select().from(projects);
+    expect(after.find((p) => p.id === mover.id)!.parentId).toBeNull();
+
+    // a 100-deep chain still resolves (walk reaches the root) and the update lands
+    await expect(callProc('projects.update', { id: mover.id, parentId: 'deep-100' })).resolves.toMatchObject({
+      ok: true,
+    });
+  });
 });
