@@ -25,7 +25,7 @@ test('inbox toggle filters to tasks pending on me and shows a badge', async ({ p
   await page.waitForTimeout(600);
   await page.getByRole('link', { name: name }).first().click();
   await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
-  await page.getByPlaceholder('Write a note or review…').fill('which db?');
+  await page.getByPlaceholder('Write a note…').fill('which db?');
   await page.getByRole('button', { name: 'Ask', exact: true }).first().click();
   await page.waitForTimeout(1200);
 

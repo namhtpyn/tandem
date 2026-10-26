@@ -1,5 +1,11 @@
 import { and, eq } from 'drizzle-orm';
 
+/** jsonb payloads arrive as raw strings through RQB relation selects - normalize to the kind */
+export function activityKindOf(payload: unknown): string {
+  const obj = (typeof payload === 'string' ? JSON.parse(payload) : payload) as { kind?: string } | null;
+  return (obj?.kind ?? '').toLowerCase();
+}
+
 import { consola } from 'consola';
 
 import { PROPOSAL_STATUS } from '#shared/enums';
@@ -86,10 +92,23 @@ type BriefInput = {
   /** exact deliverable out-dir for this run's task — agents must not guess it */
   outDir: string;
   recentActivity: Array<{ kind: string; authorName: string | null; body: string | null }>;
+  /** reader already ran this task: the ticket lives in their session, prompt is a relay */
+  relay: boolean;
   attachments?: Array<{ id: string; filename: string; mime: string; size: number; remotePath: string }>;
 };
 
 export function buildBrief(input: BriefInput) {
+  if (input.relay) {
+    // continuation: the ticket already lives in this agent's session
+    return [
+      ...orgSection(input),
+      '',
+      'CONTINUATION — you worked on this task before; the messages below are everything new since your last turn. If you are missing earlier context (fresh session), ask for the full ticket via a blocked envelope.',
+      ...activitySection(input),
+      ...attachmentsSection(input),
+      ...contractSection(input),
+    ].join('\n');
+  }
   return [
     ...orgSection(input),
     ...contextSection(input),
@@ -152,7 +171,8 @@ function activitySection(input: BriefInput) {
   if (!input.recentActivity.length) return [];
   const lines = ['', 'Recent activity on this task (oldest first):'];
   for (const a of input.recentActivity)
-    lines.push(`- ${a.kind.toLowerCase()} by ${a.authorName ?? 'system'}: ${trunc(a.body ?? '', 200)}`);
+    // owner law 2026-10-26: prompt message lines ship whole — never truncated
+    lines.push(`- ${a.kind.toLowerCase()} by ${a.authorName ?? 'system'}: ${a.body ?? ''}`);
   return lines;
 }
 
@@ -174,26 +194,20 @@ function contractSection(input: BriefInput) {
     `DELIVERABLES — write any output files to ${input.outDir} (create it if needed; that EXACT path, not the environment name); everything left there when you exit is collected and attached to your result.`,
     '',
     renderOutputContract(RunVerdictSchema, {
-      intro: 'OUTPUT CONTRACT — end your response with exactly one JSON line (no code fence):',
+      intro: 'OUTPUT CONTRACT — end your response with exactly one JSON line (no code fence). ROUTING rides the same line: propose subtasks when a meaningful part belongs to someone else; reassign only when the WHOLE task belongs elsewhere; routing inside your own supervision chain executes immediately, anything outside goes to a human:',
       examples: [
         '{"kind": "result", "body": "<final answer or summary of work done>"}',
         '{"kind": "question", "body": "<blocking question for the owner>"}',
         '{"kind": "blocked", "body": "<what you need and from whom>"}',
+        '{"kind": "result", "body": "<…>", "subtasks": [{"title": "<…>", "description": "<…>", "assigneeName": "<name>"}]}',
+        '{"kind": "result", "body": "<…>", "reassign": {"assigneeName": "<name>", "reason": "<why>"}}',
       ],
     }),
-    '',
-    'ROUTING — if part of this task belongs to someone else, also add a routing line (routing to people inside your own supervision chain executes immediately; anything outside your chain goes to a human for confirmation):',
-    '[SUBTASKS] <title> :: <description> :: <suggested assignee name> | <another subtask> (propose subtasks; suggest assignees from people you know above — outside your chain gets escalated to your supervisor)',
-    '[REASSIGN] <employee name> — <reason> (only when the WHOLE task belongs to someone else)',
   ];
 }
 
 function personLine(p: BriefPerson) {
   return p.title ? `${p.name} (${p.title})` : p.name;
-}
-
-function trunc(s: string, n: number) {
-  return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
 /** mentions -> plain Name refs for the prompt (agent sees names, not markdown ids) */
@@ -202,7 +216,7 @@ function stripMentions(desc: string) {
 }
 
 /** gather everything the brief needs from the DB (single dispatch-time read) */
-export async function loadBriefData(taskId: string) {
+export async function loadBriefData(taskId: string, readerEmployeeId?: string) {
   const task = await db.query.tasks.findFirst({
     columns: {
       title: true,
@@ -228,7 +242,7 @@ export async function loadBriefData(taskId: string) {
       .where(and(eq(taskProposals.taskId, taskId), eq(taskProposals.status, PROPOSAL_STATUS.REJECTED)))
   )
     .filter((p) => p.decisionNote)
-    .map((p) => `- proposal declined: ${p.kind} — ${trunc(p.decisionNote, 200)}`);
+    .map((p) => `- proposal declined: ${p.kind} — ${p.decisionNote}`);
   const assigneeId = nonNull(task.assigneeId);
   const edges = await db.query.employeeSupervisors.findMany({
     columns: { employeeId: true, supervisorId: true },
@@ -257,17 +271,46 @@ export async function loadBriefData(taskId: string) {
     if (!users.some((u) => u.id === mid)) continue;
     extra.push({ person: person(mid), chain: chainToRoot(mid, edges).map(person) });
   }
-  const activity = await db.query.taskActivity.findMany({
-    columns: { kind: true, authorId: true, body: true, createdAt: true },
+  // prompt source = task_messages (owner ruling 2026-10-26); the relay filter
+  // below decides what actually ships
+  const threadRows = await db.query.taskMessages.findMany({
+    columns: { id: true, body: true, authorId: true, createdAt: true },
     where: { taskId: { eq: taskId } },
     orderBy: { createdAt: 'asc' },
+    with: {
+      author: { columns: { name: true } },
+      run: { columns: { finishedAt: true, employeeId: true } },
+      activityExt: { columns: { payload: true } },
+    },
   });
-  activity.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  const finishedAts = threadRows
+    .map((m) => m.run?.finishedAt)
+    .filter((t): t is Date => t instanceof Date)
+    .sort((a, b) => a.getTime() - b.getTime());
+  // relay law (owner ruling 2026-10-26): the prompt is a conversation relay, not a
+  // re-brief. The TASK block ships only on the reader's first run of the task; later
+  // prompts carry just the messages since the reader's own last finished turn —
+  // other agents' results are the relay, own turns live in session memory, STATUS
+  // bookkeeping never ships.
+  const ownFinished = finishedAts.filter(
+    (f) => !readerEmployeeId || threadRows.some((m) => m.run?.employeeId === readerEmployeeId && m.run.finishedAt?.getTime() === f.getTime()),
+  );
+  const hasPrior = ownFinished.length > 0;
+  const lastFinished = hasPrior ? (ownFinished.at(-1) ?? null) : null;
+  const extKind = (m: (typeof threadRows)[number]) => activityKindOf(m.activityExt?.payload);
+  const convo = threadRows.filter((m) => {
+    if (lastFinished && m.createdAt <= lastFinished) return false;
+    if (extKind(m) === 'status') return false;
+    // other agents' settled results relay; the reader's own turns live in session memory
+    if (m.run) return m.run.employeeId !== readerEmployeeId;
+    return true;
+  });
   const nameById = new Map(users.map((u) => [u.id, u.name]));
-  const recent = activity.slice(-20).map((a) => ({
-    kind: a.kind,
-    authorName: a.authorId ? nonNull(nameById.get(a.authorId)) : null,
-    body: nonNull(a.body),
+  const recent = convo.map((m) => ({
+    kind: m.run ? 'result' : extKind(m) || 'note',
+    // run turns carry no message author; the employee user row names them
+    authorName: m.run ? (nameById.get(m.run.employeeId ?? '') ?? 'agent') : (m.author?.name ?? null),
+    body: m.body,
   }));
   const ai = aiById.get(assigneeId);
   // company + project prompts ride every brief (user law 2026-10-16: layered context)
@@ -311,6 +354,7 @@ export async function loadBriefData(taskId: string) {
       projectName: projectRow?.name ?? null,
     },
     recentActivity: [...recent, ...rejectedNotes.map((n) => ({ kind: 'note', authorName: 'system', body: n }))],
+    relay: hasPrior,
     attachments,
   };
 }

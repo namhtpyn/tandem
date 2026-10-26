@@ -34,6 +34,7 @@ const workflowMessage = ref('');
 // zod strips unknown keys, so optional extras ride along safely
 type WorkflowAction =
   | 'dispatch'
+  | 'note'
   | 'submit'
   | 'ask'
   | 'forward'
@@ -52,6 +53,7 @@ async function wfAction(action: WorkflowAction, extra: { body?: string; toEmploy
     await (
       {
         dispatch: () => $client.tasks.dispatch({ taskId: input.taskId }),
+        note: () => $client.tasks.note({ ...input, body: nonNull(input.body) }),
         submit: () => $client.tasks.submit({ ...input, body: nonNull(input.body) }),
         ask: () => $client.tasks.ask({ ...input, body: nonNull(input.body) }),
         forward: () => $client.tasks.forward({ ...input, toEmployeeId: nonNull(input.toEmployeeId) }),
@@ -175,7 +177,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                 autoresize
                 :maxrows="6"
                 variant="none"
-                placeholder="Write a note or review…"
+                placeholder="Write a note…"
                 class="w-full"
                 :ui="{ base: 'px-1 py-1 text-sm placeholder:text-zinc-400' }"
               />
@@ -187,7 +189,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                 >
                   {{ workflowMessage }}
                 </p>
-                <span v-else class="text-[11px] text-zinc-400 dark:text-zinc-500">⏎ submit · ▶ dispatch agent</span>
+                <span v-else class="text-[11px] text-zinc-400 dark:text-zinc-500">⏎ post note · ▶ dispatch agent</span>
                 <div class="ml-auto flex items-center gap-1.5">
                   <UPopover mode="hover" enable-touch>
                     <template #content><div class="px-3 py-1.5 text-xs">Dispatch to the AI assignee</div></template>
@@ -202,15 +204,15 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                       @click="wfAction('dispatch')"
                   /></UPopover>
                   <UPopover mode="hover" enable-touch>
-                    <template #content><div class="px-3 py-1.5 text-xs">Submit note to the thread</div></template>
+                    <template #content><div class="px-3 py-1.5 text-xs">Post note to the conversation</div></template>
                     <UButton
                       size="lg"
                       color="primary"
                       icon="i-lucide-arrow-up"
-                      aria-label="Submit"
+                      aria-label="Send note"
                       class="size-10"
-                      :disabled="workflowBusy"
-                      @click="wfAction('submit', { body: workflowNote || undefined })"
+                      :disabled="workflowBusy || !workflowNote.trim()"
+                      @click="wfAction('note', { body: workflowNote })"
                   /></UPopover>
                 </div>
               </div>
@@ -225,7 +227,12 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
               <TaskDetailsFields :task="task" />
               <TaskReviewPanel v-if="task.reviewerNames.length" :task-id="task.id" />
               <TaskRoutingPanels :task-id="task.id" />
-              <TaskWorkflowActions :busy="workflowBusy" :note="workflowNote" @action="wfAction" />
+              <TaskWorkflowActions
+                :busy="workflowBusy"
+                :note="workflowNote"
+                :status-id="task.status"
+                @action="wfAction"
+              />
             </div>
           </aside>
         </div>
@@ -237,7 +244,12 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
               <TaskDetailsFields :task="task" />
               <TaskReviewPanel v-if="task.reviewerNames.length" :task-id="task.id" />
               <TaskRoutingPanels :task-id="task.id" />
-              <TaskWorkflowActions :busy="workflowBusy" :note="workflowNote" @action="wfAction" />
+              <TaskWorkflowActions
+                :busy="workflowBusy"
+                :note="workflowNote"
+                :status-id="task.status"
+                @action="wfAction"
+              />
             </div>
           </template>
         </USlideover>

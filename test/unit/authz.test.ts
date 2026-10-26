@@ -147,6 +147,19 @@ describe('admin-only writes', () => {
     await expect(call('tasks.setStatus', { id: child.id, status: STATUS.doing })).resolves.toMatchObject({ ok: true });
   });
 
+  it('tasks.note posts a thread message and changes nothing else', async () => {
+    const t = await call('tasks.create', { title: 'Noted' });
+    await expect(call('tasks.note', { taskId: t.id, body: 'plain human note' })).resolves.toMatchObject({ ok: true });
+    const { db } = await dbm();
+    const { taskMessages, tasks } = await schema();
+    const { eq } = await import('drizzle-orm');
+    const msgs = await db.select().from(taskMessages).where(eq(taskMessages.taskId, t.id));
+    expect(msgs.some((m: { body: string }) => m.body === 'plain human note')).toBe(true);
+    // no state transition rode along — the task stays on its create status
+    const row = await db.select().from(tasks).where(eq(tasks.id, t.id));
+    expect(row[0]!.status).toBe(STATUS.todo);
+  });
+
   it('tasks.create only accepts ready-category starting statuses', async () => {
     await expect(call('tasks.create', { title: 'Born working', status: STATUS.doing })).rejects.toMatchObject({
       code: 'BAD_REQUEST',

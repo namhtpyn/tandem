@@ -23,6 +23,7 @@ import { listReviews, logActivity } from './review.service';
 import { dispatchTask, listRuns } from './runner.service';
 import { listTaskThread } from './thread.service';
 import {
+  addNote,
   askQuestion,
   forwardQuestion,
   answerQuestion,
@@ -558,6 +559,16 @@ export const tasksRouter = os.router({
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
       return await runWorkflow(() => askQuestion(input.taskId, selfId, input.body));
+    }),
+
+  /** a plain conversation note: thread-only, no state change */
+  note: protectedProcedure
+    .input(z.strictObject({ taskId: z.string().min(1), body: z.string().min(1).max(10_000) }))
+    .handler(async ({ input, context }) => {
+      const selfId = await selfIdOf(context);
+      if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
+      await runWorkflow(() => addNote(input.taskId, selfId, input.body));
+      return { ok: true };
     }),
 
   /** current holder forwards the question down the chain */

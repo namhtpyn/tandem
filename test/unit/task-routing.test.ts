@@ -614,8 +614,11 @@ describe('routing coverage arms', () => {
     const child = await mkTask({ title: 'Child task', parentId: root, assigneeId: idMap.get('peer')! });
     const childBrief = buildBrief(await loadBriefData(child));
     expect(childBrief).toContain('This is a subtask of: Root task');
-    expect(childBrief).toContain('[SUBTASKS]');
-    expect(childBrief).toContain('[REASSIGN]');
+    // routing folded into the JSON envelope: the contract shows the optional fields
+    expect(childBrief).toContain('"subtasks"');
+    expect(childBrief).toContain('"reassign"');
+    expect(childBrief).not.toContain('[SUBTASKS]');
+    expect(childBrief).not.toContain('[REASSIGN]');
     const rootBrief = buildBrief({
       ...(await loadBriefData(root)),
       task: { ...(await loadBriefData(root)).task, parentTitle: null },
