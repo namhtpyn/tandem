@@ -42,6 +42,9 @@ async function logActivity(
   meta: Record<string, unknown> = {},
 ) {
   await db.insert(taskActivity).values({ id: uuidv7(), taskId, kind, authorId, body, meta });
+  // dual-write: the thread is the relay-brief source, every activity must land there
+  const { insertActivityMessage } = await import('./thread.service');
+  await insertActivityMessage({ taskId, authorId, body, payload: { kind, ...meta } });
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
@@ -139,6 +142,13 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
   await refreshParentGating(taskId);
   return { ok: true };
 }
+/** a plain conversation note: thread-only, no state change (relay law 2026-10-26) */
+export async function addNote(taskId: string, authorId: string, body: string) {
+  await getTask(taskId);
+  await logActivity(taskId, ACTIVITY_KIND.NOTE, authorId, body, {});
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+}
+
 
 export async function submitResult(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId);

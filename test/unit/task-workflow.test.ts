@@ -129,6 +129,7 @@ describe('workflow procs without a session', () => {
     const caller = await makeProcCaller({ name: 'No Id' } as never);
     const taskId = '00000000-0000-7000-8000-000000000001';
     const paths: Array<[string, unknown]> = [
+      ['tasks.note', { taskId, body: 'n' }],
       ['tasks.ask', { taskId, body: 'q' }],
       ['tasks.forward', { taskId, toEmployeeId: '00000000-0000-7000-8000-000000000002', body: 'f' }],
       ['tasks.answer', { taskId, body: 'a' }],

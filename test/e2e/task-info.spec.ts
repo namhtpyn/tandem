@@ -19,7 +19,7 @@ test('task title click opens the task detail page', async ({ page }) => {
 
   // chat main: empty thread placeholder + composer
   await expect(page.getByText('No activity yet.')).toBeVisible();
-  await expect(page.getByPlaceholder('Write a note or review…')).toBeVisible();
+  await expect(page.getByPlaceholder('Write a note…')).toBeVisible();
 
   // sidebar: Details + Workflow sections
   await expect(page.getByText('Details', { exact: true }).first()).toBeVisible();
@@ -45,9 +45,10 @@ test('mobile: sidebar collapses into the info sheet', async ({ page }) => {
   await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
 
   // composer still primary on mobile; info opens as sheet
-  await expect(page.getByPlaceholder('Write a note or review…')).toBeVisible();
+  await expect(page.getByPlaceholder('Write a note…')).toBeVisible();
   await page.getByTestId('task-info-trigger').click();
   // scope to the visible slideover (the desktop aside is display:none on mobile)
   await expect(page.getByLabel('Task info').getByText('Details', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('Task info').getByRole('button', { name: 'Approve' })).toBeVisible();
+  // a fresh task is To do: the contextual workflow verbs are work-state moves
+  await expect(page.getByLabel('Task info').getByRole('button', { name: 'Ask' })).toBeVisible();
 });
