@@ -1,3 +1,19 @@
+# [2.46.0](https://github.com/namhtpyn/tandem/compare/v2.45.0...v2.46.0) (2026-10-26)
+
+
+### Bug Fixes
+
+* **docker:** bump base image to bun 1.4.4 (CVE-2026-111497 brotli OOB write) ([98872a3](https://github.com/namhtpyn/tandem/commit/98872a3c7165e1af9c583d5ffdb3f01dba696d33))
+
+
+### Features
+
+* **app:** composer posts plain notes; workflow verbs render per state ([07b8181](https://github.com/namhtpyn/tandem/commit/07b81817673dffebf2311a493c63b309ae465df7))
+* **brief:** activity section = thread messages after the last finished run ([bbfab4c](https://github.com/namhtpyn/tandem/commit/bbfab4ca3b8faf6bbc22b847887678c69ad7222a))
+* **brief:** prompt is a conversation relay, not a re-brief ([be2fa25](https://github.com/namhtpyn/tandem/commit/be2fa25d7e3894228bd2d9e65465907e7a96de53))
+* **brief:** prompt message lines ship whole — no truncation ([4e81b5f](https://github.com/namhtpyn/tandem/commit/4e81b5f24b091222fa79a43d224e14974b9caa61))
+* **routing:** fold SUBTASKS/REASSIGN into the JSON envelope ([1106087](https://github.com/namhtpyn/tandem/commit/11060877fdb580f2300f9fc696f2ff5bf6e9d3cd))
+
 # [2.45.0](https://github.com/namhtpyn/tandem/compare/v2.44.1...v2.45.0) (2026-10-26)
 
 
