@@ -8,15 +8,30 @@ import { z } from 'zod';
 // estate speaks one format.
 import { nonNull } from '#shared/utils/non-null';
 
+export const SubtaskProposalItemSchema = z.object({
+  title: z.string().min(1),
+  description: z.string().optional(),
+  assigneeName: z.string().optional(),
+});
+
 export const RunVerdictSchema = z.object({
   kind: z.enum(['result', 'question', 'blocked']),
   body: z.string(), // empty allowed — the runner substitutes fallback text per kind
+  // routing folded into the envelope (owner ruling 2026-10-26): the agent's single
+  // JSON line carries its own routing proposals — no side-channel text markers
+  subtasks: z.array(SubtaskProposalItemSchema).max(20).optional(),
+  reassign: z.object({ assigneeName: z.string().min(1), reason: z.string().optional() }).optional(),
 });
 
 export type RunVerdict = z.infer<typeof RunVerdictSchema>;
 
 export type EnvelopeKind = RunVerdict['kind'];
-export type RunEnvelope = { kind: EnvelopeKind; text: string };
+export type RunEnvelope = {
+  kind: EnvelopeKind;
+  text: string;
+  subtasks?: Array<{ title: string; description?: string; assigneeName?: string }>;
+  reassign?: { assigneeName: string; reason?: string };
+};
 
 /**
  * The single verdict parser — used by the runner AND the UI thread. SYNC
@@ -40,7 +55,13 @@ export function parseRunEnvelope(output: string | null | undefined): RunEnvelope
     if (!raw.startsWith('{') || !raw.endsWith('}')) continue;
     try {
       const parsed = RunVerdictSchema.safeParse(JSON.parse(raw));
-      if (parsed.success) return { kind: parsed.data.kind, text: parsed.data.body };
+      if (parsed.success)
+        return {
+          kind: parsed.data.kind,
+          text: parsed.data.body,
+          subtasks: parsed.data.subtasks,
+          reassign: parsed.data.reassign,
+        };
     } catch {
       /* not JSON — keep scanning */
     }

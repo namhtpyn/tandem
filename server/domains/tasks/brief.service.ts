@@ -194,17 +194,15 @@ function contractSection(input: BriefInput) {
     `DELIVERABLES — write any output files to ${input.outDir} (create it if needed; that EXACT path, not the environment name); everything left there when you exit is collected and attached to your result.`,
     '',
     renderOutputContract(RunVerdictSchema, {
-      intro: 'OUTPUT CONTRACT — end your response with exactly one JSON line (no code fence):',
+      intro: 'OUTPUT CONTRACT — end your response with exactly one JSON line (no code fence). ROUTING rides the same line: propose subtasks when a meaningful part belongs to someone else; reassign only when the WHOLE task belongs elsewhere; routing inside your own supervision chain executes immediately, anything outside goes to a human:',
       examples: [
         '{"kind": "result", "body": "<final answer or summary of work done>"}',
         '{"kind": "question", "body": "<blocking question for the owner>"}',
         '{"kind": "blocked", "body": "<what you need and from whom>"}',
+        '{"kind": "result", "body": "<…>", "subtasks": [{"title": "<…>", "description": "<…>", "assigneeName": "<name>"}]}',
+        '{"kind": "result", "body": "<…>", "reassign": {"assigneeName": "<name>", "reason": "<why>"}}',
       ],
     }),
-    '',
-    'ROUTING — if part of this task belongs to someone else, also add a routing line (routing to people inside your own supervision chain executes immediately; anything outside your chain goes to a human for confirmation):',
-    '[SUBTASKS] <title> :: <description> :: <suggested assignee name> | <another subtask> (propose subtasks; suggest assignees from people you know above — outside your chain gets escalated to your supervisor)',
-    '[REASSIGN] <employee name> — <reason> (only when the WHOLE task belongs to someone else)',
   ];
 }
 

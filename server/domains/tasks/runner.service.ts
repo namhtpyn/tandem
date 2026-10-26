@@ -14,6 +14,8 @@ import { and, desc, eq, ne, sql } from 'drizzle-orm';
 // TANDEM_FAKE_RUNNER=1 short-circuits SSH with a synthetic emitter so CI and
 // local e2e can exercise the full dispatch→stream→finish loop with no host.
 import { nonNull } from '#shared/utils/non-null';
+import { PROPOSAL_KIND } from '#shared/enums';
+import type { RoutingProposal } from '../../../app/utils/task-thread';
 
 import { db } from '../../db/index';
 import { tasks, taskRuns, taskActivity, taskAttachments, taskMessages } from '../../db/schema';
@@ -632,14 +634,6 @@ export async function dispatchTask(
   };
 
   const settleDoneRun = async () => {
-    // routing proposals ([SUBTASKS]/[REASSIGN]) ride the output — record before submit
-    try {
-      const { parseRoutingProposals } = await import('../../../app/utils/task-thread');
-      const payloads = parseRoutingProposals(buffer);
-      if (payloads.length) await recordProposals(taskId, runId, plan.ai.userId, payloads);
-    } catch {
-      /* proposal recording is best-effort */
-    }
     const { parseRunEnvelope } = await import('#shared/run-verdict');
     let envelope = parseRunEnvelope(buffer);
     if (!envelope) {
@@ -647,6 +641,24 @@ export async function dispatchTask(
       // lines; rejoin the last 3 lines with NO separator (the newline was a flush
       // artifact — a '\n' join would re-split identically) once before falling back
       envelope = parseRunEnvelope(buffer.split('\n').slice(-3).join(''));
+    }
+
+    // routing folded into the envelope (owner ruling 2026-10-26): proposals are read
+    // ONLY from the agent's own verdict line — echoed task content can never route
+    const payloads: RoutingProposal[] = [];
+    if (envelope?.subtasks?.length) payloads.push({ kind: PROPOSAL_KIND.SUBTASKS, items: envelope.subtasks });
+    if (envelope?.reassign)
+      payloads.push({
+        kind: PROPOSAL_KIND.REASSIGN,
+        targetName: envelope.reassign.assigneeName,
+        reason: envelope.reassign.reason,
+      });
+    if (payloads.length) {
+      try {
+        await recordProposals(taskId, runId, plan.ai.userId, payloads);
+      } catch {
+        /* proposal recording is best-effort */
+      }
     }
     try {
       if (plan.review) {
