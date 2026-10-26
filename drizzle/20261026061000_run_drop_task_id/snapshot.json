@@ -1,0 +1,55 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "63a9908f-13bf-4c75-a603-e0c296151d06",
+  "prevIds": [
+    "bb600414-474b-4b99-8311-fa3e47d3f36c"
+  ],
+  "footprints": [
+    {
+      "statementType": "drop_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "task_message_runs"
+      ],
+      "writes": [
+        "s|tbl|public.task_message_runs",
+        "n|tbl|public.task_message_runs",
+        "e|tbl|public.task_message_runs",
+        "n|rel|public.task_message_runs",
+        "n|type|public.task_message_runs"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "drop",
+      "key": "tables\u0000[\"public\",\"task_message_runs\"]"
+    },
+    {
+      "op": "drop",
+      "key": "columns\u0000[\"public\",\"task_message_runs\",\"message_id\"]"
+    },
+    {
+      "op": "drop",
+      "key": "columns\u0000[\"public\",\"task_message_runs\",\"run_id\"]"
+    },
+    {
+      "op": "drop",
+      "key": "fks\u0000[\"public\",\"task_message_runs\",\"task_message_runs_message_id_task_messages_id_fkey\"]"
+    },
+    {
+      "op": "drop",
+      "key": "fks\u0000[\"public\",\"task_message_runs\",\"task_message_runs_run_id_task_runs_id_fkey\"]"
+    },
+    {
+      "op": "drop",
+      "key": "pks\u0000[\"public\",\"task_message_runs\",\"task_message_runs_pkey\"]"
+    }
+  ]
+}
