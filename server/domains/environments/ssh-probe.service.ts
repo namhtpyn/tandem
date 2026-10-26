@@ -30,6 +30,9 @@ function sshArgs(host: string, port: string, username: string, identityFile?: st
     ...identity,
     '-p',
     port,
+    // '--' ends ssh option parsing: a hostile user/host string can never be
+    // reinterpreted as ssh flags even if the input schema ever regresses
+    '--',
     `${username}@${host}`,
     'echo',
     'tandem-probe-ok',

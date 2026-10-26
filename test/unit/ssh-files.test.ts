@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -36,7 +36,10 @@ class FakeStream {
 }
 
 /** Fake ssh2 Client: records commands, answers exec by script */
-function makeFakeClient(script: Record<string, string>) {
+function makeFakeClient(
+  script: Record<string, string>,
+  opts?: { getBody?: (remote: string) => string; failGet?: (remote: string) => boolean },
+) {
   const cmds: string[] = [];
   const instances: Array<{ __cmds: string[] }> = [];
   class FakeClient {
@@ -74,7 +77,11 @@ function makeFakeClient(script: Record<string, string>) {
         },
         fastGet: (remote: string, local: string, done: (e?: Error | null) => void) => {
           gotFiles.push([remote, local]);
-          writeFileSync(local, 'FROM-SANDBOX');
+          if (opts?.failGet?.(remote)) {
+            done(new Error('EIO: transfer died'));
+            return;
+          }
+          writeFileSync(local, opts?.getBody?.(remote) ?? 'FROM-SANDBOX');
           done(null);
         },
         __putFiles: putFiles,
@@ -187,6 +194,49 @@ describe('collectRunOutputs', () => {
   });
 });
 
+describe('collectRunOutputs per-file hardening', () => {
+  it('skips + deletes a file that arrives over the cap (TOCTOU re-check) and keeps the rest', async () => {
+    // du says the batch is tiny, but the file GREW between listing and transfer —
+    // the actual bytes are re-judged and the oversize temp file is removed
+    const Fake = makeFakeClient(
+      {
+        [`find ${taskFilesOutDir('t-big')}`]: 'ok.txt\nhuge.bin',
+        [`du -cb '${taskFilesOutDir('t-big')}/ok.txt' '${taskFilesOutDir('t-big')}/huge.bin'`]: '8\ttotal',
+      },
+      { getBody: (r) => (r.endsWith('huge.bin') ? 'x'.repeat(64) : 'tiny') },
+    );
+    const tmp = mkdtempSync(join(tmpdir(), 'collect-big-'));
+    const got = await collectRunOutputs(Fake, plan, 't-big', tmp, 32);
+    expect(got.map((g) => g.filename)).toEqual(['ok.txt']);
+    expect(readdirSync(tmp)).toEqual([expect.stringContaining('ok.txt')]);
+  });
+
+  it('one failed transfer never aborts the batch', async () => {
+    const Fake = makeFakeClient(
+      {
+        [`find ${taskFilesOutDir('t-iso')}`]: 'bad.bin\ngood.txt',
+        [`du -cb '${taskFilesOutDir('t-iso')}/bad.bin' '${taskFilesOutDir('t-iso')}/good.txt'`]: '8\ttotal',
+      },
+      { failGet: (r) => r.endsWith('bad.bin') },
+    );
+    const got = await collectRunOutputs(Fake, plan, 't-iso', mkdtempSync(join(tmpdir(), 'collect-iso-')), 1024);
+    expect(got.map((g) => g.filename)).toEqual(['good.txt']);
+  });
+
+  it('every transfer failing resolves to an empty batch (isolation, not rejection)', async () => {
+    const Fake = makeFakeClient(
+      {
+        [`find ${taskFilesOutDir('t-allfail')}`]: 'a.txt\nb.txt',
+        [`du -cb '${taskFilesOutDir('t-allfail')}/a.txt' '${taskFilesOutDir('t-allfail')}/b.txt'`]: '8\ttotal',
+      },
+      { failGet: () => true },
+    );
+    await expect(collectRunOutputs(Fake, plan, 't-allfail', mkdtempSync(join(tmpdir(), 'collect-fail-')), 1024)).resolves.toEqual(
+      [],
+    );
+  });
+});
+
 describe('transfer error arms', () => {
   it('propagates fastPut failures out of pushTaskFiles', async () => {
     const Fake = makeFakeClient({ 'mkdir -p': '' });
@@ -287,7 +337,7 @@ describe('error propagation arms', () => {
 });
 
 describe('error propagation arms', () => {
-  it('propagates fastGet failures out of collectRunOutputs', async () => {
+  it('isolates fastGet failures inside collectRunOutputs (skipped file, empty batch)', async () => {
     class GetFailClient {
       private h = new Map<string, Array<(a?: unknown) => void>>();
       connect() {
@@ -318,6 +368,7 @@ describe('error propagation arms', () => {
         cb(null, { fastGet: (_r: string, _l: string, d: (e?: Error | null) => void) => d(new Error('EIO')) });
       }
     }
+    // per-file isolation: a transfer failure is skipped with a warn, never a batch rejection
     await expect(
       collectRunOutputs(
         GetFailClient as unknown as typeof import('ssh2').Client,
@@ -326,7 +377,7 @@ describe('error propagation arms', () => {
         mkdtempSync(join(tmpdir(), 'getfail-')),
         1024,
       ),
-    ).rejects.toThrow('EIO');
+    ).resolves.toEqual([]);
   });
 
   it('propagates exec failures from cleanup', async () => {

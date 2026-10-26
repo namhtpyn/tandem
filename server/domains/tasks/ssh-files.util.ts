@@ -5,6 +5,7 @@
 // Collect: everything the agent left in out/ comes back and becomes run outputs.
 // Cleanup: the task dir is removed once no run of that task is still running.
 // Exported as an object so tests can mock the whole shuttle.
+import { consola } from 'consola';
 import type { Client } from 'ssh2';
 
 export type SshFilePlan = {
@@ -168,8 +169,21 @@ export async function collectRunOutputs(
     const sftp = await sftpOf(conn);
     for (const name of names) {
       const local = `${tmpDir}/${taskId}-out-${name.replace(/[/\\]/g, '_')}`;
-      await fastGet(sftp, `${outDir}/${name}`, local);
-      out.push({ localPath: local, filename: name, size: fs.statSync(local).size });
+      try {
+        await fastGet(sftp, `${outDir}/${name}`, local);
+        // TOCTOU: the du pre-check raced the agent — judge the ACTUAL transferred bytes
+        const size = fs.statSync(local).size;
+        if (size > maxBytes) {
+          fs.rmSync(local, { force: true });
+          consola.warn(`[collect] skipped '${name}' — ${size} bytes exceeds the ${maxBytes}-byte cap`);
+          continue;
+        }
+        out.push({ localPath: local, filename: name, size });
+      } catch (e) {
+        // one bad file never aborts the batch; drop any partial transfer it left behind
+        fs.rmSync(local, { force: true });
+        consola.warn(`[collect] failed to transfer '${name}': ${String(e)}`);
+      }
     }
   } finally {
     try {

@@ -9,21 +9,22 @@ import { eq, inArray } from 'drizzle-orm';
 
 import { STATUS } from '#shared/status';
 
-import { db } from '../../db/index';
+import { db, asDb, type DbExecutor } from '../../db/index';
 import { logActivity as publishActivity } from './review.service';
 import { tasks, taskStatuses } from '../../db/schema';
 import { ACTIVITY_KIND } from '#shared/enums';
 
 export const BLOCKED_STATUS = STATUS.blocked;
 
+// activity rows are notification state, not gating state — they ride the pool db even mid-tx
 async function logActivity(taskId: string, body: string, meta: Record<string, unknown> = {}) {
   await publishActivity(taskId, ACTIVITY_KIND.STATUS, null, body, meta);
 }
 
 /** status ids whose category is terminal (done | cancelled) */
-export async function terminalStatusIds() {
+export async function terminalStatusIds(ex: DbExecutor = db) {
   // seeded categories are lowercase ('done' | 'cancelled'); OBLIGATION_STATUS is a different key space
-  const rows = await db
+  const rows = await asDb(ex)
     .select({ id: taskStatuses.id, category: taskStatuses.category })
     .from(taskStatuses)
     .where(inArray(taskStatuses.category, ['done', 'cancelled']));
@@ -34,17 +35,18 @@ export async function terminalStatusIds() {
  * recompute the auto-block for every ancestor of this task. Call after ANY status
  * change on a task (its own transition may release or tighten its parents' gates).
  */
-export async function refreshParentGating(taskId: string) {
-  const terminal = await terminalStatusIds();
+export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
+  const d = asDb(ex);
+  const terminal = await terminalStatusIds(ex);
   // gate the task itself, then every ancestor; guard against cycles defensively
   const seen = new Set<string>();
-  let cur = await db.query.tasks.findFirst({
+  let cur = await d.query.tasks.findFirst({
     columns: { id: true, status: true, preBlockStatus: true, parentTaskId: true },
     where: { id: { eq: taskId } },
   });
   while (cur && !seen.has(cur.id)) {
     seen.add(cur.id);
-    const children = await db.query.tasks.findMany({
+    const children = await d.query.tasks.findMany({
       columns: { status: true },
       where: { parentTaskId: { eq: cur.id } },
       orderBy: { createdAt: 'asc' },
@@ -52,14 +54,14 @@ export async function refreshParentGating(taskId: string) {
     const open = children.filter((c) => !terminal.has(c.status)).length;
     if (open > 0 && cur.status !== BLOCKED_STATUS) {
       const pre = cur.preBlockStatus ?? cur.status;
-      await db
+      await d
         .update(tasks)
         .set({ status: BLOCKED_STATUS, preBlockStatus: pre, updatedAt: new Date() })
         .where(eq(tasks.id, cur.id));
       await logActivity(cur.id, `auto-blocked: ${open} subtask(s) open`, { autoBlocked: true, open });
     } else if (open === 0 && cur.status === BLOCKED_STATUS && cur.preBlockStatus) {
       const restore = cur.preBlockStatus;
-      await db
+      await d
         .update(tasks)
         .set({ status: restore, preBlockStatus: null, updatedAt: new Date() })
         .where(eq(tasks.id, cur.id));
@@ -69,7 +71,7 @@ export async function refreshParentGating(taskId: string) {
       });
     }
     if (!cur.parentTaskId) break;
-    cur = await db.query.tasks.findFirst({
+    cur = await d.query.tasks.findFirst({
       columns: { id: true, status: true, preBlockStatus: true, parentTaskId: true },
       where: { id: { eq: cur.parentTaskId } },
     });

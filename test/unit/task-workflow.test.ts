@@ -87,9 +87,12 @@ async function mkTask(input: Record<string, unknown>): Promise<string> {
   return r.id;
 }
 
-/** move task to doing (the assignee picked it up) */
+/** move task to doing (the assignee picked it up) — raw status writes left the API */
 async function startWork(taskId: string) {
-  await callProc('tasks.update', { id: taskId, status: STATUS.doing });
+  const { eq } = await import('drizzle-orm');
+  const { db } = await dbm();
+  const { tasks } = await schema();
+  await db.update(tasks).set({ status: STATUS.doing, updatedAt: new Date() }).where(eq(tasks.id, taskId));
 }
 
 async function getTask(id: string) {
@@ -218,7 +221,8 @@ describe('task workflow — question chain', () => {
     expect(await answerHolder(t.id)).toBeNull();
     expect(t.questionChain).toEqual([]);
     const feed = await activity(taskId);
-    expect(feed.map((a) => a.kind)).toEqual([ACTIVITY_KIND.STATUS, ACTIVITY_KIND.QUESTION, OBLIGATION_ROLE.ANSWER]);
+    // the doing fixture writes the row directly — no STATUS activity row anymore
+    expect(feed.map((a) => a.kind)).toEqual([ACTIVITY_KIND.QUESTION, OBLIGATION_ROLE.ANSWER]);
   });
 
   it('outsider cannot answer', async () => {

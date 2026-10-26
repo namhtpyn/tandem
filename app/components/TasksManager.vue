@@ -108,7 +108,7 @@ function statusColor(s: string) {
 
 // ---- mutations (list rows) ----
 const queryClient = useQueryClient();
-const updateMutation = useMutation($orpc.tasks.update.mutationOptions());
+const setStatusMutation = useMutation($orpc.tasks.setStatus.mutationOptions());
 const removeMutation = useMutation($orpc.tasks.remove.mutationOptions());
 const assignMutation = useMutation($orpc.statuses.assign.mutationOptions());
 
@@ -124,7 +124,7 @@ async function setStatus(row: TaskRow, status: string) {
   }
   message.value = '';
   try {
-    await updateMutation.mutateAsync({ id: row.id, status });
+    await setStatusMutation.mutateAsync({ id: row.id, status });
   } catch (e) {
     message.value = e instanceof Error ? e.message : 'status change failed';
   }

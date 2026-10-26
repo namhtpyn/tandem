@@ -460,3 +460,49 @@ describe('runs proc payload mapping (unit shape)', () => {
     expect(byRun.has('t')).toBe(false);
   });
 });
+
+describe('settleAttachments per-file store hardening', () => {
+  it('sanitizes collected filenames and isolates one bad file from the rest', async () => {
+    const { uid, tid } = await seed();
+    const { sanitizeFilename } = await import('#server/domains/tasks/attachments.util');
+    const runId = crypto.randomUUID();
+    await db.insert(taskRuns).values({
+      id: runId,
+      taskId: tid,
+      employeeId: uid,
+      status: RUN_STATUS.DONE,
+      exitCode: 0,
+      output: '{"kind": "result", "body": "ok"}',
+      finishedAt: new Date(),
+    });
+    writeFileSync(join(settleTmp, 'nasty.md'), '# n\n');
+    const { settleAttachments } = await import('#server/domains/tasks/runner.service');
+    const filesMod = await import('#server/domains/tasks/ssh-files.util');
+    const orig = (filesMod as unknown as { collectRunOutputs: unknown }).collectRunOutputs;
+    (filesMod as unknown as { collectRunOutputs: unknown }).collectRunOutputs = async () => [
+      { localPath: join(settleTmp, 'nasty.md'), filename: '../..//evil report (v2).md', size: 4 },
+      { localPath: join(settleTmp, 'ghost.md'), filename: 'ghost.md', size: 4 }, // bytes never landed
+      { localPath: join(settleTmp, 'report.md'), filename: 'report.md', size: 11 },
+    ];
+    try {
+      await settleAttachments(
+        tid,
+        runId,
+        { env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' } },
+        RUN_STATUS.DONE,
+      );
+    } finally {
+      (filesMod as unknown as { collectRunOutputs: unknown }).collectRunOutputs = orig;
+    }
+    const outs = await db
+      .select()
+      .from(taskAttachments)
+      .where(and(eq(taskAttachments.taskId, tid), eq(taskAttachments.kind, 'output')));
+    // the unreadable file was skipped (warn) — the other two still stored
+    expect(outs).toHaveLength(2);
+    expect(outs.map((o) => o.filename)).toContain(sanitizeFilename('../..//evil report (v2).md'));
+    expect(outs.map((o) => o.filename)).toContain('report.md');
+    // no stored filename carries path separators
+    expect(outs.every((o) => !o.filename.includes('/') && !o.filename.includes('\\'))).toBe(true);
+  });
+});

@@ -1,9 +1,11 @@
-import { eq, and, desc, ne } from 'drizzle-orm';
+import { consola } from 'consola';
+import { and, desc, eq, ne, sql } from 'drizzle-orm';
 
 // Agent runner: dispatch a task to its AI assignee over SSH as ONE ACP
 // prompt turn (Agent Client Protocol v1 over stdio), stream session updates
-// back, persist a capped tail on the run row. Secrets (SSH identity, agent
-// LLM key) are decrypted in memory only and NEVER placed on argv — they ride
+// back, persist the FULL output on the run row (appended in chunks, never
+// tailed). Secrets (SSH identity, agent LLM key) are decrypted in memory only
+// and NEVER placed on argv — they ride
 // a stdin env blob inside the remote shell (byte-count framed ahead of the
 // JSON-RPC stream), per the M5 law. One ACP session per task: first dispatch
 // creates it, later dispatches resume it (the agent keeps its own task
@@ -96,22 +98,30 @@ export async function settleAttachments(
     try {
       const collected = await collectRunOutputs(ClientCtor, sshPlan, taskId, tmp, COLLECTION_MAX_BYTES);
       for (const f of collected) {
-        const bytes = Buffer.from(await Bun.file(f.localPath).arrayBuffer());
-        const mime = normalizeMime(guessMime(f.filename));
-        if (!mimeAllowed(mime)) continue;
-        const id = uuidv7();
-        await saveAttachmentBytes(taskId, id, bytes);
-        await db.insert(taskAttachments).values({
-          id,
-          taskId,
-          runId,
-          kind: 'output',
-          filename: f.filename,
-          mime,
-          size: bytes.byteLength,
-          sha256: sha256Hex(bytes),
-          createdBy: null,
-        });
+        try {
+          const bytes = Buffer.from(await Bun.file(f.localPath).arrayBuffer());
+          const mime = normalizeMime(guessMime(f.filename));
+          if (!mimeAllowed(mime)) continue;
+          const id = uuidv7();
+          await saveAttachmentBytes(taskId, id, bytes);
+          await db.insert(taskAttachments).values({
+            id,
+            taskId,
+            runId,
+            kind: 'output',
+            // sandbox filenames are agent-controlled text — never stored raw
+            filename: sanitizeFilename(f.filename),
+            mime,
+            size: bytes.byteLength,
+            sha256: sha256Hex(bytes),
+            createdBy: null,
+          });
+        } catch (e) {
+          // one unreadable/unstorable file never aborts the rest of the batch
+          consola.warn(
+            `[settle] skipped collected output '${f.filename}': ${String(e)}`,
+          );
+        }
       }
       if (collected.length) {
         await logRun(taskId, runId, `collected ${collected.length} output file(s)`, {
@@ -177,6 +187,7 @@ import {
   COLLECTION_MAX_BYTES,
   mimeAllowed,
   normalizeMime,
+  sanitizeFilename,
   saveAttachmentBytes,
   sha256Hex,
 } from './attachments.util';
@@ -447,6 +458,12 @@ export function hostDerivedKeyEnv(baseUrl: string) {
   }
 }
 
+/** shell-quote one value for a single-quoted blob slot: every ' becomes '\''
+ * (close quote, escaped quote, reopen) so nothing can break out of the assignment */
+export function shQ(v: string) {
+  return v.replace(/'/g, `'\\''`);
+}
+
 export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>, _tandemUrl: string) {
   return [
     // set -a: every assignment below is EXPORTED to the agent child process env
@@ -456,24 +473,24 @@ export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>,
     // extend it or the agent executable is 'command not found' (exit 127)
     // double quotes: $HOME/$PATH must EXPAND when the blob is sourced
     `PATH="/opt/hermes/bin:$HOME/.local/bin:$HOME/.bun/bin:$HOME/.cargo/bin:/usr/local/bin:$PATH"`,
-    `CUSTOM_BASE_URL='${plan.llmEnv.CUSTOM_BASE_URL ?? ''}'`,
+    `CUSTOM_BASE_URL='${shQ(plan.llmEnv.CUSTOM_BASE_URL ?? '')}'`,
     // hermes's credential ladder is HOST-GATED: for host a.b.example.com it reads only
     // <BEXAMPLE>_API_KEY (registrable label of the host), NOT CUSTOM_API_KEY, for the chat
     // call. Emit BOTH so any OpenAI-compat client works while hermes finds its key.
-    `CUSTOM_API_KEY='${plan.llmEnv.CUSTOM_API_KEY ?? ''}'`,
+    `CUSTOM_API_KEY='${shQ(plan.llmEnv.CUSTOM_API_KEY ?? '')}'`,
     // hermes host-gated credential (mirrors _host_derived_api_key: drop leading api./www.,
     // take the registrable label pair, strip non-alnum, uppercase) + keep CUSTOM_API_KEY for
     // every other OpenAI-compatible client
-    `${hostDerivedKeyEnv(plan.llmEnv.CUSTOM_BASE_URL ?? '')}='${plan.llmEnv.CUSTOM_API_KEY ?? ''}'`,
-    `HERMES_MODEL='${plan.llmEnv.HERMES_MODEL ?? ''}'`,
-    `TANDEM_TASK_ID='${plan.task.id}'`,
+    `${hostDerivedKeyEnv(plan.llmEnv.CUSTOM_BASE_URL ?? '')}='${shQ(plan.llmEnv.CUSTOM_API_KEY ?? '')}'`,
+    `HERMES_MODEL='${shQ(plan.llmEnv.HERMES_MODEL ?? '')}'`,
+    `TANDEM_TASK_ID='${shQ(plan.task.id)}'`,
     // NO HERMES_HOME override: the host's own agent home is the employee's
     // environment; per-task isolation comes from ACP sessions, not homes
 
     'set +a',
-    // single-quote EVERY value: titles contain spaces; unquoted words would be
-    // executed as commands when the blob is sourced (exit 127)
-    `TANDEM_TASK_TITLE='${plan.task.title.replace(/'/g, `'\\''`)}'`,
+    // shQ escapes EVERY value: titles carry quotes/spaces; an unescaped ' would
+    // close the assignment and execute injected words when the blob is sourced
+    `TANDEM_TASK_TITLE='${shQ(plan.task.title)}'`,
     '',
   ].join('\n');
 }
@@ -553,6 +570,8 @@ export async function dispatchTask(
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 
   let buffer = '';
+  /** how much of buffer the run row already holds — each flush appends ONLY the new slice */
+  let flushedLen = 0;
   let lastFlush = 0;
   let flushing = false;
   const onLine = (line: string) => {
@@ -561,11 +580,14 @@ export async function dispatchTask(
     if (now - lastFlush > flushMs() && !flushing) {
       lastFlush = now;
       flushing = true;
-      // flush only while the run row is still RUN_STATUS.RUNNING: once finish() flips the status,
-      // late lines are dropped (their content is already in finish's tail write)
+      // sql-concat append of ONLY the new slice: rewriting the whole buffer each flush is
+      // O(n²) write amplification on long runs. Same RUNNING predicate as before — once
+      // finish() flips the status, late lines are dropped (finish writes the full buffer).
+      const chunk = buffer.slice(flushedLen);
+      flushedLen = buffer.length;
       void db
         .update(taskRuns)
-        .set({ output: buffer })
+        .set({ output: sql`coalesce(${taskRuns.output}, '') || ${chunk}` })
         .where(and(eq(taskRuns.id, runId), eq(taskRuns.status, RUN_STATUS.RUNNING)))
         .then(() => publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE))
         // flush is best-effort; finish() writes the final tail. A late flush can
@@ -613,12 +635,18 @@ export async function dispatchTask(
     try {
       const { parseRoutingProposals } = await import('../../../app/utils/task-thread');
       const payloads = parseRoutingProposals(buffer);
-      if (payloads.length) await recordProposals(taskId, runId, payloads);
+      if (payloads.length) await recordProposals(taskId, runId, plan.ai.userId, payloads);
     } catch {
       /* proposal recording is best-effort */
     }
     const { parseRunEnvelope } = await import('#shared/run-verdict');
-    const envelope = parseRunEnvelope(buffer);
+    let envelope = parseRunEnvelope(buffer);
+    if (!envelope) {
+      // the ACP 400-char force-flush splits ONE long JSON verdict into adjacent buffer
+      // lines; rejoin the last 3 lines with NO separator (the newline was a flush
+      // artifact — a '\n' join would re-split identically) once before falling back
+      envelope = parseRunEnvelope(buffer.split('\n').slice(-3).join(''));
+    }
     try {
       if (plan.review) {
         await settleReviewVerdict(envelope);

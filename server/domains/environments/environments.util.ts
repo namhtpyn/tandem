@@ -5,13 +5,15 @@ import { SECRET_USAGE } from '#shared/enums';
 
 export const environmentInput = z.strictObject({
   name: z.string().min(1).max(64),
-  host: z.string().min(1).max(253),
+  host: z
+    .string()
+    .regex(/^(?!-)[a-zA-Z0-9._-]{1,253}(?<!-)$/, 'ssh-safe host'),
   port: z
     .string()
     .regex(/^[1-9][0-9]{0,4}$/, 'port must be 1-65535')
     .refine((p) => Number.parseInt(p, 10) <= 65535, 'port must be 1-65535')
     .default('22'),
-  username: z.string().min(1).max(64),
+  username: z.string().regex(/^[a-zA-Z0-9._][a-zA-Z0-9._-]{0,63}$/, 'ssh-safe username'),
   secretId: z.string().min(1).nullable().default(null),
   secretUsage: z.enum(SECRET_USAGE).default(SECRET_USAGE.SSH_KEY),
 });

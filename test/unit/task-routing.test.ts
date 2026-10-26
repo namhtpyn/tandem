@@ -102,6 +102,15 @@ async function getTask(id: string) {
   return rows.find((t) => t.id === id)!;
 }
 
+/** fixture: raw status writes left the API — arrange state directly (parent re-gates, like the workflow does) */
+async function setStatus(taskId: string, status: string) {
+  const { db } = await import('#server/db');
+  const { tasks } = await import('#server/db/schema');
+  const { refreshParentGating } = await import('#server/domains/tasks/gating.service');
+  await db.update(tasks).set({ status, updatedAt: new Date() }).where(eq(tasks.id, taskId));
+  await refreshParentGating(taskId);
+}
+
 async function dbRow(table: string, id: string) {
   const { db } = await import('#server/db');
   const mod = await import('#server/db/schema');
@@ -175,12 +184,23 @@ describe('parseRoutingProposals', () => {
     expect(parseRoutingProposals('plain output\n{"kind": "result", "body": "done"}')).toEqual([]);
     expect(parseRoutingProposals(null)).toEqual([]);
   });
+
+  it('item budget: >20 items on one line truncate to 20; proposals per output cap at 10', () => {
+    const items = Array.from({ length: 25 }, (_, i) => `Item ${i + 1}`).join(' | ');
+    const parsed = parseRoutingProposals(`[SUBTASKS] ${items}`);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].kind).toBe(PROPOSAL_KIND.SUBTASKS);
+    expect((parsed[0] as { items: unknown[] }).items).toHaveLength(20);
+
+    const lines = Array.from({ length: 12 }, (_, i) => `[REASSIGN] Person ${i + 1}`).join('\n');
+    expect(parseRoutingProposals(lines)).toHaveLength(10);
+  });
 });
 
 describe('obligations', () => {
   it('ask spawns a pending answer obligation; forward MOVES it; answer resolves it', async () => {
     const taskId = await mkTask({ title: 'Q task', assigneeId: idMap.get('worker')!, ownerId: idMap.get('peer')! });
-    await callProc('tasks.update', { id: taskId, status: STATUS.doing });
+    await setStatus(taskId, STATUS.doing);
     await asEmp('worker', () => callProc('tasks.ask', { taskId, body: 'which db?' }));
     expect(await answerHolder(taskId)).toBe(idMap.get('peer')!);
     expect((await pendingForUser(idMap.get('peer')!)).map((i) => i.taskId)).toContain(taskId);
@@ -200,7 +220,7 @@ describe('obligations', () => {
       assigneeId: idMap.get('worker')!,
       reviewers: [idMap.get('peer')!, idMap.get('report')!],
     });
-    await callProc('tasks.update', { id: taskId, status: STATUS.doing });
+    await setStatus(taskId, STATUS.doing);
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: RUN_STATUS.DONE }));
     const t1 = await getTask(taskId);
     expect(t1.status).toBe(STATUS.inReview);
@@ -217,7 +237,7 @@ describe('obligations', () => {
     await asEmp('report', () => callProc('tasks.requestChanges', { taskId, body: 'redo' }));
     expect((await getTask(taskId)).status).toBe(STATUS.todo); // READY — the assignee resumes
     // resubmit opens round 2; round 1 history kept
-    await callProc('tasks.update', { id: taskId, status: STATUS.doing });
+    await setStatus(taskId, STATUS.doing);
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'v2' }));
     const revs2 = (await callProc('tasks.reviews', { taskId })) as Array<{ round: number; status: string }>;
     expect(revs2.filter((r) => r.round === 2)).toHaveLength(2);
@@ -235,7 +255,7 @@ describe('obligations', () => {
       assigneeId: idMap.get('worker')!,
       reviewers: [idMap.get('peer')!],
     });
-    await callProc('tasks.update', { id: taskId, status: STATUS.doing });
+    await setStatus(taskId, STATUS.doing);
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'v1' }));
     await asEmp('peer', () => callProc('tasks.approve', { taskId, body: 'ok' }));
     expect((await getTask(taskId)).status).toBe(STATUS.done);
@@ -299,12 +319,12 @@ describe('obligations', () => {
       assigneeId: idMap.get('worker')!,
       reviewers: [idMap.get('peer')!],
     });
-    await callProc('tasks.update', { id: taskId, status: STATUS.doing });
+    await setStatus(taskId, STATUS.doing);
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: RUN_STATUS.DONE }));
     await asEmp('peer', () => callProc('tasks.reject', { taskId, body: 'wrong scope entirely' }));
     // body-omitted arm: reject without a note (default body '')
     const taskId2 = await mkTask({ title: 'RJ2', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!] });
-    await callProc('tasks.update', { id: taskId2, status: STATUS.doing });
+    await setStatus(taskId2, STATUS.doing);
     await asEmp('worker', () => callProc('tasks.submit', { taskId: taskId2, body: RUN_STATUS.DONE }));
     await asEmp('peer', () => callProc('tasks.reject', { taskId: taskId2 }));
     expect((await getTask(taskId)).status).toBe(STATUS.cancelled);
@@ -317,7 +337,7 @@ describe('obligations', () => {
     const a = await mkTask({ title: 'A', assigneeId: idMap.get('worker')!, ownerId: idMap.get('peer')! });
     const b = await mkTask({ title: 'B', assigneeId: idMap.get('worker')!, ownerId: idMap.get('peer')! });
     for (const id of [a, b]) {
-      await callProc('tasks.update', { id, status: STATUS.doing });
+      await setStatus(id, STATUS.doing);
       await asEmp('worker', () => callProc('tasks.ask', { taskId: id, body: 'q' }));
     }
     let inbox!: { items: unknown[]; counts: Record<string, unknown> };
@@ -355,20 +375,20 @@ describe('assignee history', () => {
 describe('subtask gating', () => {
   it('parent auto-blocks while children are open and restores when all are terminal', async () => {
     const parentId = await mkTask({ title: 'Parent', assigneeId: idMap.get('worker')! });
-    await callProc('tasks.update', { id: parentId, status: STATUS.doing });
+    await setStatus(parentId, STATUS.doing);
     const c1 = await mkTask({ title: 'C1', parentId, assigneeId: idMap.get('peer')! });
     expect((await getTask(parentId)).status).toBe(STATUS.blocked);
     expect((await getTask(parentId)).preBlockStatus).toBe(STATUS.doing);
 
-    await callProc('tasks.update', { id: c1, status: STATUS.doing });
-    await callProc('tasks.update', { id: c1, status: STATUS.done });
+    await setStatus(c1, STATUS.doing);
+    await setStatus(c1, STATUS.done);
     expect((await getTask(parentId)).status).toBe(STATUS.doing);
     expect((await getTask(parentId)).preBlockStatus).toBeNull();
 
     // second round: cancelled counts as terminal again (done was arm one)
     const c2 = await mkTask({ title: 'C2', parentId });
     expect((await getTask(parentId)).status).toBe(STATUS.blocked);
-    await callProc('tasks.update', { id: c2, status: STATUS.cancelled });
+    await setStatus(c2, STATUS.cancelled);
     expect((await getTask(parentId)).status).toBe(STATUS.doing);
   });
 
@@ -376,20 +396,20 @@ describe('subtask gating', () => {
     const root = await mkTask({ title: 'Root' });
     const mid = await mkTask({ title: 'Mid', parentId: root });
     expect((await getTask(root)).status).toBe(STATUS.blocked);
-    await callProc('tasks.update', { id: mid, status: STATUS.doing });
+    await setStatus(mid, STATUS.doing);
     const leaf = await mkTask({ title: 'Leaf', parentId: mid });
     expect((await getTask(mid)).status).toBe(STATUS.blocked);
 
-    await callProc('tasks.update', { id: leaf, status: STATUS.doing });
-    await callProc('tasks.update', { id: leaf, status: STATUS.done });
+    await setStatus(leaf, STATUS.doing);
+    await setStatus(leaf, STATUS.done);
     expect((await getTask(mid)).status).toBe(STATUS.doing);
-    await callProc('tasks.update', { id: mid, status: STATUS.done });
+    await setStatus(mid, STATUS.done);
     expect((await getTask(root)).status).toBe(STATUS.todo);
   });
 
   it('submit is refused while children are open; subtasks proc lists children', async () => {
     const parentId = await mkTask({ title: 'P2', assigneeId: idMap.get('worker')! });
-    await callProc('tasks.update', { id: parentId, status: STATUS.doing });
+    await setStatus(parentId, STATUS.doing);
     // a raw child row (no router hook) keeps the parent STATUS.doing so the explicit
     // open-children submit guard is reachable — defense in depth for racing flips
     const { db } = await import('#server/db');
@@ -410,7 +430,7 @@ describe('subtask gating', () => {
     );
     const c1 = 'c-raw';
 
-    await callProc('tasks.update', { id: c1, status: STATUS.cancelled });
+    await setStatus(c1, STATUS.cancelled);
     await asEmp('worker', async () => {
       expect(await callProc('tasks.submit', { taskId: parentId, body: 'x' })).toBeTruthy();
     });
@@ -482,6 +502,33 @@ describe('proposal confirm flow', () => {
     expect(brief).toContain('stay on it');
   });
 
+  it('double-confirm is idempotent: second throws, one child set', async () => {
+    const taskId = await mkTask({ title: 'Idem2', assigneeId: idMap.get('worker')! });
+    const pid = await mkProposal(taskId, PROPOSAL_KIND.SUBTASKS, {
+      items: [{ title: 'Once', assigneeName: 'Peer Person' }],
+    });
+    await callProc('tasks.confirmProposal', { proposalId: pid });
+    await expect(callProc('tasks.confirmProposal', { proposalId: pid })).rejects.toThrow(/already decided/i);
+    const st = (await callProc('tasks.subtasks', { taskId })) as { items: Array<{ title: string }> };
+    expect(st.items.map((i) => i.title)).toEqual(['Once']);
+    // the claim rolled nothing back: the proposal still reads EXECUTED
+    expect((await dbRow('taskProposals', pid)).status).toBe(PROPOSAL_STATUS.EXECUTED);
+  });
+
+  it('concurrent confirms race the claim: exactly one wins, one child set', async () => {
+    const taskId = await mkTask({ title: 'IdemRace', assigneeId: idMap.get('worker')! });
+    const pid = await mkProposal(taskId, PROPOSAL_KIND.SUBTASKS, {
+      items: [{ title: 'Solo child', assigneeName: 'Peer Person' }],
+    });
+    const { confirmProposal } = await import('#server/domains/tasks/proposals.service');
+    const adminId = idMap.get('chief')!;
+    const results = await Promise.allSettled([confirmProposal(pid, adminId), confirmProposal(pid, adminId)]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    const st = (await callProc('tasks.subtasks', { taskId })) as { items: Array<{ title: string }> };
+    expect(st.items.map((i) => i.title)).toEqual(['Solo child']);
+  });
+
   it('rejected reassign keeps the current assignee', async () => {
     const taskId = await mkTask({ title: 'T5', assigneeId: idMap.get('worker')! });
     const pid = await mkProposal(taskId, PROPOSAL_KIND.REASSIGN, { targetName: 'Peer Person', reason: 'r' });
@@ -495,13 +542,13 @@ describe('routing coverage arms', () => {
     await expect(mkTask({ title: 'X', parentId: 'nope' })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     const taskId = await mkTask({ title: 'Cov', assigneeId: idMap.get('worker')! });
     // outside-chain target stays proposed (the list still surfaces proposals)
-    await recordProposals(taskId, null as unknown as string, [
+    await recordProposals(taskId, null as unknown as string, idMap.get('worker')!, [
       { kind: PROPOSAL_KIND.SUBTASKS, items: [{ title: 'Only', description: 'd', assigneeName: 'Solo Person' }] },
     ]);
     const list = await callProc('tasks.proposals', { taskId });
     expect(list.items.length).toBe(1);
     expect(list.items[0].kind).toBe(PROPOSAL_KIND.SUBTASKS);
-    expect(list.items[0].status).toBe(PROPOSAL_STATUS.PROPOSED);
+    expect(list.items[0].status).toBe('proposed'); // response mapping lowercases the stored enum
   });
 
   it('reassign escalation: outside-chain target lands on the agent supervisor', async () => {
@@ -542,9 +589,9 @@ describe('routing coverage arms', () => {
   it('pendingCounts splits by role; openObligations batches holders and approvers', async () => {
     const a = await mkTask({ title: 'MultiA', assigneeId: idMap.get('worker')!, ownerId: idMap.get('peer')! });
     const b = await mkTask({ title: 'MultiB', assigneeId: idMap.get('worker')!, reviewers: [idMap.get('peer')!] });
-    await callProc('tasks.update', { id: a, status: STATUS.doing });
+    await setStatus(a, STATUS.doing);
     await asEmp('worker', () => callProc('tasks.ask', { taskId: a, body: 'q' }));
-    await callProc('tasks.update', { id: b, status: STATUS.doing });
+    await setStatus(b, STATUS.doing);
     await asEmp('worker', () => callProc('tasks.submit', { taskId: b, body: 's' }));
     let counts!: { counts: Record<string, unknown> };
     await asEmp('peer', async () => {
@@ -597,7 +644,7 @@ describe('routing coverage arms II', () => {
       assigneeId: idMap.get('worker')!,
       reviewers: [idMap.get('peer')!],
     });
-    await callProc('tasks.update', { id: taskId, status: STATUS.doing });
+    await setStatus(taskId, STATUS.doing);
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 'v1' }));
     await asEmp('peer', () => callProc('tasks.requestChanges', { taskId, body: 'no' }));
     const batch = await approvalsInRoundBatch([taskId]);
@@ -676,7 +723,7 @@ describe('routing coverage arms II', () => {
   it('AUTO-LAW: routing to own chain executes without approval; outside stays proposed', async () => {
     // worker's chain includes Peer Person; Solo Person is outside
     const taskId = await mkTask({ title: 'AutoExec', assigneeId: idMap.get('worker')! });
-    await recordProposals(taskId, null as unknown as string, [
+    await recordProposals(taskId, null as unknown as string, idMap.get('worker')!, [
       {
         kind: PROPOSAL_KIND.SUBTASKS,
         items: [{ title: 'Mine to Peer', description: 'd', assigneeName: 'Peer Person' }],
@@ -691,7 +738,7 @@ describe('routing coverage arms II', () => {
 
     // outside the chain -> still a proposal awaiting a human
     const taskId2 = await mkTask({ title: 'AutoKeep', assigneeId: idMap.get('worker')! });
-    await recordProposals(taskId2, null as unknown as string, [
+    await recordProposals(taskId2, null as unknown as string, idMap.get('worker')!, [
       { kind: PROPOSAL_KIND.SUBTASKS, items: [{ title: 'Out', description: 'd', assigneeName: 'Solo Person' }] },
     ]);
     rows = (await dbRows('taskProposals')).filter((p) => p.taskId === taskId2);
@@ -701,7 +748,7 @@ describe('routing coverage arms II', () => {
 
   it('AUTO-LAW: in-chain reassign executes immediately; loop-guard target stays proposed (no throw)', async () => {
     const taskId = await mkTask({ title: 'AutoRe', assigneeId: idMap.get('worker')! });
-    await recordProposals(taskId, null as unknown as string, [
+    await recordProposals(taskId, null as unknown as string, idMap.get('worker')!, [
       { kind: PROPOSAL_KIND.REASSIGN, targetName: 'Peer Person', reason: 'their domain' },
     ]);
     expect((await getTask(taskId)).assigneeId).toBe(idMap.get('peer')!);
@@ -709,7 +756,7 @@ describe('routing coverage arms II', () => {
     expect(rows[0].status).toBe(PROPOSAL_STATUS.EXECUTED);
 
     // peer is now the assignee; routing BACK to worker (recent) trips the loop guard -> stays proposed
-    await recordProposals(taskId, null as unknown as string, [
+    await recordProposals(taskId, null as unknown as string, idMap.get('worker')!, [
       { kind: PROPOSAL_KIND.REASSIGN, targetName: 'Worker', reason: 'back' },
     ]);
     const back = (await dbRows('taskProposals')).filter(
@@ -720,7 +767,8 @@ describe('routing coverage arms II', () => {
 
   it('recordProposals reassign summary includes the reason', async () => {
     const taskId = await mkTask({ title: 'ReasonSum' });
-    await recordProposals(taskId, null as unknown as string, [
+    // author with no supervision chain: the gate stays closed so the proposed-summary path runs
+    await recordProposals(taskId, null as unknown as string, idMap.get('solo')!, [
       { kind: PROPOSAL_KIND.REASSIGN, targetName: 'Peer Person', reason: 'legal work' },
     ]);
     const { db } = await import('#server/db');
@@ -729,13 +777,23 @@ describe('routing coverage arms II', () => {
     expect(acts.some((a) => a.body!.includes('legal work'))).toBe(true);
   });
 
+  it('item budget: recordProposals drops a >20-item payload (no row, no execution)', async () => {
+    const taskId = await mkTask({ title: 'TooMany', assigneeId: idMap.get('worker')! });
+    const items = Array.from({ length: 21 }, (_, i) => ({ title: `Bulk ${i + 1}` }));
+    await recordProposals(taskId, null as unknown as string, idMap.get('worker')!, [
+      { kind: PROPOSAL_KIND.SUBTASKS, items },
+    ]);
+    expect((await dbRows('taskProposals')).filter((p) => p.taskId === taskId)).toHaveLength(0);
+    expect((await getTask(taskId)).status).toBe(STATUS.todo); // nothing executed either
+  });
+
   it('live payload skips holders for approval-only tasks (in-review snapshot)', async () => {
     const taskId = await mkTask({
       title: 'ApproveOnly',
       assigneeId: idMap.get('worker')!,
       reviewers: [idMap.get('peer')!],
     });
-    await callProc('tasks.update', { id: taskId, status: STATUS.doing });
+    await setStatus(taskId, STATUS.doing);
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 's' }));
     const iter = await callProc('tasks.live');
     const snap = await iter.next();
@@ -754,14 +812,14 @@ describe('routing coverage arms II', () => {
       reviewers: [idMap.get('report')!],
     });
     // outside-chain target: stays proposed (in-chain routing auto-executes by law and would move the assignee)
-    await recordProposals(taskId, null as unknown as string, [
+    await recordProposals(taskId, null as unknown as string, idMap.get('worker')!, [
       { kind: PROPOSAL_KIND.REASSIGN, targetName: 'Solo Person' },
     ]);
 
-    await callProc('tasks.update', { id: taskId, status: STATUS.doing });
+    await setStatus(taskId, STATUS.doing);
     await asEmp('worker', () => callProc('tasks.ask', { taskId, body: 'q' }));
     await asEmp('peer', () => callProc('tasks.answer', { taskId, body: 'a' }));
-    await callProc('tasks.update', { id: taskId, status: STATUS.doing });
+    await setStatus(taskId, STATUS.doing);
     await asEmp('worker', () => callProc('tasks.submit', { taskId, body: 's' }));
     await asEmp('report', () => callProc('tasks.approve', { taskId, body: 'ok' }));
 

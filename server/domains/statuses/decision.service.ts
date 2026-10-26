@@ -151,13 +151,21 @@ export async function pickAssignee(params: {
     // above fails this assignment (raw stays undefined -> typed never match)
     raw satisfies DecisionPick | undefined;
 
+    // confidence must be a finite number in [0,1]: NaN would sail past the
+    // `confidence < 0.5` comparison (all NaN comparisons are false) and assign
+    const confOk =
+      typeof raw.confidence === 'number' &&
+      Number.isFinite(raw.confidence) &&
+      raw.confidence >= 0 &&
+      raw.confidence <= 1;
+
     // shared validation on the normalized pick
     if (!raw.employeeId) return raw;
-    if (raw.employeeId === 'unassigned' || raw.confidence < 0.5) {
+    if (raw.employeeId === 'unassigned' || !confOk || raw.confidence < 0.5) {
       const reason =
         raw.employeeId === 'unassigned'
           ? 'decision model chose unassigned'
-          : `low confidence ${raw.confidence.toFixed(2)}`;
+          : `low confidence ${Number(raw.confidence).toFixed(2)}`;
       return { ...raw, employeeId: null, fallbackReason: reason };
     }
     const valid = params.candidates.some((c) => c.id === raw.employeeId);

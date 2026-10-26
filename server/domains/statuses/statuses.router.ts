@@ -5,11 +5,12 @@ import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
 import { projects as projectsTable, taskStatuses as taskStatusesTable, tasks as tasksTable } from '../../db/schema';
-import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { adminProcedure, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 
 async function listStatuses() {
   const rows = await db.query.taskStatuses.findMany({
@@ -33,8 +34,8 @@ export const statusesRouter = os.router({
   /** live task-status list (ordered) */
   live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.STATUSES], listStatuses)),
 
-  /** create or update a status (upsert by id) */
-  save: protectedProcedure
+  /** create or update a status (upsert by id, admin-only) */
+  save: adminProcedure
     .input(
       z.strictObject({
         id: z.string().min(1).max(64).optional(),
@@ -50,11 +51,9 @@ export const statusesRouter = os.router({
     .handler(async ({ input }) => {
       const id = input.id?.trim() || uuidv7();
       if (id === 'new') throw new ORPCError('BAD_REQUEST', { message: 'reserved status id' });
-      // transitions must reference existing statuses (self ok)
-      const all = await db.query.taskStatuses.findMany({ columns: { id: true }, orderBy: { position: 'asc' } });
-      const ids = new Set([...all.map((a) => a.id), id]);
-      for (const n of input.nextIds) {
-        if (!ids.has(n)) throw new ORPCError('BAD_REQUEST', { message: `unknown status in transitions: ${n}` });
+      // seeded workflow statuses are fixed rows — renaming/re-pointing them corrupts every environment
+      if ((Object.values(STATUS) as string[]).includes(id)) {
+        throw new ORPCError('BAD_REQUEST', { message: 'built-in status' });
       }
       const now = new Date();
       const values = {
@@ -66,37 +65,64 @@ export const statusesRouter = os.router({
         nextIds: input.nextIds,
         updatedAt: now,
       };
-      await db
-        .insert(taskStatusesTable)
-        .values(values)
-        .onConflictDoUpdate({
-          target: taskStatusesTable.id,
-          set: {
-            name: values.name,
-            color: values.color,
-            position: values.position,
-            category: values.category,
-            nextIds: values.nextIds,
-            updatedAt: now,
-          },
-        });
+      await db.transaction(async (tx) => {
+        // transitions must reference existing statuses (self ok) — validated against the same snapshot we upsert
+        const all = await tx.query.taskStatuses.findMany({ columns: { id: true }, orderBy: { position: 'asc' } });
+        const ids = new Set([...all.map((a) => a.id), id]);
+        for (const n of input.nextIds) {
+          if (!ids.has(n)) throw new ORPCError('BAD_REQUEST', { message: `unknown status in transitions: ${n}` });
+        }
+        await tx
+          .insert(taskStatusesTable)
+          .values(values)
+          .onConflictDoUpdate({
+            target: taskStatusesTable.id,
+            set: {
+              name: values.name,
+              color: values.color,
+              position: values.position,
+              category: values.category,
+              nextIds: values.nextIds,
+              updatedAt: now,
+            },
+          });
+      });
       await publishChange(CHANGE_RESOURCE.STATUSES, CHANGE_ACTION.UPDATE);
       return { id };
     }),
 
-  /** delete a status: blocked while in use; deletes nothing else */
-  remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
-    const inUse = await db.query.tasks.findMany({
-      columns: { id: true },
-      where: { status: { eq: input.id } },
-      orderBy: { id: 'asc' },
+  /** delete a status: blocked while in use; prunes dangling transition edges (admin-only) */
+  remove: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+    // seeded workflow statuses are load-bearing (code + migrations address them by id)
+    if ((Object.values(STATUS) as string[]).includes(input.id)) {
+      throw new ORPCError('BAD_REQUEST', { message: 'built-in status' });
+    }
+    await db.transaction(async (tx) => {
+      const inUse = await tx.query.tasks.findMany({
+        columns: { id: true },
+        where: { status: { eq: input.id } },
+        orderBy: { id: 'asc' },
+      });
+      if (inUse.length > 0)
+        throw new ORPCError('BAD_REQUEST', { message: `status is used by ${inUse.length} task(s)` });
+      const del = await tx
+        .delete(taskStatusesTable)
+        .where(eq(taskStatusesTable.id, input.id))
+        .returning({ id: taskStatusesTable.id });
+      if (del.length === 0) throw new ORPCError('NOT_FOUND', { message: 'status not found' });
+      // edges pointing at the removed status would become dead transitions — strip them atomically
+      const others = await tx.query.taskStatuses.findMany({
+        columns: { id: true, nextIds: true },
+        orderBy: { position: 'asc' },
+      });
+      for (const o of others) {
+        if (!o.nextIds.includes(input.id)) continue;
+        await tx
+          .update(taskStatusesTable)
+          .set({ nextIds: o.nextIds.filter((n) => n !== input.id), updatedAt: new Date() })
+          .where(eq(taskStatusesTable.id, o.id));
+      }
     });
-    if (inUse.length > 0) throw new ORPCError('BAD_REQUEST', { message: `status is used by ${inUse.length} task(s)` });
-    const del = await db
-      .delete(taskStatusesTable)
-      .where(eq(taskStatusesTable.id, input.id))
-      .returning({ id: taskStatusesTable.id });
-    if (del.length === 0) throw new ORPCError('NOT_FOUND', { message: 'status not found' });
     await publishChange(CHANGE_RESOURCE.STATUSES, CHANGE_ACTION.UPDATE);
     return { ok: true };
   }),
@@ -104,7 +130,7 @@ export const statusesRouter = os.router({
   /** auto-assign a task via Jev (typed choice over employee candidates).
    *  No-op when a Jev key isn't configured or Jev is unsure — the task
    *  stays unassigned for a human decision. */
-  assign: protectedProcedure.input(z.strictObject({ taskId: z.string().min(1) })).handler(async ({ input }) => {
+  assign: adminProcedure.input(z.strictObject({ taskId: z.string().min(1) })).handler(async ({ input }) => {
     const tRows = await db.query.tasks.findMany({
       columns: { id: true, title: true, description: true, projectId: true },
       where: { id: { eq: input.taskId } },

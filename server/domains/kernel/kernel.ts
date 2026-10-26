@@ -4,7 +4,7 @@ import { ORPCError, os } from '@orpc/server';
 // routers; services never import routers.
 import type { RequestHeadersHandlerPluginContext } from '@orpc/server/plugins';
 
-import type { Role } from '#shared/enums';
+import { ROLE, type Role } from '#shared/enums';
 
 import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from './change-bus';
 
@@ -27,6 +27,23 @@ const requireSession = base.middleware(async ({ context, next }) => {
 });
 
 export const protectedProcedure = base.use(requireSession);
+
+// Admin gate: workspace-wide config and record writes stay admin-only.
+export const adminProcedure = protectedProcedure.use(({ context, next }) => {
+  if (context.session.user.role !== ROLE.ADMIN) {
+    throw new ORPCError('FORBIDDEN', { message: 'admin only' });
+  }
+  return next({ context: { session: context.session } });
+});
+
+// Staff gate: employees and admins may write; read-only viewers stay out.
+export const employeeProcedure = protectedProcedure.use(({ context, next }) => {
+  const { role } = context.session.user;
+  if (role !== ROLE.EMPLOYEE && role !== ROLE.ADMIN) {
+    throw new ORPCError('FORBIDDEN', { message: 'employee only' });
+  }
+  return next({ context: { session: context.session } });
+});
 
 /** Live generator: initial snapshot, then fresh snapshots on relevant changes. */
 export async function* liveGenerator<T>(resources: ChangeResource[], fetch: () => Promise<T>) {

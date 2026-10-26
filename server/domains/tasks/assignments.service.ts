@@ -4,7 +4,7 @@
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
-import { db } from '../../db/index';
+import { db, asDb, type DbExecutor } from '../../db/index';
 import { taskAssignments, tasks } from '../../db/schema';
 
 /** close the open row (if any) and open a new one for the new assignee */
@@ -13,12 +13,14 @@ export async function recordAssignment(
   employeeId: string | null,
   reason: string,
   actorId: string | null,
+  ex: DbExecutor = db,
 ) {
-  await db
+  const d = asDb(ex);
+  await d
     .update(taskAssignments)
     .set({ endedAt: new Date() })
     .where(and(eq(taskAssignments.taskId, taskId), isNull(taskAssignments.endedAt)));
-  await db.insert(taskAssignments).values({ id: uuidv7(), taskId, employeeId, reason, actorId });
+  await d.insert(taskAssignments).values({ id: uuidv7(), taskId, employeeId, reason, actorId });
 }
 
 /** full assignment history for a task, newest first */
@@ -31,8 +33,8 @@ export async function listAssignments(taskId: string) {
 }
 
 /** recent distinct assignees of a task (loop guard for [REASSIGN] ping-pong) */
-export async function recentAssignees(taskId: string, limit = 2) {
-  const rows = await db
+export async function recentAssignees(taskId: string, limit = 2, ex: DbExecutor = db) {
+  const rows = await asDb(ex)
     .select({
       employeeId: taskAssignments.employeeId,
       startedAt: taskAssignments.startedAt,
@@ -46,7 +48,13 @@ export async function recentAssignees(taskId: string, limit = 2) {
 }
 
 /** assign + write history in one go (keeps the task row and ledger in lockstep) */
-export async function assignTask(taskId: string, employeeId: string | null, reason: string, actorId: string | null) {
-  await db.update(tasks).set({ assigneeId: employeeId, updatedAt: new Date() }).where(eq(tasks.id, taskId));
-  await recordAssignment(taskId, employeeId, reason, actorId);
+export async function assignTask(
+  taskId: string,
+  employeeId: string | null,
+  reason: string,
+  actorId: string | null,
+  ex: DbExecutor = db,
+) {
+  await asDb(ex).update(tasks).set({ assigneeId: employeeId, updatedAt: new Date() }).where(eq(tasks.id, taskId));
+  await recordAssignment(taskId, employeeId, reason, actorId, ex);
 }

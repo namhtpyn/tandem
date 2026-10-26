@@ -9,7 +9,7 @@ import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 import { db } from '../../db/index';
 import { modelProviders as modelProvidersTable } from '../../db/schema';
-import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { adminProcedure, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
 import { modelCache, armCacheSweeper } from './models-cache';
 
@@ -27,8 +27,8 @@ export const providersRouter = os.router({
     }),
   ),
 
-  /** replace ONE provider (upsert by id) */
-  save: protectedProcedure
+  /** replace ONE provider (upsert by id, admin-only) */
+  save: adminProcedure
     .input(
       z.strictObject({
         id: z.string().min(1).max(64).optional(),
@@ -77,7 +77,7 @@ export const providersRouter = os.router({
    *  on first ask using a TRANSIENT vault secret (audited `use`, never
    *  stored), cached in-memory per provider+secret for 5 minutes. Falls back
    *  to an empty list when no secret is given. */
-  models: protectedProcedure
+  models: adminProcedure
     .input(
       z.strictObject({
         providerId: z.string().min(1),
@@ -161,8 +161,8 @@ export const providersRouter = os.router({
       return { models: unique };
     }),
 
-  /** delete a provider (blocked while AI employees use it) */
-  remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+  /** delete a provider (blocked while AI employees use it, admin-only) */
+  remove: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
     const { providerInUse } = await import('./model-providers.service');
     if (await providerInUse(input.id)) {
       throw new ORPCError('BAD_REQUEST', { message: 'provider is in use by AI employees' });

@@ -10,7 +10,7 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
-import { db } from '../../db/index';
+import { db, asDb, type DbExecutor } from '../../db/index';
 import { insertActivityMessage } from './thread.service';
 import { tasks, taskReviews, taskRuns } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
@@ -42,11 +42,12 @@ export async function logActivity(
   authorId: string | null,
   body: string,
   meta: Record<string, unknown>,
+  ex: DbExecutor = db,
 ) {
   const { taskActivity } = await import('../../db/schema');
-  await db.insert(taskActivity).values({ id: uuidv7(), taskId, authorId, kind, body, meta });
+  await asDb(ex).insert(taskActivity).values({ id: uuidv7(), taskId, authorId, kind, body, meta });
   // dual-write: the conversation thread carries the same item (payload keeps the kind)
-  await insertActivityMessage({ taskId, authorId, body, payload: { kind, ...meta } });
+  await insertActivityMessage({ taskId, authorId, body, payload: { kind, ...meta } }, ex);
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }

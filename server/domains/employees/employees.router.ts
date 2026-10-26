@@ -20,9 +20,19 @@ import {
   user as userTable,
   vaultSecrets as vaultSecretsTable,
 } from '../../db/schema';
-import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { adminProcedure, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/;
+
+// avatar writes must be raster-image data URLs (svg/xml excluded — served with nosniff,
+// never allowed to carry active content); '' / null still clear the avatar
+const AVATAR_DATA_URL_RE = /^data:image\/(png|jpeg|webp|gif);base64,/;
+const avatarImageSchema = z
+  .string()
+  .max(300_000)
+  .refine((v) => !v || AVATAR_DATA_URL_RE.test(v), 'Avatar must be a base64 data URL image (png, jpeg, webp, or gif)')
+  .nullable()
+  .optional();
 
 const assertNoDuplicateSupervisors = (supervisorIds: string[]) => {
   if (new Set(supervisorIds).size !== supervisorIds.length)
@@ -279,13 +289,13 @@ export const employeesRouter = os.router({
 
   /** create an employee AND its login user. kind=ai also mints an API key
    *  (returned once) and the AI extension row. */
-  create: protectedProcedure
+  create: adminProcedure
     .input(
       z.strictObject({
         name: z.string().min(1).max(100),
         email: z.email(),
         kind: z.enum(['human', 'ai']),
-        image: z.string().max(300_000).nullable().optional(),
+        image: avatarImageSchema,
         title: z.string().min(1).max(100),
         supervisorIds: z.array(z.string().min(1)).max(20).default([]),
         environmentId: z.string().min(1).optional(),
@@ -356,7 +366,7 @@ export const employeesRouter = os.router({
       return { id: userId, userId, apiKey };
     }),
 
-  update: protectedProcedure
+  update: adminProcedure
     .input(
       z.strictObject({
         id: z.string().min(1),
@@ -377,7 +387,7 @@ export const employeesRouter = os.router({
         model: z.string().min(1).max(200).nullable().optional(),
         apiKeySecretId: z.string().min(1).nullable().optional(),
         /** avatar: data URL (resized client-side); null clears */
-        image: z.string().max(300_000).nullable().optional(),
+        image: avatarImageSchema,
       }),
     )
     .handler(async ({ input }) => {
@@ -511,7 +521,7 @@ export const employeesRouter = os.router({
     }),
   },
 
-  remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input, context }) => {
+  remove: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input, context }) => {
     // guard: cannot delete yourself (session may be absent in raw handler tests)
     const selfId = (context as { session?: { user?: { id?: string } } }).session?.user?.id;
     if (selfId && selfId === input.id) {
@@ -543,7 +553,7 @@ export const employeesRouter = os.router({
   }),
 
   /** mint a fresh access key for any employee — AI or human (old keys stay valid) */
-  createApiKey: protectedProcedure
+  createApiKey: adminProcedure
     .input(
       z.strictObject({
         employeeId: z.string().min(1),
@@ -563,7 +573,7 @@ export const employeesRouter = os.router({
     }),
 
   /** rename an access key */
-  updateApiKey: protectedProcedure
+  updateApiKey: adminProcedure
     .input(
       z.strictObject({
         keyId: z.string().min(1),
@@ -609,7 +619,7 @@ export const employeesRouter = os.router({
     }),
 
   /** revoke one API key */
-  revokeApiKey: protectedProcedure.input(z.strictObject({ keyId: z.string().min(1) })).handler(async ({ input }) => {
+  revokeApiKey: adminProcedure.input(z.strictObject({ keyId: z.string().min(1) })).handler(async ({ input }) => {
     const deleted = await db
       .delete(apikeyTable)
       .where(eq(apikeyTable.id, input.keyId))

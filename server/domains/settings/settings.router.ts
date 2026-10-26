@@ -7,7 +7,7 @@ import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 import { db } from '../../db/index';
 import { vaultSecrets as vaultSecretsTable } from '../../db/schema';
-import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { adminProcedure, protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 
 async function getSettingsSnapshot() {
   const { getSettings } = await import('./settings.service');
@@ -21,8 +21,8 @@ export const settingsRouter = os.router({
   /** live app settings */
   live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.SETTINGS], getSettingsSnapshot)),
 
-  /** update settings (strict input) */
-  update: protectedProcedure
+  /** update settings (strict input, admin-only) */
+  update: adminProcedure
     .input(
       z.strictObject({
         disablePasswordLogin: z.boolean().optional(),

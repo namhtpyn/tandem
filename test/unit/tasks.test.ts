@@ -109,21 +109,23 @@ describe('tasks', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
-  it('update changes title/status/assignee; done sticks', async () => {
+  it('update changes title/assignee without touching status; workflow moves done', async () => {
     const a = await mkEmployee('A', 'a@t.local');
     const b = await mkEmployee('B', 'b@t.local');
     const r = await callProc('tasks.create', { title: 'T1', assigneeId: a });
-    await callProc('tasks.update', { id: r.id, title: 'T1 renamed', status: STATUS.doing, assigneeId: b });
+    await callProc('tasks.update', { id: r.id, title: 'T1 renamed', assigneeId: b });
     const iter = await callProc('tasks.live');
     const snap = await iter.next();
     await iter.return?.();
-    const row = (snap.value as TaskRow[])[0];
+    const row = (snap.value as TaskRow[]).find((x) => x.id === r.id)!;
     expect(row.title).toBe('T1 renamed');
-    expect(row.status).toBe(STATUS.doing);
+    expect(row.status).toBe(STATUS.todo); // raw update no longer moves status
     expect(row.assigneeName).toBe('B');
-    await callProc('tasks.update', { id: r.id, status: STATUS.done });
+    // status moves belong to the workflow: doing → done via submit (admin is the assignee)
     const { tasks } = await schema();
     const { db } = await dbm();
+    await db.update(tasks).set({ status: STATUS.doing, assigneeId: admin.id }).where(eq(tasks.id, r.id));
+    await callProc('tasks.submit', { taskId: r.id, body: 'done!' });
     const t = (await db.select().from(tasks).where(eq(tasks.id, r.id)))[0]!;
     expect(t.status).toBe(STATUS.done);
   });
@@ -163,7 +165,7 @@ describe('tasks', () => {
     let snap = await iter.next();
     await iter.return?.();
     expect((snap.value as TaskRow[])[0].description).toBe('keep me');
-    await callProc('tasks.update', { id: r.id, description: 'replaced', status: STATUS.todo });
+    await callProc('tasks.update', { id: r.id, description: 'replaced' });
     iter = await callProc('tasks.live');
     snap = await iter.next();
     await iter.return?.();

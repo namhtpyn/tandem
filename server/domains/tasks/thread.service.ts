@@ -3,7 +3,7 @@
 // exists; emitters dual-write task_activity during the transition.
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 
-import { db } from '../../db/index';
+import { db, asDb, type DbExecutor } from '../../db/index';
 import { nonNull } from '#shared/utils/non-null';
 import { taskAttachments, taskMessageActivities, taskMessageRuns, taskMessages } from '../../db/schema';
 
@@ -30,8 +30,9 @@ export async function insertRunMessage(input: MessageInsert & { runId: string })
 }
 
 /** base row + activity extension — payload carries the activity kind + detail */
-export async function insertActivityMessage(input: MessageInsert & { payload: Record<string, unknown> }) {
-  const rows = await db
+export async function insertActivityMessage(input: MessageInsert & { payload: Record<string, unknown> }, ex: DbExecutor = db) {
+  const d = asDb(ex);
+  const rows = await d
     .insert(taskMessages)
     .values({
       taskId: input.taskId,
@@ -41,7 +42,7 @@ export async function insertActivityMessage(input: MessageInsert & { payload: Re
     })
     .returning({ id: taskMessages.id });
   // insert...returning always yields the row — nonNull is a type guard only
-  await db.insert(taskMessageActivities).values({ messageId: nonNull(rows[0]).id, payload: input.payload });
+  await d.insert(taskMessageActivities).values({ messageId: nonNull(rows[0]).id, payload: input.payload });
 }
 
 /** one ordered thread: base rows with their extension + run payload attached */

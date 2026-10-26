@@ -65,3 +65,12 @@ export const db = drizzle({ client: sqlClient, relations });
 
 // install count/findManyAndCount on the live query builders (chunker drops bare side-effect imports)
 installRqbExtensions(db.query);
+
+/** an open transaction from db.transaction — the tx shares the pool db's query-builder surface */
+export type DbTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/** service fns accept either the pool db or an open tx so their writes join the caller's transaction */
+export type DbExecutor = typeof db | DbTx;
+
+/** view an executor through the db surface — tx and db expose the same query builders */
+export const asDb = (ex: DbExecutor): typeof db => ex as typeof db;

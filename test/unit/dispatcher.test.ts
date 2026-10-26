@@ -242,6 +242,18 @@ beforeEach(async () => {
   });
 });
 
+describe('buildEnvBlob shell escaping', () => {
+  it('escapes every value and defaults missing llmEnv fields to empty strings', async () => {
+    const { buildEnvBlob } = await import('#server/domains/tasks/runner.service');
+    const plan = { task: { id: 'task-1', title: "o'brien" }, llmEnv: {} };
+    const blob = buildEnvBlob(plan as never, 'http://x');
+    expect(blob).toContain("CUSTOM_BASE_URL=''");
+    expect(blob).toContain("CUSTOM_API_KEY=''");
+    expect(blob).toContain("HERMES_MODEL=''");
+    expect(blob).toContain("TANDEM_TASK_TITLE='o'\\''brien'");
+  });
+});
+
 describe('runner service guards', () => {
   it('loadDispatchPlan refuses ghost task / human assignee / missing environment', async () => {
     const { loadDispatchPlan } = await import('#server/domains/tasks/runner.service');
@@ -838,6 +850,20 @@ describe('env blob quoting', () => {
     // and the model still travels through the env blob, not argv
     expect(blob).toContain(`HERMES_MODEL='`);
   });
+
+  it('shQ escapes single quotes; values round-trip bash quoting (string-level, no spawn)', async () => {
+    const { shQ } = await import('#server/domains/tasks/runner.service');
+    // escape shape: ' -> '\'' (close quote, escaped quote, reopen)
+    expect(shQ("o'brien")).toBe("o'\\''brien");
+    expect(shQ("it's a \"test\"")).toBe("it'\\''s a \"test\"");
+    expect(shQ('plain')).toBe('plain');
+    expect(shQ('')).toBe('');
+    // bash string-level round trip: inside '...', the sequence '\'' yields a literal '
+    const unquote = (varName: string, line: string) =>
+      line.slice(`${varName}='`.length, -1).replace(/'\\''/g, "'");
+    expect(unquote('CUSTOM_API_KEY', `CUSTOM_API_KEY='${shQ("o'brien")}'`)).toBe("o'brien");
+    expect(unquote('TANDEM_TASK_TITLE', `TANDEM_TASK_TITLE='${shQ("who's today")}'`)).toBe("who's today");
+  });
 });
 
 describe('dispatcher', () => {
@@ -1115,7 +1141,8 @@ describe('dispatcher', () => {
       // resubmit after rework: round 2 opens
       setEnv({ TANDEM_FAKE_SCRIPT: 'fixed\n{"kind": "result", "body": "v2 with e2e"}' });
       setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'lgtm\n{"kind": "result", "body": "approved"}' });
-      await callProc('tasks.update', { id: t.id, status: STATUS.doing });
+      // fixture: raw status writes left the API — arrange doing directly
+      await db.update(tasks).set({ status: STATUS.doing, updatedAt: new Date() }).where(eq(tasks.id, t.id));
       const { submitResult } = await import('#server/domains/tasks/workflow.service');
       await submitResult(t.id, jay, 'v2 with e2e');
       await new Promise((r) => setTimeout(r, 600));
@@ -1292,7 +1319,10 @@ describe('dispatcher', () => {
       assigneeId: agentId,
       reviewers: ['00000000-0000-7000-8000-fe1cc20db501'],
     });
-    await callProc('tasks.update', { id: t2.id, status: STATUS.doing });
+    // fixture: raw status writes left the API — arrange doing directly
+    const { db: db2 } = await dbm();
+    const { tasks: tasksTable2 } = await schema();
+    await db2.update(tasksTable2).set({ status: STATUS.doing, updatedAt: new Date() }).where(eq(tasksTable2.id, t2.id));
     const { submitResult } = await import('#server/domains/tasks/workflow.service');
     await submitResult(t2.id, agentId, 'real body');
     // review turn ran with the reviewer's secrets/LLM env loaded; verdict landed
@@ -1401,7 +1431,10 @@ describe('dispatcher', () => {
     setEnv({ TANDEM_FAKE_RUNNER: '1' });
     const agentId = await mkAiAgent();
     const t = await callProc('tasks.create', { title: 'Stale', assigneeId: agentId });
-    await callProc('tasks.update', { id: t.id, status: STATUS.doing }); // worker busy elsewhere flipped nothing; a stale job arrives now
+    // fixture: raw status writes left the API — arrange the non-ready status directly
+    const { db: db3 } = await dbm();
+    const { tasks: tasksTable3 } = await schema();
+    await db3.update(tasksTable3).set({ status: STATUS.doing, updatedAt: new Date() }).where(eq(tasksTable3.id, t.id));
     const { dispatchIfEligible } = await import('#server/domains/tasks/dispatcher.service');
     await dispatchIfEligible(t.id, 'http://tandem.local');
     const { db } = await dbm();
@@ -1635,7 +1668,7 @@ describe('dispatcher', () => {
       updatedAt: new Date(),
     });
     const t = await callProc('tasks.create', { title: 'Nope', assigneeId: '00000000-0000-7000-8000-b4b57f028566' });
-    await expect(callProc('tasks.dispatch', { taskId: t.id })).rejects.toThrow(/not an AI/i);
+    await expect(callProc('tasks.dispatch', { taskId: t.id })).rejects.toThrow(/not dispatchable.*AI assignee/i);
   });
 
   it('failed run bounces the task back to ready', async () => {

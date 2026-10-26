@@ -12,7 +12,7 @@ const listVaultSecretsInput = z.object({
 
 import { CHANGE_RESOURCE } from '#shared/enums';
 
-import { protectedProcedure, liveGenerator } from '../../kernel/kernel';
+import { adminProcedure, protectedProcedure, liveGenerator } from '../../kernel/kernel';
 import { listVaultSecrets, createSecret, updateSecret, removeSecret } from './secret.service';
 
 export const secretRouter = {
@@ -21,7 +21,7 @@ export const secretRouter = {
 
   live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.VAULT], listVaultSecrets)),
 
-  create: protectedProcedure
+  create: adminProcedure
     .input(
       z.strictObject({
         name: z.string().min(1).max(100),
@@ -33,7 +33,7 @@ export const secretRouter = {
     .handler(async ({ input, context }) => createSecret(input, context.session.user.id)),
 
   /** value can be replaced but NEVER read back through the API */
-  update: protectedProcedure
+  update: adminProcedure
     .input(
       z.strictObject({
         id: z.string().min(1),
@@ -45,7 +45,7 @@ export const secretRouter = {
     )
     .handler(async ({ input, context }) => updateSecret(input, context.session.user.id)),
 
-  remove: protectedProcedure
+  remove: adminProcedure
     .input(z.strictObject({ id: z.string().min(1) }))
     .handler(async ({ input, context }) => removeSecret(input, context.session.user.id)),
 };

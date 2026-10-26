@@ -3,6 +3,9 @@ import type { H3Event } from 'h3';
 
 import { getAuth, resolveAuthPolicy, anyUserExists } from '../../domains/auth/auth.service';
 
+/** generous for JSON auth payloads, small enough that a hostile body cannot balloon memory */
+const MAX_AUTH_BODY_BYTES = 1_000_000;
+
 function headerValue(v: string | string[] | undefined): string | undefined {
   // node never delivers undefined header values; arrays collapse to first
   return Array.isArray(v) ? v[0] : v;
@@ -55,6 +58,10 @@ export default defineEventHandler(async (event) => {
   }
 
   const raw = event.method !== 'GET' && event.method !== 'HEAD' ? await readRawBody(event, false) : undefined;
+  // 1MB body cap before better-auth sees the bytes — auth bodies are tiny JSON; bigger is abuse
+  if (raw && Buffer.byteLength(raw) > MAX_AUTH_BODY_BYTES) {
+    throw createError({ statusCode: 413, statusMessage: 'payload too large' });
+  }
 
   let body: ArrayBuffer | undefined;
   if (raw) {
