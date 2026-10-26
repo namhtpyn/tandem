@@ -1,5 +1,11 @@
 import { and, eq } from 'drizzle-orm';
 
+/** jsonb payloads arrive as raw strings through RQB relation selects - normalize to the kind */
+export function activityKindOf(payload: unknown): string {
+  const obj = (typeof payload === 'string' ? JSON.parse(payload) : payload) as { kind?: string } | null;
+  return (obj?.kind ?? '').toLowerCase();
+}
+
 import { consola } from 'consola';
 
 import { PROPOSAL_STATUS } from '#shared/enums';
@@ -257,17 +263,33 @@ export async function loadBriefData(taskId: string) {
     if (!users.some((u) => u.id === mid)) continue;
     extra.push({ person: person(mid), chain: chainToRoot(mid, edges).map(person) });
   }
-  const activity = await db.query.taskActivity.findMany({
-    columns: { kind: true, authorId: true, body: true, createdAt: true },
+  // thread messages only (owner ruling 2026-10-26): STATUS bookkeeping and the
+  // run turns themselves are noise; rows newer than the agent's last finished
+  // run carry exactly the decisions the next turn needs (answers, verdicts, notes)
+  const threadRows = await db.query.taskMessages.findMany({
+    columns: { id: true, body: true, authorId: true, createdAt: true },
     where: { taskId: { eq: taskId } },
     orderBy: { createdAt: 'asc' },
+    with: {
+      author: { columns: { name: true } },
+      run: { columns: { finishedAt: true, startedAt: true } },
+      activityExt: { columns: { payload: true } },
+    },
   });
-  activity.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  const finishedAts = threadRows
+    .map((m) => m.run?.finishedAt)
+    .filter((t): t is Date => t instanceof Date)
+    .sort((a, b) => a.getTime() - b.getTime());
+  const lastFinished = finishedAts.at(-1) ?? null;
+  const extKind = (m: (typeof threadRows)[number]) => activityKindOf(m.activityExt?.payload);
+  const convo = lastFinished
+    ? threadRows.filter((m) => m.createdAt > lastFinished && extKind(m) !== 'status' && !m.run)
+    : [];
   const nameById = new Map(users.map((u) => [u.id, u.name]));
-  const recent = activity.slice(-20).map((a) => ({
-    kind: a.kind,
-    authorName: a.authorId ? nonNull(nameById.get(a.authorId)) : null,
-    body: nonNull(a.body),
+  const recent = convo.map((m) => ({
+    kind: extKind(m) || 'note',
+    authorName: m.author?.name ?? null,
+    body: m.body,
   }));
   const ai = aiById.get(assigneeId);
   // company + project prompts ride every brief (user law 2026-10-16: layered context)

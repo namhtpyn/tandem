@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 // loadBriefData coverage against the real test DB: users, supervision edges, mentions,
 // activity, missing-task error arm.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -16,9 +16,15 @@ import {
   aiEmployees,
   employeeSupervisors,
   taskActivity,
+  taskMessages,
+  taskRuns,
   environments,
 } from '#server/db/schema';
-import { buildBrief, loadBriefData } from '#server/domains/tasks/brief.service';
+import { activityKindOf, buildBrief, loadBriefData } from '#server/domains/tasks/brief.service';
+
+const dbm = () => import('#server/db');
+const schema2 = () => import('#server/db/schema');
+const rnd = () => Math.random().toString(16).slice(2, 8);
 import { ACTIVITY_KIND, ROLE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
@@ -58,9 +64,11 @@ describe('loadBriefData (real db)', () => {
       assigneeId: agentId,
       ownerId: chiefId,
     });
-    await db
-      .insert(taskActivity)
-      .values({ id: `act-${rnd}`, taskId, kind: 'status', authorId: chiefId, body: 'dispatched' });
+    // STATUS bookkeeping message, exactly as the dispatcher's dual-write emits it
+    await db.insert(taskMessages).values({ id: `msg-${rnd}`, taskId, authorId: chiefId, body: 'dispatched' });
+    await db.execute(
+      sql`insert into task_message_activities (message_id, payload) values (${`msg-${rnd}`}, ${JSON.stringify({ kind: 'STATUS' })}::jsonb)`,
+    );
   });
 
   afterEach(async () => {
@@ -83,14 +91,61 @@ describe('loadBriefData (real db)', () => {
     expect(d.extraChains).toHaveLength(1);
     expect(d.extraChains[0]!.person.id).toBe(peerId);
     expect(d.extraChains[0]!.chain.map((p) => p.id)).toEqual([chiefId]);
-    expect(d.recentActivity.at(-1)?.body).toBe('dispatched');
+    // STATUS bookkeeping (dispatch lines) never reaches the prompt
+    const kinds = d.recentActivity.map((a) => a.kind);
+    expect(kinds).not.toContain('status');
+    // no finished run yet (first dispatch): the activity section stays empty
+    expect(d.recentActivity).toEqual([]);
+  });
+
+  it('activity section only carries rows newer than the last finished run', async () => {
+    const { db: d2 } = await dbm();
+    const { taskMessages: msgs, taskRuns: runs } = await schema2();
+    const old = new Date(Date.now() - 60 * 60_000);
+    const mid = new Date(Date.now() - 30 * 60_000);
+    await d2.insert(msgs).values({ id: `m-old-${rnd()}`, taskId, authorId: chiefId, body: 'old note', createdAt: old });
+    const runId = `run-${rnd()}`;
+    await d2.insert(runs).values({
+      id: runId,
+      messageId: (
+        await d2.insert(msgs).values({ id: `m-run-${rnd()}`, taskId, body: '', createdAt: mid }).returning({ id: msgs.id })
+      )[0]!.id,
+      employeeId: agentId,
+      environmentId: 'env-x',
+      status: 'DONE',
+      output: '',
+      startedAt: mid,
+      finishedAt: new Date(Date.now() - 10 * 60_000),
+    });
+    await d2.insert(msgs).values({
+      id: `m-new-${rnd()}`,
+      taskId,
+      authorId: chiefId,
+      body: 'answer: use blue',
+      createdAt: new Date(Date.now() - 5 * 60_000),
+    });
+    const all = await d2.select().from(msgs);
+    console.log('DBG msgs:', JSON.stringify(all.map((m) => ({ id: m.id, body: m.body, at: m.createdAt }))));
+    const d = await loadBriefData(taskId);
+    console.log('DBG recent:', JSON.stringify(d.recentActivity));
+    // only the post-run message survives; the pre-run note is session memory now
+    expect(d.recentActivity.map((a) => a.body)).toEqual(['answer: use blue']);
   });
 
   it('covers long activity truncation, mention name stripping, populated reviewers', async () => {
     const long = 'x'.repeat(300);
-    await db
-      .insert(taskActivity)
-      .values({ id: taskId + '-long', taskId, kind: ACTIVITY_KIND.NOTE, authorId: null, body: long });
+    // a finished run first: the long note must land after the cutoff to ship
+    await db.insert(taskMessages).values({ id: 'run-msg-long', taskId, body: '' });
+    await db.insert(taskRuns).values({
+      id: 'run-long',
+      messageId: 'run-msg-long',
+      employeeId: agentId,
+      environmentId: 'env-x',
+      status: 'DONE',
+      output: '',
+      finishedAt: new Date(Date.now() - 60_000),
+    });
+    await db.insert(taskMessages).values({ id: taskId + '-long', taskId, authorId: null, body: long });
     await db
       .update(tasks)
       .set({ description: `ping @[Peer Three](mention-${peerId}) and [@ label="Chief Two"]`, reviewers: [chiefId] })
@@ -147,15 +202,20 @@ describe('loadBriefData (real db)', () => {
   });
 
   it('defensive arms: activity by unknown author, null description fallbacks', async () => {
-    await db
-      .insert(taskActivity)
-      .values({ id: taskId + '-ghost', taskId, kind: 'status', authorId: null, body: 'system did something' });
-    try {
-      const d = await loadBriefData(taskId);
-      expect(d.recentActivity.some((a) => a.authorName === null)).toBe(true);
-    } finally {
-      await db.delete(taskActivity).where(eq(taskActivity.id, taskId + '-ghost'));
-    }
+    // seed a finished run so the note lands after the cutoff and reaches the prompt
+    await db.insert(taskMessages).values({ id: `run-msg-ghost`, taskId, body: '' });
+    await db.insert(taskRuns).values({
+      id: `run-ghost`,
+      messageId: 'run-msg-ghost',
+      employeeId: agentId,
+      environmentId: 'env-x',
+      status: 'DONE',
+      output: '',
+      finishedAt: new Date(Date.now() - 60_000),
+    });
+    await db.insert(taskMessages).values({ id: 'ghost-note', taskId, authorId: null, body: 'system did something' });
+    const d = await loadBriefData(taskId);
+    expect(d.recentActivity.some((a) => a.authorName === null)).toBe(true);
   });
 
   it('fresh task with no activity: brief omits the activity section; titled owner renders', async () => {
@@ -179,6 +239,13 @@ describe('loadBriefData (real db)', () => {
     } finally {
       await db.delete(tasks).where(eq(tasks.id, freshId));
     }
+  });
+
+  it('activityKindOf reads both jsonb shapes (string payload and object payload)', () => {
+    expect(activityKindOf(JSON.stringify({ kind: 'STATUS' }))).toBe('status');
+    expect(activityKindOf({ kind: 'NOTE' })).toBe('note');
+    expect(activityKindOf(null)).toBe('');
+    expect(activityKindOf(undefined)).toBe('');
   });
 
   it('throws on missing task', async () => {
