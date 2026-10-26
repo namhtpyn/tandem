@@ -41,10 +41,8 @@ test('details: change status and assignee from the sidebar', async ({ page }) =>
   await page.getByRole('link', { name: 'Fields E2E' }).first().click();
   await expect(page.getByRole('heading', { name: /Fields E2E/ })).toBeVisible();
 
-  // status: move along a seeded transition (To do -> Doing); the thread gains
-  // the system note and the trigger shows the new status
+  // status: move along a seeded transition (To do -> Doing); trigger shows the new status
   const status = await pickOption(page, 'Task status', 'Doing');
-  await expect(page.getByText('status:').filter({ visible: true }).first()).toBeVisible({ timeout: 10_000 });
   await expect(status).toContainText('Doing');
 
   // assignee: pick the seeded employee; survives a reload (persisted via tasks.update)

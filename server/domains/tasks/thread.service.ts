@@ -107,7 +107,10 @@ export async function listTaskThread(taskId: string) {
     outputsByRun.set(o.runId, list);
   }
 
-  return messages.map((m) => {
+  // STATUS rows are pipeline chatter (dispatch/review bookkeeping) — never thread items
+  const visible = messages.filter((m) => (m.activityExt?.payload as { kind?: string } | null)?.kind !== 'STATUS');
+
+  return visible.map((m) => {
     const runRow = m.runExt?.run;
     const run = runRow
       ? {

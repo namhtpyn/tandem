@@ -78,7 +78,13 @@ describe('task thread (task_messages base + extensions)', () => {
     const { taskRuns } = await schema();
     const svc = await threadSvc();
 
-    // dispatch note first, then the run — the same relative order the runner writes
+    // a human NOTE lands in the thread; STATUS chatter is excluded server-side
+    await svc.insertActivityMessage({
+      taskId: t.id,
+      authorId: ADMIN_ID,
+      body: 'human note',
+      payload: { kind: 'NOTE' },
+    });
     await svc.insertActivityMessage({
       taskId: t.id,
       authorId: null,
@@ -98,11 +104,12 @@ describe('task thread (task_messages base + extensions)', () => {
     await svc.insertRunMessage({ taskId: t.id, authorId: agentId, body: '', runId: 'r-thread-1', createdAt: started });
 
     const items = (await svc.listTaskThread(t.id)) as Array<Record<string, any>>;
-    expect(items.map((i) => i.body)).toEqual(['dispatched to Robby on E1', '']);
+    // STATUS row dropped, human note kept, run turn mapped
+    expect(items.map((i) => i.body)).toEqual(['human note', '']);
     expect(items[1].run).toMatchObject({ id: 'r-thread-1', agentName: 'Robby', status: 'RUNNING', outputs: [] });
     expect(items[1].run.startedAt).toBe(started.toISOString());
-    expect(items[0].activity).toMatchObject({ kind: 'STATUS', dispatched: true });
-    expect(items[0].authorName).toBeNull();
+    expect(items[0].activity).toMatchObject({ kind: 'NOTE' });
+    expect(items[0].authorName).toBe('Test Admin');
     expect(items[1].authorName).toBe('Robby');
   });
 
