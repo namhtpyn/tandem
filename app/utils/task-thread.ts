@@ -72,6 +72,11 @@ export type RoutingProposal =
   | { kind: typeof PROPOSAL_KIND.SUBTASKS; items: SubtaskProposalItem[] }
   | { kind: typeof PROPOSAL_KIND.REASSIGN; targetName: string; reason?: string };
 
+/** item cap per [SUBTASKS] line; recordProposals drops anything beyond it */
+export const MAX_SUBTASK_ITEMS = 20;
+/** proposal cap per run output */
+export const MAX_PROPOSALS_PER_OUTPUT = 10;
+
 export function parseRoutingProposals(output: string | null | undefined): RoutingProposal[] {
   if (!output) return [];
   const out: RoutingProposal[] = [];
@@ -89,7 +94,8 @@ export function parseRoutingProposals(output: string | null | undefined): Routin
             assigneeName: seg[2] || undefined,
           };
         })
-        .filter((i) => i.title.length > 0);
+        .filter((i) => i.title.length > 0)
+        .slice(0, MAX_SUBTASK_ITEMS); // runaway lines are truncated, not executed
       if (items.length) out.push({ kind: PROPOSAL_KIND.SUBTASKS, items });
       continue;
     }
@@ -100,7 +106,7 @@ export function parseRoutingProposals(output: string | null | undefined): Routin
       out.push({ kind: PROPOSAL_KIND.REASSIGN, targetName, reason: m[1]?.trim() });
     }
   }
-  return out;
+  return out.slice(0, MAX_PROPOSALS_PER_OUTPUT); // one run can only propose so much
 }
 
 /** Strip the JSON verdict line from displayed output so the bubble shows prose only. */

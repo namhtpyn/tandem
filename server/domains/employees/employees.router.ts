@@ -24,6 +24,16 @@ import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../
 
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/;
 
+// avatar writes must be raster-image data URLs (svg/xml excluded — served with nosniff,
+// never allowed to carry active content); '' / null still clear the avatar
+const AVATAR_DATA_URL_RE = /^data:image\/(png|jpeg|webp|gif);base64,/;
+const avatarImageSchema = z
+  .string()
+  .max(300_000)
+  .refine((v) => !v || AVATAR_DATA_URL_RE.test(v), 'Avatar must be a base64 data URL image (png, jpeg, webp, or gif)')
+  .nullable()
+  .optional();
+
 const assertNoDuplicateSupervisors = (supervisorIds: string[]) => {
   if (new Set(supervisorIds).size !== supervisorIds.length)
     throw new ORPCError('BAD_REQUEST', { message: 'duplicate supervisor ids' });
@@ -285,7 +295,7 @@ export const employeesRouter = os.router({
         name: z.string().min(1).max(100),
         email: z.email(),
         kind: z.enum(['human', 'ai']),
-        image: z.string().max(300_000).nullable().optional(),
+        image: avatarImageSchema,
         title: z.string().min(1).max(100),
         supervisorIds: z.array(z.string().min(1)).max(20).default([]),
         environmentId: z.string().min(1).optional(),
@@ -377,7 +387,7 @@ export const employeesRouter = os.router({
         model: z.string().min(1).max(200).nullable().optional(),
         apiKeySecretId: z.string().min(1).nullable().optional(),
         /** avatar: data URL (resized client-side); null clears */
-        image: z.string().max(300_000).nullable().optional(),
+        image: avatarImageSchema,
       }),
     )
     .handler(async ({ input }) => {

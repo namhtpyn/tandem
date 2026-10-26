@@ -59,7 +59,8 @@ export function decryptSecret(envelope: string) {
   return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
 }
 
-/** Display hint: last 4 chars of the plaintext, never more. */
+/** Display hint: last 4 chars of the plaintext; secrets <=8 chars get NO hint —
+ * a 4-char peek at a short secret reveals half of it or more. */
 export function lastFourHint(plaintext: string) {
-  return plaintext.length <= 4 ? '••••' : plaintext.slice(-4);
+  return plaintext.length <= 8 ? '' : plaintext.slice(-4);
 }

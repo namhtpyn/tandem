@@ -27,7 +27,7 @@ export const providersRouter = os.router({
     }),
   ),
 
-  /** replace ONE provider (upsert by id) */
+  /** replace ONE provider (upsert by id, admin-only) */
   save: protectedProcedure
     .input(
       z.strictObject({
@@ -161,7 +161,7 @@ export const providersRouter = os.router({
       return { models: unique };
     }),
 
-  /** delete a provider (blocked while AI employees use it) */
+  /** delete a provider (blocked while AI employees use it, admin-only) */
   remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
     const { providerInUse } = await import('./model-providers.service');
     if (await providerInUse(input.id)) {

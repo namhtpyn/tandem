@@ -405,3 +405,66 @@ describe('ssh run timeout', () => {
     }
   }, 5000);
 });
+
+describe('run output streaming', () => {
+  it('chunk-appended flushes are end-to-end equivalent to the streamed buffer (no loss, no dup)', async () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `working: step ${i + 1}`);
+    setEnv({ TANDEM_FAKE_RUNNER: '1' });
+    setEnv({ TANDEM_FAKE_SCRIPT: lines.join('\n') });
+    setEnv({ TANDEM_FAKE_DELAY_MS: '25' });
+    setEnv({ TANDEM_RUN_FLUSH_MS: '0' }); // every line flushes — max chunk-write pressure
+    try {
+      const { db } = await import('#server/db');
+      const { taskRuns } = await import('#server/db/schema');
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
+      const handleP = dispatchTask('t-1', 'http://t.local');
+      // catch the run MID-FLIGHT: a RUNNING row already holding appended output
+      let mid = '';
+      await vi.waitFor(async () => {
+        const rows = await db
+          .select({ status: taskRuns.status, output: taskRuns.output })
+          .from(taskRuns)
+          .where(eq(taskRuns.taskId, 't-1'));
+        const hit = rows.find((r) => r.status === RUN_STATUS.RUNNING && r.output.length > 0);
+        if (hit) mid = hit.output;
+        expect(hit).toBeDefined();
+      });
+      const handle = await handleP;
+      expect((await handle.finished).status).toBe(RUN_STATUS.DONE);
+      const final = (await db.select({ output: taskRuns.output }).from(taskRuns).where(eq(taskRuns.taskId, 't-1')))[0]!;
+      // the mid-run view is a strict prefix of the final: appends grew the row, never rewrote it
+      expect(final.output.startsWith(mid)).toBe(true);
+      expect(mid.length).toBeLessThan(final.output.length);
+      // full equivalence: what the agent streamed is exactly what the row holds
+      expect(final.output).toBe(lines.join('\n'));
+    } finally {
+      setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+      setEnv({ TANDEM_FAKE_DELAY_MS: undefined });
+      setEnv({ TANDEM_RUN_FLUSH_MS: undefined });
+      setEnv({ TANDEM_FAKE_RUNNER: '1' });
+    }
+  }, 30_000);
+
+  it('a 450-char verdict delivered as force-flush fragments still parks the task', async () => {
+    // the acp client force-flushes a line at 400 chars: ONE long JSON verdict arrives
+    // as two onLine calls, so the buffer holds it as two adjacent fragment lines
+    const line = `{"kind": "question", "body": "${'q'.repeat(450)}"}`;
+    setEnv({ TANDEM_FAKE_RUNNER: '1' });
+    setEnv({ TANDEM_FAKE_SCRIPT: `${line.slice(0, 400)}\n${line.slice(400)}` });
+    try {
+      const { db } = await import('#server/db');
+      const { tasks } = await import('#server/db/schema');
+      // askQuestion needs a holder: ownerId ?? createdBy
+      await db.update(tasks).set({ createdBy: admin.id }).where(eq(tasks.id, 't-1'));
+      const { dispatchTask } = await import('#server/domains/tasks/runner.service');
+      const handle = await dispatchTask('t-1', 'http://t.local');
+      expect((await handle.finished).status).toBe(RUN_STATUS.DONE);
+      const row = (await db.select().from(tasks).where(eq(tasks.id, 't-1')))[0]!;
+      // without the tail-rejoin retry this falls to the envelope-less submit (in-review)
+      expect(row.status).toBe(STATUS.waitingAnswer);
+    } finally {
+      setEnv({ TANDEM_FAKE_SCRIPT: undefined });
+      setEnv({ TANDEM_FAKE_RUNNER: '1' });
+    }
+  }, 30_000);
+});

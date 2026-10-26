@@ -108,27 +108,72 @@ describe('task statuses', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
-  it('save upserts by id (rename)', async () => {
-    const r = await callProc('statuses.save', {
-      id: STATUS.todo,
-      name: 'Backlog',
+  it('save upserts by id (rename a custom status)', async () => {
+    const made = await callProc('statuses.save', {
+      name: 'Draft Loop',
       color: 'neutral',
-      position: 0,
-      category: 'ready',
+      position: 7,
+      category: 'backlog',
       nextIds: [STATUS.doing],
     });
-    expect(r.id).toBe(STATUS.todo);
+    const r = await callProc('statuses.save', {
+      id: made.id,
+      name: 'Draft Loop II',
+      color: 'warning',
+      position: 7,
+      category: 'backlog',
+      nextIds: [STATUS.doing],
+    });
+    expect(r.id).toBe(made.id);
     const { db } = await dbm();
     const { taskStatuses } = await import('#server/db/schema');
-    const row = (await db.select().from(taskStatuses)).find((x) => x.id === STATUS.todo)!;
-    expect(row.name).toBe('Backlog');
+    const row = (await db.select().from(taskStatuses)).find((x) => x.id === made.id)!;
+    expect(row.name).toBe('Draft Loop II');
   });
 
-  it('remove blocked while a task uses the status', async () => {
-    const t = await callProc('tasks.create', { title: 'T1' });
-    await expect(callProc('statuses.remove', { id: STATUS.todo })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  it('built-in statuses are immutable: save and remove both refuse them', async () => {
+    await expect(
+      callProc('statuses.save', {
+        id: STATUS.todo,
+        name: 'Backlog',
+        color: 'neutral',
+        position: 0,
+        category: 'ready',
+        nextIds: [STATUS.doing],
+      }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'built-in status' });
+    await expect(callProc('statuses.remove', { id: STATUS.done })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'built-in status',
+    });
+  });
+
+  it('remove prunes dangling transition edges left in other statuses', async () => {
+    const a = await callProc('statuses.save', { name: 'EdgeA', position: 8, nextIds: [] });
+    const b = await callProc('statuses.save', { name: 'EdgeB', position: 9, nextIds: [a.id] });
+    const { db } = await dbm();
+    const { taskStatuses } = await import('#server/db/schema');
+    // a built-in row points at the doomed status too (save refuses built-in ids, so write raw)
+    await db.update(taskStatuses).set({ nextIds: [STATUS.doing, a.id], updatedAt: new Date() }).where(eq(taskStatuses.id, STATUS.todo));
+    await callProc('statuses.remove', { id: a.id });
+    const rows = await db.select().from(taskStatuses);
+    expect(rows.find((x) => x.id === STATUS.todo)!.nextIds).toEqual([STATUS.doing]);
+    expect(rows.find((x) => x.id === b.id)!.nextIds).toEqual([]);
+  });
+
+  it('remove blocked while a task uses the status; built-ins always refused', async () => {
+    const custom = await callProc('statuses.save', { name: 'HoldMe', position: 8, category: 'ready', nextIds: [] });
+    const t = await callProc('tasks.create', { title: 'T1', status: custom.id });
+    await expect(callProc('statuses.remove', { id: custom.id })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: /used by 1 task/,
+    });
     await callProc('tasks.remove', { id: t.id });
-    await expect(callProc('statuses.remove', { id: STATUS.todo })).resolves.toMatchObject({ ok: true });
+    await expect(callProc('statuses.remove', { id: custom.id })).resolves.toMatchObject({ ok: true });
+    await expect(callProc('statuses.remove', { id: STATUS.todo })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'built-in status',
+    });
   });
 
   it('save rejects reserved id "new"', async () => {
@@ -138,17 +183,10 @@ describe('task statuses', () => {
   });
 
   it('create with no statuses defined fails clearly', async () => {
-    // remove all seeded statuses (no tasks exist)
-    for (const id of [
-      STATUS.todo,
-      STATUS.doing,
-      STATUS.done,
-      STATUS.waitingAnswer,
-      STATUS.inReview,
-      STATUS.blocked,
-      STATUS.cancelled,
-    ])
-      await callProc('statuses.remove', { id });
+    // built-ins cannot be removed via the API — wipe the table raw (no tasks exist)
+    const { db } = await dbm();
+    const { taskStatuses } = await import('#server/db/schema');
+    await db.delete(taskStatuses);
     await expect(callProc('tasks.create', { title: 'NoStatus' })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: /no task statuses/i,
@@ -159,7 +197,7 @@ describe('task statuses', () => {
     await expect(callProc('statuses.remove', { id: 'ghost' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
-  it('tasks.create validates status; default = first status', async () => {
+  it('tasks.create validates status; default = first status; non-ready refused', async () => {
     const t = await callProc('tasks.create', { title: 'A' });
     const { db } = await dbm();
     const { tasks } = await import('#server/db/schema');
@@ -168,28 +206,26 @@ describe('task statuses', () => {
     await expect(callProc('tasks.create', { title: 'B', status: 'ghost' })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
     });
-    const t2 = await callProc('tasks.create', { title: 'C', status: STATUS.doing });
-    const row2 = (await db.select().from(tasks)).find((x) => x.id === t2.id)!;
-    expect(row2.status).toBe(STATUS.doing);
+    // tasks are born dispatch-eligible only — a working-category status is refused
+    await expect(callProc('tasks.create', { title: 'C', status: STATUS.doing })).rejects.toThrow(/ready-category/);
   });
 
-  it('tasks.update enforces transitions (todo -> done blocked, todo -> doing ok)', async () => {
+  it('tasks.update refuses raw status writes — moves go through the workflow endpoints', async () => {
     const t = await callProc('tasks.create', { title: 'X' });
-    await expect(callProc('tasks.update', { id: t.id, status: STATUS.done })).rejects.toMatchObject({
+    await expect(callProc('tasks.update', { id: t.id, status: STATUS.doing })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
-      message: /cannot move/i,
+      message: 'status changes go through the workflow endpoints',
     });
-    await callProc('tasks.update', { id: t.id, status: STATUS.doing });
-    await callProc('tasks.update', { id: t.id, status: STATUS.done });
+    // even an unknown status id gets the workflow-guard message (the guard fires before validation)
     await expect(callProc('tasks.update', { id: t.id, status: 'ghost' })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
-      message: /does not exist/i,
+      message: 'status changes go through the workflow endpoints',
     });
   });
 
-  it('tasks.update same-status is a no-op pass', async () => {
+  it('tasks.update without a status field still patches', async () => {
     const t = await callProc('tasks.create', { title: 'Y' });
-    await expect(callProc('tasks.update', { id: t.id, status: STATUS.todo })).resolves.toMatchObject({ ok: true });
+    await expect(callProc('tasks.update', { id: t.id, title: 'Y2' })).resolves.toMatchObject({ ok: true });
   });
 });
 
@@ -395,6 +431,41 @@ describe('jev auto-assign', () => {
     expect(r.assigned).toBe(false);
     expect(r.reason).toMatch(/could not reach/);
     globalThis.fetch = origFetch;
+  });
+
+  it('assign: non-finite or out-of-range confidence refuses (NaN guard)', async () => {
+    const sec = await callProc('vault.secrets.create', { name: 'jev-key-nan', value: 'sk-jev-nan' });
+    await wireDecisionProvider(sec.id);
+    const t = await callProc('tasks.create', { title: 'NaN guard' });
+    const origFetch = globalThis.fetch;
+    // NaN is typeof number: without the finite guard it would sail past `confidence < 0.5`
+    globalThis.fetch = (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        model: 'm',
+        answers: { assignee: { type: 'choice', choice: 'some-emp', confidence: NaN, probabilities: {} } },
+      }),
+    })) as typeof fetch;
+    try {
+      let r = await callProc('statuses.assign', { taskId: t.id });
+      expect(r.assigned).toBe(false);
+      expect(r.reason).toMatch(/low confidence/);
+      // out-of-range confidence fails the check the same way
+      globalThis.fetch = (async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          model: 'm',
+          answers: { assignee: { type: 'choice', choice: 'some-emp', confidence: 1.5, probabilities: {} } },
+        }),
+      })) as typeof fetch;
+      r = await callProc('statuses.assign', { taskId: t.id });
+      expect(r.assigned).toBe(false);
+      expect(r.reason).toMatch(/low confidence/);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
   });
 
   it('assign: empty candidate list + assigned-task load counting', async () => {

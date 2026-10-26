@@ -936,4 +936,32 @@ describe('ACP executable', () => {
     });
     expect(upd2.ok).toBe(true);
   });
+
+  it('rejects non-raster avatar writes (svg, bare url) at the zod edge', async () => {
+    // validation only runs through the official call() path — the local callProc above
+    // pokes ~orpc.handler directly and skips input schemas by design
+    const { makeProcCaller } = await import('./helpers/procs.ts');
+    const proc = await makeProcCaller(admin);
+    for (const bad of ['data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=', 'http://cdn.example.com/a.png']) {
+      await expect(
+        proc('employees.create', {
+          name: 'Svg User',
+          email: `svg-user-${crypto.randomUUID().slice(0, 8)}@tandem.local`,
+          kind: 'human',
+          title: 'T',
+          supervisorIds: [],
+          image: bad,
+        }),
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST', data: { issues: [expect.objectContaining({ path: ['image'] })] } });
+    }
+    await expect(
+      proc('employees.update', {
+        id: '00000000-0000-7000-8000-c5ea71554c77',
+        name: 'A',
+        title: 'T',
+        supervisorIds: [],
+        image: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=',
+      }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
 });

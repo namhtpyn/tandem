@@ -23,6 +23,7 @@ const projectsLive = useQuery($orpc.projects.list.queryOptions({ queryKey: [CHAN
 const projects = computed(() => (unref(projectsLive.data) ?? []) as Array<{ id: string; name: string }>);
 
 const updateMutation = useMutation($orpc.tasks.update.mutationOptions());
+const setStatusMutation = useMutation($orpc.tasks.setStatus.mutationOptions());
 const fieldBusy = ref(false);
 const fieldError = ref('');
 /** status select: current + the workflow-allowed next statuses (server enforces the same rule) */
@@ -51,7 +52,11 @@ async function updateField(patch: { status?: string; assigneeId?: string | null;
   fieldBusy.value = true;
   fieldError.value = '';
   try {
-    await updateMutation.mutateAsync({ id: props.task.id, ...patch });
+    if (patch.status) {
+      await setStatusMutation.mutateAsync({ id: props.task.id, status: patch.status });
+    } else {
+      await updateMutation.mutateAsync({ id: props.task.id, ...patch });
+    }
     await queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
   } catch (e) {
     const err = e as { data?: { json?: { message?: string } }; message?: string };

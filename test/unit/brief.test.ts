@@ -1,7 +1,13 @@
 // Brief builder unit tests: pure functions (chains, mention extraction, brief shape).
-import { describe, expect, it } from 'vitest';
+import { consola } from 'consola';
+import { describe, expect, it, vi } from 'vitest';
 
-import { buildBrief, chainToRoot, extractMentionedEmployeeIds } from '#server/domains/tasks/brief.service';
+import {
+  buildBrief,
+  chainToRoot,
+  extractMentionedEmployeeIds,
+  mentionMatcher,
+} from '#server/domains/tasks/brief.service';
 import { ACTIVITY_KIND } from '#shared/enums';
 
 const P = (id: string, name: string, title: string | null = null) => ({ id, name, title, kind: 'human' });
@@ -57,6 +63,40 @@ describe('extractMentionedEmployeeIds', () => {
   });
   it('dedupes', () => {
     expect(extractMentionedEmployeeIds('@Zed and @Zed again', map)).toEqual(['00000000-0000-7000-8000-cba5723598ca']);
+  });
+  it('a poisoned name (regex metachars) matches literally instead of throwing', () => {
+    const poison = new Map([['Ash (2) [dev]*', '00000000-0000-7000-8000-b5ca5ca514c6']]);
+    expect(() => extractMentionedEmployeeIds('ping @Ash (2) [dev]* now', poison)).not.toThrow();
+    expect(extractMentionedEmployeeIds('ping @Ash (2) [dev]* now', poison)).toEqual([
+      '00000000-0000-7000-8000-b5ca5ca514c6',
+    ]);
+    // and it never half-matches a different name that merely contains the text
+    expect(extractMentionedEmployeeIds('ping @Ash (2) [dev]*2 now', poison)).toEqual([]);
+  });
+  it('the boundary rejects a longer name sharing the prefix', () => {
+    expect(extractMentionedEmployeeIds('ping @Zed2 now', map)).toEqual([]);
+  });
+  it('skips names that fail to compile, warns once, never throws', () => {
+    const warn = vi.spyOn(consola, 'warn').mockImplementation(() => {});
+    // force the compile failure: correct escaping makes every real name compile
+    const spy = vi
+      .spyOn(globalThis, 'RegExp')
+      .mockImplementation((() => {
+        throw new SyntaxError('mock compile failure');
+      }) as never);
+    try {
+      expect(extractMentionedEmployeeIds('ping @Zed now', map)).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      // every known name failed (the stub throws for all RegExp compiles)
+      expect(String(warn.mock.calls[0]?.[0])).toContain(String(map.size));
+    } finally {
+      spy.mockRestore();
+      warn.mockRestore();
+    }
+  });
+  it('mentionMatcher still compiles unicode names exactly', () => {
+    expect(mentionMatcher('Renée')?.test('ping @Renée ok')).toBe(true);
+    expect(mentionMatcher('Renée')?.test('ping @Renée2 ok')).toBe(false);
   });
 });
 

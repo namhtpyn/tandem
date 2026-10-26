@@ -459,6 +459,43 @@ export const taskActivity = pgTable(
   (t) => [index('task_activity_task_idx').on(t.taskId, t.createdAt)],
 );
 
+// Task conversation: one ordered thread per task. Base rows carry the rendered
+// line; per-kind extension tables (1:1) hold the structured payload — the kind
+// is whichever extension exists, no kind column (user design, 2026-10-24).
+export const taskMessages = pgTable(
+  'task_messages',
+  {
+    id: text('id')
+      .primaryKey()
+      .$default(() => uuidv7()),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    authorId: uuid('author_id').references(() => user.id, { onDelete: 'set null' }),
+    body: text('body').notNull().default(''),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .$default(() => new Date()),
+  },
+  (t) => [index('task_messages_task_idx').on(t.taskId, t.createdAt)],
+);
+
+export const taskMessageRuns = pgTable('task_message_runs', {
+  messageId: text('message_id')
+    .primaryKey()
+    .references(() => taskMessages.id, { onDelete: 'cascade' }),
+  runId: text('run_id')
+    .notNull()
+    .references(() => taskRuns.id, { onDelete: 'cascade' }),
+});
+
+export const taskMessageActivities = pgTable('task_message_activities', {
+  messageId: text('message_id')
+    .primaryKey()
+    .references(() => taskMessages.id, { onDelete: 'cascade' }),
+  payload: jsonb('payload').notNull().default({}),
+});
+
 // ---------- relations ----------
 
 export const relations = defineRelations(
@@ -478,6 +515,9 @@ export const relations = defineRelations(
     tasks,
     taskActivity,
     taskRuns,
+    taskMessages,
+    taskMessageRuns,
+    taskMessageActivities,
     taskReviews,
     taskStatuses,
     modelProviders,
@@ -526,6 +566,28 @@ export const relations = defineRelations(
       secrets: helpers.many.vaultSecrets({
         from: helpers.vaultFolders.id,
         to: helpers.vaultSecrets.folderId,
+      }),
+    },
+    taskMessages: {
+      task: helpers.one.tasks({ from: helpers.taskMessages.taskId, to: helpers.tasks.id }),
+      author: helpers.one.user({ from: helpers.taskMessages.authorId, to: helpers.user.id }),
+      runExt: helpers.one.taskMessageRuns({
+        from: helpers.taskMessages.id,
+        to: helpers.taskMessageRuns.messageId,
+      }),
+      activityExt: helpers.one.taskMessageActivities({
+        from: helpers.taskMessages.id,
+        to: helpers.taskMessageActivities.messageId,
+      }),
+    },
+    taskMessageRuns: {
+      message: helpers.one.taskMessages({ from: helpers.taskMessageRuns.messageId, to: helpers.taskMessages.id }),
+      run: helpers.one.taskRuns({ from: helpers.taskMessageRuns.runId, to: helpers.taskRuns.id }),
+    },
+    taskMessageActivities: {
+      message: helpers.one.taskMessages({
+        from: helpers.taskMessageActivities.messageId,
+        to: helpers.taskMessages.id,
       }),
     },
     verification: {},

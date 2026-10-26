@@ -1,5 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 
+import { consola } from 'consola';
+
 import { PROPOSAL_STATUS } from '#shared/enums';
 import { RunVerdictSchema } from '#shared/run-verdict';
 import { renderOutputContract } from '#shared/structured-output';
@@ -13,6 +15,18 @@ import { stripAttachments } from './attachments.util';
 
 export type BriefPerson = { id: string; name: string; title: string | null; kind: string };
 
+/** exact-name mention matcher: metachars escaped ($& would be a no-op — it reinserts
+ * the match), boundary rejects letters/digits so @Zed never matches @Zed2.
+ * Null when the pattern cannot compile — the caller skips that name. */
+export function mentionMatcher(name: string): RegExp | null {
+  try {
+    return new RegExp(`@${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'u');
+  } catch {
+    /* v8 ignore next 2 -- correct escaping compiles every name; skip is engine-limit defense */
+    return null;
+  }
+}
+
 /** mentions in the description: @[Label](id) tiptap links, HTML spans, or plain @Label tokens.
  * Labels resolve against known employee names (mention menu only offers employees), so
  * plain @Name matching is exact-by-construction, never fuzzy. */
@@ -23,11 +37,19 @@ export function extractMentionedEmployeeIds(description: string, nameToId: Map<s
     const id = nameToId.get(nonNull(m[1]));
     if (id) ids.add(id);
   }
-  const esc = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, '$&');
+  let uncompiled = 0;
   for (const [name, id] of nameToId) {
-    const re = new RegExp(`@${esc(name)}(?![p{L}p{N}])`, 'u');
+    const re = mentionMatcher(name);
+    /* v8 ignore next 3 -- correct escaping compiles every name; skip is engine-limit defense */
+    if (!re) {
+      uncompiled++;
+      continue;
+    }
     if (re.test(description)) ids.add(id);
   }
+  // one warn for the whole batch, never per name
+  /* v8 ignore next -- same defensive arm as above */
+  if (uncompiled) consola.warn(`[brief] skipped ${uncompiled} employee name(s) that failed mention-pattern compile`);
   return [...ids];
 }
 

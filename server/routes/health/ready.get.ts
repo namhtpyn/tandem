@@ -21,10 +21,9 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 200);
     return { ok: true, migrations: 'complete' };
   } catch (e) {
+    // the body stays generic — driver text must never reach an unauthenticated probe
+    log.error('readiness check failed:', e);
     setResponseStatus(event, 503);
-    /* v8 ignore start -- postgres.js always throws typed errors */
-    const message = e instanceof Error ? e.message : 'database unavailable';
-    return { ok: false, error: message };
-    /* v8 ignore stop */
+    return { ok: false };
   }
 });

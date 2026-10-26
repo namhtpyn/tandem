@@ -1,4 +1,5 @@
 // Vault folders + employee title catalog: CRUD, guards, joins, rename cascade.
+import { eq } from 'drizzle-orm';
 import { describe, expect, it, beforeEach } from 'vitest';
 
 import './helpers/pg';
@@ -6,6 +7,13 @@ import { ROLE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 import './api-harness';
+
+async function dbm() {
+  return await import('#server/db');
+}
+async function schema() {
+  return await import('#server/db/schema');
+}
 
 const admin = {
   user: {
@@ -164,11 +172,11 @@ describe('vault folders', () => {
       id: string;
       lastFour: string;
     };
-    expect(s.lastFour).toBe('et-1');
+    expect(s.lastFour).toBe(''); // 8-char value: short secrets get NO hint
     const upd = (await proc(['vault', 'secrets', 'update'], { id: s.id, name: 'k-renamed', folderId: null })) as {
       lastFour: string;
     };
-    expect(upd.lastFour).toBe('et-1'); // hint unchanged => ciphertext untouched
+    expect(upd.lastFour).toBe(''); // hint unchanged => ciphertext untouched
     // rotating still works
     const rot = (await proc(['vault', 'secrets', 'update'], {
       id: s.id,
@@ -300,6 +308,28 @@ describe('environments listPaged', () => {
     const miss = (await proc(['environments', 'listPaged'], { page: 1, pageSize: 10, q: 'zzz' })) as { total: number };
     expect(miss.total).toBe(0);
   });
+
+  it('environment input rejects ssh-unsafe usernames and hosts', async () => {
+    // a leading dash would parse as an ssh option (-oProxyCommand=...)
+    await expect(
+      proc(['environments', 'create'], { name: 'evil', host: 'h', port: '22', username: '-oProxyCommand=x' }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    // quotes/spaces in host would break argv + shell quoting downstream
+    await expect(
+      proc(['environments', 'create'], { name: 'evil', host: "ho'st sin", port: '22', username: 'u' }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(
+      proc(['environments', 'create'], { name: 'evil', host: '-bad-host', port: '22', username: 'u' }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    // safe values still pass
+    const ok = (await proc(['environments', 'create'], {
+      name: 'safe',
+      host: '10.0.0.9',
+      port: '22',
+      username: 'deploy.user',
+    })) as { id: string };
+    expect(ok.id).toBeTruthy();
+  });
 });
 
 describe('employees listPaged', () => {
@@ -390,8 +420,13 @@ describe('tasks listPaged', () => {
       title: 'Pager Beta',
       description: 'zebra sweep',
       assigneeId: admin.user.id,
-      status: STATUS.doing,
     })) as { id: string };
+    // doing is workflow-only now: create lands in a ready status, then the test moves it directly
+    {
+      const { db } = await dbm();
+      const { tasks } = await schema();
+      await db.update(tasks).set({ status: STATUS.doing }).where(eq(tasks.id, beta.id));
+    }
     await proc(['tasks', 'create'], { title: 'Unrelated note' });
 
     const page1 = (await proc(['tasks', 'listPaged'], { page: 1, pageSize: 2 })) as {

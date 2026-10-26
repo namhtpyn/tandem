@@ -4,20 +4,24 @@ import { desc, EmptyFilter, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
-import { CHANGE_RESOURCE, CHANGE_ACTION, type RunStatus, type ActivityKind } from '#shared/enums';
+import { ACTIVITY_KIND, CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS, type RunStatus, type ActivityKind } from '#shared/enums';
+import { STATUS } from '#shared/status';
 import type { TaskRow } from '#shared/types';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { projects as projectsTable, tasks as tasksTable, taskActivity, taskProposals } from '../../db/schema';
-import { env } from '../kernel/env';
-import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { projects as projectsTable, tasks as tasksTable, taskProposals } from '../../db/schema';
+
+
 import { recordAssignment, listAssignments } from './assignments.service';
 import { refreshParentGating } from './gating.service';
 import { approvalsInRoundBatch, openObligations, pendingForUser, pendingCounts } from './obligations.service';
 import { confirmProposal, rejectProposal } from './proposals.service';
-import { listReviews } from './review.service';
+import { env } from '../kernel/env';
+import { liveGenerator, ORPCError, protectedProcedure, publishChange } from '../kernel/kernel';
+import { listReviews, logActivity } from './review.service';
 import { dispatchTask, listRuns } from './runner.service';
+import { listTaskThread } from './thread.service';
 import {
   askQuestion,
   forwardQuestion,
@@ -148,7 +152,11 @@ async function listTasksPaged(
   selfId: string,
 ) {
   const q = input.q?.trim();
-  const searchFilter = q ? { OR: [{ title: { ilike: `%${q}%` } }, { description: { ilike: `%${q}%` } }] } : undefined;
+  // escape LIKE wildcards so a q of '%' or '_' matches itself, not everything
+  const escIlike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
+  const searchFilter = q
+    ? { OR: [{ title: { ilike: `%${escIlike(q)}%` } }, { description: { ilike: `%${escIlike(q)}%` } }] }
+    : undefined;
   const statusFilter = input.statusId ? { status: { eq: input.statusId } } : undefined;
   // inboxOfMe = tasks with a PENDING obligation on the caller — the same taskId
   // set `inbox` items come from (pendingForUser); empty set short-circuits
@@ -252,56 +260,76 @@ async function requireExistingRefs(input: { assigneeId?: string | null; projectI
   }
 }
 
-/** first status by position unless the caller names one; a named one must exist */
+/** first status by position unless the caller names one; a named one must exist
+ *  AND be ready-category — dispatch eligibility starts at creation */
 async function resolveCreatedStatus(requested?: string) {
   const statusRows = await db.query.taskStatuses.findMany({
-    columns: { id: true },
+    columns: { id: true, category: true },
     orderBy: { position: 'asc' },
   });
   if (statusRows.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'no task statuses defined' });
   if (!requested) return nonNull(statusRows[0]).id;
   const found = statusRows.find((r) => r.id === requested);
   if (!found) throw new ORPCError('BAD_REQUEST', { message: 'status does not exist' });
+  if (found.category !== 'ready') {
+    throw new ORPCError('BAD_REQUEST', { message: 'created tasks must start in a ready-category status' });
+  }
   return found.id;
 }
 
-/** the workflow graph must allow the move: unknown target or a forbidden jump is rejected */
-async function requireReachableStatus(currentStatus: string, requested: string) {
-  const stRows = await db.query.taskStatuses.findMany({
-    columns: { id: true, name: true },
-    where: { id: { eq: requested } },
+/** the workflow owns status moves — reject raw status writes with a targeted error */
+const updateInput = z.preprocess(
+  (raw) => {
+    if (raw !== null && typeof raw === 'object' && 'status' in raw) {
+      throw new ORPCError('BAD_REQUEST', { message: 'status changes go through the workflow endpoints' });
+    }
+    return raw;
+  },
+  z.strictObject({
+    id: z.string().min(1),
+    title: z.string().min(1).max(200).optional(),
+    description: z.string().max(10_000).nullable().optional(),
+    projectId: z.string().min(1).nullable().optional(),
+    assigneeId: z.string().min(1).nullable().optional(),
+    ownerId: z.string().min(1).nullable().optional(),
+    reviewers: z.array(z.string().min(1)).max(10).nullable().optional(),
+  }),
+);
+
+/** the dispatcher's eligibility rule restated for the manual path: ready-category
+ *  status, AI assignee, and no run already in flight */
+async function requireDispatchable(taskId: string) {
+  const rows = await db.query.tasks.findMany({
+    columns: { id: true, status: true, assigneeId: true },
+    where: { id: { eq: taskId } },
+    orderBy: { createdAt: 'asc' },
+  });
+  const task = nonNull(rows[0]);
+  const statusRows = await db.query.taskStatuses.findMany({
+    columns: { id: true },
+    where: { category: { eq: 'ready' } },
     orderBy: { position: 'asc' },
   });
-  const target = stRows[0];
-  if (!target) throw new ORPCError('BAD_REQUEST', { message: 'status does not exist' });
-  // enforce the workflow: target must be reachable from the current status
-  if (currentStatus === requested) return;
-  const cur = await db.query.taskStatuses.findFirst({
-    columns: { id: true, name: true, nextIds: true },
-    where: { id: { eq: currentStatus } },
-  });
-  if (cur && !cur.nextIds.includes(requested)) {
-    throw new ORPCError('BAD_REQUEST', { message: `cannot move from '${cur.name}' to '${target.name}'` });
+  const readyIds = new Set(statusRows.map((s) => s.id));
+  const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true }, orderBy: { userId: 'asc' } });
+  const aiIds = new Set(aiRows.map((r) => r.userId));
+  if (!readyIds.has(task.status) || !task.assigneeId || !aiIds.has(task.assigneeId)) {
+    throw new ORPCError('BAD_REQUEST', {
+      message: 'task is not dispatchable (needs a ready-category status and an AI assignee)',
+    });
   }
-}
-
-/** note a newly created subtask on the parent task's activity thread */
-async function logSubtaskCreation(parentTaskId: string, authorId: string | null, childId: string, childTitle: string) {
-  await db.insert(taskActivity).values({
-    id: uuidv7(),
-    taskId: parentTaskId,
-    kind: 'status',
-    authorId,
-    body: `subtask created: ${childTitle}`,
-    meta: { childId },
+  const running = await db.query.taskRuns.findMany({
+    columns: { id: true },
+    where: { taskId: { eq: taskId }, status: { eq: RUN_STATUS.RUNNING } },
+    orderBy: { id: 'asc' },
   });
+  if (running.length > 0) throw new ORPCError('BAD_REQUEST', { message: 'task already has a running run' });
 }
 
 /** only fields the caller actually sent land in the patch; explicit nulls clear nothing */
 function buildUpdatePatch(input: {
   title?: string;
   description?: string | null;
-  status?: string;
   projectId?: string | null;
   assigneeId?: string | null;
   ownerId?: string | null;
@@ -311,11 +339,15 @@ function buildUpdatePatch(input: {
   if (input.projectId !== undefined) patch.projectId = input.projectId;
   if (input.title !== undefined) patch.title = input.title;
   if (input.description !== undefined && input.description !== null) patch.description = input.description;
-  if (input.status !== undefined) patch.status = input.status;
   if (input.assigneeId !== undefined) patch.assigneeId = input.assigneeId;
   if (input.ownerId !== undefined) patch.ownerId = input.ownerId;
   if (input.reviewers !== undefined && input.reviewers !== null) patch.reviewers = input.reviewers;
   return patch;
+}
+
+/** note a newly created subtask on the parent task's activity thread */
+async function logSubtaskCreation(parentTaskId: string, authorId: string | null, childId: string, childTitle: string) {
+  await logActivity(parentTaskId, ACTIVITY_KIND.STATUS, authorId, `subtask created: ${childTitle}`, { childId });
 }
 
 export const tasksRouter = os.router({
@@ -389,47 +421,57 @@ export const tasksRouter = os.router({
       return { id };
     }),
 
-  /** update a task (title/description/status/assignee) */
-  update: protectedProcedure
-    .input(
-      z.strictObject({
-        id: z.string().min(1),
-        title: z.string().min(1).max(200).optional(),
-        description: z.string().max(10_000).nullable().optional(),
-        status: z.string().min(1).max(64).optional(),
-        projectId: z.string().min(1).nullable().optional(),
-        assigneeId: z.string().min(1).nullable().optional(),
-        ownerId: z.string().min(1).nullable().optional(),
-        reviewers: z.array(z.string().min(1)).max(10).nullable().optional(),
-      }),
-    )
+  /** update a task (title/description/assignee) — status moves live in the workflow */
+  update: protectedProcedure.input(updateInput).handler(async ({ input, context }) => {
+    const rows = await db.query.tasks.findMany({
+      columns: { status: true, assigneeId: true },
+      where: { id: { eq: input.id } },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
+    await requireExistingRefs(input);
+    const actorId = await selfIdOf(context);
+    await db.update(tasksTable).set(buildUpdatePatch(input)).where(eq(tasksTable.id, input.id));
+    if (input.assigneeId !== undefined && input.assigneeId !== nonNull(rows[0]).assigneeId) {
+      await recordAssignment(input.id, input.assigneeId, 'manual', actorId);
+    }
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+    await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+    return { ok: true };
+  }),
+
+  /** manual status move: graph-legal + category-allowed; done/in-review stay workflow-only */
+  setStatus: protectedProcedure
+    .input(z.strictObject({ id: z.string().min(1), status: z.string().min(1) }))
     .handler(async ({ input, context }) => {
       const rows = await db.query.tasks.findMany({
-        columns: { status: true, assigneeId: true },
+        columns: { status: true, parentTaskId: true },
         where: { id: { eq: input.id } },
         orderBy: { createdAt: 'asc' },
       });
       if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
-      await requireExistingRefs(input);
-      if (input.status !== undefined) await requireReachableStatus(nonNull(rows[0]).status, input.status);
+      const cur = nonNull(rows[0]).status;
+      const [curRow] = await db.query.taskStatuses.findMany({
+        columns: { nextIds: true },
+        where: { id: { eq: cur } },
+        orderBy: { position: 'asc' },
+      });
+      if (!curRow || !curRow.nextIds.includes(input.status)) {
+        throw new ORPCError('BAD_REQUEST', { message: `cannot move from '${cur}' to '${input.status}'` });
+      }
+      const terminal = new Set<string>([STATUS.done, STATUS.cancelled, STATUS.inReview, STATUS.waitingAnswer]);
+      if (terminal.has(input.status)) {
+        throw new ORPCError('BAD_REQUEST', { message: 'use the workflow actions for review, completion and cancellation' });
+      }
       const actorId = await selfIdOf(context);
-      await db.update(tasksTable).set(buildUpdatePatch(input)).where(eq(tasksTable.id, input.id));
-      if (input.assigneeId !== undefined && input.assigneeId !== nonNull(rows[0]).assigneeId) {
-        await recordAssignment(input.id, input.assigneeId, 'manual', actorId);
-      }
-      if (input.status !== undefined && input.status !== nonNull(rows[0]).status) {
-        await db.insert(taskActivity).values({
-          id: uuidv7(),
-          taskId: input.id,
-          kind: 'status',
-          authorId: actorId,
-          body: `status: ${nonNull(rows[0]).status} → ${input.status}`,
-          meta: {},
-        });
-        await refreshParentGating(input.id);
-      }
+      await db
+        .update(tasksTable)
+        .set({ status: input.status, updatedAt: new Date() })
+        .where(eq(tasksTable.id, input.id));
+      await logActivity(input.id, ACTIVITY_KIND.STATUS, actorId, `status: ${cur} → ${input.status}`, {});
+      const parentId = rows.at(0)?.parentTaskId;
+      if (parentId) await refreshParentGating(parentId);
       await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
-      await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
       return { ok: true };
     }),
 
@@ -487,7 +529,7 @@ export const tasksRouter = os.router({
         id: p.id,
         kind: p.kind,
         payload: p.payload,
-        status: p.status,
+        status: p.status.toLowerCase(),
         decisionNote: p.decisionNote,
         createdAt: p.createdAt.toISOString(),
       })),
@@ -609,6 +651,19 @@ export const tasksRouter = os.router({
     .input(z.strictObject({ taskId: z.string().min(1) }))
     .handler(({ input }) => runsSnapshot(input.taskId)),
 
+  /** the unified conversation thread (snapshot) — base messages with their run/activity extension */
+  threadList: protectedProcedure
+    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .handler(({ input }) => listTaskThread(input.taskId)),
+
+  thread: protectedProcedure
+    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .handler(({ input }) =>
+      liveGenerator([CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_RESOURCE.RUNS, CHANGE_RESOURCE.TASKS], () =>
+        listTaskThread(input.taskId),
+      ),
+    ),
+
   runs: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))
     .handler(({ input }) =>
@@ -624,6 +679,8 @@ export const tasksRouter = os.router({
       ).getSession();
       const selfId = session?.user?.id ?? null;
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
+      // the manual path must not bypass the queue worker's eligibility rule
+      await requireDispatchable(input.taskId);
       return await runWorkflow(async () => {
         const tandemUrl = env.TANDEM_PUBLIC_URL ?? 'http://localhost:3000';
         const handle = await dispatchTask(input.taskId, tandemUrl);
@@ -631,15 +688,24 @@ export const tasksRouter = os.router({
       });
     }),
 
-  /** delete a task */
+  /** delete a task — blocked while a run is in flight; parents re-gate after */
   remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
     const rows = await db.query.tasks.findMany({
-      columns: { id: true },
+      columns: { id: true, parentTaskId: true },
       where: { id: { eq: input.id } },
       orderBy: { createdAt: 'asc' },
     });
     if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
+    const running = await db.query.taskRuns.findMany({
+      columns: { id: true },
+      where: { taskId: { eq: input.id }, status: { eq: RUN_STATUS.RUNNING } },
+      orderBy: { id: 'asc' },
+    });
+    if (running.length > 0) throw new ORPCError('BAD_REQUEST', { message: 'cancel the running run first' });
     await db.delete(tasksTable).where(eq(tasksTable.id, input.id));
+    // deleting a subtask can release the parent's auto-block
+    const parentId = nonNull(rows[0]).parentTaskId;
+    if (parentId) await refreshParentGating(parentId);
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.DELETE);
     return { ok: true };
   }),

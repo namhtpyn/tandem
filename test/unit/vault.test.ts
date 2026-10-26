@@ -115,9 +115,12 @@ describe('vault-crypto (module)', () => {
   });
 
   it('lastFourHint never reveals short values', () => {
-    expect(lastFourHint('ab')).toBe('••••');
-    expect(lastFourHint('abcd')).toBe('••••');
-    expect(lastFourHint('abcde')).toBe('bcde');
+    expect(lastFourHint('ab')).toBe('');
+    expect(lastFourHint('abcd')).toBe('');
+    // 5-8 chars used to leak 4 of them; short secrets now get NO hint at all
+    expect(lastFourHint('12345678')).toBe('');
+    expect(lastFourHint('abcde')).toBe('');
+    expect(lastFourHint('abcdefghi')).toBe('fghi');
   });
 });
 
@@ -203,6 +206,14 @@ describe('vault API', () => {
     expect(raw[0]!.ciphertext).not.toContain('correct-horse');
     // server-side decrypt still works (M5 runner path)
     expect(decryptSecret(raw[0]!.ciphertext)).toBe('correct-horse-battery');
+  });
+
+  it('short secrets carry an empty hint through the API', async () => {
+    // 7 chars: no last-4 peek, the API row must not reveal any of it
+    const row = await secretFactory('shorty', 'hunter2');
+    expect(row.lastFour).toBe('');
+    const long = await secretFactory('longy', 'correct-horse-battery');
+    expect(long.lastFour).toBe('tery');
   });
 
   it('allows duplicate names (non-unique by design)', async () => {

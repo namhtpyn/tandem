@@ -20,49 +20,49 @@ const { $orpc } = useNuxtApp();
 const taskId = computed(() => props.task.id);
 
 // ---- first-load data via GET + change-event invalidation (SSE law) -----------
-// runs/activity load as a conventional GET as soon as the task resolves; the
-// app-wide changes subscription refetches them whenever the server says runs
-// or activity changed. No long-lived stream is opened for initial data.
-const runsQuery = useQuery(
+// the unified conversation thread loads as one conventional GET as soon as the
+// task resolves; the app-wide changes subscription refetches it on task-activity
+// events (dispatch, notes, verdicts). No long-lived stream for initial data.
+const threadQuery = useQuery(
   computed(() =>
-    $orpc.tasks.runsList.queryOptions({
-      input: { taskId: taskId.value },
-      queryKey: [CHANGE_RESOURCE.RUNS, taskId.value],
-    }),
-  ),
-);
-const runFeed = computed(
-  () =>
-    (unref(runsQuery.data) ?? []) as unknown as Array<{
-      id: string;
-      status: string;
-      output: string;
-      prompt?: string | null;
-      agentName?: string | null;
-      exitCode: number | null;
-      startedAt: string;
-      outputs?: Array<{ id: string; filename: string; mime: string; size: number }>;
-    }>,
-);
-
-const activityQuery = useQuery(
-  computed(() =>
-    $orpc.tasks.activityList.queryOptions({
+    $orpc.tasks.threadList.queryOptions({
       input: { taskId: taskId.value },
       queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, taskId.value],
     }),
   ),
 );
-const workflowFeed = computed(
-  () =>
-    (unref(activityQuery.data) ?? []) as unknown as Array<{
-      id: string;
-      kind: string;
-      body: string;
-      authorName: string | null;
-      authorId: string | null;
-      createdAt: string;
-    }>,
+type ThreadRow = {
+  id: string;
+  body: string;
+  createdAt: string;
+  authorId: string | null;
+  authorName: string | null;
+  run: null | {
+    id: string;
+    status: string;
+    output: string;
+    prompt: string | null;
+    agentName: string | null;
+    exitCode: number | null;
+    startedAt: string;
+    finishedAt: string | null;
+    outputs: Array<{ id: string; filename: string; mime: string; size: number }>;
+  };
+  activity: Record<string, unknown> | null;
+};
+const threadRows = computed(() => (unref(threadQuery.data) ?? []) as unknown as ThreadRow[]);
+const runFeed = computed(() => threadRows.value.flatMap((r) => (r.run ? [r.run] : [])));
+const workflowFeed = computed(() =>
+  threadRows.value
+    .filter((r) => r.activity)
+    .map((r) => ({
+      id: r.id,
+      kind: String(r.activity?.kind ?? ''),
+      body: r.body,
+      authorName: r.authorName,
+      authorId: r.authorId,
+      createdAt: r.createdAt,
+    })),
 );
 const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES] }));
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[]);
@@ -81,10 +81,11 @@ const thread = computed<ThreadItem[]>(() =>
     briefAuthorId: props.task.createdBy ?? null,
     runs: runFeed.value.map((r) => ({
       id: r.id,
-      status: (r.status === 'running' ? 'running' : r.status === 'done' ? 'done' : 'failed') as
-        | 'running'
-        | 'done'
-        | 'failed',
+      status: (r.status.toLowerCase() === 'running'
+        ? 'running'
+        : r.status.toLowerCase() === 'done'
+          ? 'done'
+          : 'failed') as 'running' | 'done' | 'failed',
       output: r.output,
       prompt: r.prompt,
       agentName: r.agentName,
@@ -160,7 +161,7 @@ function envelopeOf(item: ThreadItem) {
   return item.kind === 'run' ? parseRunEnvelope(item.output) : null;
 }
 
-onServerPrefetch(() => Promise.all([runsQuery.suspense(), activityQuery.suspense(), employeesLive.suspense()]));
+onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspense()]));
 </script>
 
 <template>

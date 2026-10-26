@@ -31,6 +31,7 @@ export const folderRouter = os.router({
 
   live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.VAULT], listFolders)),
 
+  /** create/rename a folder (admin-only write) */
   save: protectedProcedure
     .input(
       z.strictObject({

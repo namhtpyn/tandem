@@ -117,12 +117,15 @@ describe('avatar endpoint', () => {
     const etag = headersOut.find(([k]) => k === 'etag')?.[1];
     expect(etag).toBeTruthy();
     expect(headersOut.some(([k, v]) => k === 'cache-control' && v.includes('immutable'))).toBe(true);
+    // nosniff always rides success responses
+    expect(headersOut.some(([k, v]) => k === 'x-content-type-options' && v === 'nosniff')).toBe(true);
     // 304 with matching If-None-Match
     headersOut.length = 0;
     state.status = 200;
     const empty = await avatarEndpoint(mkEvent({ 'if-none-match': etag! }) as never);
     expect(empty).toBe('');
     expect(state.status).toBe(304);
+    expect(headersOut.some(([k, v]) => k === 'x-content-type-options' && v === 'nosniff')).toBe(true);
   });
 
   it('passes request headers through to the session lookup', async () => {
@@ -157,7 +160,7 @@ describe('avatar endpoint', () => {
     await expect(avatarEndpoint(event as never)).rejects.toMatchObject({ statusCode: 404 });
   });
 
-  it('404s when the user has no avatar, 422 on a non-data-url image', async () => {
+  it('404s on a missing avatar, a non-data-url image, and a non-raster (svg) type', async () => {
     const { default: avatarEndpoint } = await import('#server/routes/api/employees/[id]/avatar.get');
     const { db } = await import('#server/db');
     const { user } = await import('#server/db/schema');
@@ -178,6 +181,15 @@ describe('avatar endpoint', () => {
       updatedAt: new Date(),
       image: 'http://example.com/x.png',
     });
+    await db.insert(user).values({
+      id: '00000000-0000-7000-8000-3f2dfe4447ca',
+      name: 'Svg',
+      email: 'svg@tandem.local',
+      emailVerified: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      image: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=',
+    });
     const mkEvent = (id: string) => ({
       node: { req: { method: 'GET', url: `/api/employees/${id}/avatar`, headers: {} }, res: {} },
       context: { params: { id } },
@@ -190,7 +202,11 @@ describe('avatar endpoint', () => {
       statusCode: 404,
     });
     await expect(avatarEndpoint(mkEvent('00000000-0000-7000-8000-debca3b3ac2b') as never)).rejects.toMatchObject({
-      statusCode: 422,
+      statusCode: 404,
+    });
+    // svg+xml (and every other non-raster type) is rejected at the serve edge too
+    await expect(avatarEndpoint(mkEvent('00000000-0000-7000-8000-3f2dfe4447ca') as never)).rejects.toMatchObject({
+      statusCode: 404,
     });
     await expect(avatarEndpoint(mkEvent('00000000-0000-7000-8000-21b2d09f5631') as never)).rejects.toMatchObject({
       statusCode: 404,

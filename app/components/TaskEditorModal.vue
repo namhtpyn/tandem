@@ -197,7 +197,7 @@ const projectOptions = computed(() => [
   { label: 'No project', value: '__none__' },
   ...projectRows.value.map((p) => ({ label: p.name, value: p.id })),
 ]);
-const statusOptions = computed(() => statuses.value.map((x) => ({ label: x.name, value: x.id })));
+const statusOptions = computed(() => statuses.value.filter((x) => x.category === 'ready').map((x) => ({ label: x.name, value: x.id })));
 
 async function save() {
   busy.value = true;
@@ -214,7 +214,7 @@ async function save() {
       reviewers: form.reviewers,
     };
     if (editingId.value) {
-      await updateMutation.mutateAsync({ id: editingId.value, ...payload, status: form.status });
+      await updateMutation.mutateAsync({ id: editingId.value, ...payload });
     } else {
       await createMutation.mutateAsync({ ...payload, status: form.status });
     }
@@ -299,7 +299,7 @@ async function save() {
             class="w-full"
           />
         </UFormField>
-        <UFormField v-show="isEdit" label="Status" name="status">
+        <UFormField v-show="!isEdit" label="Status" name="status">
           <USelect
             v-model="form.status"
             :items="statusOptions"

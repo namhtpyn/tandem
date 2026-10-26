@@ -68,7 +68,7 @@ export const projectsRouter = os.router({
     }),
   ),
 
-  /** create */
+  /** create (staff only — employees and admins) */
   create: protectedProcedure
     .input(
       z.strictObject({
@@ -98,7 +98,7 @@ export const projectsRouter = os.router({
       return { id };
     }),
 
-  /** update (name/description/status/parent — cycle-guarded) */
+  /** update (name/description/status/parent — cycle-guarded, staff only) */
   update: protectedProcedure
     .input(
       z.strictObject({
@@ -123,37 +123,40 @@ export const projectsRouter = os.router({
       if (input.description !== undefined) patch.description = input.description;
       if (input.prompt !== undefined) patch.prompt = input.prompt;
       if (input.status !== undefined) patch.status = input.status;
-      if (input.parentId !== undefined) {
-        if (input.parentId === null) {
-          patch.parentId = null;
-        } else {
-          if (input.parentId === input.id)
-            throw new ORPCError('BAD_REQUEST', { message: 'project cannot be its own parent' });
-          // walk ancestors; hitting self = cycle
-          let cursor: string | null = input.parentId;
-          for (let depth = 0; depth < 100 && cursor; depth++) {
-            if (cursor === input.id)
-              throw new ORPCError('BAD_REQUEST', { message: 'cannot nest a project under its own descendant' });
-            const rows: Array<{ parentId: string | null }> = await db
-              .select({ parentId: projectsTable.parentId })
+      await db.transaction(async (tx) => {
+        if (input.parentId !== undefined) {
+          if (input.parentId === null) {
+            patch.parentId = null;
+          } else {
+            if (input.parentId === input.id)
+              throw new ORPCError('BAD_REQUEST', { message: 'project cannot be its own parent' });
+            // walk ancestors; hitting self = cycle, depth cap without resolving = corrupt chain (fail CLOSED)
+            let cursor: string | null = input.parentId;
+            for (let depth = 0; depth < 100 && cursor; depth++) {
+              if (cursor === input.id)
+                throw new ORPCError('BAD_REQUEST', { message: 'cannot nest a project under its own descendant' });
+              const rows: Array<{ parentId: string | null }> = await tx
+                .select({ parentId: projectsTable.parentId })
+                .from(projectsTable)
+                .where(eq(projectsTable.id, cursor));
+              cursor = rows[0]?.parentId ?? null;
+            }
+            if (cursor) throw new ORPCError('BAD_REQUEST', { message: 'project nesting too deep' });
+            const p = await tx
+              .select({ id: projectsTable.id })
               .from(projectsTable)
-              .where(eq(projectsTable.id, cursor));
-            cursor = rows[0]?.parentId ?? null;
+              .where(eq(projectsTable.id, input.parentId));
+            if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'parent project does not exist' });
+            patch.parentId = input.parentId;
           }
-          const p = await db
-            .select({ id: projectsTable.id })
-            .from(projectsTable)
-            .where(eq(projectsTable.id, input.parentId));
-          if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'parent project does not exist' });
-          patch.parentId = input.parentId;
         }
-      }
-      await db.update(projectsTable).set(patch).where(eq(projectsTable.id, input.id));
+        await tx.update(projectsTable).set(patch).where(eq(projectsTable.id, input.id));
+      });
       await publishChange(CHANGE_RESOURCE.PROJECTS, CHANGE_ACTION.UPDATE);
       return { ok: true };
     }),
 
-  /** delete — tasks orphan to no-project (set null); children orphan to root (set null) */
+  /** delete — tasks orphan to no-project (set null); children orphan to root (set null); staff only */
   remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
     await db.delete(projectsTable).where(eq(projectsTable.id, input.id));
     await publishChange(CHANGE_RESOURCE.PROJECTS, CHANGE_ACTION.REMOVE);

@@ -21,7 +21,7 @@ export const settingsRouter = os.router({
   /** live app settings */
   live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.SETTINGS], getSettingsSnapshot)),
 
-  /** update settings (strict input) */
+  /** update settings (strict input, admin-only) */
   update: protectedProcedure
     .input(
       z.strictObject({
