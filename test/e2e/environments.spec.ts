@@ -33,12 +33,7 @@ test('environment links a vault secret and shows it in the row', async ({ page }
 
   // edit shows the linked key preselected
   await page.locator('tr:visible', { hasText: envName }).getByRole('button', { name: 'Edit environment' }).click();
-  await expect(
-    page
-      .locator('button')
-      .filter({ hasText: /••••/ })
-      .first(),
-  ).toContainText(secName.slice(0, 20));
+  await expect(page.locator('button').filter({ hasText: /••••/ }).first()).toContainText(secName.slice(0, 20));
   await vault.dismissOverlay('Username');
 
   // cleanup env

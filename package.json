@@ -76,6 +76,7 @@
     "drizzle-kit": "1.0.0-rc.5",
     "drizzle-seed": "1.0.0-rc.5",
     "happy-dom": "21.0.4",
+    "oxfmt": "0.75.0",
     "oxlint": "1.89.0",
     "semantic-release": "25.0.9",
     "testcontainers": "12.2.1",
