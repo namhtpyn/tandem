@@ -95,17 +95,20 @@ function sendComposer() {
 }
 
 /** a live run turns the composer into a steer box; stopped = send dispatches */
-const runsLive = useQuery(
-  $orpc.tasks.runsList.queryOptions({
+const runsLive = useQuery({
+  ...$orpc.tasks.runsList.queryOptions({
     queryKey: [CHANGE_RESOURCE.RUNS, String(route.params.id)],
     input: { taskId: String(route.params.id) },
   }),
-);
+  // client-only: the SSR prefetch of this query blanks the whole page render
+  enabled: import.meta.client,
+});
 const agentRunning = computed(() =>
   ((unref(runsLive.data) ?? []) as Array<{ status?: string }>).some((r) => r.status === 'running'),
 );
 
 const infoSheetOpen = ref(false);
+const subtaskEditorOpen = ref(false);
 
 const parentTask = computed(() =>
   task.value?.parentTaskId ? (tasks.value.find((t) => t.id === nonNull(task.value).parentTaskId) ?? null) : null,
@@ -261,7 +264,11 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
             <div class="space-y-4">
               <TaskDetailsFields :task="task" :run-locked="agentRunning" />
               <TaskReviewPanel v-if="task.reviewerNames.length" :task-id="task.id" />
-              <TaskRoutingPanels :task-id="task.id" :status-by-id="statusById" />
+              <TaskRoutingPanels
+                :task-id="task.id"
+                :status-by-id="statusById"
+                @add-subtask="subtaskEditorOpen = true"
+              />
             </div>
           </aside>
         </div>
@@ -272,11 +279,22 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
             <div class="space-y-4">
               <TaskDetailsFields :task="task" :run-locked="agentRunning" />
               <TaskReviewPanel v-if="task.reviewerNames.length" :task-id="task.id" />
-              <TaskRoutingPanels :task-id="task.id" :status-by-id="statusById" />
+              <TaskRoutingPanels
+                :task-id="task.id"
+                :status-by-id="statusById"
+                @add-subtask="subtaskEditorOpen = true"
+              />
             </div>
           </template>
         </USlideover>
       </div>
     </template>
   </UDashboardPanel>
+  <TaskEditorModal
+    v-if="subtaskEditorOpen"
+    v-model:open="subtaskEditorOpen"
+    :task="null"
+    :parent-task-id="task?.id ?? null"
+    @saved="queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] })"
+  />
 </template>
