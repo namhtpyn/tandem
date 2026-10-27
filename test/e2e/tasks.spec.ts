@@ -90,7 +90,7 @@ test('workflow drawer shows activity and lets the owner answer', async ({ page }
   await expect(drawer.getByText(/no activity yet/i)).toBeVisible();
   // the composer posts a plain note (no state change, no verb picker)
   await drawer.locator('textarea').fill('who owns the spec?');
-  await drawer.getByRole('button', { name: 'Post note' }).click();
+  await drawer.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(drawer.getByText('done', { exact: true })).toBeVisible({ timeout: 10_000 });
 });
 
