@@ -18,7 +18,7 @@ test('attachment upload renders inline in the task thread', async ({ page, reque
   await page.getByRole('button', { name: 'New task' }).first().click();
   await page.getByPlaceholder('Task title').fill('Attachment probe');
   await page.getByRole('button', { name: /Save|Create task/ }).click();
-  await page.waitForTimeout(800);
+  await expect(page.getByRole('link', { name: 'Attachment probe' }).first()).toBeVisible({ timeout: 10_000 });
 
   await page.getByRole('link', { name: 'Attachment probe' }).first().click();
   await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
@@ -52,9 +52,9 @@ test('attachment upload renders inline in the task thread', async ({ page, reque
 
   // thread renders the image + the file chip
   await page.reload();
-  await page.waitForSelector('text=Reference image:', { timeout: 10_000 });
+  await expect(page.getByText('Reference image:')).toBeVisible({ timeout: 10_000 });
   await expect(page.locator(`img[src="/api/attachments/${att.id}"]`)).toBeVisible();
-  await expect(page.getByRole('link', { name: /probe doc/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: /probe doc/ })).toContainText('probe doc');
 
   // serve route: etag present and 304 on revalidation
   const first = await context.request.get(`/api/attachments/${att.id}`);

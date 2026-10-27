@@ -33,8 +33,9 @@ test('statuses manager: add a custom status with transition', async ({ page }) =
   await page.getByRole('button', { name: 'New status' }).click();
   await page.getByPlaceholder('e.g. In review').fill('In review');
   await page.getByRole('button', { name: 'Save status' }).click();
-  await page.waitForTimeout(1200);
-  // manager reopens? It closed — reopen and check the list
+  // save closes the manager — settled once its heading leaves the page
+  await expect(page.getByText('Task statuses')).toBeHidden({ timeout: 10_000 });
+  // reopen and check the list
   await page.getByRole('button', { name: 'Statuses' }).click();
   await expect(page.getByText('In review').first()).toBeVisible({ timeout: 10_000 });
 });

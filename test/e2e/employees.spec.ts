@@ -4,22 +4,29 @@ import { login } from './helpers/login.ts';
 
 async function dismiss(page: any, text: string) {
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(400);
-  const still = await page.evaluate((t) => (document.body.innerText || '').includes(t), text);
-  if (still) {
+  // settled when the overlay's sentinel text no longer reads from the body —
+  // polled, not slept, so it rides out the close transition. A sentinel that
+  // also lives behind the overlay (e.g. the row's own 'Edit employee' button)
+  // keeps the poll failing by design: the fallback then tries the overlay's
+  // Close button, which no-ops when Escape already closed it.
+  try {
+    await expect
+      .poll(() => page.evaluate((t: string) => (document.body.innerText || '').includes(t), text), { timeout: 1_500 })
+      .toBe(false);
+  } catch {
     const close = page.getByRole('button', { name: 'Close' }).first();
     if (await close.count()) await close.click();
-    await page.waitForTimeout(400);
   }
 }
 
 // M3: employees — live CRUD over oRPC /rpc, SSE realtime, AI keys.
 // Every run uses unique emails/names (leftover state must not break retries).
 
-// the list is server-paged (createdAt asc) — search surfaces fresh rows on page 1
+// the list is server-paged (createdAt asc) — search surfaces fresh rows on
+// page 1; no settle sleep: the callers' retrying row asserts absorb the
+// debounced query + refetch
 async function searchFor(page: any, text: string) {
   await page.getByPlaceholder('Search employees…').fill(text);
-  await page.waitForTimeout(800);
 }
 
 test('human employee CRUD round-trip on the live page', async ({ page }) => {
@@ -113,10 +120,11 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
   const keyRows = page.locator('div.flex.items-center.justify-between.gap-2.py-2');
   await expect(keyRows).toHaveCount(2, { timeout: 15_000 });
-  // revoke both — deterministic teardown
+  // revoke both — deterministic teardown; the count assert settles each revoke
+  // before the next iteration re-resolves '.first()'
   for (let i = 0; i < 2; i++) {
     await page.getByRole('button', { name: 'Revoke key' }).first().click();
-    await page.waitForTimeout(300);
+    await expect(keyRows).toHaveCount(1 - i, { timeout: 10_000 });
   }
   await expect(page.getByText('No keys.')).toBeVisible({ timeout: 15_000 });
 

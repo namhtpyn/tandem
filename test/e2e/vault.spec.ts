@@ -4,12 +4,18 @@ import { login } from './helpers/login.ts';
 
 async function dismiss(page: any, text: string) {
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(400);
-  const still = await page.evaluate((t) => (document.body.innerText || '').includes(t), text);
-  if (still) {
+  // settled when the overlay's sentinel text no longer reads from the body —
+  // polled, not slept, so it rides out the close transition. A sentinel that
+  // also lives behind the overlay (e.g. the row's own 'Edit employee' button)
+  // keeps the poll failing by design: the fallback then tries the overlay's
+  // Close button, which no-ops when Escape already closed it.
+  try {
+    await expect
+      .poll(() => page.evaluate((t: string) => (document.body.innerText || '').includes(t), text), { timeout: 1_500 })
+      .toBe(false);
+  } catch {
     const close = page.getByRole('button', { name: 'Close' }).first();
     if (await close.count()) await close.click();
-    await page.waitForTimeout(400);
   }
 }
 
@@ -77,7 +83,8 @@ test.describe('vault', () => {
         .getByRole('button', { name: 'Delete secret' })
         .click();
       await page.getByRole('button', { name: 'Delete', exact: true }).click();
-      await page.waitForTimeout(400);
+      // each delete settles (row count drops) before the next '.first()' re-resolves
+      await expect(page.locator('tr:visible', { hasText: dupName })).toHaveCount(1 - i, { timeout: 15_000 });
     }
     await expect(page.locator('tr:visible', { hasText: dupName })).toHaveCount(0, { timeout: 15_000 });
   });

@@ -113,12 +113,12 @@ test('workflow drawer shows activity and lets the owner answer', async ({ page }
   await page.getByRole('button', { name: 'New task' }).first().click();
   await page.getByPlaceholder('Task title').fill(`WF ${suffix}`);
   await page.getByRole('button', { name: /Save|Create task/ }).click();
-  await page.waitForTimeout(1200);
   // open the workflow drawer (row-scoped locator: immune to live re-renders of sibling rows)
   const row = page
     .locator('tr')
     .filter({ hasText: `WF ${suffix}` })
     .first();
+  await expect(row).toBeVisible({ timeout: 15_000 });
   await row.locator('button[aria-label="Task workflow"]').first().click();
   const drawer = page.locator('[data-slot="content"]').first();
   await expect(drawer).toBeVisible();
@@ -163,12 +163,14 @@ test('workflow drawer streams an agent run to completion', async ({ page }) => {
     .first()
     .click();
   await page.getByRole('button', { name: /Save|Create task/ }).click();
-  await page.waitForTimeout(1500);
-  // open the workflow drawer (row-scoped locator)
+  // open the workflow drawer (row-scoped locator); the row must carry the
+  // assigned bot before the auto-dispatcher can pick the task up
   const row = page
     .locator('tr')
     .filter({ hasText: `Run ${suffix}` })
     .first();
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  await expect(row).toContainText(botName);
   await row.locator('button[aria-label="Task workflow"]').first().click();
   const drawer = page.locator('[data-slot="content"]').first();
   await expect(drawer).toBeVisible();
