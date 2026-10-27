@@ -1,7 +1,7 @@
 {
   "name": "tandem",
   "version": "0.0.0",
-  "description": "Company workspace where human and AI employees work together \u2014 SSH environments run the Hermes agent as the task runner.",
+  "description": "Company workspace where human and AI employees work together — SSH environments run the Hermes agent as the task runner.",
   "license": "MIT",
   "author": "namhtpyn",
   "repository": {
@@ -76,6 +76,7 @@
     "drizzle-kit": "1.0.0-rc.5",
     "drizzle-seed": "1.0.0-rc.5",
     "happy-dom": "21.0.4",
+    "oxlint": "1.89.0",
     "semantic-release": "25.0.9",
     "testcontainers": "12.2.1",
     "type-fest": "5.10.0",
