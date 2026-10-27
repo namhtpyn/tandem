@@ -39,10 +39,14 @@ export default defineConfig({
         'app/utils/orpc-types.ts', // type-only module (InferClientOutputs projections)
       ],
       thresholds: {
-        statements: 100,
-        branches: 100,
-        functions: 100,
-        lines: 100,
+        // bun 1.4.4's V8 counts every ??/?. arm as its own branch and mis-attributes
+        // branches to schema-declaration lines — the phantom floor measured stable at
+        // ~97.3 branches / ~99.7 statements across runs (owner ruling 2026-10-27: (b)).
+        // A real untested function/line still moves these by whole percents.
+        statements: 99.5,
+        branches: 97,
+        functions: 99.5,
+        lines: 99.5,
       },
     },
     projects: [
