@@ -105,14 +105,12 @@ describe('loadBriefData (real db)', () => {
     expect(d0.recentActivity).toEqual([]);
 
     // Jay run 1 settles: body filled from the result envelope (updateRunMessageBody)
-    await db
-      .insert(taskMessages)
-      .values({
-        id: 'msg-jay1',
-        taskId,
-        body: 'Jay: blocked, need cloudflare dns',
-        createdAt: new Date(Date.now() - 95_000),
-      });
+    await db.insert(taskMessages).values({
+      id: 'msg-jay1',
+      taskId,
+      body: 'Jay: blocked, need cloudflare dns',
+      createdAt: new Date(Date.now() - 95_000),
+    });
     await db.insert(taskRuns).values({
       id: 'run-jay1',
       messageId: 'msg-jay1',
