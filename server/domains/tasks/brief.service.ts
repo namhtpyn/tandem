@@ -64,17 +64,25 @@ export function extractMentionedEmployeeIds(description: string, nameToId: Map<s
   return [...ids];
 }
 
+/** one level per management layer; a level lists every supervisor of the level
+ * below (a person can report to several), deduped and cycle-safe */
 export function chainToRoot(startId: string, edges: Array<{ employeeId: string; supervisorId: string }>) {
-  const byEmployee = new Map(edges.map((e) => [e.employeeId, e.supervisorId]));
-  const chain: string[] = [];
-  let cur: string | undefined = byEmployee.get(startId);
-  const seen = new Set([startId]);
-  while (cur && !seen.has(cur)) {
-    seen.add(cur);
-    chain.push(cur);
-    cur = byEmployee.get(cur);
+  const supersOf = new Map<string, string[]>();
+  for (const e of edges) {
+    const list = supersOf.get(e.employeeId) ?? [];
+    if (!list.includes(e.supervisorId)) list.push(e.supervisorId);
+    supersOf.set(e.employeeId, list);
   }
-  return chain;
+  const levels: string[][] = [];
+  const seen = new Set([startId]);
+  let cur = supersOf.get(startId) ?? [];
+  while (cur.length) {
+    levels.push(cur);
+    for (const id of cur) seen.add(id);
+    const next = [...new Set(cur.flatMap((id) => supersOf.get(id) ?? []))].filter((id) => !seen.has(id));
+    cur = next;
+  }
+  return levels;
 }
 
 type BriefInput = {
@@ -82,9 +90,9 @@ type BriefInput = {
   projectPrompt?: string;
   agent: BriefPerson;
   agentInstructions: string;
-  upChain: BriefPerson[];
+  upChain: BriefPerson[][];
   directReports: BriefPerson[];
-  extraChains: Array<{ person: BriefPerson; chain: BriefPerson[] }>;
+  extraChains: Array<{ person: BriefPerson; chain: BriefPerson[][] }>;
   task: {
     title: string;
     description: string;
@@ -127,13 +135,16 @@ export function buildBrief(input: BriefInput) {
 /** who the agent is and where it sits in the org */
 function orgSection(input: BriefInput) {
   const lines = [`You are ${input.agent.name}${input.agent.title ? `, ${input.agent.title}` : ''}.`];
-  if (input.upChain.length) lines.push(`You report to: ${input.upChain.map((p) => personLine(p)).join(' -> ')}.`);
+  if (input.upChain.length)
+    lines.push(`You report to: ${input.upChain.map((lvl) => lvl.map(personLine).join(' & ')).join(' -> ')}.`);
   else lines.push('You report to: (nobody — top of organization).');
   if (input.directReports.length) lines.push(`Reports to you: ${input.directReports.map(personLine).join(', ')}.`);
   if (input.agentInstructions.trim()) lines.push(`Standing instructions: ${input.agentInstructions.trim()}`);
   for (const c of input.extraChains) {
     if (c.chain.length)
-      lines.push(`${c.person.name}: ${personLine(c.person)}; their chain: ${c.chain.map(personLine).join(' -> ')}.`);
+      lines.push(
+        `${c.person.name}: ${personLine(c.person)}; their chain: ${c.chain.map((lvl) => lvl.map(personLine).join(' & ')).join(' -> ')}.`,
+      );
     else lines.push(`${c.person.name}: ${personLine(c.person)}; their chain: (unknown).`);
   }
   return lines;
@@ -259,15 +270,16 @@ export async function loadBriefData(taskId: string, readerEmployeeId?: string) {
     const u = nonNull(users.find((x) => x.id === id));
     return { id, name: nonNull(u).name, title: nonNull(u).title || null, kind: aiById.has(id) ? 'ai' : 'human' };
   };
-  const upIds = chainToRoot(assigneeId, edges);
+  const upLevels = chainToRoot(assigneeId, edges);
+  const upIds = upLevels.flat();
   const downIds = edges.filter((e) => e.supervisorId === assigneeId).map((e) => e.employeeId);
   const nameToId = new Map(users.map((u) => [u.name, u.id] as const));
   const mentionIds = extractMentionedEmployeeIds(task.description, nameToId);
-  const extra: Array<{ person: BriefPerson; chain: BriefPerson[] }> = [];
+  const extra: Array<{ person: BriefPerson; chain: BriefPerson[][] }> = [];
   for (const mid of mentionIds) {
     if (mid === assigneeId || upIds.includes(mid) || downIds.includes(mid)) continue;
     if (!users.some((u) => u.id === mid)) continue;
-    extra.push({ person: person(mid), chain: chainToRoot(mid, edges).map(person) });
+    extra.push({ person: person(mid), chain: chainToRoot(mid, edges).map((lvl) => lvl.map(person)) });
   }
   // prompt source = task_messages (owner ruling 2026-10-26); the relay filter
   // below decides what actually ships. Newest 200 only — the brief relays recent
@@ -366,7 +378,7 @@ export async function loadBriefData(taskId: string, readerEmployeeId?: string) {
     projectPrompt: projectRow?.prompt ?? '',
     agent: person(assigneeId),
     agentInstructions: ai?.instructions ?? '',
-    upChain: upIds.map(person),
+    upChain: upLevels.map((lvl) => lvl.map(person)),
     directReports: downIds.map(person),
     extraChains: extra,
     task: {

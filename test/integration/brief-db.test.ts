@@ -85,12 +85,12 @@ describe('loadBriefData (real db)', () => {
     const d = await loadBriefData(taskId);
     expect(d.agent).toMatchObject({ id: agentId, name: 'Agent One', title: 'Worker', kind: 'ai' });
     expect(d.agentInstructions).toBe('Be terse.');
-    expect(d.upChain.map((p) => p.id)).toEqual([chiefId]);
+    expect(d.upChain.map((lvl) => lvl.map((p) => p.id))).toEqual([[chiefId]]);
     expect(d.task.ownerName).toBe('Chief Two');
     // @Peer Three mentioned -> extra chain with their supervisor
     expect(d.extraChains).toHaveLength(1);
     expect(d.extraChains[0]!.person.id).toBe(peerId);
-    expect(d.extraChains[0]!.chain.map((p) => p.id)).toEqual([chiefId]);
+    expect(d.extraChains[0]!.chain.map((lvl) => lvl.map((p) => p.id))).toEqual([[chiefId]]);
     // STATUS bookkeeping (dispatch lines) never reaches the prompt
     const kinds = d.recentActivity.map((a) => a.kind);
     expect(kinds).not.toContain('status');
