@@ -32,12 +32,14 @@ g.useNuxtApp = () => ({
 });
 let currentSession: unknown = null;
 
-beforeEach(() => {
+beforeEach(async () => {
   stateStore.clear();
   mounted.length = 0;
   unmounted.length = 0;
   currentFetch = null;
   currentSession = null;
+  const m = await import('../../app/composables/useAppSession.ts');
+  (m as unknown as { __resetFocusListenerForTests: () => void }).__resetFocusListenerForTests();
 });
 
 describe('useAppSession', () => {
@@ -52,18 +54,18 @@ describe('useAppSession', () => {
     const m = await import('../../app/composables/useAppSession.ts');
     m.useAppSession().value = {
       user: { id: 'x', name: 'X', email: 'x@x', role: ROLE.ADMIN },
-      session: { expiresAt: 'later' },
+
     };
     expect(m.useAppSession().value?.user.id).toBe('x');
   });
 });
 
 describe('useSessionRefreshing', () => {
-  it('refreshSession clears the session when the client throws', async () => {
+  it('refreshSession keeps the session on a generic error (only 401 logs out)', async () => {
     const m = await import('../../app/composables/useAppSession.ts');
     m.useAppSession().value = {
       user: { id: 'old', name: 'Old', email: 'o@x', role: ROLE.ADMIN },
-      session: { expiresAt: 't' },
+
     };
     (g.useNuxtApp as () => unknown) = () => ({
       $client: {
@@ -76,7 +78,8 @@ describe('useSessionRefreshing', () => {
     });
     const { refreshSession } = m.useSessionRefreshing();
     await refreshSession();
-    expect(m.useAppSession().value).toBeNull();
+    // transient errors must not visually log the user out
+    expect(m.useAppSession().value?.user.id).toBe('old');
     // restore the default stub for subsequent tests
     (g.useNuxtApp as () => unknown) = () => ({
       $client: { auth: { session: async () => currentSession } },
@@ -86,7 +89,7 @@ describe('useSessionRefreshing', () => {
   it('refreshSession updates the session via oRPC auth.session', async () => {
     currentSession = {
       user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'U', email: 'u@x', role: ROLE.VIEWER },
-      session: { expiresAt: 't' },
+
     };
     const m = await import('../../app/composables/useAppSession.ts');
     const { refreshSession } = m.useSessionRefreshing();
@@ -94,18 +97,27 @@ describe('useSessionRefreshing', () => {
     expect(m.useAppSession().value?.user.id).toBe('00000000-0000-7000-8000-c5ea71554c77');
   });
 
-  it('refreshSession swallows fetch errors and nulls the session', async () => {
-    currentFetch = async () => {
-      throw new Error('network down');
-    };
+  it('refreshSession keeps the session on a fetch error (no visual logout)', async () => {
+    (g.useNuxtApp as () => unknown) = () => ({
+      $client: {
+        auth: {
+          session: async () => {
+            throw new Error('network down');
+          },
+        },
+      },
+    });
     const m = await import('../../app/composables/useAppSession.ts');
     m.useAppSession().value = {
       user: { id: 'old', name: 'O', email: 'o@x', role: ROLE.ADMIN },
-      session: { expiresAt: 't' },
     };
     const { refreshSession } = m.useSessionRefreshing();
     await expect(refreshSession()).resolves.toBeUndefined();
-    expect(m.useAppSession().value).toBeNull();
+    expect(m.useAppSession().value?.user.id).toBe('old');
+    // restore the default stub for subsequent tests
+    (g.useNuxtApp as () => unknown) = () => ({
+      $client: { auth: { session: async () => currentSession } },
+    });
   });
 
   it('sees import.meta.client as true under the define', async () => {
@@ -116,7 +128,7 @@ describe('useSessionRefreshing', () => {
     expect(mounted.length).toBeGreaterThan(before);
   });
 
-  it('registers window focus listener on mount and removes it on unmount', async () => {
+  it('binds exactly one tab-lifetime window focus listener on mount', async () => {
     const add = vi.fn();
     const remove = vi.fn();
     (globalThis as unknown as { window: unknown }).window = { addEventListener: add, removeEventListener: remove };
@@ -124,8 +136,44 @@ describe('useSessionRefreshing', () => {
     m.useSessionRefreshing();
     expect(mounted).toHaveLength(1);
     mounted[0]!();
+    expect(add).toHaveBeenCalledTimes(1);
     expect(add).toHaveBeenCalledWith('focus', expect.any(Function));
-    unmounted[0]!();
-    expect(remove).toHaveBeenCalledWith('focus', expect.any(Function));
+    // singleton law: a second call site must not add another listener
+    m.useSessionRefreshing();
+    mounted[1]!();
+    expect(add).toHaveBeenCalledTimes(1);
   });
+
+describe('isUnauthorizedError', () => {
+  it('detects code, status and statusCode shapes; rejects everything else', async () => {
+    const m = await import('../../app/composables/useAppSession.ts');
+    expect(m.isUnauthorizedError({ code: 'UNAUTHORIZED' })).toBe(true);
+    expect(m.isUnauthorizedError({ code: 'FORBIDDEN' })).toBe(true);
+    expect(m.isUnauthorizedError({ status: 401 })).toBe(true);
+    expect(m.isUnauthorizedError({ statusCode: 403 })).toBe(true);
+    expect(m.isUnauthorizedError(new Error('boom'))).toBe(false);
+    expect(m.isUnauthorizedError(null)).toBe(false);
+  });
+
+  it('refreshSession clears the session ONLY on an explicit auth rejection', async () => {
+    (g.useNuxtApp as () => unknown) = () => ({
+      $client: {
+        auth: {
+          session: async () => {
+            throw Object.assign(new Error('nope'), { code: 'UNAUTHORIZED' });
+          },
+        },
+      },
+    });
+    const m = await import('../../app/composables/useAppSession.ts');
+    m.useAppSession().value = { user: { id: 'old', name: 'O', email: 'o@x', role: ROLE.ADMIN } };
+    const { refreshSession } = m.useSessionRefreshing();
+    await refreshSession();
+    expect(m.useAppSession().value).toBeNull();
+    // restore the default stub
+    (g.useNuxtApp as () => unknown) = () => ({
+      $client: { auth: { session: async () => currentSession } },
+    });
+  });
+});
 });

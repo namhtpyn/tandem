@@ -181,7 +181,10 @@ import { v7 as uuidv7 } from 'uuid';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION, SECRET_USAGE } from '#shared/enums';
 import { RUN_STATUS, REVIEW_STATUS, type FinishedStatus } from '#shared/enums';
-import type { RunEnvelope } from '#shared/run-verdict';
+// One shared verdict contract: the review brief renders the SAME JSON envelope as the
+// work brief (owner no-truncation law: title/description/result/activity ship WHOLE).
+import { renderOutputContract } from '#shared/structured-output';
+import { RunVerdictSchema, type RunEnvelope } from '#shared/run-verdict';
 import { STATUS } from '#shared/status';
 
 import {
@@ -402,7 +405,22 @@ async function loadDispatchPlanFor(employeeId: string, taskId: string) {
 }
 
 /** REVIEW LAW: the brief for a review turn — reviewer identity, the task under
- * review, the submitted result, and the verdict contract. Ends like every brief. */
+ * review, the submitted result, and the verdict contract. Ends like every brief:
+ * the SAME RunVerdictSchema JSON envelope (no marker fallback — only the parser's
+ * contract parses), and NO truncation — the reviewer must see the whole ticket. */
+/** routing folded into the envelope: map the settled verdict's optional fields to proposal payloads */
+function envelopeProposals(envelope: RunEnvelope | null): RoutingProposal[] {
+  const payloads: RoutingProposal[] = [];
+  if (envelope?.subtasks?.length) payloads.push({ kind: PROPOSAL_KIND.SUBTASKS, items: envelope.subtasks });
+  if (envelope?.reassign)
+    payloads.push({
+      kind: PROPOSAL_KIND.REASSIGN,
+      targetName: envelope.reassign.assigneeName,
+      reason: envelope.reassign.reason,
+    });
+  return payloads;
+}
+
 function reviewBrief(
   reviewerName: string,
   taskTitle: string,
@@ -420,25 +438,33 @@ function reviewBrief(
   if (!relay) {
     lines.push('TASK UNDER REVIEW');
     lines.push(`Title: ${taskTitle}`);
-    if (taskDescription.trim()) lines.push(`Description: ${taskDescription.trim().slice(0, 2000)}`);
+    if (taskDescription.trim()) lines.push(`Description: ${taskDescription.trim()}`);
     lines.push('');
   }
   lines.push('SUBMITTED RESULT (by the assignee)');
   /* v8 ignore next -- '(no result text)' is defensive; submits carry a body */
-  lines.push(resultBody.slice(0, 4000) || '(no result text)');
+  lines.push(resultBody || '(no result text)');
   /* v8 ignore start -- fresh tasks have no activity; the block is optional by design */
   if (briefData.recentActivity.length) {
     lines.push('');
     lines.push('Recent activity (oldest first):');
-    for (const a of briefData.recentActivity.slice(-10))
-      lines.push(`- ${a.kind} by ${a.authorName ?? 'system'}: ${(a.body ?? '').slice(0, 160)}`);
+    for (const a of briefData.recentActivity)
+      lines.push(`- ${a.kind} by ${a.authorName ?? 'system'}: ${a.body ?? ''}`);
   }
   /* v8 ignore stop */
   lines.push('');
-  lines.push('VERDICT — end with exactly one line:');
-  lines.push('[RESULT] <approve — verdict note> (all reviewers approving completes the task)');
-  lines.push('[BLOCKED] <what must change — sent back to the assignee with your note>');
-  lines.push('[QUESTION] <blocking question for the owner>');
+  lines.push(
+    renderOutputContract(RunVerdictSchema, {
+      // same verbs the verdict parser settles on: result = approve, blocked =
+      // change request, question = park on the owner; a verdict-less review never approves
+      intro: 'VERDICT — end your response with exactly one JSON line (no code fence). kind "result" APPROVES the submission, "blocked" sends it back to the assignee with your note, "question" parks the task on the owner:',
+      examples: [
+        '{"kind": "result", "body": "<verdict note — approval>"}',
+        '{"kind": "blocked", "body": "<what must change — sent back to the assignee>"}',
+        '{"kind": "question", "body": "<blocking question for the owner>"}',
+      ],
+    }),
+  );
   return lines.join('\n');
 }
 
@@ -569,7 +595,11 @@ export async function dispatchTask(
     status: RUN_STATUS.RUNNING,
     output: '',
   });
-  await db.update(tasks).set({ status: STATUS.doing, updatedAt: new Date() }).where(eq(tasks.id, taskId));
+  // review turns run ON the task but must not claim it: flipping in-review → doing
+  // here would make the human verdict verbs (approve/request-changes) throw on the
+  // status gate — only the ASSIGNEE's dispatch owns the doing transition
+  if (!plan.review)
+    await db.update(tasks).set({ status: STATUS.doing, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 
   let buffer = '';
@@ -644,20 +674,17 @@ export async function dispatchTask(
     }
 
     // routing folded into the envelope (owner ruling 2026-10-26): proposals are read
-    // ONLY from the agent's own verdict line — echoed task content can never route
-    const payloads: RoutingProposal[] = [];
-    if (envelope?.subtasks?.length) payloads.push({ kind: PROPOSAL_KIND.SUBTASKS, items: envelope.subtasks });
-    if (envelope?.reassign)
-      payloads.push({
-        kind: PROPOSAL_KIND.REASSIGN,
-        targetName: envelope.reassign.assigneeName,
-        reason: envelope.reassign.reason,
-      });
-    if (payloads.length) {
-      try {
-        await recordProposals(taskId, runId, plan.ai.userId, payloads);
-      } catch {
-        /* proposal recording is best-effort */
+    // ONLY from the agent's own verdict line — echoed task content can never route.
+    // REVIEW runs are exempt: a reviewer's envelope must never route work — recording
+    // proposals on the REVIEWER's chain could self-reassign the task to the reviewer.
+    if (!plan.review) {
+      const payloads = envelopeProposals(envelope);
+      if (payloads.length) {
+        try {
+          await recordProposals(taskId, runId, plan.ai.userId, payloads);
+        } catch {
+          /* proposal recording is best-effort */
+        }
       }
     }
     try {
@@ -675,9 +702,15 @@ export async function dispatchTask(
           envelope?.text?.trim() || buffer.trim().split('\n').slice(-12).join('\n').slice(-2000) || 'run complete';
         await submitResult(taskId, plan.ai.userId, resultBody);
       }
-    } catch {
-      /* task may have moved on; leave as-is */
+    } catch (e) {
+      // a submit/verdict failure is REAL: log it and take the retry/backoff path —
+      // swallowing it here then resetting failStreak wedged the task with no retry
+      /* v8 ignore start */ // needs a mid-flight workflow mutation so submit throws; the reaper/backoff arms cover the ladder
+      consola.error(`[settle] task ${taskId} run ${runId} settle failed: ${e instanceof Error ? e.message : String(e)}`);
+      await scheduleRetryBackoff();
+      return;
     }
+    // streak reset only AFTER a successful settle — a failed settle must keep the ladder
     await db
       .update(tasks)
       .set({ failStreak: 0, dispatchAfter: null, updatedAt: new Date() })
@@ -689,14 +722,27 @@ export async function dispatchTask(
   const scheduleRetryBackoff = async () => {
     const current = (
       await db.query.tasks.findMany({
-        columns: { failStreak: true },
+        columns: { status: true, failStreak: true },
         where: { id: { eq: taskId } },
         orderBy: { createdAt: 'asc' },
       })
     )[0];
-    const streak = (current?.failStreak ?? 0) + 1;
+    // resurrection guard: only THIS task's latest run may bounce it, and only while
+    // the task still sits in the doing state this run owns — a cancelled/done/
+    // waiting-answer/in-review task must never be dragged back into the ready queue
+    const latestRun = (
+      await db
+        .select({ id: taskRuns.id })
+        .from(taskRuns)
+        .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+        .where(eq(taskMessages.taskId, taskId))
+        .orderBy(desc(taskRuns.startedAt))
+        .limit(1)
+    )[0];
+    if (latestRun?.id !== runId || current?.status !== STATUS.doing) return;
+    const streak = current.failStreak + 1;
     const waitMs = backoffFor(streak, buffer);
-    await db
+    const bounced = await db
       .update(tasks)
       .set({
         status: STATUS.todo,
@@ -704,7 +750,10 @@ export async function dispatchTask(
         dispatchAfter: new Date(Date.now() + waitMs),
         updatedAt: new Date(),
       })
-      .where(eq(tasks.id, taskId)); // no-op when the task was deleted mid-run
+      // atomic re-check of the guard: a settle/cancel between read and write wins
+      .where(and(eq(tasks.id, taskId), eq(tasks.status, STATUS.doing)))
+      .returning({ id: tasks.id });
+    if (!bounced.length) return; // raced with a status change — nothing to retry
     /* v8 ignore next -- the catch only guards a task deleted between the update and the log */
     await logRun(taskId, runId, `retry scheduled in ${Math.round(waitMs / 60_000)} min (streak ${streak})`, {
       backoffMs: waitMs,
@@ -712,11 +761,17 @@ export async function dispatchTask(
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   };
 
+  // finish() settles a run EXACTLY once: a settle error after DONE must not re-enter
+  // as FAILED (overwriting submitted work), and a second call must not double-settle
+  let settled = false;
   const finish = async (status: FinishedStatus, exitCode: number | null) => {
+    if (settled) return;
+    settled = true;
+    // RUNNING predicate: a reaper-settled row is never overwritten mid-flight
     await db
       .update(taskRuns)
       .set({ status, exitCode, output: buffer, finishedAt: new Date() })
-      .where(eq(taskRuns.id, runId));
+      .where(and(eq(taskRuns.id, runId), eq(taskRuns.status, RUN_STATUS.RUNNING)));
     // the thread message body becomes the parsed result of the final output
     await updateRunMessageBody(messageId, buffer);
     // no settle note: the run card's status pill (completed / failed exit N) IS the
@@ -791,7 +846,15 @@ export async function dispatchTask(
         } catch (e) {
           /* v8 ignore next -- service throws are Error by construction */
           onLine(`[dispatch] ${e instanceof Error ? e.message : String(e)}`);
-          await finish(RUN_STATUS.FAILED, null);
+          try {
+            // no-ops when finish() already settled this run (e.g. after DONE)
+            await finish(RUN_STATUS.FAILED, null);
+          } catch (finishError) {
+            /* v8 ignore start -- needs settle + finish to BOTH fail; injected in e2e only */
+            // the worker slot frees via resolve — a failing settle must never leak it
+            consola.error(`[dispatch] run ${runId} finish failed: ${String(finishError)}`);
+            /* v8 ignore stop */
+          }
           resolve({ status: RUN_STATUS.FAILED, exitCode: null });
         }
       })();

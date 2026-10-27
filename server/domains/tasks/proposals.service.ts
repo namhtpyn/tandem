@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { consola } from 'consola';
 import { v7 as uuidv7 } from 'uuid';
 
@@ -66,7 +66,9 @@ async function findByName(name: string | undefined, ex: DbExecutor = db) {
   const rows = await asDb(ex)
     .select({ id: userTable.id, name: userTable.name })
     .from(userTable)
-    .where(eq(userTable.name, name));
+    .where(eq(userTable.name, name))
+    // duplicate names are allowed: oldest account wins so resolution is deterministic
+    .orderBy(asc(userTable.createdAt));
   return rows[0] ?? null;
 }
 
@@ -108,7 +110,8 @@ async function createSubtask(
   await asDb(ex).insert(tasks).values({
     id: childId,
     title: item.title.slice(0, 200),
-    description: item.description ?? '',
+    // agent-proposed text gets the same 2000-char cap as a human note
+    description: item.description?.slice(0, 2000) ?? '',
     status: STATUS.todo,
     assigneeId,
     ownerId: task.ownerId ?? task.createdBy,
@@ -279,8 +282,19 @@ export async function rejectProposal(proposalId: string, decidedBy: string, note
  * by the same confirm path a human would use. Anything touching people outside
  * the chain (or unnamed routing targets) still waits for a human.
  * `authorId` is the run's AGENT — the chain judged here is the author's, never the
- * task's current assignee (which can move while a run is in flight). */
+ * task's current assignee (which can move while a run is in flight).
+ * CURRENCY LAW: the task is reloaded before anything lands — a run that finished
+ * on a done/cancelled task records nothing, and a run whose author is no longer
+ * the assignee (reassigned mid-flight) loses the auto-execute right: its
+ * proposals stay PROPOSED for a human instead of mutating the new state. */
 export async function recordProposals(taskId: string, runId: string, authorId: string, payloads: Array<ProposalPayload>) {
+  const taskRow = (
+    await db.select({ status: tasks.status, assigneeId: tasks.assigneeId }).from(tasks).where(eq(tasks.id, taskId))
+  )[0];
+  // a terminal or vanished task takes nothing from a run that settled late
+  if (!taskRow || taskRow.status === STATUS.done || taskRow.status === STATUS.cancelled) return;
+  // stale author = the task moved to someone else while the run flew: no auto-execution
+  const staleAuthor = taskRow.assigneeId !== null && taskRow.assigneeId !== authorId;
   const chain = await supervisionChain(authorId);
   for (const payload of payloads) {
     // item budget: a runaway [SUBTASKS] line must not spawn an unbounded child set
@@ -299,7 +313,7 @@ export async function recordProposals(taskId: string, runId: string, authorId: s
     });
     // every routing target named and inside the author's own chain -> auto-execute
     let inChain = false;
-    if (chain.size > 1) {
+    if (chain.size > 1 && !staleAuthor) {
       if (payload.kind === PROPOSAL_KIND.REASSIGN) {
         const target = await findByName(payload.targetName);
         inChain = !!target && chain.has(target.id);

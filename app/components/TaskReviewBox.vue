@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // GitHub-style review box: verdicts get their own input, not the chat composer
-// (owner ruling 2026-10-26). Rendered on the task page while the task is in
-// review; the note is optional and rides the verdict.
+// (owner ruling 2026-10-26). Rendered only for explicit reviewers while the task
+// is in review. The note is optional for approve, REQUIRED for request changes
+// (no fabricated "needs changes"), and reject is terminal — two-click confirm.
 defineProps<{ busy: boolean }>();
 
 const emit = defineEmits<{
@@ -9,6 +10,29 @@ const emit = defineEmits<{
 }>();
 
 const reviewNote = ref('');
+
+// reject ends the task — first click arms for 3s, the second one fires
+const rejectArmed = ref(false);
+let rejectTimer: ReturnType<typeof setTimeout> | null = null;
+
+function disarmReject() {
+  rejectArmed.value = false;
+  if (rejectTimer) clearTimeout(rejectTimer);
+  rejectTimer = null;
+}
+
+function onRejectClick() {
+  if (!rejectArmed.value) {
+    rejectArmed.value = true;
+    if (rejectTimer) clearTimeout(rejectTimer);
+    rejectTimer = setTimeout(disarmReject, 3000);
+    return;
+  }
+  disarmReject();
+  emit('verdict', 'reject', reviewNote.value || undefined);
+}
+
+onUnmounted(disarmReject);
 </script>
 
 <template>
@@ -20,7 +44,7 @@ const reviewNote = ref('');
       autoresize
       :maxrows="6"
       variant="none"
-      placeholder="Leave review feedback (optional)…"
+      placeholder="Leave review feedback (required to request changes)…"
       class="w-full"
       :ui="{ base: 'px-1 py-1 text-sm placeholder:text-zinc-400' }"
     />
@@ -28,19 +52,19 @@ const reviewNote = ref('');
       <UButton
         size="md"
         color="error"
-        variant="outline"
+        :variant="rejectArmed ? 'solid' : 'outline'"
         icon="i-lucide-x-circle"
         :disabled="busy"
-        @click="emit('verdict', 'reject', reviewNote)"
-        >Reject</UButton
+        @click="onRejectClick"
+        >{{ rejectArmed ? 'Confirm reject?' : 'Reject' }}</UButton
       >
       <UButton
         size="md"
         color="warning"
         variant="outline"
         icon="i-lucide-undo-2"
-        :disabled="busy"
-        @click="emit('verdict', 'requestChanges', reviewNote || 'needs changes')"
+        :disabled="busy || !reviewNote.trim()"
+        @click="emit('verdict', 'requestChanges', reviewNote)"
         >Request changes</UButton
       >
       <UButton

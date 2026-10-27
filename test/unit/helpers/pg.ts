@@ -26,7 +26,8 @@ export async function captureStatusSeed() {
   if (statusSeed && statusSeed.length > 0) return;
   // to_json gives next_ids as a real JSON array in every runtime — Bun SQL's
   // raw text[] decoding is inconsistent between plain bun and vitest workers
-  const rows = await postgres`select id, name, color, position, category, created_at, updated_at, to_json(next_ids) as next_ids_json from task_statuses`;
+  const rows =
+    await postgres`select id, name, color, position, category, created_at, updated_at, to_json(next_ids) as next_ids_json from task_statuses`;
   statusSeed = rows.map(({ next_ids_json, ...rest }) => ({ ...rest, next_ids: next_ids_json }));
 }
 
@@ -46,30 +47,15 @@ async function reseedStatuses() {
   for (const row of rows) {
     const cols = Object.keys(row);
     const values = cols.map((c) => lit(row[c])).join(', ');
-    await postgres.unsafe(
-      `insert into task_statuses (${cols.map((c) => `"${c}"`).join(', ')}) values (${values})`,
-    );
+    await postgres.unsafe(`insert into task_statuses (${cols.map((c) => `"${c}"`).join(', ')}) values (${values})`);
   }
 }
 
 // per-test reset: TRUNCATE every table (drizzle-seed reset = TRUNCATE
-// ... CASCADE), then replay the status seed. Schema + migrations exist before
-// any worker — they are applied once in global-setup, so a truncate never
-// meets missing tables.
-let sp = 0;
-
+// ... CASCADE), then replay the status seed — the ONLY reset path (one
+// truncate per test law). Schema + migrations exist before any worker — they
+// are applied once in global-setup, so a truncate never meets missing tables.
 export async function resetData() {
-  // worker holds one transaction for its whole life (worker-setup.ts): rolling
-  // back to a fresh savepoint is the reset — ~1ms, and it also undoes whatever
-  // the previous test committed through any connection
-  const tx = await postgres`select current_setting('tandem.test_tx', true) as v`;
-  if (tx[0]?.v === '1') {
-    if (sp > 0) await postgres.unsafe(`rollback to savepoint s${sp}`);
-    sp += 1;
-    await postgres.unsafe(`savepoint s${sp}`);
-    await reseedStatuses();
-    return;
-  }
   await captureStatusSeed(); // pre-truncate: the only moment the rows exist
   const { reset } = await import('drizzle-seed');
   const { db, applyMigrations } = await import('#server/db');
@@ -90,7 +76,6 @@ export async function resetSchema() {
   await postgres.unsafe('create schema public authorization tandem');
 }
 
-
 // File-boundary invariant: migrations are applied and the ledger agrees with
 // the journal. Migration-subject tests (migrations/boot/fresh-ledger arms)
 // deliberately corrupt this state; drizzle's migrator no-ops when the ledger
@@ -103,12 +88,4 @@ export async function ensureMigrated() {
     await resetSchema();
     await applyMigrations();
   }
-}
-
-/** Pin the app's pooled connections into this worker's transaction. The app
- * code under test opens its own pool (server/db) — without this, its writes
- * commit for real and leak across tests. Called once per worker. */
-export async function joinWorkerTransaction() {
-  const { sqlClient } = await import('#server/db');
-  await sqlClient`select set_config('tandem.test_tx', '1', false)`;
 }

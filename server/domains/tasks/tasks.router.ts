@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { ACTIVITY_KIND, CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS, type RunStatus, type ActivityKind } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import type { TaskRow } from '#shared/types';
+import { escapeIlike } from '#shared/utils/escape-ilike';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
@@ -153,10 +154,8 @@ async function listTasksPaged(
   selfId: string,
 ) {
   const q = input.q?.trim();
-  // escape LIKE wildcards so a q of '%' or '_' matches itself, not everything
-  const escIlike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
   const searchFilter = q
-    ? { OR: [{ title: { ilike: `%${escIlike(q)}%` } }, { description: { ilike: `%${escIlike(q)}%` } }] }
+    ? { OR: [{ title: { ilike: `%${escapeIlike(q)}%` } }, { description: { ilike: `%${escapeIlike(q)}%` } }] }
     : undefined;
   const statusFilter = input.statusId ? { status: { eq: input.statusId } } : undefined;
   // inboxOfMe = tasks with a PENDING obligation on the caller — the same taskId
@@ -327,6 +326,9 @@ async function requireDispatchable(taskId: string) {
   if (running.length > 0) throw new ORPCError('BAD_REQUEST', { message: 'task already has a running run' });
 }
 
+/** reviewers are stored unique (schema unique index) — write paths dedupe input */
+const uniqueReviewers = (reviewers: string[]) => [...new Set(reviewers)];
+
 /** only fields the caller actually sent land in the patch; explicit nulls clear nothing */
 function buildUpdatePatch(input: {
   title?: string;
@@ -342,7 +344,7 @@ function buildUpdatePatch(input: {
   if (input.description !== undefined && input.description !== null) patch.description = input.description;
   if (input.assigneeId !== undefined) patch.assigneeId = input.assigneeId;
   if (input.ownerId !== undefined) patch.ownerId = input.ownerId;
-  if (input.reviewers !== undefined && input.reviewers !== null) patch.reviewers = input.reviewers;
+  if (input.reviewers !== undefined && input.reviewers !== null) patch.reviewers = uniqueReviewers(input.reviewers);
   return patch;
 }
 
@@ -408,7 +410,7 @@ export const tasksRouter = os.router({
         projectId: input.projectId ?? null,
         assigneeId: input.assigneeId ?? null,
         ownerId: input.ownerId ?? selfId,
-        reviewers: input.reviewers ?? [],
+        reviewers: uniqueReviewers(input.reviewers ?? []),
         parentTaskId: input.parentId ?? null,
         createdBy: selfId,
       });

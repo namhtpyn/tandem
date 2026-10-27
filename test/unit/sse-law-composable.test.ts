@@ -4,6 +4,7 @@
 // Nuxt globals (useNuxtApp/useQueryClient/onScopeDispose) are stubbed as
 // globalThis bindings so the composable runs under the plain unit project.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ref } from 'vue';
 
 import { CHANGE_ACTION, CHANGE_RESOURCE } from '#shared/enums';
 
@@ -76,7 +77,7 @@ describe('useChangeEvents', () => {
     });
     install({ changes: { live } }, qc);
     const { useChangeEvents } = await loadMod();
-    useChangeEvents();
+    useChangeEvents(ref({ user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } }));
     await new Promise((r) => setTimeout(r, 30));
     disposers[0]?.();
     expect(live).toHaveBeenCalled();
@@ -99,7 +100,7 @@ describe('useChangeEvents', () => {
     });
     install({ changes: { live } }, qc);
     const { useChangeEvents } = await loadMod();
-    useChangeEvents();
+    useChangeEvents(ref({ user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } }));
     await new Promise((r) => setTimeout(r, 60));
     expect(live).toHaveBeenCalledTimes(1);
     expect(capturedSignal!.aborted).toBe(false);
@@ -116,9 +117,11 @@ describe('useChangeEvents', () => {
     const live = makeLive(['fail', 'open-empty']);
     install({ changes: { live } }, qc);
     const { useChangeEvents } = await loadMod();
-    useChangeEvents();
-    await new Promise((r) => setTimeout(r, 2450)); // fail → 2s backoff → reconnect
+    useChangeEvents(ref({ user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } }));
+    await new Promise((r) => setTimeout(r, 2450)); // fail → 2s retry → reconnect + catch-up invalidate
     expect(live).toHaveBeenCalledTimes(2);
+    // catch-up: the post-drop successful open invalidates everything once
+    expect(qc.invalidateQueries).toHaveBeenCalledWith();
     while (disposers.length) disposers.pop()!();
     await new Promise((r) => setTimeout(r, 30));
   });
@@ -137,12 +140,40 @@ describe('useChangeEvents', () => {
     );
     install({ changes: { live } }, qc);
     const { useChangeEvents } = await loadMod();
-    useChangeEvents();
+    useChangeEvents(ref({ user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } }));
     disposers[0]?.(); // scope teardown aborts the open SSE stream
     await new Promise((r) => setTimeout(r, 40));
     const call = live.mock.calls[0]?.[1] as unknown as { signal: AbortSignal };
     expect(call.signal.aborted).toBe(true);
     // loop saw stopped=true and exited — no reconnect attempt
     expect(live).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds signed-out and only opens once a session appears', async () => {
+    const qc = makeQc();
+    const live = vi.fn(() => Promise.resolve({ async *[Symbol.asyncIterator]() {} }));
+    install({ changes: { live } }, qc);
+    const { useChangeEvents } = await loadMod();
+    const session = ref(null);
+    useChangeEvents(session);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(live).not.toHaveBeenCalled(); // anonymous: channel never opens
+    session.value = { user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } };
+    await new Promise((r) => setTimeout(r, 2100)); // the signed-out poll ticks at 2s
+    expect(live).toHaveBeenCalledTimes(1);
+    disposers[0]?.();
+  });
+
+  it('auth failures take the backoff path (distinct from plain drops)', async () => {
+    const qc = makeQc();
+    const live = vi.fn(() =>
+      Promise.reject(Object.assign(new Error('nope'), { code: 'UNAUTHORIZED' })),
+    );
+    install({ changes: { live } }, qc);
+    const { useChangeEvents } = await loadMod();
+    useChangeEvents(ref({ user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } }));
+    await new Promise((r) => setTimeout(r, 60));
+    expect(live).toHaveBeenCalledTimes(1); // first attempt fails auth → backoff ≥ 4s, not the 2s drop path
+    disposers[0]?.();
   });
 });

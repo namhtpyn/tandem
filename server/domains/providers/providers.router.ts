@@ -15,15 +15,17 @@ import { modelCache, armCacheSweeper } from './models-cache';
 
 export const providersRouter = os.router({
   /** live model-provider catalog (connection info only — no keys, no models) */
-  list: protectedProcedure.handler(async () => {
+  list: protectedProcedure.handler(async ({ context }) => {
     const { listModelProviders } = await import('./model-providers.service');
-    return await listModelProviders();
+    // extra headers stay admin-only
+    return await listModelProviders(context.session.user.role);
   }),
 
-  live: protectedProcedure.handler(() =>
+  live: protectedProcedure.handler(({ context }) =>
     liveGenerator([CHANGE_RESOURCE.PROVIDERS], async () => {
       const { listModelProviders } = await import('./model-providers.service');
-      return await listModelProviders();
+      // extra headers stay admin-only
+      return await listModelProviders(context.session.user.role);
     }),
   ),
 
@@ -161,11 +163,22 @@ export const providersRouter = os.router({
       return { models: unique };
     }),
 
-  /** delete a provider (blocked while AI employees use it, admin-only) */
+  /** delete a provider (blocked while AI employees or workspace settings use it, admin-only) */
   remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
     const { providerInUse } = await import('./model-providers.service');
     if (await providerInUse(input.id)) {
       throw new ORPCError('BAD_REQUEST', { message: 'provider is in use by AI employees' });
+    }
+    // the workspace LLM/decision assignments also keep a provider alive
+    const { getSettings } = await import('../settings/settings.service');
+    const settings = await getSettings();
+    const assignments: string[] = [];
+    if (settings.internalLlm?.providerId === input.id) assignments.push('internal LLM');
+    if (settings.internalDecision?.providerId === input.id) assignments.push('decision engine');
+    if (assignments.length > 0) {
+      throw new ORPCError('BAD_REQUEST', {
+        message: `provider is in use by settings (${assignments.join(', ')}) — reassign those first`,
+      });
     }
     await db.delete(modelProvidersTable).where(eq(modelProvidersTable.id, input.id));
     await publishChange(CHANGE_RESOURCE.PROVIDERS, CHANGE_ACTION.UPDATE);

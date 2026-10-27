@@ -264,16 +264,34 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
   };
 
   try {
-    // 1. initialize (no fs/terminal capabilities — Tandem exposes nothing)
-    const init = await request('initialize', {
-      protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: {},
-      clientInfo,
-    });
-    if (init.error) throw new Error(`acp initialize failed: ${init.error.message}`);
+    // session SETUP shares the run timeout: a silent agent (initialize/session/new
+    // never answered, stream never closes) must fail the turn — not hang the run forever
+    /* v8 ignore next 6 -- fires only on a dead-silent agent host; needs a fake transport */
+    const setupTimer = setTimeout(() => {
+      onLine?.('[acp] session setup timed out — killing the agent process');
+      // a dead-silent agent never answers: unblock the in-flight request ourselves
+      for (const [, p] of pending)
+        p.resolve({ jsonrpc: '2.0', error: { code: -32001, message: 'acp session setup timed out' } });
+      pending.clear();
+      teardown();
+    }, timeoutMs);
+    setupTimer.unref?.();
 
-    // 2. session: resume the task's session, or create the first one
-    const sessionId = await resumeOrCreateSession(request, opts.resumeSessionId, onLine);
+    let sessionId: string;
+    try {
+      // 1. initialize (no fs/terminal capabilities — Tandem exposes nothing)
+      const init = await request('initialize', {
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: {},
+        clientInfo,
+      });
+      if (init.error) throw new Error(`acp initialize failed: ${init.error.message}`);
+
+      // 2. session: resume the task's session, or create the first one
+      sessionId = await resumeOrCreateSession(request, opts.resumeSessionId, onLine);
+    } finally {
+      clearTimeout(setupTimer);
+    }
 
     // 3. one prompt turn; v1 answers when the turn ends (stopReason)
     const turnTimer = setTimeout(() => {

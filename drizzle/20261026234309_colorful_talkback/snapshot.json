@@ -1,0 +1,216 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "285bf962-0339-4d60-9a46-57f0230a807a",
+  "prevIds": [
+    "63a9908f-13bf-4c75-a603-e0c296151d06"
+  ],
+  "footprints": [
+    {
+      "statementType": "alter_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "task_attachments",
+        "created_by"
+      ],
+      "writes": [
+        "s|colprop|public.task_attachments.created_by.type",
+        "s|colprop|public.task_attachments.created_by.default"
+      ],
+      "reads": [
+        "n|tbl|public.task_attachments",
+        "n|sch|public",
+        "n|col|public.task_attachments.created_by"
+      ],
+      "sqlHash": "e9b2fc6cb4301ebe"
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "task_reviews",
+        "task_reviews_round_reviewer_uniq"
+      ],
+      "writes": [
+        "s|idx|public.task_reviews_round_reviewer_uniq",
+        "n|idx|public.task_reviews_round_reviewer_uniq",
+        "e|idx|public.task_reviews_round_reviewer_uniq",
+        "n|rel|public.task_reviews_round_reviewer_uniq"
+      ],
+      "reads": [
+        "n|tbl|public.task_reviews",
+        "n|sch|public",
+        "n|col|public.task_reviews.task_id",
+        "n|col|public.task_reviews.round",
+        "n|col|public.task_reviews.reviewer_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "task_attachments"
+      ],
+      "writes": [
+        "s|fk|public.task_attachments.task_attachments_run_id_task_runs_id_fkey",
+        "n|fk|public.task_attachments.task_attachments_run_id_task_runs_id_fkey",
+        "e|fk|public.task_attachments.task_attachments_run_id_task_runs_id_fkey",
+        "n|con|public.task_attachments.task_attachments_run_id_task_runs_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.task_attachments",
+        "n|sch|public",
+        "n|tbl|public.task_runs",
+        "n|sch|public",
+        "n|col|public.task_attachments.run_id",
+        "n|col|public.task_runs.id",
+        "e|uniqueness|public.task_runs.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "task_attachments"
+      ],
+      "writes": [
+        "s|fk|public.task_attachments.task_attachments_created_by_user_id_fkey",
+        "n|fk|public.task_attachments.task_attachments_created_by_user_id_fkey",
+        "e|fk|public.task_attachments.task_attachments_created_by_user_id_fkey",
+        "n|con|public.task_attachments.task_attachments_created_by_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.task_attachments",
+        "n|sch|public",
+        "n|tbl|public.user",
+        "n|sch|public",
+        "n|col|public.task_attachments.created_by",
+        "n|col|public.user.id",
+        "e|uniqueness|public.user.id"
+      ]
+    },
+    {
+      "statementType": "recreate_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "task_obligations"
+      ],
+      "writes": [
+        "s|fk|public.task_obligations.task_obligations_employee_id_user_id_fkey",
+        "n|fk|public.task_obligations.task_obligations_employee_id_user_id_fkey",
+        "e|fk|public.task_obligations.task_obligations_employee_id_user_id_fkey",
+        "n|con|public.task_obligations.task_obligations_employee_id_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.task_obligations",
+        "n|sch|public",
+        "n|tbl|public.user",
+        "n|sch|public",
+        "n|col|public.task_obligations.employee_id",
+        "n|col|public.user.id",
+        "e|uniqueness|public.user.id"
+      ],
+      "sqlHash": "ccefb874398ab18a"
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "task_reviews",
+        "name": "task_reviews_round_reviewer_uniq",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "task_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "round",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "reviewer_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "task_attachments",
+        "name": "task_attachments_run_id_task_runs_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "run_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "task_runs",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "task_attachments",
+        "name": "task_attachments_created_by_user_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "created_by"
+        ],
+        "schemaTo": "public",
+        "tableTo": "user",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "SET NULL",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "alter",
+      "key": "columns\u0000[\"public\",\"task_attachments\",\"created_by\"]",
+      "set": {
+        "type": "uuid"
+      }
+    },
+    {
+      "op": "alter",
+      "key": "fks\u0000[\"public\",\"task_obligations\",\"task_obligations_employee_id_user_id_fkey\"]",
+      "set": {
+        "onDelete": "SET NULL"
+      }
+    }
+  ]
+}

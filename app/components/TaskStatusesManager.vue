@@ -50,6 +50,14 @@ const statusForm = reactive({
 const statusSaveMutation = useMutation($orpc.statuses.save.mutationOptions());
 const statusRemoveMutation = useMutation($orpc.statuses.remove.mutationOptions());
 
+const pendingDelete = ref<TaskStatusRow | null>(null);
+const deleteOpen = computed({
+  get: () => pendingDelete.value !== null,
+  set: (v: boolean) => {
+    if (!v) pendingDelete.value = null;
+  },
+});
+
 function openStatusEditor(row?: TaskStatusRow) {
   editingStatusId.value = row?.id ?? null;
   statusForm.name = row?.name ?? '';
@@ -84,11 +92,13 @@ async function saveStatus() {
   }
 }
 
-async function removeStatus(id: string) {
+async function removeStatus() {
+  if (!pendingDelete.value) return;
   statusBusy.value = true;
   statusMessage.value = '';
   try {
-    await statusRemoveMutation.mutateAsync({ id });
+    await statusRemoveMutation.mutateAsync({ id: pendingDelete.value.id });
+    pendingDelete.value = null;
   } catch (e) {
     statusMessage.value = e instanceof Error ? e.message : 'delete failed';
   } finally {
@@ -176,7 +186,7 @@ function categoryColor(c: string) {
                     size="xs"
                     aria-label="Delete status"
                     :disabled="statusBusy"
-                    @click="removeStatus(st.id)"
+                    @click="pendingDelete = st"
                   />
                   <template #content>
                     <div class="px-3 py-1.5 text-xs">Delete status</div>
@@ -189,6 +199,31 @@ function categoryColor(c: string) {
           <div class="flex justify-end">
             <UButton icon="i-lucide-plus" size="sm" label="New status" @click="openStatusEditor()" />
           </div>
+        </div>
+      </template>
+    </UModal>
+
+    <!-- delete confirm (same pattern as the vault/environment delete confirms) -->
+    <UModal v-model:open="deleteOpen" title="Delete status">
+      <template #body>
+        <div class="space-y-4">
+          <p class="text-sm text-zinc-600 dark:text-zinc-300">
+            Delete status
+            <span class="font-semibold text-zinc-900 dark:text-white">{{ pendingDelete?.name }}</span
+            >? A status still used by tasks can't be deleted, and transitions pointing at it are removed.
+          </p>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingDelete = null" />
+          <UButton
+            icon="i-lucide-trash-2"
+            color="error"
+            label="Delete"
+            :loading="statusBusy"
+            @click="removeStatus"
+          />
         </div>
       </template>
     </UModal>

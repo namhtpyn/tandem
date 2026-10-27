@@ -1,12 +1,13 @@
 import { os } from '@orpc/server';
 // employees router — business logic lives in services/utils; this file only wires procedures
-import { count, desc, EmptyFilter, eq } from 'drizzle-orm';
+import { count, desc, EmptyFilter, eq, inArray } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { ROLE } from '#shared/enums';
 import type { ApiKeyRow, EmployeeRow } from '#shared/types';
+import { escapeIlike } from '#shared/utils/escape-ilike';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
@@ -260,7 +261,13 @@ const listEmployeesPaged = async (input: { page: number; pageSize: number; q?: s
   const { data, total } = await db.query.user.findManyAndCount({
     columns: { id: true, name: true, email: true, image: true, title: true, createdAt: true, updatedAt: true },
     where: q
-      ? { OR: [{ name: { ilike: `%${q}%` } }, { email: { ilike: `%${q}%` } }, { title: { ilike: `%${q}%` } }] }
+      ? {
+          OR: [
+            { name: { ilike: `%${escapeIlike(q)}%` } },
+            { email: { ilike: `%${escapeIlike(q)}%` } },
+            { title: { ilike: `%${escapeIlike(q)}%` } },
+          ],
+        }
       : EmptyFilter,
     orderBy: { createdAt: 'asc' },
     limit: input.pageSize,
@@ -544,6 +551,31 @@ export const employeesRouter = os.router({
       if (admins.length <= 1) {
         throw new ORPCError('BAD_REQUEST', { message: 'cannot delete the last admin' });
       }
+    }
+    // guard: vault_secrets.created_by cascades on user delete, so any secret this
+    // employee still owns (and anything linking it) would vanish with them
+    const ownedSecrets = await db
+      .select({ id: vaultSecretsTable.id })
+      .from(vaultSecretsTable)
+      .where(eq(vaultSecretsTable.createdBy, input.id));
+    if (ownedSecrets.length > 0) {
+      const ownedIds = ownedSecrets.map((s) => s.id);
+      const envLinks = await db
+        .select({ id: environmentsTable.id })
+        .from(environmentsTable)
+        .where(inArray(environmentsTable.secretId, ownedIds))
+        .limit(1);
+      const aiLinks = await db
+        .select({ userId: aiEmployeesTable.userId })
+        .from(aiEmployeesTable)
+        .where(inArray(aiEmployeesTable.apiKeySecretId, ownedIds))
+        .limit(1);
+      const blockers = [`${ownedSecrets.length} vault secret(s) owned`];
+      if (envLinks.length > 0) blockers.push('environments');
+      if (aiLinks.length > 0) blockers.push('AI employees');
+      throw new ORPCError('BAD_REQUEST', {
+        message: `employee is in use by ${blockers.join(', ')} — reassign or delete those first`,
+      });
     }
     // deleting the user cascades supervisors, ai extension, api keys
     // (existence already verified above — no race window worth a second check)

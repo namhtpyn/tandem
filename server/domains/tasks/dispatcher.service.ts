@@ -1,5 +1,5 @@
 import { consola } from 'consola';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
@@ -41,7 +41,7 @@ async function reapStaleRunsInner() {
   let reaped = 0;
   for (const run of stale) {
     if (run.startedAt.getTime() > cutoff.getTime()) continue;
-    await db
+    const reapedRows = await db
       .update(taskRuns)
       .set({
         status: RUN_STATUS.FAILED,
@@ -51,7 +51,11 @@ async function reapStaleRunsInner() {
           : '[reaper] run timed out',
         finishedAt: new Date(),
       })
-      .where(eq(taskRuns.id, run.id));
+      // RUNNING predicate: a run that just settled (finish() flipped it) must never
+      // be overwritten by a reaper sweep that read the stale RUNNING list
+      .where(and(eq(taskRuns.id, run.id), eq(taskRuns.status, RUN_STATUS.RUNNING)))
+      .returning({ id: taskRuns.id });
+    if (!reapedRows.length) continue; // settled concurrently — nothing to reap
     // only bounce the task if this was its latest run
     const latest = await db
       .select({ id: taskRuns.id, startedAt: taskRuns.startedAt })
@@ -163,8 +167,14 @@ export async function dispatchIfEligible(taskId: string, tandemUrl: string) {
     orderBy: { position: 'asc' },
   });
   const readyIds = new Set(statuses.filter((s) => s.category === 'ready').map((s) => s.id));
-  const row = await db.query.tasks.findFirst({ columns: { status: true }, where: { id: { eq: taskId } } });
+  const row = await db.query.tasks.findFirst({
+    columns: { status: true, dispatchAfter: true },
+    where: { id: { eq: taskId } },
+  });
   if (!row || !readyIds.has(row.status)) return; // stale duplicate: skip
+  // backoff law: a QUEUED job must not bypass the failure backoff the runner set —
+  // the scan loop respects dispatch_after; the worker path has to as well
+  if (row.dispatchAfter && row.dispatchAfter.getTime() > Date.now()) return;
   const run = await dispatchTask(taskId, tandemUrl);
   await run.finished;
 }

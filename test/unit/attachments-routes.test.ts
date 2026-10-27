@@ -50,6 +50,16 @@ beforeEach(async () => {
     createdAt: new Date(),
     updatedAt: new Date(),
   });
+  // the api-harness session writes created_by as this id — FK needs the row
+  await db.insert(userTable).values({
+    id: '00000000-0000-7000-8000-3f18cbc16519',
+    name: 'Test Admin',
+    email: 'test@tandem.local',
+    emailVerified: true,
+    role: ROLE.ADMIN,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
   await db.insert(tasks).values({
     id: 'task-att-1',
     title: 'Att task',

@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
 // Routing panels: agent proposals (SUBTASKS/REASSIGN awaiting a decision), the
-// subtask list + creator, and the assignment history. Rows come from the typed
-// $client.tasks.{subtasks,proposals,assignments} calls, refreshed when the task
-// changes and after createSubtask/decideProposal; a decision also invalidates
-// the activity + runs feeds so the thread keeps up. Self-loads employees for
-// the subtask assignee picker. Props: `taskId`.
-import { computed, ref, watch } from 'vue';
+// subtask list + creator, and the assignment history. Rows load as conventional
+// GETs keyed on TASKS/TASK_ACTIVITY so the app-wide changes subscription
+// refetches them live (SSE law) — proposals/subtasks/assignments track run
+// settlements, decisions and task edits without polling. Subtask badges join the
+// statuses list (passed down from the page) to render the status NAME in the
+// category color, never the raw id. Self-loads employees for the subtask
+// assignee picker. Props: `taskId`, `statusById`.
+import { computed, ref } from 'vue';
 
 import { CHANGE_RESOURCE, PROPOSAL_KIND, type ProposalKind } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
-import type { EmployeeRow } from '~/utils/orpc-types';
+import type { EmployeeRow, TaskStatusRow } from '~/utils/orpc-types';
 
-const props = defineProps<{ taskId: string }>();
+const props = defineProps<{ taskId: string; statusById: Map<string, TaskStatusRow> }>();
 
 const { $client, $orpc } = useNuxtApp();
 const queryClient = useQueryClient();
@@ -46,36 +48,43 @@ interface AssignmentRow {
   endedAt: string | null;
 }
 
-const subtaskRows = ref<ChildRow[]>([]);
-const proposalRows = ref<ProposalRow[]>([]);
-const assignmentRows = ref<AssignmentRow[]>([]);
+// ---- GET-first + change-event invalidation (SSE law): the query keys carry the
+// resource prefix, so every TASKS/TASK_ACTIVITY change event (run settles,
+// proposal decided, subtask created) refetches the matching panel ----
+const subtasksQuery = useQuery(
+  computed(() =>
+    $orpc.tasks.subtasks.queryOptions({
+      input: { taskId: props.taskId },
+      queryKey: [CHANGE_RESOURCE.TASKS, props.taskId, 'subtasks'],
+    }),
+  ),
+);
+const subtaskRows = computed(() => (unref(subtasksQuery.data)?.items ?? []) as ChildRow[]);
+
+const proposalsQuery = useQuery(
+  computed(() =>
+    $orpc.tasks.proposals.queryOptions({
+      input: { taskId: props.taskId },
+      queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, props.taskId, 'proposals'],
+    }),
+  ),
+);
+const proposalRows = computed(() => (unref(proposalsQuery.data)?.items ?? []) as ProposalRow[]);
+
+const assignmentsQuery = useQuery(
+  computed(() =>
+    $orpc.tasks.assignments.queryOptions({
+      input: { taskId: props.taskId },
+      queryKey: [CHANGE_RESOURCE.TASKS, props.taskId, 'assignments'],
+    }),
+  ),
+);
+const assignmentRows = computed(() => (unref(assignmentsQuery.data)?.items ?? []) as AssignmentRow[]);
+
 const proposalBusy = ref(false);
 const proposalMessage = ref('');
 const subtaskTitle = ref('');
 const subtaskAssignee = ref('__none__');
-
-async function refreshRoutingPanels(id: string) {
-  try {
-    const [st, pr, as] = await Promise.all([
-      $client.tasks.subtasks({ taskId: id }),
-      $client.tasks.proposals({ taskId: id }),
-      $client.tasks.assignments({ taskId: id }),
-    ]);
-    subtaskRows.value = st.items as ChildRow[];
-    proposalRows.value = pr.items as ProposalRow[];
-    assignmentRows.value = as.items as AssignmentRow[];
-  } catch {
-    /* panels are best-effort; the thread still works */
-  }
-}
-
-watch(
-  () => props.taskId,
-  (id) => {
-    if (id) void refreshRoutingPanels(id);
-  },
-  { immediate: true },
-);
 
 async function createSubtask() {
   if (!subtaskTitle.value.trim()) return;
@@ -89,7 +98,8 @@ async function createSubtask() {
     });
     subtaskTitle.value = '';
     subtaskAssignee.value = '__none__';
-    await refreshRoutingPanels(props.taskId);
+    // fuse: refetch the subtasks panel now; the SSE event re-syncs the rest
+    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS, props.taskId] });
     proposalMessage.value = 'subtask created';
   } catch (e) {
     proposalMessage.value =
@@ -109,7 +119,8 @@ async function decideProposal(id: string, action: 'confirmProposal' | 'rejectPro
         : await $client.tasks.rejectProposal({ proposalId: id });
     const events: string[] = 'events' in r && Array.isArray(r.events) ? r.events : [];
     proposalMessage.value = events.length ? events.join('; ') : 'done';
-    await refreshRoutingPanels(props.taskId);
+    // fuse: the decision mutates proposals + subtasks + the task row
+    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS, props.taskId] });
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, props.taskId] });
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.RUNS, props.taskId] });
   } catch (e) {
@@ -128,6 +139,25 @@ const assignmentLines = computed(() => {
     return `${from} → ${r.employeeName ?? '∅'}${r.reason ? ` (${r.reason})` : ''}`;
   });
 });
+
+/** subtask badge: joined status row — its NAME in the category color (never the raw id) */
+function subtaskBadge(c: ChildRow): { label: string; color: 'primary' | 'success' | 'warning' | 'error' | 'info' | 'neutral' } {
+  const st = props.statusById.get(c.status);
+  const category = st?.category;
+  return {
+    label: st?.name ?? c.status,
+    color:
+      category === 'done'
+        ? 'success'
+        : category === 'cancelled'
+          ? 'error'
+          : category === 'in_review'
+            ? 'info'
+            : category === 'working' || category === 'waiting_answer'
+              ? 'warning'
+              : 'neutral',
+  };
+}
 </script>
 
 <template>
@@ -190,12 +220,7 @@ const assignmentLines = computed(() => {
           class="flex items-center justify-between gap-2 rounded px-1.5 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
         >
           <span class="truncate text-zinc-800 dark:text-zinc-200">{{ c.title }}</span>
-          <UBadge
-            :color="c.status === 'done' ? 'success' : c.status === 'blocked' ? 'error' : 'neutral'"
-            variant="subtle"
-            size="sm"
-            >{{ c.status }}</UBadge
-          >
+          <UBadge :color="subtaskBadge(c).color" variant="subtle" size="sm">{{ subtaskBadge(c).label }}</UBadge>
         </NuxtLink>
       </li>
     </ul>

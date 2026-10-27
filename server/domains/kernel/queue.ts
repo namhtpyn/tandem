@@ -104,7 +104,9 @@ async function createQueueDomain(): Promise<QueueDomain> {
         // with jobId dedup, a KEPT completed job would block re-dispatch of the
         // same task until it ages out — dispatch queues remove immediately
         removeOnComplete: opts?.removeOnComplete ? true : 100,
-        removeOnFail: 500,
+        // same for FAILED jobs: jobId = taskId, so a long-kept failed job PERMANENTLY
+        // dedupes the task — free the id quickly (50 kept max) so retries can re-enqueue
+        removeOnFail: { count: 50 },
       });
       /* v8 ignore next -- bullmq always assigns an id */
       return job.id ?? '';

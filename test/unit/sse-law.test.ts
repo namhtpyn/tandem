@@ -29,6 +29,8 @@ async function ctx(sessionUser: { id: string; name: string; email: string; role:
   const context = buildServerContext(new Headers());
   (context as unknown as { getSession: () => Promise<unknown> }).getSession = async () =>
     sessionUser ? { user: sessionUser } : null;
+  // requireSession middleware normally injects this — direct .handler() calls skip it
+  (context as unknown as { session: unknown }).session = sessionUser ? { user: sessionUser } : null;
   return context;
 }
 

@@ -45,13 +45,31 @@ jobs:
       - run: bun run gen:auth
       - run: git diff --exit-code -- server/db/schema.auth.ts scripts/ # drift guard: better-auth schema must regenerate byte-identical
       - run: bunx --bun drizzle-kit check # drift guard: migration snapshot chain must stay clean
+      - run: bun run lint:check
+      - run: bun run format:check
       - run: bun run typecheck
       - run: bun run build
       - run: bun run test:coverage
       - name: Create e2e database
         run: docker exec ${{ job.services.postgres.id }} psql -U tandem -d tandem_test -c 'create database tandem_e2e owner tandem'
       - run: bunx playwright install --with-deps chromium
-      - run: bun run test:e2e
+      # direct invocation, NOT `bun run test:e2e`: the script's pretest:e2e
+      # hook exists for LOCAL runs (never test a stale .output); CI built above
+      # already — don't pay a second build here
+      - run: bunx --bun playwright test
         env:
           TANDEM_E2E_URL: http://localhost:4100
           TANDEM_E2E_DATABASE_URL: postgresql://tandem:tandem@127.0.0.1:5432/tandem_e2e
+      - name: Upload playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+      # images publish through release.yml without re-running this suite on
+      # that path — a Dockerfile/regression that only breaks the image must
+      # fail CI here, before anything ships. Build only; no push.
+      - name: Docker build smoke
+        run: docker build --build-arg APP_VERSION=ci -t tandem:ci .

@@ -1,4 +1,5 @@
-// OIDC provider registry — stored as JSON in settings (key: oidc_providers).
+// OIDC provider registry — stored as JSON in settings (key: oidc_providers),
+// envelope-encrypted at rest via the vault crypto (TANDEM_VAULT_KEY).
 // Env fallback seeds ONE provider (legacy/simple deployments):
 //   TANDEM_OIDC_ISSUER / TANDEM_OIDC_CLIENT_ID / TANDEM_OIDC_CLIENT_SECRET
 //   TANDEM_OIDC_LABEL (display name, default "SSO")
@@ -6,10 +7,11 @@
 import { consola } from 'consola';
 import { z } from 'zod';
 
-const log = consola.withTag('tandem');
-
 import { env } from '../kernel/env';
 import { getSetting, setSetting } from '../settings/settings.service';
+import { decryptSecret, encryptSecret } from '../vault/secret/secret-crypto.service';
+
+const log = consola.withTag('tandem');
 
 export type OidcProvider = {
   id: string;
@@ -29,17 +31,35 @@ export const oidcProviderSchema = z.strictObject({
 
 const REGISTRY_KEY = 'oidc_providers';
 
-export async function getOidcProviders() {
-  const raw = await getSetting(REGISTRY_KEY);
-  if (raw) {
-    try {
-      const parsed = z.array(oidcProviderSchema).safeParse(JSON.parse(raw));
-      if (parsed.success) return parsed.data;
-      log.warn('stored OIDC registry failed validation — ignoring');
-    } catch {
-      log.warn('stored OIDC registry is not valid JSON — ignoring');
-    }
+/** parse + validate one registry JSON document; null = unusable */
+function parseRegistry(json: string): OidcProvider[] | null {
+  try {
+    const parsed = z.array(oidcProviderSchema).safeParse(JSON.parse(json));
+    if (parsed.success) return parsed.data;
+    log.warn('stored OIDC registry failed validation — ignoring');
+  } catch {
+    log.warn('stored OIDC registry is not valid JSON — ignoring');
   }
+  return null;
+}
+
+async function loadStoredRegistry(): Promise<OidcProvider[] | null> {
+  const raw = await getSetting(REGISTRY_KEY);
+  if (!raw) return null;
+  // the blob is envelope-encrypted at rest; a pre-encryption plaintext registry
+  // (or corrupted value) is not a valid envelope and is parsed/fallback as-is
+  let json = raw;
+  try {
+    json = decryptSecret(raw);
+  } catch {
+    // not a vault envelope — keep raw for the legacy-plaintext path below
+  }
+  return parseRegistry(json);
+}
+
+export async function getOidcProviders() {
+  const stored = await loadStoredRegistry();
+  if (stored) return stored;
   // env fallback (static vars from the boot contract)
   if (env.TANDEM_OIDC_ISSUER && env.TANDEM_OIDC_CLIENT_ID && env.TANDEM_OIDC_CLIENT_SECRET) {
     return [
@@ -56,5 +76,6 @@ export async function getOidcProviders() {
 }
 
 export async function saveOidcProviders(providers: OidcProvider[]) {
-  await setSetting(REGISTRY_KEY, JSON.stringify(providers));
+  // encrypt the WHOLE registry blob — settings rows are not secret-safe by default
+  await setSetting(REGISTRY_KEY, encryptSecret(JSON.stringify(providers)));
 }

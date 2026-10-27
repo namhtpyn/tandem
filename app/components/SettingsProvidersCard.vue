@@ -65,13 +65,17 @@ async function saveMProv() {
   mProvBusy.value = true;
   mProvMessage.value = '';
   try {
+    // one 'Name: value' per line — split on the FIRST ':' only, so values with
+    // colons (https:// URLs, timestamps) survive; unparsable lines are skipped
     const headers = mProvForm.extraHeaders.trim()
       ? Object.fromEntries(
           mProvForm.extraHeaders
             .split('\n')
-            .map((l) => l.split(':').map((p) => p.trim()))
-            .filter((p) => p.length === 2)
-            .map((p) => [nonNull(p[0]), nonNull(p[1])]),
+            .map((l) => {
+              const idx = l.indexOf(':');
+              return idx > 0 ? ([l.slice(0, idx).trim(), l.slice(idx + 1).trim()] as const) : null;
+            })
+            .filter((p): p is readonly [string, string] => p !== null),
         )
       : undefined;
     await $client.providers.save({
@@ -90,11 +94,21 @@ async function saveMProv() {
   }
 }
 
-async function removeMProv(id: string) {
+const pendingRemove = ref<ModelProviderRow | null>(null);
+const removeOpen = computed({
+  get: () => pendingRemove.value !== null,
+  set: (v: boolean) => {
+    if (!v) pendingRemove.value = null;
+  },
+});
+
+async function removeMProv() {
+  if (!pendingRemove.value) return;
   mProvBusy.value = true;
   mProvMessage.value = '';
   try {
-    await $client.providers.remove({ id });
+    await $client.providers.remove({ id: pendingRemove.value.id });
+    pendingRemove.value = null;
   } catch (e) {
     mProvMessage.value = e instanceof Error ? e.message : 'delete failed';
   } finally {
@@ -168,8 +182,8 @@ onServerPrefetch(() => providersLive.suspense());
                   color="error"
                   size="sm"
                   aria-label="Delete provider"
-                  :loading="mProvBusy"
-                  @click="removeMProv(p.id)"
+                  :disabled="mProvBusy"
+                  @click="pendingRemove = p"
                 />
                 <template #content>
                   <div class="px-3 py-1.5 text-xs">Delete provider</div>
@@ -237,8 +251,8 @@ onServerPrefetch(() => providersLive.suspense());
                     color="error"
                     size="xs"
                     aria-label="Delete provider"
-                    :loading="mProvBusy"
-                    @click="removeMProv(row.original.id)"
+                    :disabled="mProvBusy"
+                    @click="pendingRemove = row.original"
                   />
                   <template #content>
                     <div class="px-3 py-1.5 text-xs">Delete provider</div>
@@ -356,6 +370,25 @@ onServerPrefetch(() => providersLive.suspense());
           :label="mProvEditingId ? 'Save changes' : 'Add provider'"
           form="provider-editor-form"
         />
+      </div>
+    </template>
+  </UModal>
+
+  <!-- delete confirm (same pattern as the vault/environment delete confirms) -->
+  <UModal v-model:open="removeOpen" title="Delete provider">
+    <template #body>
+      <div class="space-y-4">
+        <p class="text-sm text-zinc-600 dark:text-zinc-300">
+          Delete provider
+          <span class="font-semibold text-zinc-900 dark:text-white">{{ pendingRemove?.label }}</span
+          >? Agents and workspace assignments using it will need a new endpoint.
+        </p>
+      </div>
+    </template>
+    <template #footer>
+      <div class="flex w-full justify-end gap-2">
+        <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingRemove = null" />
+        <UButton icon="i-lucide-trash-2" color="error" label="Delete" :loading="mProvBusy" @click="removeMProv" />
       </div>
     </template>
   </UModal>

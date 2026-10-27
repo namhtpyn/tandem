@@ -595,7 +595,7 @@ describe('employees model access', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
-  it('deleting the key secret nulls the agent reference (set null)', async () => {
+  it('deleting a key secret in use by an AI employee is refused (no silent unlink)', async () => {
     const { db } = await dbm();
     const { environments } = await import('#server/db/schema');
     await db.insert(environments).values({
@@ -606,7 +606,7 @@ describe('employees model access', () => {
       username: '00000000-0000-7000-8000-51e69892ab49',
     });
     const sec = await callProc('vault.secrets.create', { name: 'gone-key', value: 'sk-gone' });
-    const bot = await callProc('employees.create', {
+    await callProc('employees.create', {
       name: 'S Bot',
       email: 'sbot@tandem.local',
       kind: 'ai',
@@ -615,12 +615,48 @@ describe('employees model access', () => {
       apiKeySecretId: sec.id,
       executable: 'hermes acp',
     });
-    await callProc('vault.secrets.remove', { id: sec.id });
-    const { aiEmployees } = await import('#server/db/schema');
-    const ai = (await db.select().from(aiEmployees))[0]!;
-    expect(ai.apiKeySecretId).toBeNull();
-    expect(bot.id).toBeTruthy();
+    // in-use guard: the agent keeps its key until explicitly rotated
+    await expect(callProc('vault.secrets.remove', { id: sec.id })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('secret is in use'),
+    });
   });
+
+  it('deleting an employee who owns vault secrets is refused', async () => {
+    const { db } = await dbm();
+    const { environments } = await import('#server/db/schema');
+    await db.insert(environments).values({
+      id: 'env-owned',
+      name: 'env-owned',
+      host: '127.0.0.1',
+      username: '00000000-0000-7000-8000-51e69892ab49',
+    });
+    const sec = await callProc('vault.secrets.create', { name: 'owned-key', value: 'v', description: '' });
+    await callProc('employees.create', {
+      name: 'Owner Bot',
+      email: 'owner-bot@tandem.local',
+      kind: 'ai',
+      title: 'B',
+      environmentId: 'env-owned',
+      apiKeySecretId: sec.id,
+      executable: 'hermes acp',
+    });
+    const { user } = await import('#server/db/schema');
+    const bot = (await db.select().from(user)).find((u: { email: string }) => u.email === 'owner-bot@tandem.local')!;
+    // the secret was created by the admin session — reassign ownership to the bot
+    const { vaultSecrets } = await import('#server/db/schema');
+    await db.update(vaultSecrets).set({ createdBy: bot.id }).where(eq(vaultSecrets.id, sec.id));
+    // link the owned secret to an environment so the env-blocker arm reports too
+    await db.update(environments).set({ secretId: sec.id }).where(eq(environments.id, 'env-owned'));
+    // the same owned secret is the agent's key — the AI-employees blocker arm reports too
+    const { aiEmployees } = await import('#server/db/schema');
+    await db.update(aiEmployees).set({ apiKeySecretId: sec.id });
+    await expect(callProc('employees.remove', { id: bot.id })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('AI employees'),
+    });
+  });
+
 });
 
 describe('provider styles', () => {
@@ -729,5 +765,28 @@ describe('models probe payload arms', () => {
     } finally {
       globalThis.fetch = origFetch;
     }
+  });
+
+  it('remove is blocked while settings assign the provider (internal LLM / decision)', async () => {
+    const { db } = await dbm();
+    // assign a REAL provider as the workspace LLM through the settings API
+    const prov = await callProc('providers.save', {
+      label: 'InUse Prov',
+      baseUrl: 'https://inuse.example.com',
+      endpoints: ['OPENAI-COMPLETIONS'],
+    });
+    const sec = await callProc('vault.secrets.create', { name: 'inuse-llm-key', value: 'sk-inuse' });
+    await callProc('settings.update', { internalLlm: { providerId: prov.id, keySecretId: sec.id, model: 'm1' } });
+    // decision-engine arm: needs a DECISION-endpoint provider
+    const prov2 = await callProc('providers.save', {
+      label: 'InUse Decision',
+      baseUrl: 'https://inuse2.example.com',
+      endpoints: ['OPENAI-COMPLETIONS', 'OPENAI-DECISIONS'],
+    });
+    await callProc('settings.update', { internalDecision: { providerId: prov2.id, keySecretId: sec.id, model: 'm1' } });
+    await expect(callProc('providers.remove', { id: prov2.id })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('provider is in use'),
+    });
   });
 });

@@ -19,3 +19,17 @@ export const environmentInput = z.strictObject({
 });
 
 export type EnvironmentInput = z.infer<typeof environmentInput>;
+
+/** update variant: optional keys — an omitted field keeps its stored value
+ *  instead of silently resetting (port/secret) */
+export const environmentUpdateInput = z.strictObject({
+  id: z.string().min(1),
+  name: environmentInput.shape.name.optional(),
+  host: environmentInput.shape.host.optional(),
+  port: environmentInput.shape.port.removeDefault().optional(),
+  username: environmentInput.shape.username.optional(),
+  secretId: environmentInput.shape.secretId.removeDefault().optional(),
+  secretUsage: environmentInput.shape.secretUsage.removeDefault().optional(),
+});
+
+export type EnvironmentUpdateInput = z.infer<typeof environmentUpdateInput>;

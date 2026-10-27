@@ -27,6 +27,38 @@ jobs:
     outputs:
       released: ${{ steps.semrel.outputs.new_release_published }}
       version: ${{ steps.semrel.outputs.new_release_version }}
+    # The docker job publishes `needs.release`'s tag WITHOUT re-running this
+    # suite — so the gates must run HERE, on the exact push SHA that gets
+    # tagged, BEFORE semantic-release cuts anything. No green release job →
+    # no tag → no image.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: tandem
+          POSTGRES_PASSWORD: tandem
+          POSTGRES_DB: tandem_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tandem"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6399:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://tandem:tandem@127.0.0.1:5432/tandem_test
+      TANDEM_TEST_DATABASE_URL: postgresql://tandem:tandem@127.0.0.1:5432/tandem_test
+      REDIS_URL: redis://127.0.0.1:6399
+      BETTER_AUTH_SECRET: ci-secret-not-for-prod
     steps:
       - uses: actions/checkout@v7
         with:
@@ -39,19 +71,33 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
-        env:
-          # postinstall (nuxt prepare) imports the db client module which
-          # asserts DATABASE_URL; a non-connecting placeholder is enough for
-          # typegen — the real build below also gets one (no queries run).
-          DATABASE_URL: postgresql://placeholder@127.0.0.1:5432/placeholder
 
       - name: Build
         run: bun run build
-        env:
-          DATABASE_URL: postgresql://placeholder@127.0.0.1:5432/placeholder
 
       - name: Typecheck
         run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint:check
+
+      - name: Format check
+        run: bun run format:check
+
+      - name: Unit tests (coverage gate)
+        run: bun run test:coverage
+
+      - name: Create e2e database
+        run: docker exec ${{ job.services.postgres.id }} psql -U tandem -d tandem_test -c 'create database tandem_e2e owner tandem'
+      - name: Install playwright chromium
+        run: bunx playwright install --with-deps chromium
+      # direct invocation, NOT `bun run test:e2e` — CI built above; the
+      # script's pretest:e2e hook (fresh local builds) must not double-build
+      - name: E2E tests
+        run: bunx --bun playwright test
+        env:
+          TANDEM_E2E_URL: http://localhost:4100
+          TANDEM_E2E_DATABASE_URL: postgresql://tandem:tandem@127.0.0.1:5432/tandem_e2e
 
       - name: Semantic Release
         id: semrel

@@ -1,4 +1,4 @@
-import { eq, asc } from 'drizzle-orm';
+import { eq, asc, and } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import {
@@ -21,11 +21,11 @@ import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { tasks, taskActivity, employeeSupervisors } from '../../db/schema';
+import { tasks, taskActivity, employeeSupervisors, taskReviews } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { refreshParentGating, hasOpenChildren } from './gating.service';
 import { spawnObligation, resolveObligation, cancelObligations, answerHolder } from './obligations.service';
-import { openRoundLive, dispatchAiReviewTurns, openReviewRound, recordVerdict } from './review.service';
+import { openRoundLive, dispatchAiReviewTurns, openReviewRound, recordVerdict, currentRound } from './review.service';
 
 export const WAITING_ANSWER_STATUS = STATUS.waitingAnswer;
 export const IN_REVIEW_STATUS = STATUS.inReview;
@@ -77,6 +77,29 @@ export async function askQuestion(taskId: string, authorId: string, body: string
   // (the round stays open — answering flips back to in-review, the review continues)
   if (task.status !== DOING_STATUS && task.status !== IN_REVIEW_STATUS)
     throw new Error('only a task in progress or review can ask');
+  // identity gate: only the assignee, the owner, or a reviewer with a PENDING verdict
+  // this round (an AI review turn asks instead of approving — REVIEW LAW) may stall
+  // the task; nobody else can park someone else's work
+  let isParty = task.assigneeId === authorId || task.ownerId === authorId || task.createdBy === authorId;
+  if (!isParty) {
+    const round = await currentRound(taskId);
+    isParty =
+      round > 0 &&
+      (
+        await db
+          .select({ id: taskReviews.id })
+          .from(taskReviews)
+          .where(
+            and(
+              eq(taskReviews.taskId, taskId),
+              eq(taskReviews.round, round),
+              eq(taskReviews.reviewerId, authorId),
+              eq(taskReviews.status, REVIEW_STATUS.PENDING),
+            ),
+          )
+      ).length > 0;
+  }
+  if (!isParty) throw new Error('only the assignee, the owner or a pending reviewer can ask');
   await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
   await spawnObligation(taskId, holder, OBLIGATION_ROLE.ANSWER);
   await db
@@ -158,12 +181,19 @@ export async function submitResult(taskId: string, authorId: string, body: strin
   // explicit reviewers only (owner ruling 2026-10-26): the org supervisor is NOT a
   // quality gate — a task with nobody set completes immediately
   const reviewers = task.reviewers;
-  const nextStatus = reviewers.length > 0 ? IN_REVIEW_STATUS : DONE_STATUS;
-  await db.update(tasks).set({ status: nextStatus, updatedAt: new Date() }).where(eq(tasks.id, taskId));
-  if (reviewers.length > 0) await openReviewRound(taskId, reviewers, body);
   await logActivity(taskId, ACTIVITY_KIND.VERDICT, authorId, body, { submitted: true, reviewers });
+  if (reviewers.length > 0) {
+    // open the round BEFORE flipping the status: a failed round-open must leave the
+    // task doing (error surfaced to the caller), never parked in-review with no
+    // round rows to settle it out
+    await openReviewRound(taskId, reviewers, body);
+    await db.update(tasks).set({ status: IN_REVIEW_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
+    await refreshParentGating(taskId);
+    return { status: IN_REVIEW_STATUS };
+  }
+  await db.update(tasks).set({ status: DONE_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   await refreshParentGating(taskId);
-  return { status: nextStatus };
+  return { status: DONE_STATUS };
 }
 
 /** reviewer approves — writes the task_reviews row via recordVerdict */
@@ -180,6 +210,7 @@ export async function rejectReview(taskId: string, authorId: string, body: strin
   const task = await getTask(taskId);
   if (task.status !== IN_REVIEW_STATUS) throw new Error('task is not in review');
   await recordVerdict(taskId, authorId, REVIEW_STATUS.REJECTED, body, 'human');
+  await refreshParentGating(taskId);
   return { ok: true };
 }
 
@@ -202,6 +233,23 @@ export async function abandonReview(taskId: string, authorId: string, body: stri
   if (!isReviewer && !isOwner) throw new Error('only a reviewer or the owner can abandon');
   await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
   await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
+  // close the round's PENDING rows too: once cancelled, nothing PENDING may remain
+  // for a late AI verdict to settle (recordVerdict's terminal gate backstops this).
+  // CHANGE_REQUESTED is the closed-round marker — the closed enum has no SUPERSEDED
+  // value, and the task status carries the real outcome (cancelled).
+  const round = await currentRound(taskId);
+  if (round > 0) {
+    await db
+      .update(taskReviews)
+      .set({ status: REVIEW_STATUS.CHANGE_REQUESTED, decidedAt: new Date() })
+      .where(
+        and(
+          eq(taskReviews.taskId, taskId),
+          eq(taskReviews.round, round),
+          eq(taskReviews.status, REVIEW_STATUS.PENDING),
+        ),
+      );
+  }
   // abandoned == cancelled (one terminal, no fake distinction)
   await db.update(tasks).set({ status: CANCELLED_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   await logActivity(taskId, ACTIVITY_KIND.VERDICT, authorId, body || 'cancelled', { abandon: true });

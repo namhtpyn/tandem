@@ -9,11 +9,16 @@ import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { environments as environmentsTable, vaultSecrets as vaultSecretsTable } from '../../db/schema';
+import {
+  aiEmployees as aiEmployeesTable,
+  environments as environmentsTable,
+  user as userTable,
+  vaultSecrets as vaultSecretsTable,
+} from '../../db/schema';
 import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
 import { listEnvironments, listEnvironmentsPaged, toRow } from './environments.service';
-import { environmentInput } from './environments.util';
+import { environmentInput, environmentUpdateInput } from './environments.util';
 import { probeSsh } from './ssh-probe.service';
 
 export const environmentsRouter = os.router({
@@ -59,10 +64,9 @@ export const environmentsRouter = os.router({
     return toRow(nonNull(inserted[0]));
   }),
 
-  update: protectedProcedure
-    .input(z.strictObject({ id: z.string().min(1), ...environmentInput.shape }))
-    .handler(async ({ input }) => {
-      const { id, ...data } = input;
+  update: protectedProcedure.input(environmentUpdateInput).handler(async ({ input }) => {
+    const { id, ...data } = input;
+    if (data.name !== undefined) {
       const clash = await db
         .select({ id: environmentsTable.id })
         .from(environmentsTable)
@@ -70,28 +74,52 @@ export const environmentsRouter = os.router({
       if (clash.some((c: { id: string }) => c.id !== id)) {
         throw new ORPCError('CONFLICT', { message: `environment "${data.name}" already exists` });
       }
-      if (data.secretId) {
-        const secret = await db
-          .select({ id: vaultSecretsTable.id })
-          .from(vaultSecretsTable)
-          .where(eq(vaultSecretsTable.id, data.secretId));
-        if (secret.length === 0) {
-          throw new ORPCError('NOT_FOUND', { message: 'linked secret not found' });
-        }
+    }
+    if (data.secretId) {
+      const secret = await db
+        .select({ id: vaultSecretsTable.id })
+        .from(vaultSecretsTable)
+        .where(eq(vaultSecretsTable.id, data.secretId));
+      if (secret.length === 0) {
+        throw new ORPCError('NOT_FOUND', { message: 'linked secret not found' });
       }
-      const updated = await db
-        .update(environmentsTable)
-        .set({ ...data, updatedAt: new Date() })
-        .where(eq(environmentsTable.id, id))
-        .returning();
-      if (updated.length === 0) {
-        throw new ORPCError('NOT_FOUND', { message: 'environment not found' });
-      }
-      await publishChange(CHANGE_RESOURCE.ENVIRONMENTS, CHANGE_ACTION.UPDATE);
-      return toRow(nonNull(updated[0]));
-    }),
+    }
+    // partial update: only provided keys land in the patch — omitted port/secret
+    // fields keep their stored values (the update schema carries no defaults)
+    const updated = await db
+      .update(environmentsTable)
+      .set({
+        ...(data.name !== undefined ? { name: data.name } : {}),
+        ...(data.host !== undefined ? { host: data.host } : {}),
+        ...(data.username !== undefined ? { username: data.username } : {}),
+        ...(data.port !== undefined ? { port: data.port } : {}),
+        ...(data.secretId !== undefined ? { secretId: data.secretId } : {}),
+        ...(data.secretUsage !== undefined ? { secretUsage: data.secretUsage } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(environmentsTable.id, id))
+      .returning();
+    if (updated.length === 0) {
+      throw new ORPCError('NOT_FOUND', { message: 'environment not found' });
+    }
+    await publishChange(CHANGE_RESOURCE.ENVIRONMENTS, CHANGE_ACTION.UPDATE);
+    return toRow(nonNull(updated[0]));
+  }),
 
   remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+    // ai_employees.environment_id is ON DELETE RESTRICT — pre-check so the caller
+    // gets a clean 4xx naming the employee instead of a raw 23503 FK violation
+    const linkedUsers = await db
+      .select({ name: userTable.name })
+      .from(aiEmployeesTable)
+      .innerJoin(userTable, eq(userTable.id, aiEmployeesTable.userId))
+      .where(eq(aiEmployeesTable.environmentId, input.id))
+      .limit(1);
+    if (linkedUsers.length > 0) {
+      throw new ORPCError('BAD_REQUEST', {
+        message: `environment is in use by AI employee ${nonNull(linkedUsers[0]).name}`,
+      });
+    }
     const deleted = await db
       .delete(environmentsTable)
       .where(eq(environmentsTable.id, input.id))

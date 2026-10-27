@@ -198,4 +198,10 @@ describe('task project linkage', () => {
       ok: true,
     });
   });
+
+  it('remove of a nonexistent project is NOT_FOUND (not silent ok)', async () => {
+    await expect(callProc('projects.remove', { id: 'no-such-project' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
 });

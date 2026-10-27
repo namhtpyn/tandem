@@ -21,6 +21,7 @@
     "test:coverage": "bun --bun vitest run --coverage",
     "test:e2e": "bunx --bun playwright test",
     "test:e2e:ui": "bunx --bun playwright test --ui",
+    "pretest:e2e": "bun run build",
     "postinstall": "nuxt prepare",
     "gen:auth": "bun run scripts/gen-auth-schema.ts",
     "lint:fix": "bunx --bun oxlint --fix",

@@ -40,8 +40,9 @@ test.describe('model providers', () => {
     await page.getByRole('button', { name: 'Add provider' }).last().click();
     const row = page.locator('tr', { hasText: name });
     await expect(row).toBeVisible();
-    // delete via that row's own button
+    // delete via that row's own button, then confirm in the modal (two-step delete law)
     await row.getByRole('button', { name: 'Delete provider' }).click();
+    await page.getByRole('button', { name: 'Delete', exact: true }).last().click();
     await expect(page.locator('tr', { hasText: name })).toHaveCount(0);
   });
 

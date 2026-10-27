@@ -34,10 +34,11 @@ export async function ensureOutDir(ClientCtor: typeof Client, plan: SshFilePlan,
   const conn = await connect(ClientCtor, plan, timeoutMs);
   try {
     const out = taskFilesOutDir(taskId);
-    await exec(conn, `mkdir -p ${out}`);
+    await exec(conn, `mkdir -p ${out}`, timeoutMs);
     await exec(
       conn,
       `chown -R 10000:10000 ${TASK_FILES_HOME}/${taskId} 2>/dev/null || chmod -R a+rwX ${TASK_FILES_HOME}/${taskId}`,
+      timeoutMs,
     );
   } finally {
     conn.end();
@@ -71,6 +72,9 @@ function connect(ClientCtor: typeof Client, plan: SshFilePlan, timeoutMs = 20_00
         privateKey: plan.sshKey,
         password: plan.sshPassword,
         readyTimeout: 20_000,
+        // idle NAT/firewall drops kill silent connections mid-transfer — keepalive
+        // keeps the shuttle channel alive for long collect/put sessions
+        keepaliveInterval: 10_000,
       });
   });
 }
@@ -89,7 +93,11 @@ function fastGet(sftp: import('ssh2').SFTPWrapper, remote: string, local: string
   return new Promise<void>((resolve, reject) => sftp.fastGet(remote, local, (err) => (err ? reject(err) : resolve())));
 }
 
-function exec(conn: Client, cmd: string): Promise<string> {
+/** per-exec ceiling: a hung remote command must fail the shuttle step, not wedge the
+ * run (collect/cleanup run DETACHED after settle — an unterminated exec would leak forever) */
+const EXEC_TIMEOUT_MS = 120_000;
+
+function exec(conn: Client, cmd: string, timeoutMs = EXEC_TIMEOUT_MS): Promise<string> {
   return new Promise((resolve, reject) => {
     conn.exec(cmd, (err, stream) => {
       if (err) {
@@ -97,10 +105,19 @@ function exec(conn: Client, cmd: string): Promise<string> {
         return;
       }
       let out = '';
+      /* v8 ignore next 4 -- fires only on a stalled sshd; needs a fake transport */
+      const t = setTimeout(() => {
+        stream.close();
+        reject(new Error(`ssh exec timed out after ${Math.round(timeoutMs / 1000)}s: ${cmd.slice(0, 80)}`));
+      }, timeoutMs);
+      t.unref?.();
       stream.on('data', (d: Buffer) => {
         out += d.toString();
       });
-      stream.on('close', () => resolve(out.trim()));
+      stream.on('close', () => {
+        clearTimeout(t);
+        resolve(out.trim());
+      });
       stream.stderr?.on('data', () => {}); // best-effort; errors surface via close
       stream.end();
     });
@@ -119,7 +136,7 @@ export async function pushTaskFiles(
   const conn = await connect(ClientCtor, plan, timeoutMs);
   try {
     const dir = taskFilesDir(taskId);
-    await exec(conn, `mkdir -p ${dir}`);
+    await exec(conn, `mkdir -p ${dir}`, timeoutMs);
     const sftp = await sftpOf(conn);
     for (const f of files) {
       await fastPut(sftp, f.localPath, `${dir}/${f.remoteName}`);
@@ -128,6 +145,7 @@ export async function pushTaskFiles(
     await exec(
       conn,
       `chown -R 10000:10000 ${TASK_FILES_HOME}/${taskId} 2>/dev/null || chmod -R a+rwX ${TASK_FILES_HOME}/${taskId}`,
+      timeoutMs,
     );
   } finally {
     try {
@@ -154,13 +172,18 @@ export async function collectRunOutputs(
   try {
     const outDir = taskFilesOutDir(taskId);
     let names: string[] = [];
-    const listing = await exec(conn, `find ${outDir} -maxdepth 1 -type f -printf '%f\\n' 2>/dev/null || true`);
+    const listing = await exec(
+      conn,
+      `find ${outDir} -maxdepth 1 -type f -printf '%f\\n' 2>/dev/null || true`,
+      timeoutMs,
+    );
     names = listing ? listing.split('\n').filter(Boolean) : [];
     if (!names.length) return [];
     // size check first — an agent dumping node_modules gets truncated, not stored
     const duRaw = await exec(
       conn,
       `du -cb ${names.map((n) => `'${outDir}/${n.replace(/'/g, "'\\''")}'`).join(' ')} 2>/dev/null | tail -1`,
+      timeoutMs,
     );
     const total = Number((duRaw.match(/(\d+)\s+total$/) || [])[1] ?? '0');
     if (total > maxBytes) return [];
@@ -204,7 +227,7 @@ export async function cleanupTaskFiles(
 ) {
   const conn = await connect(ClientCtor, plan, timeoutMs);
   try {
-    await exec(conn, `rm -rf ${TASK_FILES_HOME}/${taskId}`);
+    await exec(conn, `rm -rf ${TASK_FILES_HOME}/${taskId}`, timeoutMs);
   } finally {
     try {
       conn.end();

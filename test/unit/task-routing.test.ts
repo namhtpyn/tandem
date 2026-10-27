@@ -32,7 +32,6 @@ import {
 import { STATUS } from '#shared/status';
 import type { TaskRow } from '#shared/types';
 
-import { parseRoutingProposals } from '../../app/utils/task-thread.ts';
 import { makeProcCaller } from './helpers/procs.ts';
 
 const admin = {
@@ -156,46 +155,7 @@ beforeEach(async () => {
   await mkEmployee('solo', 'Solo Person', 'solo@tandem.local');
 });
 
-describe('parseRoutingProposals', () => {
-  it('parses subtask lists and reassign with reason, ignores prose', () => {
-    const out = [
-      'Did the analysis.',
-      '[SUBTASKS] Draft legal review :: contract clauses :: Peer Person | Fix CSS :: layout bugs :: Report Guy',
-      '[REASSIGN] Peer Person — the whole thing is legal work',
-      '{"kind": "result", "body": "analysis complete"}',
-    ].join('\n');
-    expect(parseRoutingProposals(out)).toEqual([
-      {
-        kind: PROPOSAL_KIND.SUBTASKS,
-        items: [
-          { title: 'Draft legal review', description: 'contract clauses', assigneeName: 'Peer Person' },
-          { title: 'Fix CSS', description: 'layout bugs', assigneeName: 'Report Guy' },
-        ],
-      },
-      { kind: PROPOSAL_KIND.REASSIGN, targetName: 'Peer Person', reason: 'the whole thing is legal work' },
-    ]);
-  });
 
-  it('empty titles filtered; missing reason optional; no markers = no proposals', () => {
-    expect(parseRoutingProposals('[SUBTASKS] :: desc :: Someone')).toEqual([]);
-    expect(parseRoutingProposals('[REASSIGN] Nobody')).toEqual([
-      { kind: PROPOSAL_KIND.REASSIGN, targetName: 'Nobody', reason: undefined },
-    ]);
-    expect(parseRoutingProposals('plain output\n{"kind": "result", "body": "done"}')).toEqual([]);
-    expect(parseRoutingProposals(null)).toEqual([]);
-  });
-
-  it('item budget: >20 items on one line truncate to 20; proposals per output cap at 10', () => {
-    const items = Array.from({ length: 25 }, (_, i) => `Item ${i + 1}`).join(' | ');
-    const parsed = parseRoutingProposals(`[SUBTASKS] ${items}`);
-    expect(parsed).toHaveLength(1);
-    expect(parsed[0].kind).toBe(PROPOSAL_KIND.SUBTASKS);
-    expect((parsed[0] as { items: unknown[] }).items).toHaveLength(20);
-
-    const lines = Array.from({ length: 12 }, (_, i) => `[REASSIGN] Person ${i + 1}`).join('\n');
-    expect(parseRoutingProposals(lines)).toHaveLength(10);
-  });
-});
 
 describe('obligations', () => {
   it('ask spawns a pending answer obligation; forward MOVES it; answer resolves it', async () => {
@@ -626,14 +586,7 @@ describe('routing coverage arms', () => {
     expect(rootBrief).not.toContain('This is a subtask of');
   });
 
-  it('parser: empty segments become undefined; multiple items; reassign without reason', () => {
-    expect(parseRoutingProposals('[SUBTASKS] A :: :: Peer Person')).toEqual([
-      { kind: PROPOSAL_KIND.SUBTASKS, items: [{ title: 'A', description: undefined, assigneeName: 'Peer Person' }] },
-    ]);
-    expect(parseRoutingProposals('[SUBTASKS] B')).toEqual([
-      { kind: PROPOSAL_KIND.SUBTASKS, items: [{ title: 'B', description: undefined, assigneeName: undefined }] },
-    ]);
-  });
+
 });
 
 describe('routing coverage arms II', () => {
@@ -842,5 +795,48 @@ describe('routing coverage arms II', () => {
     expect(hist.items[0].employeeName).toBeNull();
     expect(hist.items[0].endedAt).toBeNull();
     expect(hist.items[1].endedAt).toBeTruthy();
+  });
+
+  it('dead-round gate: a verdict on a bounced round refuses with round closed', async () => {
+    const { recordVerdict } = await import('#server/domains/tasks/review.service');
+    const t = await mkTask({ title: 'DeadRound', assigneeId: idMap.get('worker')! });
+    // a CHANGE_REQUESTED round is dead — any verdict on it refuses
+    const { db } = await import('#server/db');
+    const { taskReviews, tasks } = await import('#server/db/schema');
+    await db.update(tasks).set({ status: STATUS.inReview }).where(eq(tasks.id, t.id));
+    // the caller's row is still pending; ANOTHER reviewer already bounced the round
+    await db.insert(taskReviews).values([
+      {
+        id: 'dr-1',
+        taskId: t,
+        reviewerId: idMap.get('worker')!,
+        round: 1,
+        status: 'PENDING',
+        createdAt: new Date(),
+      },
+      {
+        id: 'dr-2',
+        taskId: t,
+        reviewerId: idMap.get('admin') ?? '00000000-0000-7000-8000-cd5fca5e2d34',
+        round: 1,
+        status: 'CHANGE_REQUESTED',
+        createdAt: new Date(),
+      },
+    ]);
+    await expect(
+      recordVerdict(t, idMap.get('worker')!, 'APPROVED', 'late', 'human'),
+    ).rejects.toThrow(/review round already closed/);
+  });
+
+  it('recordVerdict refuses a non-reviewer; normalize handles scalars/null', async () => {
+    const { recordVerdict } = await import('#server/domains/tasks/review.service');
+    const t = await mkTask({ title: 'NotReviewer', assigneeId: idMap.get('worker')! });
+    await expect(recordVerdict(t, idMap.get('solo')!, 'APPROVED', 'x', 'human')).rejects.toThrow(
+      /no open review round|not a reviewer/,
+    );
+    const { normalizeActivityPayload } = await import('#server/domains/tasks/thread.service');
+    expect(normalizeActivityPayload(null)).toBeNull();
+    expect(normalizeActivityPayload(42)).toBeNull();
+    expect(normalizeActivityPayload('"scalar"')).toBeNull();
   });
 });

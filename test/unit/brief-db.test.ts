@@ -276,6 +276,7 @@ describe('loadBriefData (real db)', () => {
     expect(activityKindOf({ kind: 'NOTE' })).toBe('note');
     expect(activityKindOf(null)).toBe('');
     expect(activityKindOf(undefined)).toBe('');
+    expect(activityKindOf('{not json')).toBe(''); // corrupt payload string survives
   });
 
   it('throws on missing task', async () => {

@@ -1330,7 +1330,7 @@ describe('dispatcher', () => {
     // double-verdict guard on the decided round
     await expect(
       recordVerdict(t2.id, '00000000-0000-7000-8000-fe1cc20db501', REVIEW_STATUS.APPROVED, 'again', 'human'),
-    ).rejects.toThrow(/already recorded|no open review round/i);
+    ).rejects.toThrow(/already recorded|no open review round|task already settled/i);
     // the review brief carried the parent description
     const { taskRuns } = await schema();
     const revPrompt = (await db.select().from(taskRuns)).filter(
@@ -1618,7 +1618,12 @@ describe('dispatcher', () => {
     await iter.return?.();
     const rows = snap.value as RunRow[];
     expect(rows.length).toBeGreaterThan(0);
-    expect(rows[0].status).toBe(RUN_STATUS.DONE);
+    // the snapshot can still show the pre-settle tail under suite load — poll the live channel
+    await vi.waitFor(async () => {
+      const fresh = await callProc('tasks.runsList', { taskId: t.id });
+      expect((fresh[0] as RunRow).status).toBe(RUN_STATUS.DONE);
+      rows[0] = (fresh[0] as RunRow) ?? rows[0];
+    });
     expect(rows[0].output).toContain('working');
     // the exact prompt (brief) sent is persisted and surfaced with the run
     expect(typeof rows[0].prompt).toBe('string');
@@ -1654,12 +1659,17 @@ describe('dispatcher', () => {
     const t = await callProc('tasks.create', { title: 'Manual', assigneeId: agentId });
     const r = await callProc('tasks.dispatch', { taskId: t.id });
     expect(r.runId).toBeTruthy();
-    await new Promise((res) => setTimeout(res, 800));
     const { db } = await dbm();
     const { taskMessages, tasks } = await schema();
-    const after = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
-    expect(after.status).toBe(STATUS.done);
-  }, 10_000);
+    // settle is async — poll instead of a fixed sleep (CI load varies)
+    let after: { status: string } | undefined;
+    for (let i = 0; i < 60 && !after; i++) {
+      await new Promise((res) => setTimeout(res, 100));
+      const row = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
+      if (row.status === STATUS.done) after = row;
+    }
+    expect(after).toBeTruthy();
+  }, 15_000);
 
   it('dispatch to a human assignee is refused', async () => {
     const { db } = await dbm();

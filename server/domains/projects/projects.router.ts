@@ -160,7 +160,12 @@ export const projectsRouter = os.router({
 
   /** delete — tasks orphan to no-project (set null); children orphan to root (set null); staff only */
   remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
-    await db.delete(projectsTable).where(eq(projectsTable.id, input.id));
+    const deleted = await db
+      .delete(projectsTable)
+      .where(eq(projectsTable.id, input.id))
+      .returning({ id: projectsTable.id });
+    // missing row must 404 like every sibling remove, not report success
+    if (deleted.length === 0) throw new ORPCError('NOT_FOUND', { message: 'project not found' });
     await publishChange(CHANGE_RESOURCE.PROJECTS, CHANGE_ACTION.REMOVE);
     return { ok: true };
   }),

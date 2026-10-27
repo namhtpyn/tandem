@@ -63,7 +63,9 @@ function byParentOf(list: ProjectRow[]) {
 }
 const byParent = computed(() => byParentOf(rows.value));
 
-// flat walk with depth + path for indentation; children of collapsed parents hidden
+// flat walk with depth + path for indentation; children of collapsed parents
+// hidden — EXCEPT while searching: hiding collapsed branches would swallow
+// matches under them, so the full filtered tree stays visible/navigable
 const collapsed = ref<Set<string>>(new Set());
 
 function toggleCollapse(id: string) {
@@ -75,22 +77,31 @@ function toggleCollapse(id: string) {
 
 const hasChildren = (id: string) => (byParent.value.get(id) ?? []).length > 0;
 
-interface FlatRow extends ProjectRow {
-  depth: number;
-  path: string;
-}
-const flat = computed<FlatRow[]>(() => {
+const searchQ = computed(() => search.value.trim().toLowerCase());
+
+/** depth+path flat walk; `respectCollapse` hides children of collapsed parents */
+function flattenTree(list: ProjectRow[], respectCollapse: boolean): FlatRow[] {
+  const map = byParentOf(list);
   const out: FlatRow[] = [];
   const walk = (parent: string | null, depth: number, path: string) => {
-    for (const r of byParent.value.get(parent) ?? []) {
+    for (const r of map.get(parent) ?? []) {
       const label = depth === 0 ? r.name : `${path} / ${r.name}`;
       out.push({ ...r, depth, path: label });
-      if (!collapsed.value.has(r.id)) walk(r.id, depth + 1, label);
+      if (respectCollapse && collapsed.value.has(r.id)) continue;
+      walk(r.id, depth + 1, label);
     }
   };
   walk(null, 0, '');
   return out;
-});
+}
+
+// display tree: children of collapsed parents hidden — EXCEPT while searching,
+// which would swallow matches under them; the filtered tree stays fully visible
+const flat = computed<FlatRow[]>(() => flattenTree(rows.value, !searchQ.value));
+
+// parent picker always walks the FULL tree (no search filter, no collapse) so
+// every project stays selectable no matter what the list above is doing
+const fullFlat = computed<FlatRow[]>(() => flattenTree(allRows.value, false));
 
 // parent options for the picker: any project except self and its descendants
 const parentItems = computed(() => {
@@ -108,7 +119,7 @@ const parentItems = computed(() => {
   }
   return [
     { label: 'No parent (top level)', value: '__none__' },
-    ...flat.value.filter((r) => !excluded.has(r.id)).map((r) => ({ label: r.path, value: r.id })),
+    ...fullFlat.value.filter((r) => !excluded.has(r.id)).map((r) => ({ label: r.path, value: r.id })),
   ];
 });
 

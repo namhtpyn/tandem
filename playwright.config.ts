@@ -1,8 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
-  // 4 workers starve the app server under load (random login/fill timeouts); 2 is the sweet spot locally
-  workers: process.env.CI ? 2 : 2,
+  // ONE worker, both locally and in CI: every spec shares the same e2e
+  // database, so parallel workers only race truncates and login state (and at
+  // 4+ they starved the app server into random login/fill timeouts). The
+  // shared-DB serial promise is the config's contract — no worker env tuning.
+  workers: 1,
   testDir: './test/e2e',
   timeout: 60_000,
   fullyParallel: false, // shared DB — serial by file

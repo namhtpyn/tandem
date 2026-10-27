@@ -178,6 +178,9 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
       :page-count="pageCount"
       :page-size="pageSize"
       :columns="columns"
+      show-empty-state
+      empty-icon="i-lucide-users"
+      empty-text="No employees yet — add the first human or AI teammate."
     >
       <template #name-cell="{ row }">
         <div class="flex items-center gap-2">
@@ -271,16 +274,18 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
       <template #mobile-item="{ row }">
         <UCard :ui="{ root: 'shadow-sm' }">
           <div class="flex items-start justify-between gap-2">
-            <div class="flex min-w-0 items-center gap-2">
+            <div class="flex min-w-0 items-start gap-2">
               <img
                 v-if="row.hasAvatar"
                 :src="`/api/employees/${row.id}/avatar`"
                 :alt="row.name"
                 class="size-8 shrink-0 rounded-full object-cover"
               />
-              <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
-              <p class="truncate font-mono text-xs text-zinc-400">{{ row.email }}</p>
-              <p v-if="row.title" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ row.title }}</p>
+              <div class="min-w-0">
+                <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
+                <p class="truncate font-mono text-xs text-zinc-400">{{ row.email }}</p>
+                <p v-if="row.title" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ row.title }}</p>
+              </div>
             </div>
             <UBadge
               :color="row.kind === 'ai' ? 'primary' : 'neutral'"
@@ -355,22 +360,6 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
         </UCard>
       </template>
     </DataTable>
-
-    <UCard v-if="view === 'list' && !rows.length" :ui="{ root: 'shadow-sm' }">
-      <div class="flex flex-col items-center gap-2 py-8 text-center">
-        <UIcon name="i-lucide-users" class="size-8 text-zinc-300" />
-        <p class="text-sm text-zinc-500">No employees yet — add the first human or AI teammate.</p>
-        <UButton
-          icon="i-lucide-briefcase"
-          size="sm"
-          label="Titles"
-          color="neutral"
-          variant="outline"
-          @click="titleManagerOpen = true"
-        />
-        <UButton icon="i-lucide-plus" size="sm" label="New employee" @click="openEditor()" />
-      </div>
-    </UCard>
 
     <!-- graph view: supervision hierarchy -->
     <EmployeeOrgGraph v-if="view === 'graph'" :rows="allEmployees" />

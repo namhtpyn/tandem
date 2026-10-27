@@ -3,26 +3,41 @@
 const session = useAppSession();
 const authConfig = useAuthConfigState();
 const appVersion = useAppVersion();
-useSessionRefreshing();
 
 const { $client } = useNuxtApp();
 
-const sess = await $client.auth.session();
-if (sess) session.value = sess as unknown as typeof session.value;
-
-// plain GET (SSE law: initial data comes from conventional queries; the
-// change-events subscription below refetches when auth-affecting settings/oidc
-// change). Plain POJO, devalue-serializable.
-authConfig.value = (await $client.auth.config()) as unknown as typeof authConfig.value;
+// The three setup GETs used to await one-by-one, tripling time-to-render — run
+// them in parallel. On failure the app cannot know who is signed in, so show
+// the Nuxt error page with a clean message instead of letting the raw RPC
+// error escape setup.
+try {
+  const [sess, config, meta] = await Promise.all([
+    $client.auth.session(),
+    $client.auth.config(),
+    $client.meta.version(),
+  ]);
+  // plain GETs (SSE law: initial data comes from conventional queries; the
+  // change-events subscription below refetches when auth-affecting
+  // settings/oidc change). Plain POJOs, devalue-serializable.
+  session.value = sess;
+  authConfig.value = config;
+  if (meta.version) appVersion.value = meta.version;
+} catch {
+  throw createError({
+    fatal: true,
+    statusCode: 503,
+    statusMessage: 'Tandem is unreachable',
+    message: 'Could not reach the Tandem server — it may be restarting. Try again in a moment.',
+  });
+}
 
 // SSE law enforcement: GET queries carry first-load data; this subscription
-// only invalidates them after the page is loaded.
+// only invalidates them after the page is loaded (it opens after mount, so it
+// never blocks hydration). Focus-refresh of the session lives in the layout —
+// useSessionRefreshing binds its listener once per tab.
 useChangeEvents();
 
-const v = await $client.meta.version();
-
 useHead({ titleTemplate: (t) => (t ? `${t} - Tandem` : 'Tandem') });
-if (v.version) appVersion.value = v.version;
 
 // Nuxt polls builds/latest.json (checkOutdatedBuildInterval) and fires this
 // hook when a newer build is deployed — offer a reload, client-side only

@@ -163,4 +163,6 @@ describe('task thread (task_messages base + extensions)', () => {
     await iter.return?.();
     expect((snap.value as Array<{ body: string }>)[0].body).toBe('human note');
   });
+
+
 });

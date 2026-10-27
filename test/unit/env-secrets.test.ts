@@ -173,21 +173,24 @@ describe('environment secret linkage', () => {
     expect(unlinked.secretId).toBeNull();
   });
 
-  it('deleting the secret set-nulls the environment link (no dangling FK)', async () => {
-    const secret = await callProc('vault.secrets.create', { name: 'doomed-key', value: 'v', description: 'ssh key' });
+  it('deleting a secret in use by an environment is refused (no silent unlink)', async () => {
+    const secret = await callProc('vault.secrets.create', { name: 'in-use', value: 'v', description: '' });
     const env = await callProc('environments.create', {
-      name: 'box',
+      name: 'in-use-box',
       host: 'h',
       port: '22',
       username: '00000000-0000-7000-8000-51e69892ab49',
       secretId: secret.id,
     });
-    await callProc('vault.secrets.remove', { id: secret.id });
-    const { db } = await dbm();
-    const { environments } = await schema();
-    const rows = await db.select().from(environments);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.secretId).toBeNull();
+    // in-use guard: the environment keeps its credential until explicitly unlinked
+    await expect(callProc('vault.secrets.remove', { id: secret.id })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('secret is in use'),
+    });
+    const { db: d2 } = await dbm();
+    const { environments: envs } = await schema();
+    const still = await d2.select().from(envs);
+    expect(still[0]!.secretId).toBe(env.secretId);
   });
 
   it('probe with a linked secret decrypts server-side and audits the use', async () => {
@@ -240,5 +243,10 @@ describe('environment secret linkage', () => {
       username: '00000000-0000-7000-8000-51e69892ab49',
     });
     await callProc('environments.probe', { id: env.id });
+  });
+
+  it('removing an unused secret succeeds and confirms', async () => {
+    const secret = await callProc('vault.secrets.create', { name: 'unused-del', value: 'v', description: '' });
+    await expect(callProc('vault.secrets.remove', { id: secret.id })).resolves.toMatchObject({ ok: true });
   });
 });

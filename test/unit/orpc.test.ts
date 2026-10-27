@@ -97,6 +97,17 @@ describe('environments.update', () => {
     expect(r.host).toBe('10.0.0.9');
   });
 
+  it('partial update without name skips the clash check and keeps other fields', async () => {
+    const created = (await callProc(['environments', 'create'], valid)) as { id: string };
+    const r = (await callProc(['environments', 'update'], { id: created.id, host: '10.0.0.42' })) as {
+      id: string;
+      name: string;
+      host: string;
+    };
+    expect(r.name).toBe('ct112');
+    expect(r.host).toBe('10.0.0.42');
+  });
+
   it('CONFLICT on renaming onto another row', async () => {
     const a = (await callProc(['environments', 'create'], valid)) as { id: string };
     await callProc(['environments', 'create'], { ...valid, name: 'b' });
@@ -113,6 +124,34 @@ describe('environments.update', () => {
 });
 
 describe('environments.remove', () => {
+  it('refuses while an AI employee is linked (clean 4xx, not raw FK)', async () => {
+    const { db } = await import('#server/db');
+    const { environments, aiEmployees, user } = await import('#server/db/schema');
+    await db.insert(environments).values({
+      id: 'env-inuse',
+      name: 'env-inuse',
+      host: '10.0.0.9',
+      username: 'tandem',
+    });
+    await db.insert(user).values({
+      id: '00000000-0000-7000-8000-3f18cbc16519',
+      name: 'Test Admin',
+      email: 'test@tandem.local',
+      emailVerified: true,
+      role: 'ADMIN',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(aiEmployees).values({
+      userId: '00000000-0000-7000-8000-3f18cbc16519',
+      environmentId: 'env-inuse',
+      executable: 'hermes acp',
+    });
+    await expect(callProc(['environments', 'remove'], { id: 'env-inuse' })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('environment is in use'),
+    });
+  });
   it('deletes and confirms', async () => {
     const created = (await callProc(['environments', 'create'], valid)) as { id: string };
     const r = (await callProc(['environments', 'remove'], { id: created.id })) as { ok: boolean };

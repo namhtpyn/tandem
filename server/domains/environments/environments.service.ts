@@ -2,6 +2,7 @@
 
 import type { SecretUsage } from '#shared/enums';
 import type { EnvironmentRow } from '#shared/types';
+import { escapeIlike } from '#shared/utils/escape-ilike';
 
 import { EmptyFilter } from 'drizzle-orm';
 
@@ -62,7 +63,13 @@ export async function listEnvironmentsPaged(input: { page?: number; pageSize?: n
       updatedAt: true,
     },
     where: q
-      ? { OR: [{ name: { ilike: `%${q}%` } }, { host: { ilike: `%${q}%` } }, { username: { ilike: `%${q}%` } }] }
+      ? {
+          OR: [
+            { name: { ilike: `%${escapeIlike(q)}%` } },
+            { host: { ilike: `%${escapeIlike(q)}%` } },
+            { username: { ilike: `%${escapeIlike(q)}%` } },
+          ],
+        }
       : EmptyFilter,
     orderBy: { createdAt: 'desc' },
     limit: pageSize,
