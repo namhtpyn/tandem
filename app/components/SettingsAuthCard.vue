@@ -177,7 +177,7 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
               </template>
               <template #actions-cell="{ row }">
                 <div class="flex justify-end gap-2">
-                  <UPopover mode="hover">
+                  <UPopover mode="hover" enable-touch>
                     <UButton
                       icon="i-lucide-pencil"
                       variant="ghost"
@@ -190,11 +190,12 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
                       <div class="px-3 py-1.5 text-xs">Edit provider</div>
                     </template>
                   </UPopover>
-                  <UPopover mode="hover">
+                  <UPopover mode="hover" enable-touch>
                     <UButton
                       icon="i-lucide-trash-2"
                       variant="ghost"
-                      color="error"
+                      color="neutral"
+                      class="text-muted hover:text-error"
                       size="sm"
                       aria-label="Delete provider"
                       :disabled="busy"

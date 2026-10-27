@@ -81,24 +81,31 @@ async function oidcLogin(providerId: string, providerLabel: string) {
 }
 
 async function logout() {
-  await $authClient.signOut();
+  try {
+    await $authClient.signOut();
+  } catch {
+    toast.add({ title: "Couldn't sign out — try again.", color: 'error' });
+    return;
+  }
   await refreshSession();
 }
 
 const route = useRoute();
 // exact to === path would leave detail pages (/tasks/<id>) with no active nav
-const nav = [
-  { label: 'Overview', icon: 'i-lucide-layout-dashboard', to: '/' },
-  { label: 'Vault', icon: 'i-lucide-shield', to: '/vault' },
-  { label: 'Environments', icon: 'i-lucide-server', to: '/environments' },
-  { label: 'Employees', icon: 'i-lucide-users', to: '/employees' },
-  { label: 'Tasks', icon: 'i-lucide-list-todo', to: '/tasks' },
-  { label: 'Projects', icon: 'i-lucide-folder-kanban', to: '/projects' },
-  { label: 'Settings', icon: 'i-lucide-settings', to: '/settings' },
-].map((item) => ({
-  ...item,
-  active: item.to === '/' ? route.path === '/' : route.path.startsWith(item.to),
-}));
+const nav = computed(() =>
+  [
+    { label: 'Overview', icon: 'i-lucide-layout-dashboard', to: '/' },
+    { label: 'Vault', icon: 'i-lucide-shield', to: '/vault' },
+    { label: 'Environments', icon: 'i-lucide-server', to: '/environments' },
+    { label: 'Employees', icon: 'i-lucide-users', to: '/employees' },
+    { label: 'Tasks', icon: 'i-lucide-list-todo', to: '/tasks' },
+    { label: 'Projects', icon: 'i-lucide-folder-kanban', to: '/projects' },
+    { label: 'Settings', icon: 'i-lucide-settings', to: '/settings' },
+  ].map((item) => ({
+    ...item,
+    active: item.to === '/' ? route.path === '/' : route.path.startsWith(item.to),
+  })),
+);
 </script>
 
 <template>

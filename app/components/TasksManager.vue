@@ -162,6 +162,7 @@ async function autoAssign(row: TaskRow) {
 }
 
 const pendingDelete = ref<TaskRow | null>(null);
+const deleteError = ref('');
 const deleteOpen = computed({
   get: () => pendingDelete.value !== null,
   set: (v: boolean) => {
@@ -172,11 +173,12 @@ const deleteOpen = computed({
 async function remove() {
   if (!pendingDelete.value) return;
   busy.value = true;
+  deleteError.value = '';
   try {
     await removeMutation.mutateAsync({ id: pendingDelete.value.id });
     pendingDelete.value = null;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : "Couldn't delete the task — try again";
+    deleteError.value = e instanceof Error ? e.message : "Couldn't delete the task — try again.";
   } finally {
     busy.value = false;
   }
@@ -592,6 +594,7 @@ onServerPrefetch(() =>
       class="mt-3"
       :data="rows"
       :loading="pagedQuery.isPending.value"
+      :error="pagedQuery.isError.value"
       v-model:page="page"
       :page-count="pageCount"
       :page-size="pageSize"
@@ -762,7 +765,7 @@ onServerPrefetch(() =>
                   <button type="button" :class="BOARD_MENU_ITEM" :disabled="busy" @click="autoAssign(row)">
                     <UIcon name="i-lucide-wand-sparkles" class="size-3.5 shrink-0" />Auto-assign
                   </button>
-                  <p class="text-dimmed px-2 pt-1.5 pb-1 text-[10px] font-medium tracking-wide uppercase">Move to…</p>
+                  <p class="text-dimmed px-2 pt-1.5 pb-1 text-[10px] font-medium">Move to…</p>
                   <div class="max-h-40 overflow-y-auto">
                     <button
                       v-for="st in statuses"
@@ -928,6 +931,29 @@ onServerPrefetch(() =>
     </div>
 
     <!-- workflow drawer -->
+    <div
+      v-if="view === 'board' && pageCount > 1"
+      class="border-default mt-3 flex items-center justify-end gap-1 border-t pt-3"
+    >
+      <span class="text-muted me-auto text-xs">{{ total }} tasks</span>
+      <UButton
+        icon="i-lucide-chevron-left"
+        color="neutral"
+        variant="outline"
+        :disabled="page <= 1"
+        aria-label="Previous page"
+        @click="page--"
+      />
+      <span class="text-muted px-2 text-xs">{{ page }} / {{ pageCount }}</span>
+      <UButton
+        icon="i-lucide-chevron-right"
+        color="neutral"
+        variant="outline"
+        :disabled="page >= pageCount"
+        aria-label="Next page"
+        @click="page++"
+      />
+    </div>
     <UModal
       v-model:open="workflowOpen"
       title="Task workflow"
@@ -1098,6 +1124,15 @@ onServerPrefetch(() =>
           Delete <span class="text-highlighted font-semibold">{{ pendingDelete?.title }}</span
           >? This cannot be undone.
         </p>
+        <UAlert
+          v-if="deleteError"
+          icon="i-lucide-circle-alert"
+          color="error"
+          variant="subtle"
+          :title="deleteError"
+          class="mt-3"
+          :ui="{ title: 'text-sm' }"
+        />
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">

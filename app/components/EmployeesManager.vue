@@ -169,7 +169,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
       </div>
     </div>
 
-    <p v-if="message && !editorOpen" class="text-error text-sm">{{ message }}</p>
+    <p v-if="message && !editorOpen" role="alert" class="text-error text-sm">{{ message }}</p>
 
     <!-- Mobile: stacked cards (list view) -->
     <DataTable
@@ -177,6 +177,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
       class="mt-3"
       :data="rows"
       :loading="listQuery.isPending.value"
+      :error="listQuery.isError.value"
       v-model:page="page"
       :page-count="pageCount"
       :page-size="pageSize"

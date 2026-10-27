@@ -156,7 +156,7 @@ const categoryOptions = [
                 </p>
               </div>
               <div class="flex shrink-0 gap-1">
-                <UPopover mode="hover">
+                <UPopover mode="hover" enable-touch>
                   <UButton
                     icon="i-lucide-pencil"
                     variant="ghost"
@@ -170,11 +170,12 @@ const categoryOptions = [
                     <div class="px-3 py-1.5 text-xs">Edit status</div>
                   </template>
                 </UPopover>
-                <UPopover mode="hover">
+                <UPopover mode="hover" enable-touch>
                   <UButton
                     icon="i-lucide-trash-2"
                     variant="ghost"
-                    color="error"
+                    color="neutral"
+                    class="text-muted hover:text-error"
                     size="xs"
                     aria-label="Delete status"
                     :disabled="statusBusy"

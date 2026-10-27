@@ -86,6 +86,7 @@ const attachmentInput = ref<HTMLInputElement | null>(null);
 const editingId = ref<string | null>(null);
 const busy = ref(false);
 const message = ref('');
+const messageOk = ref(false); // tone: success paths ('Attached …') render green
 
 const form = reactive({
   title: '',
@@ -117,6 +118,7 @@ async function uploadAttachment(
   viaEditor = false,
 ): Promise<{ id: string; filename: string; token: string } | null> {
   if (!form.title.trim()) {
+    messageOk.value = false;
     message.value = 'Add a title first — files attach to a saved task';
     return null;
   }
@@ -148,9 +150,12 @@ async function uploadAttachment(
     // when the editor owns the field the image NODE is the single insertion —
     // appending the string too would duplicate the marker in the doc
     if (!viaEditor) form.description = form.description ? `${form.description}\n${token}` : token;
-    message.value = `attached ${up.filename}`;
+    messageOk.value = true;
+    message.value = `Attached ${up.filename}`;
+    messageOk.value = true;
     return { id: up.id, filename: up.filename, token };
   } catch (e) {
+    messageOk.value = false;
     message.value = (e as { data?: { message?: string }; message?: string }).data?.message ?? (e as Error).message;
   } finally {
     busy.value = false;
@@ -226,6 +231,8 @@ async function save() {
     open.value = false;
     emit('saved');
   } catch (e) {
+    messageOk.value = false;
+    messageOk.value = false;
     message.value = e instanceof Error ? e.message : "Couldn't save the task — try again";
   } finally {
     busy.value = false;
@@ -333,7 +340,9 @@ async function save() {
             </p>
           </template>
         </UFormField>
-        <p v-if="message" class="text-error text-sm">{{ message }}</p>
+        <p v-if="message" :class="messageOk ? 'text-success' : 'text-error'" class="text-sm" role="status">
+          {{ message }}
+        </p>
       </UForm>
     </template>
     <template #footer>

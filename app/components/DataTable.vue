@@ -25,6 +25,8 @@ const props = withDefaults(
     getSubRows?: (row: T) => T[];
     /** opt-in built-in empty state (data empty + not loading); parents with their own empty UI leave it off */
     showEmptyState?: boolean;
+    /** list query errored — swaps the empty state for retry copy */
+    error?: boolean;
     /** no-data branding for the built-in empty state; a live search always shows a no-results line instead */
     emptyIcon?: string;
     emptyText?: string;
@@ -206,6 +208,9 @@ function cellValue(row: T, col: TableColumn<T>) {
       </UTable>
     </UCard>
 
+    <div v-if="!mobileViewRows.length && loading" class="space-y-3 md:hidden" aria-hidden="true">
+      <USkeleton v-for="i in 3" :key="i" class="h-20 w-full rounded-lg" />
+    </div>
     <div v-if="mobileViewRows.length" class="space-y-3 md:hidden">
       <template v-for="(row, idx) in mobileViewRows" :key="String((row as Record<string, unknown>).id ?? idx)">
         <slot name="mobile-item" :row="row">
@@ -230,7 +235,7 @@ function cellValue(row: T, col: TableColumn<T>) {
          showEmptyState, per the prop contract); without a filter the opt-in
          empty state renders the parent's no-data branding (icon + text + CTA) -->
     <div
-      v-if="!data.length && !loading && (isFiltered || showEmptyState)"
+      v-if="!data.length && !loading && (error || isFiltered || showEmptyState)"
       class="flex flex-col items-center justify-center gap-3 py-24 text-center"
     >
       <UIcon
@@ -242,7 +247,13 @@ function cellValue(row: T, col: TableColumn<T>) {
         {{ isFiltered ? 'No results' : 'Nothing here yet' }}
       </p>
       <p class="text-muted max-w-sm text-sm">
-        {{ isFiltered ? 'No results — try a different search.' : emptyText || 'Use the button above to create one.' }}
+        {{
+          error
+            ? "Couldn't load this list — try again."
+            : isFiltered
+              ? 'No results — try a different search.'
+              : emptyText || 'Use the button above to create one.'
+        }}
       </p>
       <slot name="empty-cta" />
     </div>

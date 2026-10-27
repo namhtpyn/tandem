@@ -94,7 +94,7 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
           />
         </dd>
       </div>
-      <p v-if="runLocked" class="text-dimmed text-[11px]">Locked while the agent runs.</p>
+      <p v-if="runLocked" class="text-dimmed text-[11px]">Status and assignee are locked while the agent runs.</p>
       <!-- owner is read-only (owner routing lives on the task row): label + subtle chip -->
       <div class="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-x-2">
         <dt class="text-muted text-xs">Owner</dt>

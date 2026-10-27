@@ -164,7 +164,7 @@ onServerPrefetch(() => providersLive.suspense());
               >
             </div>
             <div class="mt-3 flex justify-end gap-1">
-              <UPopover mode="hover">
+              <UPopover mode="hover" enable-touch>
                 <UButton
                   icon="i-lucide-pencil"
                   variant="ghost"
@@ -177,11 +177,12 @@ onServerPrefetch(() => providersLive.suspense());
                   <div class="px-3 py-1.5 text-xs">Edit provider</div>
                 </template>
               </UPopover>
-              <UPopover mode="hover">
+              <UPopover mode="hover" enable-touch>
                 <UButton
                   icon="i-lucide-trash-2"
                   variant="ghost"
-                  color="error"
+                  color="neutral"
+                  class="text-muted hover:text-error"
                   size="sm"
                   aria-label="Delete provider"
                   :disabled="mProvBusy"
@@ -233,7 +234,7 @@ onServerPrefetch(() => providersLive.suspense());
             </template>
             <template #actions-cell="{ row }">
               <div class="flex justify-end gap-1">
-                <UPopover mode="hover">
+                <UPopover mode="hover" enable-touch>
                   <UButton
                     icon="i-lucide-pencil"
                     variant="ghost"
@@ -246,11 +247,12 @@ onServerPrefetch(() => providersLive.suspense());
                     <div class="px-3 py-1.5 text-xs">Edit provider</div>
                   </template>
                 </UPopover>
-                <UPopover mode="hover">
+                <UPopover mode="hover" enable-touch>
                   <UButton
                     icon="i-lucide-trash-2"
                     variant="ghost"
-                    color="error"
+                    color="neutral"
+                    class="text-muted hover:text-error"
                     size="xs"
                     aria-label="Delete provider"
                     :disabled="mProvBusy"

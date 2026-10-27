@@ -215,6 +215,7 @@ onServerPrefetch(() => liveQuery.suspense());
       class="mt-3"
       :data="rows"
       :loading="liveQuery.isPending.value"
+      :error="liveQuery.isError.value"
       v-model:page="page"
       :page-count="pageCount"
       :page-size="pageSize"
@@ -428,7 +429,11 @@ onServerPrefetch(() => liveQuery.suspense());
       <template #footer>
         <div class="flex w-full justify-end gap-2">
           <UButton variant="ghost" color="neutral" @click="confirming = null">Cancel</UButton>
-          <UButton color="error" icon="i-lucide-trash-2" :loading="busy" @click="reallyRemove(confirmingRow!)"
+          <UButton
+            color="error"
+            icon="i-lucide-trash-2"
+            :loading="busy"
+            @click="confirmingRow && reallyRemove(confirmingRow)"
             >Delete</UButton
           >
         </div>

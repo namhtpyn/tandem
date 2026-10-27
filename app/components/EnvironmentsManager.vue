@@ -203,12 +203,13 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       </div>
     </div>
 
-    <p v-if="message && !editorOpen" class="text-error mt-3 text-sm">{{ message }}</p>
+    <p v-if="message && !editorOpen" role="alert" class="text-error mt-3 text-sm">{{ message }}</p>
 
     <DataTable
       class="mt-3"
       :data="rows"
       :loading="liveQuery.isPending.value"
+      :error="liveQuery.isError.value"
       v-model:page="page"
       :page-count="pageCount"
       :page-size="pageSize"
@@ -475,7 +476,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               class="w-full"
             />
           </UFormField>
-          <p v-if="message" class="text-error text-sm">{{ message }}</p>
+          <p v-if="message" role="alert" class="text-error text-sm">{{ message }}</p>
         </UForm>
       </template>
       <template #footer>

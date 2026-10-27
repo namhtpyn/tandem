@@ -214,7 +214,7 @@ onServerPrefetch(() => liveQuery.suspense());
       </div>
     </div>
 
-    <p v-if="message && !editorOpen" class="text-error mt-3 text-sm">{{ message }}</p>
+    <p v-if="message && !editorOpen" role="alert" class="text-error mt-3 text-sm">{{ message }}</p>
 
     <DataTable
       class="mt-3"
@@ -420,7 +420,7 @@ onServerPrefetch(() => liveQuery.suspense());
               class="w-full"
             />
           </UFormField>
-          <p v-if="message" class="text-error text-sm">{{ message }}</p>
+          <p v-if="message" role="alert" class="text-error text-sm">{{ message }}</p>
         </UForm>
       </template>
       <template #footer>
