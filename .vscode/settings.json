@@ -9,5 +9,6 @@
   },
   "js/ts.preferences.importModuleSpecifier": "project-relative",
   "js/ts.preferences.importModuleSpecifierEnding": "js",
-  "js/ts.tsdk.promptToUseWorkspaceVersion": true
+  "js/ts.tsdk.promptToUseWorkspaceVersion": true,
+  "js/ts.tsdk.path": "node_modules/typescript/lib"
 }

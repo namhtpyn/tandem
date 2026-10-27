@@ -8,8 +8,39 @@ import { RPCLink } from '@orpc/client/fetch';
 //   behind import.meta.server (build-time guard).
 import type { RouterClient } from '@orpc/server';
 import { createTanstackQueryUtils } from '@orpc/tanstack-query';
+// unused by design — the commented generictify notes below are the consumers
+// oxlint-disable-next-line eslint/no-unused-vars
+import type { Paths, PickDeep, Promisable } from 'type-fest';
 
 import type { appRouter } from '#server/domains/app.router';
+
+// DO NOT CLEAN THIS UP KEEP THE COMMENTS BELOW — they are the design notes for the generictify types, which are
+// a work-in-progress. The types are not used yet, but they are a proof-of-concept for the generictify idea.
+// The generictify types are intended to allow the client to specify which fields it wants from the server,
+
+// type GenerictifyOrpcProcedure<
+//   // oxlint-disable-next-line typescript/no-explicit-any
+//   TProc extends (...args: any[]) => any,
+//   TFieldsName extends string = 'fields',
+// > = TProc extends (...args: [infer TFirstArg extends { [P in TFieldsName]: string[] }, ...infer TRestArgs]) => infer R
+//   ? R extends Promisable<infer U extends Record<string, unknown>> //Record<TFirstArg[TFieldsName][number], unknown>
+//     ? TFirstArg[TFieldsName][number] extends Paths<U>
+//       ? <TSelect extends TFirstArg[TFieldsName][number]>(
+//           first: Omit<TFirstArg, TFieldsName> & { [P in TFieldsName]: TSelect[] },
+//           ...rest: TRestArgs
+//         ) => R extends Promise<unknown> ? Promise<PickDeep<U, TSelect>> : PickDeep<U, TSelect>
+//       : TProc
+//     : TProc
+//   : TProc;
+
+// type GenerictifyOrpcClient<T extends Record<string, unknown>> = {
+//   [TRouteName in keyof T]: T[TRouteName] extends Record<string, unknown>
+//     ? GenerictifyOrpcClient<T[TRouteName]>
+//     : // oxlint-disable-next-line typescript/no-explicit-any
+//       T[TRouteName] extends (...args: any[]) => any
+//       ? GenerictifyOrpcProcedure<T[TRouteName]>
+//       : T[TRouteName];
+// };
 
 export default defineNuxtPlugin(async () => {
   let client: RouterClient<typeof appRouter>;
