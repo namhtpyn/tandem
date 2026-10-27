@@ -21,9 +21,9 @@ test('task title click opens the task detail page', async ({ page }) => {
   await expect(page.getByText('No activity yet.')).toHaveText('No activity yet.');
   await expect(page.getByPlaceholder('Write a note…')).toBeVisible();
 
-  // sidebar: Details + Workflow sections
+  // sidebar: Details section (the Workflow block is gone — status is manual)
   await expect(page.getByText('Details', { exact: true }).first()).toBeVisible();
-  await expect(page.getByText('Workflow', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('Workflow', { exact: true })).toHaveCount(0);
   await expect(page.getByText('Status').first()).toBeVisible();
   await expect(page.getByText('Assignee').first()).toBeVisible();
 
@@ -49,6 +49,6 @@ test('mobile: sidebar collapses into the info sheet', async ({ page }) => {
   await page.getByTestId('task-info-trigger').click();
   // scope to the visible slideover (the desktop aside is display:none on mobile)
   await expect(page.getByLabel('Task info').getByText('Details', { exact: true })).toBeVisible();
-  // a fresh task is To do: the contextual workflow verbs are work-state moves
-  await expect(page.getByLabel('Task info').getByRole('button', { name: 'Forward' })).toBeVisible();
+  // status is a plain manual select now (the workflow block is gone)
+  await expect(page.getByLabel('Task info').getByLabel('Task status')).toBeVisible();
 });

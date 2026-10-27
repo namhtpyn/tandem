@@ -259,16 +259,9 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
             class="hidden w-full shrink-0 self-start rounded-xl border border-zinc-200/70 bg-zinc-50/70 p-3.5 lg:sticky lg:top-4 lg:mt-0 lg:block lg:max-h-[calc(100vh-8.5rem)] lg:w-72 lg:overflow-y-auto dark:border-zinc-800 dark:bg-zinc-900/60"
           >
             <div class="space-y-4">
-              <TaskDetailsFields :task="task" />
+              <TaskDetailsFields :task="task" :run-locked="agentRunning" />
               <TaskReviewPanel v-if="task.reviewerNames.length" :task-id="task.id" />
               <TaskRoutingPanels :task-id="task.id" :status-by-id="statusById" />
-              <TaskWorkflowActions
-                :busy="workflowBusy"
-                :note="workflowNote"
-                :status-category="taskStatusCategory"
-                :assignee-kind="task.assigneeKind"
-                @action="wfAction"
-              />
             </div>
           </aside>
         </div>
@@ -277,16 +270,9 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
         <USlideover v-if="task" v-model:open="infoSheetOpen" title="Task info" side="right" class="lg:hidden">
           <template #body>
             <div class="space-y-4">
-              <TaskDetailsFields :task="task" />
+              <TaskDetailsFields :task="task" :run-locked="agentRunning" />
               <TaskReviewPanel v-if="task.reviewerNames.length" :task-id="task.id" />
               <TaskRoutingPanels :task-id="task.id" :status-by-id="statusById" />
-              <TaskWorkflowActions
-                :busy="workflowBusy"
-                :note="workflowNote"
-                :status-category="taskStatusCategory"
-                :assignee-kind="task.assigneeKind"
-                @action="wfAction"
-              />
             </div>
           </template>
         </USlideover>

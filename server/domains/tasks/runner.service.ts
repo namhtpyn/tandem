@@ -63,6 +63,17 @@ export function __setLiveSteerForTests(runId: string, fn: ((text: string) => Pro
   else liveSteers.delete(runId);
 }
 
+/** the task's live run id, if any — status/assignee edits are locked while it runs */
+export async function runningRunIdForTask(taskId: string): Promise<string | null> {
+  const msg = await db.query.taskMessages.findFirst({
+    columns: { id: true },
+    where: { taskId: { eq: taskId } },
+    orderBy: { createdAt: 'desc', id: 'desc' },
+    with: { run: { columns: { id: true, status: true } } },
+  });
+  return msg?.run && msg.run.status === RUN_STATUS.RUNNING ? msg.run.id : null;
+}
+
 /** steer the task's live run. 'stopped' = no live run (safe to dispatch);
  *  'refused' = a run is live but this turn can't take input (fake runner) */
 export async function steerRun(taskId: string, text: string): Promise<'steered' | 'stopped' | 'refused'> {
