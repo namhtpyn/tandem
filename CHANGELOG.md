@@ -1,3 +1,18 @@
+# [2.47.0](https://github.com/namhtpyn/tandem/compare/v2.46.0...v2.47.0) (2026-10-27)
+
+
+### Bug Fixes
+
+* 10-reviewer audit sweep — reliability, state machine, data safety, UI, infra, docs ([93c7bad](https://github.com/namhtpyn/tandem/commit/93c7baddfca6e6c4f2ebaf8771dc2c96908d3b96))
+* **ci:** pin oxfmt 0.75 — bunx@latest reformats drift between runs ([2101d46](https://github.com/namhtpyn/tandem/commit/2101d464ecaa624d9870ddde3d90d4f6ca5ef87f))
+* **ci:** pin oxlint 1.89 as devDep — TS config imports the package now ([0c9709b](https://github.com/namhtpyn/tandem/commit/0c9709bc510e09ba5ab45cfb109e10bd8432147a))
+* low-tier sweep — hydration-safe timestamps, session-lookup index, a11y, live proposals ([de03514](https://github.com/namhtpyn/tandem/commit/de035144133700f740ac1f2308f2fa1d5912f368))
+
+
+### Features
+
+* **app:** GitHub-style review box, auto-answer composer, no human Ask ([2f2c870](https://github.com/namhtpyn/tandem/commit/2f2c870e55658e4c667d5dbfcc08b509882b3cfd))
+
 # [2.46.0](https://github.com/namhtpyn/tandem/compare/v2.45.0...v2.46.0) (2026-10-26)
 
 
