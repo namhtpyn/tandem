@@ -1,3 +1,15 @@
+# [2.48.0](https://github.com/namhtpyn/tandem/compare/v2.47.1...v2.48.0) (2026-10-27)
+
+
+### Bug Fixes
+
+* **thread:** run turns render as chat bubbles; echo notes deduped ([54b19ba](https://github.com/namhtpyn/tandem/commit/54b19ba6d314a41932baa4549d68cf2f0779bf77))
+
+
+### Features
+
+* **brief:** multi-supervisor chains — one level per layer, joined by & ([9ee443d](https://github.com/namhtpyn/tandem/commit/9ee443d0afc00dc6ceaadd003bd290c5712eb7b5))
+
 ## [2.47.1](https://github.com/namhtpyn/tandem/compare/v2.47.0...v2.47.1) (2026-10-27)
 
 
