@@ -7,7 +7,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import './api-harness';
 import { ROLE, SECRET_USAGE } from '#shared/enums';
 
-
 const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 
 async function ctx(sessionUser: { id: string; name: string; email: string; role: string } | null = admin) {

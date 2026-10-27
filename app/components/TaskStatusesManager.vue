@@ -217,13 +217,7 @@ function categoryColor(c: string) {
       <template #footer>
         <div class="flex w-full justify-end gap-2">
           <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingDelete = null" />
-          <UButton
-            icon="i-lucide-trash-2"
-            color="error"
-            label="Delete"
-            :loading="statusBusy"
-            @click="removeStatus"
-          />
+          <UButton icon="i-lucide-trash-2" color="error" label="Delete" :loading="statusBusy" @click="removeStatus" />
         </div>
       </template>
     </UModal>

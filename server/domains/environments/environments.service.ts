@@ -1,10 +1,10 @@
 // environments service: row mapping + list helpers
 
+import { EmptyFilter } from 'drizzle-orm';
+
 import type { SecretUsage } from '#shared/enums';
 import type { EnvironmentRow } from '#shared/types';
 import { escapeIlike } from '#shared/utils/escape-ilike';
-
-import { EmptyFilter } from 'drizzle-orm';
 
 import { db } from '../../db/index';
 import { environments as environmentsTable } from '../../db/schema';

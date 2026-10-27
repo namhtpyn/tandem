@@ -12,8 +12,7 @@ import { buildServerContext } from '#server/domains/kernel/context';
 
 import { makeEvent } from './api-harness.ts';
 
-beforeEach(async () => {
-});
+beforeEach(async () => {});
 
 async function rpc(event2: ReturnType<typeof makeEvent>, body?: unknown) {
   const headers = new Headers();

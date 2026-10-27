@@ -38,7 +38,9 @@ test('human employee CRUD round-trip on the live page', async ({ page }) => {
   await page.getByPlaceholder('name@company.com').fill(`renamed-${suffix}@tandem.local`);
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
   await ui.searchRows(SEARCH, name);
-  await expect(page.locator('tr:visible', { hasText: name }).getByText('Promoted Tester')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('tr:visible', { hasText: name }).getByText('Promoted Tester')).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(page.locator('tr:visible', { hasText: name }).getByText(`renamed-${suffix}@tandem.local`)).toBeVisible({
     timeout: 15_000,
   });

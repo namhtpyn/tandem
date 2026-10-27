@@ -133,7 +133,6 @@ import {
 } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
-
 setEnv({ TANDEM_FAKE_RUNNER: '1' });
 
 const admin = {
@@ -356,8 +355,10 @@ describe('dispatcher extras', () => {
     const { db } = await dbm();
     const { taskMessages, taskRuns } = await schema();
     const base = Date.now() - 60_000;
-    const msg1 = (await db.insert(taskMessages).values({ taskId: t.id, body: '' }).returning({ id: taskMessages.id }))[0]!;
-await db.insert(taskRuns).values({
+    const msg1 = (
+      await db.insert(taskMessages).values({ taskId: t.id, body: '' }).returning({ id: taskMessages.id })
+    )[0]!;
+    await db.insert(taskRuns).values({
       id: 'r-old',
       employeeId: agentId,
       environmentId: 'env-1',
@@ -366,16 +367,20 @@ await db.insert(taskRuns).values({
       output: '',
       startedAt: new Date(base),
       finishedAt: new Date(base + 1000),
-     messageId: msg1.id, });
-    const msg2 = (await db.insert(taskMessages).values({ taskId: t.id, body: '' }).returning({ id: taskMessages.id }))[0]!;
-await db.insert(taskRuns).values({
+      messageId: msg1.id,
+    });
+    const msg2 = (
+      await db.insert(taskMessages).values({ taskId: t.id, body: '' }).returning({ id: taskMessages.id })
+    )[0]!;
+    await db.insert(taskRuns).values({
       id: 'r-new',
       employeeId: agentId,
       environmentId: 'env-1',
       status: RUN_STATUS.RUNNING,
       output: '',
       startedAt: new Date(),
-     messageId: msg2.id, });
+      messageId: msg2.id,
+    });
     const iter = await callProc('tasks.runs', { taskId: t.id });
     const snap = await iter.next();
     await iter.return?.();
@@ -391,14 +396,17 @@ await db.insert(taskRuns).values({
     const t = await callProc('tasks.create', { title: 'Null fin', assigneeId: agentId });
     const { db } = await dbm();
     const { taskMessages, taskRuns } = await schema();
-    const msg3 = (await db.insert(taskMessages).values({ taskId: t.id, body: '' }).returning({ id: taskMessages.id }))[0]!;
-await db.insert(taskRuns).values({
+    const msg3 = (
+      await db.insert(taskMessages).values({ taskId: t.id, body: '' }).returning({ id: taskMessages.id })
+    )[0]!;
+    await db.insert(taskRuns).values({
       id: 'r-x',
       employeeId: agentId,
       environmentId: 'env-1',
       status: RUN_STATUS.RUNNING,
       output: '',
-     messageId: msg3.id, });
+      messageId: msg3.id,
+    });
     const iter = await callProc('tasks.runs', { taskId: t.id });
     const snap = await iter.next();
     await iter.return?.();
@@ -502,17 +510,19 @@ describe('runner failure + fallback arms', () => {
     const sch = await schema();
     const taskRow = (await d.db.select().from(sch.tasks))[0]!;
     const { taskMessages, taskRuns } = await schema();
-const msgX0 = (await d.db.insert(taskMessages).values({ taskId: taskRow.id, body: '' }).returning({ id: taskMessages.id }))[0]!;
-await d.db.insert(taskRuns).values({
+    const msgX0 = (
+      await d.db.insert(taskMessages).values({ taskId: taskRow.id, body: '' }).returning({ id: taskMessages.id })
+    )[0]!;
+    await d.db.insert(taskRuns).values({
       id: 'r-long',
-            employeeId: agentId,
+      employeeId: agentId,
       environmentId: 'env-1',
       status: RUN_STATUS.DONE,
       exitCode: 0,
       output: Array.from({ length: 150 }, (_, i) => `line-${i}`).join('\n'),
       finishedAt: new Date(),
       messageId: msgX0.id,
-});
+    });
     const iter = await callProc('tasks.runs', { taskId: taskRow.id });
     const snap = await iter.next();
     await iter.return?.();
@@ -856,12 +866,11 @@ describe('env blob quoting', () => {
     const { shQ } = await import('#server/domains/tasks/runner.service');
     // escape shape: ' -> '\'' (close quote, escaped quote, reopen)
     expect(shQ("o'brien")).toBe("o'\\''brien");
-    expect(shQ("it's a \"test\"")).toBe("it'\\''s a \"test\"");
+    expect(shQ('it\'s a "test"')).toBe("it'\\''s a \"test\"");
     expect(shQ('plain')).toBe('plain');
     expect(shQ('')).toBe('');
     // bash string-level round trip: inside '...', the sequence '\'' yields a literal '
-    const unquote = (varName: string, line: string) =>
-      line.slice(`${varName}='`.length, -1).replace(/'\\''/g, "'");
+    const unquote = (varName: string, line: string) => line.slice(`${varName}='`.length, -1).replace(/'\\''/g, "'");
     expect(unquote('CUSTOM_API_KEY', `CUSTOM_API_KEY='${shQ("o'brien")}'`)).toBe("o'brien");
     expect(unquote('TANDEM_TASK_TITLE', `TANDEM_TASK_TITLE='${shQ("who's today")}'`)).toBe("who's today");
   });
@@ -881,9 +890,7 @@ describe('dispatcher', () => {
     let taskRow: { status: string } | undefined;
     for (let i = 0; i < 30; i++) {
       // poll OUR task — shuffle can leave sibling rows from earlier tests
-      taskRow = (
-        await db.select().from(tasks).where(eq(tasks.id, t.id)).limit(1)
-      )[0];
+      taskRow = (await db.select().from(tasks).where(eq(tasks.id, t.id)).limit(1))[0];
       if (taskRow?.status === STATUS.doing) break;
       await new Promise((r) => setTimeout(r, 100));
     }
@@ -975,7 +982,12 @@ describe('dispatcher', () => {
       const handle = await dispatchTask(t.id, 'http://tandem.local');
       await handle.finished;
       const { taskRuns } = await schema();
-      const row = (await db.select({ run: taskRuns, message: taskMessages }).from(taskRuns).innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))).find((r) => r.message.taskId === t.id)!;
+      const row = (
+        await db
+          .select({ run: taskRuns, message: taskMessages })
+          .from(taskRuns)
+          .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+      ).find((r) => r.message.taskId === t.id)!;
       expect(row.run.prompt).toContain('COMPANY (applies to all your work)\nEnglish only, pinned deps.');
       expect(row.run.prompt).toContain('PROJECT — FedEx\nFedEx API v9, never log labels.');
       expect(row.run.prompt).toContain('Project: FedEx');
@@ -1059,11 +1071,12 @@ describe('dispatcher', () => {
       expect(rev).toHaveLength(0);
       const obl = (await db.select().from(taskObligations)).filter((o) => o.taskId === t.id);
       expect(obl).toHaveLength(0);
-      const runs = (await db
-        .select({ run: taskRuns, message: taskMessages })
-        .from(taskRuns)
-        .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId)))
-        .filter((r) => r.message.taskId === t.id);
+      const runs = (
+        await db
+          .select({ run: taskRuns, message: taskMessages })
+          .from(taskRuns)
+          .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+      ).filter((r) => r.message.taskId === t.id);
       expect(runs).toHaveLength(1); // the assignee's turn only — no review turn
     } finally {
       setEnv({ TANDEM_FAKE_SCRIPT: undefined });
@@ -1096,7 +1109,12 @@ describe('dispatcher', () => {
       expect(rev[0]!.status).toBe(REVIEW_STATUS.APPROVED);
       expect(rev[0]!.source).toBe('ai');
       expect(rev[0]!.note).toContain('nice work');
-      const runs = (await db.select({ run: taskRuns, message: taskMessages }).from(taskRuns).innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))).filter((r) => r.message.taskId === t.id);
+      const runs = (
+        await db
+          .select({ run: taskRuns, message: taskMessages })
+          .from(taskRuns)
+          .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+      ).filter((r) => r.message.taskId === t.id);
       expect(runs).toHaveLength(2); // assignee turn + review turn ON THE SAME TASK
       expect(runs.some((r) => r.run.employeeId === ash)).toBe(true);
       // sessions stay separate: the reviewer's session lives on their run, not the task
@@ -1405,14 +1423,19 @@ describe('dispatcher', () => {
       expect(waiting).toBe(true);
       // while the review turn's run is settling, a manual re-arm skips live runs
       const { dispatchAiReviewTurns } = await import('#server/domains/tasks/review.service');
-      await db.execute(`update task_runs set status = 'RUNNING' where message_id in (select id from task_messages where task_id = '${t.id}')`);
+      await db.execute(
+        `update task_runs set status = 'RUNNING' where message_id in (select id from task_messages where task_id = '${t.id}')`,
+      );
       await dispatchAiReviewTurns(t.id); // running arm: no extra run row appears
-      const runCount = (await db
-        .select({ run: taskRuns, message: taskMessages })
-        .from(taskRuns)
-        .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId)))
-        .filter((r) => r.message.taskId === t.id && r.run.employeeId === ash).length;
-      await db.execute(`update task_runs set status = 'DONE' where message_id in (select id from task_messages where task_id = '${t.id}')`);
+      const runCount = (
+        await db
+          .select({ run: taskRuns, message: taskMessages })
+          .from(taskRuns)
+          .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+      ).filter((r) => r.message.taskId === t.id && r.run.employeeId === ash).length;
+      await db.execute(
+        `update task_runs set status = 'DONE' where message_id in (select id from task_messages where task_id = '${t.id}')`,
+      );
       // answer -> re-arm without an explicit body (fetches from activity)
       setEnv({ TANDEM_FAKE_SCRIPT_REVIEW: 'ok now\n{"kind": "result", "body": "approved after the answer"}' });
       const { answerQuestion } = await import('#server/domains/tasks/workflow.service');
@@ -1423,10 +1446,12 @@ describe('dispatcher', () => {
         done = (await db.select().from(tasks)).find((x) => x.id === t.id)!.status === STATUS.done;
       }
       expect(done).toBe(true);
-      const ashRuns = (await db
-        .select({ run: taskRuns, message: taskMessages })
-        .from(taskRuns)
-        .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId)))
+      const ashRuns = (
+        await db
+          .select({ run: taskRuns, message: taskMessages })
+          .from(taskRuns)
+          .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+      )
         .filter((r) => r.message.taskId === t.id && r.run.employeeId === ash)
         .map((r) => r.run);
       expect(ashRuns.length).toBe(runCount + 1); // exactly one re-armed turn
@@ -1453,7 +1478,14 @@ describe('dispatcher', () => {
     await dispatchIfEligible(t.id, 'http://tandem.local');
     const { db } = await dbm();
     const { taskRuns } = await schema();
-    expect((await db.select({ run: taskRuns, message: taskMessages }).from(taskRuns).innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))).filter((r) => r.message.taskId === t.id)).toHaveLength(0);
+    expect(
+      (
+        await db
+          .select({ run: taskRuns, message: taskMessages })
+          .from(taskRuns)
+          .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+      ).filter((r) => r.message.taskId === t.id),
+    ).toHaveLength(0);
   });
 
   it('onDispatcherSettingsChanged is a no-op without redis', async () => {
@@ -1649,8 +1681,15 @@ describe('dispatcher', () => {
     const t = await callProc('tasks.create', { title: 'Legacy', assigneeId: agentId });
     const { db } = await dbm();
     const { taskMessages, taskRuns } = await schema();
-    const mLegacy = (await db.insert(taskMessages).values({ taskId: t.id, body: '' }).returning({ id: taskMessages.id }))[0]!;
-    const mGhost = (await db.insert(taskMessages).values({ taskId: t.id, authorId: null, body: '' }).returning({ id: taskMessages.id }))[0]!;
+    const mLegacy = (
+      await db.insert(taskMessages).values({ taskId: t.id, body: '' }).returning({ id: taskMessages.id })
+    )[0]!;
+    const mGhost = (
+      await db
+        .insert(taskMessages)
+        .values({ taskId: t.id, authorId: null, body: '' })
+        .returning({ id: taskMessages.id })
+    )[0]!;
     await db
       .insert(taskRuns)
       .values({ id: 'run-legacy', messageId: mLegacy.id, employeeId: agentId, status: RUN_STATUS.DONE, output: 'old' });
@@ -1714,11 +1753,12 @@ describe('dispatcher', () => {
     const dispatchNote = notes.find((n) => (n.meta as Record<string, unknown> | null)?.dispatched === true);
     const { taskRuns: tr } = await schema();
     const tm2 = await import('#server/db/schema');
-    const run0 = (await db
-      .select({ run: tr, message: tm2.taskMessages })
-      .from(tr)
-      .innerJoin(tm2.taskMessages, eq(tm2.taskMessages.id, tr.messageId)))
-      .find((x) => x.message.taskId === t.id)!.run;
+    const run0 = (
+      await db
+        .select({ run: tr, message: tm2.taskMessages })
+        .from(tr)
+        .innerJoin(tm2.taskMessages, eq(tm2.taskMessages.id, tr.messageId))
+    ).find((x) => x.message.taskId === t.id)!.run;
     expect(dispatchNote).toBeTruthy();
     // strict < flaked in CI when both stamps landed in the same millisecond;
     // activity feeds order by createdAt only, so same-ms ties are admissible

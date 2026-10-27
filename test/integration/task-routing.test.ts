@@ -155,8 +155,6 @@ beforeEach(async () => {
   await mkEmployee('solo', 'Solo Person', 'solo@tandem.local');
 });
 
-
-
 describe('obligations', () => {
   it('ask spawns a pending answer obligation; forward MOVES it; answer resolves it', async () => {
     const taskId = await mkTask({ title: 'Q task', assigneeId: idMap.get('worker')!, ownerId: idMap.get('peer')! });
@@ -585,8 +583,6 @@ describe('routing coverage arms', () => {
     });
     expect(rootBrief).not.toContain('This is a subtask of');
   });
-
-
 });
 
 describe('routing coverage arms II', () => {
@@ -823,9 +819,9 @@ describe('routing coverage arms II', () => {
         createdAt: new Date(),
       },
     ]);
-    await expect(
-      recordVerdict(t, idMap.get('worker')!, 'APPROVED', 'late', 'human'),
-    ).rejects.toThrow(/review round already closed/);
+    await expect(recordVerdict(t, idMap.get('worker')!, 'APPROVED', 'late', 'human')).rejects.toThrow(
+      /review round already closed/,
+    );
   });
 
   it('recordVerdict refuses a non-reviewer; normalize handles scalars/null', async () => {

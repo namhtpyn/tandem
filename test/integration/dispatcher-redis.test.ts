@@ -17,7 +17,6 @@ import { CHANGE_ACTION, CHANGE_RESOURCE } from '#shared/enums';
 import { ROLE, RUN_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
-
 const REDIS_URL = 'redis://127.0.0.1:6399';
 
 async function nr() {
@@ -60,7 +59,7 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
     const keys = await flush.keys('bull:*');
     if (keys.length) await flush.del(keys);
     await flush.disconnect();
-      await applyMigrations();
+    await applyMigrations();
     const { db } = await import('#server/db');
     const { user, environments, aiEmployees, tasks } = await import('#server/db/schema');
     await db.insert(user).values({

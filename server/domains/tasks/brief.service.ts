@@ -1,6 +1,5 @@
-import { and, eq } from 'drizzle-orm';
-
 import { consola } from 'consola';
+import { and, eq } from 'drizzle-orm';
 
 import { PROPOSAL_STATUS } from '#shared/enums';
 import { parseRunEnvelope, RunVerdictSchema } from '#shared/run-verdict';
@@ -200,7 +199,8 @@ function contractSection(input: BriefInput) {
     `DELIVERABLES — write any output files to ${input.outDir} (create it if needed; that EXACT path, not the environment name); everything left there when you exit is collected and attached to your result.`,
     '',
     renderOutputContract(RunVerdictSchema, {
-      intro: 'OUTPUT CONTRACT — end your response with exactly one JSON line (no code fence). ROUTING rides the same line: propose subtasks when a meaningful part belongs to someone else; reassign only when the WHOLE task belongs elsewhere; routing inside your own supervision chain executes immediately, anything outside goes to a human:',
+      intro:
+        'OUTPUT CONTRACT — end your response with exactly one JSON line (no code fence). ROUTING rides the same line: propose subtasks when a meaningful part belongs to someone else; reassign only when the WHOLE task belongs elsewhere; routing inside your own supervision chain executes immediately, anything outside goes to a human:',
       examples: [
         '{"kind": "result", "body": "<final answer or summary of work done>"}',
         '{"kind": "question", "body": "<blocking question for the owner>"}',
@@ -295,7 +295,9 @@ export async function loadBriefData(taskId: string, readerEmployeeId?: string) {
   // other agents' results are the relay, own turns live in session memory, STATUS
   // bookkeeping never ships.
   const ownFinished = finishedAts.filter(
-    (f) => !readerEmployeeId || threadRows.some((m) => m.run?.employeeId === readerEmployeeId && m.run.finishedAt?.getTime() === f.getTime()),
+    (f) =>
+      !readerEmployeeId ||
+      threadRows.some((m) => m.run?.employeeId === readerEmployeeId && m.run.finishedAt?.getTime() === f.getTime()),
   );
   const hasPrior = ownFinished.length > 0;
   const lastFinished = hasPrior ? (ownFinished.at(-1) ?? null) : null;
@@ -329,7 +331,7 @@ export async function loadBriefData(taskId: string, readerEmployeeId?: string) {
     return {
       // run turns render under their settled envelope kind (a question/blocked result
       // relays as such); 'result' stays the default when the output never parsed
-      kind: m.run ? (envelope?.kind ?? 'result') : (extKind(m) || 'note'),
+      kind: m.run ? (envelope?.kind ?? 'result') : extKind(m) || 'note',
       // run turns carry no message author; the employee user row names them
       authorName: m.run ? (nameById.get(m.run.employeeId ?? '') ?? 'agent') : (m.author?.name ?? null),
       body: m.body,

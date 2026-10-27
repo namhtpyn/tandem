@@ -8,8 +8,7 @@ import { ROLE } from '#shared/enums';
 
 import { call } from './api-harness.ts';
 
-beforeEach(async () => {
-});
+beforeEach(async () => {});
 
 describe('auth route gates', () => {
   it('blocks password sign-up once any user exists (403)', async () => {

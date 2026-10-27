@@ -79,11 +79,9 @@ describe('extractMentionedEmployeeIds', () => {
   it('skips names that fail to compile, warns once, never throws', () => {
     const warn = vi.spyOn(consola, 'warn').mockImplementation(() => {});
     // force the compile failure: correct escaping makes every real name compile
-    const spy = vi
-      .spyOn(globalThis, 'RegExp')
-      .mockImplementation((() => {
-        throw new SyntaxError('mock compile failure');
-      }) as never);
+    const spy = vi.spyOn(globalThis, 'RegExp').mockImplementation((() => {
+      throw new SyntaxError('mock compile failure');
+    }) as never);
     try {
       expect(extractMentionedEmployeeIds('ping @Zed now', map)).toEqual([]);
       expect(warn).toHaveBeenCalledTimes(1);

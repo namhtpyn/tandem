@@ -98,14 +98,21 @@ describe('loadBriefData (real db)', () => {
     expect(d.recentActivity).toEqual([]);
   });
 
-  it('relay law: first run full ticket, later runs carry only the other side\'s messages', async () => {
+  it("relay law: first run full ticket, later runs carry only the other side's messages", async () => {
     const d0 = await loadBriefData(taskId, agentId);
     // Jay #1: first dispatch — full ticket, no activity section
     expect(d0.relay).toBe(false);
     expect(d0.recentActivity).toEqual([]);
 
     // Jay run 1 settles: body filled from the result envelope (updateRunMessageBody)
-    await db.insert(taskMessages).values({ id: 'msg-jay1', taskId, body: 'Jay: blocked, need cloudflare dns', createdAt: new Date(Date.now() - 95_000) });
+    await db
+      .insert(taskMessages)
+      .values({
+        id: 'msg-jay1',
+        taskId,
+        body: 'Jay: blocked, need cloudflare dns',
+        createdAt: new Date(Date.now() - 95_000),
+      });
     await db.insert(taskRuns).values({
       id: 'run-jay1',
       messageId: 'msg-jay1',
@@ -124,7 +131,9 @@ describe('loadBriefData (real db)', () => {
     ]);
 
     // Ash run 1 settles
-    await db.insert(taskMessages).values({ id: 'msg-ash1', taskId, body: 'Ash: dns updated', createdAt: new Date(Date.now() - 65_000) });
+    await db
+      .insert(taskMessages)
+      .values({ id: 'msg-ash1', taskId, body: 'Ash: dns updated', createdAt: new Date(Date.now() - 65_000) });
     await db.insert(taskRuns).values({
       id: 'run-ash1',
       messageId: 'msg-ash1',
@@ -145,7 +154,9 @@ describe('loadBriefData (real db)', () => {
     expect(briefJay2).toContain('OUTPUT CONTRACT'); // protocol still rides
 
     // Jay run 2 settles
-    await db.insert(taskMessages).values({ id: 'msg-jay2', taskId, body: 'Jay: done, pr opened', createdAt: new Date(Date.now() - 35_000) });
+    await db
+      .insert(taskMessages)
+      .values({ id: 'msg-jay2', taskId, body: 'Jay: done, pr opened', createdAt: new Date(Date.now() - 35_000) });
     await db.insert(taskRuns).values({
       id: 'run-jay2',
       messageId: 'msg-jay2',

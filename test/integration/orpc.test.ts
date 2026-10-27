@@ -48,8 +48,7 @@ describe('test-only auth instance', () => {
   });
 });
 
-beforeEach(async () => {
-});
+beforeEach(async () => {});
 
 describe('session gate (via RPCHandler — middleware runs)', () => {
   it('rejects unauthenticated calls (UNAUTHORIZED)', async () => {

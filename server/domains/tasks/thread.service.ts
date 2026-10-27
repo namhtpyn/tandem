@@ -3,11 +3,11 @@
 // Activity rows dual-write task_activity during the transition.
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 
-import { db, asDb, type DbExecutor } from '../../db/index';
-import { nonNull } from '#shared/utils/non-null';
 import { parseRunEnvelope } from '#shared/run-verdict';
-import { taskAttachments, taskMessageActivities, taskMessages } from '../../db/schema';
+import { nonNull } from '#shared/utils/non-null';
 
+import { db, asDb, type DbExecutor } from '../../db/index';
+import { taskAttachments, taskMessageActivities, taskMessages } from '../../db/schema';
 import { activityKindOf } from './brief.service';
 
 /** jsonb payloads arrive as raw strings through RQB relation selects — parse once so the
@@ -26,7 +26,10 @@ export function normalizeActivityPayload(payload: unknown): Record<string, unkno
 }
 
 /** the blank-body message a dispatch creates before its run row exists */
-export async function createRunMessage(input: { taskId: string; authorId: string | null; createdAt?: Date }, ex: DbExecutor = db) {
+export async function createRunMessage(
+  input: { taskId: string; authorId: string | null; createdAt?: Date },
+  ex: DbExecutor = db,
+) {
   const d = asDb(ex);
   const rows = await d
     .insert(taskMessages)
@@ -43,7 +46,10 @@ export async function createRunMessage(input: { taskId: string; authorId: string
 
 /** activity side of the thread — the structured payload lives in task_activity
  * during the dual-write window, so this only places the base row */
-export async function insertActivityMessage(input: { taskId: string; authorId: string | null; body: string; payload: Record<string, unknown> }, ex: DbExecutor = db) {
+export async function insertActivityMessage(
+  input: { taskId: string; authorId: string | null; body: string; payload: Record<string, unknown> },
+  ex: DbExecutor = db,
+) {
   const d = asDb(ex);
   const rows = await d
     .insert(taskMessages)

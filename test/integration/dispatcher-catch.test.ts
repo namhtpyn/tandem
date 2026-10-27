@@ -6,7 +6,6 @@ import './api-harness';
 import { ROLE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
-
 vi.mock('#server/domains/tasks/runner.service', () => ({
   dispatchTask: async () => {
     throw new Error('task vanished');

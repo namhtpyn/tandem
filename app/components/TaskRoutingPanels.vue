@@ -141,7 +141,10 @@ const assignmentLines = computed(() => {
 });
 
 /** subtask badge: joined status row — its NAME in the category color (never the raw id) */
-function subtaskBadge(c: ChildRow): { label: string; color: 'primary' | 'success' | 'warning' | 'error' | 'info' | 'neutral' } {
+function subtaskBadge(c: ChildRow): {
+  label: string;
+  color: 'primary' | 'success' | 'warning' | 'error' | 'info' | 'neutral';
+} {
   const st = props.statusById.get(c.status);
   const category = st?.category;
   return {
@@ -176,13 +179,9 @@ function subtaskBadge(c: ChildRow): { label: string; color: 'primary' | 'success
           />
           {{ p.kind === PROPOSAL_KIND.SUBTASKS ? 'Split into subtasks' : 'Reassign ticket' }}
         </p>
-        <ul
-          v-if="p.kind === PROPOSAL_KIND.SUBTASKS"
-          class="mb-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400"
-        >
+        <ul v-if="p.kind === PROPOSAL_KIND.SUBTASKS" class="mb-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
           <li v-for="(item, i) in p.payload.items ?? []" :key="i" class="truncate">
-            • {{ item.title
-            }}<span v-if="item.assigneeName" class="text-zinc-400"> — {{ item.assigneeName }}</span>
+            • {{ item.title }}<span v-if="item.assigneeName" class="text-zinc-400"> — {{ item.assigneeName }}</span>
           </li>
         </ul>
         <p v-else class="mb-2 truncate text-xs text-zinc-600 dark:text-zinc-400">
@@ -235,19 +234,11 @@ function subtaskBadge(c: ChildRow): { label: string; color: 'primary' | 'success
       />
       <USelect
         v-model="subtaskAssignee"
-        :items="[
-          { label: 'Unassigned', value: '__none__' },
-          ...employees.map((e) => ({ label: e.name, value: e.id })),
-        ]"
+        :items="[{ label: 'Unassigned', value: '__none__' }, ...employees.map((e) => ({ label: e.name, value: e.id }))]"
         size="xs"
         class="w-28"
       />
-      <UButton
-        size="xs"
-        icon="i-lucide-plus"
-        :disabled="proposalBusy || !subtaskTitle.trim()"
-        @click="createSubtask"
-      />
+      <UButton size="xs" icon="i-lucide-plus" :disabled="proposalBusy || !subtaskTitle.trim()" @click="createSubtask" />
     </div>
   </div>
 

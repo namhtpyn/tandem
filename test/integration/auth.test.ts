@@ -12,10 +12,9 @@ import { env, setEnv } from '#server/domains/kernel/env';
 import { setSetting } from '#server/domains/settings/settings.service';
 import { ROLE } from '#shared/enums';
 
-
 describe('auth policy', () => {
   beforeEach(async () => {
-      await applyMigrations();
+    await applyMigrations();
     setEnv({ TANDEM_DISABLE_PASSWORD_LOGIN: undefined });
     await saveOidcProviders([]);
   });
@@ -79,7 +78,7 @@ describe('auth policy', () => {
 
 describe('auth instance', () => {
   beforeEach(async () => {
-      await applyMigrations();
+    await applyMigrations();
     await saveOidcProviders([]);
   });
 

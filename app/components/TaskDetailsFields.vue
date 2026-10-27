@@ -99,9 +99,7 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
             :disabled="fieldBusy"
             aria-label="Task assignee"
             class="w-40"
-            @update:model-value="
-              (v: string) => task && updateField({ assigneeId: v === '__none__' ? null : v })
-            "
+            @update:model-value="(v: string) => task && updateField({ assigneeId: v === '__none__' ? null : v })"
           />
         </dd>
       </div>
@@ -125,9 +123,7 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
             :disabled="fieldBusy"
             aria-label="Task project"
             class="w-40"
-            @update:model-value="
-              (v: string) => task && updateField({ projectId: v === '__none__' ? null : v })
-            "
+            @update:model-value="(v: string) => task && updateField({ projectId: v === '__none__' ? null : v })"
           />
         </dd>
       </div>

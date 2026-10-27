@@ -1,7 +1,4 @@
 <script setup lang="ts">
-
-import { formatWhen } from '~/utils/format-when';
-
 // Self-contained vault secrets manager: owns the paged query (server-side
 // folder filter + search), the create/replace editor, the delete confirm and
 // the table with mobile cards. The parent owns the folder filter value
@@ -12,6 +9,7 @@ import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { formatWhen } from '~/utils/format-when';
 import type { VaultSecretRow } from '~/utils/orpc-types';
 
 const folderId = defineModel<string | null>('folderId', { default: null });
@@ -173,13 +171,7 @@ onServerPrefetch(() => liveQuery.suspense());
       <template #toolbar>
         <VaultFolderSelect v-model="folderId" clearable />
         <span class="flex-1" />
-        <UButton
-          v-if="editable"
-          icon="i-lucide-plus"
-          size="sm"
-          label="New secret"
-          @click="openEditor()"
-        />
+        <UButton v-if="editable" icon="i-lucide-plus" size="sm" label="New secret" @click="openEditor()" />
       </template>
       <template #description-cell="{ row }">
         <span class="text-xs text-zinc-500 dark:text-zinc-400">{{ row.original.description || '—' }}</span>

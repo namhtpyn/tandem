@@ -10,7 +10,6 @@ import { decryptSecret, encryptSecret, lastFourHint } from '#server/domains/vaul
 import { ROLE } from '#shared/enums';
 import type { VaultSecretRow } from '#shared/types';
 
-
 const admin = { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'A', email: 'a@x', role: ROLE.ADMIN };
 
 async function ctx(sessionUser: { id: string; name: string; email: string; role: string } | null = admin) {

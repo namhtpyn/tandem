@@ -23,7 +23,6 @@ async function callProc(path: string, input?: unknown): Promise<any> {
   return call(node as unknown as Parameters<typeof call>[0], input ?? {}, { context });
 }
 
-
 describe('GET /health/ready failure body', () => {
   it('returns { ok: false } only — the driver error goes to the server log, not the body', async () => {
     const { vi: v } = await import('vitest');

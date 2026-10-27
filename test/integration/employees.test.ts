@@ -13,7 +13,6 @@ import { CHANGE_ACTION, CHANGE_RESOURCE } from '#shared/enums';
 import { ROLE } from '#shared/enums';
 import type { EmployeeRow, ApiKeyRow } from '#shared/types';
 
-
 // live rows intentionally drop the legacy harness field — the test asserts its absence
 type LiveEmployee = EmployeeRow & { harness?: string };
 
@@ -54,8 +53,7 @@ async function seedEnv(id: string) {
   return id;
 }
 
-beforeEach(async () => {
-});
+beforeEach(async () => {});
 
 describe('employees.live', () => {
   it('returns an empty snapshot for a fresh database', async () => {
@@ -952,7 +950,10 @@ describe('ACP executable', () => {
           supervisorIds: [],
           image: bad,
         }),
-      ).rejects.toMatchObject({ code: 'BAD_REQUEST', data: { issues: [expect.objectContaining({ path: ['image'] })] } });
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        data: { issues: [expect.objectContaining({ path: ['image'] })] },
+      });
     }
     await expect(
       proc('employees.update', {

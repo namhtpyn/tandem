@@ -2,11 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ACTIVITY_KIND, REVIEW_STATUS, RUN_STATUS } from '#shared/enums';
 
-import {
-  buildThread,
-  formatThreadTime,
-  parseRunEnvelope,
-} from '../../app/utils/task-thread.ts';
+import { buildThread, formatThreadTime, parseRunEnvelope } from '../../app/utils/task-thread.ts';
 
 describe('parseRunEnvelope', () => {
   it('parses a JSON verdict on the last line', () => {
@@ -58,10 +54,6 @@ describe('structured verdicts (zod)', () => {
     expect(parseRunEnvelope('[1,2,3]')).toBeNull();
   });
 });
-
-
-
-
 
 describe('buildThread', () => {
   it('description becomes the first bubble even when newer than runs', () => {
@@ -164,8 +156,6 @@ describe('buildThread', () => {
     expect(item).toMatchObject({ kind: 'run', status: RUN_STATUS.RUNNING, output: 'partial', exitCode: null });
   });
 });
-
-
 
 describe('buildThread degenerate sources', () => {
   it('no runs and no activity keys at all yields brief only', () => {

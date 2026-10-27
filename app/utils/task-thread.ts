@@ -48,7 +48,10 @@ export type ThreadSource = {
   briefAuthorName?: string | null;
   briefAuthorId?: string | null;
   runs?: Array<
-    Pick<ThreadRunItem, 'id' | 'status' | 'output' | 'exitCode' | 'prompt' | 'body' | 'agentName' | 'startedAt' | 'finishedAt'>
+    Pick<
+      ThreadRunItem,
+      'id' | 'status' | 'output' | 'exitCode' | 'prompt' | 'body' | 'agentName' | 'startedAt' | 'finishedAt'
+    >
   >;
   activity?: Array<Pick<ThreadNoteItem, 'id' | 'noteKind' | 'body' | 'authorName' | 'authorId' | 'createdAt'>>;
 };

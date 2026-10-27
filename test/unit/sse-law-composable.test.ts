@@ -166,9 +166,7 @@ describe('useChangeEvents', () => {
 
   it('auth failures take the backoff path (distinct from plain drops)', async () => {
     const qc = makeQc();
-    const live = vi.fn(() =>
-      Promise.reject(Object.assign(new Error('nope'), { code: 'UNAUTHORIZED' })),
-    );
+    const live = vi.fn(() => Promise.reject(Object.assign(new Error('nope'), { code: 'UNAUTHORIZED' })));
     install({ changes: { live } }, qc);
     const { useChangeEvents } = await loadMod();
     useChangeEvents(ref({ user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } }));

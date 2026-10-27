@@ -231,9 +231,9 @@ describe('collectRunOutputs per-file hardening', () => {
       },
       { failGet: () => true },
     );
-    await expect(collectRunOutputs(Fake, plan, 't-allfail', mkdtempSync(join(tmpdir(), 'collect-fail-')), 1024)).resolves.toEqual(
-      [],
-    );
+    await expect(
+      collectRunOutputs(Fake, plan, 't-allfail', mkdtempSync(join(tmpdir(), 'collect-fail-')), 1024),
+    ).resolves.toEqual([]);
   });
 });
 

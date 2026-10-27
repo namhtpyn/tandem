@@ -172,7 +172,6 @@ export async function addNote(taskId: string, authorId: string, body: string) {
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
 
-
 export async function submitResult(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId);
   if (task.status !== DOING_STATUS) throw new Error('only a task in progress can submit');

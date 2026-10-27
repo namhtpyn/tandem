@@ -35,9 +35,7 @@ const taskStatusCategory = computed<TaskStatusRow['category'] | null>(() =>
 );
 
 // review verdicts are an explicit-reviewer surface — nobody else sees the box
-const isReviewer = computed(
-  () => !!task.value?.reviewerNames.includes(session.value?.user.name ?? ''),
-);
+const isReviewer = computed(() => !!task.value?.reviewerNames.includes(session.value?.user.name ?? ''));
 
 const workflowNote = ref('');
 const workflowBusy = ref(false);
@@ -62,21 +60,19 @@ async function wfAction(action: WorkflowAction, extra: { body?: string; toEmploy
   workflowMessage.value = '';
   try {
     const input = { taskId: task.value.id, ...extra };
-    await (
-      {
-        dispatch: () => $client.tasks.dispatch({ taskId: input.taskId }),
-        note: () => $client.tasks.note({ ...input, body: nonNull(input.body) }),
-        // body is optional server-side (submitResult defaults it) — an empty note is fine
-        submit: () => $client.tasks.submit({ ...input, body: input.body || undefined }),
-        ask: () => $client.tasks.ask({ ...input, body: nonNull(input.body) }),
-        forward: () => $client.tasks.forward({ ...input, toEmployeeId: nonNull(input.toEmployeeId) }),
-        answer: () => $client.tasks.answer({ ...input, body: nonNull(input.body) }),
-        approve: () => $client.tasks.approve(input),
-        requestChanges: () => $client.tasks.requestChanges({ ...input, body: nonNull(input.body) }),
-        reject: () => $client.tasks.reject(input),
-        abandon: () => $client.tasks.abandon(input),
-      }[action]
-    )();
+    await {
+      dispatch: () => $client.tasks.dispatch({ taskId: input.taskId }),
+      note: () => $client.tasks.note({ ...input, body: nonNull(input.body) }),
+      // body is optional server-side (submitResult defaults it) — an empty note is fine
+      submit: () => $client.tasks.submit({ ...input, body: input.body || undefined }),
+      ask: () => $client.tasks.ask({ ...input, body: nonNull(input.body) }),
+      forward: () => $client.tasks.forward({ ...input, toEmployeeId: nonNull(input.toEmployeeId) }),
+      answer: () => $client.tasks.answer({ ...input, body: nonNull(input.body) }),
+      approve: () => $client.tasks.approve(input),
+      requestChanges: () => $client.tasks.requestChanges({ ...input, body: nonNull(input.body) }),
+      reject: () => $client.tasks.reject(input),
+      abandon: () => $client.tasks.abandon(input),
+    }[action]();
     workflowNote.value = '';
     // TASKS refresh keeps the page's task row (and the drawer's snapshot) ahead
     // of the SSE round-trip — no double-submit window when the verb moves status
@@ -115,7 +111,6 @@ const queryClient = useQueryClient();
 useHead({ title: () => (task.value ? `${task.value.title} · Tandem` : 'Task · Tandem') });
 
 onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense()]));
-
 </script>
 
 <template>
@@ -194,7 +189,10 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
               v-if="taskStatusCategory === 'in_review' && isReviewer"
               class="mb-3"
               :busy="workflowBusy"
-              @verdict="(action: 'approve' | 'requestChanges' | 'reject', body?: string) => wfAction(action, { body: body || undefined })"
+              @verdict="
+                (action: 'approve' | 'requestChanges' | 'reject', body?: string) =>
+                  wfAction(action, { body: body || undefined })
+              "
             />
 
             <!-- composer: workflow note + primary actions -->
@@ -238,7 +236,11 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                   <UPopover mode="hover" enable-touch>
                     <template #content>
                       <div class="px-3 py-1.5 text-xs">
-                        {{ taskStatusCategory === 'waiting_answer' ? 'Send answer — the agent resumes' : 'Post note to the conversation' }}
+                        {{
+                          taskStatusCategory === 'waiting_answer'
+                            ? 'Send answer — the agent resumes'
+                            : 'Post note to the conversation'
+                        }}
                       </div>
                     </template>
                     <UButton

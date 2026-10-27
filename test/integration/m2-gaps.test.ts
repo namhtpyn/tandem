@@ -7,8 +7,7 @@ import { env, setEnv } from '#server/domains/kernel/env';
 
 import { makeEvent } from './api-harness.ts';
 
-beforeEach(async () => {
-});
+beforeEach(async () => {});
 
 describe('/rpc adapter branch arms', () => {
   it('GET with no body builds a bodyless Request (live SSE endpoint)', async () => {

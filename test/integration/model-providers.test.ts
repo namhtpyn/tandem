@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import './api-harness';
 import { ROLE } from '#shared/enums';
 
-
 const admin = {
   id: '00000000-0000-7000-8000-cd5fca5e2d34',
   name: 'Admin',
@@ -656,7 +655,6 @@ describe('employees model access', () => {
       message: expect.stringContaining('AI employees'),
     });
   });
-
 });
 
 describe('provider styles', () => {

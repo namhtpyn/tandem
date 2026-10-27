@@ -385,8 +385,10 @@ export const taskRuns = pgTable(
       .$default(() => new Date()),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
   },
-  (t) => [index('task_runs_message_idx').on(t.messageId, t.startedAt),
-    index('task_runs_employee_started_idx').on(t.employeeId, t.startedAt)],
+  (t) => [
+    index('task_runs_message_idx').on(t.messageId, t.startedAt),
+    index('task_runs_employee_started_idx').on(t.employeeId, t.startedAt),
+  ],
 );
 
 // REVIEW LAW (2026-10-16): one row per reviewer per review round — the single source

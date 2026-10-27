@@ -1,12 +1,10 @@
 // Pure helpers: vault secret picker grouping + avatar endpoint (REST).
 import { beforeEach, describe, expect, it } from 'vitest';
 
-
 import './api-harness';
 import { groupedSecretOptions } from '../../app/utils/vault-options.ts';
 
-beforeEach(async () => {
-});
+beforeEach(async () => {});
 
 describe('groupedSecretOptions', () => {
   it('groups by folder, folders first alphabetically, loose secrets last', () => {

@@ -141,9 +141,27 @@ describe('task thread (task_messages base + extensions)', () => {
       finishedAt: started,
     });
     await db.insert(taskAttachments).values([
-      { id: 'att-1', taskId: t.id, runId: 'r-att', kind: 'output', filename: 'a.txt', mime: 'text/plain', size: 3, sha256: 'aa' },
+      {
+        id: 'att-1',
+        taskId: t.id,
+        runId: 'r-att',
+        kind: 'output',
+        filename: 'a.txt',
+        mime: 'text/plain',
+        size: 3,
+        sha256: 'aa',
+      },
       // defensive arm: an output attachment with no run never reaches any payload
-      { id: 'att-2', taskId: t.id, runId: null, kind: 'output', filename: 'b.txt', mime: 'text/plain', size: 4, sha256: 'bb' },
+      {
+        id: 'att-2',
+        taskId: t.id,
+        runId: null,
+        kind: 'output',
+        filename: 'b.txt',
+        mime: 'text/plain',
+        size: 4,
+        sha256: 'bb',
+      },
     ]);
     const items = (await svc.listTaskThread(t.id)) as Array<{ run: { outputs: Array<{ filename: string }> } | null }>;
     expect(items[0].run?.outputs.map((o) => o.filename)).toEqual(['a.txt']);
@@ -152,7 +170,12 @@ describe('task thread (task_messages base + extensions)', () => {
   it('threadList proc + thread live proc serve the same snapshot', async () => {
     const t = await callProc('tasks.create', { title: 'Proc thread' });
     const svc = await threadSvc();
-    await svc.insertActivityMessage({ taskId: t.id, authorId: ADMIN_ID, body: 'human note', payload: { kind: 'NOTE' } });
+    await svc.insertActivityMessage({
+      taskId: t.id,
+      authorId: ADMIN_ID,
+      body: 'human note',
+      payload: { kind: 'NOTE' },
+    });
 
     const viaProc = await callProc('tasks.threadList', { taskId: t.id });
     expect(viaProc).toHaveLength(1);
@@ -163,6 +186,4 @@ describe('task thread (task_messages base + extensions)', () => {
     await iter.return?.();
     expect((snap.value as Array<{ body: string }>)[0].body).toBe('human note');
   });
-
-
 });

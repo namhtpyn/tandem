@@ -5,7 +5,6 @@ import './api-harness';
 import { ROLE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
-
 vi.mock('#server/domains/kernel/queue', () => ({
   redisQueue: async () => ({
     queue: async () => ({ close: async () => {} }),

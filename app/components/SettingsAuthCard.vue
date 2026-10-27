@@ -165,9 +165,7 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
               <template #provider-cell="{ row }">
                 <div class="flex flex-wrap items-center gap-2">
                   <span class="text-sm font-medium text-zinc-900 dark:text-white">{{ row.original.label }}</span>
-                  <UBadge v-if="!row.original.secretSet" variant="subtle" color="warning" size="sm"
-                    >no secret</UBadge
-                  >
+                  <UBadge v-if="!row.original.secretSet" variant="subtle" color="warning" size="sm">no secret</UBadge>
                 </div>
               </template>
               <template #callback-cell="{ row }">

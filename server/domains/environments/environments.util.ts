@@ -5,9 +5,7 @@ import { SECRET_USAGE } from '#shared/enums';
 
 export const environmentInput = z.strictObject({
   name: z.string().min(1).max(64),
-  host: z
-    .string()
-    .regex(/^(?!-)[a-zA-Z0-9._-]{1,253}(?<!-)$/, 'ssh-safe host'),
+  host: z.string().regex(/^(?!-)[a-zA-Z0-9._-]{1,253}(?<!-)$/, 'ssh-safe host'),
   port: z
     .string()
     .regex(/^[1-9][0-9]{0,4}$/, 'port must be 1-65535')

@@ -5,7 +5,6 @@ import './api-harness';
 import { PROJECT_STATUS, ROLE } from '#shared/enums';
 import type { ProjectRow, TaskRow } from '#shared/types';
 
-
 const admin = {
   id: '00000000-0000-7000-8000-cd5fca5e2d34',
   name: 'Admin',

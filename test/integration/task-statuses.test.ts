@@ -7,7 +7,6 @@ import { OBLIGATION_STATUS, ROLE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import type { TaskStatusRow } from '#shared/types';
 
-
 async function wireDecisionProvider(secretId: string | null) {
   const d = await dbm();
   const { modelProviders } = await import('#server/db/schema');
@@ -154,7 +153,10 @@ describe('task statuses', () => {
     const { db } = await dbm();
     const { taskStatuses } = await import('#server/db/schema');
     // a built-in row points at the doomed status too (save refuses built-in ids, so write raw)
-    await db.update(taskStatuses).set({ nextIds: [STATUS.doing, a.id], updatedAt: new Date() }).where(eq(taskStatuses.id, STATUS.todo));
+    await db
+      .update(taskStatuses)
+      .set({ nextIds: [STATUS.doing, a.id], updatedAt: new Date() })
+      .where(eq(taskStatuses.id, STATUS.todo));
     await callProc('statuses.remove', { id: a.id });
     const rows = await db.select().from(taskStatuses);
     expect(rows.find((x) => x.id === STATUS.todo)!.nextIds).toEqual([STATUS.doing]);

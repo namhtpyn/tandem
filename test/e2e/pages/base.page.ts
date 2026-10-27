@@ -24,10 +24,9 @@ export class BasePage {
     await this.page.keyboard.press('Escape');
     try {
       await expect
-        .poll(
-          () => this.page.evaluate((t: string) => (document.body.innerText || '').includes(t), sentinelText),
-          { timeout: 1_500 },
-        )
+        .poll(() => this.page.evaluate((t: string) => (document.body.innerText || '').includes(t), sentinelText), {
+          timeout: 1_500,
+        })
         .toBe(false);
     } catch {
       const close = this.page.getByRole('button', { name: 'Close' }).first();

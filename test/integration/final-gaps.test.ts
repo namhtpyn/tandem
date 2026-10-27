@@ -126,9 +126,7 @@ describe('GET /health/ready 503 path', () => {
     // the ledger count query throws inside the handler's try
     await sqlClient`drop table if exists drizzle.__drizzle_migrations`;
     // the ready memo survives other tests' successful probes — reset for this arm
-    const { __resetMigrationsDoneForTests } = await import(
-      '../../server/routes/health/ready.get.ts'
-    );
+    const { __resetMigrationsDoneForTests } = await import('../../server/routes/health/ready.get.ts');
     __resetMigrationsDoneForTests();
     const { result, event } = await call('#server/routes/health/ready.get.ts', {
       method: 'GET',

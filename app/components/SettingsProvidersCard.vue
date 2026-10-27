@@ -277,13 +277,7 @@ onServerPrefetch(() => providersLive.suspense());
     <template #body>
       <UForm id="provider-editor-form" :state="mProvForm" class="space-y-4" @submit="saveMProv">
         <UFormField label="Label" name="label">
-          <UInput
-            v-model="mProvForm.label"
-            icon="i-lucide-tag"
-            placeholder="Provider name"
-            class="w-full"
-            required
-          />
+          <UInput v-model="mProvForm.label" icon="i-lucide-tag" placeholder="Provider name" class="w-full" required />
         </UFormField>
         <UFormField label="Base URL" name="baseUrl">
           <template #hint><FormHint text="OpenAI- or Anthropic-compatible endpoint root" /></template>

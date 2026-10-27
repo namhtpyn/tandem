@@ -4,22 +4,33 @@ import { and, desc, EmptyFilter, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
-import { ACTIVITY_KIND, CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS, type RunStatus, type ActivityKind } from '#shared/enums';
+import {
+  ACTIVITY_KIND,
+  CHANGE_RESOURCE,
+  CHANGE_ACTION,
+  RUN_STATUS,
+  type RunStatus,
+  type ActivityKind,
+} from '#shared/enums';
 import { STATUS } from '#shared/status';
 import type { TaskRow } from '#shared/types';
 import { escapeIlike } from '#shared/utils/escape-ilike';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { projects as projectsTable, taskRuns as taskRunsTable, tasks as tasksTable, taskProposals, taskMessages } from '../../db/schema';
-
-
+import {
+  projects as projectsTable,
+  taskRuns as taskRunsTable,
+  tasks as tasksTable,
+  taskProposals,
+  taskMessages,
+} from '../../db/schema';
+import { env } from '../kernel/env';
+import { liveGenerator, ORPCError, protectedProcedure, publishChange } from '../kernel/kernel';
 import { recordAssignment, listAssignments } from './assignments.service';
 import { refreshParentGating } from './gating.service';
 import { approvalsInRoundBatch, openObligations, pendingForUser, pendingCounts } from './obligations.service';
 import { confirmProposal, rejectProposal } from './proposals.service';
-import { env } from '../kernel/env';
-import { liveGenerator, ORPCError, protectedProcedure, publishChange } from '../kernel/kernel';
 import { listReviews, logActivity } from './review.service';
 import { dispatchTask, listRuns } from './runner.service';
 import { listTaskThread } from './thread.service';
@@ -464,7 +475,9 @@ export const tasksRouter = os.router({
       }
       const terminal = new Set<string>([STATUS.done, STATUS.cancelled, STATUS.inReview, STATUS.waitingAnswer]);
       if (terminal.has(input.status)) {
-        throw new ORPCError('BAD_REQUEST', { message: 'use the workflow actions for review, completion and cancellation' });
+        throw new ORPCError('BAD_REQUEST', {
+          message: 'use the workflow actions for review, completion and cancellation',
+        });
       }
       const actorId = await selfIdOf(context);
       await db

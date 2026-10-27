@@ -263,9 +263,7 @@ async function saveCompanyName() {
   }
 }
 
-onServerPrefetch(() =>
-  Promise.all([settingsLive.suspense(), providersLive.suspense(), vaultLive.suspense()]),
-);
+onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspense(), vaultLive.suspense()]));
 </script>
 
 <template>
@@ -288,12 +286,9 @@ onServerPrefetch(() =>
         />
       </UFormField>
       <UButton type="submit" icon="i-lucide-save" :loading="savingName">Save</UButton>
-      <span
-        v-if="nameMessage"
-        class="pb-2 text-xs"
-        :class="nameMessage === 'Saved' ? 'text-success' : 'text-error'"
-        >{{ nameMessage }}</span
-      >
+      <span v-if="nameMessage" class="pb-2 text-xs" :class="nameMessage === 'Saved' ? 'text-success' : 'text-error'">{{
+        nameMessage
+      }}</span>
     </UForm>
 
     <USeparator class="my-5" />
@@ -379,9 +374,7 @@ onServerPrefetch(() =>
 
     <div>
       <p class="pb-1 text-sm font-medium">Decision engine (auto-assign)</p>
-      <p class="text-muted pb-2 text-xs">
-        Picks which employee takes a task. Provider must speak a decision endpoint.
-      </p>
+      <p class="text-muted pb-2 text-xs">Picks which employee takes a task. Provider must speak a decision endpoint.</p>
       <UForm :state="decisionForm" class="flex flex-col gap-3" @submit="saveAssignment('internalDecision')">
         <UFormField label="Provider" name="dProvider">
           <USelectMenu
@@ -467,9 +460,7 @@ onServerPrefetch(() =>
             :disabled="llmSaving"
           />
         </UFormField>
-        <UButton type="submit" icon="i-lucide-save" :loading="llmSaving" class="self-start"
-          >Save internal LLM</UButton
-        >
+        <UButton type="submit" icon="i-lucide-save" :loading="llmSaving" class="self-start">Save internal LLM</UButton>
       </UForm>
     </div>
     <span v-if="aiMessage" class="pb-2 text-xs" :class="aiMessage === 'Saved' ? 'text-success' : 'text-error'">{{

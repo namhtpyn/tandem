@@ -197,7 +197,9 @@ const projectOptions = computed(() => [
   { label: 'No project', value: '__none__' },
   ...projectRows.value.map((p) => ({ label: p.name, value: p.id })),
 ]);
-const statusOptions = computed(() => statuses.value.filter((x) => x.category === 'ready').map((x) => ({ label: x.name, value: x.id })));
+const statusOptions = computed(() =>
+  statuses.value.filter((x) => x.category === 'ready').map((x) => ({ label: x.name, value: x.id })),
+);
 
 async function save() {
   busy.value = true;

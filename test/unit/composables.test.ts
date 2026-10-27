@@ -54,7 +54,6 @@ describe('useAppSession', () => {
     const m = await import('../../app/composables/useAppSession.ts');
     m.useAppSession().value = {
       user: { id: 'x', name: 'X', email: 'x@x', role: ROLE.ADMIN },
-
     };
     expect(m.useAppSession().value?.user.id).toBe('x');
   });
@@ -65,7 +64,6 @@ describe('useSessionRefreshing', () => {
     const m = await import('../../app/composables/useAppSession.ts');
     m.useAppSession().value = {
       user: { id: 'old', name: 'Old', email: 'o@x', role: ROLE.ADMIN },
-
     };
     (g.useNuxtApp as () => unknown) = () => ({
       $client: {
@@ -89,7 +87,6 @@ describe('useSessionRefreshing', () => {
   it('refreshSession updates the session via oRPC auth.session', async () => {
     currentSession = {
       user: { id: '00000000-0000-7000-8000-c5ea71554c77', name: 'U', email: 'u@x', role: ROLE.VIEWER },
-
     };
     const m = await import('../../app/composables/useAppSession.ts');
     const { refreshSession } = m.useSessionRefreshing();
@@ -144,36 +141,36 @@ describe('useSessionRefreshing', () => {
     expect(add).toHaveBeenCalledTimes(1);
   });
 
-describe('isUnauthorizedError', () => {
-  it('detects code, status and statusCode shapes; rejects everything else', async () => {
-    const m = await import('../../app/composables/useAppSession.ts');
-    expect(m.isUnauthorizedError({ code: 'UNAUTHORIZED' })).toBe(true);
-    expect(m.isUnauthorizedError({ code: 'FORBIDDEN' })).toBe(true);
-    expect(m.isUnauthorizedError({ status: 401 })).toBe(true);
-    expect(m.isUnauthorizedError({ statusCode: 403 })).toBe(true);
-    expect(m.isUnauthorizedError(new Error('boom'))).toBe(false);
-    expect(m.isUnauthorizedError(null)).toBe(false);
-  });
+  describe('isUnauthorizedError', () => {
+    it('detects code, status and statusCode shapes; rejects everything else', async () => {
+      const m = await import('../../app/composables/useAppSession.ts');
+      expect(m.isUnauthorizedError({ code: 'UNAUTHORIZED' })).toBe(true);
+      expect(m.isUnauthorizedError({ code: 'FORBIDDEN' })).toBe(true);
+      expect(m.isUnauthorizedError({ status: 401 })).toBe(true);
+      expect(m.isUnauthorizedError({ statusCode: 403 })).toBe(true);
+      expect(m.isUnauthorizedError(new Error('boom'))).toBe(false);
+      expect(m.isUnauthorizedError(null)).toBe(false);
+    });
 
-  it('refreshSession clears the session ONLY on an explicit auth rejection', async () => {
-    (g.useNuxtApp as () => unknown) = () => ({
-      $client: {
-        auth: {
-          session: async () => {
-            throw Object.assign(new Error('nope'), { code: 'UNAUTHORIZED' });
+    it('refreshSession clears the session ONLY on an explicit auth rejection', async () => {
+      (g.useNuxtApp as () => unknown) = () => ({
+        $client: {
+          auth: {
+            session: async () => {
+              throw Object.assign(new Error('nope'), { code: 'UNAUTHORIZED' });
+            },
           },
         },
-      },
-    });
-    const m = await import('../../app/composables/useAppSession.ts');
-    m.useAppSession().value = { user: { id: 'old', name: 'O', email: 'o@x', role: ROLE.ADMIN } };
-    const { refreshSession } = m.useSessionRefreshing();
-    await refreshSession();
-    expect(m.useAppSession().value).toBeNull();
-    // restore the default stub
-    (g.useNuxtApp as () => unknown) = () => ({
-      $client: { auth: { session: async () => currentSession } },
+      });
+      const m = await import('../../app/composables/useAppSession.ts');
+      m.useAppSession().value = { user: { id: 'old', name: 'O', email: 'o@x', role: ROLE.ADMIN } };
+      const { refreshSession } = m.useSessionRefreshing();
+      await refreshSession();
+      expect(m.useAppSession().value).toBeNull();
+      // restore the default stub
+      (g.useNuxtApp as () => unknown) = () => ({
+        $client: { auth: { session: async () => currentSession } },
+      });
     });
   });
-});
 });

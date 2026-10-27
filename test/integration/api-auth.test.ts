@@ -56,8 +56,7 @@ async function firstSnapshot(path: string[]) {
   return first;
 }
 
-beforeEach(async () => {
-});
+beforeEach(async () => {});
 
 describe('oidc.replace (authenticated)', () => {
   it('rejects an invalid payload (BAD_REQUEST)', async () => {

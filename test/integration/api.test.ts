@@ -20,7 +20,6 @@ import { applyMigrations, sqlClient } from '#server/db/index';
 import { env, setEnv } from '#server/domains/kernel/env';
 import { ROLE } from '#shared/enums';
 
-
 // ---- harness: real h3 events + nitro auto-import aliases ----
 
 type FakeReq = {

@@ -11,11 +11,11 @@ import { and, desc, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { db, asDb, type DbExecutor } from '../../db/index';
-import { insertActivityMessage } from './thread.service';
 import { tasks, taskReviews, taskRuns, taskMessages } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { spawnObligation, cancelObligations, cancelAllObligations, resolveObligation } from './obligations.service';
 import { dispatchTask } from './runner.service';
+import { insertActivityMessage } from './thread.service';
 
 export type ReviewVerdict = Exclude<ReviewStatus, typeof REVIEW_STATUS.PENDING>;
 
@@ -235,7 +235,7 @@ export async function recordVerdict(
   // covers AI runs still in flight when their round closed
   if (roundRows.some((r) => r.status === REVIEW_STATUS.CHANGE_REQUESTED || r.status === REVIEW_STATUS.REJECTED))
     throw new Error('review round already closed');
-    // unanimity is judged on the round AS THIS VERDICT lands (rows pre-read above)
+  // unanimity is judged on the round AS THIS VERDICT lands (rows pre-read above)
   const unanimous =
     verdict === REVIEW_STATUS.APPROVED &&
     roundRows.length > 0 &&

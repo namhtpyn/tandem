@@ -68,12 +68,17 @@ const mobileRows = computed<T[]>(() => {
 // client-side pagination for small lists: internal page state, sliced rows —
 // no page/pageCount props needed (server-side lists pass them and slice themselves)
 const internalPage = ref(1);
-watch(() => props.data, () => {
-  internalPage.value = 1;
-});
+watch(
+  () => props.data,
+  () => {
+    internalPage.value = 1;
+  },
+);
 const internalPageCount = computed(() => Math.max(1, Math.ceil(props.data.length / props.pageSize)));
 const viewData = computed(() =>
-  paginated.value ? props.data : props.data.slice((internalPage.value - 1) * props.pageSize, internalPage.value * props.pageSize),
+  paginated.value
+    ? props.data
+    : props.data.slice((internalPage.value - 1) * props.pageSize, internalPage.value * props.pageSize),
 );
 // the mobile card list paginates exactly like the desktop rows (server-side
 // lists arrive pre-sliced; client-side lists slice the flattened tree)
@@ -181,10 +186,7 @@ function cellValue(row: T, col: TableColumn<T>) {
 
     <!-- opt-in empty state: a live search yields a no-results line, otherwise
          the parent's no-data branding (icon + text props) -->
-    <div
-      v-if="showEmptyState && !data.length && !loading"
-      class="flex flex-col items-center gap-2 py-12 text-center"
-    >
+    <div v-if="showEmptyState && !data.length && !loading" class="flex flex-col items-center gap-2 py-12 text-center">
       <UIcon :name="emptyIcon ?? (isFiltered ? 'i-lucide-search-x' : 'i-lucide-inbox')" class="size-8 text-zinc-300" />
       <p class="text-sm text-zinc-500">
         {{ isFiltered ? 'No results — try a different search.' : emptyText || 'Nothing here yet.' }}

@@ -8,18 +8,14 @@ import { mockDb, tasks } from './helpers/mock-db';
 describe('query shape (drizzle.mock)', () => {
   it('rqb count(filter) renders where clause', () => {
     const db = mockDb();
-    const { sql: rendered } = db.query.tasks
-      .count({ id: { in: ['a', 'b'] } })
-      .toSQL();
+    const { sql: rendered } = db.query.tasks.count({ id: { in: ['a', 'b'] } }).toSQL();
     expect(rendered).toContain('count(*)');
     expect(rendered).toContain('where');
   });
 
   it('RQB with: joins through the declared relation', () => {
     const db = mockDb();
-    const { sql: rendered } = db.query.taskMessages
-      .findMany({ with: { task: true }, limit: 1 })
-      .toSQL();
+    const { sql: rendered } = db.query.taskMessages.findMany({ with: { task: true }, limit: 1 }).toSQL();
     expect(rendered.toLowerCase()).toContain('task_messages');
     expect(rendered.toLowerCase()).toContain('join');
   });

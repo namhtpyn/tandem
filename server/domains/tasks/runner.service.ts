@@ -1,6 +1,7 @@
 import { consola } from 'consola';
 import { and, desc, eq, ne, sql } from 'drizzle-orm';
 
+import { PROPOSAL_KIND } from '#shared/enums';
 // Agent runner: dispatch a task to its AI assignee over SSH as ONE ACP
 // prompt turn (Agent Client Protocol v1 over stdio), stream session updates
 // back, persist the FULL output on the run row (appended in chunks, never
@@ -14,9 +15,8 @@ import { and, desc, eq, ne, sql } from 'drizzle-orm';
 // TANDEM_FAKE_RUNNER=1 short-circuits SSH with a synthetic emitter so CI and
 // local e2e can exercise the full dispatch→stream→finish loop with no host.
 import { nonNull } from '#shared/utils/non-null';
-import { PROPOSAL_KIND } from '#shared/enums';
-import type { RoutingProposal } from '../../../app/utils/task-thread';
 
+import type { RoutingProposal } from '../../../app/utils/task-thread';
 import { db } from '../../db/index';
 import { tasks, taskRuns, taskActivity, taskAttachments, taskMessages } from '../../db/schema';
 import { env } from '../kernel/env';
@@ -120,9 +120,7 @@ export async function settleAttachments(
           });
         } catch (e) {
           // one unreadable/unstorable file never aborts the rest of the batch
-          consola.warn(
-            `[settle] skipped collected output '${f.filename}': ${String(e)}`,
-          );
+          consola.warn(`[settle] skipped collected output '${f.filename}': ${String(e)}`);
         }
       }
       if (collected.length) {
@@ -181,11 +179,11 @@ import { v7 as uuidv7 } from 'uuid';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION, SECRET_USAGE } from '#shared/enums';
 import { RUN_STATUS, REVIEW_STATUS, type FinishedStatus } from '#shared/enums';
+import { RunVerdictSchema, type RunEnvelope } from '#shared/run-verdict';
+import { STATUS } from '#shared/status';
 // One shared verdict contract: the review brief renders the SAME JSON envelope as the
 // work brief (owner no-truncation law: title/description/result/activity ship WHOLE).
 import { renderOutputContract } from '#shared/structured-output';
-import { RunVerdictSchema, type RunEnvelope } from '#shared/run-verdict';
-import { STATUS } from '#shared/status';
 
 import {
   attachmentExists,
@@ -200,9 +198,9 @@ import {
 /** everything the dispatched agent needs, decrypted; returns null pieces when unconfigured */
 import { buildBrief, loadBriefData } from './brief.service';
 import { recordProposals } from './proposals.service';
-import { createRunMessage, updateRunMessageBody } from './thread.service';
 import { recordVerdict } from './review.service';
 import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles, ensureOutDir } from './ssh-files.util';
+import { createRunMessage, updateRunMessageBody } from './thread.service';
 import { submitResult, askQuestion } from './workflow.service';
 
 export async function loadDispatchPlan(taskId: string) {
@@ -425,7 +423,10 @@ function reviewBrief(
   reviewerName: string,
   taskTitle: string,
   taskDescription: string,
-  briefData: { recentActivity: Array<{ kind: string; authorName: string | null; body: string | null }>; relay: boolean },
+  briefData: {
+    recentActivity: Array<{ kind: string; authorName: string | null; body: string | null }>;
+    relay: boolean;
+  },
   resultBody: string,
   relay = false,
 ) {
@@ -448,8 +449,7 @@ function reviewBrief(
   if (briefData.recentActivity.length) {
     lines.push('');
     lines.push('Recent activity (oldest first):');
-    for (const a of briefData.recentActivity)
-      lines.push(`- ${a.kind} by ${a.authorName ?? 'system'}: ${a.body ?? ''}`);
+    for (const a of briefData.recentActivity) lines.push(`- ${a.kind} by ${a.authorName ?? 'system'}: ${a.body ?? ''}`);
   }
   /* v8 ignore stop */
   lines.push('');
@@ -457,7 +457,8 @@ function reviewBrief(
     renderOutputContract(RunVerdictSchema, {
       // same verbs the verdict parser settles on: result = approve, blocked =
       // change request, question = park on the owner; a verdict-less review never approves
-      intro: 'VERDICT — end your response with exactly one JSON line (no code fence). kind "result" APPROVES the submission, "blocked" sends it back to the assignee with your note, "question" parks the task on the owner:',
+      intro:
+        'VERDICT — end your response with exactly one JSON line (no code fence). kind "result" APPROVES the submission, "blocked" sends it back to the assignee with your note, "question" parks the task on the owner:',
       examples: [
         '{"kind": "result", "body": "<verdict note — approval>"}',
         '{"kind": "blocked", "body": "<what must change — sent back to the assignee>"}',
@@ -706,7 +707,9 @@ export async function dispatchTask(
       // a submit/verdict failure is REAL: log it and take the retry/backoff path —
       // swallowing it here then resetting failStreak wedged the task with no retry
       /* v8 ignore start */ // needs a mid-flight workflow mutation so submit throws; the reaper/backoff arms cover the ladder
-      consola.error(`[settle] task ${taskId} run ${runId} settle failed: ${e instanceof Error ? e.message : String(e)}`);
+      consola.error(
+        `[settle] task ${taskId} run ${runId} settle failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
       await scheduleRetryBackoff();
       return;
     }
@@ -791,7 +794,14 @@ export async function dispatchTask(
         try {
           const briefData = await loadBriefData(taskId, plan.ai.userId);
           const brief = plan.review
-            ? reviewBrief(plan.agentName, plan.task.title, plan.task.description, briefData, plan.review.resultBody, briefData.relay)
+            ? reviewBrief(
+                plan.agentName,
+                plan.task.title,
+                plan.task.description,
+                briefData,
+                plan.review.resultBody,
+                briefData.relay,
+              )
             : buildBrief({ ...briefData, outDir: `~/.tandem/${taskId}/attachments/out/` });
           // persist the exact prompt so the run is auditable from the task page
           await db.update(taskRuns).set({ prompt: brief }).where(eq(taskRuns.id, runId));

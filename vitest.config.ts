@@ -66,11 +66,7 @@ export default defineConfig({
         test: {
           name: 'integration',
           include: ['test/integration/**/*.test.ts'],
-          setupFiles: [
-            './test/setup.ts',
-            './test/integration/worker-setup.ts',
-            './test/integration/setup.ts',
-          ],
+          setupFiles: ['./test/setup.ts', './test/integration/worker-setup.ts', './test/integration/setup.ts'],
         },
       },
       // component tests in a real Nuxt environment (auto-imports, plugins, injections)

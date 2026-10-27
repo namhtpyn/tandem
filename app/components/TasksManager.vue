@@ -1,7 +1,4 @@
 <script setup lang="ts">
-
-import { formatWhen } from '~/utils/format-when';
-
 // Self-contained tasks manager: server-paged/searched/filtered list
 // (tasks.listPaged — q + statusId + inboxOfMe), the statuses/employees/projects
 // display joins, the needs-my-decision inbox toggle (badge from tasks.inbox,
@@ -13,6 +10,7 @@ import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
 
 import { ACTIVITY_KIND, CHANGE_RESOURCE } from '#shared/enums';
+import { formatWhen } from '~/utils/format-when';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 
 const { $orpc, $client } = useNuxtApp();
@@ -290,21 +288,19 @@ async function wfAction(action: WorkflowAction, extra: { body?: string; toEmploy
   workflowMessage.value = '';
   try {
     const input = { taskId, ...extra };
-    await (
-      {
-        dispatch: () => $client.tasks.dispatch({ taskId: input.taskId }),
-        note: () => $client.tasks.note({ ...input, body: nonNull(input.body) }),
-        // body is optional server-side (submitResult defaults it) — an empty note is fine
-        submit: () => $client.tasks.submit({ ...input, body: input.body || undefined }),
-        ask: () => $client.tasks.ask({ ...input, body: nonNull(input.body) }),
-        forward: () => $client.tasks.forward({ ...input, toEmployeeId: nonNull(input.toEmployeeId) }),
-        answer: () => $client.tasks.answer({ ...input, body: nonNull(input.body) }),
-        approve: () => $client.tasks.approve(input),
-        requestChanges: () => $client.tasks.requestChanges({ ...input, body: nonNull(input.body) }),
-        reject: () => $client.tasks.reject(input),
-        abandon: () => $client.tasks.abandon(input),
-      }[action]
-    )();
+    await {
+      dispatch: () => $client.tasks.dispatch({ taskId: input.taskId }),
+      note: () => $client.tasks.note({ ...input, body: nonNull(input.body) }),
+      // body is optional server-side (submitResult defaults it) — an empty note is fine
+      submit: () => $client.tasks.submit({ ...input, body: input.body || undefined }),
+      ask: () => $client.tasks.ask({ ...input, body: nonNull(input.body) }),
+      forward: () => $client.tasks.forward({ ...input, toEmployeeId: nonNull(input.toEmployeeId) }),
+      answer: () => $client.tasks.answer({ ...input, body: nonNull(input.body) }),
+      approve: () => $client.tasks.approve(input),
+      requestChanges: () => $client.tasks.requestChanges({ ...input, body: nonNull(input.body) }),
+      reject: () => $client.tasks.reject(input),
+      abandon: () => $client.tasks.abandon(input),
+    }[action]();
     workflowNote.value = '';
     // invalidate BOTH feeds: TASKS re-syncs the drawer's task row (status/reviewers),
     // TASK_ACTIVITY keeps the thread and activity feed current
@@ -322,9 +318,7 @@ async function wfAction(action: WorkflowAction, extra: { body?: string; toEmploy
 
 // review verdicts are an explicit-reviewer surface — nobody else sees the box
 const session = useAppSession();
-const drawerCanReview = computed(
-  () => !!workflowTask.value?.reviewerNames.includes(session.value?.user.name ?? ''),
-);
+const drawerCanReview = computed(() => !!workflowTask.value?.reviewerNames.includes(session.value?.user.name ?? ''));
 
 // ---- board (kanban) view ----
 // Persisted client-side only (localStorage via VueUse) — deliberately NOT a DB setting.
@@ -817,7 +811,11 @@ onServerPrefetch(() =>
               variant="soft"
               icon="i-lucide-corner-up-right"
               :disabled="workflowBusy || !forwardTo || forwardTo === '__none__'"
-              @click="forwardTo && forwardTo !== '__none__' && wfAction('forward', { toEmployeeId: forwardTo, body: workflowNote })"
+              @click="
+                forwardTo &&
+                forwardTo !== '__none__' &&
+                wfAction('forward', { toEmployeeId: forwardTo, body: workflowNote })
+              "
               >Forward</UButton
             >
             <UButton
@@ -833,7 +831,10 @@ onServerPrefetch(() =>
           <TaskReviewBox
             v-if="workflowStatusCategory === 'in_review' && drawerCanReview"
             :busy="workflowBusy"
-            @verdict="(action: 'approve' | 'requestChanges' | 'reject', body?: string) => wfAction(action, { body: body || undefined })"
+            @verdict="
+              (action: 'approve' | 'requestChanges' | 'reject', body?: string) =>
+                wfAction(action, { body: body || undefined })
+            "
           />
           <USelect
             v-model="forwardTo"
@@ -851,7 +852,9 @@ onServerPrefetch(() =>
           <UTextarea
             v-model="workflowNote"
             :rows="3"
-            :placeholder="workflowStatusCategory === 'waiting_answer' ? 'Write an answer — the agent resumes' : 'Write a note…'"
+            :placeholder="
+              workflowStatusCategory === 'waiting_answer' ? 'Write an answer — the agent resumes' : 'Write a note…'
+            "
             class="w-full"
           />
           <UButton
@@ -886,7 +889,10 @@ onServerPrefetch(() =>
                   v-if="r.status.toLowerCase() === 'running'"
                   class="bg-warning inline-block size-2 animate-pulse rounded-full"
                 />
-                <span v-else-if="r.status.toLowerCase() === 'done'" class="bg-success inline-block size-2 rounded-full" />
+                <span
+                  v-else-if="r.status.toLowerCase() === 'done'"
+                  class="bg-success inline-block size-2 rounded-full"
+                />
                 <span v-else class="bg-error inline-block size-2 rounded-full" />
                 {{ r.status }}<span v-if="r.exitCode !== null"> · exit {{ r.exitCode }}</span>
               </p>

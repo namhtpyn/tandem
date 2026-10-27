@@ -204,16 +204,18 @@ describe('stale-run reaper', () => {
   it('fails ancient running runs and bounces the task with a long backoff', async () => {
     const { db } = await import('#server/db');
     const { tasks, taskRuns, taskMessages } = await import('#server/db/schema');
-    const msg1 = (await db.insert(taskMessages).values({ taskId: 't-1', body: '' }).returning({ id: taskMessages.id }))[0]!;
-await db.insert(taskRuns).values({
+    const msg1 = (
+      await db.insert(taskMessages).values({ taskId: 't-1', body: '' }).returning({ id: taskMessages.id })
+    )[0]!;
+    await db.insert(taskRuns).values({
       id: 'r-old',
-            employeeId: '00000000-0000-7000-8000-79d931929132',
+      employeeId: '00000000-0000-7000-8000-79d931929132',
       environmentId: 'env-1',
       status: RUN_STATUS.RUNNING,
       output: 'partial output',
       startedAt: new Date(Date.now() - 3 * 60 * 60_000),
       messageId: msg1.id,
-});
+    });
     await db.update(tasks).set({ status: STATUS.doing }).where(eq(tasks.id, 't-1'));
     const { reapStaleRuns } = await import('#server/domains/tasks/dispatcher.service');
     expect(await reapStaleRuns()).toBe(1);
@@ -225,16 +227,18 @@ await db.insert(taskRuns).values({
     expect(task.failStreak).toBe(1);
     expect(task.dispatchAfter!.getTime()).toBeGreaterThan(Date.now() + 14 * 60_000);
     // fresh running runs are left alone
-    const msg2 = (await db.insert(taskMessages).values({ taskId: 't-1', body: '' }).returning({ id: taskMessages.id }))[0]!;
-await db.insert(taskRuns).values({
+    const msg2 = (
+      await db.insert(taskMessages).values({ taskId: 't-1', body: '' }).returning({ id: taskMessages.id })
+    )[0]!;
+    await db.insert(taskRuns).values({
       id: 'r-new',
-            employeeId: '00000000-0000-7000-8000-79d931929132',
+      employeeId: '00000000-0000-7000-8000-79d931929132',
       environmentId: 'env-1',
       status: RUN_STATUS.RUNNING,
       output: '',
       startedAt: new Date(),
       messageId: msg2.id,
-});
+    });
     expect(await reapStaleRuns()).toBe(0);
   });
 
@@ -242,51 +246,59 @@ await db.insert(taskRuns).values({
     const { db } = await import('#server/db');
     const { tasks, taskRuns, taskMessages } = await import('#server/db/schema');
     const old = new Date(Date.now() - 3 * 60 * 60_000);
-    const msg3 = (await db.insert(taskMessages).values({ taskId: 't-1', body: '' }).returning({ id: taskMessages.id }))[0]!;
-await db.insert(taskRuns).values({
+    const msg3 = (
+      await db.insert(taskMessages).values({ taskId: 't-1', body: '' }).returning({ id: taskMessages.id })
+    )[0]!;
+    await db.insert(taskRuns).values({
       id: 'r-a',
-            employeeId: '00000000-0000-7000-8000-79d931929132',
+      employeeId: '00000000-0000-7000-8000-79d931929132',
       environmentId: 'env-1',
       status: RUN_STATUS.RUNNING,
       output: '',
       startedAt: old,
       messageId: msg3.id,
-});
-    const msg4 = (await db.insert(taskMessages).values({ taskId: 't-1', body: '' }).returning({ id: taskMessages.id }))[0]!;
-await db.insert(taskRuns).values({
+    });
+    const msg4 = (
+      await db.insert(taskMessages).values({ taskId: 't-1', body: '' }).returning({ id: taskMessages.id })
+    )[0]!;
+    await db.insert(taskRuns).values({
       id: 'r-b',
-            employeeId: '00000000-0000-7000-8000-79d931929132',
+      employeeId: '00000000-0000-7000-8000-79d931929132',
       environmentId: 'env-1',
       status: RUN_STATUS.RUNNING,
       output: '',
       startedAt: new Date(Date.now() - 2 * 60 * 60_000),
       messageId: msg4.id,
-});
+    });
     await db.update(tasks).set({ status: STATUS.doing }).where(eq(tasks.id, 't-1'));
     const { reapStaleRuns } = await import('#server/domains/tasks/dispatcher.service');
     expect(await reapStaleRuns()).toBe(2); // both stale -> both reaped
     // now only ONE new run: reaping it must NOT bounce when a newer done run exists
-    const msg5 = (await db.insert(taskMessages).values({ taskId: 't-1', body: '' }).returning({ id: taskMessages.id }))[0]!;
-await db.insert(taskRuns).values({
+    const msg5 = (
+      await db.insert(taskMessages).values({ taskId: 't-1', body: '' }).returning({ id: taskMessages.id })
+    )[0]!;
+    await db.insert(taskRuns).values({
       id: 'r-c',
-            employeeId: '00000000-0000-7000-8000-79d931929132',
+      employeeId: '00000000-0000-7000-8000-79d931929132',
       environmentId: 'env-1',
       status: RUN_STATUS.RUNNING,
       output: '',
       startedAt: new Date(Date.now() - 3 * 60 * 60_000),
       messageId: msg5.id,
-});
-    const msg6 = (await db.insert(taskMessages).values({ taskId: 't-1', body: '' }).returning({ id: taskMessages.id }))[0]!;
-await db.insert(taskRuns).values({
+    });
+    const msg6 = (
+      await db.insert(taskMessages).values({ taskId: 't-1', body: '' }).returning({ id: taskMessages.id })
+    )[0]!;
+    await db.insert(taskRuns).values({
       id: 'r-d',
-            employeeId: '00000000-0000-7000-8000-79d931929132',
+      employeeId: '00000000-0000-7000-8000-79d931929132',
       environmentId: 'env-1',
       status: RUN_STATUS.DONE,
       exitCode: 0,
       output: '',
       startedAt: new Date(),
       messageId: msg6.id,
-});
+    });
     await db
       .update(tasks)
       .set({ status: RUN_STATUS.DONE, failStreak: 0, dispatchAfter: null })
@@ -432,7 +444,7 @@ describe('run output streaming', () => {
       let mid = '';
       await vi.waitFor(async () => {
         const rows = await db
-           .select({ status: taskRuns.status, output: taskRuns.output })
+          .select({ status: taskRuns.status, output: taskRuns.output })
           .from(taskRuns)
           .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
           .where(eq(taskMessages.taskId, 't-1'));
@@ -442,11 +454,13 @@ describe('run output streaming', () => {
       });
       const handle = await handleP;
       expect((await handle.finished).status).toBe(RUN_STATUS.DONE);
-      const final = (await db
-      .select({ output: taskRuns.output })
-      .from(taskRuns)
-      .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
-      .where(eq(taskMessages.taskId, 't-1')))[0]!;
+      const final = (
+        await db
+          .select({ output: taskRuns.output })
+          .from(taskRuns)
+          .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+          .where(eq(taskMessages.taskId, 't-1'))
+      )[0]!;
       // the mid-run view is a strict prefix of the final: appends grew the row, never rewrote it
       expect(final.output.startsWith(mid)).toBe(true);
       expect(mid.length).toBeLessThan(final.output.length);
