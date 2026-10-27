@@ -5,6 +5,9 @@
 import { SQL } from 'bun';
 
 const base = process.env.TANDEM_TEST_DATABASE_URL;
+/** resolved once here — test-client reads this instead of process.env (env law) */
+export const templateDatabaseUrl = base;
+(globalThis as { __tandemTestUrl?: string }).__tandemTestUrl = base;
 if (!base) throw new Error('TANDEM_TEST_DATABASE_URL missing — global-setup did not run');
 
 // The template is whatever TANDEM_TEST_DATABASE_URL points at: parse the db
