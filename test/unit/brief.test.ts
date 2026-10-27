@@ -18,10 +18,20 @@ describe('chainToRoot', () => {
     { employeeId: '00000000-0000-7000-8000-cb101192dff2', supervisorId: '00000000-0000-7000-8000-ce4004f150eb' },
     { employeeId: 'jim', supervisorId: '00000000-0000-7000-8000-5821b64a4515' },
   ];
-  it('walks up to the root', () => {
+  it('walks up to the root, one level per layer', () => {
     expect(chainToRoot('jim', edges)).toEqual([
-      '00000000-0000-7000-8000-5821b64a4515',
-      '00000000-0000-7000-8000-ce4004f150eb',
+      ['00000000-0000-7000-8000-5821b64a4515'],
+      ['00000000-0000-7000-8000-ce4004f150eb'],
+    ]);
+  });
+  it('a person with two supervisors yields a combined level, cycles terminate', () => {
+    const dual = [
+      ...edges,
+      { employeeId: '00000000-0000-7000-8000-5821b64a4515', supervisorId: 'boss2' },
+    ];
+    expect(chainToRoot('jim', dual)).toEqual([
+      ['00000000-0000-7000-8000-5821b64a4515'],
+      ['00000000-0000-7000-8000-ce4004f150eb', 'boss2'],
     ]);
   });
   it('top of org yields empty chain', () => {
@@ -102,12 +112,12 @@ describe('buildBrief', () => {
   const base = {
     agent: P('00000000-0000-7000-8000-cba5723598ca', 'Zed', 'CEO'),
     agentInstructions: 'Always answer in Vietnamese.',
-    upChain: [P('00000000-0000-7000-8000-481d41fbaa78', 'Nam Hoang', 'Founder')],
+    upChain: [[P('00000000-0000-7000-8000-481d41fbaa78', 'Nam Hoang', 'Founder')]],
     directReports: [P('00000000-0000-7000-8000-b5ca5ca514c6', 'Ash', 'CTO')],
     extraChains: [
       {
         person: P('00000000-0000-7000-8000-4a10b4d22ecf', 'Jay', 'PSE'),
-        chain: [P('00000000-0000-7000-8000-481d41fbaa78', 'Nam Hoang', 'Founder')],
+        chain: [[P('00000000-0000-7000-8000-481d41fbaa78', 'Nam Hoang', 'Founder')]],
       },
     ],
     task: {
@@ -179,7 +189,7 @@ describe('buildBrief', () => {
   it('null body + null authorName + untitled people render safely', () => {
     const b = buildBrief({
       ...base,
-      upChain: [P('00000000-0000-7000-8000-f20d9b639839', 'NoTitle')],
+      upChain: [[P('00000000-0000-7000-8000-f20d9b639839', 'NoTitle')]],
       agentInstructions: '',
       recentActivity: [{ kind: 'status', authorName: null, body: null }],
     });
