@@ -1,40 +1,21 @@
 import { expect, test } from '@playwright/test';
 
-import { login } from './helpers/login.ts';
-
-async function dismiss(page: any, text: string) {
-  await page.keyboard.press('Escape');
-  // settled when the overlay's sentinel text no longer reads from the body —
-  // polled, not slept, so it rides out the close transition. A sentinel that
-  // also lives behind the overlay (e.g. the row's own 'Edit employee' button)
-  // keeps the poll failing by design: the fallback then tries the overlay's
-  // Close button, which no-ops when Escape already closed it.
-  try {
-    await expect
-      .poll(() => page.evaluate((t: string) => (document.body.innerText || '').includes(t), text), { timeout: 1_500 })
-      .toBe(false);
-  } catch {
-    const close = page.getByRole('button', { name: 'Close' }).first();
-    if (await close.count()) await close.click();
-  }
-}
+import { BasePage } from './pages/base.page.ts';
 
 // M3: employees — live CRUD over oRPC /rpc, SSE realtime, AI keys.
 // Every run uses unique emails/names (leftover state must not break retries).
 
 // the list is server-paged (createdAt asc) — search surfaces fresh rows on
-// page 1; no settle sleep: the callers' retrying row asserts absorb the
-// debounced query + refetch
-async function searchFor(page: any, text: string) {
-  await page.getByPlaceholder('Search employees…').fill(text);
-}
+// page 1; the shared helper fills the debounced query and lets the callers'
+// retrying row asserts absorb the refetch
+const SEARCH = 'Search employees…';
 
 test('human employee CRUD round-trip on the live page', async ({ page }) => {
+  const ui = new BasePage(page);
   const suffix = Date.now().toString(36);
   const name = `E2E Human ${suffix}`;
   const email = `e2e-human-${suffix}@tandem.local`;
-  await login(page);
-  await page.getByRole('link', { name: /Employees/ }).click();
+  await ui.navigate('/employees');
   // wait for the live snapshot (admin row may or may not exist; empty state or table)
   await expect(page.getByRole('heading', { name: /Employees/ })).toBeVisible();
 
@@ -48,7 +29,7 @@ test('human employee CRUD round-trip on the live page', async ({ page }) => {
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
   // humans now also get an initial access key — dismiss the shown-once alert
   await page.getByRole('button', { name: /Done — I saved the key/ }).click();
-  await searchFor(page, name);
+  await ui.searchRows(SEARCH, name);
   await expect(page.locator('tr:visible', { hasText: name })).toBeVisible({ timeout: 15_000 });
 
   // edit title + email
@@ -56,7 +37,7 @@ test('human employee CRUD round-trip on the live page', async ({ page }) => {
   await page.getByPlaceholder('Job title').fill('Promoted Tester');
   await page.getByPlaceholder('name@company.com').fill(`renamed-${suffix}@tandem.local`);
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
-  await searchFor(page, name);
+  await ui.searchRows(SEARCH, name);
   await expect(page.locator('tr:visible', { hasText: name }).getByText('Promoted Tester')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator('tr:visible', { hasText: name }).getByText(`renamed-${suffix}@tandem.local`)).toBeVisible({
     timeout: 15_000,
@@ -66,19 +47,16 @@ test('human employee CRUD round-trip on the live page', async ({ page }) => {
   await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Delete employee' }).click();
   await expect(page.getByRole('dialog').getByText(/permanently/i)).toBeVisible();
   await expect(page.locator('tr:visible', { hasText: name })).toBeVisible(); // still there pre-confirm
-  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await ui.confirmDelete();
   await expect(page.locator('tr:visible', { hasText: name })).toHaveCount(0, { timeout: 15_000 });
 });
 
 test('AI employee create shows minted key once, kind immutable on edit', async ({ page }) => {
+  const ui = new BasePage(page);
   const suffix = Date.now().toString(36);
   // prerequisite environment for AI employees
   const envName = `e2e-env-${suffix}`;
-  await login(page);
-  await page
-    .getByRole('link', { name: /Environments/ })
-    .first()
-    .click();
+  await ui.navigate('/environments');
   await page.getByRole('button', { name: 'New environment' }).first().click();
   await page.getByPlaceholder('Environment name').fill(envName);
   await page.getByPlaceholder('Hostname or IP').fill('127.0.0.1');
@@ -89,7 +67,7 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   // create AI employee
   const name = `E2E Bot ${suffix}`;
   const email = `e2e-bot-${suffix}@tandem.local`;
-  await page.getByRole('link', { name: /Employees/ }).click();
+  await ui.navigate('/employees');
   await page.getByRole('button', { name: 'New employee' }).first().click();
   await page.getByPlaceholder('Full name').fill(name);
   await page.getByPlaceholder('name@company.com').fill(email);
@@ -104,7 +82,7 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   // minted key surfaces once
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
   await page.getByRole('button', { name: /Done — I saved the key/ }).click();
-  await searchFor(page, name);
+  await ui.searchRows(SEARCH, name);
   await expect(page.locator('tr:visible', { hasText: name })).toBeVisible({ timeout: 15_000 });
 
   // edit: kind immutable badge, no kind radio
@@ -130,27 +108,21 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
 
   // teardown: delete the bot, then its environment (leftover env rows break
   // other suites' unscoped selectors; keep the DB tidy)
-  await dismiss(page, 'Edit employee');
-  await page
-    .getByRole('link', { name: /Employees/ })
-    .first()
-    .click();
+  await ui.dismissOverlay('Edit employee');
+  await ui.navigate('/employees');
   await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Delete employee' }).click();
-  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await ui.confirmDelete();
   await expect(page.locator('tr', { hasText: name })).toHaveCount(0, { timeout: 15_000 });
-  await page
-    .getByRole('link', { name: /Environments/ })
-    .first()
-    .click();
+  await ui.navigate('/environments');
   await page.locator('tr:visible', { hasText: envName }).getByRole('button', { name: 'Delete environment' }).click();
-  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await ui.confirmDelete();
   await expect(page.locator('tr', { hasText: envName })).toHaveCount(0, { timeout: 15_000 });
 });
 
 test('supervision: assign supervisors on create, reflected live', async ({ page }) => {
+  const ui = new BasePage(page);
   const suffix = Date.now().toString(36);
-  await login(page);
-  await page.getByRole('link', { name: /Employees/ }).click();
+  await ui.navigate('/employees');
   await expect(page.getByRole('heading', { name: /Employees/ })).toBeVisible();
 
   // create the supervisor
@@ -163,7 +135,7 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
   await page.getByRole('button', { name: /Done — I saved the key/ }).click();
-  await searchFor(page, supName);
+  await ui.searchRows(SEARCH, supName);
   await expect(page.locator('tr:visible', { hasText: supName })).toBeVisible({ timeout: 15_000 });
 
   // create the report with supervisor assigned
@@ -176,7 +148,7 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
   await page.getByRole('button', { name: /Done — I saved the key/ }).click();
-  await searchFor(page, subName);
+  await ui.searchRows(SEARCH, subName);
   await expect(page.locator('tr:visible', { hasText: subName })).toBeVisible({ timeout: 15_000 });
 
   // edit the report: pick the supervisor in the multi-select
@@ -191,12 +163,12 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   await expect(row.getByText(supName, { exact: true })).toBeVisible({ timeout: 15_000 });
 
   // cleanup both rows (with confirmation); search keeps each target on page 1
-  await searchFor(page, subName);
+  await ui.searchRows(SEARCH, subName);
   await page.locator('tr:visible', { hasText: subName }).getByRole('button', { name: 'Delete employee' }).click();
-  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await ui.confirmDelete();
   await expect(page.locator('tr:visible', { hasText: subName })).toHaveCount(0, { timeout: 15_000 });
-  await searchFor(page, supName);
+  await ui.searchRows(SEARCH, supName);
   await page.locator('tr:visible', { hasText: supName }).getByRole('button', { name: 'Delete employee' }).click();
-  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await ui.confirmDelete();
   await expect(page.locator('tr:visible', { hasText: supName })).toHaveCount(0, { timeout: 15_000 });
 });

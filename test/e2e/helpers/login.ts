@@ -1,14 +1,14 @@
 import { expect, type Page } from '@playwright/test';
 
-// Deterministic login for e2e specs: the real UI form. The form is SSR'd;
+// Deterministic sign-in guard for e2e specs: the real UI form, no-op when the
+// setup project's storageState already signed the context in (the '/' shell
+// renders the dashboard, not the login card, once a session cookie exists).
+// The form is SSR'd;
 // clicking Sign in before Vue hydration attaches @submit causes a NATIVE form
 // post (page reloads, credentials lost, test flakes), and pre-hydration fills
 // get wiped by hydration itself — so we gate on hydration COMPLETING, not on
 // the network.
 export async function login(page: Page) {
-  // UI-form login: the fast cookie path (better-auth test-utils) dragged
-  // drizzle-orm/bun-sql into the playwright worker and its native SQL binding
-  // killed the worker process — the UI round-trip is the stable path.
   await page.goto('/');
 
   // Race-free hydration gate. waitForLoadState('networkidle') was doubly
@@ -27,6 +27,11 @@ export async function login(page: Page) {
     const root = document.querySelector('#__nuxt') as (Element & { __vue_app__?: unknown }) | null;
     return Boolean(root?.__vue_app__);
   });
+
+  // storageState reuse: after the hydration gate the Overview shell is already
+  // mounted iff the session cookie is valid — nothing to fill, done.
+  const overview = page.getByRole('heading', { name: 'Overview' });
+  if (await overview.isVisible()) return;
 
   const email = page.getByPlaceholder('you@example.com');
   await email.fill('admin@tandem.local');
