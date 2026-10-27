@@ -1,3 +1,19 @@
+# [2.49.0](https://github.com/namhtpyn/tandem/compare/v2.48.0...v2.49.0) (2026-10-27)
+
+
+### Bug Fixes
+
+* envelope stream corruption, prompt echo leak, status edges ([527cede](https://github.com/namhtpyn/tandem/commit/527cede1a8ae0f776595b5869ef5dcb6394d5daa))
+* **queue:** bounded redis reconnect; serial test asserts execution windows ([cf20061](https://github.com/namhtpyn/tandem/commit/cf200612c29563407d8c286a2b86254acde0bd8b))
+* **thread:** echo dedupe ms-precision, run-turn avatar, cap-leak test ([145f192](https://github.com/namhtpyn/tandem/commit/145f192c5a3c13172e198cc1c77b6eabb82ca415))
+
+
+### Features
+
+* **composer:** send steers a live agent, dispatches a stopped one; single button ([bae8efe](https://github.com/namhtpyn/tandem/commit/bae8efefb275aced6934d414c13af4dd8bbdab9f))
+* **tasks:** manual status is free; live runs lock status + assignee; Workflow block removed ([56239b0](https://github.com/namhtpyn/tandem/commit/56239b003ef9052862b86bb5a441bc4e9de94c9a))
+* **tasks:** subtasks open the create modal; owner field out; reviewers multi-select ([8fc2429](https://github.com/namhtpyn/tandem/commit/8fc24294b54e3a0adb04fc7d17d1598eecbb716c)), closes [#body](https://github.com/namhtpyn/tandem/issues/body)
+
 # [2.48.0](https://github.com/namhtpyn/tandem/compare/v2.47.1...v2.48.0) (2026-10-27)
 
 
