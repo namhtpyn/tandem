@@ -34,7 +34,7 @@ async function createCacheDomain(): Promise<CacheDomain> {
   /* v8 ignore next 4 -- node-redis socket internals fire the strategy, not our code */
   const ping = createClient({
     url,
-    socket: { connectTimeout: 5000, reconnectStrategy: () => new Error('no-retry') },
+    socket: { connectTimeout: 5000, reconnectStrategy: (retries: number) => (retries > 3 ? new Error('no-retry') : Math.min(retries * 200, 1_000)) },
   });
   ping.on('error', () => {});
   try {
