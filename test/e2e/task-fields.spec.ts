@@ -20,7 +20,10 @@ test('details: change status and assignee from the sidebar', async ({ page }) =>
   await login(page);
 
   // seed one human employee so the assignee select has a real option
-  await page.getByRole('link', { name: /Employees/ }).first().click();
+  await page
+    .getByRole('link', { name: /Employees/ })
+    .first()
+    .click();
   await expect(page.getByRole('heading', { name: /Employees/ })).toBeVisible();
   await page.getByRole('button', { name: 'New employee' }).first().click();
   await page.getByPlaceholder('Full name').fill(employeeName);

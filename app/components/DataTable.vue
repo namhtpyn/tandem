@@ -118,6 +118,8 @@ defineSlots<
     'mobile-item'?: (props: { row: T }) => VNode[];
     /** toolbar extras: filter chips, action buttons — rendered right of the search box */
     toolbar?: () => VNode[];
+    /** built-in empty state CTA — no cell props */
+    'empty-cta'?: () => VNode[];
   }
 >();
 
@@ -202,20 +204,27 @@ function cellValue(row: T, col: TableColumn<T>) {
 
     <!-- opt-in empty state: a live search yields a no-results line, otherwise
          the parent's no-data branding (icon + text props) -->
-    <div v-if="showEmptyState && !data.length && !loading" class="flex flex-col items-center gap-2 py-12 text-center">
-      <UIcon :name="emptyIcon ?? (isFiltered ? 'i-lucide-search-x' : 'i-lucide-inbox')" class="text-dimmed size-8" />
-      <p class="text-muted text-sm">
-        {{
-          isFiltered
-            ? 'No results — try a different search.'
-            : emptyText || 'Nothing here yet — use the button above to create one.'
-        }}
+    <div
+      v-if="showEmptyState && !data.length && !loading"
+      class="flex flex-col items-center justify-center gap-3 py-24 text-center"
+    >
+      <UIcon
+        :name="emptyIcon ?? (isFiltered ? 'i-lucide-search-x' : 'i-lucide-inbox')"
+        class="text-toned size-12"
+        aria-hidden="true"
+      />
+      <p class="text-highlighted text-base font-medium">
+        {{ isFiltered ? 'No results' : 'Nothing here yet' }}
       </p>
+      <p class="text-muted max-w-sm text-sm">
+        {{ isFiltered ? 'No results — try a different search.' : emptyText || 'Use the button above to create one.' }}
+      </p>
+      <slot name="empty-cta" />
     </div>
 
     <!-- pagination footer: prev / numbered / next (UButton — reka UPagination
          click handlers never fire in this app, proven in bd8b5f6) -->
-    <div v-if="showPager" class="border-default flex items-center justify-end gap-1 border-t p-3">
+    <div v-if="showPager && displayPageCount > 1" class="flex items-center justify-end gap-1 pt-2">
       <UButton
         icon="i-lucide-chevron-left"
         color="neutral"
@@ -228,8 +237,9 @@ function cellValue(row: T, col: TableColumn<T>) {
         <span v-if="typeof p === 'string'" class="text-dimmed px-1 text-sm" aria-hidden="true">…</span>
         <UButton
           v-else
-          :color="p === displayPage ? 'primary' : 'neutral'"
-          :variant="p === displayPage ? 'solid' : 'outline'"
+          color="neutral"
+          :variant="p === displayPage ? 'soft' : 'outline'"
+          :class="p === displayPage ? 'text-highlighted' : ''"
           :label="String(p)"
           :aria-label="`Page ${p}`"
           :aria-current="p === displayPage ? 'page' : undefined"

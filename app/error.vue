@@ -14,26 +14,28 @@ const description = computed(() => {
 
 useHead({ title: () => `${statusCode.value} - Tandem` });
 
-// Back into the app: clearing the error re-renders app.vue fresh; /tasks shows
-// the login screen when the error was auth-related.
-function backToTasks() {
-  clearError({ redirect: '/tasks' });
+// Back into the app: clearing the error re-renders app.vue fresh; the overview
+// shows the login screen when the error was auth-related. The action is a real
+// UButton (never a bare underlined link) — clearError is the reliable recovery
+// path here, a plain NuxtLink would push the error-state router.
+function backToOverview() {
+  clearError({ redirect: '/' });
 }
 </script>
 
 <template>
   <UApp>
     <div class="bg-default flex min-h-screen flex-col items-center justify-center p-6 text-center">
-      <div class="bg-primary/10 flex size-12 items-center justify-center rounded-xl shadow-sm">
+      <div class="bg-primary/10 flex size-14 items-center justify-center rounded-2xl shadow-sm">
         <UIcon
           :name="statusCode === 404 ? 'i-lucide-file-question' : 'i-lucide-triangle-alert'"
-          class="text-primary size-6"
+          class="text-primary size-7"
         />
       </div>
-      <p class="text-dimmed mt-6 text-sm font-medium">{{ statusCode }}</p>
-      <h1 class="text-highlighted mt-1 text-2xl font-bold tracking-tight">{{ title }}</h1>
+      <p class="text-dimmed mt-8 text-5xl font-bold tracking-tight tabular-nums sm:text-6xl">{{ statusCode }}</p>
+      <h1 class="text-highlighted mt-2 text-2xl font-bold tracking-tight">{{ title }}</h1>
       <p class="text-muted mt-2 max-w-sm text-sm leading-5">{{ description }}</p>
-      <UButton class="mt-6" size="lg" icon="i-lucide-arrow-left" label="Back to tasks" @click="backToTasks" />
+      <UButton class="mt-8" size="lg" icon="i-lucide-arrow-left" label="Back to overview" @click="backToOverview" />
     </div>
   </UApp>
 </template>

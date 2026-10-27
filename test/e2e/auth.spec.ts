@@ -3,8 +3,6 @@
 // own database tandem_e2e.
 import { expect, test } from '@playwright/test';
 
-import { ROLE } from '#shared/enums';
-
 import { login } from './helpers/login.ts';
 
 /** POST an oRPC live procedure, read the FIRST SSE data event, abort the
@@ -85,7 +83,9 @@ test.describe('auth flow', () => {
   test('admin login lands on the dashboard and shows the session', async ({ page }) => {
     // hydration-safe login (raw fill+click races Vue hydration under load)
     await login(page);
-    await expect(page.getByText(ROLE.ADMIN, { exact: true })).toBeVisible();
+    // sidebar footer shows the signed-in name; the role suffix is hidden when
+    // it just repeats the name ('Admin' + 'ADMIN')
+    await expect(page.getByText('Admin', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: /sign in/i })).toHaveCount(0);
   });
 

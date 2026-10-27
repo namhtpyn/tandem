@@ -5,6 +5,16 @@ const session = useAppSession();
 const authConfig = useAuthConfigState();
 const appVersion = useAppVersion();
 const companyName = computed(() => authConfig.value?.companyName?.trim() || 'Tandem');
+// version chip: only real semver builds get the chip — 'dev'/'main'/empty are
+// dev builds and the tiny 'vdev' reads as a rendering bug next to the logo
+const versionLabel = computed(() => appVersion.value.replace(/^v/, '').trim());
+const showVersionChip = computed(() => /^\d+\.\d+\.\d+/.test(versionLabel.value));
+// role suffix only when it adds information — name 'Admin' over role 'ADMIN'
+// is the same word twice (case-insensitive compare)
+const showRoleSuffix = computed(() => {
+  const user = session.value?.user;
+  return !!user && user.role.toLowerCase() !== user.name.trim().toLowerCase();
+});
 const { refreshSession } = useSessionRefreshing();
 const { $authClient } = useNuxtApp();
 const toast = useToast();
@@ -138,9 +148,9 @@ const nav = [
             <div v-if="!collapsed" class="flex min-w-0 flex-col">
               <span class="text-highlighted truncate text-sm leading-tight font-semibold"
                 >{{ companyName }}
-                <span class="text-dimmed text-xs">v{{ appVersion }}</span>
+                <span v-if="showVersionChip" class="text-dimmed text-xs font-normal">v{{ versionLabel }}</span>
               </span>
-              <span class="text-dimmed text-xs leading-tight">{{
+              <span class="text-dimmed truncate text-xs leading-tight">{{
                 companyName.toLowerCase() === 'tandem' ? 'company workspace' : 'workspace'
               }}</span>
             </div>
@@ -153,8 +163,11 @@ const nav = [
           <div class="flex w-full items-center gap-2" :class="collapsed ? 'flex-col' : ''">
             <UAvatar :alt="session.user.name" size="xs" />
             <div v-if="!collapsed" class="min-w-0 flex-1">
-              <p class="text-highlighted truncate text-xs font-medium">{{ session.user.name }}</p>
-              <p class="text-dimmed truncate text-xs">{{ session.user.role }}</p>
+              <!-- one line: name, plus the role as a muted suffix only when it
+                   differs from the name — 'Admin' + 'ADMIN' said it twice -->
+              <p class="text-highlighted truncate text-xs font-medium">
+                {{ session.user.name }}<span v-if="showRoleSuffix" class="text-dimmed"> · {{ session.user.role }}</span>
+              </p>
             </div>
             <UButton
               icon="i-lucide-log-out"

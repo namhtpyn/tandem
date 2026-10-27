@@ -1,7 +1,8 @@
 <script setup lang="ts">
 useHead({ title: 'Employees' });
 // Employees page shell — the paged/searched table, org chart and all CRUD
-// live in EmployeesManager (server-paged via employees.listPaged).
+// live in EmployeesManager (server-paged via employees.listPaged). The flex
+// column lets the org-graph canvas fill the remaining viewport height.
 </script>
 
 <template>
@@ -12,14 +13,12 @@ useHead({ title: 'Employees' });
           <UDashboardSidebarCollapse />
         </template>
       </UDashboardNavbar>
-      <div class="space-y-6 p-6 lg:p-8">
-        <div class="flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <p class="text-sm text-zinc-500">Humans and AI agents, one hierarchy — every employee is a login</p>
-          </div>
-        </div>
+      <div class="flex min-h-full flex-col space-y-6 p-6 lg:p-8">
+        <p class="text-muted hidden text-sm sm:block">
+          Manage human and AI-agent accounts, titles, and reporting lines
+        </p>
 
-        <EmployeesManager />
+        <EmployeesManager class="min-h-0 flex-1" />
       </div>
     </template>
   </UDashboardPanel>

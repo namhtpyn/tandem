@@ -1,87 +1,124 @@
 # Tandem Design System
 
 The visual language for every Tandem surface. Nuxt UI v4 components on Tailwind
-CSS v4; tokens are Nuxt UI theme aliases — no custom CSS beyond `main.css`
-imports. Dark mode is first-class (class strategy).
+CSS v4; colors are Nuxt UI **semantic tokens** — raw palette classes
+(`text-zinc-500`, `bg-amber-50`, …) are banned outside `app.config.ts`. Dark
+mode is first-class (class strategy); every view must hold in both modes.
 
 ## Tokens
 
-| Token          | Value                                                | Used for                                              |
-| -------------- | ---------------------------------------------------- | ----------------------------------------------------- |
-| Primary color  | `amber`                                              | brand marks, primary buttons, focus rings, active nav |
-| Neutral color  | `zinc`                                               | text, borders, backgrounds, all neutral surfaces      |
-| App background | `bg-zinc-50` / `dark:bg-zinc-950`                    | page canvas                                           |
-| Body text      | `text-zinc-900` / `dark:text-white`                  | headings + strong text                                |
-| Muted text     | `text-zinc-500` / `text-zinc-400`                    | descriptions, secondary labels                        |
-| Version label  | `font-mono text-xs text-zinc-400`                    | version chips (`v{{ appVersion }}`)                   |
-| Radius scale   | Tailwind default (`rounded-xl`, `rounded-2xl`)       | logo tiles `2xl`, cards/buttons via UCard/UButton     |
-| Icons          | Lucide (`i-lucide-*`) via @nuxt/icon                 | every icon, no other sets                             |
-| Fonts          | Nuxt UI default stack + `font-mono` for versions/ids | —                                                     |
+| Token            | Value / class                            | Used for                                            |
+| ---------------- | ---------------------------------------- | --------------------------------------------------- |
+| Primary color    | `amber` (app.config)                     | primary CTAs + brand marks ONLY (see rationing)     |
+| Neutral color    | `zinc`                                   | everything else                                     |
+| Canvas           | `bg-default`                             | page + app shell background                         |
+| Elevated surface | `bg-elevated`                            | cards, active segmented toggles, hover rows         |
+| Muted surface    | `bg-muted`                               | read-only value chips, subtle fills                 |
+| Strong text      | `text-highlighted`                       | headings, values, active states                     |
+| Body text        | `text-default`                           | body copy                                           |
+| Secondary text   | `text-muted`                             | descriptions, labels, timestamps                    |
+| Faint text       | `text-dimmed` (light floor: zinc-500)    | placeholders, meta — never darker than zinc-500     |
+| Borders          | `border-default` / `divide-default`      | all hairlines                                       |
+| SVG fills        | `fill-(--ui-*)` / `stroke-(--ui-*)`      | Tailwind has no `fill-default` namespace            |
+| Radius           | `rounded-xl`                             | one radius for brand icon tiles (login, error, sidebar) |
+| Icons            | Lucide (`i-lucide-*`) via @nuxt/icon     | dash naming only (`i-lucide-chevron-left`)          |
 
-Set in `app/app.config.ts`:
+Set in `app/app.config.ts` (`ui.colors`). The modal/drawer scrim lives there
+too: `bg-default/75 backdrop-blur-sm` on overlay slots.
 
-```ts
-export default defineAppConfig({
-  ui: { colors: { primary: 'amber', neutral: 'zinc' } },
-});
-```
+## Accent rationing
 
-## Layout
+Amber is scarce: it belongs to **one primary action per view** (New task,
+Create key, Save) and the active nav item. Everything else that marks "active"
+— segmented toggles, filter chips, pagination current page — is neutral
+(`bg-elevated text-highlighted` or `color=neutral variant=soft`). Status color
+comes from `categoryColor()` (`app/utils/ui-labels.ts`), never from amber.
 
-- **Shell**: fixed left sidebar (`USlideover`-free, collapsible) + top bar with
-  user chip; content scrolls in the main region. `min-h-screen` canvas.
-- **Login**: centered card (`max-w-sm`), logo tile above, brand lockup below.
-  Never inside the app shell.
-- **Logo tile**: square icon container — `size-12 rounded-2xl bg-primary` with
-  `i-lucide-users` in `text-inverted` (login), or `size-9 rounded-xl
-  bg-primary/10` with `text-primary` icon (sidebar, compact).
+## Shared vocabulary (`app/utils/ui-labels.ts`, auto-imported)
 
-## Components (Nuxt UI laws)
+- `categoryColor(category)` — the ONE status→badge-color map (header pills,
+  subtask badges, list dots, board dots).
+- `categoryLabel(category)` — `waiting_answer` → "Waiting answer" etc.
+- `kindLabel(kind)` — `ai` → "AI agent", `human` → "Human".
+- Raw enums never reach the DOM (`active`, `ai`, `in_review` are for storage).
 
-- **Record lists are `UTable` + a single add/edit modal** — never `v-for` +
-  `v-model` in pages (the dxup namedLayoutSlots transform breaks v-model over
-  v-for aliases in pages). Rows render via slot-scoped cells.
-- **Forms**: `UForm` + `UFormField` + `UInput` (`size="lg"` on login). Icons in
-  inputs: `i-lucide-mail`, `i-lucide-lock`.
-- **Buttons**: `UButton` — primary actions default color; destructive = `color="error"`,
-  variant `soft` or `ghost` for row actions.
-- **Feedback**: `UAlert` for form errors (login), toasts via `useToast()`.
-- **Avatars**: `UAvatar :alt="user.name"` — initials fallback; size `xs` in the
-  top bar.
-- **Badges/status**: `UBadge` with `color="success" | "warning" | "error" |
-  "neutral"` — run/task states map onto these.
-- **Modals**: `UModal` for create/edit; one modal per page, opened by row action
-  or "New" button.
+## Timestamps
 
-## Content patterns
+`formatWhenShort()` (`app/utils/format-when.ts`) for dense lists — `HH:MM`
+today, `Oct 27, 14:03` otherwise. `formatWhen()` for detail surfaces.
+Seconds never render; hydration suppression wraps every locale-dependent span.
 
-- **Milestone placeholder cards** (Overview page): heading + one-line purpose +
-  arrival note. Keeps empty states informative.
-- **Truncation**: `truncate` on any name/email in chips and table cells;
-  min-width guarded by `min-w-0`.
-- **Version display**: everywhere the app names itself, the version follows in
-  mono zinc-400 — brand consistency signal.
+## Page anatomy (every page)
 
-## Do / Don't
+1. Navbar title (+ one-line functional subtitle under it, `text-muted`,
+   `hidden sm:block`).
+2. ONE toolbar row: search left, all actions right, same baseline
+   (`size-sm`, `items-center`).
+3. Filter chips (horizontally scrollable on mobile, never wrapped).
+4. Content. A search input hides while the list is empty and unfiltered.
 
-- Do use token aliases (`text-primary`, `bg-primary/10`) — never raw amber hex.
-- Do keep dark-mode pairs on every custom color class (`dark:` variant).
-- Don't introduce a second icon set or font family.
-- Don't build custom tables/modals — compose UTable/UModal.
-- Don't hand-roll toasts; `useToast()`.
-- Empty states get a sentence, not a blank region.
+## Empty states
+
+Rendered by `DataTable` (centered, `py-24`, `size-12` icon, heading + sentence)
+with an `#empty-cta` slot — the page's real create button lives INSIDE the
+empty state, not only in the toolbar. Filtered-no-results states keep the
+search-x icon and never show a CTA.
+
+## Tables & rows
+
+- `DataTable` wraps `UTable`: server paging, debounced search, `:loading`
+  always wired; pager hidden at `pageCount <= 1`, current page =
+  `color=neutral variant=soft`; no border below the table card.
+- Row actions: hover/focus-within reveal on desktop (`md:opacity-0` →
+  `group-hover/focus-within:opacity-100`), always visible on mobile. Delete is
+  NOT permanently red — `text-muted`, `hover:text-error` — and two-step
+  confirmed.
+- Status cell: borderless `USelect variant="none"` + `categoryColor` dot.
+- Empty assignee renders "Unassigned" with a person icon, never a blank cell.
+- Timestamps: `formatWhenShort`.
+
+## Board (kanban)
+
+Single horizontally-scrollable flex row — columns never wrap to a second row.
+Each column `min-w-[260px] flex-1`; cards scroll internally; an empty column is
+a compact ~120px dashed drop zone (dashed = drop target only). No in-card
+status select (the column IS the status; drag & drop moves); card actions live
+behind a click kebab (`Auto-assign / Edit / Delete` with the existing confirm).
+
+## Modals & hints
+
+- One modal per page, opened by row action or the toolbar CTA; footer slot
+  holds `Cancel` (`variant="outline"`) + a dynamic primary
+  ("Create task" / "Save changes").
+- `FormHint` icons sit INLINE right after their label text (label slot), open
+  on hover, focus, and click (keyboard-reachable).
+- One-time secrets render in a `bg-primary/10` alert with a Copy button and a
+  "Done — I saved the key" dismiss; delete/revoke confirmations are stacked
+  modals whose buttons carry `:loading`.
+
+## Identity chrome
+
+- Version chip renders only for real semver tags — hidden on `dev`/`main`.
+- Sidebar footer: one line — name, plus a muted role suffix only when the role
+  differs from the name (`Admin` + `admin` shows just "Admin").
 
 ## Accessibility floor
 
-- Every icon-only control carries an `aria-label`.
-- Form fields use `UFormField` labels (real `<label>` association).
-- Color is never the only signal (badges also carry text).
+- Every icon-only control carries an `aria-label` (always, not only when
+  collapsed).
+- Toggle/segmented controls expose `aria-pressed`; section labels are real
+  headings (`h2`–`h4`), sentence case — no ALL-CAPS tracking-wide eyebrows.
+- Touch targets ≥ 32px on mobile-reachable controls; visible focus rings
+  everywhere (`focus-visible:`).
+- Contrast: `text-dimmed` never below zinc-500-equivalent on light, zinc-400
+  on dark; color is never the only signal.
 
-## Realtime indicators (M2+)
+## Do / Don't
 
-- Live data pages carry a pulsing emerald dot + `live` label next to the page
-  title (`animate-ping` outer, solid inner, `size-1.5`)
-- Probe results render as `UBadge` `success`/`error` subtle, `sm`, followed by
-  the detail line in `text-xs text-zinc-400` truncated with a `:title` tooltip
-- Tables are snapshots of a stream: no skeletons after first load — the rows
-  swap in place when the SSE snapshot lands
+- Do use semantic tokens; never raw palette classes in components.
+- Don't hand-roll status colors — `categoryColor`.
+- Don't build custom tables/modals/pagers — compose `UTable`/`UModal`/UButtons.
+- Don't keep `aria-label` only for the collapsed state; don't ship raw enum
+  values, internal milestone labels, or codenames in copy.
+- Copy: sentence case, active voice, named outcomes ("Note added"), recoverable
+  errors ("Couldn't save — try again"), empty states that invite.

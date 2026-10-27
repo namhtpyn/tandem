@@ -60,6 +60,10 @@ const byId = computed(() => new Map(allEmployees.value.map((r) => [r.id, r])));
 // ---- view toggle ----
 const view = ref<'list' | 'graph'>('list');
 
+// the search box is pointless over an empty, unfiltered list — hide it there
+const showSearch = computed(() => view.value === 'list' && (total.value > 0 || !!search.value));
+const isFiltered = computed(() => !!searchDebounced.value);
+
 const removeMutation = useMutation($orpc.employees.remove.mutationOptions());
 
 const busy = ref(false);
@@ -118,15 +122,23 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
 </script>
 
 <template>
-  <div>
-    <div class="flex flex-wrap items-end justify-between gap-2">
-      <span />
-      <div class="flex items-center gap-2">
+  <div class="flex min-h-0 flex-1 flex-col">
+    <!-- ONE toolbar row: search left, every action right -->
+    <div class="flex flex-wrap items-center gap-2">
+      <UInput
+        v-if="showSearch"
+        v-model="search"
+        icon="i-lucide-search"
+        placeholder="Search employees…"
+        size="sm"
+        class="w-full sm:max-w-xs"
+      />
+      <div class="ms-auto flex items-center gap-2 overflow-x-auto">
         <div class="border-default inline-flex overflow-hidden rounded-md border" role="group" aria-label="View">
           <button
             type="button"
             class="px-3 py-1.5 text-sm font-medium transition-colors"
-            :class="view === 'list' ? 'text-primary bg-primary/10' : 'text-muted hover:text-highlighted'"
+            :class="view === 'list' ? 'bg-elevated text-highlighted' : 'text-muted hover:text-highlighted'"
             aria-label="List view"
             :aria-pressed="view === 'list'"
             @click="view = 'list'"
@@ -136,7 +148,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
           <button
             type="button"
             class="border-default border-l px-3 py-1.5 text-sm font-medium transition-colors"
-            :class="view === 'graph' ? 'text-primary bg-primary/10' : 'text-muted hover:text-highlighted'"
+            :class="view === 'graph' ? 'bg-elevated text-highlighted' : 'text-muted hover:text-highlighted'"
             aria-label="Graph view"
             :aria-pressed="view === 'graph'"
             @click="view = 'graph'"
@@ -149,9 +161,10 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
           label="Titles"
           color="neutral"
           variant="outline"
+          size="sm"
           @click="titleManagerOpen = true"
         />
-        <UButton icon="i-lucide-plus" label="New employee" @click="openEditor()" />
+        <UButton icon="i-lucide-plus" label="New employee" size="sm" @click="openEditor()" />
       </div>
     </div>
 
@@ -160,9 +173,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
     <!-- Mobile: stacked cards (list view) -->
     <DataTable
       v-if="view === 'list'"
-      v-model:search="search"
-      searchable
-      search-placeholder="Search employees…"
+      class="mt-3"
       :data="rows"
       :loading="listQuery.isPending.value"
       v-model:page="page"
@@ -170,9 +181,14 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
       :page-size="pageSize"
       :columns="columns"
       show-empty-state
-      empty-icon="i-lucide-users"
-      empty-text="No employees yet — add the first human or AI teammate."
+      :empty-icon="isFiltered ? 'i-lucide-search-x' : 'i-lucide-users'"
+      :empty-text="
+        isFiltered ? 'No results — try a different search.' : 'No employees yet — add the first human or AI teammate.'
+      "
     >
+      <template #empty-cta>
+        <UButton v-if="!isFiltered" icon="i-lucide-plus" label="New employee" @click="openEditor()" />
+      </template>
       <template #name-cell="{ row }">
         <div class="flex items-center gap-2">
           <span class="flex items-center gap-2">
@@ -217,7 +233,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
         <span v-else class="text-dimmed text-xs">—</span>
       </template>
       <template #actions-cell="{ row }">
-        <div class="flex justify-end gap-1">
+        <div class="row-actions flex justify-end gap-1 transition-opacity">
           <UPopover mode="hover">
             <UButton
               icon="i-lucide-key-round"
@@ -250,8 +266,9 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
             <UButton
               icon="i-lucide-trash-2"
               variant="ghost"
-              color="error"
+              color="neutral"
               size="sm"
+              class="text-muted hover:text-error"
               aria-label="Delete employee"
               :disabled="busy"
               @click="askRemove(row.original)"
@@ -337,8 +354,9 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
               <UButton
                 icon="i-lucide-trash-2"
                 variant="ghost"
-                color="error"
+                color="neutral"
                 size="sm"
+                class="text-muted hover:text-error"
                 aria-label="Delete employee"
                 :disabled="busy"
                 @click="askRemove(row)"
@@ -353,7 +371,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
     </DataTable>
 
     <!-- graph view: supervision hierarchy -->
-    <EmployeeOrgGraph v-if="view === 'graph'" :rows="allEmployees" />
+    <EmployeeOrgGraph v-if="view === 'graph'" class="mt-3 min-h-72 flex-1" :rows="allEmployees" />
 
     <UModal v-model:open="deleteOpen" title="Delete employee" :ui="{ content: 'max-w-sm' }">
       <template #body>
@@ -379,3 +397,12 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
     <EmployeeKeysDrawer v-model:open="keysOpen" :employee="keysEmployee" />
   </div>
 </template>
+
+<style scoped>
+/* desktop hover-reveal for row actions — always visible on touch/mobile */
+@media (min-width: 768px) and (hover: hover) {
+  :deep(tbody tr:not(:hover):not(:focus-within)) .row-actions {
+    opacity: 0;
+  }
+}
+</style>

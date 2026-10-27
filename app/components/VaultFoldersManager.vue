@@ -134,8 +134,8 @@ async function removeFolder(id: string) {
           empty-icon="i-lucide-folder"
           empty-text="No folders yet — create one to categorize secrets."
         >
-          <template #toolbar>
-            <UButton v-if="editable" icon="i-lucide-plus" size="sm" label="New folder" @click="openEditor()" />
+          <template #empty-cta>
+            <UButton v-if="editable" icon="i-lucide-plus" label="New folder" @click="openEditor()" />
           </template>
           <template #secrets-cell="{ row }">
             <span class="text-muted text-xs"
@@ -143,7 +143,7 @@ async function removeFolder(id: string) {
             >
           </template>
           <template v-if="editable" #actions-cell="{ row }">
-            <div class="flex justify-end gap-1">
+            <div class="row-actions flex justify-end gap-1 transition-opacity">
               <UPopover mode="hover">
                 <UButton
                   icon="i-lucide-pencil"
@@ -162,6 +162,7 @@ async function removeFolder(id: string) {
                   size="xs"
                   color="neutral"
                   variant="ghost"
+                  class="text-muted hover:text-error"
                   aria-label="Delete folder"
                   :disabled="busy"
                   @click="confirmId = row.original.id"
@@ -190,6 +191,7 @@ async function removeFolder(id: string) {
                     size="xs"
                     color="neutral"
                     variant="ghost"
+                    class="text-muted hover:text-error"
                     aria-label="Delete folder"
                     :disabled="busy"
                     @click="confirmId = row.id"
@@ -274,3 +276,12 @@ async function removeFolder(id: string) {
     </UModal>
   </div>
 </template>
+
+<style scoped>
+/* desktop hover-reveal for row actions — always visible on touch/mobile */
+@media (min-width: 768px) and (hover: hover) {
+  :deep(tbody tr:not(:hover):not(:focus-within)) .row-actions {
+    opacity: 0;
+  }
+}
+</style>

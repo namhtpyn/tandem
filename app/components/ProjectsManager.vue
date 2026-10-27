@@ -190,17 +190,33 @@ const STATUS_LABELS: Record<string, string> = {
 };
 const statusLabel = (s: string) => STATUS_LABELS[s] ?? s;
 
+// the search box is pointless over an empty, unfiltered list — hide it there
+const isFiltered = computed(() => !!searchDebounced.value);
+
 onServerPrefetch(() => liveQuery.suspense());
 </script>
 
 <template>
   <div>
-    <p v-if="message && !editorOpen" class="text-error text-sm">{{ message }}</p>
+    <!-- ONE toolbar row: search left, every action right -->
+    <div class="flex flex-wrap items-center gap-2">
+      <UInput
+        v-if="allRows.length || search"
+        v-model="search"
+        icon="i-lucide-search"
+        placeholder="Search projects…"
+        size="sm"
+        class="w-full sm:max-w-xs"
+      />
+      <div class="ms-auto flex items-center gap-2 overflow-x-auto">
+        <UButton icon="i-lucide-plus" label="New project" size="sm" @click="openEditor()" />
+      </div>
+    </div>
+
+    <p v-if="message && !editorOpen" class="text-error mt-3 text-sm">{{ message }}</p>
 
     <DataTable
-      v-model:search="search"
-      searchable
-      search-placeholder="Search projects…"
+      class="mt-3"
       :data="flat"
       :loading="liveQuery.isPending.value"
       :columns="[
@@ -209,11 +225,11 @@ onServerPrefetch(() => liveQuery.suspense());
         { accessorKey: 'actions', header: '' },
       ]"
       show-empty-state
-      empty-icon="i-lucide-folder-tree"
-      empty-text="No projects yet — create your first one."
+      :empty-icon="isFiltered ? 'i-lucide-search-x' : 'i-lucide-folder-tree'"
+      :empty-text="isFiltered ? 'No results — try a different search.' : 'No projects yet — create your first one.'"
     >
-      <template #toolbar>
-        <UButton icon="i-lucide-plus" label="New project" @click="openEditor()" />
+      <template #empty-cta>
+        <UButton v-if="!isFiltered" icon="i-lucide-plus" label="New project" @click="openEditor()" />
       </template>
       <template #name-cell="{ row }">
         <div class="flex min-w-0 items-center gap-1.5" :style="{ paddingLeft: `${row.original.depth * 1.25}rem` }">
@@ -241,7 +257,7 @@ onServerPrefetch(() => liveQuery.suspense());
         }}</UBadge>
       </template>
       <template #actions-cell="{ row }">
-        <div class="flex justify-end gap-1">
+        <div class="row-actions flex justify-end gap-1 transition-opacity">
           <UPopover mode="hover">
             <UButton
               icon="i-lucide-plus"
@@ -275,8 +291,9 @@ onServerPrefetch(() => liveQuery.suspense());
             <UButton
               icon="i-lucide-trash-2"
               variant="ghost"
-              color="error"
+              color="neutral"
               size="xs"
+              class="text-muted hover:text-error"
               aria-label="Delete project"
               :disabled="busy"
               @click="askRemove(row.original)"
@@ -333,8 +350,9 @@ onServerPrefetch(() => liveQuery.suspense());
               <UButton
                 icon="i-lucide-trash-2"
                 variant="ghost"
-                color="error"
+                color="neutral"
                 size="sm"
+                class="text-muted hover:text-error"
                 aria-label="Delete project"
                 :disabled="busy"
                 @click="askRemove(row)"
@@ -359,8 +377,11 @@ onServerPrefetch(() => liveQuery.suspense());
           <UFormField label="Name" name="name">
             <UInput v-model="form.name" icon="i-lucide-folder" placeholder="Project name" class="w-full" required />
           </UFormField>
-          <UFormField label="Parent" name="parentId">
-            <template #hint><FormHint text="Nest this project under another" /></template>
+          <UFormField name="parentId">
+            <template #label>
+              Parent
+              <FormHint text="Nest this project under another" />
+            </template>
             <USelectMenu
               v-model="form.parentId"
               :items="parentItems"
@@ -386,10 +407,11 @@ onServerPrefetch(() => liveQuery.suspense());
           <UFormField label="Description" name="description">
             <UTextarea v-model="form.description" placeholder="What this project is about" :rows="3" class="w-full" />
           </UFormField>
-          <UFormField label="Project prompt" name="prompt">
-            <template #hint
-              ><FormHint text="Added to every agent brief of this project's tasks (empty = omitted)"
-            /></template>
+          <UFormField name="prompt">
+            <template #label>
+              Project prompt
+              <FormHint text="Added to every agent brief of this project's tasks (empty = omitted)" />
+            </template>
             <UTextarea
               v-model="form.prompt"
               placeholder="e.g. This project integrates FedEx/UPS APIs into a NestJS checkout. Never store raw API keys in the repo…"
@@ -437,3 +459,12 @@ onServerPrefetch(() => liveQuery.suspense());
     </UModal>
   </div>
 </template>
+
+<style scoped>
+/* desktop hover-reveal for row actions — always visible on touch/mobile */
+@media (min-width: 768px) and (hover: hover) {
+  :deep(tbody tr:not(:hover):not(:focus-within)) .row-actions {
+    opacity: 0;
+  }
+}
+</style>

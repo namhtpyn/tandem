@@ -212,45 +212,35 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
               :description="`${task.failStreak} consecutive failure${task.failStreak === 1 ? '' : 's'}. The most recent run's error is in the thread.`"
             />
 
-            <!-- the thread (TaskActivityThread) -->
-            <TaskActivityThread :task="task" />
+            <!-- ONE card: the thread and the composer share a single border -->
+            <div class="border-default bg-default flex min-h-0 flex-1 flex-col rounded-2xl border shadow-sm">
+              <!-- the thread (TaskActivityThread) -->
+              <TaskActivityThread :task="task" />
 
-            <!-- GitHub-style review verdicts: own input, reviewers only, in review only -->
-            <TaskReviewBox
-              v-if="taskStatusCategory === 'in_review' && isReviewer"
-              class="mb-3"
-              :busy="workflowBusy"
-              @verdict="
-                (action: 'approve' | 'requestChanges' | 'reject', body?: string) =>
-                  wfAction(action, { body: body || undefined })
-              "
-            />
-
-            <!-- composer: workflow note + primary actions -->
-            <div class="border-default bg-default mt-3 rounded-2xl border p-2.5 shadow-sm">
-              <UTextarea
-                v-model="workflowNote"
-                :rows="1"
-                autoresize
-                :maxrows="6"
-                variant="none"
-                :placeholder="taskStatusCategory === 'waiting_answer' ? 'Write an answer…' : 'Write a note…'"
-                class="w-full"
-                :ui="{ base: 'px-1 py-1 text-sm placeholder:text-dimmed' }"
-              />
-              <div class="mt-1.5 flex items-center justify-between">
-                <p
-                  v-if="workflowMessage"
-                  class="text-xs"
-                  :class="workflowOk ? 'text-success' : 'text-error'"
-                  role="status"
-                >
-                  {{ workflowMessage }}
-                </p>
-                <span v-else class="text-dimmed text-[11px]">
-                  ⏎ {{ agentRunning ? 'Send — steers the running agent' : 'Send — dispatches the agent' }}
-                </span>
-                <div class="ml-auto flex items-center gap-1.5">
+              <!-- composer: workflow note + primary actions -->
+              <div class="border-default border-t p-2.5">
+                <UTextarea
+                  v-model="workflowNote"
+                  :rows="1"
+                  autoresize
+                  :maxrows="6"
+                  variant="none"
+                  :placeholder="taskStatusCategory === 'waiting_answer' ? 'Write an answer…' : 'Write a note…'"
+                  class="w-full"
+                  :ui="{ base: 'px-1 py-1 text-sm placeholder:text-dimmed' }"
+                />
+                <div class="mt-1.5 flex items-center justify-between gap-2">
+                  <p
+                    v-if="workflowMessage"
+                    class="text-xs"
+                    :class="workflowOk ? 'text-success' : 'text-error'"
+                    role="status"
+                  >
+                    {{ workflowMessage }}
+                  </p>
+                  <span v-else class="text-dimmed shrink-0 text-[11px]">
+                    {{ agentRunning ? 'Send — steers the running agent' : 'Send — dispatches the agent' }}
+                  </span>
                   <UPopover mode="hover" enable-touch>
                     <template #content>
                       <div class="px-3 py-1.5 text-xs">
@@ -264,13 +254,24 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                       color="primary"
                       :icon="agentRunning ? 'i-lucide-reply' : 'i-lucide-arrow-up'"
                       :aria-label="agentRunning ? 'Steer agent' : 'Send and dispatch'"
-                      class="size-10"
+                      class="size-10 shrink-0"
                       :disabled="workflowBusy || !workflowNote.trim()"
                       @click="sendComposer()"
                   /></UPopover>
                 </div>
               </div>
             </div>
+
+            <!-- GitHub-style review verdicts: own card, reviewers only, in review only -->
+            <TaskReviewBox
+              v-if="taskStatusCategory === 'in_review' && isReviewer"
+              class="mt-3"
+              :busy="workflowBusy"
+              @verdict="
+                (action: 'approve' | 'requestChanges' | 'reject', body?: string) =>
+                  wfAction(action, { body: body || undefined })
+              "
+            />
           </section>
 
           <!-- ============ sidebar: task info (desktop docked; mobile via sheet above) ============ -->

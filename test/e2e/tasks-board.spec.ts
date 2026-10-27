@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { login } from './helpers/login.ts';
 
-test('board view renders columns from statuses and moves a task', async ({ page }) => {
+test('board view renders columns from statuses and moves a task by drag & drop', async ({ page }) => {
   await login(page);
   await page.goto('/tasks');
   await expect(page.getByRole('heading', { name: /Tasks/ })).toBeVisible();
@@ -13,15 +13,25 @@ test('board view renders columns from statuses and moves a task', async ({ page 
   await page.getByRole('button', { name: /Create task/ }).click();
   await expect(page.getByText('Kanban E2E').filter({ visible: true }).first()).toBeVisible({ timeout: 15_000 });
 
-  // switch to board
+  // switch to board: one horizontally scrollable row of status columns
   await page.getByRole('button', { name: 'Board view' }).click();
-  await expect(page.getByText('To do').filter({ visible: true }).first()).toBeVisible();
-  await expect(page.getByText('Done').first()).toBeVisible();
+  const columns = page.getByTestId('board-column');
+  await expect(columns.filter({ hasText: 'To do' }).first()).toBeVisible();
+  await expect(columns.filter({ hasText: 'Done' }).first()).toBeVisible();
 
-  // move via card status select: todo -> doing allowed by seed transitions
-  await page.getByRole('combobox', { name: 'Status for Kanban E2E' }).filter({ visible: true }).first().click();
-  await page.getByRole('option', { name: 'Doing', exact: true }).click();
-  await expect(page.getByText('Doing', { exact: true }).first()).toBeVisible({ timeout: 10_000 });
+  // the new card sits in the To-do column
+  const todoCol = columns.filter({ hasText: 'To do' }).first();
+  await expect(todoCol.getByRole('link', { name: 'Kanban E2E' })).toBeVisible();
+
+  // drag the card onto the Doing column — the drop IS the status move
+  // (cards carry no in-card status select; the column owns the status)
+  const doingCol = columns.filter({ hasText: 'Doing' }).first();
+  await todoCol.getByRole('link', { name: 'Kanban E2E' }).dragTo(doingCol);
+  await expect(doingCol.getByRole('link', { name: 'Kanban E2E' })).toBeVisible({ timeout: 10_000 });
+  await expect(todoCol.getByRole('link', { name: 'Kanban E2E' })).toHaveCount(0, { timeout: 10_000 });
+
+  // empty columns render as compact dashed drop zones, not stretched slabs
+  await expect(columns.filter({ hasText: 'Cancelled' }).first()).toContainText('Drop tasks here');
 });
 
 test('statuses manager: add a custom status with transition', async ({ page }) => {

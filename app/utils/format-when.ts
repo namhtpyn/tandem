@@ -11,3 +11,16 @@ export function formatDate(value: string | Date | null | undefined): string {
   const d = value instanceof Date ? value : new Date(value);
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString();
 }
+
+// compact variant for dense lists: times read as HH:MM today, 'Mon 27, 14:03' older
+export function formatWhenShort(value: string | Date | null | undefined): string {
+  if (!value) return '';
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const today = new Date();
+  const sameDay = d.toDateString() === today.toDateString();
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  if (sameDay) return time;
+  const day = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `${day}, ${time}`;
+}

@@ -294,11 +294,18 @@ onServerPrefetch(() =>
   >
     <template #body>
       <UForm id="employee-editor-form" :state="form" class="space-y-4" @submit="save">
-        <UFormField label="Name" name="name">
+        <UFormField name="name">
+          <template #label>
+            Name
+            <FormHint text="Shown across tasks, runs and the org graph" />
+          </template>
           <UInput v-model="form.name" icon="i-lucide-user" placeholder="Full name" class="w-full" required />
         </UFormField>
-        <UFormField label="Email (login)" name="email">
-          <template #hint><FormHint text="Humans sign in with it; AI employees authenticate by API key" /></template>
+        <UFormField name="email">
+          <template #label>
+            Email (login)
+            <FormHint text="Humans sign in with it; AI employees authenticate by API key" />
+          </template>
           <UInput
             v-model="form.email"
             type="email"
@@ -308,11 +315,14 @@ onServerPrefetch(() =>
             required
           />
         </UFormField>
-        <UFormField label="Avatar" name="avatar">
-          <template #hint><FormHint text="square photo, resized to 256px" /></template>
+        <UFormField name="avatar">
+          <template #label>
+            Avatar
+            <FormHint text="square photo, resized to 256px" />
+          </template>
           <div class="flex items-center gap-3">
             <span
-              class="bg-elevated text-muted inline-flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-full text-lg font-semibold"
+              class="bg-elevated text-muted inline-flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-full"
             >
               <img v-if="form.image" :src="form.image" alt="avatar preview" class="size-12 rounded-full object-cover" />
               <img
@@ -321,10 +331,16 @@ onServerPrefetch(() =>
                 alt="avatar preview"
                 class="size-12 rounded-full object-cover"
               />
-              <template v-else>{{ form.kind === 'ai' ? 'AI' : form.name.slice(0, 1) || '?' }}</template>
+              <UIcon
+                v-else-if="!form.name"
+                :name="form.kind === 'ai' ? 'i-lucide-bot' : 'i-lucide-user'"
+                class="size-5"
+                aria-hidden="true"
+              />
+              <template v-else>{{ form.name.slice(0, 1) }}</template>
             </span>
             <label
-              class="border-default hover:bg-elevated/50 text-highlighted flex flex-1 cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
+              class="border-default hover:bg-elevated text-highlighted inline-flex w-fit shrink-0 cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
             >
               <UIcon name="i-lucide-image-up" class="size-4 shrink-0" />
               <span class="truncate">Choose image</span>
@@ -352,7 +368,11 @@ onServerPrefetch(() =>
             />
           </div>
         </UFormField>
-        <UFormField v-if="!isEdit" label="Kind" name="kind">
+        <UFormField v-if="!isEdit" name="kind">
+          <template #label>
+            Kind
+            <FormHint text="Fixed after creation — humans sign in, AI agents run on an environment" />
+          </template>
           <URadioGroup
             v-model="form.kind"
             :items="[
@@ -360,6 +380,8 @@ onServerPrefetch(() =>
               { label: 'AI agent — API key, runs on an environment', value: 'ai' },
             ]"
             variant="card"
+            color="neutral"
+            :ui="{ item: 'has-data-[state=checked]:text-highlighted' }"
             class="w-full"
           />
         </UFormField>
@@ -372,8 +394,11 @@ onServerPrefetch(() =>
             {{ editingIsAi ? 'AI agent (immutable)' : 'Human (immutable)' }}
           </UBadge>
         </UFormField>
-        <UFormField label="Title" name="title">
-          <template #hint><FormHint text="Place in the company, e.g. Senior Engineer" /></template>
+        <UFormField name="title">
+          <template #label>
+            Title
+            <FormHint text="Place in the company, e.g. Senior Engineer" />
+          </template>
           <AutoCompleteInput
             v-model="form.title"
             :items="titles.map((t) => t.name)"
@@ -383,8 +408,11 @@ onServerPrefetch(() =>
             :disabled="busy"
           />
         </UFormField>
-        <UFormField label="Supervisors" name="supervisorIds">
-          <template #hint><FormHint text="Many-to-many — an employee can report to several" /></template>
+        <UFormField name="supervisorIds">
+          <template #label>
+            Supervisors
+            <FormHint text="Many-to-many — an employee can report to several" />
+          </template>
           <USelectMenu
             v-model="form.supervisorIds"
             :items="supervisorItems"
@@ -395,8 +423,11 @@ onServerPrefetch(() =>
           />
         </UFormField>
         <template v-if="showAiFields">
-          <UFormField label="Environment" name="environmentId">
-            <template #hint><FormHint text="SSH target this agent runs on" /></template>
+          <UFormField name="environmentId">
+            <template #label>
+              Environment
+              <FormHint text="SSH target this agent runs on" />
+            </template>
             <USelectMenu
               v-model="form.environmentId"
               :items="[{ label: 'No environment', value: '__none__' }, ...environmentItems]"
@@ -405,8 +436,11 @@ onServerPrefetch(() =>
               class="w-full"
             />
           </UFormField>
-          <UFormField label="ACP executable" name="executable" required>
-            <template #hint><FormHint text="Command that starts an ACP server on stdio in the environment" /></template>
+          <UFormField name="executable" required>
+            <template #label>
+              ACP executable
+              <FormHint text="Command that starts an ACP server on stdio in the environment" />
+            </template>
             <UInput
               v-model="form.executable"
               icon="i-lucide-terminal"
@@ -415,8 +449,11 @@ onServerPrefetch(() =>
               data-testid="acp-executable-input"
             />
           </UFormField>
-          <UFormField label="Provider" name="providerId">
-            <template #hint><FormHint text="Model endpoint this agent uses" /></template>
+          <UFormField name="providerId">
+            <template #label>
+              Provider
+              <FormHint text="Model endpoint this agent uses" />
+            </template>
             <USelect
               v-model="form.providerId"
               :items="[
@@ -429,10 +466,11 @@ onServerPrefetch(() =>
               class="w-full"
             />
           </UFormField>
-          <UFormField label="Model" name="model">
-            <template #hint
-              ><FormHint text="Model name the agent runs — pick from the list or type your own"
-            /></template>
+          <UFormField name="model">
+            <template #label>
+              Model
+              <FormHint text="Model name the agent runs — pick from the list or type your own" />
+            </template>
             <UInputMenu
               v-model="form.model"
               :items="modelItems"
@@ -442,8 +480,11 @@ onServerPrefetch(() =>
               class="w-full"
             />
           </UFormField>
-          <UFormField label="API key" name="apiKeySecretId">
-            <template #hint><FormHint text="Vault secret holding the key (per-agent, injected per run)" /></template>
+          <UFormField name="apiKeySecretId">
+            <template #label>
+              API key
+              <FormHint text="Vault secret holding the key (per-agent, injected per run)" />
+            </template>
             <USelectMenu
               v-model="form.apiKeySecretId"
               :items="secretItems"
@@ -455,8 +496,11 @@ onServerPrefetch(() =>
               class="w-full"
             />
           </UFormField>
-          <UFormField label="Instructions" name="instructions">
-            <template #hint><FormHint text="System prompt for this agent" /></template>
+          <UFormField name="instructions">
+            <template #label>
+              Instructions
+              <FormHint text="System prompt for this agent" />
+            </template>
             <UTextarea
               v-model="form.instructions"
               :rows="4"

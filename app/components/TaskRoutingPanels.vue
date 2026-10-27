@@ -117,15 +117,18 @@ async function decideProposal(id: string, action: 'confirmProposal' | 'rejectPro
 }
 
 const openProposals = computed(() => proposalRows.value.filter((p) => p.status?.toLowerCase() === 'proposed'));
-// assignment history as prose — 'Mia took over from Unassigned', never '∅ → Mia'
-const assignmentLines = computed(() => {
-  const rows = [...assignmentRows.value].reverse(); // oldest first
-  return rows.map((r, i) => {
-    const from = (i === 0 ? null : rows[i - 1]?.employeeName) ?? 'Unassigned';
-    const to = r.employeeName ?? 'Unassigned';
-    return `${to} took over from ${from}${r.reason ? ` (${r.reason})` : ''}`;
-  });
-});
+// assignment history, structured: who (muted row) + a short reason tag on the
+// right — never a raw audit sentence like 'Jay took over from Unassigned (created)'
+const ASSIGNMENT_REASON: Record<string, string> = {
+  created: 'on create',
+  manual: 'manual',
+  subtask: 'via subtask',
+  'subtask-escalated': 'escalated',
+};
+/** known reasons map to short phrases; free text (reassign why) passes through */
+function reasonLabel(reason: string) {
+  return ASSIGNMENT_REASON[reason] ?? reason;
+}
 
 /** subtask badge: joined status row — its NAME in the shared category color (never the raw id) */
 function subtaskBadge(c: ChildRow): {
@@ -199,6 +202,7 @@ function subtaskBadge(c: ChildRow): {
     <UButton
       class="mt-2"
       size="xs"
+      color="neutral"
       variant="soft"
       icon="i-lucide-plus"
       label="Add subtask"
@@ -206,10 +210,13 @@ function subtaskBadge(c: ChildRow): {
     />
   </div>
 
-  <div v-if="assignmentLines.length" data-testid="assignment-history">
+  <div v-if="assignmentRows.length" data-testid="assignment-history">
     <h3 class="text-muted mb-2 text-xs font-medium">Assignees</h3>
-    <ul class="text-muted space-y-0.5 text-xs">
-      <li v-for="(line, i) in assignmentLines" :key="i" class="truncate">{{ line }}</li>
+    <ul class="space-y-1 text-xs">
+      <li v-for="a in assignmentRows" :key="a.id" class="flex items-baseline justify-between gap-2">
+        <span class="text-toned min-w-0 truncate">Assigned to {{ a.employeeName ?? 'Unassigned' }}</span>
+        <span v-if="reasonLabel(a.reason)" class="text-dimmed shrink-0">({{ reasonLabel(a.reason) }})</span>
+      </li>
     </ul>
   </div>
 </template>

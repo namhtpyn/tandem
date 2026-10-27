@@ -9,8 +9,9 @@ import { computed, nextTick, onServerPrefetch, ref, watch } from 'vue';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
+import { formatWhenShort } from '~/utils/format-when';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
-import { buildThread, formatThreadTime, parseRunEnvelope } from '~/utils/task-thread';
+import { buildThread, parseRunEnvelope } from '~/utils/task-thread';
 import type { ThreadItem } from '~/utils/task-thread';
 
 const props = defineProps<{ task: TaskRow }>();
@@ -77,7 +78,8 @@ const hasAvatarByUserId = computed(() => new Map(employees.value.map((e) => [e.u
 // the task creator opens the thread as the brief's author
 const briefAuthor = computed(() => props.task.creatorName ?? null);
 
-// ---- run status: real words + neutral colors for cancelled/timeout, not 'failed' ----
+// run status reads as a word, not a pill: the task status badge owns color — a
+// run turn's outcome stays a tiny neutral label so the two never look alike
 type RunStatus = 'running' | 'done' | 'failed' | 'cancelled' | 'timeout' | 'stopped';
 function mapRunStatus(raw: string): RunStatus {
   const s = raw.toLowerCase();
@@ -93,13 +95,13 @@ const runStatusById = computed(() => {
   for (const r of runFeed.value) m.set(r.id, mapRunStatus(r.status));
   return m;
 });
-const RUN_PILL: Record<RunStatus, { label: string; color: 'warning' | 'success' | 'error' | 'neutral' }> = {
-  running: { label: 'Working', color: 'warning' },
-  done: { label: 'Completed', color: 'success' },
-  failed: { label: 'Failed', color: 'error' },
-  cancelled: { label: 'Cancelled', color: 'neutral' },
-  timeout: { label: 'Timed out', color: 'neutral' },
-  stopped: { label: 'Stopped', color: 'neutral' },
+const RUN_LABEL: Record<RunStatus, string> = {
+  running: 'Working',
+  done: 'Completed',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+  timeout: 'Timed out',
+  stopped: 'Stopped',
 };
 
 // ---- one ordered timeline from runs + activity + description -----------------
@@ -198,11 +200,8 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
 </script>
 
 <template>
-  <!-- the thread -->
-  <div
-    ref="scroller"
-    class="border-default bg-default/50 min-h-0 flex-1 space-y-4 overflow-y-auto rounded-xl border p-3.5 lg:max-h-none"
-  >
+  <!-- the thread: content only — the page owns the single card border -->
+  <div ref="scroller" class="max-h-[min(60dvh,42rem)] min-h-0 flex-1 space-y-4 overflow-y-auto p-3.5 lg:max-h-none">
     <p v-if="!thread.length" class="text-dimmed py-10 text-center text-xs">
       No activity yet — write a note below or dispatch the agent.
     </p>
@@ -225,11 +224,11 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
         <div class="min-w-0 flex-1">
           <p class="text-dimmed mb-1 text-[11px] font-medium">
             {{ briefAuthor ?? 'Task brief' }}
-            <span v-if="item.createdAt" class="text-muted font-normal">· {{ formatThreadTime(item.createdAt) }}</span>
+            <span v-if="item.createdAt" class="text-muted font-normal">· {{ formatWhenShort(item.createdAt) }}</span>
           </p>
           <!-- description: mention tokens -> @Name; attachment tokens -> inline images / file chips -->
           <div
-            class="border-default bg-muted text-default rounded-xl rounded-tl-sm border px-3.5 py-2.5 text-sm leading-relaxed"
+            class="border-default bg-muted text-default inline-block max-w-[85%] rounded-xl rounded-tl-sm border px-3.5 py-2.5 text-sm leading-relaxed"
           >
             <template v-for="(p, i) in briefParts" :key="i">
               <span
@@ -274,28 +273,24 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
           <p class="mb-1 flex items-center gap-1.5 text-[11px] leading-none">
             <span class="text-toned font-semibold">{{ item.agentName ?? 'Agent' }}</span>
             <span class="text-primary">(AI)</span>
-            <UBadge
-              :color="RUN_PILL[runStatusById.get(item.id) ?? 'stopped'].color"
-              variant="subtle"
-              size="sm"
-              :class="runStatusById.get(item.id) === 'running' ? 'gap-1' : ''"
-            >
+            <!-- tiny neutral run label — NOT a second status pill (the header badge owns task status) -->
+            <span class="text-dimmed inline-flex items-center gap-1 text-[10px] font-medium tracking-wide uppercase">
               <UIcon
                 v-if="runStatusById.get(item.id) === 'running'"
                 name="i-lucide-loader-circle"
                 class="size-3 animate-spin"
               />
-              {{ RUN_PILL[runStatusById.get(item.id) ?? 'stopped'].label
-              }}<span v-if="runStatusById.get(item.id) === 'failed' && item.exitCode" class="font-normal opacity-80">
+              {{ RUN_LABEL[runStatusById.get(item.id) ?? 'stopped']
+              }}<span v-if="runStatusById.get(item.id) === 'failed' && item.exitCode" class="font-normal normal-case">
                 (exit code {{ item.exitCode }})</span
               >
-            </UBadge>
-            <span class="text-muted ml-auto">{{ formatThreadTime(item.startedAt) }}</span>
+            </span>
+            <span class="text-muted ml-auto">{{ formatWhenShort(item.startedAt) }}</span>
           </p>
           <!-- message: the settled result body; envelope parse only as a pre-settle fallback -->
           <div
             v-if="item.body || envelopeOf(item)"
-            class="bg-elevated text-default inline-block max-w-full rounded-xl rounded-tl-sm px-3.5 py-2 text-sm leading-relaxed"
+            class="bg-elevated text-default inline-block max-w-[85%] rounded-xl rounded-tl-sm px-3.5 py-2 text-sm leading-relaxed"
           >
             {{ item.body || envelopeOf(item)?.text || '(empty)' }}
           </div>
@@ -322,15 +317,25 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
             </template>
           </div>
           <!-- raw input: the exact brief, expandable below the message -->
-          <details v-if="item.prompt" class="mt-1">
-            <summary class="text-dimmed hover:text-toned cursor-pointer text-xs select-none">input</summary>
+          <details v-if="item.prompt" class="group mt-1">
+            <summary
+              class="text-muted hover:bg-elevated focus-visible:ring-primary inline-flex cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-xs select-none focus-visible:ring-2 focus-visible:outline-none"
+            >
+              <UIcon name="i-lucide-chevron-right" class="size-3.5 transition-transform group-open:rotate-90" />
+              input
+            </summary>
             <pre
               class="bg-elevated text-toned mt-1 rounded-md px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
               >{{ item.prompt }}</pre>
           </details>
           <!-- raw output: FULL transcript, expandable below the message -->
-          <details v-if="item.output" class="mt-1">
-            <summary class="text-dimmed hover:text-toned cursor-pointer text-xs select-none">output</summary>
+          <details v-if="item.output" class="group mt-1">
+            <summary
+              class="text-muted hover:bg-elevated focus-visible:ring-primary inline-flex cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-xs select-none focus-visible:ring-2 focus-visible:outline-none"
+            >
+              <UIcon name="i-lucide-chevron-right" class="size-3.5 transition-transform group-open:rotate-90" />
+              output
+            </summary>
             <pre
               class="mt-1 rounded-md bg-zinc-950 px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-zinc-200"
               >{{ item.output }}</pre>
@@ -356,11 +361,11 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
         <div class="min-w-0 flex-1">
           <p class="mb-1 flex items-center gap-1.5 text-[11px] leading-none">
             <span class="text-toned font-semibold">{{ item.authorName }}</span>
-            <span class="text-muted">{{ formatThreadTime(item.createdAt) }}</span>
+            <span class="text-muted">{{ formatWhenShort(item.createdAt) }}</span>
           </p>
           <div
             v-if="item.body"
-            class="bg-elevated text-default inline-block max-w-full rounded-xl rounded-tl-sm px-3.5 py-2 text-sm leading-relaxed"
+            class="bg-elevated text-default inline-block max-w-[85%] rounded-xl rounded-tl-sm px-3.5 py-2 text-sm leading-relaxed"
           >
             {{ item.body }}
           </div>
@@ -386,7 +391,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
             class="size-3 shrink-0"
           />
           <span class="truncate">{{ item.body || item.noteKind }}</span>
-          <span class="text-muted shrink-0">· {{ formatThreadTime(item.createdAt) }}</span>
+          <span class="text-muted shrink-0">· {{ formatWhenShort(item.createdAt) }}</span>
         </span>
       </div>
     </template>

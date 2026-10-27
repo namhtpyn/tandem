@@ -243,20 +243,7 @@ async function save() {
           <template #hint><FormHint text="Short summary of the work" /></template>
           <UInput v-model="form.title" icon="i-lucide-list-todo" placeholder="Task title" class="w-full" required />
         </UFormField>
-        <UFormField name="description">
-          <template #label>
-            <span class="flex items-center gap-2"
-              >Description
-              <UButton
-                size="xs"
-                variant="ghost"
-                icon="i-lucide-paperclip"
-                aria-label="Attach file"
-                :disabled="busy || !form.title.trim()"
-                @click="attachmentInput?.click()"
-              />
-            </span>
-          </template>
+        <UFormField label="Description" name="description">
           <template #hint
             ><FormHint
               text="What needs to be done; @mention employees — AI agents receive it as their instructions. Add a title first — files attach to a saved task"
@@ -274,12 +261,25 @@ async function save() {
             :extensions="descriptionExtensions"
             content-type="markdown"
             placeholder="Description (optional) — paste/drop images to attach; type @ to mention an employee"
-            class="bg-default ring-accented focus-visible:ring-primary min-h-24 w-full rounded-md px-2.5 py-1.5 ring ring-inset"
+            class="bg-default ring-accented focus-visible:ring-primary min-h-18 w-full rounded-md px-2.5 py-1.5 ring ring-inset"
             :ui="{ base: 'px-0 sm:px-0' }"
           >
             <span class="hidden">{{ captureDescriptionEditor(editor) }}</span>
             <UEditorMentionMenu :editor="editor" :items="mentionItems" />
           </UEditor>
+          <!-- attach lives in the editor toolbar row (not the label) so it reads
+               as part of the description field, not a stray label icon -->
+          <div class="mt-1 flex items-center">
+            <UButton
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              icon="i-lucide-paperclip"
+              label="Attach"
+              :disabled="busy || !form.title.trim()"
+              @click="attachmentInput?.click()"
+            />
+          </div>
         </UFormField>
         <UFormField label="Project" name="projectId">
           <template #hint><FormHint text="Group this task under a project" /></template>
@@ -314,22 +314,29 @@ async function save() {
         </UFormField>
         <!-- owner/reviewers sit OUTSIDE the status field's slot: the status field
              is hidden in edit mode, and routing fields must render in both modes -->
-        <UFormField label="Reviewers (all must approve)" name="reviewers">
+        <UFormField label="Reviewers" name="reviewers">
           <USelectMenu
             v-model="form.reviewers"
             multiple
             :items="employees.map((e) => ({ label: e.kind === 'ai' ? `${e.name} (AI)` : e.name, value: e.id }))"
             value-key="value"
             icon="i-lucide-user-check"
+            placeholder="Add reviewers…"
             class="w-full"
           />
+          <!-- unanimous policy under the field, not crammed into the label -->
+          <template #description>
+            <p class="text-muted text-xs">
+              All reviewers must approve before the task completes — leave empty to complete without review.
+            </p>
+          </template>
         </UFormField>
         <p v-if="message" class="text-error text-sm">{{ message }}</p>
       </UForm>
     </template>
     <template #footer>
       <div class="flex w-full justify-end gap-2">
-        <UButton variant="ghost" color="neutral" label="Cancel" :disabled="busy" @click="open = false" />
+        <UButton variant="outline" color="neutral" label="Cancel" :disabled="busy" @click="open = false" />
         <UButton
           type="submit"
           :loading="busy"

@@ -98,10 +98,9 @@ const probeCall = $orpc.environments.probe.call;
 
 const columns = [
   { accessorKey: 'name', header: 'Name' },
-  { accessorKey: 'host', header: 'Host' },
-  { accessorKey: 'port', header: 'Port' },
-  { accessorKey: 'username', header: 'User' },
-  { accessorKey: 'probe', header: 'Connection' },
+  // connection cell stacks username over host:port — port lives only here
+  { accessorKey: 'host', header: 'Connection' },
+  { accessorKey: 'probe', header: 'Status' },
   { accessorKey: 'actions', header: '' },
 ];
 
@@ -179,17 +178,34 @@ async function probe(row: EnvironmentRow) {
 
 const probeLabel = (ok: boolean) => (ok ? 'OK' : 'Failed');
 
+// the search box is pointless over an empty, unfiltered list — hide it there
+const showSearch = computed(() => total.value > 0 || !!search.value);
+const isFiltered = computed(() => !!searchDebounced.value);
+
 onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense()]));
 </script>
 
 <template>
   <div>
-    <p v-if="message && !editorOpen" class="text-error text-sm">{{ message }}</p>
+    <!-- ONE toolbar row: search left, every action right -->
+    <div class="flex flex-wrap items-center gap-2">
+      <UInput
+        v-if="showSearch"
+        v-model="search"
+        icon="i-lucide-search"
+        placeholder="Search environments…"
+        size="sm"
+        class="w-full sm:max-w-xs"
+      />
+      <div class="ms-auto flex items-center gap-2 overflow-x-auto">
+        <UButton v-if="editable" icon="i-lucide-plus" label="New environment" size="sm" @click="openEditor()" />
+      </div>
+    </div>
+
+    <p v-if="message && !editorOpen" class="text-error mt-3 text-sm">{{ message }}</p>
 
     <DataTable
-      v-model:search="search"
-      searchable
-      search-placeholder="Search environments…"
+      class="mt-3"
       :data="rows"
       :loading="liveQuery.isPending.value"
       v-model:page="page"
@@ -197,35 +213,51 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       :page-size="pageSize"
       :columns="columns"
       show-empty-state
-      empty-icon="i-lucide-server"
-      empty-text="No environments yet — add the SSH target where your Hermes agents run."
+      :empty-icon="isFiltered ? 'i-lucide-search-x' : 'i-lucide-server'"
+      :empty-text="
+        isFiltered
+          ? 'No results — try a different search.'
+          : 'No environments yet — add the SSH target where your Hermes agents run.'
+      "
     >
-      <template #toolbar>
-        <UButton v-if="editable" icon="i-lucide-plus" size="sm" label="New environment" @click="openEditor()" />
+      <template #empty-cta>
+        <UButton v-if="editable && !isFiltered" icon="i-lucide-plus" label="New environment" @click="openEditor()" />
       </template>
       <template #name-cell="{ row }">
         <span class="text-highlighted text-sm font-medium">{{ row.original.name }}</span>
       </template>
       <template #host-cell="{ row }">
-        <span class="text-muted font-mono text-xs"
-          >{{ row.original.username }}@{{ row.original.host }}:{{ row.original.port }}</span
-        >
+        <!-- stacked mono: username muted over host:port, both truncate with the full value on hover -->
+        <div class="min-w-0 font-mono text-xs">
+          <span class="text-muted block truncate" :title="row.original.username">{{ row.original.username }}</span>
+          <span class="text-highlighted block truncate" :title="`${row.original.host}:${row.original.port}`">
+            {{ row.original.host }}:{{ row.original.port }}
+          </span>
+        </div>
       </template>
       <template #probe-cell="{ row }">
         <div class="flex items-center gap-2">
-          <template v-if="probeResults[row.original.id]">
-            <UBadge :color="probeResults[row.original.id]!.ok ? 'success' : 'error'" variant="subtle" size="sm">
-              {{ probeLabel(probeResults[row.original.id]!.ok) }}
-            </UBadge>
-            <span class="text-dimmed truncate text-xs" :title="probeResults[row.original.id]!.detail">
-              {{ probeResults[row.original.id]!.detail }} · {{ probeResults[row.original.id]!.durationMs }}ms
-            </span>
-          </template>
-          <span v-else class="text-dimmed text-xs">Not probed</span>
+          <UBadge
+            v-if="probeResults[row.original.id]"
+            :color="probeResults[row.original.id]!.ok ? 'success' : 'error'"
+            variant="subtle"
+            size="sm"
+            icon="i-lucide-circle-fill"
+          >
+            {{ probeLabel(probeResults[row.original.id]!.ok) }}
+          </UBadge>
+          <UBadge v-else color="neutral" variant="subtle" size="sm" icon="i-lucide-circle-fill">Not probed</UBadge>
+          <span
+            v-if="probeResults[row.original.id]"
+            class="text-dimmed truncate text-xs"
+            :title="probeResults[row.original.id]!.detail"
+          >
+            {{ probeResults[row.original.id]!.detail }} · {{ probeResults[row.original.id]!.durationMs }}ms
+          </span>
         </div>
       </template>
       <template v-if="editable" #actions-cell="{ row }">
-        <div class="flex justify-end gap-1">
+        <div class="row-actions flex justify-end gap-1 transition-opacity">
           <UPopover mode="hover">
             <UButton
               icon="i-lucide-plug-zap"
@@ -259,8 +291,9 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
             <UButton
               icon="i-lucide-trash-2"
               variant="ghost"
-              color="error"
+              color="neutral"
               size="sm"
+              class="text-muted hover:text-error"
               aria-label="Delete environment"
               :disabled="busy"
               @click="askRemove(row.original)"
@@ -330,8 +363,9 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               <UButton
                 icon="i-lucide-trash-2"
                 variant="ghost"
-                color="error"
+                color="neutral"
                 size="sm"
+                class="text-muted hover:text-error"
                 aria-label="Delete environment"
                 :disabled="busy"
                 @click="askRemove(row)"
@@ -371,14 +405,25 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
     >
       <template #body>
         <UForm id="environment-editor-form" :state="form" class="space-y-4" @submit="save">
-          <UFormField label="Name" name="name">
-            <template #hint><FormHint text="Unique label, e.g. ct112-tandem" /></template>
+          <UFormField name="name">
+            <template #label>
+              Name
+              <FormHint text="Unique label, e.g. ct112-tandem" />
+            </template>
             <UInput v-model="form.name" icon="i-lucide-tag" placeholder="Environment name" class="w-full" required />
           </UFormField>
-          <UFormField label="Host" name="host">
+          <UFormField name="host">
+            <template #label>
+              Host
+              <FormHint text="Hostname or IP of the SSH target" />
+            </template>
             <UInput v-model="form.host" icon="i-lucide-server" placeholder="Hostname or IP" class="w-full" required />
           </UFormField>
-          <UFormField label="Port" name="port">
+          <UFormField name="port">
+            <template #label>
+              Port
+              <FormHint text="SSH port — 22 unless changed on the host" />
+            </template>
             <UInput
               v-model="form.port"
               type="number"
@@ -390,14 +435,18 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               required
             />
           </UFormField>
-          <UFormField label="Username" name="username">
-            <template #hint
-              ><FormHint text="Key or password — the runner connects with whichever this environment uses"
-            /></template>
+          <UFormField name="username">
+            <template #label>
+              Username
+              <FormHint text="Key or password — the runner connects with whichever this environment uses" />
+            </template>
             <UInput v-model="form.username" icon="i-lucide-user" placeholder="SSH username" class="w-full" required />
           </UFormField>
-          <UFormField label="Authentication" name="secretUsage">
-            <template #hint><FormHint text="How the SSH connection authenticates" /></template>
+          <UFormField name="secretUsage">
+            <template #label>
+              Authentication
+              <FormHint text="How the SSH connection authenticates" />
+            </template>
             <USelect
               v-model="form.secretUsage"
               :items="[
@@ -409,8 +458,11 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               class="w-full"
             />
           </UFormField>
-          <UFormField label="Secret" name="secretId">
-            <template #hint><FormHint text="Vault secret holding the key or password (optional)" /></template>
+          <UFormField name="secretId">
+            <template #label>
+              Secret
+              <FormHint text="Vault secret holding the key or password (optional)" />
+            </template>
             <USelectMenu
               v-model="form.secretId"
               :items="secretOptions"
@@ -431,3 +483,12 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
     </UModal>
   </div>
 </template>
+
+<style scoped>
+/* desktop hover-reveal for row actions — always visible on touch/mobile */
+@media (min-width: 768px) and (hover: hover) {
+  :deep(tbody tr:not(:hover):not(:focus-within)) .row-actions {
+    opacity: 0;
+  }
+}
+</style>

@@ -84,37 +84,51 @@ onServerPrefetch(() => titlesQuery.suspense());
   >
     <template #body>
       <div v-if="titles.length" class="divide-default divide-y">
-        <div v-for="t in titles" :key="t.id" class="flex items-center gap-2 py-2.5">
+        <div v-for="t in titles" :key="t.id" class="group flex items-center gap-2 py-2.5">
           <UBadge color="neutral" variant="subtle" icon="i-lucide-briefcase">{{ t.name }}</UBadge>
           <span class="text-muted text-xs">{{ t.employees }} {{ t.employees === 1 ? 'employee' : 'employees' }}</span>
-          <span class="flex-1" />
-          <UPopover mode="hover">
-            <UButton
-              icon="i-lucide-pencil"
-              size="xs"
-              color="neutral"
-              variant="ghost"
-              aria-label="Rename title"
-              :disabled="titleBusy"
-              @click="openTitleEditor(t.id)"
-            />
-            <template #content><div class="px-3 py-1.5 text-xs">Rename</div></template>
-          </UPopover>
-          <UPopover mode="hover">
-            <UButton
-              icon="i-lucide-trash-2"
-              size="xs"
-              color="neutral"
-              variant="ghost"
-              aria-label="Delete title"
-              :disabled="titleBusy"
-              @click="titleConfirmId = t.id"
-            />
-            <template #content><div class="px-3 py-1.5 text-xs">Delete</div></template>
-          </UPopover>
+          <span
+            class="flex-1 transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
+          />
+          <div
+            class="flex gap-1 transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
+          >
+            <UPopover mode="hover">
+              <UButton
+                icon="i-lucide-pencil"
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                aria-label="Rename title"
+                :disabled="titleBusy"
+                @click="openTitleEditor(t.id)"
+              />
+              <template #content><div class="px-3 py-1.5 text-xs">Rename</div></template>
+            </UPopover>
+            <UPopover mode="hover">
+              <UButton
+                icon="i-lucide-trash-2"
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                class="text-muted hover:text-error"
+                aria-label="Delete title"
+                :disabled="titleBusy"
+                @click="titleConfirmId = t.id"
+              />
+              <template #content><div class="px-3 py-1.5 text-xs">Delete</div></template>
+            </UPopover>
+          </div>
         </div>
       </div>
-      <p v-else class="text-muted py-6 text-center text-sm">No titles yet — create one to standardize roles.</p>
+      <div v-else class="flex flex-col items-center gap-3 py-10 text-center">
+        <UIcon name="i-lucide-briefcase" class="text-toned size-10" aria-hidden="true" />
+        <div>
+          <p class="text-highlighted text-sm font-medium">No titles yet</p>
+          <p class="text-muted mt-1 text-xs">Create one to standardize roles across employees.</p>
+        </div>
+        <UButton icon="i-lucide-plus" label="New title" size="sm" @click="openTitleEditor()" />
+      </div>
     </template>
     <template #footer>
       <div class="flex w-full items-center justify-between gap-2">

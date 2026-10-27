@@ -13,11 +13,7 @@ useHead({ title: 'Projects' });
         </template>
       </UDashboardNavbar>
       <div class="space-y-6 p-6 lg:p-8">
-        <div class="flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <p class="text-sm text-zinc-500">Group work into nestable projects</p>
-          </div>
-        </div>
+        <p class="text-muted hidden text-sm sm:block">Nestable groups of tasks</p>
 
         <ProjectsManager />
       </div>

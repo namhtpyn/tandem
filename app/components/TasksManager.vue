@@ -10,7 +10,7 @@ import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
 
 import { ACTIVITY_KIND, CHANGE_RESOURCE } from '#shared/enums';
-import { formatWhen } from '~/utils/format-when';
+import { formatWhenShort } from '~/utils/format-when';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 import { categoryColor } from '~/utils/ui-labels';
 
@@ -39,6 +39,8 @@ watch([statusId, needsDecision], () => {
 function toggleStatusFilter(id: string) {
   statusId.value = statusId.value === id ? null : id;
 }
+/** any active server-side filter (search / status chip / inbox) — drives the empty-state copy */
+const listFiltered = computed(() => !!searchDebounced.value || statusId.value !== null || needsDecision.value);
 
 const pagedQuery = useQuery(
   computed(() =>
@@ -104,6 +106,20 @@ const statusOptions = computed(() => statuses.value.map((x) => ({ label: x.name,
 // one shared category→color mapping (ui-labels) — statuses agree with the detail page
 function statusColor(s: string) {
   return categoryColor(statusById.value.get(s)?.category);
+}
+
+// solid-dot color for the borderless status selects (list row + mobile card):
+// same category mapping, rendered as a filled dot instead of a badge
+const STATUS_DOT: Record<string, string> = {
+  success: 'bg-success',
+  error: 'bg-error',
+  info: 'bg-info',
+  warning: 'bg-warning',
+  primary: 'bg-primary',
+  neutral: 'bg-accented',
+};
+function statusDot(s: string) {
+  return STATUS_DOT[categoryColor(statusById.value.get(s)?.category)];
 }
 
 // ---- mutations (list rows) ----
@@ -386,6 +402,11 @@ const draggingId = ref<string | null>(null);
 const dropTarget = ref<string | null>(null);
 const boardColumns = computed(() => statuses.value);
 
+// board card kebab menu items — the actions hide behind one menu instead of an
+// always-on icon row (accent rationing: delete is a menu item, not a red button)
+const BOARD_MENU_ITEM =
+  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-xs text-muted transition-colors hover:bg-elevated hover:text-highlighted';
+
 // manual status is FREE on every surface (owner ruling) — any column is a legal drop
 
 function tasksByStatus(status: string) {
@@ -421,81 +442,107 @@ onServerPrefetch(() =>
 </script>
 
 <template>
-  <div>
-    <div class="flex flex-wrap items-center justify-end gap-2">
-      <div class="border-default inline-flex overflow-hidden rounded-md border" role="group" aria-label="View">
-        <button
-          type="button"
-          class="px-3 py-1.5 text-sm font-medium transition-colors"
-          :class="view === 'list' ? 'bg-primary/10 text-primary' : 'text-muted hover:text-highlighted'"
-          aria-label="List view"
-          @click="view = 'list'"
-        >
-          List
-        </button>
-        <button
-          type="button"
-          class="border-default border-l px-3 py-1.5 text-sm font-medium transition-colors"
-          :class="view === 'board' ? 'bg-primary/10 text-primary' : 'text-muted hover:text-highlighted'"
-          aria-label="Board view"
-          @click="view = 'board'"
-        >
-          Board
-        </button>
-      </div>
-      <UButton
-        :color="needsDecision ? 'primary' : 'neutral'"
-        :variant="needsDecision ? 'solid' : 'outline'"
+  <div class="flex min-h-0 flex-1 flex-col">
+    <!-- ONE toolbar row: search left, every action right, same baseline -->
+    <div class="flex flex-wrap items-center gap-2">
+      <UInput
+        v-model="search"
+        icon="i-lucide-search"
+        placeholder="Search tasks…"
         size="sm"
-        :aria-pressed="needsDecision"
-        data-testid="needs-decision-toggle"
-        @click="needsDecision = !needsDecision"
-      >
-        <span class="inline-flex items-center gap-1.5">
-          <UIcon name="i-lucide-inbox" class="size-4" />
-          Needs my decision
-          <span
-            v-if="inboxCount > 0"
-            class="bg-primary text-inverted inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
-            data-testid="inbox-count"
-            >{{ inboxCount }}</span
-          >
-        </span>
-      </UButton>
-      <UButton
-        icon="i-lucide-settings-2"
-        label="Statuses"
-        color="neutral"
-        variant="outline"
-        size="sm"
-        @click="statusManagerOpen = true"
+        class="w-full sm:max-w-xs"
+        aria-label="Search tasks"
       />
-      <UButton icon="i-lucide-plus" label="New task" @click="openEditor()" />
+      <div class="ms-auto flex items-center gap-2 overflow-x-auto">
+        <div class="border-default inline-flex overflow-hidden rounded-md border" role="group" aria-label="View">
+          <button
+            type="button"
+            class="px-3 py-1.5 text-sm font-medium transition-colors"
+            :class="view === 'list' ? 'bg-elevated text-highlighted' : 'text-muted hover:text-highlighted'"
+            aria-label="List view"
+            :aria-pressed="view === 'list'"
+            @click="view = 'list'"
+          >
+            List
+          </button>
+          <button
+            type="button"
+            class="border-default border-l px-3 py-1.5 text-sm font-medium transition-colors"
+            :class="view === 'board' ? 'bg-elevated text-highlighted' : 'text-muted hover:text-highlighted'"
+            aria-label="Board view"
+            :aria-pressed="view === 'board'"
+            @click="view = 'board'"
+          >
+            Board
+          </button>
+        </div>
+        <UButton
+          color="neutral"
+          :variant="needsDecision ? 'solid' : 'outline'"
+          size="sm"
+          :aria-pressed="needsDecision"
+          data-testid="needs-decision-toggle"
+          @click="needsDecision = !needsDecision"
+        >
+          <span class="inline-flex items-center gap-1.5">
+            <UIcon name="i-lucide-inbox" class="size-4" />
+            Needs my decision
+            <span
+              v-if="inboxCount > 0"
+              class="bg-accented text-default inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
+              data-testid="inbox-count"
+              >{{ inboxCount }}</span
+            >
+          </span>
+        </UButton>
+        <UButton
+          icon="i-lucide-settings-2"
+          label="Statuses"
+          color="neutral"
+          variant="outline"
+          size="sm"
+          @click="statusManagerOpen = true"
+        />
+        <UButton icon="i-lucide-plus" label="New task" size="sm" @click="openEditor()" />
+      </div>
     </div>
 
-    <p v-if="message" class="text-sm" :class="messageOk ? 'text-success' : 'text-error'" role="status">
+    <p v-if="message" class="mt-3 text-sm" :class="messageOk ? 'text-success' : 'text-error'" role="status">
       {{ message }}
     </p>
 
-    <!-- status filter chips (server-side statusId filter) -->
-    <div v-if="statuses.length" class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by status">
+    <!-- status filter chips (server-side statusId filter) — one scrollable row on
+         mobile; active = neutral fill + a single primary dot, never amber-filled -->
+    <div
+      v-if="statuses.length"
+      class="mt-3 flex items-center gap-1.5 overflow-x-auto"
+      role="group"
+      aria-label="Filter by status"
+    >
       <UButton
-        size="xs"
-        :variant="statusId === null ? 'solid' : 'soft'"
-        :color="statusId === null ? 'primary' : 'neutral'"
+        size="sm"
+        color="neutral"
+        variant="soft"
+        class="shrink-0"
+        :class="statusId === null ? 'text-highlighted' : 'text-muted'"
         :aria-pressed="statusId === null"
         @click="statusId = null"
-        >All</UButton
       >
+        <span v-if="statusId === null" class="bg-primary mr-1 inline-block size-1.5 rounded-full" aria-hidden="true" />
+        All
+      </UButton>
       <UButton
         v-for="st in statuses"
         :key="st.id"
-        size="xs"
-        :variant="statusId === st.id ? 'solid' : 'soft'"
-        :color="statusId === st.id ? 'primary' : 'neutral'"
+        size="sm"
+        color="neutral"
+        variant="soft"
+        class="shrink-0"
+        :class="statusId === st.id ? 'text-highlighted' : 'text-muted'"
         :aria-pressed="statusId === st.id"
         @click="toggleStatusFilter(st.id)"
       >
+        <span v-if="statusId === st.id" class="bg-primary mr-1 inline-block size-1.5 rounded-full" aria-hidden="true" />
         {{ st.name }}
       </UButton>
     </div>
@@ -503,15 +550,24 @@ onServerPrefetch(() =>
     <!-- server-paged list (desktop table + mobile cards) -->
     <DataTable
       v-if="view === 'list'"
-      v-model:search="search"
-      searchable
-      search-placeholder="Search tasks…"
+      class="mt-3"
       :data="rows"
+      :loading="pagedQuery.isPending.value"
       v-model:page="page"
       :page-count="pageCount"
       :page-size="pageSize"
       :columns="tableColumns"
+      show-empty-state
+      :empty-icon="listFiltered ? 'i-lucide-search-x' : 'i-lucide-list-todo'"
+      :empty-text="
+        listFiltered
+          ? 'No results — try a different search.'
+          : 'No tasks yet — create the first one for your humans or agents.'
+      "
     >
+      <template #empty-cta>
+        <UButton v-if="!listFiltered" icon="i-lucide-plus" label="New task" @click="openEditor()" />
+      </template>
       <template #title-cell="{ row }">
         <div class="min-w-0">
           <NuxtLink :to="`/tasks/${row.original.id}`" class="text-highlighted truncate font-medium hover:underline">{{
@@ -523,27 +579,48 @@ onServerPrefetch(() =>
         </div>
       </template>
       <template #assignee-cell="{ row }">
-        <span class="text-toned flex items-center gap-1.5 text-sm">
-          <UIcon v-if="row.original.assigneeKind === 'ai'" name="i-lucide-bot" class="text-primary size-3.5" />
+        <span
+          class="flex items-center gap-1.5 text-sm"
+          :class="row.original.assigneeName ? 'text-toned' : 'text-muted'"
+        >
+          <UIcon v-if="row.original.assigneeKind === 'ai'" name="i-lucide-bot" class="text-primary size-3.5 shrink-0" />
+          <UIcon
+            v-else-if="!row.original.assigneeName"
+            name="i-lucide-user-round"
+            class="text-dimmed size-3.5 shrink-0"
+          />
           {{ row.original.assigneeName ?? 'Unassigned' }}
         </span>
       </template>
       <template #status-cell="{ row }">
+        <!-- borderless select: the row already reads as a table — no OS chrome,
+             just a category dot + name + chevron, hover reveals an elevated bg -->
         <USelect
           :model-value="row.original.status"
           :items="statusOptions"
           value-key="value"
           size="sm"
-          class="w-32"
+          variant="none"
+          class="hover:bg-elevated rounded-md"
           :aria-label="`Status for ${row.original.title}`"
           @update:model-value="(v: string) => setStatus(row.original, v)"
-        />
+        >
+          <template #leading>
+            <span
+              class="inline-block size-2 shrink-0 rounded-full"
+              :class="statusDot(row.original.status)"
+              aria-hidden="true"
+            />
+          </template>
+        </USelect>
       </template>
       <template #updatedAt-cell="{ row }">
-        <span suppressHydration-warning class="text-muted text-xs">{{ formatWhen(row.original.updatedAt) }}</span>
+        <span suppressHydration-warning class="text-muted text-xs">{{ formatWhenShort(row.original.updatedAt) }}</span>
       </template>
       <template #actions-cell="{ row }">
-        <div class="flex justify-end gap-1">
+        <div
+          class="flex justify-end gap-1 opacity-0 transition-opacity max-md:opacity-100 md:focus-within:opacity-100 md:[tr:hover_&]:opacity-100"
+        >
           <UPopover mode="hover">
             <UButton
               icon="i-lucide-wand-sparkles"
@@ -603,7 +680,7 @@ onServerPrefetch(() =>
         <UCard :ui="{ root: 'shadow-sm' }">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
-              <NuxtLink :to="`/tasks/${row.id}`" class="text-highlighted truncate font-medium hover:underline">{{
+              <NuxtLink :to="`/tasks/${row.id}`" class="text-highlighted line-clamp-2 font-medium hover:underline">{{
                 row.title
               }}</NuxtLink>
               <p v-if="row.projectName" class="text-primary mt-0.5 flex items-center gap-1 text-xs">
@@ -615,22 +692,34 @@ onServerPrefetch(() =>
                   ><UIcon name="i-lucide-bot" class="size-3" />AI</span
                 >
               </p>
+              <p class="text-dimmed mt-0.5 flex items-center gap-1 text-xs">
+                <UIcon name="i-lucide-clock" class="size-3 shrink-0" />
+                <span suppressHydration-warning>{{ formatWhenShort(row.updatedAt) }}</span>
+              </p>
             </div>
-            <UBadge :color="statusColor(row.status)" variant="subtle" size="sm">{{
+            <UBadge :color="statusColor(row.status)" variant="subtle" size="sm" class="shrink-0">{{
               statusById.get(row.status)?.name ?? row.status
             }}</UBadge>
           </div>
-          <div class="mt-3 flex items-center justify-between">
+          <div class="mt-3 flex items-center justify-between gap-2">
             <USelect
               :model-value="row.status"
               :items="statusOptions"
               value-key="value"
               size="sm"
-              class="w-32"
-              icon="i-lucide-circle-dot"
+              variant="none"
+              class="hover:bg-elevated max-w-40 rounded-md"
               :aria-label="`Status for ${row.title}`"
               @update:model-value="(v: string) => setStatus(row, v)"
-            />
+            >
+              <template #leading>
+                <span
+                  class="inline-block size-2 shrink-0 rounded-full"
+                  :class="statusDot(row.status)"
+                  aria-hidden="true"
+                />
+              </template>
+            </USelect>
             <div class="flex items-center gap-1">
               <UPopover mode="hover">
                 <UButton
@@ -691,48 +780,40 @@ onServerPrefetch(() =>
       </template>
     </DataTable>
 
-    <!-- empty state -->
-    <UCard v-if="view === 'list' && !rows.length" :ui="{ root: 'shadow-sm' }">
-      <template #body>
-        <div class="flex flex-col items-center gap-2 py-6 text-center">
-          <UIcon name="i-lucide-list-todo" class="text-dimmed size-8" />
-          <p class="text-muted text-sm">
-            {{
-              statusId || needsDecision || searchDebounced
-                ? 'No tasks match the current filters.'
-                : 'No tasks yet. Create the first one for your humans or agents.'
-            }}
-          </p>
-          <UButton icon="i-lucide-plus" size="sm" class="mt-2" @click="openEditor()">New task</UButton>
-        </div>
-      </template>
-    </UCard>
-
-    <!-- kanban board view (over the same server-paged rows) -->
-    <div v-if="view === 'board'" class="space-y-4">
-      <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <div
+    <!-- kanban board view (over the same server-paged rows): one horizontally
+         scrollable row of columns; the column IS the status — cards move by
+         drag & drop, empty columns stay compact dashed drop zones -->
+    <div v-if="view === 'board'" class="mt-3 min-h-0 flex-1">
+      <div class="flex items-start gap-4 overflow-x-auto pb-2">
+        <section
           v-for="col in boardColumns"
           :key="col.id"
-          class="border-default bg-muted/60 flex min-h-40 flex-col rounded-lg border"
+          data-testid="board-column"
+          class="border-default bg-muted/40 flex min-w-[260px] flex-1 flex-col rounded-lg border"
           :class="dropTarget === col.id ? 'ring-primary ring-2' : ''"
           @dragover.prevent="dropTarget = col.id"
           @dragleave="dropTarget === col.id && (dropTarget = null)"
           @drop.prevent="onDrop(col.id)"
         >
-          <div class="border-default flex items-center justify-between gap-2 border-b px-3 py-2">
-            <p class="text-toned flex items-center gap-1.5 text-sm font-medium">
-              <UIcon name="i-lucide-circle-dot" class="size-4" :class="CATEGORY_TEXT[col.category] ?? 'text-dimmed'" />
-              {{ col.name }}
+          <header class="border-default flex items-center justify-between gap-2 border-b px-3 py-2">
+            <p class="text-toned flex min-w-0 items-center gap-1.5 text-sm font-medium">
+              <UIcon
+                name="i-lucide-circle-dot"
+                class="size-4 shrink-0"
+                :class="CATEGORY_TEXT[col.category] ?? 'text-dimmed'"
+              />
+              <span class="truncate">{{ col.name }}</span>
             </p>
-            <UBadge color="neutral" variant="subtle" size="sm">{{ tasksByStatus(col.id).length }}</UBadge>
-          </div>
-          <div class="flex-1 space-y-2 p-2">
-            <UCard
+            <UBadge color="neutral" variant="subtle" size="sm" class="shrink-0">{{
+              tasksByStatus(col.id).length
+            }}</UBadge>
+          </header>
+          <div class="flex max-h-[min(60dvh,40rem)] flex-col gap-2 overflow-y-auto p-2">
+            <article
               v-for="row in tasksByStatus(col.id)"
               :key="row.id"
-              :ui="{ root: 'shadow-sm cursor-grab active:cursor-grabbing' }"
               draggable="true"
+              class="border-default bg-default group/card relative cursor-grab rounded-lg border p-2.5 shadow-sm active:cursor-grabbing"
               :class="draggingId === row.id ? 'opacity-40' : ''"
               @dragstart="draggingId = row.id"
               @dragend="
@@ -740,77 +821,58 @@ onServerPrefetch(() =>
                 dropTarget = null;
               "
             >
-              <div class="min-w-0">
+              <div class="flex items-start justify-between gap-1">
                 <NuxtLink
                   :to="`/tasks/${row.id}`"
-                  class="text-highlighted truncate text-sm font-medium hover:underline"
+                  draggable="false"
+                  class="text-highlighted line-clamp-2 min-w-0 flex-1 text-sm font-medium hover:underline"
                   >{{ row.title }}</NuxtLink
                 >
-                <p v-if="row.projectName" class="text-primary mt-0.5 flex items-center gap-1 text-xs">
-                  <UIcon name="i-lucide-folder-kanban" class="size-3" />{{ row.projectName }}
-                </p>
-                <p class="text-dimmed mt-0.5 flex items-center gap-1 text-xs">
-                  <UIcon v-if="row.assigneeKind === 'ai'" name="i-lucide-bot" class="text-primary size-3" />
-                  {{ row.assigneeName ?? 'Unassigned' }}
-                </p>
+                <UPopover :ui="{ content: 'w-40 p-1' }">
+                  <UButton
+                    icon="i-lucide-ellipsis-vertical"
+                    size="sm"
+                    color="neutral"
+                    variant="ghost"
+                    aria-label="Task actions"
+                    class="transition-opacity max-md:opacity-100 md:opacity-0 md:group-focus-within/card:opacity-100 md:group-hover/card:opacity-100"
+                  />
+                  <template #content>
+                    <div class="flex flex-col">
+                      <button type="button" :class="BOARD_MENU_ITEM" :disabled="busy" @click="autoAssign(row)">
+                        <UIcon name="i-lucide-wand-sparkles" class="size-3.5 shrink-0" />Auto-assign
+                      </button>
+                      <button type="button" :class="BOARD_MENU_ITEM" @click="openEditor(row)">
+                        <UIcon name="i-lucide-pencil" class="size-3.5 shrink-0" />Edit
+                      </button>
+                      <button
+                        type="button"
+                        :class="[BOARD_MENU_ITEM, 'text-error hover:bg-error/10 hover:text-error']"
+                        @click="pendingDelete = row"
+                      >
+                        <UIcon name="i-lucide-trash-2" class="size-3.5 shrink-0" />Delete
+                      </button>
+                    </div>
+                  </template>
+                </UPopover>
               </div>
-              <div class="mt-2 flex items-center justify-between gap-2">
-                <USelect
-                  :model-value="row.status"
-                  :items="statusOptions"
-                  value-key="value"
-                  size="xs"
-                  class="w-28"
-                  :aria-label="`Status for ${row.title}`"
-                  @update:model-value="(v: string) => setStatus(row, v)"
-                />
-                <div class="flex items-center gap-1">
-                  <UPopover mode="hover">
-                    <UButton
-                      icon="i-lucide-wand-sparkles"
-                      variant="ghost"
-                      color="neutral"
-                      size="xs"
-                      aria-label="Auto-assign"
-                      :disabled="busy"
-                      @click="autoAssign(row)"
-                    />
-                    <template #content>
-                      <div class="px-3 py-1.5 text-xs">Auto-assign</div>
-                    </template>
-                  </UPopover>
-                  <UPopover mode="hover">
-                    <UButton
-                      icon="i-lucide-pencil"
-                      variant="ghost"
-                      color="neutral"
-                      size="xs"
-                      aria-label="Edit task"
-                      @click="openEditor(row)"
-                    />
-                    <template #content>
-                      <div class="px-3 py-1.5 text-xs">Edit task</div>
-                    </template>
-                  </UPopover>
-                  <UPopover mode="hover">
-                    <UButton
-                      icon="i-lucide-trash-2"
-                      variant="ghost"
-                      color="error"
-                      size="xs"
-                      aria-label="Delete task"
-                      @click="pendingDelete = row"
-                    />
-                    <template #content>
-                      <div class="px-3 py-1.5 text-xs">Delete task</div>
-                    </template>
-                  </UPopover>
-                </div>
-              </div>
-            </UCard>
-            <p v-if="!tasksByStatus(col.id).length" class="text-dimmed py-4 text-center text-xs">Drop tasks here</p>
+              <p v-if="row.projectName" class="text-primary mt-1 flex items-center gap-1 text-xs">
+                <UIcon name="i-lucide-folder-kanban" class="size-3 shrink-0" />{{ row.projectName }}
+              </p>
+              <p class="text-dimmed mt-1 flex items-center gap-1 text-xs">
+                <UIcon v-if="row.assigneeKind === 'ai'" name="i-lucide-bot" class="text-primary size-3 shrink-0" />
+                <UIcon v-else name="i-lucide-user-round" class="size-3 shrink-0" />
+                {{ row.assigneeName ?? 'Unassigned' }}
+              </p>
+            </article>
+            <div
+              v-if="!tasksByStatus(col.id).length"
+              class="border-default text-dimmed flex min-h-[120px] items-center justify-center rounded-md border border-dashed text-xs"
+            >
+              Drop tasks here
+            </div>
           </div>
-        </div>
+        </section>
       </div>
     </div>
 

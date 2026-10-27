@@ -1,7 +1,9 @@
 <script setup lang="ts">
 // Supervision-hierarchy org chart: ONE box per employee, ONE line per
-// supervision edge, top-down layered tree with elbow connectors. Renders only
-// the graph card incl. its empty state — the parent owns the view toggle.
+// supervision edge, top-down layered tree with elbow connectors. The canvas
+// flexes to the remaining viewport height and centers the tree inside itself
+// (scrolls when a big org overflows — no zoom). Renders only the graph card
+// incl. its empty state — the parent owns the view toggle.
 import { computed } from 'vue';
 
 import { nonNull } from '#shared/utils/non-null';
@@ -13,22 +15,11 @@ const rows = computed(() => props.rows);
 
 const byId = computed(() => new Map(rows.value.map((r) => [r.id, r])));
 
-/** children map: supervisorId -> direct reports (in row order) */
-const childrenOf = computed(() => {
-  const m = new Map<string, EmployeeRow[]>();
-  for (const r of rows.value) {
-    for (const sup of r.supervisorIds) {
-      const arr = m.get(sup) ?? [];
-      arr.push(r);
-      m.set(sup, arr);
-    }
-  }
-  return m;
-});
-/** roots = employees with no supervisor (or supervisor missing) */
+/** roots = employees with no supervisor (or supervisor missing) — they sit on the top row */
 const roots = computed(() =>
   rows.value.filter((r) => r.supervisorIds.length === 0 || r.supervisorIds.every((id) => !byId.value.has(id))),
 );
+
 /** ONE box per employee; ONE line per supervision edge.
  * TOP-DOWN layered layout (classic org chart): depth = row, subtree width =
  * leaf count; children centered under their parent, elbow connectors from the
@@ -62,17 +53,14 @@ const graphLayout = computed(() => {
     for (const sup of r.supervisorIds) if (byId.value.has(sup)) return sup;
     return null;
   };
-  // width = number of leaves in subtree (min 1)
+  // width = number of leaves in the subtree (min 1); cycle-guarded by path
   const widthCache = new Map<string, number>();
   const subtreeWidth = (r: EmployeeRow, path: Set<string>): number => {
     if (path.has(r.id)) return 1;
     if (widthCache.has(r.id)) return nonNull(widthCache.get(r.id));
     const next = new Set(path).add(r.id);
     const ch = (kids.get(r.id) ?? []).filter((c) => primaryOf(c) === r.id);
-    let w = 1;
-    for (const c of ch) w += subtreeWidth(c, next);
-    // each child contributes max(1, its own width); accumulate:
-    w = ch.length ? ch.reduce((acc, c) => acc + Math.max(1, subtreeWidth(c, next)), 0) : 1;
+    const w = ch.length ? ch.reduce((acc, c) => acc + Math.max(1, subtreeWidth(c, next)), 0) : 1;
     widthCache.set(r.id, w);
     return w;
   };
@@ -137,6 +125,12 @@ const secondaryEdges = computed(() => {
 
 const graphWidth = computed(() => Math.max(360, ...graphLayout.value.map((n) => n.x + NODE_W)) + 8);
 const graphHeight = computed(() => (Math.max(0, ...graphLayout.value.map((n) => n.depth)) + 1) * (NODE_H + ROW_GAP));
+
+/** hard-truncate a label to `max` chars with a real ellipsis (SVG has no text-overflow) */
+function fitLabel(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, Math.max(1, max - 1)).trimEnd()}…` : text;
+}
+
 function primaryPath(i: number): string {
   const nodes = graphLayout.value;
   const n = nonNull(nodes[i]);
@@ -160,21 +154,26 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
 </script>
 
 <template>
-  <UCard :ui="{ root: 'shadow-sm', body: 'p-0 sm:p-0' }">
-    <div v-if="!rows.length" class="flex flex-col items-center gap-2 py-10 text-center">
+  <UCard
+    :ui="{
+      root: 'shadow-sm flex min-h-0 flex-col',
+      body: 'flex min-h-0 flex-1 flex-col p-0 sm:p-0',
+    }"
+  >
+    <div v-if="!rows.length" class="flex flex-1 flex-col items-center justify-center gap-2 py-10 text-center">
       <UIcon name="i-lucide-users" class="text-dimmed size-8" />
       <p class="text-muted text-sm">No employees yet — add the first human or AI teammate.</p>
     </div>
-    <!-- the org chart pans horizontally on desktop (deliberate: wide orgs scroll);
-         small viewports scale the svg to the container width instead -->
-    <div v-else class="overflow-x-auto p-4">
+    <!-- the canvas fills the remaining viewport height (parent grants flex-1);
+         the tree centers inside it and pans when a wide/tall org overflows -->
+    <div v-else class="flex min-h-0 flex-1 overflow-auto p-4">
       <svg
         :viewBox="`0 0 ${graphWidth} ${graphHeight}`"
         :width="graphWidth"
         :height="graphHeight"
         role="img"
         aria-label="Supervision hierarchy"
-        class="h-auto w-full md:h-auto md:w-auto"
+        class="m-auto h-auto w-full max-w-full shrink-0 md:h-auto md:w-auto"
       >
         <!-- primary tree: elbow from parent bottom-center to child top-center -->
         <path
@@ -194,12 +193,12 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
           class="stroke-(--ui-border-accented)"
           stroke-width="2"
         />
-        <g v-for="(n, i) in graphLayout" :key="n.row.id" :transform="`translate(${n.x}, ${n.y})`">
+        <g v-for="n in graphLayout" :key="n.row.id" :transform="`translate(${n.x}, ${n.y})`">
           <rect
             :width="NODE_W"
             :height="NODE_H"
             rx="10"
-            class="fill-(--ui-bg) stroke-(--ui-border)"
+            class="fill-(--ui-bg-elevated) stroke-(--ui-border)"
             stroke-width="1.5"
           />
           <defs>
@@ -207,14 +206,14 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
               <circle cx="28" cy="26" r="17" />
             </clipPath>
           </defs>
+          <!-- avatar: same 34px circle for every node — photo, or initial with an
+               AI tint matching the table badges -->
           <circle
             cx="28"
             cy="26"
             r="17"
             :class="
-              n.row.kind === 'ai'
-                ? 'fill-primary/15 stroke-primary/40'
-                : 'fill-(--ui-bg-elevated) stroke-(--ui-border-accented)'
+              n.row.kind === 'ai' ? 'fill-primary/15 stroke-primary/40' : 'fill-(--ui-bg) stroke-(--ui-border-accented)'
             "
             stroke-width="1.5"
           />
@@ -232,10 +231,11 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
             {{ n.row.kind === 'ai' ? 'AI' : n.row.name.slice(0, 1) }}
           </text>
           <text x="52" y="22" class="fill-(--ui-text-highlighted) text-[12px] font-medium">
-            {{ n.row.name.length > 14 ? n.row.name.slice(0, 14) + '…' : n.row.name }}
+            {{ fitLabel(n.row.name, 14) }}
           </text>
           <text x="52" y="38" class="fill-(--ui-text-dimmed) text-[10px]">
-            {{ (n.row.title || n.row.email).slice(0, 16) }}
+            {{ fitLabel(n.row.title || n.row.email, 20) }}
+            <title>{{ n.row.title || n.row.email }}</title>
           </text>
           <text x="8" :y="NODE_H - 12" class="fill-(--ui-text-dimmed) text-[10px]">
             {{ n.row.kind === 'ai' ? 'AI agent' : 'Human' }}

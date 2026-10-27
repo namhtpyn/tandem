@@ -62,10 +62,11 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
 <template>
   <div>
     <h3 class="text-muted mb-2 text-xs font-medium">Details</h3>
+    <!-- one [label | field] grid: every select stretches to the same right edge -->
     <dl class="space-y-1.5 text-sm">
-      <div class="flex items-center justify-between gap-2">
+      <div class="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-x-2">
         <dt class="text-muted text-xs">Status</dt>
-        <dd>
+        <dd class="min-w-0">
           <USelect
             :model-value="task.status"
             :items="statusOptions"
@@ -73,14 +74,14 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
             size="md"
             :disabled="fieldBusy || runLocked"
             aria-label="Task status"
-            class="w-40"
+            class="w-full"
             @update:model-value="(v: string) => task && v !== task.status && updateField({ status: v })"
           />
         </dd>
       </div>
-      <div class="flex items-center justify-between gap-2">
+      <div class="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-x-2">
         <dt class="text-muted text-xs">Assignee</dt>
-        <dd>
+        <dd class="min-w-0">
           <USelect
             :model-value="task.assigneeId ?? '__none__'"
             :items="assigneeOptions"
@@ -88,21 +89,27 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
             size="md"
             :disabled="fieldBusy || runLocked"
             aria-label="Task assignee"
-            class="w-40"
+            class="w-full"
             @update:model-value="(v: string) => task && updateField({ assigneeId: v === '__none__' ? null : v })"
           />
         </dd>
       </div>
       <p v-if="runLocked" class="text-dimmed text-[11px]">Locked while the agent runs.</p>
-      <div class="flex items-center justify-between gap-2">
+      <!-- owner is read-only (owner routing lives on the task row): label + subtle chip -->
+      <div class="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-x-2">
         <dt class="text-muted text-xs">Owner</dt>
-        <dd class="truncate text-right" :class="task.ownerName ? 'text-toned' : 'text-dimmed italic'">
-          {{ task.ownerName ?? 'None' }}
+        <dd class="min-w-0">
+          <span class="bg-muted text-toned inline-flex max-w-full items-center gap-1.5 rounded-md px-2 py-1 text-xs">
+            <UIcon name="i-lucide-user-round" class="size-3 shrink-0" />
+            <span class="truncate" :class="task.ownerName ? '' : 'text-dimmed italic'">{{
+              task.ownerName ?? 'Unassigned'
+            }}</span>
+          </span>
         </dd>
       </div>
-      <div class="flex items-center justify-between gap-2">
+      <div class="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-x-2">
         <dt class="text-muted text-xs">Project</dt>
-        <dd>
+        <dd class="min-w-0">
           <USelect
             :model-value="task.projectId ?? '__none__'"
             :items="projectOptions"
@@ -110,7 +117,7 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
             size="md"
             :disabled="fieldBusy"
             aria-label="Task project"
-            class="w-40"
+            class="w-full"
             @update:model-value="(v: string) => task && updateField({ projectId: v === '__none__' ? null : v })"
           />
         </dd>

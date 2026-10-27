@@ -12,12 +12,9 @@ useHead({ title: 'Tasks' });
           <UDashboardSidebarCollapse />
         </template>
       </UDashboardNavbar>
-      <div class="space-y-6 p-6 lg:p-8">
-        <div class="flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <p class="text-sm text-zinc-500">Work items for humans and AI agents</p>
-          </div>
-        </div>
+      <div class="p-4 sm:p-6 lg:p-8">
+        <!-- subtitle sits directly under the page title (small, muted); hidden on mobile -->
+        <p class="text-muted hidden pb-3 text-sm sm:block">Work items for humans and AI agents</p>
         <TasksManager />
       </div>
     </template>

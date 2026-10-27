@@ -9,11 +9,11 @@ import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
-import { formatWhen } from '~/utils/format-when';
+import { formatWhenShort } from '~/utils/format-when';
 import type { VaultSecretRow } from '~/utils/orpc-types';
 
 const folderId = defineModel<string | null>('folderId', { default: null });
-const emit = defineEmits<{ deleted: [id: string] }>();
+const emit = defineEmits<{ deleted: [id: string]; manageFolders: [] }>();
 const { editable = true } = defineProps<{ editable?: boolean }>();
 
 const { $orpc } = useNuxtApp();
@@ -53,6 +53,10 @@ const liveQuery = useQuery(
 const rows = computed(() => liveQuery.data.value?.data ?? []);
 const total = computed(() => liveQuery.data.value?.total ?? 0);
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
+
+// the search box is pointless over an empty, unfiltered list — hide it there
+const showSearch = computed(() => total.value > 0 || !!search.value);
+const isFiltered = computed(() => !!searchDebounced.value);
 
 // deleting the last row of a high page clamps back into range — but only on a REAL
 // total: while a page switch is in flight data is undefined (total 0) and clamping
@@ -156,10 +160,33 @@ onServerPrefetch(() => liveQuery.suspense());
 
 <template>
   <div>
+    <!-- ONE toolbar row: search left, filters + actions right -->
+    <div class="flex flex-wrap items-center gap-2">
+      <UInput
+        v-if="showSearch"
+        v-model="search"
+        icon="i-lucide-search"
+        placeholder="Search secrets…"
+        size="sm"
+        class="w-full sm:max-w-xs"
+      />
+      <div class="ms-auto flex items-center gap-2 overflow-x-auto">
+        <VaultFolderSelect v-model="folderId" clearable />
+        <UButton
+          v-if="editable"
+          icon="i-lucide-folder"
+          label="Folders"
+          color="neutral"
+          variant="outline"
+          size="sm"
+          @click="emit('manageFolders')"
+        />
+        <UButton v-if="editable" icon="i-lucide-plus" label="New secret" size="sm" @click="openEditor()" />
+      </div>
+    </div>
+
     <DataTable
-      v-model:search="search"
-      searchable
-      search-placeholder="Search secrets…"
+      class="mt-3"
       :data="rows"
       :loading="liveQuery.isPending.value"
       v-model:page="page"
@@ -173,13 +200,15 @@ onServerPrefetch(() => liveQuery.suspense());
         { id: 'actions', header: '' },
       ]"
       show-empty-state
-      empty-icon="i-lucide-shield"
-      empty-text="No secrets yet. Store SSH keys and API tokens here — encrypted at rest."
+      :empty-icon="isFiltered ? 'i-lucide-search-x' : 'i-lucide-shield'"
+      :empty-text="
+        isFiltered
+          ? 'No results — try a different search.'
+          : 'No secrets yet. Store SSH keys and API tokens here — encrypted at rest.'
+      "
     >
-      <template #toolbar>
-        <VaultFolderSelect v-model="folderId" clearable />
-        <span class="flex-1" />
-        <UButton v-if="editable" icon="i-lucide-plus" size="sm" label="New secret" @click="openEditor()" />
+      <template #empty-cta>
+        <UButton v-if="editable && !isFiltered" icon="i-lucide-plus" label="New secret" @click="openEditor()" />
       </template>
       <template #description-cell="{ row }">
         <span class="text-muted text-xs">{{ row.original.description || '—' }}</span>
@@ -188,10 +217,10 @@ onServerPrefetch(() => liveQuery.suspense());
         <span class="text-dimmed font-mono text-xs">•••• {{ row.original.lastFour }}</span>
       </template>
       <template #updatedAt-cell="{ row }">
-        <span suppressHydration-warning class="text-muted text-xs">{{ formatWhen(row.original.updatedAt) }}</span>
+        <span suppressHydration-warning class="text-muted text-xs">{{ formatWhenShort(row.original.updatedAt) }}</span>
       </template>
       <template v-if="editable" #actions-cell="{ row }">
-        <div class="flex justify-end gap-1">
+        <div class="row-actions flex justify-end gap-1 transition-opacity">
           <UPopover mode="hover">
             <UButton
               icon="i-lucide-pencil"
@@ -210,8 +239,9 @@ onServerPrefetch(() => liveQuery.suspense());
             <UButton
               icon="i-lucide-trash-2"
               variant="ghost"
-              color="error"
+              color="neutral"
               size="sm"
+              class="text-muted hover:text-error"
               aria-label="Delete secret"
               :disabled="busy"
               @click="askRemove(row.original)"
@@ -250,8 +280,9 @@ onServerPrefetch(() => liveQuery.suspense());
               <UButton
                 icon="i-lucide-trash-2"
                 variant="ghost"
-                color="error"
+                color="neutral"
                 size="sm"
+                class="text-muted hover:text-error"
                 aria-label="Delete secret"
                 :disabled="busy"
                 @click="askRemove(row)"
@@ -273,12 +304,18 @@ onServerPrefetch(() => liveQuery.suspense());
     >
       <template #body>
         <div class="space-y-4">
-          <UFormField label="Name" :error="formError && !form.name ? formError : undefined">
-            <template #hint><FormHint text="unique" /></template>
+          <UFormField name="name" :error="formError && !form.name ? formError : undefined">
+            <template #label>
+              Name
+              <FormHint text="unique" />
+            </template>
             <UInput v-model="form.name" placeholder="Secret name" class="w-full" :disabled="busy" />
           </UFormField>
-          <UFormField label="Description">
-            <template #hint><FormHint text="optional note" /></template>
+          <UFormField name="description">
+            <template #label>
+              Description
+              <FormHint text="optional note" />
+            </template>
             <UTextarea
               v-model="form.description"
               placeholder="Description (optional)"
@@ -290,8 +327,9 @@ onServerPrefetch(() => liveQuery.suspense());
           <UFormField label="Folder" name="folder">
             <VaultFolderSelect v-model="form.folderId" creatable clearable size="md" class="w-full" />
           </UFormField>
-          <UFormField label="Value" :error="formError && formError !== 'Name is required' ? formError : undefined">
-            <template #hint>
+          <UFormField name="value" :error="formError && formError !== 'Name is required' ? formError : undefined">
+            <template #label>
+              Value
               <FormHint :text="isEdit ? 'replaces the stored value' : 'encrypted, never shown again'" />
             </template>
             <div class="relative w-full">
@@ -380,5 +418,12 @@ onServerPrefetch(() => liveQuery.suspense());
 /* mask secret text while the eye toggle is closed (Chromium/WebKit) */
 :deep(.secret-masked textarea) {
   -webkit-text-security: disc;
+}
+
+/* desktop hover-reveal for row actions — always visible on touch/mobile */
+@media (min-width: 768px) and (hover: hover) {
+  :deep(tbody tr:not(:hover):not(:focus-within)) .row-actions {
+    opacity: 0;
+  }
 }
 </style>

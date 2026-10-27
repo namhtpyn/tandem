@@ -5,7 +5,7 @@
 import { useMutation } from '@tanstack/vue-query';
 import { computed, ref, watch } from 'vue';
 
-import { formatDate } from '~/utils/format-when';
+import { formatWhenShort } from '~/utils/format-when';
 import type { ApiKeyRow, EmployeeRow } from '~/utils/orpc-types';
 
 const open = defineModel<boolean>('open', { default: false });
@@ -149,11 +149,11 @@ async function copyKey(key: string) {
           </div>
         </div>
         <div v-if="keys.length" class="divide-default divide-y">
-          <div v-for="k in keys" :key="k.id" class="flex items-center justify-between gap-2 py-2">
+          <div v-for="k in keys" :key="k.id" class="group flex items-center justify-between gap-2 py-2">
             <div v-if="renamingId !== k.id" class="min-w-0">
               <p class="text-highlighted truncate text-sm">{{ k.name ?? 'unnamed' }}</p>
               <p class="text-dimmed font-mono text-xs">
-                {{ k.prefix }}{{ k.start }}… · created {{ formatDate(k.createdAt) }}
+                {{ k.prefix }}{{ k.start }}… · created {{ formatWhenShort(k.createdAt) }}
               </p>
             </div>
             <div v-else class="flex min-w-0 flex-1 items-center gap-1">
@@ -186,7 +186,10 @@ async function copyKey(key: string) {
                 /><template #content><div class="px-3 py-1.5 text-xs">Cancel</div></template></UPopover
               >
             </div>
-            <div v-if="renamingId !== k.id" class="flex shrink-0 gap-1">
+            <div
+              v-if="renamingId !== k.id"
+              class="flex shrink-0 gap-1 transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
+            >
               <UPopover mode="hover"
                 ><UButton
                   icon="i-lucide-pencil"
@@ -202,8 +205,9 @@ async function copyKey(key: string) {
                 ><UButton
                   icon="i-lucide-trash-2"
                   variant="ghost"
-                  color="error"
+                  color="neutral"
                   size="xs"
+                  class="text-muted hover:text-error"
                   aria-label="Revoke key"
                   :disabled="keysBusy"
                   @click="askRevoke(k.id)"
