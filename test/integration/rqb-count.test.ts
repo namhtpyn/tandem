@@ -33,11 +33,7 @@ describe('rqb count/findManyAndCount (real db)', () => {
     expect(total).toBe(5);
   });
 
-  it('count toSQL renders where clause', () => {
-    const { sql: rendered } = db.query.tasks.count({ id: { in: ids } }).toSQL();
-    expect(rendered).toContain('count(*)');
-    expect(rendered).toContain('where');
-  });
+  // count/findManyAndCount toSQL shape tests moved to test/unit/query-shape.test.ts
 
   it('findManyAndCount pages and totals in one await', async () => {
     const { data, total } = await db.query.tasks.findManyAndCount({
@@ -48,12 +44,6 @@ describe('rqb count/findManyAndCount (real db)', () => {
     });
     expect(total).toBe(5);
     expect(data.map((t: { id: string }) => t.id)).toEqual(ids.slice(0, 2));
-  });
-
-  it('findManyAndCount toSQL exposes both queries', () => {
-    const { count, findMany } = db.query.tasks.findManyAndCount({ where: { id: { in: ids } } }).toSQL();
-    expect(count.sql).toContain('count(*)');
-    expect(findMany.sql).toContain('select');
   });
 
   it('installRqbExtensions on an empty query object returns early', async () => {

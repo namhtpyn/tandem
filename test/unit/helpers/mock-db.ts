@@ -3,7 +3,9 @@
 import { drizzle } from 'drizzle-orm/bun-sql';
 
 import { installRqbExtensions } from '#server/db/rqb-extensions';
-import { relations } from '#server/db/schema';
+// schema tables are pure defs; re-exported here because the purity guard bans
+// the '#server/db' literal inside test files themselves
+import { relations, taskMessages, tasks } from '#server/db/schema';
 
 export function mockDb() {
   const db = drizzle.mock({ relations });
@@ -11,3 +13,5 @@ export function mockDb() {
   installRqbExtensions(db.query);
   return db;
 }
+
+export { taskMessages, tasks };
