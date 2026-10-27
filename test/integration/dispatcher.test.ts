@@ -964,9 +964,7 @@ describe('dispatcher', () => {
     // startedAt stamps dispatch (row creation), which can precede the first run's
     // finish under queue backpressure — serial EXECUTION means the execution
     // windows never overlap
-    expect(second.finishedAt?.getTime() ?? Infinity).toBeGreaterThanOrEqual(
-      first.finishedAt?.getTime() ?? 0,
-    );
+    expect(second.finishedAt?.getTime() ?? Infinity).toBeGreaterThanOrEqual(first.finishedAt?.getTime() ?? 0);
   }, 25_000);
 
   it('company + project prompts ride the persisted run prompt end-to-end', async () => {

@@ -44,7 +44,10 @@ async function createQueueDomain(): Promise<QueueDomain> {
     createClient({
       url,
       // long-lived: a redis blip must reconnect, not brick enqueues for the process
-      socket: { connectTimeout: 2000, reconnectStrategy: (retries: number) => (retries > 3 ? new Error('no-retry') : Math.min(retries * 200, 1_000)) },
+      socket: {
+        connectTimeout: 2000,
+        reconnectStrategy: (retries: number) => (retries > 3 ? new Error('no-retry') : Math.min(retries * 200, 1_000)),
+      },
     });
   type Raw = ReturnType<typeof makeRaw>;
 

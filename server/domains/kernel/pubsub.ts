@@ -34,7 +34,10 @@ async function createPubsubDomain(): Promise<PubsubDomain> {
   // fail fast: verify the connection works before handing out the domain
   const ping = createClient({
     url,
-    socket: { connectTimeout: 5000, reconnectStrategy: (retries: number) => (retries > 3 ? new Error('no-retry') : Math.min(retries * 200, 1_000)) },
+    socket: {
+      connectTimeout: 5000,
+      reconnectStrategy: (retries: number) => (retries > 3 ? new Error('no-retry') : Math.min(retries * 200, 1_000)),
+    },
   });
   ping.on('error', swallowRedisError);
   try {
