@@ -355,6 +355,6 @@ INSERT INTO "task_statuses" ("id", "name", "color", "position", "category", "nex
 	('01a14743-43f5-759d-a00e-a20a36faa315', 'Done', 'success', 2, 'done', ARRAY['01a14743-43f5-759d-a00e-9ccda502cc88']::text[], now(), now()),
 	('01a14743-43f5-759d-a00e-a424b478f2fa', 'Waiting answer', 'warning', 3, 'waiting_answer', ARRAY['01a14743-43f5-759d-a00e-9ccda502cc88']::text[], now(), now()),
 	('01a14743-43f5-759d-a00e-a90831248ea5', 'In review', 'info', 4, 'in_review', ARRAY['01a14743-43f5-759d-a00e-9ccda502cc88','01a14743-43f5-759d-a00e-a20a36faa315']::text[], now(), now()),
-	('01a14743-43f5-759d-a00e-ada27e46c2f8', 'Blocked', 'error', 5, 'paused', ARRAY['01a14743-43f4-7053-a698-5b4ef36ed046','01a14743-43f5-759d-a00e-ada27e46c2f8']::text[], now(), now()),
+	('01a14743-43f5-759d-a00e-ada27e46c2f8', 'Blocked', 'error', 5, 'paused', ARRAY['01a14743-43f4-7053-a698-5b4ef36ed046','01a14743-43f5-759d-a00e-b0f2a5a04f4c']::text[], now(), now()),
 	('01a14743-43f5-759d-a00e-b0f2a5a04f4c', 'Cancelled', 'neutral', 6, 'cancelled', ARRAY[]::text[], now(), now())
 ON CONFLICT ("id") DO NOTHING;
