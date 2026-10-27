@@ -10,6 +10,11 @@ import { applyMigrations } from '../../db/index';
 
 let migrationsDone = false;
 
+// the 503-arm test sabotages the ledger; order-shuffling needs the memo resettable
+export function __resetMigrationsDoneForTests() {
+  migrationsDone = false;
+}
+
 export default defineEventHandler(async (event) => {
   try {
     await sqlClient`select 1`;

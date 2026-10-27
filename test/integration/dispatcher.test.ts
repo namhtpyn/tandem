@@ -880,7 +880,10 @@ describe('dispatcher', () => {
     // the queue worker claims the job asynchronously — poll for the doing hop
     let taskRow: { status: string } | undefined;
     for (let i = 0; i < 30; i++) {
-      taskRow = (await db.select().from(tasks))[0];
+      // poll OUR task — shuffle can leave sibling rows from earlier tests
+      taskRow = (
+        await db.select().from(tasks).where(eq(tasks.id, t.id)).limit(1)
+      )[0];
       if (taskRow?.status === STATUS.doing) break;
       await new Promise((r) => setTimeout(r, 100));
     }
@@ -890,9 +893,17 @@ describe('dispatcher', () => {
     expect(run.status).toBe(RUN_STATUS.RUNNING);
     // wait for the fake run to finish, then the task is submitted (done: no reviewers)
     await new Promise((r) => setTimeout(r, 400));
-    const after = (await db.select().from(tasks))[0];
+    const after = (await db.select().from(tasks).where(eq(tasks.id, t.id)).limit(1))[0];
     expect(after.status).toBe(STATUS.done);
-    const runAfter = (await db.select().from(taskRuns))[0];
+    // message-first schema: runs link to the task through its message
+    const runAfter = (
+      await db
+        .select({ run: taskRuns })
+        .from(taskRuns)
+        .innerJoin(taskMessages, eq(taskRuns.messageId, taskMessages.id))
+        .where(eq(taskMessages.taskId, t.id))
+        .limit(1)
+    )[0]!.run;
     expect(runAfter.status).toBe(RUN_STATUS.DONE);
     expect(runAfter.exitCode).toBe(0);
     expect(runAfter.output).toContain('RESULT');

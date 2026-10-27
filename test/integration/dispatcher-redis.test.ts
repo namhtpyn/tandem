@@ -109,9 +109,11 @@ describe.skipIf(!up)('dispatcher + change-bus on redis', () => {
     expect(await scanOnce('http://t.local')).toBe(true);
     const { maybeStartDispatcher } = await import('#server/domains/tasks/dispatcher.service');
     const stop = await maybeStartDispatcher();
-    // deterministic: the worker's job fn must actually invoke the mocked runner
-    for (let i = 0; i < 100 && dispatched.length === 0; i++) await new Promise((r) => setTimeout(r, 100));
-    expect(dispatched.length).toBe(1);
+    // deterministic: the worker's job fn must actually invoke the mocked runner.
+    // shuffled order can leave this worker draining jobs from earlier tests —
+    // assert OUR task arrived, not that the queue is globally quiet.
+    for (let i = 0; i < 100 && !dispatched.includes('t-1'); i++) await new Promise((r) => setTimeout(r, 100));
+    expect(dispatched).toContain('t-1');
     stop!();
     void hub;
   }, 20_000);

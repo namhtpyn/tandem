@@ -10,6 +10,7 @@ import { env, setEnv } from '#server/domains/kernel/env';
 import { ROLE } from '#shared/enums';
 
 import { call } from './api-harness.ts';
+import { ensureMigrated } from './helpers/pg.ts';
 
 beforeEach(async () => {
   // the fresh-ledger arm wipes the migration ledger — heal before each test
@@ -124,12 +125,19 @@ describe('GET /health/ready 503 path', () => {
     // schema via a prepared sabotage — simplest: drop the migrations table so
     // the ledger count query throws inside the handler's try
     await sqlClient`drop table if exists drizzle.__drizzle_migrations`;
+    // the ready memo survives other tests' successful probes — reset for this arm
+    const { __resetMigrationsDoneForTests } = await import(
+      '../../server/routes/health/ready.get.ts'
+    );
+    __resetMigrationsDoneForTests();
     const { result, event } = await call('#server/routes/health/ready.get.ts', {
       method: 'GET',
       url: '/health/ready',
     });
     expect(result).toMatchObject({ ok: false });
     expect((event.node.res as { statusCode: number }).statusCode).toBe(503);
+    // restore the dropped ledger — the worker clone survives for later tests
+    await ensureMigrated();
   });
 });
 

@@ -1,7 +1,7 @@
 {
   "name": "tandem",
   "version": "0.0.0",
-  "description": "Company workspace where human and AI employees work together — SSH environments run the Hermes agent as the task runner.",
+  "description": "Company workspace where human and AI employees work together \u2014 SSH environments run the Hermes agent as the task runner.",
   "license": "MIT",
   "author": "namhtpyn",
   "repository": {
@@ -27,7 +27,9 @@
     "lint:fix": "bunx --bun oxlint --fix",
     "lint:check": "bunx --bun oxlint",
     "format": "bunx --bun oxfmt",
-    "format:check": "bunx --bun oxfmt --check"
+    "format:check": "bunx --bun oxfmt --check",
+    "test:unit": "bun --bun vitest run --project unit",
+    "test:integration": "bun --bun vitest run --project integration"
   },
   "dependencies": {
     "@better-auth/api-key": "1.7.12",
