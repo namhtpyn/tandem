@@ -1,23 +1,28 @@
+import { consola } from 'consola';
 import { and, eq } from 'drizzle-orm';
 
-/** jsonb payloads arrive as raw strings through RQB relation selects - normalize to the kind */
-export function activityKindOf(payload: unknown): string {
-  const obj = (typeof payload === 'string' ? JSON.parse(payload) : payload) as { kind?: string } | null;
-  return (obj?.kind ?? '').toLowerCase();
-}
-
-import { consola } from 'consola';
-
 import { PROPOSAL_STATUS } from '#shared/enums';
-import { RunVerdictSchema } from '#shared/run-verdict';
+import { parseRunEnvelope, RunVerdictSchema } from '#shared/run-verdict';
 import { renderOutputContract } from '#shared/structured-output';
-// Per-task brief: identity + org chains + task context + mention chains + output contract.
-// Pure functions — no I/O; loadBriefData gathers rows.
 import { nonNull } from '#shared/utils/non-null';
 
+// Per-task brief: identity + org chains + task context + mention chains + output contract.
+// Pure functions — no I/O; loadBriefData gathers rows.
 import { db } from '../../db/index';
 import { taskProposals } from '../../db/schema';
 import { stripAttachments } from './attachments.util';
+
+/** jsonb payloads arrive as raw strings through RQB relation selects — normalize to the
+ * kind; one corrupt payload must never brick dispatch, so unparseable reads as '' (note) */
+export function activityKindOf(payload: unknown): string {
+  try {
+    const obj = (typeof payload === 'string' ? JSON.parse(payload) : payload) as { kind?: unknown } | null;
+    return typeof obj?.kind === 'string' ? obj.kind.toLowerCase() : '';
+  } catch {
+    /* v8 ignore next */
+    return '';
+  }
+}
 
 export type BriefPerson = { id: string; name: string; title: string | null; kind: string };
 
@@ -194,7 +199,8 @@ function contractSection(input: BriefInput) {
     `DELIVERABLES — write any output files to ${input.outDir} (create it if needed; that EXACT path, not the environment name); everything left there when you exit is collected and attached to your result.`,
     '',
     renderOutputContract(RunVerdictSchema, {
-      intro: 'OUTPUT CONTRACT — end your response with exactly one JSON line (no code fence). ROUTING rides the same line: propose subtasks when a meaningful part belongs to someone else; reassign only when the WHOLE task belongs elsewhere; routing inside your own supervision chain executes immediately, anything outside goes to a human:',
+      intro:
+        'OUTPUT CONTRACT — end your response with exactly one JSON line (no code fence). ROUTING rides the same line: propose subtasks when a meaningful part belongs to someone else; reassign only when the WHOLE task belongs elsewhere; routing inside your own supervision chain executes immediately, anything outside goes to a human:',
       examples: [
         '{"kind": "result", "body": "<final answer or summary of work done>"}',
         '{"kind": "question", "body": "<blocking question for the owner>"}',
@@ -235,14 +241,6 @@ export async function loadBriefData(taskId: string, readerEmployeeId?: string) {
     ? nonNull(await db.query.tasks.findFirst({ columns: { title: true }, where: { id: { eq: task.parentTaskId } } }))
         .title
     : null;
-  const rejectedNotes = (
-    await db
-      .select()
-      .from(taskProposals)
-      .where(and(eq(taskProposals.taskId, taskId), eq(taskProposals.status, PROPOSAL_STATUS.REJECTED)))
-  )
-    .filter((p) => p.decisionNote)
-    .map((p) => `- proposal declined: ${p.kind} — ${p.decisionNote}`);
   const assigneeId = nonNull(task.assigneeId);
   const edges = await db.query.employeeSupervisors.findMany({
     columns: { employeeId: true, supervisorId: true },
@@ -272,17 +270,21 @@ export async function loadBriefData(taskId: string, readerEmployeeId?: string) {
     extra.push({ person: person(mid), chain: chainToRoot(mid, edges).map(person) });
   }
   // prompt source = task_messages (owner ruling 2026-10-26); the relay filter
-  // below decides what actually ships
-  const threadRows = await db.query.taskMessages.findMany({
-    columns: { id: true, body: true, authorId: true, createdAt: true },
-    where: { taskId: { eq: taskId } },
-    orderBy: { createdAt: 'asc' },
-    with: {
-      author: { columns: { name: true } },
-      run: { columns: { finishedAt: true, employeeId: true } },
-      activityExt: { columns: { payload: true } },
-    },
-  });
+  // below decides what actually ships. Newest 200 only — the brief relays recent
+  // context, never the full archive (desc + reverse keeps asc render order).
+  const threadRows = (
+    await db.query.taskMessages.findMany({
+      columns: { id: true, body: true, authorId: true, createdAt: true },
+      where: { taskId: { eq: taskId } },
+      orderBy: { createdAt: 'desc', id: 'desc' },
+      limit: 200,
+      with: {
+        author: { columns: { name: true } },
+        run: { columns: { finishedAt: true, employeeId: true, output: true } },
+        activityExt: { columns: { payload: true } },
+      },
+    })
+  ).reverse();
   const finishedAts = threadRows
     .map((m) => m.run?.finishedAt)
     .filter((t): t is Date => t instanceof Date)
@@ -293,25 +295,48 @@ export async function loadBriefData(taskId: string, readerEmployeeId?: string) {
   // other agents' results are the relay, own turns live in session memory, STATUS
   // bookkeeping never ships.
   const ownFinished = finishedAts.filter(
-    (f) => !readerEmployeeId || threadRows.some((m) => m.run?.employeeId === readerEmployeeId && m.run.finishedAt?.getTime() === f.getTime()),
+    (f) =>
+      !readerEmployeeId ||
+      threadRows.some((m) => m.run?.employeeId === readerEmployeeId && m.run.finishedAt?.getTime() === f.getTime()),
   );
   const hasPrior = ownFinished.length > 0;
   const lastFinished = hasPrior ? (ownFinished.at(-1) ?? null) : null;
+  // declined proposals ride the same relay cutoff as thread rows — pre-cutoff
+  // declines are old news to a reader who already saw them
+  const rejectedNotes = (
+    await db
+      .select()
+      .from(taskProposals)
+      .where(and(eq(taskProposals.taskId, taskId), eq(taskProposals.status, PROPOSAL_STATUS.REJECTED)))
+  )
+    .filter((p) => p.decisionNote)
+    .filter((p) => !lastFinished || p.createdAt > lastFinished)
+    // no leading "- ": the activity renderer already dashes every line
+    .map((p) => `proposal declined: ${p.kind} — ${p.decisionNote}`);
   const extKind = (m: (typeof threadRows)[number]) => activityKindOf(m.activityExt?.payload);
   const convo = threadRows.filter((m) => {
+    // cutoff gates EVERY row first (relay law) — exclusions never un-filter stale rows
     if (lastFinished && m.createdAt <= lastFinished) return false;
     if (extKind(m) === 'status') return false;
-    // other agents' settled results relay; the reader's own turns live in session memory
-    if (m.run) return m.run.employeeId !== readerEmployeeId;
+    if (m.run) {
+      // only SETTLED turns relay: an unfinished run's message is still an empty stub,
+      // and the reader's own turns live in session memory
+      return Boolean(m.run.finishedAt) && m.body.trim() !== '' && m.run.employeeId !== readerEmployeeId;
+    }
     return true;
   });
   const nameById = new Map(users.map((u) => [u.id, u.name]));
-  const recent = convo.map((m) => ({
-    kind: m.run ? 'result' : extKind(m) || 'note',
-    // run turns carry no message author; the employee user row names them
-    authorName: m.run ? (nameById.get(m.run.employeeId ?? '') ?? 'agent') : (m.author?.name ?? null),
-    body: m.body,
-  }));
+  const recent = convo.map((m) => {
+    const envelope = m.run ? parseRunEnvelope(m.run.output) : null;
+    return {
+      // run turns render under their settled envelope kind (a question/blocked result
+      // relays as such); 'result' stays the default when the output never parsed
+      kind: m.run ? (envelope?.kind ?? 'result') : extKind(m) || 'note',
+      // run turns carry no message author; the employee user row names them
+      authorName: m.run ? (nameById.get(m.run.employeeId ?? '') ?? 'agent') : (m.author?.name ?? null),
+      body: m.body,
+    };
+  });
   const ai = aiById.get(assigneeId);
   // company + project prompts ride every brief (user law 2026-10-16: layered context)
   const { getCompanyPrompt } = await import('../settings/settings.service');

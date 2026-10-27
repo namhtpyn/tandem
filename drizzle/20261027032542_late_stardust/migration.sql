@@ -1,0 +1,1 @@
+CREATE INDEX "task_runs_employee_started_idx" ON "task_runs" ("employee_id","started_at");

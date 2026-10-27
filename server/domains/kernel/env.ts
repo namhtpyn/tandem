@@ -30,6 +30,9 @@ const envSchema = z.preprocess(
     TANDEM_RUN_FLUSH_MS: z.string().optional(),
     TANDEM_ACP_CANCEL_GRACE_MS: z.string().optional(),
     TANDEM_SSH_TIMEOUT_MS: z.string().optional(),
+    // boot-time knob — the pool is built once at import, so the contract (not a
+    // process.env bypass) validates it: an unset/0/NaN pool dies at boot, not at query
+    TANDEM_DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
     // fake-runner knobs (test-only)
     TANDEM_FAKE_RUNNER: z.string().optional(),
     TANDEM_FAKE_SCRIPT: z.string().optional(),

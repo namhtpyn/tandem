@@ -1,28 +1,15 @@
 import { expect, test } from '@playwright/test';
 
-import { login } from './helpers/login.ts';
-
-// visible row/card: desktop tr or the mobile card stack (md:hidden)
-const VISIBLE_ROW = 'tr:visible';
+import { TasksPage } from './pages/tasks.page.ts';
 
 test('task CRUD round-trip, assignee badge, status via select', async ({ page }) => {
+  const tasks = new TasksPage(page);
   const suffix = Date.now().toString(36);
-  await login(page);
-  await page.goto('/tasks');
+  await tasks.navigate('/tasks');
 
   // create via the toolbar button
-  await page.getByRole('button', { name: 'New task' }).first().click();
-  await page.getByPlaceholder('Task title').fill(`E2E Task ${suffix}`);
-  await page.locator('[contenteditable]').first().fill('created by e2e');
-  await page.getByRole('combobox', { name: 'Assignee' }).click();
-  await page.getByRole('option', { name: 'Admin' }).click();
-  await page.getByRole('button', { name: /Save|Create task/ }).click();
-  await expect(
-    page
-      .locator(VISIBLE_ROW)
-      .filter({ hasText: `E2E Task ${suffix}` })
-      .first(),
-  ).toBeVisible({ timeout: 15_000 });
+  await tasks.createTask({ title: `E2E Task ${suffix}`, description: 'created by e2e', assignee: 'Admin' });
+  await expect(tasks.rowFor(`E2E Task ${suffix}`)).toBeVisible({ timeout: 15_000 });
 
   // status flip via the inline select (task descriptions no longer render on the list)
   await page.locator('tbody').getByLabel(`Status for E2E Task ${suffix}`).click();
@@ -31,43 +18,28 @@ test('task CRUD round-trip, assignee badge, status via select', async ({ page })
 
   // edit: rename + reassign UI opens with values (scoped to THIS task's row —
   // leftovers from other specs share the DB and can sort first)
-  await page
-    .locator('tr:visible')
-    .filter({ hasText: `E2E Task ${suffix}` })
-    .first()
-    .getByRole('button', { name: 'Edit task' })
-    .click();
+  await tasks.rowFor(`E2E Task ${suffix}`).getByRole('button', { name: 'Edit task' }).click();
   await expect(page.getByPlaceholder('Task title')).toHaveValue(`E2E Task ${suffix}`);
-  await page.getByPlaceholder('Task title').fill(`E2E Task ${suffix} v2`);
-  await page.getByRole('button', { name: /Save|Create task/ }).click();
-  await expect(
-    page
-      .locator('tr:visible')
-      .filter({ hasText: `E2E Task ${suffix} v2` })
-      .first(),
-  ).toBeVisible({ timeout: 15_000 });
+  await tasks.fillTaskForm({ title: `E2E Task ${suffix} v2` });
+  await tasks.saveTask();
+  await expect(tasks.rowFor(`E2E Task ${suffix} v2`)).toBeVisible({ timeout: 15_000 });
 
   // delete requires confirmation
-  await page
-    .locator('tr:visible')
-    .filter({ hasText: `E2E Task ${suffix} v2` })
-    .first()
-    .getByRole('button', { name: 'Delete task' })
-    .click();
+  await tasks.rowFor(`E2E Task ${suffix} v2`).getByRole('button', { name: 'Delete task' }).click();
   await expect(page.getByRole('dialog').getByText(/cannot be undone/i)).toBeVisible();
-  await page.getByRole('button', { name: 'Delete', exact: true }).click();
-  await expect(page.locator('tr:visible').filter({ hasText: `E2E Task ${suffix} v2` })).toHaveCount(0, {
+  await tasks.confirmDelete();
+  await expect(tasks.rowFor(`E2E Task ${suffix} v2`)).toHaveCount(0, {
     timeout: 15_000,
   });
 });
 
 test('task assignee picker lists AI employees with (AI)', async ({ page }) => {
+  const tasks = new TasksPage(page);
   const suffix = Date.now().toString(36);
-  await login(page);
 
   // prerequisite: an environment + an AI employee
   const envName = `e2e-env-${suffix}`;
-  await page.goto('/environments');
+  await tasks.navigate('/environments');
   await page.getByRole('button', { name: 'New environment' }).first().click();
   await page.getByPlaceholder('Environment name').fill(envName);
   await page.getByPlaceholder('Hostname or IP').fill('127.0.0.1');
@@ -76,7 +48,7 @@ test('task assignee picker lists AI employees with (AI)', async ({ page }) => {
   await expect(page.locator('tr', { hasText: envName }).first()).toBeVisible({ timeout: 15_000 });
 
   const botName = `E2e Bot ${suffix}`;
-  await page.goto('/employees');
+  await tasks.navigate('/employees');
   await page.getByRole('button', { name: 'New employee' }).first().click();
   await page.getByPlaceholder('Full name').fill(botName);
   await page.getByPlaceholder('name@company.com').fill(`e2e-bot-${suffix}@tandem.local`);
@@ -91,58 +63,51 @@ test('task assignee picker lists AI employees with (AI)', async ({ page }) => {
   await expect(page.locator('tr:visible', { hasText: botName })).toBeVisible({ timeout: 15_000 });
 
   // tasks: picker shows the bot with (AI)
-  await page.goto('/tasks');
-  await page.getByRole('button', { name: 'New task' }).first().click();
-  await page.getByPlaceholder('Task title').fill(`AI task ${suffix}`);
+  await tasks.navigate('/tasks');
+  await tasks.openCreateModal();
+  await tasks.fillTaskForm({ title: `AI task ${suffix}` });
   await page.getByRole('combobox', { name: 'Assignee' }).click();
   await expect(page.getByRole('option', { name: new RegExp(botName) }).first()).toContainText('(AI)');
   await page
     .getByRole('option', { name: new RegExp(botName) })
     .first()
     .click();
-  await page.getByRole('button', { name: /Save|Create task/ }).click();
+  await tasks.saveTask();
   // row shows the bot as assignee
   await expect(page.locator('tr:visible').filter({ hasText: botName }).first()).toBeVisible({ timeout: 15_000 });
 });
 
 test('workflow drawer shows activity and lets the owner answer', async ({ page }) => {
-  await login(page);
+  const tasks = new TasksPage(page);
   const suffix = Date.now().toString(36).slice(-6);
-  await page.goto('/tasks');
+  await tasks.navigate('/tasks');
   // create a task owned by admin
-  await page.getByRole('button', { name: 'New task' }).first().click();
-  await page.getByPlaceholder('Task title').fill(`WF ${suffix}`);
-  await page.getByRole('button', { name: /Save|Create task/ }).click();
-  await page.waitForTimeout(1200);
+  await tasks.createTask({ title: `WF ${suffix}` });
   // open the workflow drawer (row-scoped locator: immune to live re-renders of sibling rows)
-  const row = page
-    .locator('tr')
-    .filter({ hasText: `WF ${suffix}` })
-    .first();
-  await row.locator('button[aria-label="Task workflow"]').first().click();
-  const drawer = page.locator('[data-slot="content"]').first();
-  await expect(drawer).toBeVisible();
+  const row = tasks.rowFor(`WF ${suffix}`);
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  const drawer = await tasks.openWorkflowDrawer(row);
   await expect(drawer.getByText(/no activity yet/i)).toBeVisible();
-  // note + Ask is rejected (admin is not assignee) -> error surfaces
+  // the composer posts a plain note (no state change, no verb picker)
   await drawer.locator('textarea').fill('who owns the spec?');
-  await drawer.getByRole('button', { name: 'Ask' }).click();
-  await expect(drawer.getByText(/only a task in progress|assignee/i).first()).toBeVisible({ timeout: 10_000 });
+  await drawer.getByRole('button', { name: 'Post note' }).click();
+  await expect(drawer.getByText('done', { exact: true })).toBeVisible({ timeout: 10_000 });
 });
 
 test('workflow drawer streams an agent run to completion', async ({ page }) => {
-  await login(page);
+  const tasks = new TasksPage(page);
   const suffix = Date.now().toString(36);
   const envName = `e2e-runenv-${suffix}`;
   const botName = `E2e Runner ${suffix}`;
   // prerequisite: environment + AI employee
-  await page.goto('/environments');
+  await tasks.navigate('/environments');
   await page.getByRole('button', { name: 'New environment' }).first().click();
   await page.getByPlaceholder('Environment name').fill(envName);
   await page.getByPlaceholder('Hostname or IP').fill('127.0.0.1');
   await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('tr', { hasText: envName }).first()).toBeVisible({ timeout: 15_000 });
-  await page.goto('/employees');
+  await tasks.navigate('/employees');
   await page.getByRole('button', { name: 'New employee' }).first().click();
   await page.getByPlaceholder('Full name').fill(botName);
   await page.getByPlaceholder('name@company.com').fill(`e2e-runner-${suffix}@tandem.local`);
@@ -153,25 +118,22 @@ test('workflow drawer streams an agent run to completion', async ({ page }) => {
   await page.getByRole('option', { name: envName }).click();
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
   await page.getByRole('button', { name: /Done — I saved the key/ }).click();
-  await page.goto('/tasks');
+  await tasks.navigate('/tasks');
   // create a task assigned to the AI employee
-  await page.getByRole('button', { name: 'New task' }).first().click();
-  await page.getByPlaceholder('Task title').fill(`Run ${suffix}`);
+  await tasks.openCreateModal();
+  await tasks.fillTaskForm({ title: `Run ${suffix}` });
   await page.getByRole('combobox', { name: 'Assignee' }).click();
   await page
     .getByRole('option', { name: new RegExp(botName) })
     .first()
     .click();
-  await page.getByRole('button', { name: /Save|Create task/ }).click();
-  await page.waitForTimeout(1500);
-  // open the workflow drawer (row-scoped locator)
-  const row = page
-    .locator('tr')
-    .filter({ hasText: `Run ${suffix}` })
-    .first();
-  await row.locator('button[aria-label="Task workflow"]').first().click();
-  const drawer = page.locator('[data-slot="content"]').first();
-  await expect(drawer).toBeVisible();
+  await tasks.saveTask();
+  // open the workflow drawer (row-scoped locator); the row must carry the
+  // assigned bot before the auto-dispatcher can pick the task up
+  const row = tasks.rowFor(`Run ${suffix}`);
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  await expect(row).toContainText(botName);
+  const drawer = await tasks.openWorkflowDrawer(row);
   // the auto-dispatcher (fake runner) picks the ready task up and streams output
   // the submitted result also lands in the thread as the verdict note — scope to the run output
   await expect(

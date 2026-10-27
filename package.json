@@ -21,12 +21,15 @@
     "test:coverage": "bun --bun vitest run --coverage",
     "test:e2e": "bunx --bun playwright test",
     "test:e2e:ui": "bunx --bun playwright test --ui",
+    "pretest:e2e": "bun run build",
     "postinstall": "nuxt prepare",
     "gen:auth": "bun run scripts/gen-auth-schema.ts",
     "lint:fix": "bunx --bun oxlint --fix",
     "lint:check": "bunx --bun oxlint",
     "format": "bunx --bun oxfmt",
-    "format:check": "bunx --bun oxfmt --check"
+    "format:check": "bunx --bun oxfmt --check",
+    "test:unit": "bun --bun vitest run --project unit",
+    "test:integration": "bun --bun vitest run --project integration"
   },
   "dependencies": {
     "@better-auth/api-key": "1.7.12",
@@ -73,6 +76,8 @@
     "drizzle-kit": "1.0.0-rc.5",
     "drizzle-seed": "1.0.0-rc.5",
     "happy-dom": "21.0.4",
+    "oxfmt": "0.75.0",
+    "oxlint": "1.89.0",
     "semantic-release": "25.0.9",
     "testcontainers": "12.2.1",
     "type-fest": "5.10.0",

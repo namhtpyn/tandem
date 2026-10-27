@@ -2,34 +2,21 @@ import { expect, test } from '@playwright/test';
 
 import { RUN_STATUS } from '#shared/enums';
 
-import { login } from './helpers/login.ts';
-
-async function dismiss(page: any, text: string) {
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(400);
-  const still = await page.evaluate((t) => (document.body.innerText || '').includes(t), text);
-  if (still) {
-    const close = page.getByRole('button', { name: 'Close' }).first();
-    if (await close.count()) await close.click();
-    await page.waitForTimeout(400);
-  }
-}
+import { BasePage } from './pages/base.page.ts';
+import { VaultPage } from './pages/vault.page.ts';
 
 // M2: environments — live CRUD over oRPC /rpc, SSE realtime, probe.
 
 test('environment links a vault secret and shows it in the row', async ({ page }) => {
-  await login(page);
+  const vault = new VaultPage(page);
   // create a secret first
-  await page.goto('/vault');
+  await vault.navigate('/vault');
   const secName = `e2e-env-key-${process.pid}-${Date.now().toString(36)}`;
-  await page.getByRole('button', { name: 'New secret' }).first().click();
-  await page.getByRole('textbox', { name: 'Name' }).fill(secName);
-  await page.getByRole('textbox', { name: 'Value' }).fill('e2e-key-material');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await vault.createSecret({ name: secName, value: 'e2e-key-material' });
   await expect(page.locator('tr:visible', { hasText: secName })).toBeVisible({ timeout: 15_000 });
 
   // create an environment linked to it
-  await page.goto('/environments');
+  await vault.navigate('/environments');
   const envName = `e2e-secret-box-${process.pid}-${Date.now().toString(36)}`;
   await page.getByRole('button', { name: 'New environment' }).first().click();
   await page.getByRole('textbox', { name: 'Name', exact: true }).fill(envName);
@@ -46,25 +33,20 @@ test('environment links a vault secret and shows it in the row', async ({ page }
 
   // edit shows the linked key preselected
   await page.locator('tr:visible', { hasText: envName }).getByRole('button', { name: 'Edit environment' }).click();
-  await expect(
-    page
-      .locator('button')
-      .filter({ hasText: /••••/ })
-      .first(),
-  ).toContainText(secName.slice(0, 20));
-  await dismiss(page, 'Username');
+  await expect(page.locator('button').filter({ hasText: /••••/ }).first()).toContainText(secName.slice(0, 20));
+  await vault.dismissOverlay('Username');
 
   // cleanup env
   await page.locator('tr:visible', { hasText: envName }).getByRole('button', { name: 'Delete environment' }).click();
-  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await vault.confirmDelete();
   await expect(page.locator('tr:visible', { hasText: envName })).toHaveCount(0, { timeout: 15_000 });
 });
 
 test('environment CRUD round-trip on the live page', async ({ page }) => {
+  const ui = new BasePage(page);
   const suffix = Date.now().toString(36);
   const rowName = `e2e-box-${suffix}`;
-  await login(page);
-  await page.getByRole('link', { name: /Environments/ }).click();
+  await ui.navigate('/environments');
   await expect(page.getByText('No environments yet')).toBeVisible();
 
   // create
@@ -105,18 +87,15 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
   // delete requires confirmation, scoped to this row
   await page.locator('tr:visible', { hasText: rowName }).getByRole('button', { name: 'Delete environment' }).click();
   await expect(page.getByRole('heading', { name: 'Delete environment' })).toBeVisible();
-  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await ui.confirmDelete();
   await expect(page.locator('tr', { hasText: rowName })).toHaveCount(0, { timeout: 15_000 });
 });
 
 test('live table updates from another tab via SSE', async ({ context, page }) => {
+  const ui = new BasePage(page);
   const suffix = Date.now().toString(36);
   const rowName = `sse-ghost-${suffix}`;
-  await login(page);
-  await page
-    .getByRole('link', { name: /Environments/ })
-    .first()
-    .click();
+  await ui.navigate('/environments');
   await expect(page.getByRole('heading', { name: /Environments/ })).toBeVisible();
 
   const other = await context.newPage();
@@ -135,15 +114,20 @@ test('live table updates from another tab via SSE', async ({ context, page }) =>
 
   // cleanup (scoped to this row, with confirmation)
   await page.locator('tr:visible', { hasText: rowName }).getByRole('button', { name: 'Delete environment' }).click();
-  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await ui.confirmDelete();
   await expect(page.locator('tr', { hasText: rowName })).toHaveCount(0, { timeout: 15_000 });
   await other.close();
 });
 
-test('unauthenticated /rpc rejects with 401', async ({ request }) => {
-  const res = await request.post('/rpc/environments/create', {
-    headers: { 'content-type': 'application/json' },
-    data: { json: { name: 'x', host: 'h', port: '22', username: 'u' } },
+test.describe('unauthenticated', () => {
+  // request fixture would inherit the project storageState and arrive logged-in
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test('unauthenticated /rpc rejects with 401', async ({ request }) => {
+    const res = await request.post('/rpc/environments/create', {
+      headers: { 'content-type': 'application/json' },
+      data: { json: { name: 'x', host: 'h', port: '22', username: 'u' } },
+    });
+    expect(res.status()).toBe(401);
   });
-  expect(res.status()).toBe(401);
 });

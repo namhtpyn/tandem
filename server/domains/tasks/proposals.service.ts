@@ -1,5 +1,5 @@
-import { and, eq, inArray } from 'drizzle-orm';
 import { consola } from 'consola';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION, PROPOSAL_STATUS, PROPOSAL_KIND, ACTIVITY_KIND } from '#shared/enums';
@@ -13,11 +13,11 @@ import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db, asDb, type DbExecutor } from '../../db/index';
-import { logActivity as publishActivity } from './review.service';
 import { tasks, taskProposals, user as userTable, employeeSupervisors } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { recordAssignment, recentAssignees, assignTask } from './assignments.service';
 import { refreshParentGating } from './gating.service';
+import { logActivity as publishActivity } from './review.service';
 
 export type SubtaskItem = { title: string; description?: string; assigneeName?: string };
 export type ProposalPayload =
@@ -66,7 +66,9 @@ async function findByName(name: string | undefined, ex: DbExecutor = db) {
   const rows = await asDb(ex)
     .select({ id: userTable.id, name: userTable.name })
     .from(userTable)
-    .where(eq(userTable.name, name));
+    .where(eq(userTable.name, name))
+    // duplicate names are allowed: oldest account wins so resolution is deterministic
+    .orderBy(asc(userTable.createdAt));
   return rows[0] ?? null;
 }
 
@@ -105,17 +107,20 @@ async function createSubtask(
   ex: DbExecutor,
 ) {
   const childId = uuidv7();
-  await asDb(ex).insert(tasks).values({
-    id: childId,
-    title: item.title.slice(0, 200),
-    description: item.description ?? '',
-    status: STATUS.todo,
-    assigneeId,
-    ownerId: task.ownerId ?? task.createdBy,
-    reviewers: [],
-    parentTaskId: task.id,
-    createdBy: confirmedBy,
-  });
+  await asDb(ex)
+    .insert(tasks)
+    .values({
+      id: childId,
+      title: item.title.slice(0, 200),
+      // agent-proposed text gets the same 2000-char cap as a human note
+      description: item.description?.slice(0, 2000) ?? '',
+      status: STATUS.todo,
+      assigneeId,
+      ownerId: task.ownerId ?? task.createdBy,
+      reviewers: [],
+      parentTaskId: task.id,
+      createdBy: confirmedBy,
+    });
   return childId;
 }
 
@@ -133,9 +138,15 @@ async function executeSubtasks(
     if (assigneeId)
       await recordAssignment(childId, assigneeId, escalated ? 'subtask-escalated' : 'subtask', confirmedBy, ex);
     events.push(`subtask "${item.title}" → ${escalated ? 'supervisor' : (item.assigneeName ?? 'unassigned')}`);
-    await logActivity(task.id, confirmedBy, `subtask created: ${item.title}${escalated ? ' (escalated)' : ''}`, {
-      childId,
-    }, ex);
+    await logActivity(
+      task.id,
+      confirmedBy,
+      `subtask created: ${item.title}${escalated ? ' (escalated)' : ''}`,
+      {
+        childId,
+      },
+      ex,
+    );
   }
   await refreshParentGating(task.id, ex);
 }
@@ -153,10 +164,16 @@ async function doReassign(
   const name = nonNull(
     await asDb(ex).query.user.findFirst({ columns: { name: true }, where: { id: { eq: employeeId } } }),
   ).name;
-  await logActivity(taskId, actorId, `reassigned to ${name}${extra ? ` (${extra})` : ''}`, {
-    reassign: true,
-    reason,
-  }, ex);
+  await logActivity(
+    taskId,
+    actorId,
+    `reassigned to ${name}${extra ? ` (${extra})` : ''}`,
+    {
+      reassign: true,
+      reason,
+    },
+    ex,
+  );
 }
 
 async function escalateReassignToSupervisor(
@@ -266,7 +283,13 @@ export async function rejectProposal(proposalId: string, decidedBy: string, note
       .where(and(eq(taskProposals.id, proposalId), eq(taskProposals.status, PROPOSAL_STATUS.PROPOSED)))
       .returning({ id: taskProposals.id });
     if (claimed.length === 0) throw new Error('proposal already decided');
-    await logActivity(p.taskId, decidedBy, `proposal rejected${note ? `: ${note}` : ''}`, { proposalId, kind: p.kind }, tx);
+    await logActivity(
+      p.taskId,
+      decidedBy,
+      `proposal rejected${note ? `: ${note}` : ''}`,
+      { proposalId, kind: p.kind },
+      tx,
+    );
     return { ok: true };
   });
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
@@ -279,8 +302,24 @@ export async function rejectProposal(proposalId: string, decidedBy: string, note
  * by the same confirm path a human would use. Anything touching people outside
  * the chain (or unnamed routing targets) still waits for a human.
  * `authorId` is the run's AGENT — the chain judged here is the author's, never the
- * task's current assignee (which can move while a run is in flight). */
-export async function recordProposals(taskId: string, runId: string, authorId: string, payloads: Array<ProposalPayload>) {
+ * task's current assignee (which can move while a run is in flight).
+ * CURRENCY LAW: the task is reloaded before anything lands — a run that finished
+ * on a done/cancelled task records nothing, and a run whose author is no longer
+ * the assignee (reassigned mid-flight) loses the auto-execute right: its
+ * proposals stay PROPOSED for a human instead of mutating the new state. */
+export async function recordProposals(
+  taskId: string,
+  runId: string,
+  authorId: string,
+  payloads: Array<ProposalPayload>,
+) {
+  const taskRow = (
+    await db.select({ status: tasks.status, assigneeId: tasks.assigneeId }).from(tasks).where(eq(tasks.id, taskId))
+  )[0];
+  // a terminal or vanished task takes nothing from a run that settled late
+  if (!taskRow || taskRow.status === STATUS.done || taskRow.status === STATUS.cancelled) return;
+  // stale author = the task moved to someone else while the run flew: no auto-execution
+  const staleAuthor = taskRow.assigneeId !== null && taskRow.assigneeId !== authorId;
   const chain = await supervisionChain(authorId);
   for (const payload of payloads) {
     // item budget: a runaway [SUBTASKS] line must not spawn an unbounded child set
@@ -299,7 +338,7 @@ export async function recordProposals(taskId: string, runId: string, authorId: s
     });
     // every routing target named and inside the author's own chain -> auto-execute
     let inChain = false;
-    if (chain.size > 1) {
+    if (chain.size > 1 && !staleAuthor) {
       if (payload.kind === PROPOSAL_KIND.REASSIGN) {
         const target = await findByName(payload.targetName);
         inChain = !!target && chain.has(target.id);

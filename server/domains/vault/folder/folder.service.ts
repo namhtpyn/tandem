@@ -2,6 +2,7 @@ import { EmptyFilter, eq, sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { escapeIlike } from '#shared/utils/escape-ilike';
 // Folder service — vault folders with per-folder secret counts.
 // Duplicate folder names are allowed (the unique constraint was dropped);
 // deleting a folder never deletes secrets — they fall back to uncategorized
@@ -22,7 +23,7 @@ export async function listFoldersPaged(input: ListFoldersPagedInput = {}) {
   const q = input.q;
   const { data, total } = await db.query.vaultFolders.findManyAndCount({
     columns: { id: true, name: true },
-    where: q ? { name: { ilike: `%${q}%` } } : EmptyFilter,
+    where: q ? { name: { ilike: `%${escapeIlike(q)}%` } } : EmptyFilter,
     orderBy: { name: 'asc' },
     limit: pageSize,
     offset: (page - 1) * pageSize,
@@ -62,7 +63,7 @@ export async function listFolderOptions(input: { page?: number; pageSize?: numbe
   const q = input.q?.trim();
   const { data, total } = await db.query.vaultFolders.findManyAndCount({
     columns: { id: true, name: true },
-    where: q ? { name: { ilike: `%${q}%` } } : EmptyFilter,
+    where: q ? { name: { ilike: `%${escapeIlike(q)}%` } } : EmptyFilter,
     orderBy: { name: 'asc' },
     limit: pageSize,
     offset: (page - 1) * pageSize,

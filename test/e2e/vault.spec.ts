@@ -1,17 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { login } from './helpers/login.ts';
-
-async function dismiss(page: any, text: string) {
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(400);
-  const still = await page.evaluate((t) => (document.body.innerText || '').includes(t), text);
-  if (still) {
-    const close = page.getByRole('button', { name: 'Close' }).first();
-    if (await close.count()) await close.click();
-    await page.waitForTimeout(400);
-  }
-}
+import { VaultPage } from './pages/vault.page.ts';
 
 // Unique-per-run names: a crashed prior run can't poison the unique-name
 // constraint on rerun (same pattern as the employees spec).
@@ -20,16 +9,12 @@ const RUN = process.pid + '-' + Date.now().toString(36);
 test.describe('vault', () => {
   test('secret create/replace/delete round-trip, values never displayed', async ({ page }) => {
     const secName = `e2e-ssh-key-${RUN}`;
-    await login(page);
-    await page.goto('/vault');
+    const vault = new VaultPage(page);
+    await vault.navigate('/vault');
     await expect(page.getByRole('heading', { name: 'Vault' })).toBeVisible();
 
     // create
-    await page.getByRole('button', { name: 'New secret' }).first().click();
-    await page.getByRole('textbox', { name: 'Name' }).fill(secName);
-    await page.getByRole('textbox', { name: 'Description' }).fill('e2e round-trip secret');
-    await page.getByRole('textbox', { name: 'Value' }).fill('e2e-secret-value-123');
-    await page.getByRole('button', { name: 'Save' }).click();
+    await vault.createSecret({ name: secName, description: 'e2e round-trip secret', value: 'e2e-secret-value-123' });
 
     // row appears with hint only — plaintext NEVER rendered
     const row = page.locator('tr:visible', { hasText: secName });
@@ -48,20 +33,16 @@ test.describe('vault', () => {
 
     // delete with confirmation
     await page.locator('tr:visible', { hasText: secName }).getByRole('button', { name: 'Delete secret' }).click();
-    await page.getByRole('button', { name: 'Delete', exact: true }).click();
+    await vault.confirmDelete();
     await expect(page.locator('tr:visible', { hasText: secName })).toHaveCount(0, { timeout: 15_000 });
   });
 
   test('duplicate names allowed, description saved and shown', async ({ page }) => {
     const dupName = `e2e-dup-${RUN}`;
-    await login(page);
-    await page.goto('/vault');
+    const vault = new VaultPage(page);
+    await vault.navigate('/vault');
     for (const [i, desc] of ['first copy', 'second copy'].entries()) {
-      await page.getByRole('button', { name: 'New secret' }).first().click();
-      await page.getByRole('textbox', { name: 'Name' }).fill(dupName);
-      await page.getByRole('textbox', { name: 'Description' }).fill(desc);
-      await page.getByRole('textbox', { name: 'Value' }).fill(`v${i}`);
-      await page.getByRole('button', { name: 'Save' }).click();
+      await vault.createSecret({ name: dupName, description: desc, value: `v${i}` });
       await expect(page.locator('tr:visible', { hasText: dupName }).nth(i)).toBeVisible({ timeout: 15_000 });
     }
     // both rows exist with their descriptions
@@ -76,8 +57,9 @@ test.describe('vault', () => {
         .first()
         .getByRole('button', { name: 'Delete secret' })
         .click();
-      await page.getByRole('button', { name: 'Delete', exact: true }).click();
-      await page.waitForTimeout(400);
+      await vault.confirmDelete();
+      // each delete settles (row count drops) before the next '.first()' re-resolves
+      await expect(page.locator('tr:visible', { hasText: dupName })).toHaveCount(1 - i, { timeout: 15_000 });
     }
     await expect(page.locator('tr:visible', { hasText: dupName })).toHaveCount(0, { timeout: 15_000 });
   });

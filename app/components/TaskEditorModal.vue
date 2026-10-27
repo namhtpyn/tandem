@@ -197,7 +197,9 @@ const projectOptions = computed(() => [
   { label: 'No project', value: '__none__' },
   ...projectRows.value.map((p) => ({ label: p.name, value: p.id })),
 ]);
-const statusOptions = computed(() => statuses.value.filter((x) => x.category === 'ready').map((x) => ({ label: x.name, value: x.id })));
+const statusOptions = computed(() =>
+  statuses.value.filter((x) => x.category === 'ready').map((x) => ({ label: x.name, value: x.id })),
+);
 
 async function save() {
   busy.value = true;
@@ -307,36 +309,38 @@ async function save() {
             icon="i-lucide-circle-dot"
             class="w-full"
           />
-          <UFormField label="Owner (routes questions)" name="owner">
-            <USelect
-              v-model="form.ownerId"
-              :items="[
-                { label: 'Creator (default)', value: '__none__' },
-                ...employees.map((e) => ({ label: e.name, value: e.id })),
-              ]"
-              value-key="value"
-              icon="i-lucide-user-cog"
-              class="w-full"
-            />
-          </UFormField>
-          <UFormField label="Reviewers (all must approve)" name="reviewers">
-            <div class="flex flex-wrap gap-2">
-              <UButton
-                v-for="e in employees"
-                :key="e.id"
-                size="xs"
-                :variant="form.reviewers.includes(e.id) ? 'solid' : 'soft'"
-                :color="form.reviewers.includes(e.id) ? 'primary' : 'neutral'"
-                @click="
-                  form.reviewers.includes(e.id)
-                    ? (form.reviewers = form.reviewers.filter((x) => x !== e.id))
-                    : form.reviewers.push(e.id)
-                "
-              >
-                {{ e.name }}
-              </UButton>
-            </div>
-          </UFormField>
+        </UFormField>
+        <!-- owner/reviewers sit OUTSIDE the status field's slot: the status field
+             is hidden in edit mode, and routing fields must render in both modes -->
+        <UFormField label="Owner (routes questions)" name="owner">
+          <USelect
+            v-model="form.ownerId"
+            :items="[
+              { label: 'Creator (default)', value: '__none__' },
+              ...employees.map((e) => ({ label: e.name, value: e.id })),
+            ]"
+            value-key="value"
+            icon="i-lucide-user-cog"
+            class="w-full"
+          />
+        </UFormField>
+        <UFormField label="Reviewers (all must approve)" name="reviewers">
+          <div class="flex flex-wrap gap-2">
+            <UButton
+              v-for="e in employees"
+              :key="e.id"
+              size="xs"
+              :variant="form.reviewers.includes(e.id) ? 'solid' : 'soft'"
+              :color="form.reviewers.includes(e.id) ? 'primary' : 'neutral'"
+              @click="
+                form.reviewers.includes(e.id)
+                  ? (form.reviewers = form.reviewers.filter((x) => x !== e.id))
+                  : form.reviewers.push(e.id)
+              "
+            >
+              {{ e.name }}
+            </UButton>
+          </div>
         </UFormField>
         <p v-if="message" class="text-error text-sm">{{ message }}</p>
       </UForm>

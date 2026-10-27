@@ -4,21 +4,33 @@ import { and, desc, EmptyFilter, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
-import { ACTIVITY_KIND, CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS, type RunStatus, type ActivityKind } from '#shared/enums';
+import {
+  ACTIVITY_KIND,
+  CHANGE_RESOURCE,
+  CHANGE_ACTION,
+  RUN_STATUS,
+  type RunStatus,
+  type ActivityKind,
+} from '#shared/enums';
 import { STATUS } from '#shared/status';
 import type { TaskRow } from '#shared/types';
+import { escapeIlike } from '#shared/utils/escape-ilike';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { projects as projectsTable, taskRuns as taskRunsTable, tasks as tasksTable, taskProposals, taskMessages } from '../../db/schema';
-
-
+import {
+  projects as projectsTable,
+  taskRuns as taskRunsTable,
+  tasks as tasksTable,
+  taskProposals,
+  taskMessages,
+} from '../../db/schema';
+import { env } from '../kernel/env';
+import { liveGenerator, ORPCError, protectedProcedure, publishChange } from '../kernel/kernel';
 import { recordAssignment, listAssignments } from './assignments.service';
 import { refreshParentGating } from './gating.service';
 import { approvalsInRoundBatch, openObligations, pendingForUser, pendingCounts } from './obligations.service';
 import { confirmProposal, rejectProposal } from './proposals.service';
-import { env } from '../kernel/env';
-import { liveGenerator, ORPCError, protectedProcedure, publishChange } from '../kernel/kernel';
 import { listReviews, logActivity } from './review.service';
 import { dispatchTask, listRuns } from './runner.service';
 import { listTaskThread } from './thread.service';
@@ -153,10 +165,8 @@ async function listTasksPaged(
   selfId: string,
 ) {
   const q = input.q?.trim();
-  // escape LIKE wildcards so a q of '%' or '_' matches itself, not everything
-  const escIlike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
   const searchFilter = q
-    ? { OR: [{ title: { ilike: `%${escIlike(q)}%` } }, { description: { ilike: `%${escIlike(q)}%` } }] }
+    ? { OR: [{ title: { ilike: `%${escapeIlike(q)}%` } }, { description: { ilike: `%${escapeIlike(q)}%` } }] }
     : undefined;
   const statusFilter = input.statusId ? { status: { eq: input.statusId } } : undefined;
   // inboxOfMe = tasks with a PENDING obligation on the caller — the same taskId
@@ -327,6 +337,9 @@ async function requireDispatchable(taskId: string) {
   if (running.length > 0) throw new ORPCError('BAD_REQUEST', { message: 'task already has a running run' });
 }
 
+/** reviewers are stored unique (schema unique index) — write paths dedupe input */
+const uniqueReviewers = (reviewers: string[]) => [...new Set(reviewers)];
+
 /** only fields the caller actually sent land in the patch; explicit nulls clear nothing */
 function buildUpdatePatch(input: {
   title?: string;
@@ -342,7 +355,7 @@ function buildUpdatePatch(input: {
   if (input.description !== undefined && input.description !== null) patch.description = input.description;
   if (input.assigneeId !== undefined) patch.assigneeId = input.assigneeId;
   if (input.ownerId !== undefined) patch.ownerId = input.ownerId;
-  if (input.reviewers !== undefined && input.reviewers !== null) patch.reviewers = input.reviewers;
+  if (input.reviewers !== undefined && input.reviewers !== null) patch.reviewers = uniqueReviewers(input.reviewers);
   return patch;
 }
 
@@ -408,7 +421,7 @@ export const tasksRouter = os.router({
         projectId: input.projectId ?? null,
         assigneeId: input.assigneeId ?? null,
         ownerId: input.ownerId ?? selfId,
-        reviewers: input.reviewers ?? [],
+        reviewers: uniqueReviewers(input.reviewers ?? []),
         parentTaskId: input.parentId ?? null,
         createdBy: selfId,
       });
@@ -462,7 +475,9 @@ export const tasksRouter = os.router({
       }
       const terminal = new Set<string>([STATUS.done, STATUS.cancelled, STATUS.inReview, STATUS.waitingAnswer]);
       if (terminal.has(input.status)) {
-        throw new ORPCError('BAD_REQUEST', { message: 'use the workflow actions for review, completion and cancellation' });
+        throw new ORPCError('BAD_REQUEST', {
+          message: 'use the workflow actions for review, completion and cancellation',
+        });
       }
       const actorId = await selfIdOf(context);
       await db

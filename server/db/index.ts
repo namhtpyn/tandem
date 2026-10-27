@@ -6,6 +6,7 @@ import path from 'node:path';
 // Env:
 //   DATABASE_URL            — postgres://user:pass@host:port/db (required in prod)
 //   TANDEM_DRIZZLE_DIR      — migrations dir override (default ./drizzle)
+//   TANDEM_DB_POOL_MAX      — pool cap, 1-100 (default 10; env-contracted in kernel/env)
 //
 // Migrations are drizzle-kit SQL folders applied at boot by drizzle's own
 // migrator (drizzle.__drizzle_migrations ledger), not a hand-rolled runner.
@@ -22,9 +23,10 @@ import { relations } from './schema';
 const url = env.DATABASE_URL;
 
 export const sqlClient = new SQL(url, {
-  // TANDEM_DB_POOL_MAX: the test suite runs one DB per worker and shrinks
-  // pools so 8 workers stay under postgres's 100-connection cap
-  max: Number(process.env.TANDEM_DB_POOL_MAX ?? 10),
+  // pool cap comes from the env contract (TANDEM_DB_POOL_MAX, default 10): the test
+  // suite shrinks pools so 8 workers stay under postgres's 100-connection cap, and
+  // a 0/NaN bypass now fails boot validation instead of opening a dead pool
+  max: env.TANDEM_DB_POOL_MAX,
   idleTimeout: 20,
   connectionTimeout: 10,
 });

@@ -47,7 +47,8 @@ export async function publishChange(resource: ChangeResource, action: ChangeActi
   try {
     const pubsub = await redisPubsub();
     if (pubsub) {
-      lastPublishedId = event.id; // redis echoes this back to us; bridge skips own events
+      // redis echoes this back to us; remember a window of ids so the bridge skips our own events
+      rememberPublishedId(event.id);
       await pubsub.publish(CHANGE_CHANNEL, encodeChange(event)); // best-effort
     }
   } catch {
@@ -60,9 +61,21 @@ export async function bridgeRedisChanges() {
   const pubsub = await redisPubsub();
   await pubsub.subscribe(CHANGE_CHANNEL, (raw) => {
     const e = decodeChange(raw);
-    if (e.id === lastPublishedId) return; // own echo: already on the local bus
+    if (recentPublishedIds.has(e.id)) return; // own echo: already on the local bus
     void changeBus.publish('change', e);
   });
 }
 
-let lastPublishedId = '';
+// Bounded window of ids we published: a single id raced with any overlapping
+// publish (a later event overwrote it before its echo arrived, causing a dup).
+const RECENT_PUBLISHED_MAX = 100;
+const recentPublishedIds = new Set<string>();
+
+function rememberPublishedId(id: string) {
+  recentPublishedIds.add(id);
+  if (recentPublishedIds.size > RECENT_PUBLISHED_MAX) {
+    // Set preserves insertion order — evict the oldest id first
+    const oldest = recentPublishedIds.values().next().value;
+    if (oldest !== undefined) recentPublishedIds.delete(oldest);
+  }
+}

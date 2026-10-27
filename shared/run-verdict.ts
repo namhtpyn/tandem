@@ -16,7 +16,9 @@ export const SubtaskProposalItemSchema = z.object({
 
 export const RunVerdictSchema = z.object({
   kind: z.enum(['result', 'question', 'blocked']),
-  body: z.string(), // empty allowed — the runner substitutes fallback text per kind
+  // empty allowed — the runner substitutes fallback text per kind; .max bounds the one
+  // unbounded agent input (human notes cap at 10k elsewhere)
+  body: z.string().max(50_000),
   // routing folded into the envelope (owner ruling 2026-10-26): the agent's single
   // JSON line carries its own routing proposals — no side-channel text markers
   subtasks: z.array(SubtaskProposalItemSchema).max(20).optional(),
@@ -33,6 +35,14 @@ export type RunEnvelope = {
   reassign?: { assigneeName: string; reason?: string };
 };
 
+/** schema verdict -> shared envelope shape (one mapping site for every parse path) */
+const toEnvelope = (v: RunVerdict): RunEnvelope => ({
+  kind: v.kind,
+  text: v.body,
+  subtasks: v.subtasks,
+  reassign: v.reassign,
+});
+
 /**
  * The single verdict parser — used by the runner AND the UI thread. SYNC
  * (safeParse): RunVerdictSchema carries no async refinements, so safeParse is
@@ -41,6 +51,9 @@ export type RunEnvelope = {
  * safeParseAsync) used by the ACP client.
  * Bottom-up scan, fence-tolerant, bounded window (a verdict is the turn end).
  * Accepts a full output or a single line; null when no valid verdict.
+ * Multi-line recovery: a pretty-printed verdict spans lines, so when a line starts
+ * a JSON object it can't close, the block from that '{' to the turn end is joined
+ * and parsed once before the scan moves on.
  */
 export function parseRunEnvelope(output: string | null | undefined): RunEnvelope | null {
   if (!output) return null;
@@ -52,16 +65,25 @@ export function parseRunEnvelope(output: string | null | undefined): RunEnvelope
         .replace(/^```(?:json)?\s*/i, '')
         .replace(/```\s*$/, '')
         .trim();
-    if (!raw.startsWith('{') || !raw.endsWith('}')) continue;
+    if (!raw.startsWith('{')) continue;
+    if (raw.endsWith('}')) {
+      try {
+        const parsed = RunVerdictSchema.safeParse(JSON.parse(raw));
+        if (parsed.success) return toEnvelope(parsed.data);
+      } catch {
+        /* not JSON — keep scanning */
+      }
+      continue;
+    }
+    // open object without a close on one line: join the trailing block (fence
+    // lines dropped) and parse once — bottom-up order still wins the match
     try {
-      const parsed = RunVerdictSchema.safeParse(JSON.parse(raw));
-      if (parsed.success)
-        return {
-          kind: parsed.data.kind,
-          text: parsed.data.body,
-          subtasks: parsed.data.subtasks,
-          reassign: parsed.data.reassign,
-        };
+      const block = lines
+        .slice(i)
+        .filter((l) => !l.trim().startsWith('```'))
+        .join('\n');
+      const parsed = RunVerdictSchema.safeParse(JSON.parse(block));
+      if (parsed.success) return toEnvelope(parsed.data);
     } catch {
       /* not JSON — keep scanning */
     }

@@ -1,0 +1,5 @@
+ALTER TABLE "task_attachments" ALTER COLUMN "created_by" SET DATA TYPE uuid USING "created_by"::uuid;--> statement-breakpoint
+CREATE UNIQUE INDEX "task_reviews_round_reviewer_uniq" ON "task_reviews" ("task_id","round","reviewer_id");--> statement-breakpoint
+ALTER TABLE "task_attachments" ADD CONSTRAINT "task_attachments_run_id_task_runs_id_fkey" FOREIGN KEY ("run_id") REFERENCES "task_runs"("id") ON DELETE CASCADE;--> statement-breakpoint
+ALTER TABLE "task_attachments" ADD CONSTRAINT "task_attachments_created_by_user_id_fkey" FOREIGN KEY ("created_by") REFERENCES "user"("id") ON DELETE SET NULL;--> statement-breakpoint
+ALTER TABLE "task_obligations" DROP CONSTRAINT "task_obligations_employee_id_user_id_fkey", ADD CONSTRAINT "task_obligations_employee_id_user_id_fkey" FOREIGN KEY ("employee_id") REFERENCES "user"("id") ON DELETE SET NULL;

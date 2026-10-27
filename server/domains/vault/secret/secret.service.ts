@@ -2,13 +2,18 @@ import { EmptyFilter, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { escapeIlike } from '#shared/utils/escape-ilike';
 // Secret service — vault secret rows: list mapping, audit trail, CRUD.
 // Values are envelope-encrypted via ./secret-crypto.service; plaintext never
 // leaves the server (list returns metadata + last-four hint only).
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../../db/index';
-import { vaultSecrets as vaultSecretsTable } from '../../../db/schema';
+import {
+  aiEmployees as aiEmployeesTable,
+  environments as environmentsTable,
+  vaultSecrets as vaultSecretsTable,
+} from '../../../db/schema';
 import { ORPCError, publishChange } from '../../kernel/kernel';
 import { folderExists } from '../folder/folder.service';
 import { encryptSecret, lastFourHint } from './secret-crypto.service';
@@ -35,7 +40,9 @@ export async function listVaultSecrets(input: ListVaultSecretsInput = {}) {
   const folderId = input.folderId;
   const q = input.q?.trim() || undefined;
   const folderFilter = folderId ? { folderId: { eq: folderId } } : undefined;
-  const searchFilter = q ? { OR: [{ name: { ilike: `%${q}%` } }, { description: { ilike: `%${q}%` } }] } : undefined;
+  const searchFilter = q
+    ? { OR: [{ name: { ilike: `%${escapeIlike(q)}%` } }, { description: { ilike: `%${escapeIlike(q)}%` } }] }
+    : undefined;
   const where =
     folderFilter && searchFilter
       ? { AND: [folderFilter, searchFilter] }
@@ -104,6 +111,26 @@ export async function updateSecret(
 }
 
 export async function removeSecret(input: { id: string }, _actorId: string) {
+  // in-use guard: environments (ssh/password key) and AI employees (api key) keep
+  // this secret alive — refuse like providers.remove instead of silently set-null
+  const envLinks = await db
+    .select({ id: environmentsTable.id })
+    .from(environmentsTable)
+    .where(eq(environmentsTable.secretId, input.id))
+    .limit(1);
+  const aiLinks = await db
+    .select({ userId: aiEmployeesTable.userId })
+    .from(aiEmployeesTable)
+    .where(eq(aiEmployeesTable.apiKeySecretId, input.id))
+    .limit(1);
+  if (envLinks.length > 0 || aiLinks.length > 0) {
+    const blockers = [envLinks.length > 0 ? 'environments' : '', aiLinks.length > 0 ? 'AI employees' : ''].filter(
+      Boolean,
+    );
+    throw new ORPCError('BAD_REQUEST', {
+      message: `secret is in use by ${blockers.join(' and ')} — unlink or delete those first`,
+    });
+  }
   const deleted = await db
     .delete(vaultSecretsTable)
     .where(eq(vaultSecretsTable.id, input.id))

@@ -46,7 +46,8 @@ export default defineEventHandler(async (event) => {
 
   const m = /^data:image\/([a-z0-9.+-]+);base64,(.+)$/s.exec(row.image);
   // serve-edge allowlist: svg (or any non-raster type) 404s and never renders as scriptable markup
-  if (!m || !AVATAR_MIME.has(`image/${nonNull(m[1])}`)) throw createError({ statusCode: 404, statusMessage: 'no avatar' });
+  if (!m || !AVATAR_MIME.has(`image/${nonNull(m[1])}`))
+    throw createError({ statusCode: 404, statusMessage: 'no avatar' });
   const [, mime, b64] = m;
   const body = Buffer.from(nonNull(b64), 'base64');
   const etag = `"${createHash('sha1').update(`${id}:${row.updatedAt.toISOString()}:${body.length}`).digest('hex')}"`;

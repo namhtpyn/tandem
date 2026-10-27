@@ -48,7 +48,10 @@ export type ThreadSource = {
   briefAuthorName?: string | null;
   briefAuthorId?: string | null;
   runs?: Array<
-    Pick<ThreadRunItem, 'id' | 'status' | 'output' | 'exitCode' | 'prompt' | 'body' | 'agentName' | 'startedAt' | 'finishedAt'>
+    Pick<
+      ThreadRunItem,
+      'id' | 'status' | 'output' | 'exitCode' | 'prompt' | 'body' | 'agentName' | 'startedAt' | 'finishedAt'
+    >
   >;
   activity?: Array<Pick<ThreadNoteItem, 'id' | 'noteKind' | 'body' | 'authorName' | 'authorId' | 'createdAt'>>;
 };
@@ -58,73 +61,17 @@ export type EnvelopeKind = 'result' | 'run' | 'question' | 'blocked';
 export type RunEnvelope = { kind: EnvelopeKind; text: string };
 
 import { PROPOSAL_KIND } from '#shared/enums';
-// verdict parsing lives in shared/run-verdict (zod schema + marker fallback) —
+// verdict parsing lives in shared/run-verdict (zod schema, bottom-up scan) —
 // re-exported here so the UI thread and the runner share one implementation.
 // (the file's own EnvelopeKind/RunEnvelope below include the 'run' thread kind)
-import { parseRunEnvelope } from '#shared/run-verdict';
-import { nonNull } from '#shared/utils/non-null';
 export { parseRunEnvelope, RunVerdictSchema } from '#shared/run-verdict';
 
-/** Parse routing proposals from run output (structural markers, scanned anywhere):
- *  [SUBTASKS] title :: description :: assignee | title2 :: ...
- *  [REASSIGN] Employee Name — reason
- * These are proposals only — the confirm flow (human/decision model) executes them. */
+/** routing proposal shapes — the runner maps the settled verdict envelope onto these
+ * ([SUBTASKS]/[REASSIGN] text markers are RETIRED: routing rides the envelope JSON) */
 export type SubtaskProposalItem = { title: string; description?: string; assigneeName?: string };
 export type RoutingProposal =
   | { kind: typeof PROPOSAL_KIND.SUBTASKS; items: SubtaskProposalItem[] }
   | { kind: typeof PROPOSAL_KIND.REASSIGN; targetName: string; reason?: string };
-
-/** item cap per [SUBTASKS] line; recordProposals drops anything beyond it */
-export const MAX_SUBTASK_ITEMS = 20;
-/** proposal cap per run output */
-export const MAX_PROPOSALS_PER_OUTPUT = 10;
-
-export function parseRoutingProposals(output: string | null | undefined): RoutingProposal[] {
-  if (!output) return [];
-  const out: RoutingProposal[] = [];
-  for (const raw of output.split('\n')) {
-    const line = raw.trim();
-    const st = line.match(/^\[SUBTASKS\]\s*(.+)$/);
-    if (st) {
-      const items: SubtaskProposalItem[] = nonNull(st[1])
-        .split('|')
-        .map((part) => {
-          const seg = part.split('::').map((p) => p.trim());
-          return {
-            title: nonNull(seg[0]).slice(0, 200),
-            description: seg[1] || undefined,
-            assigneeName: seg[2] || undefined,
-          };
-        })
-        .filter((i) => i.title.length > 0)
-        .slice(0, MAX_SUBTASK_ITEMS); // runaway lines are truncated, not executed
-      if (items.length) out.push({ kind: PROPOSAL_KIND.SUBTASKS, items });
-      continue;
-    }
-    const re = line.match(/^\[REASSIGN\]\s*(.+)$/);
-    if (re) {
-      const m = nonNull(re[1]).split(/\s+—\s+|\s+--\s+/);
-      const targetName = nonNull(m[0]).trim(); // the marker regex guarantees non-empty here
-      out.push({ kind: PROPOSAL_KIND.REASSIGN, targetName, reason: m[1]?.trim() });
-    }
-  }
-  return out.slice(0, MAX_PROPOSALS_PER_OUTPUT); // one run can only propose so much
-}
-
-/** Strip the JSON verdict line from displayed output so the bubble shows prose only. */
-export function runOutputWithoutEnvelope(output: string | null | undefined) {
-  if (!output) return '';
-  const lines = output.trimEnd().split('\n');
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (parseRunEnvelope((lines[i] ?? '').trim())) {
-      let end = i;
-      // drop the fence opener left dangling above a fenced JSON verdict
-      if (i > 0 && lines[i - 1]?.trim().startsWith('```')) end = i - 1;
-      return lines.slice(0, end).join('\n').trim();
-    }
-  }
-  return output;
-}
 
 /** Compact thread time: same-day -> "14:32", older -> "Oct 12". No seconds, no date spam. */
 export function formatThreadTime(iso: string, now: Date = new Date()) {

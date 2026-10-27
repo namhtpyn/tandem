@@ -9,6 +9,7 @@ package-lock.json
 coverage
 test-results
 playwright-report
+test/e2e/.auth/
 .vitest
 qa-shots
 mockprobe.mjs

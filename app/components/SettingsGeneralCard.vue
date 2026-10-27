@@ -15,6 +15,69 @@ const { $orpc, $client } = useNuxtApp();
 const settingsLive = useQuery($orpc.settings.list.queryOptions({ queryKey: [CHANGE_RESOURCE.SETTINGS] }));
 const providersLive = useQuery($orpc.providers.list.queryOptions({ queryKey: [CHANGE_RESOURCE.PROVIDERS] }));
 
+// ---- seed-on-arrival, never clobber unsaved edits ----
+// Each save is its own `settings.update` call, so every refetch carries a mix
+// of saved + unsaved fields: re-seeding all refs on every refetch would wipe
+// what the user typed but hasn't saved yet. A ref is refreshed only when its
+// current value still equals the projection the last server arrival seeded —
+// anything else means the user touched it.
+type SettingsPayload = {
+  companyName?: string;
+  runTimeoutMs?: number;
+  tasksPerAgent?: number;
+  companyPrompt?: string;
+  internalLlm?: { providerId: string; model: string | null; keySecretId: string } | null;
+  internalDecision?: { providerId: string; model: string | null; keySecretId: string } | null;
+};
+
+/** what the refs hold right after seeding from a server payload (comparison baseline) */
+function projectionOf(v: SettingsPayload) {
+  const assignment = (a: SettingsPayload['internalLlm']) => ({
+    providerId: a?.providerId ?? undefined,
+    model: a?.model ?? '',
+    keySecretId: a?.keySecretId ?? null,
+  });
+  return {
+    companyName: v.companyName?.trim() || 'Tandem',
+    runTimeoutMinutes: Math.round((v.runTimeoutMs ?? 1_800_000) / 60_000),
+    tasksPerAgent: v.tasksPerAgent ?? 1,
+    companyPrompt: v.companyPrompt ?? '',
+    internalLlm: assignment(v.internalLlm),
+    internalDecision: assignment(v.internalDecision),
+  };
+}
+
+const lastProjection = ref<ReturnType<typeof projectionOf> | null>(null);
+
+/** untouched = no arrival seen yet, or the ref still holds what we last seeded */
+function isUntouched(
+  key: 'companyName' | 'runTimeoutMinutes' | 'tasksPerAgent' | 'companyPrompt' | 'internalLlm' | 'internalDecision',
+  current: unknown,
+) {
+  const prior = lastProjection.value;
+  if (!prior) return true;
+  return JSON.stringify(current) === JSON.stringify(prior[key]);
+}
+
+function applySettings(v: SettingsPayload) {
+  const seeded = projectionOf(v);
+  if (isUntouched('companyName', companyName.value)) companyName.value = seeded.companyName;
+  if (isUntouched('runTimeoutMinutes', runTimeoutMinutes.value)) runTimeoutMinutes.value = seeded.runTimeoutMinutes;
+  if (isUntouched('tasksPerAgent', tasksPerAgent.value)) tasksPerAgent.value = seeded.tasksPerAgent;
+  if (isUntouched('companyPrompt', companyPrompt.value)) companyPrompt.value = seeded.companyPrompt;
+  if (isUntouched('internalLlm', llmForm)) {
+    llmForm.providerId = seeded.internalLlm.providerId;
+    llmForm.model = seeded.internalLlm.model;
+    llmForm.keySecretId = seeded.internalLlm.keySecretId;
+  }
+  if (isUntouched('internalDecision', decisionForm)) {
+    decisionForm.providerId = seeded.internalDecision.providerId;
+    decisionForm.model = seeded.internalDecision.model;
+    decisionForm.keySecretId = seeded.internalDecision.keySecretId;
+  }
+  lastProjection.value = seeded;
+}
+
 const companyName = ref('Tandem');
 const runTimeoutMinutes = ref(30);
 const tasksPerAgent = ref(1);
@@ -39,15 +102,25 @@ async function saveCompanyPrompt() {
   }
 }
 // ---- Workspace AI: internal LLM + decision assignments ----
-const vaultLive = useQuery(
-  $orpc.vault.secrets.list.queryOptions({
-    input: { page: 1, pageSize: 100 },
-    queryKey: [CHANGE_RESOURCE.VAULT, 'all'],
-  }),
-);
+// vault picker source: a single page caps at 100 rows and silently hides the
+// rest of the vault, so walk pages up to `total` (shared [VAULT, 'all'] cache)
+const vaultLive = useQuery({
+  queryKey: [CHANGE_RESOURCE.VAULT, 'all'],
+  queryFn: async () => {
+    const pageSize = 100;
+    const first = await $orpc.vault.secrets.list.call({ page: 1, pageSize });
+    const rows = [...first.data];
+    const pages = Math.min(3, Math.ceil(first.total / pageSize));
+    for (let p = 2; p <= pages; p++) {
+      const next = await $orpc.vault.secrets.list.call({ page: p, pageSize });
+      rows.push(...next.data);
+    }
+    return rows;
+  },
+});
 const vaultItems = computed<SecretOption[]>(() =>
   groupedSecretOptions(
-    (unref(vaultLive.data)?.data ?? []) as Array<{ id: string; name: string; lastFour: string; folder: string | null }>,
+    (unref(vaultLive.data) ?? []) as Array<{ id: string; name: string; lastFour: string; folder: string | null }>,
   ),
 );
 interface AiAssignmentForm {
@@ -70,24 +143,6 @@ const decisionProviders = computed(() =>
   ((unref(providersLive.data) ?? []) as Array<{ id: string; label: string; endpoints?: string[] }>)
     .filter((p) => (p.endpoints ?? []).some((st) => endpointKind(st) === PROVIDER_KIND.DECISION))
     .map((p) => ({ label: p.label, value: p.id })),
-);
-
-watch(
-  () => unref(settingsLive.data),
-  (d) => {
-    if (!d) return;
-    const v = d as {
-      internalLlm?: { providerId: string; model: string | null; keySecretId: string } | null;
-      internalDecision?: { providerId: string; model: string | null; keySecretId: string } | null;
-    };
-    llmForm.providerId = v.internalLlm?.providerId ?? undefined;
-    llmForm.model = v.internalLlm?.model ?? '';
-    llmForm.keySecretId = v.internalLlm?.keySecretId ?? null;
-    decisionForm.providerId = v.internalDecision?.providerId ?? undefined;
-    decisionForm.model = v.internalDecision?.model ?? '';
-    decisionForm.keySecretId = v.internalDecision?.keySecretId ?? null;
-  },
-  { immediate: true },
 );
 
 // model autocomplete for the Workspace AI slots: fires only when the chosen
@@ -142,21 +197,13 @@ async function saveAssignment(kind: 'internalLlm' | 'internalDecision') {
     saving.value = false;
   }
 }
+// single sync point for BOTH form groups — every settings arrival seeds refs
+// the user hasn't touched and leaves user-edited ones alone (see applySettings)
 watch(
   () => unref(settingsLive.data),
   (d) => {
-    if (d) {
-      const v = d as {
-        companyName?: string;
-        runTimeoutMs?: number;
-        tasksPerAgent?: number;
-        companyPrompt?: string;
-      };
-      companyName.value = v.companyName?.trim() || 'Tandem';
-      runTimeoutMinutes.value = Math.round((v.runTimeoutMs ?? 1_800_000) / 60_000);
-      tasksPerAgent.value = v.tasksPerAgent ?? 1;
-      companyPrompt.value = v.companyPrompt ?? '';
-    }
+    if (!d) return;
+    applySettings(d as SettingsPayload);
   },
   { immediate: true },
 );
@@ -216,9 +263,7 @@ async function saveCompanyName() {
   }
 }
 
-onServerPrefetch(() =>
-  Promise.all([settingsLive.suspense(), providersLive.suspense(), vaultLive.suspense()]),
-);
+onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspense(), vaultLive.suspense()]));
 </script>
 
 <template>
@@ -241,12 +286,9 @@ onServerPrefetch(() =>
         />
       </UFormField>
       <UButton type="submit" icon="i-lucide-save" :loading="savingName">Save</UButton>
-      <span
-        v-if="nameMessage"
-        class="pb-2 text-xs"
-        :class="nameMessage === 'Saved' ? 'text-success' : 'text-error'"
-        >{{ nameMessage }}</span
-      >
+      <span v-if="nameMessage" class="pb-2 text-xs" :class="nameMessage === 'Saved' ? 'text-success' : 'text-error'">{{
+        nameMessage
+      }}</span>
     </UForm>
 
     <USeparator class="my-5" />
@@ -332,9 +374,7 @@ onServerPrefetch(() =>
 
     <div>
       <p class="pb-1 text-sm font-medium">Decision engine (auto-assign)</p>
-      <p class="text-muted pb-2 text-xs">
-        Picks which employee takes a task. Provider must speak a decision endpoint.
-      </p>
+      <p class="text-muted pb-2 text-xs">Picks which employee takes a task. Provider must speak a decision endpoint.</p>
       <UForm :state="decisionForm" class="flex flex-col gap-3" @submit="saveAssignment('internalDecision')">
         <UFormField label="Provider" name="dProvider">
           <USelectMenu
@@ -420,9 +460,7 @@ onServerPrefetch(() =>
             :disabled="llmSaving"
           />
         </UFormField>
-        <UButton type="submit" icon="i-lucide-save" :loading="llmSaving" class="self-start"
-          >Save internal LLM</UButton
-        >
+        <UButton type="submit" icon="i-lucide-save" :loading="llmSaving" class="self-start">Save internal LLM</UButton>
       </UForm>
     </div>
     <span v-if="aiMessage" class="pb-2 text-xs" :class="aiMessage === 'Saved' ? 'text-success' : 'text-error'">{{

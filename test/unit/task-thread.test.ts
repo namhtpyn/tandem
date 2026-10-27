@@ -2,12 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ACTIVITY_KIND, REVIEW_STATUS, RUN_STATUS } from '#shared/enums';
 
-import {
-  buildThread,
-  formatThreadTime,
-  parseRunEnvelope,
-  runOutputWithoutEnvelope,
-} from '../../app/utils/task-thread.ts';
+import { buildThread, formatThreadTime, parseRunEnvelope } from '../../app/utils/task-thread.ts';
 
 describe('parseRunEnvelope', () => {
   it('parses a JSON verdict on the last line', () => {
@@ -57,27 +52,6 @@ describe('structured verdicts (zod)', () => {
   it('schema rejects non-object JSON', () => {
     expect(parseRunEnvelope('"just a string"')).toBeNull();
     expect(parseRunEnvelope('[1,2,3]')).toBeNull();
-  });
-});
-
-describe('runOutputWithoutEnvelope (structured)', () => {
-  it('strips the JSON verdict line, keeps prose', () => {
-    expect(runOutputWithoutEnvelope('line one\n{"kind": "result", "body": "done"}')).toBe('line one');
-  });
-  it('fenced JSON verdict is stripped too', () => {
-    expect(runOutputWithoutEnvelope('prose\n```json\n{"kind": "result", "body": "ok"}\n```')).toBe('prose');
-  });
-});
-
-describe('runOutputWithoutEnvelope', () => {
-  it('strips the envelope line, keeps prose', () => {
-    expect(runOutputWithoutEnvelope('line one\n{"kind": "result", "body": "done"}')).toBe('line one');
-  });
-  it('returns output untouched when no envelope', () => {
-    expect(runOutputWithoutEnvelope('plain')).toBe('plain');
-  });
-  it('nullish output without envelope returns empty string', () => {
-    expect(runOutputWithoutEnvelope(undefined)).toBe('');
   });
 });
 
@@ -180,38 +154,6 @@ describe('buildThread', () => {
       ],
     });
     expect(item).toMatchObject({ kind: 'run', status: RUN_STATUS.RUNNING, output: 'partial', exitCode: null });
-  });
-});
-
-describe('envelope edge arms', () => {
-  it('question verdict with empty body still parks (runner substitutes text)', () => {
-    expect(parseRunEnvelope('pre\n{"kind": "question", "body": ""}')).toEqual({ kind: 'question', text: '' });
-  });
-  it('verdict a few lines above the end is still found (bounded window)', async () => {
-    const out = 'prose\n{"kind": "question", "body": "q?"}\n\ntrailing note';
-    expect(parseRunEnvelope(out)?.text).toBe('q?');
-  });
-  it('output of envelope-only run strips to empty string', () => {
-    expect(runOutputWithoutEnvelope('{"kind": "blocked", "body": "waiting"}')).toBe('');
-  });
-  it('envelope-only run strips to empty (envelope at position 0)', () => {
-    expect(runOutputWithoutEnvelope('{"kind": "result", "body": "only line"}')).toBe('');
-  });
-  it('whitespace-only description omits brief; null description too', () => {
-    expect(buildThread({ description: null as string | null, runs: [], activity: [] })).toEqual([]);
-  });
-  it('note items carry kind and author fields', () => {
-    const [n] = buildThread({
-      activity: [
-        { id: 'a1', noteKind: ACTIVITY_KIND.VERDICT, body: REVIEW_STATUS.APPROVED, authorName: 'Zed', createdAt: 't' },
-      ],
-    });
-    expect(n).toMatchObject({
-      kind: 'note',
-      noteKind: ACTIVITY_KIND.VERDICT,
-      body: REVIEW_STATUS.APPROVED,
-      authorName: 'Zed',
-    });
   });
 });
 

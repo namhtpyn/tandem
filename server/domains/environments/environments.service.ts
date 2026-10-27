@@ -1,9 +1,10 @@
 // environments service: row mapping + list helpers
 
+import { EmptyFilter } from 'drizzle-orm';
+
 import type { SecretUsage } from '#shared/enums';
 import type { EnvironmentRow } from '#shared/types';
-
-import { EmptyFilter } from 'drizzle-orm';
+import { escapeIlike } from '#shared/utils/escape-ilike';
 
 import { db } from '../../db/index';
 import { environments as environmentsTable } from '../../db/schema';
@@ -62,7 +63,13 @@ export async function listEnvironmentsPaged(input: { page?: number; pageSize?: n
       updatedAt: true,
     },
     where: q
-      ? { OR: [{ name: { ilike: `%${q}%` } }, { host: { ilike: `%${q}%` } }, { username: { ilike: `%${q}%` } }] }
+      ? {
+          OR: [
+            { name: { ilike: `%${escapeIlike(q)}%` } },
+            { host: { ilike: `%${escapeIlike(q)}%` } },
+            { username: { ilike: `%${escapeIlike(q)}%` } },
+          ],
+        }
       : EmptyFilter,
     orderBy: { createdAt: 'desc' },
     limit: pageSize,

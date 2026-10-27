@@ -18,11 +18,13 @@ export default defineConfig({
   test: {
     hookTimeout: 60_000,
     testTimeout: 15_000,
-    // each worker owns its own database (test/unit/worker-setup.ts clones the
+    // DB tests truncate their own data (per-worker cloned DBs), so order is
+    // arbitrary by design — shuffling keeps hidden coupling from hiding
+    sequence: { shuffle: true },
+    // each integration worker owns its own database (worker-setup.ts clones the
     // migrated template), so files run in parallel without sharing rows
     fileParallelism: true,
     globalSetup: ['./test/global-setup.ts'],
-    setupFiles: ['./test/setup.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'json-summary', 'html'],
@@ -39,19 +41,32 @@ export default defineConfig({
         'app/utils/orpc-types.ts', // type-only module (InferClientOutputs projections)
       ],
       thresholds: {
-        statements: 100,
-        branches: 100,
-        functions: 100,
-        lines: 100,
+        // bun 1.4.4's V8 counts every ??/?. arm as its own branch and mis-attributes
+        // branches to schema-declaration lines — the phantom floor measured stable at
+        // ~97.3 branches / ~99.7 statements across runs (owner ruling 2026-10-27: (b)).
+        // A real untested function/line still moves these by whole percents.
+        statements: 99.5,
+        branches: 97,
+        functions: 99.5,
+        lines: 99.5,
       },
     },
     projects: [
       {
+        // pure tests: no database, no real I/O — must stay millisecond-fast
         test: {
           name: 'unit',
           include: ['test/unit/**/*.test.ts'],
-          exclude: ['test/nuxt/**'], // nuxt-env component tests live in their own project below
-          setupFiles: ['./test/setup.ts', './test/unit/worker-setup.ts', './test/unit/setup.ts'],
+          setupFiles: ['./test/setup.ts'],
+        },
+      },
+      {
+        // DB-coupled tests: real Postgres, per-worker cloned DBs (no-real-DB law:
+        // these are integration, not unit)
+        test: {
+          name: 'integration',
+          include: ['test/integration/**/*.test.ts'],
+          setupFiles: ['./test/setup.ts', './test/integration/worker-setup.ts', './test/integration/setup.ts'],
         },
       },
       // component tests in a real Nuxt environment (auto-imports, plugins, injections)

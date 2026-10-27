@@ -7,12 +7,12 @@
 //     because the same rule keeps that child non-terminal until its own gate lifts.
 import { eq, inArray } from 'drizzle-orm';
 
+import { ACTIVITY_KIND } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 import { db, asDb, type DbExecutor } from '../../db/index';
-import { logActivity as publishActivity } from './review.service';
 import { tasks, taskStatuses } from '../../db/schema';
-import { ACTIVITY_KIND } from '#shared/enums';
+import { logActivity as publishActivity } from './review.service';
 
 export const BLOCKED_STATUS = STATUS.blocked;
 

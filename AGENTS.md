@@ -222,10 +222,21 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
 
 ## Task workflow (user laws, 2026-10-13)
 
-- Statuses: `todo → doing → waiting-answer →(answer)→ todo` and `doing →(submit)→ in-review →(unanimous approve)→ done`; `in-review →(changes)→ doing`, `in-review →(abandon)→ cancelled`.
+- Statuses: `todo → doing → waiting-answer →(answer)→ todo` and `doing →(submit)→ in-review →(unanimous approve)→ done`; `in-review →(changes)→ todo`, `in-review →(reject)→ cancelled` (human-only verdict), `in-review →(abandon)→ cancelled`.
 - **Owner ≠ supervisor**: owner routes questions; creator by default; no hierarchy coupling.
 - **All reviewers must approve** (unanimous) before done. Reviewer or assignee can be AI or human — no restriction anywhere.
 - **Forward chain is free** but stops at the top of the hierarchy (employee with no supervisors must ANSWER, cannot receive forwards) and never revisits someone already in the chain.
-- Workflow logic lives in `server/domains/tasks/workflow.service.ts`; the router only wires procedures (`ask`, `forward`, `answer`, `submit`, `approve`, `requestChanges`, `abandon`, `activity`).
+- Workflow logic lives in `server/domains/tasks/workflow.service.ts`; the router only wires procedures (`ask`, `note`, `forward`, `answer`, `submit`, `approve`, `requestChanges`, `reject`, `abandon`, `dispatch`, `thread`, `activity`).
 - `tasks.activity` is a liveGenerator over `['taskActivity','tasks']` — publish both resources on every workflow write.
 - Coverage law: no defensive `?? fallback` on NOT NULL columns (istanbul counts the dead arm and CI enforces 100% branches).
+
+### Owner laws (2026-10-26)
+
+- **Message-first schema:** runs link to tasks via thread messages — `task_runs.message_id` (NOT NULL) joins `task_messages`; no `task_runs.task_id`, no `tasks.acp_session_id` (the ACP session lives on `task_runs.session_id`, one per task×employee; reviewer turns never resume the assignee's session); `task_message_activities` remains the activity extension.
+- **Relay brief law:** the TASK block ships only on an agent's FIRST run of a task; later prompts are a conversation relay — only task_messages newer than the reader's own last finished run (other agents' turns relay as `result`, the reader's own turns are skipped — they live in session memory, STATUS bookkeeping never ships) + a CONTINUATION line for fresh sessions; the OUTPUT CONTRACT + DELIVERABLES path ride every prompt.
+- **No prompt truncation:** prompt message lines ship WHOLE — never clipped.
+- **Envelope-only routing:** one JSON line `{kind, body, subtasks?, reassign?}` is the whole verdict contract; read routing proposals ONLY from the settled envelope — no `[SUBTASKS]`/`[REASSIGN]` text markers; the in-chain auto-exec law is unchanged.
+- **Explicit reviewers only:** no supervisor default — a submit with no reviewers completes immediately; unanimous approve → done, the FIRST change-request bounces the round, reject is human-only terminal (cancelled).
+- **Reviews happen ON the task:** AI reviewers get a review TURN (a run row on the same task), never a review subtask; reviews are never re-reviewed.
+- **Note verb:** the task-page composer posts plain notes (`tasks.note`, no state change) and auto-becomes Send answer while the task waits for one.
+- **Contextual workflow verbs:** review verdicts live in the TaskReviewBox (own input); Ask is an agent verb only (envelope question — no human button); sidebar verbs render per state (Submit for review is the human assignee's move — agents submit via the envelope).

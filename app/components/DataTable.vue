@@ -4,6 +4,8 @@ import type { CellContext } from '@tanstack/vue-table';
 import { computed, ref, watch } from 'vue';
 import type { VNode } from 'vue';
 
+import { formatWhen } from '~/utils/format-when';
+
 const props = withDefaults(
   defineProps<{
     data: T[];
@@ -21,6 +23,11 @@ const props = withDefaults(
     search?: string;
     /** tree data: rows carry `subRows`; UTable expands them natively */
     getSubRows?: (row: T) => T[];
+    /** opt-in built-in empty state (data empty + not loading); parents with their own empty UI leave it off */
+    showEmptyState?: boolean;
+    /** no-data branding for the built-in empty state; a live search always shows a no-results line instead */
+    emptyIcon?: string;
+    emptyText?: string;
   }>(),
   {
     loading: false,
@@ -33,6 +40,9 @@ const props = withDefaults(
     searchPlaceholder: 'Search…',
     search: undefined,
     getSubRows: undefined,
+    showEmptyState: false,
+    emptyIcon: undefined,
+    emptyText: undefined,
   },
 );
 
@@ -58,13 +68,27 @@ const mobileRows = computed<T[]>(() => {
 // client-side pagination for small lists: internal page state, sliced rows —
 // no page/pageCount props needed (server-side lists pass them and slice themselves)
 const internalPage = ref(1);
-watch(() => props.data, () => {
-  internalPage.value = 1;
-});
+watch(
+  () => props.data,
+  () => {
+    internalPage.value = 1;
+  },
+);
 const internalPageCount = computed(() => Math.max(1, Math.ceil(props.data.length / props.pageSize)));
 const viewData = computed(() =>
-  paginated.value ? props.data : props.data.slice((internalPage.value - 1) * props.pageSize, internalPage.value * props.pageSize),
+  paginated.value
+    ? props.data
+    : props.data.slice((internalPage.value - 1) * props.pageSize, internalPage.value * props.pageSize),
 );
+// the mobile card list paginates exactly like the desktop rows (server-side
+// lists arrive pre-sliced; client-side lists slice the flattened tree)
+const mobileViewRows = computed<T[]>(() =>
+  paginated.value
+    ? mobileRows.value
+    : mobileRows.value.slice((internalPage.value - 1) * props.pageSize, internalPage.value * props.pageSize),
+);
+const isFiltered = computed(() => props.searchable && !!props.search?.trim());
+
 const showPager = computed(() => (paginated.value || props.data.length > props.pageSize) && props.data.length > 0);
 const displayPage = computed(() => (paginated.value ? (props.page ?? 1) : internalPage.value));
 const displayPageCount = computed(() => (paginated.value ? (props.pageCount ?? 1) : internalPageCount.value));
@@ -102,14 +126,14 @@ function cellValue(row: T, col: TableColumn<T>) {
   const key = 'accessorKey' in col ? String(col.accessorKey) : (col.id ?? '');
   const raw = (row as Record<string, unknown>)[key];
   if (raw == null || raw === '') return '—';
-  if (raw instanceof Date) return raw.toLocaleString();
+  if (raw instanceof Date) return formatWhen(raw);
   if (Array.isArray(raw)) return raw.length ? raw.join(', ') : '—';
   return String(raw);
 }
 </script>
 
 <template>
-  <div v-if="searchable || data.length || loading" class="space-y-3">
+  <div v-if="searchable || data.length || loading || showEmptyState" class="space-y-3">
     <div v-if="searchable" class="flex flex-wrap items-center gap-2">
       <UInput
         :model-value="search"
@@ -140,8 +164,8 @@ function cellValue(row: T, col: TableColumn<T>) {
       </UTable>
     </UCard>
 
-    <div v-if="data.length" class="space-y-3 md:hidden">
-      <template v-for="(row, idx) in mobileRows" :key="String((row as Record<string, unknown>).id ?? idx)">
+    <div v-if="mobileViewRows.length" class="space-y-3 md:hidden">
+      <template v-for="(row, idx) in mobileViewRows" :key="String((row as Record<string, unknown>).id ?? idx)">
         <slot name="mobile-item" :row="row">
           <UCard :ui="{ root: 'shadow-sm' }">
             <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">
@@ -158,6 +182,15 @@ function cellValue(row: T, col: TableColumn<T>) {
           </UCard>
         </slot>
       </template>
+    </div>
+
+    <!-- opt-in empty state: a live search yields a no-results line, otherwise
+         the parent's no-data branding (icon + text props) -->
+    <div v-if="showEmptyState && !data.length && !loading" class="flex flex-col items-center gap-2 py-12 text-center">
+      <UIcon :name="emptyIcon ?? (isFiltered ? 'i-lucide-search-x' : 'i-lucide-inbox')" class="size-8 text-zinc-300" />
+      <p class="text-sm text-zinc-500">
+        {{ isFiltered ? 'No results — try a different search.' : emptyText || 'Nothing here yet.' }}
+      </p>
     </div>
 
     <!-- pagination footer: prev / numbered / next (UButton — reka UPagination

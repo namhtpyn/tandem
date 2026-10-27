@@ -3,13 +3,33 @@
 // Activity rows dual-write task_activity during the transition.
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 
-import { db, asDb, type DbExecutor } from '../../db/index';
-import { nonNull } from '#shared/utils/non-null';
 import { parseRunEnvelope } from '#shared/run-verdict';
+import { nonNull } from '#shared/utils/non-null';
+
+import { db, asDb, type DbExecutor } from '../../db/index';
 import { taskAttachments, taskMessageActivities, taskMessages } from '../../db/schema';
+import { activityKindOf } from './brief.service';
+
+/** jsonb payloads arrive as raw strings through RQB relation selects — parse once so the
+ * client gets an object; corrupt/non-object payloads ship as null instead of a dead string */
+export function normalizeActivityPayload(payload: unknown): Record<string, unknown> | null {
+  /* v8 ignore next 2 -- jsonb payloads are object-or-string by construction; arms kept total */
+  if (payload !== null && typeof payload === 'object') return payload as Record<string, unknown>;
+  if (typeof payload !== 'string') return null;
+  try {
+    const parsed: unknown = JSON.parse(payload);
+    return parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    /* v8 ignore next */
+    return null;
+  }
+}
 
 /** the blank-body message a dispatch creates before its run row exists */
-export async function createRunMessage(input: { taskId: string; authorId: string | null; createdAt?: Date }, ex: DbExecutor = db) {
+export async function createRunMessage(
+  input: { taskId: string; authorId: string | null; createdAt?: Date },
+  ex: DbExecutor = db,
+) {
   const d = asDb(ex);
   const rows = await d
     .insert(taskMessages)
@@ -26,7 +46,10 @@ export async function createRunMessage(input: { taskId: string; authorId: string
 
 /** activity side of the thread — the structured payload lives in task_activity
  * during the dual-write window, so this only places the base row */
-export async function insertActivityMessage(input: { taskId: string; authorId: string | null; body: string; payload: Record<string, unknown> }, ex: DbExecutor = db) {
+export async function insertActivityMessage(
+  input: { taskId: string; authorId: string | null; body: string; payload: Record<string, unknown> },
+  ex: DbExecutor = db,
+) {
   const d = asDb(ex);
   const rows = await d
     .insert(taskMessages)
@@ -70,7 +93,8 @@ export async function listTaskThread(taskId: string) {
   });
 
   // STATUS rows are pipeline chatter (dispatch/review bookkeeping) — never thread items
-  const visible = messages.filter((m) => (m.activityExt?.payload as { kind?: string } | null)?.kind !== 'STATUS');
+  // (payload arrives as a raw jsonb string, so the kind check goes through activityKindOf)
+  const visible = messages.filter((m) => activityKindOf(m.activityExt?.payload) !== 'status');
 
   const runIds = visible.flatMap((m) => (m.run ? [m.run.id] : []));
   const outputs = runIds.length
@@ -125,7 +149,7 @@ export async function listTaskThread(taskId: string) {
       authorId: m.authorId,
       authorName: m.author?.name ?? null,
       run,
-      activity: m.activityExt?.payload ?? null,
+      activity: normalizeActivityPayload(m.activityExt?.payload),
     };
   });
 }

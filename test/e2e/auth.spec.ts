@@ -59,6 +59,10 @@ test.describe('health', () => {
 });
 
 test.describe('auth flow', () => {
+  // the chromium project injects an admin storageState — these tests exercise
+  // the login form itself and must start from a clean context
+  test.use({ storageState: { cookies: [], origins: [] } });
+
   test('root serves the app', async ({ page }) => {
     await page.goto('/');
     await expect(page).toHaveURL(/\/$/);
@@ -101,7 +105,9 @@ test.describe('auth flow', () => {
 });
 
 test.describe('authenticated settings', () => {
-  test.use({ storageState: undefined });
+  // fresh UI login mints its own session cookie here — the project-level
+  // storageState must not pre-sign this context (undefined would inherit it)
+  test.use({ storageState: { cookies: [], origins: [] } });
 
   test('signed-in admin can read settings and manage OIDC providers', async ({ page, request }) => {
     // sign in via UI (hydration-safe) to get the session cookie in the browser context

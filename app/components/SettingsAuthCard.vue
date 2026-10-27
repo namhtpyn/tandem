@@ -2,8 +2,8 @@
 // Authentication card: OIDC provider table + add/edit editor (no v-model over
 // v-for aliases — the dxup page transform breaks that pattern; pathbridge
 // table+modal law) and the password-login policy switch. Self-loading — shares
-// the providers/settings query keys with the rest of the app (the switch locks
-// until a provider exists; shared cache, no prop drilling).
+// the oidc/settings query keys with the rest of the app (the switch locks until
+// an OIDC provider exists; shared cache, no prop drilling).
 import { useQuery } from '@tanstack/vue-query';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
@@ -19,8 +19,6 @@ interface OidcProviderRow {
 }
 
 const oidcLive = useQuery($orpc.oidc.list.queryOptions({ queryKey: [CHANGE_RESOURCE.OIDC] }));
-const providersLive = useQuery($orpc.providers.list.queryOptions({ queryKey: [CHANGE_RESOURCE.PROVIDERS] }));
-const providerRows = computed(() => unref(providersLive.data) ?? []);
 const settingsLive = useQuery($orpc.settings.list.queryOptions({ queryKey: [CHANGE_RESOURCE.SETTINGS] }));
 
 const providers = computed<OidcProviderRow[]>(() =>
@@ -102,28 +100,49 @@ async function saveProvider() {
   }
 }
 
-async function removeProvider(row: OidcProviderRow) {
-  const list = providers.value
-    .filter((p) => p.id !== row.id)
-    .map((p) => ({ id: p.id, label: p.label, issuer: p.issuer, clientId: p.clientId }));
-  await $client.oidc.replace({ providers: list });
+const pendingRemove = ref<OidcProviderRow | null>(null);
+const removeOpen = computed({
+  get: () => pendingRemove.value !== null,
+  set: (v: boolean) => {
+    if (!v) pendingRemove.value = null;
+  },
+});
+
+async function removeProvider() {
+  if (!pendingRemove.value) return;
+  busy.value = true;
+  message.value = '';
+  try {
+    const list = providers.value
+      .filter((p) => p.id !== pendingRemove.value?.id)
+      .map((p) => ({ id: p.id, label: p.label, issuer: p.issuer, clientId: p.clientId }));
+    await $client.oidc.replace({ providers: list });
+    pendingRemove.value = null;
+  } catch (e) {
+    message.value = e instanceof Error ? e.message : 'remove failed';
+  } finally {
+    busy.value = false;
+  }
 }
 
-async function savePasswordPolicy() {
+async function savePasswordPolicy(next: boolean) {
+  const previous = disablePasswordLogin.value;
+  disablePasswordLogin.value = next;
   busy.value = true;
+  message.value = '';
   try {
-    await $client.settings.update({ disablePasswordLogin: disablePasswordLogin.value });
+    await $client.settings.update({ disablePasswordLogin: next });
     message.value = 'Saved';
   } catch (e) {
+    // nothing refetches after a failed write — put the switch back where it was
+    disablePasswordLogin.value = previous;
     message.value = e instanceof Error ? e.message : 'save failed';
   } finally {
     busy.value = false;
   }
 }
 
-onServerPrefetch(() =>
-  Promise.all([oidcLive.suspense(), providersLive.suspense(), settingsLive.suspense()]),
-);
+onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()]));
 </script>
 
 <template>
@@ -146,9 +165,7 @@ onServerPrefetch(() =>
               <template #provider-cell="{ row }">
                 <div class="flex flex-wrap items-center gap-2">
                   <span class="text-sm font-medium text-zinc-900 dark:text-white">{{ row.original.label }}</span>
-                  <UBadge v-if="!row.original.secretSet" variant="subtle" color="warning" size="sm"
-                    >no secret</UBadge
-                  >
+                  <UBadge v-if="!row.original.secretSet" variant="subtle" color="warning" size="sm">no secret</UBadge>
                 </div>
               </template>
               <template #callback-cell="{ row }">
@@ -178,7 +195,8 @@ onServerPrefetch(() =>
                       color="error"
                       size="sm"
                       aria-label="Remove provider"
-                      @click="removeProvider(row.original)"
+                      :disabled="busy"
+                      @click="pendingRemove = row.original"
                     />
                     <template #content>
                       <div class="px-3 py-1.5 text-xs">Remove provider</div>
@@ -206,7 +224,7 @@ onServerPrefetch(() =>
           </p>
           <p class="text-xs text-zinc-400">
             {{
-              providerRows.length === 0
+              providers.length === 0
                 ? 'Cannot be disabled until an OIDC provider is configured.'
                 : 'Turn off to require single sign-on.'
             }}
@@ -214,13 +232,8 @@ onServerPrefetch(() =>
         </div>
         <USwitch
           :model-value="!disablePasswordLogin"
-          :disabled="providerRows.length === 0"
-          @update:model-value="
-            async (v: boolean) => {
-              disablePasswordLogin = !v;
-              await savePasswordPolicy();
-            }
-          "
+          :disabled="providers.length === 0 || busy"
+          @update:model-value="(v: boolean) => savePasswordPolicy(!v)"
         />
       </div>
     </div>
@@ -276,6 +289,25 @@ onServerPrefetch(() =>
           :label="editingId ? 'Save changes' : 'Add provider'"
           form="oidc-editor-form"
         />
+      </div>
+    </template>
+  </UModal>
+
+  <!-- remove confirm (same pattern as the vault/environment delete confirms) -->
+  <UModal v-model:open="removeOpen" title="Remove provider">
+    <template #body>
+      <div class="space-y-4">
+        <p class="text-sm text-zinc-600 dark:text-zinc-300">
+          Remove OIDC provider
+          <span class="font-semibold text-zinc-900 dark:text-white">{{ pendingRemove?.label }}</span
+          >? Anyone signing in through it loses that login option immediately.
+        </p>
+      </div>
+    </template>
+    <template #footer>
+      <div class="flex w-full justify-end gap-2">
+        <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingRemove = null" />
+        <UButton icon="i-lucide-trash-2" color="error" label="Remove" :loading="busy" @click="removeProvider" />
       </div>
     </template>
   </UModal>

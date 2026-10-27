@@ -17,27 +17,32 @@ test('inbox toggle filters to tasks pending on me and shows a badge', async ({ p
   await page.getByRole('combobox', { name: 'Assignee' }).click();
   await page.getByRole('option', { name: 'Admin', exact: true }).click();
   await page.getByRole('button', { name: /Save|Create task/ }).click();
-  await page.waitForTimeout(800);
+  await expect(page.getByRole('link', { name })).toBeVisible();
 
   // flip to doing via the list's inline status select, then ask from the detail page
   await page.locator('tbody').getByLabel(`Status for ${name}`).click();
   await page.getByRole('option', { name: 'Doing' }).click();
-  await page.waitForTimeout(600);
+  await expect(page.locator('tr:visible').filter({ hasText: name }).first()).toContainText(/doing/i);
   await page.getByRole('link', { name: name }).first().click();
   await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
-  await page.getByPlaceholder('Write a note…').fill('which db?');
-  await page.getByRole('button', { name: 'Ask', exact: true }).first().click();
-  await page.waitForTimeout(1200);
+  // Ask is an agent verb now (envelope question) — drive it via the session's RPC
+  const taskUrl = page.url();
+  const taskId = taskUrl.split('/').pop()!;
+  const asked = await page.request.post('/rpc/tasks/ask', {
+    data: { json: { taskId, body: 'which db?' } },
+  });
+  expect(asked.status()).toBe(200);
 
   await page.goto('/tasks');
   const toggle = page.getByTestId('needs-decision-toggle');
-  await expect(toggle).toBeVisible();
-  await expect(page.getByTestId('inbox-count')).toBeVisible(); // badge count
+  await expect(toggle).toContainText('Needs my decision');
+  // badge count ≥1 is the settled state of the ask round-trip (SSE refetches
+  // within ms — the retrying value assert absorbs the server-side routing)
+  await expect(page.getByTestId('inbox-count')).toHaveText(/[1-9]/); // badge count
 
   // toggle on: only the pending task remains visible
   await toggle.click();
-  await page.waitForTimeout(600);
-  await expect(page.getByRole('link', { name: name })).toBeVisible();
+  await expect(page.getByRole('link', { name })).toBeVisible();
   const otherRows = await page.locator('a[href^="/tasks/"]').count();
   expect(otherRows).toBeGreaterThanOrEqual(1);
 
@@ -56,7 +61,7 @@ test('subtask creation nests under the parent, chips the child, and blocks the p
   await page.getByRole('button', { name: 'New task' }).first().click();
   await page.getByPlaceholder('Task title').fill(parentName);
   await page.getByRole('button', { name: /Save|Create task/ }).click();
-  await page.waitForTimeout(800);
+  await expect(page.getByRole('link', { name: parentName }).first()).toBeVisible();
   await page.getByRole('link', { name: parentName }).first().click();
   await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
 
@@ -67,8 +72,8 @@ test('subtask creation nests under the parent, chips the child, and blocks the p
   await page.keyboard.press('Enter');
   await expect(panel.getByRole('link', { name: childName })).toBeVisible({ timeout: 10_000 });
 
-  // parent flips to blocked (derived from the open child)
-  await page.waitForTimeout(800);
+  // parent flips to blocked (derived from the open child); the reload pulls
+  // fresh server state and the retrying 'Blocked' assert absorbs the derive
   await page.reload();
   // status ids are uuids now — the badge renders the status NAME
   await expect(page.getByText('Blocked', { exact: true }).first()).toBeVisible({ timeout: 10_000 });

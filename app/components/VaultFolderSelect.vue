@@ -16,7 +16,11 @@ import { CHANGE_RESOURCE } from '#shared/enums';
 type FolderOption = { id: string; name: string; label: string };
 
 const model = defineModel<string | null>({ default: null });
-const { creatable = false, clearable = false, size = 'sm' } = defineProps<{
+const {
+  creatable = false,
+  clearable = false,
+  size = 'sm',
+} = defineProps<{
   creatable?: boolean;
   clearable?: boolean;
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
@@ -136,7 +140,7 @@ const selectModel = computed({
   >
     <template #content-bottom>
       <div v-if="pagesQuery.isFetchingNextPage.value" class="flex w-full items-center justify-center py-2">
-        <UIcon name="i-lucide-loader-circle" class="size-4 animate-spin text-muted" />
+        <UIcon name="i-lucide-loader-circle" class="text-muted size-4 animate-spin" />
       </div>
     </template>
   </USelectMenu>

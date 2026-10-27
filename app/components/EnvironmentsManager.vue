@@ -47,14 +47,23 @@ watch(total, (t) => {
   if (page.value > maxPage) page.value = maxPage;
 });
 
-// vault secrets for the SSH key picker (metadata only)
-const secretsQuery = useQuery(
-  $orpc.vault.secrets.list.queryOptions({
-    input: { page: 1, pageSize: 100 },
-    queryKey: [CHANGE_RESOURCE.VAULT, 'all'],
-  }),
-);
-const secrets = computed<VaultSecretRow[]>(() => (unref(secretsQuery.data)?.data ?? []) as VaultSecretRow[]);
+// vault secrets for the SSH key picker (metadata only) — a single page caps at
+// 100 rows and silently hides the rest of the vault, so walk pages up to `total`
+const secretsQuery = useQuery({
+  queryKey: [CHANGE_RESOURCE.VAULT, 'all'],
+  queryFn: async () => {
+    const pageSize = 100;
+    const first = await $orpc.vault.secrets.list.call({ page: 1, pageSize });
+    const rows = [...first.data];
+    const pages = Math.min(3, Math.ceil(first.total / pageSize));
+    for (let p = 2; p <= pages; p++) {
+      const next = await $orpc.vault.secrets.list.call({ page: p, pageSize });
+      rows.push(...next.data);
+    }
+    return rows;
+  },
+});
+const secrets = computed<VaultSecretRow[]>(() => (unref(secretsQuery.data) ?? []) as VaultSecretRow[]);
 const secretOptions = computed<SecretOption[]>(() => [
   { label: 'No key (agent default)', value: '__none__' },
   ...groupedSecretOptions(secrets.value),
@@ -179,6 +188,9 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       :page-count="pageCount"
       :page-size="pageSize"
       :columns="columns"
+      show-empty-state
+      empty-icon="i-lucide-server"
+      empty-text="No environments yet — add the SSH target where your Hermes agents run."
     >
       <template #toolbar>
         <UButton v-if="editable" icon="i-lucide-plus" size="sm" label="New environment" @click="openEditor()" />
@@ -325,14 +337,6 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       </template>
     </DataTable>
 
-    <UCard v-if="!rows.length" :ui="{ root: 'shadow-sm' }">
-      <div class="flex flex-col items-center gap-2 py-8 text-center">
-        <UIcon name="i-lucide-server" class="size-8 text-zinc-300" />
-        <p class="text-sm text-zinc-500">No environments yet — add the SSH target where your Hermes agents run.</p>
-        <UButton v-if="editable" icon="i-lucide-plus" size="sm" label="New environment" @click="openEditor()" />
-      </div>
-    </UCard>
-
     <UModal v-model:open="deleteOpen" title="Delete environment">
       <template #body>
         <div class="space-y-4">
@@ -378,8 +382,8 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
             <USelect
               v-model="form.secretUsage"
               :items="[
-                { label: 'SSH key', value: 'ssh-key' },
-                { label: 'Password', value: 'password' },
+                { label: 'SSH key', value: SECRET_USAGE.SSH_KEY },
+                { label: 'Password', value: SECRET_USAGE.PASSWORD },
               ]"
               value-key="value"
               icon="i-lucide-fingerprint"

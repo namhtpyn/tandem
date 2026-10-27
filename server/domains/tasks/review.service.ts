@@ -11,11 +11,11 @@ import { and, desc, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { db, asDb, type DbExecutor } from '../../db/index';
-import { insertActivityMessage } from './thread.service';
 import { tasks, taskReviews, taskRuns, taskMessages } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { spawnObligation, cancelObligations, cancelAllObligations, resolveObligation } from './obligations.service';
 import { dispatchTask } from './runner.service';
+import { insertActivityMessage } from './thread.service';
 
 export type ReviewVerdict = Exclude<ReviewStatus, typeof REVIEW_STATUS.PENDING>;
 
@@ -63,12 +63,42 @@ export async function currentRound(taskId: string) {
   return rows[0]?.round ?? 0;
 }
 
+/** stable first-occurrence reviewer dedupe — duplicated ids must not mint two
+ * review rows for the same round (the round unique index backstops this) */
+export function dedupeReviewers(reviewers: string[]): string[] {
+  return [...new Set(reviewers)];
+}
+
+/** the round an AI reviewer's LATEST run on the task was dispatched for: the newest
+ * round whose review row already existed when that run started. Reading the
+ * dispatched round at settle — instead of currentRound — is what keeps a stale run
+ * from settling a newer round it was never part of. */
+async function dispatchedReviewRound(taskId: string, reviewerId: string) {
+  const runRows = await db
+    .select({ startedAt: taskRuns.startedAt })
+    .from(taskRuns)
+    .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+    .where(and(eq(taskMessages.taskId, taskId), eq(taskRuns.employeeId, reviewerId)))
+    .orderBy(desc(taskRuns.startedAt))
+    .limit(1);
+  const startedAt = runRows[0]?.startedAt;
+  if (!startedAt) return 0;
+  const rows = await db
+    .select({ round: taskReviews.round, createdAt: taskReviews.createdAt })
+    .from(taskReviews)
+    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.reviewerId, reviewerId)))
+    .orderBy(desc(taskReviews.round));
+  // rounds are minted in order; the dispatched round is the newest one open at run start
+  return rows.find((r) => r.createdAt.getTime() <= startedAt.getTime())?.round ?? 0;
+}
+
 /** open a fresh review round: one pending row per reviewer + inbox obligations.
  * Called by submitResult. The task parks in-review; AI reviewers get review turns. */
 export async function openReviewRound(taskId: string, reviewers: string[], resultBody: string) {
+  const uniqueReviewers = dedupeReviewers(reviewers);
   const round = (await currentRound(taskId)) + 1;
   const now = new Date();
-  for (const reviewerId of reviewers) {
+  for (const reviewerId of uniqueReviewers) {
     await db
       .insert(taskReviews)
       .values({ id: uuidv7(), taskId, reviewerId, round, status: REVIEW_STATUS.PENDING, createdAt: now });
@@ -78,7 +108,7 @@ export async function openReviewRound(taskId: string, reviewers: string[], resul
     taskId,
     ACTIVITY_KIND.STATUS,
     null,
-    `review round ${round} opened — waiting on ${reviewers.length} reviewer(s)`,
+    `review round ${round} opened — waiting on ${uniqueReviewers.length} reviewer(s)`,
     { reviewRound: round },
   );
   await dispatchAiReviewTurns(taskId, resultBody);
@@ -170,7 +200,7 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
   }
 }
 
-/** write one reviewer's verdict. Only the current round counts. */
+/** write one reviewer's verdict. Only the round the verdict belongs to counts. */
 export async function recordVerdict(
   taskId: string,
   reviewerId: string,
@@ -178,7 +208,16 @@ export async function recordVerdict(
   note: string,
   source: 'human' | 'ai',
 ): Promise<{ outcome: 'waiting' | 'done' | 'returned' | 'cancelled' }> {
-  const round = await currentRound(taskId);
+  const taskRow = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  if (!taskRow) throw new Error('task not found');
+  // terminal gate: a settled (done/cancelled) task must never be moved by a verdict
+  // that arrives late — stale AI runs and post-abandon clicks land here
+  if (taskRow.status === DONE_STATUS || taskRow.status === CANCELLED_STATUS)
+    throw new Error('task already settled — late verdict refused');
+  // round binding: a human click decides the CURRENT round; an AI verdict belongs to
+  // the round its review run was DISPATCHED for (a stale run must not settle a newer
+  // round it was never part of)
+  const round = source === 'human' ? await currentRound(taskId) : await dispatchedReviewRound(taskId, reviewerId);
   if (round === 0) throw new Error('task has no open review round');
   const row = (
     await db
@@ -188,6 +227,19 @@ export async function recordVerdict(
   )[0];
   if (!row) throw new Error('not a reviewer in the current round');
   if (row.status !== REVIEW_STATUS.PENDING) throw new Error('verdict already recorded for this round');
+  const roundRows = await db
+    .select()
+    .from(taskReviews)
+    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
+  // dead-round gate: a round that already bounced or rejected must not settle —
+  // covers AI runs still in flight when their round closed
+  if (roundRows.some((r) => r.status === REVIEW_STATUS.CHANGE_REQUESTED || r.status === REVIEW_STATUS.REJECTED))
+    throw new Error('review round already closed');
+  // unanimity is judged on the round AS THIS VERDICT lands (rows pre-read above)
+  const unanimous =
+    verdict === REVIEW_STATUS.APPROVED &&
+    roundRows.length > 0 &&
+    roundRows.every((r) => (r.id === row.id ? verdict : r.status) === REVIEW_STATUS.APPROVED);
   await db
     .update(taskReviews)
     .set({ status: verdict, note: note || null, decidedAt: new Date(), source })
@@ -195,13 +247,6 @@ export async function recordVerdict(
   /* v8 ignore next -- the obligation always exists for a verdict author; the
    * catch only guards a race with a concurrent round close */
   await resolveObligation(taskId, reviewerId, OBLIGATION_ROLE.APPROVAL, reviewerId).catch(() => {});
-
-  const roundRows = await db
-    .select()
-    .from(taskReviews)
-    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
-
-  const unanimous = roundRows.length > 0 && roundRows.every((r) => r.status === REVIEW_STATUS.APPROVED);
 
   if (verdict === REVIEW_STATUS.REJECTED) {
     // HUMAN-only terminal verdict: task cancelled, round closed

@@ -9,6 +9,7 @@ import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { formatWhen } from '~/utils/format-when';
 import type { VaultSecretRow } from '~/utils/orpc-types';
 
 const folderId = defineModel<string | null>('folderId', { default: null });
@@ -170,13 +171,7 @@ onServerPrefetch(() => liveQuery.suspense());
       <template #toolbar>
         <VaultFolderSelect v-model="folderId" clearable />
         <span class="flex-1" />
-        <UButton
-          v-if="editable"
-          icon="i-lucide-plus"
-          size="sm"
-          label="New secret"
-          @click="openEditor()"
-        />
+        <UButton v-if="editable" icon="i-lucide-plus" size="sm" label="New secret" @click="openEditor()" />
       </template>
       <template #description-cell="{ row }">
         <span class="text-xs text-zinc-500 dark:text-zinc-400">{{ row.original.description || '—' }}</span>
@@ -185,7 +180,7 @@ onServerPrefetch(() => liveQuery.suspense());
         <span class="font-mono text-xs text-zinc-400">•••• {{ row.original.lastFour }}</span>
       </template>
       <template #updatedAt-cell="{ row }">
-        <span class="text-xs text-zinc-500">{{ new Date(row.original.updatedAt).toLocaleString() }}</span>
+        <span suppressHydration-warning class="text-xs text-zinc-500">{{ formatWhen(row.original.updatedAt) }}</span>
       </template>
       <template v-if="editable" #actions-cell="{ row }">
         <div class="flex justify-end gap-1">

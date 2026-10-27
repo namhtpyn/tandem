@@ -10,6 +10,7 @@ import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
 
 import { ACTIVITY_KIND, CHANGE_RESOURCE } from '#shared/enums';
+import { formatWhen } from '~/utils/format-when';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 
 const { $orpc, $client } = useNuxtApp();
@@ -181,10 +182,38 @@ function onSaved() {
 
 // ---- workflow drawer ----
 const workflowOpen = ref(false);
-const workflowTask = ref<TaskRow | null>(null);
+// the drawer holds the task ID, not a frozen row copy: the displayed task
+// re-resolves from the live paged list on every TASKS invalidation so a verdict
+// or submit immediately reflects (status change, reviewer state, …). The last
+// fresh row is kept as fallback for when the row leaves the current page/filter.
+const workflowTaskId = ref<string | null>(null);
+const workflowTaskFallback = ref<TaskRow | null>(null);
+const workflowTaskLive = computed(() => rows.value.find((t) => t.id === workflowTaskId.value) ?? null);
+const workflowTask = computed<TaskRow | null>(() => workflowTaskLive.value ?? workflowTaskFallback.value);
+watch(workflowTaskLive, (t) => {
+  if (t) workflowTaskFallback.value = t;
+});
 const workflowNote = ref('');
 const workflowBusy = ref(false);
 const workflowMessage = ref('');
+// the workflow gate keys off the status CATEGORY (not seeded uuids): ready /
+// working / paused are the work states where forward/abandon/submit apply
+const workflowStatusCategory = computed(() =>
+  workflowTask.value ? (statusById.value.get(workflowTask.value.status)?.category ?? null) : null,
+);
+const workflowIsWorking = computed(
+  () =>
+    workflowStatusCategory.value === 'ready' ||
+    workflowStatusCategory.value === 'working' ||
+    workflowStatusCategory.value === 'paused',
+);
+
+/** drawer composer: send is the answer verb while the task waits for one */
+function sendDrawerNote() {
+  if (!workflowTask.value) return;
+  if (workflowStatusCategory.value === 'waiting_answer') wfAction('answer', { body: workflowNote.value });
+  else wfAction('note', { body: workflowNote.value });
+}
 const forwardTo = ref('__none__');
 
 // ---- drawer data: conventional GETs + change-event invalidation (SSE law) ----
@@ -232,7 +261,8 @@ const retryInMin = computed(() => {
 });
 
 function openWorkflow(row: TaskRow) {
-  workflowTask.value = row;
+  workflowTaskId.value = row.id;
+  workflowTaskFallback.value = row;
   workflowNote.value = '';
   workflowMessage.value = '';
   workflowOpen.value = true;
@@ -241,6 +271,7 @@ function openWorkflow(row: TaskRow) {
 // zod strips unknown keys, so optional extras ride along safely
 type WorkflowAction =
   | 'dispatch'
+  | 'note'
   | 'submit'
   | 'ask'
   | 'forward'
@@ -252,25 +283,29 @@ type WorkflowAction =
 
 async function wfAction(action: WorkflowAction, extra: { body?: string; toEmployeeId?: string } = {}) {
   if (!workflowTask.value) return;
+  const taskId = workflowTask.value.id;
   workflowBusy.value = true;
   workflowMessage.value = '';
   try {
-    const input = { taskId: workflowTask.value.id, ...extra };
-    await (
-      {
-        dispatch: () => $client.tasks.dispatch({ taskId: input.taskId }),
-        submit: () => $client.tasks.submit({ ...input, body: nonNull(input.body) }),
-        ask: () => $client.tasks.ask({ ...input, body: nonNull(input.body) }),
-        forward: () => $client.tasks.forward({ ...input, toEmployeeId: nonNull(input.toEmployeeId) }),
-        answer: () => $client.tasks.answer({ ...input, body: nonNull(input.body) }),
-        approve: () => $client.tasks.approve(input),
-        requestChanges: () => $client.tasks.requestChanges({ ...input, body: nonNull(input.body) }),
-        reject: () => $client.tasks.reject(input),
-        abandon: () => $client.tasks.abandon(input),
-      }[action]
-    )();
+    const input = { taskId, ...extra };
+    await {
+      dispatch: () => $client.tasks.dispatch({ taskId: input.taskId }),
+      note: () => $client.tasks.note({ ...input, body: nonNull(input.body) }),
+      // body is optional server-side (submitResult defaults it) — an empty note is fine
+      submit: () => $client.tasks.submit({ ...input, body: input.body || undefined }),
+      ask: () => $client.tasks.ask({ ...input, body: nonNull(input.body) }),
+      forward: () => $client.tasks.forward({ ...input, toEmployeeId: nonNull(input.toEmployeeId) }),
+      answer: () => $client.tasks.answer({ ...input, body: nonNull(input.body) }),
+      approve: () => $client.tasks.approve(input),
+      requestChanges: () => $client.tasks.requestChanges({ ...input, body: nonNull(input.body) }),
+      reject: () => $client.tasks.reject(input),
+      abandon: () => $client.tasks.abandon(input),
+    }[action]();
     workflowNote.value = '';
-    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, workflowTask.value.id] });
+    // invalidate BOTH feeds: TASKS re-syncs the drawer's task row (status/reviewers),
+    // TASK_ACTIVITY keeps the thread and activity feed current
+    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
+    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, taskId] });
     workflowMessage.value = 'done';
   } catch (e) {
     // surface the server's oRPC message, not ofetch's generic '[POST] …: 400'
@@ -280,6 +315,10 @@ async function wfAction(action: WorkflowAction, extra: { body?: string; toEmploy
     workflowBusy.value = false;
   }
 }
+
+// review verdicts are an explicit-reviewer surface — nobody else sees the box
+const session = useAppSession();
+const drawerCanReview = computed(() => !!workflowTask.value?.reviewerNames.includes(session.value?.user.name ?? ''));
 
 // ---- board (kanban) view ----
 // Persisted client-side only (localStorage via VueUse) — deliberately NOT a DB setting.
@@ -456,7 +495,7 @@ onServerPrefetch(() =>
         />
       </template>
       <template #updatedAt-cell="{ row }">
-        <span class="text-xs text-zinc-500">{{ new Date(row.original.updatedAt).toLocaleString() }}</span>
+        <span suppressHydration-warning class="text-xs text-zinc-500">{{ formatWhen(row.original.updatedAt) }}</span>
       </template>
       <template #actions-cell="{ row }">
         <div class="flex justify-end gap-1">
@@ -754,71 +793,49 @@ onServerPrefetch(() =>
               >
             </p>
           </div>
-          <div class="flex flex-wrap gap-2">
+          <!-- contextual verbs only (owner rulings 2026-10-26): notes/answers ride the composer -->
+          <div v-if="workflowIsWorking" class="flex flex-wrap gap-2">
             <UButton
+              v-if="workflowTask.assigneeKind !== 'ai'"
               size="xs"
-              color="warning"
+              color="primary"
               variant="soft"
-              icon="i-lucide-help-circle"
+              icon="i-lucide-send"
               :disabled="workflowBusy"
-              @click="wfAction('ask', { body: workflowNote || 'question' })"
-              >Ask</UButton
+              @click="wfAction('submit', { body: workflowNote })"
+              >Submit for review</UButton
             >
             <UButton
               size="xs"
               color="neutral"
               variant="soft"
               icon="i-lucide-corner-up-right"
-              :disabled="workflowBusy || !forwardTo"
-              @click="forwardTo && wfAction('forward', { toEmployeeId: forwardTo, body: workflowNote })"
+              :disabled="workflowBusy || !forwardTo || forwardTo === '__none__'"
+              @click="
+                forwardTo &&
+                forwardTo !== '__none__' &&
+                wfAction('forward', { toEmployeeId: forwardTo, body: workflowNote })
+              "
               >Forward</UButton
-            >
-            <UButton
-              size="xs"
-              color="primary"
-              variant="soft"
-              icon="i-lucide-check-check"
-              :disabled="workflowBusy"
-              @click="wfAction('answer', { body: workflowNote || 'answer' })"
-              >Answer</UButton
-            >
-            <UButton
-              size="xs"
-              color="info"
-              variant="soft"
-              icon="i-lucide-send"
-              :disabled="workflowBusy"
-              @click="wfAction('submit', { body: workflowNote })"
-              >Submit</UButton
-            >
-            <UButton
-              size="xs"
-              color="success"
-              variant="soft"
-              icon="i-lucide-thumbs-up"
-              :disabled="workflowBusy"
-              @click="wfAction('approve')"
-              >Approve</UButton
-            >
-            <UButton
-              size="xs"
-              color="warning"
-              variant="soft"
-              icon="i-lucide-undo-2"
-              :disabled="workflowBusy || !workflowNote"
-              @click="wfAction('requestChanges', { body: workflowNote })"
-              >Request changes</UButton
             >
             <UButton
               size="xs"
               color="error"
               variant="soft"
-              icon="i-lucide-x-circle"
+              icon="i-lucide-ban"
               :disabled="workflowBusy"
               @click="wfAction('abandon')"
               >Abandon</UButton
             >
           </div>
+          <TaskReviewBox
+            v-if="workflowStatusCategory === 'in_review' && drawerCanReview"
+            :busy="workflowBusy"
+            @verdict="
+              (action: 'approve' | 'requestChanges' | 'reject', body?: string) =>
+                wfAction(action, { body: body || undefined })
+            "
+          />
           <USelect
             v-model="forwardTo"
             :items="[
@@ -832,7 +849,24 @@ onServerPrefetch(() =>
             class="w-full"
             aria-label="Forward to"
           />
-          <UTextarea v-model="workflowNote" :rows="3" placeholder="Question / answer / review note" class="w-full" />
+          <UTextarea
+            v-model="workflowNote"
+            :rows="3"
+            :placeholder="
+              workflowStatusCategory === 'waiting_answer' ? 'Write an answer — the agent resumes' : 'Write a note…'
+            "
+            class="w-full"
+          />
+          <UButton
+            size="sm"
+            color="primary"
+            variant="soft"
+            icon="i-lucide-arrow-up"
+            :disabled="workflowBusy || !workflowNote.trim()"
+            @click="sendDrawerNote()"
+          >
+            {{ workflowStatusCategory === 'waiting_answer' ? 'Send answer' : 'Post note' }}
+          </UButton>
           <p v-if="workflowMessage" class="text-xs" :class="workflowMessage === 'done' ? 'text-success' : 'text-error'">
             {{ workflowMessage }}
           </p>
@@ -843,7 +877,7 @@ onServerPrefetch(() =>
                 size="xs"
                 variant="soft"
                 icon="i-lucide-play"
-                :disabled="workflowBusy || !workflowTask.assigneeKind || workflowTask.assigneeKind !== 'ai'"
+                :disabled="workflowBusy || workflowTask?.assigneeKind !== 'ai'"
                 @click="wfAction('dispatch')"
               >
                 Dispatch now
@@ -851,8 +885,14 @@ onServerPrefetch(() =>
             </div>
             <div v-for="r in runFeed" :key="r.id" class="rounded-md border border-zinc-200 dark:border-zinc-800">
               <p class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                <span v-if="r.status === 'running'" class="bg-warning inline-block size-2 animate-pulse rounded-full" />
-                <span v-else-if="r.status === 'done'" class="bg-success inline-block size-2 rounded-full" />
+                <span
+                  v-if="r.status.toLowerCase() === 'running'"
+                  class="bg-warning inline-block size-2 animate-pulse rounded-full"
+                />
+                <span
+                  v-else-if="r.status.toLowerCase() === 'done'"
+                  class="bg-success inline-block size-2 rounded-full"
+                />
                 <span v-else class="bg-error inline-block size-2 rounded-full" />
                 {{ r.status }}<span v-if="r.exitCode !== null"> · exit {{ r.exitCode }}</span>
               </p>

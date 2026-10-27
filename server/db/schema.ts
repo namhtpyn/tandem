@@ -8,6 +8,7 @@ import {
   timestamp,
   integer,
   index,
+  uniqueIndex,
   primaryKey,
   check,
   jsonb,
@@ -298,7 +299,8 @@ export const taskObligations = pgTable(
     taskId: text('task_id')
       .notNull()
       .references(() => tasks.id, { onDelete: 'cascade' }),
-    employeeId: uuid('employee_id').references(() => user.id, { onDelete: 'cascade' }),
+    // SET NULL, not CASCADE: deleting an employee keeps the obligation trail on the task
+    employeeId: uuid('employee_id').references(() => user.id, { onDelete: 'set null' }),
     role: text('role').notNull(),
     status: text('status').notNull().default('PENDING'),
     createdAt: timestamp('created_at', { withTimezone: true })
@@ -383,7 +385,10 @@ export const taskRuns = pgTable(
       .$default(() => new Date()),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
   },
-  (t) => [index('task_runs_message_idx').on(t.messageId, t.startedAt)],
+  (t) => [
+    index('task_runs_message_idx').on(t.messageId, t.startedAt),
+    index('task_runs_employee_started_idx').on(t.employeeId, t.startedAt),
+  ],
 );
 
 // REVIEW LAW (2026-10-16): one row per reviewer per review round — the single source
@@ -410,7 +415,11 @@ export const taskReviews = pgTable(
       .$default(() => new Date()),
     decidedAt: timestamp('decided_at', { withTimezone: true }),
   },
-  (t) => [index('task_reviews_task_idx').on(t.taskId, t.round)],
+  (t) => [
+    index('task_reviews_task_idx').on(t.taskId, t.round),
+    // one review row per reviewer per round — DB backstop for the reviewer dedupe
+    uniqueIndex('task_reviews_round_reviewer_uniq').on(t.taskId, t.round, t.reviewerId),
+  ],
 );
 
 // Task activity feed: questions, answers, forwards, verdicts, status notes.
@@ -424,14 +433,14 @@ export const taskAttachments = pgTable(
       .notNull()
       .references(() => tasks.id, { onDelete: 'cascade' }),
     /** set for agent-produced files: the run that produced them */
-    runId: text('run_id'),
+    runId: text('run_id').references(() => taskRuns.id, { onDelete: 'cascade' }),
     /** input (human upload) | output (collected from the sandbox) */
     kind: text('kind').notNull().default('input'),
     filename: text('filename').notNull(),
     mime: text('mime').notNull(),
     size: integer('size').notNull(),
     sha256: text('sha256').notNull(),
-    createdBy: text('created_by'),
+    createdBy: uuid('created_by').references(() => user.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .$default(() => new Date()),

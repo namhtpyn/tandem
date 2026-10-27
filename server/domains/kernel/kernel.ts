@@ -3,8 +3,8 @@ import { ORPCError, os } from '@orpc/server';
 // change-bus re-exports. Modules import from here — never from each other's
 // routers; services never import routers.
 import type { RequestHeadersHandlerPluginContext } from '@orpc/server/plugins';
-import type { Role } from '#shared/enums';
 
+import type { Role } from '#shared/enums';
 
 import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from './change-bus';
 
@@ -27,7 +27,6 @@ const requireSession = base.middleware(async ({ context, next }) => {
 });
 
 export const protectedProcedure = base.use(requireSession);
-
 
 /** Live generator: initial snapshot, then fresh snapshots on relevant changes. */
 export async function* liveGenerator<T>(resources: ChangeResource[], fetch: () => Promise<T>) {

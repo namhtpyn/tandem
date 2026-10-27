@@ -20,7 +20,9 @@ const reviewsQuery = useQuery(
   ),
 );
 const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES] }));
-const employees = computed(() => (unref(employeesLive.data) ?? []) as unknown as Array<{ userId: string; name: string }>);
+const employees = computed(
+  () => (unref(employeesLive.data) ?? []) as unknown as Array<{ userId: string; name: string }>,
+);
 
 /** REVIEW LAW checklist: current-round verdicts per reviewer, history collapsed by round */
 const reviewChecklist = computed(() => {
@@ -59,22 +61,13 @@ onServerPrefetch(() => Promise.all([reviewsQuery.suspense(), employeesLive.suspe
                   : 'i-lucide-user'
           "
           class="mt-0.5 size-3.5 shrink-0"
-          :class="
-            r.status === 'approved'
-              ? 'text-success'
-              : r.status === 'pending'
-                ? 'text-zinc-400'
-                : 'text-warning'
-          "
+          :class="r.status === 'approved' ? 'text-success' : r.status === 'pending' ? 'text-zinc-400' : 'text-warning'"
         />
         <span class="min-w-0">
           <span class="block truncate text-zinc-800 dark:text-zinc-200"
-            >{{ r.name }}
-            <span class="text-xs text-zinc-400">({{ r.source === 'ai' ? 'AI' : 'human' }})</span></span
+            >{{ r.name }} <span class="text-xs text-zinc-400">({{ r.source === 'ai' ? 'AI' : 'human' }})</span></span
           >
-          <span v-if="r.note" class="block truncate text-xs text-zinc-400" :title="r.note">{{
-            r.note
-          }}</span>
+          <span v-if="r.note" class="block truncate text-xs text-zinc-400" :title="r.note">{{ r.note }}</span>
         </span>
       </li>
       <li v-if="reviewChecklist.history.length" class="pt-1 text-xs text-zinc-400">

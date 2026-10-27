@@ -11,14 +11,14 @@ test('task title click opens the task detail page', async ({ page }) => {
   await page.getByRole('button', { name: 'New task' }).first().click();
   await page.getByPlaceholder('Task title').fill('Info page probe');
   await page.getByRole('button', { name: /Save|Create task/ }).click();
-  await page.waitForTimeout(800);
+  await expect(page.getByRole('link', { name: 'Info page probe' }).first()).toBeVisible({ timeout: 10_000 });
 
   await page.getByRole('link', { name: 'Info page probe' }).first().click();
   await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
-  await expect(page.getByRole('heading', { name: 'Info page probe' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Info page probe' })).toHaveText('Info page probe');
 
   // chat main: empty thread placeholder + composer
-  await expect(page.getByText('No activity yet.')).toBeVisible();
+  await expect(page.getByText('No activity yet.')).toHaveText('No activity yet.');
   await expect(page.getByPlaceholder('Write a note…')).toBeVisible();
 
   // sidebar: Details + Workflow sections
@@ -38,7 +38,7 @@ test('mobile: sidebar collapses into the info sheet', async ({ page }) => {
   await page.getByRole('button', { name: 'New task' }).first().click();
   await page.getByPlaceholder('Task title').fill('Mobile sheet probe');
   await page.getByRole('button', { name: /Save|Create task/ }).click();
-  await page.waitForTimeout(800);
+  await expect(page.getByRole('link', { name: 'Mobile sheet probe' }).first()).toBeVisible({ timeout: 10_000 });
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('link', { name: 'Mobile sheet probe' }).first().click();
@@ -50,5 +50,5 @@ test('mobile: sidebar collapses into the info sheet', async ({ page }) => {
   // scope to the visible slideover (the desktop aside is display:none on mobile)
   await expect(page.getByLabel('Task info').getByText('Details', { exact: true })).toBeVisible();
   // a fresh task is To do: the contextual workflow verbs are work-state moves
-  await expect(page.getByLabel('Task info').getByRole('button', { name: 'Ask' })).toBeVisible();
+  await expect(page.getByLabel('Task info').getByRole('button', { name: 'Forward' })).toBeVisible();
 });

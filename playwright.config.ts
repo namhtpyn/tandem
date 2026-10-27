@@ -1,8 +1,13 @@
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
-  // 4 workers starve the app server under load (random login/fill timeouts); 2 is the sweet spot locally
-  workers: process.env.CI ? 2 : 2,
+  // ONE worker, both locally and in CI: every spec shares the same e2e
+  // database, so parallel workers only race truncates and login state (and at
+  // 4+ they starved the app server into random login/fill timeouts). The
+  // shared-DB serial promise is the config's contract — no worker env tuning.
+  workers: 1,
+  // a stray .only must not silently reduce CI to a fraction of the suite
+  forbidOnly: !!process.env.CI,
   testDir: './test/e2e',
   timeout: 60_000,
   fullyParallel: false, // shared DB — serial by file
@@ -10,9 +15,19 @@ export default defineConfig({
   reporter: process.env.CI ? 'github' : 'list',
   use: {
     baseURL: process.env.TANDEM_E2E_URL || 'http://localhost:4100',
-    trace: 'retain-on-failure',
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    // signs in once; chromium consumes the saved session cookie
+    { name: 'setup', testMatch: '*.setup.ts' },
+    {
+      name: 'chromium',
+      testIgnore: '*.setup.ts', // the setup file belongs to the setup project only
+      use: { ...devices['Desktop Chrome'], storageState: 'test/e2e/.auth/admin.json' },
+      dependencies: ['setup'], // the state file must exist before chromium starts
+    },
+  ],
   webServer: process.env.TANDEM_E2E_NO_SERVER
     ? undefined
     : {
