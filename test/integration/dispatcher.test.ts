@@ -1034,7 +1034,8 @@ describe('dispatcher', () => {
         ),
       ).toBe(true);
     } finally {
-      if (prev !== undefined) setEnv({ TANDEM_FAKE_SCRIPT: prev });
+      // restore unconditionally — a leaked question script poisons shuffled tests
+      setEnv({ TANDEM_FAKE_SCRIPT: prev });
       setEnv({ TANDEM_FAKE_RUNNER: '1' }); // file-level default (set at top)
     }
   }, 15_000);

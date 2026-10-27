@@ -7,6 +7,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import './api-harness';
+import { env, setEnv } from '#server/domains/kernel/env';
 import { answerHolder, spawnObligation } from '#server/domains/tasks/obligations.service';
 import { ACTIVITY_KIND, OBLIGATION_ROLE, REVIEW_STATUS, ROLE } from '#shared/enums';
 import { STATUS } from '#shared/status';
@@ -121,6 +122,129 @@ beforeEach(async () => {
     role: ROLE.ADMIN,
     createdAt: new Date(),
     updatedAt: new Date(),
+  });
+});
+
+describe('composer note semantics (steer / dispatch)', () => {
+  const mkAi = async (call: Awaited<ReturnType<typeof makeProcCaller>>, name: string, seq: number) => {
+    void call;
+    const { db } = await dbm();
+    const { aiEmployees, environments, user } = await schema();
+    const id = `00000000-0000-7000-8000-${String(770000 + seq).padStart(12, '0')}`;
+    const envId = `env-note-${seq}`;
+    await db.insert(environments).values({
+      id: envId,
+      name: `EN${seq}`,
+      host: '127.0.0.1',
+      port: '2222',
+      username: '00000000-0000-7000-8000-51e69892ab49',
+    });
+    await db.insert(user).values({
+      id,
+      name,
+      email: `${name.toLowerCase().replace(/\s+/g, '-')}@tandem.test`,
+      emailVerified: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db
+      .insert(aiEmployees)
+      .values({ userId: id, environmentId: envId, instructions: '', executable: 'hermes acp' });
+    return id;
+  };
+
+  it('a note on a ready task with an AI assignee dispatches the run', async () => {
+    const call = callProc;
+    const agentId = await mkAi(call, 'Dispatch Steed', 1);
+    const t = (await call('tasks.create', { title: 'Note dispatches', assigneeId: agentId })) as { id: string };
+    const prev = env.TANDEM_FAKE_SCRIPT;
+    setEnv({ TANDEM_FAKE_RUNNER: '1', TANDEM_FAKE_SCRIPT: 'ok\n{"kind": "result", "body": "done"}' });
+    try {
+      const r = (await call('tasks.note', { taskId: t.id, body: 'go' })) as { dispatched?: boolean };
+      expect(r.dispatched).toBe(true);
+      // the dispatch actually ran: the task settled done by the fake runner
+      const { db } = await dbm();
+      const { tasks } = await schema();
+      const row = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
+      expect(row.status).toBe(STATUS.done);
+    } finally {
+      setEnv({ TANDEM_FAKE_SCRIPT: prev });
+    }
+  });
+
+  it('steerRun: steered with a live turn, refused without one, stopped with no run', async () => {
+    const call = callProc;
+    const agentId = await mkAi(call, 'Steer Steed', 3);
+    const t = (await call('tasks.create', { title: 'Steer me', assigneeId: agentId })) as { id: string };
+    const { db } = await dbm();
+    const { taskMessages, taskRuns } = await schema();
+    const { __setLiveSteerForTests, steerRun } = await import('#server/domains/tasks/runner.service');
+    // no run yet → stopped
+    await expect(steerRun(t.id, 'hi')).resolves.toBe('stopped');
+    // a RUNNING run without a registered live turn → refused
+    await db
+      .insert(taskMessages)
+      .values({ id: 'msg-steer', taskId: t.id, authorId: agentId, body: '', createdAt: new Date() });
+    await db.insert(taskRuns).values({
+      id: 'run-steer',
+      messageId: 'msg-steer',
+      employeeId: agentId,
+      environmentId: 'env-note-3',
+      status: 'RUNNING',
+      output: '',
+      startedAt: new Date(),
+    });
+    await expect(steerRun(t.id, 'hi')).resolves.toBe('refused');
+    // live turn registered → steered; agent refusal flips back to refused
+    __setLiveSteerForTests('run-steer', async () => true);
+    await expect(steerRun(t.id, 'hi')).resolves.toBe('steered');
+    __setLiveSteerForTests('run-steer', async () => false);
+    await expect(steerRun(t.id, 'hi')).resolves.toBe('refused');
+    __setLiveSteerForTests('run-steer', null);
+  });
+
+  it('a note with no assignee or a human assignee stays note-only', async () => {
+    const call = callProc;
+    const noAssignee = (await call('tasks.create', { title: 'Unassigned note' })) as { id: string };
+    const r1 = (await call('tasks.note', { taskId: noAssignee.id, body: 'note' })) as { dispatched?: boolean };
+    expect(r1.dispatched).toBeUndefined();
+    // human assignee: same — dispatch needs an AI employee row
+    const { db } = await dbm();
+    const { user } = await schema();
+    const humanId = '00000000-0000-7000-8000-660000000001';
+    await db.insert(user).values({
+      id: humanId,
+      name: 'Human Steed',
+      email: 'human-steed@tandem.test',
+      emailVerified: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const humanTask = (await call('tasks.create', { title: 'Human note', assigneeId: humanId })) as { id: string };
+    const r2 = (await call('tasks.note', { taskId: humanTask.id, body: 'note' })) as { dispatched?: boolean };
+    expect(r2.dispatched).toBeUndefined();
+  });
+
+  it('a note on a terminal (done) task is note-only — no dispatch, no move', async () => {
+    const call = callProc;
+    const agentId = await mkAi(call, 'Terminal Steed', 2);
+    const t = (await call('tasks.create', { title: 'Terminal note', assigneeId: agentId })) as { id: string };
+    const prev = env.TANDEM_FAKE_SCRIPT;
+    setEnv({ TANDEM_FAKE_RUNNER: '1', TANDEM_FAKE_SCRIPT: 'ok\n{"kind": "result", "body": "done"}' });
+    try {
+      await call('tasks.note', { taskId: t.id, body: 'first send dispatches' });
+      const { db } = await dbm();
+      const { tasks } = await schema();
+      let row = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
+      expect(row.status).toBe(STATUS.done);
+      // done is terminal: the note neither moves the task nor dispatches
+      const r = (await call('tasks.note', { taskId: t.id, body: 'post-completion note' })) as { dispatched?: boolean };
+      expect(r.dispatched).toBeUndefined();
+      row = (await db.select().from(tasks)).find((x) => x.id === t.id)!;
+      expect(row.status).toBe(STATUS.done);
+    } finally {
+      setEnv({ TANDEM_FAKE_SCRIPT: prev });
+    }
   });
 });
 

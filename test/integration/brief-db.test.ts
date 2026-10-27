@@ -171,6 +171,44 @@ describe('loadBriefData (real db)', () => {
     expect(dAsh2.recentActivity.map((a) => a.body)).toEqual(['Jay: done, pr opened']);
   });
 
+  it('an agent echo note never re-ships in its own next prompt', async () => {
+    // Jay's run settles with a body, then Jay's runner echoes the same text as a plain note
+    await db.insert(taskMessages).values({
+      id: 'msg-echo-run',
+      taskId,
+      authorId: agentId,
+      body: 'Jay: verdict text',
+      createdAt: new Date(Date.now() - 70_000),
+    });
+    await db.insert(taskRuns).values({
+      id: 'run-echo',
+      messageId: 'msg-echo-run',
+      employeeId: agentId,
+      environmentId: 'env-x',
+      status: 'DONE',
+      output: '',
+      finishedAt: new Date(Date.now() - 69_000),
+    });
+    await db.insert(taskMessages).values({
+      id: 'msg-echo-note',
+      taskId,
+      authorId: agentId,
+      body: 'Jay: verdict text',
+      createdAt: new Date(Date.now() - 68_000),
+    });
+    // a human note after it stays relay signal
+    await db.insert(taskMessages).values({
+      id: 'msg-human-after',
+      taskId,
+      body: 'Nam: continue',
+      createdAt: new Date(Date.now() - 60_000),
+    });
+    const d = await loadBriefData(taskId, agentId);
+    const bodies = d.recentActivity.map((a) => a.body);
+    expect(bodies).toContain('Nam: continue');
+    expect(bodies.filter((b) => b === 'Jay: verdict text')).toHaveLength(0);
+  });
+
   it('ships long activity whole (never truncated), strips mention ids, populated reviewers', async () => {
     const long = 'x'.repeat(300);
     // a finished run first: the long note must land after the cutoff to ship

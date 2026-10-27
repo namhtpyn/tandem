@@ -582,8 +582,8 @@ export const tasksRouter = os.router({
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
-      await runWorkflow(() => addNote(input.taskId, selfId, input.body));
-      return { ok: true };
+      const outcome = await runWorkflow(() => addNote(input.taskId, selfId, input.body));
+      return { ok: true, ...outcome };
     }),
 
   /** current holder forwards the question down the chain */

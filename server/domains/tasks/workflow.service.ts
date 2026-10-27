@@ -167,9 +167,30 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
 }
 /** a plain conversation note: thread-only, no state change (relay law 2026-10-26) */
 export async function addNote(taskId: string, authorId: string, body: string) {
-  await getTask(taskId);
+  const task = await getTask(taskId);
   await logActivity(taskId, ACTIVITY_KIND.NOTE, authorId, body, {});
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+  // composer law (owner ruling 2026-10-27): a send steers the live agent; a send
+  // while stopped always dispatches the run — the note itself stays thread-only.
+  // A live run that can't take input still blocks dispatch (never a second task
+  // to a running agent)
+  const { steerRun } = await import('./runner.service');
+  const steerState = await steerRun(taskId, body);
+  if (steerState === 'steered' || steerState === 'refused') return { steered: steerState === 'steered' };
+  const { STATUS } = await import('#shared/status');
+  if (([STATUS.done, STATUS.cancelled, STATUS.inReview] as string[]).includes(task.status))
+    return { steered: false as const };
+  if (!task.assigneeId) return { steered: false as const };
+  const ai = await db.query.aiEmployees.findFirst({
+    columns: { userId: true },
+    where: { userId: { eq: task.assigneeId } },
+  });
+  if (!ai) return { steered: false as const };
+  await db.update(tasks).set({ status: STATUS.todo, updatedAt: new Date() }).where(eq(tasks.id, taskId));
+  const { dispatchIfEligible } = await import('./dispatcher.service');
+  const { env } = await import('#server/domains/kernel/env');
+  await dispatchIfEligible(taskId, env.TANDEM_PUBLIC_URL ?? 'http://localhost:3000');
+  return { steered: false as const, dispatched: true as const };
 }
 
 export async function submitResult(taskId: string, authorId: string, body: string) {

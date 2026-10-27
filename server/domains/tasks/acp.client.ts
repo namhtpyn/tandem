@@ -105,6 +105,9 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
   outputSchema?: S;
   /** extra lines appended after the auto-rendered contract (e.g. examples) */
   outputContractExtras?: string[];
+  /** called once the session exists — the hook receives a mid-turn steer fn
+   *  (a second session/prompt on the live stream; agents queue or interrupt it) */
+  onSessionOpen?: (steer: (text: string) => Promise<boolean>) => void;
 }): Promise<[S] extends [never] ? AcpTurnResult : AcpStructuredTurnResult<S>> {
   const { stream, timeoutMs, onLine } = opts;
   // promptText: the caller's prompt plus the auto-rendered structured-output
@@ -130,10 +133,8 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
     queuedLogLines.push(line);
   };
   const drainQueuedLogLines = () => {
-    while (queuedLogLines.length && !pendingLine) {
-      const next = queuedLogLines.shift();
-      if (next === undefined) break;
-      onLine?.(next);
+    if (!pendingLine && queuedLogLines.length) {
+      for (const line of queuedLogLines.splice(0)) onLine?.(line);
     }
   };
   const LINE_FLUSH_MAX = 400;
@@ -321,6 +322,21 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
       }, cancelGraceMs()).unref?.();
     }, timeoutMs);
     turnTimer.unref?.();
+
+    if (opts.onSessionOpen) {
+      opts.onSessionOpen(async (text: string) => {
+        try {
+          const steer = await request('session/prompt', {
+            sessionId,
+            prompt: [{ type: 'text', text }],
+          });
+          return !steer.error;
+        } catch {
+          /* v8 ignore next -- request() resolves on error frames; a throw is transport-level */
+          return false;
+        }
+      });
+    }
 
     const prompt = await request('session/prompt', {
       sessionId,

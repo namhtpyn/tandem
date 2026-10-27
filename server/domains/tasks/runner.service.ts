@@ -53,6 +53,35 @@ export type RunHandle = {
   finished: Promise<{ status: FinishedStatus; exitCode: number | null }>;
 };
 
+/** live ACP turns by runId — a note sent while a run executes steers it (a second
+ * session/prompt on the open stream); gone the moment the turn settles */
+const liveSteers = new Map<string, (text: string) => Promise<boolean>>();
+
+/** test seam: register/clear a fake live turn so steerRun's arms are unit-testable */
+export function __setLiveSteerForTests(runId: string, fn: ((text: string) => Promise<boolean>) | null) {
+  if (fn) liveSteers.set(runId, fn);
+  else liveSteers.delete(runId);
+}
+
+/** steer the task's live run. 'stopped' = no live run (safe to dispatch);
+ *  'refused' = a run is live but this turn can't take input (fake runner) */
+export async function steerRun(taskId: string, text: string): Promise<'steered' | 'stopped' | 'refused'> {
+  // message-first: the task is reached through the run's thread message
+  const msg = await db.query.taskMessages.findFirst({
+    columns: { id: true },
+    where: { taskId: { eq: taskId } },
+    orderBy: { createdAt: 'desc', id: 'desc' },
+    with: { run: { columns: { id: true, status: true } } },
+  });
+  const runId = msg?.run && msg.run.status === RUN_STATUS.RUNNING ? msg.run.id : null;
+  if (!runId) return 'stopped';
+  const steer = liveSteers.get(runId);
+  if (!steer) return 'refused';
+  const ok = await steer(text).catch(() => false);
+  if (!ok) liveSteers.delete(runId);
+  return ok ? 'steered' : 'refused';
+}
+
 async function logRun(taskId: string, runId: string, body: string, meta: Record<string, unknown> = {}) {
   await db
     .insert(taskActivity)
@@ -837,6 +866,9 @@ export async function dispatchTask(
           const stream = await openAcpSshStream(sshPlan, envBlob, plan.ai.executable, onLine);
           const acp = await runAcpTurn({
             stream,
+            onSessionOpen: (steer) => {
+              liveSteers.set(runId, steer);
+            },
             /* v8 ignore next -- the review-resume arm runs on real ACP review turns;
              * unit coverage drives review turns through the fake runner */
             resumeSessionId: plan.review

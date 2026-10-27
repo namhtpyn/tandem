@@ -9,9 +9,9 @@ import { nonNull } from '#shared/utils/non-null';
 // Per-task brief: identity + org chains + task context + mention chains + output contract.
 // Pure functions — no I/O; loadBriefData gathers rows.
 import { db } from '../../db/index';
-import { dropEchoNotes } from './echo-notes';
 import { taskProposals } from '../../db/schema';
 import { stripAttachments } from './attachments.util';
+import { dropEchoNotes } from './echo-notes';
 
 /** jsonb payloads arrive as raw strings through RQB relation selects — normalize to the
  * kind; one corrupt payload must never brick dispatch, so unparseable reads as '' (note) */

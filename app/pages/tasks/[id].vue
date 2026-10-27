@@ -94,6 +94,17 @@ function sendComposer() {
   else wfAction('note', { body: workflowNote.value });
 }
 
+/** a live run turns the composer into a steer box; stopped = send dispatches */
+const runsLive = useQuery(
+  $orpc.tasks.runsList.queryOptions({
+    queryKey: [CHANGE_RESOURCE.RUNS, String(route.params.id)],
+    input: { taskId: String(route.params.id) },
+  }),
+);
+const agentRunning = computed(() =>
+  ((unref(runsLive.data) ?? []) as Array<{ status?: string }>).some((r) => r.status === 'running'),
+);
+
 const infoSheetOpen = ref(false);
 
 const parentTask = computed(() =>
@@ -218,36 +229,22 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                   {{ workflowMessage }}
                 </p>
                 <span v-else class="text-[11px] text-zinc-400 dark:text-zinc-500">
-                  ⏎ {{ taskStatusCategory === 'waiting_answer' ? 'send answer' : 'post note' }} · ▶ dispatch agent
+                  ⏎ {{ agentRunning ? 'steer the running agent' : 'send + dispatch agent' }}
                 </span>
                 <div class="ml-auto flex items-center gap-1.5">
-                  <UPopover mode="hover" enable-touch>
-                    <template #content><div class="px-3 py-1.5 text-xs">Dispatch to the AI assignee</div></template>
-                    <UButton
-                      size="lg"
-                      color="primary"
-                      variant="soft"
-                      icon="i-lucide-play"
-                      aria-label="Run agent"
-                      class="size-10"
-                      :disabled="workflowBusy || !task.assigneeKind || task.assigneeKind !== 'ai'"
-                      @click="wfAction('dispatch')"
-                  /></UPopover>
                   <UPopover mode="hover" enable-touch>
                     <template #content>
                       <div class="px-3 py-1.5 text-xs">
                         {{
-                          taskStatusCategory === 'waiting_answer'
-                            ? 'Send answer — the agent resumes'
-                            : 'Post note to the conversation'
+                          agentRunning ? 'Steer — the running agent gets this message' : 'Send — dispatches the agent'
                         }}
                       </div>
                     </template>
                     <UButton
                       size="lg"
                       color="primary"
-                      :icon="taskStatusCategory === 'waiting_answer' ? 'i-lucide-reply' : 'i-lucide-arrow-up'"
-                      :aria-label="taskStatusCategory === 'waiting_answer' ? 'Send answer' : 'Send note'"
+                      :icon="agentRunning ? 'i-lucide-reply' : 'i-lucide-arrow-up'"
+                      :aria-label="agentRunning ? 'Steer agent' : 'Send and dispatch'"
                       class="size-10"
                       :disabled="workflowBusy || !workflowNote.trim()"
                       @click="sendComposer()"
