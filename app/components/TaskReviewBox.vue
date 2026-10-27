@@ -48,7 +48,10 @@ onUnmounted(disarmReject);
       class="w-full"
       :ui="{ base: 'px-1 py-1 text-sm placeholder:text-dimmed' }"
     />
-    <div class="mt-1.5 flex items-center justify-end gap-1.5">
+    <!-- wrap + stack: three md verdict buttons overflow every phone width, so
+         below sm they stack full-width (Approve on top, Reject bottom); on
+         desktop the row stays one right-aligned line -->
+    <div class="mt-1.5 flex flex-wrap items-center justify-end gap-1.5 max-sm:flex-col-reverse max-sm:items-stretch">
       <UButton
         size="md"
         color="error"

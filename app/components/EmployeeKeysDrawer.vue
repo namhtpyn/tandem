@@ -164,7 +164,7 @@ async function copyKey(key: string) {
                 class="flex-1"
                 @keydown.enter.prevent="saveRename"
               />
-              <UPopover mode="hover"
+              <UPopover mode="hover" enable-touch
                 ><UButton
                   icon="i-lucide-check"
                   variant="ghost"
@@ -175,7 +175,7 @@ async function copyKey(key: string) {
                   @click="saveRename"
                 /><template #content><div class="px-3 py-1.5 text-xs">Save name</div></template></UPopover
               >
-              <UPopover mode="hover"
+              <UPopover mode="hover" enable-touch
                 ><UButton
                   icon="i-lucide-x"
                   variant="ghost"
@@ -190,7 +190,7 @@ async function copyKey(key: string) {
               v-if="renamingId !== k.id"
               class="flex shrink-0 gap-1 transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
             >
-              <UPopover mode="hover"
+              <UPopover mode="hover" enable-touch
                 ><UButton
                   icon="i-lucide-pencil"
                   variant="ghost"
@@ -201,7 +201,7 @@ async function copyKey(key: string) {
                   @click="startRename(k)"
                 /><template #content><div class="px-3 py-1.5 text-xs">Rename key</div></template></UPopover
               >
-              <UPopover mode="hover"
+              <UPopover mode="hover" enable-touch
                 ><UButton
                   icon="i-lucide-trash-2"
                   variant="ghost"

@@ -8,6 +8,7 @@ import { computed, reactive, ref } from 'vue';
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 import type { TaskStatusRow } from '~/utils/orpc-types';
+import { categoryColor, categoryLabel } from '~/utils/ui-labels';
 
 const open = defineModel<boolean>('open', { default: false });
 
@@ -67,7 +68,9 @@ function openStatusEditor(row?: TaskStatusRow) {
   statusForm.nextIds = row ? [...row.nextIds] : statuses.value.length > 0 ? [nonNull(statuses.value[0]).id] : [];
   statusMessage.value = '';
   statusEditorTouched.value = true;
-  open.value = false;
+  // the manager modal STAYS OPEN underneath — the editor stacks on top of it
+  // (EmployeeTitlesManager pattern): closing it here would leave no way back
+  // to the list and save would never reopen it
 }
 
 async function saveStatus() {
@@ -86,7 +89,7 @@ async function saveStatus() {
     statusEditorTouched.value = false;
     editingStatusId.value = null;
   } catch (e) {
-    statusMessage.value = e instanceof Error ? e.message : 'save failed';
+    statusMessage.value = e instanceof Error ? e.message : 'Save failed.';
   } finally {
     statusBusy.value = false;
   }
@@ -100,7 +103,7 @@ async function removeStatus() {
     await statusRemoveMutation.mutateAsync({ id: pendingDelete.value.id });
     pendingDelete.value = null;
   } catch (e) {
-    statusMessage.value = e instanceof Error ? e.message : 'delete failed';
+    statusMessage.value = e instanceof Error ? e.message : 'Delete failed.';
   } finally {
     statusBusy.value = false;
   }
@@ -117,21 +120,8 @@ const categoryOptions = [
   { label: 'Done — completed, agents stop', value: 'done' },
   { label: 'Cancelled — agents stop', value: 'cancelled' },
 ];
-function categoryColor(c: string) {
-  return c === 'ready'
-    ? 'primary'
-    : c === 'working'
-      ? 'warning'
-      : c === 'waiting_answer'
-        ? 'warning'
-        : c === 'in_review'
-          ? 'info'
-          : c === 'done'
-            ? 'success'
-            : c === 'cancelled'
-              ? 'error'
-              : 'neutral';
-}
+// badge colors + labels come from the SHARED ui-labels mapping (imported above) —
+// statuses render the same words/colors as every other surface
 </script>
 
 <template>
@@ -143,19 +133,21 @@ function categoryColor(c: string) {
     >
       <template #body>
         <div class="space-y-4">
-          <p class="text-xs text-zinc-500 dark:text-zinc-400">
+          <p class="text-muted text-xs">
             Define the workflow statuses and which moves are allowed between them (used by the board and the task
             editor).
           </p>
           <p v-if="statusMessage" class="text-error text-sm">{{ statusMessage }}</p>
-          <div v-if="statuses.length" class="divide-y divide-zinc-200 dark:divide-zinc-800">
+          <div v-if="statuses.length" class="divide-default divide-y">
             <div v-for="st in statuses" :key="st.id" class="flex items-center justify-between gap-2 py-2">
               <div class="min-w-0">
-                <p class="flex items-center gap-2 truncate text-sm font-medium text-zinc-900 dark:text-white">
+                <p class="text-highlighted flex items-center gap-2 truncate text-sm font-medium">
                   <UBadge :color="st.color as typeof statusForm.color" variant="subtle" size="sm">{{ st.name }}</UBadge>
-                  <UBadge :color="categoryColor(st.category)" variant="subtle" size="sm">{{ st.category }}</UBadge>
+                  <UBadge :color="categoryColor(st.category)" variant="subtle" size="sm">{{
+                    categoryLabel(st.category)
+                  }}</UBadge>
                 </p>
-                <p class="truncate text-xs text-zinc-400">
+                <p class="text-dimmed truncate text-xs">
                   {{
                     st.nextIds.length
                       ? `→ ${st.nextIds.map((n) => statusById.get(n)?.name ?? n).join(', ')}`
@@ -195,7 +187,7 @@ function categoryColor(c: string) {
               </div>
             </div>
           </div>
-          <p v-else class="text-sm text-zinc-500">No statuses defined.</p>
+          <p v-else class="text-muted text-sm">No statuses defined.</p>
           <div class="flex justify-end">
             <UButton icon="i-lucide-plus" size="sm" label="New status" @click="openStatusEditor()" />
           </div>
@@ -207,9 +199,9 @@ function categoryColor(c: string) {
     <UModal v-model:open="deleteOpen" title="Delete status">
       <template #body>
         <div class="space-y-4">
-          <p class="text-sm text-zinc-600 dark:text-zinc-300">
+          <p class="text-toned text-sm">
             Delete status
-            <span class="font-semibold text-zinc-900 dark:text-white">{{ pendingDelete?.name }}</span
+            <span class="text-highlighted font-semibold">{{ pendingDelete?.name }}</span
             >? A status still used by tasks can't be deleted, and transitions pointing at it are removed.
           </p>
         </div>

@@ -54,6 +54,23 @@ const rows = computed(() => liveQuery.data.value?.data ?? []);
 const total = computed(() => liveQuery.data.value?.total ?? 0);
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 
+// empty-vault detection (zero secrets AND zero folders): the folder filter and
+// the Folders manage button have nothing to filter/manage, so the toolbar drops
+// them and the empty state below carries the single 'New secret' CTA
+const foldersCountQuery = useQuery(
+  $orpc.vault.folders.listPaged.queryOptions({
+    input: { page: 1, pageSize: 1 },
+    queryKey: [CHANGE_RESOURCE.VAULT, 'folders-count'],
+  }),
+);
+const emptyVault = computed(
+  () =>
+    !liveQuery.isPending.value &&
+    total.value === 0 &&
+    foldersCountQuery.isSuccess.value &&
+    (foldersCountQuery.data.value?.total ?? 0) === 0,
+);
+
 // the search box is pointless over an empty, unfiltered list — hide it there
 const showSearch = computed(() => total.value > 0 || !!search.value);
 const isFiltered = computed(() => !!searchDebounced.value);
@@ -169,11 +186,14 @@ onServerPrefetch(() => liveQuery.suspense());
         placeholder="Search secrets…"
         size="sm"
         class="w-full sm:max-w-xs"
+        aria-label="Search secrets"
       />
       <div class="ms-auto flex items-center gap-2 overflow-x-auto">
-        <VaultFolderSelect v-model="folderId" clearable />
+        <!-- nothing to filter or manage while the vault is empty — the empty
+             state below carries the one 'New secret' CTA -->
+        <VaultFolderSelect v-if="!emptyVault" v-model="folderId" clearable />
         <UButton
-          v-if="editable"
+          v-if="editable && !emptyVault"
           icon="i-lucide-folder"
           label="Folders"
           color="neutral"
@@ -181,7 +201,13 @@ onServerPrefetch(() => liveQuery.suspense());
           size="sm"
           @click="emit('manageFolders')"
         />
-        <UButton v-if="editable" icon="i-lucide-plus" label="New secret" size="sm" @click="openEditor()" />
+        <UButton
+          v-if="editable && !emptyVault"
+          icon="i-lucide-plus"
+          label="New secret"
+          size="sm"
+          @click="openEditor()"
+        />
       </div>
     </div>
 
@@ -202,9 +228,7 @@ onServerPrefetch(() => liveQuery.suspense());
       show-empty-state
       :empty-icon="isFiltered ? 'i-lucide-search-x' : 'i-lucide-shield'"
       :empty-text="
-        isFiltered
-          ? 'No results — try a different search.'
-          : 'No secrets yet. Store SSH keys and API tokens here — encrypted at rest.'
+        isFiltered ? 'No results — try a different search.' : 'Store SSH keys and API tokens — encrypted, write-only.'
       "
     >
       <template #empty-cta>
@@ -221,7 +245,7 @@ onServerPrefetch(() => liveQuery.suspense());
       </template>
       <template v-if="editable" #actions-cell="{ row }">
         <div class="row-actions flex justify-end gap-1 transition-opacity">
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-pencil"
               variant="ghost"
@@ -235,7 +259,7 @@ onServerPrefetch(() => liveQuery.suspense());
               <div class="px-3 py-1.5 text-xs">Replace secret</div>
             </template>
           </UPopover>
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-trash-2"
               variant="ghost"
@@ -262,7 +286,7 @@ onServerPrefetch(() => liveQuery.suspense());
           </div>
           <p v-if="row.description" class="text-muted mt-1 text-xs">{{ row.description }}</p>
           <div v-if="editable" class="mt-3 flex justify-end gap-3">
-            <UPopover mode="hover">
+            <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-pencil"
                 variant="ghost"
@@ -276,7 +300,7 @@ onServerPrefetch(() => liveQuery.suspense());
                 <div class="px-3 py-1.5 text-xs">Replace secret</div>
               </template>
             </UPopover>
-            <UPopover mode="hover">
+            <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-trash-2"
                 variant="ghost"
@@ -343,14 +367,13 @@ onServerPrefetch(() => liveQuery.suspense());
                 spellcheck="false"
                 :class="showValue ? 'font-mono' : 'secret-masked font-mono'"
               />
-              <UPopover mode="hover">
+              <UPopover mode="hover" enable-touch>
                 <UButton
                   :icon="showValue ? 'i-lucide-eye-off' : 'i-lucide-eye'"
                   variant="link"
                   color="neutral"
                   size="sm"
                   :aria-label="showValue ? 'Hide value' : 'Show value'"
-                  tabindex="-1"
                   class="absolute top-1 right-1"
                   @click="showValue = !showValue"
                 />

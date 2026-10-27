@@ -18,7 +18,8 @@ export type ThreadBriefItem = {
 export type ThreadRunItem = {
   kind: 'run';
   id: string;
-  status: 'running' | 'done' | 'failed';
+  /** real settled run status — consumers map it to labels/colors themselves */
+  status: 'running' | 'done' | 'failed' | 'cancelled' | 'timeout' | 'stopped';
   exitCode: number | null;
   output: string;
   /** the agent (employee) that ran this turn, for the chat bubble label */

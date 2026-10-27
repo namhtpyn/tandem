@@ -88,6 +88,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
       :aria-activedescendant="activeDescendant"
       @update:model-value="input"
       @focus="open = true"
+      @blur="open = false"
       @keydown="onKeydown"
     />
     <div
@@ -108,7 +109,6 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
         @mousedown.prevent="pick(m)"
         @mousemove="activeIndex = i"
       >
-        <UIcon :name="icon ?? 'i-lucide-check'" class="text-primary size-3.5 shrink-0" />
         <span class="truncate">{{ m }}</span>
       </button>
       <div

@@ -26,12 +26,21 @@ const CATEGORY_LABELS: Record<string, string> = {
   cancelled: 'Cancelled',
 };
 
+/** map-miss fallback: humanize the raw enum ('IN_PROGRESS' → 'In progress') —
+ * SCREAMING_SNAKE_CASE values must never reach the UI verbatim */
+function humanizeEnum(value: string): string {
+  const words = value.replace(/[_-]+/g, ' ').trim().replace(/\s+/g, ' ');
+  if (!words) return value;
+  return words.charAt(0).toUpperCase() + words.slice(1).toLowerCase();
+}
+
 export function categoryLabel(category: string | null | undefined): string {
-  return (category && CATEGORY_LABELS[category]) || category || '';
+  if (!category) return '';
+  return CATEGORY_LABELS[category] ?? humanizeEnum(category);
 }
 
 export function kindLabel(kind: string | null | undefined): string {
   if (kind === 'ai') return 'AI agent';
   if (kind === 'human') return 'Human';
-  return kind ?? '';
+  return kind ? humanizeEnum(kind) : '';
 }

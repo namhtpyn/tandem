@@ -18,14 +18,16 @@ describe('ui-labels', () => {
     expect(categoryLabel('waiting_answer')).toBe('Waiting answer');
     expect(categoryLabel('in_review')).toBe('In review');
     expect(categoryLabel('todo')).toBe('To do');
-    expect(categoryLabel('mystery')).toBe('mystery');
+    // map-miss: humanized, never the raw enum
+    expect(categoryLabel('mystery')).toBe('Mystery');
+    expect(categoryLabel('IN_FLIGHT')).toBe('In flight');
     expect(categoryLabel(undefined)).toBe('');
   });
 
   it('humanizes employee kinds', () => {
     expect(kindLabel('ai')).toBe('AI agent');
     expect(kindLabel('human')).toBe('Human');
-    expect(kindLabel('other')).toBe('other');
+    expect(kindLabel('other')).toBe('Other');
     expect(kindLabel(null)).toBe('');
   });
 });
@@ -34,7 +36,17 @@ describe('formatDate', () => {
   it('renders date-only and tolerates junk', () => {
     const d = new Date(2026, 9, 27, 14, 30);
     expect(formatDate(d)).toBe(d.toLocaleDateString());
-    expect(formatWhen(d)).toBe(d.toLocaleString());
+    // formatWhen drops seconds — date + HH:MM only
+    expect(formatWhen(d)).toBe(
+      d.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+    );
+    expect(formatWhen(d)).not.toMatch(/:\d{2}:\d{2}/);
     expect(formatDate(null)).toBe('');
     expect(formatDate('not-a-date')).toBe('');
   });

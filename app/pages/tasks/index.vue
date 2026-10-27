@@ -7,14 +7,20 @@ useHead({ title: 'Tasks' });
 <template>
   <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
     <template #body>
-      <UDashboardNavbar title="Tasks">
+      <UDashboardNavbar>
         <template #leading>
           <UDashboardSidebarCollapse />
         </template>
+        <!-- title + subtitle are ONE unit in the navbar — a subtitle floating
+             under the bar reads as an orphan; hidden on mobile -->
+        <template #title>
+          <div class="min-w-0">
+            <p class="text-highlighted truncate text-base font-semibold">Tasks</p>
+            <p class="text-muted hidden text-xs sm:block">Work items for humans and AI agents</p>
+          </div>
+        </template>
       </UDashboardNavbar>
       <div class="p-4 sm:p-6 lg:p-8">
-        <!-- subtitle sits directly under the page title (small, muted); hidden on mobile -->
-        <p class="text-muted hidden pb-3 text-sm sm:block">Work items for humans and AI agents</p>
         <TasksManager />
       </div>
     </template>

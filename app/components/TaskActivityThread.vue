@@ -5,9 +5,9 @@ import { useQuery } from '@tanstack/vue-query';
 // activity + employees (same query keys the app-wide changes subscription
 // invalidates; SSE law: first load is a conventional GET) and autoscrolls to
 // the newest item. Props: the resolved `task` row.
-import { computed, nextTick, onServerPrefetch, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onServerPrefetch, ref, watch } from 'vue';
 
-import { CHANGE_RESOURCE } from '#shared/enums';
+import { ACTIVITY_KIND, CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 import { formatWhenShort } from '~/utils/format-when';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
@@ -104,6 +104,28 @@ const RUN_LABEL: Record<RunStatus, string> = {
   stopped: 'Stopped',
 };
 
+// system pills fall back to the note kind when there's no body — never leak the
+// raw enum (the API stores SCREAMING kinds; older rows may hold lowercase)
+const NOTE_KIND_LABELS: Record<string, string> = {
+  [ACTIVITY_KIND.NOTE]: 'Note',
+  [ACTIVITY_KIND.QUESTION]: 'Question',
+  [ACTIVITY_KIND.ANSWER]: 'Answer',
+  [ACTIVITY_KIND.VERDICT]: 'Review verdict',
+  [ACTIVITY_KIND.FORWARD]: 'Forwarded',
+  [ACTIVITY_KIND.STATUS]: 'Status',
+};
+function noteKindLabel(kind: string) {
+  return NOTE_KIND_LABELS[kind] ?? NOTE_KIND_LABELS[kind.toUpperCase()] ?? kind;
+}
+function noteKindIcon(kind: string) {
+  const k = kind.toLowerCase();
+  if (k === 'question') return 'i-lucide-help-circle';
+  if (k === 'answer') return 'i-lucide-check-check';
+  if (k === 'forward') return 'i-lucide-corner-up-right';
+  if (k === 'verdict') return 'i-lucide-gavel';
+  return 'i-lucide-info';
+}
+
 // ---- one ordered timeline from runs + activity + description -----------------
 const thread = computed<ThreadItem[]>(() =>
   buildThread({
@@ -111,13 +133,11 @@ const thread = computed<ThreadItem[]>(() =>
     createdAt: props.task.createdAt ?? null,
     briefAuthorName: props.task.creatorName ?? null,
     briefAuthorId: props.task.createdBy ?? null,
+    // pass the REAL settled status + finish time through — the display reads
+    // runStatusById, but the item data should not lie about the run
     runs: runFeed.value.map((r) => ({
       id: r.id,
-      status: (r.status.toLowerCase() === 'running'
-        ? 'running'
-        : r.status.toLowerCase() === 'done'
-          ? 'done'
-          : 'failed') as 'running' | 'done' | 'failed',
+      status: mapRunStatus(r.status),
       output: r.output,
       prompt: r.prompt,
       body: r.body,
@@ -126,7 +146,7 @@ const thread = computed<ThreadItem[]>(() =>
       authorName: r.authorName ?? null,
       exitCode: r.exitCode,
       startedAt: r.startedAt,
-      finishedAt: null,
+      finishedAt: r.finishedAt ?? null,
     })),
     activity: workflowFeed.value.map((a) => ({
       id: a.id,
@@ -146,13 +166,30 @@ const outputsByRun = computed(() => {
   for (const r of runFeed.value) if (r.outputs?.length) m.set(r.id, r.outputs);
   return m;
 });
+// anchor to the newest item on first arrival, then FOLLOW the reader: only keep
+// autoscrolling while they're already near the bottom — scrolled-up history
+// must not yank them back down on every new item
+let anchored = false;
 watch(
   () => thread.value.length,
   async () => {
     await nextTick();
-    scroller.value?.scrollTo({ top: scroller.value.scrollHeight });
+    const el = scroller.value;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (!anchored || nearBottom) el.scrollTo({ top: el.scrollHeight });
+    anchored = true;
   },
 );
+// SSR path: the thread hydrates FULL (suspense), so the length-watch never
+// fires — anchor to the bottom once on mount instead
+onMounted(async () => {
+  await nextTick();
+  const el = scroller.value;
+  if (!el || !thread.value.length) return;
+  el.scrollTo({ top: el.scrollHeight });
+  anchored = true;
+});
 
 function runOutputs(item: ThreadItem) {
   return item.kind === 'run' ? (outputsByRun.value.get(item.id) ?? []) : [];
@@ -200,200 +237,198 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
 </script>
 
 <template>
-  <!-- the thread: content only — the page owns the single card border -->
-  <div ref="scroller" class="max-h-[min(60dvh,42rem)] min-h-0 flex-1 space-y-4 overflow-y-auto p-3.5 lg:max-h-none">
-    <p v-if="!thread.length" class="text-dimmed py-10 text-center text-xs">
+  <!-- the thread: content only — the page owns the single card border.
+       Bottom-anchored: short conversations hug the composer (mt-auto), and the
+       empty state sits centered in the scroller. -->
+  <div ref="scroller" class="flex max-h-[min(60dvh,42rem)] min-h-0 flex-1 flex-col overflow-y-auto p-3.5 lg:max-h-none">
+    <p v-if="!thread.length" class="text-dimmed my-auto py-10 text-center text-xs">
       No activity yet — write a note below or dispatch the agent.
     </p>
-
-    <template v-for="item in thread" :key="item.id">
-      <!-- brief: the task description as the opening message -->
-      <div v-if="item.kind === 'brief'" class="flex gap-2.5">
-        <img
-          v-if="item.authorId && hasAvatarByUserId.get(item.authorId)"
-          :src="`/api/employees/${item.authorId}/avatar`"
-          :alt="item.authorName ?? 'Task brief'"
-          class="mt-0.5 size-8 shrink-0 rounded-full object-cover"
-        />
-        <div
-          v-else
-          class="bg-accented text-toned mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
-        >
-          {{ briefAuthor ? briefAuthor.slice(0, 2).toUpperCase() : 'T' }}
-        </div>
-        <div class="min-w-0 flex-1">
-          <p class="text-dimmed mb-1 text-[11px] font-medium">
-            {{ briefAuthor ?? 'Task brief' }}
-            <span v-if="item.createdAt" class="text-muted font-normal">· {{ formatWhenShort(item.createdAt) }}</span>
-          </p>
-          <!-- description: mention tokens -> @Name; attachment tokens -> inline images / file chips -->
-          <div
-            class="border-default bg-muted text-default inline-block max-w-[85%] rounded-xl rounded-tl-sm border px-3.5 py-2.5 text-sm leading-relaxed"
-          >
-            <template v-for="(p, i) in briefParts" :key="i">
-              <span
-                v-if="p.type === 'mention'"
-                class="bg-primary/10 text-primary mx-0.5 inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-medium"
-                >@{{ p.label }}</span
-              >
-              <span v-if="p.type === 'text'" class="whitespace-pre-wrap">{{ p.body }}</span>
-              <img
-                v-else-if="p.type === 'image'"
-                :src="`/api/attachments/${p.id}`"
-                :alt="p.alt"
-                class="border-default my-1.5 max-h-64 rounded-lg border"
-              />
-              <a
-                v-else-if="p.type === 'file'"
-                :href="`/api/attachments/${p.id}`"
-                target="_blank"
-                class="border-default bg-default text-toned hover:border-primary/50 hover:text-primary my-1 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium"
-                ><UIcon name="i-lucide-file-text" class="size-3.5 shrink-0" />{{ p.name }}</a
-              >
-            </template>
-          </div>
-        </div>
-      </div>
-
-      <!-- run: an agent turn — rendered like any chat message: avatar + bubble -->
-      <div v-else-if="item.kind === 'run'" class="flex gap-2.5">
-        <img
-          v-if="item.authorId && hasAvatarByUserId.get(item.authorId)"
-          :src="`/api/employees/${item.authorId}/avatar`"
-          :alt="item.agentName ?? 'Agent'"
-          class="mt-0.5 size-8 shrink-0 rounded-full object-cover"
-        />
-        <div
-          v-else
-          class="bg-elevated text-muted mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
-        >
-          {{ (item.authorName ?? item.agentName ?? 'Agent').slice(0, 2).toUpperCase() }}
-        </div>
-        <div class="min-w-0 flex-1">
-          <p class="mb-1 flex items-center gap-1.5 text-[11px] leading-none">
-            <span class="text-toned font-semibold">{{ item.agentName ?? 'Agent' }}</span>
-            <span class="text-primary">(AI)</span>
-            <!-- tiny neutral run label — NOT a second status pill (the header badge owns task status) -->
-            <span class="text-dimmed inline-flex items-center gap-1 text-[10px] font-medium tracking-wide uppercase">
-              <UIcon
-                v-if="runStatusById.get(item.id) === 'running'"
-                name="i-lucide-loader-circle"
-                class="size-3 animate-spin"
-              />
-              {{ RUN_LABEL[runStatusById.get(item.id) ?? 'stopped']
-              }}<span v-if="runStatusById.get(item.id) === 'failed' && item.exitCode" class="font-normal normal-case">
-                (exit code {{ item.exitCode }})</span
-              >
-            </span>
-            <span class="text-muted ml-auto">{{ formatWhenShort(item.startedAt) }}</span>
-          </p>
-          <!-- message: the settled result body; envelope parse only as a pre-settle fallback -->
-          <div
-            v-if="item.body || envelopeOf(item)"
-            class="bg-elevated text-default inline-block max-w-[85%] rounded-xl rounded-tl-sm px-3.5 py-2 text-sm leading-relaxed"
-          >
-            {{ item.body || envelopeOf(item)?.text || '(empty)' }}
-          </div>
-          <!-- collected output files (agent deliverables) -->
-          <div v-if="runOutputs(item).length" class="mt-1.5 flex flex-wrap gap-1.5">
-            <template v-for="f in runOutputs(item)" :key="f.id">
-              <img
-                v-if="f.mime.startsWith('image/')"
-                :src="`/api/attachments/${f.id}`"
-                :alt="f.filename"
-                class="border-default max-h-48 rounded-lg border"
-              />
-              <a
-                v-else
-                :href="`/api/attachments/${f.id}`"
-                target="_blank"
-                class="border-default bg-default text-toned hover:border-primary/50 hover:text-primary inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium"
-                ><UIcon
-                  :name="f.mime === 'application/pdf' ? 'i-lucide-file-text' : 'i-lucide-file'"
-                  class="size-3.5 shrink-0"
-                />{{ f.filename
-                }}<span class="text-dimmed font-normal">{{ Math.max(1, Math.round(f.size / 1024)) }}KB</span></a
-              >
-            </template>
-          </div>
-          <!-- raw input: the exact brief, expandable below the message -->
-          <details v-if="item.prompt" class="group mt-1">
-            <summary
-              class="text-muted hover:bg-elevated focus-visible:ring-primary inline-flex cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-xs select-none focus-visible:ring-2 focus-visible:outline-none"
-            >
-              <UIcon name="i-lucide-chevron-right" class="size-3.5 transition-transform group-open:rotate-90" />
-              input
-            </summary>
-            <pre
-              class="bg-elevated text-toned mt-1 rounded-md px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
-              >{{ item.prompt }}</pre>
-          </details>
-          <!-- raw output: FULL transcript, expandable below the message -->
-          <details v-if="item.output" class="group mt-1">
-            <summary
-              class="text-muted hover:bg-elevated focus-visible:ring-primary inline-flex cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-xs select-none focus-visible:ring-2 focus-visible:outline-none"
-            >
-              <UIcon name="i-lucide-chevron-right" class="size-3.5 transition-transform group-open:rotate-90" />
-              output
-            </summary>
-            <pre
-              class="mt-1 rounded-md bg-zinc-950 px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-zinc-200"
-              >{{ item.output }}</pre>
-          </details>
-        </div>
-      </div>
-
-      <!-- note: slim system/human activity row -->
-      <!-- human note: left bubble with initials avatar -->
-      <div v-else-if="item.authorName" class="flex gap-2.5">
-        <img
-          v-if="item.authorId && hasAvatarByUserId.get(item.authorId)"
-          :src="`/api/employees/${item.authorId}/avatar`"
-          :alt="item.authorName"
-          class="mt-0.5 size-8 shrink-0 rounded-full object-cover"
-        />
-        <div
-          v-else
-          class="bg-elevated text-muted mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
-        >
-          {{ item.authorName.slice(0, 2).toUpperCase() }}
-        </div>
-        <div class="min-w-0 flex-1">
-          <p class="mb-1 flex items-center gap-1.5 text-[11px] leading-none">
-            <span class="text-toned font-semibold">{{ item.authorName }}</span>
-            <span class="text-muted">{{ formatWhenShort(item.createdAt) }}</span>
-          </p>
-          <div
-            v-if="item.body"
-            class="bg-elevated text-default inline-block max-w-[85%] rounded-xl rounded-tl-sm px-3.5 py-2 text-sm leading-relaxed"
-          >
-            {{ item.body }}
-          </div>
-        </div>
-      </div>
-      <!-- system note: centered pill -->
-      <div v-else class="flex justify-center py-0.5">
-        <span
-          class="bg-elevated/60 text-muted inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px]"
-        >
-          <UIcon
-            :name="
-              item.noteKind === 'question'
-                ? 'i-lucide-help-circle'
-                : item.noteKind === 'answer'
-                  ? 'i-lucide-check-check'
-                  : item.noteKind === 'forward'
-                    ? 'i-lucide-corner-up-right'
-                    : item.noteKind === 'verdict'
-                      ? 'i-lucide-gavel'
-                      : 'i-lucide-info'
-            "
-            class="size-3 shrink-0"
+    <div v-else class="mt-auto space-y-4">
+      <template v-for="item in thread" :key="item.id">
+        <!-- brief: the task description as the opening message -->
+        <div v-if="item.kind === 'brief'" class="flex gap-2.5">
+          <img
+            v-if="item.authorId && hasAvatarByUserId.get(item.authorId)"
+            :src="`/api/employees/${item.authorId}/avatar`"
+            :alt="item.authorName ?? 'Task brief'"
+            class="mt-0.5 size-8 shrink-0 rounded-full object-cover"
           />
-          <span class="truncate">{{ item.body || item.noteKind }}</span>
-          <span class="text-muted shrink-0">· {{ formatWhenShort(item.createdAt) }}</span>
-        </span>
-      </div>
-    </template>
+          <div
+            v-else
+            class="bg-accented text-toned mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
+          >
+            {{ briefAuthor ? briefAuthor.slice(0, 2).toUpperCase() : 'T' }}
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="text-dimmed mb-1 text-[11px] font-medium">
+              {{ briefAuthor ?? 'Task brief' }}
+              <span v-if="item.createdAt" class="text-muted font-normal">· {{ formatWhenShort(item.createdAt) }}</span>
+            </p>
+            <!-- description: mention tokens -> @Name; attachment tokens -> inline images / file chips -->
+            <div
+              class="border-default bg-muted text-default inline-block max-w-[85%] rounded-xl rounded-tl-sm border px-3.5 py-2.5 text-sm leading-relaxed"
+            >
+              <template v-for="(p, i) in briefParts" :key="i">
+                <span
+                  v-if="p.type === 'mention'"
+                  class="bg-primary/10 text-primary mx-0.5 inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-medium"
+                  >@{{ p.label }}</span
+                >
+                <span v-if="p.type === 'text'" class="whitespace-pre-wrap">{{ p.body }}</span>
+                <img
+                  v-else-if="p.type === 'image'"
+                  :src="`/api/attachments/${p.id}`"
+                  :alt="p.alt"
+                  class="border-default my-1.5 max-h-64 rounded-lg border"
+                />
+                <a
+                  v-else-if="p.type === 'file'"
+                  :href="`/api/attachments/${p.id}`"
+                  target="_blank"
+                  class="border-default bg-default text-toned hover:border-primary/50 hover:text-primary my-1 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium"
+                  ><UIcon name="i-lucide-file-text" class="size-3.5 shrink-0" />{{ p.name }}</a
+                >
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- run: an agent turn — rendered like any chat message: avatar + bubble -->
+        <div v-else-if="item.kind === 'run'" class="flex gap-2.5">
+          <img
+            v-if="item.authorId && hasAvatarByUserId.get(item.authorId)"
+            :src="`/api/employees/${item.authorId}/avatar`"
+            :alt="item.agentName ?? 'Agent'"
+            class="mt-0.5 size-8 shrink-0 rounded-full object-cover"
+          />
+          <div
+            v-else
+            class="bg-elevated text-muted mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
+          >
+            {{ (item.authorName ?? item.agentName ?? 'Agent').slice(0, 2).toUpperCase() }}
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="mb-1 flex items-center gap-1.5 text-[11px] leading-none">
+              <span class="text-toned font-semibold">{{ item.agentName ?? 'Agent' }}</span>
+              <span class="text-primary">(AI)</span>
+              <!-- meta cluster: the tiny neutral run label rides NEXT TO the time,
+                 never orphaned mid-row on a narrow phone -->
+              <span class="text-muted ml-auto inline-flex shrink-0 items-center gap-1.5">
+                <span
+                  class="text-dimmed inline-flex items-center gap-1 text-[10px] font-medium tracking-wide uppercase"
+                >
+                  <UIcon
+                    v-if="runStatusById.get(item.id) === 'running'"
+                    name="i-lucide-loader-circle"
+                    class="size-3 motion-safe:animate-spin"
+                  />
+                  {{ RUN_LABEL[runStatusById.get(item.id) ?? 'stopped']
+                  }}<span
+                    v-if="runStatusById.get(item.id) === 'failed' && item.exitCode"
+                    class="font-normal normal-case"
+                  >
+                    (exit code {{ item.exitCode }})</span
+                  >
+                </span>
+                {{ formatWhenShort(item.startedAt) }}
+              </span>
+            </p>
+            <!-- message: the settled result body; envelope parse only as a pre-settle fallback -->
+            <div
+              v-if="item.body || envelopeOf(item)"
+              class="bg-elevated text-default inline-block max-w-[85%] rounded-xl rounded-tl-sm px-3.5 py-2 text-sm leading-relaxed"
+            >
+              {{ item.body || envelopeOf(item)?.text || '(empty)' }}
+            </div>
+            <!-- collected output files (agent deliverables) -->
+            <div v-if="runOutputs(item).length" class="mt-1.5 flex flex-wrap gap-1.5">
+              <template v-for="f in runOutputs(item)" :key="f.id">
+                <img
+                  v-if="f.mime.startsWith('image/')"
+                  :src="`/api/attachments/${f.id}`"
+                  :alt="f.filename"
+                  class="border-default max-h-48 rounded-lg border"
+                />
+                <a
+                  v-else
+                  :href="`/api/attachments/${f.id}`"
+                  target="_blank"
+                  class="border-default bg-default text-toned hover:border-primary/50 hover:text-primary inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium"
+                  ><UIcon
+                    :name="f.mime === 'application/pdf' ? 'i-lucide-file-text' : 'i-lucide-file'"
+                    class="size-3.5 shrink-0"
+                  />{{ f.filename
+                  }}<span class="text-dimmed font-normal">{{ Math.max(1, Math.round(f.size / 1024)) }}KB</span></a
+                >
+              </template>
+            </div>
+            <!-- raw input: the exact brief, expandable below the message -->
+            <details v-if="item.prompt" class="group mt-1">
+              <summary
+                class="text-muted hover:bg-elevated focus-visible:ring-primary inline-flex cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-xs select-none focus-visible:ring-2 focus-visible:outline-none"
+              >
+                <UIcon name="i-lucide-chevron-right" class="size-3.5 transition-transform group-open:rotate-90" />
+                input
+              </summary>
+              <pre
+                class="bg-elevated text-toned mt-1 rounded-md px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
+                >{{ item.prompt }}</pre>
+            </details>
+            <!-- raw output: FULL transcript, expandable below the message -->
+            <details v-if="item.output" class="group mt-1">
+              <summary
+                class="text-muted hover:bg-elevated focus-visible:ring-primary inline-flex cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-xs select-none focus-visible:ring-2 focus-visible:outline-none"
+              >
+                <UIcon name="i-lucide-chevron-right" class="size-3.5 transition-transform group-open:rotate-90" />
+                output
+              </summary>
+              <pre
+                class="bg-inverted text-inverted mt-1 rounded-md px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
+                >{{ item.output }}</pre>
+            </details>
+          </div>
+        </div>
+
+        <!-- note: slim system/human activity row -->
+        <!-- human note: left bubble with initials avatar -->
+        <div v-else-if="item.authorName" class="flex gap-2.5">
+          <img
+            v-if="item.authorId && hasAvatarByUserId.get(item.authorId)"
+            :src="`/api/employees/${item.authorId}/avatar`"
+            :alt="item.authorName"
+            class="mt-0.5 size-8 shrink-0 rounded-full object-cover"
+          />
+          <div
+            v-else
+            class="bg-elevated text-muted mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
+          >
+            {{ item.authorName.slice(0, 2).toUpperCase() }}
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="mb-1 flex items-center gap-1.5 text-[11px] leading-none">
+              <span class="text-toned font-semibold">{{ item.authorName }}</span>
+              <span class="text-muted">{{ formatWhenShort(item.createdAt) }}</span>
+            </p>
+            <div
+              v-if="item.body"
+              class="bg-elevated text-default inline-block max-w-[85%] rounded-xl rounded-tl-sm px-3.5 py-2 text-sm leading-relaxed"
+            >
+              {{ item.body }}
+            </div>
+          </div>
+        </div>
+        <!-- system note: centered pill -->
+        <div v-else class="flex justify-center py-0.5">
+          <span
+            class="bg-elevated/60 text-muted inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px]"
+          >
+            <UIcon :name="noteKindIcon(item.noteKind)" class="size-3 shrink-0" />
+            <span class="truncate">{{ item.body || noteKindLabel(item.noteKind) }}</span>
+            <span class="text-muted shrink-0">· {{ formatWhenShort(item.createdAt) }}</span>
+          </span>
+        </div>
+      </template>
+    </div>
   </div>
 </template>

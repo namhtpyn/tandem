@@ -132,6 +132,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
         placeholder="Search employees…"
         size="sm"
         class="w-full sm:max-w-xs"
+        aria-label="Search employees"
       />
       <div class="ms-auto flex items-center gap-2 overflow-x-auto">
         <div class="border-default inline-flex overflow-hidden rounded-md border" role="group" aria-label="View">
@@ -219,8 +220,15 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
       <template #supervisors-cell="{ row }">
         <div class="flex flex-wrap gap-1">
           <template v-if="row.original.supervisorIds.length">
-            <UBadge v-for="sid in row.original.supervisorIds" :key="sid" color="neutral" variant="soft" size="sm">
-              {{ byId.get(sid)?.name ?? sid.slice(0, 8) }}
+            <UBadge
+              v-for="sid in row.original.supervisorIds"
+              :key="sid"
+              color="neutral"
+              variant="soft"
+              size="sm"
+              :class="byId.get(sid) ? undefined : 'text-dimmed italic'"
+            >
+              {{ byId.get(sid)?.name ?? 'Unassigned' }}
             </UBadge>
           </template>
           <span v-else class="text-dimmed text-xs">—</span>
@@ -234,7 +242,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
       </template>
       <template #actions-cell="{ row }">
         <div class="row-actions flex justify-end gap-1 transition-opacity">
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-key-round"
               variant="ghost"
@@ -248,7 +256,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
               <div class="px-3 py-1.5 text-xs">Access keys</div>
             </template>
           </UPopover>
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-pencil"
               variant="ghost"
@@ -262,7 +270,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
               <div class="px-3 py-1.5 text-xs">Edit employee</div>
             </template>
           </UPopover>
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-trash-2"
               variant="ghost"
@@ -308,8 +316,15 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
             v-if="row.supervisorIds.length || (row.kind === 'ai' && row.environmentId)"
             class="mt-2 flex flex-wrap gap-1"
           >
-            <UBadge v-for="sid in row.supervisorIds" :key="sid" color="neutral" variant="soft" size="sm">
-              {{ byId.get(sid)?.name ?? sid.slice(0, 8) }}
+            <UBadge
+              v-for="sid in row.supervisorIds"
+              :key="sid"
+              color="neutral"
+              variant="soft"
+              size="sm"
+              :class="byId.get(sid) ? undefined : 'text-dimmed italic'"
+            >
+              {{ byId.get(sid)?.name ?? 'Unassigned' }}
             </UBadge>
             <UBadge
               v-if="row.kind === 'ai' && row.environmentId"
@@ -322,7 +337,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
             </UBadge>
           </div>
           <div class="mt-3 flex justify-end gap-1">
-            <UPopover mode="hover">
+            <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-key-round"
                 variant="ghost"
@@ -336,7 +351,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
                 <div class="px-3 py-1.5 text-xs">Access keys</div>
               </template>
             </UPopover>
-            <UPopover mode="hover">
+            <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-pencil"
                 variant="ghost"
@@ -350,7 +365,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
                 <div class="px-3 py-1.5 text-xs">Edit employee</div>
               </template>
             </UPopover>
-            <UPopover mode="hover">
+            <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-trash-2"
                 variant="ghost"

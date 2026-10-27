@@ -11,6 +11,7 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import { computed, ref } from 'vue';
 
 import { CHANGE_RESOURCE, PROPOSAL_KIND, type ProposalKind } from '#shared/enums';
+import { formatWhenShort } from '~/utils/format-when';
 import type { EmployeeRow, TaskStatusRow } from '~/utils/orpc-types';
 import { categoryColor } from '~/utils/ui-labels';
 
@@ -117,18 +118,6 @@ async function decideProposal(id: string, action: 'confirmProposal' | 'rejectPro
 }
 
 const openProposals = computed(() => proposalRows.value.filter((p) => p.status?.toLowerCase() === 'proposed'));
-// assignment history, structured: who (muted row) + a short reason tag on the
-// right — never a raw audit sentence like 'Jay took over from Unassigned (created)'
-const ASSIGNMENT_REASON: Record<string, string> = {
-  created: 'on create',
-  manual: 'manual',
-  subtask: 'via subtask',
-  'subtask-escalated': 'escalated',
-};
-/** known reasons map to short phrases; free text (reassign why) passes through */
-function reasonLabel(reason: string) {
-  return ASSIGNMENT_REASON[reason] ?? reason;
-}
 
 /** subtask badge: joined status row — its NAME in the shared category color (never the raw id) */
 function subtaskBadge(c: ChildRow): {
@@ -213,9 +202,10 @@ function subtaskBadge(c: ChildRow): {
   <div v-if="assignmentRows.length" data-testid="assignment-history">
     <h3 class="text-muted mb-2 text-xs font-medium">Assignees</h3>
     <ul class="space-y-1 text-xs">
+      <!-- who + when — the when replaces dev-speak reason tags like '(on create)' -->
       <li v-for="a in assignmentRows" :key="a.id" class="flex items-baseline justify-between gap-2">
         <span class="text-toned min-w-0 truncate">Assigned to {{ a.employeeName ?? 'Unassigned' }}</span>
-        <span v-if="reasonLabel(a.reason)" class="text-dimmed shrink-0">({{ reasonLabel(a.reason) }})</span>
+        <span class="text-dimmed shrink-0" suppressHydration-warning>· {{ formatWhenShort(a.startedAt) }}</span>
       </li>
     </ul>
   </div>

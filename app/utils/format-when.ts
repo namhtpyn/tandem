@@ -2,7 +2,15 @@
 export function formatWhen(value: string | Date | null | undefined): string {
   if (!value) return '';
   const d = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString();
+  if (Number.isNaN(d.getTime())) return '';
+  // seconds add noise everywhere this renders — date + HH:MM only
+  return d.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 // date-only variant for lists where the time of day adds noise (keys, credentials)

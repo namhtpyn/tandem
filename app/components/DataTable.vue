@@ -126,11 +126,34 @@ defineSlots<
 const slots = useSlots();
 const desktopSlotNames = computed(() => Object.keys(slots).filter((n) => n !== 'mobile-item' && n !== 'toolbar'));
 
-const titleKey = computed(() => {
-  if (props.mobileTitleKey) return props.mobileTitleKey;
-  const first = props.columns.find((c) => 'accessorKey' in c && c.accessorKey);
-  return first && 'accessorKey' in first ? String(first.accessorKey) : undefined;
+// mobile card title: the mobileTitleKey column when resolvable, else the first
+// column — a card without a title line reads as a rendering bug, so there is
+// always a first column to render
+const titleColumn = computed<TableColumn<T> | undefined>(() => {
+  if (props.mobileTitleKey) {
+    const named = props.columns.find(
+      (c) => ('accessorKey' in c && String(c.accessorKey) === props.mobileTitleKey) || c.id === props.mobileTitleKey,
+    );
+    if (named) return named;
+  }
+  return props.columns.find((c) => 'accessorKey' in c && c.accessorKey) ?? props.columns[0];
 });
+const titleKey = computed(() => {
+  const col = titleColumn.value;
+  if (!col) return undefined;
+  return 'accessorKey' in col && col.accessorKey ? String(col.accessorKey) : (col.id ?? undefined);
+});
+
+/** header as display text for the mobile dl — a fn header would print its source */
+function headerLabel(col: TableColumn<T>): string {
+  if (typeof col.header === 'string') return col.header;
+  const key = 'accessorKey' in col ? String(col.accessorKey ?? '') : (col.id ?? '');
+  return key
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .trim()
+    .replace(/^./, (c) => c.toUpperCase());
+}
 
 function detailColumns() {
   return props.columns.filter((c) => {
@@ -157,6 +180,7 @@ function cellValue(row: T, col: TableColumn<T>) {
         :model-value="search"
         icon="i-lucide-search"
         :placeholder="searchPlaceholder"
+        :aria-label="searchPlaceholder.replace('…', '')"
         size="sm"
         class="w-full sm:max-w-xs"
         @update:model-value="(v: string) => emit('update:search', v)"
@@ -187,11 +211,11 @@ function cellValue(row: T, col: TableColumn<T>) {
         <slot name="mobile-item" :row="row">
           <UCard :ui="{ root: 'shadow-sm' }">
             <p class="text-highlighted truncate text-sm font-medium">
-              {{ titleKey ? cellValue(row, { accessorKey: titleKey }) : '' }}
+              {{ titleColumn ? cellValue(row, titleColumn) : '' }}
             </p>
             <dl v-if="detailColumns().length" class="mt-2 space-y-1">
               <div v-for="col in detailColumns()" :key="col.id" class="flex items-baseline justify-between gap-3">
-                <dt class="text-muted shrink-0 text-xs">{{ col.header }}</dt>
+                <dt class="text-muted shrink-0 text-xs">{{ headerLabel(col) }}</dt>
                 <dd class="text-highlighted min-w-0 truncate text-right text-xs">
                   {{ cellValue(row, col) }}
                 </dd>
@@ -202,10 +226,11 @@ function cellValue(row: T, col: TableColumn<T>) {
       </template>
     </div>
 
-    <!-- opt-in empty state: a live search yields a no-results line, otherwise
-         the parent's no-data branding (icon + text props) -->
+    <!-- no-results line for ANY live search over empty rows (independent of
+         showEmptyState, per the prop contract); without a filter the opt-in
+         empty state renders the parent's no-data branding (icon + text + CTA) -->
     <div
-      v-if="showEmptyState && !data.length && !loading"
+      v-if="!data.length && !loading && (isFiltered || showEmptyState)"
       class="flex flex-col items-center justify-center gap-3 py-24 text-center"
     >
       <UIcon

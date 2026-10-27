@@ -207,6 +207,7 @@ onServerPrefetch(() => liveQuery.suspense());
         placeholder="Search projects…"
         size="sm"
         class="w-full sm:max-w-xs"
+        aria-label="Search projects"
       />
       <div class="ms-auto flex items-center gap-2 overflow-x-auto">
         <UButton icon="i-lucide-plus" label="New project" size="sm" @click="openEditor()" />
@@ -258,7 +259,7 @@ onServerPrefetch(() => liveQuery.suspense());
       </template>
       <template #actions-cell="{ row }">
         <div class="row-actions flex justify-end gap-1 transition-opacity">
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-plus"
               variant="ghost"
@@ -274,7 +275,7 @@ onServerPrefetch(() => liveQuery.suspense());
               <div class="px-3 py-1.5 text-xs">Add subproject</div>
             </template>
           </UPopover>
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-pencil"
               variant="ghost"
@@ -287,7 +288,7 @@ onServerPrefetch(() => liveQuery.suspense());
               <div class="px-3 py-1.5 text-xs">Edit project</div>
             </template>
           </UPopover>
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-trash-2"
               variant="ghost"
@@ -317,7 +318,7 @@ onServerPrefetch(() => liveQuery.suspense());
             <UBadge :color="statusColor(row.status)" variant="subtle" size="sm">{{ statusLabel(row.status) }}</UBadge>
           </div>
           <div class="mt-3 flex justify-end gap-1">
-            <UPopover mode="hover">
+            <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-plus"
                 variant="ghost"
@@ -333,7 +334,7 @@ onServerPrefetch(() => liveQuery.suspense());
                 <div class="px-3 py-1.5 text-xs">Add subproject</div>
               </template>
             </UPopover>
-            <UPopover mode="hover">
+            <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-pencil"
                 variant="ghost"
@@ -346,7 +347,7 @@ onServerPrefetch(() => liveQuery.suspense());
                 <div class="px-3 py-1.5 text-xs">Edit project</div>
               </template>
             </UPopover>
-            <UPopover mode="hover">
+            <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-trash-2"
                 variant="ghost"

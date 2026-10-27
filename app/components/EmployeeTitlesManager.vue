@@ -93,7 +93,7 @@ onServerPrefetch(() => titlesQuery.suspense());
           <div
             class="flex gap-1 transition-opacity md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100"
           >
-            <UPopover mode="hover">
+            <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-pencil"
                 size="xs"
@@ -105,7 +105,7 @@ onServerPrefetch(() => titlesQuery.suspense());
               />
               <template #content><div class="px-3 py-1.5 text-xs">Rename</div></template>
             </UPopover>
-            <UPopover mode="hover">
+            <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-trash-2"
                 size="xs"

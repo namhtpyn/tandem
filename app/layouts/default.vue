@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { z } from 'zod';
+
 // Dashboard shell (Nuxt UI UDashboardGroup): login screen when unauthenticated,
 // sidebar + content when signed in. Session/auth-config via useState (app.vue).
 const session = useAppSession();
@@ -23,6 +25,18 @@ const loginEmail = ref('');
 const loginPassword = ref('');
 const loginError = ref('');
 const busy = ref(false);
+// UForm :state needs a stable object — reactive() wrapping the refs keeps both in sync
+const loginState = reactive({ email: loginEmail, password: loginPassword });
+// frontend form schemas are deliberately loose (repo convention): .email() +
+// min(1) only — the real credential check happens server-side
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+
+// distinct failure copy: unreachable server ≠ wrong credentials
+const SERVER_DOWN = "Can't reach the server — try again.";
+const BAD_CREDENTIALS = 'Invalid email or password.';
 
 async function login() {
   busy.value = true;
@@ -30,14 +44,20 @@ async function login() {
   try {
     const res = await $authClient.signIn.email({ email: loginEmail.value, password: loginPassword.value });
     if (res.error) {
-      loginError.value = res.error.message || 'Invalid email or password';
+      // 5xx is a server-side failure, not a wrong password — say so instead of
+      // blaming the credentials; 401/400 are the explicit auth rejections
+      if (res.error.status >= 500) loginError.value = SERVER_DOWN;
+      else if (res.error.status === 400 || res.error.status === 401) loginError.value = BAD_CREDENTIALS;
+      else loginError.value = res.error.message || BAD_CREDENTIALS;
     } else {
       await refreshSession();
       // cookie is set server-side; a full reload guarantees SSR picks it up
-      if (window.location) window.location.reload();
+      window.location.reload();
     }
   } catch {
-    loginError.value = 'Invalid email or password';
+    // the client only throws below the HTTP contract (DNS/socket/TypeError) —
+    // the server was never reached, so it cannot be a credentials problem
+    loginError.value = SERVER_DOWN;
   } finally {
     busy.value = false;
   }
@@ -65,6 +85,8 @@ async function logout() {
   await refreshSession();
 }
 
+const route = useRoute();
+// exact to === path would leave detail pages (/tasks/<id>) with no active nav
 const nav = [
   { label: 'Overview', icon: 'i-lucide-layout-dashboard', to: '/' },
   { label: 'Vault', icon: 'i-lucide-shield', to: '/vault' },
@@ -73,7 +95,10 @@ const nav = [
   { label: 'Tasks', icon: 'i-lucide-list-todo', to: '/tasks' },
   { label: 'Projects', icon: 'i-lucide-folder-kanban', to: '/projects' },
   { label: 'Settings', icon: 'i-lucide-settings', to: '/settings' },
-];
+].map((item) => ({
+  ...item,
+  active: item.to === '/' ? route.path === '/' : route.path.startsWith(item.to),
+}));
 </script>
 
 <template>
@@ -90,49 +115,68 @@ const nav = [
         </div>
 
         <UCard :ui="{ root: 'shadow-sm' }">
-          <UForm
-            v-if="authConfig?.passwordEnabled !== false"
-            :state="{ email: loginEmail, password: loginPassword }"
-            class="space-y-4"
-            @submit="login"
-          >
-            <UFormField label="Email" name="email">
-              <UInput
-                v-model="loginEmail"
-                type="email"
-                icon="i-lucide-mail"
-                placeholder="you@example.com"
-                class="w-full"
-                size="lg"
-                autocomplete="email"
-                required
+          <!-- authConfig null = still resolving (unknown, not "password on"):
+               render a neutral shimmer instead of guessing — password-disabled
+               tenants would otherwise flash the wrong form for a beat -->
+          <div v-if="!authConfig" class="space-y-4" aria-hidden="true">
+            <div v-for="i in 2" :key="i" class="space-y-1.5">
+              <div class="bg-elevated h-4 w-20 animate-pulse rounded-sm" />
+              <div class="bg-elevated h-10 animate-pulse rounded-md" />
+            </div>
+            <div class="bg-elevated h-10 animate-pulse rounded-md" />
+          </div>
+          <template v-else>
+            <UForm
+              v-if="authConfig.passwordEnabled !== false"
+              :schema="loginSchema"
+              :state="loginState"
+              class="space-y-4"
+              @submit="login"
+            >
+              <UFormField label="Email" name="email">
+                <UInput
+                  v-model="loginEmail"
+                  type="email"
+                  icon="i-lucide-mail"
+                  placeholder="you@example.com"
+                  class="w-full"
+                  size="lg"
+                  autocomplete="email"
+                  required
+                />
+              </UFormField>
+              <UFormField label="Password" name="password">
+                <UInput
+                  v-model="loginPassword"
+                  type="password"
+                  icon="i-lucide-lock"
+                  class="w-full"
+                  size="lg"
+                  autocomplete="current-password"
+                  required
+                />
+              </UFormField>
+              <UAlert
+                v-if="loginError"
+                icon="i-lucide-shield-alert"
+                color="error"
+                variant="subtle"
+                :title="loginError"
               />
-            </UFormField>
-            <UFormField label="Password" name="password">
-              <UInput
-                v-model="loginPassword"
-                type="password"
-                icon="i-lucide-lock"
-                class="w-full"
-                size="lg"
-                autocomplete="current-password"
-                required
-              />
-            </UFormField>
-            <UAlert v-if="loginError" icon="i-lucide-shield-alert" color="error" variant="subtle" :title="loginError" />
-            <UButton type="submit" block size="lg" :loading="busy" label="Sign in" />
-          </UForm>
-          <UButton
-            v-for="prov in authConfig?.providers ?? []"
-            :key="prov.id"
-            block
-            size="lg"
-            variant="outline"
-            icon="i-lucide-key-round"
-            :label="`Sign in with ${prov.label}`"
-            class="mt-3"
-            @click="oidcLogin(prov.id, prov.label)"
-          />
+              <UButton type="submit" block size="lg" :loading="busy" label="Sign in" />
+            </UForm>
+            <UButton
+              v-for="prov in authConfig.providers ?? []"
+              :key="prov.id"
+              block
+              size="lg"
+              variant="outline"
+              icon="i-lucide-key-round"
+              :label="`Sign in with ${prov.label}`"
+              class="mt-3"
+              @click="oidcLogin(prov.id, prov.label)"
+            />
+          </template>
         </UCard>
       </div>
     </div>
@@ -173,7 +217,7 @@ const nav = [
               icon="i-lucide-log-out"
               color="neutral"
               variant="ghost"
-              size="xs"
+              size="sm"
               aria-label="Sign out"
               @click="logout"
             />

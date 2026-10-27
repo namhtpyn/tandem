@@ -253,6 +253,9 @@ const updateMutation = useMutation($orpc.employees.update.mutationOptions());
 const titleSaveMutation = useMutation({ ...$orpc.employees.titles.save.mutationOptions() });
 
 async function save() {
+  // the minted key is on screen — the footer is hidden and a stray resubmit
+  // (Enter in a field) must not double-create
+  if (mintedKey.value) return;
   busy.value = true;
   message.value = '';
   try {
@@ -546,7 +549,9 @@ onServerPrefetch(() =>
       </UForm>
     </template>
     <template #footer>
-      <div class="flex w-full justify-end gap-2">
+      <!-- hidden while the minted key is displayed — 'Create employee' beside
+           the key invites a double-create; the panel's Done button closes -->
+      <div v-if="!mintedKey" class="flex w-full justify-end gap-2">
         <UButton variant="ghost" color="neutral" label="Cancel" :disabled="busy" @click="open = false" />
         <UButton
           type="submit"

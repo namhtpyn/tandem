@@ -27,7 +27,9 @@ const statusesLive = useQuery($orpc.statuses.list.queryOptions({ queryKey: [CHAN
 const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES] }));
 const projectsLive = useQuery($orpc.projects.list.queryOptions({ queryKey: [CHANGE_RESOURCE.PROJECTS] }));
 const statuses = computed(() => unref(statusesLive.data) ?? []);
-const firstStatusId = computed(() => statuses.value[0]?.id ?? STATUS.todo);
+// the create-time status select lists READY-category statuses only — default to
+// the first of those so the select never renders with a value it can't display
+const defaultStatusId = computed(() => statuses.value.find((x) => x.category === 'ready')?.id ?? STATUS.todo);
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[]);
 // @mention menu items: label = display name, mention id = employee id (used by the brief builder)
 const mentionItems = computed(() =>
@@ -105,7 +107,7 @@ watch(open, (v) => {
   form.assigneeId = row?.assigneeId ?? '__none__';
   form.projectId = row?.projectId ?? '__none__';
   form.reviewers = row?.reviewers ? [...row.reviewers] : [];
-  form.status = row?.status ?? firstStatusId.value;
+  form.status = row?.status ?? defaultStatusId.value;
   message.value = '';
 });
 

@@ -43,9 +43,13 @@ test('statuses manager: add a custom status with transition', async ({ page }) =
   await page.getByRole('button', { name: 'New status' }).click();
   await page.getByPlaceholder('e.g. In review').fill('In review');
   await page.getByRole('button', { name: 'Save status' }).click();
-  // save closes the manager — settled once its heading leaves the page
-  await expect(page.getByText('Task statuses')).toBeHidden({ timeout: 10_000 });
-  // reopen and check the list
+  // the editor closes onto the STILL-OPEN manager (stacked modals) — settled
+  // once the editor's save button leaves while the manager heading remains
+  await expect(page.getByRole('button', { name: 'Save status' })).toBeHidden({ timeout: 10_000 });
+  await expect(page.getByText('Task statuses')).toBeVisible();
+  // close the manager, then reopen and check the list
+  await page.keyboard.press('Escape');
+  await expect(page.getByText('Task statuses')).toBeHidden();
   await page.getByRole('button', { name: 'Statuses' }).click();
   await expect(page.getByText('In review').first()).toBeVisible({ timeout: 10_000 });
 });

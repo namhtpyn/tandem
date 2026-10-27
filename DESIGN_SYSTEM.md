@@ -7,21 +7,21 @@ mode is first-class (class strategy); every view must hold in both modes.
 
 ## Tokens
 
-| Token            | Value / class                            | Used for                                            |
-| ---------------- | ---------------------------------------- | --------------------------------------------------- |
-| Primary color    | `amber` (app.config)                     | primary CTAs + brand marks ONLY (see rationing)     |
-| Neutral color    | `zinc`                                   | everything else                                     |
-| Canvas           | `bg-default`                             | page + app shell background                         |
-| Elevated surface | `bg-elevated`                            | cards, active segmented toggles, hover rows         |
-| Muted surface    | `bg-muted`                               | read-only value chips, subtle fills                 |
-| Strong text      | `text-highlighted`                       | headings, values, active states                     |
-| Body text        | `text-default`                           | body copy                                           |
-| Secondary text   | `text-muted`                             | descriptions, labels, timestamps                    |
-| Faint text       | `text-dimmed` (light floor: zinc-500)    | placeholders, meta — never darker than zinc-500     |
-| Borders          | `border-default` / `divide-default`      | all hairlines                                       |
-| SVG fills        | `fill-(--ui-*)` / `stroke-(--ui-*)`      | Tailwind has no `fill-default` namespace            |
-| Radius           | `rounded-xl`                             | one radius for brand icon tiles (login, error, sidebar) |
-| Icons            | Lucide (`i-lucide-*`) via @nuxt/icon     | dash naming only (`i-lucide-chevron-left`)          |
+| Token            | Value / class                         | Used for                                                |
+| ---------------- | ------------------------------------- | ------------------------------------------------------- |
+| Primary color    | `amber` (app.config)                  | primary CTAs + brand marks ONLY (see rationing)         |
+| Neutral color    | `zinc`                                | everything else                                         |
+| Canvas           | `bg-default`                          | page + app shell background                             |
+| Elevated surface | `bg-elevated`                         | cards, active segmented toggles, hover rows             |
+| Muted surface    | `bg-muted`                            | read-only value chips, subtle fills                     |
+| Strong text      | `text-highlighted`                    | headings, values, active states                         |
+| Body text        | `text-default`                        | body copy                                               |
+| Secondary text   | `text-muted`                          | descriptions, labels, timestamps                        |
+| Faint text       | `text-dimmed` (light floor: zinc-500) | placeholders, meta — never darker than zinc-500         |
+| Borders          | `border-default` / `divide-default`   | all hairlines                                           |
+| SVG fills        | `fill-(--ui-*)` / `stroke-(--ui-*)`   | Tailwind has no `fill-default` namespace                |
+| Radius           | `rounded-xl`                          | one radius for brand icon tiles (login, error, sidebar) |
+| Icons            | Lucide (`i-lucide-*`) via @nuxt/icon  | dash naming only (`i-lucide-chevron-left`)              |
 
 Set in `app/app.config.ts` (`ui.colors`). The modal/drawer scrim lives there
 too: `bg-default/75 backdrop-blur-sm` on overlay slots.

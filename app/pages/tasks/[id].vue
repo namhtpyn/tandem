@@ -139,6 +139,10 @@ const retryInMin = computed(() => {
 
 const queryClient = useQueryClient();
 
+// the list page warms a different query key — on client nav this query is
+// pending, and the not-found copy must NOT flash while it resolves
+const tasksPending = computed(() => tasksLive.isPending.value);
+
 // bare title — app.vue's titleTemplate appends '- Tandem'; extra separators render 'X · Tandem - Tandem'
 useHead({ title: () => (task.value ? task.value.title : 'Task') });
 
@@ -149,7 +153,20 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
   <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
     <template #body>
       <div class="p-3 lg:p-6">
-        <div v-if="!task" class="text-dimmed py-16 text-center text-sm">
+        <!-- pending: client nav never warms this key — hold a skeleton, never the
+             not-found copy, until the query settles -->
+        <div v-if="tasksPending" class="space-y-4" aria-busy="true">
+          <div class="flex items-start gap-2">
+            <USkeleton class="mt-0.5 size-8 shrink-0 rounded-md" />
+            <div class="flex-1 space-y-2">
+              <USkeleton class="h-6 w-2/3" />
+              <USkeleton class="h-4 w-1/3" />
+            </div>
+          </div>
+          <USkeleton class="h-72 w-full rounded-2xl" />
+        </div>
+
+        <div v-else-if="!task" class="text-dimmed py-16 text-center text-sm">
           Task not found — it may have been deleted.
           <ULink to="/tasks" class="underline">Back to tasks</ULink>
         </div>
@@ -167,7 +184,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                 <UIcon name="i-lucide-arrow-left" class="size-4" />
               </NuxtLink>
               <div class="min-w-0 flex-1">
-                <h1 class="text-highlighted truncate text-lg font-semibold">{{ task.title }}</h1>
+                <h1 class="text-highlighted truncate text-lg font-semibold" :title="task.title">{{ task.title }}</h1>
                 <div class="text-muted flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
                   <UBadge
                     v-if="statusById.get(task.status)?.name"
@@ -238,26 +255,19 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                   >
                     {{ workflowMessage }}
                   </p>
+                  <!-- the ONE send hint — the send button carries no duplicate hover popover -->
                   <span v-else class="text-dimmed shrink-0 text-[11px]">
                     {{ agentRunning ? 'Send — steers the running agent' : 'Send — dispatches the agent' }}
                   </span>
-                  <UPopover mode="hover" enable-touch>
-                    <template #content>
-                      <div class="px-3 py-1.5 text-xs">
-                        {{
-                          agentRunning ? 'Steer — the running agent gets this message' : 'Send — dispatches the agent'
-                        }}
-                      </div>
-                    </template>
-                    <UButton
-                      size="lg"
-                      color="primary"
-                      :icon="agentRunning ? 'i-lucide-reply' : 'i-lucide-arrow-up'"
-                      :aria-label="agentRunning ? 'Steer agent' : 'Send and dispatch'"
-                      class="size-10 shrink-0"
-                      :disabled="workflowBusy || !workflowNote.trim()"
-                      @click="sendComposer()"
-                  /></UPopover>
+                  <UButton
+                    size="lg"
+                    color="primary"
+                    :icon="agentRunning ? 'i-lucide-reply' : 'i-lucide-arrow-up'"
+                    :aria-label="agentRunning ? 'Steer agent' : 'Send and dispatch'"
+                    class="size-10 shrink-0"
+                    :disabled="workflowBusy || !workflowNote.trim()"
+                    @click="sendComposer()"
+                  />
                 </div>
               </div>
             </div>

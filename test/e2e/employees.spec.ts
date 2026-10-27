@@ -100,15 +100,23 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
   const keyRows = page.locator('div.flex.items-center.justify-between.gap-2.py-2');
   await expect(keyRows).toHaveCount(2, { timeout: 15_000 });
-  // revoke both — two-step confirm (stacked modal); the count assert settles each
-  // revoke before the next iteration re-resolves '.first()'
-  for (let i = 0; i < 2; i++) {
-    await page.getByRole('button', { name: 'Revoke key' }).first().click();
-    // the confirm dialog is the TOP layer — the drawer dialog stays open beneath it
-    await expect(page.getByRole('heading', { name: 'Revoke key?' })).toBeVisible();
-    await page.getByRole('dialog').last().getByRole('button', { name: 'Revoke key' }).click();
-    await expect(keyRows).toHaveCount(1 - i, { timeout: 10_000 });
+  // revoke both by NAME — two-step confirm (stacked modal); the confirm closing
+  // is the mutation-settled signal, the named row disappearing is the proof
+  // (a bare count race let the second revoke click land on a settling list)
+  for (const suffixWord of ['access key', 'key']) {
+    const keyName = `${name} ${suffixWord}`;
+    const row = page.locator('div.flex.items-center.justify-between.gap-2.py-2', { hasText: keyName });
+    await row.getByRole('button', { name: 'Revoke key' }).click();
+    // pin the confirm by its heading — dialog stack order is not stable across suites
+    const confirmDialog = page.locator('[role="dialog"]', {
+      has: page.getByRole('heading', { name: 'Revoke key?' }),
+    });
+    await expect(confirmDialog).toBeVisible();
+    await confirmDialog.getByRole('button', { name: 'Revoke key' }).click();
+    await expect(confirmDialog).toBeHidden({ timeout: 10_000 });
+    await expect(row).toHaveCount(0, { timeout: 10_000 });
   }
+  await expect(keyRows).toHaveCount(0, { timeout: 10_000 });
   await expect(page.getByText('No keys.')).toBeVisible({ timeout: 15_000 });
 
   // teardown: delete the bot, then its environment (leftover env rows break

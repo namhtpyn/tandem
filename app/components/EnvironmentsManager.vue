@@ -196,6 +196,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
         placeholder="Search environments…"
         size="sm"
         class="w-full sm:max-w-xs"
+        aria-label="Search environments"
       />
       <div class="ms-auto flex items-center gap-2 overflow-x-auto">
         <UButton v-if="editable" icon="i-lucide-plus" label="New environment" size="sm" @click="openEditor()" />
@@ -227,9 +228,11 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
         <span class="text-highlighted text-sm font-medium">{{ row.original.name }}</span>
       </template>
       <template #host-cell="{ row }">
-        <!-- stacked mono: username muted over host:port, both truncate with the full value on hover -->
+        <!-- stacked mono: 'user' label over host:port, both truncate with the full value on hover -->
         <div class="min-w-0 font-mono text-xs">
-          <span class="text-muted block truncate" :title="row.original.username">{{ row.original.username }}</span>
+          <span class="text-muted block truncate" :title="row.original.username">
+            user {{ row.original.username }}
+          </span>
           <span class="text-highlighted block truncate" :title="`${row.original.host}:${row.original.port}`">
             {{ row.original.host }}:{{ row.original.port }}
           </span>
@@ -258,7 +261,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       </template>
       <template v-if="editable" #actions-cell="{ row }">
         <div class="row-actions flex justify-end gap-1 transition-opacity">
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-plug-zap"
               variant="ghost"
@@ -273,7 +276,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               <div class="px-3 py-1.5 text-xs">Test connection</div>
             </template>
           </UPopover>
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-pencil"
               variant="ghost"
@@ -287,7 +290,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               <div class="px-3 py-1.5 text-xs">Edit environment</div>
             </template>
           </UPopover>
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-trash-2"
               variant="ghost"
@@ -320,6 +323,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               >
                 {{ probeLabel(probeResults[row.id]!.ok) }}
               </UBadge>
+              <UBadge v-else color="neutral" variant="subtle" size="sm" icon="i-lucide-circle-fill">Not probed</UBadge>
             </div>
           </div>
           <p
@@ -330,7 +334,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
             {{ probeResults[row.id]!.detail }} · {{ probeResults[row.id]!.durationMs }}ms
           </p>
           <div v-if="editable" class="mt-3 flex justify-end gap-1">
-            <UPopover mode="hover">
+            <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-plug-zap"
                 variant="ghost"
@@ -345,7 +349,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
                 <div class="px-3 py-1.5 text-xs">Test connection</div>
               </template>
             </UPopover>
-            <UPopover mode="hover">
+            <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-pencil"
                 variant="ghost"
@@ -359,7 +363,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
                 <div class="px-3 py-1.5 text-xs">Edit environment</div>
               </template>
             </UPopover>
-            <UPopover mode="hover">
+            <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-trash-2"
                 variant="ghost"

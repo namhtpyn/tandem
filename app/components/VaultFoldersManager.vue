@@ -144,7 +144,7 @@ async function removeFolder(id: string) {
           </template>
           <template v-if="editable" #actions-cell="{ row }">
             <div class="row-actions flex justify-end gap-1 transition-opacity">
-              <UPopover mode="hover">
+              <UPopover mode="hover" enable-touch>
                 <UButton
                   icon="i-lucide-pencil"
                   size="xs"
@@ -156,7 +156,7 @@ async function removeFolder(id: string) {
                 />
                 <template #content><div class="px-3 py-1.5 text-xs">Rename</div></template>
               </UPopover>
-              <UPopover mode="hover">
+              <UPopover mode="hover" enable-touch>
                 <UButton
                   icon="i-lucide-trash-2"
                   size="xs"

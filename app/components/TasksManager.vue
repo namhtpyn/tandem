@@ -10,6 +10,7 @@ import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
 
 import { ACTIVITY_KIND, CHANGE_RESOURCE } from '#shared/enums';
+import { nonNull } from '#shared/utils/non-null';
 import { formatWhenShort } from '~/utils/format-when';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 import { categoryColor } from '~/utils/ui-labels';
@@ -104,9 +105,6 @@ const inboxCount = computed(() => inboxItems.value.length);
 const statusOptions = computed(() => statuses.value.map((x) => ({ label: x.name, value: x.id })));
 
 // one shared category→color mapping (ui-labels) — statuses agree with the detail page
-function statusColor(s: string) {
-  return categoryColor(statusById.value.get(s)?.category);
-}
 
 // solid-dot color for the borderless status selects (list row + mobile card):
 // same category mapping, rendered as a filled dot instead of a badge
@@ -282,10 +280,11 @@ function runLabel(r: { status: string; exitCode: number | null }) {
   if (s === 'timeout') return 'Run timed out';
   return 'Run stopped';
 }
-// same mapping as runLabel, for the status dot color (cancelled/timeout stay neutral)
+// same mapping as runDot, for the status dot color (cancelled/timeout stay neutral);
+// the pulse respects the user's reduced-motion preference
 function runDot(r: { status: string }) {
   const s = r.status.toLowerCase();
-  if (s === 'running') return 'bg-warning animate-pulse';
+  if (s === 'running') return 'bg-warning motion-safe:animate-pulse';
   if (s === 'done') return 'bg-success';
   if (s === 'failed') return 'bg-error';
   return 'bg-accented';
@@ -324,6 +323,9 @@ function openWorkflow(row: TaskRow) {
   workflowTaskFallback.value = row;
   workflowNote.value = '';
   workflowMessage.value = '';
+  // reset the forward picker too — a stale pre-armed selection would fire the
+  // next Forward at whoever was picked for a previous task
+  forwardTo.value = '__none__';
   workflowOpen.value = true;
 }
 
@@ -454,11 +456,17 @@ onServerPrefetch(() =>
         aria-label="Search tasks"
       />
       <div class="ms-auto flex items-center gap-2 overflow-x-auto">
-        <div class="border-default inline-flex overflow-hidden rounded-md border" role="group" aria-label="View">
+        <div
+          class="border-default bg-default inline-flex overflow-hidden rounded-md border"
+          role="group"
+          aria-label="View"
+        >
           <button
             type="button"
             class="px-3 py-1.5 text-sm font-medium transition-colors"
-            :class="view === 'list' ? 'bg-elevated text-highlighted' : 'text-muted hover:text-highlighted'"
+            :class="
+              view === 'list' ? 'bg-elevated text-highlighted' : 'text-muted hover:bg-elevated hover:text-highlighted'
+            "
             aria-label="List view"
             :aria-pressed="view === 'list'"
             @click="view = 'list'"
@@ -468,7 +476,9 @@ onServerPrefetch(() =>
           <button
             type="button"
             class="border-default border-l px-3 py-1.5 text-sm font-medium transition-colors"
-            :class="view === 'board' ? 'bg-elevated text-highlighted' : 'text-muted hover:text-highlighted'"
+            :class="
+              view === 'board' ? 'bg-elevated text-highlighted' : 'text-muted hover:bg-elevated hover:text-highlighted'
+            "
             aria-label="Board view"
             :aria-pressed="view === 'board'"
             @click="view = 'board'"
@@ -480,13 +490,16 @@ onServerPrefetch(() =>
           color="neutral"
           :variant="needsDecision ? 'solid' : 'outline'"
           size="sm"
+          aria-label="Needs my decision"
           :aria-pressed="needsDecision"
           data-testid="needs-decision-toggle"
           @click="needsDecision = !needsDecision"
         >
           <span class="inline-flex items-center gap-1.5">
             <UIcon name="i-lucide-inbox" class="size-4" />
-            Needs my decision
+            <!-- mobile shows the short label — the full words wrap to 3 lines at 390px -->
+            <span class="whitespace-nowrap sm:hidden">Decisions</span>
+            <span class="hidden whitespace-nowrap sm:inline">Needs my decision</span>
             <span
               v-if="inboxCount > 0"
               class="bg-accented text-default inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
@@ -512,39 +525,49 @@ onServerPrefetch(() =>
     </p>
 
     <!-- status filter chips (server-side statusId filter) — one scrollable row on
-         mobile; active = neutral fill + a single primary dot, never amber-filled -->
-    <div
-      v-if="statuses.length"
-      class="mt-3 flex items-center gap-1.5 overflow-x-auto"
-      role="group"
-      aria-label="Filter by status"
-    >
-      <UButton
-        size="sm"
-        color="neutral"
-        variant="soft"
-        class="shrink-0"
-        :class="statusId === null ? 'text-highlighted' : 'text-muted'"
-        :aria-pressed="statusId === null"
-        @click="statusId = null"
-      >
-        <span v-if="statusId === null" class="bg-primary mr-1 inline-block size-1.5 rounded-full" aria-hidden="true" />
-        All
-      </UButton>
-      <UButton
-        v-for="st in statuses"
-        :key="st.id"
-        size="sm"
-        color="neutral"
-        variant="soft"
-        class="shrink-0"
-        :class="statusId === st.id ? 'text-highlighted' : 'text-muted'"
-        :aria-pressed="statusId === st.id"
-        @click="toggleStatusFilter(st.id)"
-      >
-        <span v-if="statusId === st.id" class="bg-primary mr-1 inline-block size-1.5 rounded-full" aria-hidden="true" />
-        {{ st.name }}
-      </UButton>
+         mobile; active = neutral fill + a single primary dot, never amber-filled.
+         The right-edge fade telegraphs the horizontal scroll. -->
+    <div v-if="statuses.length" class="relative mt-3">
+      <div class="flex items-center gap-1.5 overflow-x-auto" role="group" aria-label="Filter by status">
+        <UButton
+          size="sm"
+          color="neutral"
+          variant="soft"
+          class="shrink-0"
+          :class="statusId === null ? 'text-highlighted' : 'text-muted'"
+          :aria-pressed="statusId === null"
+          @click="statusId = null"
+        >
+          <span
+            v-if="statusId === null"
+            class="bg-primary mr-1 inline-block size-1.5 rounded-full"
+            aria-hidden="true"
+          />
+          All
+        </UButton>
+        <UButton
+          v-for="st in statuses"
+          :key="st.id"
+          size="sm"
+          color="neutral"
+          variant="soft"
+          class="shrink-0"
+          :class="statusId === st.id ? 'text-highlighted' : 'text-muted'"
+          :aria-pressed="statusId === st.id"
+          @click="toggleStatusFilter(st.id)"
+        >
+          <span
+            v-if="statusId === st.id"
+            class="bg-primary mr-1 inline-block size-1.5 rounded-full"
+            aria-hidden="true"
+          />
+          {{ st.name }}
+        </UButton>
+      </div>
+      <div
+        class="from-default pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l to-transparent"
+        aria-hidden="true"
+      />
     </div>
 
     <!-- server-paged list (desktop table + mobile cards) -->
@@ -589,7 +612,7 @@ onServerPrefetch(() =>
             name="i-lucide-user-round"
             class="text-dimmed size-3.5 shrink-0"
           />
-          {{ row.original.assigneeName ?? 'Unassigned' }}
+          {{ row.original.assigneeName || 'Unassigned' }}
         </span>
       </template>
       <template #status-cell="{ row }">
@@ -621,7 +644,7 @@ onServerPrefetch(() =>
         <div
           class="flex justify-end gap-1 opacity-0 transition-opacity max-md:opacity-100 md:focus-within:opacity-100 md:[tr:hover_&]:opacity-100"
         >
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-wand-sparkles"
               variant="ghost"
@@ -635,7 +658,7 @@ onServerPrefetch(() =>
               <div class="px-3 py-1.5 text-xs">Auto-assign</div>
             </template>
           </UPopover>
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-message-circle-more"
               variant="ghost"
@@ -648,7 +671,7 @@ onServerPrefetch(() =>
               <div class="px-3 py-1.5 text-xs">Workflow &amp; activity</div>
             </template>
           </UPopover>
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-pencil"
               variant="ghost"
@@ -661,11 +684,12 @@ onServerPrefetch(() =>
               <div class="px-3 py-1.5 text-xs">Edit task</div>
             </template>
           </UPopover>
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-trash-2"
               variant="ghost"
-              color="error"
+              color="neutral"
+              class="text-muted hover:text-error"
               size="xs"
               aria-label="Delete task"
               @click="pendingDelete = row.original"
@@ -687,6 +711,15 @@ onServerPrefetch(() =>
                 <UIcon name="i-lucide-folder-kanban" class="size-3" />{{ row.projectName }}
               </p>
               <p class="text-dimmed mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+                <!-- category dot + name: the status reads without a second badge -->
+                <span class="inline-flex items-center gap-1">
+                  <span
+                    class="inline-block size-2 shrink-0 rounded-full"
+                    :class="statusDot(row.status)"
+                    aria-hidden="true"
+                  />
+                  {{ statusById.get(row.status)?.name ?? row.status }}
+                </span>
                 <span>{{ assigneeNameById.get(row.assigneeId ?? '') ?? 'Unassigned' }}</span>
                 <span v-if="row.assigneeKind === 'ai'" class="text-primary inline-flex items-center gap-1"
                   ><UIcon name="i-lucide-bot" class="size-3" />AI</span
@@ -697,84 +730,54 @@ onServerPrefetch(() =>
                 <span suppressHydration-warning>{{ formatWhenShort(row.updatedAt) }}</span>
               </p>
             </div>
-            <UBadge :color="statusColor(row.status)" variant="subtle" size="sm" class="shrink-0">{{
-              statusById.get(row.status)?.name ?? row.status
-            }}</UBadge>
-          </div>
-          <div class="mt-3 flex items-center justify-between gap-2">
-            <USelect
-              :model-value="row.status"
-              :items="statusOptions"
-              value-key="value"
-              size="sm"
-              variant="none"
-              class="hover:bg-elevated max-w-40 rounded-md"
-              :aria-label="`Status for ${row.title}`"
-              @update:model-value="(v: string) => setStatus(row, v)"
-            >
-              <template #leading>
-                <span
-                  class="inline-block size-2 shrink-0 rounded-full"
-                  :class="statusDot(row.status)"
-                  aria-hidden="true"
-                />
+            <!-- every card action hides behind one kebab — no visible trash row
+                 to mis-tap on a phone; Move to… is the touch/keyboard status path -->
+            <UPopover :ui="{ content: 'w-44 p-1' }">
+              <UButton
+                icon="i-lucide-ellipsis-vertical"
+                size="sm"
+                color="neutral"
+                variant="ghost"
+                aria-label="Task actions"
+                class="shrink-0"
+              />
+              <template #content>
+                <div class="flex flex-col">
+                  <button type="button" :class="BOARD_MENU_ITEM" :disabled="busy" @click="autoAssign(row)">
+                    <UIcon name="i-lucide-wand-sparkles" class="size-3.5 shrink-0" />Auto-assign
+                  </button>
+                  <p class="text-dimmed px-2 pt-1.5 pb-1 text-[10px] font-medium tracking-wide uppercase">Move to…</p>
+                  <div class="max-h-40 overflow-y-auto">
+                    <button
+                      v-for="st in statuses"
+                      :key="st.id"
+                      type="button"
+                      :class="BOARD_MENU_ITEM"
+                      :disabled="busy || row.status === st.id"
+                      @click="setStatus(row, st.id)"
+                    >
+                      <span
+                        class="inline-block size-2 shrink-0 rounded-full"
+                        :class="statusDot(st.id)"
+                        aria-hidden="true"
+                      />
+                      {{ st.name }}
+                    </button>
+                  </div>
+                  <div class="border-default my-1 border-t" aria-hidden="true" />
+                  <button type="button" :class="BOARD_MENU_ITEM" @click="openEditor(row)">
+                    <UIcon name="i-lucide-pencil" class="size-3.5 shrink-0" />Edit
+                  </button>
+                  <button
+                    type="button"
+                    :class="[BOARD_MENU_ITEM, 'text-error hover:bg-error/10 hover:text-error']"
+                    @click="pendingDelete = row"
+                  >
+                    <UIcon name="i-lucide-trash-2" class="size-3.5 shrink-0" />Delete
+                  </button>
+                </div>
               </template>
-            </USelect>
-            <div class="flex items-center gap-1">
-              <UPopover mode="hover">
-                <UButton
-                  icon="i-lucide-wand-sparkles"
-                  variant="ghost"
-                  color="neutral"
-                  size="sm"
-                  aria-label="Auto-assign"
-                  :disabled="busy"
-                  @click="autoAssign(row)"
-                />
-                <template #content>
-                  <div class="px-3 py-1.5 text-xs">Auto-assign</div>
-                </template>
-              </UPopover>
-              <UPopover mode="hover">
-                <UButton
-                  icon="i-lucide-message-circle-more"
-                  variant="ghost"
-                  color="neutral"
-                  size="sm"
-                  aria-label="Task workflow"
-                  @click="openWorkflow(row)"
-                />
-                <template #content>
-                  <div class="px-3 py-1.5 text-xs">Workflow &amp; activity</div>
-                </template>
-              </UPopover>
-              <UPopover mode="hover">
-                <UButton
-                  icon="i-lucide-pencil"
-                  variant="ghost"
-                  color="neutral"
-                  size="sm"
-                  aria-label="Edit task"
-                  @click="openEditor(row)"
-                />
-                <template #content>
-                  <div class="px-3 py-1.5 text-xs">Edit task</div>
-                </template>
-              </UPopover>
-              <UPopover mode="hover">
-                <UButton
-                  icon="i-lucide-trash-2"
-                  variant="ghost"
-                  color="error"
-                  size="sm"
-                  aria-label="Delete task"
-                  @click="pendingDelete = row"
-                />
-                <template #content>
-                  <div class="px-3 py-1.5 text-xs">Delete task</div>
-                </template>
-              </UPopover>
-            </div>
+            </UPopover>
           </div>
         </UCard>
       </template>
@@ -782,9 +785,11 @@ onServerPrefetch(() =>
 
     <!-- kanban board view (over the same server-paged rows): one horizontally
          scrollable row of columns; the column IS the status — cards move by
-         drag & drop, empty columns stay compact dashed drop zones -->
-    <div v-if="view === 'board'" class="mt-3 min-h-0 flex-1">
-      <div class="flex items-start gap-4 overflow-x-auto pb-2">
+         drag & drop OR the card kebab's Move-to list (touch/keyboard path),
+         empty columns stay compact dashed drop zones. The row fills the
+         available height; the right-edge fade telegraphs the scroll. -->
+    <div v-if="view === 'board'" class="relative mt-3 min-h-0 flex-1">
+      <div class="flex h-[min(72dvh,44rem)] min-h-72 items-stretch gap-4 overflow-x-auto pb-2">
         <section
           v-for="col in boardColumns"
           :key="col.id"
@@ -808,7 +813,7 @@ onServerPrefetch(() =>
               tasksByStatus(col.id).length
             }}</UBadge>
           </header>
-          <div class="flex max-h-[min(60dvh,40rem)] flex-col gap-2 overflow-y-auto p-2">
+          <div class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
             <article
               v-for="row in tasksByStatus(col.id)"
               :key="row.id"
@@ -842,6 +847,29 @@ onServerPrefetch(() =>
                       <button type="button" :class="BOARD_MENU_ITEM" :disabled="busy" @click="autoAssign(row)">
                         <UIcon name="i-lucide-wand-sparkles" class="size-3.5 shrink-0" />Auto-assign
                       </button>
+                      <!-- Move to…: the same setStatus the drag fires — the
+                           touch/keyboard path onto the drag-only board -->
+                      <p class="text-dimmed px-2 pt-1.5 pb-1 text-[10px] font-medium tracking-wide uppercase">
+                        Move to…
+                      </p>
+                      <div class="max-h-40 overflow-y-auto">
+                        <button
+                          v-for="st in statuses"
+                          :key="st.id"
+                          type="button"
+                          :class="BOARD_MENU_ITEM"
+                          :disabled="busy || row.status === st.id"
+                          @click="setStatus(row, st.id)"
+                        >
+                          <span
+                            class="inline-block size-2 shrink-0 rounded-full"
+                            :class="statusDot(st.id)"
+                            aria-hidden="true"
+                          />
+                          {{ st.name }}
+                        </button>
+                      </div>
+                      <div class="border-default my-1 border-t" aria-hidden="true" />
                       <button type="button" :class="BOARD_MENU_ITEM" @click="openEditor(row)">
                         <UIcon name="i-lucide-pencil" class="size-3.5 shrink-0" />Edit
                       </button>
@@ -862,18 +890,22 @@ onServerPrefetch(() =>
               <p class="text-dimmed mt-1 flex items-center gap-1 text-xs">
                 <UIcon v-if="row.assigneeKind === 'ai'" name="i-lucide-bot" class="text-primary size-3 shrink-0" />
                 <UIcon v-else name="i-lucide-user-round" class="size-3 shrink-0" />
-                {{ row.assigneeName ?? 'Unassigned' }}
+                {{ row.assigneeName || 'Unassigned' }}
               </p>
             </article>
             <div
               v-if="!tasksByStatus(col.id).length"
-              class="border-default text-dimmed flex min-h-[120px] items-center justify-center rounded-md border border-dashed text-xs"
+              class="border-default text-dimmed flex min-h-[120px] flex-1 items-center justify-center rounded-md border border-dashed text-xs"
             >
               Drop tasks here
             </div>
           </div>
         </section>
       </div>
+      <div
+        class="from-default pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l to-transparent"
+        aria-hidden="true"
+      />
     </div>
 
     <!-- workflow drawer -->
@@ -978,11 +1010,14 @@ onServerPrefetch(() =>
           <div class="space-y-2">
             <div class="flex items-center justify-between">
               <h3 class="text-muted text-xs font-medium">Agent runs</h3>
+              <!-- dispatch is an agent verb — humans have nothing to dispatch, so
+                   the button hides instead of sitting disabled with no why -->
               <UButton
+                v-if="workflowTask?.assigneeKind === 'ai'"
                 size="xs"
                 variant="soft"
                 icon="i-lucide-play"
-                :disabled="workflowBusy || workflowTask?.assigneeKind !== 'ai'"
+                :disabled="workflowBusy"
                 @click="wfAction('dispatch')"
               >
                 Dispatch now
@@ -995,7 +1030,7 @@ onServerPrefetch(() =>
               </p>
               <pre
                 v-if="r.output"
-                class="max-h-72 overflow-y-auto rounded-b-md bg-zinc-950 px-2.5 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-zinc-200"
+                class="bg-inverted text-inverted max-h-72 overflow-y-auto rounded-b-md px-2.5 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap"
                 >{{ r.output }}</pre>
             </div>
             <p v-if="!runFeed.length" class="text-dimmed text-xs">No runs yet.</p>
@@ -1024,6 +1059,7 @@ onServerPrefetch(() =>
                   class="size-3.5"
                 />
                 {{ ACTIVITY_LABELS[a.kind] ?? a.kind }} · {{ a.authorName ?? 'system' }}
+                <span class="text-dimmed ml-auto shrink-0 font-normal">{{ formatWhenShort(a.createdAt) }}</span>
               </p>
               <p v-if="a.body" class="text-muted mt-1">{{ a.body }}</p>
             </div>

@@ -55,6 +55,7 @@ onBeforeUnmount(() => {
   <UPopover
     v-model:open="open"
     mode="hover"
+    enable-touch
     :open-delay="0"
     :close-delay="100"
     :content="{ side: 'bottom', align: 'end' }"

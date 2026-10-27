@@ -165,7 +165,10 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
       <p class="text-muted text-sm">No employees yet — add the first human or AI teammate.</p>
     </div>
     <!-- the canvas fills the remaining viewport height (parent grants flex-1);
-         the tree centers inside it and pans when a wide/tall org overflows -->
+         the tree centers inside it and pans when a wide/tall org overflows.
+         Below md the svg floors at 720px: plain w-full squeezed the chart into
+         the viewport so overflow never engaged — the floor keeps node text at a
+         legible scale and lets small screens pan. -->
     <div v-else class="flex min-h-0 flex-1 overflow-auto p-4">
       <svg
         :viewBox="`0 0 ${graphWidth} ${graphHeight}`"
@@ -173,7 +176,7 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
         :height="graphHeight"
         role="img"
         aria-label="Supervision hierarchy"
-        class="m-auto h-auto w-full max-w-full shrink-0 md:h-auto md:w-auto"
+        class="m-auto h-auto w-full max-w-full min-w-[720px] shrink-0 md:h-auto md:w-auto md:min-w-0"
       >
         <!-- primary tree: elbow from parent bottom-center to child top-center -->
         <path
@@ -232,6 +235,7 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
           </text>
           <text x="52" y="22" class="fill-(--ui-text-highlighted) text-[12px] font-medium">
             {{ fitLabel(n.row.name, 14) }}
+            <title>{{ n.row.name }}</title>
           </text>
           <text x="52" y="38" class="fill-(--ui-text-dimmed) text-[10px]">
             {{ fitLabel(n.row.title || n.row.email, 20) }}
