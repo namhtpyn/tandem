@@ -1,3 +1,10 @@
+## [2.47.1](https://github.com/namhtpyn/tandem/compare/v2.47.0...v2.47.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **db:** prod-proof the obligations FK rename — pre-squash constraint name ([dff6627](https://github.com/namhtpyn/tandem/commit/dff6627a01441d287199f7ac64e25c189bdd34ea))
+
 # [2.47.0](https://github.com/namhtpyn/tandem/compare/v2.46.0...v2.47.0) (2026-10-27)
 
 
