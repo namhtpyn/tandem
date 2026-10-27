@@ -51,10 +51,6 @@ export const statusesRouter = os.router({
     .handler(async ({ input }) => {
       const id = input.id?.trim() || uuidv7();
       if (id === 'new') throw new ORPCError('BAD_REQUEST', { message: 'reserved status id' });
-      // seeded workflow statuses are fixed rows — renaming/re-pointing them corrupts every environment
-      if ((Object.values(STATUS) as string[]).includes(id)) {
-        throw new ORPCError('BAD_REQUEST', { message: 'built-in status' });
-      }
       const now = new Date();
       const values = {
         id,

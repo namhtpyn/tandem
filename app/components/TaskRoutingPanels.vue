@@ -14,6 +14,7 @@ import { CHANGE_RESOURCE, PROPOSAL_KIND, type ProposalKind } from '#shared/enums
 import { nonNull } from '#shared/utils/non-null';
 import type { EmployeeRow, TaskStatusRow } from '~/utils/orpc-types';
 
+const emit = defineEmits<{ 'add-subtask': [] }>();
 const props = defineProps<{ taskId: string; statusById: Map<string, TaskStatusRow> }>();
 
 const { $client, $orpc } = useNuxtApp();
@@ -83,31 +84,6 @@ const assignmentRows = computed(() => (unref(assignmentsQuery.data)?.items ?? []
 
 const proposalBusy = ref(false);
 const proposalMessage = ref('');
-const subtaskTitle = ref('');
-const subtaskAssignee = ref('__none__');
-
-async function createSubtask() {
-  if (!subtaskTitle.value.trim()) return;
-  proposalBusy.value = true;
-  proposalMessage.value = '';
-  try {
-    await $client.tasks.create({
-      title: subtaskTitle.value.trim(),
-      parentId: props.taskId,
-      assigneeId: subtaskAssignee.value === '__none__' ? null : subtaskAssignee.value,
-    });
-    subtaskTitle.value = '';
-    subtaskAssignee.value = '__none__';
-    // fuse: refetch the subtasks panel now; the SSE event re-syncs the rest
-    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS, props.taskId] });
-    proposalMessage.value = 'subtask created';
-  } catch (e) {
-    proposalMessage.value =
-      (e as { data?: { json?: { message?: string } }; message?: string }).data?.json?.message ?? (e as Error).message;
-  } finally {
-    proposalBusy.value = false;
-  }
-}
 
 async function decideProposal(id: string, action: 'confirmProposal' | 'rejectProposal') {
   proposalBusy.value = true;
@@ -223,23 +199,14 @@ function subtaskBadge(c: ChildRow): {
         </NuxtLink>
       </li>
     </ul>
-    <div class="mt-2 flex gap-1.5">
-      <UInput
-        v-model="subtaskTitle"
-        placeholder="New subtask…"
-        size="xs"
-        class="flex-1"
-        :disabled="proposalBusy"
-        @keydown.enter.prevent="createSubtask"
-      />
-      <USelect
-        v-model="subtaskAssignee"
-        :items="[{ label: 'Unassigned', value: '__none__' }, ...employees.map((e) => ({ label: e.name, value: e.id }))]"
-        size="xs"
-        class="w-28"
-      />
-      <UButton size="xs" icon="i-lucide-plus" :disabled="proposalBusy || !subtaskTitle.trim()" @click="createSubtask" />
-    </div>
+    <UButton
+      class="mt-2"
+      size="xs"
+      variant="soft"
+      icon="i-lucide-plus"
+      label="Add subtask"
+      @click="emit('add-subtask')"
+    />
   </div>
 
   <div v-if="assignmentLines.length" data-testid="assignment-history">

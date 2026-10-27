@@ -11,6 +11,7 @@ import { nonNull } from '#shared/utils/non-null';
 import { db } from '../../db/index';
 import { taskProposals } from '../../db/schema';
 import { stripAttachments } from './attachments.util';
+import { dropEchoNotes } from './echo-notes';
 
 /** jsonb payloads arrive as raw strings through RQB relation selects — normalize to the
  * kind; one corrupt payload must never brick dispatch, so unparseable reads as '' (note) */
@@ -297,6 +298,9 @@ export async function loadBriefData(taskId: string, readerEmployeeId?: string) {
       },
     })
   ).reverse();
+  // echo notes (agent-side runners re-posting their own settled result) read as fresh
+  // author messages here — they are the author's own turn, never relay signal
+  const relayRows = dropEchoNotes(threadRows);
   const finishedAts = threadRows
     .map((m) => m.run?.finishedAt)
     .filter((t): t is Date => t instanceof Date)
@@ -326,7 +330,7 @@ export async function loadBriefData(taskId: string, readerEmployeeId?: string) {
     // no leading "- ": the activity renderer already dashes every line
     .map((p) => `proposal declined: ${p.kind} — ${p.decisionNote}`);
   const extKind = (m: (typeof threadRows)[number]) => activityKindOf(m.activityExt?.payload);
-  const convo = threadRows.filter((m) => {
+  const convo = relayRows.filter((m) => {
     // cutoff gates EVERY row first (relay law) — exclusions never un-filter stale rows
     if (lastFinished && m.createdAt <= lastFinished) return false;
     if (extKind(m) === 'status') return false;

@@ -43,7 +43,11 @@ async function createQueueDomain(): Promise<QueueDomain> {
   const makeRaw = () =>
     createClient({
       url,
-      socket: { connectTimeout: 2000 },
+      // long-lived: a redis blip must reconnect, not brick enqueues for the process
+      socket: {
+        connectTimeout: 2000,
+        reconnectStrategy: (retries: number) => (retries > 3 ? new Error('no-retry') : Math.min(retries * 200, 1_000)),
+      },
     });
   type Raw = ReturnType<typeof makeRaw>;
 
@@ -69,7 +73,10 @@ async function createQueueDomain(): Promise<QueueDomain> {
   }
 
   // one adapter per role; bullmq duplicates it internally for blocking commands
+  // long-lived connection: reconnect with capped backoff — a redis blip must not
+  // brick enqueues for the rest of the process (no-retry would)
   const workerConn = createNodeRedisClient(await connectRaw());
+  workerConn.on('error', swallowRedisError);
   raws.push(workerConn as unknown as Raw);
 
   return {

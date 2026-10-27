@@ -95,6 +95,8 @@ const thread = computed<ThreadItem[]>(() =>
       prompt: r.prompt,
       body: r.body,
       agentName: r.agentName,
+      authorId: r.authorId ?? null,
+      authorName: r.authorName ?? null,
       exitCode: r.exitCode,
       startedAt: r.startedAt,
       finishedAt: null,

@@ -56,7 +56,7 @@ test('details: change status and assignee from the sidebar', async ({ page }) =>
   await expect(page.getByLabel('Task project')).toContainText('No project');
 });
 
-test('details: status select only offers workflow-allowed transitions', async ({ page }) => {
+test('details: status select offers every status (manual moves are free)', async ({ page }) => {
   await login(page);
   await page.goto('/tasks');
   await page.getByRole('button', { name: 'New task' }).first().click();
@@ -68,10 +68,11 @@ test('details: status select only offers workflow-allowed transitions', async ({
   await page.getByRole('link', { name: 'Fields E2E transitions' }).first().click();
   await expect(page.getByRole('heading', { name: /Fields E2E transitions/ })).toBeVisible();
 
-  // a fresh task sits in the first status; the select must NOT offer every
-  // status — e.g. Done is not directly reachable from To do in the seed graph
+  // owner ruling 2026-10-27: the transition graph is advisory — every status is
+  // manually selectable, including Done and Cancelled
   await page.getByLabel('Task status').click();
   const options = await page.getByRole('option').allTextContents();
   expect(options.some((o) => o.includes('To do'))).toBe(true);
-  expect(options.some((o) => o.includes('Done'))).toBe(false);
+  expect(options.some((o) => o.includes('Done'))).toBe(true);
+  expect(options.some((o) => o.includes('Cancelled'))).toBe(true);
 });

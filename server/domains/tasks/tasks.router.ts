@@ -12,7 +12,6 @@ import {
   type RunStatus,
   type ActivityKind,
 } from '#shared/enums';
-import { STATUS } from '#shared/status';
 import type { TaskRow } from '#shared/types';
 import { escapeIlike } from '#shared/utils/escape-ilike';
 import { nonNull } from '#shared/utils/non-null';
@@ -443,6 +442,13 @@ export const tasksRouter = os.router({
       orderBy: { createdAt: 'asc' },
     });
     if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
+    // owner ruling 2026-10-27: the assignee is locked while the agent is mid-run
+    if (input.assigneeId !== undefined && input.assigneeId !== nonNull(rows[0]).assigneeId) {
+      const { runningRunIdForTask } = await import('./runner.service');
+      if (await runningRunIdForTask(input.id)) {
+        throw new ORPCError('BAD_REQUEST', { message: 'task is running — assignee is locked until it settles' });
+      }
+    }
     await requireExistingRefs(input);
     const actorId = await selfIdOf(context);
     await db.update(tasksTable).set(buildUpdatePatch(input)).where(eq(tasksTable.id, input.id));
@@ -464,21 +470,13 @@ export const tasksRouter = os.router({
         orderBy: { createdAt: 'asc' },
       });
       if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
+      // owner rulings 2026-10-27: manual status is free (graph is advisory), but a
+      // live run locks it — the running agent owns the status until it settles
+      const { runningRunIdForTask } = await import('./runner.service');
+      if (await runningRunIdForTask(input.id)) {
+        throw new ORPCError('BAD_REQUEST', { message: 'task is running — status is locked until it settles' });
+      }
       const cur = nonNull(rows[0]).status;
-      const [curRow] = await db.query.taskStatuses.findMany({
-        columns: { nextIds: true },
-        where: { id: { eq: cur } },
-        orderBy: { position: 'asc' },
-      });
-      if (!curRow || !curRow.nextIds.includes(input.status)) {
-        throw new ORPCError('BAD_REQUEST', { message: `cannot move from '${cur}' to '${input.status}'` });
-      }
-      const terminal = new Set<string>([STATUS.done, STATUS.cancelled, STATUS.inReview, STATUS.waitingAnswer]);
-      if (terminal.has(input.status)) {
-        throw new ORPCError('BAD_REQUEST', {
-          message: 'use the workflow actions for review, completion and cancellation',
-        });
-      }
       const actorId = await selfIdOf(context);
       await db
         .update(tasksTable)
@@ -582,8 +580,10 @@ export const tasksRouter = os.router({
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
-      await runWorkflow(() => addNote(input.taskId, selfId, input.body));
-      return { ok: true };
+      const outcome = await runWorkflow(
+        () => addNote(input.taskId, selfId, input.body) as Promise<{ steered: boolean; dispatched?: true }>,
+      );
+      return { ok: true, ...(outcome as { steered: boolean; dispatched?: true }) };
     }),
 
   /** current holder forwards the question down the chain */

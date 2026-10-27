@@ -279,6 +279,76 @@ describe('acp.client turns', () => {
     expect(stream.closed).toBe(true);
   });
 
+  it('onSessionOpen exposes a mid-turn steer (second session/prompt); agent error => false', async () => {
+    let steer: ((text: string) => Promise<boolean>) | undefined;
+    let promptsSeen = 0;
+    const stream = fakeAgent((msg, send) => {
+      const method = msg.method as string | undefined;
+      if (!method) return;
+      if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1 } });
+      else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-st' } });
+      else if (method === 'session/prompt') {
+        promptsSeen += 1;
+        if (promptsSeen === 1) {
+          send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+        } else if (promptsSeen === 2) {
+          send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+        } else {
+          send({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'busy' } });
+        }
+      }
+    });
+    await turn(stream, {
+      onSessionOpen: (fn) => {
+        steer = fn;
+      },
+    });
+    expect(steer).toBeTruthy();
+    await expect(steer!('pivot: use sqlite')).resolves.toBe(true);
+    await expect(steer!('again')).resolves.toBe(false);
+  });
+
+  it('notifications never split a half-streamed envelope line (queued behind chunks)', async () => {
+    const lines: string[] = [];
+    const stream = fakeAgent((msg, send) => {
+      const method = msg.method as string | undefined;
+      if (!method) return;
+      if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1 } });
+      else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-q' } });
+      else if (method === 'session/prompt') {
+        // chunk 1: envelope WITHOUT trailing newline, then a usage notification lands
+        send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: '{"kind": "result", "body": "half' },
+            },
+          },
+        });
+        send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: { update: { sessionUpdate: 'usage_update', used: 18506, size: 1000000 } },
+        });
+        send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' half"}' } } },
+        });
+        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+      }
+    });
+    await turn(stream, { onLine: (l) => lines.push(l) });
+    // the envelope line stays whole; the notification rides AFTER it, never inside
+    expect(lines.some((l) => l === '{"kind": "result", "body": "half half"}')).toBe(true);
+    expect(lines.filter((l) => l === '[context] 18506/1000000 tokens')).toHaveLength(1);
+    expect(lines.indexOf('[context] 18506/1000000 tokens')).toBeGreaterThan(
+      lines.indexOf('{"kind": "result", "body": "half half"}'),
+    );
+  });
+
   it('outputSchema: contract appended to the prompt; structured parsed from the transcript', async () => {
     const { z } = await import('zod');
     const Report = z.object({ score: z.number(), notes: z.string() });

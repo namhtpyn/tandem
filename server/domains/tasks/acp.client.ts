@@ -105,6 +105,9 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
   outputSchema?: S;
   /** extra lines appended after the auto-rendered contract (e.g. examples) */
   outputContractExtras?: string[];
+  /** called once the session exists — the hook receives a mid-turn steer fn
+   *  (a second session/prompt on the live stream; agents queue or interrupt it) */
+  onSessionOpen?: (steer: (text: string) => Promise<boolean>) => void;
 }): Promise<[S] extends [never] ? AcpTurnResult : AcpStructuredTurnResult<S>> {
   const { stream, timeoutMs, onLine } = opts;
   // promptText: the caller's prompt plus the auto-rendered structured-output
@@ -123,6 +126,17 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
   /** chunk deltas coalesce here until a real newline — one log line per source line, not per chunk */
   let pendingLine = '';
   let streamedText = false;
+  /** notifications ([context]/[tool]) arriving mid-chunk-line queue here — printing
+   * them directly would split a half-streamed envelope JSON into invalid pieces */
+  const queuedLogLines: string[] = [];
+  const queueLogLine = (line: string) => {
+    queuedLogLines.push(line);
+  };
+  const drainQueuedLogLines = () => {
+    if (!pendingLine && queuedLogLines.length) {
+      for (const line of queuedLogLines.splice(0)) onLine?.(line);
+    }
+  };
   const LINE_FLUSH_MAX = 400;
   const emitChunkText = (text: string) => {
     pendingLine += text;
@@ -132,10 +146,12 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
       pendingLine = pendingLine.slice(nl + 1);
       nl = pendingLine.indexOf('\n');
     }
+    drainQueuedLogLines();
     // very long unbroken text still streams instead of landing as one blob at turn end
     if (pendingLine.length >= LINE_FLUSH_MAX) {
       onLine?.(pendingLine);
       pendingLine = '';
+      drainQueuedLogLines();
     }
   };
   const flushPendingLine = () => {
@@ -143,6 +159,7 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
       onLine?.(pendingLine);
       pendingLine = '';
     }
+    for (const line of queuedLogLines.splice(0)) onLine?.(line);
   };
 
   const request = (method: string, params: unknown): Promise<RpcMessage> =>
@@ -188,9 +205,9 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
               ? update.toolName
               : 'tool';
         const status = typeof update.status === 'string' ? ` ${update.status}` : '';
-        onLine(`[tool] ${title}${status}`);
+        queueLogLine(`[tool] ${title}${status}`);
       } else if (kind === 'usage_update') {
-        onLine(`[context] ${update.used ?? '?'}/${update.size ?? '?'} tokens`);
+        queueLogLine(`[context] ${update.used ?? '?'}/${update.size ?? '?'} tokens`);
       }
       // user_message_chunk (our own prompt echo) and plans stay out of the log
     }
@@ -305,6 +322,21 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
       }, cancelGraceMs()).unref?.();
     }, timeoutMs);
     turnTimer.unref?.();
+
+    if (opts.onSessionOpen) {
+      opts.onSessionOpen(async (text: string) => {
+        try {
+          const steer = await request('session/prompt', {
+            sessionId,
+            prompt: [{ type: 'text', text }],
+          });
+          return !steer.error;
+        } catch {
+          /* v8 ignore next -- request() resolves on error frames; a throw is transport-level */
+          return false;
+        }
+      });
+    }
 
     const prompt = await request('session/prompt', {
       sessionId,

@@ -53,7 +53,17 @@ export type ThreadSource = {
   runs?: Array<
     Pick<
       ThreadRunItem,
-      'id' | 'status' | 'output' | 'exitCode' | 'prompt' | 'body' | 'agentName' | 'startedAt' | 'finishedAt'
+      | 'id'
+      | 'status'
+      | 'output'
+      | 'exitCode'
+      | 'prompt'
+      | 'body'
+      | 'agentName'
+      | 'authorId'
+      | 'authorName'
+      | 'startedAt'
+      | 'finishedAt'
     >
   >;
   activity?: Array<Pick<ThreadNoteItem, 'id' | 'noteKind' | 'body' | 'authorName' | 'authorId' | 'createdAt'>>;
@@ -114,6 +124,8 @@ export function buildThread(src: ThreadSource): ThreadItem[] {
       prompt: r.prompt,
       body: r.body,
       agentName: r.agentName,
+      authorId: r.authorId ?? null,
+      authorName: r.authorName ?? null,
       startedAt: r.startedAt,
       finishedAt: r.finishedAt,
     });

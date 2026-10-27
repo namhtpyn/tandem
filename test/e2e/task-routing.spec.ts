@@ -65,11 +65,14 @@ test('subtask creation nests under the parent, chips the child, and blocks the p
   await page.getByRole('link', { name: parentName }).first().click();
   await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
 
-  // create a subtask inline
+  // create a subtask through the task creation modal (parent pre-set)
   const panel = page.getByTestId('subtask-panel');
   await expect(panel).toBeVisible();
-  await panel.getByPlaceholder('New subtask…').fill(childName);
-  await page.keyboard.press('Enter');
+  await panel.getByRole('button', { name: 'Add subtask' }).click();
+  const subtaskModal = page.getByRole('dialog', { name: 'New task' });
+  await expect(subtaskModal).toBeVisible();
+  await subtaskModal.getByPlaceholder('Task title').fill(childName);
+  await subtaskModal.getByRole('button', { name: /Create task/ }).click();
   await expect(panel.getByRole('link', { name: childName })).toBeVisible({ timeout: 10_000 });
 
   // parent flips to blocked (derived from the open child); the reload pulls

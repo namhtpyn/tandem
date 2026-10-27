@@ -9,7 +9,7 @@ import { computed, onServerPrefetch, ref } from 'vue';
 import { CHANGE_RESOURCE } from '#shared/enums';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 
-const props = defineProps<{ task: TaskRow }>();
+const props = defineProps<{ task: TaskRow; runLocked?: boolean }>();
 
 const { $orpc } = useNuxtApp();
 const queryClient = useQueryClient();
@@ -26,18 +26,8 @@ const updateMutation = useMutation($orpc.tasks.update.mutationOptions());
 const setStatusMutation = useMutation($orpc.tasks.setStatus.mutationOptions());
 const fieldBusy = ref(false);
 const fieldError = ref('');
-/** status select: current + the workflow-allowed next statuses (server enforces the same rule) */
-const selectableStatuses = computed(() => {
-  const cur = props.task.status ? statusById.value.get(props.task.status) : null;
-  if (!cur) return [];
-  return [
-    cur,
-    ...cur.nextIds
-      .filter((id) => id !== cur.id)
-      .map((id) => statusById.value.get(id))
-      .filter((s) => !!s),
-  ];
-});
+/** status select: every status is manually reachable (owner ruling 2026-10-27) */
+const selectableStatuses = computed(() => [...statusById.value.values()]);
 const statusOptions = computed(() => selectableStatuses.value.map((s) => ({ label: s.name, value: s.id })));
 const assigneeOptions = computed(() => [
   { label: 'Unassigned', value: '__none__' },
@@ -81,7 +71,7 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
             :items="statusOptions"
             value-key="value"
             size="md"
-            :disabled="fieldBusy"
+            :disabled="fieldBusy || runLocked"
             aria-label="Task status"
             class="w-40"
             @update:model-value="(v: string) => task && v !== task.status && updateField({ status: v })"
@@ -96,13 +86,14 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
             :items="assigneeOptions"
             value-key="value"
             size="md"
-            :disabled="fieldBusy"
+            :disabled="fieldBusy || runLocked"
             aria-label="Task assignee"
             class="w-40"
             @update:model-value="(v: string) => task && updateField({ assigneeId: v === '__none__' ? null : v })"
           />
         </dd>
       </div>
+      <p v-if="runLocked" class="text-[11px] text-zinc-400">Locked while the agent runs.</p>
       <div class="flex items-center justify-between gap-2">
         <dt class="text-xs text-zinc-500">Owner</dt>
         <dd

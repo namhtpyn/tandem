@@ -865,7 +865,7 @@ onServerPrefetch(() =>
             :disabled="workflowBusy || !workflowNote.trim()"
             @click="sendDrawerNote()"
           >
-            {{ workflowStatusCategory === 'waiting_answer' ? 'Send answer' : 'Post note' }}
+            {{ workflowStatusCategory === 'waiting_answer' ? 'Send answer' : 'Send' }}
           </UButton>
           <p v-if="workflowMessage" class="text-xs" :class="workflowMessage === 'done' ? 'text-success' : 'text-error'">
             {{ workflowMessage }}

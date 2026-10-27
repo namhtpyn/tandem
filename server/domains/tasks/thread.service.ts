@@ -9,6 +9,7 @@ import { nonNull } from '#shared/utils/non-null';
 import { db, asDb, type DbExecutor } from '../../db/index';
 import { taskAttachments, taskMessageActivities, taskMessages } from '../../db/schema';
 import { activityKindOf } from './brief.service';
+import { dropEchoNotes } from './echo-notes';
 
 /** jsonb payloads arrive as raw strings through RQB relation selects — parse once so the
  * client gets an object; corrupt/non-object payloads ship as null instead of a dead string */
@@ -96,20 +97,7 @@ export async function listTaskThread(taskId: string) {
   // (payload arrives as a raw jsonb string, so the kind check goes through activityKindOf)
   const visible = messages.filter((m) => activityKindOf(m.activityExt?.payload) !== 'status');
 
-  // agent-side runners echo the settled result as a plain note seconds after the run
-  // message carries the same body — the run turn already renders it, so drop the echo
-  const runBodyByAuthor = new Map<string, { body: string; at: number }>();
-  for (const m of visible) {
-    if (m.run && m.body && m.authorId)
-      runBodyByAuthor.set(m.authorId, { body: m.body, at: Date.parse(String(m.createdAt)) });
-  }
-  const deduped = visible.filter((m) => {
-    if (m.run || !m.body || !m.authorId) return true;
-    const run = runBodyByAuthor.get(m.authorId);
-    if (!run || run.body !== m.body) return true;
-    const at = Date.parse(String(m.createdAt));
-    return !(at > run.at && at - run.at <= 120_000);
-  });
+  const deduped = dropEchoNotes(visible);
 
   const runIds = deduped.flatMap((m) => (m.run ? [m.run.id] : []));
   const outputs = runIds.length
@@ -171,3 +159,4 @@ export async function listTaskThread(taskId: string) {
 
 // re-exported so callers of the old helper keep one import site
 export { taskMessageActivities, taskMessages };
+export { dropEchoNotes } from './echo-notes';

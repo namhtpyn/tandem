@@ -114,24 +114,15 @@ describe('admin-only writes', () => {
     expect(response!.status).toBe(400);
   });
 
-  it('tasks.setStatus moves graph-legally and rejects workflow-only targets', async () => {
+  it('tasks.setStatus is manual and free: any status is settable, task must exist', async () => {
     const t = await call('tasks.create', { title: 'SetStatus' });
-    // todo -> doing is seeded graph-legal and allowed
+    // owner ruling 2026-10-27: the transition graph is advisory, not a gate
     await expect(call('tasks.setStatus', { id: t.id, status: STATUS.doing })).resolves.toMatchObject({ ok: true });
-    // doing -> done is review-gated: rejected even though the seeded graph allows it
-    await expect(call('tasks.setStatus', { id: t.id, status: STATUS.done })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: 'use the workflow actions for review, completion and cancellation',
-    });
-    // doing -> in_review is submit-flow-only
-    await expect(call('tasks.setStatus', { id: t.id, status: STATUS.inReview })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-    });
-    // doing -> blocked is graph-legal and manually allowed (pause work)
+    await expect(call('tasks.setStatus', { id: t.id, status: STATUS.done })).resolves.toMatchObject({ ok: true });
+    await expect(call('tasks.setStatus', { id: t.id, status: STATUS.inReview })).resolves.toMatchObject({ ok: true });
     await expect(call('tasks.setStatus', { id: t.id, status: STATUS.blocked })).resolves.toMatchObject({ ok: true });
-    // blocked -> done is refused (done is workflow-only)
-    await expect(call('tasks.setStatus', { id: t.id, status: STATUS.done })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
+    await expect(call('tasks.setStatus', { id: t.id, status: STATUS.cancelled })).resolves.toMatchObject({
+      ok: true,
     });
     // unknown task -> NOT_FOUND
     await expect(call('tasks.setStatus', { id: 'no-such-task', status: STATUS.doing })).rejects.toMatchObject({
@@ -141,6 +132,35 @@ describe('admin-only writes', () => {
     const parent = await call('tasks.create', { title: 'SetStatus parent' });
     const child = await call('tasks.create', { title: 'SetStatus child', parentId: parent.id });
     await expect(call('tasks.setStatus', { id: child.id, status: STATUS.doing })).resolves.toMatchObject({ ok: true });
+  });
+
+  it('a live run locks status and assignee edits', async () => {
+    const t = await call('tasks.create', { title: 'Locked run' });
+    const { db } = await dbm();
+    const { taskMessages, taskRuns } = await schema();
+    await db.insert(taskMessages).values({ id: 'msg-lock', taskId: t.id, body: '', createdAt: new Date() });
+    await db.insert(taskRuns).values({
+      id: 'run-lock',
+      messageId: 'msg-lock',
+      employeeId: admin.id,
+      environmentId: 'env-local',
+      status: 'RUNNING',
+      output: '',
+      startedAt: new Date(),
+    });
+    await expect(call('tasks.setStatus', { id: t.id, status: STATUS.doing })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'task is running — status is locked until it settles',
+    });
+    await expect(
+      call('tasks.update', { id: t.id, assigneeId: '00000000-0000-7000-8000-111111111111' }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'task is running — assignee is locked until it settles' });
+    // settling unlocks both
+    await db
+      .update(taskRuns)
+      .set({ status: 'DONE' })
+      .where((await import('drizzle-orm')).eq(taskRuns.id, 'run-lock'));
+    await expect(call('tasks.setStatus', { id: t.id, status: STATUS.doing })).resolves.toMatchObject({ ok: true });
   });
 
   it('tasks.note posts a thread message and changes nothing else', async () => {

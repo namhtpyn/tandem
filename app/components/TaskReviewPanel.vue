@@ -21,8 +21,12 @@ const reviewsQuery = useQuery(
 );
 const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES] }));
 const employees = computed(
-  () => (unref(employeesLive.data) ?? []) as unknown as Array<{ userId: string; name: string }>,
+  () => (unref(employeesLive.data) ?? []) as unknown as Array<{ userId: string; name: string; kind?: string }>,
 );
+
+/** reviewer kind comes from the employee record — a PENDING verdict row has no source yet */
+const kindOf = (id: string, fallback: string | null) =>
+  employees.value.find((e) => e.userId === id)?.kind ?? (fallback === 'ai' ? 'AI' : 'human');
 
 /** REVIEW LAW checklist: current-round verdicts per reviewer, history collapsed by round */
 const reviewChecklist = computed(() => {
@@ -65,7 +69,7 @@ onServerPrefetch(() => Promise.all([reviewsQuery.suspense(), employeesLive.suspe
         />
         <span class="min-w-0">
           <span class="block truncate text-zinc-800 dark:text-zinc-200"
-            >{{ r.name }} <span class="text-xs text-zinc-400">({{ r.source === 'ai' ? 'AI' : 'human' }})</span></span
+            >{{ r.name }} <span class="text-xs text-zinc-400">({{ kindOf(r.reviewerId, r.source) }})</span></span
           >
           <span v-if="r.note" class="block truncate text-xs text-zinc-400" :title="r.note">{{ r.note }}</span>
         </span>

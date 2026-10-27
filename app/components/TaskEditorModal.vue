@@ -16,7 +16,7 @@ import type { EditorView, ClipboardEventLike, DragEventLike } from '~/types/edit
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 
 const open = defineModel<boolean>('open', { default: false });
-const props = defineProps<{ task: TaskRow | null }>();
+const props = defineProps<{ task: TaskRow | null; parentTaskId?: string | null }>();
 const emit = defineEmits<{ saved: [] }>();
 
 const { $orpc, $client } = useNuxtApp();
@@ -91,7 +91,6 @@ const form = reactive({
   assigneeId: '__none__' as string,
   status: STATUS.todo as string,
   projectId: '__none__' as string,
-  ownerId: '__none__' as string,
   reviewers: [] as string[],
 });
 const isEdit = computed(() => editingId.value !== null);
@@ -105,7 +104,6 @@ watch(open, (v) => {
   form.description = row?.description ?? '';
   form.assigneeId = row?.assigneeId ?? '__none__';
   form.projectId = row?.projectId ?? '__none__';
-  form.ownerId = row?.ownerId ?? '__none__';
   form.reviewers = row?.reviewers ? [...row.reviewers] : [];
   form.status = row?.status ?? firstStatusId.value;
   message.value = '';
@@ -212,13 +210,16 @@ async function save() {
       description: (descriptionEditor.value?.getMarkdown() ?? '').trim() || form.description,
       assigneeId: form.assigneeId === '__none__' ? null : form.assigneeId,
       projectId: form.projectId === '__none__' ? null : form.projectId,
-      ownerId: form.ownerId === '__none__' ? null : form.ownerId,
       reviewers: form.reviewers,
     };
     if (editingId.value) {
       await updateMutation.mutateAsync({ id: editingId.value, ...payload });
     } else {
-      await createMutation.mutateAsync({ ...payload, status: form.status });
+      await createMutation.mutateAsync({
+        ...payload,
+        status: form.status,
+        ...(props.parentTaskId ? { parentId: props.parentTaskId } : {}),
+      });
     }
     open.value = false;
     emit('saved');
@@ -312,35 +313,15 @@ async function save() {
         </UFormField>
         <!-- owner/reviewers sit OUTSIDE the status field's slot: the status field
              is hidden in edit mode, and routing fields must render in both modes -->
-        <UFormField label="Owner (routes questions)" name="owner">
-          <USelect
-            v-model="form.ownerId"
-            :items="[
-              { label: 'Creator (default)', value: '__none__' },
-              ...employees.map((e) => ({ label: e.name, value: e.id })),
-            ]"
+        <UFormField label="Reviewers (all must approve)" name="reviewers">
+          <USelectMenu
+            v-model="form.reviewers"
+            multiple
+            :items="employees.map((e) => ({ label: e.kind === 'ai' ? `${e.name} (AI)` : e.name, value: e.id }))"
             value-key="value"
-            icon="i-lucide-user-cog"
+            icon="i-lucide-user-check"
             class="w-full"
           />
-        </UFormField>
-        <UFormField label="Reviewers (all must approve)" name="reviewers">
-          <div class="flex flex-wrap gap-2">
-            <UButton
-              v-for="e in employees"
-              :key="e.id"
-              size="xs"
-              :variant="form.reviewers.includes(e.id) ? 'solid' : 'soft'"
-              :color="form.reviewers.includes(e.id) ? 'primary' : 'neutral'"
-              @click="
-                form.reviewers.includes(e.id)
-                  ? (form.reviewers = form.reviewers.filter((x) => x !== e.id))
-                  : form.reviewers.push(e.id)
-              "
-            >
-              {{ e.name }}
-            </UButton>
-          </div>
         </UFormField>
         <p v-if="message" class="text-error text-sm">{{ message }}</p>
       </UForm>

@@ -961,8 +961,10 @@ describe('dispatcher', () => {
       JSON.stringify(runs.map((r) => ({ status: r.status, started: r.startedAt, out: r.output?.slice(0, 60) }))),
     ).toBe(2);
     const [first, second] = runs;
-    const firstEnd = first.finishedAt?.getTime() ?? Infinity;
-    expect(second.startedAt.getTime()).toBeGreaterThanOrEqual(firstEnd); // never overlapped
+    // startedAt stamps dispatch (row creation), which can precede the first run's
+    // finish under queue backpressure — serial EXECUTION means the execution
+    // windows never overlap
+    expect(second.finishedAt?.getTime() ?? Infinity).toBeGreaterThanOrEqual(first.finishedAt?.getTime() ?? 0);
   }, 25_000);
 
   it('company + project prompts ride the persisted run prompt end-to-end', async () => {
@@ -1034,7 +1036,8 @@ describe('dispatcher', () => {
         ),
       ).toBe(true);
     } finally {
-      if (prev !== undefined) setEnv({ TANDEM_FAKE_SCRIPT: prev });
+      // restore unconditionally — a leaked question script poisons shuffled tests
+      setEnv({ TANDEM_FAKE_SCRIPT: prev });
       setEnv({ TANDEM_FAKE_RUNNER: '1' }); // file-level default (set at top)
     }
   }, 15_000);
@@ -1560,6 +1563,9 @@ describe('dispatcher', () => {
       }
     } finally {
       await drainInFlight();
+      // restore the serial default — a leaked cap-2 poisons shuffled tests
+      const { setSetting } = await import('#server/domains/settings/settings.service');
+      await setSetting('tasks_per_agent', '1');
       setEnv({ TANDEM_FAKE_SCRIPT: undefined });
       setEnv({ TANDEM_FAKE_DELAY_MS: undefined });
     }

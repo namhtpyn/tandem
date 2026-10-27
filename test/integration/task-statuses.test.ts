@@ -130,21 +130,41 @@ describe('task statuses', () => {
     expect(row.name).toBe('Draft Loop II');
   });
 
-  it('built-in statuses are immutable: save and remove both refuse them', async () => {
-    await expect(
-      callProc('statuses.save', {
-        id: STATUS.todo,
-        name: 'Backlog',
-        color: 'neutral',
-        position: 0,
-        category: 'ready',
-        nextIds: [STATUS.doing],
-      }),
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'built-in status' });
+  it('built-in statuses are editable (owner ruling) but never removable', async () => {
+    // rename + re-point a built-in: allowed
+    await callProc('statuses.save', {
+      id: STATUS.blocked,
+      name: 'Blocked',
+      color: 'error',
+      position: 5,
+      category: 'paused',
+      nextIds: [STATUS.todo, STATUS.cancelled],
+    });
+    const { db } = await dbm();
+    const { taskStatuses } = await import('#server/db/schema');
+    const blocked = (await db.select().from(taskStatuses)).find((x) => x.id === STATUS.blocked)!;
+    expect(blocked.nextIds).toEqual([STATUS.todo, STATUS.cancelled]);
+    // restore canonical edges (migration parity) and confirm remove still refuses
+    await callProc('statuses.save', {
+      id: STATUS.blocked,
+      name: 'Blocked',
+      color: 'error',
+      position: 5,
+      category: 'paused',
+      nextIds: [STATUS.todo, STATUS.cancelled],
+    });
     await expect(callProc('statuses.remove', { id: STATUS.done })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: 'built-in status',
     });
+  });
+
+  it('seeded Blocked edges: no self-transition, Cancelled reachable', async () => {
+    const rows = await callProc('statuses.list', {});
+    const blocked = (rows as Array<{ id: string; nextIds: string[] }>).find((x) => x.id === STATUS.blocked)!;
+    expect(blocked.nextIds).not.toContain(STATUS.blocked);
+    expect(blocked.nextIds).toContain(STATUS.cancelled);
+    expect(blocked.nextIds).toContain(STATUS.todo);
   });
 
   it('remove prunes dangling transition edges left in other statuses', async () => {
