@@ -166,7 +166,11 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
   return { ok: true };
 }
 /** a plain conversation note: thread-only, no state change (relay law 2026-10-26) */
-export async function addNote(taskId: string, authorId: string, body: string) {
+export async function addNote(
+  taskId: string,
+  authorId: string,
+  body: string,
+): Promise<{ steered: boolean; dispatched?: true }> {
   const task = await getTask(taskId);
   await logActivity(taskId, ACTIVITY_KIND.NOTE, authorId, body, {});
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);

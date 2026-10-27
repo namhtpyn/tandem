@@ -1561,6 +1561,9 @@ describe('dispatcher', () => {
       }
     } finally {
       await drainInFlight();
+      // restore the serial default — a leaked cap-2 poisons shuffled tests
+      const { setSetting } = await import('#server/domains/settings/settings.service');
+      await setSetting('tasks_per_agent', '1');
       setEnv({ TANDEM_FAKE_SCRIPT: undefined });
       setEnv({ TANDEM_FAKE_DELAY_MS: undefined });
     }

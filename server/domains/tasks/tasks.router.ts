@@ -582,8 +582,10 @@ export const tasksRouter = os.router({
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
-      const outcome = await runWorkflow(() => addNote(input.taskId, selfId, input.body));
-      return { ok: true, ...outcome };
+      const outcome = await runWorkflow(
+        () => addNote(input.taskId, selfId, input.body) as Promise<{ steered: boolean; dispatched?: true }>,
+      );
+      return { ok: true, ...(outcome as { steered: boolean; dispatched?: true }) };
     }),
 
   /** current holder forwards the question down the chain */

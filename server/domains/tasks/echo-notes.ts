@@ -13,13 +13,13 @@ export function dropEchoNotes<T extends EchoRow>(rows: T[]): T[] {
   const runBodyByAuthor = new Map<string, { body: string; at: number }>();
   for (const m of rows) {
     if (m.run && m.body && m.authorId)
-      runBodyByAuthor.set(m.authorId, { body: m.body, at: Date.parse(String(m.createdAt)) });
+      runBodyByAuthor.set(m.authorId, { body: m.body, at: new Date(m.createdAt).getTime() });
   }
   return rows.filter((m) => {
     if (m.run || !m.body || !m.authorId) return true;
     const run = runBodyByAuthor.get(m.authorId);
     if (!run || run.body !== m.body) return true;
-    const at = Date.parse(String(m.createdAt));
+    const at = new Date(m.createdAt).getTime();
     return !(at > run.at && at - run.at <= 120_000);
   });
 }
