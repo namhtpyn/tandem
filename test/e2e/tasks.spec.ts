@@ -91,7 +91,7 @@ test('workflow drawer shows activity and lets the owner answer', async ({ page }
   // the composer posts a plain note (no state change, no verb picker)
   await drawer.locator('textarea').fill('who owns the spec?');
   await drawer.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(drawer.getByText('done', { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(drawer.getByText('Note added', { exact: true })).toBeVisible({ timeout: 10_000 });
 });
 
 test('workflow drawer streams an agent run to completion', async ({ page }) => {
@@ -142,9 +142,9 @@ test('workflow drawer streams an agent run to completion', async ({ page }) => {
       .getByText(/RESULT: task complete/i)
       .first(),
   ).toBeVisible({ timeout: 30_000 });
-  // the run card reports done + exit 0
-  await expect(drawer.getByText(/done · exit 0/i)).toBeVisible();
-  // the activity feed logs dispatch; the run card's status pill is the verdict
+  // the run card reads as a sentence; exit code 0 is hidden
+  await expect(drawer.getByText(/Run completed/i)).toBeVisible();
+  // the activity feed logs dispatch; the run card's status line is the verdict
   await expect(drawer.getByText(/dispatched to/i).first()).toBeVisible();
-  await expect(drawer.getByText(/done/i).first()).toBeVisible();
+  await expect(drawer.getByText(/completed/i).first()).toBeVisible();
 });

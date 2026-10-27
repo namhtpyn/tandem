@@ -3,9 +3,9 @@ import { expect, test, type Page } from '@playwright/test';
 import { login } from './helpers/login.ts';
 
 // Task detail Details section: assignee / project / status are editable selects
-// (Nuxt UI USelect = role=combobox button + portal options). Status is
-// workflow-constrained (current + allowed next statuses); the server enforces
-// the same rule and writes a status activity note into the thread.
+// (Nuxt UI USelect = role=combobox button + portal options). Manual status is
+// free on every surface (owner ruling 2026-10-27); the run lock still blocks
+// status/assignee edits while a run is live.
 
 async function pickOption(page: Page, label: string, option: string) {
   const trigger = page.getByLabel(label);
@@ -20,7 +20,7 @@ test('details: change status and assignee from the sidebar', async ({ page }) =>
   await login(page);
 
   // seed one human employee so the assignee select has a real option
-  await page.getByRole('link', { name: /Employees/ }).click();
+  await page.getByRole('link', { name: /Employees/ }).first().click();
   await expect(page.getByRole('heading', { name: /Employees/ })).toBeVisible();
   await page.getByRole('button', { name: 'New employee' }).first().click();
   await page.getByPlaceholder('Full name').fill(employeeName);
@@ -32,7 +32,7 @@ test('details: change status and assignee from the sidebar', async ({ page }) =>
   await page.getByRole('button', { name: /Done — I saved the key/ }).click();
 
   // create a task, then open its detail page via the title link
-  await page.getByRole('link', { name: /Tasks/, exact: true }).click();
+  await page.getByRole('link', { name: /Tasks/, exact: true }).first().click();
   await expect(page.getByRole('heading', { name: /Tasks/ })).toBeVisible();
   await page.getByRole('button', { name: 'New task' }).first().click();
   await page.getByPlaceholder('Task title').fill('Fields E2E');

@@ -3,6 +3,7 @@
 // are nestable, so the full list must stay client-side for tree assembly),
 // create/edit editor and delete confirm. The page renders the shell.
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
+import { watchDebounced } from '@vueuse/core';
 // Projects: nestable containers for tasks. Mobile-first: stacked tree cards,
 // desktop table; create/edit modal follows the #footer submit law.
 import { computed, reactive, ref, unref } from 'vue';
@@ -16,8 +17,16 @@ const queryClient = useQueryClient();
 const liveQuery = useQuery($orpc.projects.list.queryOptions({ queryKey: [CHANGE_RESOURCE.PROJECTS] }));
 const allRows = computed(() => (unref(liveQuery.data) ?? []) as ProjectRow[]);
 const search = ref('');
+const searchDebounced = ref('');
+watchDebounced(
+  search,
+  (v) => {
+    searchDebounced.value = v.trim();
+  },
+  { debounce: 300 },
+);
 const rows = computed(() => {
-  const q = search.value.trim().toLowerCase();
+  const q = searchDebounced.value.toLowerCase();
   if (!q) return allRows.value;
   // keep matches and their ancestor chain so the tree stays navigable
   const byId = new Map(allRows.value.map((r) => [r.id, r]));
@@ -77,7 +86,7 @@ function toggleCollapse(id: string) {
 
 const hasChildren = (id: string) => (byParent.value.get(id) ?? []).length > 0;
 
-const searchQ = computed(() => search.value.trim().toLowerCase());
+const searchQ = computed(() => searchDebounced.value.toLowerCase());
 
 /** depth+path flat walk; `respectCollapse` hides children of collapsed parents */
 function flattenTree(list: ProjectRow[], respectCollapse: boolean): FlatRow[] {
@@ -149,7 +158,7 @@ async function save() {
     else await $client.projects.create(payload);
     editorOpen.value = false;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'save failed';
+    message.value = e instanceof Error ? e.message : 'Save failed.';
   } finally {
     busy.value = false;
   }
@@ -166,13 +175,20 @@ async function remove_() {
     await $client.projects.remove({ id: confirmId.value });
     confirmId.value = null;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'delete failed';
+    // close the confirm so the page-level message isn't hidden behind the modal
+    confirmId.value = null;
+    message.value = e instanceof Error ? e.message : 'Delete failed.';
   } finally {
     busy.value = false;
   }
 }
 
 const statusColor = (s: string) => (s === PROJECT_STATUS.ARCHIVED ? 'neutral' : 'success');
+const STATUS_LABELS: Record<string, string> = {
+  [PROJECT_STATUS.ACTIVE]: 'Active',
+  [PROJECT_STATUS.ARCHIVED]: 'Archived',
+};
+const statusLabel = (s: string) => STATUS_LABELS[s] ?? s;
 
 onServerPrefetch(() => liveQuery.suspense());
 </script>
@@ -181,21 +197,24 @@ onServerPrefetch(() => liveQuery.suspense());
   <div>
     <p v-if="message && !editorOpen" class="text-error text-sm">{{ message }}</p>
 
-    <div class="mb-3 flex items-center gap-2">
-      <UInput v-model="search" icon="i-lucide-search" placeholder="Search projects…" class="flex-1" size="sm" />
-      <UButton icon="i-lucide-plus" label="New project" @click="openEditor()" />
-    </div>
-
-    <!-- Mobile: stacked tree cards -->
     <DataTable
-      v-if="flat.length"
+      v-model:search="search"
+      searchable
+      search-placeholder="Search projects…"
       :data="flat"
+      :loading="liveQuery.isPending.value"
       :columns="[
         { accessorKey: 'name', header: 'Project' },
         { accessorKey: 'status', header: 'Status' },
         { accessorKey: 'actions', header: '' },
       ]"
+      show-empty-state
+      empty-icon="i-lucide-folder-tree"
+      empty-text="No projects yet — create your first one."
     >
+      <template #toolbar>
+        <UButton icon="i-lucide-plus" label="New project" @click="openEditor()" />
+      </template>
       <template #name-cell="{ row }">
         <div class="flex min-w-0 items-center gap-1.5" :style="{ paddingLeft: `${row.original.depth * 1.25}rem` }">
           <UButton
@@ -209,15 +228,17 @@ onServerPrefetch(() => liveQuery.suspense());
             @click="toggleCollapse(row.original.id)"
           />
           <div class="min-w-0">
-            <p class="truncate font-medium text-zinc-900 dark:text-white">{{ row.original.name }}</p>
-            <p v-if="row.original.description" class="truncate text-xs text-zinc-400">
+            <p class="text-highlighted truncate font-medium">{{ row.original.name }}</p>
+            <p v-if="row.original.description" class="text-dimmed truncate text-xs">
               {{ row.original.description }}
             </p>
           </div>
         </div>
       </template>
       <template #status-cell="{ row }">
-        <UBadge :color="statusColor(row.original.status)" variant="subtle" size="sm">{{ row.original.status }}</UBadge>
+        <UBadge :color="statusColor(row.original.status)" variant="subtle" size="sm">{{
+          statusLabel(row.original.status)
+        }}</UBadge>
       </template>
       <template #actions-cell="{ row }">
         <div class="flex justify-end gap-1">
@@ -270,13 +291,13 @@ onServerPrefetch(() => liveQuery.suspense());
         <UCard :ui="{ root: 'shadow-sm' }" :class="row.depth > 0 ? 'ml-4' : ''">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
-              <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">
-                <UIcon v-if="row.depth > 0" name="i-lucide-corner-down-right" class="mr-1 size-3.5 text-zinc-400" />
+              <p class="text-highlighted truncate text-sm font-medium">
+                <UIcon v-if="row.depth > 0" name="i-lucide-corner-down-right" class="text-dimmed mr-1 size-3.5" />
                 {{ row.name }}
               </p>
-              <p v-if="row.description" class="mt-0.5 line-clamp-2 text-xs text-zinc-500">{{ row.description }}</p>
+              <p v-if="row.description" class="text-muted mt-0.5 line-clamp-2 text-xs">{{ row.description }}</p>
             </div>
-            <UBadge :color="statusColor(row.status)" variant="subtle" size="sm">{{ row.status }}</UBadge>
+            <UBadge :color="statusColor(row.status)" variant="subtle" size="sm">{{ statusLabel(row.status) }}</UBadge>
           </div>
           <div class="mt-3 flex justify-end gap-1">
             <UPopover mode="hover">
@@ -326,8 +347,6 @@ onServerPrefetch(() => liveQuery.suspense());
         </UCard>
       </template>
     </DataTable>
-
-    <p v-else class="py-8 text-center text-sm text-zinc-500">No projects yet.</p>
 
     <!-- editor modal -->
     <UModal
@@ -395,9 +414,17 @@ onServerPrefetch(() => liveQuery.suspense());
     </UModal>
 
     <!-- delete confirm -->
-    <UModal :open="confirmId !== null" title="Delete project" @update:open="confirmId = null">
+    <UModal
+      :open="confirmId !== null"
+      title="Delete project"
+      @update:open="
+        (v: boolean) => {
+          if (!v) confirmId = null;
+        }
+      "
+    >
       <template #body>
-        <p class="text-sm text-zinc-600 dark:text-zinc-300">
+        <p class="text-muted text-sm">
           Delete this project? Its tasks become unscoped and subprojects move to the top level.
         </p>
       </template>

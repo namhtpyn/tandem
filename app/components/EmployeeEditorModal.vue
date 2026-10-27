@@ -39,7 +39,7 @@ const form = reactive({
   image: null as string | null,
   title: '',
   supervisorIds: [] as string[],
-  environmentId: '' as string,
+  environmentId: '__none__' as string,
   instructions: '',
   executable: '',
   providerId: '__none__' as string,
@@ -175,7 +175,7 @@ function applyIdentityToForm(row: EmployeeRow | undefined) {
 
 /** AI extension fields seeded from an employee row */
 function applyAiExtensionToForm(row: EmployeeRow | undefined) {
-  form.environmentId = row?.environmentId ?? '';
+  form.environmentId = row?.environmentId ?? '__none__';
   form.instructions = row?.instructions ?? '';
   form.executable = row?.executable ?? '';
   form.providerId = row?.providerId ?? '__none__';
@@ -216,7 +216,7 @@ function updateInput() {
     ...(avatarDirty.value ? { image: form.image } : {}),
     title: form.title,
     supervisorIds: form.supervisorIds,
-    ...(showAiFields.value && form.environmentId ? { environmentId: form.environmentId } : {}),
+    ...(showAiFields.value ? { environmentId: form.environmentId === '__none__' ? null : form.environmentId } : {}),
     ...(showAiFields.value ? { instructions: form.instructions } : {}),
     ...(showAiFields.value ? { executable: form.executable.trim() } : {}),
     ...(showAiFields.value ? { providerId: form.providerId === '__none__' ? null : form.providerId } : {}),
@@ -236,7 +236,8 @@ function createInput() {
     supervisorIds: form.supervisorIds,
     ...(form.kind === 'ai'
       ? {
-          environmentId: form.environmentId,
+          // create input has no null for environmentId — omit instead of clearing
+          ...(form.environmentId !== '__none__' ? { environmentId: form.environmentId } : {}),
           instructions: form.instructions,
           executable: form.executable.trim(),
           providerId: form.providerId === '__none__' ? null : form.providerId,
@@ -274,7 +275,7 @@ async function save() {
     emit('saved');
     if (!mintedKey.value) open.value = false;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'save failed';
+    message.value = e instanceof Error ? e.message : 'Save failed.';
   } finally {
     busy.value = false;
   }
@@ -292,211 +293,213 @@ onServerPrefetch(() =>
     :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
   >
     <template #body>
-      <div class="max-h-[55dvh] overflow-y-auto px-4 sm:px-6">
-        <UForm id="employee-editor-form" :state="form" class="space-y-4" @submit="save">
-          <UFormField label="Name" name="name">
-            <UInput v-model="form.name" icon="i-lucide-user" placeholder="Full name" class="w-full" required />
-          </UFormField>
-          <UFormField label="Email (login)" name="email">
-            <template #hint><FormHint text="Humans sign in with it; AI employees authenticate by API key" /></template>
-            <UInput
-              v-model="form.email"
-              icon="i-lucide-at-sign"
-              placeholder="name@company.com"
-              class="w-full"
-              required
-            />
-          </UFormField>
-          <UFormField label="Avatar" name="avatar">
-            <template #hint><FormHint text="square photo, resized to 256px" /></template>
-            <div class="flex items-center gap-3">
-              <span
-                class="bg-elevated text-muted inline-flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-full text-lg font-semibold"
-              >
-                <img
-                  v-if="form.image"
-                  :src="form.image"
-                  alt="avatar preview"
-                  class="size-12 rounded-full object-cover"
-                />
-                <img
-                  v-else-if="avatarUrl"
-                  :src="avatarUrl"
-                  alt="avatar preview"
-                  class="size-12 rounded-full object-cover"
-                />
-                <template v-else>{{ form.kind === 'ai' ? 'AI' : form.name.slice(0, 1) || '?' }}</template>
-              </span>
-              <input type="file" accept="image/*" class="w-full text-xs" :disabled="busy" @change="onAvatarPicked" />
-              <UButton
-                v-if="form.image"
-                icon="i-lucide-x"
-                size="xs"
-                color="neutral"
-                variant="soft"
-                aria-label="Remove avatar"
-                @click="
-                  form.image = null;
-                  avatarDirty = true;
-                  avatarUrl = null;
-                "
-              />
-            </div>
-          </UFormField>
-          <UFormField v-if="!isEdit" label="Kind" name="kind">
-            <URadioGroup
-              v-model="form.kind"
-              :items="[
-                { label: 'Human — password/SSO login', value: 'human' },
-                { label: 'AI agent — API key, runs on an environment', value: 'ai' },
-              ]"
-              variant="card"
-              class="w-full"
-            />
-          </UFormField>
-          <UFormField v-else name="kind">
-            <UBadge
-              :color="editingIsAi ? 'primary' : 'neutral'"
-              variant="subtle"
-              :icon="editingIsAi ? 'i-lucide-bot' : 'i-lucide-user'"
-            >
-              {{ editingIsAi ? 'AI agent (immutable)' : 'Human (immutable)' }}
-            </UBadge>
-          </UFormField>
-          <UFormField label="Title" name="title">
-            <template #hint><FormHint text="Place in the company, e.g. Senior Engineer" /></template>
-            <AutoCompleteInput
-              v-model="form.title"
-              :items="titles.map((t) => t.name)"
-              icon="i-lucide-briefcase"
-              placeholder="Job title"
-              create-hint="A new title will be added to the catalog"
-              :disabled="busy"
-            />
-          </UFormField>
-          <UFormField label="Supervisors" name="supervisorIds">
-            <template #hint><FormHint text="Many-to-many — an employee can report to several" /></template>
-            <USelectMenu
-              v-model="form.supervisorIds"
-              :items="supervisorItems"
-              multiple
-              value-key="value"
-              placeholder="No supervisors"
-              class="w-full"
-            />
-          </UFormField>
-          <template v-if="showAiFields">
-            <UFormField label="Environment" name="environmentId">
-              <template #hint><FormHint text="SSH target this agent runs on" /></template>
-              <USelectMenu
-                v-model="form.environmentId"
-                :items="environmentItems"
-                value-key="value"
-                placeholder="Select an environment"
-                class="w-full"
-              />
-            </UFormField>
-            <UFormField label="ACP executable" name="executable" required>
-              <template #hint
-                ><FormHint text="Command that starts an ACP server on stdio in the environment"
-              /></template>
-              <UInput
-                v-model="form.executable"
-                icon="i-lucide-terminal"
-                placeholder="hermes acp"
-                class="w-full"
-                data-testid="acp-executable-input"
-              />
-            </UFormField>
-            <UFormField label="Provider" name="providerId">
-              <template #hint><FormHint text="Model endpoint this agent uses" /></template>
-              <USelect
-                v-model="form.providerId"
-                :items="[
-                  { label: 'No provider', value: '__none__' },
-                  ...modelProviders.map((p) => ({ label: p.label, value: p.id })),
-                ]"
-                value-key="value"
-                icon="i-lucide-plug"
-                placeholder="Select a provider"
-                class="w-full"
-              />
-            </UFormField>
-            <UFormField label="Model" name="model">
-              <template #hint
-                ><FormHint text="Model name the agent runs — pick from the list or type your own"
-              /></template>
-              <UInputMenu
-                v-model="form.model"
-                :items="modelItems"
-                :loading="modelLoading"
-                icon="i-lucide-cpu"
-                placeholder="Model name"
-                class="w-full"
-              />
-            </UFormField>
-            <UFormField label="API key" name="apiKeySecretId">
-              <template #hint><FormHint text="Vault secret holding the key (per-agent, injected per run)" /></template>
-              <USelectMenu
-                v-model="form.apiKeySecretId"
-                :items="secretItems"
-                value-key="value"
-                :search-input="{ placeholder: 'Search secrets' }"
-                clear
-                icon="i-lucide-key-round"
-                placeholder="Vault secret with the API key"
-                class="w-full"
-              />
-            </UFormField>
-            <UFormField label="Instructions" name="instructions">
-              <template #hint><FormHint text="System prompt for this agent" /></template>
-              <UTextarea
-                v-model="form.instructions"
-                :rows="4"
-                placeholder="Custom instructions for this agent…"
-                class="w-full"
-              />
-            </UFormField>
-          </template>
-          <UAlert
-            v-if="message"
-            icon="i-lucide-circle-alert"
-            color="error"
-            variant="subtle"
-            :title="message"
-            :ui="{ title: 'text-sm' }"
+      <UForm id="employee-editor-form" :state="form" class="space-y-4" @submit="save">
+        <UFormField label="Name" name="name">
+          <UInput v-model="form.name" icon="i-lucide-user" placeholder="Full name" class="w-full" required />
+        </UFormField>
+        <UFormField label="Email (login)" name="email">
+          <template #hint><FormHint text="Humans sign in with it; AI employees authenticate by API key" /></template>
+          <UInput
+            v-model="form.email"
+            type="email"
+            icon="i-lucide-at-sign"
+            placeholder="name@company.com"
+            class="w-full"
+            required
           />
-          <div v-if="mintedKey" class="rounded-lg border-2 border-amber-400/70 bg-amber-50 p-4 dark:bg-amber-950/40">
-            <p class="flex items-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-200">
-              <UIcon name="i-lucide-key-round" class="size-4" />
-              API key created — shown only once
-            </p>
-            <p class="mt-1 text-xs text-amber-700 dark:text-amber-300">Copy it now; it cannot be retrieved later.</p>
-            <div class="mt-3 flex items-center gap-2">
-              <code
-                class="flex-1 rounded-md bg-white/70 px-2.5 py-2 font-mono text-sm break-all text-amber-900 dark:bg-black/30 dark:text-amber-100"
-                >{{ mintedKey }}</code
-              >
-              <UButton
-                :icon="copied ? 'i-lucide-check' : 'i-lucide-copy'"
-                :color="copied ? 'success' : 'neutral'"
-                variant="soft"
-                size="sm"
-                :label="copied ? 'Copied' : 'Copy'"
-                @click="copyKey(mintedKey)"
+        </UFormField>
+        <UFormField label="Avatar" name="avatar">
+          <template #hint><FormHint text="square photo, resized to 256px" /></template>
+          <div class="flex items-center gap-3">
+            <span
+              class="bg-elevated text-muted inline-flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-full text-lg font-semibold"
+            >
+              <img v-if="form.image" :src="form.image" alt="avatar preview" class="size-12 rounded-full object-cover" />
+              <img
+                v-else-if="avatarUrl"
+                :src="avatarUrl"
+                alt="avatar preview"
+                class="size-12 rounded-full object-cover"
               />
-            </div>
+              <template v-else>{{ form.kind === 'ai' ? 'AI' : form.name.slice(0, 1) || '?' }}</template>
+            </span>
+            <label
+              class="border-default hover:bg-elevated/50 text-highlighted flex flex-1 cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
+            >
+              <UIcon name="i-lucide-image-up" class="size-4 shrink-0" />
+              <span class="truncate">Choose image</span>
+              <input
+                type="file"
+                accept="image/*"
+                class="sr-only"
+                aria-label="Choose avatar image"
+                :disabled="busy"
+                @change="onAvatarPicked"
+              />
+            </label>
             <UButton
-              class="mt-3"
-              size="sm"
-              color="primary"
-              variant="solid"
-              label="Done — I saved the key"
-              @click="open = false"
+              v-if="form.image"
+              icon="i-lucide-x"
+              size="xs"
+              color="neutral"
+              variant="soft"
+              aria-label="Remove avatar"
+              @click="
+                form.image = null;
+                avatarDirty = true;
+                avatarUrl = null;
+              "
             />
           </div>
-        </UForm>
-      </div>
+        </UFormField>
+        <UFormField v-if="!isEdit" label="Kind" name="kind">
+          <URadioGroup
+            v-model="form.kind"
+            :items="[
+              { label: 'Human — password/SSO login', value: 'human' },
+              { label: 'AI agent — API key, runs on an environment', value: 'ai' },
+            ]"
+            variant="card"
+            class="w-full"
+          />
+        </UFormField>
+        <UFormField v-else name="kind">
+          <UBadge
+            :color="editingIsAi ? 'primary' : 'neutral'"
+            variant="subtle"
+            :icon="editingIsAi ? 'i-lucide-bot' : 'i-lucide-user'"
+          >
+            {{ editingIsAi ? 'AI agent (immutable)' : 'Human (immutable)' }}
+          </UBadge>
+        </UFormField>
+        <UFormField label="Title" name="title">
+          <template #hint><FormHint text="Place in the company, e.g. Senior Engineer" /></template>
+          <AutoCompleteInput
+            v-model="form.title"
+            :items="titles.map((t) => t.name)"
+            icon="i-lucide-briefcase"
+            placeholder="Job title"
+            create-hint="A new title will be added to the catalog"
+            :disabled="busy"
+          />
+        </UFormField>
+        <UFormField label="Supervisors" name="supervisorIds">
+          <template #hint><FormHint text="Many-to-many — an employee can report to several" /></template>
+          <USelectMenu
+            v-model="form.supervisorIds"
+            :items="supervisorItems"
+            multiple
+            value-key="value"
+            placeholder="No supervisors"
+            class="w-full"
+          />
+        </UFormField>
+        <template v-if="showAiFields">
+          <UFormField label="Environment" name="environmentId">
+            <template #hint><FormHint text="SSH target this agent runs on" /></template>
+            <USelectMenu
+              v-model="form.environmentId"
+              :items="[{ label: 'No environment', value: '__none__' }, ...environmentItems]"
+              value-key="value"
+              placeholder="Select an environment"
+              class="w-full"
+            />
+          </UFormField>
+          <UFormField label="ACP executable" name="executable" required>
+            <template #hint><FormHint text="Command that starts an ACP server on stdio in the environment" /></template>
+            <UInput
+              v-model="form.executable"
+              icon="i-lucide-terminal"
+              placeholder="hermes acp"
+              class="w-full"
+              data-testid="acp-executable-input"
+            />
+          </UFormField>
+          <UFormField label="Provider" name="providerId">
+            <template #hint><FormHint text="Model endpoint this agent uses" /></template>
+            <USelect
+              v-model="form.providerId"
+              :items="[
+                { label: 'No provider', value: '__none__' },
+                ...modelProviders.map((p) => ({ label: p.label, value: p.id })),
+              ]"
+              value-key="value"
+              icon="i-lucide-plug"
+              placeholder="Select a provider"
+              class="w-full"
+            />
+          </UFormField>
+          <UFormField label="Model" name="model">
+            <template #hint
+              ><FormHint text="Model name the agent runs — pick from the list or type your own"
+            /></template>
+            <UInputMenu
+              v-model="form.model"
+              :items="modelItems"
+              :loading="modelLoading"
+              icon="i-lucide-cpu"
+              placeholder="Model name"
+              class="w-full"
+            />
+          </UFormField>
+          <UFormField label="API key" name="apiKeySecretId">
+            <template #hint><FormHint text="Vault secret holding the key (per-agent, injected per run)" /></template>
+            <USelectMenu
+              v-model="form.apiKeySecretId"
+              :items="secretItems"
+              value-key="value"
+              :search-input="{ placeholder: 'Search secrets' }"
+              clear
+              icon="i-lucide-key-round"
+              placeholder="Vault secret with the API key"
+              class="w-full"
+            />
+          </UFormField>
+          <UFormField label="Instructions" name="instructions">
+            <template #hint><FormHint text="System prompt for this agent" /></template>
+            <UTextarea
+              v-model="form.instructions"
+              :rows="4"
+              placeholder="Custom instructions for this agent…"
+              class="w-full"
+            />
+          </UFormField>
+        </template>
+        <UAlert
+          v-if="message"
+          icon="i-lucide-circle-alert"
+          color="error"
+          variant="subtle"
+          :title="message"
+          :ui="{ title: 'text-sm' }"
+        />
+        <div v-if="mintedKey" class="text-primary bg-primary/10 rounded-lg p-4">
+          <p class="flex items-center gap-2 text-sm font-semibold">
+            <UIcon name="i-lucide-key-round" class="size-4" />
+            API key created — shown only once
+          </p>
+          <p class="text-muted mt-1 text-xs">Copy it now; it cannot be retrieved later.</p>
+          <div class="mt-3 flex items-center gap-2">
+            <code class="bg-default/60 flex-1 rounded-md px-2.5 py-2 font-mono text-sm break-all">{{ mintedKey }}</code>
+            <UButton
+              :icon="copied ? 'i-lucide-check' : 'i-lucide-copy'"
+              :color="copied ? 'success' : 'neutral'"
+              variant="soft"
+              size="sm"
+              :label="copied ? 'Copied' : 'Copy'"
+              @click="copyKey(mintedKey)"
+            />
+          </div>
+          <UButton
+            class="mt-3"
+            size="sm"
+            color="primary"
+            variant="solid"
+            label="Done — I saved the key"
+            @click="open = false"
+          />
+        </div>
+      </UForm>
     </template>
     <template #footer>
       <div class="flex w-full justify-end gap-2">

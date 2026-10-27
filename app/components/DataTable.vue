@@ -97,6 +97,22 @@ function goPage(p: number) {
   else internalPage.value = p;
 }
 
+// windowed pager: 1 … around-current … last — long page lists (vault, employees)
+// must not render every page number
+type PageItem = number | 'ellipsis-start' | 'ellipsis-end';
+const pageItems = computed<PageItem[]>(() => {
+  const total = displayPageCount.value;
+  const current = displayPage.value;
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const middle = [current - 1, current, current + 1].filter((p) => p > 1 && p < total);
+  const items: PageItem[] = [1];
+  if (current > 3) items.push('ellipsis-start');
+  items.push(...middle);
+  if (current < total - 2) items.push('ellipsis-end');
+  items.push(total);
+  return items;
+});
+
 defineSlots<
   Record<`${string}-cell` | `${string}-header` | (string & {}), (props: CellContext<T, unknown>) => VNode[]> & {
     'mobile-item'?: (props: { row: T }) => VNode[];
@@ -168,13 +184,13 @@ function cellValue(row: T, col: TableColumn<T>) {
       <template v-for="(row, idx) in mobileViewRows" :key="String((row as Record<string, unknown>).id ?? idx)">
         <slot name="mobile-item" :row="row">
           <UCard :ui="{ root: 'shadow-sm' }">
-            <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">
+            <p class="text-highlighted truncate text-sm font-medium">
               {{ titleKey ? cellValue(row, { accessorKey: titleKey }) : '' }}
             </p>
             <dl v-if="detailColumns().length" class="mt-2 space-y-1">
               <div v-for="col in detailColumns()" :key="col.id" class="flex items-baseline justify-between gap-3">
-                <dt class="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{{ col.header }}</dt>
-                <dd class="min-w-0 truncate text-right text-xs text-zinc-900 dark:text-white">
+                <dt class="text-muted shrink-0 text-xs">{{ col.header }}</dt>
+                <dd class="text-highlighted min-w-0 truncate text-right text-xs">
                   {{ cellValue(row, col) }}
                 </dd>
               </div>
@@ -187,9 +203,13 @@ function cellValue(row: T, col: TableColumn<T>) {
     <!-- opt-in empty state: a live search yields a no-results line, otherwise
          the parent's no-data branding (icon + text props) -->
     <div v-if="showEmptyState && !data.length && !loading" class="flex flex-col items-center gap-2 py-12 text-center">
-      <UIcon :name="emptyIcon ?? (isFiltered ? 'i-lucide-search-x' : 'i-lucide-inbox')" class="size-8 text-zinc-300" />
-      <p class="text-sm text-zinc-500">
-        {{ isFiltered ? 'No results — try a different search.' : emptyText || 'Nothing here yet.' }}
+      <UIcon :name="emptyIcon ?? (isFiltered ? 'i-lucide-search-x' : 'i-lucide-inbox')" class="text-dimmed size-8" />
+      <p class="text-muted text-sm">
+        {{
+          isFiltered
+            ? 'No results — try a different search.'
+            : emptyText || 'Nothing here yet — use the button above to create one.'
+        }}
       </p>
     </div>
 
@@ -197,25 +217,27 @@ function cellValue(row: T, col: TableColumn<T>) {
          click handlers never fire in this app, proven in bd8b5f6) -->
     <div v-if="showPager" class="border-default flex items-center justify-end gap-1 border-t p-3">
       <UButton
-        icon="i-lucide:chevron-left"
+        icon="i-lucide-chevron-left"
         color="neutral"
         variant="outline"
         :disabled="displayPage <= 1"
         aria-label="Previous page"
         @click="goPage(displayPage - 1)"
       />
+      <template v-for="p in pageItems" :key="p">
+        <span v-if="typeof p === 'string'" class="text-dimmed px-1 text-sm" aria-hidden="true">…</span>
+        <UButton
+          v-else
+          :color="p === displayPage ? 'primary' : 'neutral'"
+          :variant="p === displayPage ? 'solid' : 'outline'"
+          :label="String(p)"
+          :aria-label="`Page ${p}`"
+          :aria-current="p === displayPage ? 'page' : undefined"
+          @click="goPage(p)"
+        />
+      </template>
       <UButton
-        v-for="p in displayPageCount"
-        :key="p"
-        :color="p === displayPage ? 'primary' : 'neutral'"
-        :variant="p === displayPage ? 'solid' : 'outline'"
-        :label="String(p)"
-        :aria-label="`Page ${p}`"
-        :aria-current="p === displayPage ? 'page' : undefined"
-        @click="goPage(p)"
-      />
-      <UButton
-        icon="i-lucide:chevron-right"
+        icon="i-lucide-chevron-right"
         color="neutral"
         variant="outline"
         :disabled="displayPage >= displayPageCount"

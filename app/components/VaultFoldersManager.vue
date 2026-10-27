@@ -58,6 +58,7 @@ const editingId = ref<string | null>(null);
 const form = ref({ name: '' });
 const busy = ref(false);
 const error = ref<string | null>(null);
+const removeError = ref<string | null>(null);
 const confirmId = ref<string | null>(null);
 const confirming = computed(() => folders.value.find((f) => f.id === confirmId.value) ?? null);
 
@@ -85,18 +86,21 @@ async function saveFolder() {
     });
     editorOpen.value = false;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Save failed';
+    error.value = e instanceof Error ? e.message : 'Save failed.';
   } finally {
     busy.value = false;
   }
 }
 
 async function removeFolder(id: string) {
+  removeError.value = null;
   busy.value = true;
   try {
     await removeMutation.mutateAsync({ id });
     confirmId.value = null;
     emit('deleted', id);
+  } catch (e) {
+    removeError.value = e instanceof Error ? e.message : 'Delete failed.';
   } finally {
     busy.value = false;
   }
@@ -111,13 +115,13 @@ async function removeFolder(id: string) {
       :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
     >
       <template #body>
-        <div v-if="error" class="bg-error/10 text-error mb-3 rounded-md px-3 py-2 text-xs">{{ error }}</div>
         <DataTable
           v-model:search="search"
           v-model:page="page"
           searchable
           search-placeholder="Search folders…"
           :data="folders"
+          :loading="foldersQuery.isPending.value"
           :page-count="pageCount"
           :page-size="pageSize"
           :columns="[
@@ -126,12 +130,15 @@ async function removeFolder(id: string) {
             { id: 'actions', header: '' },
           ]"
           mobile-title-key="name"
+          show-empty-state
+          empty-icon="i-lucide-folder"
+          empty-text="No folders yet — create one to categorize secrets."
         >
           <template #toolbar>
             <UButton v-if="editable" icon="i-lucide-plus" size="sm" label="New folder" @click="openEditor()" />
           </template>
           <template #secrets-cell="{ row }">
-            <span class="text-xs text-zinc-500"
+            <span class="text-muted text-xs"
               >{{ row.original.secrets }} {{ row.original.secrets === 1 ? 'secret' : 'secrets' }}</span
             >
           </template>
@@ -175,6 +182,7 @@ async function removeFolder(id: string) {
                     color="neutral"
                     variant="ghost"
                     aria-label="Rename folder"
+                    :disabled="busy"
                     @click="openEditor(row.id)"
                   />
                   <UButton
@@ -183,20 +191,15 @@ async function removeFolder(id: string) {
                     color="neutral"
                     variant="ghost"
                     aria-label="Delete folder"
+                    :disabled="busy"
                     @click="confirmId = row.id"
                   />
                 </template>
               </div>
-              <p class="mt-1 text-xs text-zinc-500">{{ row.secrets }} {{ row.secrets === 1 ? 'secret' : 'secrets' }}</p>
+              <p class="text-muted mt-1 text-xs">{{ row.secrets }} {{ row.secrets === 1 ? 'secret' : 'secrets' }}</p>
             </UCard>
           </template>
         </DataTable>
-        <p v-if="!folders.length" class="py-6 text-center text-sm text-zinc-500">
-          No folders yet — create one to categorize secrets.
-        </p>
-      </template>
-      <template #footer>
-        <div class="flex w-full items-center justify-end" />
       </template>
     </UModal>
 
@@ -217,6 +220,15 @@ async function removeFolder(id: string) {
             :disabled="busy"
           />
         </UFormField>
+        <UAlert
+          v-if="error"
+          icon="i-lucide-circle-alert"
+          color="error"
+          variant="subtle"
+          :title="error"
+          class="mt-3"
+          :ui="{ title: 'text-sm' }"
+        />
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
@@ -241,6 +253,15 @@ async function removeFolder(id: string) {
           Delete <strong>{{ confirming?.name }}</strong
           >? Secrets in it stay — they just become uncategorized.
         </p>
+        <UAlert
+          v-if="removeError"
+          icon="i-lucide-circle-alert"
+          color="error"
+          variant="subtle"
+          :title="removeError"
+          class="mt-3"
+          :ui="{ title: 'text-sm' }"
+        />
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">

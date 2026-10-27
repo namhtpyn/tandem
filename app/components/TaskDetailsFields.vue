@@ -50,7 +50,7 @@ async function updateField(patch: { status?: string; assigneeId?: string | null;
     await queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
   } catch (e) {
     const err = e as { data?: { json?: { message?: string } }; message?: string };
-    fieldError.value = err.data?.json?.message ?? err.message ?? 'update failed';
+    fieldError.value = err.data?.json?.message ?? err.message ?? "Couldn't save the change — try again";
   } finally {
     fieldBusy.value = false;
   }
@@ -61,10 +61,10 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
 
 <template>
   <div>
-    <p class="mb-2 text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">Details</p>
+    <h3 class="text-muted mb-2 text-xs font-medium">Details</h3>
     <dl class="space-y-1.5 text-sm">
       <div class="flex items-center justify-between gap-2">
-        <dt class="text-xs text-zinc-500">Status</dt>
+        <dt class="text-muted text-xs">Status</dt>
         <dd>
           <USelect
             :model-value="task.status"
@@ -79,7 +79,7 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
         </dd>
       </div>
       <div class="flex items-center justify-between gap-2">
-        <dt class="text-xs text-zinc-500">Assignee</dt>
+        <dt class="text-muted text-xs">Assignee</dt>
         <dd>
           <USelect
             :model-value="task.assigneeId ?? '__none__'"
@@ -93,18 +93,15 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
           />
         </dd>
       </div>
-      <p v-if="runLocked" class="text-[11px] text-zinc-400">Locked while the agent runs.</p>
+      <p v-if="runLocked" class="text-dimmed text-[11px]">Locked while the agent runs.</p>
       <div class="flex items-center justify-between gap-2">
-        <dt class="text-xs text-zinc-500">Owner</dt>
-        <dd
-          class="truncate text-right"
-          :class="task.ownerName ? 'text-zinc-800 dark:text-zinc-200' : 'text-zinc-400 italic'"
-        >
+        <dt class="text-muted text-xs">Owner</dt>
+        <dd class="truncate text-right" :class="task.ownerName ? 'text-toned' : 'text-dimmed italic'">
           {{ task.ownerName ?? 'None' }}
         </dd>
       </div>
       <div class="flex items-center justify-between gap-2">
-        <dt class="text-xs text-zinc-500">Project</dt>
+        <dt class="text-muted text-xs">Project</dt>
         <dd>
           <USelect
             :model-value="task.projectId ?? '__none__'"

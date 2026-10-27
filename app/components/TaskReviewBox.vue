@@ -36,8 +36,8 @@ onUnmounted(disarmReject);
 </script>
 
 <template>
-  <div class="rounded-2xl border border-zinc-200 bg-white p-2.5 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
-    <p class="mb-1.5 text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">Your review</p>
+  <div class="border-default bg-default rounded-2xl border p-2.5 shadow-sm">
+    <h3 class="text-muted mb-1.5 text-xs font-medium">Your review</h3>
     <UTextarea
       v-model="reviewNote"
       :rows="1"
@@ -46,7 +46,7 @@ onUnmounted(disarmReject);
       variant="none"
       placeholder="Leave review feedback (required to request changes)…"
       class="w-full"
-      :ui="{ base: 'px-1 py-1 text-sm placeholder:text-zinc-400' }"
+      :ui="{ base: 'px-1 py-1 text-sm placeholder:text-dimmed' }"
     />
     <div class="mt-1.5 flex items-center justify-end gap-1.5">
       <UButton
@@ -56,7 +56,7 @@ onUnmounted(disarmReject);
         icon="i-lucide-x-circle"
         :disabled="busy"
         @click="onRejectClick"
-        >{{ rejectArmed ? 'Confirm reject?' : 'Reject' }}</UButton
+        ><span aria-live="polite">{{ rejectArmed ? 'Click again to confirm' : 'Reject' }}</span></UButton
       >
       <UButton
         size="md"

@@ -94,7 +94,7 @@ async function saveProvider() {
     await $client.oidc.replace({ providers: list2 });
     editorOpen.value = false;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'save failed';
+    message.value = e instanceof Error ? e.message : 'Save failed.';
   } finally {
     busy.value = false;
   }
@@ -119,7 +119,7 @@ async function removeProvider() {
     await $client.oidc.replace({ providers: list });
     pendingRemove.value = null;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'remove failed';
+    message.value = e instanceof Error ? e.message : 'Delete failed.';
   } finally {
     busy.value = false;
   }
@@ -136,7 +136,7 @@ async function savePasswordPolicy(next: boolean) {
   } catch (e) {
     // nothing refetches after a failed write — put the switch back where it was
     disablePasswordLogin.value = previous;
-    message.value = e instanceof Error ? e.message : 'save failed';
+    message.value = e instanceof Error ? e.message : 'Save failed.';
   } finally {
     busy.value = false;
   }
@@ -149,14 +149,14 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
   <UCard :ui="{ root: 'shadow-sm' }">
     <template #header>
       <div class="flex items-center gap-2">
-        <UIcon name="i-lucide-key-round" class="size-4 text-zinc-400" />
-        <h3 class="text-sm font-semibold text-zinc-900 dark:text-white">Authentication</h3>
+        <UIcon name="i-lucide-key-round" class="text-dimmed size-4" />
+        <h3 class="text-highlighted text-sm font-semibold">Authentication</h3>
       </div>
     </template>
     <div class="space-y-5">
       <div>
         <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <h4 class="text-xs font-semibold tracking-wide text-zinc-400 uppercase">OIDC providers</h4>
+          <h4 class="text-highlighted text-sm font-semibold">OIDC providers</h4>
           <UButton icon="i-lucide-plus" size="sm" label="Add provider" @click="openEditor()" />
         </div>
         <template v-if="providers.length">
@@ -164,12 +164,14 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
             <UTable :data="providers" :columns="providerColumns">
               <template #provider-cell="{ row }">
                 <div class="flex flex-wrap items-center gap-2">
-                  <span class="text-sm font-medium text-zinc-900 dark:text-white">{{ row.original.label }}</span>
-                  <UBadge v-if="!row.original.secretSet" variant="subtle" color="warning" size="sm">no secret</UBadge>
+                  <span class="text-highlighted text-sm font-medium">{{ row.original.label }}</span>
+                  <UBadge v-if="!row.original.secretSet" variant="subtle" color="warning" size="sm"
+                    >Client secret not set</UBadge
+                  >
                 </div>
               </template>
               <template #callback-cell="{ row }">
-                <span class="block font-mono text-xs break-all text-zinc-500"
+                <span class="text-muted block font-mono text-xs break-all"
                   >{{ publicOrigin }}/auth/callback/{{ row.original.id }}</span
                 >
               </template>
@@ -194,22 +196,22 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
                       variant="ghost"
                       color="error"
                       size="sm"
-                      aria-label="Remove provider"
+                      aria-label="Delete provider"
                       :disabled="busy"
                       @click="pendingRemove = row.original"
                     />
                     <template #content>
-                      <div class="px-3 py-1.5 text-xs">Remove provider</div>
+                      <div class="px-3 py-1.5 text-xs">Delete provider</div>
                     </template>
                   </UPopover>
                 </div>
               </template>
             </UTable>
           </UCard>
-          <p class="mt-2 text-xs text-zinc-400">Register each callback URL above with its identity provider.</p>
+          <p class="text-dimmed mt-2 text-xs">Register each callback URL above with its identity provider.</p>
         </template>
-        <div v-else class="rounded-xl border border-dashed border-zinc-300 p-8 text-center dark:border-zinc-700">
-          <p class="text-sm text-zinc-400">No OIDC providers — password login only.</p>
+        <div v-else class="border-default rounded-xl border border-dashed p-8 text-center">
+          <p class="text-muted text-sm">No OIDC providers — password login only.</p>
         </div>
       </div>
 
@@ -217,12 +219,12 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
 
       <div class="flex items-center justify-between gap-4">
         <div>
-          <p class="text-sm font-medium text-zinc-900 dark:text-white">
+          <p class="text-highlighted text-sm font-medium">
             Password login
             <UBadge v-if="!disablePasswordLogin" color="success" variant="subtle" size="sm">Enabled</UBadge>
             <UBadge v-else color="warning" variant="subtle" size="sm">Disabled — SSO only</UBadge>
           </p>
-          <p class="text-xs text-zinc-400">
+          <p class="text-dimmed text-xs">
             {{
               providers.length === 0
                 ? 'Cannot be disabled until an OIDC provider is configured.'
@@ -231,12 +233,16 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
           </p>
         </div>
         <USwitch
+          aria-label="Password login"
           :model-value="!disablePasswordLogin"
           :disabled="providers.length === 0 || busy"
           @update:model-value="(v: boolean) => savePasswordPolicy(!v)"
         />
       </div>
     </div>
+    <p v-if="message" role="alert" class="mt-3 text-sm" :class="message === 'Saved' ? 'text-success' : 'text-error'">
+      {{ message }}
+    </p>
   </UCard>
 
   <!-- OIDC provider editor modal -->
@@ -248,7 +254,8 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
   >
     <template #body>
       <UForm id="oidc-editor-form" :state="form" class="space-y-4" @submit="saveProvider">
-        <UFormField name="label" label="Name" required help="Shown on the login button">
+        <UFormField name="label" label="Name" required>
+          <template #hint><FormHint text="Shown on the login button" /></template>
           <UInput v-model="form.label" icon="i-lucide-tag" class="w-full" placeholder="Display name" />
         </UFormField>
         <UFormField name="issuer" label="Issuer URL" required>
@@ -284,7 +291,7 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
         />
         <UButton
           type="submit"
-          icon="i-lucide-plus"
+          :icon="editingId ? 'i-lucide-check' : 'i-lucide-plus'"
           :loading="busy"
           :label="editingId ? 'Save changes' : 'Add provider'"
           form="oidc-editor-form"
@@ -293,13 +300,13 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
     </template>
   </UModal>
 
-  <!-- remove confirm (same pattern as the vault/environment delete confirms) -->
-  <UModal v-model:open="removeOpen" title="Remove provider">
+  <!-- delete confirm (same pattern as the vault/environment delete confirms) -->
+  <UModal v-model:open="removeOpen" title="Delete provider">
     <template #body>
       <div class="space-y-4">
-        <p class="text-sm text-zinc-600 dark:text-zinc-300">
-          Remove OIDC provider
-          <span class="font-semibold text-zinc-900 dark:text-white">{{ pendingRemove?.label }}</span
+        <p class="text-muted text-sm">
+          Delete OIDC provider
+          <span class="text-highlighted font-semibold">{{ pendingRemove?.label }}</span
           >? Anyone signing in through it loses that login option immediately.
         </p>
       </div>
@@ -307,10 +314,8 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
     <template #footer>
       <div class="flex w-full justify-end gap-2">
         <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingRemove = null" />
-        <UButton icon="i-lucide-trash-2" color="error" label="Remove" :loading="busy" @click="removeProvider" />
+        <UButton icon="i-lucide-trash-2" color="error" label="Delete" :loading="busy" @click="removeProvider" />
       </div>
     </template>
   </UModal>
-
-  <p v-if="message" class="text-xs text-zinc-400">{{ message }}</p>
 </template>

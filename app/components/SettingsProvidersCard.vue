@@ -88,7 +88,7 @@ async function saveMProv() {
     });
     mProvEditorOpen.value = false;
   } catch (e) {
-    mProvMessage.value = e instanceof Error ? e.message : 'save failed';
+    mProvMessage.value = e instanceof Error ? e.message : 'Save failed.';
   } finally {
     mProvBusy.value = false;
   }
@@ -110,7 +110,9 @@ async function removeMProv() {
     await $client.providers.remove({ id: pendingRemove.value.id });
     pendingRemove.value = null;
   } catch (e) {
-    mProvMessage.value = e instanceof Error ? e.message : 'delete failed';
+    // close the confirm so the message renders on the card, not behind the modal
+    pendingRemove.value = null;
+    mProvMessage.value = e instanceof Error ? e.message : 'Delete failed.';
   } finally {
     mProvBusy.value = false;
   }
@@ -123,14 +125,14 @@ onServerPrefetch(() => providersLive.suspense());
   <UCard :ui="{ root: 'shadow-sm' }">
     <template #header>
       <div class="flex items-center gap-2">
-        <UIcon name="i-lucide-cpu" class="size-4 text-zinc-400" />
-        <h3 class="text-sm font-semibold text-zinc-900 dark:text-white">Model providers</h3>
+        <UIcon name="i-lucide-cpu" class="text-dimmed size-4" />
+        <h3 class="text-highlighted text-sm font-semibold">Model providers</h3>
       </div>
     </template>
     <div class="space-y-5">
       <div>
         <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <h4 class="text-xs font-semibold tracking-wide text-zinc-400 uppercase">Catalog</h4>
+          <h4 class="text-highlighted text-sm font-semibold">Catalog</h4>
           <UButton icon="i-lucide-plus" size="sm" label="Add provider" @click="openMProvEditor()" />
         </div>
         <!-- Mobile: stacked cards -->
@@ -138,8 +140,8 @@ onServerPrefetch(() => providersLive.suspense());
           <UCard v-for="p in mProvList" :key="p.id" :ui="{ root: 'shadow-sm' }">
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0">
-                <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ p.label }}</p>
-                <p class="truncate font-mono text-xs text-zinc-400">{{ p.baseUrl }}</p>
+                <p class="text-highlighted truncate text-sm font-medium">{{ p.label }}</p>
+                <p class="text-dimmed truncate font-mono text-xs">{{ p.baseUrl }}</p>
               </div>
               <UBadge
                 v-for="st in p.endpoints"
@@ -204,7 +206,7 @@ onServerPrefetch(() => providersLive.suspense());
           >
             <template #label-cell="{ row }">
               <div class="min-w-0">
-                <p class="flex items-center gap-2 truncate font-medium text-zinc-900 dark:text-white">
+                <p class="text-highlighted flex items-center gap-2 truncate font-medium">
                   {{ row.original.label }}
                   <UBadge
                     v-for="st in row.original.endpoints"
@@ -226,7 +228,7 @@ onServerPrefetch(() => providersLive.suspense());
                     }}</UBadge
                   >
                 </p>
-                <p class="truncate font-mono text-xs text-zinc-400">{{ row.original.baseUrl }}</p>
+                <p class="text-dimmed truncate font-mono text-xs">{{ row.original.baseUrl }}</p>
               </div>
             </template>
             <template #actions-cell="{ row }">
@@ -262,8 +264,10 @@ onServerPrefetch(() => providersLive.suspense());
             </template>
           </UTable>
         </UCard>
-        <p v-if="mProvMessage" class="text-error mt-2 text-xs">{{ mProvMessage }}</p>
-        <p v-else-if="!mProvList.length" class="py-4 text-center text-sm text-zinc-500">No providers yet.</p>
+        <p v-if="mProvMessage" class="text-error mt-2 text-sm" role="alert">{{ mProvMessage }}</p>
+        <p v-else-if="!mProvList.length" class="text-muted py-4 text-center text-sm">
+          No providers yet — add one to power agents and auto-assign.
+        </p>
       </div>
     </div>
   </UCard>
@@ -372,10 +376,10 @@ onServerPrefetch(() => providersLive.suspense());
   <UModal v-model:open="removeOpen" title="Delete provider">
     <template #body>
       <div class="space-y-4">
-        <p class="text-sm text-zinc-600 dark:text-zinc-300">
+        <p class="text-muted text-sm">
           Delete provider
-          <span class="font-semibold text-zinc-900 dark:text-white">{{ pendingRemove?.label }}</span
-          >? Agents and workspace assignments using it will need a new endpoint.
+          <span class="text-highlighted font-semibold">{{ pendingRemove?.label }}</span
+          >? Agents using it will stop working until you pick a new provider.
         </p>
       </div>
     </template>

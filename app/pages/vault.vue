@@ -24,16 +24,11 @@ function onFolderDeleted(id: string) {
       <div class="space-y-6 p-6 lg:p-8">
         <div class="flex flex-wrap items-end justify-between gap-2">
           <div>
-            <p class="text-sm text-zinc-500">
+            <p class="text-muted text-sm">
               Encrypted secrets for SSH keys and API tokens — write-only, never displayed again
             </p>
           </div>
           <div class="flex items-center gap-2">
-            <UPopover mode="hover">
-              <template #content>
-                <div class="px-3 py-1.5 text-xs">Audit log</div>
-              </template>
-            </UPopover>
             <UButton
               icon="i-lucide-folder"
               label="Folders"

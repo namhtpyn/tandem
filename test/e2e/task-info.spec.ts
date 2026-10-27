@@ -18,7 +18,7 @@ test('task title click opens the task detail page', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Info page probe' })).toHaveText('Info page probe');
 
   // chat main: empty thread placeholder + composer
-  await expect(page.getByText('No activity yet.')).toHaveText('No activity yet.');
+  await expect(page.getByText('No activity yet — write a note below or dispatch the agent.')).toBeVisible();
   await expect(page.getByPlaceholder('Write a note…')).toBeVisible();
 
   // sidebar: Details section (the Workflow block is gone — status is manual)

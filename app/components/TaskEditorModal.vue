@@ -115,7 +115,7 @@ async function uploadAttachment(
   viaEditor = false,
 ): Promise<{ id: string; filename: string; token: string } | null> {
   if (!form.title.trim()) {
-    message.value = 'save the task title first — attachments need a task';
+    message.value = 'Add a title first — files attach to a saved task';
     return null;
   }
   try {
@@ -224,7 +224,7 @@ async function save() {
     open.value = false;
     emit('saved');
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'save failed';
+    message.value = e instanceof Error ? e.message : "Couldn't save the task — try again";
   } finally {
     busy.value = false;
   }
@@ -258,7 +258,8 @@ async function save() {
             </span>
           </template>
           <template #hint
-            ><FormHint text="What needs to be done; @mention employees — AI agents receive it as their instructions"
+            ><FormHint
+              text="What needs to be done; @mention employees — AI agents receive it as their instructions. Add a title first — files attach to a saved task"
           /></template>
           <input
             ref="attachmentInput"

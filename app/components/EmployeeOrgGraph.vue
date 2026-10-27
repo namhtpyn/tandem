@@ -93,17 +93,15 @@ const graphLayout = computed(() => {
   };
   let cursor = 0;
   const rootList = [...roots.value];
-  for (const r of rows.value)
-    if (
-      !indexById.has(r.id) &&
-      !rootList.some((x) => x.id === r.id) &&
-      ![...indexById.keys()].includes(r.id) &&
-      !r.supervisorIds.some((id) => indexById.has(id))
-    ) {
-      if (!indexById.has(r.id)) {
-        rootList.push(r);
-      }
+  // orphans (supervisors outside the placed forest) become extra roots — Set-based
+  const rootIds = new Set(rootList.map((r) => r.id));
+  for (const r of rows.value) {
+    if (rootIds.has(r.id) || indexById.has(r.id)) continue;
+    if (!r.supervisorIds.some((id) => indexById.has(id))) {
+      rootList.push(r);
+      rootIds.add(r.id);
     }
+  }
   for (const r of rootList) {
     if (indexById.has(r.id)) continue;
     place(r, 0, -1, cursor, new Set());
@@ -164,18 +162,27 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
 <template>
   <UCard :ui="{ root: 'shadow-sm', body: 'p-0 sm:p-0' }">
     <div v-if="!rows.length" class="flex flex-col items-center gap-2 py-10 text-center">
-      <UIcon name="i-lucide-users" class="size-8 text-zinc-300" />
-      <p class="text-sm text-zinc-500">No employees yet.</p>
+      <UIcon name="i-lucide-users" class="text-dimmed size-8" />
+      <p class="text-muted text-sm">No employees yet — add the first human or AI teammate.</p>
     </div>
+    <!-- the org chart pans horizontally on desktop (deliberate: wide orgs scroll);
+         small viewports scale the svg to the container width instead -->
     <div v-else class="overflow-x-auto p-4">
-      <svg :width="graphWidth" :height="graphHeight" role="img" aria-label="Supervision hierarchy">
+      <svg
+        :viewBox="`0 0 ${graphWidth} ${graphHeight}`"
+        :width="graphWidth"
+        :height="graphHeight"
+        role="img"
+        aria-label="Supervision hierarchy"
+        class="h-auto w-full md:h-auto md:w-auto"
+      >
         <!-- primary tree: elbow from parent bottom-center to child top-center -->
         <path
           v-for="pi in primaryEdgeIndices"
           :key="`p-${graphLayout[pi]!.row.id}`"
           :d="primaryPath(pi)"
           fill="none"
-          class="stroke-zinc-400 dark:stroke-zinc-600"
+          class="stroke-(--ui-border-accented)"
           stroke-width="2"
         />
         <!-- extra supervisor edges: solid curve parent-bottom -> child-top -->
@@ -184,7 +191,7 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
           :key="`sec-${k}`"
           :d="secondaryTopPath(e.fromIndex, e.toIndex)"
           fill="none"
-          class="stroke-zinc-400 dark:stroke-zinc-600"
+          class="stroke-(--ui-border-accented)"
           stroke-width="2"
         />
         <g v-for="(n, i) in graphLayout" :key="n.row.id" :transform="`translate(${n.x}, ${n.y})`">
@@ -192,7 +199,7 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
             :width="NODE_W"
             :height="NODE_H"
             rx="10"
-            class="fill-white stroke-zinc-200 dark:fill-zinc-900 dark:stroke-zinc-700"
+            class="fill-(--ui-bg) stroke-(--ui-border)"
             stroke-width="1.5"
           />
           <defs>
@@ -206,8 +213,8 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
             r="17"
             :class="
               n.row.kind === 'ai'
-                ? 'fill-primary-100 stroke-primary-400 dark:fill-primary-500/20'
-                : 'fill-zinc-100 stroke-zinc-300 dark:fill-zinc-800'
+                ? 'fill-primary/15 stroke-primary/40'
+                : 'fill-(--ui-bg-elevated) stroke-(--ui-border-accented)'
             "
             stroke-width="1.5"
           />
@@ -221,22 +228,16 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
             :clip-path="`url(#av-${n.row.id})`"
             preserveAspectRatio="xMidYMid slice"
           />
-          <text
-            v-else
-            x="28"
-            y="30"
-            text-anchor="middle"
-            class="fill-zinc-600 text-[11px] font-semibold dark:fill-zinc-300"
-          >
+          <text v-else x="28" y="30" text-anchor="middle" class="fill-(--ui-text-toned) text-[11px] font-semibold">
             {{ n.row.kind === 'ai' ? 'AI' : n.row.name.slice(0, 1) }}
           </text>
-          <text x="52" y="22" class="fill-zinc-900 text-[12px] font-medium dark:fill-white">
+          <text x="52" y="22" class="fill-(--ui-text-highlighted) text-[12px] font-medium">
             {{ n.row.name.length > 14 ? n.row.name.slice(0, 14) + '…' : n.row.name }}
           </text>
-          <text x="52" y="38" class="fill-zinc-400 text-[10px]">
+          <text x="52" y="38" class="fill-(--ui-text-dimmed) text-[10px]">
             {{ (n.row.title || n.row.email).slice(0, 16) }}
           </text>
-          <text x="8" :y="NODE_H - 12" class="fill-zinc-400 text-[10px]">
+          <text x="8" :y="NODE_H - 12" class="fill-(--ui-text-dimmed) text-[10px]">
             {{ n.row.kind === 'ai' ? 'AI agent' : 'Human' }}
           </text>
         </g>

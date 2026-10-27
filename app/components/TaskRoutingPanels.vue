@@ -11,8 +11,8 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query';
 import { computed, ref } from 'vue';
 
 import { CHANGE_RESOURCE, PROPOSAL_KIND, type ProposalKind } from '#shared/enums';
-import { nonNull } from '#shared/utils/non-null';
 import type { EmployeeRow, TaskStatusRow } from '~/utils/orpc-types';
+import { categoryColor } from '~/utils/ui-labels';
 
 const emit = defineEmits<{ 'add-subtask': [] }>();
 const props = defineProps<{ taskId: string; statusById: Map<string, TaskStatusRow> }>();
@@ -84,6 +84,7 @@ const assignmentRows = computed(() => (unref(assignmentsQuery.data)?.items ?? []
 
 const proposalBusy = ref(false);
 const proposalMessage = ref('');
+const proposalOk = ref(false); // message tone: confirmed decisions green, failures red
 
 async function decideProposal(id: string, action: 'confirmProposal' | 'rejectProposal') {
   proposalBusy.value = true;
@@ -94,74 +95,67 @@ async function decideProposal(id: string, action: 'confirmProposal' | 'rejectPro
         ? await $client.tasks.confirmProposal({ proposalId: id })
         : await $client.tasks.rejectProposal({ proposalId: id });
     const events: string[] = 'events' in r && Array.isArray(r.events) ? r.events : [];
-    proposalMessage.value = events.length ? events.join('; ') : 'done';
+    proposalMessage.value = events.length
+      ? events.join('; ')
+      : action === 'confirmProposal'
+        ? 'Proposal applied'
+        : 'Proposal declined';
+    proposalOk.value = true;
     // fuse: the decision mutates proposals + subtasks + the task row
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS, props.taskId] });
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, props.taskId] });
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.RUNS, props.taskId] });
   } catch (e) {
     proposalMessage.value =
-      (e as { data?: { json?: { message?: string } }; message?: string }).data?.json?.message ?? (e as Error).message;
+      (e as { data?: { json?: { message?: string } }; message?: string }).data?.json?.message ??
+      (e as Error).message ??
+      "Couldn't decide the proposal — try again";
+    proposalOk.value = false;
   } finally {
     proposalBusy.value = false;
   }
 }
 
 const openProposals = computed(() => proposalRows.value.filter((p) => p.status?.toLowerCase() === 'proposed'));
+// assignment history as prose — 'Mia took over from Unassigned', never '∅ → Mia'
 const assignmentLines = computed(() => {
   const rows = [...assignmentRows.value].reverse(); // oldest first
   return rows.map((r, i) => {
-    const from = i === 0 ? '∅' : rows[i - 1] ? nonNull(rows[i - 1]).employeeName : '∅';
-    return `${from} → ${r.employeeName ?? '∅'}${r.reason ? ` (${r.reason})` : ''}`;
+    const from = (i === 0 ? null : rows[i - 1]?.employeeName) ?? 'Unassigned';
+    const to = r.employeeName ?? 'Unassigned';
+    return `${to} took over from ${from}${r.reason ? ` (${r.reason})` : ''}`;
   });
 });
 
-/** subtask badge: joined status row — its NAME in the category color (never the raw id) */
+/** subtask badge: joined status row — its NAME in the shared category color (never the raw id) */
 function subtaskBadge(c: ChildRow): {
   label: string;
   color: 'primary' | 'success' | 'warning' | 'error' | 'info' | 'neutral';
 } {
   const st = props.statusById.get(c.status);
-  const category = st?.category;
-  return {
-    label: st?.name ?? c.status,
-    color:
-      category === 'done'
-        ? 'success'
-        : category === 'cancelled'
-          ? 'error'
-          : category === 'in_review'
-            ? 'info'
-            : category === 'working' || category === 'waiting_answer'
-              ? 'warning'
-              : 'neutral',
-  };
+  return { label: st?.name ?? c.status, color: categoryColor(st?.category) };
 }
 </script>
 
 <template>
   <div v-if="openProposals.length" data-testid="proposal-panel">
-    <p class="mb-2 text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">Agent proposals</p>
+    <h3 class="text-muted mb-2 text-xs font-medium">Agent proposals</h3>
     <div class="space-y-2">
-      <div
-        v-for="p in openProposals"
-        :key="p.id"
-        class="rounded-lg border border-zinc-200 bg-white p-2.5 text-sm dark:border-zinc-800 dark:bg-zinc-900"
-      >
-        <p class="mb-1 flex items-center gap-1.5 font-medium text-zinc-800 dark:text-zinc-200">
+      <div v-for="p in openProposals" :key="p.id" class="border-default bg-default rounded-lg border p-2.5 text-sm">
+        <p class="text-default mb-1 flex items-center gap-1.5 font-medium">
           <UIcon
             :name="p.kind === PROPOSAL_KIND.SUBTASKS ? 'i-lucide-git-branch' : 'i-lucide-corner-up-right'"
             class="text-primary size-3.5"
           />
-          {{ p.kind === PROPOSAL_KIND.SUBTASKS ? 'Split into subtasks' : 'Reassign ticket' }}
+          {{ p.kind === PROPOSAL_KIND.SUBTASKS ? 'Split into subtasks' : 'Reassign task' }}
         </p>
-        <ul v-if="p.kind === PROPOSAL_KIND.SUBTASKS" class="mb-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+        <ul v-if="p.kind === PROPOSAL_KIND.SUBTASKS" class="text-toned mb-2 space-y-1 text-xs">
           <li v-for="(item, i) in p.payload.items ?? []" :key="i" class="truncate">
-            • {{ item.title }}<span v-if="item.assigneeName" class="text-zinc-400"> — {{ item.assigneeName }}</span>
+            • {{ item.title }}<span v-if="item.assigneeName" class="text-dimmed"> — {{ item.assigneeName }}</span>
           </li>
         </ul>
-        <p v-else class="mb-2 truncate text-xs text-zinc-600 dark:text-zinc-400">
-          → {{ p.payload.targetName }}<span v-if="p.payload.reason"> — {{ p.payload.reason }}</span>
+        <p v-else class="text-toned mb-2 truncate text-xs">
+          Moves to: {{ p.payload.targetName }}<span v-if="p.payload.reason"> — {{ p.payload.reason }}</span>
         </p>
         <div class="flex gap-2">
           <UButton
@@ -184,17 +178,20 @@ function subtaskBadge(c: ChildRow): {
         </div>
       </div>
     </div>
+    <p v-if="proposalMessage" class="mt-2 text-xs" :class="proposalOk ? 'text-success' : 'text-error'" role="status">
+      {{ proposalMessage }}
+    </p>
   </div>
 
   <div data-testid="subtask-panel">
-    <p class="mb-2 text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">Subtasks</p>
+    <h3 class="text-muted mb-2 text-xs font-medium">Subtasks</h3>
     <ul class="space-y-1 text-sm">
       <li v-for="c in subtaskRows" :key="c.id">
         <NuxtLink
           :to="`/tasks/${c.id}`"
-          class="flex items-center justify-between gap-2 rounded px-1.5 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          class="hover:bg-elevated flex items-center justify-between gap-2 rounded px-1.5 py-1"
         >
-          <span class="truncate text-zinc-800 dark:text-zinc-200">{{ c.title }}</span>
+          <span class="text-default truncate">{{ c.title }}</span>
           <UBadge :color="subtaskBadge(c).color" variant="subtle" size="sm">{{ subtaskBadge(c).label }}</UBadge>
         </NuxtLink>
       </li>
@@ -210,8 +207,8 @@ function subtaskBadge(c: ChildRow): {
   </div>
 
   <div v-if="assignmentLines.length" data-testid="assignment-history">
-    <p class="mb-2 text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">Assignees</p>
-    <ul class="space-y-0.5 text-xs text-zinc-500">
+    <h3 class="text-muted mb-2 text-xs font-medium">Assignees</h3>
+    <ul class="text-muted space-y-0.5 text-xs">
       <li v-for="(line, i) in assignmentLines" :key="i" class="truncate">{{ line }}</li>
     </ul>
   </div>

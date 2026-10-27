@@ -118,6 +118,11 @@ function openEditor(row?: EnvironmentRow) {
 }
 
 async function save() {
+  const port = Number(form.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    message.value = 'Port must be a whole number between 1 and 65535.';
+    return;
+  }
   busy.value = true;
   message.value = '';
   try {
@@ -133,7 +138,7 @@ async function save() {
     }
     editorOpen.value = false;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'save failed';
+    message.value = e instanceof Error ? e.message : 'Save failed.';
   } finally {
     busy.value = false;
   }
@@ -153,7 +158,7 @@ async function remove() {
     pendingDelete.value = null;
   } catch (e) {
     pendingDelete.value = null;
-    message.value = e instanceof Error ? e.message : 'delete failed';
+    message.value = e instanceof Error ? e.message : 'Delete failed.';
   } finally {
     busy.value = false;
   }
@@ -166,11 +171,13 @@ async function probe(row: EnvironmentRow) {
     const res = await probeCall({ id: row.id });
     probeResults.value[row.id] = res as { ok: boolean; detail: string; durationMs: number };
   } catch (e) {
-    probeResults.value[row.id] = { ok: false, detail: e instanceof Error ? e.message : 'probe failed', durationMs: 0 };
+    probeResults.value[row.id] = { ok: false, detail: e instanceof Error ? e.message : 'Probe failed.', durationMs: 0 };
   } finally {
     probingId.value = null;
   }
 }
+
+const probeLabel = (ok: boolean) => (ok ? 'OK' : 'Failed');
 
 onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense()]));
 </script>
@@ -184,6 +191,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       searchable
       search-placeholder="Search environments…"
       :data="rows"
+      :loading="liveQuery.isPending.value"
       v-model:page="page"
       :page-count="pageCount"
       :page-size="pageSize"
@@ -196,10 +204,10 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
         <UButton v-if="editable" icon="i-lucide-plus" size="sm" label="New environment" @click="openEditor()" />
       </template>
       <template #name-cell="{ row }">
-        <span class="text-sm font-medium text-zinc-900 dark:text-white">{{ row.original.name }}</span>
+        <span class="text-highlighted text-sm font-medium">{{ row.original.name }}</span>
       </template>
       <template #host-cell="{ row }">
-        <span class="font-mono text-xs text-zinc-500"
+        <span class="text-muted font-mono text-xs"
           >{{ row.original.username }}@{{ row.original.host }}:{{ row.original.port }}</span
         >
       </template>
@@ -207,13 +215,13 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
         <div class="flex items-center gap-2">
           <template v-if="probeResults[row.original.id]">
             <UBadge :color="probeResults[row.original.id]!.ok ? 'success' : 'error'" variant="subtle" size="sm">
-              {{ probeResults[row.original.id]!.ok ? 'ok' : 'failed' }}
+              {{ probeLabel(probeResults[row.original.id]!.ok) }}
             </UBadge>
-            <span class="truncate text-xs text-zinc-400" :title="probeResults[row.original.id]!.detail">
+            <span class="text-dimmed truncate text-xs" :title="probeResults[row.original.id]!.detail">
               {{ probeResults[row.original.id]!.detail }} · {{ probeResults[row.original.id]!.durationMs }}ms
             </span>
           </template>
-          <span v-else class="text-xs text-zinc-400">not probed</span>
+          <span v-else class="text-dimmed text-xs">Not probed</span>
         </div>
       </template>
       <template v-if="editable" #actions-cell="{ row }">
@@ -267,8 +275,8 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
         <UCard :ui="{ root: 'shadow-sm' }">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
-              <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
-              <p class="truncate font-mono text-xs text-zinc-400">{{ row.username }}@{{ row.host }}:{{ row.port }}</p>
+              <p class="text-highlighted truncate text-sm font-medium">{{ row.name }}</p>
+              <p class="text-dimmed truncate font-mono text-xs">{{ row.username }}@{{ row.host }}:{{ row.port }}</p>
             </div>
             <div class="flex flex-col items-end gap-1">
               <UBadge
@@ -277,13 +285,13 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
                 variant="subtle"
                 size="sm"
               >
-                {{ probeResults[row.id]!.ok ? 'ok' : 'failed' }}
+                {{ probeLabel(probeResults[row.id]!.ok) }}
               </UBadge>
             </div>
           </div>
           <p
             v-if="probeResults[row.id]"
-            class="mt-1 truncate text-xs text-zinc-400"
+            class="text-dimmed mt-1 truncate text-xs"
             :title="probeResults[row.id]!.detail"
           >
             {{ probeResults[row.id]!.detail }} · {{ probeResults[row.id]!.durationMs }}ms
@@ -340,9 +348,9 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
     <UModal v-model:open="deleteOpen" title="Delete environment">
       <template #body>
         <div class="space-y-4">
-          <p class="text-sm text-zinc-600 dark:text-zinc-300">
+          <p class="text-muted text-sm">
             Delete environment
-            <span class="font-semibold text-zinc-900 dark:text-white">{{ pendingDelete?.name }}</span> ({{
+            <span class="text-highlighted font-semibold">{{ pendingDelete?.name }}</span> ({{
               pendingDelete?.username
             }}@{{ pendingDelete?.host }})? AI agents configured on it will need reassigning.
           </p>
@@ -371,10 +379,21 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
             <UInput v-model="form.host" icon="i-lucide-server" placeholder="Hostname or IP" class="w-full" required />
           </UFormField>
           <UFormField label="Port" name="port">
-            <UInput v-model="form.port" icon="i-lucide-network" placeholder="Port" class="w-full" required />
+            <UInput
+              v-model="form.port"
+              type="number"
+              :min="1"
+              :max="65535"
+              icon="i-lucide-network"
+              placeholder="Port"
+              class="w-full"
+              required
+            />
           </UFormField>
           <UFormField label="Username" name="username">
-            <template #hint><FormHint text="Key auth only — the runner never uses passwords" /></template>
+            <template #hint
+              ><FormHint text="Key or password — the runner connects with whichever this environment uses"
+            /></template>
             <UInput v-model="form.username" icon="i-lucide-user" placeholder="SSH username" class="w-full" required />
           </UFormField>
           <UFormField label="Authentication" name="secretUsage">

@@ -33,7 +33,7 @@ async function login() {
   }
 }
 
-async function oidcLogin(providerId: string) {
+async function oidcLogin(providerId: string, providerLabel: string) {
   try {
     const res = await $fetch<{ url: string }>('/auth/sign-in/social', {
       method: 'POST',
@@ -42,7 +42,11 @@ async function oidcLogin(providerId: string) {
     if (res?.url) window.location.href = res.url;
     else throw new Error('no authorization url returned');
   } catch {
-    toast.add({ title: 'SSO unavailable', description: 'OIDC provider not reachable', color: 'error' });
+    toast.add({
+      title: 'Sign-in unavailable',
+      description: `Sign-in with ${providerLabel} is unavailable right now. Use email and password or try again.`,
+      color: 'error',
+    });
   }
 }
 
@@ -63,16 +67,16 @@ const nav = [
 </script>
 
 <template>
-  <div class="min-h-screen bg-zinc-50 dark:bg-zinc-950">
+  <div class="bg-default min-h-screen">
     <!-- ===================== LOGIN ===================== -->
     <div v-if="!session" class="flex min-h-screen items-center justify-center p-6">
       <div class="w-full max-w-sm">
         <div class="mb-8 flex flex-col items-center gap-2 text-center">
-          <div class="bg-primary flex size-12 items-center justify-center rounded-2xl shadow-sm">
+          <div class="bg-primary flex size-12 items-center justify-center rounded-xl shadow-sm">
             <UIcon name="i-lucide-users" class="text-inverted size-6" />
           </div>
-          <h1 class="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">{{ companyName }}</h1>
-          <p class="text-sm text-zinc-500">Humans and AI employees, one workspace</p>
+          <h1 class="text-highlighted text-2xl font-bold tracking-tight">{{ companyName }}</h1>
+          <p class="text-muted text-sm">Humans and AI employees, one workspace.</p>
         </div>
 
         <UCard :ui="{ root: 'shadow-sm' }">
@@ -90,11 +94,20 @@ const nav = [
                 placeholder="you@example.com"
                 class="w-full"
                 size="lg"
+                autocomplete="email"
                 required
               />
             </UFormField>
             <UFormField label="Password" name="password">
-              <UInput v-model="loginPassword" type="password" icon="i-lucide-lock" class="w-full" size="lg" required />
+              <UInput
+                v-model="loginPassword"
+                type="password"
+                icon="i-lucide-lock"
+                class="w-full"
+                size="lg"
+                autocomplete="current-password"
+                required
+              />
             </UFormField>
             <UAlert v-if="loginError" icon="i-lucide-shield-alert" color="error" variant="subtle" :title="loginError" />
             <UButton type="submit" block size="lg" :loading="busy" label="Sign in" />
@@ -108,7 +121,7 @@ const nav = [
             icon="i-lucide-key-round"
             :label="`Sign in with ${prov.label}`"
             class="mt-3"
-            @click="oidcLogin(prov.id)"
+            @click="oidcLogin(prov.id, prov.label)"
           />
         </UCard>
       </div>
@@ -123,11 +136,11 @@ const nav = [
               <UIcon name="i-lucide-users" class="text-primary size-5" />
             </div>
             <div v-if="!collapsed" class="flex min-w-0 flex-col">
-              <span class="truncate text-sm leading-tight font-semibold text-zinc-900 dark:text-white"
+              <span class="text-highlighted truncate text-sm leading-tight font-semibold"
                 >{{ companyName }}
-                <span class="font-mono text-[10px] font-normal text-zinc-400">v{{ appVersion }}</span>
+                <span class="text-dimmed text-xs">v{{ appVersion }}</span>
               </span>
-              <span class="text-xs leading-tight text-zinc-400">{{
+              <span class="text-dimmed text-xs leading-tight">{{
                 companyName.toLowerCase() === 'tandem' ? 'company workspace' : 'workspace'
               }}</span>
             </div>
@@ -140,15 +153,15 @@ const nav = [
           <div class="flex w-full items-center gap-2" :class="collapsed ? 'flex-col' : ''">
             <UAvatar :alt="session.user.name" size="xs" />
             <div v-if="!collapsed" class="min-w-0 flex-1">
-              <p class="truncate text-xs font-medium text-zinc-900 dark:text-white">{{ session.user.name }}</p>
-              <p class="truncate text-[11px] text-zinc-400">{{ session.user.role }}</p>
+              <p class="text-highlighted truncate text-xs font-medium">{{ session.user.name }}</p>
+              <p class="text-dimmed truncate text-xs">{{ session.user.role }}</p>
             </div>
             <UButton
               icon="i-lucide-log-out"
               color="neutral"
               variant="ghost"
               size="xs"
-              :aria-label="collapsed ? 'Sign out' : undefined"
+              aria-label="Sign out"
               @click="logout"
             />
           </div>

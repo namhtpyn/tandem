@@ -82,6 +82,11 @@ const companyName = ref('Tandem');
 const runTimeoutMinutes = ref(30);
 const tasksPerAgent = ref(1);
 const companyPrompt = ref('');
+// UForm :state needs a stable object — reactive() wrapping the refs keeps both in sync
+const nameState = reactive({ companyName });
+const promptState = reactive({ companyPrompt });
+const timeoutState = reactive({ runTimeoutMinutes });
+const tasksState = reactive({ tasksPerAgent });
 const savingCompanyPrompt = ref(false);
 const companyPromptMessage = ref('');
 async function saveCompanyPrompt() {
@@ -90,13 +95,13 @@ async function saveCompanyPrompt() {
   try {
     const text = companyPrompt.value.trim();
     if (text.length > 8000) {
-      companyPromptMessage.value = 'Keep it under 8000 characters';
+      companyPromptMessage.value = 'Keep it under 8000 characters.';
       return;
     }
     await $client.settings.update({ companyPrompt: text });
     companyPromptMessage.value = 'Saved';
   } catch (e) {
-    companyPromptMessage.value = e instanceof Error ? e.message : 'Save failed';
+    companyPromptMessage.value = e instanceof Error ? e.message : 'Save failed.';
   } finally {
     savingCompanyPrompt.value = false;
   }
@@ -130,7 +135,9 @@ interface AiAssignmentForm {
 }
 const llmForm = reactive<AiAssignmentForm>({ providerId: undefined, model: '', keySecretId: null });
 const decisionForm = reactive<AiAssignmentForm>({ providerId: undefined, model: '', keySecretId: null });
-const aiMessage = ref('');
+// one message PER form — a shared ref rendered once could only ever sit below one of them
+const llmMessage = ref('');
+const decisionMessage = ref('');
 const llmSaving = ref(false);
 const decisionSaving = ref(false);
 
@@ -178,11 +185,12 @@ const decisionModels = aiModelsState(decisionForm);
 async function saveAssignment(kind: 'internalLlm' | 'internalDecision') {
   const form = kind === 'internalLlm' ? llmForm : decisionForm;
   const saving = kind === 'internalLlm' ? llmSaving : decisionSaving;
+  const message = kind === 'internalLlm' ? llmMessage : decisionMessage;
   saving.value = true;
-  aiMessage.value = '';
+  message.value = '';
   try {
     if (form.providerId && (!form.keySecretId || !form.model.trim())) {
-      aiMessage.value = 'API key and model are required once a provider is picked';
+      message.value = 'API key and model are required once a provider is picked';
       return;
     }
     const value =
@@ -190,9 +198,9 @@ async function saveAssignment(kind: 'internalLlm' | 'internalDecision') {
         ? { providerId: form.providerId, model: form.model.trim(), keySecretId: form.keySecretId }
         : null;
     await $client.settings.update({ [kind]: value });
-    aiMessage.value = 'Saved';
+    message.value = 'Saved';
   } catch (e) {
-    aiMessage.value = e instanceof Error ? e.message : 'save failed';
+    message.value = e instanceof Error ? e.message : 'Save failed.';
   } finally {
     saving.value = false;
   }
@@ -216,13 +224,13 @@ async function saveTasksPerAgent() {
   try {
     const n = Number(tasksPerAgent.value);
     if (!Number.isInteger(n) || n < 1 || n > 32) {
-      tasksPerAgentMessage.value = 'Enter a whole number between 1 and 32';
+      tasksPerAgentMessage.value = 'Enter a whole number between 1 and 32.';
       return;
     }
     await $client.settings.update({ tasksPerAgent: n });
     tasksPerAgentMessage.value = 'Saved';
   } catch (e) {
-    tasksPerAgentMessage.value = e instanceof Error ? e.message : 'Save failed';
+    tasksPerAgentMessage.value = e instanceof Error ? e.message : 'Save failed.';
   } finally {
     savingTasksPerAgent.value = false;
   }
@@ -236,13 +244,13 @@ async function saveRunTimeout() {
   try {
     const minutes = Number(runTimeoutMinutes.value);
     if (!Number.isFinite(minutes) || minutes < 1) {
-      runTimeoutMessage.value = 'Enter at least 1 minute';
+      runTimeoutMessage.value = 'Enter at least 1 minute.';
       return;
     }
     await $client.settings.update({ runTimeoutMs: Math.round(minutes * 60_000) });
     runTimeoutMessage.value = 'Saved';
   } catch (e) {
-    runTimeoutMessage.value = e instanceof Error ? e.message : 'Save failed';
+    runTimeoutMessage.value = e instanceof Error ? e.message : 'Save failed.';
   } finally {
     savingRunTimeout.value = false;
   }
@@ -257,7 +265,7 @@ async function saveCompanyName() {
     await $client.settings.update({ companyName: companyName.value });
     nameMessage.value = 'Saved';
   } catch (e) {
-    nameMessage.value = e instanceof Error ? e.message : 'Save failed';
+    nameMessage.value = e instanceof Error ? e.message : 'Save failed.';
   } finally {
     savingName.value = false;
   }
@@ -270,11 +278,11 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
   <UCard :ui="{ root: 'shadow-sm' }">
     <template #header>
       <div class="flex items-center gap-2">
-        <UIcon name="i-lucide-building-2" class="size-4 text-zinc-400" />
-        <h3 class="text-sm font-semibold text-zinc-900 dark:text-white">General</h3>
+        <UIcon name="i-lucide-building-2" class="text-dimmed size-4" />
+        <h3 class="text-highlighted text-sm font-semibold">General</h3>
       </div>
     </template>
-    <UForm :state="{ companyName }" class="flex flex-wrap items-end gap-3" @submit="saveCompanyName">
+    <UForm :state="nameState" class="flex flex-wrap items-end gap-3" @submit="saveCompanyName">
       <UFormField label="Company name" name="companyName" class="min-w-56 flex-1">
         <template #hint><FormHint text="Shown in the sidebar and on the login screen" /></template>
         <UInput
@@ -293,10 +301,10 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
 
     <USeparator class="my-5" />
 
-    <UForm :state="{ companyPrompt }" class="flex flex-col gap-3" @submit="saveCompanyPrompt">
+    <UForm :state="promptState" class="flex flex-col gap-3" @submit="saveCompanyPrompt">
       <UFormField label="Company prompt" name="companyPrompt">
         <template #hint
-          ><FormHint text="Added to EVERY agent brief — company-wide context, standards, tone (empty = omitted)"
+          ><FormHint text="Added to every agent brief — company-wide context, standards, tone (empty = omitted)"
         /></template>
         <UTextarea
           v-model="companyPrompt"
@@ -319,7 +327,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
 
     <USeparator class="my-5" />
 
-    <UForm :state="{ runTimeoutMinutes }" class="flex flex-wrap items-end gap-3" @submit="saveRunTimeout">
+    <UForm :state="timeoutState" class="flex flex-wrap items-end gap-3" @submit="saveRunTimeout">
       <UFormField label="Agent run timeout (minutes)" name="runTimeoutMinutes" class="min-w-56">
         <template #hint
           ><FormHint text="Hard cap on one agent run — the run is cancelled when it exceeds this"
@@ -345,7 +353,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
 
     <USeparator class="my-5" />
 
-    <UForm :state="{ tasksPerAgent }" class="flex flex-wrap items-end gap-3" @submit="saveTasksPerAgent">
+    <UForm :state="tasksState" class="flex flex-wrap items-end gap-3" @submit="saveTasksPerAgent">
       <UFormField label="Tasks per agent" name="tasksPerAgent" class="min-w-56">
         <template #hint
           ><FormHint
@@ -374,7 +382,9 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
 
     <div>
       <p class="pb-1 text-sm font-medium">Decision engine (auto-assign)</p>
-      <p class="text-muted pb-2 text-xs">Picks which employee takes a task. Provider must speak a decision endpoint.</p>
+      <p class="text-muted pb-2 text-xs">
+        Picks which employee takes a task. Provider must offer a decision-compatible endpoint.
+      </p>
       <UForm :state="decisionForm" class="flex flex-col gap-3" @submit="saveAssignment('internalDecision')">
         <UFormField label="Provider" name="dProvider">
           <USelectMenu
@@ -406,7 +416,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
             :items="decisionModels.items.value"
             :loading="decisionModels.loading.value"
             icon="i-lucide-cpu"
-            placeholder="e.g. jev-latest"
+            placeholder="e.g. claude-sonnet"
             class="w-full"
             :disabled="decisionSaving"
           />
@@ -414,6 +424,13 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
         <UButton type="submit" icon="i-lucide-save" :loading="decisionSaving" class="self-start"
           >Save decision engine</UButton
         >
+        <span
+          v-if="decisionMessage"
+          class="text-xs"
+          :class="decisionMessage === 'Saved' ? 'text-success' : 'text-error'"
+        >
+          {{ decisionMessage }}
+        </span>
       </UForm>
     </div>
 
@@ -422,7 +439,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
     <div>
       <p class="pb-1 text-sm font-medium">Internal LLM</p>
       <p class="text-muted pb-2 text-xs">
-        Used by Tandem's own server-side features. Provider must speak an LLM endpoint. Not sent to agents.
+        Used by Tandem's own server-side features. Provider must offer an LLM-compatible endpoint. Not sent to agents.
       </p>
       <UForm :state="llmForm" class="flex flex-col gap-3" @submit="saveAssignment('internalLlm')">
         <UFormField label="Provider" name="lProvider">
@@ -461,10 +478,10 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
           />
         </UFormField>
         <UButton type="submit" icon="i-lucide-save" :loading="llmSaving" class="self-start">Save internal LLM</UButton>
+        <span v-if="llmMessage" class="text-xs" :class="llmMessage === 'Saved' ? 'text-success' : 'text-error'">
+          {{ llmMessage }}
+        </span>
       </UForm>
     </div>
-    <span v-if="aiMessage" class="pb-2 text-xs" :class="aiMessage === 'Saved' ? 'text-success' : 'text-error'">{{
-      aiMessage
-    }}</span>
   </UCard>
 </template>

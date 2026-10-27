@@ -1,6 +1,12 @@
 <script setup lang="ts">
 useHead({ title: 'Overview' });
-// M1 overview: placeholder cards until environments/employees/tasks land (M2-M4).
+
+// Overview landing: quick links into the three main areas of the workspace.
+const cards = [
+  { to: '/environments', icon: 'i-lucide-server', title: 'Environments', blurb: 'SSH targets that run Hermes.' },
+  { to: '/employees', icon: 'i-lucide-users', title: 'Employees', blurb: 'Humans and AI, one hierarchy.' },
+  { to: '/tasks', icon: 'i-lucide-list-todo', title: 'Tasks', blurb: 'Assign and track work.' },
+];
 </script>
 
 <template>
@@ -12,44 +18,22 @@ useHead({ title: 'Overview' });
         </template>
       </UDashboardNavbar>
       <div class="space-y-6 p-6 lg:p-8">
-        <div>
-          <p class="text-sm text-zinc-500">Company workspace — humans and AI employees, one hierarchy.</p>
-        </div>
+        <p class="text-muted text-sm">Humans and AI employees, one workspace.</p>
 
         <div class="grid gap-4 sm:grid-cols-3">
-          <UCard>
-            <div class="flex items-center gap-3">
-              <div class="bg-primary/10 flex size-9 items-center justify-center rounded-lg">
-                <UIcon name="i-lucide-server" class="text-primary size-5" />
+          <NuxtLink v-for="card in cards" :key="card.to" :to="card.to" class="block">
+            <UCard :ui="{ root: 'shadow-sm transition-colors hover:bg-elevated/50' }">
+              <div class="flex items-center gap-3">
+                <div class="bg-primary/10 flex size-9 items-center justify-center rounded-lg">
+                  <UIcon :name="card.icon" class="text-primary size-5" />
+                </div>
+                <div class="min-w-0">
+                  <p class="text-highlighted text-sm font-medium">{{ card.title }}</p>
+                  <p class="text-muted text-xs">{{ card.blurb }}</p>
+                </div>
               </div>
-              <div>
-                <p class="text-sm font-medium text-zinc-900 dark:text-white">Environments</p>
-                <p class="text-xs text-zinc-400">SSH targets that run Hermes</p>
-              </div>
-            </div>
-          </UCard>
-          <UCard>
-            <div class="flex items-center gap-3">
-              <div class="bg-primary/10 flex size-9 items-center justify-center rounded-lg">
-                <UIcon name="i-lucide-users" class="text-primary size-5" />
-              </div>
-              <div>
-                <p class="text-sm font-medium text-zinc-900 dark:text-white">Employees</p>
-                <p class="text-xs text-zinc-400">Humans + AI, titles & hierarchy — M3</p>
-              </div>
-            </div>
-          </UCard>
-          <UCard>
-            <div class="flex items-center gap-3">
-              <div class="bg-primary/10 flex size-9 items-center justify-center rounded-lg">
-                <UIcon name="i-lucide-list-todo" class="text-primary size-5" />
-              </div>
-              <div>
-                <p class="text-sm font-medium text-zinc-900 dark:text-white">Tasks</p>
-                <p class="text-xs text-zinc-400">Assign & track work — M4</p>
-              </div>
-            </div>
-          </UCard>
+            </UCard>
+          </NuxtLink>
         </div>
       </div>
     </template>

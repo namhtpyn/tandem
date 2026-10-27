@@ -25,6 +25,7 @@ const titleEditingId = ref<string | null>(null);
 const titleForm = ref({ name: '' });
 const titleBusy = ref(false);
 const titleError = ref<string | null>(null);
+const titleRemoveError = ref<string | null>(null);
 const titleConfirmId = ref<string | null>(null);
 const titleConfirming = computed(() => titles.value.find((t) => t.id === titleConfirmId.value) ?? null);
 
@@ -52,17 +53,20 @@ async function saveTitle() {
     });
     titleEditorOpen.value = false;
   } catch (e) {
-    titleError.value = e instanceof Error ? e.message : 'Save failed';
+    titleError.value = e instanceof Error ? e.message : 'Save failed.';
   } finally {
     titleBusy.value = false;
   }
 }
 
 async function removeTitle(id: string) {
+  titleRemoveError.value = null;
   titleBusy.value = true;
   try {
     await titleRemoveMutation.mutateAsync({ id });
     titleConfirmId.value = null;
+  } catch (e) {
+    titleRemoveError.value = e instanceof Error ? e.message : 'Delete failed.';
   } finally {
     titleBusy.value = false;
   }
@@ -79,13 +83,10 @@ onServerPrefetch(() => titlesQuery.suspense());
     :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
   >
     <template #body>
-      <div v-if="titleError" class="bg-error/10 text-error mb-3 rounded-md px-3 py-2 text-xs">{{ titleError }}</div>
       <div v-if="titles.length" class="divide-default divide-y">
         <div v-for="t in titles" :key="t.id" class="flex items-center gap-2 py-2.5">
           <UBadge color="neutral" variant="subtle" icon="i-lucide-briefcase">{{ t.name }}</UBadge>
-          <span class="text-xs text-zinc-500"
-            >{{ t.employees }} {{ t.employees === 1 ? 'employee' : 'employees' }}</span
-          >
+          <span class="text-muted text-xs">{{ t.employees }} {{ t.employees === 1 ? 'employee' : 'employees' }}</span>
           <span class="flex-1" />
           <UPopover mode="hover">
             <UButton
@@ -113,7 +114,7 @@ onServerPrefetch(() => titlesQuery.suspense());
           </UPopover>
         </div>
       </div>
-      <p v-else class="py-6 text-center text-sm text-zinc-500">No titles yet — create one to standardize roles.</p>
+      <p v-else class="text-muted py-6 text-center text-sm">No titles yet — create one to standardize roles.</p>
     </template>
     <template #footer>
       <div class="flex w-full items-center justify-between gap-2">
@@ -138,7 +139,16 @@ onServerPrefetch(() => titlesQuery.suspense());
           :disabled="titleBusy"
         />
       </UFormField>
-      <p class="mt-2 text-xs text-zinc-500">Renaming updates every employee who holds this title.</p>
+      <UAlert
+        v-if="titleError"
+        icon="i-lucide-circle-alert"
+        color="error"
+        variant="subtle"
+        :title="titleError"
+        class="mt-3"
+        :ui="{ title: 'text-sm' }"
+      />
+      <p class="text-muted mt-2 text-xs">Renaming updates every employee who holds this title.</p>
     </template>
     <template #footer>
       <div class="flex w-full justify-end gap-2">
@@ -163,6 +173,15 @@ onServerPrefetch(() => titlesQuery.suspense());
         Delete <strong>{{ titleConfirming?.name }}</strong> from the catalog? Employees keep their title text — it just
         stops being offered in the picker.
       </p>
+      <UAlert
+        v-if="titleRemoveError"
+        icon="i-lucide-circle-alert"
+        color="error"
+        variant="subtle"
+        :title="titleRemoveError"
+        class="mt-3"
+        :ui="{ title: 'text-sm' }"
+      />
     </template>
     <template #footer>
       <div class="flex w-full justify-end gap-2">

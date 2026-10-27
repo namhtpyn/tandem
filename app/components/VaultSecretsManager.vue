@@ -64,6 +64,7 @@ watch(total, (t) => {
 });
 
 const busy = ref(false);
+const removeError = ref<string | null>(null);
 
 const editorOpen = ref(false);
 const isEdit = ref(false);
@@ -126,7 +127,7 @@ async function save() {
     }
     editorOpen.value = false;
   } catch (e) {
-    formError.value = e instanceof Error ? e.message : 'Save failed';
+    formError.value = e instanceof Error ? e.message : 'Save failed.';
   } finally {
     busy.value = false;
   }
@@ -137,11 +138,14 @@ function askRemove(row: VaultSecretRow) {
 }
 
 async function reallyRemove(row: VaultSecretRow) {
-  confirming.value = null;
+  removeError.value = null;
   busy.value = true;
   try {
     await removeMutation.mutateAsync({ id: row.id });
+    confirming.value = null;
     emit('deleted', row.id);
+  } catch (e) {
+    removeError.value = e instanceof Error ? e.message : 'Delete failed.';
   } finally {
     busy.value = false;
   }
@@ -157,6 +161,7 @@ onServerPrefetch(() => liveQuery.suspense());
       searchable
       search-placeholder="Search secrets…"
       :data="rows"
+      :loading="liveQuery.isPending.value"
       v-model:page="page"
       :page-count="pageCount"
       :page-size="pageSize"
@@ -167,6 +172,9 @@ onServerPrefetch(() => liveQuery.suspense());
         { accessorKey: 'updatedAt', header: 'Updated' },
         { id: 'actions', header: '' },
       ]"
+      show-empty-state
+      empty-icon="i-lucide-shield"
+      empty-text="No secrets yet. Store SSH keys and API tokens here — encrypted at rest."
     >
       <template #toolbar>
         <VaultFolderSelect v-model="folderId" clearable />
@@ -174,13 +182,13 @@ onServerPrefetch(() => liveQuery.suspense());
         <UButton v-if="editable" icon="i-lucide-plus" size="sm" label="New secret" @click="openEditor()" />
       </template>
       <template #description-cell="{ row }">
-        <span class="text-xs text-zinc-500 dark:text-zinc-400">{{ row.original.description || '—' }}</span>
+        <span class="text-muted text-xs">{{ row.original.description || '—' }}</span>
       </template>
       <template #lastFour-cell="{ row }">
-        <span class="font-mono text-xs text-zinc-400">•••• {{ row.original.lastFour }}</span>
+        <span class="text-dimmed font-mono text-xs">•••• {{ row.original.lastFour }}</span>
       </template>
       <template #updatedAt-cell="{ row }">
-        <span suppressHydration-warning class="text-xs text-zinc-500">{{ formatWhen(row.original.updatedAt) }}</span>
+        <span suppressHydration-warning class="text-muted text-xs">{{ formatWhen(row.original.updatedAt) }}</span>
       </template>
       <template v-if="editable" #actions-cell="{ row }">
         <div class="flex justify-end gap-1">
@@ -218,11 +226,11 @@ onServerPrefetch(() => liveQuery.suspense());
         <UCard :ui="{ root: 'shadow-sm' }">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
-              <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
-              <p class="mt-1 font-mono text-xs text-zinc-400">•••• {{ row.lastFour }}</p>
+              <p class="text-highlighted truncate text-sm font-medium">{{ row.name }}</p>
+              <p class="text-dimmed mt-1 font-mono text-xs">•••• {{ row.lastFour }}</p>
             </div>
           </div>
-          <p v-if="row.description" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ row.description }}</p>
+          <p v-if="row.description" class="text-muted mt-1 text-xs">{{ row.description }}</p>
           <div v-if="editable" class="mt-3 flex justify-end gap-3">
             <UPopover mode="hover">
               <UButton
@@ -256,17 +264,6 @@ onServerPrefetch(() => liveQuery.suspense());
         </UCard>
       </template>
     </DataTable>
-    <UCard v-if="!rows.length" :ui="{ root: 'shadow-sm' }">
-      <template #body>
-        <div class="flex flex-col items-center gap-2 py-6 text-center">
-          <UIcon name="i-lucide-shield" class="size-8 text-zinc-300 dark:text-zinc-600" />
-          <p class="text-sm text-zinc-500">No secrets yet. Store SSH keys and API tokens here — encrypted at rest.</p>
-          <UButton v-if="editable" icon="i-lucide-plus" size="sm" class="mt-2" @click="openEditor()"
-            >New secret</UButton
-          >
-        </div>
-      </template>
-    </UCard>
 
     <!-- editor: create / replace -->
     <UModal
@@ -353,15 +350,26 @@ onServerPrefetch(() => liveQuery.suspense());
       "
     >
       <template #body>
-        <p class="text-sm text-zinc-600 dark:text-zinc-300">
-          Delete <span class="font-medium text-zinc-900 dark:text-white">{{ confirmingRow?.name }}</span
+        <p class="text-muted text-sm">
+          Delete <span class="text-highlighted font-medium">{{ confirmingRow?.name }}</span
           >? Anything using it (e.g. the SSH runner) will stop working. This cannot be undone.
         </p>
+        <UAlert
+          v-if="removeError"
+          icon="i-lucide-circle-alert"
+          color="error"
+          variant="subtle"
+          :title="removeError"
+          class="mt-3"
+          :ui="{ title: 'text-sm' }"
+        />
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
           <UButton variant="ghost" color="neutral" @click="confirming = null">Cancel</UButton>
-          <UButton color="error" icon="i-lucide-trash-2" @click="reallyRemove(confirmingRow!)">Delete</UButton>
+          <UButton color="error" icon="i-lucide-trash-2" :loading="busy" @click="reallyRemove(confirmingRow!)"
+            >Delete</UButton
+          >
         </div>
       </template>
     </UModal>

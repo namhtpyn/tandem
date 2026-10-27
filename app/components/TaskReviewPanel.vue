@@ -51,7 +51,7 @@ onServerPrefetch(() => Promise.all([reviewsQuery.suspense(), employeesLive.suspe
 
 <template>
   <div>
-    <p class="mb-2 text-xs font-semibold tracking-wide text-zinc-400 uppercase">Review</p>
+    <h3 class="text-muted mb-2 text-xs font-medium">Review</h3>
     <ul class="space-y-1 text-sm">
       <li v-for="r in reviewChecklist.current" :key="r.reviewerId" class="flex items-start gap-1.5">
         <UIcon
@@ -65,17 +65,26 @@ onServerPrefetch(() => Promise.all([reviewsQuery.suspense(), employeesLive.suspe
                   : 'i-lucide-user'
           "
           class="mt-0.5 size-3.5 shrink-0"
-          :class="r.status === 'approved' ? 'text-success' : r.status === 'pending' ? 'text-zinc-400' : 'text-warning'"
+          :class="
+            r.status === 'approved'
+              ? 'text-success'
+              : r.status === 'rejected'
+                ? 'text-error'
+                : r.status === 'pending'
+                  ? 'text-dimmed'
+                  : 'text-warning'
+          "
         />
         <span class="min-w-0">
-          <span class="block truncate text-zinc-800 dark:text-zinc-200"
-            >{{ r.name }} <span class="text-xs text-zinc-400">({{ kindOf(r.reviewerId, r.source) }})</span></span
+          <span class="text-default block truncate"
+            >{{ r.name }} <span class="text-dimmed text-xs">({{ kindOf(r.reviewerId, r.source) }})</span></span
           >
-          <span v-if="r.note" class="block truncate text-xs text-zinc-400" :title="r.note">{{ r.note }}</span>
+          <span v-if="r.note" class="text-dimmed block truncate text-xs" :title="r.note">{{ r.note }}</span>
         </span>
       </li>
-      <li v-if="reviewChecklist.history.length" class="pt-1 text-xs text-zinc-400">
-        {{ reviewChecklist.history.length }} earlier-round verdict(s)
+      <li v-if="reviewChecklist.history.length" class="text-dimmed pt-1 text-xs">
+        {{ reviewChecklist.history.length }} earlier-round
+        {{ reviewChecklist.history.length === 1 ? 'verdict' : 'verdicts' }}
       </li>
     </ul>
   </div>

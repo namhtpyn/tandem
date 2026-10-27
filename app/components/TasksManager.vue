@@ -12,6 +12,7 @@ import { computed, ref, watch } from 'vue';
 import { ACTIVITY_KIND, CHANGE_RESOURCE } from '#shared/enums';
 import { formatWhen } from '~/utils/format-when';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
+import { categoryColor } from '~/utils/ui-labels';
 
 const { $orpc, $client } = useNuxtApp();
 
@@ -100,11 +101,9 @@ const inboxCount = computed(() => inboxItems.value.length);
 
 const statusOptions = computed(() => statuses.value.map((x) => ({ label: x.name, value: x.id })));
 
+// one shared category→color mapping (ui-labels) — statuses agree with the detail page
 function statusColor(s: string) {
-  const c = statusById.value.get(s)?.color;
-  if (c === 'primary' || c === 'success' || c === 'warning' || c === 'error' || c === 'info' || c === 'neutral')
-    return c;
-  return 'neutral';
+  return categoryColor(statusById.value.get(s)?.category);
 }
 
 // ---- mutations (list rows) ----
@@ -115,33 +114,36 @@ const assignMutation = useMutation($orpc.statuses.assign.mutationOptions());
 
 const busy = ref(false);
 const message = ref('');
+const messageOk = ref(false); // message tone: only auto-assign success renders green
 
 async function setStatus(row: TaskRow, status: string) {
   if (row.status === status) return;
-  const cur = statusById.value.get(row.status);
-  if (cur && !cur.nextIds.includes(status)) {
-    message.value = `cannot move from '${cur.name}' to '${statusById.value.get(status)?.name ?? status}'`;
-    return;
-  }
+  // manual status is FREE (owner ruling 2026-10-27): every status is reachable from
+  // every surface — the server is the only gate
   message.value = '';
+  messageOk.value = false;
   try {
     await setStatusMutation.mutateAsync({ id: row.id, status });
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'status change failed';
+    message.value = e instanceof Error ? e.message : "Couldn't update status — try again";
   }
 }
 
 async function autoAssign(row: TaskRow) {
   message.value = '';
+  messageOk.value = false;
   try {
     const res = await assignMutation.mutateAsync({ taskId: row.id });
     if (res.assigned) {
-      message.value = `Assigned to ${assigneeNameById.value.get(res.employeeId) ?? 'employee'} (confidence ${(res.confidence * 100).toFixed(0)}%)`;
+      message.value = `Assigned to ${assigneeNameById.value.get(res.employeeId) ?? 'employee'} — match confidence ${(
+        res.confidence * 100
+      ).toFixed(0)}%`;
+      messageOk.value = true;
     } else {
-      message.value = `Not assigned: ${res.reason ?? 'decision engine declined'}`;
+      message.value = 'No confident match — nobody was auto-assigned';
     }
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'auto-assign failed';
+    message.value = e instanceof Error ? e.message : "Couldn't auto-assign — try again";
   }
 }
 
@@ -160,7 +162,7 @@ async function remove() {
     await removeMutation.mutateAsync({ id: pendingDelete.value.id });
     pendingDelete.value = null;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'delete failed';
+    message.value = e instanceof Error ? e.message : "Couldn't delete the task — try again";
   } finally {
     busy.value = false;
   }
@@ -196,6 +198,7 @@ watch(workflowTaskLive, (t) => {
 const workflowNote = ref('');
 const workflowBusy = ref(false);
 const workflowMessage = ref('');
+const workflowOk = ref(true); // message tone: success copy vs failure copy
 // the workflow gate keys off the status CATEGORY (not seeded uuids): ready /
 // working / paused are the work states where forward/abandon/submit apply
 const workflowStatusCategory = computed(() =>
@@ -253,6 +256,46 @@ const drawerActivityQuery = useQuery(
 );
 const workflowFeed = computed(() => unref(drawerActivityQuery.data) ?? []);
 
+// run rows read as sentences — 'Run failed (exit code 1)', never bare status jargon
+function runLabel(r: { status: string; exitCode: number | null }) {
+  const s = r.status.toLowerCase();
+  if (s === 'running') return 'Run in progress';
+  if (s === 'done') return 'Run completed';
+  if (s === 'failed') return r.exitCode ? `Run failed (exit code ${r.exitCode})` : 'Run failed';
+  if (s === 'cancelled') return 'Run cancelled';
+  if (s === 'timeout') return 'Run timed out';
+  return 'Run stopped';
+}
+// same mapping as runLabel, for the status dot color (cancelled/timeout stay neutral)
+function runDot(r: { status: string }) {
+  const s = r.status.toLowerCase();
+  if (s === 'running') return 'bg-warning animate-pulse';
+  if (s === 'done') return 'bg-success';
+  if (s === 'failed') return 'bg-error';
+  return 'bg-accented';
+}
+
+// activity kinds read as words, not enum fragments
+const ACTIVITY_LABELS: Record<string, string> = {
+  [ACTIVITY_KIND.NOTE]: 'Note',
+  [ACTIVITY_KIND.QUESTION]: 'Question',
+  [ACTIVITY_KIND.ANSWER]: 'Answer',
+  [ACTIVITY_KIND.VERDICT]: 'Review verdict',
+  [ACTIVITY_KIND.FORWARD]: 'Forwarded',
+  [ACTIVITY_KIND.STATUS]: 'Status changed',
+};
+
+// board column dot: category-driven text color (mirrors categoryColor's mapping)
+const CATEGORY_TEXT: Record<string, string> = {
+  done: 'text-success',
+  cancelled: 'text-error',
+  blocked: 'text-error',
+  working: 'text-warning',
+  waiting_answer: 'text-warning',
+  in_review: 'text-info',
+  todo: 'text-dimmed',
+};
+
 const retryInMin = computed(() => {
   const t = workflowTask.value;
   if (!t?.dispatchAfter) return 0;
@@ -281,6 +324,20 @@ type WorkflowAction =
   | 'reject'
   | 'abandon';
 
+// every verb names what just happened (and what to retry) — no bare 'done'/'action failed'
+const WF_COPY: Record<WorkflowAction, { ok: string; fail: string }> = {
+  dispatch: { ok: 'Agent dispatched', fail: "Couldn't dispatch — try again" },
+  note: { ok: 'Note added', fail: "Couldn't add the note — try again" },
+  submit: { ok: 'Sent for review', fail: "Couldn't submit for review — try again" },
+  ask: { ok: 'Question sent', fail: "Couldn't send the question — try again" },
+  forward: { ok: 'Forwarded', fail: "Couldn't forward — try again" },
+  answer: { ok: 'Answer sent', fail: "Couldn't send the answer — try again" },
+  approve: { ok: 'Approved', fail: "Couldn't approve — try again" },
+  requestChanges: { ok: 'Changes requested', fail: "Couldn't request changes — try again" },
+  reject: { ok: 'Rejected', fail: "Couldn't reject — try again" },
+  abandon: { ok: 'Task abandoned', fail: "Couldn't abandon the task — try again" },
+};
+
 async function wfAction(action: WorkflowAction, extra: { body?: string; toEmployeeId?: string } = {}) {
   if (!workflowTask.value) return;
   const taskId = workflowTask.value.id;
@@ -306,11 +363,13 @@ async function wfAction(action: WorkflowAction, extra: { body?: string; toEmploy
     // TASK_ACTIVITY keeps the thread and activity feed current
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, taskId] });
-    workflowMessage.value = 'done';
+    workflowMessage.value = WF_COPY[action].ok;
+    workflowOk.value = true;
   } catch (e) {
     // surface the server's oRPC message, not ofetch's generic '[POST] …: 400'
     const err = e as { data?: { json?: { message?: string }; message?: string }; message?: string };
-    workflowMessage.value = err.data?.json?.message ?? err.data?.message ?? err.message ?? 'action failed';
+    workflowMessage.value = err.data?.json?.message ?? err.data?.message ?? err.message ?? WF_COPY[action].fail;
+    workflowOk.value = false;
   } finally {
     workflowBusy.value = false;
   }
@@ -326,9 +385,8 @@ const view = useLocalStorage<'list' | 'board'>('tasks:view', 'list');
 const draggingId = ref<string | null>(null);
 const dropTarget = ref<string | null>(null);
 const boardColumns = computed(() => statuses.value);
-function allowedTargets(statusIdOfRow: string): string[] {
-  return statusById.value.get(statusIdOfRow)?.nextIds ?? [];
-}
+
+// manual status is FREE on every surface (owner ruling) — any column is a legal drop
 
 function tasksByStatus(status: string) {
   return rows.value.filter((t) => t.status === status);
@@ -340,7 +398,6 @@ function onDrop(status: string) {
   dropTarget.value = null;
   const row = rows.value.find((t) => t.id === id);
   if (!row || row.status === status) return;
-  if (!allowedTargets(row.status).includes(status)) return; // column not highlighted for this card
   void setStatus(row, status);
 }
 
@@ -366,19 +423,11 @@ onServerPrefetch(() =>
 <template>
   <div>
     <div class="flex flex-wrap items-center justify-end gap-2">
-      <div
-        class="inline-flex overflow-hidden rounded-md border border-zinc-300 dark:border-zinc-700"
-        role="group"
-        aria-label="View"
-      >
+      <div class="border-default inline-flex overflow-hidden rounded-md border" role="group" aria-label="View">
         <button
           type="button"
           class="px-3 py-1.5 text-sm font-medium transition-colors"
-          :class="
-            view === 'list'
-              ? 'bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400'
-              : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
-          "
+          :class="view === 'list' ? 'bg-primary/10 text-primary' : 'text-muted hover:text-highlighted'"
           aria-label="List view"
           @click="view = 'list'"
         >
@@ -386,12 +435,8 @@ onServerPrefetch(() =>
         </button>
         <button
           type="button"
-          class="border-l border-zinc-300 px-3 py-1.5 text-sm font-medium transition-colors dark:border-zinc-700"
-          :class="
-            view === 'board'
-              ? 'bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400'
-              : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
-          "
+          class="border-default border-l px-3 py-1.5 text-sm font-medium transition-colors"
+          :class="view === 'board' ? 'bg-primary/10 text-primary' : 'text-muted hover:text-highlighted'"
           aria-label="Board view"
           @click="view = 'board'"
         >
@@ -408,10 +453,10 @@ onServerPrefetch(() =>
       >
         <span class="inline-flex items-center gap-1.5">
           <UIcon name="i-lucide-inbox" class="size-4" />
-          {{ needsDecision ? 'All tasks' : 'Needs my decision' }}
+          Needs my decision
           <span
             v-if="inboxCount > 0"
-            class="bg-primary-600 inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold text-white"
+            class="bg-primary text-inverted inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
             data-testid="inbox-count"
             >{{ inboxCount }}</span
           >
@@ -428,7 +473,9 @@ onServerPrefetch(() =>
       <UButton icon="i-lucide-plus" label="New task" @click="openEditor()" />
     </div>
 
-    <p v-if="message" class="text-error text-sm">{{ message }}</p>
+    <p v-if="message" class="text-sm" :class="messageOk ? 'text-success' : 'text-error'" role="status">
+      {{ message }}
+    </p>
 
     <!-- status filter chips (server-side statusId filter) -->
     <div v-if="statuses.length" class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by status">
@@ -467,18 +514,16 @@ onServerPrefetch(() =>
     >
       <template #title-cell="{ row }">
         <div class="min-w-0">
-          <NuxtLink
-            :to="`/tasks/${row.original.id}`"
-            class="truncate font-medium text-zinc-900 hover:underline dark:text-white"
-            >{{ row.original.title }}</NuxtLink
-          >
+          <NuxtLink :to="`/tasks/${row.original.id}`" class="text-highlighted truncate font-medium hover:underline">{{
+            row.original.title
+          }}</NuxtLink>
           <p v-if="row.original.projectName" class="text-primary flex items-center gap-1 text-xs">
             <UIcon name="i-lucide-folder-kanban" class="size-3" />{{ row.original.projectName }}
           </p>
         </div>
       </template>
       <template #assignee-cell="{ row }">
-        <span class="flex items-center gap-1.5 text-sm text-zinc-600 dark:text-zinc-300">
+        <span class="text-toned flex items-center gap-1.5 text-sm">
           <UIcon v-if="row.original.assigneeKind === 'ai'" name="i-lucide-bot" class="text-primary size-3.5" />
           {{ row.original.assigneeName ?? 'Unassigned' }}
         </span>
@@ -495,7 +540,7 @@ onServerPrefetch(() =>
         />
       </template>
       <template #updatedAt-cell="{ row }">
-        <span suppressHydration-warning class="text-xs text-zinc-500">{{ formatWhen(row.original.updatedAt) }}</span>
+        <span suppressHydration-warning class="text-muted text-xs">{{ formatWhen(row.original.updatedAt) }}</span>
       </template>
       <template #actions-cell="{ row }">
         <div class="flex justify-end gap-1">
@@ -509,6 +554,11 @@ onServerPrefetch(() =>
               :disabled="busy"
               @click="autoAssign(row.original)"
             />
+            <template #content>
+              <div class="px-3 py-1.5 text-xs">Auto-assign</div>
+            </template>
+          </UPopover>
+          <UPopover mode="hover">
             <UButton
               icon="i-lucide-message-circle-more"
               variant="ghost"
@@ -518,7 +568,7 @@ onServerPrefetch(() =>
               @click="openWorkflow(row.original)"
             />
             <template #content>
-              <div class="px-3 py-1.5 text-xs">Auto-assign (Jev)</div>
+              <div class="px-3 py-1.5 text-xs">Workflow &amp; activity</div>
             </template>
           </UPopover>
           <UPopover mode="hover">
@@ -553,15 +603,13 @@ onServerPrefetch(() =>
         <UCard :ui="{ root: 'shadow-sm' }">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
-              <NuxtLink
-                :to="`/tasks/${row.id}`"
-                class="truncate font-medium text-zinc-900 hover:underline dark:text-white"
-                >{{ row.title }}</NuxtLink
-              >
+              <NuxtLink :to="`/tasks/${row.id}`" class="text-highlighted truncate font-medium hover:underline">{{
+                row.title
+              }}</NuxtLink>
               <p v-if="row.projectName" class="text-primary mt-0.5 flex items-center gap-1 text-xs">
                 <UIcon name="i-lucide-folder-kanban" class="size-3" />{{ row.projectName }}
               </p>
-              <p class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-400">
+              <p class="text-dimmed mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
                 <span>{{ assigneeNameById.get(row.assigneeId ?? '') ?? 'Unassigned' }}</span>
                 <span v-if="row.assigneeKind === 'ai'" class="text-primary inline-flex items-center gap-1"
                   ><UIcon name="i-lucide-bot" class="size-3" />AI</span
@@ -589,13 +637,13 @@ onServerPrefetch(() =>
                   icon="i-lucide-wand-sparkles"
                   variant="ghost"
                   color="neutral"
-                  size="xs"
+                  size="sm"
                   aria-label="Auto-assign"
                   :disabled="busy"
                   @click="autoAssign(row)"
                 />
                 <template #content>
-                  <div class="px-3 py-1.5 text-xs">Auto-assign (Jev)</div>
+                  <div class="px-3 py-1.5 text-xs">Auto-assign</div>
                 </template>
               </UPopover>
               <UPopover mode="hover">
@@ -603,7 +651,7 @@ onServerPrefetch(() =>
                   icon="i-lucide-message-circle-more"
                   variant="ghost"
                   color="neutral"
-                  size="xs"
+                  size="sm"
                   aria-label="Task workflow"
                   @click="openWorkflow(row)"
                 />
@@ -616,7 +664,7 @@ onServerPrefetch(() =>
                   icon="i-lucide-pencil"
                   variant="ghost"
                   color="neutral"
-                  size="xs"
+                  size="sm"
                   aria-label="Edit task"
                   @click="openEditor(row)"
                 />
@@ -629,7 +677,7 @@ onServerPrefetch(() =>
                   icon="i-lucide-trash-2"
                   variant="ghost"
                   color="error"
-                  size="xs"
+                  size="sm"
                   aria-label="Delete task"
                   @click="pendingDelete = row"
                 />
@@ -647,8 +695,8 @@ onServerPrefetch(() =>
     <UCard v-if="view === 'list' && !rows.length" :ui="{ root: 'shadow-sm' }">
       <template #body>
         <div class="flex flex-col items-center gap-2 py-6 text-center">
-          <UIcon name="i-lucide-list-todo" class="size-8 text-zinc-300 dark:text-zinc-600" />
-          <p class="text-sm text-zinc-500">
+          <UIcon name="i-lucide-list-todo" class="text-dimmed size-8" />
+          <p class="text-muted text-sm">
             {{
               statusId || needsDecision || searchDebounced
                 ? 'No tasks match the current filters.'
@@ -666,21 +714,15 @@ onServerPrefetch(() =>
         <div
           v-for="col in boardColumns"
           :key="col.id"
-          class="flex min-h-40 flex-col rounded-lg border border-zinc-200 bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900/40"
+          class="border-default bg-muted/60 flex min-h-40 flex-col rounded-lg border"
           :class="dropTarget === col.id ? 'ring-primary ring-2' : ''"
           @dragover.prevent="dropTarget = col.id"
           @dragleave="dropTarget === col.id && (dropTarget = null)"
           @drop.prevent="onDrop(col.id)"
         >
-          <div class="flex items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
-            <p class="flex items-center gap-1.5 text-sm font-medium text-zinc-700 dark:text-zinc-200">
-              <UIcon
-                name="i-lucide-circle-dot"
-                class="size-4"
-                :class="
-                  col.color === 'success' ? 'text-success' : col.color === 'warning' ? 'text-warning' : 'text-zinc-400'
-                "
-              />
+          <div class="border-default flex items-center justify-between gap-2 border-b px-3 py-2">
+            <p class="text-toned flex items-center gap-1.5 text-sm font-medium">
+              <UIcon name="i-lucide-circle-dot" class="size-4" :class="CATEGORY_TEXT[col.category] ?? 'text-dimmed'" />
               {{ col.name }}
             </p>
             <UBadge color="neutral" variant="subtle" size="sm">{{ tasksByStatus(col.id).length }}</UBadge>
@@ -697,18 +739,17 @@ onServerPrefetch(() =>
                 draggingId = null;
                 dropTarget = null;
               "
-              @dragenter="dropTarget === null && allowedTargets(row.status).includes(col.id) && (dropTarget = col.id)"
             >
               <div class="min-w-0">
                 <NuxtLink
                   :to="`/tasks/${row.id}`"
-                  class="truncate text-sm font-medium text-zinc-900 hover:underline dark:text-white"
+                  class="text-highlighted truncate text-sm font-medium hover:underline"
                   >{{ row.title }}</NuxtLink
                 >
                 <p v-if="row.projectName" class="text-primary mt-0.5 flex items-center gap-1 text-xs">
                   <UIcon name="i-lucide-folder-kanban" class="size-3" />{{ row.projectName }}
                 </p>
-                <p class="mt-0.5 flex items-center gap-1 text-xs text-zinc-400">
+                <p class="text-dimmed mt-0.5 flex items-center gap-1 text-xs">
                   <UIcon v-if="row.assigneeKind === 'ai'" name="i-lucide-bot" class="text-primary size-3" />
                   {{ row.assigneeName ?? 'Unassigned' }}
                 </p>
@@ -735,7 +776,7 @@ onServerPrefetch(() =>
                       @click="autoAssign(row)"
                     />
                     <template #content>
-                      <div class="px-3 py-1.5 text-xs">Auto-assign (Jev)</div>
+                      <div class="px-3 py-1.5 text-xs">Auto-assign</div>
                     </template>
                   </UPopover>
                   <UPopover mode="hover">
@@ -767,7 +808,7 @@ onServerPrefetch(() =>
                 </div>
               </div>
             </UCard>
-            <p v-if="!tasksByStatus(col.id).length" class="py-4 text-center text-xs text-zinc-400">Drop tasks here</p>
+            <p v-if="!tasksByStatus(col.id).length" class="text-dimmed py-4 text-center text-xs">Drop tasks here</p>
           </div>
         </div>
       </div>
@@ -783,7 +824,7 @@ onServerPrefetch(() =>
         <div v-if="workflowTask" class="space-y-4">
           <div>
             <p class="font-medium">{{ workflowTask.title }}</p>
-            <p class="mt-0.5 text-xs text-zinc-400">
+            <p class="text-dimmed mt-0.5 text-xs">
               {{ statusById.get(workflowTask.status)?.name ?? workflowTask.status }}
               <template v-if="workflowTask.questionHolderName">
                 · waiting on {{ workflowTask.questionHolderName }}</template
@@ -828,18 +869,12 @@ onServerPrefetch(() =>
               >Abandon</UButton
             >
           </div>
-          <TaskReviewBox
-            v-if="workflowStatusCategory === 'in_review' && drawerCanReview"
-            :busy="workflowBusy"
-            @verdict="
-              (action: 'approve' | 'requestChanges' | 'reject', body?: string) =>
-                wfAction(action, { body: body || undefined })
-            "
-          />
+          <!-- forward picker only applies while the task is in a working state -->
           <USelect
+            v-if="workflowIsWorking"
             v-model="forwardTo"
             :items="[
-              { label: 'Forward to…', value: '__none__' },
+              { label: 'Not forwarded', value: '__none__' },
               ...employees
                 .filter((e) => e.id !== workflowTask?.questionHolderId)
                 .map((e) => ({ label: e.name, value: e.id })),
@@ -848,6 +883,14 @@ onServerPrefetch(() =>
             size="sm"
             class="w-full"
             aria-label="Forward to"
+          />
+          <TaskReviewBox
+            v-if="workflowStatusCategory === 'in_review' && drawerCanReview"
+            :busy="workflowBusy"
+            @verdict="
+              (action: 'approve' | 'requestChanges' | 'reject', body?: string) =>
+                wfAction(action, { body: body || undefined })
+            "
           />
           <UTextarea
             v-model="workflowNote"
@@ -867,12 +910,12 @@ onServerPrefetch(() =>
           >
             {{ workflowStatusCategory === 'waiting_answer' ? 'Send answer' : 'Send' }}
           </UButton>
-          <p v-if="workflowMessage" class="text-xs" :class="workflowMessage === 'done' ? 'text-success' : 'text-error'">
+          <p v-if="workflowMessage" class="text-xs" :class="workflowOk ? 'text-success' : 'text-error'" role="status">
             {{ workflowMessage }}
           </p>
           <div class="space-y-2">
             <div class="flex items-center justify-between">
-              <p class="text-xs font-semibold tracking-wide text-zinc-400 uppercase">Agent runs</p>
+              <h3 class="text-muted text-xs font-medium">Agent runs</h3>
               <UButton
                 size="xs"
                 variant="soft"
@@ -883,25 +926,17 @@ onServerPrefetch(() =>
                 Dispatch now
               </UButton>
             </div>
-            <div v-for="r in runFeed" :key="r.id" class="rounded-md border border-zinc-200 dark:border-zinc-800">
-              <p class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                <span
-                  v-if="r.status.toLowerCase() === 'running'"
-                  class="bg-warning inline-block size-2 animate-pulse rounded-full"
-                />
-                <span
-                  v-else-if="r.status.toLowerCase() === 'done'"
-                  class="bg-success inline-block size-2 rounded-full"
-                />
-                <span v-else class="bg-error inline-block size-2 rounded-full" />
-                {{ r.status }}<span v-if="r.exitCode !== null"> · exit {{ r.exitCode }}</span>
+            <div v-for="r in runFeed" :key="r.id" class="border-default rounded-md border">
+              <p class="text-toned flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium">
+                <span class="inline-block size-2 rounded-full" :class="runDot(r)" />
+                {{ runLabel(r) }}
               </p>
               <pre
                 v-if="r.output"
                 class="max-h-72 overflow-y-auto rounded-b-md bg-zinc-950 px-2.5 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-zinc-200"
                 >{{ r.output }}</pre>
             </div>
-            <p v-if="!runFeed.length" class="text-xs text-zinc-400">No runs yet.</p>
+            <p v-if="!runFeed.length" class="text-dimmed text-xs">No runs yet.</p>
             <p v-if="retryInMin > 0" class="text-warning text-xs font-medium">
               Retrying in ~{{ retryInMin }} min ({{ workflowTask?.failStreak ?? 0 }} consecutive failure{{
                 (workflowTask?.failStreak ?? 0) === 1 ? '' : 's'
@@ -909,13 +944,9 @@ onServerPrefetch(() =>
             </p>
           </div>
           <div class="space-y-2">
-            <p class="text-xs font-semibold tracking-wide text-zinc-400 uppercase">Activity</p>
-            <div
-              v-for="a in workflowFeed"
-              :key="a.id"
-              class="rounded-md border border-zinc-200 px-2.5 py-2 text-xs dark:border-zinc-800"
-            >
-              <p class="flex items-center gap-1.5 font-medium text-zinc-600 dark:text-zinc-300">
+            <h3 class="text-muted text-xs font-medium">Activity</h3>
+            <div v-for="a in workflowFeed" :key="a.id" class="border-default rounded-md border px-2.5 py-2 text-xs">
+              <p class="text-toned flex items-center gap-1.5 font-medium">
                 <UIcon
                   :name="
                     a.kind === ACTIVITY_KIND.QUESTION
@@ -930,11 +961,11 @@ onServerPrefetch(() =>
                   "
                   class="size-3.5"
                 />
-                {{ a.kind }} · {{ a.authorName ?? 'system' }}
+                {{ ACTIVITY_LABELS[a.kind] ?? a.kind }} · {{ a.authorName ?? 'system' }}
               </p>
-              <p v-if="a.body" class="mt-1 text-zinc-500 dark:text-zinc-400">{{ a.body }}</p>
+              <p v-if="a.body" class="text-muted mt-1">{{ a.body }}</p>
             </div>
-            <p v-if="!workflowFeed.length" class="text-xs text-zinc-400">No activity yet.</p>
+            <p v-if="!workflowFeed.length" class="text-dimmed text-xs">No activity yet.</p>
           </div>
         </div>
       </template>
@@ -946,8 +977,8 @@ onServerPrefetch(() =>
     <!-- delete confirm -->
     <UModal v-model:open="deleteOpen" title="Delete task" :ui="{ content: 'max-w-sm' }">
       <template #body>
-        <p class="text-sm text-zinc-600 dark:text-zinc-300">
-          Delete <span class="font-semibold text-zinc-900 dark:text-white">{{ pendingDelete?.title }}</span
+        <p class="text-toned text-sm">
+          Delete <span class="text-highlighted font-semibold">{{ pendingDelete?.title }}</span
           >? This cannot be undone.
         </p>
       </template>

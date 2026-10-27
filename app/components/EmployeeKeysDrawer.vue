@@ -3,8 +3,9 @@
 // the one-time fresh-key alert. Loads the key list whenever it opens. Nothing
 // to do with the model-provider API key picked in the editor.
 import { useMutation } from '@tanstack/vue-query';
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 
+import { formatDate } from '~/utils/format-when';
 import type { ApiKeyRow, EmployeeRow } from '~/utils/orpc-types';
 
 const open = defineModel<boolean>('open', { default: false });
@@ -23,6 +24,9 @@ const freshKey = ref('');
 const mintName = ref('');
 const renamingId = ref<string | null>(null);
 const renameValue = ref('');
+const revokeConfirmId = ref<string | null>(null);
+const revokingKey = computed(() => keys.value.find((k) => k.id === revokeConfirmId.value) ?? null);
+const revokeError = ref<string | null>(null);
 
 async function refreshKeys() {
   if (!props.employee) return;
@@ -30,7 +34,7 @@ async function refreshKeys() {
   try {
     keys.value = (await listKeysCall({ employeeId: props.employee.id })) as ApiKeyRow[];
   } catch (e) {
-    keysMessage.value = e instanceof Error ? e.message : 'load failed';
+    keysMessage.value = e instanceof Error ? e.message : "Couldn't load keys — try again.";
   } finally {
     keysBusy.value = false;
   }
@@ -58,7 +62,7 @@ async function mintKey() {
     mintName.value = '';
     await refreshKeys();
   } catch (e) {
-    keysMessage.value = e instanceof Error ? e.message : 'mint failed';
+    keysMessage.value = e instanceof Error ? e.message : "Couldn't create the key — try again.";
   } finally {
     keysBusy.value = false;
   }
@@ -77,20 +81,27 @@ async function saveRename() {
     renamingId.value = null;
     await refreshKeys();
   } catch (e) {
-    keysMessage.value = e instanceof Error ? e.message : 'rename failed';
+    keysMessage.value = e instanceof Error ? e.message : "Couldn't rename the key — try again.";
   } finally {
     keysBusy.value = false;
   }
 }
 
-async function revokeKey(keyId: string) {
-  keysBusy.value = true;
+function askRevoke(keyId: string) {
   keysMessage.value = '';
+  revokeError.value = null;
+  revokeConfirmId.value = keyId;
+}
+
+async function revokeKey(keyId: string) {
+  revokeError.value = null;
+  keysBusy.value = true;
   try {
     await revokeKeyMutation.mutateAsync({ keyId });
+    revokeConfirmId.value = null;
     await refreshKeys();
   } catch (e) {
-    keysMessage.value = e instanceof Error ? e.message : 'revoke failed';
+    revokeError.value = e instanceof Error ? e.message : "Couldn't revoke the key — try again.";
   } finally {
     keysBusy.value = false;
   }
@@ -115,21 +126,18 @@ async function copyKey(key: string) {
   <UModal v-model:open="open" :title="`Access keys — ${employee?.name ?? ''}`">
     <template #body>
       <div class="space-y-3">
-        <p class="text-xs text-zinc-500 dark:text-zinc-400">
+        <p class="text-muted text-xs">
           Access keys authenticate API calls to Tandem as {{ employee?.name ?? 'this employee' }} — nothing to do with
           the model provider API key in the editor.
         </p>
         <p v-if="keysMessage" class="text-error text-sm">{{ keysMessage }}</p>
-        <div v-if="freshKey" class="rounded-lg border-2 border-amber-400/70 bg-amber-50 p-4 dark:bg-amber-950/40">
-          <p class="flex items-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-200">
+        <div v-if="freshKey" class="text-primary bg-primary/10 rounded-lg p-4">
+          <p class="flex items-center gap-2 text-sm font-semibold">
             <UIcon name="i-lucide-key-round" class="size-4" />
             New key — shown only once
           </p>
           <div class="mt-3 flex items-center gap-2">
-            <code
-              class="flex-1 rounded-md bg-white/70 px-2.5 py-2 font-mono text-sm break-all text-amber-900 dark:bg-black/30 dark:text-amber-100"
-              >{{ freshKey }}</code
-            >
+            <code class="bg-default/60 flex-1 rounded-md px-2.5 py-2 font-mono text-sm break-all">{{ freshKey }}</code>
             <UButton
               :icon="copied ? 'i-lucide-check' : 'i-lucide-copy'"
               :color="copied ? 'success' : 'neutral'"
@@ -140,12 +148,12 @@ async function copyKey(key: string) {
             />
           </div>
         </div>
-        <div v-if="keys.length" class="divide-y divide-zinc-200 dark:divide-zinc-800">
+        <div v-if="keys.length" class="divide-default divide-y">
           <div v-for="k in keys" :key="k.id" class="flex items-center justify-between gap-2 py-2">
             <div v-if="renamingId !== k.id" class="min-w-0">
-              <p class="truncate text-sm text-zinc-900 dark:text-white">{{ k.name ?? 'unnamed' }}</p>
-              <p class="font-mono text-xs text-zinc-400">
-                {{ k.prefix }}{{ k.start }}… · created {{ new Date(k.createdAt).toLocaleDateString() }}
+              <p class="text-highlighted truncate text-sm">{{ k.name ?? 'unnamed' }}</p>
+              <p class="text-dimmed font-mono text-xs">
+                {{ k.prefix }}{{ k.start }}… · created {{ formatDate(k.createdAt) }}
               </p>
             </div>
             <div v-else class="flex min-w-0 flex-1 items-center gap-1">
@@ -197,20 +205,61 @@ async function copyKey(key: string) {
                   color="error"
                   size="xs"
                   aria-label="Revoke key"
-                  :loading="keysBusy"
-                  @click="revokeKey(k.id)"
+                  :disabled="keysBusy"
+                  @click="askRevoke(k.id)"
                 /><template #content><div class="px-3 py-1.5 text-xs">Revoke key</div></template></UPopover
               >
             </div>
           </div>
         </div>
-        <p v-else-if="!keysBusy" class="text-sm text-zinc-500">No keys.</p>
-        <UFormField label="Key name" name="mintName" class="pt-1">
+        <p v-else-if="!keysBusy" class="text-muted text-sm">No keys.</p>
+      </div>
+    </template>
+    <template #footer>
+      <div class="flex w-full items-end justify-between gap-3">
+        <UFormField label="Key name" name="mintName" class="min-w-0 flex-1">
           <UInput v-model="mintName" icon="i-lucide-tag" placeholder="e.g. ci-deploy (optional)" class="w-full" />
         </UFormField>
-        <div class="flex justify-end gap-2 pt-1">
-          <UButton icon="i-lucide-key-round" size="sm" label="Mint new key" :loading="keysBusy" @click="mintKey" />
-        </div>
+        <UButton icon="i-lucide-key-round" size="sm" label="Create key" :loading="keysBusy" @click="mintKey" />
+      </div>
+    </template>
+  </UModal>
+
+  <!-- revoke confirm: apps using the key stop authenticating immediately -->
+  <UModal
+    :open="revokeConfirmId !== null"
+    title="Revoke key?"
+    @update:open="
+      (v: boolean) => {
+        if (!v) revokeConfirmId = null;
+      }
+    "
+  >
+    <template #body>
+      <p class="text-sm">
+        Revoke <strong>{{ revokingKey?.name ?? 'unnamed key' }}</strong
+        >? Apps using it stop authenticating immediately.
+      </p>
+      <UAlert
+        v-if="revokeError"
+        icon="i-lucide-circle-alert"
+        color="error"
+        variant="subtle"
+        :title="revokeError"
+        class="mt-3"
+        :ui="{ title: 'text-sm' }"
+      />
+    </template>
+    <template #footer>
+      <div class="flex w-full justify-end gap-2">
+        <UButton variant="ghost" color="neutral" @click="revokeConfirmId = null">Cancel</UButton>
+        <UButton
+          color="error"
+          icon="i-lucide-trash-2"
+          :loading="keysBusy"
+          @click="revokeConfirmId && revokeKey(revokeConfirmId)"
+          >Revoke key</UButton
+        >
       </div>
     </template>
   </UModal>

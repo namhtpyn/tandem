@@ -84,7 +84,7 @@ async function remove() {
     pendingDelete.value = null;
   } catch (e) {
     pendingDelete.value = null;
-    message.value = e instanceof Error ? e.message : 'delete failed';
+    message.value = e instanceof Error ? e.message : 'Delete failed.';
   } finally {
     busy.value = false;
   }
@@ -122,33 +122,23 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
     <div class="flex flex-wrap items-end justify-between gap-2">
       <span />
       <div class="flex items-center gap-2">
-        <div
-          class="inline-flex overflow-hidden rounded-md border border-zinc-300 dark:border-zinc-700"
-          role="group"
-          aria-label="View"
-        >
+        <div class="border-default inline-flex overflow-hidden rounded-md border" role="group" aria-label="View">
           <button
             type="button"
             class="px-3 py-1.5 text-sm font-medium transition-colors"
-            :class="
-              view === 'list'
-                ? 'bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400'
-                : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
-            "
+            :class="view === 'list' ? 'text-primary bg-primary/10' : 'text-muted hover:text-highlighted'"
             aria-label="List view"
+            :aria-pressed="view === 'list'"
             @click="view = 'list'"
           >
             List
           </button>
           <button
             type="button"
-            class="border-l border-zinc-300 px-3 py-1.5 text-sm font-medium transition-colors dark:border-zinc-700"
-            :class="
-              view === 'graph'
-                ? 'bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400'
-                : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
-            "
+            class="border-default border-l px-3 py-1.5 text-sm font-medium transition-colors"
+            :class="view === 'graph' ? 'text-primary bg-primary/10' : 'text-muted hover:text-highlighted'"
             aria-label="Graph view"
+            :aria-pressed="view === 'graph'"
             @click="view = 'graph'"
           >
             Graph
@@ -174,6 +164,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
       searchable
       search-placeholder="Search employees…"
       :data="rows"
+      :loading="listQuery.isPending.value"
       v-model:page="page"
       :page-count="pageCount"
       :page-size="pageSize"
@@ -191,13 +182,13 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
               :alt="row.original.name"
               class="size-6 shrink-0 rounded-full object-cover"
             />
-            <span class="text-sm font-medium text-zinc-900 dark:text-white">{{ row.original.name }}</span>
+            <span class="text-highlighted text-sm font-medium">{{ row.original.name }}</span>
           </span>
-          <span class="truncate font-mono text-xs text-zinc-400">{{ row.original.email }}</span>
+          <span class="text-dimmed truncate font-mono text-xs">{{ row.original.email }}</span>
         </div>
       </template>
       <template #title-cell="{ row }">
-        <span class="text-sm text-zinc-600 dark:text-zinc-300">{{ row.original.title }}</span>
+        <span class="text-toned text-sm">{{ row.original.title }}</span>
       </template>
       <template #kind-cell="{ row }">
         <UBadge
@@ -206,7 +197,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
           size="sm"
           :icon="row.original.kind === 'ai' ? 'i-lucide-bot' : 'i-lucide-user'"
         >
-          {{ row.original.kind }}
+          {{ kindLabel(row.original.kind) }}
         </UBadge>
       </template>
       <template #supervisors-cell="{ row }">
@@ -216,14 +207,14 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
               {{ byId.get(sid)?.name ?? sid.slice(0, 8) }}
             </UBadge>
           </template>
-          <span v-else class="text-xs text-zinc-400">—</span>
+          <span v-else class="text-dimmed text-xs">—</span>
         </div>
       </template>
       <template #environment-cell="{ row }">
-        <span v-if="row.original.kind === 'ai' && row.original.environmentId" class="font-mono text-xs text-zinc-500">{{
+        <span v-if="row.original.kind === 'ai' && row.original.environmentId" class="text-muted font-mono text-xs">{{
           envName(row.original.environmentId)
         }}</span>
-        <span v-else class="text-xs text-zinc-400">—</span>
+        <span v-else class="text-dimmed text-xs">—</span>
       </template>
       <template #actions-cell="{ row }">
         <div class="flex justify-end gap-1">
@@ -282,9 +273,9 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
                 class="size-8 shrink-0 rounded-full object-cover"
               />
               <div class="min-w-0">
-                <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
-                <p class="truncate font-mono text-xs text-zinc-400">{{ row.email }}</p>
-                <p v-if="row.title" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ row.title }}</p>
+                <p class="text-highlighted truncate text-sm font-medium">{{ row.name }}</p>
+                <p class="text-dimmed truncate font-mono text-xs">{{ row.email }}</p>
+                <p v-if="row.title" class="text-muted mt-1 text-xs">{{ row.title }}</p>
               </div>
             </div>
             <UBadge
@@ -293,7 +284,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
               size="sm"
               :icon="row.kind === 'ai' ? 'i-lucide-bot' : 'i-lucide-user'"
             >
-              {{ row.kind }}
+              {{ kindLabel(row.kind) }}
             </UBadge>
           </div>
           <div
@@ -367,8 +358,8 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
     <UModal v-model:open="deleteOpen" title="Delete employee" :ui="{ content: 'max-w-sm' }">
       <template #body>
         <div class="space-y-4">
-          <p class="text-sm text-zinc-600 dark:text-zinc-300">
-            Delete <span class="font-semibold text-zinc-900 dark:text-white">{{ pendingDelete?.name }}</span> ({{
+          <p class="text-muted text-sm">
+            Delete <span class="text-highlighted font-semibold">{{ pendingDelete?.name }}</span> ({{
               pendingDelete?.email
             }})? Their login, supervision links, API keys{{ pendingDelete?.kind === 'ai' ? ', and AI extension' : '' }}
             are removed permanently.

@@ -96,14 +96,17 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   // keys drawer: list + mint + revoke
   await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Access keys' }).click();
   await expect(page.getByText(/employee .{8}|-key/, { exact: false }).first()).toBeVisible({ timeout: 15_000 });
-  await page.getByRole('button', { name: 'Mint new key' }).click();
+  await page.getByRole('button', { name: 'Create key' }).click();
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
   const keyRows = page.locator('div.flex.items-center.justify-between.gap-2.py-2');
   await expect(keyRows).toHaveCount(2, { timeout: 15_000 });
-  // revoke both — deterministic teardown; the count assert settles each revoke
-  // before the next iteration re-resolves '.first()'
+  // revoke both — two-step confirm (stacked modal); the count assert settles each
+  // revoke before the next iteration re-resolves '.first()'
   for (let i = 0; i < 2; i++) {
     await page.getByRole('button', { name: 'Revoke key' }).first().click();
+    // the confirm dialog is the TOP layer — the drawer dialog stays open beneath it
+    await expect(page.getByRole('heading', { name: 'Revoke key?' })).toBeVisible();
+    await page.getByRole('dialog').last().getByRole('button', { name: 'Revoke key' }).click();
     await expect(keyRows).toHaveCount(1 - i, { timeout: 10_000 });
   }
   await expect(page.getByText('No keys.')).toBeVisible({ timeout: 15_000 });
