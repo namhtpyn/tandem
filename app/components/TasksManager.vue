@@ -306,9 +306,21 @@ const CATEGORY_TEXT: Record<string, string> = {
   cancelled: 'text-error',
   blocked: 'text-error',
   working: 'text-warning',
-  waiting_answer: 'text-warning',
+  waiting_answer: 'text-info',
   in_review: 'text-info',
   todo: 'text-dimmed',
+};
+
+// distinct glyph per category — Doing (clock) vs Waiting answer (speech bubble)
+// read as the same yellow dot without one
+const CATEGORY_ICON: Record<string, string> = {
+  todo: 'i-lucide-circle-dashed',
+  working: 'i-lucide-clock-3',
+  waiting_answer: 'i-lucide-message-circle-question',
+  in_review: 'i-lucide-eye',
+  blocked: 'i-lucide-octagon-alert',
+  done: 'i-lucide-circle-check',
+  cancelled: 'i-lucide-circle-x',
 };
 
 const retryInMin = computed(() => {
@@ -807,7 +819,7 @@ onServerPrefetch(() =>
           <header class="border-default flex items-center justify-between gap-2 border-b px-3 py-2">
             <p class="text-toned flex min-w-0 items-center gap-1.5 text-sm font-medium">
               <UIcon
-                name="i-lucide-circle-dot"
+                :name="CATEGORY_ICON[col.category] ?? 'i-lucide-circle-dot'"
                 class="size-4 shrink-0"
                 :class="CATEGORY_TEXT[col.category] ?? 'text-dimmed'"
               />
