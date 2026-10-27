@@ -315,9 +315,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
               <!-- meta cluster: the tiny neutral run label rides NEXT TO the time,
                  never orphaned mid-row on a narrow phone -->
               <span class="text-muted ml-auto inline-flex shrink-0 items-center gap-1.5">
-                <span
-                  class="text-dimmed inline-flex items-center gap-1 text-[10px] font-medium tracking-wide uppercase"
-                >
+                <span class="text-dimmed inline-flex items-center gap-1 text-xs">
                   <UIcon
                     v-if="runStatusById.get(item.id) === 'running'"
                     name="i-lucide-loader-circle"

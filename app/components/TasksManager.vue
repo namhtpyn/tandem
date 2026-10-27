@@ -528,7 +528,11 @@ onServerPrefetch(() =>
          mobile; active = neutral fill + a single primary dot, never amber-filled.
          The right-edge fade telegraphs the horizontal scroll. -->
     <div v-if="statuses.length" class="relative mt-3">
-      <div class="flex items-center gap-1.5 overflow-x-auto" role="group" aria-label="Filter by status">
+      <div
+        class="flex [scrollbar-width:thin] items-center gap-1.5 overflow-x-auto pr-16"
+        role="group"
+        aria-label="Filter by status"
+      >
         <UButton
           size="sm"
           color="neutral"
@@ -601,7 +605,7 @@ onServerPrefetch(() =>
           </p>
         </div>
       </template>
-      <template #assignee-cell="{ row }">
+      <template #assigneeName-cell="{ row }">
         <span
           class="flex items-center gap-1.5 text-sm"
           :class="row.original.assigneeName ? 'text-toned' : 'text-muted'"
@@ -819,7 +823,10 @@ onServerPrefetch(() =>
               :key="row.id"
               draggable="true"
               class="border-default bg-default group/card relative cursor-grab rounded-lg border p-2.5 shadow-sm active:cursor-grabbing"
-              :class="draggingId === row.id ? 'opacity-40' : ''"
+              :class="[
+                draggingId === row.id ? 'opacity-40' : '',
+                statusById.get(row.status)?.category === 'done' ? 'opacity-70' : '',
+              ]"
               @dragstart="draggingId = row.id"
               @dragend="
                 draggingId = null;
@@ -895,7 +902,7 @@ onServerPrefetch(() =>
             </article>
             <div
               v-if="!tasksByStatus(col.id).length"
-              class="border-default text-dimmed flex min-h-[120px] flex-1 items-center justify-center rounded-md border border-dashed text-xs"
+              class="border-default text-dimmed mx-1 mb-1 flex max-h-40 min-h-[120px] items-center justify-center rounded-md border border-dashed text-xs"
             >
               Drop tasks here
             </div>

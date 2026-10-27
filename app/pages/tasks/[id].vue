@@ -256,7 +256,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                     {{ workflowMessage }}
                   </p>
                   <!-- the ONE send hint — the send button carries no duplicate hover popover -->
-                  <span v-else class="text-dimmed shrink-0 text-[11px]">
+                  <span v-else class="text-muted shrink-0 text-xs">
                     {{ agentRunning ? 'Send — steers the running agent' : 'Send — dispatches the agent' }}
                   </span>
                   <UButton

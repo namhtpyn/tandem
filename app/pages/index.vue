@@ -34,21 +34,21 @@ const cards = computed(() => [
     to: '/environments',
     icon: 'i-lucide-server',
     count: envCount.data.value?.total,
-    label: 'environments',
+    label: { singular: 'environment', plural: 'environments' },
     blurb: 'SSH hosts the agents run on',
   },
   {
     to: '/employees',
     icon: 'i-lucide-users',
     count: employeeCount.data.value?.total,
-    label: 'people',
+    label: { singular: 'person', plural: 'people' },
     blurb: 'People and AI agents, one directory',
   },
   {
     to: '/tasks',
     icon: 'i-lucide-list-todo',
     count: taskCount.data.value?.total,
-    label: 'tasks',
+    label: { singular: 'task', plural: 'tasks' },
     blurb: 'Work for humans and agents, one board',
   },
 ]);
@@ -92,7 +92,7 @@ const cards = computed(() => [
                 </div>
                 <div class="flex flex-wrap items-baseline gap-x-2">
                   <p class="text-highlighted text-3xl font-bold tabular-nums">{{ card.count ?? '—' }}</p>
-                  <p class="text-muted text-sm">{{ card.label }}</p>
+                  <p class="text-muted text-sm">{{ card.count === 1 ? card.label.singular : card.label.plural }}</p>
                 </div>
                 <p class="text-muted text-sm leading-5">{{ card.blurb }}</p>
               </div>
