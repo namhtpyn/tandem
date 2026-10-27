@@ -96,7 +96,21 @@ export async function listTaskThread(taskId: string) {
   // (payload arrives as a raw jsonb string, so the kind check goes through activityKindOf)
   const visible = messages.filter((m) => activityKindOf(m.activityExt?.payload) !== 'status');
 
-  const runIds = visible.flatMap((m) => (m.run ? [m.run.id] : []));
+  // agent-side runners echo the settled result as a plain note seconds after the run
+  // message carries the same body — the run turn already renders it, so drop the echo
+  const runBodyByAuthor = new Map<string, { body: string; at: number }>();
+  for (const m of visible) {
+    if (m.run && m.body && m.authorId) runBodyByAuthor.set(m.authorId, { body: m.body, at: Date.parse(String(m.createdAt)) });
+  }
+  const deduped = visible.filter((m) => {
+    if (m.run || !m.body || !m.authorId) return true;
+    const run = runBodyByAuthor.get(m.authorId);
+    if (!run || run.body !== m.body) return true;
+    const at = Date.parse(String(m.createdAt));
+    return !(at > run.at && at - run.at <= 120_000);
+  });
+
+  const runIds = deduped.flatMap((m) => (m.run ? [m.run.id] : []));
   const outputs = runIds.length
     ? await db
         .select({
@@ -115,7 +129,7 @@ export async function listTaskThread(taskId: string) {
         )
     : [];
   // run payload needs the same ISO + agent-name mapping the runs snapshot uses
-  const employeeIds = [...new Set(visible.flatMap((m) => (m.run?.employeeId ? [m.run.employeeId] : [])))];
+  const employeeIds = [...new Set(deduped.flatMap((m) => (m.run?.employeeId ? [m.run.employeeId] : [])))];
   const users = employeeIds.length
     ? await db.query.user.findMany({ columns: { id: true, name: true }, where: { id: { in: employeeIds } } })
     : [];
@@ -129,7 +143,7 @@ export async function listTaskThread(taskId: string) {
     outputsByRun.set(o.runId, list);
   }
 
-  return visible.map((m) => {
+  return deduped.map((m) => {
     const runRow = m.run;
     const run = runRow
       ? {

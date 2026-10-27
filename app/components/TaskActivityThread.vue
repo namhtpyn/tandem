@@ -52,7 +52,9 @@ type ThreadRow = {
 };
 const threadRows = computed(() => (unref(threadQuery.data) ?? []) as unknown as ThreadRow[]);
 // the run's thread message carries the settled result body — attach it to the run feed
-const runFeed = computed(() => threadRows.value.flatMap((r) => (r.run ? [{ ...r.run, body: r.body }] : [])));
+const runFeed = computed(() =>
+  threadRows.value.flatMap((r) => (r.run ? [{ ...r.run, body: r.body, authorId: r.authorId, authorName: r.authorName }] : [])),
+);
 const workflowFeed = computed(() =>
   threadRows.value
     .filter((r) => r.activity)
@@ -225,12 +227,19 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
         </div>
       </div>
 
-      <!-- run: an agent turn — one message from the agent, avatar + name + bubble -->
+      <!-- run: an agent turn — rendered like any chat message: avatar + bubble -->
       <div v-else-if="item.kind === 'run'" class="flex gap-2.5">
+        <img
+          v-if="item.authorId && hasAvatarByUserId.get(item.authorId)"
+          :src="`/api/employees/${item.authorId}/avatar`"
+          :alt="item.agentName ?? 'Agent'"
+          class="mt-0.5 size-8 shrink-0 rounded-full object-cover"
+        />
         <div
-          class="bg-primary/10 text-primary mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
+          v-else
+          class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-[11px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
         >
-          {{ (item.agentName ?? 'Agent').slice(0, 2).toUpperCase() }}
+          {{ (item.authorName ?? item.agentName ?? 'Agent').slice(0, 2).toUpperCase() }}
         </div>
         <div class="min-w-0 flex-1">
           <p class="mb-1 flex items-center gap-1.5 text-[11px] leading-none">
@@ -258,26 +267,9 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
           <!-- message: the settled result body; envelope parse only as a pre-settle fallback -->
           <div
             v-if="item.body || envelopeOf(item)"
-            :class="[
-              'max-w-[calc(100%-3rem)] rounded-xl rounded-tl-sm border-l-2 px-3.5 py-2.5 text-sm leading-relaxed',
-              envelopeOf(item)?.kind === 'question'
-                ? 'border-l-blue-400/70 bg-blue-50/40 text-zinc-800 dark:bg-blue-500/10 dark:text-zinc-200'
-                : envelopeOf(item)?.kind === 'blocked'
-                  ? 'border-l-error/70 bg-error/5 dark:bg-error/5 text-zinc-800 dark:text-zinc-200'
-                  : 'border-l-emerald-400/70 bg-emerald-50/40 text-zinc-800 dark:bg-emerald-500/10 dark:text-zinc-200',
-            ]"
+            class="inline-block max-w-full rounded-xl rounded-tl-sm bg-zinc-100 px-3.5 py-2 text-sm leading-relaxed text-zinc-800 dark:bg-zinc-800/70 dark:text-zinc-200"
           >
-            <span
-              :class="[
-                'mr-1.5 align-middle text-[9px] font-bold tracking-widest uppercase',
-                envelopeOf(item)!.kind === 'question'
-                  ? 'text-blue-500'
-                  : envelopeOf(item)?.kind === 'blocked'
-                    ? 'text-error'
-                    : 'text-emerald-600 dark:text-emerald-400',
-              ]"
-              >{{ envelopeOf(item)?.kind ?? 'result' }}</span
-            ><span class="align-middle">{{ item.body || envelopeOf(item)?.text || '(empty)' }}</span>
+            {{ item.body || envelopeOf(item)?.text || '(empty)' }}
           </div>
           <!-- collected output files (agent deliverables) -->
           <div v-if="runOutputs(item).length" class="mt-1.5 flex flex-wrap gap-1.5">

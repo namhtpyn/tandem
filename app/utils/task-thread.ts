@@ -23,6 +23,9 @@ export type ThreadRunItem = {
   output: string;
   /** the agent (employee) that ran this turn, for the chat bubble label */
   agentName?: string | null;
+  /** the thread message's author — avatar lookup via /api/employees/:userId/avatar */
+  authorId?: string | null;
+  authorName?: string | null;
   /** the exact prompt (brief) sent for this turn, when recorded */
   prompt?: string | null;
   /** the parsed result the settle wrote onto the thread message */
