@@ -1,4 +1,7 @@
 <script setup lang="ts">
+
+import { formatWhen } from '~/utils/format-when';
+
 // Self-contained vault secrets manager: owns the paged query (server-side
 // folder filter + search), the create/replace editor, the delete confirm and
 // the table with mobile cards. The parent owns the folder filter value
@@ -185,7 +188,7 @@ onServerPrefetch(() => liveQuery.suspense());
         <span class="font-mono text-xs text-zinc-400">•••• {{ row.original.lastFour }}</span>
       </template>
       <template #updatedAt-cell="{ row }">
-        <span class="text-xs text-zinc-500">{{ new Date(row.original.updatedAt).toLocaleString() }}</span>
+        <span suppressHydration-warning class="text-xs text-zinc-500">{{ formatWhen(row.original.updatedAt) }}</span>
       </template>
       <template v-if="editable" #actions-cell="{ row }">
         <div class="flex justify-end gap-1">

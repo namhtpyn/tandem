@@ -131,7 +131,7 @@ async function decideProposal(id: string, action: 'confirmProposal' | 'rejectPro
   }
 }
 
-const openProposals = computed(() => proposalRows.value.filter((p) => p.status === 'proposed'));
+const openProposals = computed(() => proposalRows.value.filter((p) => p.status?.toLowerCase() === 'proposed'));
 const assignmentLines = computed(() => {
   const rows = [...assignmentRows.value].reverse(); // oldest first
   return rows.map((r, i) => {

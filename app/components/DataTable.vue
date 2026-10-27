@@ -4,6 +4,8 @@ import type { CellContext } from '@tanstack/vue-table';
 import { computed, ref, watch } from 'vue';
 import type { VNode } from 'vue';
 
+import { formatWhen } from '~/utils/format-when';
+
 const props = withDefaults(
   defineProps<{
     data: T[];
@@ -119,7 +121,7 @@ function cellValue(row: T, col: TableColumn<T>) {
   const key = 'accessorKey' in col ? String(col.accessorKey) : (col.id ?? '');
   const raw = (row as Record<string, unknown>)[key];
   if (raw == null || raw === '') return '—';
-  if (raw instanceof Date) return raw.toLocaleString();
+  if (raw instanceof Date) return formatWhen(raw);
   if (Array.isArray(raw)) return raw.length ? raw.join(', ') : '—';
   return String(raw);
 }

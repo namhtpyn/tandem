@@ -1,4 +1,7 @@
 <script setup lang="ts">
+
+import { formatWhen } from '~/utils/format-when';
+
 // Self-contained tasks manager: server-paged/searched/filtered list
 // (tasks.listPaged — q + statusId + inboxOfMe), the statuses/employees/projects
 // display joins, the needs-my-decision inbox toggle (badge from tasks.inbox,
@@ -498,7 +501,7 @@ onServerPrefetch(() =>
         />
       </template>
       <template #updatedAt-cell="{ row }">
-        <span class="text-xs text-zinc-500">{{ new Date(row.original.updatedAt).toLocaleString() }}</span>
+        <span suppressHydration-warning class="text-xs text-zinc-500">{{ formatWhen(row.original.updatedAt) }}</span>
       </template>
       <template #actions-cell="{ row }">
         <div class="flex justify-end gap-1">
