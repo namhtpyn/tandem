@@ -53,7 +53,9 @@ type ThreadRow = {
 const threadRows = computed(() => (unref(threadQuery.data) ?? []) as unknown as ThreadRow[]);
 // the run's thread message carries the settled result body — attach it to the run feed
 const runFeed = computed(() =>
-  threadRows.value.flatMap((r) => (r.run ? [{ ...r.run, body: r.body, authorId: r.authorId, authorName: r.authorName }] : [])),
+  threadRows.value.flatMap((r) =>
+    r.run ? [{ ...r.run, body: r.body, authorId: r.authorId, authorName: r.authorName }] : [],
+  ),
 );
 const workflowFeed = computed(() =>
   threadRows.value

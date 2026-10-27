@@ -100,7 +100,8 @@ export async function listTaskThread(taskId: string) {
   // message carries the same body — the run turn already renders it, so drop the echo
   const runBodyByAuthor = new Map<string, { body: string; at: number }>();
   for (const m of visible) {
-    if (m.run && m.body && m.authorId) runBodyByAuthor.set(m.authorId, { body: m.body, at: Date.parse(String(m.createdAt)) });
+    if (m.run && m.body && m.authorId)
+      runBodyByAuthor.set(m.authorId, { body: m.body, at: Date.parse(String(m.createdAt)) });
   }
   const deduped = visible.filter((m) => {
     if (m.run || !m.body || !m.authorId) return true;

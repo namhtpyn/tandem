@@ -25,10 +25,7 @@ describe('chainToRoot', () => {
     ]);
   });
   it('a person with two supervisors yields a combined level, cycles terminate', () => {
-    const dual = [
-      ...edges,
-      { employeeId: '00000000-0000-7000-8000-5821b64a4515', supervisorId: 'boss2' },
-    ];
+    const dual = [...edges, { employeeId: '00000000-0000-7000-8000-5821b64a4515', supervisorId: 'boss2' }];
     expect(chainToRoot('jim', dual)).toEqual([
       ['00000000-0000-7000-8000-5821b64a4515'],
       ['00000000-0000-7000-8000-ce4004f150eb', 'boss2'],

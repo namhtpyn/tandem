@@ -142,7 +142,9 @@ function orgSection(input: BriefInput) {
   if (input.agentInstructions.trim()) lines.push(`Standing instructions: ${input.agentInstructions.trim()}`);
   for (const c of input.extraChains) {
     if (c.chain.length)
-      lines.push(`${c.person.name}: ${personLine(c.person)}; their chain: ${c.chain.map((lvl) => lvl.map(personLine).join(' & ')).join(' -> ')}.`);
+      lines.push(
+        `${c.person.name}: ${personLine(c.person)}; their chain: ${c.chain.map((lvl) => lvl.map(personLine).join(' & ')).join(' -> ')}.`,
+      );
     else lines.push(`${c.person.name}: ${personLine(c.person)}; their chain: (unknown).`);
   }
   return lines;
