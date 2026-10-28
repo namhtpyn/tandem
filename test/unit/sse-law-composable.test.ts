@@ -71,16 +71,25 @@ afterEach(async () => {
 
 describe('useChangeEvents', () => {
   it('a synchronously throwing live() is caught and retried', async () => {
-    const qc = makeQc();
-    const live = vi.fn(() => {
-      throw new Error('stream dropped');
-    });
-    install({ changes: { live } }, qc);
-    const { useChangeEvents } = await loadMod();
-    useChangeEvents(ref({ user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } }));
-    await new Promise((r) => setTimeout(r, 30));
-    disposers[0]?.();
-    expect(live).toHaveBeenCalled();
+    vi.useFakeTimers();
+    try {
+      const qc = makeQc();
+      const live = vi.fn(() => {
+        throw new Error('stream dropped');
+      });
+      install({ changes: { live } }, qc);
+      const { useChangeEvents } = await loadMod();
+      useChangeEvents(ref({ user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(live).toHaveBeenCalledTimes(1);
+      // the failure schedules the 2s retry — no real sleep in the suite
+      await vi.advanceTimersByTimeAsync(2_100);
+      expect(live).toHaveBeenCalledTimes(2);
+      while (disposers.length) disposers.pop()!();
+      await vi.advanceTimersByTimeAsync(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('subscribes once and invalidates by resource key as events arrive', async () => {
@@ -101,13 +110,13 @@ describe('useChangeEvents', () => {
     install({ changes: { live } }, qc);
     const { useChangeEvents } = await loadMod();
     useChangeEvents(ref({ user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } }));
-    await new Promise((r) => setTimeout(r, 60));
+    // both yields are drained by the async iterator — wait for the effect, not a sleep
+    await vi.waitFor(() => expect(qc.invalidateQueries).toHaveBeenCalledTimes(2));
     expect(live).toHaveBeenCalledTimes(1);
     expect(capturedSignal!.aborted).toBe(false);
     // resource keys are invalidated — GET queries with matching prefixes refetch
     expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: [CHANGE_RESOURCE.TASKS] });
     expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: [CHANGE_RESOURCE.VAULT] });
-    expect(qc.invalidateQueries).toHaveBeenCalledTimes(2);
     await disposers[0]?.();
     expect(capturedSignal!.aborted).toBe(true);
   });
@@ -134,26 +143,34 @@ describe('useChangeEvents', () => {
   });
 
   it('exits its hung iteration when scope disposes (no leaked open streams)', async () => {
-    const qc = makeQc();
-    const live = vi.fn((input: unknown, opts: { signal: AbortSignal }) =>
-      Promise.resolve({
-        async *[Symbol.asyncIterator]() {
-          await new Promise<void>((resolve) => {
-            if (opts.signal.aborted) return resolve();
-            opts.signal.addEventListener('abort', () => resolve(), { once: true });
-          });
-        },
-      }),
-    );
-    install({ changes: { live } }, qc);
-    const { useChangeEvents } = await loadMod();
-    useChangeEvents(ref({ user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } }));
-    disposers[0]?.(); // scope teardown aborts the open SSE stream
-    await new Promise((r) => setTimeout(r, 40));
-    const call = live.mock.calls[0]?.[1] as unknown as { signal: AbortSignal };
-    expect(call.signal.aborted).toBe(true);
-    // loop saw stopped=true and exited — no reconnect attempt
-    expect(live).toHaveBeenCalledTimes(1);
+    vi.useFakeTimers();
+    try {
+      const qc = makeQc();
+      const live = vi.fn((input: unknown, opts: { signal: AbortSignal }) =>
+        Promise.resolve({
+          async *[Symbol.asyncIterator]() {
+            await new Promise<void>((resolve) => {
+              if (opts.signal.aborted) return resolve();
+              opts.signal.addEventListener('abort', () => resolve(), { once: true });
+            });
+          },
+        }),
+      );
+      install({ changes: { live } }, qc);
+      const { useChangeEvents } = await loadMod();
+      useChangeEvents(ref({ user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } }));
+      await vi.advanceTimersByTimeAsync(0); // let the open land
+      disposers[0]?.(); // scope teardown aborts the open SSE stream
+      await vi.advanceTimersByTimeAsync(0); // flush the iterator's abort resolve
+      const call = live.mock.calls[0]?.[1] as unknown as { signal: AbortSignal };
+      expect(call.signal.aborted).toBe(true);
+      // loop saw stopped=true and exited — no reconnect timer was scheduled
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(live).toHaveBeenCalledTimes(1);
+      while (disposers.length) disposers.pop()!();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('holds signed-out and only opens once a session appears', async () => {
@@ -179,13 +196,24 @@ describe('useChangeEvents', () => {
   });
 
   it('auth failures take the backoff path (distinct from plain drops)', async () => {
-    const qc = makeQc();
-    const live = vi.fn(() => Promise.reject(Object.assign(new Error('nope'), { code: 'UNAUTHORIZED' })));
-    install({ changes: { live } }, qc);
-    const { useChangeEvents } = await loadMod();
-    useChangeEvents(ref({ user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } }));
-    await new Promise((r) => setTimeout(r, 60));
-    expect(live).toHaveBeenCalledTimes(1); // first attempt fails auth → backoff ≥ 4s, not the 2s drop path
-    disposers[0]?.();
+    // the plain-drop path retries at 2s; an AUTH failure doubles the backoff to
+    // 4s. Advancing 2s must still be 1 call, 2 more seconds must be 2 calls —
+    // exactly what distinguishes the two paths without sleeping.
+    vi.useFakeTimers();
+    try {
+      const qc = makeQc();
+      const live = vi.fn(() => Promise.reject(Object.assign(new Error('nope'), { code: 'UNAUTHORIZED' })));
+      install({ changes: { live } }, qc);
+      const { useChangeEvents } = await loadMod();
+      useChangeEvents(ref({ user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } }));
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(live).toHaveBeenCalledTimes(1); // 4s auth backoff, not the 2s drop path
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(live).toHaveBeenCalledTimes(2);
+      while (disposers.length) disposers.pop()!();
+      await vi.advanceTimersByTimeAsync(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

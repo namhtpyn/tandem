@@ -1,7 +1,8 @@
 // E2E: task detail page (Paperclip-style) — create task via UI, click title, land on
 // /tasks/:id: chat thread present (brief + composer), sidebar info present, mobile sheet
 // carries the same info, back link returns to the list.
-// the cleanup fixture sweeps every row the test created (envs, bots, keys)
+// the cleanup fixture sweeps every row the test created (tasks cascade messages/
+// runs/obligations/attachments; then users, projects, environments, vault, providers)
 import { expect, test } from './helpers/cleanup';
 import { login } from './helpers/login.ts';
 import { waitForHydration } from './pages/base.page.ts';
@@ -24,7 +25,7 @@ test('task title click opens the task detail page', async ({ page }) => {
 
   // chat main: empty thread placeholder + composer
   await expect(page.getByText('No activity yet — write a note below or dispatch the agent.')).toBeVisible();
-  await expect(page.getByPlaceholder('Write a note…')).toBeVisible();
+  await expect(page.getByPlaceholder('Write a note')).toBeVisible();
 
   // sidebar: Details section (the Workflow block is gone — status is manual)
   await expect(page.getByText('Details', { exact: true }).first()).toBeVisible();
@@ -55,7 +56,7 @@ test('mobile: sidebar collapses into the info sheet', async ({ page }) => {
   await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
 
   // composer still primary on mobile; info opens as sheet
-  await expect(page.getByPlaceholder('Write a note…')).toBeVisible();
+  await expect(page.getByPlaceholder('Write a note')).toBeVisible();
   await page.getByTestId('task-info-trigger').click();
   // scope to the visible slideover (the desktop aside is display:none on mobile)
   await expect(page.getByLabel('Task info').getByText('Details', { exact: true })).toBeVisible();

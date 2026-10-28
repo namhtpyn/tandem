@@ -16,7 +16,7 @@ it('a failing listKeys renders the Retry branch, never a fake empty state', asyn
   // UModal teleports its content to document.body — assert there, not on the wrapper
   await vi.waitFor(
     () => {
-      expect(document.body.textContent).toContain('Retry');
+      expect(document.body.textContent).toContain('Try again');
     },
     { timeout: 5_000 },
   );

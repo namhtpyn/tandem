@@ -19,7 +19,7 @@ test('environment links a vault secret and shows it in the row', async ({ page }
   await vault.navigate('/environments');
   const envName = `e2e-secret-box-${process.pid}-${Date.now().toString(36)}`;
   await page.getByRole('button', { name: 'New environment' }).first().click();
-  await page.getByRole('textbox', { name: 'Name', exact: true }).fill(envName);
+  await page.getByRole('textbox', { name: /^Name/ }).fill(envName);
   await page.getByRole('textbox', { name: 'Host' }).fill('10.9.8.7');
   await page.getByRole('textbox', { name: 'Username' }).fill('tandem');
   await page
@@ -83,7 +83,7 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
   ).toBeVisible({ timeout: 15_000 });
 
   // probe (refused port -> failed badge with detail), scoped to the row
-  await row.getByRole('button', { name: /Test / }).click();
+  await row.getByRole('button', { name: /Probe / }).click();
   await expect(page.locator('tr:visible', { hasText: rowName }).getByText(RUN_STATUS.FAILED)).toBeVisible({
     timeout: 20_000,
   });

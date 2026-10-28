@@ -1,5 +1,4 @@
-import { expect, test } from '@playwright/test';
-
+import { expect, test } from './helpers/cleanup';
 import { login } from './helpers/login.ts';
 import { waitForHydration } from './pages/base.page.ts';
 
@@ -35,7 +34,7 @@ test('graph view renders the supervision hierarchy', async ({ page }) => {
 
   // graph view
   await page.getByRole('button', { name: 'Graph view' }).click();
-  const svg = page.locator('svg[aria-label="Supervision hierarchy"]');
+  const svg = page.getByTestId('supervision-graph');
   await expect(svg).toBeVisible({ timeout: 10_000 });
   // the org chart pans horizontally — assert presence (text is clipped by the
   // scroll container when off-viewport, so count beats visibility)
@@ -45,7 +44,7 @@ test('graph view renders the supervision hierarchy', async ({ page }) => {
   // sub renders one depth below boss (top-down rows) with a connector
   const rows = await page.evaluate(
     ([boss, sub]) => {
-      const el = document.querySelector('svg[aria-label="Supervision hierarchy"]');
+      const el = document.querySelector('svg[data-testid="supervision-graph"]');
       const gs = [...(el?.querySelectorAll('g') ?? [])].filter((g) => g.querySelector('rect'));
       const byName = (needle: string) =>
         gs.find((g) => [...g.querySelectorAll('text')].some((t) => t.textContent?.includes(needle)));

@@ -111,7 +111,7 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   for (const suffixWord of ['access key', 'key']) {
     const keyName = `${name} ${suffixWord}`;
     const row = page.getByTestId('key-row').filter({ hasText: keyName });
-    await row.getByRole('button', { name: 'Revoke key' }).click();
+    await row.getByRole('button', { name: /^Revoke / }).click();
     // pin the confirm by its heading — dialog stack order is not stable across suites
     const confirmDialog = page.locator('[role="dialog"]', {
       has: page.getByRole('heading', { name: 'Revoke key?' }),

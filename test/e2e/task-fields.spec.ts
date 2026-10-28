@@ -1,4 +1,5 @@
-// the cleanup fixture sweeps every row the test created (envs, bots, keys)
+// the cleanup fixture sweeps every row the test created (tasks cascade messages/
+// runs/obligations/attachments; then users, projects, environments, vault, providers)
 import { expect, test, type Page } from './helpers/cleanup';
 import { login } from './helpers/login.ts';
 import { waitForHydration } from './pages/base.page.ts';

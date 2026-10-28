@@ -22,7 +22,10 @@ const workerId = process.env.VITEST_POOL_ID ?? '1';
 // postgres both clone the same template — identical `…_w1` names would let one
 // host's setup drop the other's database mid-run. Postgres identifiers cap at
 // 63 bytes, so the tail (the uniqueness-critical part) must survive truncation.
-const dbName = `${templateDb}_w${workerId}_h${process.pid}`.slice(-63);
+// The run-id tail is stamped by global-setup so teardown can drop exactly this
+// run's clones (crashed runs are swept at the NEXT startup).
+const runId = process.env.TANDEM_TEST_RUN_ID ?? 'adhoc';
+const dbName = `${templateDb}_w${workerId}_h${process.pid}_r${runId}`.slice(-63);
 
 const withDbName = (db: string) => {
   const url = new URL(base);

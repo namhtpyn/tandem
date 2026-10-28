@@ -93,7 +93,7 @@ describe('ui-labels', () => {
     expect(activityLabel('weird_kind')).toBe('Weird kind');
     expect(activityIcon('question')).toBe('i-lucide-help-circle');
     expect(activityIcon('forward')).toBe('i-lucide-corner-up-right');
-    expect(activityIcon('note')).toBe('i-lucide-info');
+    expect(activityIcon('note')).toBe('i-lucide-message-square');
   });
 
   it('builds AI picker labels from one helper', () => {
