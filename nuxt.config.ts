@@ -42,4 +42,6 @@ export default defineNuxtConfig({
       link: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
     },
   },
+  // devtools disabled: its plugin chain imports h3 v2's 'H3' under `bun --bun nuxt dev`, which h3 v1.15 doesn't export
+  devtools: { enabled: false },
 });

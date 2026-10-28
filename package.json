@@ -11,6 +11,7 @@
   "type": "module",
   "scripts": {
     "dev": "nuxt dev",
+    "dev:tunnel": "bun --bun nuxt dev --tunnel",
     "build": "nuxt build",
     "start": "NITRO_BUN_IDLE_TIMEOUT=255 bun .output/server/index.mjs",
     "typecheck": "bunx vue-tsc --noEmit -p tsconfig.json",
