@@ -561,7 +561,13 @@ onServerPrefetch(() =>
           size="sm"
           @click="statusManagerOpen = true"
         />
-        <UButton icon="i-lucide-plus" label="New task" size="sm" @click="openEditor()" />
+        <UButton
+          v-if="rows.length > 0 || listFiltered"
+          icon="i-lucide-plus"
+          label="New task"
+          size="sm"
+          @click="openEditor()"
+        />
       </div>
     </div>
 
@@ -580,7 +586,7 @@ onServerPrefetch(() =>
          the horizontal scroll. -->
     <div v-if="statuses.length" class="relative mt-3">
       <div
-        class="flex [scrollbar-width:thin] items-center gap-1.5 overflow-x-auto pr-16"
+        class="flex [scrollbar-width:thin] items-center gap-1.5 overflow-x-auto [mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)] pr-16"
         role="group"
         aria-label="Filter by status"
       >
@@ -851,13 +857,15 @@ onServerPrefetch(() =>
           @click="pagedQuery.refetch()"
         />
       </div>
-      <div class="flex h-[min(72dvh,44rem)] min-h-72 items-stretch gap-4 overflow-x-auto pb-2">
+      <div
+        class="flex h-[min(72dvh,44rem)] min-h-72 snap-x [scrollbar-width:thin] items-stretch gap-4 overflow-x-auto pb-2"
+      >
         <section
           v-for="col in boardColumns"
           :key="col.id"
           :aria-labelledby="`board-col-${col.id}`"
           data-testid="board-column"
-          class="border-default bg-muted/40 flex min-w-[260px] flex-1 flex-col rounded-lg border"
+          class="border-default bg-muted/40 flex min-w-[260px] flex-1 snap-start flex-col rounded-lg border"
           :class="dropTarget === col.id ? 'ring-primary ring-2' : ''"
           @dragover.prevent="dropTarget = col.id"
           @dragleave="dropTarget === col.id && (dropTarget = null)"
@@ -878,9 +886,10 @@ onServerPrefetch(() =>
               variant="subtle"
               size="sm"
               class="shrink-0"
-              title="Counts tasks on this page only — use the pager for the rest"
+              :title="pageCount > 1 ? 'Counts tasks on this page only — use the pager for the rest' : undefined"
             >
-              {{ tasksByStatus(col.id).length }} on this page
+              {{ tasksByStatus(col.id).length }}
+              {{ pageCount > 1 ? 'on this page' : 'tasks' }}
             </UBadge>
           </header>
           <div class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">

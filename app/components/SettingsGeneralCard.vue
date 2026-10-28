@@ -351,6 +351,8 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
         <UButton
           type="submit"
           icon="i-lucide-save"
+          color="neutral"
+          variant="soft"
           :loading="nameSaver.saving"
           :disabled="!settingsLive.isSuccess.value"
           >Save name</UButton
@@ -422,6 +424,8 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
         <UButton
           type="submit"
           icon="i-lucide-save"
+          color="neutral"
+          variant="soft"
           :loading="timeoutSaver.saving"
           :disabled="!settingsLive.isSuccess.value"
           >Save timeout</UButton
@@ -461,6 +465,8 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
         <UButton
           type="submit"
           icon="i-lucide-save"
+          color="neutral"
+          variant="soft"
           :loading="tasksSaver.saving"
           :disabled="!settingsLive.isSuccess.value"
           >Save task limit</UButton

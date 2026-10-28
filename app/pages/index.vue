@@ -93,7 +93,7 @@ const cards = computed(() => [
                   </div>
                   <UIcon
                     name="i-lucide-chevron-right"
-                    class="text-dimmed group-hover:text-default size-4 shrink-0 transition-colors"
+                    class="text-muted group-hover:text-default size-4 shrink-0 transition-colors"
                   />
                 </div>
                 <div class="flex flex-wrap items-baseline gap-x-2">

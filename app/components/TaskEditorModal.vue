@@ -363,14 +363,14 @@ async function save() {
   >
     <template #body>
       <UForm id="task-editor-form" :schema="taskFormSchema" :state="form" class="space-y-4" @submit="save">
-        <UFormField label="Title" name="title">
+        <UFormField label="Title" name="title" required>
           <template #hint><FormHint text="Short summary of the work" /></template>
-          <UInput v-model="form.title" icon="i-lucide-list-todo" placeholder="Task title" class="w-full" required />
+          <UInput v-model="form.title" icon="i-lucide-list-todo" placeholder="Task title" class="w-full" />
         </UFormField>
         <UFormField label="Description" name="description">
           <template #hint
             ><FormHint
-              text="What needs to be done; @mention employees — AI agents receive it as their instructions. Add a title first — files attach to a saved task"
+              text="Paste or drop images to attach. Type @ to mention an employee; AI agents receive this as their instructions."
           /></template>
           <input
             ref="attachmentInput"
@@ -384,7 +384,7 @@ async function save() {
             v-model="form.description"
             :extensions="descriptionExtensions"
             content-type="markdown"
-            placeholder="Description (optional) — paste/drop images to attach; type @ to mention an employee"
+            placeholder="What needs to be done"
             class="bg-default ring-accented focus-visible:ring-primary min-h-18 w-full rounded-md px-2.5 py-1.5 ring ring-inset"
             :ui="{ base: 'px-0 sm:px-0' }"
           >

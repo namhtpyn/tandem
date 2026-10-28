@@ -7,7 +7,7 @@ useHead({ title: 'Tasks' });
 <template>
   <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
     <template #body>
-      <UDashboardNavbar>
+      <UDashboardNavbar :ui="{ root: 'lg:px-8' }">
         <template #leading>
           <UDashboardSidebarCollapse />
         </template>

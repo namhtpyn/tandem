@@ -262,7 +262,7 @@ onServerPrefetch(() => liveQuery.suspense());
       show-empty-state
       empty-icon="i-lucide-shield"
       :empty-noun="folderId && !searchDebounced ? undefined : 'secrets'"
-      empty-text="Store SSH keys and API tokens, encrypted and write-only."
+      empty-text="Add the first key or token — values are encrypted and never shown again."
     >
       <template #empty-cta>
         <UButton v-if="editable && !isFiltered" icon="i-lucide-plus" label="New secret" @click="openEditor()" />
