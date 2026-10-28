@@ -62,8 +62,13 @@ async function createQueueDomain(): Promise<QueueDomain> {
   const workers: Array<{ close: () => Promise<void> }> = [];
   const raws: Raw[] = [];
 
-  // fail fast: verify the connection works before handing out the domain
-  const ping = createClient({ url, socket: { connectTimeout: 5000, reconnectStrategy: () => new Error('no-retry') } });
+  // fail fast: verify the connection works before handing out the domain.
+  // 15s (not 5s): CI runners under coverage starve the loop and a localhost TCP
+  // connect + ping legitimately takes longer than 5s there (run #40 'no-retry')
+  const ping = createClient({
+    url,
+    socket: { connectTimeout: 15_000, reconnectStrategy: () => new Error('no-retry') },
+  });
   ping.on('error', swallowRedisError);
   try {
     await ping.connect();

@@ -143,9 +143,13 @@ export async function scanOnce(tandemUrl: string) {
   }
 }
 
-/** per-agent dispatch queue name (bullmq forbids ':' in queue names) */
+/** per-agent dispatch queue name (bullmq forbids ':' in queue names). The
+ * optional namespace is set per test file (worker-setup.ts) so a file's queues
+ * can never collide with a zombie worker left by a previous file sharing the
+ * same process and redis db index. */
 export function dispatchQueueName(employeeId: string) {
-  return `${DISPATCH_QUEUE_PREFIX}-${employeeId}`;
+  const ns = process.env.TANDEM_QUEUE_NS;
+  return `${DISPATCH_QUEUE_PREFIX}${ns ? `-${ns}` : ''}-${employeeId}`;
 }
 
 export const DISPATCH_QUEUE_PREFIX = 'tandem-dispatch';

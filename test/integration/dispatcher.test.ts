@@ -896,10 +896,16 @@ describe('dispatcher', () => {
     const run = (await db.select().from(taskRuns))[0];
     expect(run).toBeTruthy();
     expect(run.status).toBe(RUN_STATUS.RUNNING);
-    // wait for the fake run to finish, then the task is submitted (done: no reviewers)
-    await new Promise((r) => setTimeout(r, 400));
-    const after = (await db.select().from(tasks).where(eq(tasks.id, t.id)).limit(1))[0];
-    expect(after.status).toBe(STATUS.done);
+    // wait for the fake run to finish, then the task is submitted (done: no
+    // reviewers) — poll, don't sleep: under a loaded runner the settle beats
+    // any fixed window (flake at 400ms in the full coverage run)
+    let after: { status: string } | undefined;
+    for (let i = 0; i < 50; i++) {
+      after = (await db.select().from(tasks).where(eq(tasks.id, t.id)).limit(1))[0];
+      if (after?.status === STATUS.done) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(after?.status).toBe(STATUS.done);
     // message-first schema: runs link to the task through its message
     const runAfter = (
       await db
