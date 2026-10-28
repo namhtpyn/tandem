@@ -1,9 +1,13 @@
+import path from 'node:path';
+
 import { SQL } from 'bun';
+import { drizzle } from 'drizzle-orm/bun-sql';
+import { migrate } from 'drizzle-orm/bun-sql/migrator';
 
 import { E2E_DATABASE_URL, redactedDatabaseUrl } from './helpers/env';
-// E2E reset: every run starts from a fresh data set. The web server is booted by
-// Playwright BEFORE this hook (webServer is a plugin setup task), so migrations
-// have applied and the boot admin exists.
+// E2E reset: every run starts from a fresh data set. This hook applies the
+// drizzle migrations itself (CI's tandem_e2e is created EMPTY each run and
+// globalSetup runs before the webServer), then resets the data.
 //
 // Kept: `user` + `account` (the boot admin and its credential login — boot only
 // seeds an admin when the user table is EMPTY, so truncating them would leave a
@@ -105,6 +109,14 @@ const REQUIRED_TABLES = [
 export default async function globalSetup() {
   const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
+    // fresh-database law: CI creates tandem_e2e EMPTY every run, and playwright's
+    // globalSetup runs BEFORE the webServer — the boot-migration claim in the old
+    // comment only held for a locally-persisted db. Apply the drizzle migrations
+    // here (same runner as boot: drizzle.__drizzle_migrations ledger), so a
+    // virgin db and a pre-migrated one both land on the required schema.
+    await migrate(drizzle({ client: sql }), {
+      migrationsFolder: process.env.TANDEM_DRIZZLE_DIR || path.join(process.cwd(), 'drizzle'),
+    });
     // fail fast: a wrong port/database here used to surface as dozens of
     // unrelated login/locator timeouts inside the specs
     try {
