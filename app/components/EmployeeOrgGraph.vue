@@ -7,9 +7,16 @@
 import { computed } from 'vue';
 
 import { nonNull } from '#shared/utils/non-null';
+import { employeeAvatarUrl } from '~/utils/api-urls';
 import type { EmployeeRow } from '~/utils/orpc-types';
 
-const props = defineProps<{ rows: EmployeeRow[] }>();
+// loading/error mirror the parent's list query — an empty graph while the query
+// is still in flight (or failed) reads as 'no employees', which is a lie
+const props = withDefaults(defineProps<{ rows: EmployeeRow[]; loading?: boolean; error?: boolean }>(), {
+  loading: false,
+  error: false,
+});
+const emit = defineEmits<{ retry: [] }>();
 
 const rows = computed(() => props.rows);
 
@@ -25,13 +32,13 @@ const roots = computed(() =>
  * leaf count; children centered under their parent, elbow connectors from the
  * parent's bottom-center to each child's top-center. Extra supervisor edges
  * (multi-parent) curve from the other supervisor's bottom to the child's top. */
-interface GraphNode {
+type GraphNode = {
   row: EmployeeRow;
   depth: number;
   parentIndex: number;
   x: number;
   y: number;
-}
+};
 const NODE_W = 168;
 const NODE_H = 84;
 const COL_GAP = 16;
@@ -160,7 +167,19 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
       body: 'flex min-h-0 flex-1 flex-col p-0 sm:p-0',
     }"
   >
-    <div v-if="!rows.length" class="flex flex-1 flex-col items-center justify-center gap-2 py-10 text-center">
+    <div v-if="loading" class="flex flex-1 flex-col items-center justify-center gap-3 py-10" aria-hidden="true">
+      <USkeleton class="h-20 w-48 rounded-xl" />
+      <USkeleton class="h-20 w-64 rounded-xl" />
+    </div>
+    <div
+      v-else-if="error"
+      role="alert"
+      class="flex flex-1 flex-col items-center justify-center gap-3 py-10 text-center"
+    >
+      <p class="text-error text-sm">Couldn't load the org chart — try again</p>
+      <UButton size="sm" variant="soft" icon="i-lucide-refresh-cw" label="Retry" @click="emit('retry')" />
+    </div>
+    <div v-else-if="!rows.length" class="flex flex-1 flex-col items-center justify-center gap-2 py-10 text-center">
       <UIcon name="i-lucide-users" class="text-dimmed size-8" />
       <p class="text-muted text-sm">No employees yet — add the first human or AI teammate.</p>
     </div>
@@ -222,7 +241,7 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
           />
           <image
             v-if="n.row.hasAvatar"
-            :href="`/api/employees/${n.row.id}/avatar`"
+            :href="employeeAvatarUrl(n.row.id)"
             x="11"
             y="9"
             width="34"

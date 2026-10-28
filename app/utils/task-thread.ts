@@ -7,15 +7,17 @@
  *  - 'run'      an agent dispatch turn (status pill + output bubble)
  *  - 'note'     human/system activity (questions, verdicts, status changes...)
  */
-export type ThreadBriefItem = {
+import { PROPOSAL_KIND } from '#shared/enums';
+
+type ThreadBriefItem = {
   kind: 'brief';
   id: string;
   body: string;
   createdAt: string;
   /** task creator shown as the brief author */ authorName?: string | null;
-  /** creator's user id — avatar lookup via /api/employees/:userId/avatar */ authorId?: string | null;
+  /** creator's user id — avatar lookup via employeeAvatarUrl() */ authorId?: string | null;
 };
-export type ThreadRunItem = {
+type ThreadRunItem = {
   kind: 'run';
   id: string;
   /** real settled run status — consumers map it to labels/colors themselves */
@@ -24,7 +26,7 @@ export type ThreadRunItem = {
   output: string;
   /** the agent (employee) that ran this turn, for the chat bubble label */
   agentName?: string | null;
-  /** the thread message's author — avatar lookup via /api/employees/:userId/avatar */
+  /** the thread message's author — avatar lookup via employeeAvatarUrl() */
   authorId?: string | null;
   authorName?: string | null;
   /** the exact prompt (brief) sent for this turn, when recorded */
@@ -34,19 +36,19 @@ export type ThreadRunItem = {
   startedAt: string;
   finishedAt: string | null;
 };
-export type ThreadNoteItem = {
+type ThreadNoteItem = {
   kind: 'note';
   id: string;
   noteKind: string;
   body: string;
   authorName: string | null;
-  /** author's user id — avatar lookup via /api/employees/:userId/avatar */
+  /** author's user id — avatar lookup via employeeAvatarUrl() */
   authorId?: string | null;
   createdAt: string;
 };
 export type ThreadItem = ThreadBriefItem | ThreadRunItem | ThreadNoteItem;
 
-export type ThreadSource = {
+type ThreadSource = {
   description?: string | null;
   createdAt?: string | null;
   briefAuthorName?: string | null;
@@ -70,14 +72,10 @@ export type ThreadSource = {
   activity?: Array<Pick<ThreadNoteItem, 'id' | 'noteKind' | 'body' | 'authorName' | 'authorId' | 'createdAt'>>;
 };
 
-/** Envelope of the output contract: last [RESULT]/[QUESTION]/[BLOCKED] line wins. */
-export type EnvelopeKind = 'result' | 'run' | 'question' | 'blocked';
-export type RunEnvelope = { kind: EnvelopeKind; text: string };
-
-import { PROPOSAL_KIND } from '#shared/enums';
 // verdict parsing lives in shared/run-verdict (zod schema, bottom-up scan) —
 // re-exported here so the UI thread and the runner share one implementation.
-// (the file's own EnvelopeKind/RunEnvelope below include the 'run' thread kind)
+// (the UI never parses envelopes directly: item.kind === 'run' items carry the
+// settled body, and parseRunEnvelope is only the pre-settle fallback)
 export { parseRunEnvelope, RunVerdictSchema } from '#shared/run-verdict';
 
 /** routing proposal shapes — the runner maps the settled verdict envelope onto these

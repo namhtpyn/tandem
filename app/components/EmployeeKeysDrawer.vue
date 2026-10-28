@@ -3,9 +3,11 @@
 // the one-time fresh-key alert. Loads the key list whenever it opens. Nothing
 // to do with the model-provider API key picked in the editor.
 import { useMutation } from '@tanstack/vue-query';
-import { computed, ref, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
+import { z } from 'zod';
 
 import { formatWhenShort } from '~/utils/format-when';
+import { errorMessage } from '~/utils/forms';
 import type { ApiKeyRow, EmployeeRow } from '~/utils/orpc-types';
 
 const open = defineModel<boolean>('open', { default: false });
@@ -17,11 +19,15 @@ const createKeyMutation = useMutation($orpc.employees.createApiKey.mutationOptio
 const revokeKeyMutation = useMutation($orpc.employees.revokeApiKey.mutationOptions());
 const listKeysCall = $orpc.employees.listApiKeys.call;
 
+// the mint field lives in the footer — a UForm around it makes Enter submit
+const mintSchema = z.object({ mintName: z.string().max(100) });
+const mintState = reactive({ mintName: '' });
+
 const keys = ref<ApiKeyRow[]>([]);
 const keysBusy = ref(false);
 const keysMessage = ref('');
+const keysLoadError = ref(false);
 const freshKey = ref('');
-const mintName = ref('');
 const renamingId = ref<string | null>(null);
 const renameValue = ref('');
 const revokeConfirmId = ref<string | null>(null);
@@ -31,10 +37,12 @@ const revokeError = ref<string | null>(null);
 async function refreshKeys() {
   if (!props.employee) return;
   keysBusy.value = true;
+  keysLoadError.value = false;
   try {
     keys.value = (await listKeysCall({ employeeId: props.employee.id })) as ApiKeyRow[];
   } catch (e) {
-    keysMessage.value = e instanceof Error ? e.message : "Couldn't load keys — try again";
+    keysLoadError.value = true;
+    keysMessage.value = errorMessage(e, "Couldn't load keys — try again");
   } finally {
     keysBusy.value = false;
   }
@@ -45,7 +53,7 @@ watch(open, async (v) => {
   if (!v || !props.employee) return;
   keysMessage.value = '';
   freshKey.value = '';
-  mintName.value = '';
+  mintState.mintName = '';
   await refreshKeys();
 });
 
@@ -56,13 +64,13 @@ async function mintKey() {
   try {
     const res = await createKeyMutation.mutateAsync({
       employeeId: props.employee.id,
-      ...(mintName.value.trim() ? { name: mintName.value.trim() } : {}),
+      ...(mintState.mintName.trim() ? { name: mintState.mintName.trim() } : {}),
     });
     freshKey.value = res.key as string;
-    mintName.value = '';
+    mintState.mintName = '';
     await refreshKeys();
   } catch (e) {
-    keysMessage.value = e instanceof Error ? e.message : "Couldn't create the key — try again";
+    keysMessage.value = errorMessage(e, "Couldn't create the key — try again");
   } finally {
     keysBusy.value = false;
   }
@@ -81,7 +89,7 @@ async function saveRename() {
     renamingId.value = null;
     await refreshKeys();
   } catch (e) {
-    keysMessage.value = e instanceof Error ? e.message : "Couldn't rename the key — try again";
+    keysMessage.value = errorMessage(e, "Couldn't rename the key — try again");
   } finally {
     keysBusy.value = false;
   }
@@ -101,7 +109,7 @@ async function revokeKey(keyId: string) {
     revokeConfirmId.value = null;
     await refreshKeys();
   } catch (e) {
-    revokeError.value = e instanceof Error ? e.message : "Couldn't revoke the key — try again";
+    revokeError.value = errorMessage(e, "Couldn't revoke the key — try again");
   } finally {
     keysBusy.value = false;
   }
@@ -123,7 +131,9 @@ async function copyKey(key: string) {
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="`Access keys — ${employee?.name ?? ''}`">
+  <!-- dismissible drops while the one-time fresh key is on screen — Esc/overlay
+       must not be able to destroy the only copy of the key -->
+  <UModal v-model:open="open" :dismissible="!freshKey" :title="`${employee?.name ?? ''}'s access keys`">
     <template #body>
       <div class="space-y-3">
         <p class="text-muted text-xs">
@@ -148,17 +158,21 @@ async function copyKey(key: string) {
             />
           </div>
         </div>
-        <div v-if="keys.length" class="divide-default divide-y">
+        <!-- pending first load: skeleton rows instead of a blank body -->
+        <div v-if="keysBusy && !keys.length" class="space-y-2" aria-hidden="true">
+          <USkeleton v-for="i in 2" :key="i" class="h-10 w-full rounded-md" />
+        </div>
+        <div v-else-if="keys.length" class="divide-default divide-y">
           <div v-for="k in keys" :key="k.id" class="group flex items-center justify-between gap-2 py-2">
             <div v-if="renamingId !== k.id" class="min-w-0">
               <p class="text-highlighted truncate text-sm">{{ k.name ?? 'Unnamed' }}</p>
               <p class="text-dimmed font-mono text-xs">{{ k.prefix }}{{ k.start }}…</p>
-              <p class="text-dimmed text-xs" suppressHydration-warning>Created {{ formatWhenShort(k.createdAt) }}</p>
+              <p class="text-dimmed text-xs" data-allow-mismatch>Created {{ formatWhenShort(k.createdAt) }}</p>
             </div>
             <div v-else class="flex min-w-0 flex-1 items-center gap-1">
               <UInput
                 v-model="renameValue"
-                size="xs"
+                size="sm"
                 placeholder="Key name"
                 class="flex-1"
                 @keydown.enter.prevent="saveRename"
@@ -215,16 +229,38 @@ async function copyKey(key: string) {
             </div>
           </div>
         </div>
-        <p v-else-if="!keysBusy" class="text-muted text-sm">No keys.</p>
+        <!-- load failure: the alert above carries the message; retry re-runs the fetch -->
+        <div v-else-if="!keysBusy && keysLoadError">
+          <UButton size="sm" variant="soft" icon="i-lucide-refresh-cw" label="Retry" @click="refreshKeys" />
+        </div>
+        <p v-else-if="!keysBusy" class="text-muted text-sm">No keys yet — create one below.</p>
       </div>
     </template>
     <template #footer>
-      <div class="flex w-full items-end justify-between gap-3">
+      <UForm
+        id="mint-key-form"
+        :schema="mintSchema"
+        :state="mintState"
+        class="flex w-full items-end justify-between gap-3"
+        @submit="mintKey"
+      >
         <UFormField label="Key name" name="mintName" class="min-w-0 flex-1">
-          <UInput v-model="mintName" icon="i-lucide-tag" placeholder="e.g. ci-deploy (optional)" class="w-full" />
+          <UInput
+            v-model="mintState.mintName"
+            icon="i-lucide-tag"
+            placeholder="e.g. ci-deploy (optional)"
+            class="w-full"
+          />
         </UFormField>
-        <UButton icon="i-lucide-key-round" size="sm" label="Create key" :loading="keysBusy" @click="mintKey" />
-      </div>
+        <UButton
+          type="submit"
+          form="mint-key-form"
+          icon="i-lucide-key-round"
+          size="sm"
+          label="Create key"
+          :loading="keysBusy"
+        />
+      </UForm>
     </template>
   </UModal>
 

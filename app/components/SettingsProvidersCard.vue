@@ -5,17 +5,12 @@
 // policy read the same cache) and the save/remove mutations.
 import { useQuery } from '@tanstack/vue-query';
 
-import {
-  PROVIDER_KIND,
-  endpointKind,
-  isAnthropicWire,
-  ENDPOINT_OPTIONS,
-  PROVIDER_ENDPOINT_LABEL,
-  isModelsEndpoint,
-} from '#shared/api-styles';
+import { ENDPOINT_OPTIONS, PROVIDER_ENDPOINT_LABEL, isModelsEndpoint } from '#shared/api-styles';
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
+import { errorMessage } from '~/utils/forms';
 import type { ModelProviderRow, ProviderSaveInput } from '~/utils/orpc-types';
+import { endpointBadgeColor } from '~/utils/ui-labels';
 
 const { $orpc, $client } = useNuxtApp();
 
@@ -83,12 +78,15 @@ async function saveMProv() {
       label: mProvForm.label,
       baseUrl: mProvForm.baseUrl,
       endpoints: mProvForm.endpoints as ProviderSaveInput['endpoints'],
+      // always send notes ('' clears) and extraHeaders only when present — an
+      // omitted extraHeaders is the server's explicit clear; both fields keep
+      // their value across an edit that never touched them
       ...(headers && Object.keys(headers).length ? { extraHeaders: headers } : {}),
-      ...(mProvForm.notes ? { notes: mProvForm.notes } : {}),
+      notes: mProvForm.notes,
     });
     mProvEditorOpen.value = false;
   } catch (e) {
-    mProvMessage.value = e instanceof Error ? e.message : 'Save failed';
+    mProvMessage.value = errorMessage(e, 'Save failed');
   } finally {
     mProvBusy.value = false;
   }
@@ -112,7 +110,7 @@ async function removeMProv() {
   } catch (e) {
     // close the confirm so the message renders on the card, not behind the modal
     pendingRemove.value = null;
-    mProvMessage.value = e instanceof Error ? e.message : 'Delete failed';
+    mProvMessage.value = errorMessage(e, 'Delete failed');
   } finally {
     mProvBusy.value = false;
   }
@@ -126,7 +124,7 @@ onServerPrefetch(() => providersLive.suspense());
     <template #header>
       <div class="flex items-center gap-2">
         <UIcon name="i-lucide-cpu" class="text-dimmed size-4" />
-        <h3 class="text-highlighted text-sm font-semibold">Model providers</h3>
+        <h2 class="text-highlighted text-sm font-semibold">Model providers</h2>
       </div>
     </template>
     <div class="space-y-5">
@@ -146,15 +144,7 @@ onServerPrefetch(() => providersLive.suspense());
               <UBadge
                 v-for="st in p.endpoints"
                 :key="st"
-                :color="
-                  endpointKind(st) === PROVIDER_KIND.DECISION
-                    ? 'info'
-                    : isModelsEndpoint(st)
-                      ? 'success'
-                      : isAnthropicWire([st])
-                        ? 'warning'
-                        : 'primary'
-                "
+                :color="endpointBadgeColor(st)"
                 variant="subtle"
                 size="sm"
                 class="max-w-52 truncate"
@@ -212,15 +202,7 @@ onServerPrefetch(() => providersLive.suspense());
                   <UBadge
                     v-for="st in row.original.endpoints"
                     :key="st"
-                    :color="
-                      endpointKind(st) === PROVIDER_KIND.DECISION
-                        ? 'info'
-                        : isModelsEndpoint(st)
-                          ? 'success'
-                          : isAnthropicWire([st])
-                            ? 'warning'
-                            : 'primary'
-                    "
+                    :color="endpointBadgeColor(st)"
                     variant="subtle"
                     size="sm"
                     class="max-w-52 truncate"
@@ -336,13 +318,7 @@ onServerPrefetch(() => providersLive.suspense());
                 <UBadge
                   v-for="ep in modelValue"
                   :key="ep"
-                  :color="
-                    endpointKind(String(ep)) === PROVIDER_KIND.DECISION
-                      ? 'info'
-                      : isModelsEndpoint(String(ep))
-                        ? 'success'
-                        : 'primary'
-                  "
+                  :color="endpointBadgeColor(String(ep))"
                   variant="subtle"
                   size="sm"
                   class="max-w-52 truncate"

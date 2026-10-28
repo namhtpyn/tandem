@@ -6,8 +6,10 @@
 import { useMutation, useQuery, keepPreviousData } from '@tanstack/vue-query';
 import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
+import { z } from 'zod';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { errorMessage } from '~/utils/forms';
 
 const open = defineModel<boolean>('open', { default: false });
 const emit = defineEmits<{ deleted: [id: string] }>();
@@ -56,6 +58,8 @@ watch(pageCount, (pc) => {
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
 const form = ref({ name: '' });
+// loose frontend schema (repo law): name presence only
+const folderSchema = z.object({ name: z.string().min(1, 'Name is required') });
 const busy = ref(false);
 const error = ref<string | null>(null);
 const removeError = ref<string | null>(null);
@@ -86,7 +90,7 @@ async function saveFolder() {
     });
     editorOpen.value = false;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Save failed';
+    error.value = errorMessage(e, 'Save failed');
   } finally {
     busy.value = false;
   }
@@ -100,7 +104,7 @@ async function removeFolder(id: string) {
     confirmId.value = null;
     emit('deleted', id);
   } catch (e) {
-    removeError.value = e instanceof Error ? e.message : 'Delete failed';
+    removeError.value = errorMessage(e, 'Delete failed');
   } finally {
     busy.value = false;
   }
@@ -214,33 +218,36 @@ async function removeFolder(id: string) {
       :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
     >
       <template #body>
-        <UFormField label="Name" name="name" required>
-          <UInput
-            v-model="form.name"
-            icon="i-lucide-folder"
-            placeholder="e.g. Production keys"
-            class="w-full"
-            :disabled="busy"
+        <UForm id="folder-editor-form" :schema="folderSchema" :state="form" @submit="saveFolder">
+          <UFormField label="Name" name="name" required>
+            <UInput
+              v-model="form.name"
+              icon="i-lucide-folder"
+              placeholder="e.g. Production keys"
+              class="w-full"
+              :disabled="busy"
+            />
+          </UFormField>
+          <UAlert
+            v-if="error"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            :title="error"
+            class="mt-3"
+            :ui="{ title: 'text-sm' }"
           />
-        </UFormField>
-        <UAlert
-          v-if="error"
-          icon="i-lucide-circle-alert"
-          color="error"
-          variant="subtle"
-          :title="error"
-          class="mt-3"
-          :ui="{ title: 'text-sm' }"
-        />
+        </UForm>
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
           <UButton variant="ghost" color="neutral" @click="editorOpen = false">Cancel</UButton>
           <UButton
+            type="submit"
+            form="folder-editor-form"
             icon="i-lucide-check"
             :loading="busy"
             :label="editingId ? 'Save changes' : 'Create folder'"
-            @click="saveFolder"
           />
         </div>
       </template>

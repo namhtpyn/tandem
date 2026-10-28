@@ -196,5 +196,3 @@ describe('buildThread degenerate sources', () => {
     expect(items.map((i) => i.id)).toEqual(['ra', 'rb']);
   });
 });
-
-

@@ -86,8 +86,15 @@ function reload() {
               <p class="text-highlighted text-sm font-medium">New version available</p>
               <p class="text-muted mt-0.5 text-xs">A newer build of Tandem is deployed. Reload to update.</p>
               <div class="mt-3 flex gap-2">
-                <UButton size="xs" label="Reload" icon="i-lucide-rotate-cw" @click="reload" />
-                <UButton size="xs" color="neutral" variant="ghost" label="Later" @click="dismissed = true" />
+                <UButton size="xs" class="min-h-8" label="Reload" icon="i-lucide-rotate-cw" @click="reload" />
+                <UButton
+                  size="xs"
+                  class="min-h-8"
+                  color="neutral"
+                  variant="ghost"
+                  label="Later"
+                  @click="dismissed = true"
+                />
               </div>
             </div>
           </div>

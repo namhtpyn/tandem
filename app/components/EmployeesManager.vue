@@ -8,6 +8,8 @@ import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { employeeAvatarUrl } from '~/utils/api-urls';
+import { errorMessage } from '~/utils/forms';
 import type { EmployeeRow, EnvironmentRow } from '~/utils/orpc-types';
 
 const { $orpc } = useNuxtApp();
@@ -88,7 +90,7 @@ async function remove() {
     pendingDelete.value = null;
   } catch (e) {
     pendingDelete.value = null;
-    message.value = e instanceof Error ? e.message : 'Delete failed.';
+    message.value = errorMessage(e, 'Delete failed');
   } finally {
     busy.value = false;
   }
@@ -118,7 +120,7 @@ const columns = [
   { accessorKey: 'actions', header: '' },
 ];
 
-onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]));
+onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), allQuery.suspense()]));
 </script>
 
 <template>
@@ -196,7 +198,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
           <span class="flex items-center gap-2">
             <img
               v-if="row.original.hasAvatar"
-              :src="`/api/employees/${row.original.id}/avatar`"
+              :src="employeeAvatarUrl(row.original.id)"
               :alt="row.original.name"
               class="size-6 shrink-0 rounded-full object-cover"
             />
@@ -229,7 +231,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
               size="sm"
               :class="byId.get(sid) ? undefined : 'text-dimmed italic'"
             >
-              {{ byId.get(sid)?.name ?? 'Unassigned' }}
+              {{ byId.get(sid)?.name ?? 'Unknown' }}
             </UBadge>
           </template>
           <span v-else class="text-dimmed text-xs">—</span>
@@ -294,7 +296,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
             <div class="flex min-w-0 items-start gap-2">
               <img
                 v-if="row.hasAvatar"
-                :src="`/api/employees/${row.id}/avatar`"
+                :src="employeeAvatarUrl(row.id)"
                 :alt="row.name"
                 class="size-8 shrink-0 rounded-full object-cover"
               />
@@ -325,7 +327,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
               size="sm"
               :class="byId.get(sid) ? undefined : 'text-dimmed italic'"
             >
-              {{ byId.get(sid)?.name ?? 'Unassigned' }}
+              {{ byId.get(sid)?.name ?? 'Unknown' }}
             </UBadge>
             <UBadge
               v-if="row.kind === 'ai' && row.environmentId"
@@ -387,7 +389,14 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
     </DataTable>
 
     <!-- graph view: supervision hierarchy -->
-    <EmployeeOrgGraph v-if="view === 'graph'" class="mt-3 min-h-72 flex-1" :rows="allEmployees" />
+    <EmployeeOrgGraph
+      v-if="view === 'graph'"
+      class="mt-3 min-h-72 flex-1"
+      :rows="allEmployees"
+      :loading="allQuery.isPending.value"
+      :error="allQuery.isError.value"
+      @retry="allQuery.refetch()"
+    />
 
     <UModal v-model:open="deleteOpen" title="Delete employee" :ui="{ content: 'max-w-sm' }">
       <template #body>

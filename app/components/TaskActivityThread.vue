@@ -9,6 +9,7 @@ import { computed, nextTick, onMounted, onServerPrefetch, ref, watch } from 'vue
 
 import { ACTIVITY_KIND, CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
+import { attachmentUrl, employeeAvatarUrl } from '~/utils/api-urls';
 import { formatWhenShort } from '~/utils/format-when';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 import { buildThread, parseRunEnvelope } from '~/utils/task-thread';
@@ -28,7 +29,7 @@ const threadQuery = useQuery(
   computed(() =>
     $orpc.tasks.threadList.queryOptions({
       input: { taskId: taskId.value },
-      queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, taskId.value],
+      queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, taskId.value, 'thread'],
     }),
   ),
 );
@@ -72,7 +73,7 @@ const workflowFeed = computed(() =>
 );
 const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES] }));
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[]);
-/** userId -> hasAvatar: chat avatars render via /api/employees/:userId/avatar, initials otherwise */
+/** userId -> hasAvatar: chat avatars render via employeeAvatarUrl(), initials otherwise */
 const hasAvatarByUserId = computed(() => new Map(employees.value.map((e) => [e.userId, e.hasAvatar])));
 
 // the task creator opens the thread as the brief's author
@@ -115,7 +116,7 @@ const NOTE_KIND_LABELS: Record<string, string> = {
   [ACTIVITY_KIND.STATUS]: 'Status',
 };
 function noteKindLabel(kind: string) {
-  return NOTE_KIND_LABELS[kind] ?? NOTE_KIND_LABELS[kind.toUpperCase()] ?? kind;
+  return NOTE_KIND_LABELS[kind] ?? NOTE_KIND_LABELS[kind.toUpperCase()] ?? humanizeEnum(kind);
 }
 function noteKindIcon(kind: string) {
   const k = kind.toLowerCase();
@@ -200,6 +201,9 @@ function runOutputs(item: ThreadItem) {
   return item.kind === 'run' ? (outputsByRun.value.get(item.id) ?? []) : [];
 }
 
+/** server ids are uuid/slug tokens — anything else must never reach href/src */
+const ATTACHMENT_ID_RE = /^[A-Za-z0-9_-]+$/;
+
 /** split the brief description into text + attachment refs for rendering */
 const briefParts = computed(() => {
   const desc = props.task.description ?? '';
@@ -209,13 +213,20 @@ const briefParts = computed(() => {
     | { type: 'image'; id: string; alt: string }
     | { type: 'file'; id: string; name: string }
   > = [];
-  // split attachments first, then employee mentions inside the text parts
+  // split attachments first, then employee mentions inside the text parts.
+  // Captured ids end up in href/src — anything outside the server's id alphabet
+  // renders as its literal source text instead of building a URL from it.
   const re = /!\[([^\]]*)\]\(attachment-([^)]+)\)|@\[([^\]]*)\]\(attachment-([^)]+)\)/g;
   let last = 0;
   for (const m of desc.matchAll(re)) {
     if (nonNull(m.index) > last) pushText(desc.slice(last, m.index));
-    if (m[2] !== undefined) parts.push({ type: 'image', id: nonNull(m[2]), alt: nonNull(m[1]) });
-    else parts.push({ type: 'file', id: nonNull(m[4]), name: nonNull(m[3]) });
+    const id = nonNull(m[2] ?? m[4]);
+    if (ATTACHMENT_ID_RE.test(id)) {
+      if (m[2] !== undefined) parts.push({ type: 'image', id, alt: nonNull(m[1]) });
+      else parts.push({ type: 'file', id, name: nonNull(m[3]) });
+    } else {
+      parts.push({ type: 'text', body: m[0] });
+    }
     last = nonNull(m.index) + m[0].length;
   }
   if (last < desc.length) pushText(desc.slice(last));
@@ -263,13 +274,13 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
     <p v-else-if="!thread.length" class="text-dimmed my-auto py-10 text-center text-xs">
       No activity yet — write a note below or dispatch the agent.
     </p>
-    <div v-else class="mt-auto space-y-4">
+    <div v-else :class="thread.length < 3 ? 'my-auto space-y-4' : 'mt-auto space-y-4'">
       <template v-for="item in thread" :key="item.id">
         <!-- brief: the task description as the opening message -->
         <div v-if="item.kind === 'brief'" class="flex gap-2.5">
           <img
             v-if="item.authorId && hasAvatarByUserId.get(item.authorId)"
-            :src="`/api/employees/${item.authorId}/avatar`"
+            :src="employeeAvatarUrl(item.authorId)"
             :alt="item.authorName ?? 'Task brief'"
             class="mt-0.5 size-8 shrink-0 rounded-full object-cover"
           />
@@ -282,7 +293,9 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
           <div class="min-w-0 flex-1">
             <p class="text-dimmed mb-1 text-[11px] font-medium">
               {{ briefAuthor ?? 'Task brief' }}
-              <span v-if="item.createdAt" class="text-muted font-normal">{{ formatWhenShort(item.createdAt) }}</span>
+              <span v-if="item.createdAt" class="text-muted font-normal" data-allow-mismatch>{{
+                formatWhenShort(item.createdAt)
+              }}</span>
             </p>
             <!-- description: mention tokens -> @Name; attachment tokens -> inline images / file chips -->
             <div
@@ -297,13 +310,13 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
                 <span v-if="p.type === 'text'" class="whitespace-pre-wrap">{{ p.body }}</span>
                 <img
                   v-else-if="p.type === 'image'"
-                  :src="`/api/attachments/${p.id}`"
+                  :src="attachmentUrl(p.id)"
                   :alt="p.alt"
                   class="border-default my-1.5 max-h-64 rounded-lg border"
                 />
                 <a
                   v-else-if="p.type === 'file'"
-                  :href="`/api/attachments/${p.id}`"
+                  :href="attachmentUrl(p.id)"
                   target="_blank"
                   class="border-default bg-default text-toned hover:border-primary/50 hover:text-primary my-1 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium"
                   ><UIcon name="i-lucide-file-text" class="size-3.5 shrink-0" />{{ p.name }}</a
@@ -317,7 +330,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
         <div v-else-if="item.kind === 'run'" class="flex gap-2.5">
           <img
             v-if="item.authorId && hasAvatarByUserId.get(item.authorId)"
-            :src="`/api/employees/${item.authorId}/avatar`"
+            :src="employeeAvatarUrl(item.authorId)"
             :alt="item.agentName ?? 'Agent'"
             class="mt-0.5 size-8 shrink-0 rounded-full object-cover"
           />
@@ -348,7 +361,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
                     (exit code {{ item.exitCode }})</span
                   >
                 </span>
-                {{ formatWhenShort(item.startedAt) }}
+                <span data-allow-mismatch>{{ formatWhenShort(item.startedAt) }}</span>
               </span>
             </p>
             <!-- message: the settled result body; envelope parse only as a pre-settle fallback -->
@@ -363,13 +376,13 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
               <template v-for="f in runOutputs(item)" :key="f.id">
                 <img
                   v-if="f.mime.startsWith('image/')"
-                  :src="`/api/attachments/${f.id}`"
+                  :src="attachmentUrl(f.id)"
                   :alt="f.filename"
                   class="border-default max-h-48 rounded-lg border"
                 />
                 <a
                   v-else
-                  :href="`/api/attachments/${f.id}`"
+                  :href="attachmentUrl(f.id)"
                   target="_blank"
                   class="border-default bg-default text-toned hover:border-primary/50 hover:text-primary inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium"
                   ><UIcon
@@ -383,7 +396,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
             <!-- raw input: the exact brief, expandable below the message -->
             <details v-if="item.prompt" class="group mt-1">
               <summary
-                class="text-muted hover:bg-elevated focus-visible:ring-primary inline-flex cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-xs select-none focus-visible:ring-2 focus-visible:outline-none"
+                class="text-muted hover:bg-elevated focus-visible:ring-primary inline-flex min-h-8 cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-xs select-none focus-visible:ring-2 focus-visible:outline-none"
               >
                 <UIcon name="i-lucide-chevron-right" class="size-3.5 transition-transform group-open:rotate-90" />
                 Input
@@ -395,7 +408,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
             <!-- raw output: FULL transcript, expandable below the message -->
             <details v-if="item.output" class="group mt-1">
               <summary
-                class="text-muted hover:bg-elevated focus-visible:ring-primary inline-flex cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-xs select-none focus-visible:ring-2 focus-visible:outline-none"
+                class="text-muted hover:bg-elevated focus-visible:ring-primary inline-flex min-h-8 cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-xs select-none focus-visible:ring-2 focus-visible:outline-none"
               >
                 <UIcon name="i-lucide-chevron-right" class="size-3.5 transition-transform group-open:rotate-90" />
                 Output
@@ -412,7 +425,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
         <div v-else-if="item.authorName" class="flex gap-2.5">
           <img
             v-if="item.authorId && hasAvatarByUserId.get(item.authorId)"
-            :src="`/api/employees/${item.authorId}/avatar`"
+            :src="employeeAvatarUrl(item.authorId)"
             :alt="item.authorName"
             class="mt-0.5 size-8 shrink-0 rounded-full object-cover"
           />
@@ -425,7 +438,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
           <div class="min-w-0 flex-1">
             <p class="mb-1 flex items-center gap-1.5 text-[11px] leading-none">
               <span class="text-toned font-semibold">{{ item.authorName }}</span>
-              <span class="text-muted">{{ formatWhenShort(item.createdAt) }}</span>
+              <span class="text-muted" data-allow-mismatch>{{ formatWhenShort(item.createdAt) }}</span>
             </p>
             <div
               v-if="item.body"
@@ -438,11 +451,11 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
         <!-- system note: centered pill -->
         <div v-else class="flex justify-center py-0.5">
           <span
-            class="bg-elevated/60 text-muted inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px]"
+            class="bg-elevated/60 text-muted inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px]"
           >
             <UIcon :name="noteKindIcon(item.noteKind)" class="size-3 shrink-0" />
             <span class="truncate">{{ item.body || noteKindLabel(item.noteKind) }}</span>
-            <span class="text-muted shrink-0">{{ formatWhenShort(item.createdAt) }}</span>
+            <span class="text-muted shrink-0" data-allow-mismatch>{{ formatWhenShort(item.createdAt) }}</span>
           </span>
         </div>
       </template>

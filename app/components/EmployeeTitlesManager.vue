@@ -4,8 +4,10 @@
 // The parent only toggles open.
 import { useMutation, useQuery } from '@tanstack/vue-query';
 import { computed, ref } from 'vue';
+import { z } from 'zod';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { errorMessage } from '~/utils/forms';
 
 const open = defineModel<boolean>('open', { default: false });
 
@@ -23,6 +25,8 @@ const titles = computed(
 const titleEditorOpen = ref(false);
 const titleEditingId = ref<string | null>(null);
 const titleForm = ref({ name: '' });
+// loose frontend schema (repo law): name presence only
+const titleSchema = z.object({ name: z.string().min(1, 'Name is required') });
 const titleBusy = ref(false);
 const titleError = ref<string | null>(null);
 const titleRemoveError = ref<string | null>(null);
@@ -53,7 +57,7 @@ async function saveTitle() {
     });
     titleEditorOpen.value = false;
   } catch (e) {
-    titleError.value = e instanceof Error ? e.message : 'Save failed';
+    titleError.value = errorMessage(e, 'Save failed');
   } finally {
     titleBusy.value = false;
   }
@@ -66,7 +70,7 @@ async function removeTitle(id: string) {
     await titleRemoveMutation.mutateAsync({ id });
     titleConfirmId.value = null;
   } catch (e) {
-    titleRemoveError.value = e instanceof Error ? e.message : 'Delete failed';
+    titleRemoveError.value = errorMessage(e, 'Delete failed');
   } finally {
     titleBusy.value = false;
   }
@@ -151,34 +155,40 @@ onServerPrefetch(() => titlesQuery.suspense());
     :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
   >
     <template #body>
-      <UFormField label="Name" name="name" required>
-        <UInput
-          v-model="titleForm.name"
-          icon="i-lucide-briefcase"
-          placeholder="e.g. Senior Engineer"
-          class="w-full"
-          :disabled="titleBusy"
+      <UForm id="title-editor-form" :schema="titleSchema" :state="titleForm" @submit="saveTitle">
+        <UFormField label="Name" name="name" required>
+          <UInput
+            v-model="titleForm.name"
+            icon="i-lucide-briefcase"
+            placeholder="e.g. Senior Engineer"
+            class="w-full"
+            :disabled="titleBusy"
+          />
+        </UFormField>
+        <UAlert
+          v-if="titleError"
+          icon="i-lucide-circle-alert"
+          color="error"
+          variant="subtle"
+          :title="titleError"
+          class="mt-3"
+          :ui="{ title: 'text-sm' }"
         />
-      </UFormField>
-      <UAlert
-        v-if="titleError"
-        icon="i-lucide-circle-alert"
-        color="error"
-        variant="subtle"
-        :title="titleError"
-        class="mt-3"
-        :ui="{ title: 'text-sm' }"
-      />
-      <p class="text-muted mt-2 text-xs">Renaming updates every employee who holds this title.</p>
+        <!-- rename-specific: creating a title has nothing to rename yet -->
+        <p v-if="titleEditingId" class="text-muted mt-2 text-xs">
+          Renaming updates every employee who holds this title.
+        </p>
+      </UForm>
     </template>
     <template #footer>
       <div class="flex w-full justify-end gap-2">
         <UButton variant="ghost" color="neutral" @click="titleEditorOpen = false">Cancel</UButton>
         <UButton
+          type="submit"
+          form="title-editor-form"
           icon="i-lucide-check"
           :loading="titleBusy"
           :label="titleEditingId ? 'Save changes' : 'Create title'"
-          @click="saveTitle"
         />
       </div>
     </template>

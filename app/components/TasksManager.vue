@@ -12,8 +12,17 @@ import { computed, ref, watch } from 'vue';
 import { ACTIVITY_KIND, CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 import { formatWhenShort } from '~/utils/format-when';
+import { NONE_ID, errorMessage } from '~/utils/forms';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
-import { categoryColor, composerPlaceholder, humanizeEnum, statusLabel } from '~/utils/ui-labels';
+import {
+  categoryColor,
+  categoryIcon,
+  categoryText,
+  composerPlaceholder,
+  dotClass,
+  humanizeEnum,
+  statusLabel,
+} from '~/utils/ui-labels';
 
 const { $orpc, $client } = useNuxtApp();
 
@@ -91,12 +100,12 @@ const projectNameById = computed(() => new Map(projectRows.value.map((p) => [p.i
 // ---- "needs my decision" inbox: this query drives the COUNT/badge only; the
 // list itself is filtered server-side via the inboxOfMe input ----
 const inboxQuery = useQuery($orpc.tasks.inbox.queryOptions({ queryKey: [CHANGE_RESOURCE.TASKS, 'inbox'] }));
-interface InboxItem {
+type InboxItem = {
   taskId: string;
   role: string;
   title: string;
   status: string;
-}
+};
 const inboxItems = computed<InboxItem[]>(
   () => (unref(inboxQuery.data) as { items?: InboxItem[] } | undefined)?.items ?? [],
 );
@@ -107,17 +116,9 @@ const statusOptions = computed(() => statuses.value.map((x) => ({ label: x.name,
 // one shared category→color mapping (ui-labels) — statuses agree with the detail page
 
 // solid-dot color for the borderless status selects (list row + mobile card):
-// same category mapping, rendered as a filled dot instead of a badge
-const STATUS_DOT: Record<string, string> = {
-  success: 'bg-success',
-  error: 'bg-error',
-  info: 'bg-info',
-  warning: 'bg-warning',
-  primary: 'bg-primary',
-  neutral: 'bg-accented',
-};
+// the shared category→color mapping, rendered as a filled dot instead of a badge
 function statusDot(s: string) {
-  return STATUS_DOT[categoryColor(statusById.value.get(s)?.category)];
+  return dotClass(categoryColor(statusById.value.get(s)?.category));
 }
 
 // ---- mutations (list rows) ----
@@ -131,21 +132,27 @@ const message = ref('');
 const messageOk = ref(false); // message tone: only auto-assign success renders green
 
 async function setStatus(row: TaskRow, status: string) {
-  if (row.status === status) return;
+  if (row.status === status || busy.value) return;
   // manual status is FREE (owner ruling 2026-10-27): every status is reachable from
-  // every surface — the server is the only gate
+  // every surface — the server is the only gate. busy gates selects + drops so a
+  // second move can't race the first one's refetch.
   message.value = '';
   messageOk.value = false;
+  busy.value = true;
   try {
     await setStatusMutation.mutateAsync({ id: row.id, status });
   } catch (e) {
-    message.value = e instanceof Error ? e.message : "Couldn't update status — try again";
+    message.value = errorMessage(e, "Couldn't update status — try again");
+  } finally {
+    busy.value = false;
   }
 }
 
 async function autoAssign(row: TaskRow) {
+  if (busy.value) return;
   message.value = '';
   messageOk.value = false;
+  busy.value = true;
   try {
     const res = await assignMutation.mutateAsync({ taskId: row.id });
     if (res.assigned) {
@@ -157,7 +164,9 @@ async function autoAssign(row: TaskRow) {
       message.value = 'No confident match — nobody was auto-assigned';
     }
   } catch (e) {
-    message.value = e instanceof Error ? e.message : "Couldn't auto-assign — try again";
+    message.value = errorMessage(e, "Couldn't auto-assign — try again");
+  } finally {
+    busy.value = false;
   }
 }
 
@@ -178,7 +187,7 @@ async function remove() {
     await removeMutation.mutateAsync({ id: pendingDelete.value.id });
     pendingDelete.value = null;
   } catch (e) {
-    deleteError.value = e instanceof Error ? e.message : "Couldn't delete the task — try again";
+    deleteError.value = errorMessage(e, "Couldn't delete the task — try again");
   } finally {
     busy.value = false;
   }
@@ -233,7 +242,7 @@ function sendDrawerNote() {
   if (workflowStatusCategory.value === 'waiting_answer') wfAction('answer', { body: workflowNote.value });
   else wfAction('note', { body: workflowNote.value });
 }
-const forwardTo = ref('__none__');
+const forwardTo = ref(NONE_ID);
 
 // ---- drawer data: conventional GETs + change-event invalidation (SSE law) ----
 // runs/activity load as plain GETs once the drawer opens; the app-wide changes
@@ -265,7 +274,7 @@ const drawerActivityQuery = useQuery(
   computed(() =>
     $orpc.tasks.activityList.queryOptions({
       input: { taskId: drawerTaskId.value },
-      queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, drawerTaskId.value],
+      queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, drawerTaskId.value, 'activity'],
       enabled: !!drawerTaskId.value,
     }),
   ),
@@ -302,29 +311,6 @@ const ACTIVITY_LABELS: Record<string, string> = {
   [ACTIVITY_KIND.STATUS]: 'Status changed',
 };
 
-// board column dot: category-driven text color (mirrors categoryColor's mapping)
-const CATEGORY_TEXT: Record<string, string> = {
-  done: 'text-success',
-  cancelled: 'text-error',
-  blocked: 'text-error',
-  working: 'text-warning',
-  waiting_answer: 'text-info',
-  in_review: 'text-info',
-  todo: 'text-dimmed',
-};
-
-// distinct glyph per category — Doing (clock) vs Waiting answer (speech bubble)
-// read as the same yellow dot without one
-const CATEGORY_ICON: Record<string, string> = {
-  todo: 'i-lucide-circle-dashed',
-  working: 'i-lucide-clock-3',
-  waiting_answer: 'i-lucide-message-circle-question',
-  in_review: 'i-lucide-eye',
-  blocked: 'i-lucide-octagon-alert',
-  done: 'i-lucide-circle-check',
-  cancelled: 'i-lucide-circle-x',
-};
-
 const retryInMin = computed(() => {
   const t = workflowTask.value;
   if (!t?.dispatchAfter) return 0;
@@ -339,7 +325,7 @@ function openWorkflow(row: TaskRow) {
   workflowMessage.value = '';
   // reset the forward picker too — a stale pre-armed selection would fire the
   // next Forward at whoever was picked for a previous task
-  forwardTo.value = '__none__';
+  forwardTo.value = NONE_ID;
   workflowOpen.value = true;
 }
 
@@ -399,8 +385,7 @@ async function wfAction(action: WorkflowAction, extra: { body?: string; toEmploy
     workflowOk.value = true;
   } catch (e) {
     // surface the server's oRPC message, not ofetch's generic '[POST] …: 400'
-    const err = e as { data?: { json?: { message?: string }; message?: string }; message?: string };
-    workflowMessage.value = err.data?.json?.message ?? err.data?.message ?? err.message ?? WF_COPY[action].fail;
+    workflowMessage.value = errorMessage(e, WF_COPY[action].fail);
     workflowOk.value = false;
   } finally {
     workflowBusy.value = false;
@@ -421,7 +406,7 @@ const boardColumns = computed(() => statuses.value);
 // board card kebab menu items — the actions hide behind one menu instead of an
 // always-on icon row (accent rationing: delete is a menu item, not a red button)
 const BOARD_MENU_ITEM =
-  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-xs text-muted transition-colors hover:bg-elevated hover:text-highlighted';
+  'flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-xs text-muted transition-colors hover:bg-elevated hover:text-highlighted';
 
 // manual status is FREE on every surface (owner ruling) — any column is a legal drop
 
@@ -430,6 +415,7 @@ function tasksByStatus(status: string) {
 }
 
 function onDrop(status: string) {
+  if (busy.value) return;
   const id = draggingId.value;
   draggingId.value = null;
   dropTarget.value = null;
@@ -606,6 +592,9 @@ onServerPrefetch(() =>
       <template #empty-cta>
         <UButton v-if="!listFiltered" icon="i-lucide-plus" label="New task" @click="openEditor()" />
       </template>
+      <template #error-cta>
+        <UButton size="sm" variant="soft" icon="i-lucide-refresh-cw" label="Retry" @click="pagedQuery.refetch()" />
+      </template>
       <template #title-cell="{ row }">
         <div class="min-w-0">
           <NuxtLink :to="`/tasks/${row.original.id}`" class="text-highlighted truncate font-medium hover:underline">{{
@@ -639,6 +628,7 @@ onServerPrefetch(() =>
           value-key="value"
           size="sm"
           variant="none"
+          :disabled="busy"
           class="hover:bg-elevated rounded-md"
           :aria-label="`Status for ${row.original.title}`"
           @update:model-value="(v: string) => setStatus(row.original, v)"
@@ -653,7 +643,7 @@ onServerPrefetch(() =>
         </USelect>
       </template>
       <template #updatedAt-cell="{ row }">
-        <span suppressHydration-warning class="text-muted text-xs">{{ formatWhenShort(row.original.updatedAt) }}</span>
+        <span data-allow-mismatch class="text-muted text-xs">{{ formatWhenShort(row.original.updatedAt) }}</span>
       </template>
       <template #actions-cell="{ row }">
         <div
@@ -735,14 +725,14 @@ onServerPrefetch(() =>
                   />
                   {{ statusLabel(row.status, statusById) }}
                 </span>
-                <span>{{ assigneeNameById.get(row.assigneeId ?? '') ?? 'Unassigned' }}</span>
+                <span>{{ row.assigneeName || 'Unassigned' }}</span>
                 <span v-if="row.assigneeKind === 'ai'" class="text-primary inline-flex items-center gap-1"
                   ><UIcon name="i-lucide-bot" class="size-3" />AI</span
                 >
               </p>
               <p class="text-dimmed mt-0.5 flex items-center gap-1 text-xs">
                 <UIcon name="i-lucide-clock" class="size-3 shrink-0" />
-                <span suppressHydration-warning>{{ formatWhenShort(row.updatedAt) }}</span>
+                <span data-allow-mismatch>{{ formatWhenShort(row.updatedAt) }}</span>
               </p>
             </div>
             <!-- every card action hides behind one kebab — no visible trash row
@@ -804,6 +794,21 @@ onServerPrefetch(() =>
          empty columns stay compact dashed drop zones. The row fills the
          available height; the right-edge fade telegraphs the scroll. -->
     <div v-if="view === 'board'" class="relative mt-3 min-h-0 flex-1">
+      <div
+        v-if="pagedQuery.isError.value"
+        role="alert"
+        class="border-error/40 bg-error/5 text-error mb-3 flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"
+      >
+        <span>Couldn't load tasks</span>
+        <UButton
+          size="sm"
+          color="error"
+          variant="soft"
+          icon="i-lucide-refresh-cw"
+          label="Retry"
+          @click="pagedQuery.refetch()"
+        />
+      </div>
       <div class="flex h-[min(72dvh,44rem)] min-h-72 items-stretch gap-4 overflow-x-auto pb-2">
         <section
           v-for="col in boardColumns"
@@ -817,11 +822,7 @@ onServerPrefetch(() =>
         >
           <header class="border-default flex items-center justify-between gap-2 border-b px-3 py-2">
             <p class="text-toned flex min-w-0 items-center gap-1.5 text-sm font-medium">
-              <UIcon
-                :name="CATEGORY_ICON[col.category] ?? 'i-lucide-circle-dot'"
-                class="size-4 shrink-0"
-                :class="CATEGORY_TEXT[col.category] ?? 'text-dimmed'"
-              />
+              <UIcon :name="categoryIcon(col.category)" class="size-4 shrink-0" :class="categoryText(col.category)" />
               <span class="truncate">{{ col.name }}</span>
             </p>
             <UBadge color="neutral" variant="subtle" size="sm" class="shrink-0">{{
@@ -829,92 +830,101 @@ onServerPrefetch(() =>
             }}</UBadge>
           </header>
           <div class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
-            <article
-              v-for="row in tasksByStatus(col.id)"
-              :key="row.id"
-              draggable="true"
-              class="border-default bg-default group/card relative cursor-grab rounded-lg border p-2.5 shadow-sm active:cursor-grabbing"
-              :class="[
-                draggingId === row.id ? 'opacity-40' : '',
-                statusById.get(row.status)?.category === 'done' ? 'opacity-70' : '',
-              ]"
-              @dragstart="draggingId = row.id"
-              @dragend="
-                draggingId = null;
-                dropTarget = null;
-              "
-            >
-              <div class="flex items-start justify-between gap-1">
-                <NuxtLink
-                  :to="`/tasks/${row.id}`"
-                  draggable="false"
-                  class="text-highlighted line-clamp-2 min-w-0 flex-1 text-sm font-medium hover:underline"
-                  >{{ row.title }}</NuxtLink
-                >
-                <UPopover :ui="{ content: 'w-40 p-1' }">
-                  <UButton
-                    icon="i-lucide-ellipsis-vertical"
-                    size="sm"
-                    color="neutral"
-                    variant="ghost"
-                    aria-label="Task actions"
-                    class="transition-opacity max-md:opacity-100 md:opacity-0 md:group-focus-within/card:opacity-100 md:group-hover/card:opacity-100"
-                  />
-                  <template #content>
-                    <div class="flex flex-col">
-                      <button type="button" :class="BOARD_MENU_ITEM" :disabled="busy" @click="autoAssign(row)">
-                        <UIcon name="i-lucide-wand-sparkles" class="size-3.5 shrink-0" />Auto-assign
-                      </button>
-                      <!-- Move to…: the same setStatus the drag fires — the
+            <!-- pending first page: skeleton cards, never bare empty columns -->
+            <div v-if="pagedQuery.isPending.value" class="space-y-2" aria-hidden="true">
+              <USkeleton class="h-20 w-full rounded-lg" />
+              <USkeleton class="h-20 w-4/5 rounded-lg" />
+            </div>
+            <template v-else>
+              <article
+                v-for="row in tasksByStatus(col.id)"
+                :key="row.id"
+                draggable="true"
+                class="border-default bg-default group/card relative cursor-grab rounded-lg border p-2.5 shadow-sm active:cursor-grabbing"
+                :class="[
+                  draggingId === row.id ? 'opacity-40' : '',
+                  statusById.get(row.status)?.category === 'done' ? 'opacity-70' : '',
+                ]"
+                @dragstart="draggingId = row.id"
+                @dragend="
+                  draggingId = null;
+                  dropTarget = null;
+                "
+              >
+                <div class="flex items-start justify-between gap-1">
+                  <NuxtLink
+                    :to="`/tasks/${row.id}`"
+                    draggable="false"
+                    class="text-highlighted line-clamp-2 min-w-0 flex-1 text-sm font-medium hover:underline"
+                    >{{ row.title }}</NuxtLink
+                  >
+                  <UPopover :ui="{ content: 'w-40 p-1' }">
+                    <UButton
+                      icon="i-lucide-ellipsis-vertical"
+                      size="sm"
+                      color="neutral"
+                      variant="ghost"
+                      aria-label="Task actions"
+                      class="transition-opacity max-md:opacity-100 md:opacity-0 md:group-focus-within/card:opacity-100 md:group-hover/card:opacity-100"
+                    />
+                    <template #content>
+                      <div class="flex flex-col">
+                        <button type="button" :class="BOARD_MENU_ITEM" :disabled="busy" @click="autoAssign(row)">
+                          <UIcon name="i-lucide-wand-sparkles" class="size-3.5 shrink-0" />Auto-assign
+                        </button>
+                        <!-- Move to…: the same setStatus the drag fires — the
                            touch/keyboard path onto the drag-only board -->
-                      <p class="text-dimmed px-2 pt-1.5 pb-1 text-[10px] font-medium">Move to…</p>
-                      <div class="max-h-40 overflow-y-auto">
+                        <p class="text-dimmed px-2 pt-1.5 pb-1 text-[10px] font-medium">Move to…</p>
+                        <div class="max-h-40 overflow-y-auto">
+                          <button
+                            v-for="st in statuses"
+                            :key="st.id"
+                            type="button"
+                            :class="BOARD_MENU_ITEM"
+                            :disabled="busy || row.status === st.id"
+                            @click="setStatus(row, st.id)"
+                          >
+                            <span
+                              class="inline-block size-2 shrink-0 rounded-full"
+                              :class="statusDot(st.id)"
+                              aria-hidden="true"
+                            />
+                            {{ st.name }}
+                          </button>
+                        </div>
+                        <div class="border-default my-1 border-t" aria-hidden="true" />
+                        <button type="button" :class="BOARD_MENU_ITEM" @click="openEditor(row)">
+                          <UIcon name="i-lucide-pencil" class="size-3.5 shrink-0" />Edit
+                        </button>
                         <button
-                          v-for="st in statuses"
-                          :key="st.id"
                           type="button"
-                          :class="BOARD_MENU_ITEM"
-                          :disabled="busy || row.status === st.id"
-                          @click="setStatus(row, st.id)"
+                          :class="[BOARD_MENU_ITEM, 'text-error hover:bg-error/10 hover:text-error']"
+                          @click="pendingDelete = row"
                         >
-                          <span
-                            class="inline-block size-2 shrink-0 rounded-full"
-                            :class="statusDot(st.id)"
-                            aria-hidden="true"
-                          />
-                          {{ st.name }}
+                          <UIcon name="i-lucide-trash-2" class="size-3.5 shrink-0" />Delete
                         </button>
                       </div>
-                      <div class="border-default my-1 border-t" aria-hidden="true" />
-                      <button type="button" :class="BOARD_MENU_ITEM" @click="openEditor(row)">
-                        <UIcon name="i-lucide-pencil" class="size-3.5 shrink-0" />Edit
-                      </button>
-                      <button
-                        type="button"
-                        :class="[BOARD_MENU_ITEM, 'text-error hover:bg-error/10 hover:text-error']"
-                        @click="pendingDelete = row"
-                      >
-                        <UIcon name="i-lucide-trash-2" class="size-3.5 shrink-0" />Delete
-                      </button>
-                    </div>
-                  </template>
-                </UPopover>
+                    </template>
+                  </UPopover>
+                </div>
+                <p v-if="row.projectName" class="text-primary mt-1 flex items-center gap-1 text-xs">
+                  <UIcon name="i-lucide-folder-kanban" class="size-3 shrink-0" />{{ row.projectName }}
+                </p>
+                <p class="text-dimmed mt-1 flex items-center gap-1 text-xs">
+                  <UIcon v-if="row.assigneeKind === 'ai'" name="i-lucide-bot" class="text-primary size-3 shrink-0" />
+                  <UIcon v-else name="i-lucide-user-round" class="size-3 shrink-0" />
+                  {{ row.assigneeName || 'Unassigned' }}
+                </p>
+              </article>
+              <!-- the drop zone is a SETTLED empty column's affordance — during a
+                 load or an error it would read as a broken board -->
+              <div
+                v-if="!tasksByStatus(col.id).length && pagedQuery.isSuccess.value"
+                class="border-default text-dimmed mx-1 mb-1 flex max-h-40 min-h-[120px] items-center justify-center rounded-md border border-dashed text-xs"
+              >
+                Drop tasks here
               </div>
-              <p v-if="row.projectName" class="text-primary mt-1 flex items-center gap-1 text-xs">
-                <UIcon name="i-lucide-folder-kanban" class="size-3 shrink-0" />{{ row.projectName }}
-              </p>
-              <p class="text-dimmed mt-1 flex items-center gap-1 text-xs">
-                <UIcon v-if="row.assigneeKind === 'ai'" name="i-lucide-bot" class="text-primary size-3 shrink-0" />
-                <UIcon v-else name="i-lucide-user-round" class="size-3 shrink-0" />
-                {{ row.assigneeName || 'Unassigned' }}
-              </p>
-            </article>
-            <div
-              v-if="!tasksByStatus(col.id).length"
-              class="border-default text-dimmed mx-1 mb-1 flex max-h-40 min-h-[120px] items-center justify-center rounded-md border border-dashed text-xs"
-            >
-              Drop tasks here
-            </div>
+            </template>
           </div>
         </section>
       </div>
@@ -967,7 +977,7 @@ onServerPrefetch(() =>
           <div v-if="workflowIsWorking" class="flex flex-wrap gap-2">
             <UButton
               v-if="workflowTask.assigneeKind !== 'ai'"
-              size="xs"
+              size="sm"
               color="primary"
               variant="soft"
               icon="i-lucide-send"
@@ -976,20 +986,20 @@ onServerPrefetch(() =>
               >Submit for review</UButton
             >
             <UButton
-              size="xs"
+              size="sm"
               color="neutral"
               variant="soft"
               icon="i-lucide-corner-up-right"
-              :disabled="workflowBusy || !forwardTo || forwardTo === '__none__'"
+              :disabled="workflowBusy || !forwardTo || forwardTo === NONE_ID"
               @click="
                 forwardTo &&
-                forwardTo !== '__none__' &&
+                forwardTo !== NONE_ID &&
                 wfAction('forward', { toEmployeeId: forwardTo, body: workflowNote })
               "
               >Forward</UButton
             >
             <UButton
-              size="xs"
+              size="sm"
               color="error"
               variant="soft"
               icon="i-lucide-ban"
@@ -1003,7 +1013,7 @@ onServerPrefetch(() =>
             v-if="workflowIsWorking"
             v-model="forwardTo"
             :items="[
-              { label: 'Not forwarded', value: '__none__' },
+              { label: 'Not forwarded', value: NONE_ID },
               ...employees
                 .filter((e) => e.id !== workflowTask?.questionHolderId)
                 .map((e) => ({ label: e.name, value: e.id })),
@@ -1025,6 +1035,7 @@ onServerPrefetch(() =>
             v-model="workflowNote"
             :rows="3"
             :placeholder="composerPlaceholder(workflowStatusCategory === 'waiting_answer')"
+            aria-label="Task note"
             class="w-full"
           />
           <UButton
@@ -1052,7 +1063,7 @@ onServerPrefetch(() =>
                    the button hides instead of sitting disabled with no why -->
               <UButton
                 v-if="workflowTask?.assigneeKind === 'ai'"
-                size="xs"
+                size="sm"
                 variant="soft"
                 icon="i-lucide-play"
                 :disabled="workflowBusy"
@@ -1071,7 +1082,13 @@ onServerPrefetch(() =>
                 class="bg-inverted text-inverted max-h-72 overflow-y-auto rounded-b-md px-2.5 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap"
                 >{{ r.output }}</pre>
             </div>
-            <p v-if="!runFeed.length" class="text-dimmed text-xs">No runs yet</p>
+            <div v-if="drawerRunsQuery.isPending.value" class="space-y-2" aria-hidden="true">
+              <USkeleton class="h-10 w-full rounded-md" />
+            </div>
+            <p v-else-if="drawerRunsQuery.isError.value" role="alert" class="text-error text-xs">
+              Couldn't load agent runs
+            </p>
+            <p v-else-if="!runFeed.length" class="text-dimmed text-xs">No runs yet — dispatch the agent.</p>
             <p v-if="retryInMin > 0" class="text-warning text-xs font-medium">
               Retrying in ~{{ retryInMin }} min ({{ workflowTask?.failStreak ?? 0 }} consecutive failure{{
                 (workflowTask?.failStreak ?? 0) === 1 ? '' : 's'
@@ -1098,11 +1115,21 @@ onServerPrefetch(() =>
                 />
                 {{ ACTIVITY_LABELS[a.kind] ?? humanizeEnum(a.kind) }}
                 <span class="text-muted font-normal">{{ a.authorName ?? 'system' }}</span>
-                <span class="text-dimmed ml-auto shrink-0 font-normal">{{ formatWhenShort(a.createdAt) }}</span>
+                <span class="text-dimmed ml-auto shrink-0 font-normal" data-allow-mismatch>{{
+                  formatWhenShort(a.createdAt)
+                }}</span>
               </p>
               <p v-if="a.body" class="text-muted mt-1">{{ a.body }}</p>
             </div>
-            <p v-if="!workflowFeed.length" class="text-dimmed text-xs">No activity yet</p>
+            <div v-if="drawerActivityQuery.isPending.value" class="space-y-2" aria-hidden="true">
+              <USkeleton class="h-10 w-full rounded-md" />
+            </div>
+            <p v-else-if="drawerActivityQuery.isError.value" role="alert" class="text-error text-xs">
+              Couldn't load activity
+            </p>
+            <p v-else-if="!workflowFeed.length" class="text-dimmed text-xs">
+              No activity yet — notes and verdicts land here.
+            </p>
           </div>
         </div>
       </template>

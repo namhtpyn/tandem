@@ -7,6 +7,7 @@ import { computed, reactive, ref } from 'vue';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
+import { errorMessage } from '~/utils/forms';
 import type { TaskStatusRow } from '~/utils/orpc-types';
 import { categoryColor, categoryLabel } from '~/utils/ui-labels';
 
@@ -89,7 +90,7 @@ async function saveStatus() {
     statusEditorTouched.value = false;
     editingStatusId.value = null;
   } catch (e) {
-    statusMessage.value = e instanceof Error ? e.message : 'Save failed';
+    statusMessage.value = errorMessage(e, 'Save failed');
   } finally {
     statusBusy.value = false;
   }
@@ -103,7 +104,7 @@ async function removeStatus() {
     await statusRemoveMutation.mutateAsync({ id: pendingDelete.value.id });
     pendingDelete.value = null;
   } catch (e) {
-    statusMessage.value = e instanceof Error ? e.message : 'Delete failed';
+    statusMessage.value = errorMessage(e, 'Delete failed');
   } finally {
     statusBusy.value = false;
   }
@@ -208,7 +209,7 @@ const categoryOptions = [
             <p class="text-muted text-sm">No statuses yet — define the steps your tasks move through.</p>
             <UButton icon="i-lucide-plus" size="sm" label="New status" @click="openStatusEditor()" />
           </div>
-          <div class="flex justify-end">
+          <div v-if="statuses.length" class="flex justify-end">
             <UButton icon="i-lucide-plus" size="sm" label="New status" @click="openStatusEditor()" />
           </div>
         </div>
@@ -272,7 +273,7 @@ const categoryOptions = [
           <UButton variant="ghost" color="neutral" label="Cancel" @click="statusEditorOpen = false" />
           <UButton
             icon="i-lucide-check"
-            label="Save status"
+            :label="editingStatusId ? 'Save changes' : 'Create status'"
             :loading="statusBusy"
             :disabled="!statusForm.name.trim()"
             @click="saveStatus"

@@ -15,7 +15,7 @@ useHead({ title: 'Tasks' });
              under the bar reads as an orphan; hidden on mobile -->
         <template #title>
           <div class="min-w-0">
-            <p class="text-highlighted truncate text-base font-semibold">Tasks</p>
+            <span class="text-highlighted block truncate text-base font-semibold">Tasks</span>
             <p class="text-muted hidden text-xs sm:block">Work items for humans and AI agents</p>
           </div>
         </template>

@@ -10,8 +10,9 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query';
 // assignee picker. Props: `taskId`, `statusById`.
 import { computed, ref } from 'vue';
 
-import { CHANGE_RESOURCE, PROPOSAL_KIND, type ProposalKind } from '#shared/enums';
+import { CHANGE_RESOURCE, PROPOSAL_KIND, PROPOSAL_STATUS, type ProposalKind } from '#shared/enums';
 import { formatWhenShort } from '~/utils/format-when';
+import { errorMessage } from '~/utils/forms';
 import type { EmployeeRow, TaskStatusRow } from '~/utils/orpc-types';
 import { categoryColor } from '~/utils/ui-labels';
 
@@ -24,13 +25,13 @@ const queryClient = useQueryClient();
 const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES] }));
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[]);
 
-interface ChildRow {
+type ChildRow = {
   id: string;
   title: string;
   status: string;
   assigneeId: string | null;
-}
-interface ProposalRow {
+};
+type ProposalRow = {
   id: string;
   kind: ProposalKind;
   payload: {
@@ -41,14 +42,14 @@ interface ProposalRow {
   status: string;
   decisionNote: string;
   createdAt: string;
-}
-interface AssignmentRow {
+};
+type AssignmentRow = {
   id: string;
   employeeName: string | null;
   reason: string;
   startedAt: string;
   endedAt: string | null;
-}
+};
 
 // ---- GET-first + change-event invalidation (SSE law): the query keys carry the
 // resource prefix, so every TASKS/TASK_ACTIVITY change event (run settles,
@@ -103,21 +104,21 @@ async function decideProposal(id: string, action: 'confirmProposal' | 'rejectPro
         : 'Proposal declined';
     proposalOk.value = true;
     // fuse: the decision mutates proposals + subtasks + the task row
+    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS, props.taskId] });
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, props.taskId] });
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.RUNS, props.taskId] });
   } catch (e) {
-    proposalMessage.value =
-      (e as { data?: { json?: { message?: string } }; message?: string }).data?.json?.message ??
-      (e as Error).message ??
-      "Couldn't decide the proposal — try again";
+    proposalMessage.value = errorMessage(e, "Couldn't decide the proposal — try again");
     proposalOk.value = false;
   } finally {
     proposalBusy.value = false;
   }
 }
 
-const openProposals = computed(() => proposalRows.value.filter((p) => p.status?.toLowerCase() === 'proposed'));
+const openProposals = computed(() =>
+  proposalRows.value.filter((p) => p.status?.toUpperCase() === PROPOSAL_STATUS.PROPOSED),
+);
 
 /** subtask badge: joined status row — its NAME in the shared category color (never the raw id) */
 function subtaskBadge(c: ChildRow): {
@@ -130,9 +131,16 @@ function subtaskBadge(c: ChildRow): {
 </script>
 
 <template>
-  <div v-if="openProposals.length" data-testid="proposal-panel">
+  <div
+    v-if="openProposals.length || proposalsQuery.isPending.value || proposalsQuery.isError.value || proposalMessage"
+    data-testid="proposal-panel"
+  >
     <h2 class="text-muted mb-2 text-xs font-medium">Agent proposals</h2>
-    <div class="space-y-2">
+    <div v-if="proposalsQuery.isPending.value" class="space-y-1.5" aria-hidden="true">
+      <USkeleton class="h-14 w-full rounded" />
+    </div>
+    <p v-else-if="proposalsQuery.isError.value" role="alert" class="text-error text-xs">Couldn't load proposals</p>
+    <div v-else-if="openProposals.length" class="space-y-2">
       <div v-for="p in openProposals" :key="p.id" class="border-default bg-default rounded-lg border p-2.5 text-sm">
         <p class="text-default mb-1 flex items-center gap-1.5 font-medium">
           <UIcon
@@ -152,7 +160,7 @@ function subtaskBadge(c: ChildRow): {
         </p>
         <div class="flex gap-2">
           <UButton
-            size="xs"
+            size="sm"
             color="primary"
             icon="i-lucide-check"
             :disabled="proposalBusy"
@@ -160,7 +168,7 @@ function subtaskBadge(c: ChildRow): {
             >Confirm</UButton
           >
           <UButton
-            size="xs"
+            size="sm"
             color="neutral"
             variant="outline"
             icon="i-lucide-x"
@@ -188,7 +196,7 @@ function subtaskBadge(c: ChildRow): {
       <USkeleton class="h-7 w-4/5 rounded" />
     </div>
     <p v-else-if="subtasksQuery.isError.value" role="alert" class="text-error text-xs">Couldn't load subtasks</p>
-    <p v-else-if="!subtaskRows.length" class="text-dimmed text-xs">No subtasks yet</p>
+    <p v-else-if="!subtaskRows.length" class="text-dimmed text-xs">No subtasks yet — add one to split the work.</p>
     <ul v-else class="space-y-1 text-sm">
       <li v-for="c in subtaskRows" :key="c.id">
         <NuxtLink
@@ -202,7 +210,7 @@ function subtaskBadge(c: ChildRow): {
     </ul>
     <UButton
       class="mt-2"
-      size="xs"
+      size="sm"
       color="neutral"
       variant="soft"
       icon="i-lucide-plus"
@@ -211,13 +219,23 @@ function subtaskBadge(c: ChildRow): {
     />
   </div>
 
-  <div v-if="assignmentRows.length" data-testid="assignment-history">
-    <h2 class="text-muted mb-2 text-xs font-medium">Assignees</h2>
-    <ul class="space-y-1 text-xs">
+  <div
+    v-if="assignmentRows.length || assignmentsQuery.isPending.value || assignmentsQuery.isError.value"
+    data-testid="assignment-history"
+  >
+    <h2 class="text-muted mb-2 text-xs font-medium">Assignment history</h2>
+    <div v-if="assignmentsQuery.isPending.value" class="space-y-1.5" aria-hidden="true">
+      <USkeleton class="h-4 w-full rounded" />
+      <USkeleton class="h-4 w-2/3 rounded" />
+    </div>
+    <p v-else-if="assignmentsQuery.isError.value" role="alert" class="text-error text-xs">
+      Couldn't load assignment history
+    </p>
+    <ul v-else class="space-y-1 text-xs">
       <!-- who + when — the when replaces dev-speak reason tags like '(on create)' -->
       <li v-for="a in assignmentRows" :key="a.id" class="flex items-baseline justify-between gap-2">
         <span class="text-toned min-w-0 truncate">Assigned to {{ a.employeeName ?? 'Unassigned' }}</span>
-        <span class="text-dimmed shrink-0" suppressHydration-warning>{{ formatWhenShort(a.startedAt) }}</span>
+        <span class="text-dimmed shrink-0" data-allow-mismatch>{{ formatWhenShort(a.startedAt) }}</span>
       </li>
     </ul>
   </div>

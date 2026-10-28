@@ -1,3 +1,4 @@
+import { isAnthropicWire, endpointKind, isModelsEndpoint, PROVIDER_KIND } from '#shared/api-styles';
 // Shared UI vocabulary: one color mapping, one label mapping per enum — a status
 // must render the same color, and a kind/category the same words, on every surface.
 import { ROLE, type Role } from '#shared/enums';
@@ -41,6 +42,52 @@ export function categoryLabel(category: string | null | undefined): string {
   return CATEGORY_LABELS[category] ?? humanizeEnum(category);
 }
 
+// solid-dot background class per badge color — the borderless status selects
+// (list row + mobile card) render categoryColor as a filled dot instead of a badge
+const BADGE_DOT: Record<BadgeColor, string> = {
+  success: 'bg-success',
+  error: 'bg-error',
+  info: 'bg-info',
+  warning: 'bg-warning',
+  primary: 'bg-primary',
+  neutral: 'bg-accented',
+};
+
+export function dotClass(color: string): string {
+  return BADGE_DOT[color as BadgeColor] ?? BADGE_DOT.neutral;
+}
+
+// board column heading: category-driven text color (mirrors categoryColor's mapping)
+const CATEGORY_TEXT: Record<string, string> = {
+  done: 'text-success',
+  cancelled: 'text-error',
+  blocked: 'text-error',
+  working: 'text-warning',
+  waiting_answer: 'text-info',
+  in_review: 'text-info',
+  todo: 'text-dimmed',
+};
+
+export function categoryText(category: string | null | undefined): string {
+  return (category && CATEGORY_TEXT[category]) || 'text-dimmed';
+}
+
+// distinct glyph per category — Doing (clock) vs Waiting answer (speech bubble)
+// read as the same yellow dot without one
+const CATEGORY_ICON: Record<string, string> = {
+  todo: 'i-lucide-circle-dashed',
+  working: 'i-lucide-clock-3',
+  waiting_answer: 'i-lucide-message-circle-question',
+  in_review: 'i-lucide-eye',
+  blocked: 'i-lucide-octagon-alert',
+  done: 'i-lucide-circle-check',
+  cancelled: 'i-lucide-circle-x',
+};
+
+export function categoryIcon(category: string | null | undefined): string {
+  return (category && CATEGORY_ICON[category]) || 'i-lucide-circle-dot';
+}
+
 export function kindLabel(kind: string | null | undefined): string {
   if (kind === 'ai') return 'AI agent';
   if (kind === 'human') return 'Human';
@@ -48,13 +95,22 @@ export function kindLabel(kind: string | null | undefined): string {
 }
 
 /** Status name from a by-id lookup — one fallback ladder on every surface:
- * known row name, else humanize the raw id, else 'Unknown' for a missing id. */
+ * known row name, else 'Unknown status' (a map-miss id is a raw UUID — never render it). */
 export function statusLabel<V extends { name: string }>(
   statusId: string | null | undefined,
   byId: Map<string, V>,
 ): string {
   if (!statusId) return 'Unknown';
-  return byId.get(statusId)?.name ?? humanizeEnum(statusId);
+  return byId.get(statusId)?.name ?? 'Unknown status';
+}
+
+/** endpoint → badge color, one mapping for every provider-endpoint badge
+ * (catalog cards, table rows and the editor's selected chips) */
+export function endpointBadgeColor(endpoint: string): BadgeColor {
+  if (endpointKind(endpoint) === PROVIDER_KIND.DECISION) return 'info';
+  if (isModelsEndpoint(endpoint)) return 'success';
+  if (isAnthropicWire([endpoint])) return 'warning';
+  return 'primary';
 }
 
 /** shared composer placeholders — the task page and the workflow drawer stay word-identical */

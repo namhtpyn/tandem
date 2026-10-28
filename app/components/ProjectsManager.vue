@@ -7,8 +7,10 @@ import { watchDebounced } from '@vueuse/core';
 // Projects: nestable containers for tasks. Mobile-first: stacked tree cards,
 // desktop table; create/edit modal follows the #footer submit law.
 import { computed, reactive, ref, unref } from 'vue';
+import { z } from 'zod';
 
 import { CHANGE_RESOURCE, PROJECT_STATUS, type ProjectStatus } from '#shared/enums';
+import { NONE_ID, errorMessage } from '~/utils/forms';
 import type { ProjectRow } from '~/utils/orpc-types';
 import { humanizeEnum } from '~/utils/ui-labels';
 
@@ -48,19 +50,25 @@ const message = ref('');
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
 const confirmId = ref<string | null>(null);
+// loose frontend schema (repo law): project name presence — the server owns the rest
+const projectSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  description: z.string(),
+  prompt: z.string(),
+  parentId: z.string(),
+  status: z.string(),
+});
+
 const form = reactive({
   name: '',
   description: '',
   prompt: '',
-  parentId: '__none__' as string,
+  parentId: NONE_ID as string,
   status: PROJECT_STATUS.ACTIVE as ProjectStatus,
 });
 
 // nested rows for the tree table (TanStack sub-rows) + a flat walk for mobile
-interface FlatRow extends ProjectRow {
-  depth: number;
-  path: string;
-}
+type FlatRow = ProjectRow & { depth: number; path: string };
 function byParentOf(list: ProjectRow[]) {
   const map = new Map<string | null, ProjectRow[]>();
   for (const r of list) {
@@ -128,7 +136,7 @@ const parentItems = computed(() => {
     walk(editingId.value);
   }
   return [
-    { label: 'No parent (top level)', value: '__none__' },
+    { label: 'No parent (top level)', value: NONE_ID },
     ...fullFlat.value.filter((r) => !excluded.has(r.id)).map((r) => ({ label: r.path, value: r.id })),
   ];
 });
@@ -138,7 +146,7 @@ function openEditor(row?: FlatRow) {
   form.name = row?.name ?? '';
   form.description = row?.description ?? '';
   form.prompt = row?.prompt ?? '';
-  form.parentId = row?.parentId ?? '__none__';
+  form.parentId = row?.parentId ?? NONE_ID;
   form.status = row?.status ?? PROJECT_STATUS.ACTIVE;
   message.value = '';
   editorOpen.value = true;
@@ -152,18 +160,21 @@ async function save() {
       name: form.name,
       description: form.description,
       prompt: form.prompt,
-      parentId: form.parentId === '__none__' ? null : form.parentId,
+      parentId: form.parentId === NONE_ID ? null : form.parentId,
       ...(editingId.value ? { status: form.status } : {}),
     };
     if (editingId.value) await $client.projects.update({ id: editingId.value, ...payload });
     else await $client.projects.create(payload);
     editorOpen.value = false;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'Save failed';
+    message.value = errorMessage(e, 'Save failed');
   } finally {
     busy.value = false;
   }
 }
+
+// the confirm copy names the project — resolve the row from the id
+const confirmingRow = computed(() => allRows.value.find((r) => r.id === confirmId.value) ?? null);
 
 async function askRemove(row: FlatRow) {
   confirmId.value = row.id;
@@ -178,7 +189,7 @@ async function remove_() {
   } catch (e) {
     // close the confirm so the page-level message isn't hidden behind the modal
     confirmId.value = null;
-    message.value = e instanceof Error ? e.message : 'Delete failed';
+    message.value = errorMessage(e, 'Delete failed');
   } finally {
     busy.value = false;
   }
@@ -242,7 +253,7 @@ onServerPrefetch(() => liveQuery.suspense());
             variant="ghost"
             color="neutral"
             size="xs"
-            :aria-label="collapsed.has(row.original.id) ? 'Expand' : 'Collapse'"
+            :aria-label="`${collapsed.has(row.original.id) ? 'Expand' : 'Collapse'} ${row.original.name}`"
             class="px-0.5"
             @click="toggleCollapse(row.original.id)"
           />
@@ -376,7 +387,7 @@ onServerPrefetch(() => liveQuery.suspense());
       :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
     >
       <template #body>
-        <UForm id="project-editor-form" :state="form" class="space-y-4" @submit="save">
+        <UForm id="project-editor-form" :schema="projectSchema" :state="form" class="space-y-4" @submit="save">
           <UFormField label="Name" name="name">
             <UInput v-model="form.name" icon="i-lucide-folder" placeholder="Project name" class="w-full" required />
           </UFormField>
@@ -450,7 +461,8 @@ onServerPrefetch(() => liveQuery.suspense());
     >
       <template #body>
         <p class="text-muted text-sm">
-          Delete this project? Its tasks become unscoped and subprojects move to the top level.
+          Delete <strong class="text-highlighted">{{ confirmingRow?.name ?? 'this project' }}</strong
+          >? Its tasks become unscoped and subprojects move to the top level.
         </p>
       </template>
       <template #footer>

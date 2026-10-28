@@ -45,6 +45,7 @@ onUnmounted(disarmReject);
       :maxrows="6"
       variant="none"
       placeholder="Leave review feedback (required to request changes)…"
+      aria-label="Review note"
       class="w-full"
       :ui="{ base: 'px-1 py-1 text-sm placeholder:text-dimmed' }"
     />

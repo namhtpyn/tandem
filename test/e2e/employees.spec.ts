@@ -117,7 +117,7 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
     await expect(row).toHaveCount(0, { timeout: 10_000 });
   }
   await expect(keyRows).toHaveCount(0, { timeout: 10_000 });
-  await expect(page.getByText('No keys.')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('No keys yet — create one below.')).toBeVisible({ timeout: 15_000 });
 
   // teardown: delete the bot, then its environment (leftover env rows break
   // other suites' unscoped selectors; keep the DB tidy)

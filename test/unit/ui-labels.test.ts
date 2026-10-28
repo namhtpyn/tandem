@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatDate, formatWhen } from '../../app/utils/format-when';
-import { categoryColor, categoryLabel, kindLabel } from '../../app/utils/ui-labels';
+import { formatWhen } from '../../app/utils/format-when';
+import {
+  categoryColor,
+  categoryIcon,
+  categoryLabel,
+  categoryText,
+  dotClass,
+  endpointBadgeColor,
+  kindLabel,
+  statusLabel,
+} from '../../app/utils/ui-labels';
 
 describe('ui-labels', () => {
   it('maps every seeded category to a badge color and label', () => {
@@ -30,24 +39,27 @@ describe('ui-labels', () => {
     expect(kindLabel('other')).toBe('Other');
     expect(kindLabel(null)).toBe('');
   });
-});
 
-describe('formatDate', () => {
-  it('renders date-only and tolerates junk', () => {
-    const d = new Date(2026, 9, 27, 14, 30);
-    expect(formatDate(d)).toBe(d.toLocaleDateString());
-    // formatWhen drops seconds — date + HH:MM only
-    expect(formatWhen(d)).toBe(
-      d.toLocaleString(undefined, {
-        year: 'numeric',
-        month: 'numeric',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
-    );
-    expect(formatWhen(d)).not.toMatch(/:\d{2}:\d{2}/);
-    expect(formatDate(null)).toBe('');
-    expect(formatDate('not-a-date')).toBe('');
+  it('statusLabel never leaks a map-miss UUID', () => {
+    const byId = new Map([['s1', { name: 'Doing' }]]);
+    expect(statusLabel('s1', byId)).toBe('Doing');
+    expect(statusLabel('not-a-status', byId)).toBe('Unknown status');
+    expect(statusLabel(null, byId)).toBe('Unknown');
+  });
+
+  it('renders board/category styling from one shared mapping', () => {
+    expect(dotClass('success')).toBe('bg-success');
+    expect(dotClass('mystery')).toBe('bg-accented');
+    expect(categoryText('done')).toBe('text-success');
+    expect(categoryText('mystery')).toBe('text-dimmed');
+    expect(categoryText(null)).toBe('text-dimmed');
+    expect(categoryIcon('working')).toBe('i-lucide-clock-3');
+    expect(categoryIcon('mystery')).toBe('i-lucide-circle-dot');
+  });
+
+  it('colors endpoint badges: decision → info, models → success, anthropic wire → warning, else primary', () => {
+    expect(endpointBadgeColor('TYPESAFE-SYSTEMONE')).toBe('info');
+    expect(endpointBadgeColor('OPENAI-COMPLETIONS')).toBe('primary');
+    expect(endpointBadgeColor('ANTHROPIC-MESSAGES')).toBe('warning');
   });
 });

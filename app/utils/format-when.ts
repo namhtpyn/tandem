@@ -1,4 +1,4 @@
-// timestamps render user-local; server/client disagree pre-hydration — spans suppress the warning
+// timestamps render user-local; server/client disagree pre-hydration — spans opt out (data-allow-mismatch)
 export function formatWhen(value: string | Date | null | undefined): string {
   if (!value) return '';
   const d = value instanceof Date ? value : new Date(value);
@@ -11,13 +11,6 @@ export function formatWhen(value: string | Date | null | undefined): string {
     hour: '2-digit',
     minute: '2-digit',
   });
-}
-
-// date-only variant for lists where the time of day adds noise (keys, credentials)
-export function formatDate(value: string | Date | null | undefined): string {
-  if (!value) return '';
-  const d = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString();
 }
 
 // compact variant for dense lists: times read as HH:MM today, 'Mon 27, 14:03' older

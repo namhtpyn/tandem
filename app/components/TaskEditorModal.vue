@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useMutation, useQuery } from '@tanstack/vue-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 // Task create/edit editor modal: tiptap description with paste/drop image
 // attachments, @mention menu, assignee/status/project/owner/reviewers fields.
 // Self-loads statuses/employees/projects (vue-query dedupes with the manager's
@@ -13,6 +13,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import type { EditorView, ClipboardEventLike, DragEventLike } from '~/types/editor-typing';
+import { NONE_ID, errorMessage } from '~/utils/forms';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 import { kindLabel } from '~/utils/ui-labels';
 
@@ -21,6 +22,7 @@ const props = defineProps<{ task: TaskRow | null; parentTaskId?: string | null }
 const emit = defineEmits<{ saved: [] }>();
 
 const { $orpc, $client } = useNuxtApp();
+const queryClient = useQueryClient();
 
 // self-load: statuses (first-status default + editor select), employees
 // (mention items + pickers), projects (picker)
@@ -92,9 +94,9 @@ const messageOk = ref(false); // tone: success paths ('Attached …') render gre
 const form = reactive({
   title: '',
   description: '',
-  assigneeId: '__none__' as string,
+  assigneeId: NONE_ID as string,
   status: STATUS.todo as string,
-  projectId: '__none__' as string,
+  projectId: NONE_ID as string,
   reviewers: [] as string[],
 });
 const isEdit = computed(() => editingId.value !== null);
@@ -106,8 +108,8 @@ watch(open, (v) => {
   editingId.value = row?.id ?? null;
   form.title = row?.title ?? '';
   form.description = row?.description ?? '';
-  form.assigneeId = row?.assigneeId ?? '__none__';
-  form.projectId = row?.projectId ?? '__none__';
+  form.assigneeId = row?.assigneeId ?? NONE_ID;
+  form.projectId = row?.projectId ?? NONE_ID;
   form.reviewers = row?.reviewers ? [...row.reviewers] : [];
   form.status = row?.status ?? defaultStatusId.value;
   message.value = '';
@@ -131,12 +133,14 @@ async function uploadAttachment(
       const created = await $client.tasks.create({
         title: form.title,
         description: '',
-        assigneeId: form.assigneeId === '__none__' ? null : form.assigneeId,
+        assigneeId: form.assigneeId === NONE_ID ? null : form.assigneeId,
         status: form.status,
-        projectId: form.projectId === '__none__' ? null : form.projectId,
+        projectId: form.projectId === NONE_ID ? null : form.projectId,
       });
       taskId = created.id;
       editingId.value = taskId;
+      // the row exists the moment the attachment uploads — refresh the lists
+      void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
     }
     const fd = new FormData();
     fd.append('file', file);
@@ -156,7 +160,7 @@ async function uploadAttachment(
     return { id: up.id, filename: up.filename, token };
   } catch (e) {
     messageOk.value = false;
-    message.value = (e as { data?: { message?: string }; message?: string }).data?.message ?? (e as Error).message;
+    message.value = errorMessage(e, "Couldn't attach the file — try again");
   } finally {
     busy.value = false;
   }
@@ -195,11 +199,11 @@ const createMutation = useMutation($orpc.tasks.create.mutationOptions());
 const updateMutation = useMutation($orpc.tasks.update.mutationOptions());
 
 const assigneeOptions = computed(() => [
-  { label: 'Unassigned', value: '__none__' },
+  { label: 'Unassigned', value: NONE_ID },
   ...employees.value.map((e) => ({ label: `${e.name}${e.kind === 'ai' ? ' (AI)' : ''}`, value: e.id })),
 ]);
 const projectOptions = computed(() => [
-  { label: 'No project', value: '__none__' },
+  { label: 'No project', value: NONE_ID },
   ...projectRows.value.map((p) => ({ label: p.name, value: p.id })),
 ]);
 const statusOptions = computed(() =>
@@ -215,8 +219,8 @@ async function save() {
       // prefer the live doc's markdown; the string form.description is the
       // fallback (defensive against editor remounts)
       description: (descriptionEditor.value?.getMarkdown() ?? '').trim() || form.description,
-      assigneeId: form.assigneeId === '__none__' ? null : form.assigneeId,
-      projectId: form.projectId === '__none__' ? null : form.projectId,
+      assigneeId: form.assigneeId === NONE_ID ? null : form.assigneeId,
+      projectId: form.projectId === NONE_ID ? null : form.projectId,
       reviewers: form.reviewers,
     };
     if (editingId.value) {
@@ -232,7 +236,7 @@ async function save() {
     emit('saved');
   } catch (e) {
     messageOk.value = false;
-    message.value = e instanceof Error ? e.message : "Couldn't save the task — try again";
+    message.value = errorMessage(e, "Couldn't save the task — try again");
   } finally {
     busy.value = false;
   }

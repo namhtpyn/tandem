@@ -4,8 +4,10 @@
 // renders the shell; editable=false hides mutation UI for a read-only browser.
 import { useQuery, useMutation, keepPreviousData } from '@tanstack/vue-query';
 import { watchDebounced } from '@vueuse/core';
+import { z } from 'zod';
 
 import { CHANGE_RESOURCE, SECRET_USAGE, type SecretUsage } from '#shared/enums';
+import { NONE_ID, errorMessage } from '~/utils/forms';
 import type { EnvironmentRow, VaultSecretRow } from '~/utils/orpc-types';
 import type { SecretOption } from '~/utils/vault-options';
 import { groupedSecretOptions } from '~/utils/vault-options';
@@ -65,18 +67,33 @@ const secretsQuery = useQuery({
 });
 const secrets = computed<VaultSecretRow[]>(() => (unref(secretsQuery.data) ?? []) as VaultSecretRow[]);
 const secretOptions = computed<SecretOption[]>(() => [
-  { label: 'No key (agent default)', value: '__none__' },
+  { label: 'No key (agent default)', value: NONE_ID },
   ...groupedSecretOptions(secrets.value),
 ]);
 
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
+// loose frontend schema (repo law): presence + port shape only — the server
+// re-validates and owns the real SSH contract
+const envSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  host: z.string().min(1, 'Host is required'),
+  port: z.coerce
+    .number()
+    .int('Port must be a whole number between 1 and 65535')
+    .min(1, 'Port must be a whole number between 1 and 65535')
+    .max(65535, 'Port must be a whole number between 1 and 65535'),
+  username: z.string().min(1, 'Username is required'),
+  secretId: z.string(),
+  secretUsage: z.string(),
+});
+
 const form = reactive({
   name: '',
   host: '',
   port: '22',
   username: '',
-  secretId: '__none__',
+  secretId: NONE_ID,
   secretUsage: SECRET_USAGE.SSH_KEY as SecretUsage,
 });
 const busy = ref(false);
@@ -110,25 +127,21 @@ function openEditor(row?: EnvironmentRow) {
   form.host = row?.host ?? '';
   form.port = row?.port ?? '22';
   form.username = row?.username ?? '';
-  form.secretId = row?.secretId ?? '__none__';
+  form.secretId = row?.secretId ?? NONE_ID;
   form.secretUsage = row?.secretUsage ?? SECRET_USAGE.SSH_KEY;
   message.value = '';
   editorOpen.value = true;
 }
 
 async function save() {
-  const port = Number(form.port);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    message.value = 'Port must be a whole number between 1 and 65535.';
-    return;
-  }
+  // UForm's schema gate blocks submit on a bad port — no manual pre-check here
   busy.value = true;
   message.value = '';
   try {
     const payload = {
       ...form,
-      secretId: form.secretId === '__none__' ? null : form.secretId,
-      secretUsage: form.secretId === '__none__' ? SECRET_USAGE.SSH_KEY : form.secretUsage,
+      secretId: form.secretId === NONE_ID ? null : form.secretId,
+      secretUsage: form.secretId === NONE_ID ? SECRET_USAGE.SSH_KEY : form.secretUsage,
     };
     if (editingId.value) {
       await updateMutation.mutateAsync({ id: editingId.value, ...payload });
@@ -137,7 +150,7 @@ async function save() {
     }
     editorOpen.value = false;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'Save failed.';
+    message.value = errorMessage(e, 'Save failed');
   } finally {
     busy.value = false;
   }
@@ -157,7 +170,7 @@ async function remove() {
     pendingDelete.value = null;
   } catch (e) {
     pendingDelete.value = null;
-    message.value = e instanceof Error ? e.message : 'Delete failed.';
+    message.value = errorMessage(e, 'Delete failed');
   } finally {
     busy.value = false;
   }
@@ -170,7 +183,7 @@ async function probe(row: EnvironmentRow) {
     const res = await probeCall({ id: row.id });
     probeResults.value[row.id] = res as { ok: boolean; detail: string; durationMs: number };
   } catch (e) {
-    probeResults.value[row.id] = { ok: false, detail: e instanceof Error ? e.message : 'Probe failed.', durationMs: 0 };
+    probeResults.value[row.id] = { ok: false, detail: errorMessage(e, 'Probe failed'), durationMs: 0 };
   } finally {
     probingId.value = null;
   }
@@ -409,7 +422,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       :title="editingId ? 'Edit environment' : 'New environment'"
     >
       <template #body>
-        <UForm id="environment-editor-form" :state="form" class="space-y-4" @submit="save">
+        <UForm id="environment-editor-form" :schema="envSchema" :state="form" class="space-y-4" @submit="save">
           <UFormField name="name">
             <template #label>
               Name

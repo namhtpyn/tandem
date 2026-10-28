@@ -7,9 +7,11 @@
 import { useMutation, useQuery, keepPreviousData } from '@tanstack/vue-query';
 import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
+import { z } from 'zod';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { formatWhenShort } from '~/utils/format-when';
+import { errorMessage } from '~/utils/forms';
 import type { VaultSecretRow } from '~/utils/orpc-types';
 
 const folderId = defineModel<string | null>('folderId', { default: null });
@@ -91,6 +93,14 @@ const editorOpen = ref(false);
 const isEdit = ref(false);
 const editingId = ref<string | null>(null);
 const form = ref({ name: '', description: '', value: '', folderId: null as string | null });
+// loose frontend schema (repo law) — name presence only; the value-required rule
+// is edit-conditional and stays in save()
+const secretSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  description: z.string(),
+  value: z.string(),
+  folderId: z.string().nullish(),
+});
 const nameError = ref<string | null>(null);
 const valueError = ref<string | null>(null);
 const saveError = ref<string | null>(null);
@@ -154,7 +164,7 @@ async function save() {
     }
     editorOpen.value = false;
   } catch (e) {
-    saveError.value = e instanceof Error ? e.message : 'Save failed';
+    saveError.value = errorMessage(e, 'Save failed');
   } finally {
     busy.value = false;
   }
@@ -172,7 +182,7 @@ async function reallyRemove(row: VaultSecretRow) {
     confirming.value = null;
     emit('deleted', row.id);
   } catch (e) {
-    removeError.value = e instanceof Error ? e.message : 'Delete failed';
+    removeError.value = errorMessage(e, 'Delete failed');
   } finally {
     busy.value = false;
   }
@@ -197,7 +207,7 @@ onServerPrefetch(() => liveQuery.suspense());
       <div class="ms-auto flex items-center gap-2 overflow-x-auto">
         <!-- nothing to filter or manage while the vault is empty — the empty
              state below carries the one 'New secret' CTA -->
-        <VaultFolderSelect v-if="!emptyVault" v-model="folderId" clearable aria-label="Filter by folder" />
+        <VaultFolderSelect v-if="!emptyVault" v-model="folderId" clearable class="w-44" aria-label="Filter by folder" />
         <UButton
           v-if="editable && !emptyVault"
           icon="i-lucide-folder"
@@ -250,7 +260,7 @@ onServerPrefetch(() => liveQuery.suspense());
         <span class="text-dimmed font-mono text-xs">•••• {{ row.original.lastFour }}</span>
       </template>
       <template #updatedAt-cell="{ row }">
-        <span suppressHydration-warning class="text-muted text-xs">{{ formatWhenShort(row.original.updatedAt) }}</span>
+        <span data-allow-mismatch class="text-muted text-xs">{{ formatWhenShort(row.original.updatedAt) }}</span>
       </template>
       <template v-if="editable" #actions-cell="{ row }">
         <div class="row-actions flex justify-end gap-1 transition-opacity">
@@ -336,7 +346,7 @@ onServerPrefetch(() => liveQuery.suspense());
       :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
     >
       <template #body>
-        <div class="space-y-4">
+        <UForm id="vault-secret-form" :schema="secretSchema" :state="form" class="space-y-4" @submit="save">
           <UFormField name="name" :error="nameError ?? undefined">
             <template #label>
               Name
@@ -357,7 +367,7 @@ onServerPrefetch(() => liveQuery.suspense());
               :disabled="busy"
             />
           </UFormField>
-          <UFormField label="Folder" name="folder">
+          <UFormField label="Folder" name="folderId">
             <VaultFolderSelect v-model="form.folderId" creatable clearable size="md" class="w-full" />
           </UFormField>
           <UFormField name="value" :error="valueError ?? undefined">
@@ -393,12 +403,17 @@ onServerPrefetch(() => liveQuery.suspense());
             </div>
           </UFormField>
           <UAlert v-if="saveError" icon="i-lucide-alert-circle" color="error" variant="subtle" :title="saveError" />
-        </div>
+        </UForm>
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
           <UButton variant="ghost" color="neutral" :disabled="busy" @click="editorOpen = false">Cancel</UButton>
-          <UButton :loading="busy" :label="isEdit ? 'Save changes' : 'Create secret'" @click="save" />
+          <UButton
+            type="submit"
+            form="vault-secret-form"
+            :loading="busy"
+            :label="isEdit ? 'Save changes' : 'Create secret'"
+          />
         </div>
       </template>
     </UModal>

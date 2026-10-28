@@ -86,7 +86,7 @@ async function logout() {
   try {
     await $authClient.signOut();
   } catch {
-    toast.add({ title: "Couldn't sign out — try again.", color: 'error' });
+    toast.add({ title: "Couldn't sign out — try again", color: 'error' });
     return;
   }
   await refreshSession();
@@ -120,7 +120,7 @@ const nav = computed(() =>
             <UIcon name="i-lucide-users" class="text-inverted size-6" />
           </div>
           <h1 class="text-highlighted text-2xl font-bold tracking-tight">{{ companyName }}</h1>
-          <p class="text-muted text-sm">Humans and AI employees, one workspace.</p>
+          <p class="text-muted text-sm">Humans and AI employees, one workspace</p>
         </div>
 
         <UCard :ui="{ root: 'shadow-sm' }">

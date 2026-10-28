@@ -62,7 +62,7 @@ onBeforeUnmount(() => {
   >
     <UIcon
       name="i-lucide-info"
-      class="text-dimmed hover:text-muted focus-visible:ring-primary -m-0.5 size-3.5 shrink-0 cursor-help self-center rounded-full p-0.5 focus-visible:ring-2 focus-visible:outline-none"
+      class="text-dimmed hover:text-muted focus-visible:ring-primary -m-2 size-3.5 shrink-0 cursor-help self-center rounded-full p-2 focus-visible:ring-2 focus-visible:outline-none"
       :aria-label="label ?? text"
       role="button"
       tabindex="0"

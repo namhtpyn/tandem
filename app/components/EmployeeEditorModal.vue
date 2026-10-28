@@ -6,10 +6,13 @@
 // `saved` after a successful write.
 import { useMutation, useQuery } from '@tanstack/vue-query';
 import { computed, reactive, ref, watch } from 'vue';
+import { z } from 'zod';
 
 import { PROVIDER_KIND, endpointKind, isModelsEndpoint } from '#shared/api-styles';
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
+import { employeeAvatarUrl } from '~/utils/api-urls';
+import { NONE_ID, errorMessage } from '~/utils/forms';
 import type { EmployeeRow, EnvironmentRow } from '~/utils/orpc-types';
 import { kindLabel } from '~/utils/ui-labels';
 import type { SecretOption } from '~/utils/vault-options';
@@ -30,6 +33,13 @@ const titles = computed(
       ?.titles ?? [],
 );
 
+// frontend form schema (loose, repo law): presence + shape only — the server
+// re-validates strictly. UForm blocks submit and points at the offending field.
+const employeeFormSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  email: z.string().email('Enter a valid email'),
+});
+
 const editingId = ref<string | null>(null);
 const avatarUrl = ref<string | null>(null); // existing avatar (endpoint URL)
 const avatarDirty = ref(false); // true when the user picked a NEW file
@@ -40,10 +50,10 @@ const form = reactive({
   image: null as string | null,
   title: '',
   supervisorIds: [] as string[],
-  environmentId: '__none__' as string,
+  environmentId: NONE_ID as string,
   instructions: '',
   executable: '',
-  providerId: '__none__' as string,
+  providerId: NONE_ID as string,
   model: '',
   apiKeySecretId: null as string | null,
 });
@@ -95,7 +105,7 @@ watch(
   [() => form.providerId, () => form.apiKeySecretId],
   async ([providerId, keySecretId]) => {
     modelItems.value = [];
-    if (providerId === '__none__' || !providerHasModelsEndpoint.value) return;
+    if (providerId === NONE_ID || !providerHasModelsEndpoint.value) return;
     modelLoading.value = true;
     try {
       const res = await $client.providers.models({
@@ -176,17 +186,17 @@ function applyIdentityToForm(row: EmployeeRow | undefined) {
 
 /** AI extension fields seeded from an employee row */
 function applyAiExtensionToForm(row: EmployeeRow | undefined) {
-  form.environmentId = row?.environmentId ?? '__none__';
+  form.environmentId = row?.environmentId ?? NONE_ID;
   form.instructions = row?.instructions ?? '';
   form.executable = row?.executable ?? '';
-  form.providerId = row?.providerId ?? '__none__';
+  form.providerId = row?.providerId ?? NONE_ID;
   form.model = row?.model ?? '';
   form.apiKeySecretId = row?.apiKeySecretId ?? null;
 }
 
 /** existing avatar only enters the form as the preview src; not re-uploaded unless replaced */
 function syncAvatarPreview(row: EmployeeRow | undefined) {
-  avatarUrl.value = row?.hasAvatar ? `/api/employees/${row.id}/avatar` : null;
+  avatarUrl.value = row?.hasAvatar ? employeeAvatarUrl(row.id) : null;
 }
 
 // seeding on open — the page's openEditor body, driven by the controlled props
@@ -217,10 +227,10 @@ function updateInput() {
     ...(avatarDirty.value ? { image: form.image } : {}),
     title: form.title,
     supervisorIds: form.supervisorIds,
-    ...(showAiFields.value ? { environmentId: form.environmentId === '__none__' ? null : form.environmentId } : {}),
+    ...(showAiFields.value ? { environmentId: form.environmentId === NONE_ID ? null : form.environmentId } : {}),
     ...(showAiFields.value ? { instructions: form.instructions } : {}),
     ...(showAiFields.value ? { executable: form.executable.trim() } : {}),
-    ...(showAiFields.value ? { providerId: form.providerId === '__none__' ? null : form.providerId } : {}),
+    ...(showAiFields.value ? { providerId: form.providerId === NONE_ID ? null : form.providerId } : {}),
     ...(showAiFields.value ? { model: form.model || null } : {}),
     ...(showAiFields.value ? { apiKeySecretId: form.apiKeySecretId ?? null } : {}),
   };
@@ -238,10 +248,10 @@ function createInput() {
     ...(form.kind === 'ai'
       ? {
           // create input has no null for environmentId — omit instead of clearing
-          ...(form.environmentId !== '__none__' ? { environmentId: form.environmentId } : {}),
+          ...(form.environmentId !== NONE_ID ? { environmentId: form.environmentId } : {}),
           instructions: form.instructions,
           executable: form.executable.trim(),
-          providerId: form.providerId === '__none__' ? null : form.providerId,
+          providerId: form.providerId === NONE_ID ? null : form.providerId,
           model: form.model || null,
           apiKeySecretId: form.apiKeySecretId ?? null,
         }
@@ -279,7 +289,7 @@ async function save() {
     emit('saved');
     if (!mintedKey.value) open.value = false;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'Save failed.';
+    message.value = errorMessage(e, 'Save failed');
   } finally {
     busy.value = false;
   }
@@ -294,10 +304,12 @@ onServerPrefetch(() =>
   <UModal
     v-model:open="open"
     :title="isEdit ? 'Edit employee' : 'New employee'"
+    :dismissible="!mintedKey"
+    :close="!mintedKey"
     :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
   >
     <template #body>
-      <UForm id="employee-editor-form" :state="form" class="space-y-4" @submit="save">
+      <UForm id="employee-editor-form" :schema="employeeFormSchema" :state="form" class="space-y-4" @submit="save">
         <UFormField name="name">
           <template #label>
             Name
@@ -352,7 +364,7 @@ onServerPrefetch(() =>
                 type="file"
                 accept="image/*"
                 class="sr-only"
-                aria-label="Choose avatar image"
+                aria-label="Choose image"
                 :disabled="busy"
                 @change="onAvatarPicked"
               />
@@ -438,7 +450,7 @@ onServerPrefetch(() =>
             </template>
             <USelectMenu
               v-model="form.environmentId"
-              :items="[{ label: 'No environment', value: '__none__' }, ...environmentItems]"
+              :items="[{ label: 'No environment', value: NONE_ID }, ...environmentItems]"
               value-key="value"
               placeholder="Select an environment"
               class="w-full"
@@ -465,7 +477,7 @@ onServerPrefetch(() =>
             <USelect
               v-model="form.providerId"
               :items="[
-                { label: 'No provider', value: '__none__' },
+                { label: 'No provider', value: NONE_ID },
                 ...modelProviders.map((p) => ({ label: p.label, value: p.id })),
               ]"
               value-key="value"

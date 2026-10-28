@@ -48,7 +48,9 @@ const pagesQuery = useInfiniteQuery(
     $orpc.vault.folders.options.infiniteOptions({
       input: (page: number) => ({ page, pageSize: PAGE_SIZE, q: debouncedSearch.value || undefined }),
       queryKey: [CHANGE_RESOURCE.VAULT, 'folder-options', debouncedSearch.value],
-      enabled: opened.value,
+      // a preselected id must resolve its label on first paint — waiting for
+      // the menu to open renders the raw UUID in the trigger
+      enabled: opened.value || model.value != null,
       initialPageParam: 1,
       getNextPageParam: (lastPage, allPages) => {
         const loaded = allPages.reduce((n, p) => n + p.options.length, 0);
@@ -137,7 +139,6 @@ const selectModel = computed({
     :size="size"
     placeholder="Folder"
     :aria-label="ariaLabel"
-    class="w-44"
     @create="onCreate"
     @update:model-value="onPick"
     @clear="model = null"

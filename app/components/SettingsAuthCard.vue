@@ -7,16 +7,17 @@
 import { useQuery } from '@tanstack/vue-query';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { errorMessage } from '~/utils/forms';
 
 const { $orpc, $client } = useNuxtApp();
 
-interface OidcProviderRow {
+type OidcProviderRow = {
   id: string;
   label: string;
   issuer: string;
   clientId: string;
   secretSet: boolean;
-}
+};
 
 const oidcLive = useQuery($orpc.oidc.list.queryOptions({ queryKey: [CHANGE_RESOURCE.OIDC] }));
 const settingsLive = useQuery($orpc.settings.list.queryOptions({ queryKey: [CHANGE_RESOURCE.SETTINGS] }));
@@ -47,12 +48,16 @@ watch(
 const busy = ref(false);
 const message = ref('');
 const messageOk = ref(false);
+// editor-save errors render INSIDE the open editor modal — the card-level <p>
+// sits behind it and would never be seen
+const editorError = ref('');
 
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
 const form = reactive({ label: '', issuer: '', clientId: '', clientSecret: '' });
 
-const publicOrigin = import.meta.client ? window.location.origin : '';
+// SSR-safe: window.location during setup hydrates a different string on the client
+const publicOrigin = useRequestURL().origin;
 
 const providerColumns = [
   { accessorKey: 'label', header: 'Provider' },
@@ -68,12 +73,15 @@ function openEditor(row?: OidcProviderRow) {
   form.issuer = row?.issuer ?? '';
   form.clientId = row?.clientId ?? '';
   form.clientSecret = '';
+  message.value = '';
+  editorError.value = '';
   editorOpen.value = true;
 }
 
 async function saveProvider() {
   busy.value = true;
   message.value = '';
+  editorError.value = '';
   try {
     const list = providers.value
       .filter((p) => p.id !== editingId.value)
@@ -95,8 +103,8 @@ async function saveProvider() {
     await $client.oidc.replace({ providers: list2 });
     editorOpen.value = false;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'Save failed';
-    messageOk.value = false;
+    // the editor modal stays open — render the failure where the user is
+    editorError.value = errorMessage(e, 'Save failed');
   } finally {
     busy.value = false;
   }
@@ -121,7 +129,10 @@ async function removeProvider() {
     await $client.oidc.replace({ providers: list });
     pendingRemove.value = null;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'Delete failed';
+    // mirror SettingsProvidersCard: close the confirm so the card-level
+    // message renders on the card, not behind the modal
+    pendingRemove.value = null;
+    message.value = errorMessage(e, 'Delete failed');
     messageOk.value = false;
   } finally {
     busy.value = false;
@@ -140,7 +151,7 @@ async function savePasswordPolicy(next: boolean) {
   } catch (e) {
     // nothing refetches after a failed write — put the switch back where it was
     disablePasswordLogin.value = previous;
-    message.value = e instanceof Error ? e.message : 'Save failed';
+    message.value = errorMessage(e, 'Save failed');
     messageOk.value = false;
   } finally {
     busy.value = false;
@@ -155,7 +166,7 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
     <template #header>
       <div class="flex items-center gap-2">
         <UIcon name="i-lucide-key-round" class="text-dimmed size-4" />
-        <h3 class="text-highlighted text-sm font-semibold">Authentication</h3>
+        <h2 class="text-highlighted text-sm font-semibold">Authentication</h2>
       </div>
     </template>
     <div class="space-y-5">
@@ -224,7 +235,7 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
           <p class="text-dimmed mt-2 text-xs">Register each callback URL above with its identity provider.</p>
         </template>
         <div v-else class="border-default rounded-xl border border-dashed p-8 text-center">
-          <p class="text-muted text-sm">No OIDC providers — password login only.</p>
+          <p class="text-muted text-sm">No OIDC providers yet — add one to enable single sign-on.</p>
         </div>
       </div>
 
@@ -285,7 +296,7 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
           <UInput v-model="form.clientId" class="w-full" placeholder="Client ID" />
         </UFormField>
         <UFormField
-          name="secret"
+          name="clientSecret"
           :label="editingId ? 'Client secret (blank = keep stored)' : 'Client secret'"
           :required="!editingId"
         >
@@ -297,6 +308,14 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
             placeholder="Client secret"
           />
         </UFormField>
+        <UAlert
+          v-if="editorError"
+          icon="i-lucide-circle-alert"
+          color="error"
+          variant="subtle"
+          :title="editorError"
+          :ui="{ title: 'text-sm' }"
+        />
       </UForm>
     </template>
     <template #footer>

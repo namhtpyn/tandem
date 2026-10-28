@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/vue-query';
 
 import { PROVIDER_KIND, endpointKind, isModelsEndpoint } from '#shared/api-styles';
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { NONE_ID, errorMessage } from '~/utils/forms';
 import type { SecretOption } from '~/utils/vault-options';
 import { groupedSecretOptions } from '~/utils/vault-options';
 
@@ -104,7 +105,7 @@ async function saveCompanyPrompt() {
     companyPromptMessage.value = 'Saved';
     companyPromptOk.value = true;
   } catch (e) {
-    companyPromptMessage.value = e instanceof Error ? e.message : 'Save failed';
+    companyPromptMessage.value = errorMessage(e, 'Save failed');
   } finally {
     savingCompanyPrompt.value = false;
   }
@@ -131,11 +132,11 @@ const vaultItems = computed<SecretOption[]>(() =>
     (unref(vaultLive.data) ?? []) as Array<{ id: string; name: string; lastFour: string; folder: string | null }>,
   ),
 );
-interface AiAssignmentForm {
+type AiAssignmentForm = {
   providerId: string | undefined;
   model: string;
   keySecretId: string | null;
-}
+};
 const llmForm = reactive<AiAssignmentForm>({ providerId: undefined, model: '', keySecretId: null });
 const decisionForm = reactive<AiAssignmentForm>({ providerId: undefined, model: '', keySecretId: null });
 // one message PER form — a shared ref rendered once could only ever sit below one of them
@@ -146,16 +147,21 @@ const decisionOk = ref(false);
 const llmSaving = ref(false);
 const decisionSaving = ref(false);
 
-const llmProviders = computed(() =>
-  ((unref(providersLive.data) ?? []) as Array<{ id: string; label: string; endpoints?: string[] }>)
+// each picker carries an explicit 'No provider' entry: once a provider is
+// picked the select must still be able to go back to unset (sentinel law)
+const NO_PROVIDER_ITEM = { label: 'No provider', value: NONE_ID };
+const llmProviders = computed(() => [
+  NO_PROVIDER_ITEM,
+  ...((unref(providersLive.data) ?? []) as Array<{ id: string; label: string; endpoints?: string[] }>)
     .filter((p) => (p.endpoints ?? []).some((st) => endpointKind(st) === PROVIDER_KIND.LLM))
     .map((p) => ({ label: p.label, value: p.id })),
-);
-const decisionProviders = computed(() =>
-  ((unref(providersLive.data) ?? []) as Array<{ id: string; label: string; endpoints?: string[] }>)
+]);
+const decisionProviders = computed(() => [
+  NO_PROVIDER_ITEM,
+  ...((unref(providersLive.data) ?? []) as Array<{ id: string; label: string; endpoints?: string[] }>)
     .filter((p) => (p.endpoints ?? []).some((st) => endpointKind(st) === PROVIDER_KIND.DECISION))
     .map((p) => ({ label: p.label, value: p.id })),
-);
+]);
 
 // model autocomplete for the Workspace AI slots: fires only when the chosen
 // provider speaks a /v1/models endpoint; the picked key unlocks the probe
@@ -166,7 +172,7 @@ function aiModelsState(form: AiAssignmentForm) {
     [() => form.providerId, () => form.keySecretId],
     async ([providerId, keySecretId]) => {
       items.value = [];
-      if (!providerId || !keySecretId) return;
+      if (!providerId || providerId === NONE_ID || !keySecretId) return;
       const providers = (unref(providersLive.data) ?? []) as Array<{ id: string; endpoints: string[] }>;
       const p = providers.find((x) => x.id === providerId);
       if (!p || !(p.endpoints ?? []).some((st) => isModelsEndpoint(st))) return;
@@ -196,19 +202,20 @@ async function saveAssignment(kind: 'internalLlm' | 'internalDecision') {
   message.value = '';
   ok.value = false;
   try {
-    if (form.providerId && (!form.keySecretId || !form.model.trim())) {
+    // the explicit 'No provider' entry maps back to unset — without it a picked
+    // assignment could never be cleared again
+    const providerId = form.providerId === NONE_ID ? undefined : form.providerId;
+    if (providerId && (!form.keySecretId || !form.model.trim())) {
       message.value = 'API key and model are required once a provider is picked';
       return;
     }
     const value =
-      form.providerId && form.keySecretId
-        ? { providerId: form.providerId, model: form.model.trim(), keySecretId: form.keySecretId }
-        : null;
+      providerId && form.keySecretId ? { providerId, model: form.model.trim(), keySecretId: form.keySecretId } : null;
     await $client.settings.update({ [kind]: value });
     message.value = 'Saved';
     ok.value = true;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'Save failed';
+    message.value = errorMessage(e, 'Save failed');
   } finally {
     saving.value = false;
   }
@@ -241,7 +248,7 @@ async function saveTasksPerAgent() {
     tasksPerAgentMessage.value = 'Saved';
     tasksPerAgentOk.value = true;
   } catch (e) {
-    tasksPerAgentMessage.value = e instanceof Error ? e.message : 'Save failed';
+    tasksPerAgentMessage.value = errorMessage(e, 'Save failed');
   } finally {
     savingTasksPerAgent.value = false;
   }
@@ -264,7 +271,7 @@ async function saveRunTimeout() {
     runTimeoutMessage.value = 'Saved';
     runTimeoutOk.value = true;
   } catch (e) {
-    runTimeoutMessage.value = e instanceof Error ? e.message : 'Save failed';
+    runTimeoutMessage.value = errorMessage(e, 'Save failed');
   } finally {
     savingRunTimeout.value = false;
   }
@@ -282,7 +289,7 @@ async function saveCompanyName() {
     nameMessage.value = 'Saved';
     nameMessageOk.value = true;
   } catch (e) {
-    nameMessage.value = e instanceof Error ? e.message : 'Save failed';
+    nameMessage.value = errorMessage(e, 'Save failed');
   } finally {
     savingName.value = false;
   }
@@ -296,7 +303,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
     <template #header>
       <div class="flex items-center gap-2">
         <UIcon name="i-lucide-building-2" class="text-dimmed size-4" />
-        <h3 class="text-highlighted text-sm font-semibold">General</h3>
+        <h2 class="text-highlighted text-sm font-semibold">General</h2>
       </div>
     </template>
     <UForm :state="nameState" class="flex flex-wrap items-end gap-3" @submit="saveCompanyName">
@@ -410,7 +417,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
         Picks which employee takes a task. Provider must offer a decision-compatible endpoint.
       </p>
       <UForm :state="decisionForm" class="flex flex-col gap-3" @submit="saveAssignment('internalDecision')">
-        <UFormField label="Provider" name="dProvider">
+        <UFormField label="Provider" name="providerId">
           <USelectMenu
             v-model="decisionForm.providerId"
             :items="decisionProviders"
@@ -421,7 +428,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
             :disabled="decisionSaving"
           />
         </UFormField>
-        <UFormField label="API key (vault)" name="dKey" required>
+        <UFormField label="API key (vault)" name="keySecretId" required>
           <USelectMenu
             v-model="decisionForm.keySecretId"
             :items="vaultItems"
@@ -434,7 +441,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
             :disabled="decisionSaving"
           />
         </UFormField>
-        <UFormField label="Model" name="dModel" required>
+        <UFormField label="Model" name="model" required>
           <UInputMenu
             v-model="decisionForm.model"
             :items="decisionModels.items.value"
@@ -467,7 +474,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
         Used by Tandem's own server-side features. Provider must offer an LLM-compatible endpoint. Not sent to agents.
       </p>
       <UForm :state="llmForm" class="flex flex-col gap-3" @submit="saveAssignment('internalLlm')">
-        <UFormField label="Provider" name="lProvider">
+        <UFormField label="Provider" name="providerId">
           <USelectMenu
             v-model="llmForm.providerId"
             :items="llmProviders"
@@ -478,7 +485,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
             :disabled="llmSaving"
           />
         </UFormField>
-        <UFormField label="API key (vault)" name="lKey" required>
+        <UFormField label="API key (vault)" name="keySecretId" required>
           <USelectMenu
             v-model="llmForm.keySecretId"
             :items="vaultItems"
@@ -491,7 +498,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
             :disabled="llmSaving"
           />
         </UFormField>
-        <UFormField label="Model" name="lModel" required>
+        <UFormField label="Model" name="model" required>
           <UInputMenu
             v-model="llmForm.model"
             :items="llmModels.items.value"

@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 import { computed, onServerPrefetch, ref } from 'vue';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { NONE_ID, errorMessage } from '~/utils/forms';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 
 const props = defineProps<{ task: TaskRow; runLocked?: boolean }>();
@@ -30,13 +31,16 @@ const fieldError = ref('');
 const selectableStatuses = computed(() => [...statusById.value.values()]);
 const statusOptions = computed(() => selectableStatuses.value.map((s) => ({ label: s.name, value: s.id })));
 const assigneeOptions = computed(() => [
-  { label: 'Unassigned', value: '__none__' },
+  { label: 'Unassigned', value: NONE_ID },
   ...employees.value.map((e) => ({ label: e.kind === 'ai' ? `${e.name} (AI)` : e.name, value: e.id })),
 ]);
 const projectOptions = computed(() => [
-  { label: 'No project', value: '__none__' },
+  { label: 'No project', value: NONE_ID },
   ...projects.value.map((p) => ({ label: p.name, value: p.id })),
 ]);
+// script-setup helper for template comparisons — an imported binding used
+// directly inside a template arrow function trips vue-tsc's maybe-ref unwrap
+const isNoneId = (v: string | null | undefined) => v === NONE_ID;
 async function updateField(patch: { status?: string; assigneeId?: string | null; projectId?: string | null }) {
   if (fieldBusy.value) return;
   fieldBusy.value = true;
@@ -49,8 +53,7 @@ async function updateField(patch: { status?: string; assigneeId?: string | null;
     }
     await queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
   } catch (e) {
-    const err = e as { data?: { json?: { message?: string } }; message?: string };
-    fieldError.value = err.data?.json?.message ?? err.message ?? "Couldn't save the change — try again";
+    fieldError.value = errorMessage(e, "Couldn't save the change — try again");
   } finally {
     fieldBusy.value = false;
   }
@@ -83,14 +86,14 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
         <dt class="text-muted text-xs">Assignee</dt>
         <dd class="min-w-0">
           <USelect
-            :model-value="task.assigneeId ?? '__none__'"
+            :model-value="task.assigneeId ?? NONE_ID"
             :items="assigneeOptions"
             value-key="value"
             size="md"
             :disabled="fieldBusy || runLocked"
             aria-label="Task assignee"
             class="w-full"
-            @update:model-value="(v: string) => task && updateField({ assigneeId: v === '__none__' ? null : v })"
+            @update:model-value="(v: string) => task && updateField({ assigneeId: isNoneId(v) ? null : v })"
           />
         </dd>
       </div>
@@ -111,14 +114,14 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
         <dt class="text-muted text-xs">Project</dt>
         <dd class="min-w-0">
           <USelect
-            :model-value="task.projectId ?? '__none__'"
+            :model-value="task.projectId ?? NONE_ID"
             :items="projectOptions"
             value-key="value"
             size="md"
             :disabled="fieldBusy"
             aria-label="Task project"
             class="w-full"
-            @update:model-value="(v: string) => task && updateField({ projectId: v === '__none__' ? null : v })"
+            @update:model-value="(v: string) => task && updateField({ projectId: isNoneId(v) ? null : v })"
           />
         </dd>
       </div>

@@ -16,7 +16,9 @@ const reviewsQuery = useQuery(
   computed(() =>
     $orpc.tasks.reviews.queryOptions({
       input: { taskId: props.taskId },
-      queryKey: ['taskReviews', props.taskId],
+      // suffix on the TASK_ACTIVITY prefix: the SSE subscription invalidates the
+      // prefix, and each surface keeps its own cache slot
+      queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, props.taskId, 'reviews'],
     }),
   ),
 );
@@ -59,7 +61,9 @@ onServerPrefetch(() => Promise.all([reviewsQuery.suspense(), employeesLive.suspe
       <USkeleton class="h-6 w-3/4 rounded" />
     </div>
     <p v-else-if="reviewsQuery.isError.value" role="alert" class="text-error text-xs">Couldn't load reviews</p>
-    <p v-else-if="!reviewChecklist.current.length" class="text-dimmed text-xs">No reviews yet</p>
+    <p v-else-if="!reviewChecklist.current.length" class="text-dimmed text-xs">
+      No reviews yet — verdicts appear here as reviewers weigh in.
+    </p>
     <ul v-else class="space-y-1 text-sm">
       <li v-for="r in reviewChecklist.current" :key="r.reviewerId" class="flex items-start gap-1.5">
         <UIcon

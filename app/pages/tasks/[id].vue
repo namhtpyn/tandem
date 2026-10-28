@@ -10,6 +10,7 @@ import { CHANGE_RESOURCE } from '#shared/enums';
 // (TaskActivityThread, TaskDetailsFields, TaskReviewPanel, TaskRoutingPanels,
 // TaskWorkflowActions) that share query keys with the app-wide SSE subscription.
 import { nonNull } from '#shared/utils/non-null';
+import { errorMessage } from '~/utils/forms';
 import type { TaskRow, TaskStatusRow } from '~/utils/orpc-types';
 import { categoryColor, composerPlaceholder } from '~/utils/ui-labels';
 
@@ -93,12 +94,12 @@ async function wfAction(action: WorkflowAction, extra: { body?: string; toEmploy
     // of the SSE round-trip — no double-submit window when the verb moves status
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, task.value.id] });
-    void queryClient.invalidateQueries({ queryKey: ['taskReviews', task.value.id] });
+    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, task.value.id, 'reviews'] });
     workflowMessage.value = WF_COPY[action].ok;
     workflowOk.value = true;
   } catch (e) {
-    const err = e as { data?: { json?: { message?: string }; message?: string }; message?: string };
-    workflowMessage.value = err.data?.json?.message ?? err.data?.message ?? err.message ?? WF_COPY[action].fail;
+    // surface the server's oRPC message, not ofetch's generic '[POST] …: 400'
+    workflowMessage.value = errorMessage(e, WF_COPY[action].fail);
     workflowOk.value = false;
   } finally {
     workflowBusy.value = false;
@@ -142,6 +143,8 @@ const queryClient = useQueryClient();
 // the list page warms a different query key — on client nav this query is
 // pending, and the not-found copy must NOT flash while it resolves
 const tasksPending = computed(() => tasksLive.isPending.value);
+// a settled query error is NOT 'task not found' — say so and offer a retry
+const tasksError = computed(() => tasksLive.isError.value);
 
 // bare title — app.vue's titleTemplate appends '- Tandem'; extra separators render 'X · Tandem - Tandem'
 useHead({ title: () => (task.value ? task.value.title : 'Task') });
@@ -164,6 +167,11 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
             </div>
           </div>
           <USkeleton class="h-72 w-full rounded-2xl" />
+        </div>
+
+        <div v-else-if="tasksError" role="alert" class="flex flex-col items-center gap-3 py-16 text-center">
+          <p class="text-error text-sm">Couldn't load the task — try again</p>
+          <UButton size="sm" variant="soft" icon="i-lucide-refresh-cw" label="Retry" @click="tasksLive.refetch()" />
         </div>
 
         <div v-else-if="!task" class="text-dimmed py-16 text-center text-sm">
@@ -201,9 +209,16 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                   >
                     <UIcon name="i-lucide-corner-left-up" class="size-3" /> Part of: {{ parentTask.title }}
                   </NuxtLink>
-                  <span v-if="task.assigneeName"
-                    >{{ task.assigneeName
-                    }}<span v-if="task.assigneeKind === 'ai'" class="text-primary">(AI)</span></span
+                  <!-- assignee lives HERE as the header badge (one display per
+                       surface: Details owns the editable select, Assignment
+                       history owns the trail — a third plain-text line read as a bug) -->
+                  <UBadge
+                    v-if="task.assigneeName"
+                    :color="task.assigneeKind === 'ai' ? 'primary' : 'neutral'"
+                    variant="subtle"
+                    size="sm"
+                    :icon="task.assigneeKind === 'ai' ? 'i-lucide-bot' : 'i-lucide-user-round'"
+                    >{{ task.assigneeName }}</UBadge
                   >
                 </div>
               </div>
@@ -243,6 +258,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                   :maxrows="6"
                   variant="none"
                   :placeholder="composerPlaceholder(taskStatusCategory === 'waiting_answer')"
+                  aria-label="Task note"
                   class="w-full"
                   :ui="{ base: 'px-1 py-1 text-sm placeholder:text-dimmed' }"
                 />

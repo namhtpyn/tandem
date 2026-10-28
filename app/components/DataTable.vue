@@ -122,6 +122,8 @@ defineSlots<
     toolbar?: () => VNode[];
     /** built-in empty state CTA — no cell props */
     'empty-cta'?: () => VNode[];
+    /** retry affordance rendered under the error copy (wire to the list query's refetch) */
+    'error-cta'?: () => VNode[];
   }
 >();
 
@@ -255,6 +257,9 @@ function cellValue(row: T, col: TableColumn<T>) {
               : emptyText || 'Use the button above to create one.'
         }}
       </p>
+      <template v-if="error">
+        <slot name="error-cta" />
+      </template>
       <slot name="empty-cta" />
     </div>
 
