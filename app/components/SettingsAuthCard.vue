@@ -56,14 +56,23 @@ const editorError = ref('');
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
 const form = reactive({ label: '', issuer: '', clientId: '', clientSecret: '' });
-// loose frontend schema (repo law): presence only — the stored secret is kept
-// when the field is left blank on an edit, so clientSecret stays optional
-const oidcSchema = z.object({
-  label: z.string().trim().min(1, 'Name is required'),
-  issuer: z.string().trim().min(1, 'Issuer URL is required'),
-  clientId: z.string().trim().min(1, 'Client ID is required'),
-  clientSecret: z.string(),
-});
+// loose frontend schema (repo law): presence only. The stored secret is kept
+// when the field is left blank on an EDIT, but a NEW provider cannot sign in
+// without one — create-mode requires it (computed: editingId flips the rule).
+const oidcSchema = computed(() =>
+  z
+    .object({
+      label: z.string().trim().min(1, 'Name is required'),
+      issuer: z.string().trim().min(1, 'Issuer URL is required'),
+      clientId: z.string().trim().min(1, 'Client ID is required'),
+      clientSecret: z.string(),
+    })
+    .superRefine((v, ctx) => {
+      if (!editingId.value && !v.clientSecret.trim()) {
+        ctx.addIssue({ code: 'custom', path: ['clientSecret'], message: 'Client secret is required' });
+      }
+    }),
+);
 
 // SSR-safe: window.location during setup hydrates a different string on the client
 const publicOrigin = useRequestURL().origin;
@@ -208,7 +217,7 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
                 <p class="text-dimmed truncate font-mono text-xs">ID {{ p.clientId }}</p>
                 <p class="text-muted mt-1 font-mono text-xs break-all">{{ publicOrigin }}/auth/callback/{{ p.id }}</p>
               </div>
-              <div class="mt-3 flex justify-end gap-1">
+              <div class="row-actions mt-3 flex justify-end gap-1 transition-opacity">
                 <UPopover mode="hover" enable-touch>
                   <UButton
                     icon="i-lucide-pencil"
@@ -258,7 +267,7 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
                 >
               </template>
               <template #actions-cell="{ row }">
-                <div class="flex justify-end gap-2">
+                <div class="row-actions flex justify-end gap-2 transition-opacity">
                   <UPopover mode="hover" enable-touch>
                     <UButton
                       icon="i-lucide-pencil"
@@ -427,3 +436,12 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
     </template>
   </UModal>
 </template>
+
+<style scoped>
+/* desktop hover-reveal for row actions — always visible on touch/mobile */
+@media (min-width: 768px) and (hover: hover) {
+  :deep(tbody tr:not(:hover):not(:focus-within)) .row-actions {
+    opacity: 0;
+  }
+}
+</style>

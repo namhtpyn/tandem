@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { CHANGE_RESOURCE, PROJECT_STATUS, type ProjectStatus } from '#shared/enums';
 import { NONE_ID, saveFailed } from '~/utils/forms';
 import type { ProjectRow } from '~/utils/orpc-types';
+import { TABLE_PAGE_SIZE } from '~/utils/pagination';
 import { humanizeEnum } from '~/utils/ui-labels';
 
 const { $orpc, $client } = useNuxtApp();
@@ -204,6 +205,14 @@ const STATUS_LABELS: Record<string, string> = {
 };
 const statusLabel = (s: string) => STATUS_LABELS[s] ?? humanizeEnum(s);
 
+// hoisted: an inline array literal re-created per render defeats the table's
+// column memoization
+const columns = [
+  { accessorKey: 'name', header: 'Project' },
+  { accessorKey: 'status', header: 'Status' },
+  { id: 'actions', header: 'Actions', meta: { class: { th: 'sr-only' } } },
+];
+
 // the search box is pointless over an empty, unfiltered list — hide it there
 const isFiltered = computed(() => !!searchDebounced.value);
 
@@ -234,15 +243,16 @@ onServerPrefetch(() => liveQuery.suspense());
       class="mt-3"
       :data="flat"
       :loading="liveQuery.isPending.value"
+      :refreshing="liveQuery.isFetching.value"
       :error="liveQuery.isError.value"
-      :columns="[
-        { accessorKey: 'name', header: 'Project' },
-        { accessorKey: 'status', header: 'Status' },
-        { id: 'actions', header: 'Actions', meta: { class: { th: 'sr-only' } } },
-      ]"
+      @retry="liveQuery.refetch()"
+      :columns="columns"
+      :page-size="TABLE_PAGE_SIZE"
+      :reset-page-key="searchDebounced"
       show-empty-state
       :empty-icon="isFiltered ? 'i-lucide-search-x' : 'i-lucide-folder-tree'"
-      :empty-text="isFiltered ? 'No results — try a different search.' : 'No projects yet — create your first one.'"
+      empty-noun="projects"
+      :empty-text="isFiltered ? 'No results — try a different search.' : 'Create your first one.'"
     >
       <template #empty-cta>
         <UButton v-if="!isFiltered" icon="i-lucide-plus" label="New project" @click="openEditor()" />

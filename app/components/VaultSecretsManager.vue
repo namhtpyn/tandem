@@ -13,6 +13,7 @@ import { CHANGE_RESOURCE } from '#shared/enums';
 import { formatWhenShort } from '~/utils/format-when';
 import { saveFailed } from '~/utils/forms';
 import type { VaultSecretRow } from '~/utils/orpc-types';
+import { TABLE_PAGE_SIZE } from '~/utils/pagination';
 
 const folderId = defineModel<string | null>('folderId', { default: null });
 const emit = defineEmits<{ deleted: [id: string]; manageFolders: [] }>();
@@ -21,7 +22,7 @@ const { editable = true } = defineProps<{ editable?: boolean }>();
 const { $orpc } = useNuxtApp();
 
 const page = ref(1);
-const pageSize = ref(20);
+const pageSize = ref(TABLE_PAGE_SIZE);
 const search = ref('');
 const searchDebounced = ref('');
 watchDebounced(
@@ -75,13 +76,14 @@ const emptyVault = computed(
 
 // the search box is pointless over an empty, unfiltered list — hide it there
 const showSearch = computed(() => total.value > 0 || !!search.value);
-const isFiltered = computed(() => !!searchDebounced.value);
+// a folder filter is a filter: empty copy must say 'nothing in this folder',
+// not 'no secrets yet' (which reads as an empty vault)
+const isFiltered = computed(() => !!searchDebounced.value || !!folderId.value);
 
-// deleting the last row of a high page clamps back into range — but only on a REAL
-// total: while a page switch is in flight data is undefined (total 0) and clamping
-// here would snap the page back to 1 before the fetch lands (the pagination bug)
+// keepPreviousData guarantees a real total while a page switch is in flight, so
+// clamping unconditionally is safe — deleting the last row of the last page
+// snaps back into range instead of stranding the reader on an empty page
 watch(total, (t) => {
-  if (!t) return;
   const maxPage = Math.max(1, Math.ceil(t / pageSize.value));
   if (page.value > maxPage) page.value = maxPage;
 });
@@ -105,8 +107,9 @@ const valueError = ref<string | null>(null);
 const saveError = ref<string | null>(null);
 const showValue = ref(false);
 
-const confirming = ref<string | null>(null);
-const confirmingRow = computed(() => rows.value.find((r) => r.id === confirming.value) ?? null);
+// snapshot at ask-time: resolving the row live from `rows` breaks the confirm
+// copy (and the delete target) the moment the row leaves the current page
+const confirmingRow = ref<{ id: string; name: string } | null>(null);
 
 const createMutation = useMutation({ ...$orpc.vault.secrets.create.mutationOptions() });
 const updateMutation = useMutation({ ...$orpc.vault.secrets.update.mutationOptions() });
@@ -174,16 +177,18 @@ async function save() {
 
 function askRemove(row: VaultSecretRow) {
   removeError.value = null;
-  confirming.value = row.id;
+  confirmingRow.value = { id: row.id, name: row.name };
 }
 
-async function reallyRemove(row: VaultSecretRow) {
+async function reallyRemove() {
+  if (!confirmingRow.value) return;
+  const target = confirmingRow.value;
   removeError.value = null;
   busy.value = true;
   try {
-    await removeMutation.mutateAsync({ id: row.id });
-    confirming.value = null;
-    emit('deleted', row.id);
+    await removeMutation.mutateAsync({ id: target.id });
+    confirmingRow.value = null;
+    emit('deleted', target.id);
   } catch (e) {
     removeError.value = saveFailed(e, 'secret', 'delete');
   } finally {
@@ -235,6 +240,7 @@ onServerPrefetch(() => liveQuery.suspense());
       :data="rows"
       :loading="liveQuery.isFetching.value || liveQuery.isPlaceholderData.value"
       :error="liveQuery.isError.value"
+      @retry="liveQuery.refetch()"
       v-model:page="page"
       :page-count="pageCount"
       :page-size="pageSize"
@@ -247,10 +253,13 @@ onServerPrefetch(() => liveQuery.suspense());
       ]"
       show-empty-state
       :empty-icon="isFiltered ? 'i-lucide-search-x' : 'i-lucide-shield'"
+      :empty-noun="folderId && !searchDebounced ? undefined : 'secrets'"
       :empty-text="
-        isFiltered
+        searchDebounced
           ? 'No results — try a different search.'
-          : 'No secrets yet — store SSH keys and API tokens, encrypted and write-only.'
+          : folderId
+            ? 'This folder is empty — add a secret here or move one in.'
+            : 'Store SSH keys and API tokens, encrypted and write-only.'
       "
     >
       <template #empty-cta>
@@ -273,12 +282,12 @@ onServerPrefetch(() => liveQuery.suspense());
               variant="ghost"
               color="neutral"
               size="sm"
-              :aria-label="`Replace ${row.original.name}`"
+              :aria-label="`Edit ${row.original.name}`"
               :disabled="busy"
               @click="openEditor(row.original)"
             />
             <template #content>
-              <div class="px-3 py-1.5 text-xs">Replace secret</div>
+              <div class="px-3 py-1.5 text-xs">Edit secret</div>
             </template>
           </UPopover>
           <UPopover mode="hover" enable-touch>
@@ -314,12 +323,12 @@ onServerPrefetch(() => liveQuery.suspense());
                 variant="ghost"
                 color="neutral"
                 size="sm"
-                :aria-label="`Replace ${row.name}`"
+                :aria-label="`Edit ${row.name}`"
                 :disabled="busy"
                 @click="openEditor(row)"
               />
               <template #content>
-                <div class="px-3 py-1.5 text-xs">Replace secret</div>
+                <div class="px-3 py-1.5 text-xs">Edit secret</div>
               </template>
             </UPopover>
             <UPopover mode="hover" enable-touch>
@@ -345,7 +354,7 @@ onServerPrefetch(() => liveQuery.suspense());
     <!-- editor: create / replace -->
     <UModal
       v-model:open="editorOpen"
-      :title="isEdit ? 'Replace secret' : 'New secret'"
+      :title="isEdit ? 'Edit secret' : 'New secret'"
       :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
     >
       <template #body>
@@ -373,10 +382,12 @@ onServerPrefetch(() => liveQuery.suspense());
           <UFormField label="Folder" name="folderId">
             <VaultFolderSelect v-model="form.folderId" creatable clearable size="md" class="w-full" />
           </UFormField>
-          <UFormField name="value">
+          <UFormField name="value" :error="valueError ?? undefined">
             <template #label> Value </template>
             <template #hint>
-              <FormHint :text="isEdit ? 'Replaces the stored value' : 'Encrypted, never shown again'" />
+              <FormHint
+                :text="isEdit ? 'Stored value is kept unless you enter a new one' : 'Encrypted, never shown again'"
+              />
             </template>
             <div class="relative w-full">
               <UTextarea
@@ -430,18 +441,19 @@ onServerPrefetch(() => liveQuery.suspense());
 
     <!-- delete confirm -->
     <UModal
-      :open="confirming !== null"
+      :open="confirmingRow !== null"
       title="Delete secret"
       @update:open="
         (o: boolean) => {
-          if (!o) confirming = null;
+          if (!o) confirmingRow = null;
         }
       "
     >
       <template #body>
         <p class="text-muted text-sm">
           Delete <span class="text-highlighted font-medium">{{ confirmingRow?.name }}</span
-          >? Anything using it (e.g. the SSH runner) will stop working. This cannot be undone.
+          >? Environments linked to this secret lose SSH access and their agent runs fail until a new key is attached.
+          This cannot be undone.
         </p>
         <UAlert
           v-if="removeError"
@@ -456,14 +468,8 @@ onServerPrefetch(() => liveQuery.suspense());
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
-          <UButton variant="ghost" color="neutral" @click="confirming = null">Cancel</UButton>
-          <UButton
-            color="error"
-            icon="i-lucide-trash-2"
-            :loading="busy"
-            @click="confirmingRow && reallyRemove(confirmingRow)"
-            >Delete</UButton
-          >
+          <UButton variant="ghost" color="neutral" @click="confirmingRow = null">Cancel</UButton>
+          <UButton color="error" icon="i-lucide-trash-2" :loading="busy" @click="reallyRemove()">Delete</UButton>
         </div>
       </template>
     </UModal>

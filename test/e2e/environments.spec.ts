@@ -1,7 +1,6 @@
-import { expect, test } from '@playwright/test';
-
 import { RUN_STATUS } from '#shared/enums';
 
+import { expect, test } from './helpers/cleanup.ts';
 import { BasePage } from './pages/base.page.ts';
 import { waitForHydration } from './pages/base.page.ts';
 import { VaultPage } from './pages/vault.page.ts';

@@ -26,7 +26,7 @@ function backToOverview() {
 <template>
   <UApp>
     <div class="bg-default flex min-h-screen flex-col items-center justify-center p-6 text-center">
-      <div class="bg-primary/10 flex size-14 items-center justify-center rounded-2xl shadow-sm">
+      <div class="bg-primary/10 flex size-14 items-center justify-center rounded-xl shadow-sm">
         <UIcon
           :name="statusCode === 404 ? 'i-lucide-file-question' : 'i-lucide-triangle-alert'"
           class="text-primary size-7"

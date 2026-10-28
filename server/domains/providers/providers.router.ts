@@ -48,12 +48,21 @@ export const providersRouter = os.router({
     .handler(async ({ input }) => {
       const id = input.id?.trim() || uuidv7();
       const now = new Date();
+      // extraHeaders: undefined = keep stored (the client omits the field when
+      // the textarea wasn't edited — a non-admin never receives the values, so
+      // echoing '' back would silently wipe router credentials), {} = clear.
+      const extraHeaders =
+        input.extraHeaders === undefined
+          ? undefined
+          : Object.keys(input.extraHeaders).length === 0
+            ? null
+            : JSON.stringify(input.extraHeaders);
       const values = {
         id,
         label: input.label,
         baseUrl: input.baseUrl,
         endpoints: input.endpoints,
-        extraHeaders: input.extraHeaders ? JSON.stringify(input.extraHeaders) : null,
+        extraHeaders: extraHeaders ?? null,
         notes: input.notes ?? null,
         updatedAt: now,
       };
@@ -66,7 +75,7 @@ export const providersRouter = os.router({
             label: values.label,
             baseUrl: values.baseUrl,
             endpoints: values.endpoints,
-            extraHeaders: values.extraHeaders,
+            ...(extraHeaders === undefined ? {} : { extraHeaders }),
             notes: values.notes,
             updatedAt: now,
           },

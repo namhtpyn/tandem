@@ -10,6 +10,8 @@ import { z } from 'zod';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { saveFailed } from '~/utils/forms';
+import type { FolderRow } from '~/utils/orpc-types';
+import { TABLE_PAGE_SIZE } from '~/utils/pagination';
 
 const open = defineModel<boolean>('open', { default: false });
 const emit = defineEmits<{ deleted: [id: string] }>();
@@ -19,7 +21,7 @@ const { editable = true } = defineProps<{ editable?: boolean }>();
 
 const { $orpc } = useNuxtApp();
 
-const pageSize = ref(10);
+const pageSize = ref(TABLE_PAGE_SIZE);
 const page = ref(1);
 const search = ref('');
 const debouncedSearch = ref('');
@@ -44,10 +46,13 @@ const foldersQuery = useQuery(
     }),
   ),
 );
-const folders = computed(
-  () => (foldersQuery.data.value?.folders ?? []) as Array<{ id: string; name: string; secrets: number }>,
-);
+const folders = computed<FolderRow[]>(() => foldersQuery.data.value?.folders ?? []);
 const total = computed(() => foldersQuery.data.value?.total ?? 0);
+const columns = [
+  { accessorKey: 'name', header: 'Folder' },
+  { accessorKey: 'secrets', header: 'Secrets' },
+  { id: 'actions', header: 'Actions', meta: { class: { th: 'sr-only' } } },
+];
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 
 // a delete or a narrowed search can shrink the total below the current page
@@ -63,8 +68,9 @@ const folderSchema = z.object({ name: z.string().min(1, 'Name is required') });
 const busy = ref(false);
 const error = ref<string | null>(null);
 const removeError = ref<string | null>(null);
-const confirmId = ref<string | null>(null);
-const confirming = computed(() => folders.value.find((f) => f.id === confirmId.value) ?? null);
+// snapshot at ask-time: the row can leave the current page between the click
+// and the confirm, and a live lookup would blank the name / delete target
+const confirming = ref<{ id: string; name: string } | null>(null);
 
 const saveMutation = useMutation({ ...$orpc.vault.folders.save.mutationOptions() });
 const removeMutation = useMutation({ ...$orpc.vault.folders.remove.mutationOptions() });
@@ -98,18 +104,20 @@ async function saveFolder() {
   }
 }
 
-function askRemove(id: string) {
+function askRemove(row: FolderRow) {
   removeError.value = null;
-  confirmId.value = id;
+  confirming.value = { id: row.id, name: row.name };
 }
 
-async function removeFolder(id: string) {
+async function removeFolder() {
+  if (!confirming.value) return;
+  const target = confirming.value;
   removeError.value = null;
   busy.value = true;
   try {
-    await removeMutation.mutateAsync({ id });
-    confirmId.value = null;
-    emit('deleted', id);
+    await removeMutation.mutateAsync({ id: target.id });
+    confirming.value = null;
+    emit('deleted', target.id);
   } catch (e) {
     removeError.value = saveFailed(e, 'folder', 'delete');
   } finally {
@@ -132,15 +140,12 @@ async function removeFolder(id: string) {
           searchable
           search-placeholder="Search folders…"
           :data="folders"
-          :loading="foldersQuery.isPending.value"
+          :loading="foldersQuery.isFetching.value || foldersQuery.isPlaceholderData.value"
           :error="foldersQuery.isError.value"
+          @retry="foldersQuery.refetch()"
           :page-count="pageCount"
           :page-size="pageSize"
-          :columns="[
-            { accessorKey: 'name', header: 'Folder' },
-            { accessorKey: 'secrets', header: 'Secrets' },
-            { id: 'actions', header: 'Actions', meta: { class: { th: 'sr-only' } } },
-          ]"
+          :columns="columns"
           mobile-title-key="name"
           show-empty-state
           empty-icon="i-lucide-folder"
@@ -178,7 +183,7 @@ async function removeFolder(id: string) {
                   class="text-muted hover:text-error"
                   :aria-label="`Delete ${row.original.name}`"
                   :disabled="busy"
-                  @click="askRemove(row.original.id)"
+                  @click="askRemove(row.original)"
                 />
                 <template #content><div class="px-3 py-1.5 text-xs">Delete</div></template>
               </UPopover>
@@ -207,7 +212,7 @@ async function removeFolder(id: string) {
                     class="text-muted hover:text-error"
                     :aria-label="`Delete ${row.name}`"
                     :disabled="busy"
-                    @click="askRemove(row.id)"
+                    @click="askRemove(row)"
                   />
                 </template>
               </div>
@@ -264,10 +269,10 @@ async function removeFolder(id: string) {
 
     <!-- folder delete confirm: secrets survive -->
     <UModal
-      :open="confirmId !== null"
+      :open="confirming !== null"
       @update:open="
         (v: boolean) => {
-          if (!v) confirmId = null;
+          if (!v) confirming = null;
         }
       "
       title="Delete folder"
@@ -290,14 +295,8 @@ async function removeFolder(id: string) {
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
-          <UButton variant="ghost" color="neutral" @click="confirmId = null">Cancel</UButton>
-          <UButton
-            color="error"
-            icon="i-lucide-trash-2"
-            :loading="busy"
-            @click="confirming && removeFolder(confirming.id)"
-            >Delete</UButton
-          >
+          <UButton variant="ghost" color="neutral" @click="confirming = null">Cancel</UButton>
+          <UButton color="error" icon="i-lucide-trash-2" :loading="busy" @click="removeFolder()">Delete</UButton>
         </div>
       </template>
     </UModal>

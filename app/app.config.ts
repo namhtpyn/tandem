@@ -4,17 +4,30 @@ export default defineAppConfig({
       primary: 'amber',
       neutral: 'zinc',
     },
-    // overlay scrim (verified against .nuxt/ui/{modal,slideover,drawer}.ts): the
-    // library default bg-elevated/75 is a light veil — saturated amber CTAs in
-    // the shell burn straight through it. Drop to the page bg + a slight blur
-    // so background UI recedes while the open overlay owns the screen.
+    // solid primary rides amber-500 (light) / amber-400 (dark); the library's
+    // white-on-primary label is 2.15:1 in light mode. Force the dark label in
+    // BOTH modes — palette hue stays amber, only the foreground token moves.
+    // tv merges this after the theme's own compound variant, so text-neutral-900
+    // wins over text-inverted.
+    button: {
+      compoundVariants: [
+        {
+          color: 'primary',
+          variant: 'solid',
+          class: 'text-neutral-900 hover:bg-primary/90 active:bg-primary/90',
+        },
+      ],
+    },
+    // overlay scrim: the library default bg-elevated/75 is a light veil and
+    // bg-default/75 equals the panel token — neither separates an open overlay
+    // from the page. --ui-overlay (main.css) is a true dim in both modes.
     // modal carries the scrim in an `overlay` boolean variant; slideover/drawer
     // bake it into the slot string, so those override the slot directly.
     modal: {
       variants: {
         overlay: {
           true: {
-            overlay: 'bg-default/75 backdrop-blur-sm',
+            overlay: 'bg-(--ui-overlay) backdrop-blur-sm',
           },
         },
         // modals: mobile keeps the edge-to-edge card (w-[calc(100vw-2rem)]); desktop
@@ -29,12 +42,12 @@ export default defineAppConfig({
     },
     slideover: {
       slots: {
-        overlay: 'fixed inset-0 bg-default/75 backdrop-blur-sm',
+        overlay: 'fixed inset-0 bg-(--ui-overlay) backdrop-blur-sm',
       },
     },
     drawer: {
       slots: {
-        overlay: 'fixed inset-0 bg-default/75 backdrop-blur-sm',
+        overlay: 'fixed inset-0 bg-(--ui-overlay) backdrop-blur-sm',
       },
     },
   },

@@ -59,7 +59,7 @@ function reload() {
     <NuxtRouteAnnouncer />
     <a
       href="#main"
-      class="focus:bg-primary focus:text-inverted sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:rounded-md focus:px-3 focus:py-2"
+      class="focus:bg-inverted focus:text-inverted sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:rounded-md focus:px-3 focus:py-2"
     >
       Skip to main content
     </a>

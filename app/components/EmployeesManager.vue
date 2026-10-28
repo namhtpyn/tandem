@@ -11,11 +11,12 @@ import { CHANGE_RESOURCE } from '#shared/enums';
 import { employeeAvatarUrl } from '~/utils/api-urls';
 import { saveFailed } from '~/utils/forms';
 import type { EmployeeRow, EnvironmentRow } from '~/utils/orpc-types';
+import { TABLE_PAGE_SIZE } from '~/utils/pagination';
 
 const { $orpc } = useNuxtApp();
 
 const page = ref(1);
-const pageSize = ref(20);
+const pageSize = ref(TABLE_PAGE_SIZE);
 const search = ref('');
 const searchDebounced = ref('');
 watchDebounced(
@@ -191,15 +192,15 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
       :data="rows"
       :loading="listQuery.isFetching.value || listQuery.isPlaceholderData.value"
       :error="listQuery.isError.value"
+      @retry="listQuery.refetch()"
       v-model:page="page"
       :page-count="pageCount"
       :page-size="pageSize"
       :columns="columns"
       show-empty-state
       :empty-icon="isFiltered ? 'i-lucide-search-x' : 'i-lucide-users'"
-      :empty-text="
-        isFiltered ? 'No results — try a different search.' : 'No employees yet — add the first human or AI teammate.'
-      "
+      empty-noun="employees"
+      :empty-text="isFiltered ? 'No results — try a different search.' : 'Add the first human or AI teammate.'"
     >
       <template #empty-cta>
         <UButton v-if="!isFiltered" icon="i-lucide-plus" label="New employee" @click="openEditor()" />

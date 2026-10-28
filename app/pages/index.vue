@@ -64,26 +64,31 @@ const cards = computed(() => [
       </UDashboardNavbar>
       <!-- top-aligned: content sits under the navbar and the empty space falls
            BELOW the cards — vertical centering left a dead void above them -->
-      <div class="flex min-h-full flex-1 flex-col gap-8 p-6 pt-8 lg:p-8">
-        <p class="text-muted text-sm">Humans and AI employees, one workspace</p>
+      <div class="flex min-h-full flex-1 flex-col space-y-6 p-6 lg:p-8">
+        <p class="text-muted hidden text-sm sm:block">Humans and AI employees, one workspace</p>
 
         <!-- one row saying one thing: link + live count per area. The chevron is
              the single affordance — no 'Open →' copy, no hover-translate motion.
              Cards stack below sm; the count + label pair wraps inside a card. -->
         <div class="grid gap-4 sm:grid-cols-3">
-          <NuxtLink v-for="card in cards" :key="card.to" :to="card.to" class="group block rounded-xl">
+          <NuxtLink
+            v-for="card in cards"
+            :key="card.to"
+            :to="card.to"
+            class="group focus-visible:ring-primary block rounded-xl outline-none focus-visible:ring-2"
+          >
             <!-- cards use ring (not border) per the UCard theme, so the hover
-                 affordance lights the ring + raises the bg; focus gets the same
-                 treatment (keyboard parity) -->
+                 affordance lights the ring + raises the bg; the keyboard focus
+                 ring lives on the NuxtLink (the actual focus target) -->
             <UCard
               :ui="{
-                root: 'shadow-sm h-full transition-colors hover:bg-elevated hover:ring-accented focus-visible:outline-none group-focus-visible:ring-primary group-focus-visible:bg-elevated',
+                root: 'shadow-sm h-full transition-colors hover:bg-elevated hover:ring-accented group-focus-visible:bg-elevated',
                 body: 'p-4 sm:p-4',
               }"
             >
               <div class="flex h-full flex-col gap-3">
                 <div class="flex items-center justify-between gap-2">
-                  <div class="bg-primary/10 flex size-9 shrink-0 items-center justify-center rounded-lg">
+                  <div class="bg-primary/10 flex size-9 shrink-0 items-center justify-center rounded-xl">
                     <UIcon :name="card.icon" class="text-primary size-5" />
                   </div>
                   <UIcon

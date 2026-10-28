@@ -27,6 +27,10 @@ const props = withDefaults(
     showEmptyState?: boolean;
     /** list query errored — swaps the empty state for retry copy */
     error?: boolean;
+    /** background refetch in flight while rows are already on screen (static tables) */
+    refreshing?: boolean;
+    /** bump to reset the internal pager — search/filter changes, NOT background refetches */
+    resetPageKey?: string | number;
     /** no-data branding for the built-in empty state; a live search always shows a no-results line instead */
     emptyIcon?: string;
     /** 'No <noun> yet' headline shape for the built-in empty state */
@@ -35,6 +39,8 @@ const props = withDefaults(
   }>(),
   {
     loading: false,
+    refreshing: false,
+    resetPageKey: undefined,
     mobileTitleKey: undefined,
     mobileHideKeys: () => [],
     page: undefined,
@@ -51,7 +57,12 @@ const props = withDefaults(
   },
 );
 
-const emit = defineEmits<{ 'update:page': [page: number]; 'update:search': [q: string] }>();
+const emit = defineEmits<{
+  'update:page': [page: number];
+  'update:search': [q: string];
+  /** the list query failed — parents wire this to query.refetch() */
+  retry: [];
+}>();
 const paginated = computed(() => props.pageCount !== undefined && props.page !== undefined);
 const pagination = computed(() => ({ pageIndex: (props.page ?? 1) - 1, pageSize: props.pageSize }));
 
@@ -73,13 +84,21 @@ const mobileRows = computed<T[]>(() => {
 // client-side pagination for small lists: internal page state, sliced rows —
 // no page/pageCount props needed (server-side lists pass them and slice themselves)
 const internalPage = ref(1);
+// reset ONLY on a parent-declared dataset change (search/filter). Watching the
+// data array identity reset the page on every background refetch, snapping a
+// reader on page 3 back to page 1 whenever SSE invalidated the list.
 watch(
-  () => props.data,
+  () => props.resetPageKey,
   () => {
     internalPage.value = 1;
   },
 );
+// rows disappearing under the current page (delete, narrow filter) clamp instead
+// of stranding an empty page (wired after internalPageCount below)
 const internalPageCount = computed(() => Math.max(1, Math.ceil(props.data.length / props.pageSize)));
+watch(internalPageCount, (pc) => {
+  if (internalPage.value > pc) internalPage.value = pc;
+});
 const viewData = computed(() =>
   paginated.value
     ? props.data
@@ -196,6 +215,34 @@ function cellValue(row: T, col: TableColumn<T>) {
       <slot name="toolbar" />
     </div>
 
+    <!-- stale rows + a failed refetch: keep the last good data on screen, but
+         say so and offer the retry right above it -->
+    <div
+      v-if="error && data.length"
+      role="alert"
+      class="border-error/40 bg-error/10 flex flex-wrap items-center gap-2 rounded-md border px-3 py-2"
+    >
+      <UIcon name="i-lucide-circle-alert" class="text-error size-4 shrink-0" aria-hidden="true" />
+      <span class="text-error flex-1 text-sm">Couldn't refresh this list — showing the last loaded rows.</span>
+      <UButton
+        size="xs"
+        color="error"
+        variant="subtle"
+        icon="i-lucide-rotate-cw"
+        label="Retry"
+        @click="emit('retry')"
+      />
+    </div>
+
+    <!-- static lists keep their rows while a refetch runs: a quiet spinner, no
+         skeleton flash -->
+    <div v-if="refreshing && !loading" class="flex justify-end" aria-live="polite">
+      <span class="text-dimmed flex items-center gap-1.5 text-xs">
+        <UIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin" aria-hidden="true" />
+        Refreshing
+      </span>
+    </div>
+
     <UCard v-if="data.length || loading" :ui="{ root: 'shadow-sm hidden md:block', body: 'p-0 sm:p-0' }">
       <UTable
         :data="viewData"
@@ -269,7 +316,16 @@ function cellValue(row: T, col: TableColumn<T>) {
         }}
       </p>
       <template v-if="error">
-        <slot name="error-cta" />
+        <slot name="error-cta">
+          <UButton
+            size="sm"
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-rotate-cw"
+            label="Try again"
+            @click="emit('retry')"
+          />
+        </slot>
       </template>
       <!-- the create CTA belongs to the EMPTY state only — under the error copy
            it reads as 'create anyway' while the data is simply not loaded -->
@@ -278,7 +334,11 @@ function cellValue(row: T, col: TableColumn<T>) {
 
     <!-- pagination footer: prev / numbered / next (UButton — reka UPagination
          click handlers never fire in this app, proven in bd8b5f6) -->
-    <div v-if="showPager && displayPageCount > 1" class="flex items-center justify-end gap-1 pt-2">
+    <nav
+      v-if="showPager && displayPageCount > 1"
+      aria-label="Pagination"
+      class="flex items-center justify-end gap-1 pt-2"
+    >
       <UButton
         icon="i-lucide-chevron-left"
         color="neutral"
@@ -308,6 +368,6 @@ function cellValue(row: T, col: TableColumn<T>) {
         aria-label="Next page"
         @click="goPage(displayPage + 1)"
       />
-    </div>
+    </nav>
   </div>
 </template>

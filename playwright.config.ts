@@ -11,6 +11,9 @@ export default defineConfig({
   // a stray .only must not silently reduce CI to a fraction of the suite
   forbidOnly: !!process.env.CI,
   testDir: './test/e2e',
+  // fresh data set per run: truncates app tables (keeps the boot admin + seeds)
+  // AFTER Playwright has started the web server and migrations have applied
+  globalSetup: './test/e2e/global-setup.ts',
   timeout: 60_000,
   fullyParallel: false, // shared DB — serial by file
   retries: process.env.CI ? 1 : 0,

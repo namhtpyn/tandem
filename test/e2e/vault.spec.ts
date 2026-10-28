@@ -1,5 +1,4 @@
-import { expect, test } from '@playwright/test';
-
+import { expect, test } from './helpers/cleanup.ts';
 import { VaultPage } from './pages/vault.page.ts';
 
 // Unique-per-run names: a crashed prior run can't poison the unique-name
@@ -23,7 +22,7 @@ test.describe('vault', () => {
     await expect(page.getByText('e2e-secret-value-123')).toHaveCount(0);
 
     // replace: value rotates, still never shown
-    await row.getByRole('button', { name: /Replace / }).click();
+    await row.getByRole('button', { name: /Edit / }).click();
     await page.getByRole('textbox', { name: 'Value' }).fill('e2e-rotated-value-999');
     await page.getByRole('button', { name: 'Save changes' }).click();
     await expect(page.locator('tr:visible', { hasText: secName }).getByText('•••• -999')).toBeVisible({

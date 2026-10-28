@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { CHANGE_RESOURCE, SECRET_USAGE, type SecretUsage } from '#shared/enums';
 import { NONE_ID, saveFailed } from '~/utils/forms';
 import type { EnvironmentRow } from '~/utils/orpc-types';
+import { TABLE_PAGE_SIZE } from '~/utils/pagination';
 import type { SecretOption } from '~/utils/vault-options';
 import { groupedSecretOptions } from '~/utils/vault-options';
 
@@ -17,7 +18,7 @@ const { editable = true } = defineProps<{ editable?: boolean }>();
 const { $orpc } = useNuxtApp();
 
 const page = ref(1);
-const pageSize = ref(10);
+const pageSize = ref(TABLE_PAGE_SIZE);
 const search = ref('');
 const searchDebounced = ref('');
 watchDebounced(
@@ -218,17 +219,15 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       :data="rows"
       :loading="liveQuery.isFetching.value || liveQuery.isPlaceholderData.value"
       :error="liveQuery.isError.value"
+      @retry="liveQuery.refetch()"
       v-model:page="page"
       :page-count="pageCount"
       :page-size="pageSize"
       :columns="columns"
       show-empty-state
       :empty-icon="isFiltered ? 'i-lucide-search-x' : 'i-lucide-server'"
-      :empty-text="
-        isFiltered
-          ? 'No results — try a different search.'
-          : 'No environments yet — add the SSH target where your agents run.'
-      "
+      empty-noun="environments"
+      :empty-text="isFiltered ? 'No results — try a different search.' : 'Add the SSH target where your agents run.'"
     >
       <template #empty-cta>
         <UButton v-if="editable && !isFiltered" icon="i-lucide-plus" label="New environment" @click="openEditor()" />

@@ -1,6 +1,5 @@
 // E2E: model provider registry — seeds, CRUD, model sync placeholder, agent linkage.
-import { expect, test } from '@playwright/test';
-
+import { expect, test } from './helpers/cleanup.ts';
 import { BasePage } from './pages/base.page.ts';
 
 test.describe('model providers', () => {
@@ -14,7 +13,7 @@ test.describe('model providers', () => {
     await page.getByRole('button', { name: 'New provider' }).first().click();
     await page.getByLabel('Label').fill(name);
     await page.getByLabel('Base URL').fill('https://api.openai.com');
-    await page.getByRole('button', { name: 'New provider' }).last().click();
+    await page.getByRole('button', { name: 'Create provider' }).click();
     // mobile cards + desktop table both render provider names; only one is visible per breakpoint
     await expect(page.getByText(name).filter({ visible: true }).first()).toBeVisible();
 
@@ -32,7 +31,7 @@ test.describe('model providers', () => {
     await page.getByRole('button', { name: 'New provider' }).first().click();
     await page.getByLabel('Label').fill(name);
     await page.getByLabel('Base URL').fill('https://api.groq.com/openai/v1');
-    await page.getByRole('button', { name: 'New provider' }).last().click();
+    await page.getByRole('button', { name: 'Create provider' }).click();
     const row = page.locator('tr', { hasText: name });
     await expect(row).toBeVisible();
     // delete via that row's own button, then confirm in the modal (two-step delete law)
@@ -49,7 +48,7 @@ test.describe('model providers', () => {
     await page.getByRole('button', { name: 'New provider' }).first().click();
     await page.getByLabel('Label').fill(provName);
     await page.getByLabel('Base URL').fill('https://api.openai.com');
-    await page.getByRole('button', { name: 'New provider' }).last().click();
+    await page.getByRole('button', { name: 'Create provider' }).click();
     await expect(page.getByText(provName).filter({ visible: true }).first()).toBeVisible();
     await ui.navigate('/employees');
     await page.getByRole('button', { name: 'New employee' }).first().click();

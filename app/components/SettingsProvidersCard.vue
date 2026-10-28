@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/vue-query';
 import { z } from 'zod';
 
 import { ENDPOINT_OPTIONS, PROVIDER_ENDPOINT_LABEL, isModelsEndpoint } from '#shared/api-styles';
-import { CHANGE_RESOURCE } from '#shared/enums';
+import { CHANGE_RESOURCE, ROLE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 import { saveFailed } from '~/utils/forms';
 import type { ModelProviderRow, ProviderSaveInput } from '~/utils/orpc-types';
@@ -51,6 +51,20 @@ function onEndpointsChange(next: Array<string | undefined>) {
 }
 const mProvBusy = ref(false);
 const mProvMessage = ref('');
+const mProvMessageOk = ref(false); // message tone: success green, failures red
+// list() returns extraHeaders: null for non-admins (router credentials) — the
+// editor must say so instead of implying the provider has none
+const session = useAppSession();
+const mProvHeadersHidden = ref(false);
+// headers are only sent when the user actually edited the textarea; an omitted
+// field tells the server to keep the stored value (a wiped textarea on a
+// non-admin's screen would otherwise clear real credentials)
+const mProvHeadersDirty = ref(false);
+const headersHint = computed(() =>
+  mProvHeadersHidden.value
+    ? 'Hidden for your role — saving keeps the stored headers'
+    : "Optional, one 'Name: value' per line",
+);
 
 function openMProvEditor(row?: ModelProviderRow) {
   mProvEditingId.value = row?.id ?? null;
@@ -63,6 +77,8 @@ function openMProvEditor(row?: ModelProviderRow) {
         .join('\n')
     : '';
   mProvForm.notes = row?.notes ?? '';
+  mProvHeadersHidden.value = !!row && row.extraHeaders === null && session.value?.user.role !== ROLE.ADMIN;
+  mProvHeadersDirty.value = false;
   mProvMessage.value = '';
   mProvEditorOpen.value = true;
 }
@@ -72,6 +88,7 @@ async function saveMProv() {
   if (mProvBusy.value) return;
   mProvBusy.value = true;
   mProvMessage.value = '';
+  mProvMessageOk.value = false;
   try {
     // one 'Name: value' per line — split on the FIRST ':' only, so values with
     // colons (https:// URLs, timestamps) survive; unparsable lines are skipped
@@ -91,15 +108,17 @@ async function saveMProv() {
       label: mProvForm.label.trim(),
       baseUrl: mProvForm.baseUrl.trim(),
       endpoints: mProvForm.endpoints as ProviderSaveInput['endpoints'],
-      // always send notes ('' clears) and extraHeaders only when present — an
-      // omitted extraHeaders is the server's explicit clear; both fields keep
-      // their value across an edit that never touched them
-      ...(headers && Object.keys(headers).length ? { extraHeaders: headers } : {}),
+      // extraHeaders ride along ONLY when the textarea was edited ({} = clear);
+      // otherwise the field is omitted and the server keeps the stored value
+      ...(mProvHeadersDirty.value && !mProvHeadersHidden.value ? { extraHeaders: headers ?? {} } : {}),
       notes: mProvForm.notes,
     });
+    mProvMessage.value = mProvEditingId.value ? 'Provider saved' : 'Provider created';
+    mProvMessageOk.value = true;
     mProvEditorOpen.value = false;
   } catch (e) {
     mProvMessage.value = saveFailed(e, 'provider');
+    mProvMessageOk.value = false;
   } finally {
     mProvBusy.value = false;
   }
@@ -168,7 +187,7 @@ onServerPrefetch(() => providersLive.suspense());
                 >{{ endpointShortLabel(st) }}</UBadge
               >
             </div>
-            <div class="mt-3 flex justify-end gap-1">
+            <div class="row-actions mt-3 flex justify-end gap-1 transition-opacity">
               <UPopover mode="hover" enable-touch>
                 <UButton
                   icon="i-lucide-pencil"
@@ -228,7 +247,7 @@ onServerPrefetch(() => providersLive.suspense());
               </div>
             </template>
             <template #actions-cell="{ row }">
-              <div class="flex justify-end gap-1">
+              <div class="row-actions flex justify-end gap-1 transition-opacity">
                 <UPopover mode="hover" enable-touch>
                   <UButton
                     icon="i-lucide-pencil"
@@ -261,9 +280,8 @@ onServerPrefetch(() => providersLive.suspense());
             </template>
           </UTable>
         </UCard>
-        <p v-if="mProvMessage" class="text-error mt-2 text-sm" role="alert">{{ mProvMessage }}</p>
         <!-- pending: skeleton cards (mobile) + rows (desktop) before any empty copy -->
-        <template v-else-if="providersLive.isPending.value">
+        <template v-if="providersLive.isPending.value">
           <div class="space-y-3 md:hidden" aria-hidden="true">
             <USkeleton class="h-24 w-full rounded-lg" />
             <USkeleton class="h-24 w-full rounded-lg" />
@@ -286,6 +304,16 @@ onServerPrefetch(() => providersLive.suspense());
           <p class="text-muted text-sm">No providers yet — add one to power agents and auto-assign.</p>
           <UButton icon="i-lucide-plus" size="sm" label="New provider" @click="openMProvEditor()" />
         </div>
+        <!-- save/error copy sits OUTSIDE the pending/error/empty chain: as the
+             chain's v-if it masked the load states while showing a stale error -->
+        <p
+          v-if="mProvMessage"
+          class="mt-2 text-sm"
+          :class="mProvMessageOk ? 'text-success' : 'text-error'"
+          :role="mProvMessageOk ? 'status' : 'alert'"
+        >
+          {{ mProvMessage }}
+        </p>
       </div>
     </div>
   </UCard>
@@ -344,12 +372,16 @@ onServerPrefetch(() => providersLive.suspense());
         </UFormField>
 
         <UFormField label="Extra headers" name="extraHeaders">
-          <template #hint><FormHint text="Optional, one 'Name: value' per line" /></template>
+          <template #hint>
+            <FormHint :text="headersHint" />
+          </template>
           <UTextarea
             v-model="mProvForm.extraHeaders"
             placeholder="HTTP-Referer: https://tandem.local"
             :rows="2"
             class="w-full"
+            :disabled="mProvHeadersHidden"
+            @update:model-value="mProvHeadersDirty = true"
           />
         </UFormField>
         <UFormField label="Notes" name="notes">
@@ -375,7 +407,7 @@ onServerPrefetch(() => providersLive.suspense());
         <UButton
           type="submit"
           :loading="mProvBusy"
-          :label="mProvEditingId ? 'Save changes' : 'New provider'"
+          :label="mProvEditingId ? 'Save changes' : 'Create provider'"
           form="provider-editor-form"
         />
       </div>
@@ -410,3 +442,12 @@ onServerPrefetch(() => providersLive.suspense());
     </template>
   </UModal>
 </template>
+
+<style scoped>
+/* desktop hover-reveal for row actions — always visible on touch/mobile */
+@media (min-width: 768px) and (hover: hover) {
+  :deep(tbody tr:not(:hover):not(:focus-within)) .row-actions {
+    opacity: 0;
+  }
+}
+</style>

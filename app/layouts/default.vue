@@ -116,8 +116,8 @@ const nav = computed(() =>
     <div v-if="!session" class="flex min-h-screen items-center justify-center p-6">
       <div class="w-full max-w-sm">
         <div class="mb-8 flex flex-col items-center gap-2 text-center">
-          <div class="bg-primary flex size-12 items-center justify-center rounded-xl shadow-sm">
-            <UIcon name="i-lucide-users" class="text-inverted size-6" />
+          <div class="bg-primary/10 flex size-12 items-center justify-center rounded-xl shadow-sm">
+            <UIcon name="i-lucide-users" class="text-primary size-6" />
           </div>
           <h1 class="text-highlighted text-2xl font-bold tracking-tight">{{ companyName }}</h1>
           <p class="text-muted text-sm">Humans and AI employees, one workspace</p>
@@ -221,7 +221,7 @@ const nav = computed(() =>
                    from the name — 'Admin' + 'Admin' said it twice, and the raw
                    enum rode a middle-dot suffix before -->
               <p class="text-highlighted truncate text-xs font-medium">{{ session.user.name }}</p>
-              <p v-if="showRoleSuffix" class="text-dimmed truncate text-[11px] leading-tight">
+              <p v-if="showRoleSuffix" class="text-dimmed text-2xs truncate leading-tight">
                 {{ roleLabel(session.user.role) }}
               </p>
             </div>
