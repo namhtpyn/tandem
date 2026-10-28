@@ -47,15 +47,31 @@ export default defineNuxtPlugin(async () => {
 
   if (import.meta.server) {
     const { createRouterClient } = await import('@orpc/server');
-    // variable specifier: keeps vite's client crawler out of the server graph in dev
-    const routerSpec = '#server/domains/app.router';
-    const serverRouter: typeof appRouter = (await import(routerSpec)).appRouter;
-    const ctxSpec = '#server/domains/kernel/context';
-    const { buildServerContext } = await import(ctxSpec);
-    const event = useRequestEvent();
-    client = createRouterClient(serverRouter, {
-      context: buildServerContext(event?.headers),
-    });
+    // TWO import shapes, one per mode (v2.49.1 prod-500 lesson):
+    //  - PROD build: LITERAL specifier — rollup resolves '#server/*' at build and
+    //    inlines the router into the nitro output. A runtime '#server' import
+    //    cannot resolve in the packaged image (no tsconfig paths there).
+    //  - DEV: variable specifier + @vite-ignore — vite's client crawler chases
+    //    literal '#server/...' imports into the client graph (the server guard
+    //    is a runtime check there), so the specifier must stay opaque to it.
+    // import.meta.dev is define-replaced per mode, so exactly one branch ships.
+    if (import.meta.dev) {
+      const routerSpec = '#server/domains/app.router';
+      const serverRouterDev: typeof appRouter = (await import(/* @vite-ignore */ routerSpec)).appRouter;
+      const ctxSpec = '#server/domains/kernel/context';
+      const { buildServerContext } = await import(/* @vite-ignore */ ctxSpec);
+      const event = useRequestEvent();
+      client = createRouterClient(serverRouterDev, {
+        context: buildServerContext(event?.headers),
+      });
+    } else {
+      const { appRouter: serverRouter } = await import('#server/domains/app.router');
+      const { buildServerContext } = await import('#server/domains/kernel/context');
+      const event = useRequestEvent();
+      client = createRouterClient(serverRouter, {
+        context: buildServerContext(event?.headers),
+      });
+    }
   } else {
     client = createORPCClient(new RPCLink({ url: '/rpc' }));
   }
