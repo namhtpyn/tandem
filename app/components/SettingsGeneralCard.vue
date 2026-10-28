@@ -7,8 +7,9 @@ import { useQuery } from '@tanstack/vue-query';
 
 import { PROVIDER_KIND, endpointKind, isModelsEndpoint } from '#shared/api-styles';
 import { CHANGE_RESOURCE } from '#shared/enums';
-import { NONE_ID, errorMessage } from '~/utils/forms';
-import type { SecretOption } from '~/utils/vault-options';
+import { NONE_ID, saveFailed } from '~/utils/forms';
+import type { SettingsPayload } from '~/utils/orpc-types';
+import type { SecretOption, VaultSecretOptionRow } from '~/utils/vault-options';
 import { groupedSecretOptions } from '~/utils/vault-options';
 
 const { $orpc, $client } = useNuxtApp();
@@ -22,27 +23,19 @@ const providersLive = useQuery($orpc.providers.list.queryOptions({ queryKey: [CH
 // what the user typed but hasn't saved yet. A ref is refreshed only when its
 // current value still equals the projection the last server arrival seeded —
 // anything else means the user touched it.
-type SettingsPayload = {
-  companyName?: string;
-  runTimeoutMs?: number;
-  tasksPerAgent?: number;
-  companyPrompt?: string;
-  internalLlm?: { providerId: string; model: string | null; keySecretId: string } | null;
-  internalDecision?: { providerId: string; model: string | null; keySecretId: string } | null;
-};
 
 /** what the refs hold right after seeding from a server payload (comparison baseline) */
 function projectionOf(v: SettingsPayload) {
   const assignment = (a: SettingsPayload['internalLlm']) => ({
-    providerId: a?.providerId ?? undefined,
+    providerId: a?.providerId,
     model: a?.model ?? '',
     keySecretId: a?.keySecretId ?? null,
   });
   return {
-    companyName: v.companyName?.trim() || 'Tandem',
-    runTimeoutMinutes: Math.round((v.runTimeoutMs ?? 1_800_000) / 60_000),
-    tasksPerAgent: v.tasksPerAgent ?? 1,
-    companyPrompt: v.companyPrompt ?? '',
+    companyName: v.companyName.trim() || 'Tandem',
+    runTimeoutMinutes: Math.round(v.runTimeoutMs / 60_000),
+    tasksPerAgent: v.tasksPerAgent,
+    companyPrompt: v.companyPrompt,
     internalLlm: assignment(v.internalLlm),
     internalDecision: assignment(v.internalDecision),
   };
@@ -105,32 +98,16 @@ async function saveCompanyPrompt() {
     companyPromptMessage.value = 'Saved';
     companyPromptOk.value = true;
   } catch (e) {
-    companyPromptMessage.value = errorMessage(e, 'Save failed');
+    companyPromptMessage.value = saveFailed(e, 'company prompt');
   } finally {
     savingCompanyPrompt.value = false;
   }
 }
 // ---- Workspace AI: internal LLM + decision assignments ----
-// vault picker source: a single page caps at 100 rows and silently hides the
-// rest of the vault, so walk pages up to `total` (shared [VAULT, 'all'] cache)
-const vaultLive = useQuery({
-  queryKey: [CHANGE_RESOURCE.VAULT, 'all'],
-  queryFn: async () => {
-    const pageSize = 100;
-    const first = await $orpc.vault.secrets.list.call({ page: 1, pageSize });
-    const rows = [...first.data];
-    const pages = Math.min(3, Math.ceil(first.total / pageSize));
-    for (let p = 2; p <= pages; p++) {
-      const next = await $orpc.vault.secrets.list.call({ page: p, pageSize });
-      rows.push(...next.data);
-    }
-    return rows;
-  },
-});
+// vault picker source — one shared [VAULT,'all'] walk (useAllVaultSecrets)
+const vaultLive = useAllVaultSecrets();
 const vaultItems = computed<SecretOption[]>(() =>
-  groupedSecretOptions(
-    (unref(vaultLive.data) ?? []) as Array<{ id: string; name: string; lastFour: string; folder: string | null }>,
-  ),
+  groupedSecretOptions((unref(vaultLive.data) ?? []) as VaultSecretOptionRow[]),
 );
 type AiAssignmentForm = {
   providerId: string | undefined;
@@ -215,7 +192,7 @@ async function saveAssignment(kind: 'internalLlm' | 'internalDecision') {
     message.value = 'Saved';
     ok.value = true;
   } catch (e) {
-    message.value = errorMessage(e, 'Save failed');
+    message.value = saveFailed(e, kind === 'internalLlm' ? 'internal LLM' : 'decision engine');
   } finally {
     saving.value = false;
   }
@@ -226,7 +203,7 @@ watch(
   () => unref(settingsLive.data),
   (d) => {
     if (!d) return;
-    applySettings(d as SettingsPayload);
+    applySettings(d);
   },
   { immediate: true },
 );
@@ -248,7 +225,7 @@ async function saveTasksPerAgent() {
     tasksPerAgentMessage.value = 'Saved';
     tasksPerAgentOk.value = true;
   } catch (e) {
-    tasksPerAgentMessage.value = errorMessage(e, 'Save failed');
+    tasksPerAgentMessage.value = saveFailed(e, 'task limit');
   } finally {
     savingTasksPerAgent.value = false;
   }
@@ -271,7 +248,7 @@ async function saveRunTimeout() {
     runTimeoutMessage.value = 'Saved';
     runTimeoutOk.value = true;
   } catch (e) {
-    runTimeoutMessage.value = errorMessage(e, 'Save failed');
+    runTimeoutMessage.value = saveFailed(e, 'run timeout');
   } finally {
     savingRunTimeout.value = false;
   }
@@ -289,7 +266,7 @@ async function saveCompanyName() {
     nameMessage.value = 'Saved';
     nameMessageOk.value = true;
   } catch (e) {
-    nameMessage.value = errorMessage(e, 'Save failed');
+    nameMessage.value = saveFailed(e, 'company name');
   } finally {
     savingName.value = false;
   }
@@ -317,7 +294,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
           :disabled="savingName"
         />
       </UFormField>
-      <UButton type="submit" icon="i-lucide-save" :loading="savingName">Save</UButton>
+      <UButton type="submit" icon="i-lucide-save" :loading="savingName">Save name</UButton>
       <span
         v-if="nameMessage"
         class="pb-2 text-xs"
@@ -343,7 +320,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
         />
       </UFormField>
       <div class="flex items-center gap-3">
-        <UButton type="submit" icon="i-lucide-save" :loading="savingCompanyPrompt">Save</UButton>
+        <UButton type="submit" icon="i-lucide-save" :loading="savingCompanyPrompt">Save prompt</UButton>
         <span
           v-if="companyPromptMessage"
           class="pb-2 text-xs"
@@ -371,7 +348,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
           :disabled="savingRunTimeout"
         />
       </UFormField>
-      <UButton type="submit" icon="i-lucide-save" :loading="savingRunTimeout">Save</UButton>
+      <UButton type="submit" icon="i-lucide-save" :loading="savingRunTimeout">Save timeout</UButton>
       <span
         v-if="runTimeoutMessage"
         class="pb-2 text-xs"
@@ -399,7 +376,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
           :disabled="savingTasksPerAgent"
         />
       </UFormField>
-      <UButton type="submit" icon="i-lucide-save" :loading="savingTasksPerAgent">Save</UButton>
+      <UButton type="submit" icon="i-lucide-save" :loading="savingTasksPerAgent">Save task limit</UButton>
       <span
         v-if="tasksPerAgentMessage"
         class="pb-2 text-xs"
@@ -412,7 +389,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
     <USeparator class="my-5" />
 
     <div>
-      <h4 class="pb-1 text-sm font-medium">Decision engine (auto-assign)</h4>
+      <h3 class="pb-1 text-sm font-medium">Decision engine (auto-assign)</h3>
       <p class="text-muted pb-2 text-xs">
         Picks which employee takes a task. Provider must offer a decision-compatible endpoint.
       </p>
@@ -446,6 +423,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
             v-model="decisionForm.model"
             :items="decisionModels.items.value"
             :loading="decisionModels.loading.value"
+            create-item
             icon="i-lucide-cpu"
             placeholder="e.g. claude-sonnet"
             class="w-full"
@@ -469,7 +447,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
     <USeparator class="my-5" />
 
     <div>
-      <h4 class="pb-1 text-sm font-medium">Internal LLM</h4>
+      <h3 class="pb-1 text-sm font-medium">Internal LLM</h3>
       <p class="text-muted pb-2 text-xs">
         Used by Tandem's own server-side features. Provider must offer an LLM-compatible endpoint. Not sent to agents.
       </p>
@@ -503,6 +481,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
             v-model="llmForm.model"
             :items="llmModels.items.value"
             :loading="llmModels.loading.value"
+            create-item
             icon="i-lucide-cpu"
             placeholder="e.g. gpt-5.2"
             class="w-full"

@@ -84,12 +84,7 @@ export function endpointKind(endpoint: string): ProviderKind | null {
   return (ENDPOINT_KIND_LOOKUP as Record<string, ProviderKind>)[endpoint] ?? null;
 }
 
-/** Legacy alias for transitional callers. */
-export const styleKind = endpointKind;
-
 export const ALL_ENDPOINTS = [...LLM_ENDPOINTS, ...DECISION_ENDPOINTS, ...MODELS_ENDPOINTS] as const;
-/** Legacy alias. */
-export const ALL_API_STYLES = ALL_ENDPOINTS;
 
 /** True when the set speaks an Anthropic wire (auth headers for /models probes). */
 export function isAnthropicWire(endpoints: string[]) {

@@ -7,7 +7,8 @@ import { computed, ref } from 'vue';
 import { z } from 'zod';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
-import { errorMessage } from '~/utils/forms';
+import { saveFailed } from '~/utils/forms';
+import type { TitleRow } from '~/utils/orpc-types';
 
 const open = defineModel<boolean>('open', { default: false });
 
@@ -16,11 +17,7 @@ const { $orpc } = useNuxtApp();
 const titlesQuery = useQuery(
   $orpc.employees.titles.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES, 'titles'] }),
 );
-const titles = computed(
-  () =>
-    (titlesQuery.data.value as { titles: Array<{ id: string; name: string; employees: number }> } | undefined)
-      ?.titles ?? [],
-);
+const titles = computed<TitleRow[]>(() => titlesQuery.data.value?.titles ?? []);
 
 const titleEditorOpen = ref(false);
 const titleEditingId = ref<string | null>(null);
@@ -44,6 +41,8 @@ function openTitleEditor(id?: string) {
 }
 
 async function saveTitle() {
+  // one write at a time — a double-click or stray Enter must not double-create
+  if (titleBusy.value) return;
   titleError.value = null;
   if (!titleForm.value.name.trim()) {
     titleError.value = 'Name is required';
@@ -57,10 +56,15 @@ async function saveTitle() {
     });
     titleEditorOpen.value = false;
   } catch (e) {
-    titleError.value = errorMessage(e, 'Save failed');
+    titleError.value = saveFailed(e, 'title');
   } finally {
     titleBusy.value = false;
   }
+}
+
+function askRemoveTitle(id: string) {
+  titleRemoveError.value = null;
+  titleConfirmId.value = id;
 }
 
 async function removeTitle(id: string) {
@@ -70,7 +74,7 @@ async function removeTitle(id: string) {
     await titleRemoveMutation.mutateAsync({ id });
     titleConfirmId.value = null;
   } catch (e) {
-    titleRemoveError.value = errorMessage(e, 'Delete failed');
+    titleRemoveError.value = saveFailed(e, 'title', 'delete');
   } finally {
     titleBusy.value = false;
   }
@@ -103,7 +107,7 @@ onServerPrefetch(() => titlesQuery.suspense());
                 size="sm"
                 color="neutral"
                 variant="ghost"
-                aria-label="Rename title"
+                :aria-label="`Rename ${t.name}`"
                 :disabled="titleBusy"
                 @click="openTitleEditor(t.id)"
               />
@@ -116,9 +120,9 @@ onServerPrefetch(() => titlesQuery.suspense());
                 color="neutral"
                 variant="ghost"
                 class="text-muted hover:text-error"
-                aria-label="Delete title"
+                :aria-label="`Delete ${t.name}`"
                 :disabled="titleBusy"
-                @click="titleConfirmId = t.id"
+                @click="askRemoveTitle(t.id)"
               />
               <template #content><div class="px-3 py-1.5 text-xs">Delete</div></template>
             </UPopover>
@@ -167,6 +171,7 @@ onServerPrefetch(() => titlesQuery.suspense());
         </UFormField>
         <UAlert
           v-if="titleError"
+          role="alert"
           icon="i-lucide-circle-alert"
           color="error"
           variant="subtle"
@@ -211,6 +216,7 @@ onServerPrefetch(() => titlesQuery.suspense());
       </p>
       <UAlert
         v-if="titleRemoveError"
+        role="alert"
         icon="i-lucide-circle-alert"
         color="error"
         variant="subtle"
@@ -222,7 +228,11 @@ onServerPrefetch(() => titlesQuery.suspense());
     <template #footer>
       <div class="flex w-full justify-end gap-2">
         <UButton variant="ghost" color="neutral" @click="titleConfirmId = null">Cancel</UButton>
-        <UButton color="error" icon="i-lucide-trash-2" :loading="titleBusy" @click="removeTitle(titleConfirming!.id)"
+        <UButton
+          color="error"
+          icon="i-lucide-trash-2"
+          :loading="titleBusy"
+          @click="titleConfirming && removeTitle(titleConfirming.id)"
           >Delete</UButton
         >
       </div>

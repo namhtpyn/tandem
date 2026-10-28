@@ -6,6 +6,7 @@ import { z } from 'zod';
 // zod-validated. No marker fallback: historical run outputs were migrated to
 // the JSON shape by migration 20261017030000 (one-time DML), so the whole
 // estate speaks one format.
+import { PROPOSAL_KIND } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 
 export const SubtaskProposalItemSchema = z.object({
@@ -34,6 +35,15 @@ export type RunEnvelope = {
   subtasks?: Array<{ title: string; description?: string; assigneeName?: string }>;
   reassign?: { assigneeName: string; reason?: string };
 };
+
+/** routing proposal shapes, derived from the verdict schema — the runner maps the
+ * settled verdict envelope onto these ([SUBTASKS]/[REASSIGN] text markers are
+ * RETIRED: routing rides the envelope JSON). Lives in #shared so the server
+ * runner and the UI thread derive from ONE definition. */
+export type SubtaskProposalItem = z.infer<typeof SubtaskProposalItemSchema>;
+export type RoutingProposal =
+  | { kind: typeof PROPOSAL_KIND.SUBTASKS; items: SubtaskProposalItem[] }
+  | { kind: typeof PROPOSAL_KIND.REASSIGN; targetName: string; reason?: string };
 
 /** schema verdict -> shared envelope shape (one mapping site for every parse path) */
 const toEnvelope = (v: RunVerdict): RunEnvelope => ({

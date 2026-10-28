@@ -60,18 +60,20 @@ onBeforeUnmount(() => {
     :close-delay="100"
     :content="{ side: 'bottom', align: 'end' }"
   >
-    <UIcon
-      name="i-lucide-info"
-      class="text-dimmed hover:text-muted focus-visible:ring-primary -m-2 size-3.5 shrink-0 cursor-help self-center rounded-full p-2 focus-visible:ring-2 focus-visible:outline-none"
+    <!-- real button (not a role on a span): 32px hit target, native focus/Enter/Space.
+         The negative margin + padding keep the VISIBLE footprint the same 14px icon. -->
+    <button
+      type="button"
+      class="hover:bg-elevated focus-visible:ring-primary -m-2 inline-flex min-h-8 min-w-8 cursor-help items-center justify-center rounded-full p-2 focus-visible:ring-2 focus-visible:outline-none"
       :aria-label="label ?? text"
-      role="button"
-      tabindex="0"
       @click="openNow"
       @focus="openNow"
       @blur="closeSoon"
       @keydown.enter.prevent="toggle"
       @keydown.space.prevent="toggle"
-    />
+    >
+      <UIcon name="i-lucide-info" class="text-dimmed size-3.5 shrink-0" aria-hidden="true" />
+    </button>
     <template #content>
       <p class="text-muted max-w-60 px-3 py-2 text-xs leading-relaxed">{{ text }}</p>
     </template>

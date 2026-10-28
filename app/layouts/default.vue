@@ -167,6 +167,7 @@ const nav = computed(() =>
               </UFormField>
               <UAlert
                 v-if="loginError"
+                role="alert"
                 icon="i-lucide-shield-alert"
                 color="error"
                 variant="subtle"

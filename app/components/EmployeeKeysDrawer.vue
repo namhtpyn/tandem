@@ -48,9 +48,12 @@ async function refreshKeys() {
   }
 }
 
-// reset + load on every open (the old openKeys body)
+// reset + load on every open (the old openKeys body) — keys clear BEFORE the
+// fetch so employee B never sees A's list during the load or after a failure
 watch(open, async (v) => {
   if (!v || !props.employee) return;
+  keys.value = [];
+  keysLoadError.value = false;
   keysMessage.value = '';
   freshKey.value = '';
   mintState.mintName = '';
@@ -131,14 +134,19 @@ async function copyKey(key: string) {
 </script>
 
 <template>
-  <!-- dismissible drops while the one-time fresh key is on screen — Esc/overlay
-       must not be able to destroy the only copy of the key -->
-  <UModal v-model:open="open" :dismissible="!freshKey" :title="`${employee?.name ?? ''}'s access keys`">
+  <!-- dismissible + close both drop while the one-time fresh key is on screen —
+       Esc/overlay AND the top-right X must not be able to destroy the only copy
+       of the key (mirrors EmployeeEditorModal's minted-key guard) -->
+  <UModal
+    v-model:open="open"
+    :dismissible="!freshKey"
+    :close="!freshKey"
+    :title="`${employee?.name ?? ''}'s access keys`"
+  >
     <template #body>
       <div class="space-y-3">
         <p class="text-muted text-xs">
-          Access keys authenticate API calls to Tandem as {{ employee?.name ?? 'this employee' }} — nothing to do with
-          the model provider API key in the editor.
+          Access keys authenticate API calls to Tandem as {{ employee?.name ?? 'this employee' }}.
         </p>
         <p v-if="keysMessage" role="alert" class="text-error text-sm">{{ keysMessage }}</p>
         <div v-if="freshKey" class="text-primary bg-primary/10 rounded-lg p-4">
@@ -163,7 +171,12 @@ async function copyKey(key: string) {
           <USkeleton v-for="i in 2" :key="i" class="h-10 w-full rounded-md" />
         </div>
         <div v-else-if="keys.length" class="divide-default divide-y">
-          <div v-for="k in keys" :key="k.id" class="group flex items-center justify-between gap-2 py-2">
+          <div
+            v-for="k in keys"
+            :key="k.id"
+            data-testid="key-row"
+            class="group flex items-center justify-between gap-2 py-2"
+          >
             <div v-if="renamingId !== k.id" class="min-w-0">
               <p class="text-highlighted truncate text-sm">{{ k.name ?? 'Unnamed' }}</p>
               <p class="text-dimmed font-mono text-xs">{{ k.prefix }}{{ k.start }}…</p>
@@ -281,6 +294,7 @@ async function copyKey(key: string) {
       </p>
       <UAlert
         v-if="revokeError"
+        role="alert"
         icon="i-lucide-circle-alert"
         color="error"
         variant="subtle"

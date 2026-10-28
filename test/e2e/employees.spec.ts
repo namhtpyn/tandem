@@ -33,7 +33,7 @@ test('human employee CRUD round-trip on the live page', async ({ page }) => {
   await expect(page.locator('tr:visible', { hasText: name })).toBeVisible({ timeout: 15_000 });
 
   // edit title + email
-  await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Edit employee' }).click();
+  await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: /Edit / }).click();
   await page.getByPlaceholder('Job title').fill('Promoted Tester');
   await page.getByPlaceholder('name@company.com').fill(`renamed-${suffix}@tandem.local`);
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
@@ -46,7 +46,10 @@ test('human employee CRUD round-trip on the live page', async ({ page }) => {
   });
 
   // delete requires CONFIRMATION now: trash opens a dialog, not instant delete
-  await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Delete employee' }).click();
+  await page
+    .locator('tr:visible', { hasText: name })
+    .getByRole('button', { name: /Delete / })
+    .click();
   await expect(page.getByRole('dialog').getByText(/permanently/i)).toBeVisible();
   await expect(page.locator('tr:visible', { hasText: name })).toBeVisible(); // still there pre-confirm
   await ui.confirmDelete();
@@ -62,7 +65,7 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   await page.getByRole('button', { name: 'New environment' }).first().click();
   await page.getByPlaceholder('Environment name').fill(envName);
   await page.getByPlaceholder('Hostname or IP').fill('127.0.0.1');
-  await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem');
+  await page.getByRole('textbox', { name: /Username/ }).fill('tandem');
   await page.getByRole('button', { name: /Save changes|Create environment/ }).click();
   await expect(page.locator('tr', { hasText: envName }).first()).toBeVisible({ timeout: 15_000 });
 
@@ -88,24 +91,27 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   await expect(page.locator('tr:visible', { hasText: name })).toBeVisible({ timeout: 15_000 });
 
   // edit: kind immutable badge, no kind radio
-  await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Edit employee' }).click();
+  await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: /Edit / }).click();
   await expect(page.getByText('AI agent').first()).toBeVisible();
   await expect(page.getByRole('radio', { name: /AI agent/ })).toHaveCount(0);
   await page.getByRole('button', { name: 'Cancel' }).click();
 
   // keys drawer: list + mint + revoke
-  await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Access keys' }).click();
+  await page
+    .locator('tr:visible', { hasText: name })
+    .getByRole('button', { name: /Access keys/ })
+    .click();
   await expect(page.getByText(`${name} access key`).first()).toBeVisible({ timeout: 15_000 });
   await page.getByRole('button', { name: 'Create key' }).click();
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
-  const keyRows = page.locator('div.flex.items-center.justify-between.gap-2.py-2');
+  const keyRows = page.getByTestId('key-row');
   await expect(keyRows).toHaveCount(2, { timeout: 15_000 });
   // revoke both by NAME — two-step confirm (stacked modal); the confirm closing
   // is the mutation-settled signal, the named row disappearing is the proof
   // (a bare count race let the second revoke click land on a settling list)
   for (const suffixWord of ['access key', 'key']) {
     const keyName = `${name} ${suffixWord}`;
-    const row = page.locator('div.flex.items-center.justify-between.gap-2.py-2', { hasText: keyName });
+    const row = page.getByTestId('key-row').filter({ hasText: keyName });
     await row.getByRole('button', { name: 'Revoke key' }).click();
     // pin the confirm by its heading — dialog stack order is not stable across suites
     const confirmDialog = page.locator('[role="dialog"]', {
@@ -123,11 +129,17 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   // other suites' unscoped selectors; keep the DB tidy)
   await ui.dismissOverlay('Edit employee');
   await ui.navigate('/employees');
-  await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Delete employee' }).click();
+  await page
+    .locator('tr:visible', { hasText: name })
+    .getByRole('button', { name: /Delete / })
+    .click();
   await ui.confirmDelete();
   await expect(page.locator('tr', { hasText: name })).toHaveCount(0, { timeout: 15_000 });
   await ui.navigate('/environments');
-  await page.locator('tr:visible', { hasText: envName }).getByRole('button', { name: 'Delete environment' }).click();
+  await page
+    .locator('tr:visible', { hasText: envName })
+    .getByRole('button', { name: /Delete / })
+    .click();
   await ui.confirmDelete();
   await expect(page.locator('tr', { hasText: envName })).toHaveCount(0, { timeout: 15_000 });
 });
@@ -165,7 +177,7 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   await expect(page.locator('tr:visible', { hasText: subName })).toBeVisible({ timeout: 15_000 });
 
   // edit the report: pick the supervisor in the multi-select
-  await page.locator('tr:visible', { hasText: subName }).getByRole('button', { name: 'Edit employee' }).click();
+  await page.locator('tr:visible', { hasText: subName }).getByRole('button', { name: /Edit / }).click();
   await page.getByRole('button', { name: 'Supervisors', exact: true }).click();
   await page.getByRole('option', { name: supName }).click();
   await page.keyboard.press('Escape');
@@ -177,11 +189,17 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
 
   // cleanup both rows (with confirmation); search keeps each target on page 1
   await ui.searchRows(SEARCH, subName);
-  await page.locator('tr:visible', { hasText: subName }).getByRole('button', { name: 'Delete employee' }).click();
+  await page
+    .locator('tr:visible', { hasText: subName })
+    .getByRole('button', { name: /Delete / })
+    .click();
   await ui.confirmDelete();
   await expect(page.locator('tr:visible', { hasText: subName })).toHaveCount(0, { timeout: 15_000 });
   await ui.searchRows(SEARCH, supName);
-  await page.locator('tr:visible', { hasText: supName }).getByRole('button', { name: 'Delete employee' }).click();
+  await page
+    .locator('tr:visible', { hasText: supName })
+    .getByRole('button', { name: /Delete / })
+    .click();
   await ui.confirmDelete();
   await expect(page.locator('tr:visible', { hasText: supName })).toHaveCount(0, { timeout: 15_000 });
 });

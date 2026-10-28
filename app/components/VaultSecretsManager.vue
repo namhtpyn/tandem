@@ -11,7 +11,7 @@ import { z } from 'zod';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { formatWhenShort } from '~/utils/format-when';
-import { errorMessage } from '~/utils/forms';
+import { saveFailed } from '~/utils/forms';
 import type { VaultSecretRow } from '~/utils/orpc-types';
 
 const folderId = defineModel<string | null>('folderId', { default: null });
@@ -88,7 +88,6 @@ watch(total, (t) => {
 
 const busy = ref(false);
 const removeError = ref<string | null>(null);
-
 const editorOpen = ref(false);
 const isEdit = ref(false);
 const editingId = ref<string | null>(null);
@@ -125,12 +124,15 @@ function openEditor(row?: VaultSecretRow) {
   } else {
     isEdit.value = false;
     editingId.value = null;
-    form.value = { name: '', description: '', value: '', folderId: null };
+    // seeding a new secret into the active folder filter saves a re-pick
+    form.value = { name: '', description: '', value: '', folderId: folderId.value ?? null };
   }
   editorOpen.value = true;
 }
 
 async function save() {
+  // one write at a time — a double-click or stray Enter must not double-create
+  if (busy.value) return;
   nameError.value = null;
   valueError.value = null;
   saveError.value = null;
@@ -164,13 +166,14 @@ async function save() {
     }
     editorOpen.value = false;
   } catch (e) {
-    saveError.value = errorMessage(e, 'Save failed');
+    saveError.value = saveFailed(e, 'secret');
   } finally {
     busy.value = false;
   }
 }
 
 function askRemove(row: VaultSecretRow) {
+  removeError.value = null;
   confirming.value = row.id;
 }
 
@@ -182,7 +185,7 @@ async function reallyRemove(row: VaultSecretRow) {
     confirming.value = null;
     emit('deleted', row.id);
   } catch (e) {
-    removeError.value = errorMessage(e, 'Delete failed');
+    removeError.value = saveFailed(e, 'secret', 'delete');
   } finally {
     busy.value = false;
   }
@@ -230,7 +233,7 @@ onServerPrefetch(() => liveQuery.suspense());
     <DataTable
       class="mt-3"
       :data="rows"
-      :loading="liveQuery.isPending.value"
+      :loading="liveQuery.isFetching.value || liveQuery.isPlaceholderData.value"
       :error="liveQuery.isError.value"
       v-model:page="page"
       :page-count="pageCount"
@@ -238,9 +241,9 @@ onServerPrefetch(() => liveQuery.suspense());
       :columns="[
         { accessorKey: 'name', header: 'Name' },
         { accessorKey: 'description', header: 'Description' },
-        { accessorKey: 'lastFour', header: 'Value' },
+        { accessorKey: 'lastFour', header: 'Last four' },
         { accessorKey: 'updatedAt', header: 'Updated' },
-        { id: 'actions', header: '' },
+        { id: 'actions', header: 'Actions', meta: { class: { th: 'sr-only' } } },
       ]"
       show-empty-state
       :empty-icon="isFiltered ? 'i-lucide-search-x' : 'i-lucide-shield'"
@@ -270,7 +273,7 @@ onServerPrefetch(() => liveQuery.suspense());
               variant="ghost"
               color="neutral"
               size="sm"
-              aria-label="Replace secret"
+              :aria-label="`Replace ${row.original.name}`"
               :disabled="busy"
               @click="openEditor(row.original)"
             />
@@ -285,7 +288,7 @@ onServerPrefetch(() => liveQuery.suspense());
               color="neutral"
               size="sm"
               class="text-muted hover:text-error"
-              aria-label="Delete secret"
+              :aria-label="`Delete ${row.original.name}`"
               :disabled="busy"
               @click="askRemove(row.original)"
             />
@@ -311,7 +314,7 @@ onServerPrefetch(() => liveQuery.suspense());
                 variant="ghost"
                 color="neutral"
                 size="sm"
-                aria-label="Replace secret"
+                :aria-label="`Replace ${row.name}`"
                 :disabled="busy"
                 @click="openEditor(row)"
               />
@@ -326,7 +329,7 @@ onServerPrefetch(() => liveQuery.suspense());
                 color="neutral"
                 size="sm"
                 class="text-muted hover:text-error"
-                aria-label="Delete secret"
+                :aria-label="`Delete ${row.name}`"
                 :disabled="busy"
                 @click="askRemove(row)"
               />
@@ -348,15 +351,15 @@ onServerPrefetch(() => liveQuery.suspense());
       <template #body>
         <UForm id="vault-secret-form" :schema="secretSchema" :state="form" class="space-y-4" @submit="save">
           <UFormField name="name" :error="nameError ?? undefined">
-            <template #label>
-              Name
+            <template #label> Name </template>
+            <template #hint>
               <FormHint text="Must be unique" />
             </template>
             <UInput v-model="form.name" placeholder="Secret name" class="w-full" :disabled="busy" />
           </UFormField>
           <UFormField name="description">
-            <template #label>
-              Description
+            <template #label> Description </template>
+            <template #hint>
               <FormHint text="Optional note" />
             </template>
             <UTextarea
@@ -370,9 +373,9 @@ onServerPrefetch(() => liveQuery.suspense());
           <UFormField label="Folder" name="folderId">
             <VaultFolderSelect v-model="form.folderId" creatable clearable size="md" class="w-full" />
           </UFormField>
-          <UFormField name="value" :error="valueError ?? undefined">
-            <template #label>
-              Value
+          <UFormField name="value">
+            <template #label> Value </template>
+            <template #hint>
               <FormHint :text="isEdit ? 'Replaces the stored value' : 'Encrypted, never shown again'" />
             </template>
             <div class="relative w-full">
@@ -402,7 +405,14 @@ onServerPrefetch(() => liveQuery.suspense());
               </UPopover>
             </div>
           </UFormField>
-          <UAlert v-if="saveError" icon="i-lucide-alert-circle" color="error" variant="subtle" :title="saveError" />
+          <UAlert
+            v-if="saveError"
+            role="alert"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            :title="saveError"
+          />
         </UForm>
       </template>
       <template #footer>
@@ -435,6 +445,7 @@ onServerPrefetch(() => liveQuery.suspense());
         </p>
         <UAlert
           v-if="removeError"
+          role="alert"
           icon="i-lucide-circle-alert"
           color="error"
           variant="subtle"

@@ -9,6 +9,7 @@ import { computed } from 'vue';
 import { nonNull } from '#shared/utils/non-null';
 import { employeeAvatarUrl } from '~/utils/api-urls';
 import type { EmployeeRow } from '~/utils/orpc-types';
+import { kindLabel } from '~/utils/ui-labels';
 
 // loading/error mirror the parent's list query — an empty graph while the query
 // is still in flight (or failed) reads as 'no employees', which is a lie
@@ -110,6 +111,12 @@ const primaryEdgeIndices = computed(() =>
   graphLayout.value.map((n, i) => (n.parentIndex >= 0 ? i : -1)).filter((i) => i >= 0),
 );
 
+/** primary edges resolved to paths — the template iterates plain objects, so
+ * the non-null contract lives here instead of in the markup */
+const primaryEdgePaths = computed(() =>
+  primaryEdgeIndices.value.map((pi) => ({ id: nonNull(graphLayout.value[pi]).row.id, d: primaryPath(pi) })),
+);
+
 /** extra supervisor edges beyond the placement parent */
 const secondaryEdges = computed(() => {
   const nodes = graphLayout.value;
@@ -193,15 +200,15 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
         :viewBox="`0 0 ${graphWidth} ${graphHeight}`"
         :width="graphWidth"
         :height="graphHeight"
-        role="img"
+        role="group"
         aria-label="Supervision hierarchy"
         class="m-auto h-auto w-full max-w-full min-w-[720px] shrink-0 md:h-auto md:w-auto md:min-w-0"
       >
         <!-- primary tree: elbow from parent bottom-center to child top-center -->
         <path
-          v-for="pi in primaryEdgeIndices"
-          :key="`p-${graphLayout[pi]!.row.id}`"
-          :d="primaryPath(pi)"
+          v-for="e in primaryEdgePaths"
+          :key="`p-${e.id}`"
+          :d="e.d"
           fill="none"
           class="stroke-(--ui-border-accented)"
           stroke-width="2"
@@ -215,7 +222,13 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
           class="stroke-(--ui-border-accented)"
           stroke-width="2"
         />
-        <g v-for="n in graphLayout" :key="n.row.id" :transform="`translate(${n.x}, ${n.y})`">
+        <g
+          v-for="n in graphLayout"
+          :key="n.row.id"
+          role="img"
+          :aria-label="`${n.row.name}, ${n.row.title || n.row.email || 'no title'}, ${kindLabel(n.row.kind)}`"
+          :transform="`translate(${n.x}, ${n.y})`"
+        >
           <rect
             :width="NODE_W"
             :height="NODE_H"
@@ -261,7 +274,7 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
             <title>{{ n.row.title || n.row.email }}</title>
           </text>
           <text x="8" :y="NODE_H - 12" class="fill-(--ui-text-dimmed) text-[10px]">
-            {{ n.row.kind === 'ai' ? 'AI agent' : 'Human' }}
+            {{ kindLabel(n.row.kind) }}
           </text>
         </g>
       </svg>

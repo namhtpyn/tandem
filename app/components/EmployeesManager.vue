@@ -9,7 +9,7 @@ import { computed, ref, watch } from 'vue';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { employeeAvatarUrl } from '~/utils/api-urls';
-import { errorMessage } from '~/utils/forms';
+import { saveFailed } from '~/utils/forms';
 import type { EmployeeRow, EnvironmentRow } from '~/utils/orpc-types';
 
 const { $orpc } = useNuxtApp();
@@ -41,9 +41,10 @@ const rows = computed<EmployeeRow[]>(() => listQuery.data.value?.employees ?? []
 const total = computed(() => listQuery.data.value?.total ?? 0);
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 
-// deleting the last row of a high page clamps back into range — skip transient totals
+// deleting the last row of a high page (or an emptied list) clamps back into
+// range — keepPreviousData keeps the previous total while a page fetch lands,
+// so a transient zero can only mean a genuinely empty result (page 1)
 watch(total, (t) => {
-  if (!t) return;
   const maxPage = Math.max(1, Math.ceil(t / pageSize.value));
   if (page.value > maxPage) page.value = maxPage;
 });
@@ -69,7 +70,7 @@ const isFiltered = computed(() => !!searchDebounced.value);
 const removeMutation = useMutation($orpc.employees.remove.mutationOptions());
 
 const busy = ref(false);
-const message = ref('');
+const deleteError = ref('');
 const pendingDelete = ref<EmployeeRow | null>(null);
 const deleteOpen = computed({
   get: () => pendingDelete.value !== null,
@@ -79,6 +80,7 @@ const deleteOpen = computed({
 });
 
 function askRemove(row: EmployeeRow) {
+  deleteError.value = '';
   pendingDelete.value = row;
 }
 
@@ -89,8 +91,9 @@ async function remove() {
     await removeMutation.mutateAsync({ id: pendingDelete.value.id });
     pendingDelete.value = null;
   } catch (e) {
-    pendingDelete.value = null;
-    message.value = errorMessage(e, 'Delete failed');
+    // in-modal law: the failure renders where the confirm lives — the modal
+    // stays open so retrying is one click away
+    deleteError.value = saveFailed(e, 'employee', 'delete');
   } finally {
     busy.value = false;
   }
@@ -99,15 +102,26 @@ async function remove() {
 // ---- composed controls ----
 const titleManagerOpen = ref(false);
 const editorOpen = ref(false);
-const editingRow = ref<EmployeeRow | null>(null);
+// the editor keys off the ID, never a frozen row copy: the live row re-resolves
+// from the full list on every EMPLOYEES invalidation, so save+refetch shows the
+// saved values on reopen instead of the stale snapshot from open time
+const editingId = ref<string | null>(null);
+const editingRowFallback = ref<EmployeeRow | null>(null);
+const editingRowLive = computed(() => allEmployees.value.find((r) => r.id === editingId.value) ?? null);
+const editingRow = computed<EmployeeRow | null>(() => editingRowLive.value ?? editingRowFallback.value);
 function openEditor(row?: EmployeeRow) {
-  editingRow.value = row ?? null;
+  editingId.value = row?.id ?? null;
+  editingRowFallback.value = row ?? null;
   editorOpen.value = true;
 }
 const keysOpen = ref(false);
-const keysEmployee = ref<EmployeeRow | null>(null);
+const keysEmployeeId = ref<string | null>(null);
+const keysEmployeeFallback = ref<EmployeeRow | null>(null);
+const keysEmployeeLive = computed(() => allEmployees.value.find((r) => r.id === keysEmployeeId.value) ?? null);
+const keysEmployee = computed<EmployeeRow | null>(() => keysEmployeeLive.value ?? keysEmployeeFallback.value);
 function openKeys(row: EmployeeRow) {
-  keysEmployee.value = row;
+  keysEmployeeId.value = row.id;
+  keysEmployeeFallback.value = row;
   keysOpen.value = true;
 }
 
@@ -117,7 +131,7 @@ const columns = [
   { accessorKey: 'kind', header: 'Kind' },
   { accessorKey: 'supervisors', header: 'Supervisors' },
   { accessorKey: 'environment', header: 'Environment' },
-  { accessorKey: 'actions', header: '' },
+  { id: 'actions', header: 'Actions', meta: { class: { th: 'sr-only' } } },
 ];
 
 onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), allQuery.suspense()]));
@@ -171,14 +185,11 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
       </div>
     </div>
 
-    <p v-if="message && !editorOpen" role="alert" class="text-error text-sm">{{ message }}</p>
-
-    <!-- Mobile: stacked cards (list view) -->
     <DataTable
       v-if="view === 'list'"
       class="mt-3"
       :data="rows"
-      :loading="listQuery.isPending.value"
+      :loading="listQuery.isFetching.value || listQuery.isPlaceholderData.value"
       :error="listQuery.isError.value"
       v-model:page="page"
       :page-count="pageCount"
@@ -251,7 +262,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
               variant="ghost"
               color="neutral"
               size="sm"
-              aria-label="Access keys"
+              :aria-label="`Access keys for ${row.original.name}`"
               :disabled="busy"
               @click="openKeys(row.original)"
             />
@@ -265,7 +276,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
               variant="ghost"
               color="neutral"
               size="sm"
-              aria-label="Edit employee"
+              :aria-label="`Edit ${row.original.name}`"
               :disabled="busy"
               @click="openEditor(row.original)"
             />
@@ -280,7 +291,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
               color="neutral"
               size="sm"
               class="text-muted hover:text-error"
-              aria-label="Delete employee"
+              :aria-label="`Delete ${row.original.name}`"
               :disabled="busy"
               @click="askRemove(row.original)"
             />
@@ -346,7 +357,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
                 variant="ghost"
                 color="neutral"
                 size="sm"
-                aria-label="Access keys"
+                :aria-label="`Access keys for ${row.name}`"
                 :disabled="busy"
                 @click="openKeys(row)"
               />
@@ -360,7 +371,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
                 variant="ghost"
                 color="neutral"
                 size="sm"
-                aria-label="Edit employee"
+                :aria-label="`Edit ${row.name}`"
                 :disabled="busy"
                 @click="openEditor(row)"
               />
@@ -375,7 +386,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
                 color="neutral"
                 size="sm"
                 class="text-muted hover:text-error"
-                aria-label="Delete employee"
+                :aria-label="`Delete ${row.name}`"
                 :disabled="busy"
                 @click="askRemove(row)"
               />
@@ -407,6 +418,15 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
             }})? Their login, supervision links, API keys{{ pendingDelete?.kind === 'ai' ? ', and AI extension' : '' }}
             are removed permanently.
           </p>
+          <UAlert
+            v-if="deleteError"
+            role="alert"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            :title="deleteError"
+            :ui="{ title: 'text-sm' }"
+          />
         </div>
       </template>
       <template #footer>

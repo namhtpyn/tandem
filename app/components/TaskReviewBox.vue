@@ -3,7 +3,7 @@
 // (owner ruling 2026-10-26). Rendered only for explicit reviewers while the task
 // is in review. The note is optional for approve, REQUIRED for request changes
 // (no fabricated "needs changes"), and reject is terminal — two-click confirm.
-defineProps<{ busy: boolean }>();
+const props = defineProps<{ busy: boolean; failed?: boolean }>();
 
 const emit = defineEmits<{
   verdict: [action: 'approve' | 'requestChanges' | 'reject', body?: string];
@@ -31,6 +31,17 @@ function onRejectClick() {
   disarmReject();
   emit('verdict', 'reject', reviewNote.value || undefined);
 }
+
+// the parent settles the verb: a FAILED verdict keeps the note (retry needs it)
+// and disarms a stale reject confirm; a landed one clears the note
+watch(
+  () => props.busy,
+  (now, was) => {
+    if (!was || now) return;
+    if (props.failed) disarmReject();
+    else reviewNote.value = '';
+  },
+);
 
 onUnmounted(disarmReject);
 </script>

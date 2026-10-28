@@ -12,33 +12,42 @@ import { PROVIDER_KIND, endpointKind, isModelsEndpoint } from '#shared/api-style
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 import { employeeAvatarUrl } from '~/utils/api-urls';
-import { NONE_ID, errorMessage } from '~/utils/forms';
-import type { EmployeeRow, EnvironmentRow } from '~/utils/orpc-types';
+import { NONE_ID, saveFailed } from '~/utils/forms';
+import type { EmployeeRow, EnvironmentRow, TitleRow } from '~/utils/orpc-types';
 import { kindLabel } from '~/utils/ui-labels';
 import type { SecretOption } from '~/utils/vault-options';
 import { groupedSecretOptions } from '~/utils/vault-options';
 
 const open = defineModel<boolean>('open', { default: false });
 const props = defineProps<{ employee: EmployeeRow | null; rows: EmployeeRow[] }>();
-const emit = defineEmits<{ saved: [] }>();
 
 const { $orpc, $client } = useNuxtApp();
 
 const titlesQuery = useQuery(
   $orpc.employees.titles.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES, 'titles'] }),
 );
-const titles = computed(
-  () =>
-    (titlesQuery.data.value as { titles: Array<{ id: string; name: string; employees: number }> } | undefined)
-      ?.titles ?? [],
-);
+const titles = computed<TitleRow[]>(() => titlesQuery.data.value?.titles ?? []);
 
 // frontend form schema (loose, repo law): presence + shape only — the server
 // re-validates strictly. UForm blocks submit and points at the offending field.
-const employeeFormSchema = z.object({
-  name: z.string().min(1, 'Name is required'),
-  email: z.string().email('Enter a valid email'),
-});
+// title + the AI-conditional environment/executable mirror the server's own
+// requirements so field errors surface here instead of a generic Save failure.
+const employeeFormSchema = z
+  .object({
+    name: z.string().min(1, 'Name is required'),
+    email: z.string().email('Enter a valid email'),
+    title: z.string().min(1, 'Title is required'),
+    kind: z.string(),
+    environmentId: z.string(),
+    executable: z.string(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.kind !== 'ai') return;
+    if (v.environmentId === NONE_ID)
+      ctx.addIssue({ code: 'custom', path: ['environmentId'], message: 'AI employees need an environment' });
+    if (!v.executable.trim())
+      ctx.addIssue({ code: 'custom', path: ['executable'], message: 'AI employees need an ACP executable' });
+  });
 
 const editingId = ref<string | null>(null);
 const avatarUrl = ref<string | null>(null); // existing avatar (endpoint URL)
@@ -102,8 +111,9 @@ const providerHasModelsEndpoint = computed(() => {
   return (p?.endpoints ?? []).some((st) => isModelsEndpoint(st));
 });
 watch(
-  [() => form.providerId, () => form.apiKeySecretId],
-  async ([providerId, keySecretId]) => {
+  [open, () => form.providerId, () => form.apiKeySecretId],
+  async ([o, providerId, keySecretId]) => {
+    if (!o) return;
     modelItems.value = [];
     if (providerId === NONE_ID || !providerHasModelsEndpoint.value) return;
     modelLoading.value = true;
@@ -119,34 +129,14 @@ watch(
       modelLoading.value = false;
     }
   },
-  { immediate: false },
+  // immediate + keyed on open: reopening/reseeding an editor must refetch the
+  // catalog even when provider/secret are unchanged (a same-value reseed never
+  // fires a plain change watch)
+  { immediate: true },
 );
-// vault secret picker: a single page caps at 100 rows and silently hides the
-// rest of the vault, so walk pages up to `total` (shared [VAULT, 'all'] cache)
-const secretsLive = useQuery({
-  queryKey: [CHANGE_RESOURCE.VAULT, 'all'],
-  queryFn: async () => {
-    const pageSize = 100;
-    const first = await $orpc.vault.secrets.list.call({ page: 1, pageSize });
-    const rows = [...first.data];
-    const pages = Math.min(3, Math.ceil(first.total / pageSize));
-    for (let p = 2; p <= pages; p++) {
-      const next = await $orpc.vault.secrets.list.call({ page: p, pageSize });
-      rows.push(...next.data);
-    }
-    return rows;
-  },
-});
-const secretItems = computed<SecretOption[]>(() =>
-  groupedSecretOptions(
-    (unref(secretsLive.data) ?? []) as Array<{
-      id: string;
-      name: string;
-      lastFour: string;
-      folder: string | null;
-    }>,
-  ),
-);
+// vault secret picker: every picker shares one [VAULT, 'all'] walk (useAllVaultSecrets)
+const secretsLive = useAllVaultSecrets();
+const secretItems = computed<SecretOption[]>(() => groupedSecretOptions(unref(secretsLive.data) ?? []));
 
 /** read + downscale an avatar to a 256px JPEG data URL */
 async function onAvatarPicked(ev: Event) {
@@ -213,11 +203,6 @@ watch([open, () => props.employee], ([o, emp]) => {
   mintedKey.value = '';
 });
 
-/** AI create/edit requires an ACP executable before hitting the API */
-function aiNeedsExecutable() {
-  return (editingId.value ? showAiFields.value : form.kind === 'ai') && !form.executable.trim();
-}
-
 /** update call payload — avatar only when freshly picked, AI fields only when shown */
 function updateInput() {
   return {
@@ -264,17 +249,11 @@ const updateMutation = useMutation($orpc.employees.update.mutationOptions());
 const titleSaveMutation = useMutation({ ...$orpc.employees.titles.save.mutationOptions() });
 
 async function save() {
-  // the minted key is on screen — the footer is hidden and a stray resubmit
-  // (Enter in a field) must not double-create
-  if (mintedKey.value) return;
+  // one write at a time — a double-click or stray Enter must not double-create
+  if (busy.value) return;
   busy.value = true;
   message.value = '';
   try {
-    if (aiNeedsExecutable()) {
-      message.value = 'AI employees need an ACP executable (e.g. "hermes acp")';
-      busy.value = false;
-      return;
-    }
     // typed-but-unknown titles join the catalog so they autocomplete next time
     if (form.title.trim() && !titles.value.some((t) => t.name === form.title.trim())) {
       await titleSaveMutation.mutateAsync({ name: form.title.trim() }).catch(() => {});
@@ -286,10 +265,9 @@ async function save() {
       // the API key returns ONCE — surface it before the modal closes
       if (res?.apiKey) mintedKey.value = res.apiKey as string;
     }
-    emit('saved');
     if (!mintedKey.value) open.value = false;
   } catch (e) {
-    message.value = errorMessage(e, 'Save failed');
+    message.value = saveFailed(e, 'employee');
   } finally {
     busy.value = false;
   }
@@ -311,15 +289,15 @@ onServerPrefetch(() =>
     <template #body>
       <UForm id="employee-editor-form" :schema="employeeFormSchema" :state="form" class="space-y-4" @submit="save">
         <UFormField name="name">
-          <template #label>
-            Name
+          <template #label> Name </template>
+          <template #hint>
             <FormHint text="Shown across tasks, runs and the org graph" />
           </template>
           <UInput v-model="form.name" icon="i-lucide-user" placeholder="Full name" class="w-full" required />
         </UFormField>
         <UFormField name="email">
-          <template #label>
-            Email (login)
+          <template #label> Email (login) </template>
+          <template #hint>
             <FormHint text="Humans sign in with it; AI employees authenticate by API key" />
           </template>
           <UInput
@@ -332,8 +310,8 @@ onServerPrefetch(() =>
           />
         </UFormField>
         <UFormField name="avatar">
-          <template #label>
-            Avatar
+          <template #label> Avatar </template>
+          <template #hint>
             <FormHint text="Square photo, resized to 256px" />
           </template>
           <div class="flex items-center gap-3">
@@ -385,8 +363,8 @@ onServerPrefetch(() =>
           </div>
         </UFormField>
         <UFormField v-if="!isEdit" name="kind">
-          <template #label>
-            Kind
+          <template #label> Kind </template>
+          <template #hint>
             <FormHint text="Fixed after creation — humans sign in, AI agents run on an environment" />
           </template>
           <URadioGroup
@@ -402,8 +380,8 @@ onServerPrefetch(() =>
           />
         </UFormField>
         <UFormField v-else name="kind">
-          <template #label>
-            Kind
+          <template #label> Kind </template>
+          <template #hint>
             <FormHint text="Fixed after creation — humans sign in, AI agents run on an environment" />
           </template>
           <UBadge
@@ -415,8 +393,8 @@ onServerPrefetch(() =>
           </UBadge>
         </UFormField>
         <UFormField name="title">
-          <template #label>
-            Title
+          <template #label> Title </template>
+          <template #hint>
             <FormHint text="Place in the company, e.g. Senior Engineer" />
           </template>
           <AutoCompleteInput
@@ -429,8 +407,8 @@ onServerPrefetch(() =>
           />
         </UFormField>
         <UFormField name="supervisorIds">
-          <template #label>
-            Supervisors
+          <template #label> Supervisors </template>
+          <template #hint>
             <FormHint text="Many-to-many — an employee can report to several" />
           </template>
           <USelectMenu
@@ -444,8 +422,8 @@ onServerPrefetch(() =>
         </UFormField>
         <template v-if="showAiFields">
           <UFormField name="environmentId">
-            <template #label>
-              Environment
+            <template #label> Environment </template>
+            <template #hint>
               <FormHint text="SSH target this agent runs on" />
             </template>
             <USelectMenu
@@ -457,8 +435,8 @@ onServerPrefetch(() =>
             />
           </UFormField>
           <UFormField name="executable" required>
-            <template #label>
-              ACP executable
+            <template #label> ACP executable </template>
+            <template #hint>
               <FormHint text="Command that starts an ACP server on stdio in the environment" />
             </template>
             <UInput
@@ -470,8 +448,8 @@ onServerPrefetch(() =>
             />
           </UFormField>
           <UFormField name="providerId">
-            <template #label>
-              Provider
+            <template #label> Provider </template>
+            <template #hint>
               <FormHint text="Model endpoint this agent uses" />
             </template>
             <USelect
@@ -487,8 +465,8 @@ onServerPrefetch(() =>
             />
           </UFormField>
           <UFormField name="model">
-            <template #label>
-              Model
+            <template #label> Model </template>
+            <template #hint>
               <FormHint text="Model name the agent runs — pick from the list or type your own" />
             </template>
             <UInputMenu
@@ -501,8 +479,8 @@ onServerPrefetch(() =>
             />
           </UFormField>
           <UFormField name="apiKeySecretId">
-            <template #label>
-              API key
+            <template #label> API key </template>
+            <template #hint>
               <FormHint text="Vault secret holding the key (per-agent, injected per run)" />
             </template>
             <USelectMenu
@@ -517,8 +495,8 @@ onServerPrefetch(() =>
             />
           </UFormField>
           <UFormField name="instructions">
-            <template #label>
-              Instructions
+            <template #label> Instructions </template>
+            <template #hint>
               <FormHint text="System prompt for this agent" />
             </template>
             <UTextarea

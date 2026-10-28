@@ -5,9 +5,10 @@
 // the oidc/settings query keys with the rest of the app (the switch locks until
 // an OIDC provider exists; shared cache, no prop drilling).
 import { useQuery } from '@tanstack/vue-query';
+import { z } from 'zod';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
-import { errorMessage } from '~/utils/forms';
+import { saveFailed } from '~/utils/forms';
 
 const { $orpc, $client } = useNuxtApp();
 
@@ -55,6 +56,14 @@ const editorError = ref('');
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
 const form = reactive({ label: '', issuer: '', clientId: '', clientSecret: '' });
+// loose frontend schema (repo law): presence only — the stored secret is kept
+// when the field is left blank on an edit, so clientSecret stays optional
+const oidcSchema = z.object({
+  label: z.string().trim().min(1, 'Name is required'),
+  issuer: z.string().trim().min(1, 'Issuer URL is required'),
+  clientId: z.string().trim().min(1, 'Client ID is required'),
+  clientSecret: z.string(),
+});
 
 // SSR-safe: window.location during setup hydrates a different string on the client
 const publicOrigin = useRequestURL().origin;
@@ -64,7 +73,7 @@ const providerColumns = [
   { accessorKey: 'issuer', header: 'Issuer' },
   { accessorKey: 'clientId', header: 'Client ID' },
   { accessorKey: 'callback', header: 'Callback URL' },
-  { accessorKey: 'actions', header: '' },
+  { id: 'actions', header: 'Actions', meta: { class: { th: 'sr-only' } } },
 ];
 
 function openEditor(row?: OidcProviderRow) {
@@ -79,6 +88,8 @@ function openEditor(row?: OidcProviderRow) {
 }
 
 async function saveProvider() {
+  // one write at a time — a double-click or stray Enter must not double-create
+  if (busy.value) return;
   busy.value = true;
   message.value = '';
   editorError.value = '';
@@ -95,16 +106,16 @@ async function saveProvider() {
     }> = list;
     list2.push({
       id: editingId.value ?? undefined,
-      label: form.label,
-      issuer: form.issuer,
-      clientId: form.clientId,
+      label: form.label.trim(),
+      issuer: form.issuer.trim(),
+      clientId: form.clientId.trim(),
       ...(form.clientSecret ? { clientSecret: form.clientSecret } : {}),
     });
     await $client.oidc.replace({ providers: list2 });
     editorOpen.value = false;
   } catch (e) {
     // the editor modal stays open — render the failure where the user is
-    editorError.value = errorMessage(e, 'Save failed');
+    editorError.value = saveFailed(e, 'provider');
   } finally {
     busy.value = false;
   }
@@ -117,11 +128,16 @@ const removeOpen = computed({
     if (!v) pendingRemove.value = null;
   },
 });
+const removeError = ref('');
+
+function askRemove(row: OidcProviderRow) {
+  removeError.value = '';
+  pendingRemove.value = row;
+}
 
 async function removeProvider() {
   if (!pendingRemove.value) return;
   busy.value = true;
-  message.value = '';
   try {
     const list = providers.value
       .filter((p) => p.id !== pendingRemove.value?.id)
@@ -129,11 +145,8 @@ async function removeProvider() {
     await $client.oidc.replace({ providers: list });
     pendingRemove.value = null;
   } catch (e) {
-    // mirror SettingsProvidersCard: close the confirm so the card-level
-    // message renders on the card, not behind the modal
-    pendingRemove.value = null;
-    message.value = errorMessage(e, 'Delete failed');
-    messageOk.value = false;
+    // in-modal law: the confirm stays open, the failure renders inside it
+    removeError.value = saveFailed(e, 'provider', 'delete');
   } finally {
     busy.value = false;
   }
@@ -151,7 +164,7 @@ async function savePasswordPolicy(next: boolean) {
   } catch (e) {
     // nothing refetches after a failed write — put the switch back where it was
     disablePasswordLogin.value = previous;
-    message.value = errorMessage(e, 'Save failed');
+    message.value = saveFailed(e, 'settings');
     messageOk.value = false;
   } finally {
     busy.value = false;
@@ -172,8 +185,8 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
     <div class="space-y-5">
       <div>
         <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <h4 class="text-highlighted text-sm font-semibold">OIDC providers</h4>
-          <UButton icon="i-lucide-plus" size="sm" label="Add provider" @click="openEditor()" />
+          <h3 class="text-highlighted text-sm font-semibold">OIDC providers</h3>
+          <UButton icon="i-lucide-plus" size="sm" label="New provider" @click="openEditor()" />
         </div>
         <template v-if="oidcLive.isPending.value">
           <div class="space-y-2" aria-hidden="true">
@@ -183,7 +196,53 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
         </template>
         <p v-else-if="oidcLive.isError.value" role="alert" class="text-error text-sm">Couldn't load OIDC providers</p>
         <template v-else-if="providers.length">
-          <UCard :ui="{ root: 'shadow-sm', body: 'p-0 sm:p-0' }">
+          <!-- Mobile: stacked cards (the 5-column table overflows a phone) -->
+          <div class="space-y-3 md:hidden">
+            <UCard v-for="p in providers" :key="p.id" :ui="{ root: 'shadow-sm' }">
+              <div class="min-w-0">
+                <p class="text-highlighted flex flex-wrap items-center gap-2 text-sm font-medium">
+                  {{ p.label }}
+                  <UBadge v-if="!p.secretSet" variant="subtle" color="warning" size="sm">Client secret not set</UBadge>
+                </p>
+                <p class="text-muted mt-1 truncate font-mono text-xs">{{ p.issuer }}</p>
+                <p class="text-dimmed truncate font-mono text-xs">ID {{ p.clientId }}</p>
+                <p class="text-muted mt-1 font-mono text-xs break-all">{{ publicOrigin }}/auth/callback/{{ p.id }}</p>
+              </div>
+              <div class="mt-3 flex justify-end gap-1">
+                <UPopover mode="hover" enable-touch>
+                  <UButton
+                    icon="i-lucide-pencil"
+                    variant="ghost"
+                    color="neutral"
+                    size="sm"
+                    :aria-label="`Edit ${p.label}`"
+                    @click="openEditor(p)"
+                  />
+                  <template #content>
+                    <div class="px-3 py-1.5 text-xs">Edit provider</div>
+                  </template>
+                </UPopover>
+                <UPopover mode="hover" enable-touch>
+                  <UButton
+                    icon="i-lucide-trash-2"
+                    variant="ghost"
+                    color="neutral"
+                    class="text-muted hover:text-error"
+                    size="sm"
+                    :aria-label="`Delete ${p.label}`"
+                    :disabled="busy"
+                    @click="askRemove(p)"
+                  />
+                  <template #content>
+                    <div class="px-3 py-1.5 text-xs">Delete provider</div>
+                  </template>
+                </UPopover>
+              </div>
+            </UCard>
+          </div>
+
+          <!-- Desktop: table -->
+          <UCard class="hidden md:block" :ui="{ root: 'shadow-sm', body: 'p-0 sm:p-0' }">
             <UTable :data="providers" :columns="providerColumns">
               <template #label-cell="{ row }">
                 <div class="flex flex-wrap items-center gap-2">
@@ -206,7 +265,7 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
                       variant="ghost"
                       color="neutral"
                       size="sm"
-                      aria-label="Edit provider"
+                      :aria-label="`Edit ${row.original.label}`"
                       @click="openEditor(row.original)"
                     />
                     <template #content>
@@ -220,9 +279,9 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
                       color="neutral"
                       class="text-muted hover:text-error"
                       size="sm"
-                      aria-label="Delete provider"
+                      :aria-label="`Delete ${row.original.label}`"
                       :disabled="busy"
-                      @click="pendingRemove = row.original"
+                      @click="askRemove(row.original)"
                     />
                     <template #content>
                       <div class="px-3 py-1.5 text-xs">Delete provider</div>
@@ -279,12 +338,12 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
   <!-- OIDC provider editor modal -->
   <UModal
     :open="editorOpen"
-    :title="editingId ? 'Edit provider' : 'Add OIDC provider'"
+    :title="editingId ? 'Edit provider' : 'New OIDC provider'"
     description="Register the redirect URL shown after saving in your OIDC provider"
     @update:open="(v: boolean) => (editorOpen = v)"
   >
     <template #body>
-      <UForm id="oidc-editor-form" :state="form" class="space-y-4" @submit="saveProvider">
+      <UForm id="oidc-editor-form" :schema="oidcSchema" :state="form" class="space-y-4" @submit="saveProvider">
         <UFormField name="label" label="Name" required>
           <template #hint><FormHint text="Shown on the login button" /></template>
           <UInput v-model="form.label" icon="i-lucide-tag" class="w-full" placeholder="Display name" />
@@ -310,6 +369,7 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
         </UFormField>
         <UAlert
           v-if="editorError"
+          role="alert"
           icon="i-lucide-circle-alert"
           color="error"
           variant="subtle"
@@ -332,7 +392,7 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
           type="submit"
           :icon="editingId ? 'i-lucide-check' : 'i-lucide-plus'"
           :loading="busy"
-          :label="editingId ? 'Save changes' : 'Add provider'"
+          :label="editingId ? 'Save changes' : 'New provider'"
           form="oidc-editor-form"
         />
       </div>
@@ -348,6 +408,15 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
           <span class="text-highlighted font-semibold">{{ pendingRemove?.label }}</span
           >? Anyone signing in through it loses that login option immediately.
         </p>
+        <UAlert
+          v-if="removeError"
+          role="alert"
+          icon="i-lucide-circle-alert"
+          color="error"
+          variant="subtle"
+          :title="removeError"
+          :ui="{ title: 'text-sm' }"
+        />
       </div>
     </template>
     <template #footer>

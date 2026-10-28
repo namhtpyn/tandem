@@ -3,12 +3,14 @@
 import { expect, test } from '@playwright/test';
 
 import { login } from './helpers/login.ts';
+import { waitForHydration } from './pages/base.page.ts';
 
 test('inbox toggle filters to tasks pending on me and shows a badge', async ({ page }) => {
   const suffix = Date.now();
   const name = `Inbox toggle ${suffix}`;
   await login(page);
   await page.goto('/tasks');
+  await waitForHydration(page);
 
   // task assigned to admin (the logged-in user) and in progress, so Ask routes
   // the question to the owner (= admin) -> inbox obligation on the same user
@@ -34,17 +36,24 @@ test('inbox toggle filters to tasks pending on me and shows a badge', async ({ p
   expect(asked.status()).toBe(200);
 
   await page.goto('/tasks');
+  await waitForHydration(page);
   const toggle = page.getByTestId('needs-decision-toggle');
   await expect(toggle).toContainText('Needs my decision');
   // badge count ≥1 is the settled state of the ask round-trip (SSE refetches
   // within ms — the retrying value assert absorbs the server-side routing)
   await expect(page.getByTestId('inbox-count')).toHaveText(/[1-9]/); // badge count
 
-  // toggle on: only the pending task remains visible
+  // seed a bystander the inbox must NOT show: no obligation, not pending on me
+  const bystander = `Inbox bystander ${suffix}`;
+  await page.getByRole('button', { name: 'New task' }).first().click();
+  await page.getByPlaceholder('Task title').fill(bystander);
+  await page.getByRole('button', { name: /Save|Create task/ }).click();
+  await expect(page.getByRole('link', { name: bystander }).first()).toBeVisible({ timeout: 15_000 });
+
+  // toggle on: the pending task remains, the bystander disappears
   await toggle.click();
   await expect(page.getByRole('link', { name })).toBeVisible();
-  const otherRows = await page.locator('a[href^="/tasks/"]').count();
-  expect(otherRows).toBeGreaterThanOrEqual(1);
+  await expect(page.getByRole('link', { name: bystander })).toHaveCount(0);
 
   // toggle off: back to the full list label
   await toggle.click();
@@ -57,6 +66,7 @@ test('subtask creation nests under the parent, chips the child, and blocks the p
   const childName = `Gating child ${suffix}`;
   await login(page);
   await page.goto('/tasks');
+  await waitForHydration(page);
 
   await page.getByRole('button', { name: 'New task' }).first().click();
   await page.getByPlaceholder('Task title').fill(parentName);

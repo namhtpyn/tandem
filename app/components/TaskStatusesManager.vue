@@ -2,18 +2,19 @@
 // 'Task statuses' manager: workflow status CRUD — the list modal, the
 // status editor modal and its transitions picker. Self-loads the statuses
 // query + save/remove mutations.
-import { useMutation, useQuery } from '@tanstack/vue-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 import { computed, reactive, ref } from 'vue';
+import { z } from 'zod';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
-import { nonNull } from '#shared/utils/non-null';
-import { errorMessage } from '~/utils/forms';
+import { saveFailed } from '~/utils/forms';
 import type { TaskStatusRow } from '~/utils/orpc-types';
 import { categoryColor, categoryLabel } from '~/utils/ui-labels';
 
 const open = defineModel<boolean>('open', { default: false });
 
 const { $orpc } = useNuxtApp();
+const queryClient = useQueryClient();
 
 const statusesLive = useQuery($orpc.statuses.list.queryOptions({ queryKey: [CHANGE_RESOURCE.STATUSES] }));
 const statuses = computed(() => unref(statusesLive.data) ?? []);
@@ -52,6 +53,7 @@ const statusForm = reactive({
 const statusSaveMutation = useMutation($orpc.statuses.save.mutationOptions());
 const statusRemoveMutation = useMutation($orpc.statuses.remove.mutationOptions());
 
+const deleteError = ref('');
 const pendingDelete = ref<TaskStatusRow | null>(null);
 const deleteOpen = computed({
   get: () => pendingDelete.value !== null,
@@ -66,7 +68,7 @@ function openStatusEditor(row?: TaskStatusRow) {
   statusForm.color = (row?.color as typeof statusForm.color | undefined) ?? 'neutral';
   statusForm.position = row?.position ?? statuses.value.length;
   statusForm.category = (row?.category as typeof statusForm.category | undefined) ?? 'backlog';
-  statusForm.nextIds = row ? [...row.nextIds] : statuses.value.length > 0 ? [nonNull(statuses.value[0]).id] : [];
+  statusForm.nextIds = row ? [...row.nextIds] : [];
   statusMessage.value = '';
   statusEditorTouched.value = true;
   // the manager modal STAYS OPEN underneath — the editor stacks on top of it
@@ -75,7 +77,8 @@ function openStatusEditor(row?: TaskStatusRow) {
 }
 
 async function saveStatus() {
-  if (!statusForm.name.trim()) return;
+  // one write at a time — a double-click or stray Enter must not double-create
+  if (statusBusy.value) return;
   statusBusy.value = true;
   statusMessage.value = '';
   try {
@@ -89,26 +92,33 @@ async function saveStatus() {
     });
     statusEditorTouched.value = false;
     editingStatusId.value = null;
+    // SSE-down backstop: the manager's own list must refetch even without the bus
+    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.STATUSES] });
   } catch (e) {
-    statusMessage.value = errorMessage(e, 'Save failed');
+    statusMessage.value = saveFailed(e, 'status');
   } finally {
     statusBusy.value = false;
   }
 }
 
 async function removeStatus() {
-  if (!pendingDelete.value) return;
+  if (!pendingDelete.value || statusBusy.value) return;
   statusBusy.value = true;
-  statusMessage.value = '';
   try {
     await statusRemoveMutation.mutateAsync({ id: pendingDelete.value.id });
     pendingDelete.value = null;
+    // SSE-down backstop: the manager's own list must refetch even without the bus
+    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.STATUSES] });
   } catch (e) {
-    statusMessage.value = errorMessage(e, 'Delete failed');
+    // in-modal law: the confirm stays open, the failure renders inside it
+    deleteError.value = saveFailed(e, 'status', 'delete');
   } finally {
     statusBusy.value = false;
   }
 }
+
+// loose frontend schema (repo law): name presence only — the server owns the rest
+const statusSchema = z.object({ name: z.string().min(1, 'Name is required') });
 
 const colorOptions = [
   { label: 'Neutral', value: 'neutral' },
@@ -170,7 +180,7 @@ const categoryOptions = [
                     variant="ghost"
                     color="neutral"
                     size="sm"
-                    aria-label="Edit status"
+                    :aria-label="`Edit ${st.name}`"
                     :disabled="statusBusy"
                     @click="openStatusEditor(st)"
                   />
@@ -185,9 +195,12 @@ const categoryOptions = [
                     color="neutral"
                     class="text-muted hover:text-error"
                     size="sm"
-                    aria-label="Delete status"
+                    :aria-label="`Delete ${st.name}`"
                     :disabled="statusBusy"
-                    @click="pendingDelete = st"
+                    @click="
+                      deleteError = '';
+                      pendingDelete = st;
+                    "
                   />
                   <template #content>
                     <div class="px-3 py-1.5 text-xs">Delete status</div>
@@ -223,8 +236,18 @@ const categoryOptions = [
           <p class="text-toned text-sm">
             Delete status
             <span class="text-highlighted font-semibold">{{ pendingDelete?.name }}</span
-            >? A status still used by tasks can't be deleted, and transitions pointing at it are removed.
+            >? A status still used by tasks can't be deleted — move those tasks first. Transitions pointing at this
+            status are removed automatically.
           </p>
+          <UAlert
+            v-if="deleteError"
+            role="alert"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            :title="deleteError"
+            :ui="{ title: 'text-sm' }"
+          />
         </div>
       </template>
       <template #footer>
@@ -238,23 +261,30 @@ const categoryOptions = [
     <!-- status editor -->
     <UModal v-model:open="statusEditorOpen" :title="editingStatusId ? 'Edit status' : 'New status'">
       <template #body>
-        <div class="space-y-4">
-          <UFormField label="Name" name="statusName">
+        <UForm
+          id="status-editor-form"
+          :schema="statusSchema"
+          :state="statusForm"
+          class="space-y-4"
+          @submit="saveStatus"
+        >
+          <UFormField label="Name" name="name">
             <UInput v-model="statusForm.name" placeholder="e.g. In review" class="w-full" />
           </UFormField>
-          <UFormField label="Color" name="statusColor">
+          <UFormField label="Color" name="color">
             <USelect v-model="statusForm.color" :items="colorOptions" value-key="value" class="w-full" />
           </UFormField>
-          <UFormField label="Position" name="statusPosition">
+          <UFormField label="Position" name="position">
             <UInput v-model.number="statusForm.position" type="number" min="0" max="99" class="w-full" />
           </UFormField>
-          <UFormField label="Meaning" name="statusCategory">
+          <UFormField label="Meaning" name="category">
             <template #hint
-              ><FormHint text="ready = agents pick tasks up from here; done/cancelled = agents stop working"
+              ><FormHint
+                text="Agents pick up tasks whose status sits in Ready; they stop working on Done and Cancelled statuses"
             /></template>
             <USelect v-model="statusForm.category" :items="categoryOptions" value-key="value" class="w-full" />
           </UFormField>
-          <UFormField label="Can move to" name="statusNext">
+          <UFormField label="Can move to" name="nextIds">
             <template #hint><FormHint text="Allowed transitions from this status" /></template>
             <USelectMenu
               v-model="statusForm.nextIds"
@@ -266,17 +296,17 @@ const categoryOptions = [
             />
           </UFormField>
           <p v-if="statusMessage" role="alert" class="text-error text-sm">{{ statusMessage }}</p>
-        </div>
+        </UForm>
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
           <UButton variant="ghost" color="neutral" label="Cancel" @click="statusEditorOpen = false" />
           <UButton
+            type="submit"
+            form="status-editor-form"
             icon="i-lucide-check"
             :label="editingStatusId ? 'Save changes' : 'Create status'"
             :loading="statusBusy"
-            :disabled="!statusForm.name.trim()"
-            @click="saveStatus"
           />
         </div>
       </template>

@@ -9,13 +9,15 @@ import type { Editor } from '@tiptap/core';
 import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { computed, reactive, ref, watch } from 'vue';
+import { z } from 'zod';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import type { EditorView, ClipboardEventLike, DragEventLike } from '~/types/editor-typing';
-import { NONE_ID, errorMessage } from '~/utils/forms';
+import { taskAttachmentsUrl } from '~/utils/api-urls';
+import { NONE_ID, saveFailed } from '~/utils/forms';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
-import { kindLabel } from '~/utils/ui-labels';
+import { aiOptionLabel, kindLabel } from '~/utils/ui-labels';
 
 const open = defineModel<boolean>('open', { default: false });
 const props = defineProps<{ task: TaskRow | null; parentTaskId?: string | null }>();
@@ -131,11 +133,13 @@ async function uploadAttachment(
     if (!taskId) {
       // create the task first so the attachment has a row to belong to
       const created = await $client.tasks.create({
-        title: form.title,
+        title: form.title.trim(),
         description: '',
         assigneeId: form.assigneeId === NONE_ID ? null : form.assigneeId,
         status: form.status,
         projectId: form.projectId === NONE_ID ? null : form.projectId,
+        // a subtask's attachment-first create must not orphan it at the top level
+        parentId: props.parentTaskId ?? undefined,
       });
       taskId = created.id;
       editingId.value = taskId;
@@ -144,7 +148,7 @@ async function uploadAttachment(
     }
     const fd = new FormData();
     fd.append('file', file);
-    const up = (await $fetch(`/api/tasks/${taskId}/attachments`, { method: 'POST', body: fd })) as {
+    const up = (await $fetch(taskAttachmentsUrl(taskId), { method: 'POST', body: fd })) as {
       id: string;
       filename: string;
       mime: string;
@@ -198,9 +202,12 @@ function onAttachmentPicked(e: Event) {
 const createMutation = useMutation($orpc.tasks.create.mutationOptions());
 const updateMutation = useMutation($orpc.tasks.update.mutationOptions());
 
+// loose frontend schema (repo law): title presence only — the server owns the rest
+const taskFormSchema = z.object({ title: z.string().trim().min(1, 'Title is required') });
+
 const assigneeOptions = computed(() => [
   { label: 'Unassigned', value: NONE_ID },
-  ...employees.value.map((e) => ({ label: `${e.name}${e.kind === 'ai' ? ' (AI)' : ''}`, value: e.id })),
+  ...employees.value.map((e) => ({ label: aiOptionLabel(e.name, e.kind), value: e.id })),
 ]);
 const projectOptions = computed(() => [
   { label: 'No project', value: NONE_ID },
@@ -211,11 +218,13 @@ const statusOptions = computed(() =>
 );
 
 async function save() {
+  // one write at a time — a double-click or stray Enter must not double-create
+  if (busy.value) return;
   busy.value = true;
   message.value = '';
   try {
     const payload = {
-      title: form.title,
+      title: form.title.trim(),
       // prefer the live doc's markdown; the string form.description is the
       // fallback (defensive against editor remounts)
       description: (descriptionEditor.value?.getMarkdown() ?? '').trim() || form.description,
@@ -236,7 +245,7 @@ async function save() {
     emit('saved');
   } catch (e) {
     messageOk.value = false;
-    message.value = errorMessage(e, "Couldn't save the task — try again");
+    message.value = saveFailed(e, 'task');
   } finally {
     busy.value = false;
   }
@@ -250,7 +259,7 @@ async function save() {
     :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
   >
     <template #body>
-      <UForm id="task-editor-form" :state="form" class="space-y-4" @submit="save">
+      <UForm id="task-editor-form" :schema="taskFormSchema" :state="form" class="space-y-4" @submit="save">
         <UFormField label="Title" name="title">
           <template #hint><FormHint text="Short summary of the work" /></template>
           <UInput v-model="form.title" icon="i-lucide-list-todo" placeholder="Task title" class="w-full" required />
@@ -284,6 +293,7 @@ async function save() {
           <div class="mt-1 flex items-center">
             <UButton
               size="xs"
+              class="min-h-8"
               color="neutral"
               variant="ghost"
               icon="i-lucide-paperclip"
@@ -330,7 +340,7 @@ async function save() {
           <USelectMenu
             v-model="form.reviewers"
             multiple
-            :items="employees.map((e) => ({ label: e.kind === 'ai' ? `${e.name} (AI)` : e.name, value: e.id }))"
+            :items="employees.map((e) => ({ label: aiOptionLabel(e.name, e.kind), value: e.id }))"
             value-key="value"
             icon="i-lucide-user-check"
             placeholder="Add reviewers…"

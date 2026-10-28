@@ -12,6 +12,7 @@ import { useInfiniteScroll, watchDebounced } from '@vueuse/core';
 import { computed, onMounted, ref, useTemplateRef } from 'vue';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { saveFailed } from '~/utils/forms';
 
 type FolderOption = { id: string; name: string; label: string };
 
@@ -67,9 +68,15 @@ const lastPicked = ref<FolderOption | null>(null);
 
 const options = computed<FolderOption[]>(() => {
   const pages = (pagesQuery.data.value?.pages ?? []).flatMap((p) => p.options.map((o) => ({ ...o, label: o.name })));
-  const picked = lastPicked.value;
-  if (picked && !pages.some((o) => o.id === picked.id)) return [...pages, picked];
-  return pages;
+  const out = [...pages];
+  const id = model.value;
+  // the selection must ALWAYS resolve to a label: pages can be empty (search
+  // narrowed them away, first load still in flight) — keep the remembered pick,
+  // else a human placeholder instead of a raw UUID in the trigger
+  if (id && !out.some((o) => o.id === id)) {
+    out.push(lastPicked.value?.id === id ? lastPicked.value : { id, name: 'Unknown folder', label: 'Unknown folder' });
+  }
+  return out;
 });
 
 function onPick(v: string | null | undefined) {
@@ -105,10 +112,18 @@ onMounted(() => {
 
 const saveMutation = useMutation({ ...$orpc.vault.folders.save.mutationOptions() });
 
+const createError = ref('');
+
 async function onCreate(name: string) {
-  const { id } = await saveMutation.mutateAsync({ name });
-  lastPicked.value = { id, name, label: name };
-  model.value = id;
+  createError.value = '';
+  try {
+    const { id } = await saveMutation.mutateAsync({ name });
+    lastPicked.value = { id, name, label: name };
+    model.value = id;
+  } catch (e) {
+    // a swallowed failure reads as 'create worked but the folder vanished' — surface it
+    createError.value = saveFailed(e, 'folder');
+  }
 }
 
 const selectModel = computed({
@@ -147,6 +162,7 @@ const selectModel = computed({
       <div v-if="pagesQuery.isFetchingNextPage.value" class="flex w-full items-center justify-center py-2">
         <UIcon name="i-lucide-loader-circle" class="text-muted size-4 animate-spin" />
       </div>
+      <p v-if="createError" role="alert" class="text-error px-3 pb-2 text-xs">{{ createError }}</p>
     </template>
   </USelectMenu>
 </template>

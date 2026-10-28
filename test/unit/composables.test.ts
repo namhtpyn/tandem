@@ -128,17 +128,22 @@ describe('useSessionRefreshing', () => {
   it('binds exactly one tab-lifetime window focus listener on mount', async () => {
     const add = vi.fn();
     const remove = vi.fn();
-    (globalThis as unknown as { window: unknown }).window = { addEventListener: add, removeEventListener: remove };
-    const m = await import('../../app/composables/useAppSession.ts');
-    m.useSessionRefreshing();
-    expect(mounted).toHaveLength(1);
-    mounted[0]!();
-    expect(add).toHaveBeenCalledTimes(1);
-    expect(add).toHaveBeenCalledWith('focus', expect.any(Function));
-    // singleton law: a second call site must not add another listener
-    m.useSessionRefreshing();
-    mounted[1]!();
-    expect(add).toHaveBeenCalledTimes(1);
+    // stubGlobal + unstub: a bare globalThis.window assignment leaks across files
+    vi.stubGlobal('window', { addEventListener: add, removeEventListener: remove });
+    try {
+      const m = await import('../../app/composables/useAppSession.ts');
+      m.useSessionRefreshing();
+      expect(mounted).toHaveLength(1);
+      mounted[0]!();
+      expect(add).toHaveBeenCalledTimes(1);
+      expect(add).toHaveBeenCalledWith('focus', expect.any(Function));
+      // singleton law: a second call site must not add another listener
+      m.useSessionRefreshing();
+      mounted[1]!();
+      expect(add).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   describe('isUnauthorizedError', () => {

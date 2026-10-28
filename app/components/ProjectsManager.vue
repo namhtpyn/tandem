@@ -2,7 +2,7 @@
 // Self-contained projects manager: tree table, client-side search (projects
 // are nestable, so the full list must stay client-side for tree assembly),
 // create/edit editor and delete confirm. The page renders the shell.
-import { useQuery, useQueryClient } from '@tanstack/vue-query';
+import { useQuery } from '@tanstack/vue-query';
 import { watchDebounced } from '@vueuse/core';
 // Projects: nestable containers for tasks. Mobile-first: stacked tree cards,
 // desktop table; create/edit modal follows the #footer submit law.
@@ -10,12 +10,11 @@ import { computed, reactive, ref, unref } from 'vue';
 import { z } from 'zod';
 
 import { CHANGE_RESOURCE, PROJECT_STATUS, type ProjectStatus } from '#shared/enums';
-import { NONE_ID, errorMessage } from '~/utils/forms';
+import { NONE_ID, saveFailed } from '~/utils/forms';
 import type { ProjectRow } from '~/utils/orpc-types';
 import { humanizeEnum } from '~/utils/ui-labels';
 
 const { $orpc, $client } = useNuxtApp();
-const queryClient = useQueryClient();
 
 const liveQuery = useQuery($orpc.projects.list.queryOptions({ queryKey: [CHANGE_RESOURCE.PROJECTS] }));
 const allRows = computed(() => (unref(liveQuery.data) ?? []) as ProjectRow[]);
@@ -153,6 +152,8 @@ function openEditor(row?: FlatRow) {
 }
 
 async function save() {
+  // one write at a time — a double-click or stray Enter must not double-create
+  if (busy.value) return;
   busy.value = true;
   message.value = '';
   try {
@@ -167,7 +168,7 @@ async function save() {
     else await $client.projects.create(payload);
     editorOpen.value = false;
   } catch (e) {
-    message.value = errorMessage(e, 'Save failed');
+    message.value = saveFailed(e, 'project');
   } finally {
     busy.value = false;
   }
@@ -175,21 +176,22 @@ async function save() {
 
 // the confirm copy names the project — resolve the row from the id
 const confirmingRow = computed(() => allRows.value.find((r) => r.id === confirmId.value) ?? null);
+const removeError = ref('');
 
-async function askRemove(row: FlatRow) {
+function askRemove(row: FlatRow) {
+  removeError.value = '';
   confirmId.value = row.id;
 }
 
-async function remove_() {
+async function remove() {
   if (!confirmId.value) return;
   busy.value = true;
   try {
     await $client.projects.remove({ id: confirmId.value });
     confirmId.value = null;
   } catch (e) {
-    // close the confirm so the page-level message isn't hidden behind the modal
-    confirmId.value = null;
-    message.value = errorMessage(e, 'Delete failed');
+    // in-modal law: the confirm stays open, the failure renders inside it
+    removeError.value = saveFailed(e, 'project', 'delete');
   } finally {
     busy.value = false;
   }
@@ -236,7 +238,7 @@ onServerPrefetch(() => liveQuery.suspense());
       :columns="[
         { accessorKey: 'name', header: 'Project' },
         { accessorKey: 'status', header: 'Status' },
-        { accessorKey: 'actions', header: '' },
+        { id: 'actions', header: 'Actions', meta: { class: { th: 'sr-only' } } },
       ]"
       show-empty-state
       :empty-icon="isFiltered ? 'i-lucide-search-x' : 'i-lucide-folder-tree'"
@@ -254,7 +256,7 @@ onServerPrefetch(() => liveQuery.suspense());
             color="neutral"
             size="xs"
             :aria-label="`${collapsed.has(row.original.id) ? 'Expand' : 'Collapse'} ${row.original.name}`"
-            class="px-0.5"
+            class="min-h-8 px-0.5"
             @click="toggleCollapse(row.original.id)"
           />
           <div class="min-w-0">
@@ -278,7 +280,7 @@ onServerPrefetch(() => liveQuery.suspense());
               variant="ghost"
               color="neutral"
               size="sm"
-              aria-label="Add subproject"
+              :aria-label="`Add subproject under ${row.original.name}`"
               @click="
                 openEditor(undefined);
                 form.parentId = row.original.id;
@@ -294,7 +296,7 @@ onServerPrefetch(() => liveQuery.suspense());
               variant="ghost"
               color="neutral"
               size="sm"
-              aria-label="Edit project"
+              :aria-label="`Edit ${row.original.name}`"
               @click="openEditor(row.original)"
             />
             <template #content>
@@ -308,7 +310,7 @@ onServerPrefetch(() => liveQuery.suspense());
               color="neutral"
               size="sm"
               class="text-muted hover:text-error"
-              aria-label="Delete project"
+              :aria-label="`Delete ${row.original.name}`"
               :disabled="busy"
               @click="askRemove(row.original)"
             />
@@ -337,7 +339,7 @@ onServerPrefetch(() => liveQuery.suspense());
                 variant="ghost"
                 color="neutral"
                 size="sm"
-                aria-label="Add subproject"
+                :aria-label="`Add subproject under ${row.name}`"
                 @click="
                   openEditor(undefined);
                   form.parentId = row.id;
@@ -353,7 +355,7 @@ onServerPrefetch(() => liveQuery.suspense());
                 variant="ghost"
                 color="neutral"
                 size="sm"
-                aria-label="Edit project"
+                :aria-label="`Edit ${row.name}`"
                 @click="openEditor(row)"
               />
               <template #content>
@@ -367,7 +369,7 @@ onServerPrefetch(() => liveQuery.suspense());
                 color="neutral"
                 size="sm"
                 class="text-muted hover:text-error"
-                aria-label="Delete project"
+                :aria-label="`Delete ${row.name}`"
                 :disabled="busy"
                 @click="askRemove(row)"
               />
@@ -392,8 +394,8 @@ onServerPrefetch(() => liveQuery.suspense());
             <UInput v-model="form.name" icon="i-lucide-folder" placeholder="Project name" class="w-full" required />
           </UFormField>
           <UFormField name="parentId">
-            <template #label>
-              Parent
+            <template #label> Parent </template>
+            <template #hint>
               <FormHint text="Nest this project under another" />
             </template>
             <USelectMenu
@@ -421,9 +423,8 @@ onServerPrefetch(() => liveQuery.suspense());
           <UFormField label="Description" name="description">
             <UTextarea v-model="form.description" placeholder="What this project is about" :rows="3" class="w-full" />
           </UFormField>
-          <UFormField name="prompt">
-            <template #label>
-              Project prompt
+          <UFormField label="Project prompt" name="prompt">
+            <template #hint>
               <FormHint text="Added to every agent brief of this project's tasks (empty = omitted)" />
             </template>
             <UTextarea
@@ -460,15 +461,26 @@ onServerPrefetch(() => liveQuery.suspense());
       "
     >
       <template #body>
-        <p class="text-muted text-sm">
-          Delete <strong class="text-highlighted">{{ confirmingRow?.name ?? 'this project' }}</strong
-          >? Its tasks become unscoped and subprojects move to the top level.
-        </p>
+        <div class="space-y-4">
+          <p class="text-muted text-sm">
+            Delete <strong class="text-highlighted">{{ confirmingRow?.name ?? 'this project' }}</strong
+            >? Its tasks become unscoped and subprojects move to the top level.
+          </p>
+          <UAlert
+            v-if="removeError"
+            role="alert"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            :title="removeError"
+            :ui="{ title: 'text-sm' }"
+          />
+        </div>
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
           <UButton variant="ghost" color="neutral" label="Cancel" @click="confirmId = null" />
-          <UButton color="error" label="Delete" :loading="busy" @click="remove_()" />
+          <UButton color="error" label="Delete" :loading="busy" @click="remove" />
         </div>
       </template>
     </UModal>

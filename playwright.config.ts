@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+import { ADMIN_STATE } from './test/e2e/helpers/auth-state.ts';
+
 export default defineConfig({
   // ONE worker, both locally and in CI: every spec shares the same e2e
   // database, so parallel workers only race truncates and login state (and at
@@ -24,7 +26,7 @@ export default defineConfig({
     {
       name: 'chromium',
       testIgnore: '*.setup.ts', // the setup file belongs to the setup project only
-      use: { ...devices['Desktop Chrome'], storageState: 'test/e2e/.auth/admin.json' },
+      use: { ...devices['Desktop Chrome'], storageState: ADMIN_STATE },
       dependencies: ['setup'], // the state file must exist before chromium starts
     },
   ],

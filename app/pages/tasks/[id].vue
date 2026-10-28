@@ -42,6 +42,8 @@ const workflowNote = ref('');
 const workflowBusy = ref(false);
 const workflowMessage = ref('');
 const workflowOk = ref(true); // message tone: success copy vs failure copy
+// the review box disarms its reject confirm + keeps the note on a failed verdict
+const workflowFailed = ref(false);
 
 // zod strips unknown keys, so optional extras ride along safely
 type WorkflowAction =
@@ -71,9 +73,10 @@ const WF_COPY: Record<WorkflowAction, { ok: string; fail: string }> = {
 };
 
 async function wfAction(action: WorkflowAction, extra: { body?: string; toEmployeeId?: string } = {}) {
-  if (!task.value) return;
+  if (!task.value || workflowBusy.value) return;
   workflowBusy.value = true;
   workflowMessage.value = '';
+  workflowFailed.value = false;
   try {
     const input = { taskId: task.value.id, ...extra };
     await {
@@ -91,16 +94,19 @@ async function wfAction(action: WorkflowAction, extra: { body?: string; toEmploy
     }[action]();
     workflowNote.value = '';
     // TASKS refresh keeps the page's task row (and the drawer's snapshot) ahead
-    // of the SSE round-trip — no double-submit window when the verb moves status
+    // of the SSE round-trip; TASK_ACTIVITY keeps the thread/reviews current and
+    // RUNS refreshes the run cards a dispatch/verdict just changed
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, task.value.id] });
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, task.value.id, 'reviews'] });
+    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.RUNS, task.value.id] });
     workflowMessage.value = WF_COPY[action].ok;
     workflowOk.value = true;
   } catch (e) {
     // surface the server's oRPC message, not ofetch's generic '[POST] …: 400'
     workflowMessage.value = errorMessage(e, WF_COPY[action].fail);
     workflowOk.value = false;
+    workflowFailed.value = true;
   } finally {
     workflowBusy.value = false;
   }
@@ -155,7 +161,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
 <template>
   <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
     <template #body>
-      <div class="p-3 lg:p-6">
+      <div class="task-gutter p-4 sm:p-6 lg:p-8">
         <!-- pending: client nav never warms this key — hold a skeleton, never the
              not-found copy, until the query settles -->
         <div v-if="tasksPending" class="space-y-4" aria-busy="true">
@@ -166,7 +172,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
               <USkeleton class="h-4 w-1/3" />
             </div>
           </div>
-          <USkeleton class="h-72 w-full rounded-2xl" />
+          <USkeleton class="h-72 w-full rounded-lg" />
         </div>
 
         <div v-else-if="tasksError" role="alert" class="flex flex-col items-center gap-3 py-16 text-center">
@@ -179,7 +185,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
           <ULink to="/tasks" class="underline">Back to tasks</ULink>
         </div>
 
-        <div v-else class="flex flex-col lg:h-[calc(100vh-7.5rem)] lg:flex-row lg:gap-6">
+        <div v-else class="flex flex-col lg:h-(--task-h) lg:flex-row lg:gap-6">
           <!-- ============ main: the chat ============ -->
           <section class="flex min-w-0 flex-1 flex-col">
             <!-- thread header (mobile shows the info trigger here) -->
@@ -187,7 +193,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
               <NuxtLink
                 to="/tasks"
                 aria-label="Back to tasks"
-                class="text-dimmed hover:bg-elevated hover:text-highlighted mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md"
+                class="text-dimmed hover:bg-elevated hover:text-highlighted focus-visible:bg-elevated focus-visible:text-highlighted focus-visible:ring-primary mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md focus-visible:ring-2 focus-visible:outline-none"
               >
                 <UIcon name="i-lucide-arrow-left" class="size-4" />
               </NuxtLink>
@@ -210,11 +216,12 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                     <UIcon name="i-lucide-corner-left-up" class="size-3" /> Part of: {{ parentTask.title }}
                   </NuxtLink>
                   <!-- assignee lives HERE as the header badge (one display per
-                       surface: Details owns the editable select, Assignment
-                       history owns the trail — a third plain-text line read as a bug) -->
+                   surface: Details owns the editable select, Assignment
+                   history owns the trail — a third plain-text line read as a bug).
+                   Neutral fill — the bot icon carries the AI kind; color stays CTA-only -->
                   <UBadge
                     v-if="task.assigneeName"
-                    :color="task.assigneeKind === 'ai' ? 'primary' : 'neutral'"
+                    color="neutral"
                     variant="subtle"
                     size="sm"
                     :icon="task.assigneeKind === 'ai' ? 'i-lucide-bot' : 'i-lucide-user-round'"
@@ -224,11 +231,11 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
               </div>
               <UButton
                 size="xs"
+                class="min-h-8 lg:hidden"
                 variant="soft"
                 icon="i-lucide-panel-right"
                 aria-label="Task info"
                 data-testid="task-info-trigger"
-                class="lg:hidden"
                 @click="infoSheetOpen = true"
               />
             </div>
@@ -244,8 +251,13 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
               :description="`${task.failStreak} consecutive failure${task.failStreak === 1 ? '' : 's'}. The most recent run's error is in the thread.`"
             />
 
-            <!-- ONE card: the thread and the composer share a single border -->
-            <div class="border-default bg-default flex min-h-0 flex-1 flex-col rounded-2xl border shadow-sm">
+            <!-- ONE card: the thread and the composer share a single border.
+                 Shrink-to-fit when short (max-h, no fixed fill — a two-message
+                 thread must not center itself in a viewport-tall void); the
+                 composer stays pinned at its bottom. -->
+            <div
+              class="border-default bg-default flex min-h-0 flex-col rounded-lg border shadow-sm lg:max-h-[calc(var(--task-h)-4.5rem)]"
+            >
               <!-- the thread (TaskActivityThread) -->
               <TaskActivityThread :task="task" />
 
@@ -271,12 +283,16 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                   >
                     {{ workflowMessage }}
                   </p>
-                  <!-- the ONE send hint — the send button carries no duplicate hover popover -->
+                  <!-- the ONE send hint — the send button carries no duplicate hover popover.
+                       Terminal tasks never re-dispatch (server note verb), so the hint
+                       must not promise it. -->
                   <span v-else class="text-muted shrink-0 text-xs">
                     {{
                       agentRunning
                         ? 'Sends a steering note to the running agent'
-                        : 'Sends the note and dispatches the agent'
+                        : taskStatusCategory === 'done' || taskStatusCategory === 'cancelled'
+                          ? 'Adds the note to the thread'
+                          : 'Sends the note and dispatches the agent'
                     }}
                   </span>
                   <UButton
@@ -297,6 +313,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
               v-if="taskStatusCategory === 'in_review' && isReviewer"
               class="mt-3"
               :busy="workflowBusy"
+              :failed="workflowFailed"
               @verdict="
                 (action: 'approve' | 'requestChanges' | 'reject', body?: string) =>
                   wfAction(action, { body: body || undefined })
@@ -306,7 +323,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
 
           <!-- ============ sidebar: task info (desktop docked; mobile via sheet above) ============ -->
           <aside
-            class="border-default bg-elevated/50 hidden w-full shrink-0 self-start rounded-xl border p-3.5 lg:sticky lg:top-4 lg:mt-0 lg:block lg:max-h-[calc(100vh-8.5rem)] lg:w-72 lg:overflow-y-auto"
+            class="border-default bg-elevated/50 hidden w-full shrink-0 self-start rounded-xl border p-3.5 lg:sticky lg:top-4 lg:mt-0 lg:block lg:max-h-[calc(var(--task-h)-1rem)] lg:w-72 lg:overflow-y-auto"
           >
             <div class="space-y-4">
               <TaskDetailsFields :task="task" :run-locked="agentRunning" />
@@ -343,3 +360,11 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
     @saved="queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] })"
   />
 </template>
+
+<style scoped>
+/* ONE viewport constant for the chat row height and the docked aside's max
+   height — the two calcs used to drift as separate magic numbers */
+.task-gutter {
+  --task-h: calc(100vh - 7.5rem);
+}
+</style>

@@ -7,8 +7,8 @@ import { watchDebounced } from '@vueuse/core';
 import { z } from 'zod';
 
 import { CHANGE_RESOURCE, SECRET_USAGE, type SecretUsage } from '#shared/enums';
-import { NONE_ID, errorMessage } from '~/utils/forms';
-import type { EnvironmentRow, VaultSecretRow } from '~/utils/orpc-types';
+import { NONE_ID, saveFailed } from '~/utils/forms';
+import type { EnvironmentRow } from '~/utils/orpc-types';
 import type { SecretOption } from '~/utils/vault-options';
 import { groupedSecretOptions } from '~/utils/vault-options';
 
@@ -42,33 +42,19 @@ const rows = computed<EnvironmentRow[]>(() => liveQuery.data.value?.environments
 const total = computed(() => liveQuery.data.value?.total ?? 0);
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 
-// deleting the last row of a high page clamps back into range — skip transient totals
+// deleting the last row of a high page (or an emptied list) clamps back into
+// range — keepPreviousData keeps the previous total while a page fetch lands,
+// so a transient zero can only mean a genuinely empty result (page 1)
 watch(total, (t) => {
-  if (!t) return;
   const maxPage = Math.max(1, Math.ceil(t / pageSize.value));
   if (page.value > maxPage) page.value = maxPage;
 });
 
-// vault secrets for the SSH key picker (metadata only) — a single page caps at
-// 100 rows and silently hides the rest of the vault, so walk pages up to `total`
-const secretsQuery = useQuery({
-  queryKey: [CHANGE_RESOURCE.VAULT, 'all'],
-  queryFn: async () => {
-    const pageSize = 100;
-    const first = await $orpc.vault.secrets.list.call({ page: 1, pageSize });
-    const rows = [...first.data];
-    const pages = Math.min(3, Math.ceil(first.total / pageSize));
-    for (let p = 2; p <= pages; p++) {
-      const next = await $orpc.vault.secrets.list.call({ page: p, pageSize });
-      rows.push(...next.data);
-    }
-    return rows;
-  },
-});
-const secrets = computed<VaultSecretRow[]>(() => (unref(secretsQuery.data) ?? []) as VaultSecretRow[]);
+// vault secrets for the SSH key picker (metadata only) — one shared [VAULT,'all'] walk
+const secretsQuery = useAllVaultSecrets();
 const secretOptions = computed<SecretOption[]>(() => [
   { label: 'No key (agent default)', value: NONE_ID },
-  ...groupedSecretOptions(secrets.value),
+  ...groupedSecretOptions(unref(secretsQuery.data) ?? []),
 ]);
 
 const editorOpen = ref(false);
@@ -98,6 +84,7 @@ const form = reactive({
 });
 const busy = ref(false);
 const message = ref('');
+const deleteError = ref('');
 const probingId = ref<string | null>(null);
 const pendingDelete = ref<EnvironmentRow | null>(null);
 const deleteOpen = computed({
@@ -106,7 +93,7 @@ const deleteOpen = computed({
     if (!v) pendingDelete.value = null;
   },
 });
-const probeResults = ref<Record<string, { ok: boolean; detail: string; durationMs: number }>>({});
+const probeResults = ref<Record<string, { ok: boolean; detail: string; durationMs: number } | undefined>>({});
 
 const createMutation = useMutation($orpc.environments.create.mutationOptions());
 const updateMutation = useMutation($orpc.environments.update.mutationOptions());
@@ -118,7 +105,7 @@ const columns = [
   // connection cell stacks username over host:port — port lives only here
   { accessorKey: 'host', header: 'Connection' },
   { accessorKey: 'probe', header: 'Status' },
-  { accessorKey: 'actions', header: '' },
+  { id: 'actions', header: 'Actions', meta: { class: { th: 'sr-only' } } },
 ];
 
 function openEditor(row?: EnvironmentRow) {
@@ -129,11 +116,15 @@ function openEditor(row?: EnvironmentRow) {
   form.username = row?.username ?? '';
   form.secretId = row?.secretId ?? NONE_ID;
   form.secretUsage = row?.secretUsage ?? SECRET_USAGE.SSH_KEY;
+  // a stale probe verdict must not survive an edit session that changed the target
+  if (row) probeResults.value[row.id] = undefined;
   message.value = '';
   editorOpen.value = true;
 }
 
 async function save() {
+  // one write at a time — a double-click or stray Enter must not double-create
+  if (busy.value) return;
   // UForm's schema gate blocks submit on a bad port — no manual pre-check here
   busy.value = true;
   message.value = '';
@@ -145,12 +136,13 @@ async function save() {
     };
     if (editingId.value) {
       await updateMutation.mutateAsync({ id: editingId.value, ...payload });
+      probeResults.value[editingId.value] = undefined;
     } else {
       await createMutation.mutateAsync(payload);
     }
     editorOpen.value = false;
   } catch (e) {
-    message.value = errorMessage(e, 'Save failed');
+    message.value = saveFailed(e, 'environment');
   } finally {
     busy.value = false;
   }
@@ -158,19 +150,19 @@ async function save() {
 }
 
 function askRemove(row: EnvironmentRow) {
+  deleteError.value = '';
   pendingDelete.value = row;
 }
 
 async function remove() {
   if (!pendingDelete.value) return;
   busy.value = true;
-  message.value = '';
   try {
     await removeMutation.mutateAsync({ id: pendingDelete.value.id });
     pendingDelete.value = null;
   } catch (e) {
-    pendingDelete.value = null;
-    message.value = errorMessage(e, 'Delete failed');
+    // in-modal law: the confirm stays open, the failure renders inside it
+    deleteError.value = saveFailed(e, 'environment', 'delete');
   } finally {
     busy.value = false;
   }
@@ -183,13 +175,18 @@ async function probe(row: EnvironmentRow) {
     const res = await probeCall({ id: row.id });
     probeResults.value[row.id] = res as { ok: boolean; detail: string; durationMs: number };
   } catch (e) {
-    probeResults.value[row.id] = { ok: false, detail: errorMessage(e, 'Probe failed'), durationMs: 0 };
+    probeResults.value[row.id] = { ok: false, detail: saveFailed(e, 'connection', 'probe'), durationMs: 0 };
   } finally {
     probingId.value = null;
   }
 }
 
-const probeLabel = (ok: boolean) => (ok ? 'OK' : 'Failed');
+/** probed state for one row — optional chaining instead of template non-null assertions */
+function probeResult(id: string) {
+  return probeResults.value[id];
+}
+
+const probeLabel = (ok: boolean | undefined) => (ok ? 'OK' : 'Failed');
 
 // the search box is pointless over an empty, unfiltered list — hide it there
 const showSearch = computed(() => total.value > 0 || !!search.value);
@@ -216,12 +213,10 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       </div>
     </div>
 
-    <p v-if="message && !editorOpen" role="alert" class="text-error mt-3 text-sm">{{ message }}</p>
-
     <DataTable
       class="mt-3"
       :data="rows"
-      :loading="liveQuery.isPending.value"
+      :loading="liveQuery.isFetching.value || liveQuery.isPlaceholderData.value"
       :error="liveQuery.isError.value"
       v-model:page="page"
       :page-count="pageCount"
@@ -232,7 +227,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       :empty-text="
         isFiltered
           ? 'No results — try a different search.'
-          : 'No environments yet — add the SSH target where your Hermes agents run.'
+          : 'No environments yet — add the SSH target where your agents run.'
       "
     >
       <template #empty-cta>
@@ -255,21 +250,21 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       <template #probe-cell="{ row }">
         <div class="flex items-center gap-2">
           <UBadge
-            v-if="probeResults[row.original.id]"
-            :color="probeResults[row.original.id]!.ok ? 'success' : 'error'"
+            v-if="probeResult(row.original.id)"
+            :color="probeResult(row.original.id)?.ok ? 'success' : 'error'"
             variant="subtle"
             size="sm"
             icon="i-lucide-circle-fill"
           >
-            {{ probeLabel(probeResults[row.original.id]!.ok) }}
+            {{ probeLabel(probeResult(row.original.id)?.ok) }}
           </UBadge>
           <UBadge v-else color="neutral" variant="subtle" size="sm" icon="i-lucide-circle-fill">Not probed</UBadge>
           <span
-            v-if="probeResults[row.original.id]"
+            v-if="probeResult(row.original.id)"
             class="text-dimmed truncate text-xs"
-            :title="probeResults[row.original.id]!.detail"
+            :title="probeResult(row.original.id)?.detail"
           >
-            {{ probeResults[row.original.id]!.detail }} ({{ probeResults[row.original.id]!.durationMs }} ms)
+            {{ probeResult(row.original.id)?.detail }} ({{ probeResult(row.original.id)?.durationMs }} ms)
           </span>
         </div>
       </template>
@@ -281,7 +276,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               variant="ghost"
               color="neutral"
               size="sm"
-              aria-label="Test connection"
+              :aria-label="`Test ${row.original.name}`"
               :loading="probingId === row.original.id"
               :disabled="busy || probingId !== null"
               @click="probe(row.original)"
@@ -296,7 +291,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               variant="ghost"
               color="neutral"
               size="sm"
-              aria-label="Edit environment"
+              :aria-label="`Edit ${row.original.name}`"
               :disabled="busy"
               @click="openEditor(row.original)"
             />
@@ -311,7 +306,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               color="neutral"
               size="sm"
               class="text-muted hover:text-error"
-              aria-label="Delete environment"
+              :aria-label="`Delete ${row.original.name}`"
               :disabled="busy"
               @click="askRemove(row.original)"
             />
@@ -330,22 +325,18 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
             </div>
             <div class="flex flex-col items-end gap-1">
               <UBadge
-                v-if="probeResults[row.id]"
-                :color="probeResults[row.id]!.ok ? 'success' : 'error'"
+                v-if="probeResult(row.id)"
+                :color="probeResult(row.id)?.ok ? 'success' : 'error'"
                 variant="subtle"
                 size="sm"
               >
-                {{ probeLabel(probeResults[row.id]!.ok) }}
+                {{ probeLabel(probeResult(row.id)?.ok) }}
               </UBadge>
               <UBadge v-else color="neutral" variant="subtle" size="sm" icon="i-lucide-circle-fill">Not probed</UBadge>
             </div>
           </div>
-          <p
-            v-if="probeResults[row.id]"
-            class="text-dimmed mt-1 truncate text-xs"
-            :title="probeResults[row.id]!.detail"
-          >
-            {{ probeResults[row.id]!.detail }} ({{ probeResults[row.id]!.durationMs }} ms)
+          <p v-if="probeResult(row.id)" class="text-dimmed mt-1 truncate text-xs" :title="probeResult(row.id)?.detail">
+            {{ probeResult(row.id)?.detail }} ({{ probeResult(row.id)?.durationMs }} ms)
           </p>
           <div v-if="editable" class="mt-3 flex justify-end gap-1">
             <UPopover mode="hover" enable-touch>
@@ -354,7 +345,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
                 variant="ghost"
                 color="neutral"
                 size="sm"
-                aria-label="Test connection"
+                :aria-label="`Test ${row.name}`"
                 :loading="probingId === row.id"
                 :disabled="busy || probingId !== null"
                 @click="probe(row)"
@@ -369,7 +360,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
                 variant="ghost"
                 color="neutral"
                 size="sm"
-                aria-label="Edit environment"
+                :aria-label="`Edit ${row.name}`"
                 :disabled="busy"
                 @click="openEditor(row)"
               />
@@ -384,7 +375,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
                 color="neutral"
                 size="sm"
                 class="text-muted hover:text-error"
-                aria-label="Delete environment"
+                :aria-label="`Delete ${row.name}`"
                 :disabled="busy"
                 @click="askRemove(row)"
               />
@@ -406,6 +397,15 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               pendingDelete?.username
             }}@{{ pendingDelete?.host }})? AI agents configured on it will need reassigning.
           </p>
+          <UAlert
+            v-if="deleteError"
+            role="alert"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            :title="deleteError"
+            :ui="{ title: 'text-sm' }"
+          />
         </div>
       </template>
       <template #footer>
@@ -424,22 +424,22 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       <template #body>
         <UForm id="environment-editor-form" :schema="envSchema" :state="form" class="space-y-4" @submit="save">
           <UFormField name="name">
-            <template #label>
-              Name
+            <template #label> Name </template>
+            <template #hint>
               <FormHint text="Unique label, e.g. ct112-tandem" />
             </template>
             <UInput v-model="form.name" icon="i-lucide-tag" placeholder="Environment name" class="w-full" required />
           </UFormField>
           <UFormField name="host">
-            <template #label>
-              Host
+            <template #label> Host </template>
+            <template #hint>
               <FormHint text="Hostname or IP of the SSH target" />
             </template>
             <UInput v-model="form.host" icon="i-lucide-server" placeholder="Hostname or IP" class="w-full" required />
           </UFormField>
           <UFormField name="port">
-            <template #label>
-              Port
+            <template #label> Port </template>
+            <template #hint>
               <FormHint text="SSH port — 22 unless changed on the host" />
             </template>
             <UInput
@@ -448,21 +448,20 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               :min="1"
               :max="65535"
               icon="i-lucide-network"
-              placeholder="Port"
+              placeholder="22"
               class="w-full"
-              required
             />
           </UFormField>
           <UFormField name="username">
-            <template #label>
-              Username
+            <template #label> Username </template>
+            <template #hint>
               <FormHint text="Key or password — the runner connects with whichever this environment uses" />
             </template>
             <UInput v-model="form.username" icon="i-lucide-user" placeholder="SSH username" class="w-full" required />
           </UFormField>
           <UFormField name="secretUsage">
-            <template #label>
-              Authentication
+            <template #label> Authentication </template>
+            <template #hint>
               <FormHint text="How the SSH connection authenticates" />
             </template>
             <USelect
@@ -471,14 +470,12 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
                 { label: 'SSH key', value: SECRET_USAGE.SSH_KEY },
                 { label: 'Password', value: SECRET_USAGE.PASSWORD },
               ]"
-              value-key="value"
-              icon="i-lucide-fingerprint"
               class="w-full"
             />
           </UFormField>
           <UFormField name="secretId">
-            <template #label>
-              Secret
+            <template #label> Secret </template>
+            <template #hint>
               <FormHint text="Vault secret holding the key or password (optional)" />
             </template>
             <USelectMenu

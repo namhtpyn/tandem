@@ -71,12 +71,13 @@ const cards = computed(() => [
              the single affordance — no 'Open →' copy, no hover-translate motion.
              Cards stack below sm; the count + label pair wraps inside a card. -->
         <div class="grid gap-4 sm:grid-cols-3">
-          <NuxtLink v-for="card in cards" :key="card.to" :to="card.to" class="group block">
+          <NuxtLink v-for="card in cards" :key="card.to" :to="card.to" class="group block rounded-xl">
             <!-- cards use ring (not border) per the UCard theme, so the hover
-                 affordance lights the ring + raises the bg -->
+                 affordance lights the ring + raises the bg; focus gets the same
+                 treatment (keyboard parity) -->
             <UCard
               :ui="{
-                root: 'shadow-sm h-full transition-colors hover:bg-elevated hover:ring-accented',
+                root: 'shadow-sm h-full transition-colors hover:bg-elevated hover:ring-accented focus-visible:outline-none group-focus-visible:ring-primary group-focus-visible:bg-elevated',
                 body: 'p-4 sm:p-4',
               }"
             >

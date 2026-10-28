@@ -1,5 +1,21 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 
+/** Hydration gate shared by login() and BasePage.navigate: the SSR'd buttons
+ * exist before Vue attaches @click, so a click straight after a page load can
+ * be swallowed. Returns when the app is interactive. */
+export async function waitForHydration(page: Page): Promise<void> {
+  await page.waitForFunction(() => {
+    try {
+      const nuxt = (window as Window & { useNuxtApp?: () => { isHydrating?: boolean } }).useNuxtApp?.();
+      if (nuxt) return nuxt.isHydrating === false;
+    } catch {
+      // no nuxt context outside the app yet — fall through to the Vue stamp
+    }
+    const root = document.querySelector('#__nuxt') as (Element & { __vue_app__?: unknown }) | null;
+    return Boolean(root?.__vue_app__);
+  });
+}
+
 // Shared page plumbing for specs: plain navigation, modal/drawer dismissal,
 // the two-step delete confirm, and the paged-list row search that employees/
 // vault/providers/environments each grew an identical copy of.
@@ -12,6 +28,8 @@ export class BasePage {
 
   async navigate(path: string): Promise<void> {
     await this.page.goto(path);
+    // a raw goto races hydration — every navigate is gated (see waitForHydration)
+    await waitForHydration(this.page);
   }
 
   // Close an overlay with Escape, settled when the overlay's sentinel text no

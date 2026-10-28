@@ -16,7 +16,7 @@ import { PROPOSAL_KIND } from '#shared/enums';
 // local e2e can exercise the full dispatch→stream→finish loop with no host.
 import { nonNull } from '#shared/utils/non-null';
 
-import type { RoutingProposal } from '../../../app/utils/task-thread';
+import type { RoutingProposal } from '#shared/run-verdict';
 import { db } from '../../db/index';
 import { tasks, taskRuns, taskActivity, taskAttachments, taskMessages } from '../../db/schema';
 import { env } from '../kernel/env';

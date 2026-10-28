@@ -47,6 +47,8 @@ vi.mock('ssh2', () => {
     ended = false;
     execError: Error | null = null;
     stream = wrap(new FakeStream());
+    /** captured .connect() options — lets tests assert what the util dialled */
+    connectOpts: Record<string, unknown> | null = null;
     constructor() {
       FakeClient.last = this;
     }
@@ -61,7 +63,8 @@ vi.mock('ssh2', () => {
     end() {
       this.ended = true;
     }
-    connect(_opts: unknown) {
+    connect(opts: Record<string, unknown>) {
+      this.connectOpts = opts;
       // default: ready fires next tick
       setTimeout(
         () =>
@@ -167,7 +170,9 @@ describe('runOverSsh (mocked ssh2)', () => {
   it('port defaults to 22 on garbage', async () => {
     const { lines, finish, resolve } = await collected();
     const clientMod = (await import('ssh2')).default;
-    const FakeClient = clientMod.Client as unknown as { last: { stream: { close(c: number | null): void } } };
+    const FakeClient = clientMod.Client as unknown as {
+      last: { connectOpts: Record<string, unknown> | null; stream: { close(c: number | null): void } };
+    };
     const p = runOverSsh(
       { env: { host: 'h', port: 'x', username: '00000000-0000-7000-8000-51e69892ab49' } as never, sshKey: 'k' },
       'cmd',
@@ -176,7 +181,10 @@ describe('runOverSsh (mocked ssh2)', () => {
       finish,
       resolve as never,
     );
-    await new Promise((r) => setTimeout(r, 10));
+    // connect fires on the util's first tick — poll for the captured options
+    await vi.waitFor(() => expect(FakeClient.last.connectOpts).not.toBeNull());
+    // the REAL assertion: garbage port dials the ssh2 default
+    expect(FakeClient.last.connectOpts?.port).toBe(22);
     FakeClient.last.stream.close(0);
     await p;
   });

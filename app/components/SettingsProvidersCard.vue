@@ -4,13 +4,14 @@
 // providers.list query (shared key: the General card's pickers and the auth
 // policy read the same cache) and the save/remove mutations.
 import { useQuery } from '@tanstack/vue-query';
+import { z } from 'zod';
 
 import { ENDPOINT_OPTIONS, PROVIDER_ENDPOINT_LABEL, isModelsEndpoint } from '#shared/api-styles';
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
-import { errorMessage } from '~/utils/forms';
+import { saveFailed } from '~/utils/forms';
 import type { ModelProviderRow, ProviderSaveInput } from '~/utils/orpc-types';
-import { endpointBadgeColor } from '~/utils/ui-labels';
+import { endpointBadgeColor, humanizeEnum } from '~/utils/ui-labels';
 
 const { $orpc, $client } = useNuxtApp();
 
@@ -26,6 +27,16 @@ const mProvForm = reactive({
   extraHeaders: '',
   notes: '',
 });
+// loose frontend schema (repo law): presence only — the server re-validates the URL shape
+const mProvSchema = z.object({
+  label: z.string().trim().min(1, 'Label is required'),
+  baseUrl: z.string().trim().min(1, 'Base URL is required'),
+});
+
+/** short badge label for an endpoint — catalog label without the parenthetical,
+ * humanized (never the raw enum) when the value isn't in the catalog */
+const endpointShortLabel = (st: string) =>
+  (PROVIDER_ENDPOINT_LABEL[st as keyof typeof PROVIDER_ENDPOINT_LABEL] ?? humanizeEnum(st)).split(' (')[0];
 
 // at most one /v1/models endpoint: picking another replaces the previous one
 function onEndpointsChange(next: Array<string | undefined>) {
@@ -57,6 +68,8 @@ function openMProvEditor(row?: ModelProviderRow) {
 }
 
 async function saveMProv() {
+  // one write at a time — a double-click or stray Enter must not double-create
+  if (mProvBusy.value) return;
   mProvBusy.value = true;
   mProvMessage.value = '';
   try {
@@ -75,8 +88,8 @@ async function saveMProv() {
       : undefined;
     await $client.providers.save({
       ...(mProvEditingId.value ? { id: mProvEditingId.value } : {}),
-      label: mProvForm.label,
-      baseUrl: mProvForm.baseUrl,
+      label: mProvForm.label.trim(),
+      baseUrl: mProvForm.baseUrl.trim(),
       endpoints: mProvForm.endpoints as ProviderSaveInput['endpoints'],
       // always send notes ('' clears) and extraHeaders only when present — an
       // omitted extraHeaders is the server's explicit clear; both fields keep
@@ -86,7 +99,7 @@ async function saveMProv() {
     });
     mProvEditorOpen.value = false;
   } catch (e) {
-    mProvMessage.value = errorMessage(e, 'Save failed');
+    mProvMessage.value = saveFailed(e, 'provider');
   } finally {
     mProvBusy.value = false;
   }
@@ -99,18 +112,22 @@ const removeOpen = computed({
     if (!v) pendingRemove.value = null;
   },
 });
+const removeError = ref('');
+
+function askRemove(row: ModelProviderRow) {
+  removeError.value = '';
+  pendingRemove.value = row;
+}
 
 async function removeMProv() {
   if (!pendingRemove.value) return;
   mProvBusy.value = true;
-  mProvMessage.value = '';
   try {
     await $client.providers.remove({ id: pendingRemove.value.id });
     pendingRemove.value = null;
   } catch (e) {
-    // close the confirm so the message renders on the card, not behind the modal
-    pendingRemove.value = null;
-    mProvMessage.value = errorMessage(e, 'Delete failed');
+    // in-modal law: the confirm stays open, the failure renders inside it
+    removeError.value = saveFailed(e, 'provider', 'delete');
   } finally {
     mProvBusy.value = false;
   }
@@ -130,8 +147,8 @@ onServerPrefetch(() => providersLive.suspense());
     <div class="space-y-5">
       <div>
         <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <h4 class="text-highlighted text-sm font-semibold">Catalog</h4>
-          <UButton icon="i-lucide-plus" size="sm" label="Add provider" @click="openMProvEditor()" />
+          <h3 class="text-highlighted text-sm font-semibold">Catalog</h3>
+          <UButton icon="i-lucide-plus" size="sm" label="New provider" @click="openMProvEditor()" />
         </div>
         <!-- Mobile: stacked cards -->
         <div v-if="mProvList.length" class="space-y-3 md:hidden">
@@ -148,9 +165,7 @@ onServerPrefetch(() => providersLive.suspense());
                 variant="subtle"
                 size="sm"
                 class="max-w-52 truncate"
-                >{{
-                  (PROVIDER_ENDPOINT_LABEL[st as keyof typeof PROVIDER_ENDPOINT_LABEL] ?? st).split(' (')[0]
-                }}</UBadge
+                >{{ endpointShortLabel(st) }}</UBadge
               >
             </div>
             <div class="mt-3 flex justify-end gap-1">
@@ -160,7 +175,7 @@ onServerPrefetch(() => providersLive.suspense());
                   variant="ghost"
                   color="neutral"
                   size="sm"
-                  aria-label="Edit provider"
+                  :aria-label="`Edit ${p.label}`"
                   @click="openMProvEditor(p)"
                 />
                 <template #content>
@@ -174,9 +189,9 @@ onServerPrefetch(() => providersLive.suspense());
                   color="neutral"
                   class="text-muted hover:text-error"
                   size="sm"
-                  aria-label="Delete provider"
+                  :aria-label="`Delete ${p.label}`"
                   :disabled="mProvBusy"
-                  @click="pendingRemove = p"
+                  @click="askRemove(p)"
                 />
                 <template #content>
                   <div class="px-3 py-1.5 text-xs">Delete provider</div>
@@ -192,7 +207,7 @@ onServerPrefetch(() => providersLive.suspense());
             :data="mProvList"
             :columns="[
               { accessorKey: 'label', header: 'Provider' },
-              { accessorKey: 'actions', header: '' },
+              { id: 'actions', header: 'Actions', meta: { class: { th: 'sr-only' } } },
             ]"
           >
             <template #label-cell="{ row }">
@@ -206,9 +221,7 @@ onServerPrefetch(() => providersLive.suspense());
                     variant="subtle"
                     size="sm"
                     class="max-w-52 truncate"
-                    >{{
-                      (PROVIDER_ENDPOINT_LABEL[st as keyof typeof PROVIDER_ENDPOINT_LABEL] ?? st).split(' (')[0]
-                    }}</UBadge
+                    >{{ endpointShortLabel(st) }}</UBadge
                   >
                 </p>
                 <p class="text-dimmed truncate font-mono text-xs">{{ row.original.baseUrl }}</p>
@@ -222,7 +235,7 @@ onServerPrefetch(() => providersLive.suspense());
                     variant="ghost"
                     color="neutral"
                     size="sm"
-                    aria-label="Edit provider"
+                    :aria-label="`Edit ${row.original.label}`"
                     @click="openMProvEditor(row.original)"
                   />
                   <template #content>
@@ -236,9 +249,9 @@ onServerPrefetch(() => providersLive.suspense());
                     color="neutral"
                     class="text-muted hover:text-error"
                     size="sm"
-                    aria-label="Delete provider"
+                    :aria-label="`Delete ${row.original.label}`"
                     :disabled="mProvBusy"
-                    @click="pendingRemove = row.original"
+                    @click="askRemove(row.original)"
                   />
                   <template #content>
                     <div class="px-3 py-1.5 text-xs">Delete provider</div>
@@ -271,7 +284,7 @@ onServerPrefetch(() => providersLive.suspense());
         >
           <UIcon name="i-lucide-cpu" class="text-toned size-10" aria-hidden="true" />
           <p class="text-muted text-sm">No providers yet — add one to power agents and auto-assign.</p>
-          <UButton icon="i-lucide-plus" size="sm" label="Add provider" @click="openMProvEditor()" />
+          <UButton icon="i-lucide-plus" size="sm" label="New provider" @click="openMProvEditor()" />
         </div>
       </div>
     </div>
@@ -280,11 +293,11 @@ onServerPrefetch(() => providersLive.suspense());
   <!-- model provider editor -->
   <UModal
     v-model:open="mProvEditorOpen"
-    :title="mProvEditingId ? 'Edit provider' : 'Add provider'"
+    :title="mProvEditingId ? 'Edit provider' : 'New provider'"
     :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
   >
     <template #body>
-      <UForm id="provider-editor-form" :state="mProvForm" class="space-y-4" @submit="saveMProv">
+      <UForm id="provider-editor-form" :schema="mProvSchema" :state="mProvForm" class="space-y-4" @submit="saveMProv">
         <UFormField label="Label" name="label">
           <UInput v-model="mProvForm.label" icon="i-lucide-tag" placeholder="Provider name" class="w-full" required />
         </UFormField>
@@ -322,9 +335,7 @@ onServerPrefetch(() => providersLive.suspense());
                   variant="subtle"
                   size="sm"
                   class="max-w-52 truncate"
-                  >{{
-                    (PROVIDER_ENDPOINT_LABEL[ep as keyof typeof PROVIDER_ENDPOINT_LABEL] ?? ep).split(' (')[0]
-                  }}</UBadge
+                  >{{ endpointShortLabel(String(ep)) }}</UBadge
                 >
               </span>
               <span v-else class="text-dimmed">Pick at least one endpoint</span>
@@ -364,7 +375,7 @@ onServerPrefetch(() => providersLive.suspense());
         <UButton
           type="submit"
           :loading="mProvBusy"
-          :label="mProvEditingId ? 'Save changes' : 'Add provider'"
+          :label="mProvEditingId ? 'Save changes' : 'New provider'"
           form="provider-editor-form"
         />
       </div>
@@ -380,6 +391,15 @@ onServerPrefetch(() => providersLive.suspense());
           <span class="text-highlighted font-semibold">{{ pendingRemove?.label }}</span
           >? Agents using it will stop working until you pick a new provider.
         </p>
+        <UAlert
+          v-if="removeError"
+          role="alert"
+          icon="i-lucide-circle-alert"
+          color="error"
+          variant="subtle"
+          :title="removeError"
+          :ui="{ title: 'text-sm' }"
+        />
       </div>
     </template>
     <template #footer>

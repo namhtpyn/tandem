@@ -9,19 +9,23 @@ import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tansta
 import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
 
-import { ACTIVITY_KIND, CHANGE_RESOURCE } from '#shared/enums';
+import { CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 import { formatWhenShort } from '~/utils/format-when';
-import { NONE_ID, errorMessage } from '~/utils/forms';
-import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
+import { NONE_ID, errorMessage, saveFailed } from '~/utils/forms';
+import type { EmployeeRow, TaskRow, TaskRunRow } from '~/utils/orpc-types';
 import {
+  activityIcon,
+  activityLabel,
+  aiOptionLabel,
   categoryColor,
   categoryIcon,
   categoryText,
   composerPlaceholder,
   dotClass,
-  humanizeEnum,
   statusLabel,
+  runStatus,
+  AGENT_RUN_VIEW,
 } from '~/utils/ui-labels';
 
 const { $orpc, $client } = useNuxtApp();
@@ -52,6 +56,15 @@ function toggleStatusFilter(id: string) {
 /** any active server-side filter (search / status chip / inbox) — drives the empty-state copy */
 const listFiltered = computed(() => !!searchDebounced.value || statusId.value !== null || needsDecision.value);
 
+/** empty-state copy names WHICH filter came up empty — 'no results' under the inbox toggle reads as a bug */
+const emptyCopy = computed(() => {
+  if (!listFiltered.value) return 'No tasks yet — create the first one for your humans or agents.';
+  if (needsDecision.value) return 'Nothing is waiting on your decision right now.';
+  if (statusId.value !== null)
+    return `No tasks in ${statusLabel(statusId.value, statusById.value)} — try another filter.`;
+  return 'No results — try a different search.';
+});
+
 const pagedQuery = useQuery(
   computed(() =>
     $orpc.tasks.listPaged.queryOptions({
@@ -79,9 +92,10 @@ const rows = computed<TaskRow[]>(() => pagedQuery.data.value?.data ?? []);
 const total = computed(() => pagedQuery.data.value?.total ?? 0);
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 
-// deleting the last row of a high page clamps back into range — skip transient totals
+// deleting the last row of a high page (or an emptied list) clamps back into
+// range — keepPreviousData keeps the previous total while a page fetch lands,
+// so a transient zero can only mean a genuinely empty result (page 1)
 watch(total, (t) => {
-  if (!t) return;
   const maxPage = Math.max(1, Math.ceil(t / pageSize.value));
   if (page.value > maxPage) page.value = maxPage;
 });
@@ -141,8 +155,10 @@ async function setStatus(row: TaskRow, status: string) {
   busy.value = true;
   try {
     await setStatusMutation.mutateAsync({ id: row.id, status });
+    // SSE-down backstop: the list must refetch even without the change bus
+    await queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
   } catch (e) {
-    message.value = errorMessage(e, "Couldn't update status — try again");
+    message.value = saveFailed(e, 'status', 'save');
   } finally {
     busy.value = false;
   }
@@ -163,8 +179,10 @@ async function autoAssign(row: TaskRow) {
     } else {
       message.value = 'No confident match — nobody was auto-assigned';
     }
+    // SSE-down backstop: the list must refetch even without the change bus
+    await queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
   } catch (e) {
-    message.value = errorMessage(e, "Couldn't auto-assign — try again");
+    message.value = saveFailed(e, 'assignment', 'save');
   } finally {
     busy.value = false;
   }
@@ -180,14 +198,16 @@ const deleteOpen = computed({
 });
 
 async function remove() {
-  if (!pendingDelete.value) return;
+  if (!pendingDelete.value || busy.value) return;
   busy.value = true;
   deleteError.value = '';
   try {
     await removeMutation.mutateAsync({ id: pendingDelete.value.id });
     pendingDelete.value = null;
+    // SSE-down backstop: the list must refetch even without the change bus
+    await queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
   } catch (e) {
-    deleteError.value = errorMessage(e, "Couldn't delete the task — try again");
+    deleteError.value = saveFailed(e, 'task', 'delete');
   } finally {
     busy.value = false;
   }
@@ -224,6 +244,8 @@ const workflowNote = ref('');
 const workflowBusy = ref(false);
 const workflowMessage = ref('');
 const workflowOk = ref(true); // message tone: success copy vs failure copy
+// the review box disarms its reject confirm + keeps the note on a failed verdict
+const workflowFailed = ref(false);
 // the workflow gate keys off the status CATEGORY (not seeded uuids): ready /
 // working / paused are the work states where forward/abandon/submit apply
 const workflowStatusCategory = computed(() =>
@@ -260,16 +282,7 @@ const drawerRunsQuery = useQuery(
     }),
   ),
 );
-const runFeed = computed(
-  () =>
-    (unref(drawerRunsQuery.data) ?? []) as unknown as Array<{
-      id: string;
-      status: string;
-      output: string;
-      exitCode: number | null;
-      startedAt: string;
-    }>,
-);
+const runFeed = computed<TaskRunRow[]>(() => (unref(drawerRunsQuery.data) ?? []) as TaskRunRow[]);
 const drawerActivityQuery = useQuery(
   computed(() =>
     $orpc.tasks.activityList.queryOptions({
@@ -281,35 +294,15 @@ const drawerActivityQuery = useQuery(
 );
 const workflowFeed = computed(() => unref(drawerActivityQuery.data) ?? []);
 
-// run rows read as sentences — 'Run failed (exit code 1)', never bare status jargon
+// run rows read as sentences — 'Run failed (exit code 1)', never bare status jargon.
+// Status normalization + dot + words come from the SHARED ui-labels vocabulary.
 function runLabel(r: { status: string; exitCode: number | null }) {
-  const s = r.status.toLowerCase();
-  if (s === 'running') return 'Run in progress';
-  if (s === 'done') return 'Run completed';
-  if (s === 'failed') return r.exitCode ? `Run failed (exit code ${r.exitCode})` : 'Run failed';
-  if (s === 'cancelled') return 'Run cancelled';
-  if (s === 'timeout') return 'Run timed out';
-  return 'Run stopped';
+  const s = runStatus(r.status);
+  return s === 'failed' && r.exitCode ? `Run failed (exit code ${r.exitCode})` : AGENT_RUN_VIEW[s].run;
 }
-// same mapping as runDot, for the status dot color (cancelled/timeout stay neutral);
-// the pulse respects the user's reduced-motion preference
 function runDot(r: { status: string }) {
-  const s = r.status.toLowerCase();
-  if (s === 'running') return 'bg-warning motion-safe:animate-pulse';
-  if (s === 'done') return 'bg-success';
-  if (s === 'failed') return 'bg-error';
-  return 'bg-accented';
+  return AGENT_RUN_VIEW[runStatus(r.status)].dot;
 }
-
-// activity kinds read as words, not enum fragments
-const ACTIVITY_LABELS: Record<string, string> = {
-  [ACTIVITY_KIND.NOTE]: 'Note',
-  [ACTIVITY_KIND.QUESTION]: 'Question',
-  [ACTIVITY_KIND.ANSWER]: 'Answer',
-  [ACTIVITY_KIND.VERDICT]: 'Review verdict',
-  [ACTIVITY_KIND.FORWARD]: 'Forwarded',
-  [ACTIVITY_KIND.STATUS]: 'Status changed',
-};
 
 const retryInMin = computed(() => {
   const t = workflowTask.value;
@@ -357,10 +350,11 @@ const WF_COPY: Record<WorkflowAction, { ok: string; fail: string }> = {
 };
 
 async function wfAction(action: WorkflowAction, extra: { body?: string; toEmployeeId?: string } = {}) {
-  if (!workflowTask.value) return;
+  if (!workflowTask.value || workflowBusy.value) return;
   const taskId = workflowTask.value.id;
   workflowBusy.value = true;
   workflowMessage.value = '';
+  workflowFailed.value = false;
   try {
     const input = { taskId, ...extra };
     await {
@@ -377,16 +371,19 @@ async function wfAction(action: WorkflowAction, extra: { body?: string; toEmploy
       abandon: () => $client.tasks.abandon(input),
     }[action]();
     workflowNote.value = '';
-    // invalidate BOTH feeds: TASKS re-syncs the drawer's task row (status/reviewers),
-    // TASK_ACTIVITY keeps the thread and activity feed current
+    // invalidate ALL drawer feeds: TASKS re-syncs the drawer's task row
+    // (status/reviewers), TASK_ACTIVITY keeps the thread and activity feed
+    // current, RUNS refreshes the run cards a dispatch/verdict just changed
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
     void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, taskId] });
+    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.RUNS, taskId] });
     workflowMessage.value = WF_COPY[action].ok;
     workflowOk.value = true;
   } catch (e) {
     // surface the server's oRPC message, not ofetch's generic '[POST] …: 400'
     workflowMessage.value = errorMessage(e, WF_COPY[action].fail);
     workflowOk.value = false;
+    workflowFailed.value = true;
   } finally {
     workflowBusy.value = false;
   }
@@ -429,7 +426,7 @@ const tableColumns = [
   { accessorKey: 'assigneeName', header: 'Assignee' },
   { accessorKey: 'status', header: 'Status' },
   { accessorKey: 'updatedAt', header: 'Updated' },
-  { id: 'actions', header: '' },
+  { id: 'actions', header: 'Actions', meta: { class: { th: 'sr-only' } } },
 ];
 
 onServerPrefetch(() =>
@@ -445,9 +442,11 @@ onServerPrefetch(() =>
 
 <template>
   <div class="flex min-h-0 flex-1 flex-col">
-    <!-- ONE toolbar row: search left, every action right, same baseline -->
+    <!-- ONE toolbar row: search left, every action right, same baseline.
+         The search box is pointless over an empty, unfiltered list — hide it there. -->
     <div class="flex flex-wrap items-center gap-2">
       <UInput
+        v-if="total > 0 || !!search"
         v-model="search"
         icon="i-lucide-search"
         placeholder="Search tasks…"
@@ -575,19 +574,16 @@ onServerPrefetch(() =>
       v-if="view === 'list'"
       class="mt-3"
       :data="rows"
-      :loading="pagedQuery.isPending.value"
+      :loading="pagedQuery.isFetching.value || pagedQuery.isPlaceholderData.value"
       :error="pagedQuery.isError.value"
       v-model:page="page"
       :page-count="pageCount"
       :page-size="pageSize"
       :columns="tableColumns"
       show-empty-state
+      empty-noun="tasks"
+      :empty-text="emptyCopy"
       :empty-icon="listFiltered ? 'i-lucide-search-x' : 'i-lucide-list-todo'"
-      :empty-text="
-        listFiltered
-          ? 'No results — try a different search.'
-          : 'No tasks yet — create the first one for your humans or agents.'
-      "
     >
       <template #empty-cta>
         <UButton v-if="!listFiltered" icon="i-lucide-plus" label="New task" @click="openEditor()" />
@@ -655,7 +651,7 @@ onServerPrefetch(() =>
               variant="ghost"
               color="neutral"
               size="sm"
-              aria-label="Auto-assign"
+              :aria-label="`Auto-assign ${row.original.title}`"
               :disabled="busy"
               @click="autoAssign(row.original)"
             />
@@ -669,7 +665,7 @@ onServerPrefetch(() =>
               variant="ghost"
               color="neutral"
               size="sm"
-              aria-label="Task workflow"
+              :aria-label="`Workflow for ${row.original.title}`"
               @click="openWorkflow(row.original)"
             />
             <template #content>
@@ -682,7 +678,7 @@ onServerPrefetch(() =>
               variant="ghost"
               color="neutral"
               size="sm"
-              aria-label="Edit task"
+              :aria-label="`Edit ${row.original.title}`"
               @click="openEditor(row.original)"
             />
             <template #content>
@@ -696,7 +692,7 @@ onServerPrefetch(() =>
               color="neutral"
               class="text-muted hover:text-error"
               size="sm"
-              aria-label="Delete task"
+              :aria-label="`Delete ${row.original.title}`"
               @click="pendingDelete = row.original"
             />
             <template #content>
@@ -725,10 +721,10 @@ onServerPrefetch(() =>
                   />
                   {{ statusLabel(row.status, statusById) }}
                 </span>
-                <span>{{ row.assigneeName || 'Unassigned' }}</span>
-                <span v-if="row.assigneeKind === 'ai'" class="text-primary inline-flex items-center gap-1"
-                  ><UIcon name="i-lucide-bot" class="size-3" />AI</span
-                >
+                <span class="inline-flex items-center gap-1" :class="row.assigneeKind === 'ai' ? 'text-primary' : ''">
+                  <UIcon v-if="row.assigneeKind === 'ai'" name="i-lucide-bot" class="size-3 shrink-0" />
+                  {{ aiOptionLabel(row.assigneeName || 'Unassigned', row.assigneeKind) }}
+                </span>
               </p>
               <p class="text-dimmed mt-0.5 flex items-center gap-1 text-xs">
                 <UIcon name="i-lucide-clock" class="size-3 shrink-0" />
@@ -743,7 +739,7 @@ onServerPrefetch(() =>
                 size="sm"
                 color="neutral"
                 variant="ghost"
-                aria-label="Task actions"
+                :aria-label="`Actions for ${row.title}`"
                 class="shrink-0"
               />
               <template #content>
@@ -864,7 +860,7 @@ onServerPrefetch(() =>
                       size="sm"
                       color="neutral"
                       variant="ghost"
-                      aria-label="Task actions"
+                      :aria-label="`Actions for ${row.title}`"
                       class="transition-opacity max-md:opacity-100 md:opacity-0 md:group-focus-within/card:opacity-100 md:group-hover/card:opacity-100"
                     />
                     <template #content>
@@ -934,12 +930,12 @@ onServerPrefetch(() =>
       />
     </div>
 
-    <!-- workflow drawer -->
+    <!-- board pager (the kanban view paginates over the same server-paged rows) -->
     <div
       v-if="view === 'board' && pageCount > 1"
       class="border-default mt-3 flex items-center justify-end gap-1 border-t pt-3"
     >
-      <span class="text-muted me-auto text-xs">{{ total }} tasks</span>
+      <span class="text-muted me-auto text-xs">{{ total }} {{ total === 1 ? 'task' : 'tasks' }}</span>
       <UButton
         icon="i-lucide-chevron-left"
         color="neutral"
@@ -1026,6 +1022,7 @@ onServerPrefetch(() =>
           <TaskReviewBox
             v-if="workflowStatusCategory === 'in_review' && drawerCanReview"
             :busy="workflowBusy"
+            :failed="workflowFailed"
             @verdict="
               (action: 'approve' | 'requestChanges' | 'reject', body?: string) =>
                 wfAction(action, { body: body || undefined })
@@ -1099,21 +1096,8 @@ onServerPrefetch(() =>
             <h3 class="text-muted text-xs font-medium">Activity</h3>
             <div v-for="a in workflowFeed" :key="a.id" class="border-default rounded-md border px-2.5 py-2 text-xs">
               <p class="text-toned flex items-center gap-1.5 font-medium">
-                <UIcon
-                  :name="
-                    a.kind === ACTIVITY_KIND.QUESTION
-                      ? 'i-lucide-help-circle'
-                      : a.kind === ACTIVITY_KIND.ANSWER
-                        ? 'i-lucide-check-check'
-                        : a.kind === ACTIVITY_KIND.FORWARD
-                          ? 'i-lucide-corner-up-right'
-                          : a.kind === ACTIVITY_KIND.VERDICT
-                            ? 'i-lucide-gavel'
-                            : 'i-lucide-info'
-                  "
-                  class="size-3.5"
-                />
-                {{ ACTIVITY_LABELS[a.kind] ?? humanizeEnum(a.kind) }}
+                <UIcon :name="activityIcon(a.kind)" class="size-3.5" />
+                {{ activityLabel(a.kind) }}
                 <span class="text-muted font-normal">{{ a.authorName ?? 'system' }}</span>
                 <span class="text-dimmed ml-auto shrink-0 font-normal" data-allow-mismatch>{{
                   formatWhenShort(a.createdAt)
@@ -1147,6 +1131,7 @@ onServerPrefetch(() =>
         </p>
         <UAlert
           v-if="deleteError"
+          role="alert"
           icon="i-lucide-circle-alert"
           color="error"
           variant="subtle"

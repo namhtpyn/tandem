@@ -5,7 +5,8 @@ import { useQuery } from '@tanstack/vue-query';
 // query keys wfAction invalidates after each verdict. Props: `taskId`.
 import { computed, onServerPrefetch } from 'vue';
 
-import { CHANGE_RESOURCE } from '#shared/enums';
+import { CHANGE_RESOURCE, REVIEW_STATUS } from '#shared/enums';
+import type { EmployeeRow, TaskReviewRow } from '~/utils/orpc-types';
 import { kindLabel } from '~/utils/ui-labels';
 
 const props = defineProps<{ taskId: string }>();
@@ -23,25 +24,19 @@ const reviewsQuery = useQuery(
   ),
 );
 const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES] }));
-const employees = computed(
-  () => (unref(employeesLive.data) ?? []) as unknown as Array<{ userId: string; name: string; kind?: string }>,
-);
+const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[]);
 
 /** reviewer kind comes from the employee record — a PENDING verdict row has no source yet;
  * shared kindLabel vocabulary ('AI agent'/'Human'), never lowercase fragments */
-const kindOf = (id: string, fallback: string | null) =>
+const kindOf = (id: string | null, fallback: string | null) =>
   kindLabel(employees.value.find((e) => e.userId === id)?.kind ?? fallback);
 
-/** REVIEW LAW checklist: current-round verdicts per reviewer, history collapsed by round */
+/** REVIEW LAW checklist: current-round verdicts per reviewer, history collapsed by round.
+ * Status is the SCREAMING ReviewStatus enum — compare through its constants (the old
+ * lowercase literals never matched a stored value, so every row rendered as pending). */
 const reviewChecklist = computed(() => {
-  const rows = (unref(reviewsQuery.data) ?? []) as unknown as Array<{
-    reviewerId: string;
-    round: number;
-    status: string;
-    note: string | null;
-    source: string | null;
-  }>;
-  const nameOf = (id: string) => employees.value.find((e) => e.userId === id)?.name ?? 'reviewer';
+  const rows = (unref(reviewsQuery.data) ?? []) as TaskReviewRow[];
+  const nameOf = (id: string | null) => employees.value.find((e) => e.userId === id)?.name ?? 'reviewer';
   let maxRound = 0;
   for (const r of rows) maxRound = Math.max(maxRound, r.round);
   return {
@@ -65,24 +60,28 @@ onServerPrefetch(() => Promise.all([reviewsQuery.suspense(), employeesLive.suspe
       No reviews yet — verdicts appear here as reviewers weigh in.
     </p>
     <ul v-else class="space-y-1 text-sm">
-      <li v-for="r in reviewChecklist.current" :key="r.reviewerId" class="flex items-start gap-1.5">
+      <li
+        v-for="r in reviewChecklist.current"
+        :key="`${r.round}-${r.reviewerId ?? r.name}`"
+        class="flex items-start gap-1.5"
+      >
         <UIcon
           :name="
-            r.status === 'approved'
+            r.status === REVIEW_STATUS.APPROVED
               ? 'i-lucide-badge-check'
-              : r.status === 'change_requested'
+              : r.status === REVIEW_STATUS.CHANGE_REQUESTED
                 ? 'i-lucide-undo-2'
-                : r.status === 'rejected'
+                : r.status === REVIEW_STATUS.REJECTED
                   ? 'i-lucide-x-circle'
                   : 'i-lucide-user'
           "
           class="mt-0.5 size-3.5 shrink-0"
           :class="
-            r.status === 'approved'
+            r.status === REVIEW_STATUS.APPROVED
               ? 'text-success'
-              : r.status === 'rejected'
+              : r.status === REVIEW_STATUS.REJECTED
                 ? 'text-error'
-                : r.status === 'pending'
+                : r.status === REVIEW_STATUS.PENDING
                   ? 'text-dimmed'
                   : 'text-warning'
           "

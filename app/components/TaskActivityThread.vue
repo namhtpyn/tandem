@@ -7,13 +7,21 @@ import { useQuery } from '@tanstack/vue-query';
 // the newest item. Props: the resolved `task` row.
 import { computed, nextTick, onMounted, onServerPrefetch, ref, watch } from 'vue';
 
-import { ACTIVITY_KIND, CHANGE_RESOURCE } from '#shared/enums';
+import { CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 import { attachmentUrl, employeeAvatarUrl } from '~/utils/api-urls';
 import { formatWhenShort } from '~/utils/format-when';
-import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
+import type { EmployeeRow, TaskRow, ThreadRow } from '~/utils/orpc-types';
 import { buildThread, parseRunEnvelope } from '~/utils/task-thread';
 import type { ThreadItem } from '~/utils/task-thread';
+import {
+  activityIcon,
+  activityLabel,
+  aiOptionLabel,
+  runStatus,
+  AGENT_RUN_VIEW,
+  type AgentRunStatus,
+} from '~/utils/ui-labels';
 
 const props = defineProps<{ task: TaskRow }>();
 
@@ -33,26 +41,7 @@ const threadQuery = useQuery(
     }),
   ),
 );
-type ThreadRow = {
-  id: string;
-  body: string;
-  createdAt: string;
-  authorId: string | null;
-  authorName: string | null;
-  run: null | {
-    id: string;
-    status: string;
-    output: string;
-    prompt: string | null;
-    agentName: string | null;
-    exitCode: number | null;
-    startedAt: string;
-    finishedAt: string | null;
-    outputs: Array<{ id: string; filename: string; mime: string; size: number }>;
-  };
-  activity: Record<string, unknown> | null;
-};
-const threadRows = computed(() => (unref(threadQuery.data) ?? []) as unknown as ThreadRow[]);
+const threadRows = computed(() => (unref(threadQuery.data) ?? []) as ThreadRow[]);
 // the run's thread message carries the settled result body — attach it to the run feed
 const runFeed = computed(() =>
   threadRows.value.flatMap((r) =>
@@ -80,52 +69,16 @@ const hasAvatarByUserId = computed(() => new Map(employees.value.map((e) => [e.u
 const briefAuthor = computed(() => props.task.creatorName ?? null);
 
 // run status reads as a word, not a pill: the task status badge owns color — a
-// run turn's outcome stays a tiny neutral label so the two never look alike
-type RunStatus = 'running' | 'done' | 'failed' | 'cancelled' | 'timeout' | 'stopped';
-function mapRunStatus(raw: string): RunStatus {
-  const s = raw.toLowerCase();
-  if (s === 'running') return 'running';
-  if (s === 'done') return 'done';
-  if (s === 'failed') return 'failed';
-  if (s === 'cancelled') return 'cancelled';
-  if (s === 'timeout') return 'timeout';
-  return 'stopped';
-}
+// run turn's outcome stays a tiny neutral label so the two never look alike.
+// Normalization + labels come from the SHARED ui-labels vocabulary.
 const runStatusById = computed(() => {
-  const m = new Map<string, RunStatus>();
-  for (const r of runFeed.value) m.set(r.id, mapRunStatus(r.status));
+  const m = new Map<string, AgentRunStatus>();
+  for (const r of runFeed.value) m.set(r.id, runStatus(r.status));
   return m;
 });
-const RUN_LABEL: Record<RunStatus, string> = {
-  running: 'Working',
-  done: 'Completed',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-  timeout: 'Timed out',
-  stopped: 'Stopped',
-};
 
 // system pills fall back to the note kind when there's no body — never leak the
 // raw enum (the API stores SCREAMING kinds; older rows may hold lowercase)
-const NOTE_KIND_LABELS: Record<string, string> = {
-  [ACTIVITY_KIND.NOTE]: 'Note',
-  [ACTIVITY_KIND.QUESTION]: 'Question',
-  [ACTIVITY_KIND.ANSWER]: 'Answer',
-  [ACTIVITY_KIND.VERDICT]: 'Review verdict',
-  [ACTIVITY_KIND.FORWARD]: 'Forwarded',
-  [ACTIVITY_KIND.STATUS]: 'Status',
-};
-function noteKindLabel(kind: string) {
-  return NOTE_KIND_LABELS[kind] ?? NOTE_KIND_LABELS[kind.toUpperCase()] ?? humanizeEnum(kind);
-}
-function noteKindIcon(kind: string) {
-  const k = kind.toLowerCase();
-  if (k === 'question') return 'i-lucide-help-circle';
-  if (k === 'answer') return 'i-lucide-check-check';
-  if (k === 'forward') return 'i-lucide-corner-up-right';
-  if (k === 'verdict') return 'i-lucide-gavel';
-  return 'i-lucide-info';
-}
 
 // ---- one ordered timeline from runs + activity + description -----------------
 const thread = computed<ThreadItem[]>(() =>
@@ -138,7 +91,7 @@ const thread = computed<ThreadItem[]>(() =>
     // runStatusById, but the item data should not lie about the run
     runs: runFeed.value.map((r) => ({
       id: r.id,
-      status: mapRunStatus(r.status),
+      status: runStatus(r.status),
       output: r.output,
       prompt: r.prompt,
       body: r.body,
@@ -342,8 +295,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
           </div>
           <div class="min-w-0 flex-1">
             <p class="mb-1 flex items-center gap-1.5 text-[11px] leading-none">
-              <span class="text-toned font-semibold">{{ item.agentName ?? 'Agent' }}</span>
-              <span class="text-primary">(AI)</span>
+              <span class="text-toned font-semibold">{{ aiOptionLabel(item.agentName ?? 'Agent', 'ai') }}</span>
               <!-- meta cluster: the tiny neutral run label rides NEXT TO the time,
                  never orphaned mid-row on a narrow phone -->
               <span class="text-muted ml-auto inline-flex shrink-0 items-center gap-1.5">
@@ -353,7 +305,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
                     name="i-lucide-loader-circle"
                     class="size-3 motion-safe:animate-spin"
                   />
-                  {{ RUN_LABEL[runStatusById.get(item.id) ?? 'stopped']
+                  {{ AGENT_RUN_VIEW[runStatusById.get(item.id) ?? 'stopped'].label
                   }}<span
                     v-if="runStatusById.get(item.id) === 'failed' && item.exitCode"
                     class="font-normal normal-case"
@@ -453,8 +405,8 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
           <span
             class="bg-elevated/60 text-muted inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px]"
           >
-            <UIcon :name="noteKindIcon(item.noteKind)" class="size-3 shrink-0" />
-            <span class="truncate">{{ item.body || noteKindLabel(item.noteKind) }}</span>
+            <UIcon :name="activityIcon(item.noteKind)" class="size-3 shrink-0" />
+            <span class="truncate">{{ item.body || activityLabel(item.noteKind) }}</span>
             <span class="text-muted shrink-0" data-allow-mismatch>{{ formatWhenShort(item.createdAt) }}</span>
           </span>
         </div>

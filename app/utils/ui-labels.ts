@@ -1,7 +1,7 @@
 import { isAnthropicWire, endpointKind, isModelsEndpoint, PROVIDER_KIND } from '#shared/api-styles';
 // Shared UI vocabulary: one color mapping, one label mapping per enum — a status
 // must render the same color, and a kind/category the same words, on every surface.
-import { ROLE, type Role } from '#shared/enums';
+import { ACTIVITY_KIND, ROLE, type ActivityKind, type Role } from '#shared/enums';
 
 export type BadgeColor = 'primary' | 'success' | 'warning' | 'error' | 'info' | 'neutral';
 
@@ -94,6 +94,12 @@ export function kindLabel(kind: string | null | undefined): string {
   return kind ? humanizeEnum(kind) : '';
 }
 
+/** picker-option label with the AI suffix — one voice for every
+ * assignee/reviewer list ('Ada (AI)'), never a hand-rolled '(AI)' fragment */
+export function aiOptionLabel(name: string, kind: string | null | undefined): string {
+  return kind === 'ai' ? `${name} (AI)` : name;
+}
+
 /** Status name from a by-id lookup — one fallback ladder on every surface:
  * known row name, else 'Unknown status' (a map-miss id is a raw UUID — never render it). */
 export function statusLabel<V extends { name: string }>(
@@ -127,4 +133,58 @@ const ROLE_LABELS: { readonly [K in Role]: string } = {
 /** user role as a word — raw enum tokens ('ADMIN') never reach the UI */
 export function roleLabel(role: string | null | undefined): string {
   return role ? (ROLE_LABELS[role as Role] ?? humanizeEnum(role)) : '';
+}
+
+// ---- agent runs: one normalized status + label/dot map for every surface
+// (list drawer run cards, task-page chat turns). Named AgentRunStatus — the
+// server's RunStatus enum ('RUNNING'|'DONE'|'FAILED') is the lifecycle subset.
+export type AgentRunStatus = 'running' | 'done' | 'failed' | 'cancelled' | 'timeout' | 'stopped';
+
+const AGENT_RUN_STATUSES: Record<string, AgentRunStatus> = {
+  running: 'running',
+  done: 'done',
+  failed: 'failed',
+  cancelled: 'cancelled',
+  timeout: 'timeout',
+};
+
+/** settled run status from its raw stored form — an unknown value reads as stopped */
+export function runStatus(raw: string): AgentRunStatus {
+  return AGENT_RUN_STATUSES[raw.toLowerCase()] ?? 'stopped';
+}
+
+/** one map, three renderings: the thread's short word, the drawer's run sentence,
+ * and the status dot (cancelled/timeout stay neutral; the pulse respects reduced motion) */
+export const AGENT_RUN_VIEW: { readonly [K in AgentRunStatus]: { label: string; run: string; dot: string } } = {
+  running: { label: 'Working', run: 'Run in progress', dot: 'bg-warning motion-safe:animate-pulse' },
+  done: { label: 'Completed', run: 'Run completed', dot: 'bg-success' },
+  failed: { label: 'Failed', run: 'Run failed', dot: 'bg-error' },
+  cancelled: { label: 'Cancelled', run: 'Run cancelled', dot: 'bg-accented' },
+  timeout: { label: 'Timed out', run: 'Run timed out', dot: 'bg-accented' },
+  stopped: { label: 'Stopped', run: 'Run stopped', dot: 'bg-accented' },
+};
+
+// ---- activity kinds: one word + one glyph for the drawer feed and the chat thread ----
+const ACTIVITY_LABELS: { readonly [K in ActivityKind]: string } = {
+  [ACTIVITY_KIND.NOTE]: 'Note',
+  [ACTIVITY_KIND.QUESTION]: 'Question',
+  [ACTIVITY_KIND.ANSWER]: 'Answer',
+  [ACTIVITY_KIND.VERDICT]: 'Review verdict',
+  [ACTIVITY_KIND.FORWARD]: 'Forwarded',
+  [ACTIVITY_KIND.STATUS]: 'Status changed',
+};
+
+/** activity kind as a word — map hit, upper-cased legacy row, or humanized fallback */
+export function activityLabel(kind: string): string {
+  const hit = ACTIVITY_LABELS[kind as ActivityKind] ?? ACTIVITY_LABELS[kind.toUpperCase() as ActivityKind];
+  return hit ?? humanizeEnum(kind);
+}
+
+export function activityIcon(kind: string): string {
+  const k = kind.toLowerCase();
+  if (k === 'question') return 'i-lucide-help-circle';
+  if (k === 'answer') return 'i-lucide-check-check';
+  if (k === 'forward') return 'i-lucide-corner-up-right';
+  if (k === 'verdict') return 'i-lucide-gavel';
+  return 'i-lucide-info';
 }

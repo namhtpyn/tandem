@@ -174,7 +174,7 @@ function subtaskBadge(c: ChildRow): {
             icon="i-lucide-x"
             :disabled="proposalBusy"
             @click="decideProposal(p.id, 'rejectProposal')"
-            >Reject</UButton
+            >Decline</UButton
           >
         </div>
       </div>

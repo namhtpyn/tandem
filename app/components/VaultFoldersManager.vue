@@ -9,7 +9,7 @@ import { computed, ref, watch } from 'vue';
 import { z } from 'zod';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
-import { errorMessage } from '~/utils/forms';
+import { saveFailed } from '~/utils/forms';
 
 const open = defineModel<boolean>('open', { default: false });
 const emit = defineEmits<{ deleted: [id: string] }>();
@@ -77,6 +77,8 @@ function openEditor(id?: string) {
 }
 
 async function saveFolder() {
+  // one write at a time — a double-click or stray Enter must not double-create
+  if (busy.value) return;
   error.value = null;
   if (!form.value.name.trim()) {
     error.value = 'Name is required';
@@ -90,10 +92,15 @@ async function saveFolder() {
     });
     editorOpen.value = false;
   } catch (e) {
-    error.value = errorMessage(e, 'Save failed');
+    error.value = saveFailed(e, 'folder');
   } finally {
     busy.value = false;
   }
+}
+
+function askRemove(id: string) {
+  removeError.value = null;
+  confirmId.value = id;
 }
 
 async function removeFolder(id: string) {
@@ -104,7 +111,7 @@ async function removeFolder(id: string) {
     confirmId.value = null;
     emit('deleted', id);
   } catch (e) {
-    removeError.value = errorMessage(e, 'Delete failed');
+    removeError.value = saveFailed(e, 'folder', 'delete');
   } finally {
     busy.value = false;
   }
@@ -132,12 +139,13 @@ async function removeFolder(id: string) {
           :columns="[
             { accessorKey: 'name', header: 'Folder' },
             { accessorKey: 'secrets', header: 'Secrets' },
-            { id: 'actions', header: '' },
+            { id: 'actions', header: 'Actions', meta: { class: { th: 'sr-only' } } },
           ]"
           mobile-title-key="name"
           show-empty-state
           empty-icon="i-lucide-folder"
-          empty-text="No folders yet — create one to categorize secrets."
+          empty-noun="folders"
+          empty-text="Create one to categorize secrets."
         >
           <template #empty-cta>
             <UButton v-if="editable" icon="i-lucide-plus" label="New folder" @click="openEditor()" />
@@ -155,7 +163,7 @@ async function removeFolder(id: string) {
                   size="sm"
                   color="neutral"
                   variant="ghost"
-                  aria-label="Rename folder"
+                  :aria-label="`Rename ${row.original.name}`"
                   :disabled="busy"
                   @click="openEditor(row.original.id)"
                 />
@@ -168,9 +176,9 @@ async function removeFolder(id: string) {
                   color="neutral"
                   variant="ghost"
                   class="text-muted hover:text-error"
-                  aria-label="Delete folder"
+                  :aria-label="`Delete ${row.original.name}`"
                   :disabled="busy"
-                  @click="confirmId = row.original.id"
+                  @click="askRemove(row.original.id)"
                 />
                 <template #content><div class="px-3 py-1.5 text-xs">Delete</div></template>
               </UPopover>
@@ -187,7 +195,7 @@ async function removeFolder(id: string) {
                     size="sm"
                     color="neutral"
                     variant="ghost"
-                    aria-label="Rename folder"
+                    :aria-label="`Rename ${row.name}`"
                     :disabled="busy"
                     @click="openEditor(row.id)"
                   />
@@ -197,9 +205,9 @@ async function removeFolder(id: string) {
                     color="neutral"
                     variant="ghost"
                     class="text-muted hover:text-error"
-                    aria-label="Delete folder"
+                    :aria-label="`Delete ${row.name}`"
                     :disabled="busy"
-                    @click="confirmId = row.id"
+                    @click="askRemove(row.id)"
                   />
                 </template>
               </div>
@@ -230,6 +238,7 @@ async function removeFolder(id: string) {
           </UFormField>
           <UAlert
             v-if="error"
+            role="alert"
             icon="i-lucide-circle-alert"
             color="error"
             variant="subtle"
@@ -270,6 +279,7 @@ async function removeFolder(id: string) {
         </p>
         <UAlert
           v-if="removeError"
+          role="alert"
           icon="i-lucide-circle-alert"
           color="error"
           variant="subtle"
@@ -281,7 +291,11 @@ async function removeFolder(id: string) {
       <template #footer>
         <div class="flex w-full justify-end gap-2">
           <UButton variant="ghost" color="neutral" @click="confirmId = null">Cancel</UButton>
-          <UButton color="error" icon="i-lucide-trash-2" :loading="busy" @click="removeFolder(confirming!.id)"
+          <UButton
+            color="error"
+            icon="i-lucide-trash-2"
+            :loading="busy"
+            @click="confirming && removeFolder(confirming.id)"
             >Delete</UButton
           >
         </div>

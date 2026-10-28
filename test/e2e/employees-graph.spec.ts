@@ -1,11 +1,13 @@
 import { expect, test } from '@playwright/test';
 
 import { login } from './helpers/login.ts';
+import { waitForHydration } from './pages/base.page.ts';
 
 test('graph view renders the supervision hierarchy', async ({ page }) => {
   const suffix = Date.now().toString(36).slice(-6);
   await login(page);
   await page.goto('/employees');
+  await waitForHydration(page);
   await expect(page.getByRole('heading', { name: /Employees/ })).toBeVisible();
 
   // supervisor first

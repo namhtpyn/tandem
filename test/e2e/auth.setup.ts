@@ -2,11 +2,8 @@ import { rmSync } from 'node:fs';
 
 import { test as setup } from '@playwright/test';
 
+import { ADMIN_STATE } from './helpers/auth-state.ts';
 import { login } from './helpers/login.ts';
-
-// Consumed by the chromium project's use.storageState (playwright.config.ts) —
-// keep the two literals in sync.
-const ADMIN_STATE = 'test/e2e/.auth/admin.json';
 
 setup('authenticate as admin', async ({ page }) => {
   // stale state from an older run would silently auth the suite with a dead

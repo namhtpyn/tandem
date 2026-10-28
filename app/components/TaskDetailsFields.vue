@@ -9,6 +9,7 @@ import { computed, onServerPrefetch, ref } from 'vue';
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { NONE_ID, errorMessage } from '~/utils/forms';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
+import { aiOptionLabel } from '~/utils/ui-labels';
 
 const props = defineProps<{ task: TaskRow; runLocked?: boolean }>();
 
@@ -32,7 +33,7 @@ const selectableStatuses = computed(() => [...statusById.value.values()]);
 const statusOptions = computed(() => selectableStatuses.value.map((s) => ({ label: s.name, value: s.id })));
 const assigneeOptions = computed(() => [
   { label: 'Unassigned', value: NONE_ID },
-  ...employees.value.map((e) => ({ label: e.kind === 'ai' ? `${e.name} (AI)` : e.name, value: e.id })),
+  ...employees.value.map((e) => ({ label: aiOptionLabel(e.name, e.kind), value: e.id })),
 ]);
 const projectOptions = computed(() => [
   { label: 'No project', value: NONE_ID },

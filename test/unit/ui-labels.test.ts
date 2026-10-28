@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatWhen } from '../../app/utils/format-when';
 import {
+  activityIcon,
+  activityLabel,
+  aiOptionLabel,
   categoryColor,
   categoryIcon,
   categoryLabel,
@@ -9,6 +11,8 @@ import {
   dotClass,
   endpointBadgeColor,
   kindLabel,
+  runStatus,
+  AGENT_RUN_VIEW,
   statusLabel,
 } from '../../app/utils/ui-labels';
 
@@ -61,5 +65,32 @@ describe('ui-labels', () => {
     expect(endpointBadgeColor('TYPESAFE-SYSTEMONE')).toBe('info');
     expect(endpointBadgeColor('OPENAI-COMPLETIONS')).toBe('primary');
     expect(endpointBadgeColor('ANTHROPIC-MESSAGES')).toBe('warning');
+  });
+
+  it('normalizes agent run statuses and shares one label/dot view', () => {
+    expect(runStatus('RUNNING')).toBe('running');
+    expect(runStatus('done')).toBe('done');
+    // unknown/lifecycle-foreign values read as stopped, never crash the map
+    expect(runStatus('mystery')).toBe('stopped');
+    expect(AGENT_RUN_VIEW.running.label).toBe('Working');
+    expect(AGENT_RUN_VIEW.done.run).toBe('Run completed');
+    expect(AGENT_RUN_VIEW.running.dot).toContain('animate-pulse');
+    expect(AGENT_RUN_VIEW.failed.dot).toBe('bg-error');
+    expect(AGENT_RUN_VIEW.cancelled.dot).toBe('bg-accented');
+  });
+
+  it('renders activity kinds as words + glyphs with a humanized fallback', () => {
+    expect(activityLabel('VERDICT')).toBe('Review verdict');
+    expect(activityLabel('note')).toBe('Note');
+    expect(activityLabel('weird_kind')).toBe('Weird kind');
+    expect(activityIcon('question')).toBe('i-lucide-help-circle');
+    expect(activityIcon('forward')).toBe('i-lucide-corner-up-right');
+    expect(activityIcon('note')).toBe('i-lucide-info');
+  });
+
+  it('builds AI picker labels from one helper', () => {
+    expect(aiOptionLabel('Ada', 'ai')).toBe('Ada (AI)');
+    expect(aiOptionLabel('Ada', 'human')).toBe('Ada');
+    expect(aiOptionLabel('Ada', null)).toBe('Ada');
   });
 });

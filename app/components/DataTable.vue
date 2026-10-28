@@ -29,6 +29,8 @@ const props = withDefaults(
     error?: boolean;
     /** no-data branding for the built-in empty state; a live search always shows a no-results line instead */
     emptyIcon?: string;
+    /** 'No <noun> yet' headline shape for the built-in empty state */
+    emptyNoun?: string;
     emptyText?: string;
   }>(),
   {
@@ -44,6 +46,7 @@ const props = withDefaults(
     getSubRows: undefined,
     showEmptyState: false,
     emptyIcon: undefined,
+    emptyNoun: undefined,
     emptyText: undefined,
   },
 );
@@ -246,12 +249,20 @@ function cellValue(row: T, col: TableColumn<T>) {
         aria-hidden="true"
       />
       <p class="text-highlighted text-base font-medium">
-        {{ isFiltered ? 'No results' : 'Nothing here yet' }}
+        {{
+          error
+            ? "Couldn't load this list"
+            : isFiltered
+              ? 'No results'
+              : emptyNoun
+                ? `No ${emptyNoun} yet`
+                : 'Nothing here yet'
+        }}
       </p>
       <p class="text-muted max-w-sm text-sm">
         {{
           error
-            ? "Couldn't load this list — try again"
+            ? 'Check the connection and try again.'
             : isFiltered
               ? 'No results — try a different search.'
               : emptyText || 'Use the button above to create one.'
@@ -260,7 +271,9 @@ function cellValue(row: T, col: TableColumn<T>) {
       <template v-if="error">
         <slot name="error-cta" />
       </template>
-      <slot name="empty-cta" />
+      <!-- the create CTA belongs to the EMPTY state only — under the error copy
+           it reads as 'create anyway' while the data is simply not loaded -->
+      <slot v-else name="empty-cta" />
     </div>
 
     <!-- pagination footer: prev / numbered / next (UButton — reka UPagination

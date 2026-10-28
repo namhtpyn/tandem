@@ -7,8 +7,6 @@
  *  - 'run'      an agent dispatch turn (status pill + output bubble)
  *  - 'note'     human/system activity (questions, verdicts, status changes...)
  */
-import { PROPOSAL_KIND } from '#shared/enums';
-
 type ThreadBriefItem = {
   kind: 'brief';
   id: string;
@@ -76,14 +74,7 @@ type ThreadSource = {
 // re-exported here so the UI thread and the runner share one implementation.
 // (the UI never parses envelopes directly: item.kind === 'run' items carry the
 // settled body, and parseRunEnvelope is only the pre-settle fallback)
-export { parseRunEnvelope, RunVerdictSchema } from '#shared/run-verdict';
-
-/** routing proposal shapes — the runner maps the settled verdict envelope onto these
- * ([SUBTASKS]/[REASSIGN] text markers are RETIRED: routing rides the envelope JSON) */
-export type SubtaskProposalItem = { title: string; description?: string; assigneeName?: string };
-export type RoutingProposal =
-  | { kind: typeof PROPOSAL_KIND.SUBTASKS; items: SubtaskProposalItem[] }
-  | { kind: typeof PROPOSAL_KIND.REASSIGN; targetName: string; reason?: string };
+export { parseRunEnvelope } from '#shared/run-verdict';
 
 /** Merge by stable timestamp: runs by startedAt, notes by createdAt, brief first. */
 export function buildThread(src: ThreadSource): ThreadItem[] {

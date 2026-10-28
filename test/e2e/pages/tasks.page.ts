@@ -39,9 +39,27 @@ export class TasksPage extends BasePage {
   // Opens the workflow drawer for the row and returns the drawer panel; the
   // callers keep their own visibility/content assertions on it.
   async openWorkflowDrawer(row: Locator): Promise<Locator> {
-    await row.locator('button[aria-label="Task workflow"]').first().click();
-    const drawer = this.page.locator('[data-slot="content"]').first();
+    await row
+      .getByRole('button', { name: /Workflow for/ })
+      .first()
+      .click();
+    const drawer = this.page.getByRole('dialog', { name: 'Task workflow' });
     await expect(drawer).toBeVisible();
     return drawer;
+  }
+
+  // Teardown helper: surface the run's task via the list search and delete it
+  // through the two-step confirm — fixed-title leftovers must not pollute the
+  // shared e2e DB.
+  async deleteTask(title: string): Promise<void> {
+    await this.page.goto('/tasks');
+    const search = this.page.getByRole('textbox', { name: 'Search tasks' });
+    await search.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
+    if (await search.isVisible()) await search.fill(title);
+    const row = this.page.locator('tr:visible', { hasText: title }).first();
+    await expect(row).toBeVisible({ timeout: 15_000 });
+    await row.getByRole('button', { name: /Delete / }).click();
+    await this.page.getByRole('button', { name: 'Delete', exact: true }).last().click();
+    await expect(this.page.locator('tr:visible', { hasText: title })).toHaveCount(0, { timeout: 15_000 });
   }
 }

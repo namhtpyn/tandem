@@ -29,11 +29,24 @@ export async function login(page: Page) {
   });
 
   // storageState reuse: after the hydration gate the Overview shell is already
-  // mounted iff the session cookie is valid — nothing to fill, done.
+  // mounted iff the session cookie is valid — nothing to fill, done. PROBED,
+  // not sampled once: the shell mounts only after the first fetch resolves, so
+  // a single isVisible() can race it (retry until either surface answers).
   const overview = page.getByRole('heading', { name: 'Overview' });
-  if (await overview.isVisible()) return;
-
   const email = page.getByPlaceholder('you@example.com');
+  let signedIn: boolean | 'pending' = 'pending';
+  await expect
+    .poll(
+      async () => {
+        if (await overview.isVisible().catch(() => false)) signedIn = true;
+        else if (await email.isVisible().catch(() => false)) signedIn = false;
+        return signedIn;
+      },
+      { timeout: 10_000 },
+    )
+    .not.toBe('pending');
+  if (signedIn) return;
+
   await email.fill('admin@tandem.local');
   await page.getByLabel('Password').fill('tandem-admin');
   await page.getByRole('button', { name: 'Sign in', exact: true }).first().click();
