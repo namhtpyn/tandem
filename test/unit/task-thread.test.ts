@@ -186,3 +186,49 @@ describe('buildThread degenerate sources', () => {
     expect(items.map((i) => i.id)).toEqual(['ra', 'rb']);
   });
 });
+
+import { activityNotes, noteKindOf, threadTime } from '../../app/utils/task-thread.ts';
+
+describe('noteKindOf / activityNotes / threadTime', () => {
+  it('normalizes legacy casings and rejects unknown kinds', () => {
+    expect(noteKindOf({ kind: 'question' })).toBe(ACTIVITY_KIND.QUESTION);
+    expect(noteKindOf({ kind: 'VERDICT' })).toBe(ACTIVITY_KIND.VERDICT);
+    expect(noteKindOf({ kind: 'weird' })).toBeNull();
+    expect(noteKindOf({ kind: '' })).toBeNull();
+    expect(noteKindOf({ other: 1 })).toBeNull();
+    expect(noteKindOf(null)).toBeNull();
+    expect(noteKindOf(undefined)).toBeNull();
+  });
+
+  it('activityNotes keeps only rows with a known kind', () => {
+    const rows = [
+      {
+        id: 'a',
+        body: 'x',
+        authorName: 'A',
+        authorId: 'a1',
+        createdAt: '2026-01-01T00:00:00Z',
+        activity: { kind: 'note' },
+      },
+      {
+        id: 'b',
+        body: 'y',
+        authorName: 'B',
+        authorId: 'b1',
+        createdAt: '2026-01-02T00:00:00Z',
+        activity: { kind: 'zap' },
+      },
+      { id: 'c', body: 'z', authorName: 'C', authorId: 'c1', createdAt: '2026-01-03T00:00:00Z', activity: null },
+    ];
+    const out = activityNotes(rows);
+    expect(out.map((r) => r.id)).toEqual(['a']);
+    expect(out[0]?.noteKind).toBe(ACTIVITY_KIND.NOTE);
+  });
+
+  it('threadTime reads startedAt for runs and createdAt for the rest', () => {
+    expect(threadTime({ kind: 'run', startedAt: 't1' } as never)).toBe('t1');
+    expect(threadTime({ kind: 'run' } as never)).toBeNull();
+    expect(threadTime({ kind: 'note', createdAt: 't2' } as never)).toBe('t2');
+    expect(threadTime({ kind: 'note' } as never)).toBeNull();
+  });
+});

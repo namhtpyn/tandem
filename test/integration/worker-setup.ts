@@ -64,4 +64,24 @@ if (process.env.REDIS_URL) {
   const idx = (Number(workerId) || 0) % 15;
   const base = process.env.REDIS_URL.replace(/\/\d*$/, ''); // strip an existing /db too
   process.env.REDIS_URL = `${base}/${idx}`;
+
+  // setupFiles run once per FILE, and vitest's forks pool REUSES processes for
+  // several files: a previous file's BullMQ workers keep their (unclosed) redis
+  // sockets alive — a zombie worker on the same per-agent queue name steals the
+  // next file's dispatch jobs (CI-red dispatcher suite, runs #40). Namespace
+  // queue names per file execution AND flush the db index for a clean slate.
+  const g = globalThis as { __tandemFileSeq?: number };
+  g.__tandemFileSeq = (g.__tandemFileSeq ?? 0) + 1;
+  process.env.TANDEM_QUEUE_NS = `${process.pid}f${g.__tandemFileSeq}${runId}`;
+  const { createClient } = await import('redis');
+  const sweep = createClient({
+    url: process.env.REDIS_URL,
+    socket: { connectTimeout: 5000, reconnectStrategy: () => new Error('no-retry') },
+  });
+  try {
+    await sweep.connect();
+    await sweep.flushDb();
+  } finally {
+    sweep.disconnect();
+  }
 }

@@ -48,10 +48,16 @@ export function parseTaskText(text: string): TaskTextPart[] {
   let last = 0;
   for (const m of text.matchAll(ATTACHMENT_RE)) {
     if (m.index > last) pushText(text.slice(last, m.index));
+    // v8 ignore next 1 -- one of the two regex arms always binds an id group; the '' tail is defensive
     const id = m[2] ?? m[4] ?? '';
     if (TOKEN_ID_RE.test(id)) {
-      if (m[2] !== undefined) parts.push({ type: 'image', id, alt: m[1] ?? '' });
-      else parts.push({ type: 'file', id, name: m[3] ?? '' });
+      if (m[2] !== undefined) {
+        // v8 ignore next 1 -- the alt group always binds; '' is defensive
+        parts.push({ type: 'image', id, alt: m[1] ?? '' });
+      } else {
+        // v8 ignore next 1 -- the name group always binds; '' is defensive
+        parts.push({ type: 'file', id, name: m[3] ?? '' });
+      }
     } else {
       // unparseable target: show the source text rather than building a URL from it
       parts.push({ type: 'text', body: m[0] });
@@ -65,6 +71,7 @@ export function parseTaskText(text: string): TaskTextPart[] {
     let at = 0;
     for (const m of body.matchAll(MENTION_RE)) {
       if (m.index > at) parts.push({ type: 'text', body: body.slice(at, m.index) });
+      // v8 ignore next 1 -- both mention regexes require a non-empty label; the '' tail is defensive
       parts.push({ type: 'mention', label: m[1] ?? m[2] ?? '' });
       at = m.index + m[0].length;
     }

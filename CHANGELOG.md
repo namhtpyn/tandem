@@ -1,3 +1,167 @@
+# [2.49.0](https://github.com/namhtpyn/tandem/compare/v2.48.0...v2.49.0) (2026-10-27)
+
+
+### Bug Fixes
+
+* envelope stream corruption, prompt echo leak, status edges ([527cede](https://github.com/namhtpyn/tandem/commit/527cede1a8ae0f776595b5869ef5dcb6394d5daa))
+* **queue:** bounded redis reconnect; serial test asserts execution windows ([cf20061](https://github.com/namhtpyn/tandem/commit/cf200612c29563407d8c286a2b86254acde0bd8b))
+* **thread:** echo dedupe ms-precision, run-turn avatar, cap-leak test ([145f192](https://github.com/namhtpyn/tandem/commit/145f192c5a3c13172e198cc1c77b6eabb82ca415))
+
+
+### Features
+
+* **composer:** send steers a live agent, dispatches a stopped one; single button ([bae8efe](https://github.com/namhtpyn/tandem/commit/bae8efefb275aced6934d414c13af4dd8bbdab9f))
+* **tasks:** manual status is free; live runs lock status + assignee; Workflow block removed ([56239b0](https://github.com/namhtpyn/tandem/commit/56239b003ef9052862b86bb5a441bc4e9de94c9a))
+* **tasks:** subtasks open the create modal; owner field out; reviewers multi-select ([8fc2429](https://github.com/namhtpyn/tandem/commit/8fc24294b54e3a0adb04fc7d17d1598eecbb716c)), closes [#body](https://github.com/namhtpyn/tandem/issues/body)
+
+# [2.48.0](https://github.com/namhtpyn/tandem/compare/v2.47.1...v2.48.0) (2026-10-27)
+
+
+### Bug Fixes
+
+* **thread:** run turns render as chat bubbles; echo notes deduped ([54b19ba](https://github.com/namhtpyn/tandem/commit/54b19ba6d314a41932baa4549d68cf2f0779bf77))
+
+
+### Features
+
+* **brief:** multi-supervisor chains — one level per layer, joined by & ([9ee443d](https://github.com/namhtpyn/tandem/commit/9ee443d0afc00dc6ceaadd003bd290c5712eb7b5))
+
+## [2.47.1](https://github.com/namhtpyn/tandem/compare/v2.47.0...v2.47.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **db:** prod-proof the obligations FK rename — pre-squash constraint name ([dff6627](https://github.com/namhtpyn/tandem/commit/dff6627a01441d287199f7ac64e25c189bdd34ea))
+
+# [2.47.0](https://github.com/namhtpyn/tandem/compare/v2.46.0...v2.47.0) (2026-10-27)
+
+
+### Bug Fixes
+
+* 10-reviewer audit sweep — reliability, state machine, data safety, UI, infra, docs ([93c7bad](https://github.com/namhtpyn/tandem/commit/93c7baddfca6e6c4f2ebaf8771dc2c96908d3b96))
+* **ci:** pin oxfmt 0.75 — bunx@latest reformats drift between runs ([2101d46](https://github.com/namhtpyn/tandem/commit/2101d464ecaa624d9870ddde3d90d4f6ca5ef87f))
+* **ci:** pin oxlint 1.89 as devDep — TS config imports the package now ([0c9709b](https://github.com/namhtpyn/tandem/commit/0c9709bc510e09ba5ab45cfb109e10bd8432147a))
+* low-tier sweep — hydration-safe timestamps, session-lookup index, a11y, live proposals ([de03514](https://github.com/namhtpyn/tandem/commit/de035144133700f740ac1f2308f2fa1d5912f368))
+
+
+### Features
+
+* **app:** GitHub-style review box, auto-answer composer, no human Ask ([2f2c870](https://github.com/namhtpyn/tandem/commit/2f2c870e55658e4c667d5dbfcc08b509882b3cfd))
+
+# [2.46.0](https://github.com/namhtpyn/tandem/compare/v2.45.0...v2.46.0) (2026-10-26)
+
+
+### Bug Fixes
+
+* **docker:** bump base image to bun 1.4.4 (CVE-2026-111497 brotli OOB write) ([98872a3](https://github.com/namhtpyn/tandem/commit/98872a3c7165e1af9c583d5ffdb3f01dba696d33))
+
+
+### Features
+
+* **app:** composer posts plain notes; workflow verbs render per state ([07b8181](https://github.com/namhtpyn/tandem/commit/07b81817673dffebf2311a493c63b309ae465df7))
+* **brief:** activity section = thread messages after the last finished run ([bbfab4c](https://github.com/namhtpyn/tandem/commit/bbfab4ca3b8faf6bbc22b847887678c69ad7222a))
+* **brief:** prompt is a conversation relay, not a re-brief ([be2fa25](https://github.com/namhtpyn/tandem/commit/be2fa25d7e3894228bd2d9e65465907e7a96de53))
+* **brief:** prompt message lines ship whole — no truncation ([4e81b5f](https://github.com/namhtpyn/tandem/commit/4e81b5f24b091222fa79a43d224e14974b9caa61))
+* **routing:** fold SUBTASKS/REASSIGN into the JSON envelope ([1106087](https://github.com/namhtpyn/tandem/commit/11060877fdb580f2300f9fc696f2ff5bf6e9d3cd))
+
+# [2.45.0](https://github.com/namhtpyn/tandem/compare/v2.44.1...v2.45.0) (2026-10-26)
+
+
+### Features
+
+* **app:** run turn shows the message body with expandable raw input + output ([edf8c14](https://github.com/namhtpyn/tandem/commit/edf8c14f3a86d35ac17f20eb309a4d74c1a4aac9))
+* **workflow:** explicit reviewers only — supervisor is not a quality gate ([bbe889e](https://github.com/namhtpyn/tandem/commit/bbe889e466ba6d2057451cf13b2813086d10f007))
+
+## [2.44.1](https://github.com/namhtpyn/tandem/compare/v2.44.0...v2.44.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **db:** drop legacy task_runs.task_id on upgraded DBs ([c9f7afa](https://github.com/namhtpyn/tandem/commit/c9f7afa541f77ae5d9204166beaf1b61862ec9fd))
+
+# [2.44.0](https://github.com/namhtpyn/tandem/compare/v2.43.0...v2.44.0) (2026-10-26)
+
+
+### Features
+
+* **app:** thread shows raw run output, drops input fold and STATUS chatter ([a004bf5](https://github.com/namhtpyn/tandem/commit/a004bf59376fd1220566be0b679c4da14eab61a3))
+* **run:** runs link tasks via thread messages (user design, 2026-10-26) ([7ac32bb](https://github.com/namhtpyn/tandem/commit/7ac32bbc8a1c8d7acc6efdf9e4c2efa696b3269b))
+
+# [2.43.0](https://github.com/namhtpyn/tandem/compare/v2.42.0...v2.43.0) (2026-10-26)
+
+
+### Bug Fixes
+
+* **app:** task sidebar status picker routes through tasks.setStatus ([b8199a0](https://github.com/namhtpyn/tandem/commit/b8199a0263428b62b314f79ae1de3860f7402370))
+* **db:** thread backfill payload carries the activity kind ([6dcc407](https://github.com/namhtpyn/tandem/commit/6dcc40735c0093f932cca6608cf85bd9d7cc0956))
+* **security:** close run-1 audit findings — role gates, secret-egress binding, exec escaping, workflow integrity ([d321913](https://github.com/namhtpyn/tandem/commit/d3219138827b7c680e2522769669cecac07dc216))
+
+
+### Features
+
+* **db:** task conversation tables — base thread + per-kind extensions (phase 1) ([7a9d4d7](https://github.com/namhtpyn/tandem/commit/7a9d4d7d9ea8b927ee5c2229a882644f01ec726e))
+* **tasks:** unified conversation thread — thread procs + dual-write + client swap (phases 2-3) ([67fb645](https://github.com/namhtpyn/tandem/commit/67fb645112607629d3258a4aa20fdb0efbba5394))
+
+
+### Reverts
+
+* **security:** drop role/permission gates — not needed yet (owner order) ([4048e60](https://github.com/namhtpyn/tandem/commit/4048e60794816a0d92fd8355734ab35df16fb442))
+
+# [2.42.0](https://github.com/namhtpyn/tandem/compare/v2.41.0...v2.42.0) (2026-10-24)
+
+
+### Bug Fixes
+
+* **app:** drop the non-null assertion in the picker fallback ([80ef966](https://github.com/namhtpyn/tandem/commit/80ef9667ab133ed175b3aa286050029ddc11fec7))
+* **app:** every page stopped scrolling — cap UDashboardPanel inside the fixed shell ([1faa0de](https://github.com/namhtpyn/tandem/commit/1faa0ded8095b911380f36bbab30f68ee7f985cb))
+* **app:** folder picker — ignore-filter is the actual off switch for client filtering ([26653c1](https://github.com/namhtpyn/tandem/commit/26653c1b4abcaf0ea769d12562478954079521fa))
+* **app:** folder picker loaded 2 pages per scroll — flip a sync guard in the handler ([35d78cd](https://github.com/namhtpyn/tandem/commit/35d78cdd36b9c2a351bac882b356285205abfbc9))
+* **app:** folder picker page size 50 -> 20 — first page should look like a page ([fd68540](https://github.com/namhtpyn/tandem/commit/fd685404b15e6ecc9a7b9ff78d2eb2d2236efb41))
+* **app:** kill the remaining direct $fetch RPC calls on the tasks pages ([5372c28](https://github.com/namhtpyn/tandem/commit/5372c2815f58e970d1d60c29d252e6da077ffaad))
+* **app:** pagination footer lives in DataTable — folders manager gets working pages ([80a7b1b](https://github.com/namhtpyn/tandem/commit/80a7b1b8bcdb8f262c413c3eb4f186d6859cb7e3))
+* **app:** restore documented dashboard layout instead of overriding the theme ([6c336db](https://github.com/namhtpyn/tandem/commit/6c336dbc037d9ca180738e5a9bc44efa0e4be7af))
+* **app:** secret modal folder select uses size=md to match the form inputs ([216465c](https://github.com/namhtpyn/tandem/commit/216465cbd398783e5e6708aab28d068f9f179793))
+* **app:** vault QA round — perf + picker label + destructive-action spacing ([54bf453](https://github.com/namhtpyn/tandem/commit/54bf453ca606d746ff039b59bee9fa878c371022))
+* **app:** VaultFolderSelect loads pages through vue-query over the oRPC client ([a3921a2](https://github.com/namhtpyn/tandem/commit/a3921a21b4a4f0e291668842e83b7f2f3d2ef214))
+
+
+### Features
+
+* **app:** capability flags on the vault folder components ([eb4aa6a](https://github.com/namhtpyn/tandem/commit/eb4aa6af7e50a660f657b040e522e6accb8778ca))
+* **app:** folder picker search filters on the server ([f7cf21a](https://github.com/namhtpyn/tandem/commit/f7cf21a01b5a6e455c77464afda170d84c12daac))
+* **app:** FolderSelect — self-loading vault folder picker component ([e961949](https://github.com/namhtpyn/tandem/commit/e96194983b9fcc401bcb05902c0c31de76c8925a))
+* **app:** reload prompt when a newer build is deployed ([dcc3d50](https://github.com/namhtpyn/tandem/commit/dcc3d50044b831a8f53e6bd3e2cb2da2b5b21fd5))
+* **app:** VaultFolderSelect gains a size prop (default sm, USelectMenu sizes) ([466e9c6](https://github.com/namhtpyn/tandem/commit/466e9c62e7ed35c6fc7a94590eed050656b276ed))
+
+
+### Performance Improvements
+
+* **vault:** folder secret counts via extras correlated subquery ([5d6ece0](https://github.com/namhtpyn/tandem/commit/5d6ece07ad89b6012aed335a259b27719301bd44))
+
+# [2.41.0](https://github.com/namhtpyn/tandem/compare/v2.40.0...v2.41.0) (2026-10-22)
+
+
+### Bug Fixes
+
+* **test:** per-worker redis DB index — pub/sub leaked across workers ([eec7464](https://github.com/namhtpyn/tandem/commit/eec7464d237d23ec174d048cc6ffe224f965f3a8))
+* **test:** pin dispatcher-redis to its own redis DB via vi.hoisted ([7a109b3](https://github.com/namhtpyn/tandem/commit/7a109b3aecd685e101b3476dd05213fe5a5fa89c))
+* **test:** redis DB rewrite matched no URL + state-based wait in runs-tail test ([1fe2bce](https://github.com/namhtpyn/tandem/commit/1fe2bce03faaa90ef4ec0caf9d2e71ae927213be))
+* **test:** redis fanout test asserts by event id — sibling files share the worker's bus ([9394c32](https://github.com/namhtpyn/tandem/commit/9394c321238bb4102184597a797dd4672742ff9f))
+* **vault:** pagination controls never advanced past page 1 ([bd8b5f6](https://github.com/namhtpyn/tandem/commit/bd8b5f6b24d22882525977053f61b361714eb6e3))
+
+
+### Features
+
+* **a11y:** Nuxt accessibility best practices — route announcer, skip link, page titles ([d831fd4](https://github.com/namhtpyn/tandem/commit/d831fd4067c73471633aa2833b46a35c979c40d5)), closes [#main](https://github.com/namhtpyn/tandem/issues/main)
+
+
+### Performance Improvements
+
+* **test:** dispatcher suite 62s -> 23s — drain exits on idle ([fe4e514](https://github.com/namhtpyn/tandem/commit/fe4e51407f145e6b3971229220de1259c9db7cd4))
+* **test:** drizzle-seed reset for data tests; migrations once in global setup ([e01fb5d](https://github.com/namhtpyn/tandem/commit/e01fb5d62a372e2aac22c404e679ecf7f4e140f4))
+* **test:** parallel workers, one DB per worker, savepoint resets ([bd5aa42](https://github.com/namhtpyn/tandem/commit/bd5aa429b53818a964039b75288017b2a95e4404))
+* **test:** template-clone worker DBs — setup no longer dump/restores ([354a0ad](https://github.com/namhtpyn/tandem/commit/354a0ad0af76583cf0be1e3f20b161e8a29ffbd7))
+
 # [2.40.0](https://github.com/namhtpyn/tandem/compare/v2.39.1...v2.40.0) (2026-10-21)
 
 

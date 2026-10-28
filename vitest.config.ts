@@ -60,6 +60,9 @@ export default defineConfig({
           'import.meta.client': 'true',
           'import.meta.server': 'false',
         },
+        // unit tests import app modules that use the nuxt '~' alias — resolve it
+        // HERE only; the nuxt project must keep its own alias semantics
+        resolve: { alias: { '~': fileURLToPath(new URL('./app', import.meta.url)) } },
         test: {
           name: 'unit',
           include: ['test/unit/**/*.test.ts'],

@@ -1,9 +1,14 @@
+import path from 'node:path';
+
 import { SQL } from 'bun';
+import { drizzle } from 'drizzle-orm/bun-sql';
+import { migrate } from 'drizzle-orm/bun-sql/migrator';
 
 import { E2E_DATABASE_URL, redactedDatabaseUrl } from './helpers/env';
-// E2E reset: every run starts from a fresh data set. The web server is booted by
-// Playwright BEFORE this hook (webServer is a plugin setup task), so migrations
-// have applied and the boot admin exists.
+// E2E reset: every run starts from a fresh data set. playwright starts the
+// webServer and this hook together, so the SERVER owns the boot migration on a
+// virgin database and this hook waits for the schema before resetting; with
+// TANDEM_E2E_NO_SERVER=1 (server started out of band) the hook migrates itself.
 //
 // Kept: `user` + `account` (the boot admin and its credential login — boot only
 // seeds an admin when the user table is EMPTY, so truncating them would leave a
@@ -115,10 +120,30 @@ export default async function globalSetup() {
       );
     }
 
-    const tables = (await sql`
-      select tablename from pg_tables where schemaname = 'public' order by tablename
-    `) as Array<{ tablename: string }>;
-    const present = new Set(tables.map((t) => t.tablename));
+    // fresh-database law: CI creates tandem_e2e EMPTY every run, and playwright
+    // starts the webServer and this hook CONCURRENTLY. Exactly one migrator may
+    // run: with the webServer enabled it owns the boot migration and we WAIT for
+    // the schema (two concurrent migrators collide on pg_type — run 40713960511);
+    // with the server disabled (TANDEM_E2E_NO_SERVER=1) we migrate ourselves.
+    const schemaReady = async () => {
+      const tables = (await sql`
+        select tablename from pg_tables where schemaname = 'public'
+      `) as Array<{ tablename: string }>;
+      return new Set(tables.map((t) => t.tablename));
+    };
+    if (process.env.TANDEM_E2E_NO_SERVER) {
+      await migrate(drizzle({ client: sql }), {
+        migrationsFolder: process.env.TANDEM_DRIZZLE_DIR || path.join(process.cwd(), 'drizzle'),
+      });
+    } else {
+      for (let i = 0; i < 120; i++) {
+        const present = await schemaReady();
+        if (REQUIRED_TABLES.every((t) => present.has(t))) break;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+
+    const present = await schemaReady();
     const missing = REQUIRED_TABLES.filter((t) => !present.has(t));
     if (missing.length) {
       throw new Error(`e2e schema is not migrated — missing tables: ${missing.join(', ')}`);
