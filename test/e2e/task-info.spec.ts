@@ -1,8 +1,8 @@
 // E2E: task detail page (Paperclip-style) — create task via UI, click title, land on
 // /tasks/:id: chat thread present (brief + composer), sidebar info present, mobile sheet
 // carries the same info, back link returns to the list.
-import { expect, test } from '@playwright/test';
-
+// the cleanup fixture sweeps every row the test created (envs, bots, keys)
+import { expect, test } from './helpers/cleanup';
 import { login } from './helpers/login.ts';
 import { waitForHydration } from './pages/base.page.ts';
 import { TasksPage } from './pages/tasks.page.ts';

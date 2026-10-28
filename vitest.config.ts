@@ -11,13 +11,12 @@ export default defineConfig({
       '#server': fileURLToPath(new URL('./server', import.meta.url)),
     },
   },
-  define: {
-    'import.meta.client': 'true',
-    'import.meta.server': 'false',
-  },
   test: {
     hookTimeout: 60_000,
     testTimeout: 15_000,
+    // a spy/stub leak between tests is a false green — restore after every test
+    restoreMocks: true,
+    unstubGlobals: true,
     // DB tests truncate their own data (per-worker cloned DBs), so order is
     // arbitrary by design — shuffling keeps hidden coupling from hiding
     sequence: { shuffle: true },
@@ -53,7 +52,14 @@ export default defineConfig({
     },
     projects: [
       {
-        // pure tests: no database, no real I/O — must stay millisecond-fast
+        // pure tests: no database, no real I/O — must stay millisecond-fast.
+        // `import.meta.client` is only faked here: the nuxt project gets the real
+        // values from the Nuxt environment, and integration/server code must not
+        // be told it is running in a browser.
+        define: {
+          'import.meta.client': 'true',
+          'import.meta.server': 'false',
+        },
         test: {
           name: 'unit',
           include: ['test/unit/**/*.test.ts'],
@@ -71,13 +77,22 @@ export default defineConfig({
       },
       // component tests in a real Nuxt environment (auto-imports, plugins, injections)
       // — mountSuspended etc. Docs: defineVitestProject is only for nuxt-env tests.
-      // Coverage stays a unit-project concern (server/composables surface).
+      // Component coverage is REPORTED here (it used to be switched off, so
+      // app/components/** never appeared in any report) but it is not gated: the
+      // strict thresholds above are the server/util surface, and one component
+      // mount must not decide whether the suite passes.
       await defineVitestProject({
         test: {
           name: 'nuxt',
           include: ['test/nuxt/**/*.test.ts'],
           environment: 'nuxt',
-          coverage: { enabled: false, reporter: [], reportsDirectory: null, thresholds: {} },
+          coverage: {
+            enabled: true,
+            include: ['app/components/**/*.vue'],
+            reporter: ['text'],
+            reportsDirectory: './coverage/components',
+            thresholds: {},
+          },
         },
       }),
     ],

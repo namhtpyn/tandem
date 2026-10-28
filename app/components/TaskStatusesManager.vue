@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 import { computed, reactive, ref } from 'vue';
 import { z } from 'zod';
 
-import { CHANGE_RESOURCE } from '#shared/enums';
+import { CATEGORIES, CATEGORY, CHANGE_RESOURCE, type Category } from '#shared/enums';
 import { saveFailed } from '~/utils/forms';
 import type { TaskStatusRow } from '~/utils/orpc-types';
 import { categoryColor, categoryLabel } from '~/utils/ui-labels';
@@ -27,6 +27,8 @@ const statusEditorOpen = computed({
     if (!v) {
       editingStatusId.value = null;
       statusEditorTouched.value = false;
+      // a save error belongs to the editor that produced it, not the next open
+      statusMessage.value = '';
     }
   },
 });
@@ -38,15 +40,7 @@ const statusForm = reactive({
   name: '',
   color: 'neutral' as 'neutral' | 'primary' | 'success' | 'warning' | 'error' | 'info',
   position: 0,
-  category: 'backlog' as
-    | 'backlog'
-    | 'ready'
-    | 'working'
-    | 'paused'
-    | 'waiting_answer'
-    | 'in_review'
-    | 'done'
-    | 'cancelled',
+  category: CATEGORY.BACKLOG as Category,
   nextIds: [] as string[],
 });
 
@@ -66,8 +60,12 @@ function openStatusEditor(row?: TaskStatusRow) {
   editingStatusId.value = row?.id ?? null;
   statusForm.name = row?.name ?? '';
   statusForm.color = (row?.color as typeof statusForm.color | undefined) ?? 'neutral';
-  statusForm.position = row?.position ?? statuses.value.length;
-  statusForm.category = (row?.category as typeof statusForm.category | undefined) ?? 'backlog';
+  // new statuses land at the END of the workflow, not at the row count (custom
+  // positions may be sparse or duplicated)
+  let maxPos = -1;
+  for (const st of statuses.value) maxPos = Math.max(maxPos, st.position);
+  statusForm.position = row?.position ?? maxPos + 1;
+  statusForm.category = (row?.category as Category | undefined) ?? CATEGORY.BACKLOG;
   statusForm.nextIds = row ? [...row.nextIds] : [];
   statusMessage.value = '';
   statusEditorTouched.value = true;
@@ -128,16 +126,23 @@ const colorOptions = [
   { label: 'Error', value: 'error' },
   { label: 'Info', value: 'info' },
 ];
-const categoryOptions = [
-  { label: 'Backlog', description: 'Parked, nobody works on it', value: 'backlog' },
-  { label: 'Ready', description: 'Assigned agent picks it up', value: 'ready' },
-  { label: 'Working', description: 'Hands off, in progress', value: 'working' },
-  { label: 'Paused', description: 'Halted, not terminal', value: 'paused' },
-  { label: 'Waiting answer', description: 'Question routed, work paused', value: 'waiting_answer' },
-  { label: 'In review', description: 'Result awaits unanimous approval', value: 'in_review' },
-  { label: 'Done', description: 'Completed, agents stop', value: 'done' },
-  { label: 'Cancelled', description: 'Agents stop', value: 'cancelled' },
-];
+/** category copy only — the SET comes from the shared CATEGORY enum, so a new
+ *  category can't be offered in the UI without existing on the server */
+const CATEGORY_COPY: Record<Category, string> = {
+  [CATEGORY.BACKLOG]: 'Parked, nobody works on it',
+  [CATEGORY.READY]: 'Assigned agent picks it up',
+  [CATEGORY.WORKING]: 'Hands off, in progress',
+  [CATEGORY.PAUSED]: 'Halted, not terminal',
+  [CATEGORY.WAITING_ANSWER]: 'Question routed, work paused',
+  [CATEGORY.IN_REVIEW]: 'Result awaits unanimous approval',
+  [CATEGORY.DONE]: 'Completed, agents stop',
+  [CATEGORY.CANCELLED]: 'Agents stop',
+};
+const categoryOptions = CATEGORIES.map((value) => ({
+  label: categoryLabel(value),
+  description: CATEGORY_COPY[value],
+  value,
+}));
 // badge colors + labels come from the SHARED ui-labels mapping (imported above) —
 // statuses render the same words/colors as every other surface
 </script>
@@ -234,10 +239,9 @@ const categoryOptions = [
       <template #body>
         <div class="space-y-4">
           <p class="text-toned text-sm">
-            Delete status
-            <span class="text-highlighted font-semibold">{{ pendingDelete?.name }}</span
-            >? A status still used by tasks can't be deleted — move those tasks first. Transitions pointing at this
-            status are removed automatically.
+            <span class="text-highlighted font-semibold">{{ pendingDelete?.name }}</span> will disappear from the
+            workflow. If any task still sits in it the delete is refused — move those tasks to another status first.
+            Transitions pointing at it are removed with it.
           </p>
           <UAlert
             v-if="deleteError"

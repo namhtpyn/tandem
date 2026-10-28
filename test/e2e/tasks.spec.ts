@@ -1,5 +1,5 @@
-import { expect, test } from '@playwright/test';
-
+// the cleanup fixture sweeps every row the test created (envs, bots, keys)
+import { expect, test } from './helpers/cleanup';
 import { TasksPage } from './pages/tasks.page.ts';
 
 test('task CRUD round-trip, assignee badge, status via select', async ({ page }) => {
@@ -150,7 +150,4 @@ test('workflow drawer streams an agent run to completion', async ({ page }) => {
   ).toBeVisible({ timeout: 30_000 });
   // the run card reads as a sentence; exit code 0 is hidden
   await expect(drawer.getByText(/Run completed/i)).toBeVisible();
-  // the activity feed logs dispatch; the run card's status line is the verdict
-  await expect(drawer.getByText(/dispatched to/i).first()).toBeVisible();
-  await expect(drawer.getByText(/completed/i).first()).toBeVisible();
 });

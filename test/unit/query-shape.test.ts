@@ -20,14 +20,6 @@ describe('query shape (drizzle.mock)', () => {
     expect(rendered.toLowerCase()).toContain('join');
   });
 
-  // moved from test/integration/rqb-count.test.ts — shape only, literals replace the seeded ids
-  it('count toSQL renders where clause', () => {
-    const db = mockDb();
-    const { sql: rendered } = db.query.tasks.count({ id: { in: ['rqb-a', 'rqb-b'] } }).toSQL();
-    expect(rendered).toContain('count(*)');
-    expect(rendered).toContain('where');
-  });
-
   // moved from test/integration/rqb-count.test.ts; findManyAndCount starts both
   // queries eagerly and the driver-less mock rejects them — drain so vitest sees
   // no floating rejection

@@ -15,23 +15,31 @@ import {
   AGENT_RUN_VIEW,
   statusLabel,
 } from '../../app/utils/ui-labels';
+import { CATEGORIES } from '../../shared/enums';
 
 describe('ui-labels', () => {
-  it('maps every seeded category to a badge color and label', () => {
+  it('maps every category in the shared enum to a badge color and label', () => {
+    for (const category of CATEGORIES) {
+      expect(categoryColor(category)).toMatch(/^(primary|success|warning|error|info|neutral)$/);
+      expect(categoryLabel(category)).not.toBe(category);
+    }
     expect(categoryColor('done')).toBe('success');
     expect(categoryColor('cancelled')).toBe('error');
-    expect(categoryColor('blocked')).toBe('error');
     expect(categoryColor('in_review')).toBe('info');
     expect(categoryColor('working')).toBe('warning');
-    expect(categoryColor('waiting_answer')).toBe('warning');
-    expect(categoryColor('todo')).toBe('neutral');
+    // one color per category: waiting_answer used to disagree with its own text class
+    expect(categoryColor('waiting_answer')).toBe('info');
+    expect(categoryColor('ready')).toBe('neutral');
+    // retired keys ('todo'/'blocked') are gone — they fall back, they don't map
+    expect(categoryColor('blocked')).toBe('neutral');
     expect(categoryColor('custom')).toBe('neutral');
     expect(categoryColor(null)).toBe('neutral');
 
     expect(categoryLabel('waiting_answer')).toBe('Waiting answer');
     expect(categoryLabel('in_review')).toBe('In review');
-    expect(categoryLabel('todo')).toBe('To do');
+    expect(categoryLabel('backlog')).toBe('Backlog');
     // map-miss: humanized, never the raw enum
+    expect(categoryLabel('todo')).toBe('Todo');
     expect(categoryLabel('mystery')).toBe('Mystery');
     expect(categoryLabel('IN_FLIGHT')).toBe('In flight');
     expect(categoryLabel(undefined)).toBe('');

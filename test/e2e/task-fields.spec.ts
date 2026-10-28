@@ -1,5 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
-
+// the cleanup fixture sweeps every row the test created (envs, bots, keys)
+import { expect, test, type Page } from './helpers/cleanup';
 import { login } from './helpers/login.ts';
 import { waitForHydration } from './pages/base.page.ts';
 import { TasksPage } from './pages/tasks.page.ts';

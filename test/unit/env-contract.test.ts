@@ -1,8 +1,14 @@
 // env contract report formatting — the boot failure output humans read
 import { consola } from 'consola';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { formatEnvIssues } from '#server/domains/kernel/env';
+
+// an assertion that throws between spyOn and mockRestore used to leak a mocked
+// process.exit / consola into the next file — restore unconditionally
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('formatEnvIssues', () => {
   it('missing required vars read "LABEL is required"', () => {
@@ -37,8 +43,6 @@ describe('formatEnvIssues', () => {
       reportInvalidEnvironment([{ path: ['DATABASE_URL'], message: 'DATABASE_URL is required' }]);
       expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('DATABASE_URL is required'));
       expect(exitSpy).toHaveBeenCalledWith(1);
-      errSpy.mockRestore();
-      exitSpy.mockRestore();
     });
   });
 
@@ -51,8 +55,6 @@ describe('formatEnvIssues', () => {
       expect(exitSpy).toHaveBeenCalledWith(1);
       assertEnv({ success: true });
       expect(exitSpy).toHaveBeenCalledTimes(1);
-      errSpy.mockRestore();
-      exitSpy.mockRestore();
     });
   });
 });

@@ -41,6 +41,10 @@ vi.mock('ssh2', () => {
     return stream;
   };
   class FakeClient {
+    /** exec means the stream handlers are attached — the signal clientReady waits on */
+    static execs = 0;
+    /** planted BEFORE the run starts — no sleep-and-hope race with the ready tick */
+    static nextExecError: Error | null = null;
     static last: FakeClient;
     handlers: Record<string, Array<(d: unknown) => void>> = {};
     execHandler: ((err: Error | null, stream: unknown) => void) | null = null;
@@ -58,7 +62,8 @@ vi.mock('ssh2', () => {
     }
     exec(_cmd: string, cb: (err: Error | null, stream: unknown) => void) {
       this.execHandler = cb;
-      cb(this.execError, this.stream);
+      FakeClient.execs += 1;
+      cb(this.execError ?? FakeClient.nextExecError, this.stream);
     }
     end() {
       this.ended = true;
@@ -103,23 +108,43 @@ async function collected() {
   return { lines, finish, resolve, state: () => ({ finishState, resolved }) };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
+  // statics survive between tests — a stale exec count made clientReady resolve
+  // before THIS run had attached its stream handlers
+  const { default: FakeClientModule } = await import('ssh2');
+  const statics = FakeClientModule.Client as unknown as { execs: number; nextExecError: Error | null };
+  statics.execs = 0;
+  statics.nextExecError = null;
 });
+
+/** the fake ssh2 client the service constructed — awaited, never slept on */
+type FakeClientShape = {
+  stream: { emitStdout(t: string): void; emitStderr(t: string): void; close(c: number | null): void };
+  execError: Error | null;
+  emitError(e: Error): void;
+};
+async function clientReady(): Promise<FakeClientShape> {
+  const clientMod = (await import('ssh2')).default;
+  const FakeClient = clientMod.Client as unknown as { last?: FakeClientShape; execs: number };
+  // `last` alone is not enough: the service only wires the stream inside exec,
+  // which runs after the fake's ready tick — emitting before that drops events
+  await vi.waitFor(() => expect(FakeClient.execs).toBeGreaterThan(0));
+  return FakeClient.last as FakeClientShape;
+}
 
 describe('runOverSsh (mocked ssh2)', () => {
   it('streams stdout lines, prefixes stderr, closes done on exit 0', async () => {
     const { lines, finish, resolve, state } = await collected();
-    const clientMod = (await import('ssh2')).default;
-    const FakeClient = clientMod.Client as unknown as {
-      last: { stream: { emitStdout(t: string): void; emitStderr(t: string): void; close(c: number | null): void } };
-    };
     const p = runOverSsh(plan, 'cmd', 'blob', (l) => lines.push(l), finish, resolve as never);
-    await new Promise((r) => setTimeout(r, 10));
-    FakeClient.last.stream.emitStdout('line1\nline2\n');
-    FakeClient.last.stream.emitStderr('warn\n');
-    FakeClient.last.stream.close(0);
+    const client = await clientReady();
+    client.stream.emitStdout('line1\nline2\n');
+    client.stream.emitStderr('warn\n');
+    client.stream.close(0);
     await p;
+    // runOverSsh resolves once connect() is called — the settle lands later, so
+    // wait on the observable state instead of sleeping
+    await vi.waitFor(() => expect(state().finishState).not.toBeNull());
     const s = state();
     expect(lines).toEqual(['line1', 'line2', '[stderr] warn']);
     expect(s.finishState).toEqual({ status: RUN_STATUS.DONE, exitCode: 0 });
@@ -128,42 +153,35 @@ describe('runOverSsh (mocked ssh2)', () => {
 
   it('nonzero exit marks the run failed', async () => {
     const { lines, finish, resolve, state } = await collected();
-    const clientMod = (await import('ssh2')).default;
-    const FakeClient = clientMod.Client as unknown as { last: { stream: { close(c: number | null): void } } };
     const p = runOverSsh(plan, 'cmd', 'blob', (l) => lines.push(l), finish, resolve as never);
-    await new Promise((r) => setTimeout(r, 10));
-    FakeClient.last.stream.close(3);
+    const client = await clientReady();
+    client.stream.close(3);
     await p;
+    await vi.waitFor(() => expect(state().finishState).toEqual({ status: RUN_STATUS.FAILED, exitCode: 3 }));
     const s = state();
-    expect(s.finishState).toEqual({ status: RUN_STATUS.FAILED, exitCode: 3 });
   });
 
   it('exec error fails the run without streaming', async () => {
     const { lines, finish, resolve, state } = await collected();
     const clientMod = (await import('ssh2')).default;
-    const Ctor = clientMod.Client as unknown as { last: { execError: Error | null }; new (): unknown };
-    // plant the exec error before ready fires: run first tick ordering — connect schedules ready
-    // on next tick, so set the flag synchronously after runOverSsh starts
+    const Ctor = clientMod.Client as unknown as { nextExecError: Error | null };
+    // plant the error BEFORE the run: the fake applies it at exec time, so there
+    // is no sleep-and-hope race against the constructor or the ready tick
+    Ctor.nextExecError = new Error('exec blew up');
     const p = runOverSsh(plan, 'cmd', 'blob', (l) => lines.push(l), finish, resolve as never);
-    await new Promise((r) => setTimeout(r, 1)); // client constructed inside runOverSsh's first await
-    Ctor.last.execError = new Error('exec blew up');
-    await new Promise((r) => setTimeout(r, 15)); // ready -> exec with the planted error
-    await new Promise((r) => setTimeout(r, 20));
     await p;
+    await vi.waitFor(() => expect(state().finishState).toEqual({ status: RUN_STATUS.FAILED, exitCode: null }));
     const s = state();
-    expect(s.finishState).toEqual({ status: RUN_STATUS.FAILED, exitCode: null });
   });
 
   it('connection error surfaces as failed with the message on the stream', async () => {
     const { lines, finish, resolve, state } = await collected();
-    const clientMod = (await import('ssh2')).default;
-    const FakeClient = clientMod.Client as unknown as { last: { emitError(e: Error): void } };
     const p = runOverSsh({ ...plan, sshKey: undefined }, 'cmd', 'blob', (l) => lines.push(l), finish, resolve as never);
-    await new Promise((r) => setTimeout(r, 10));
-    FakeClient.last.emitError(new Error('ECONNREFUSED'));
+    const client = await clientReady();
+    client.emitError(new Error('ECONNREFUSED'));
     await p;
+    await vi.waitFor(() => expect(lines.some((l) => l.includes('ECONNREFUSED'))).toBe(true));
     const s = state();
-    expect(lines.some((l) => l.includes('ECONNREFUSED'))).toBe(true);
     expect(s.finishState).toEqual({ status: RUN_STATUS.FAILED, exitCode: null });
   });
 

@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/vue-query';
 import { computed, onServerPrefetch } from 'vue';
 
 import { CHANGE_RESOURCE, REVIEW_STATUS } from '#shared/enums';
-import type { EmployeeRow, TaskReviewRow } from '~/utils/orpc-types';
+import type { EmployeeRow, ReviewRow } from '~/utils/orpc-types';
 import { kindLabel } from '~/utils/ui-labels';
 
 const props = defineProps<{ taskId: string }>();
@@ -31,11 +31,21 @@ const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRo
 const kindOf = (id: string | null, fallback: string | null) =>
   kindLabel(employees.value.find((e) => e.userId === id)?.kind ?? fallback);
 
+/** the verdict in words — the row communicates state by icon today, which is
+ *  invisible to screen readers (and to anyone who can't tell the glyphs apart) */
+const VERDICT_LABEL: Record<string, string> = {
+  [REVIEW_STATUS.PENDING]: 'Pending',
+  [REVIEW_STATUS.APPROVED]: 'Approved',
+  [REVIEW_STATUS.CHANGE_REQUESTED]: 'Changes requested',
+  [REVIEW_STATUS.REJECTED]: 'Rejected',
+};
+const verdictLabel = (status: string) => VERDICT_LABEL[status] ?? 'Pending';
+
 /** REVIEW LAW checklist: current-round verdicts per reviewer, history collapsed by round.
  * Status is the SCREAMING ReviewStatus enum — compare through its constants (the old
  * lowercase literals never matched a stored value, so every row rendered as pending). */
 const reviewChecklist = computed(() => {
-  const rows = (unref(reviewsQuery.data) ?? []) as TaskReviewRow[];
+  const rows = (unref(reviewsQuery.data) ?? []) as ReviewRow[];
   const nameOf = (id: string | null) => employees.value.find((e) => e.userId === id)?.name ?? 'reviewer';
   let maxRound = 0;
   for (const r of rows) maxRound = Math.max(maxRound, r.round);
@@ -76,6 +86,7 @@ onServerPrefetch(() => Promise.all([reviewsQuery.suspense(), employeesLive.suspe
                   : 'i-lucide-user'
           "
           class="mt-0.5 size-3.5 shrink-0"
+          aria-hidden="true"
           :class="
             r.status === REVIEW_STATUS.APPROVED
               ? 'text-success'
@@ -87,6 +98,7 @@ onServerPrefetch(() => Promise.all([reviewsQuery.suspense(), employeesLive.suspe
           "
         />
         <span class="min-w-0">
+          <span class="sr-only">{{ verdictLabel(r.status) }}: </span>
           <span class="text-default block truncate"
             >{{ r.name }}
             <span v-if="kindOf(r.reviewerId, r.source)" class="text-dimmed text-xs"

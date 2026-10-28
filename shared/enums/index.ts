@@ -2,6 +2,7 @@ export * from './values-of';
 export * from './change-action';
 export * from './change-resource';
 export * from './role';
+export * from './category';
 export * from './project-status';
 export * from './obligation-role';
 export * from './obligation-status';

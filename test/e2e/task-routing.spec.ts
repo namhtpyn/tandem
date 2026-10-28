@@ -1,7 +1,7 @@
 // E2E: task routing — "needs my decision" inbox toggle with badge, subtask creation
 // with parent chip, parent auto-block while children are open (user laws, 2026-10-15).
-import { expect, test } from '@playwright/test';
-
+// the cleanup fixture sweeps every row the test created (envs, bots, keys)
+import { expect, test } from './helpers/cleanup';
 import { login } from './helpers/login.ts';
 import { waitForHydration } from './pages/base.page.ts';
 
@@ -79,10 +79,10 @@ test('subtask creation nests under the parent, chips the child, and blocks the p
   const panel = page.getByTestId('subtask-panel');
   await expect(panel).toBeVisible();
   await panel.getByRole('button', { name: 'Add subtask' }).click();
-  const subtaskModal = page.getByRole('dialog', { name: 'New task' });
+  const subtaskModal = page.getByRole('dialog', { name: 'New subtask' });
   await expect(subtaskModal).toBeVisible();
   await subtaskModal.getByPlaceholder('Task title').fill(childName);
-  await subtaskModal.getByRole('button', { name: /Create task/ }).click();
+  await subtaskModal.getByRole('button', { name: /Create subtask/ }).click();
   await expect(panel.getByRole('link', { name: childName })).toBeVisible({ timeout: 10_000 });
 
   // parent flips to blocked (derived from the open child); the reload pulls

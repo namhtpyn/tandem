@@ -77,6 +77,11 @@ type ThreadSource = {
 export { parseRunEnvelope } from '#shared/run-verdict';
 
 /** Merge by stable timestamp: runs by startedAt, notes by createdAt, brief first. */
+/** display timestamp for any thread item (runs carry startedAt, others createdAt) */
+export function threadTime(t: ThreadItem): string | null {
+  return t.kind === 'run' ? (t.startedAt ?? null) : (t.createdAt ?? null);
+}
+
 export function buildThread(src: ThreadSource): ThreadItem[] {
   const items: ThreadItem[] = [];
   if (src.description && src.description.trim()) {

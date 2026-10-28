@@ -11,9 +11,11 @@ import { computed, ref, watch } from 'vue';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
+import { composerReady, useWorkflowActions } from '~/composables/useWorkflowActions';
 import { formatWhenShort } from '~/utils/format-when';
 import { NONE_ID, errorMessage, saveFailed } from '~/utils/forms';
-import type { EmployeeRow, TaskRow, TaskRunRow } from '~/utils/orpc-types';
+import type { EmployeeRow, TaskRow, TaskRunRow, ThreadRow } from '~/utils/orpc-types';
+import { threadTime, buildThread, type ThreadItem } from '~/utils/task-thread';
 import {
   activityIcon,
   activityLabel,
@@ -58,12 +60,15 @@ const listFiltered = computed(() => !!searchDebounced.value || statusId.value !=
 
 /** empty-state copy names WHICH filter came up empty — 'no results' under the inbox toggle reads as a bug */
 const emptyCopy = computed(() => {
-  if (!listFiltered.value) return 'No tasks yet — create the first one for your humans or agents.';
+  // the built-in empty state renders its own headline ('No tasks yet' / 'No
+  // matches yet') — repeating a 'No …' sentence here printed it twice
+  if (!listFiltered.value) return 'Create the first one for your humans or agents.';
   if (needsDecision.value) return 'Nothing is waiting on your decision right now.';
   if (statusId.value !== null)
-    return `No tasks in ${statusLabel(statusId.value, statusById.value)} — try another filter.`;
-  return 'No results — try a different search.';
+    return `Nothing in ${statusLabel(statusId.value, statusById.value)} — try another filter.`;
+  return 'Try a different search.';
 });
+const emptyNoun = computed(() => (listFiltered.value ? 'matches' : 'tasks'));
 
 const pagedQuery = useQuery(
   computed(() =>
@@ -172,9 +177,8 @@ async function autoAssign(row: TaskRow) {
   try {
     const res = await assignMutation.mutateAsync({ taskId: row.id });
     if (res.assigned) {
-      message.value = `Assigned to ${assigneeNameById.value.get(res.employeeId) ?? 'employee'} — match confidence ${(
-        res.confidence * 100
-      ).toFixed(0)}%`;
+      // the score is a routing detail, not something the owner can act on
+      message.value = `Assigned to ${assigneeNameById.value.get(res.employeeId) ?? 'employee'}`;
       messageOk.value = true;
     } else {
       message.value = 'No confident match — nobody was auto-assigned';
@@ -240,12 +244,9 @@ const workflowTask = computed<TaskRow | null>(() => workflowTaskLive.value ?? wo
 watch(workflowTaskLive, (t) => {
   if (t) workflowTaskFallback.value = t;
 });
-const workflowNote = ref('');
-const workflowBusy = ref(false);
-const workflowMessage = ref('');
-const workflowOk = ref(true); // message tone: success copy vs failure copy
-// the review box disarms its reject confirm + keeps the note on a failed verdict
-const workflowFailed = ref(false);
+// the workflow ladder (copy + invalidation) is shared with the task page
+const { workflowNote, workflowBusy, workflowMessage, workflowOk, workflowFailed, wfAction, sendNote, resetWorkflow } =
+  useWorkflowActions(() => workflowTask.value?.id ?? null);
 // the workflow gate keys off the status CATEGORY (not seeded uuids): ready /
 // working / paused are the work states where forward/abandon/submit apply
 const workflowStatusCategory = computed(() =>
@@ -258,13 +259,19 @@ const workflowIsWorking = computed(
     workflowStatusCategory.value === 'paused',
 );
 
-/** drawer composer: send is the answer verb while the task waits for one */
+/** drawer composer: send is the answer verb while the task waits for one; a null
+ *  category (statuses loading/failed) disables send instead of defaulting to note */
+const drawerSendReady = computed(() => composerReady(workflowStatusCategory.value, workflowNote.value));
 function sendDrawerNote() {
-  if (!workflowTask.value) return;
-  if (workflowStatusCategory.value === 'waiting_answer') wfAction('answer', { body: workflowNote.value });
-  else wfAction('note', { body: workflowNote.value });
+  if (!drawerSendReady.value) return;
+  void sendNote(workflowStatusCategory.value === 'waiting_answer');
 }
 const forwardTo = ref(NONE_ID);
+/** cancel is terminal — the drawer arms a confirm block instead of firing at once */
+const cancelArmed = ref(false);
+async function confirmCancel() {
+  if (await wfAction('abandon')) cancelArmed.value = false;
+}
 
 // ---- drawer data: conventional GETs + change-event invalidation (SSE law) ----
 // runs/activity load as plain GETs once the drawer opens; the app-wide changes
@@ -283,16 +290,35 @@ const drawerRunsQuery = useQuery(
   ),
 );
 const runFeed = computed<TaskRunRow[]>(() => (unref(drawerRunsQuery.data) ?? []) as TaskRunRow[]);
-const drawerActivityQuery = useQuery(
+// the drawer timeline reads the SAME source as the task page (threadList, which
+// already drops STATUS bookkeeping rows) through the same buildThread merge —
+// the old raw activity feed showed a different, noisier timeline than the thread
+const drawerThreadQuery = useQuery(
   computed(() =>
-    $orpc.tasks.activityList.queryOptions({
+    $orpc.tasks.threadList.queryOptions({
       input: { taskId: drawerTaskId.value },
-      queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, drawerTaskId.value, 'activity'],
+      queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, drawerTaskId.value, 'thread'],
       enabled: !!drawerTaskId.value,
     }),
   ),
 );
-const workflowFeed = computed(() => unref(drawerActivityQuery.data) ?? []);
+const drawerThreadRows = computed(() => (unref(drawerThreadQuery.data) ?? []) as ThreadRow[]);
+// runs render in their own card above, so the feed keeps notes only
+const workflowFeed = computed<ThreadItem[]>(() =>
+  buildThread({
+    runs: [],
+    activity: drawerThreadRows.value
+      .filter((r) => r.activity)
+      .map((r) => ({
+        id: r.id,
+        noteKind: String(r.activity?.kind ?? ''),
+        body: r.body,
+        authorName: r.authorName,
+        authorId: r.authorId,
+        createdAt: r.createdAt,
+      })),
+  }),
+);
 
 // run rows read as sentences — 'Run failed (exit code 1)', never bare status jargon.
 // Status normalization + dot + words come from the SHARED ui-labels vocabulary.
@@ -314,84 +340,21 @@ const retryInMin = computed(() => {
 function openWorkflow(row: TaskRow) {
   workflowTaskId.value = row.id;
   workflowTaskFallback.value = row;
-  workflowNote.value = '';
-  workflowMessage.value = '';
+  // a note/verdict for the previously open task must not leak into this one
+  resetWorkflow();
+  cancelArmed.value = false;
   // reset the forward picker too — a stale pre-armed selection would fire the
   // next Forward at whoever was picked for a previous task
   forwardTo.value = NONE_ID;
   workflowOpen.value = true;
 }
 
-// zod strips unknown keys, so optional extras ride along safely
-type WorkflowAction =
-  | 'dispatch'
-  | 'note'
-  | 'submit'
-  | 'ask'
-  | 'forward'
-  | 'answer'
-  | 'approve'
-  | 'requestChanges'
-  | 'reject'
-  | 'abandon';
-
-// every verb names what just happened (and what to retry) — no bare 'done'/'action failed'
-const WF_COPY: Record<WorkflowAction, { ok: string; fail: string }> = {
-  dispatch: { ok: 'Agent dispatched', fail: "Couldn't dispatch — try again" },
-  note: { ok: 'Note added', fail: "Couldn't add the note — try again" },
-  submit: { ok: 'Sent for review', fail: "Couldn't submit for review — try again" },
-  ask: { ok: 'Question sent', fail: "Couldn't send the question — try again" },
-  forward: { ok: 'Forwarded', fail: "Couldn't forward — try again" },
-  answer: { ok: 'Answer sent', fail: "Couldn't send the answer — try again" },
-  approve: { ok: 'Approved', fail: "Couldn't approve — try again" },
-  requestChanges: { ok: 'Changes requested', fail: "Couldn't request changes — try again" },
-  reject: { ok: 'Rejected', fail: "Couldn't reject — try again" },
-  abandon: { ok: 'Task abandoned', fail: "Couldn't abandon the task — try again" },
-};
-
-async function wfAction(action: WorkflowAction, extra: { body?: string; toEmployeeId?: string } = {}) {
-  if (!workflowTask.value || workflowBusy.value) return;
-  const taskId = workflowTask.value.id;
-  workflowBusy.value = true;
-  workflowMessage.value = '';
-  workflowFailed.value = false;
-  try {
-    const input = { taskId, ...extra };
-    await {
-      dispatch: () => $client.tasks.dispatch({ taskId: input.taskId }),
-      note: () => $client.tasks.note({ ...input, body: nonNull(input.body) }),
-      // body is optional server-side (submitResult defaults it) — an empty note is fine
-      submit: () => $client.tasks.submit({ ...input, body: input.body || undefined }),
-      ask: () => $client.tasks.ask({ ...input, body: nonNull(input.body) }),
-      forward: () => $client.tasks.forward({ ...input, toEmployeeId: nonNull(input.toEmployeeId) }),
-      answer: () => $client.tasks.answer({ ...input, body: nonNull(input.body) }),
-      approve: () => $client.tasks.approve(input),
-      requestChanges: () => $client.tasks.requestChanges({ ...input, body: nonNull(input.body) }),
-      reject: () => $client.tasks.reject(input),
-      abandon: () => $client.tasks.abandon(input),
-    }[action]();
-    workflowNote.value = '';
-    // invalidate ALL drawer feeds: TASKS re-syncs the drawer's task row
-    // (status/reviewers), TASK_ACTIVITY keeps the thread and activity feed
-    // current, RUNS refreshes the run cards a dispatch/verdict just changed
-    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
-    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, taskId] });
-    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.RUNS, taskId] });
-    workflowMessage.value = WF_COPY[action].ok;
-    workflowOk.value = true;
-  } catch (e) {
-    // surface the server's oRPC message, not ofetch's generic '[POST] …: 400'
-    workflowMessage.value = errorMessage(e, WF_COPY[action].fail);
-    workflowOk.value = false;
-    workflowFailed.value = true;
-  } finally {
-    workflowBusy.value = false;
-  }
-}
-
-// review verdicts are an explicit-reviewer surface — nobody else sees the box
+// review verdicts are an explicit-reviewer surface — gate on ids, never names:
+// a name is display data and two employees can share one
 const session = useAppSession();
-const drawerCanReview = computed(() => !!workflowTask.value?.reviewerNames.includes(session.value?.user.name ?? ''));
+const drawerCanReview = computed(
+  () => !!session.value && !!workflowTask.value?.reviewers.includes(session.value.user.id),
+);
 
 // ---- board (kanban) view ----
 // Persisted client-side only (localStorage via VueUse) — deliberately NOT a DB setting.
@@ -446,7 +409,7 @@ onServerPrefetch(() =>
          The search box is pointless over an empty, unfiltered list — hide it there. -->
     <div class="flex flex-wrap items-center gap-2">
       <UInput
-        v-if="total > 0 || !!search"
+        v-if="total > 0 || !!search || listFiltered"
         v-model="search"
         icon="i-lucide-search"
         placeholder="Search tasks…"
@@ -581,7 +544,7 @@ onServerPrefetch(() =>
       :page-size="pageSize"
       :columns="tableColumns"
       show-empty-state
-      empty-noun="tasks"
+      :empty-noun="emptyNoun"
       :empty-text="emptyCopy"
       :empty-icon="listFiltered ? 'i-lucide-search-x' : 'i-lucide-list-todo'"
     >
@@ -809,6 +772,7 @@ onServerPrefetch(() =>
         <section
           v-for="col in boardColumns"
           :key="col.id"
+          :aria-labelledby="`board-col-${col.id}`"
           data-testid="board-column"
           class="border-default bg-muted/40 flex min-w-[260px] flex-1 flex-col rounded-lg border"
           :class="dropTarget === col.id ? 'ring-primary ring-2' : ''"
@@ -817,13 +781,18 @@ onServerPrefetch(() =>
           @drop.prevent="onDrop(col.id)"
         >
           <header class="border-default flex items-center justify-between gap-2 border-b px-3 py-2">
-            <p class="text-toned flex min-w-0 items-center gap-1.5 text-sm font-medium">
-              <UIcon :name="categoryIcon(col.category)" class="size-4 shrink-0" :class="categoryText(col.category)" />
+            <h3 :id="`board-col-${col.id}`" class="text-toned flex min-w-0 items-center gap-1.5 text-sm font-medium">
+              <UIcon
+                :name="categoryIcon(col.category)"
+                class="size-4 shrink-0"
+                :class="categoryText(col.category)"
+                aria-hidden="true"
+              />
               <span class="truncate">{{ col.name }}</span>
-            </p>
-            <UBadge color="neutral" variant="subtle" size="sm" class="shrink-0">{{
-              tasksByStatus(col.id).length
-            }}</UBadge>
+            </h3>
+            <UBadge color="neutral" variant="subtle" size="sm" class="shrink-0">
+              {{ tasksByStatus(col.id).length }} {{ tasksByStatus(col.id).length === 1 ? 'task' : 'tasks' }}
+            </UBadge>
           </header>
           <div class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
             <!-- pending first page: skeleton cards, never bare empty columns -->
@@ -944,7 +913,7 @@ onServerPrefetch(() =>
         aria-label="Previous page"
         @click="page--"
       />
-      <span class="text-muted px-2 text-xs">{{ page }} / {{ pageCount }}</span>
+      <span class="text-muted px-2 text-xs" aria-live="polite">Page {{ page }} of {{ pageCount }}</span>
       <UButton
         icon="i-lucide-chevron-right"
         color="neutral"
@@ -1000,9 +969,22 @@ onServerPrefetch(() =>
               variant="soft"
               icon="i-lucide-ban"
               :disabled="workflowBusy"
-              @click="wfAction('abandon')"
-              >Abandon</UButton
+              @click="cancelArmed = true"
+              >Cancel task</UButton
             >
+          </div>
+          <!-- cancelling is terminal: confirm it inline instead of firing on one click -->
+          <div
+            v-if="cancelArmed"
+            class="border-error/40 bg-error/10 space-y-2 rounded-md border p-2.5 text-xs"
+            role="alertdialog"
+            aria-label="Confirm cancelling the task"
+          >
+            <p class="text-toned">Cancelling ends this task: the agent stops and it can no longer be dispatched.</p>
+            <div class="flex gap-2">
+              <UButton size="xs" color="error" label="Cancel task" :loading="workflowBusy" @click="confirmCancel" />
+              <UButton size="xs" color="neutral" variant="ghost" label="Keep it" @click="cancelArmed = false" />
+            </div>
           </div>
           <!-- forward picker only applies while the task is in a working state -->
           <USelect
@@ -1031,6 +1013,7 @@ onServerPrefetch(() =>
           <UTextarea
             v-model="workflowNote"
             :rows="3"
+            :disabled="workflowBusy"
             :placeholder="composerPlaceholder(workflowStatusCategory === 'waiting_answer')"
             aria-label="Task note"
             class="w-full"
@@ -1040,7 +1023,7 @@ onServerPrefetch(() =>
             color="primary"
             variant="soft"
             icon="i-lucide-arrow-up"
-            :disabled="workflowBusy || !workflowNote.trim()"
+            :disabled="workflowBusy || !drawerSendReady"
             @click="sendDrawerNote()"
           >
             {{ workflowStatusCategory === 'waiting_answer' ? 'Send answer' : 'Send' }}
@@ -1096,19 +1079,19 @@ onServerPrefetch(() =>
             <h3 class="text-muted text-xs font-medium">Activity</h3>
             <div v-for="a in workflowFeed" :key="a.id" class="border-default rounded-md border px-2.5 py-2 text-xs">
               <p class="text-toned flex items-center gap-1.5 font-medium">
-                <UIcon :name="activityIcon(a.kind)" class="size-3.5" />
-                {{ activityLabel(a.kind) }}
+                <UIcon :name="activityIcon(a.kind === 'note' ? a.noteKind : a.kind)" class="size-3.5" />
+                {{ activityLabel(a.kind === 'note' ? a.noteKind : a.kind) }}
                 <span class="text-muted font-normal">{{ a.authorName ?? 'system' }}</span>
                 <span class="text-dimmed ml-auto shrink-0 font-normal" data-allow-mismatch>{{
-                  formatWhenShort(a.createdAt)
+                  formatWhenShort(threadTime(a))
                 }}</span>
               </p>
               <p v-if="a.body" class="text-muted mt-1">{{ a.body }}</p>
             </div>
-            <div v-if="drawerActivityQuery.isPending.value" class="space-y-2" aria-hidden="true">
+            <div v-if="drawerThreadQuery.isPending.value" class="space-y-2" aria-hidden="true">
               <USkeleton class="h-10 w-full rounded-md" />
             </div>
-            <p v-else-if="drawerActivityQuery.isError.value" role="alert" class="text-error text-xs">
+            <p v-else-if="drawerThreadQuery.isError.value" role="alert" class="text-error text-xs">
               Couldn't load activity
             </p>
             <p v-else-if="!workflowFeed.length" class="text-dimmed text-xs">

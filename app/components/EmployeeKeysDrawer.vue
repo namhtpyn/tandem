@@ -3,7 +3,7 @@
 // the one-time fresh-key alert. Loads the key list whenever it opens. Nothing
 // to do with the model-provider API key picked in the editor.
 import { useMutation } from '@tanstack/vue-query';
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, nextTick, reactive, ref, watch } from 'vue';
 import { z } from 'zod';
 
 import { formatWhenShort } from '~/utils/format-when';
@@ -120,6 +120,24 @@ async function revokeKey(keyId: string) {
 
 const copied = ref(false);
 
+/** the one-time key panel takes focus the moment it appears: the footer form is
+ *  gone by then, so keyboard users would otherwise land on nothing */
+const keyPanel = ref<HTMLElement | null>(null);
+watch(freshKey, async (v) => {
+  if (!v) return;
+  await nextTick();
+  keyPanel.value?.focus();
+});
+
+/** explicit acknowledgement — the ONLY way out while the guard is on, and the
+ *  point where the key is cleared from the DOM */
+function finishKey() {
+  freshKey.value = '';
+  copied.value = false;
+  mintState.mintName = '';
+  open.value = false;
+}
+
 async function copyKey(key: string) {
   try {
     await navigator.clipboard.writeText(key);
@@ -149,7 +167,14 @@ async function copyKey(key: string) {
           Access keys authenticate API calls to Tandem as {{ employee?.name ?? 'this employee' }}.
         </p>
         <p v-if="keysMessage" role="alert" class="text-error text-sm">{{ keysMessage }}</p>
-        <div v-if="freshKey" class="text-primary bg-primary/10 rounded-lg p-4">
+        <div
+          v-if="freshKey"
+          ref="keyPanel"
+          role="status"
+          aria-live="polite"
+          tabindex="-1"
+          class="text-primary bg-primary/10 focus-visible:ring-primary rounded-lg p-4 focus-visible:ring-2 focus-visible:outline-none"
+        >
           <p class="flex items-center gap-2 text-sm font-semibold">
             <UIcon name="i-lucide-key-round" class="size-4" />
             New key — shown only once
@@ -250,7 +275,13 @@ async function copyKey(key: string) {
       </div>
     </template>
     <template #footer>
+      <!-- while the one-time key is on screen the footer is a single acknowledgement:
+           no mint form, no close — losing the copy is unrecoverable -->
+      <div v-if="freshKey" class="flex w-full justify-end">
+        <UButton icon="i-lucide-check" label="Done, key saved" @click="finishKey" />
+      </div>
       <UForm
+        v-else
         id="mint-key-form"
         :schema="mintSchema"
         :state="mintState"

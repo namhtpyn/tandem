@@ -449,6 +449,26 @@ export const tasksRouter = os.router({
         throw new ORPCError('BAD_REQUEST', { message: 'task is running — assignee is locked until it settles' });
       }
     }
+    // the review round already handed out verdict slots: adding/removing reviewers
+    // mid-round would leave live checklists that never sum to a decision
+    if (input.reviewers !== undefined && input.reviewers !== null) {
+      const current = await db.query.tasks.findMany({
+        columns: { reviewers: true },
+        where: { id: { eq: input.id } },
+        orderBy: { createdAt: 'asc' },
+      });
+      const next = [...new Set(input.reviewers)].sort();
+      const prev = [...nonNull(current[0]).reviewers].sort();
+      const changed = next.length !== prev.length || next.some((v, i) => v !== prev[i]);
+      if (changed) {
+        const { openRoundLive } = await import('./review.service');
+        if (await openRoundLive(input.id)) {
+          throw new ORPCError('BAD_REQUEST', {
+            message: 'a review round is in progress — reviewers are locked until it is decided',
+          });
+        }
+      }
+    }
     await requireExistingRefs(input);
     const actorId = await selfIdOf(context);
     await db.update(tasksTable).set(buildUpdatePatch(input)).where(eq(tasksTable.id, input.id));

@@ -17,15 +17,18 @@ async function ensureRedis(ctx: GlobalSetupContext) {
     ctx.provide('redisUrl', process.env.REDIS_URL!);
     return;
   }
-  const redis = await new GenericContainer(REDIS_IMAGE)
+  localRedis = await new GenericContainer(REDIS_IMAGE)
     .withExposedPorts(6379)
     .withWaitStrategy(Wait.forLogMessage('Ready to accept connections', 1))
     .start();
-  process.env.REDIS_URL = `redis://${redis.getHost()}:${redis.getMappedPort(6379)}`;
+  process.env.REDIS_URL = `redis://${localRedis.getHost()}:${localRedis.getMappedPort(6379)}`;
   ctx.provide('redisUrl', process.env.REDIS_URL);
 }
 
 let localPostgres: { stop: () => Promise<void> } | null = null;
+/** held so teardown can stop it — Ryuk cleans up on a crash, but a normal run
+ *  must not leave a redis container running behind it */
+let localRedis: { stop: () => Promise<void> } | null = null;
 
 export async function setup(ctx: GlobalSetupContext) {
   await ensureRedis(ctx);
@@ -60,5 +63,9 @@ export async function setup(ctx: GlobalSetupContext) {
 export async function teardown() {
   if (needsLocalContainers && localPostgres) {
     await localPostgres.stop();
+  }
+  if (localRedis) {
+    await localRedis.stop();
+    localRedis = null;
   }
 }

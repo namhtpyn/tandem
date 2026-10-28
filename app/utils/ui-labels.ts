@@ -1,33 +1,47 @@
 import { isAnthropicWire, endpointKind, isModelsEndpoint, PROVIDER_KIND } from '#shared/api-styles';
 // Shared UI vocabulary: one color mapping, one label mapping per enum — a status
 // must render the same color, and a kind/category the same words, on every surface.
-import { ACTIVITY_KIND, ROLE, type ActivityKind, type Role } from '#shared/enums';
+import {
+  ACTIVITY_KIND,
+  CATEGORY,
+  ROLE,
+  RUN_STATUS,
+  type ActivityKind,
+  type Category,
+  type Role,
+  type RunStatus,
+} from '#shared/enums';
 
 export type BadgeColor = 'primary' | 'success' | 'warning' | 'error' | 'info' | 'neutral';
 
-const CATEGORY_COLORS: Record<string, BadgeColor> = {
-  done: 'success',
-  cancelled: 'error',
-  in_review: 'info',
-  working: 'warning',
-  waiting_answer: 'warning',
-  blocked: 'error',
-  todo: 'neutral',
+type CategoryView = { color: BadgeColor; text: string; icon: string; label: string };
+
+// ONE row per category: a status badge, its board-column heading, its glyph and
+// its word all read from here, so a category can never be green in one place and
+// yellow in another. Typed Record<Category, …> for exhaustiveness, then widened to
+// Record<string, …> so an unknown category yields `undefined` and every caller's
+// fallback stays reachable (noUncheckedIndexedAccess).
+const CATEGORY_VIEWS: Record<Category, CategoryView> = {
+  [CATEGORY.BACKLOG]: { color: 'neutral', text: 'text-dimmed', icon: 'i-lucide-circle-dashed', label: 'Backlog' },
+  [CATEGORY.READY]: { color: 'neutral', text: 'text-dimmed', icon: 'i-lucide-inbox', label: 'Ready' },
+  [CATEGORY.WORKING]: { color: 'warning', text: 'text-warning', icon: 'i-lucide-clock-3', label: 'Working' },
+  [CATEGORY.PAUSED]: { color: 'warning', text: 'text-warning', icon: 'i-lucide-pause', label: 'Paused' },
+  [CATEGORY.WAITING_ANSWER]: {
+    color: 'info',
+    text: 'text-info',
+    icon: 'i-lucide-message-circle-question',
+    label: 'Waiting answer',
+  },
+  [CATEGORY.IN_REVIEW]: { color: 'info', text: 'text-info', icon: 'i-lucide-eye', label: 'In review' },
+  [CATEGORY.DONE]: { color: 'success', text: 'text-success', icon: 'i-lucide-circle-check', label: 'Done' },
+  [CATEGORY.CANCELLED]: { color: 'error', text: 'text-error', icon: 'i-lucide-circle-x', label: 'Cancelled' },
 };
+
+const CATEGORY_VIEW: Record<string, CategoryView> = CATEGORY_VIEWS;
 
 export function categoryColor(category: string | null | undefined): BadgeColor {
-  return (category && CATEGORY_COLORS[category]) || 'neutral';
+  return (category && CATEGORY_VIEW[category]?.color) || 'neutral';
 }
-
-const CATEGORY_LABELS: Record<string, string> = {
-  todo: 'To do',
-  working: 'Working',
-  in_review: 'In review',
-  waiting_answer: 'Waiting answer',
-  blocked: 'Blocked',
-  done: 'Done',
-  cancelled: 'Cancelled',
-};
 
 /** map-miss fallback: humanize the raw enum ('IN_PROGRESS' → 'In progress') —
  * SCREAMING_SNAKE_CASE values must never reach the UI verbatim */
@@ -39,7 +53,7 @@ export function humanizeEnum(value: string): string {
 
 export function categoryLabel(category: string | null | undefined): string {
   if (!category) return '';
-  return CATEGORY_LABELS[category] ?? humanizeEnum(category);
+  return CATEGORY_VIEW[category]?.label ?? humanizeEnum(category);
 }
 
 // solid-dot background class per badge color — the borderless status selects
@@ -58,34 +72,14 @@ export function dotClass(color: string): string {
 }
 
 // board column heading: category-driven text color (mirrors categoryColor's mapping)
-const CATEGORY_TEXT: Record<string, string> = {
-  done: 'text-success',
-  cancelled: 'text-error',
-  blocked: 'text-error',
-  working: 'text-warning',
-  waiting_answer: 'text-info',
-  in_review: 'text-info',
-  todo: 'text-dimmed',
-};
-
 export function categoryText(category: string | null | undefined): string {
-  return (category && CATEGORY_TEXT[category]) || 'text-dimmed';
+  return (category && CATEGORY_VIEW[category]?.text) || 'text-dimmed';
 }
 
 // distinct glyph per category — Doing (clock) vs Waiting answer (speech bubble)
 // read as the same yellow dot without one
-const CATEGORY_ICON: Record<string, string> = {
-  todo: 'i-lucide-circle-dashed',
-  working: 'i-lucide-clock-3',
-  waiting_answer: 'i-lucide-message-circle-question',
-  in_review: 'i-lucide-eye',
-  blocked: 'i-lucide-octagon-alert',
-  done: 'i-lucide-circle-check',
-  cancelled: 'i-lucide-circle-x',
-};
-
 export function categoryIcon(category: string | null | undefined): string {
-  return (category && CATEGORY_ICON[category]) || 'i-lucide-circle-dot';
+  return (category && CATEGORY_VIEW[category]?.icon) || 'i-lucide-circle-dot';
 }
 
 export function kindLabel(kind: string | null | undefined): string {
@@ -136,14 +130,15 @@ export function roleLabel(role: string | null | undefined): string {
 }
 
 // ---- agent runs: one normalized status + label/dot map for every surface
-// (list drawer run cards, task-page chat turns). Named AgentRunStatus — the
-// server's RunStatus enum ('RUNNING'|'DONE'|'FAILED') is the lifecycle subset.
-export type AgentRunStatus = 'running' | 'done' | 'failed' | 'cancelled' | 'timeout' | 'stopped';
+// (list drawer run cards, task-page chat turns). AgentRunStatus is the server's
+// RunStatus lifecycle (lowercased) plus the terminal states a settled run can
+// report — derived from the shared enum so the wire tokens are never re-typed.
+export type AgentRunStatus = Lowercase<RunStatus> | 'cancelled' | 'timeout' | 'stopped';
 
 const AGENT_RUN_STATUSES: Record<string, AgentRunStatus> = {
-  running: 'running',
-  done: 'done',
-  failed: 'failed',
+  [RUN_STATUS.RUNNING.toLowerCase()]: 'running',
+  [RUN_STATUS.DONE.toLowerCase()]: 'done',
+  [RUN_STATUS.FAILED.toLowerCase()]: 'failed',
   cancelled: 'cancelled',
   timeout: 'timeout',
 };

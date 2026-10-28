@@ -10,10 +10,10 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query';
 // assignee picker. Props: `taskId`, `statusById`.
 import { computed, ref } from 'vue';
 
-import { CHANGE_RESOURCE, PROPOSAL_KIND, PROPOSAL_STATUS, type ProposalKind } from '#shared/enums';
+import { CHANGE_RESOURCE, PROPOSAL_KIND, PROPOSAL_STATUS } from '#shared/enums';
 import { formatWhenShort } from '~/utils/format-when';
 import { errorMessage } from '~/utils/forms';
-import type { EmployeeRow, TaskStatusRow } from '~/utils/orpc-types';
+import type { AssignmentRow, EmployeeRow, ProposalRow, SubtaskRow, TaskStatusRow } from '~/utils/orpc-types';
 import { categoryColor } from '~/utils/ui-labels';
 
 const emit = defineEmits<{ 'add-subtask': [] }>();
@@ -25,31 +25,41 @@ const queryClient = useQueryClient();
 const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES] }));
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[]);
 
-type ChildRow = {
-  id: string;
-  title: string;
-  status: string;
-  assigneeId: string | null;
+/** proposals carry a jsonb payload — narrow it once per row instead of trusting a cast */
+type ProposalPayload = {
+  items?: Array<{ title: string; assigneeName?: string }>;
+  targetName?: string;
+  reason?: string;
 };
-type ProposalRow = {
-  id: string;
-  kind: ProposalKind;
-  payload: {
-    items?: Array<{ title: string; assigneeName?: string }>;
-    targetName?: string;
-    reason?: string;
-  };
-  status: string;
-  decisionNote: string;
-  createdAt: string;
-};
-type AssignmentRow = {
-  id: string;
-  employeeName: string | null;
-  reason: string;
-  startedAt: string;
-  endedAt: string | null;
-};
+function payloadOf(p: ProposalRow): ProposalPayload {
+  const raw: unknown = p.payload;
+  return raw !== null && typeof raw === 'object' ? (raw as ProposalPayload) : {};
+}
+const proposalItems = (p: ProposalRow) => payloadOf(p).items ?? [];
+const proposalTarget = (p: ProposalRow) => payloadOf(p).targetName ?? 'another employee';
+
+/** what the confirm button is about to do, in words — the aria-label needs context */
+function proposalTitle(p: ProposalRow): string {
+  return p.kind === PROPOSAL_KIND.SUBTASKS
+    ? `split into ${proposalItems(p).length} subtasks`
+    : `reassign to ${proposalTarget(p)}`;
+}
+
+/** server events are machine-ish fragments — map each to a sentence, never print the code */
+function decisionEventSentence(event: string): string | null {
+  const subtask = /^subtask "(.+)" → (.+)$/.exec(event);
+  if (subtask) return `Created “${subtask[1]}” for ${subtask[2] ?? 'the assignee'}`;
+  const reassigned = /^reassigned to (.+)$/.exec(event);
+  if (reassigned) return `Reassigned to ${reassigned[1]}`;
+  if (/outside .*chain/.test(event))
+    return 'The proposed assignee was outside the chain — escalated to their supervisor';
+  return null;
+}
+
+/** 'Assigned to Unassigned' reads as a bug — branch on the missing name instead */
+function assigneePhrase(name: string | null | undefined): string {
+  return name && name !== 'Unassigned' ? `Assigned to ${name}` : 'Unassigned';
+}
 
 // ---- GET-first + change-event invalidation (SSE law): the query keys carry the
 // resource prefix, so every TASKS/TASK_ACTIVITY change event (run settles,
@@ -62,7 +72,7 @@ const subtasksQuery = useQuery(
     }),
   ),
 );
-const subtaskRows = computed(() => (unref(subtasksQuery.data)?.items ?? []) as ChildRow[]);
+const subtaskRows = computed<SubtaskRow[]>(() => (unref(subtasksQuery.data)?.items ?? []) as SubtaskRow[]);
 
 const proposalsQuery = useQuery(
   computed(() =>
@@ -72,7 +82,7 @@ const proposalsQuery = useQuery(
     }),
   ),
 );
-const proposalRows = computed(() => (unref(proposalsQuery.data)?.items ?? []) as ProposalRow[]);
+const proposalRows = computed<ProposalRow[]>(() => (unref(proposalsQuery.data)?.items ?? []) as ProposalRow[]);
 
 const assignmentsQuery = useQuery(
   computed(() =>
@@ -82,13 +92,15 @@ const assignmentsQuery = useQuery(
     }),
   ),
 );
-const assignmentRows = computed(() => (unref(assignmentsQuery.data)?.items ?? []) as AssignmentRow[]);
+const assignmentRows = computed<AssignmentRow[]>(() => (unref(assignmentsQuery.data)?.items ?? []) as AssignmentRow[]);
 
 const proposalBusy = ref(false);
 const proposalMessage = ref('');
 const proposalOk = ref(false); // message tone: confirmed decisions green, failures red
 
 async function decideProposal(id: string, action: 'confirmProposal' | 'rejectProposal') {
+  // one decision at a time — a double click would confirm and decline the same row
+  if (proposalBusy.value) return;
   proposalBusy.value = true;
   proposalMessage.value = '';
   try {
@@ -97,10 +109,12 @@ async function decideProposal(id: string, action: 'confirmProposal' | 'rejectPro
         ? await $client.tasks.confirmProposal({ proposalId: id })
         : await $client.tasks.rejectProposal({ proposalId: id });
     const events: string[] = 'events' in r && Array.isArray(r.events) ? r.events : [];
-    proposalMessage.value = events.length
-      ? events.join('; ')
-      : action === 'confirmProposal'
-        ? 'Proposal applied'
+    const sentences = events.map(decisionEventSentence).filter((x): x is string => !!x);
+    proposalMessage.value =
+      action === 'confirmProposal'
+        ? sentences.length
+          ? sentences.join('; ')
+          : 'Proposal applied'
         : 'Proposal declined';
     proposalOk.value = true;
     // fuse: the decision mutates proposals + subtasks + the task row
@@ -121,7 +135,7 @@ const openProposals = computed(() =>
 );
 
 /** subtask badge: joined status row — its NAME in the shared category color (never the raw id) */
-function subtaskBadge(c: ChildRow): {
+function subtaskBadge(c: SubtaskRow): {
   label: string;
   color: 'primary' | 'success' | 'warning' | 'error' | 'info' | 'neutral';
 } {
@@ -150,13 +164,13 @@ function subtaskBadge(c: ChildRow): {
           {{ p.kind === PROPOSAL_KIND.SUBTASKS ? 'Split into subtasks' : 'Reassign task' }}
         </p>
         <ul v-if="p.kind === PROPOSAL_KIND.SUBTASKS" class="text-toned mb-2 space-y-1 text-xs">
-          <li v-for="(item, i) in p.payload.items ?? []" :key="i">
+          <li v-for="(item, i) in proposalItems(p)" :key="i">
             <span class="text-default">• {{ item.title }}</span>
-            <span v-if="item.assigneeName" class="text-dimmed">Assigned to {{ item.assigneeName }}</span>
+            <span class="text-dimmed">{{ assigneePhrase(item.assigneeName) }}</span>
           </li>
         </ul>
         <p v-else class="text-toned mb-2 truncate text-xs">
-          Moves to: {{ p.payload.targetName }}<span v-if="p.payload.reason"> ({{ p.payload.reason }})</span>
+          Moves to: {{ proposalTarget(p) }}<span v-if="payloadOf(p).reason"> ({{ payloadOf(p).reason }})</span>
         </p>
         <div class="flex gap-2">
           <UButton
@@ -164,6 +178,7 @@ function subtaskBadge(c: ChildRow): {
             color="primary"
             icon="i-lucide-check"
             :disabled="proposalBusy"
+            :aria-label="`Confirm proposal: ${proposalTitle(p)}`"
             @click="decideProposal(p.id, 'confirmProposal')"
             >Confirm</UButton
           >
@@ -173,6 +188,7 @@ function subtaskBadge(c: ChildRow): {
             variant="outline"
             icon="i-lucide-x"
             :disabled="proposalBusy"
+            :aria-label="`Decline proposal: ${proposalTitle(p)}`"
             @click="decideProposal(p.id, 'rejectProposal')"
             >Decline</UButton
           >
@@ -234,7 +250,7 @@ function subtaskBadge(c: ChildRow): {
     <ul v-else class="space-y-1 text-xs">
       <!-- who + when — the when replaces dev-speak reason tags like '(on create)' -->
       <li v-for="a in assignmentRows" :key="a.id" class="flex items-baseline justify-between gap-2">
-        <span class="text-toned min-w-0 truncate">Assigned to {{ a.employeeName ?? 'Unassigned' }}</span>
+        <span class="text-toned min-w-0 truncate">{{ assigneePhrase(a.employeeName) }}</span>
         <span class="text-dimmed shrink-0" data-allow-mismatch>{{ formatWhenShort(a.startedAt) }}</span>
       </li>
     </ul>

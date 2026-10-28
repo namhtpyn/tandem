@@ -189,10 +189,12 @@ function syncAvatarPreview(row: EmployeeRow | undefined) {
   avatarUrl.value = row?.hasAvatar ? employeeAvatarUrl(row.id) : null;
 }
 
-// seeding on open — the page's openEditor body, driven by the controlled props
-watch([open, () => props.employee], ([o, emp]) => {
-  if (!o) return;
-  const row = emp ?? undefined;
+/** the id the form was last seeded from — the parent now passes a LIVE-resolved
+ *  row, so seeding on object identity would wipe in-progress edits, a picked
+ *  avatar and the one-time minted key on every EMPLOYEES invalidation */
+let seededId: string | null = null;
+
+function seedFrom(row: EmployeeRow | undefined) {
   editingId.value = row?.id ?? null;
   applyIdentityToForm(row);
   applyAiExtensionToForm(row);
@@ -201,7 +203,27 @@ watch([open, () => props.employee], ([o, emp]) => {
   syncAvatarPreview(row);
   message.value = '';
   mintedKey.value = '';
-});
+  seededId = row?.id ?? null;
+}
+
+// seed on the OPEN transition and on an id change only — never re-seed while
+// open on the same id (that is what stream updates look like)
+watch(
+  () => [open.value, props.employee?.id ?? null] as const,
+  ([o, id], prev) => {
+    const wasOpen = prev?.[0] ?? false;
+    if (!o) {
+      // closed: forget the seed so the next open always re-seeds, same row or not
+      seededId = null;
+      return;
+    }
+    // skip only a same-id refresh while the modal stays open — a reopen after
+    // close (including null->null create) must always re-seed
+    if (wasOpen && seededId === id) return;
+    seedFrom(props.employee ?? undefined);
+  },
+  { immediate: true },
+);
 
 /** update call payload — avatar only when freshly picked, AI fields only when shown */
 function updateInput() {
@@ -246,7 +268,7 @@ function createInput() {
 
 const createMutation = useMutation($orpc.employees.create.mutationOptions());
 const updateMutation = useMutation($orpc.employees.update.mutationOptions());
-const titleSaveMutation = useMutation({ ...$orpc.employees.titles.save.mutationOptions() });
+const titleSaveMutation = useMutation($orpc.employees.titles.save.mutationOptions());
 
 async function save() {
   // one write at a time — a double-click or stray Enter must not double-create
@@ -334,7 +356,7 @@ onServerPrefetch(() =>
               <template v-else>{{ form.name.slice(0, 1) }}</template>
             </span>
             <label
-              class="border-default hover:bg-elevated text-highlighted inline-flex w-fit shrink-0 cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
+              class="border-default hover:bg-elevated text-highlighted focus-within:ring-primary inline-flex w-fit shrink-0 cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium focus-within:ring-2 focus-within:outline-none"
             >
               <UIcon name="i-lucide-image-up" class="size-4 shrink-0" />
               <span class="truncate">Choose image</span>

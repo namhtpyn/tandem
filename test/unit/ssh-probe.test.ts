@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { probeSsh, interpret } from '#server/domains/environments/ssh-probe.service';
 
 describe('probeSsh (node fallback path — vitest workers are node)', () => {
-  it('succeeds when ssh echoes the marker (localhost key auth)', async () => {
+  it('reports ok:false with a detail when the host refuses the connection', async () => {
     // ssh to 127.0.0.1 may or may not have key auth in CI; both outcomes are
     // well-formed. Assert on a real remote-unreachable case instead for
     // determinism, and on a local marker echo via PATH-shimmed ssh:
@@ -37,15 +37,36 @@ describe('probeSsh (node fallback path — vitest workers are node)', () => {
   }, 10_000);
 });
 
-describe('ensureTrailingNewline (via writeIdentity contract)', () => {
+describe('writeIdentity (trailing-newline contract)', () => {
+  /** capture what writeIdentity hands the filesystem — asserting the ssh exit
+   *  only proved the probe failed, never that the key file was well-formed */
+  async function captureIdentityWrite(key: string): Promise<string> {
+    const written: Array<{ file: string; data: unknown }> = [];
+    const realWrite = Bun.write.bind(Bun);
+    const spy = vi.spyOn(Bun, 'write').mockImplementation((async (
+      file: Parameters<typeof Bun.write>[0],
+      data: Parameters<typeof Bun.write>[1],
+    ) => {
+      written.push({ file: String(file), data });
+      return realWrite(file, data);
+    }) as typeof Bun.write);
+    try {
+      // the write happens before ssh is spawned, so a dead port is enough
+      await probeSsh('127.0.0.1', '59999', 'nobody', key);
+    } finally {
+      spy.mockRestore();
+    }
+    const id = written.find((w) => w.file.endsWith('/id'));
+    expect(id, 'writeIdentity never wrote the key file').toBeDefined();
+    return String(id?.data ?? '');
+  }
+
   it('appends a newline to keys lacking one', async () => {
-    const { probeSsh } = await import('#server/domains/environments/ssh-probe.service');
-    // exercise the key-file path with a garbage key against a dead port:
-    // writeIdentity runs before any ssh attempt; newline branch covered.
-    const r = await probeSsh('127.0.0.1', '59999', 'nobody', 'KEY-WITHOUT-NEWLINE');
-    expect(r.ok).toBe(false);
-    const r2 = await probeSsh('127.0.0.1', '59999', 'nobody', 'KEY-WITH-NEWLINE\n');
-    expect(r2.ok).toBe(false);
+    await expect(captureIdentityWrite('KEY-WITHOUT-NEWLINE')).resolves.toBe('KEY-WITHOUT-NEWLINE\n');
+  });
+
+  it('does not double the newline on keys that already end with one', async () => {
+    await expect(captureIdentityWrite('KEY-WITH-NEWLINE\n')).resolves.toBe('KEY-WITH-NEWLINE\n');
   });
 });
 

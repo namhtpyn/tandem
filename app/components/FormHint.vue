@@ -1,15 +1,12 @@
 <script setup lang="ts">
 // Info icon popover — drop-in for UFormField's #hint slot so field descriptions
 // render consistently across every form.
-withDefaults(
-  defineProps<{
-    /** popover text */
-    text: string;
-    /** accessible label defaults to text */
-    label?: string;
-  }>(),
-  {},
-);
+defineProps<{
+  /** popover text */
+  text: string;
+  /** accessible label defaults to text */
+  label?: string;
+}>();
 
 // Controlled open state covering every input mode: reka's hover mode drives
 // pointer enter/leave (including the bridge onto the content — hover alone is

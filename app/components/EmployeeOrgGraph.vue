@@ -28,6 +28,21 @@ const roots = computed(() =>
   rows.value.filter((r) => r.supervisorIds.length === 0 || r.supervisorIds.every((id) => !byId.value.has(id))),
 );
 
+/** the SVG is decoration to a screen reader: the same hierarchy as a plain list
+ *  of reporting lines, one item per employee */
+const reportingLines = computed(() =>
+  rows.value.map((r) => {
+    const supervisors = r.supervisorIds
+      .map((id) => byId.value.get(id)?.name)
+      .filter((n): n is string => !!n)
+      .join(', ');
+    return {
+      id: r.id,
+      text: `${r.name}${r.title ? `, ${r.title}` : ''} — ${supervisors ? `reports to ${supervisors}` : 'no supervisor'}`,
+    };
+  }),
+);
+
 /** ONE box per employee; ONE line per supervision edge.
  * TOP-DOWN layered layout (classic org chart): depth = row, subtree width =
  * leaf count; children centered under their parent, elbow connectors from the
@@ -196,6 +211,9 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
          the viewport so overflow never engaged — the floor keeps node text at a
          legible scale and lets small screens pan. -->
     <div v-else class="flex min-h-0 flex-1 overflow-auto p-4">
+      <ul class="sr-only" aria-label="Reporting lines">
+        <li v-for="line in reportingLines" :key="line.id">{{ line.text }}</li>
+      </ul>
       <svg
         :viewBox="`0 0 ${graphWidth} ${graphHeight}`"
         :width="graphWidth"

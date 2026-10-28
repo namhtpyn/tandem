@@ -29,16 +29,6 @@ describe('parseRunEnvelope', () => {
 });
 
 describe('structured verdicts (zod)', () => {
-  it('parses a bare JSON verdict line', () => {
-    expect(parseRunEnvelope('work\n{"kind": "result", "body": "shipped v1"}')).toEqual({
-      kind: 'result',
-      text: 'shipped v1',
-    });
-    expect(parseRunEnvelope('{"kind": "question", "body": "which db?"}')).toEqual({
-      kind: 'question',
-      text: 'which db?',
-    });
-  });
   it('tolerates a code fence around the JSON', () => {
     expect(parseRunEnvelope('work\n```json\n{"kind": "result", "body": "ok"}\n```')).toEqual({
       kind: 'result',

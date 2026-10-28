@@ -14,6 +14,7 @@ import { formatWhenShort } from '~/utils/format-when';
 import type { EmployeeRow, TaskRow, ThreadRow } from '~/utils/orpc-types';
 import { buildThread, parseRunEnvelope } from '~/utils/task-thread';
 import type { ThreadItem } from '~/utils/task-thread';
+import { parseTaskText } from '~/utils/task-tokens';
 import {
   activityIcon,
   activityLabel,
@@ -150,56 +151,31 @@ onMounted(async () => {
   anchored = true;
 });
 
+/** human byte size with a space and an MB rollover — '1 KB', '1.4 MB' */
+function fileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function runOutputs(item: ThreadItem) {
   return item.kind === 'run' ? (outputsByRun.value.get(item.id) ?? []) : [];
 }
 
-/** server ids are uuid/slug tokens — anything else must never reach href/src */
-const ATTACHMENT_ID_RE = /^[A-Za-z0-9_-]+$/;
+/** split the brief description into text + attachment + mention parts — the
+ *  token grammar is shared with the editor that writes it (utils/task-tokens) */
+const briefParts = computed(() => parseTaskText(props.task.description ?? ''));
 
-/** split the brief description into text + attachment refs for rendering */
-const briefParts = computed(() => {
-  const desc = props.task.description ?? '';
-  const parts: Array<
-    | { type: 'text'; body: string }
-    | { type: 'mention'; label: string }
-    | { type: 'image'; id: string; alt: string }
-    | { type: 'file'; id: string; name: string }
-  > = [];
-  // split attachments first, then employee mentions inside the text parts.
-  // Captured ids end up in href/src — anything outside the server's id alphabet
-  // renders as its literal source text instead of building a URL from it.
-  const re = /!\[([^\]]*)\]\(attachment-([^)]+)\)|@\[([^\]]*)\]\(attachment-([^)]+)\)/g;
-  let last = 0;
-  for (const m of desc.matchAll(re)) {
-    if (nonNull(m.index) > last) pushText(desc.slice(last, m.index));
-    const id = nonNull(m[2] ?? m[4]);
-    if (ATTACHMENT_ID_RE.test(id)) {
-      if (m[2] !== undefined) parts.push({ type: 'image', id, alt: nonNull(m[1]) });
-      else parts.push({ type: 'file', id, name: nonNull(m[3]) });
-    } else {
-      parts.push({ type: 'text', body: m[0] });
-    }
-    last = nonNull(m.index) + m[0].length;
-  }
-  if (last < desc.length) pushText(desc.slice(last));
-  return parts;
-
-  function pushText(text: string) {
-    // either tiptap link form `@[Label](mention-id)` or serialized span `[@ id="..." label="..."]`
-    const re = /@\[([^\]]+)\]\(mention-[^)]+\)|\[@\s*id="[^"]*"\s+label="([^"]+)"\]/g;
-    let at = 0;
-    for (const m of text.matchAll(re)) {
-      if (nonNull(m.index) > at) parts.push({ type: 'text', body: text.slice(at, m.index) });
-      parts.push({ type: 'mention', label: m[1] ?? m[2] ?? '' });
-      at = nonNull(m.index) + m[0].length;
-    }
-    if (at < text.length) parts.push({ type: 'text', body: text.slice(at) });
-  }
+/** one parse per run turn: the template used to call parseRunEnvelope() twice
+ *  per item (body fallback + text fallback) on every render */
+const envelopeById = computed(() => {
+  const m = new Map<string, ReturnType<typeof parseRunEnvelope>>();
+  for (const item of thread.value) if (item.kind === 'run') m.set(item.id, parseRunEnvelope(item.output));
+  return m;
 });
 
 function envelopeOf(item: ThreadItem) {
-  return item.kind === 'run' ? parseRunEnvelope(item.output) : null;
+  return item.kind === 'run' ? (envelopeById.value.get(item.id) ?? null) : null;
 }
 
 onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspense()]));
@@ -221,9 +197,18 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
         <USkeleton class="h-16 w-1/2 rounded-xl" />
       </div>
     </div>
-    <p v-else-if="threadFailed" role="alert" class="text-error my-auto py-10 text-center text-xs">
-      Couldn't load the activity thread
-    </p>
+    <div v-else-if="threadFailed" role="alert" class="my-auto py-10 text-center">
+      <p class="text-error text-xs">Couldn't load the activity thread — the connection dropped.</p>
+      <UButton
+        class="mt-2"
+        size="xs"
+        color="neutral"
+        variant="outline"
+        icon="i-lucide-refresh-cw"
+        label="Retry"
+        @click="threadQuery.refetch()"
+      />
+    </div>
     <p v-else-if="!thread.length" class="text-dimmed my-auto py-10 text-center text-xs">
       No activity yet — write a note below or dispatch the agent.
     </p>
@@ -321,7 +306,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
               v-if="item.body || envelopeOf(item)"
               class="bg-elevated text-default inline-block max-w-[85%] rounded-xl rounded-tl-sm px-3.5 py-2 text-sm leading-relaxed"
             >
-              {{ item.body || envelopeOf(item)?.text || '(empty)' }}
+              {{ item.body || envelopeOf(item)?.text || 'No output' }}
             </div>
             <!-- collected output files (agent deliverables) -->
             <div v-if="runOutputs(item).length" class="mt-1.5 flex flex-wrap gap-1.5">
@@ -340,8 +325,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
                   ><UIcon
                     :name="f.mime === 'application/pdf' ? 'i-lucide-file-text' : 'i-lucide-file'"
                     class="size-3.5 shrink-0"
-                  />{{ f.filename
-                  }}<span class="text-dimmed font-normal">{{ Math.max(1, Math.round(f.size / 1024)) }}KB</span></a
+                  />{{ f.filename }}<span class="text-dimmed font-normal">{{ fileSize(f.size) }}</span></a
                 >
               </template>
             </div>
@@ -351,7 +335,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
                 class="text-muted hover:bg-elevated focus-visible:ring-primary inline-flex min-h-8 cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-xs select-none focus-visible:ring-2 focus-visible:outline-none"
               >
                 <UIcon name="i-lucide-chevron-right" class="size-3.5 transition-transform group-open:rotate-90" />
-                Input
+                Input sent to {{ item.agentName ?? 'the agent' }}
               </summary>
               <pre
                 class="bg-elevated text-toned mt-1 rounded-md px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
@@ -363,7 +347,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
                 class="text-muted hover:bg-elevated focus-visible:ring-primary inline-flex min-h-8 cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-xs select-none focus-visible:ring-2 focus-visible:outline-none"
               >
                 <UIcon name="i-lucide-chevron-right" class="size-3.5 transition-transform group-open:rotate-90" />
-                Output
+                Full output from {{ item.agentName ?? 'the agent' }}
               </summary>
               <pre
                 class="bg-inverted text-inverted mt-1 rounded-md px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"

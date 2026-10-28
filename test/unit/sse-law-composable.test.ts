@@ -113,17 +113,24 @@ describe('useChangeEvents', () => {
   });
 
   it('reconnects with backoff after the stream drops', async () => {
-    const qc = makeQc();
-    const live = makeLive(['fail', 'open-empty']);
-    install({ changes: { live } }, qc);
-    const { useChangeEvents } = await loadMod();
-    useChangeEvents(ref({ user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } }));
-    await new Promise((r) => setTimeout(r, 2450)); // fail → 2s retry → reconnect + catch-up invalidate
-    expect(live).toHaveBeenCalledTimes(2);
-    // catch-up: the post-drop successful open invalidates everything once
-    expect(qc.invalidateQueries).toHaveBeenCalledWith();
-    while (disposers.length) disposers.pop()!();
-    await new Promise((r) => setTimeout(r, 30));
+    // fake timers: the 2s backoff is a timer, so the test advances it instead of
+    // sleeping through it (the suite used to sit here for 2.45s)
+    vi.useFakeTimers();
+    try {
+      const qc = makeQc();
+      const live = makeLive(['fail', 'open-empty']);
+      install({ changes: { live } }, qc);
+      const { useChangeEvents } = await loadMod();
+      useChangeEvents(ref({ user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } }));
+      await vi.advanceTimersByTimeAsync(2100); // fail → 2s retry → reconnect
+      expect(live).toHaveBeenCalledTimes(2);
+      // catch-up: the post-drop successful open invalidates everything once
+      expect(qc.invalidateQueries).toHaveBeenCalledWith();
+      while (disposers.length) disposers.pop()!();
+      await vi.advanceTimersByTimeAsync(30);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('exits its hung iteration when scope disposes (no leaked open streams)', async () => {
@@ -150,18 +157,25 @@ describe('useChangeEvents', () => {
   });
 
   it('holds signed-out and only opens once a session appears', async () => {
-    const qc = makeQc();
-    const live = vi.fn(() => Promise.resolve({ async *[Symbol.asyncIterator]() {} }));
-    install({ changes: { live } }, qc);
-    const { useChangeEvents } = await loadMod();
-    const session = ref(null);
-    useChangeEvents(session);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(live).not.toHaveBeenCalled(); // anonymous: channel never opens
-    session.value = { user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } };
-    await new Promise((r) => setTimeout(r, 2100)); // the signed-out poll ticks at 2s
-    expect(live).toHaveBeenCalledTimes(1);
-    disposers[0]?.();
+    // fake timers from the START: the signed-out poll is scheduled when the
+    // composable is set up, so a clock installed later never fires it
+    vi.useFakeTimers();
+    try {
+      const qc = makeQc();
+      const live = vi.fn(() => Promise.resolve({ async *[Symbol.asyncIterator]() {} }));
+      install({ changes: { live } }, qc);
+      const { useChangeEvents } = await loadMod();
+      const session = ref(null);
+      useChangeEvents(session);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(live).not.toHaveBeenCalled(); // anonymous: channel never opens
+      session.value = { user: { id: 'u1', name: 'U', email: 'u@t', role: 'ADMIN' } };
+      await vi.advanceTimersByTimeAsync(2100); // the poll ticks at 2s
+      expect(live).toHaveBeenCalledTimes(1);
+      disposers[0]?.();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('auth failures take the backoff path (distinct from plain drops)', async () => {

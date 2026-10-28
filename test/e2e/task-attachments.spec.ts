@@ -2,8 +2,8 @@
 // description renders as inline image + file chip in the task-detail thread; the serve
 // route honors etag revalidation. (The full push/collect/cleanup sandbox leg is covered
 // by unit tests against the ssh seam — e2e stays DB/UI only.)
-import { expect, test } from '@playwright/test';
-
+// the cleanup fixture sweeps every row the test created (envs, bots, keys)
+import { expect, test } from './helpers/cleanup';
 import { login } from './helpers/login.ts';
 import { waitForHydration } from './pages/base.page.ts';
 import { TasksPage } from './pages/tasks.page.ts';

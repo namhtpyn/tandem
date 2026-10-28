@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatWhen } from '../../app/utils/format-when';
 import { NONE_ID, errorMessage, saveFailed } from '../../app/utils/forms';
 
 describe('forms (shared helpers)', () => {
@@ -24,23 +23,5 @@ describe('forms (shared helpers)', () => {
     expect(saveFailed({ data: { json: { message: 'a title with that name already exists' } } }, 'title')).toBe(
       'a title with that name already exists',
     );
-  });
-});
-
-describe('formatWhen', () => {
-  it('renders date + HH:MM and tolerates junk', () => {
-    const d = new Date(2026, 9, 27, 14, 30);
-    expect(formatWhen(d)).toBe(
-      d.toLocaleString(undefined, {
-        year: 'numeric',
-        month: 'numeric',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
-    );
-    expect(formatWhen(d)).not.toMatch(/:\d{2}:\d{2}/);
-    expect(formatWhen(null)).toBe('');
-    expect(formatWhen('not-a-date')).toBe('');
   });
 });

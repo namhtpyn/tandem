@@ -55,6 +55,7 @@ onUnmounted(disarmReject);
       autoresize
       :maxrows="6"
       variant="none"
+      :disabled="busy"
       placeholder="Leave review feedback (required to request changes)…"
       aria-label="Review note"
       class="w-full"

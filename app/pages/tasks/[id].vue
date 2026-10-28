@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
 
-import { CHANGE_RESOURCE } from '#shared/enums';
+import { CHANGE_RESOURCE, RUN_STATUS } from '#shared/enums';
+import { nonNull } from '#shared/utils/non-null';
 // Task detail — Paperclip-style layout: chat-like main content (description bubble,
 // run turns, activity notes, composer at the bottom) + right sidebar with task info
 // (status, assignee, reviewers, workflow actions). Mobile-first: single column,
@@ -9,13 +10,12 @@ import { CHANGE_RESOURCE } from '#shared/enums';
 // workflow-action state; thread and sidebar panels are self-loading components
 // (TaskActivityThread, TaskDetailsFields, TaskReviewPanel, TaskRoutingPanels,
 // TaskWorkflowActions) that share query keys with the app-wide SSE subscription.
-import { nonNull } from '#shared/utils/non-null';
-import { errorMessage } from '~/utils/forms';
-import type { TaskRow, TaskStatusRow } from '~/utils/orpc-types';
+import { composerReady, useWorkflowActions } from '~/composables/useWorkflowActions';
+import type { TaskRow, TaskRunRow, TaskStatusRow } from '~/utils/orpc-types';
 import { categoryColor, composerPlaceholder } from '~/utils/ui-labels';
 
 const route = useRoute();
-const { $orpc, $client } = useNuxtApp();
+const { $orpc } = useNuxtApp();
 const session = useAppSession();
 
 const tasksLive = useQuery($orpc.tasks.list.queryOptions({ queryKey: [CHANGE_RESOURCE.TASKS] }));
@@ -35,87 +35,19 @@ const taskStatusCategory = computed<TaskStatusRow['category'] | null>(() =>
   task.value ? (statusById.value.get(task.value.status)?.category ?? null) : null,
 );
 
-// review verdicts are an explicit-reviewer surface — nobody else sees the box
-const isReviewer = computed(() => !!task.value?.reviewerNames.includes(session.value?.user.name ?? ''));
+// review verdicts are an explicit-reviewer surface — nobody else sees the box.
+// Gate on ids, never names: a name is display data and two employees can share it.
+const isReviewer = computed(() => !!session.value && !!task.value?.reviewers.includes(session.value.user.id));
 
-const workflowNote = ref('');
-const workflowBusy = ref(false);
-const workflowMessage = ref('');
-const workflowOk = ref(true); // message tone: success copy vs failure copy
-// the review box disarms its reject confirm + keeps the note on a failed verdict
-const workflowFailed = ref(false);
+// the workflow ladder (copy + invalidation) is shared with the list drawer
+const { workflowNote, workflowBusy, workflowMessage, workflowOk, workflowFailed, wfAction, sendNote, resetWorkflow } =
+  useWorkflowActions(() => task.value?.id ?? null);
 
-// zod strips unknown keys, so optional extras ride along safely
-type WorkflowAction =
-  | 'dispatch'
-  | 'note'
-  | 'submit'
-  | 'ask'
-  | 'forward'
-  | 'answer'
-  | 'approve'
-  | 'requestChanges'
-  | 'reject'
-  | 'abandon';
-
-// every verb names what just happened (and what to retry) — no bare 'done'/'action failed'
-const WF_COPY: Record<WorkflowAction, { ok: string; fail: string }> = {
-  dispatch: { ok: 'Agent dispatched', fail: "Couldn't dispatch — try again" },
-  note: { ok: 'Note added', fail: "Couldn't add the note — try again" },
-  submit: { ok: 'Sent for review', fail: "Couldn't submit for review — try again" },
-  ask: { ok: 'Question sent', fail: "Couldn't send the question — try again" },
-  forward: { ok: 'Forwarded', fail: "Couldn't forward — try again" },
-  answer: { ok: 'Answer sent', fail: "Couldn't send the answer — try again" },
-  approve: { ok: 'Approved', fail: "Couldn't approve — try again" },
-  requestChanges: { ok: 'Changes requested', fail: "Couldn't request changes — try again" },
-  reject: { ok: 'Rejected', fail: "Couldn't reject — try again" },
-  abandon: { ok: 'Task abandoned', fail: "Couldn't abandon the task — try again" },
-};
-
-async function wfAction(action: WorkflowAction, extra: { body?: string; toEmployeeId?: string } = {}) {
-  if (!task.value || workflowBusy.value) return;
-  workflowBusy.value = true;
-  workflowMessage.value = '';
-  workflowFailed.value = false;
-  try {
-    const input = { taskId: task.value.id, ...extra };
-    await {
-      dispatch: () => $client.tasks.dispatch({ taskId: input.taskId }),
-      note: () => $client.tasks.note({ ...input, body: nonNull(input.body) }),
-      // body is optional server-side (submitResult defaults it) — an empty note is fine
-      submit: () => $client.tasks.submit({ ...input, body: input.body || undefined }),
-      ask: () => $client.tasks.ask({ ...input, body: nonNull(input.body) }),
-      forward: () => $client.tasks.forward({ ...input, toEmployeeId: nonNull(input.toEmployeeId) }),
-      answer: () => $client.tasks.answer({ ...input, body: nonNull(input.body) }),
-      approve: () => $client.tasks.approve(input),
-      requestChanges: () => $client.tasks.requestChanges({ ...input, body: nonNull(input.body) }),
-      reject: () => $client.tasks.reject(input),
-      abandon: () => $client.tasks.abandon(input),
-    }[action]();
-    workflowNote.value = '';
-    // TASKS refresh keeps the page's task row (and the drawer's snapshot) ahead
-    // of the SSE round-trip; TASK_ACTIVITY keeps the thread/reviews current and
-    // RUNS refreshes the run cards a dispatch/verdict just changed
-    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
-    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, task.value.id] });
-    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, task.value.id, 'reviews'] });
-    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.RUNS, task.value.id] });
-    workflowMessage.value = WF_COPY[action].ok;
-    workflowOk.value = true;
-  } catch (e) {
-    // surface the server's oRPC message, not ofetch's generic '[POST] …: 400'
-    workflowMessage.value = errorMessage(e, WF_COPY[action].fail);
-    workflowOk.value = false;
-    workflowFailed.value = true;
-  } finally {
-    workflowBusy.value = false;
-  }
-}
-
-/** while the task waits for an answer the composer's send IS the answer verb */
+/** composer verb: a null category (statuses loading/failed) must not read as 'note' */
+const composerSendReady = computed(() => composerReady(taskStatusCategory.value, workflowNote.value));
 function sendComposer() {
-  if (taskStatusCategory.value === 'waiting_answer') wfAction('answer', { body: workflowNote.value });
-  else wfAction('note', { body: workflowNote.value });
+  if (!composerSendReady.value) return;
+  void sendNote(taskStatusCategory.value === 'waiting_answer');
 }
 
 /** a live run turns the composer into a steer box; stopped = send dispatches */
@@ -127,12 +59,29 @@ const runsLive = useQuery({
   // client-only: the SSR prefetch of this query blanks the whole page render
   enabled: import.meta.client,
 });
-const agentRunning = computed(() =>
-  ((unref(runsLive.data) ?? []) as Array<{ status?: string }>).some((r) => r.status === 'running'),
-);
+const runs = computed<TaskRunRow[]>(() => (unref(runsLive.data) ?? []) as TaskRunRow[]);
+/** the wire token is SCREAMING (RUN_STATUS.RUNNING) — a lowercase compare never matched */
+const agentRunning = computed(() => runs.value.some((r) => r.status === RUN_STATUS.RUNNING));
+/** a pending run list means the lock state is UNKNOWN, not idle: keep the fields
+ * locked behind a neutral hint instead of letting an edit race the settle */
+const runsSettled = computed(() => runsLive.isSuccess.value || runsLive.isError.value);
+const runLocked = computed(() => !runsSettled.value || agentRunning.value);
 
 const infoSheetOpen = ref(false);
 const subtaskEditorOpen = ref(false);
+
+// task→task navigation REUSES this page instance: page-local workflow/review
+// state belongs to the task it was typed for. Reset it here; the thread,
+// review box and routing panels are also re-keyed by task id in the template so
+// an armed reject or a half-typed note can never follow the navigation.
+watch(
+  () => route.params.id,
+  () => {
+    resetWorkflow();
+    infoSheetOpen.value = false;
+    subtaskEditorOpen.value = false;
+  },
+);
 
 const parentTask = computed(() =>
   task.value?.parentTaskId ? (tasks.value.find((t) => t.id === nonNull(task.value).parentTaskId) ?? null) : null,
@@ -259,7 +208,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
               class="border-default bg-default flex min-h-0 flex-col rounded-lg border shadow-sm lg:max-h-[calc(var(--task-h)-4.5rem)]"
             >
               <!-- the thread (TaskActivityThread) -->
-              <TaskActivityThread :task="task" />
+              <TaskActivityThread :key="task.id" :task="task" />
 
               <!-- composer: workflow note + primary actions -->
               <div class="border-default border-t p-2.5">
@@ -269,6 +218,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                   autoresize
                   :maxrows="6"
                   variant="none"
+                  :disabled="workflowBusy"
                   :placeholder="composerPlaceholder(taskStatusCategory === 'waiting_answer')"
                   aria-label="Task note"
                   class="w-full"
@@ -301,7 +251,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                     :icon="agentRunning ? 'i-lucide-reply' : 'i-lucide-arrow-up'"
                     :aria-label="agentRunning ? 'Steer agent' : 'Send and dispatch'"
                     class="size-10 shrink-0"
-                    :disabled="workflowBusy || !workflowNote.trim()"
+                    :disabled="workflowBusy || !composerSendReady"
                     @click="sendComposer()"
                   />
                 </div>
@@ -311,6 +261,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
             <!-- GitHub-style review verdicts: own card, reviewers only, in review only -->
             <TaskReviewBox
               v-if="taskStatusCategory === 'in_review' && isReviewer"
+              :key="task.id"
               class="mt-3"
               :busy="workflowBusy"
               :failed="workflowFailed"
@@ -326,9 +277,10 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
             class="border-default bg-elevated/50 hidden w-full shrink-0 self-start rounded-xl border p-3.5 lg:sticky lg:top-4 lg:mt-0 lg:block lg:max-h-[calc(var(--task-h)-1rem)] lg:w-72 lg:overflow-y-auto"
           >
             <div class="space-y-4">
-              <TaskDetailsFields :task="task" :run-locked="agentRunning" />
-              <TaskReviewPanel v-if="task.reviewerNames.length" :task-id="task.id" />
+              <TaskDetailsFields :key="task.id" :task="task" :run-locked="runLocked" :run-pending="!runsSettled" />
+              <TaskReviewPanel v-if="task.reviewerNames.length" :key="task.id" :task-id="task.id" />
               <TaskRoutingPanels
+                :key="task.id"
                 :task-id="task.id"
                 :status-by-id="statusById"
                 @add-subtask="subtaskEditorOpen = true"
@@ -345,8 +297,8 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
   <USlideover v-if="task" v-model:open="infoSheetOpen" title="Task info" side="right" class="lg:hidden">
     <template #body>
       <div class="space-y-4">
-        <TaskDetailsFields :task="task" :run-locked="agentRunning" />
-        <TaskReviewPanel v-if="task.reviewerNames.length" :task-id="task.id" />
+        <TaskDetailsFields :key="task.id" :task="task" :run-locked="runLocked" :run-pending="!runsSettled" />
+        <TaskReviewPanel v-if="task.reviewerNames.length" :key="task.id" :task-id="task.id" />
         <TaskRoutingPanels :task-id="task.id" :status-by-id="statusById" @add-subtask="subtaskEditorOpen = true" />
       </div>
     </template>
