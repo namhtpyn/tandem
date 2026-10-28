@@ -1,21 +1,28 @@
 import { describe, expect, it } from 'vitest';
 
+import { NONE_ID } from '../../app/utils/forms.ts';
 import {
   activityIcon,
   activityLabel,
   aiOptionLabel,
+  AGENT_RUN_VIEW,
   categoryColor,
   categoryIcon,
   categoryLabel,
   categoryText,
+  composerPlaceholder,
   dotClass,
+  employeeOptions,
   endpointBadgeColor,
+  humanizeEnum,
   kindLabel,
+  roleLabel,
   runStatus,
-  AGENT_RUN_VIEW,
   statusLabel,
+  verdictLabel,
 } from '../../app/utils/ui-labels';
-import { CATEGORIES } from '../../shared/enums';
+import { PROVIDER_ENDPOINT } from '../../shared/api-styles';
+import { CATEGORIES, CATEGORY } from '../../shared/enums';
 
 describe('ui-labels', () => {
   it('maps every category in the shared enum to a badge color and label', () => {
@@ -100,5 +107,57 @@ describe('ui-labels', () => {
     expect(aiOptionLabel('Ada', 'ai')).toBe('Ada (AI)');
     expect(aiOptionLabel('Ada', 'human')).toBe('Ada');
     expect(aiOptionLabel('Ada', null)).toBe('Ada');
+  });
+});
+
+describe('ui-labels: null-safe category views + endpoint colors', () => {
+  it('null/unknown categories fall back to the neutral dot', () => {
+    expect(categoryColor(null)).toBe('neutral');
+    expect(categoryColor('nope')).toBe('neutral');
+    expect(categoryIcon(null)).toBe('i-lucide-circle-dot');
+    expect(categoryIcon(CATEGORY.WORKING)).toBe('i-lucide-clock-3');
+  });
+
+  it('humanizeEnum returns the input when nothing survives cleaning', () => {
+    expect(humanizeEnum('  ')).toBe('  ');
+    expect(humanizeEnum('in_progress')).toBe('In progress');
+  });
+
+  it('models endpoints badge success (decision → info is covered above)', () => {
+    expect(endpointBadgeColor(PROVIDER_ENDPOINT.MODELS['OPENAI-MODELS'])).toBe('success');
+  });
+});
+
+describe('ui-labels: composer/roles/verdicts', () => {
+  it('composer placeholders are a parallel pair', () => {
+    expect(composerPlaceholder(true)).toBe('Write an answer');
+    expect(composerPlaceholder(false)).toBe('Write a note');
+  });
+
+  it('roleLabel words roles and humanizes unknowns', () => {
+    expect(roleLabel('ADMIN')).toBe('Admin');
+    expect(roleLabel('weird_role')).toBe('Weird role');
+    expect(roleLabel(null)).toBe('');
+    expect(roleLabel(undefined)).toBe('');
+  });
+
+  it('verdictLabel falls back to Pending on a miss', () => {
+    expect(verdictLabel('x')).toBe('Pending');
+  });
+
+  it('employeeOptions excludes one id, prepends the none choice, labels AI', () => {
+    const rows = [
+      { id: 'a', name: 'Ada', kind: 'ai' },
+      { id: 'b', name: 'Bob', kind: 'human' },
+    ];
+    expect(employeeOptions(rows)).toEqual([
+      { label: 'Ada (AI)', value: 'a' },
+      { label: 'Bob', value: 'b' },
+    ]);
+    expect(employeeOptions(rows, { noneLabel: 'Unassigned' })[0]).toEqual({
+      label: 'Unassigned',
+      value: NONE_ID,
+    });
+    expect(employeeOptions(rows, { excludeId: 'a' }).map((o) => o.value)).toEqual(['b']);
   });
 });

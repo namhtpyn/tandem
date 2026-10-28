@@ -27,3 +27,31 @@ describe('formatWhen', () => {
     expect(formatWhen(withSeconds)).not.toMatch(/:\d{2}:\d{2}/);
   });
 });
+
+import { formatWhenShort } from '../../app/utils/format-when.ts';
+
+describe('formatWhenShort', () => {
+  it('same-day renders the time only', () => {
+    const now = new Date();
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 5);
+    expect(formatWhenShort(d)).toBe(d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }));
+  });
+
+  it('same-year drops the year; an older year keeps it', () => {
+    const now = new Date();
+    const thisYear = new Date(now.getFullYear(), 0, 2, 8, 30);
+    const shortThis = formatWhenShort(thisYear);
+    expect(shortThis).not.toContain(String(now.getFullYear()));
+    expect(shortThis).toContain('2');
+
+    const old = new Date(now.getFullYear() - 1, 0, 2, 8, 30);
+    const shortOld = formatWhenShort(old);
+    expect(shortOld).toContain(String(now.getFullYear() - 1));
+  });
+
+  it('empty and invalid render empty', () => {
+    expect(formatWhenShort(null)).toBe('');
+    expect(formatWhenShort(undefined)).toBe('');
+    expect(formatWhenShort('nope')).toBe('');
+  });
+});
