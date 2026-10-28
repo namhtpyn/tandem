@@ -44,7 +44,7 @@ test('task assignee picker lists AI employees with (AI)', async ({ page }) => {
   await page.getByPlaceholder('Environment name').fill(envName);
   await page.getByPlaceholder('Hostname or IP').fill('127.0.0.1');
   await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('button', { name: /Save changes|Create environment/ }).click();
   await expect(page.locator('tr', { hasText: envName }).first()).toBeVisible({ timeout: 15_000 });
 
   const botName = `E2e Bot ${suffix}`;
@@ -59,7 +59,7 @@ test('task assignee picker lists AI employees with (AI)', async ({ page }) => {
   await page.getByRole('option', { name: envName }).click();
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
-  await page.getByRole('button', { name: /Done — I saved the key/ }).click();
+  await page.getByRole('button', { name: /Done, key saved/ }).click();
   await expect(page.locator('tr:visible', { hasText: botName })).toBeVisible({ timeout: 15_000 });
 
   // tasks: picker shows the bot with (AI)
@@ -105,7 +105,7 @@ test('workflow drawer streams an agent run to completion', async ({ page }) => {
   await page.getByPlaceholder('Environment name').fill(envName);
   await page.getByPlaceholder('Hostname or IP').fill('127.0.0.1');
   await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('button', { name: /Save changes|Create environment/ }).click();
   await expect(page.locator('tr', { hasText: envName }).first()).toBeVisible({ timeout: 15_000 });
   await tasks.navigate('/employees');
   await page.getByRole('button', { name: 'New employee' }).first().click();
@@ -117,7 +117,7 @@ test('workflow drawer streams an agent run to completion', async ({ page }) => {
   await page.getByRole('button', { name: 'Environment', exact: true }).click();
   await page.getByRole('option', { name: envName }).click();
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
-  await page.getByRole('button', { name: /Done — I saved the key/ }).click();
+  await page.getByRole('button', { name: /Done, key saved/ }).click();
   await tasks.navigate('/tasks');
   // create a task assigned to the AI employee
   await tasks.openCreateModal();

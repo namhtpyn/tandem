@@ -3,6 +3,8 @@ import { z } from 'zod';
 
 // Dashboard shell (Nuxt UI UDashboardGroup): login screen when unauthenticated,
 // sidebar + content when signed in. Session/auth-config via useState (app.vue).
+import { roleLabel } from '~/utils/ui-labels';
+
 const session = useAppSession();
 const authConfig = useAuthConfigState();
 const appVersion = useAppVersion();
@@ -34,9 +36,9 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
-// distinct failure copy: unreachable server ≠ wrong credentials
-const SERVER_DOWN = "Can't reach the server — try again.";
-const BAD_CREDENTIALS = 'Invalid email or password.';
+// distinct failure copy: unreachable server ≠ wrong credentials (fragments — no trailing periods)
+const SERVER_DOWN = "Can't reach the server — try again";
+const BAD_CREDENTIALS = 'Invalid email or password';
 
 async function login() {
   busy.value = true;
@@ -214,10 +216,12 @@ const nav = computed(() =>
           <div class="flex w-full items-center gap-2" :class="collapsed ? 'flex-col' : ''">
             <UAvatar :alt="session.user.name" size="xs" />
             <div v-if="!collapsed" class="min-w-0 flex-1">
-              <!-- one line: name, plus the role as a muted suffix only when it
-                   differs from the name — 'Admin' + 'ADMIN' said it twice -->
-              <p class="text-highlighted truncate text-xs font-medium">
-                {{ session.user.name }}<span v-if="showRoleSuffix" class="text-dimmed"> · {{ session.user.role }}</span>
+              <!-- name, then the role as its own muted line only when it differs
+                   from the name — 'Admin' + 'Admin' said it twice, and the raw
+                   enum rode a middle-dot suffix before -->
+              <p class="text-highlighted truncate text-xs font-medium">{{ session.user.name }}</p>
+              <p v-if="showRoleSuffix" class="text-dimmed truncate text-[11px] leading-tight">
+                {{ roleLabel(session.user.role) }}
               </p>
             </div>
             <UButton

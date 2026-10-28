@@ -176,7 +176,7 @@ function cellValue(row: T, col: TableColumn<T>) {
 </script>
 
 <template>
-  <div v-if="searchable || data.length || loading || showEmptyState" class="space-y-3">
+  <div v-if="searchable || data.length || loading || error || showEmptyState" class="space-y-3">
     <div v-if="searchable" class="flex flex-wrap items-center gap-2">
       <UInput
         :model-value="search"
@@ -249,7 +249,7 @@ function cellValue(row: T, col: TableColumn<T>) {
       <p class="text-muted max-w-sm text-sm">
         {{
           error
-            ? "Couldn't load this list — try again."
+            ? "Couldn't load this list — try again"
             : isFiltered
               ? 'No results — try a different search.'
               : emptyText || 'Use the button above to create one.'

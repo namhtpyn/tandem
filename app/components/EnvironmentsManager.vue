@@ -256,7 +256,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
             class="text-dimmed truncate text-xs"
             :title="probeResults[row.original.id]!.detail"
           >
-            {{ probeResults[row.original.id]!.detail }} · {{ probeResults[row.original.id]!.durationMs }}ms
+            {{ probeResults[row.original.id]!.detail }} ({{ probeResults[row.original.id]!.durationMs }} ms)
           </span>
         </div>
       </template>
@@ -332,7 +332,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
             class="text-dimmed mt-1 truncate text-xs"
             :title="probeResults[row.id]!.detail"
           >
-            {{ probeResults[row.id]!.detail }} · {{ probeResults[row.id]!.durationMs }}ms
+            {{ probeResults[row.id]!.detail }} ({{ probeResults[row.id]!.durationMs }} ms)
           </p>
           <div v-if="editable" class="mt-3 flex justify-end gap-1">
             <UPopover mode="hover" enable-touch>
@@ -482,7 +482,12 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       <template #footer>
         <div class="flex w-full justify-end gap-2">
           <UButton variant="ghost" color="neutral" label="Cancel" :disabled="busy" @click="editorOpen = false" />
-          <UButton type="submit" :loading="busy" label="Save" form="environment-editor-form" />
+          <UButton
+            type="submit"
+            :loading="busy"
+            :label="editingId ? 'Save changes' : 'Create environment'"
+            form="environment-editor-form"
+          />
         </div>
       </template>
     </UModal>

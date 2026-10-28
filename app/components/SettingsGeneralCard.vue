@@ -89,19 +89,22 @@ const timeoutState = reactive({ runTimeoutMinutes });
 const tasksState = reactive({ tasksPerAgent });
 const savingCompanyPrompt = ref(false);
 const companyPromptMessage = ref('');
+const companyPromptOk = ref(false); // message tone: success green, failures red
 async function saveCompanyPrompt() {
   savingCompanyPrompt.value = true;
   companyPromptMessage.value = '';
+  companyPromptOk.value = false;
   try {
     const text = companyPrompt.value.trim();
     if (text.length > 8000) {
-      companyPromptMessage.value = 'Keep it under 8000 characters.';
+      companyPromptMessage.value = 'Keep it under 8000 characters';
       return;
     }
     await $client.settings.update({ companyPrompt: text });
     companyPromptMessage.value = 'Saved';
+    companyPromptOk.value = true;
   } catch (e) {
-    companyPromptMessage.value = e instanceof Error ? e.message : 'Save failed.';
+    companyPromptMessage.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     savingCompanyPrompt.value = false;
   }
@@ -137,7 +140,9 @@ const llmForm = reactive<AiAssignmentForm>({ providerId: undefined, model: '', k
 const decisionForm = reactive<AiAssignmentForm>({ providerId: undefined, model: '', keySecretId: null });
 // one message PER form — a shared ref rendered once could only ever sit below one of them
 const llmMessage = ref('');
+const llmOk = ref(false); // message tone: success green, failures red
 const decisionMessage = ref('');
+const decisionOk = ref(false);
 const llmSaving = ref(false);
 const decisionSaving = ref(false);
 
@@ -186,8 +191,10 @@ async function saveAssignment(kind: 'internalLlm' | 'internalDecision') {
   const form = kind === 'internalLlm' ? llmForm : decisionForm;
   const saving = kind === 'internalLlm' ? llmSaving : decisionSaving;
   const message = kind === 'internalLlm' ? llmMessage : decisionMessage;
+  const ok = kind === 'internalLlm' ? llmOk : decisionOk;
   saving.value = true;
   message.value = '';
+  ok.value = false;
   try {
     if (form.providerId && (!form.keySecretId || !form.model.trim())) {
       message.value = 'API key and model are required once a provider is picked';
@@ -199,8 +206,9 @@ async function saveAssignment(kind: 'internalLlm' | 'internalDecision') {
         : null;
     await $client.settings.update({ [kind]: value });
     message.value = 'Saved';
+    ok.value = true;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'Save failed.';
+    message.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     saving.value = false;
   }
@@ -218,19 +226,22 @@ watch(
 
 const savingTasksPerAgent = ref(false);
 const tasksPerAgentMessage = ref('');
+const tasksPerAgentOk = ref(false); // message tone: success green, failures red
 async function saveTasksPerAgent() {
   savingTasksPerAgent.value = true;
   tasksPerAgentMessage.value = '';
+  tasksPerAgentOk.value = false;
   try {
     const n = Number(tasksPerAgent.value);
     if (!Number.isInteger(n) || n < 1 || n > 32) {
-      tasksPerAgentMessage.value = 'Enter a whole number between 1 and 32.';
+      tasksPerAgentMessage.value = 'Enter a whole number between 1 and 32';
       return;
     }
     await $client.settings.update({ tasksPerAgent: n });
     tasksPerAgentMessage.value = 'Saved';
+    tasksPerAgentOk.value = true;
   } catch (e) {
-    tasksPerAgentMessage.value = e instanceof Error ? e.message : 'Save failed.';
+    tasksPerAgentMessage.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     savingTasksPerAgent.value = false;
   }
@@ -238,19 +249,22 @@ async function saveTasksPerAgent() {
 
 const savingRunTimeout = ref(false);
 const runTimeoutMessage = ref('');
+const runTimeoutOk = ref(false); // message tone: success green, failures red
 async function saveRunTimeout() {
   savingRunTimeout.value = true;
   runTimeoutMessage.value = '';
+  runTimeoutOk.value = false;
   try {
     const minutes = Number(runTimeoutMinutes.value);
     if (!Number.isFinite(minutes) || minutes < 1) {
-      runTimeoutMessage.value = 'Enter at least 1 minute.';
+      runTimeoutMessage.value = 'Enter at least 1 minute';
       return;
     }
     await $client.settings.update({ runTimeoutMs: Math.round(minutes * 60_000) });
     runTimeoutMessage.value = 'Saved';
+    runTimeoutOk.value = true;
   } catch (e) {
-    runTimeoutMessage.value = e instanceof Error ? e.message : 'Save failed.';
+    runTimeoutMessage.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     savingRunTimeout.value = false;
   }
@@ -258,14 +272,17 @@ async function saveRunTimeout() {
 
 const savingName = ref(false);
 const nameMessage = ref('');
+const nameMessageOk = ref(false); // message tone: success green, failures red
 async function saveCompanyName() {
   savingName.value = true;
   nameMessage.value = '';
+  nameMessageOk.value = false;
   try {
     await $client.settings.update({ companyName: companyName.value });
     nameMessage.value = 'Saved';
+    nameMessageOk.value = true;
   } catch (e) {
-    nameMessage.value = e instanceof Error ? e.message : 'Save failed.';
+    nameMessage.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     savingName.value = false;
   }
@@ -294,9 +311,13 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
         />
       </UFormField>
       <UButton type="submit" icon="i-lucide-save" :loading="savingName">Save</UButton>
-      <span v-if="nameMessage" class="pb-2 text-xs" :class="nameMessage === 'Saved' ? 'text-success' : 'text-error'">{{
-        nameMessage
-      }}</span>
+      <span
+        v-if="nameMessage"
+        class="pb-2 text-xs"
+        :class="nameMessageOk ? 'text-success' : 'text-error'"
+        :role="nameMessageOk ? 'status' : 'alert'"
+        >{{ nameMessage }}</span
+      >
     </UForm>
 
     <USeparator class="my-5" />
@@ -319,7 +340,8 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
         <span
           v-if="companyPromptMessage"
           class="pb-2 text-xs"
-          :class="companyPromptMessage === 'Saved' ? 'text-success' : 'text-error'"
+          :class="companyPromptOk ? 'text-success' : 'text-error'"
+          :role="companyPromptOk ? 'status' : 'alert'"
           >{{ companyPromptMessage }}</span
         >
       </div>
@@ -346,7 +368,8 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
       <span
         v-if="runTimeoutMessage"
         class="pb-2 text-xs"
-        :class="runTimeoutMessage === 'Saved' ? 'text-success' : 'text-error'"
+        :class="runTimeoutOk ? 'text-success' : 'text-error'"
+        :role="runTimeoutOk ? 'status' : 'alert'"
         >{{ runTimeoutMessage }}</span
       >
     </UForm>
@@ -373,7 +396,8 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
       <span
         v-if="tasksPerAgentMessage"
         class="pb-2 text-xs"
-        :class="tasksPerAgentMessage === 'Saved' ? 'text-success' : 'text-error'"
+        :class="tasksPerAgentOk ? 'text-success' : 'text-error'"
+        :role="tasksPerAgentOk ? 'status' : 'alert'"
         >{{ tasksPerAgentMessage }}</span
       >
     </UForm>
@@ -381,7 +405,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
     <USeparator class="my-5" />
 
     <div>
-      <p class="pb-1 text-sm font-medium">Decision engine (auto-assign)</p>
+      <h4 class="pb-1 text-sm font-medium">Decision engine (auto-assign)</h4>
       <p class="text-muted pb-2 text-xs">
         Picks which employee takes a task. Provider must offer a decision-compatible endpoint.
       </p>
@@ -427,7 +451,8 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
         <span
           v-if="decisionMessage"
           class="text-xs"
-          :class="decisionMessage === 'Saved' ? 'text-success' : 'text-error'"
+          :class="decisionOk ? 'text-success' : 'text-error'"
+          :role="decisionOk ? 'status' : 'alert'"
         >
           {{ decisionMessage }}
         </span>
@@ -437,7 +462,7 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
     <USeparator class="my-5" />
 
     <div>
-      <p class="pb-1 text-sm font-medium">Internal LLM</p>
+      <h4 class="pb-1 text-sm font-medium">Internal LLM</h4>
       <p class="text-muted pb-2 text-xs">
         Used by Tandem's own server-side features. Provider must offer an LLM-compatible endpoint. Not sent to agents.
       </p>
@@ -478,7 +503,12 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
           />
         </UFormField>
         <UButton type="submit" icon="i-lucide-save" :loading="llmSaving" class="self-start">Save internal LLM</UButton>
-        <span v-if="llmMessage" class="text-xs" :class="llmMessage === 'Saved' ? 'text-success' : 'text-error'">
+        <span
+          v-if="llmMessage"
+          class="text-xs"
+          :class="llmOk ? 'text-success' : 'text-error'"
+          :role="llmOk ? 'status' : 'alert'"
+        >
           {{ llmMessage }}
         </span>
       </UForm>

@@ -91,7 +91,9 @@ const editorOpen = ref(false);
 const isEdit = ref(false);
 const editingId = ref<string | null>(null);
 const form = ref({ name: '', description: '', value: '', folderId: null as string | null });
-const formError = ref<string | null>(null);
+const nameError = ref<string | null>(null);
+const valueError = ref<string | null>(null);
+const saveError = ref<string | null>(null);
 const showValue = ref(false);
 
 const confirming = ref<string | null>(null);
@@ -102,7 +104,9 @@ const updateMutation = useMutation({ ...$orpc.vault.secrets.update.mutationOptio
 const removeMutation = useMutation({ ...$orpc.vault.secrets.remove.mutationOptions() });
 
 function openEditor(row?: VaultSecretRow) {
-  formError.value = null;
+  nameError.value = null;
+  valueError.value = null;
+  saveError.value = null;
   showValue.value = false;
   if (row) {
     isEdit.value = true;
@@ -117,14 +121,16 @@ function openEditor(row?: VaultSecretRow) {
 }
 
 async function save() {
-  formError.value = null;
+  nameError.value = null;
+  valueError.value = null;
+  saveError.value = null;
   if (!form.value.name.trim()) {
-    formError.value = 'Name is required';
+    nameError.value = 'Name is required';
     return;
   }
   // create needs the secret; edit without a value = metadata-only change (stored secret is kept)
   if (!isEdit.value && !form.value.value) {
-    formError.value = 'Value is required (it is stored encrypted and never shown again)';
+    valueError.value = 'Value is required (it is stored encrypted and never shown again)';
     return;
   }
   busy.value = true;
@@ -148,7 +154,7 @@ async function save() {
     }
     editorOpen.value = false;
   } catch (e) {
-    formError.value = e instanceof Error ? e.message : 'Save failed.';
+    saveError.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     busy.value = false;
   }
@@ -166,7 +172,7 @@ async function reallyRemove(row: VaultSecretRow) {
     confirming.value = null;
     emit('deleted', row.id);
   } catch (e) {
-    removeError.value = e instanceof Error ? e.message : 'Delete failed.';
+    removeError.value = e instanceof Error ? e.message : 'Delete failed';
   } finally {
     busy.value = false;
   }
@@ -191,7 +197,7 @@ onServerPrefetch(() => liveQuery.suspense());
       <div class="ms-auto flex items-center gap-2 overflow-x-auto">
         <!-- nothing to filter or manage while the vault is empty — the empty
              state below carries the one 'New secret' CTA -->
-        <VaultFolderSelect v-if="!emptyVault" v-model="folderId" clearable />
+        <VaultFolderSelect v-if="!emptyVault" v-model="folderId" clearable aria-label="Filter by folder" />
         <UButton
           v-if="editable && !emptyVault"
           icon="i-lucide-folder"
@@ -229,7 +235,9 @@ onServerPrefetch(() => liveQuery.suspense());
       show-empty-state
       :empty-icon="isFiltered ? 'i-lucide-search-x' : 'i-lucide-shield'"
       :empty-text="
-        isFiltered ? 'No results — try a different search.' : 'Store SSH keys and API tokens — encrypted, write-only.'
+        isFiltered
+          ? 'No results — try a different search.'
+          : 'No secrets yet — store SSH keys and API tokens, encrypted and write-only.'
       "
     >
       <template #empty-cta>
@@ -329,17 +337,17 @@ onServerPrefetch(() => liveQuery.suspense());
     >
       <template #body>
         <div class="space-y-4">
-          <UFormField name="name" :error="formError && !form.name ? formError : undefined">
+          <UFormField name="name" :error="nameError ?? undefined">
             <template #label>
               Name
-              <FormHint text="unique" />
+              <FormHint text="Must be unique" />
             </template>
             <UInput v-model="form.name" placeholder="Secret name" class="w-full" :disabled="busy" />
           </UFormField>
           <UFormField name="description">
             <template #label>
               Description
-              <FormHint text="optional note" />
+              <FormHint text="Optional note" />
             </template>
             <UTextarea
               v-model="form.description"
@@ -352,10 +360,10 @@ onServerPrefetch(() => liveQuery.suspense());
           <UFormField label="Folder" name="folder">
             <VaultFolderSelect v-model="form.folderId" creatable clearable size="md" class="w-full" />
           </UFormField>
-          <UFormField name="value" :error="formError && formError !== 'Name is required' ? formError : undefined">
+          <UFormField name="value" :error="valueError ?? undefined">
             <template #label>
               Value
-              <FormHint :text="isEdit ? 'replaces the stored value' : 'encrypted, never shown again'" />
+              <FormHint :text="isEdit ? 'Replaces the stored value' : 'Encrypted, never shown again'" />
             </template>
             <div class="relative w-full">
               <UTextarea
@@ -384,19 +392,13 @@ onServerPrefetch(() => liveQuery.suspense());
               </UPopover>
             </div>
           </UFormField>
-          <UAlert
-            v-if="formError && !formError.includes('required')"
-            icon="i-lucide-alert-circle"
-            color="error"
-            variant="subtle"
-            :title="formError"
-          />
+          <UAlert v-if="saveError" icon="i-lucide-alert-circle" color="error" variant="subtle" :title="saveError" />
         </div>
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
           <UButton variant="ghost" color="neutral" :disabled="busy" @click="editorOpen = false">Cancel</UButton>
-          <UButton :loading="busy" @click="save">{{ isEdit ? 'Replace' : 'Save' }}</UButton>
+          <UButton :loading="busy" :label="isEdit ? 'Save changes' : 'Create secret'" @click="save" />
         </div>
       </template>
     </UModal>

@@ -86,7 +86,7 @@ async function saveFolder() {
     });
     editorOpen.value = false;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Save failed.';
+    error.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     busy.value = false;
   }
@@ -100,7 +100,7 @@ async function removeFolder(id: string) {
     confirmId.value = null;
     emit('deleted', id);
   } catch (e) {
-    removeError.value = e instanceof Error ? e.message : 'Delete failed.';
+    removeError.value = e instanceof Error ? e.message : 'Delete failed';
   } finally {
     busy.value = false;
   }
@@ -122,6 +122,7 @@ async function removeFolder(id: string) {
           search-placeholder="Search folders…"
           :data="folders"
           :loading="foldersQuery.isPending.value"
+          :error="foldersQuery.isError.value"
           :page-count="pageCount"
           :page-size="pageSize"
           :columns="[
@@ -147,7 +148,7 @@ async function removeFolder(id: string) {
               <UPopover mode="hover" enable-touch>
                 <UButton
                   icon="i-lucide-pencil"
-                  size="xs"
+                  size="sm"
                   color="neutral"
                   variant="ghost"
                   aria-label="Rename folder"
@@ -159,7 +160,7 @@ async function removeFolder(id: string) {
               <UPopover mode="hover" enable-touch>
                 <UButton
                   icon="i-lucide-trash-2"
-                  size="xs"
+                  size="sm"
                   color="neutral"
                   variant="ghost"
                   class="text-muted hover:text-error"
@@ -179,7 +180,7 @@ async function removeFolder(id: string) {
                 <template v-if="editable">
                   <UButton
                     icon="i-lucide-pencil"
-                    size="xs"
+                    size="sm"
                     color="neutral"
                     variant="ghost"
                     aria-label="Rename folder"
@@ -188,7 +189,7 @@ async function removeFolder(id: string) {
                   />
                   <UButton
                     icon="i-lucide-trash-2"
-                    size="xs"
+                    size="sm"
                     color="neutral"
                     variant="ghost"
                     class="text-muted hover:text-error"
@@ -235,7 +236,12 @@ async function removeFolder(id: string) {
       <template #footer>
         <div class="flex w-full justify-end gap-2">
           <UButton variant="ghost" color="neutral" @click="editorOpen = false">Cancel</UButton>
-          <UButton icon="i-lucide-check" :loading="busy" @click="saveFolder">Save</UButton>
+          <UButton
+            icon="i-lucide-check"
+            :loading="busy"
+            :label="editingId ? 'Save changes' : 'Create folder'"
+            @click="saveFolder"
+          />
         </div>
       </template>
     </UModal>

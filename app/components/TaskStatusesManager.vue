@@ -89,7 +89,7 @@ async function saveStatus() {
     statusEditorTouched.value = false;
     editingStatusId.value = null;
   } catch (e) {
-    statusMessage.value = e instanceof Error ? e.message : 'Save failed.';
+    statusMessage.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     statusBusy.value = false;
   }
@@ -103,22 +103,29 @@ async function removeStatus() {
     await statusRemoveMutation.mutateAsync({ id: pendingDelete.value.id });
     pendingDelete.value = null;
   } catch (e) {
-    statusMessage.value = e instanceof Error ? e.message : 'Delete failed.';
+    statusMessage.value = e instanceof Error ? e.message : 'Delete failed';
   } finally {
     statusBusy.value = false;
   }
 }
 
-const colorOptions = ['neutral', 'primary', 'success', 'warning', 'error', 'info'];
+const colorOptions = [
+  { label: 'Neutral', value: 'neutral' },
+  { label: 'Primary', value: 'primary' },
+  { label: 'Success', value: 'success' },
+  { label: 'Warning', value: 'warning' },
+  { label: 'Error', value: 'error' },
+  { label: 'Info', value: 'info' },
+];
 const categoryOptions = [
-  { label: 'Backlog — parked, nobody works on it', value: 'backlog' },
-  { label: 'Ready — assigned agent picks it up', value: 'ready' },
-  { label: 'Working — hands off, in progress', value: 'working' },
-  { label: 'Paused — halted, not terminal', value: 'paused' },
-  { label: 'Waiting answer — question routed, work paused', value: 'waiting_answer' },
-  { label: 'In review — result awaits unanimous approval', value: 'in_review' },
-  { label: 'Done — completed, agents stop', value: 'done' },
-  { label: 'Cancelled — agents stop', value: 'cancelled' },
+  { label: 'Backlog', description: 'Parked, nobody works on it', value: 'backlog' },
+  { label: 'Ready', description: 'Assigned agent picks it up', value: 'ready' },
+  { label: 'Working', description: 'Hands off, in progress', value: 'working' },
+  { label: 'Paused', description: 'Halted, not terminal', value: 'paused' },
+  { label: 'Waiting answer', description: 'Question routed, work paused', value: 'waiting_answer' },
+  { label: 'In review', description: 'Result awaits unanimous approval', value: 'in_review' },
+  { label: 'Done', description: 'Completed, agents stop', value: 'done' },
+  { label: 'Cancelled', description: 'Agents stop', value: 'cancelled' },
 ];
 // badge colors + labels come from the SHARED ui-labels mapping (imported above) —
 // statuses render the same words/colors as every other surface
@@ -137,7 +144,7 @@ const categoryOptions = [
             Define the workflow statuses and which moves are allowed between them (used by the board and the task
             editor).
           </p>
-          <p v-if="statusMessage" class="text-error text-sm">{{ statusMessage }}</p>
+          <p v-if="statusMessage" role="alert" class="text-error text-sm">{{ statusMessage }}</p>
           <div v-if="statuses.length" class="divide-default divide-y">
             <div v-for="st in statuses" :key="st.id" class="flex items-center justify-between gap-2 py-2">
               <div class="min-w-0">
@@ -150,8 +157,8 @@ const categoryOptions = [
                 <p class="text-dimmed truncate text-xs">
                   {{
                     st.nextIds.length
-                      ? `→ ${st.nextIds.map((n) => statusById.get(n)?.name ?? n).join(', ')}`
-                      : 'no transitions'
+                      ? `→ ${st.nextIds.map((n) => statusById.get(n)?.name ?? 'Unknown status').join(', ')}`
+                      : 'No transitions'
                   }}
                 </p>
               </div>
@@ -161,7 +168,7 @@ const categoryOptions = [
                     icon="i-lucide-pencil"
                     variant="ghost"
                     color="neutral"
-                    size="xs"
+                    size="sm"
                     aria-label="Edit status"
                     :disabled="statusBusy"
                     @click="openStatusEditor(st)"
@@ -176,7 +183,7 @@ const categoryOptions = [
                     variant="ghost"
                     color="neutral"
                     class="text-muted hover:text-error"
-                    size="xs"
+                    size="sm"
                     aria-label="Delete status"
                     :disabled="statusBusy"
                     @click="pendingDelete = st"
@@ -188,7 +195,19 @@ const categoryOptions = [
               </div>
             </div>
           </div>
-          <p v-else class="text-muted text-sm">No statuses defined.</p>
+          <div v-else-if="statusesLive.isPending.value" class="space-y-2" aria-hidden="true">
+            <USkeleton class="h-10 w-full rounded-lg" />
+            <USkeleton class="h-10 w-full rounded-lg" />
+          </div>
+          <p v-else-if="statusesLive.isError.value" role="alert" class="text-error text-sm">Couldn't load statuses</p>
+          <div
+            v-else
+            class="border-default flex flex-col items-center gap-3 rounded-xl border border-dashed p-8 text-center"
+          >
+            <UIcon name="i-lucide-list-todo" class="text-toned size-10" aria-hidden="true" />
+            <p class="text-muted text-sm">No statuses yet — define the steps your tasks move through.</p>
+            <UButton icon="i-lucide-plus" size="sm" label="New status" @click="openStatusEditor()" />
+          </div>
           <div class="flex justify-end">
             <UButton icon="i-lucide-plus" size="sm" label="New status" @click="openStatusEditor()" />
           </div>
@@ -223,7 +242,7 @@ const categoryOptions = [
             <UInput v-model="statusForm.name" placeholder="e.g. In review" class="w-full" />
           </UFormField>
           <UFormField label="Color" name="statusColor">
-            <USelect v-model="statusForm.color" :items="colorOptions" class="w-full" />
+            <USelect v-model="statusForm.color" :items="colorOptions" value-key="value" class="w-full" />
           </UFormField>
           <UFormField label="Position" name="statusPosition">
             <UInput v-model.number="statusForm.position" type="number" min="0" max="99" class="w-full" />
@@ -245,7 +264,7 @@ const categoryOptions = [
               placeholder="Pick allowed next statuses"
             />
           </UFormField>
-          <p v-if="statusMessage" class="text-error text-sm">{{ statusMessage }}</p>
+          <p v-if="statusMessage" role="alert" class="text-error text-sm">{{ statusMessage }}</p>
         </div>
       </template>
       <template #footer>

@@ -28,7 +28,7 @@ test('human employee CRUD round-trip on the live page', async ({ page }) => {
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
   // humans now also get an initial access key — dismiss the shown-once alert
-  await page.getByRole('button', { name: /Done — I saved the key/ }).click();
+  await page.getByRole('button', { name: /Done, key saved/ }).click();
   await ui.searchRows(SEARCH, name);
   await expect(page.locator('tr:visible', { hasText: name })).toBeVisible({ timeout: 15_000 });
 
@@ -63,7 +63,7 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   await page.getByPlaceholder('Environment name').fill(envName);
   await page.getByPlaceholder('Hostname or IP').fill('127.0.0.1');
   await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem');
-  await page.getByRole('button', { name: /Save|Create employee/ }).click();
+  await page.getByRole('button', { name: /Save changes|Create environment/ }).click();
   await expect(page.locator('tr', { hasText: envName }).first()).toBeVisible({ timeout: 15_000 });
 
   // create AI employee
@@ -83,13 +83,13 @@ test('AI employee create shows minted key once, kind immutable on edit', async (
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
   // minted key surfaces once
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
-  await page.getByRole('button', { name: /Done — I saved the key/ }).click();
+  await page.getByRole('button', { name: /Done, key saved/ }).click();
   await ui.searchRows(SEARCH, name);
   await expect(page.locator('tr:visible', { hasText: name })).toBeVisible({ timeout: 15_000 });
 
   // edit: kind immutable badge, no kind radio
   await page.locator('tr:visible', { hasText: name }).getByRole('button', { name: 'Edit employee' }).click();
-  await expect(page.getByText(/immutable/i).first()).toBeVisible();
+  await expect(page.getByText('AI agent').first()).toBeVisible();
   await expect(page.getByRole('radio', { name: /AI agent/ })).toHaveCount(0);
   await page.getByRole('button', { name: 'Cancel' }).click();
 
@@ -147,7 +147,7 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   await page.getByPlaceholder('Job title').fill('Boss');
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
-  await page.getByRole('button', { name: /Done — I saved the key/ }).click();
+  await page.getByRole('button', { name: /Done, key saved/ }).click();
   await ui.searchRows(SEARCH, supName);
   await expect(page.locator('tr:visible', { hasText: supName })).toBeVisible({ timeout: 15_000 });
 
@@ -160,7 +160,7 @@ test('supervision: assign supervisors on create, reflected live', async ({ page 
   await page.getByPlaceholder('Job title').fill('Report');
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
-  await page.getByRole('button', { name: /Done — I saved the key/ }).click();
+  await page.getByRole('button', { name: /Done, key saved/ }).click();
   await ui.searchRows(SEARCH, subName);
   await expect(page.locator('tr:visible', { hasText: subName })).toBeVisible({ timeout: 15_000 });
 

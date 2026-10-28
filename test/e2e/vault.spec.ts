@@ -25,7 +25,7 @@ test.describe('vault', () => {
     // replace: value rotates, still never shown
     await row.getByRole('button', { name: 'Replace secret' }).click();
     await page.getByRole('textbox', { name: 'Value' }).fill('e2e-rotated-value-999');
-    await page.getByRole('button', { name: 'Replace' }).click();
+    await page.getByRole('button', { name: 'Save changes' }).click();
     await expect(page.locator('tr:visible', { hasText: secName }).getByText('•••• -999')).toBeVisible({
       timeout: 15_000,
     });

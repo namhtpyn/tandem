@@ -14,6 +14,7 @@ import { CHANGE_RESOURCE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import type { EditorView, ClipboardEventLike, DragEventLike } from '~/types/editor-typing';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
+import { kindLabel } from '~/utils/ui-labels';
 
 const open = defineModel<boolean>('open', { default: false });
 const props = defineProps<{ task: TaskRow | null; parentTaskId?: string | null }>();
@@ -36,7 +37,7 @@ const mentionItems = computed(() =>
   employees.value.map((e) => ({
     label: e.name,
     id: e.id,
-    description: e.title ?? (e.kind === 'ai' ? 'AI employee' : 'Employee'),
+    description: e.title ?? kindLabel(e.kind),
   })),
 );
 const projectRows = computed(() => (unref(projectsLive.data) ?? []) as Array<{ id: string; name: string }>);
@@ -152,7 +153,6 @@ async function uploadAttachment(
     if (!viaEditor) form.description = form.description ? `${form.description}\n${token}` : token;
     messageOk.value = true;
     message.value = `Attached ${up.filename}`;
-    messageOk.value = true;
     return { id: up.id, filename: up.filename, token };
   } catch (e) {
     messageOk.value = false;
@@ -231,7 +231,6 @@ async function save() {
     open.value = false;
     emit('saved');
   } catch (e) {
-    messageOk.value = false;
     messageOk.value = false;
     message.value = e instanceof Error ? e.message : "Couldn't save the task — try again";
   } finally {
@@ -340,14 +339,19 @@ async function save() {
             </p>
           </template>
         </UFormField>
-        <p v-if="message" :class="messageOk ? 'text-success' : 'text-error'" class="text-sm" role="status">
+        <p
+          v-if="message"
+          :class="messageOk ? 'text-success' : 'text-error'"
+          class="text-sm"
+          :role="messageOk ? 'status' : 'alert'"
+        >
           {{ message }}
         </p>
       </UForm>
     </template>
     <template #footer>
       <div class="flex w-full justify-end gap-2">
-        <UButton variant="outline" color="neutral" label="Cancel" :disabled="busy" @click="open = false" />
+        <UButton variant="ghost" color="neutral" label="Cancel" :disabled="busy" @click="open = false" />
         <UButton
           type="submit"
           :loading="busy"

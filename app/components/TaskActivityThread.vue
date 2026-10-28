@@ -161,6 +161,11 @@ const thread = computed<ThreadItem[]>(() =>
 
 const scroller = ref<HTMLElement | null>(null);
 
+// pending/error as script computeds — query flags must be read with an explicit
+// .value (a bare template read is the ref object itself, always truthy)
+const threadLoading = computed(() => threadQuery.isPending.value);
+const threadFailed = computed(() => threadQuery.isError.value);
+
 const outputsByRun = computed(() => {
   const m = new Map<string, Array<{ id: string; filename: string; mime: string; size: number }>>();
   for (const r of runFeed.value) if (r.outputs?.length) m.set(r.id, r.outputs);
@@ -241,7 +246,21 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
        Bottom-anchored: short conversations hug the composer (mt-auto), and the
        empty state sits centered in the scroller. -->
   <div ref="scroller" class="flex max-h-[min(60dvh,42rem)] min-h-0 flex-1 flex-col overflow-y-auto p-3.5 lg:max-h-none">
-    <p v-if="!thread.length" class="text-dimmed my-auto py-10 text-center text-xs">
+    <!-- pending: chat-bubble skeletons keep the bottom-anchored layout honest -->
+    <div v-if="threadLoading" class="my-auto space-y-4" aria-hidden="true">
+      <div class="flex gap-2.5">
+        <USkeleton class="size-8 shrink-0 rounded-full" />
+        <USkeleton class="h-12 w-2/3 rounded-xl" />
+      </div>
+      <div class="flex gap-2.5">
+        <USkeleton class="size-8 shrink-0 rounded-full" />
+        <USkeleton class="h-16 w-1/2 rounded-xl" />
+      </div>
+    </div>
+    <p v-else-if="threadFailed" role="alert" class="text-error my-auto py-10 text-center text-xs">
+      Couldn't load the activity thread
+    </p>
+    <p v-else-if="!thread.length" class="text-dimmed my-auto py-10 text-center text-xs">
       No activity yet — write a note below or dispatch the agent.
     </p>
     <div v-else class="mt-auto space-y-4">
@@ -263,7 +282,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
           <div class="min-w-0 flex-1">
             <p class="text-dimmed mb-1 text-[11px] font-medium">
               {{ briefAuthor ?? 'Task brief' }}
-              <span v-if="item.createdAt" class="text-muted font-normal">· {{ formatWhenShort(item.createdAt) }}</span>
+              <span v-if="item.createdAt" class="text-muted font-normal">{{ formatWhenShort(item.createdAt) }}</span>
             </p>
             <!-- description: mention tokens -> @Name; attachment tokens -> inline images / file chips -->
             <div
@@ -367,7 +386,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
                 class="text-muted hover:bg-elevated focus-visible:ring-primary inline-flex cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-xs select-none focus-visible:ring-2 focus-visible:outline-none"
               >
                 <UIcon name="i-lucide-chevron-right" class="size-3.5 transition-transform group-open:rotate-90" />
-                input
+                Input
               </summary>
               <pre
                 class="bg-elevated text-toned mt-1 rounded-md px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
@@ -379,7 +398,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
                 class="text-muted hover:bg-elevated focus-visible:ring-primary inline-flex cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-xs select-none focus-visible:ring-2 focus-visible:outline-none"
               >
                 <UIcon name="i-lucide-chevron-right" class="size-3.5 transition-transform group-open:rotate-90" />
-                output
+                Output
               </summary>
               <pre
                 class="bg-inverted text-inverted mt-1 rounded-md px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
@@ -423,7 +442,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
           >
             <UIcon :name="noteKindIcon(item.noteKind)" class="size-3 shrink-0" />
             <span class="truncate">{{ item.body || noteKindLabel(item.noteKind) }}</span>
-            <span class="text-muted shrink-0">· {{ formatWhenShort(item.createdAt) }}</span>
+            <span class="text-muted shrink-0">{{ formatWhenShort(item.createdAt) }}</span>
           </span>
         </div>
       </template>

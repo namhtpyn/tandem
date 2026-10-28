@@ -16,7 +16,7 @@ test('graph view renders the supervision hierarchy', async ({ page }) => {
   await page.getByPlaceholder('Job title').fill('Lead');
   await page.getByRole('button', { name: /Create employee/ }).click();
   await expect(page.locator('tr:visible', { hasText: `Gb ${suffix}` })).toBeVisible({ timeout: 15_000 });
-  await page.getByRole('button', { name: /Done — I saved the key/ }).click();
+  await page.getByRole('button', { name: /Done, key saved/ }).click();
 
   // report
   await page.getByRole('button', { name: 'New employee' }).first().click();
@@ -29,7 +29,7 @@ test('graph view renders the supervision hierarchy', async ({ page }) => {
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: /Create employee/ }).click();
   await expect(page.locator('tr:visible', { hasText: `Gs ${suffix}` })).toBeVisible({ timeout: 15_000 });
-  await page.getByRole('button', { name: /Done — I saved the key/ }).click();
+  await page.getByRole('button', { name: /Done, key saved/ }).click();
 
   // graph view
   await page.getByRole('button', { name: 'Graph view' }).click();

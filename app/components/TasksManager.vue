@@ -13,7 +13,7 @@ import { ACTIVITY_KIND, CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 import { formatWhenShort } from '~/utils/format-when';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
-import { categoryColor } from '~/utils/ui-labels';
+import { categoryColor, composerPlaceholder, humanizeEnum, statusLabel } from '~/utils/ui-labels';
 
 const { $orpc, $client } = useNuxtApp();
 
@@ -178,7 +178,7 @@ async function remove() {
     await removeMutation.mutateAsync({ id: pendingDelete.value.id });
     pendingDelete.value = null;
   } catch (e) {
-    deleteError.value = e instanceof Error ? e.message : "Couldn't delete the task — try again.";
+    deleteError.value = e instanceof Error ? e.message : "Couldn't delete the task — try again";
   } finally {
     busy.value = false;
   }
@@ -477,7 +477,7 @@ onServerPrefetch(() =>
         >
           <button
             type="button"
-            class="px-3 py-1.5 text-sm font-medium transition-colors"
+            class="h-8 px-3 py-1.5 text-sm font-medium transition-colors"
             :class="
               view === 'list' ? 'bg-elevated text-highlighted' : 'text-muted hover:bg-elevated hover:text-highlighted'
             "
@@ -489,7 +489,7 @@ onServerPrefetch(() =>
           </button>
           <button
             type="button"
-            class="border-default border-l px-3 py-1.5 text-sm font-medium transition-colors"
+            class="border-default h-8 border-l px-3 py-1.5 text-sm font-medium transition-colors"
             :class="
               view === 'board' ? 'bg-elevated text-highlighted' : 'text-muted hover:bg-elevated hover:text-highlighted'
             "
@@ -534,13 +534,19 @@ onServerPrefetch(() =>
       </div>
     </div>
 
-    <p v-if="message" class="mt-3 text-sm" :class="messageOk ? 'text-success' : 'text-error'" role="status">
+    <p
+      v-if="message"
+      class="mt-3 text-sm"
+      :class="messageOk ? 'text-success' : 'text-error'"
+      :role="messageOk ? 'status' : 'alert'"
+    >
       {{ message }}
     </p>
 
     <!-- status filter chips (server-side statusId filter) — one scrollable row on
-         mobile; active = neutral fill + a single primary dot, never amber-filled.
-         The right-edge fade telegraphs the horizontal scroll. -->
+         mobile; active = neutral fill + highlighted text (no per-chip dots — the
+         active indicator is the text color alone). The right-edge fade telegraphs
+         the horizontal scroll. -->
     <div v-if="statuses.length" class="relative mt-3">
       <div
         class="flex [scrollbar-width:thin] items-center gap-1.5 overflow-x-auto pr-16"
@@ -556,11 +562,6 @@ onServerPrefetch(() =>
           :aria-pressed="statusId === null"
           @click="statusId = null"
         >
-          <span
-            v-if="statusId === null"
-            class="bg-primary mr-1 inline-block size-1.5 rounded-full"
-            aria-hidden="true"
-          />
           All
         </UButton>
         <UButton
@@ -574,11 +575,6 @@ onServerPrefetch(() =>
           :aria-pressed="statusId === st.id"
           @click="toggleStatusFilter(st.id)"
         >
-          <span
-            v-if="statusId === st.id"
-            class="bg-primary mr-1 inline-block size-1.5 rounded-full"
-            aria-hidden="true"
-          />
           {{ st.name }}
         </UButton>
       </div>
@@ -668,7 +664,7 @@ onServerPrefetch(() =>
               icon="i-lucide-wand-sparkles"
               variant="ghost"
               color="neutral"
-              size="xs"
+              size="sm"
               aria-label="Auto-assign"
               :disabled="busy"
               @click="autoAssign(row.original)"
@@ -682,7 +678,7 @@ onServerPrefetch(() =>
               icon="i-lucide-message-circle-more"
               variant="ghost"
               color="neutral"
-              size="xs"
+              size="sm"
               aria-label="Task workflow"
               @click="openWorkflow(row.original)"
             />
@@ -695,7 +691,7 @@ onServerPrefetch(() =>
               icon="i-lucide-pencil"
               variant="ghost"
               color="neutral"
-              size="xs"
+              size="sm"
               aria-label="Edit task"
               @click="openEditor(row.original)"
             />
@@ -709,7 +705,7 @@ onServerPrefetch(() =>
               variant="ghost"
               color="neutral"
               class="text-muted hover:text-error"
-              size="xs"
+              size="sm"
               aria-label="Delete task"
               @click="pendingDelete = row.original"
             />
@@ -737,7 +733,7 @@ onServerPrefetch(() =>
                     :class="statusDot(row.status)"
                     aria-hidden="true"
                   />
-                  {{ statusById.get(row.status)?.name ?? row.status }}
+                  {{ statusLabel(row.status, statusById) }}
                 </span>
                 <span>{{ assigneeNameById.get(row.assigneeId ?? '') ?? 'Unassigned' }}</span>
                 <span v-if="row.assigneeKind === 'ai'" class="text-primary inline-flex items-center gap-1"
@@ -871,9 +867,7 @@ onServerPrefetch(() =>
                       </button>
                       <!-- Move to…: the same setStatus the drag fires — the
                            touch/keyboard path onto the drag-only board -->
-                      <p class="text-dimmed px-2 pt-1.5 pb-1 text-[10px] font-medium tracking-wide uppercase">
-                        Move to…
-                      </p>
+                      <p class="text-dimmed px-2 pt-1.5 pb-1 text-[10px] font-medium">Move to…</p>
                       <div class="max-h-40 overflow-y-auto">
                         <button
                           v-for="st in statuses"
@@ -963,15 +957,11 @@ onServerPrefetch(() =>
         <div v-if="workflowTask" class="space-y-4">
           <div>
             <p class="font-medium">{{ workflowTask.title }}</p>
-            <p class="text-dimmed mt-0.5 text-xs">
-              {{ statusById.get(workflowTask.status)?.name ?? workflowTask.status }}
-              <template v-if="workflowTask.questionHolderName">
-                · waiting on {{ workflowTask.questionHolderName }}</template
-              >
-              <template v-if="workflowTask.reviewers.length">
-                · reviewers: {{ workflowTask.reviewerNames.join(', ') }}</template
-              >
-            </p>
+            <div class="text-dimmed mt-0.5 space-y-0.5 text-xs">
+              <p>{{ statusLabel(workflowTask.status, statusById) }}</p>
+              <p v-if="workflowTask.questionHolderName">Waiting on {{ workflowTask.questionHolderName }}</p>
+              <p v-if="workflowTask.reviewers.length">Reviewers: {{ workflowTask.reviewerNames.join(', ') }}</p>
+            </div>
           </div>
           <!-- contextual verbs only (owner rulings 2026-10-26): notes/answers ride the composer -->
           <div v-if="workflowIsWorking" class="flex flex-wrap gap-2">
@@ -1034,9 +1024,7 @@ onServerPrefetch(() =>
           <UTextarea
             v-model="workflowNote"
             :rows="3"
-            :placeholder="
-              workflowStatusCategory === 'waiting_answer' ? 'Write an answer — the agent resumes' : 'Write a note…'
-            "
+            :placeholder="composerPlaceholder(workflowStatusCategory === 'waiting_answer')"
             class="w-full"
           />
           <UButton
@@ -1049,7 +1037,12 @@ onServerPrefetch(() =>
           >
             {{ workflowStatusCategory === 'waiting_answer' ? 'Send answer' : 'Send' }}
           </UButton>
-          <p v-if="workflowMessage" class="text-xs" :class="workflowOk ? 'text-success' : 'text-error'" role="status">
+          <p
+            v-if="workflowMessage"
+            class="text-xs"
+            :class="workflowOk ? 'text-success' : 'text-error'"
+            :role="workflowOk ? 'status' : 'alert'"
+          >
             {{ workflowMessage }}
           </p>
           <div class="space-y-2">
@@ -1078,7 +1071,7 @@ onServerPrefetch(() =>
                 class="bg-inverted text-inverted max-h-72 overflow-y-auto rounded-b-md px-2.5 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap"
                 >{{ r.output }}</pre>
             </div>
-            <p v-if="!runFeed.length" class="text-dimmed text-xs">No runs yet.</p>
+            <p v-if="!runFeed.length" class="text-dimmed text-xs">No runs yet</p>
             <p v-if="retryInMin > 0" class="text-warning text-xs font-medium">
               Retrying in ~{{ retryInMin }} min ({{ workflowTask?.failStreak ?? 0 }} consecutive failure{{
                 (workflowTask?.failStreak ?? 0) === 1 ? '' : 's'
@@ -1103,12 +1096,13 @@ onServerPrefetch(() =>
                   "
                   class="size-3.5"
                 />
-                {{ ACTIVITY_LABELS[a.kind] ?? a.kind }} · {{ a.authorName ?? 'system' }}
+                {{ ACTIVITY_LABELS[a.kind] ?? humanizeEnum(a.kind) }}
+                <span class="text-muted font-normal">{{ a.authorName ?? 'system' }}</span>
                 <span class="text-dimmed ml-auto shrink-0 font-normal">{{ formatWhenShort(a.createdAt) }}</span>
               </p>
               <p v-if="a.body" class="text-muted mt-1">{{ a.body }}</p>
             </div>
-            <p v-if="!workflowFeed.length" class="text-dimmed text-xs">No activity yet.</p>
+            <p v-if="!workflowFeed.length" class="text-dimmed text-xs">No activity yet</p>
           </div>
         </div>
       </template>

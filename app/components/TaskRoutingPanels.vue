@@ -125,13 +125,13 @@ function subtaskBadge(c: ChildRow): {
   color: 'primary' | 'success' | 'warning' | 'error' | 'info' | 'neutral';
 } {
   const st = props.statusById.get(c.status);
-  return { label: st?.name ?? c.status, color: categoryColor(st?.category) };
+  return { label: st?.name ?? 'Unknown status', color: categoryColor(st?.category) };
 }
 </script>
 
 <template>
   <div v-if="openProposals.length" data-testid="proposal-panel">
-    <h3 class="text-muted mb-2 text-xs font-medium">Agent proposals</h3>
+    <h2 class="text-muted mb-2 text-xs font-medium">Agent proposals</h2>
     <div class="space-y-2">
       <div v-for="p in openProposals" :key="p.id" class="border-default bg-default rounded-lg border p-2.5 text-sm">
         <p class="text-default mb-1 flex items-center gap-1.5 font-medium">
@@ -142,12 +142,13 @@ function subtaskBadge(c: ChildRow): {
           {{ p.kind === PROPOSAL_KIND.SUBTASKS ? 'Split into subtasks' : 'Reassign task' }}
         </p>
         <ul v-if="p.kind === PROPOSAL_KIND.SUBTASKS" class="text-toned mb-2 space-y-1 text-xs">
-          <li v-for="(item, i) in p.payload.items ?? []" :key="i" class="truncate">
-            • {{ item.title }}<span v-if="item.assigneeName" class="text-dimmed"> — {{ item.assigneeName }}</span>
+          <li v-for="(item, i) in p.payload.items ?? []" :key="i">
+            <span class="text-default">• {{ item.title }}</span>
+            <span v-if="item.assigneeName" class="text-dimmed">Assigned to {{ item.assigneeName }}</span>
           </li>
         </ul>
         <p v-else class="text-toned mb-2 truncate text-xs">
-          Moves to: {{ p.payload.targetName }}<span v-if="p.payload.reason"> — {{ p.payload.reason }}</span>
+          Moves to: {{ p.payload.targetName }}<span v-if="p.payload.reason"> ({{ p.payload.reason }})</span>
         </p>
         <div class="flex gap-2">
           <UButton
@@ -170,14 +171,25 @@ function subtaskBadge(c: ChildRow): {
         </div>
       </div>
     </div>
-    <p v-if="proposalMessage" class="mt-2 text-xs" :class="proposalOk ? 'text-success' : 'text-error'" role="status">
+    <p
+      v-if="proposalMessage"
+      class="mt-2 text-xs"
+      :class="proposalOk ? 'text-success' : 'text-error'"
+      :role="proposalOk ? 'status' : 'alert'"
+    >
       {{ proposalMessage }}
     </p>
   </div>
 
   <div data-testid="subtask-panel">
-    <h3 class="text-muted mb-2 text-xs font-medium">Subtasks</h3>
-    <ul class="space-y-1 text-sm">
+    <h2 class="text-muted mb-2 text-xs font-medium">Subtasks</h2>
+    <div v-if="subtasksQuery.isPending.value" class="space-y-1.5" aria-hidden="true">
+      <USkeleton class="h-7 w-full rounded" />
+      <USkeleton class="h-7 w-4/5 rounded" />
+    </div>
+    <p v-else-if="subtasksQuery.isError.value" role="alert" class="text-error text-xs">Couldn't load subtasks</p>
+    <p v-else-if="!subtaskRows.length" class="text-dimmed text-xs">No subtasks yet</p>
+    <ul v-else class="space-y-1 text-sm">
       <li v-for="c in subtaskRows" :key="c.id">
         <NuxtLink
           :to="`/tasks/${c.id}`"
@@ -200,12 +212,12 @@ function subtaskBadge(c: ChildRow): {
   </div>
 
   <div v-if="assignmentRows.length" data-testid="assignment-history">
-    <h3 class="text-muted mb-2 text-xs font-medium">Assignees</h3>
+    <h2 class="text-muted mb-2 text-xs font-medium">Assignees</h2>
     <ul class="space-y-1 text-xs">
       <!-- who + when — the when replaces dev-speak reason tags like '(on create)' -->
       <li v-for="a in assignmentRows" :key="a.id" class="flex items-baseline justify-between gap-2">
         <span class="text-toned min-w-0 truncate">Assigned to {{ a.employeeName ?? 'Unassigned' }}</span>
-        <span class="text-dimmed shrink-0" suppressHydration-warning>· {{ formatWhenShort(a.startedAt) }}</span>
+        <span class="text-dimmed shrink-0" suppressHydration-warning>{{ formatWhenShort(a.startedAt) }}</span>
       </li>
     </ul>
   </div>

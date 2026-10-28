@@ -11,7 +11,7 @@ import { CHANGE_RESOURCE } from '#shared/enums';
 // TaskWorkflowActions) that share query keys with the app-wide SSE subscription.
 import { nonNull } from '#shared/utils/non-null';
 import type { TaskRow, TaskStatusRow } from '~/utils/orpc-types';
-import { categoryColor } from '~/utils/ui-labels';
+import { categoryColor, composerPlaceholder } from '~/utils/ui-labels';
 
 const route = useRoute();
 const { $orpc, $client } = useNuxtApp();
@@ -199,7 +199,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                     class="text-primary inline-flex items-center gap-1 hover:underline"
                     data-testid="parent-task-link"
                   >
-                    <UIcon name="i-lucide-corner-left-up" class="size-3" /> part of: {{ parentTask.title }}
+                    <UIcon name="i-lucide-corner-left-up" class="size-3" /> Part of: {{ parentTask.title }}
                   </NuxtLink>
                   <span v-if="task.assigneeName"
                     >{{ task.assigneeName
@@ -242,7 +242,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                   autoresize
                   :maxrows="6"
                   variant="none"
-                  :placeholder="taskStatusCategory === 'waiting_answer' ? 'Write an answer…' : 'Write a note…'"
+                  :placeholder="composerPlaceholder(taskStatusCategory === 'waiting_answer')"
                   class="w-full"
                   :ui="{ base: 'px-1 py-1 text-sm placeholder:text-dimmed' }"
                 />
@@ -251,13 +251,17 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                     v-if="workflowMessage"
                     class="text-xs"
                     :class="workflowOk ? 'text-success' : 'text-error'"
-                    role="status"
+                    :role="workflowOk ? 'status' : 'alert'"
                   >
                     {{ workflowMessage }}
                   </p>
                   <!-- the ONE send hint — the send button carries no duplicate hover popover -->
                   <span v-else class="text-muted shrink-0 text-xs">
-                    {{ agentRunning ? 'Send — steers the running agent' : 'Send — dispatches the agent' }}
+                    {{
+                      agentRunning
+                        ? 'Sends a steering note to the running agent'
+                        : 'Sends the note and dispatches the agent'
+                    }}
                   </span>
                   <UButton
                     size="lg"

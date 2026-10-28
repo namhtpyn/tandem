@@ -32,7 +32,7 @@ test('details: change status and assignee from the sidebar', async ({ page }) =>
   await page.getByPlaceholder('Job title').fill('E2E Tester');
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
   await expect(page.locator('tr:visible', { hasText: employeeName })).toBeVisible({ timeout: 15_000 });
-  await page.getByRole('button', { name: /Done — I saved the key/ }).click();
+  await page.getByRole('button', { name: /Done, key saved/ }).click();
 
   // create a task, then open its detail page via the title link
   await page.getByRole('link', { name: /Tasks/, exact: true }).first().click();

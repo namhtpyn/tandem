@@ -20,10 +20,13 @@ const {
   creatable = false,
   clearable = false,
   size = 'sm',
+  ariaLabel = 'Folder',
 } = defineProps<{
   creatable?: boolean;
   clearable?: boolean;
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+  /** persistent accessible name — the trigger is icon+placeholder only */
+  ariaLabel?: string;
 }>();
 
 const PAGE_SIZE = 20;
@@ -133,6 +136,7 @@ const selectModel = computed({
     icon="i-lucide-folder"
     :size="size"
     placeholder="Folder"
+    :aria-label="ariaLabel"
     class="w-44"
     @create="onCreate"
     @update:model-value="onPick"

@@ -10,6 +10,7 @@ import { computed, reactive, ref, unref } from 'vue';
 
 import { CHANGE_RESOURCE, PROJECT_STATUS, type ProjectStatus } from '#shared/enums';
 import type { ProjectRow } from '~/utils/orpc-types';
+import { humanizeEnum } from '~/utils/ui-labels';
 
 const { $orpc, $client } = useNuxtApp();
 const queryClient = useQueryClient();
@@ -158,7 +159,7 @@ async function save() {
     else await $client.projects.create(payload);
     editorOpen.value = false;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'Save failed.';
+    message.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     busy.value = false;
   }
@@ -177,7 +178,7 @@ async function remove_() {
   } catch (e) {
     // close the confirm so the page-level message isn't hidden behind the modal
     confirmId.value = null;
-    message.value = e instanceof Error ? e.message : 'Delete failed.';
+    message.value = e instanceof Error ? e.message : 'Delete failed';
   } finally {
     busy.value = false;
   }
@@ -188,7 +189,7 @@ const STATUS_LABELS: Record<string, string> = {
   [PROJECT_STATUS.ACTIVE]: 'Active',
   [PROJECT_STATUS.ARCHIVED]: 'Archived',
 };
-const statusLabel = (s: string) => STATUS_LABELS[s] ?? s;
+const statusLabel = (s: string) => STATUS_LABELS[s] ?? humanizeEnum(s);
 
 // the search box is pointless over an empty, unfiltered list — hide it there
 const isFiltered = computed(() => !!searchDebounced.value);
@@ -220,6 +221,7 @@ onServerPrefetch(() => liveQuery.suspense());
       class="mt-3"
       :data="flat"
       :loading="liveQuery.isPending.value"
+      :error="liveQuery.isError.value"
       :columns="[
         { accessorKey: 'name', header: 'Project' },
         { accessorKey: 'status', header: 'Status' },
@@ -264,7 +266,7 @@ onServerPrefetch(() => liveQuery.suspense());
               icon="i-lucide-plus"
               variant="ghost"
               color="neutral"
-              size="xs"
+              size="sm"
               aria-label="Add subproject"
               @click="
                 openEditor(undefined);
@@ -280,7 +282,7 @@ onServerPrefetch(() => liveQuery.suspense());
               icon="i-lucide-pencil"
               variant="ghost"
               color="neutral"
-              size="xs"
+              size="sm"
               aria-label="Edit project"
               @click="openEditor(row.original)"
             />
@@ -293,7 +295,7 @@ onServerPrefetch(() => liveQuery.suspense());
               icon="i-lucide-trash-2"
               variant="ghost"
               color="neutral"
-              size="xs"
+              size="sm"
               class="text-muted hover:text-error"
               aria-label="Delete project"
               :disabled="busy"

@@ -88,7 +88,7 @@ async function saveMProv() {
     });
     mProvEditorOpen.value = false;
   } catch (e) {
-    mProvMessage.value = e instanceof Error ? e.message : 'Save failed.';
+    mProvMessage.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     mProvBusy.value = false;
   }
@@ -112,7 +112,7 @@ async function removeMProv() {
   } catch (e) {
     // close the confirm so the message renders on the card, not behind the modal
     pendingRemove.value = null;
-    mProvMessage.value = e instanceof Error ? e.message : 'Delete failed.';
+    mProvMessage.value = e instanceof Error ? e.message : 'Delete failed';
   } finally {
     mProvBusy.value = false;
   }
@@ -239,7 +239,7 @@ onServerPrefetch(() => providersLive.suspense());
                     icon="i-lucide-pencil"
                     variant="ghost"
                     color="neutral"
-                    size="xs"
+                    size="sm"
                     aria-label="Edit provider"
                     @click="openMProvEditor(row.original)"
                   />
@@ -253,7 +253,7 @@ onServerPrefetch(() => providersLive.suspense());
                     variant="ghost"
                     color="neutral"
                     class="text-muted hover:text-error"
-                    size="xs"
+                    size="sm"
                     aria-label="Delete provider"
                     :disabled="mProvBusy"
                     @click="pendingRemove = row.original"
@@ -267,9 +267,30 @@ onServerPrefetch(() => providersLive.suspense());
           </UTable>
         </UCard>
         <p v-if="mProvMessage" class="text-error mt-2 text-sm" role="alert">{{ mProvMessage }}</p>
-        <p v-else-if="!mProvList.length" class="text-muted py-4 text-center text-sm">
-          No providers yet — add one to power agents and auto-assign.
+        <!-- pending: skeleton cards (mobile) + rows (desktop) before any empty copy -->
+        <template v-else-if="providersLive.isPending.value">
+          <div class="space-y-3 md:hidden" aria-hidden="true">
+            <USkeleton class="h-24 w-full rounded-lg" />
+            <USkeleton class="h-24 w-full rounded-lg" />
+          </div>
+          <UCard class="hidden md:block" :ui="{ root: 'shadow-sm', body: 'p-0 sm:p-0' }">
+            <div class="space-y-2 p-4" aria-hidden="true">
+              <USkeleton class="h-8 w-full rounded" />
+              <USkeleton class="h-8 w-3/4 rounded" />
+            </div>
+          </UCard>
+        </template>
+        <p v-else-if="providersLive.isError.value" role="alert" class="text-error py-4 text-center text-sm">
+          Couldn't load providers
         </p>
+        <div
+          v-else-if="!mProvList.length"
+          class="border-default flex flex-col items-center gap-3 rounded-xl border border-dashed p-8 text-center"
+        >
+          <UIcon name="i-lucide-cpu" class="text-toned size-10" aria-hidden="true" />
+          <p class="text-muted text-sm">No providers yet — add one to power agents and auto-assign.</p>
+          <UButton icon="i-lucide-plus" size="sm" label="Add provider" @click="openMProvEditor()" />
+        </div>
       </div>
     </div>
   </UCard>
@@ -352,7 +373,7 @@ onServerPrefetch(() => providersLive.suspense());
             class="w-full"
           />
         </UFormField>
-        <p v-if="mProvMessage" class="text-error text-sm">{{ mProvMessage }}</p>
+        <p v-if="mProvMessage" role="alert" class="text-error text-sm">{{ mProvMessage }}</p>
       </UForm>
     </template>
     <template #footer>

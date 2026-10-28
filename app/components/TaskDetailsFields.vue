@@ -61,7 +61,7 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
 
 <template>
   <div>
-    <h3 class="text-muted mb-2 text-xs font-medium">Details</h3>
+    <h2 class="text-muted mb-2 text-xs font-medium">Details</h2>
     <!-- one [label | field] grid: every select stretches to the same right edge -->
     <dl class="space-y-1.5 text-sm">
       <div class="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-x-2">
@@ -123,6 +123,6 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
         </dd>
       </div>
     </dl>
-    <p v-if="fieldError" class="text-error mt-1.5 text-xs">{{ fieldError }}</p>
+    <p v-if="fieldError" role="alert" class="text-error mt-1.5 text-xs">{{ fieldError }}</p>
   </div>
 </template>

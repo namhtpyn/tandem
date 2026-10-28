@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/vue-query';
 import { computed, onServerPrefetch } from 'vue';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { kindLabel } from '~/utils/ui-labels';
 
 const props = defineProps<{ taskId: string }>();
 
@@ -24,9 +25,10 @@ const employees = computed(
   () => (unref(employeesLive.data) ?? []) as unknown as Array<{ userId: string; name: string; kind?: string }>,
 );
 
-/** reviewer kind comes from the employee record — a PENDING verdict row has no source yet */
+/** reviewer kind comes from the employee record — a PENDING verdict row has no source yet;
+ * shared kindLabel vocabulary ('AI agent'/'Human'), never lowercase fragments */
 const kindOf = (id: string, fallback: string | null) =>
-  employees.value.find((e) => e.userId === id)?.kind ?? (fallback === 'ai' ? 'AI' : 'human');
+  kindLabel(employees.value.find((e) => e.userId === id)?.kind ?? fallback);
 
 /** REVIEW LAW checklist: current-round verdicts per reviewer, history collapsed by round */
 const reviewChecklist = computed(() => {
@@ -51,8 +53,14 @@ onServerPrefetch(() => Promise.all([reviewsQuery.suspense(), employeesLive.suspe
 
 <template>
   <div>
-    <h3 class="text-muted mb-2 text-xs font-medium">Review</h3>
-    <ul class="space-y-1 text-sm">
+    <h2 class="text-muted mb-2 text-xs font-medium">Review</h2>
+    <div v-if="reviewsQuery.isPending.value" class="space-y-1.5" aria-hidden="true">
+      <USkeleton class="h-6 w-full rounded" />
+      <USkeleton class="h-6 w-3/4 rounded" />
+    </div>
+    <p v-else-if="reviewsQuery.isError.value" role="alert" class="text-error text-xs">Couldn't load reviews</p>
+    <p v-else-if="!reviewChecklist.current.length" class="text-dimmed text-xs">No reviews yet</p>
+    <ul v-else class="space-y-1 text-sm">
       <li v-for="r in reviewChecklist.current" :key="r.reviewerId" class="flex items-start gap-1.5">
         <UIcon
           :name="
@@ -77,7 +85,10 @@ onServerPrefetch(() => Promise.all([reviewsQuery.suspense(), employeesLive.suspe
         />
         <span class="min-w-0">
           <span class="text-default block truncate"
-            >{{ r.name }} <span class="text-dimmed text-xs">({{ kindOf(r.reviewerId, r.source) }})</span></span
+            >{{ r.name }}
+            <span v-if="kindOf(r.reviewerId, r.source)" class="text-dimmed text-xs"
+              >({{ kindOf(r.reviewerId, r.source) }})</span
+            ></span
           >
           <span v-if="r.note" class="text-dimmed block truncate text-xs" :title="r.note">{{ r.note }}</span>
         </span>

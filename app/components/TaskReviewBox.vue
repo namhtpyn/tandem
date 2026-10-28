@@ -37,7 +37,7 @@ onUnmounted(disarmReject);
 
 <template>
   <div class="border-default bg-default rounded-2xl border p-2.5 shadow-sm">
-    <h3 class="text-muted mb-1.5 text-xs font-medium">Your review</h3>
+    <h2 class="text-muted mb-1.5 text-xs font-medium">Your review</h2>
     <UTextarea
       v-model="reviewNote"
       :rows="1"

@@ -46,6 +46,7 @@ watch(
 
 const busy = ref(false);
 const message = ref('');
+const messageOk = ref(false);
 
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
@@ -94,7 +95,8 @@ async function saveProvider() {
     await $client.oidc.replace({ providers: list2 });
     editorOpen.value = false;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'Save failed.';
+    message.value = e instanceof Error ? e.message : 'Save failed';
+    messageOk.value = false;
   } finally {
     busy.value = false;
   }
@@ -119,7 +121,8 @@ async function removeProvider() {
     await $client.oidc.replace({ providers: list });
     pendingRemove.value = null;
   } catch (e) {
-    message.value = e instanceof Error ? e.message : 'Delete failed.';
+    message.value = e instanceof Error ? e.message : 'Delete failed';
+    messageOk.value = false;
   } finally {
     busy.value = false;
   }
@@ -133,10 +136,12 @@ async function savePasswordPolicy(next: boolean) {
   try {
     await $client.settings.update({ disablePasswordLogin: next });
     message.value = 'Saved';
+    messageOk.value = true;
   } catch (e) {
     // nothing refetches after a failed write — put the switch back where it was
     disablePasswordLogin.value = previous;
-    message.value = e instanceof Error ? e.message : 'Save failed.';
+    message.value = e instanceof Error ? e.message : 'Save failed';
+    messageOk.value = false;
   } finally {
     busy.value = false;
   }
@@ -159,10 +164,17 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
           <h4 class="text-highlighted text-sm font-semibold">OIDC providers</h4>
           <UButton icon="i-lucide-plus" size="sm" label="Add provider" @click="openEditor()" />
         </div>
-        <template v-if="providers.length">
+        <template v-if="oidcLive.isPending.value">
+          <div class="space-y-2" aria-hidden="true">
+            <USkeleton class="h-12 w-full rounded-lg" />
+            <USkeleton class="h-12 w-full rounded-lg" />
+          </div>
+        </template>
+        <p v-else-if="oidcLive.isError.value" role="alert" class="text-error text-sm">Couldn't load OIDC providers</p>
+        <template v-else-if="providers.length">
           <UCard :ui="{ root: 'shadow-sm', body: 'p-0 sm:p-0' }">
             <UTable :data="providers" :columns="providerColumns">
-              <template #provider-cell="{ row }">
+              <template #label-cell="{ row }">
                 <div class="flex flex-wrap items-center gap-2">
                   <span class="text-highlighted text-sm font-medium">{{ row.original.label }}</span>
                   <UBadge v-if="!row.original.secretSet" variant="subtle" color="warning" size="sm"
@@ -223,25 +235,32 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
           <p class="text-highlighted text-sm font-medium">
             Password login
             <UBadge v-if="!disablePasswordLogin" color="success" variant="subtle" size="sm">Enabled</UBadge>
-            <UBadge v-else color="warning" variant="subtle" size="sm">Disabled — SSO only</UBadge>
+            <UBadge v-else color="warning" variant="subtle" size="sm">Disabled (SSO only)</UBadge>
           </p>
           <p class="text-dimmed text-xs">
             {{
-              providers.length === 0
-                ? 'Cannot be disabled until an OIDC provider is configured.'
-                : 'Turn off to require single sign-on.'
+              !oidcLive.isSuccess.value
+                ? 'Checking providers…'
+                : providers.length === 0
+                  ? 'Cannot be disabled until an OIDC provider is configured.'
+                  : 'Turn off to require single sign-on.'
             }}
           </p>
         </div>
         <USwitch
           aria-label="Password login"
           :model-value="!disablePasswordLogin"
-          :disabled="providers.length === 0 || busy"
+          :disabled="!oidcLive.isSuccess.value || providers.length === 0 || busy"
           @update:model-value="(v: boolean) => savePasswordPolicy(!v)"
         />
       </div>
     </div>
-    <p v-if="message" role="alert" class="mt-3 text-sm" :class="message === 'Saved' ? 'text-success' : 'text-error'">
+    <p
+      v-if="message"
+      :role="messageOk ? 'status' : 'alert'"
+      class="mt-3 text-sm"
+      :class="messageOk ? 'text-success' : 'text-error'"
+    >
       {{ message }}
     </p>
   </UCard>

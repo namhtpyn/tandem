@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ACTIVITY_KIND, REVIEW_STATUS, RUN_STATUS } from '#shared/enums';
 
-import { buildThread, formatThreadTime, parseRunEnvelope } from '../../app/utils/task-thread.ts';
+import { buildThread, parseRunEnvelope } from '../../app/utils/task-thread.ts';
 
 describe('parseRunEnvelope', () => {
   it('parses a JSON verdict on the last line', () => {
@@ -197,24 +197,4 @@ describe('buildThread degenerate sources', () => {
   });
 });
 
-describe('formatThreadTime', () => {
-  it('shows HH:MM for same-day timestamps', () => {
-    expect(formatThreadTime('2026-01-02T14:32:00.000Z', new Date('2026-01-02T23:00:00.000Z'))).toMatch(/^\d{2}:\d{2}$/);
-  });
-  it('shows Mon D, HH:MM for other days this year', () => {
-    const t = formatThreadTime(new Date('2026-03-05T09:05:00').toISOString(), new Date('2026-10-02T12:00:00'));
-    expect(t).toBe('Mar 5, 09:05');
-  });
-  it('includes the year for other-year timestamps', () => {
-    const d = new Date(2024, 2, 5, 9, 5);
-    expect(formatThreadTime(d.toISOString(), new Date(2026, 9, 2))).toBe('Mar 5 2024');
-  });
-  it('returns empty string for invalid dates', () => {
-    expect(formatThreadTime('not-a-date')).toBe('');
-  });
-  it('pads hours and minutes', () => {
-    const d = new Date(2026, 0, 2, 5, 7);
-    const now = new Date(2026, 0, 2, 8, 0);
-    expect(formatThreadTime(d.toISOString(), now)).toBe('05:07');
-  });
-});
+

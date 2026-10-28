@@ -11,6 +11,7 @@ import { PROVIDER_KIND, endpointKind, isModelsEndpoint } from '#shared/api-style
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 import type { EmployeeRow, EnvironmentRow } from '~/utils/orpc-types';
+import { kindLabel } from '~/utils/ui-labels';
 import type { SecretOption } from '~/utils/vault-options';
 import { groupedSecretOptions } from '~/utils/vault-options';
 
@@ -321,7 +322,7 @@ onServerPrefetch(() =>
         <UFormField name="avatar">
           <template #label>
             Avatar
-            <FormHint text="square photo, resized to 256px" />
+            <FormHint text="Square photo, resized to 256px" />
           </template>
           <div class="flex items-center gap-3">
             <span
@@ -379,8 +380,8 @@ onServerPrefetch(() =>
           <URadioGroup
             v-model="form.kind"
             :items="[
-              { label: 'Human — password/SSO login', value: 'human' },
-              { label: 'AI agent — API key, runs on an environment', value: 'ai' },
+              { label: 'Human', description: 'Password/SSO login', value: 'human' },
+              { label: 'AI agent', description: 'API key, runs on an environment', value: 'ai' },
             ]"
             variant="card"
             color="neutral"
@@ -389,12 +390,16 @@ onServerPrefetch(() =>
           />
         </UFormField>
         <UFormField v-else name="kind">
+          <template #label>
+            Kind
+            <FormHint text="Fixed after creation — humans sign in, AI agents run on an environment" />
+          </template>
           <UBadge
             :color="editingIsAi ? 'primary' : 'neutral'"
             variant="subtle"
             :icon="editingIsAi ? 'i-lucide-bot' : 'i-lucide-user'"
           >
-            {{ editingIsAi ? 'AI agent (immutable)' : 'Human (immutable)' }}
+            {{ kindLabel(editingIsAi ? 'ai' : 'human') }}
           </UBadge>
         </UFormField>
         <UFormField name="title">
@@ -523,9 +528,9 @@ onServerPrefetch(() =>
         <div v-if="mintedKey" class="text-primary bg-primary/10 rounded-lg p-4">
           <p class="flex items-center gap-2 text-sm font-semibold">
             <UIcon name="i-lucide-key-round" class="size-4" />
-            API key created — shown only once
+            API key created
           </p>
-          <p class="text-muted mt-1 text-xs">Copy it now; it cannot be retrieved later.</p>
+          <p class="text-muted mt-1 text-xs">Shown only once — copy it now; it cannot be retrieved later.</p>
           <div class="mt-3 flex items-center gap-2">
             <code class="bg-default/60 flex-1 rounded-md px-2.5 py-2 font-mono text-sm break-all">{{ mintedKey }}</code>
             <UButton
@@ -542,7 +547,7 @@ onServerPrefetch(() =>
             size="sm"
             color="primary"
             variant="solid"
-            label="Done — I saved the key"
+            label="Done, key saved"
             @click="open = false"
           />
         </div>

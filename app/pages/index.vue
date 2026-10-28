@@ -65,7 +65,7 @@ const cards = computed(() => [
       <!-- top-aligned: content sits under the navbar and the empty space falls
            BELOW the cards — vertical centering left a dead void above them -->
       <div class="flex min-h-full flex-1 flex-col gap-8 p-6 pt-8 lg:p-8">
-        <p class="text-muted text-sm">Humans and AI employees, one workspace.</p>
+        <p class="text-muted text-sm">Humans and AI employees, one workspace</p>
 
         <!-- one row saying one thing: link + live count per area. The chevron is
              the single affordance — no 'Open →' copy, no hover-translate motion.

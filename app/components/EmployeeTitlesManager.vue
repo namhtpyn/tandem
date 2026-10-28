@@ -53,7 +53,7 @@ async function saveTitle() {
     });
     titleEditorOpen.value = false;
   } catch (e) {
-    titleError.value = e instanceof Error ? e.message : 'Save failed.';
+    titleError.value = e instanceof Error ? e.message : 'Save failed';
   } finally {
     titleBusy.value = false;
   }
@@ -66,7 +66,7 @@ async function removeTitle(id: string) {
     await titleRemoveMutation.mutateAsync({ id });
     titleConfirmId.value = null;
   } catch (e) {
-    titleRemoveError.value = e instanceof Error ? e.message : 'Delete failed.';
+    titleRemoveError.value = e instanceof Error ? e.message : 'Delete failed';
   } finally {
     titleBusy.value = false;
   }
@@ -96,7 +96,7 @@ onServerPrefetch(() => titlesQuery.suspense());
             <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-pencil"
-                size="xs"
+                size="sm"
                 color="neutral"
                 variant="ghost"
                 aria-label="Rename title"
@@ -108,7 +108,7 @@ onServerPrefetch(() => titlesQuery.suspense());
             <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-trash-2"
-                size="xs"
+                size="sm"
                 color="neutral"
                 variant="ghost"
                 class="text-muted hover:text-error"
@@ -121,6 +121,13 @@ onServerPrefetch(() => titlesQuery.suspense());
           </div>
         </div>
       </div>
+      <div v-else-if="titlesQuery.isPending.value" class="space-y-2 py-4" aria-hidden="true">
+        <USkeleton class="h-10 w-full rounded-lg" />
+        <USkeleton class="h-10 w-2/3 rounded-lg" />
+      </div>
+      <p v-else-if="titlesQuery.isError.value" role="alert" class="text-error py-10 text-center text-sm">
+        Couldn't load titles
+      </p>
       <div v-else class="flex flex-col items-center gap-3 py-10 text-center">
         <UIcon name="i-lucide-briefcase" class="text-toned size-10" aria-hidden="true" />
         <div>
@@ -167,7 +174,12 @@ onServerPrefetch(() => titlesQuery.suspense());
     <template #footer>
       <div class="flex w-full justify-end gap-2">
         <UButton variant="ghost" color="neutral" @click="titleEditorOpen = false">Cancel</UButton>
-        <UButton icon="i-lucide-check" :loading="titleBusy" @click="saveTitle">Save</UButton>
+        <UButton
+          icon="i-lucide-check"
+          :loading="titleBusy"
+          :label="titleEditingId ? 'Save changes' : 'Create title'"
+          @click="saveTitle"
+        />
       </div>
     </template>
   </UModal>

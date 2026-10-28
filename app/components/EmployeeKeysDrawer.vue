@@ -34,7 +34,7 @@ async function refreshKeys() {
   try {
     keys.value = (await listKeysCall({ employeeId: props.employee.id })) as ApiKeyRow[];
   } catch (e) {
-    keysMessage.value = e instanceof Error ? e.message : "Couldn't load keys — try again.";
+    keysMessage.value = e instanceof Error ? e.message : "Couldn't load keys — try again";
   } finally {
     keysBusy.value = false;
   }
@@ -62,7 +62,7 @@ async function mintKey() {
     mintName.value = '';
     await refreshKeys();
   } catch (e) {
-    keysMessage.value = e instanceof Error ? e.message : "Couldn't create the key — try again.";
+    keysMessage.value = e instanceof Error ? e.message : "Couldn't create the key — try again";
   } finally {
     keysBusy.value = false;
   }
@@ -81,7 +81,7 @@ async function saveRename() {
     renamingId.value = null;
     await refreshKeys();
   } catch (e) {
-    keysMessage.value = e instanceof Error ? e.message : "Couldn't rename the key — try again.";
+    keysMessage.value = e instanceof Error ? e.message : "Couldn't rename the key — try again";
   } finally {
     keysBusy.value = false;
   }
@@ -101,7 +101,7 @@ async function revokeKey(keyId: string) {
     revokeConfirmId.value = null;
     await refreshKeys();
   } catch (e) {
-    revokeError.value = e instanceof Error ? e.message : "Couldn't revoke the key — try again.";
+    revokeError.value = e instanceof Error ? e.message : "Couldn't revoke the key — try again";
   } finally {
     keysBusy.value = false;
   }
@@ -130,7 +130,7 @@ async function copyKey(key: string) {
           Access keys authenticate API calls to Tandem as {{ employee?.name ?? 'this employee' }} — nothing to do with
           the model provider API key in the editor.
         </p>
-        <p v-if="keysMessage" class="text-error text-sm">{{ keysMessage }}</p>
+        <p v-if="keysMessage" role="alert" class="text-error text-sm">{{ keysMessage }}</p>
         <div v-if="freshKey" class="text-primary bg-primary/10 rounded-lg p-4">
           <p class="flex items-center gap-2 text-sm font-semibold">
             <UIcon name="i-lucide-key-round" class="size-4" />
@@ -151,10 +151,9 @@ async function copyKey(key: string) {
         <div v-if="keys.length" class="divide-default divide-y">
           <div v-for="k in keys" :key="k.id" class="group flex items-center justify-between gap-2 py-2">
             <div v-if="renamingId !== k.id" class="min-w-0">
-              <p class="text-highlighted truncate text-sm">{{ k.name ?? 'unnamed' }}</p>
-              <p class="text-dimmed font-mono text-xs">
-                {{ k.prefix }}{{ k.start }}… · created {{ formatWhenShort(k.createdAt) }}
-              </p>
+              <p class="text-highlighted truncate text-sm">{{ k.name ?? 'Unnamed' }}</p>
+              <p class="text-dimmed font-mono text-xs">{{ k.prefix }}{{ k.start }}…</p>
+              <p class="text-dimmed text-xs" suppressHydration-warning>Created {{ formatWhenShort(k.createdAt) }}</p>
             </div>
             <div v-else class="flex min-w-0 flex-1 items-center gap-1">
               <UInput
@@ -169,7 +168,7 @@ async function copyKey(key: string) {
                   icon="i-lucide-check"
                   variant="ghost"
                   color="primary"
-                  size="xs"
+                  size="sm"
                   aria-label="Save name"
                   :loading="keysBusy"
                   @click="saveRename"
@@ -180,7 +179,7 @@ async function copyKey(key: string) {
                   icon="i-lucide-x"
                   variant="ghost"
                   color="neutral"
-                  size="xs"
+                  size="sm"
                   aria-label="Cancel rename"
                   @click="renamingId = null"
                 /><template #content><div class="px-3 py-1.5 text-xs">Cancel</div></template></UPopover
@@ -195,7 +194,7 @@ async function copyKey(key: string) {
                   icon="i-lucide-pencil"
                   variant="ghost"
                   color="neutral"
-                  size="xs"
+                  size="sm"
                   aria-label="Rename key"
                   :disabled="keysBusy"
                   @click="startRename(k)"
@@ -206,7 +205,7 @@ async function copyKey(key: string) {
                   icon="i-lucide-trash-2"
                   variant="ghost"
                   color="neutral"
-                  size="xs"
+                  size="sm"
                   class="text-muted hover:text-error"
                   aria-label="Revoke key"
                   :disabled="keysBusy"
@@ -241,7 +240,7 @@ async function copyKey(key: string) {
   >
     <template #body>
       <p class="text-sm">
-        Revoke <strong>{{ revokingKey?.name ?? 'unnamed key' }}</strong
+        Revoke <strong>{{ revokingKey?.name ?? 'Unnamed key' }}</strong
         >? Apps using it stop authenticating immediately.
       </p>
       <UAlert

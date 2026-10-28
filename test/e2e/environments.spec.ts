@@ -28,7 +28,7 @@ test('environment links a vault secret and shows it in the row', async ({ page }
     .first()
     .click();
   await page.getByRole('option', { name: new RegExp(secName) }).click();
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('button', { name: /Save changes|Create environment/ }).click();
   await expect(page.locator('tr:visible', { hasText: envName })).toBeVisible({ timeout: 15_000 });
 
   // edit shows the linked key preselected
@@ -54,7 +54,7 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
   await page.getByPlaceholder('Environment name').fill(rowName);
   await page.getByPlaceholder('Hostname or IP').fill('127.0.0.1');
   await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('button', { name: /Save changes|Create environment/ }).click();
   await expect(page.locator('tr:visible', { hasText: rowName })).toBeVisible({ timeout: 15_000 });
   await expect(
     page.locator('tr:visible', { hasText: rowName }).locator('span:visible', { hasText: '127.0.0.1' }),
@@ -65,7 +65,7 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
   await page.getByPlaceholder('Environment name').fill(rowName);
   await page.getByPlaceholder('Hostname or IP').fill('10.0.0.1');
   await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('button', { name: /Save changes|Create environment/ }).click();
   await expect(page.getByText(/already exists/i)).toBeVisible();
   await page.getByRole('button', { name: 'Cancel' }).click();
 
@@ -73,7 +73,7 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
   const row = page.locator('tr', { hasText: rowName });
   await row.getByRole('button', { name: 'Edit environment' }).click();
   await page.getByPlaceholder('Hostname or IP').fill('10.9.8.7');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('button', { name: /Save changes|Create environment/ }).click();
   await expect(
     page.locator('tr:visible', { hasText: rowName }).locator('span:visible', { hasText: '10.9.8.7' }),
   ).toBeVisible({ timeout: 15_000 });
@@ -107,7 +107,7 @@ test('live table updates from another tab via SSE', async ({ context, page }) =>
   await other.getByPlaceholder('Environment name').fill(rowName);
   await other.getByPlaceholder('Hostname or IP').fill('127.0.0.1');
   await other.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem');
-  await other.getByRole('button', { name: 'Save' }).click();
+  await other.getByRole('button', { name: /Save changes|Create environment/ }).click();
   await expect(other.locator('tr', { hasText: rowName })).toBeVisible({ timeout: 15_000 });
 
   await expect(page.locator('tr:visible', { hasText: rowName })).toBeVisible({ timeout: 15_000 });
