@@ -39,7 +39,7 @@ async function refreshKeys() {
   keysBusy.value = true;
   keysLoadError.value = false;
   try {
-    keys.value = (await listKeysCall({ employeeId: props.employee.id })) as ApiKeyRow[];
+    keys.value = await listKeysCall({ employeeId: props.employee.id });
   } catch (e) {
     keysLoadError.value = true;
     keysMessage.value = errorMessage(e, "Couldn't load keys — try again");
@@ -69,7 +69,13 @@ async function mintKey() {
       employeeId: props.employee.id,
       ...(mintState.mintName.trim() ? { name: mintState.mintName.trim() } : {}),
     });
-    freshKey.value = res.key as string;
+    freshKey.value = res.key;
+    if (!freshKey.value) {
+      // type says key: string, but a server-side auth change could omit it —
+      // never render a key panel around an empty string
+      keysMessage.value = "Couldn't create the key — the server returned no key. Try again.";
+      return;
+    }
     mintState.mintName = '';
     await refreshKeys();
   } catch (e) {
@@ -157,8 +163,8 @@ async function copyKey(key: string) {
        of the key (mirrors EmployeeEditorModal's minted-key guard) -->
   <UModal
     v-model:open="open"
-    :dismissible="!freshKey"
-    :close="!freshKey"
+    :dismissible="!freshKey && !keysBusy"
+    :close="!freshKey && !keysBusy"
     :title="`${employee?.name ?? ''}'s access keys`"
   >
     <template #body>
@@ -212,6 +218,7 @@ async function copyKey(key: string) {
                 v-model="renameValue"
                 size="sm"
                 placeholder="Key name"
+                aria-label="Key name"
                 class="flex-1"
                 @keydown.enter.prevent="saveRename"
               />
@@ -247,7 +254,7 @@ async function copyKey(key: string) {
                   variant="ghost"
                   color="neutral"
                   size="sm"
-                  aria-label="Rename key"
+                  :aria-label="`Rename ${k.name ?? 'unnamed key'}`"
                   :disabled="keysBusy"
                   @click="startRename(k)"
                 /><template #content><div class="px-3 py-1.5 text-xs">Rename key</div></template></UPopover
@@ -259,7 +266,7 @@ async function copyKey(key: string) {
                   color="neutral"
                   size="sm"
                   class="text-muted hover:text-error"
-                  aria-label="Revoke key"
+                  :aria-label="`Revoke ${k.name ?? 'unnamed key'}`"
                   :disabled="keysBusy"
                   @click="askRevoke(k.id)"
                 /><template #content><div class="px-3 py-1.5 text-xs">Revoke key</div></template></UPopover
@@ -269,7 +276,7 @@ async function copyKey(key: string) {
         </div>
         <!-- load failure: the alert above carries the message; retry re-runs the fetch -->
         <div v-else-if="!keysBusy && keysLoadError">
-          <UButton size="sm" variant="soft" icon="i-lucide-refresh-cw" label="Retry" @click="refreshKeys" />
+          <UButton size="sm" variant="soft" icon="i-lucide-refresh-cw" label="Try again" @click="refreshKeys" />
         </div>
         <p v-else-if="!keysBusy" class="text-muted text-sm">No keys yet — create one below.</p>
       </div>
@@ -312,6 +319,8 @@ async function copyKey(key: string) {
   <UModal
     :open="revokeConfirmId !== null"
     title="Revoke key?"
+    :dismissible="!keysBusy"
+    :close="!keysBusy"
     @update:open="
       (v: boolean) => {
         if (!v) revokeConfirmId = null;
@@ -336,7 +345,7 @@ async function copyKey(key: string) {
     </template>
     <template #footer>
       <div class="flex w-full justify-end gap-2">
-        <UButton variant="ghost" color="neutral" @click="revokeConfirmId = null">Cancel</UButton>
+        <UButton variant="ghost" color="neutral" :disabled="keysBusy" @click="revokeConfirmId = null">Cancel</UButton>
         <UButton
           color="error"
           icon="i-lucide-trash-2"

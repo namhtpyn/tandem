@@ -17,8 +17,8 @@ import type { EditorView, ClipboardEventLike, DragEventLike } from '~/types/edit
 import { taskAttachmentsUrl } from '~/utils/api-urls';
 import { NONE_ID, saveFailed } from '~/utils/forms';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
-import { attachmentToken } from '~/utils/task-tokens';
-import { aiOptionLabel, kindLabel } from '~/utils/ui-labels';
+import { attachmentRef, attachmentToken } from '~/utils/task-tokens';
+import { employeeOptions, kindLabel } from '~/utils/ui-labels';
 
 const open = defineModel<boolean>('open', { default: false });
 const props = defineProps<{ task: TaskRow | null; parentTaskId?: string | null }>();
@@ -35,7 +35,7 @@ const projectsLive = useQuery($orpc.projects.list.queryOptions({ queryKey: [CHAN
 const statuses = computed(() => unref(statusesLive.data) ?? []);
 // the create-time status select lists READY-category statuses only — default to
 // the first of those so the select never renders with a value it can't display
-const defaultStatusId = computed(() => statuses.value.find((x) => x.category === 'ready')?.id ?? STATUS.todo);
+const defaultStatusId = computed(() => statuses.value.find((x) => x.category === CATEGORY.READY)?.id ?? STATUS.todo);
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[]);
 // @mention menu items: label = display name, mention id = employee id (used by the brief builder)
 const mentionItems = computed(() =>
@@ -86,7 +86,15 @@ const ImagePaste = Extension.create<{ onImage: (file: File) => Promise<void> }>(
 
 const attachmentInput = ref<HTMLInputElement | null>(null);
 const editingId = ref<string | null>(null);
-const busy = ref(false);
+// busy = ANY write in flight. Uploads and save are counted separately: a
+// finished upload must not re-enable Save while another upload (or the save
+// itself) is still running.
+const saving = ref(false);
+const uploadCount = ref(0);
+const busy = computed(() => saving.value || uploadCount.value > 0);
+/** uploads run one at a time behind this chain — two paste events racing the
+ *  same title would otherwise each mint their own task/draft row */
+let uploadChain: Promise<unknown> = Promise.resolve();
 const message = ref('');
 const messageOk = ref(false); // tone: success paths ('Attached …') render green
 
@@ -133,8 +141,8 @@ const draftStatus = ref<string | null>(null);
 async function ensureTaskId(): Promise<string> {
   if (editingId.value) return editingId.value;
   if (!createInFlight) {
-    createInFlight = (async () => {
-      const created = await $client.tasks.create({
+    const created = (async () => {
+      const row = await $client.tasks.create({
         title: form.title.trim(),
         description: '',
         assigneeId: form.assigneeId === NONE_ID ? null : form.assigneeId,
@@ -145,18 +153,31 @@ async function ensureTaskId(): Promise<string> {
       });
       createdInSession.value = true;
       draftStatus.value = form.status;
-      editingId.value = created.id;
+      editingId.value = row.id;
       void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
-      return created.id;
-    })().finally(() => {
-      createInFlight = null;
+      return row.id;
+    })();
+    const tracked: Promise<string> = created.finally(() => {
+      if (createInFlight === tracked) createInFlight = null;
     });
+    createInFlight = tracked;
   }
   return createInFlight;
 }
 
 /** delete the attachment-only draft when the modal closes without saving */
 async function discardDraft() {
+  // an attachment paste can still be minting the row: wait for it, or close
+  // would leave the draft orphaned in the list (and editingId would still be null)
+  if (createInFlight) {
+    try {
+      await createInFlight;
+    } catch {
+      /* the upload surfaced its own failure */
+    }
+  }
+  // reopened while we waited: the new session owns the row now
+  if (open.value) return;
   const id = editingId.value;
   const draft = createdInSession.value;
   createdInSession.value = false;
@@ -170,31 +191,36 @@ async function discardDraft() {
   }
 }
 
-/** upload a file to the task being created/edited and insert its token into the description */
-async function uploadAttachment(
+/** upload response contract — the server owns it; a silent shape drift must fail
+ *  loudly here instead of building a broken attachment token */
+const uploadResponseSchema = z.object({ id: z.string().min(1), filename: z.string().min(1), mime: z.string().min(1) });
+
+/** queue + upload one file; the insertion itself is serialized so two pastes
+ *  can never race ensureTaskId or interleave their description appends */
+function uploadAttachment(
   file: File,
   viaEditor = false,
+): Promise<{ id: string; filename: string; token: string } | null> {
+  const job = uploadChain.then(() => uploadOne(file, viaEditor));
+  uploadChain = job.catch(() => undefined);
+  return job;
+}
+
+async function uploadOne(
+  file: File,
+  viaEditor: boolean,
 ): Promise<{ id: string; filename: string; token: string } | null> {
   if (!form.title.trim()) {
     messageOk.value = false;
     message.value = 'Add a title first — files attach to a saved task';
     return null;
   }
-  if (!editingId.value && createInFlight) {
-    // a sibling paste is still minting the row — name the wait instead of no-op
-    messageOk.value = true;
-    message.value = 'Finishing upload…';
-  }
+  uploadCount.value += 1;
   try {
-    busy.value = true;
     const taskId = await ensureTaskId();
     const fd = new FormData();
     fd.append('file', file);
-    const up = (await $fetch(taskAttachmentsUrl(taskId), { method: 'POST', body: fd })) as {
-      id: string;
-      filename: string;
-      mime: string;
-    };
+    const up = uploadResponseSchema.parse(await $fetch(taskAttachmentsUrl(taskId), { method: 'POST', body: fd }));
     const token = attachmentToken(up.mime, up.filename, up.id);
     // when the editor owns the field the image NODE is the single insertion —
     // appending the string too would duplicate the marker in the doc
@@ -206,7 +232,7 @@ async function uploadAttachment(
     messageOk.value = false;
     message.value = errorMessage(e, "Couldn't attach the file — try again");
   } finally {
-    busy.value = false;
+    uploadCount.value -= 1;
   }
   return null;
 }
@@ -219,7 +245,7 @@ async function onEditorImage(file: File) {
   if (descriptionEditor.value) {
     descriptionEditor.value.commands.insertContent({
       type: 'image',
-      attrs: { src: `attachment-${att.id}`, alt: att.filename },
+      attrs: { src: attachmentRef(att.id), alt: att.filename },
     });
   } else {
     // editor not mounted (defensive) — fall back to the string append
@@ -245,16 +271,14 @@ const updateMutation = useMutation($orpc.tasks.update.mutationOptions());
 // loose frontend schema (repo law): title presence only — the server owns the rest
 const taskFormSchema = z.object({ title: z.string().trim().min(1, 'Title is required') });
 
-const assigneeOptions = computed(() => [
-  { label: 'Unassigned', value: NONE_ID },
-  ...employees.value.map((e) => ({ label: aiOptionLabel(e.name, e.kind), value: e.id })),
-]);
+const assigneeOptions = computed(() => employeeOptions(employees.value, { noneLabel: 'Unassigned' }));
+const reviewerOptions = computed(() => employeeOptions(employees.value));
 const projectOptions = computed(() => [
   { label: 'No project', value: NONE_ID },
   ...projectRows.value.map((p) => ({ label: p.name, value: p.id })),
 ]);
 const statusOptions = computed(() =>
-  statuses.value.filter((x) => x.category === 'ready').map((x) => ({ label: x.name, value: x.id })),
+  statuses.value.filter((x) => x.category === CATEGORY.READY).map((x) => ({ label: x.name, value: x.id })),
 );
 
 /** parent name for the subtask submit copy ('Adding to <parent>') */
@@ -277,10 +301,22 @@ const reviewersLocked = computed(() => {
 
 async function save() {
   // one write at a time — a double-click or stray Enter must not double-create
-  if (busy.value) return;
-  busy.value = true;
+  if (saving.value) return;
+  saving.value = true;
   message.value = '';
   try {
+    // an attachment paste may be minting the task right now — saving in parallel
+    // would take the create branch too and mint a SECOND task for the same form
+    if (createInFlight) {
+      try {
+        await createInFlight;
+      } catch {
+        /* that upload reported the failure; this save can still create cleanly */
+      }
+    }
+    // tokens land in the description as their uploads finish — save the doc the
+    // user can actually see, after the queued uploads appended theirs
+    if (uploadCount.value > 0) await uploadChain;
     const payload = {
       title: form.title.trim(),
       // prefer the live doc's markdown; the string form.description is the
@@ -314,7 +350,7 @@ async function save() {
     messageOk.value = false;
     message.value = saveFailed(e, 'task');
   } finally {
-    busy.value = false;
+    saving.value = false;
   }
 }
 </script>
@@ -407,7 +443,7 @@ async function save() {
           <USelectMenu
             v-model="form.reviewers"
             multiple
-            :items="employees.map((e) => ({ label: aiOptionLabel(e.name, e.kind), value: e.id }))"
+            :items="reviewerOptions"
             value-key="value"
             icon="i-lucide-user-check"
             :disabled="reviewersLocked"

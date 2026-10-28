@@ -9,22 +9,22 @@ import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tansta
 import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
 
-import { CHANGE_RESOURCE } from '#shared/enums';
+import { CATEGORY, CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
-import { composerReady, useWorkflowActions } from '~/composables/useWorkflowActions';
+import { composerHint, composerReady, useWorkflowActions } from '~/composables/useWorkflowActions';
 import { formatWhenShort } from '~/utils/format-when';
 import { NONE_ID, errorMessage, saveFailed } from '~/utils/forms';
 import type { EmployeeRow, TaskRow, TaskRunRow, ThreadRow } from '~/utils/orpc-types';
-import { threadTime, buildThread, type ThreadItem } from '~/utils/task-thread';
+import { activityNotes, buildThread, parseRunEnvelope, threadTime, type ThreadNoteItem } from '~/utils/task-thread';
 import {
-  activityIcon,
-  activityLabel,
+  activityView,
   aiOptionLabel,
   categoryColor,
   categoryIcon,
   categoryText,
   composerPlaceholder,
   dotClass,
+  employeeOptions,
   statusLabel,
   runStatus,
   AGENT_RUN_VIEW,
@@ -150,19 +150,33 @@ const busy = ref(false);
 const message = ref('');
 const messageOk = ref(false); // message tone: only auto-assign success renders green
 
+// optimistic row status (same contract as the detail page's selects): the chosen
+// value shows at once, and is dropped the moment the live row catches up
+const pendingStatus = ref(new Map<string, string>());
+function rowStatus(row: TaskRow): string {
+  return pendingStatus.value.get(row.id) ?? row.status;
+}
+watch(rows, (list) => {
+  for (const r of list) {
+    if (pendingStatus.value.get(r.id) === r.status) pendingStatus.value.delete(r.id);
+  }
+});
+
 async function setStatus(row: TaskRow, status: string) {
-  if (row.status === status || busy.value) return;
+  if (rowStatus(row) === status || busy.value) return;
   // manual status is FREE (owner ruling 2026-10-27): every status is reachable from
   // every surface — the server is the only gate. busy gates selects + drops so a
   // second move can't race the first one's refetch.
   message.value = '';
   messageOk.value = false;
   busy.value = true;
+  pendingStatus.value.set(row.id, status);
   try {
     await setStatusMutation.mutateAsync({ id: row.id, status });
     // SSE-down backstop: the list must refetch even without the change bus
     await queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
   } catch (e) {
+    pendingStatus.value.delete(row.id);
     message.value = saveFailed(e, 'status', 'save');
   } finally {
     busy.value = false;
@@ -194,6 +208,12 @@ async function autoAssign(row: TaskRow) {
 
 const pendingDelete = ref<TaskRow | null>(null);
 const deleteError = ref('');
+/** arming the confirm always starts with a clean error slot — a failure from the
+ *  previous task must not read as this one's */
+function openDelete(row: TaskRow) {
+  deleteError.value = '';
+  pendingDelete.value = row;
+}
 const deleteOpen = computed({
   get: () => pendingDelete.value !== null,
   set: (v: boolean) => {
@@ -240,13 +260,49 @@ const workflowOpen = ref(false);
 const workflowTaskId = ref<string | null>(null);
 const workflowTaskFallback = ref<TaskRow | null>(null);
 const workflowTaskLive = computed(() => rows.value.find((t) => t.id === workflowTaskId.value) ?? null);
-const workflowTask = computed<TaskRow | null>(() => workflowTaskLive.value ?? workflowTaskFallback.value);
+// the fallback row freezes at open time; when the drawer's task leaves the current
+// page/filter (a verdict moved it), the unfiltered list snapshot is the truthful
+// source — otherwise the drawer would show yesterday's status forever
+const workflowSnapshotQuery = useQuery(
+  computed(() => ({
+    ...$orpc.tasks.list.queryOptions({ queryKey: [CHANGE_RESOURCE.TASKS] }),
+    enabled: workflowOpen.value && !!workflowTaskId.value && !workflowTaskLive.value,
+  })),
+);
+const workflowTaskSnapshot = computed<TaskRow | null>(() => {
+  const all = (unref(workflowSnapshotQuery.data) ?? []) as TaskRow[];
+  return all.find((t) => t.id === workflowTaskId.value) ?? null;
+});
+const workflowTask = computed<TaskRow | null>(
+  () => workflowTaskLive.value ?? workflowTaskSnapshot.value ?? workflowTaskFallback.value,
+);
 watch(workflowTaskLive, (t) => {
   if (t) workflowTaskFallback.value = t;
 });
+// gone from the snapshot too = deleted elsewhere: close instead of showing a ghost
+watch([workflowTaskLive, workflowTaskSnapshot, () => workflowSnapshotQuery.isFetched.value], () => {
+  if (
+    workflowSnapshotQuery.isFetched.value &&
+    workflowOpen.value &&
+    !workflowTaskLive.value &&
+    !workflowTaskSnapshot.value
+  ) {
+    workflowOpen.value = false;
+    workflowTaskId.value = null;
+  }
+});
 // the workflow ladder (copy + invalidation) is shared with the task page
-const { workflowNote, workflowBusy, workflowMessage, workflowOk, workflowFailed, wfAction, sendNote, resetWorkflow } =
-  useWorkflowActions(() => workflowTask.value?.id ?? null);
+const {
+  workflowNote,
+  workflowBusy,
+  workflowMessage,
+  workflowOk,
+  verdictSeq,
+  verdictFailed,
+  wfAction,
+  sendNote,
+  resetWorkflow,
+} = useWorkflowActions(() => workflowTask.value?.id ?? null);
 // the workflow gate keys off the status CATEGORY (not seeded uuids): ready /
 // working / paused are the work states where forward/abandon/submit apply
 const workflowStatusCategory = computed(() =>
@@ -254,9 +310,9 @@ const workflowStatusCategory = computed(() =>
 );
 const workflowIsWorking = computed(
   () =>
-    workflowStatusCategory.value === 'ready' ||
-    workflowStatusCategory.value === 'working' ||
-    workflowStatusCategory.value === 'paused',
+    workflowStatusCategory.value === CATEGORY.READY ||
+    workflowStatusCategory.value === CATEGORY.WORKING ||
+    workflowStatusCategory.value === CATEGORY.PAUSED,
 );
 
 /** drawer composer: send is the answer verb while the task waits for one; a null
@@ -264,9 +320,14 @@ const workflowIsWorking = computed(
 const drawerSendReady = computed(() => composerReady(workflowStatusCategory.value, workflowNote.value));
 function sendDrawerNote() {
   if (!drawerSendReady.value) return;
-  void sendNote(workflowStatusCategory.value === 'waiting_answer');
+  void sendNote(workflowStatusCategory.value === CATEGORY.WAITING_ANSWER);
 }
 const forwardTo = ref(NONE_ID);
+/** forward picker options — the current question holder can't forward to themselves;
+ *  hoisted so the template stays markup (an inline array rebuilt every render) */
+const forwardItems = computed(() =>
+  employeeOptions(employees.value, { noneLabel: 'Not forwarded', excludeId: workflowTask.value?.questionHolderId }),
+);
 /** cancel is terminal — the drawer arms a confirm block instead of firing at once */
 const cancelArmed = ref(false);
 async function confirmCancel() {
@@ -304,21 +365,19 @@ const drawerThreadQuery = useQuery(
 );
 const drawerThreadRows = computed(() => (unref(drawerThreadQuery.data) ?? []) as ThreadRow[]);
 // runs render in their own card above, so the feed keeps notes only
-const workflowFeed = computed<ThreadItem[]>(() =>
+const workflowFeed = computed<ThreadNoteItem[]>(() =>
   buildThread({
     runs: [],
-    activity: drawerThreadRows.value
-      .filter((r) => r.activity)
-      .map((r) => ({
-        id: r.id,
-        noteKind: String(r.activity?.kind ?? ''),
-        body: r.body,
-        authorName: r.authorName,
-        authorId: r.authorId,
-        createdAt: r.createdAt,
-      })),
-  }),
+    activity: activityNotes(drawerThreadRows.value),
+  }).filter((i): i is ThreadNoteItem => i.kind === 'note'),
 );
+/** one view lookup per activity row — label and glyph always agree */
+const activityViewById = computed(() => new Map(workflowFeed.value.map((a) => [a.id, activityView(a.noteKind)])));
+
+/** a settled run's output as the thread shows it — the envelope's text, else raw */
+function runText(r: TaskRunRow): string {
+  return parseRunEnvelope(r.output)?.text ?? r.output;
+}
 
 // run rows read as sentences — 'Run failed (exit code 1)', never bare status jargon.
 // Status normalization + dot + words come from the SHARED ui-labels vocabulary.
@@ -371,16 +430,25 @@ const BOARD_MENU_ITEM =
 // manual status is FREE on every surface (owner ruling) — any column is a legal drop
 
 function tasksByStatus(status: string) {
-  return rows.value.filter((t) => t.status === status);
+  return rows.value.filter((t) => rowStatus(t) === status);
 }
 
-function onDrop(status: string) {
+function onDragStart(e: DragEvent, id: string) {
+  draggingId.value = id;
+  if (!e.dataTransfer) return;
+  // the payload IS the task id — the drop handler reads it back instead of
+  // trusting a ref that a second drag (or another window) could have moved
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', id);
+}
+
+function onDrop(status: string, e: DragEvent) {
   if (busy.value) return;
-  const id = draggingId.value;
+  const id = e.dataTransfer?.getData('text/plain') || draggingId.value;
   draggingId.value = null;
   dropTarget.value = null;
   const row = rows.value.find((t) => t.id === id);
-  if (!row || row.status === status) return;
+  if (!row || rowStatus(row) === status) return;
   void setStatus(row, status);
 }
 
@@ -463,7 +531,22 @@ onServerPrefetch(() =>
             <span class="whitespace-nowrap sm:hidden">Decisions</span>
             <span class="hidden whitespace-nowrap sm:inline">Needs my decision</span>
             <span
-              v-if="inboxCount > 0"
+              v-if="inboxQuery.isPending.value"
+              class="bg-accented text-muted inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
+              data-testid="inbox-count-pending"
+              aria-label="Loading the decision count"
+              >…</span
+            >
+            <span
+              v-else-if="inboxQuery.isError.value"
+              class="bg-error/15 text-error inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
+              data-testid="inbox-count-error"
+              title="Couldn't load the decision count — reopen the page to retry"
+              aria-label="Decision count unavailable"
+              >!</span
+            >
+            <span
+              v-else-if="inboxCount > 0"
               class="bg-accented text-default inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
               data-testid="inbox-count"
               >{{ inboxCount }}</span
@@ -582,7 +665,7 @@ onServerPrefetch(() =>
         <!-- borderless select: the row already reads as a table — no OS chrome,
              just a category dot + name + chevron, hover reveals an elevated bg -->
         <USelect
-          :model-value="row.original.status"
+          :model-value="rowStatus(row.original)"
           :items="statusOptions"
           value-key="value"
           size="sm"
@@ -595,7 +678,7 @@ onServerPrefetch(() =>
           <template #leading>
             <span
               class="inline-block size-2 shrink-0 rounded-full"
-              :class="statusDot(row.original.status)"
+              :class="statusDot(rowStatus(row.original))"
               aria-hidden="true"
             />
           </template>
@@ -656,7 +739,7 @@ onServerPrefetch(() =>
               class="text-muted hover:text-error"
               size="sm"
               :aria-label="`Delete ${row.original.title}`"
-              @click="pendingDelete = row.original"
+              @click="openDelete(row.original)"
             />
             <template #content>
               <div class="px-3 py-1.5 text-xs">Delete task</div>
@@ -679,10 +762,10 @@ onServerPrefetch(() =>
                 <span class="inline-flex items-center gap-1">
                   <span
                     class="inline-block size-2 shrink-0 rounded-full"
-                    :class="statusDot(row.status)"
+                    :class="statusDot(rowStatus(row))"
                     aria-hidden="true"
                   />
-                  {{ statusLabel(row.status, statusById) }}
+                  {{ statusLabel(rowStatus(row), statusById) }}
                 </span>
                 <span class="inline-flex items-center gap-1" :class="row.assigneeKind === 'ai' ? 'text-primary' : ''">
                   <UIcon v-if="row.assigneeKind === 'ai'" name="i-lucide-bot" class="size-3 shrink-0" />
@@ -717,7 +800,7 @@ onServerPrefetch(() =>
                       :key="st.id"
                       type="button"
                       :class="BOARD_MENU_ITEM"
-                      :disabled="busy || row.status === st.id"
+                      :disabled="busy || rowStatus(row) === st.id"
                       @click="setStatus(row, st.id)"
                     >
                       <span
@@ -735,7 +818,7 @@ onServerPrefetch(() =>
                   <button
                     type="button"
                     :class="[BOARD_MENU_ITEM, 'text-error hover:bg-error/10 hover:text-error']"
-                    @click="pendingDelete = row"
+                    @click="openDelete(row)"
                   >
                     <UIcon name="i-lucide-trash-2" class="size-3.5 shrink-0" />Delete
                   </button>
@@ -778,7 +861,7 @@ onServerPrefetch(() =>
           :class="dropTarget === col.id ? 'ring-primary ring-2' : ''"
           @dragover.prevent="dropTarget = col.id"
           @dragleave="dropTarget === col.id && (dropTarget = null)"
-          @drop.prevent="onDrop(col.id)"
+          @drop.prevent="onDrop(col.id, $event)"
         >
           <header class="border-default flex items-center justify-between gap-2 border-b px-3 py-2">
             <h3 :id="`board-col-${col.id}`" class="text-toned flex min-w-0 items-center gap-1.5 text-sm font-medium">
@@ -790,8 +873,14 @@ onServerPrefetch(() =>
               />
               <span class="truncate">{{ col.name }}</span>
             </h3>
-            <UBadge color="neutral" variant="subtle" size="sm" class="shrink-0">
-              {{ tasksByStatus(col.id).length }} {{ tasksByStatus(col.id).length === 1 ? 'task' : 'tasks' }}
+            <UBadge
+              color="neutral"
+              variant="subtle"
+              size="sm"
+              class="shrink-0"
+              title="Counts tasks on this page only — use the pager for the rest"
+            >
+              {{ tasksByStatus(col.id).length }} on this page
             </UBadge>
           </header>
           <div class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
@@ -808,9 +897,9 @@ onServerPrefetch(() =>
                 class="border-default bg-default group/card relative cursor-grab rounded-lg border p-2.5 shadow-sm active:cursor-grabbing"
                 :class="[
                   draggingId === row.id ? 'opacity-40' : '',
-                  statusById.get(row.status)?.category === 'done' ? 'opacity-70' : '',
+                  statusById.get(rowStatus(row))?.category === CATEGORY.DONE ? 'opacity-70' : '',
                 ]"
-                @dragstart="draggingId = row.id"
+                @dragstart="onDragStart($event, row.id)"
                 @dragend="
                   draggingId = null;
                   dropTarget = null;
@@ -846,7 +935,7 @@ onServerPrefetch(() =>
                             :key="st.id"
                             type="button"
                             :class="BOARD_MENU_ITEM"
-                            :disabled="busy || row.status === st.id"
+                            :disabled="busy || rowStatus(row) === st.id"
                             @click="setStatus(row, st.id)"
                           >
                             <span
@@ -864,7 +953,7 @@ onServerPrefetch(() =>
                         <button
                           type="button"
                           :class="[BOARD_MENU_ITEM, 'text-error hover:bg-error/10 hover:text-error']"
-                          @click="pendingDelete = row"
+                          @click="openDelete(row)"
                         >
                           <UIcon name="i-lucide-trash-2" class="size-3.5 shrink-0" />Delete
                         </button>
@@ -990,21 +1079,18 @@ onServerPrefetch(() =>
           <USelect
             v-if="workflowIsWorking"
             v-model="forwardTo"
-            :items="[
-              { label: 'Not forwarded', value: NONE_ID },
-              ...employees
-                .filter((e) => e.id !== workflowTask?.questionHolderId)
-                .map((e) => ({ label: e.name, value: e.id })),
-            ]"
+            :items="forwardItems"
             value-key="value"
             size="sm"
             class="w-full"
             aria-label="Forward to"
           />
           <TaskReviewBox
-            v-if="workflowStatusCategory === 'in_review' && drawerCanReview"
+            v-if="workflowStatusCategory === CATEGORY.IN_REVIEW && drawerCanReview"
+            :key="workflowTask?.id"
             :busy="workflowBusy"
-            :failed="workflowFailed"
+            :verdict-seq="verdictSeq"
+            :verdict-failed="verdictFailed"
             @verdict="
               (action: 'approve' | 'requestChanges' | 'reject', body?: string) =>
                 wfAction(action, { body: body || undefined })
@@ -1014,7 +1100,7 @@ onServerPrefetch(() =>
             v-model="workflowNote"
             :rows="3"
             :disabled="workflowBusy"
-            :placeholder="composerPlaceholder(workflowStatusCategory === 'waiting_answer')"
+            :placeholder="composerPlaceholder(workflowStatusCategory === CATEGORY.WAITING_ANSWER)"
             aria-label="Task note"
             class="w-full"
           />
@@ -1026,7 +1112,7 @@ onServerPrefetch(() =>
             :disabled="workflowBusy || !drawerSendReady"
             @click="sendDrawerNote()"
           >
-            {{ workflowStatusCategory === 'waiting_answer' ? 'Send answer' : 'Send' }}
+            {{ workflowStatusCategory === CATEGORY.WAITING_ANSWER ? 'Send answer' : 'Send' }}
           </UButton>
           <p
             v-if="workflowMessage"
@@ -1058,9 +1144,9 @@ onServerPrefetch(() =>
                 {{ runLabel(r) }}
               </p>
               <pre
-                v-if="r.output"
+                v-if="runText(r)"
                 class="bg-inverted text-inverted max-h-72 overflow-y-auto rounded-b-md px-2.5 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap"
-                >{{ r.output }}</pre>
+                >{{ runText(r) }}</pre>
             </div>
             <div v-if="drawerRunsQuery.isPending.value" class="space-y-2" aria-hidden="true">
               <USkeleton class="h-10 w-full rounded-md" />
@@ -1079,8 +1165,8 @@ onServerPrefetch(() =>
             <h3 class="text-muted text-xs font-medium">Activity</h3>
             <div v-for="a in workflowFeed" :key="a.id" class="border-default rounded-md border px-2.5 py-2 text-xs">
               <p class="text-toned flex items-center gap-1.5 font-medium">
-                <UIcon :name="activityIcon(a.kind === 'note' ? a.noteKind : a.kind)" class="size-3.5" />
-                {{ activityLabel(a.kind === 'note' ? a.noteKind : a.kind) }}
+                <UIcon :name="activityViewById.get(a.id)?.icon ?? 'i-lucide-info'" class="size-3.5" />
+                {{ activityViewById.get(a.id)?.label ?? 'Note' }}
                 <span class="text-muted font-normal">{{ a.authorName ?? 'system' }}</span>
                 <span class="text-dimmed ml-auto shrink-0 font-normal" data-allow-mismatch>{{
                   formatWhenShort(threadTime(a))

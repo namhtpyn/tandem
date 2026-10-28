@@ -7,6 +7,8 @@
  *  - 'run'      an agent dispatch turn (status pill + output bubble)
  *  - 'note'     human/system activity (questions, verdicts, status changes...)
  */
+import { ACTIVITY_KIND, type ActivityKind } from '#shared/enums';
+
 type ThreadBriefItem = {
   kind: 'brief';
   id: string;
@@ -34,10 +36,11 @@ type ThreadRunItem = {
   startedAt: string;
   finishedAt: string | null;
 };
-type ThreadNoteItem = {
+export type ThreadNoteItem = {
   kind: 'note';
   id: string;
-  noteKind: string;
+  /** typed activity kind — producers narrow through activityNotes(), never a raw string */
+  noteKind: ActivityKind;
   body: string;
   authorName: string | null;
   /** author's user id — avatar lookup via employeeAvatarUrl() */
@@ -75,6 +78,33 @@ type ThreadSource = {
 // (the UI never parses envelopes directly: item.kind === 'run' items carry the
 // settled body, and parseRunEnvelope is only the pre-settle fallback)
 export { parseRunEnvelope } from '#shared/run-verdict';
+
+/** activity payload kind (jsonb arrives loose) → typed ActivityKind, null when absent/unknown.
+ * The ONE narrowing point: legacy SCREAMING/lowercase rows normalize here so no
+ * producer has to carry String()/toUpperCase() compensation. */
+export function noteKindOf(activity: Record<string, unknown> | null | undefined): ActivityKind | null {
+  const raw = activity?.kind;
+  if (typeof raw !== 'string' || !raw) return null;
+  const upper = raw.toUpperCase();
+  return (Object.values(ACTIVITY_KIND) as string[]).includes(upper) ? (upper as ActivityKind) : null;
+}
+
+type ActivityRowLike = Pick<ThreadNoteItem, 'id' | 'body' | 'authorName' | 'authorId' | 'createdAt'> & {
+  activity: Record<string, unknown> | null;
+};
+
+/** thread rows → typed activity items for buildThread (runs-only surfaces pass []) */
+export function activityNotes(
+  rows: readonly ActivityRowLike[],
+): Array<Pick<ThreadNoteItem, 'id' | 'noteKind' | 'body' | 'authorName' | 'authorId' | 'createdAt'>> {
+  return rows.flatMap((r) => {
+    const noteKind = noteKindOf(r.activity);
+    if (!noteKind) return [];
+    return [
+      { id: r.id, noteKind, body: r.body, authorName: r.authorName, authorId: r.authorId, createdAt: r.createdAt },
+    ];
+  });
+}
 
 /** Merge by stable timestamp: runs by startedAt, notes by createdAt, brief first. */
 /** display timestamp for any thread item (runs carry startedAt, others createdAt) */

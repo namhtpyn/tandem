@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { z } from 'zod';
 
+import { SERVER_UNREACHABLE_COPY } from '~/utils/copy';
 // Dashboard shell (Nuxt UI UDashboardGroup): login screen when unauthenticated,
 // sidebar + content when signed in. Session/auth-config via useState (app.vue).
 import { roleLabel } from '~/utils/ui-labels';
@@ -36,8 +37,9 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
-// distinct failure copy: unreachable server ≠ wrong credentials (fragments — no trailing periods)
-const SERVER_DOWN = "Can't reach the server — try again";
+// distinct failure copy: unreachable server ≠ wrong credentials. The 503 string
+// is the shared one (app boot + error page say the same thing).
+const SERVER_DOWN = SERVER_UNREACHABLE_COPY;
 const BAD_CREDENTIALS = 'Invalid email or password';
 
 async function login() {
@@ -111,9 +113,9 @@ const nav = computed(() =>
 </script>
 
 <template>
-  <div class="bg-default min-h-screen">
+  <div class="bg-default min-h-dvh">
     <!-- ===================== LOGIN ===================== -->
-    <div v-if="!session" class="flex min-h-screen items-center justify-center p-6">
+    <div v-if="!session" class="flex min-h-dvh items-center justify-center p-6">
       <div class="w-full max-w-sm">
         <div class="mb-8 flex flex-col items-center gap-2 text-center">
           <div class="bg-primary/10 flex size-12 items-center justify-center rounded-xl shadow-sm">
@@ -142,7 +144,7 @@ const nav = computed(() =>
               class="space-y-4"
               @submit="login"
             >
-              <UFormField label="Email" name="email">
+              <UFormField label="Email" name="email" required>
                 <UInput
                   v-model="loginEmail"
                   type="email"
@@ -151,10 +153,9 @@ const nav = computed(() =>
                   class="w-full"
                   size="lg"
                   autocomplete="email"
-                  required
                 />
               </UFormField>
-              <UFormField label="Password" name="password">
+              <UFormField label="Password" name="password" required>
                 <UInput
                   v-model="loginPassword"
                   type="password"
@@ -162,7 +163,6 @@ const nav = computed(() =>
                   class="w-full"
                   size="lg"
                   autocomplete="current-password"
-                  required
                 />
               </UFormField>
               <UAlert
@@ -195,7 +195,10 @@ const nav = computed(() =>
     <UDashboardGroup v-else unit="rem">
       <UDashboardSidebar id="tandem-sidebar" :min-size="14" :default-size="16" :max-size="22" collapsible resizable>
         <template #header="{ collapsed }">
-          <NuxtLink to="/" class="flex min-w-0 items-center gap-2.5">
+          <NuxtLink
+            to="/"
+            class="focus-visible:ring-primary flex min-w-0 items-center gap-2.5 rounded-md outline-none focus-visible:ring-2"
+          >
             <div class="bg-primary/10 flex size-9 shrink-0 items-center justify-center rounded-xl">
               <UIcon name="i-lucide-users" class="text-primary size-5" />
             </div>
@@ -204,9 +207,7 @@ const nav = computed(() =>
                 >{{ companyName }}
                 <span v-if="showVersionChip" class="text-dimmed text-xs font-normal">v{{ versionLabel }}</span>
               </span>
-              <span class="text-dimmed truncate text-xs leading-tight">{{
-                companyName.toLowerCase() === 'tandem' ? 'company workspace' : 'workspace'
-              }}</span>
+              <span class="text-dimmed truncate text-xs leading-tight">workspace</span>
             </div>
           </NuxtLink>
         </template>

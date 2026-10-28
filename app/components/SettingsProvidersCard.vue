@@ -167,7 +167,13 @@ onServerPrefetch(() => providersLive.suspense());
       <div>
         <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h3 class="text-highlighted text-sm font-semibold">Catalog</h3>
-          <UButton icon="i-lucide-plus" size="sm" label="New provider" @click="openMProvEditor()" />
+          <UButton
+            v-if="mProvList.length > 0"
+            icon="i-lucide-plus"
+            size="sm"
+            label="New provider"
+            @click="openMProvEditor()"
+          />
         </div>
         <!-- Mobile: stacked cards -->
         <div v-if="mProvList.length" class="space-y-3 md:hidden">
@@ -322,21 +328,22 @@ onServerPrefetch(() => providersLive.suspense());
   <UModal
     v-model:open="mProvEditorOpen"
     :title="mProvEditingId ? 'Edit provider' : 'New provider'"
+    :dismissible="!mProvBusy"
+    :close="!mProvBusy"
     :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
   >
     <template #body>
       <UForm id="provider-editor-form" :schema="mProvSchema" :state="mProvForm" class="space-y-4" @submit="saveMProv">
-        <UFormField label="Label" name="label">
-          <UInput v-model="mProvForm.label" icon="i-lucide-tag" placeholder="Provider name" class="w-full" required />
+        <UFormField label="Label" name="label" required>
+          <UInput v-model="mProvForm.label" icon="i-lucide-tag" placeholder="Provider name" class="w-full" />
         </UFormField>
-        <UFormField label="Base URL" name="baseUrl">
+        <UFormField label="Base URL" name="baseUrl" required>
           <template #hint><FormHint text="OpenAI- or Anthropic-compatible endpoint root" /></template>
           <UInput
             v-model="mProvForm.baseUrl"
             icon="i-lucide-globe"
             placeholder="https://api.openai.com"
             class="w-full"
-            required
           />
         </UFormField>
         <UFormField label="Available endpoints" name="endpoints">
@@ -415,7 +422,7 @@ onServerPrefetch(() => providersLive.suspense());
   </UModal>
 
   <!-- delete confirm (same pattern as the vault/environment delete confirms) -->
-  <UModal v-model:open="removeOpen" title="Delete provider">
+  <UModal v-model:open="removeOpen" title="Delete provider" :dismissible="!mProvBusy" :close="!mProvBusy">
     <template #body>
       <div class="space-y-4">
         <p class="text-muted text-sm">
@@ -436,18 +443,9 @@ onServerPrefetch(() => providersLive.suspense());
     </template>
     <template #footer>
       <div class="flex w-full justify-end gap-2">
-        <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingRemove = null" />
+        <UButton variant="ghost" color="neutral" label="Cancel" :disabled="mProvBusy" @click="pendingRemove = null" />
         <UButton icon="i-lucide-trash-2" color="error" label="Delete" :loading="mProvBusy" @click="removeMProv" />
       </div>
     </template>
   </UModal>
 </template>
-
-<style scoped>
-/* desktop hover-reveal for row actions — always visible on touch/mobile */
-@media (min-width: 768px) and (hover: hover) {
-  :deep(tbody tr:not(:hover):not(:focus-within)) .row-actions {
-    opacity: 0;
-  }
-}
-</style>

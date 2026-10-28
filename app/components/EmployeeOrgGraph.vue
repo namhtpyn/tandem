@@ -199,7 +199,7 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
       class="flex flex-1 flex-col items-center justify-center gap-3 py-10 text-center"
     >
       <p class="text-error text-sm">Couldn't load the org chart — try again</p>
-      <UButton size="sm" variant="soft" icon="i-lucide-refresh-cw" label="Retry" @click="emit('retry')" />
+      <UButton size="sm" variant="soft" icon="i-lucide-refresh-cw" label="Try again" @click="emit('retry')" />
     </div>
     <div v-else-if="!rows.length" class="flex flex-1 flex-col items-center justify-center gap-2 py-10 text-center">
       <UIcon name="i-lucide-users" class="text-dimmed size-8" />
@@ -214,12 +214,16 @@ function secondaryTopPath(fromIndex: number, toIndex: number): string {
       <ul class="sr-only" aria-label="Reporting lines">
         <li v-for="line in reportingLines" :key="line.id">{{ line.text }}</li>
       </ul>
+      <!-- the sr-only list above is the accessible hierarchy; the drawing is
+           decoration, so marking it hidden keeps a screen reader from
+           announcing the same org twice -->
       <svg
         :viewBox="`0 0 ${graphWidth} ${graphHeight}`"
         :width="graphWidth"
         :height="graphHeight"
-        role="group"
-        aria-label="Supervision hierarchy"
+        aria-hidden="true"
+        focusable="false"
+        data-testid="supervision-graph"
         class="m-auto h-auto w-full max-w-full min-w-[720px] shrink-0 md:h-auto md:w-auto md:min-w-0"
       >
         <!-- primary tree: elbow from parent bottom-center to child top-center -->

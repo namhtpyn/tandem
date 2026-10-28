@@ -1,5 +1,7 @@
 <script setup lang="ts">
 // Tandem shell: resolve session/auth-config/version once (SSR), share via useState.
+import { SERVER_UNREACHABLE_COPY } from '~/utils/copy';
+
 const session = useAppSession();
 const authConfig = useAuthConfigState();
 const appVersion = useAppVersion();
@@ -27,7 +29,7 @@ try {
     fatal: true,
     statusCode: 503,
     statusMessage: 'Tandem is unreachable',
-    message: 'Could not reach the Tandem server — it may be restarting. Try again in a moment.',
+    message: SERVER_UNREACHABLE_COPY,
   });
 }
 

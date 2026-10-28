@@ -13,7 +13,9 @@ export function formatWhen(value: string | Date | null | undefined): string {
   });
 }
 
-// compact variant for dense lists: times read as HH:MM today, 'Mon 27, 14:03' older
+// compact variant for dense lists: times read as HH:MM today, 'Oct 27, 14:03'
+// within this year, 'Oct 27, 2025, 14:03' once the year differs (a bare month/day
+// on an old row reads as this year)
 export function formatWhenShort(value: string | Date | null | undefined): string {
   if (!value) return '';
   const d = value instanceof Date ? value : new Date(value);
@@ -22,6 +24,9 @@ export function formatWhenShort(value: string | Date | null | undefined): string
   const sameDay = d.toDateString() === today.toDateString();
   const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   if (sameDay) return time;
-  const day = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const day =
+    d.getFullYear() === today.getFullYear()
+      ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+      : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
   return `${day}, ${time}`;
 }

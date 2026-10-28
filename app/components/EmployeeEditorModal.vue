@@ -84,8 +84,9 @@ async function copyKey(key: string) {
 }
 
 const isEdit = computed(() => editingId.value !== null);
-const byId = computed(() => new Map(props.rows.map((r) => [r.id, r])));
-const editingIsAi = computed(() => (editingId.value ? byId.value.get(editingId.value)?.kind === 'ai' : false));
+// edit mode: the kind comes from the row being edited, never a list lookup —
+// a search/page change can drop that row from `rows` while the modal stays open
+const editingIsAi = computed(() => (isEdit.value ? props.employee?.kind === 'ai' : false));
 const showAiFields = computed(() => (!isEdit.value ? form.kind === 'ai' : editingIsAi.value));
 
 const supervisorItems = computed(() =>
@@ -304,20 +305,20 @@ onServerPrefetch(() =>
   <UModal
     v-model:open="open"
     :title="isEdit ? 'Edit employee' : 'New employee'"
-    :dismissible="!mintedKey"
-    :close="!mintedKey"
+    :dismissible="!mintedKey && !busy"
+    :close="!mintedKey && !busy"
     :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
   >
     <template #body>
       <UForm id="employee-editor-form" :schema="employeeFormSchema" :state="form" class="space-y-4" @submit="save">
-        <UFormField name="name">
+        <UFormField name="name" required>
           <template #label> Name </template>
           <template #hint>
             <FormHint text="Shown across tasks, runs and the org graph" />
           </template>
-          <UInput v-model="form.name" icon="i-lucide-user" placeholder="Full name" class="w-full" required />
+          <UInput v-model="form.name" icon="i-lucide-user" placeholder="Full name" class="w-full" />
         </UFormField>
-        <UFormField name="email">
+        <UFormField name="email" required>
           <template #label> Email (login) </template>
           <template #hint>
             <FormHint text="Humans sign in with it; AI employees authenticate by API key" />
@@ -328,7 +329,6 @@ onServerPrefetch(() =>
             icon="i-lucide-at-sign"
             placeholder="name@company.com"
             class="w-full"
-            required
           />
         </UFormField>
         <UFormField name="avatar">
@@ -417,7 +417,7 @@ onServerPrefetch(() =>
         <UFormField name="title">
           <template #label> Title </template>
           <template #hint>
-            <FormHint text="Place in the company, e.g. Senior Engineer" />
+            <FormHint text="Place in the workspace, e.g. Senior Engineer" />
           </template>
           <AutoCompleteInput
             v-model="form.title"

@@ -25,8 +25,6 @@ export type SettingsPayload = Outputs['settings']['list'];
 export type ThreadRow = Outputs['tasks']['threadList'][number];
 export type TaskRunRow = Outputs['tasks']['runsList'][number];
 export type ReviewRow = Outputs['tasks']['reviews'][number];
-/** kept for the pre-existing call sites — one row type, two names */
-export type TaskReviewRow = ReviewRow;
 export type SubtaskRow = Outputs['tasks']['subtasks']['items'][number];
 export type ProposalRow = Outputs['tasks']['proposals']['items'][number];
 export type AssignmentRow = Outputs['tasks']['assignments']['items'][number];

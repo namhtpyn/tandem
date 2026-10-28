@@ -27,8 +27,9 @@ const titleSchema = z.object({ name: z.string().min(1, 'Name is required') });
 const titleBusy = ref(false);
 const titleError = ref<string | null>(null);
 const titleRemoveError = ref<string | null>(null);
-const titleConfirmId = ref<string | null>(null);
-const titleConfirming = computed(() => titles.value.find((t) => t.id === titleConfirmId.value) ?? null);
+// snapshot the row at ask time: a live lookup blanks the name (and the delete
+// target) the moment an SSE invalidation drops the row from the list
+const pendingTitle = ref<TitleRow | null>(null);
 
 const titleSaveMutation = useMutation({ ...$orpc.employees.titles.save.mutationOptions() });
 const titleRemoveMutation = useMutation({ ...$orpc.employees.titles.remove.mutationOptions() });
@@ -62,9 +63,9 @@ async function saveTitle() {
   }
 }
 
-function askRemoveTitle(id: string) {
+function askRemoveTitle(t: TitleRow) {
   titleRemoveError.value = null;
-  titleConfirmId.value = id;
+  pendingTitle.value = t;
 }
 
 async function removeTitle(id: string) {
@@ -72,7 +73,7 @@ async function removeTitle(id: string) {
   titleBusy.value = true;
   try {
     await titleRemoveMutation.mutateAsync({ id });
-    titleConfirmId.value = null;
+    pendingTitle.value = null;
   } catch (e) {
     titleRemoveError.value = saveFailed(e, 'title', 'delete');
   } finally {
@@ -88,6 +89,8 @@ onServerPrefetch(() => titlesQuery.suspense());
   <UModal
     v-model:open="open"
     title="Employee titles"
+    :dismissible="!titleBusy"
+    :close="!titleBusy"
     :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
   >
     <template #body>
@@ -122,7 +125,7 @@ onServerPrefetch(() => titlesQuery.suspense());
                 class="text-muted hover:text-error"
                 :aria-label="`Delete ${t.name}`"
                 :disabled="titleBusy"
-                @click="askRemoveTitle(t.id)"
+                @click="askRemoveTitle(t)"
               />
               <template #content><div class="px-3 py-1.5 text-xs">Delete</div></template>
             </UPopover>
@@ -147,7 +150,9 @@ onServerPrefetch(() => titlesQuery.suspense());
     </template>
     <template #footer>
       <div class="flex w-full items-center justify-between gap-2">
-        <UButton icon="i-lucide-plus" size="sm" label="New title" @click="openTitleEditor()" />
+        <!-- the empty state owns the create CTA; a second identical button in
+             the footer would compete with it -->
+        <UButton v-if="titles.length > 0" icon="i-lucide-plus" size="sm" label="New title" @click="openTitleEditor()" />
       </div>
     </template>
   </UModal>
@@ -156,6 +161,8 @@ onServerPrefetch(() => titlesQuery.suspense());
   <UModal
     v-model:open="titleEditorOpen"
     :title="titleEditingId ? 'Rename title' : 'New title'"
+    :dismissible="!titleBusy"
+    :close="!titleBusy"
     :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
   >
     <template #body>
@@ -187,7 +194,7 @@ onServerPrefetch(() => titlesQuery.suspense());
     </template>
     <template #footer>
       <div class="flex w-full justify-end gap-2">
-        <UButton variant="ghost" color="neutral" @click="titleEditorOpen = false">Cancel</UButton>
+        <UButton variant="ghost" color="neutral" :disabled="titleBusy" @click="titleEditorOpen = false">Cancel</UButton>
         <UButton
           type="submit"
           form="title-editor-form"
@@ -201,17 +208,19 @@ onServerPrefetch(() => titlesQuery.suspense());
 
   <!-- title delete confirm: employees keep their text -->
   <UModal
-    :open="titleConfirmId !== null"
+    :open="pendingTitle !== null"
+    :dismissible="!titleBusy"
+    :close="!titleBusy"
     @update:open="
       (v: boolean) => {
-        if (!v) titleConfirmId = null;
+        if (!v) pendingTitle = null;
       }
     "
     title="Delete title"
   >
     <template #body>
       <p class="text-sm">
-        Delete <strong>{{ titleConfirming?.name }}</strong> from the catalog? Employees keep their title text — it just
+        Delete <strong>{{ pendingTitle?.name }}</strong> from the catalog? Employees keep their title text — it just
         stops being offered in the picker.
       </p>
       <UAlert
@@ -227,12 +236,12 @@ onServerPrefetch(() => titlesQuery.suspense());
     </template>
     <template #footer>
       <div class="flex w-full justify-end gap-2">
-        <UButton variant="ghost" color="neutral" @click="titleConfirmId = null">Cancel</UButton>
+        <UButton variant="ghost" color="neutral" :disabled="titleBusy" @click="pendingTitle = null">Cancel</UButton>
         <UButton
           color="error"
           icon="i-lucide-trash-2"
           :loading="titleBusy"
-          @click="titleConfirming && removeTitle(titleConfirming.id)"
+          @click="pendingTitle && removeTitle(pendingTitle.id)"
           >Delete</UButton
         >
       </div>

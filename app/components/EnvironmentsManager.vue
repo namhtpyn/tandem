@@ -210,24 +210,33 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
         aria-label="Search environments"
       />
       <div class="ms-auto flex items-center gap-2 overflow-x-auto">
-        <UButton v-if="editable" icon="i-lucide-plus" label="New environment" size="sm" @click="openEditor()" />
+        <UButton
+          v-if="editable && (total > 0 || !!search)"
+          icon="i-lucide-plus"
+          label="New environment"
+          size="sm"
+          @click="openEditor()"
+        />
       </div>
     </div>
 
     <DataTable
       class="mt-3"
       :data="rows"
-      :loading="liveQuery.isFetching.value || liveQuery.isPlaceholderData.value"
+      :loading="liveQuery.isPending.value || liveQuery.isPlaceholderData.value"
+      :refreshing="liveQuery.isFetching.value && !liveQuery.isPending.value"
+      :filtered="isFiltered"
       :error="liveQuery.isError.value"
       @retry="liveQuery.refetch()"
+      @clear-search="search = ''"
       v-model:page="page"
       :page-count="pageCount"
       :page-size="pageSize"
       :columns="columns"
       show-empty-state
-      :empty-icon="isFiltered ? 'i-lucide-search-x' : 'i-lucide-server'"
+      empty-icon="i-lucide-server"
       empty-noun="environments"
-      :empty-text="isFiltered ? 'No results — try a different search.' : 'Add the SSH target where your agents run.'"
+      empty-text="Add the SSH target where your agents run."
     >
       <template #empty-cta>
         <UButton v-if="editable && !isFiltered" icon="i-lucide-plus" label="New environment" @click="openEditor()" />
@@ -253,11 +262,11 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
             :color="probeResult(row.original.id)?.ok ? 'success' : 'error'"
             variant="subtle"
             size="sm"
-            icon="i-lucide-circle-fill"
+            icon="i-lucide-circle"
           >
             {{ probeLabel(probeResult(row.original.id)?.ok) }}
           </UBadge>
-          <UBadge v-else color="neutral" variant="subtle" size="sm" icon="i-lucide-circle-fill">Not probed</UBadge>
+          <UBadge v-else color="neutral" variant="subtle" size="sm" icon="i-lucide-circle">Not probed</UBadge>
           <span
             v-if="probeResult(row.original.id)"
             class="text-dimmed truncate text-xs"
@@ -275,13 +284,13 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               variant="ghost"
               color="neutral"
               size="sm"
-              :aria-label="`Test ${row.original.name}`"
+              :aria-label="`Probe ${row.original.name}`"
               :loading="probingId === row.original.id"
               :disabled="busy || probingId !== null"
               @click="probe(row.original)"
             />
             <template #content>
-              <div class="px-3 py-1.5 text-xs">Test connection</div>
+              <div class="px-3 py-1.5 text-xs">Probe connection</div>
             </template>
           </UPopover>
           <UPopover mode="hover" enable-touch>
@@ -331,7 +340,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               >
                 {{ probeLabel(probeResult(row.id)?.ok) }}
               </UBadge>
-              <UBadge v-else color="neutral" variant="subtle" size="sm" icon="i-lucide-circle-fill">Not probed</UBadge>
+              <UBadge v-else color="neutral" variant="subtle" size="sm" icon="i-lucide-circle">Not probed</UBadge>
             </div>
           </div>
           <p v-if="probeResult(row.id)" class="text-dimmed mt-1 truncate text-xs" :title="probeResult(row.id)?.detail">
@@ -344,13 +353,13 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
                 variant="ghost"
                 color="neutral"
                 size="sm"
-                :aria-label="`Test ${row.name}`"
+                :aria-label="`Probe ${row.name}`"
                 :loading="probingId === row.id"
                 :disabled="busy || probingId !== null"
                 @click="probe(row)"
               />
               <template #content>
-                <div class="px-3 py-1.5 text-xs">Test connection</div>
+                <div class="px-3 py-1.5 text-xs">Probe connection</div>
               </template>
             </UPopover>
             <UPopover mode="hover" enable-touch>
@@ -387,14 +396,15 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       </template>
     </DataTable>
 
-    <UModal v-model:open="deleteOpen" title="Delete environment">
+    <UModal v-model:open="deleteOpen" title="Delete environment" :dismissible="!busy" :close="!busy">
       <template #body>
         <div class="space-y-4">
           <p class="text-muted text-sm">
             Delete environment
             <span class="text-highlighted font-semibold">{{ pendingDelete?.name }}</span> ({{
               pendingDelete?.username
-            }}@{{ pendingDelete?.host }})? AI agents configured on it will need reassigning.
+            }}@{{ pendingDelete?.host }})? You can't delete it while AI agents are configured on it — reassign them
+            first.
           </p>
           <UAlert
             v-if="deleteError"
@@ -409,7 +419,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
-          <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingDelete = null" />
+          <UButton variant="ghost" color="neutral" label="Cancel" :disabled="busy" @click="pendingDelete = null" />
           <UButton icon="i-lucide-trash-2" color="error" label="Delete" :loading="busy" @click="remove" />
         </div>
       </template>
@@ -419,22 +429,24 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       v-model:open="editorOpen"
       :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
       :title="editingId ? 'Edit environment' : 'New environment'"
+      :dismissible="!busy"
+      :close="!busy"
     >
       <template #body>
         <UForm id="environment-editor-form" :schema="envSchema" :state="form" class="space-y-4" @submit="save">
-          <UFormField name="name">
+          <UFormField name="name" required>
             <template #label> Name </template>
             <template #hint>
               <FormHint text="Unique label, e.g. ct112-tandem" />
             </template>
-            <UInput v-model="form.name" icon="i-lucide-tag" placeholder="Environment name" class="w-full" required />
+            <UInput v-model="form.name" icon="i-lucide-tag" placeholder="Environment name" class="w-full" />
           </UFormField>
-          <UFormField name="host">
+          <UFormField name="host" required>
             <template #label> Host </template>
             <template #hint>
               <FormHint text="Hostname or IP of the SSH target" />
             </template>
-            <UInput v-model="form.host" icon="i-lucide-server" placeholder="Hostname or IP" class="w-full" required />
+            <UInput v-model="form.host" icon="i-lucide-server" placeholder="Hostname or IP" class="w-full" />
           </UFormField>
           <UFormField name="port">
             <template #label> Port </template>
@@ -451,12 +463,12 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               class="w-full"
             />
           </UFormField>
-          <UFormField name="username">
+          <UFormField name="username" required>
             <template #label> Username </template>
             <template #hint>
               <FormHint text="Key or password — the runner connects with whichever this environment uses" />
             </template>
-            <UInput v-model="form.username" icon="i-lucide-user" placeholder="SSH username" class="w-full" required />
+            <UInput v-model="form.username" icon="i-lucide-user" placeholder="SSH username" class="w-full" />
           </UFormField>
           <UFormField name="secretUsage">
             <template #label> Authentication </template>
@@ -502,12 +514,3 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
     </UModal>
   </div>
 </template>
-
-<style scoped>
-/* desktop hover-reveal for row actions — always visible on touch/mobile */
-@media (min-width: 768px) and (hover: hover) {
-  :deep(tbody tr:not(:hover):not(:focus-within)) .row-actions {
-    opacity: 0;
-  }
-}
-</style>

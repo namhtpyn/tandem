@@ -27,6 +27,12 @@ const props = withDefaults(
     showEmptyState?: boolean;
     /** list query errored — swaps the empty state for retry copy */
     error?: boolean;
+    /** the parent declares an active filter/search (search box, chips, folder);
+     * falls back to the built-in search box when omitted */
+    filtered?: boolean;
+    /** built-in pager (default on) — tree lists keep a parent's subtrees on one
+     * screen by turning it off */
+    pager?: boolean;
     /** background refetch in flight while rows are already on screen (static tables) */
     refreshing?: boolean;
     /** bump to reset the internal pager — search/filter changes, NOT background refetches */
@@ -40,6 +46,8 @@ const props = withDefaults(
   {
     loading: false,
     refreshing: false,
+    filtered: undefined,
+    pager: true,
     resetPageKey: undefined,
     mobileTitleKey: undefined,
     mobileHideKeys: () => [],
@@ -62,6 +70,8 @@ const emit = defineEmits<{
   'update:search': [q: string];
   /** the list query failed — parents wire this to query.refetch() */
   retry: [];
+  /** the built-in no-results CTA — parents clear their search AND chip filters */
+  'clear-search': [];
 }>();
 const paginated = computed(() => props.pageCount !== undefined && props.page !== undefined);
 const pagination = computed(() => ({ pageIndex: (props.page ?? 1) - 1, pageSize: props.pageSize }));
@@ -100,20 +110,25 @@ watch(internalPageCount, (pc) => {
   if (internalPage.value > pc) internalPage.value = pc;
 });
 const viewData = computed(() =>
-  paginated.value
+  paginated.value || !props.pager
     ? props.data
     : props.data.slice((internalPage.value - 1) * props.pageSize, internalPage.value * props.pageSize),
 );
 // the mobile card list paginates exactly like the desktop rows (server-side
 // lists arrive pre-sliced; client-side lists slice the flattened tree)
 const mobileViewRows = computed<T[]>(() =>
-  paginated.value
+  paginated.value || !props.pager
     ? mobileRows.value
     : mobileRows.value.slice((internalPage.value - 1) * props.pageSize, internalPage.value * props.pageSize),
 );
-const isFiltered = computed(() => props.searchable && !!props.search?.trim());
+// one no-results sentence for every table: a search box, a filter chip and a
+// folder filter all land here, so the copy cannot contradict the empty state
+const NO_RESULTS_TEXT = 'No matches for the current search or filters.';
+const isFiltered = computed(() => props.filtered ?? (props.searchable && !!props.search?.trim()));
 
-const showPager = computed(() => (paginated.value || props.data.length > props.pageSize) && props.data.length > 0);
+const showPager = computed(
+  () => props.pager && (paginated.value || props.data.length > props.pageSize) && props.data.length > 0,
+);
 const displayPage = computed(() => (paginated.value ? (props.page ?? 1) : internalPage.value));
 const displayPageCount = computed(() => (paginated.value ? (props.pageCount ?? 1) : internalPageCount.value));
 function goPage(p: number) {
@@ -146,11 +161,14 @@ defineSlots<
     'empty-cta'?: () => VNode[];
     /** retry affordance rendered under the error copy (wire to the list query's refetch) */
     'error-cta'?: () => VNode[];
+    /** first-load skeleton rows for the desktop table (real rows, not a flash) */
+    loading?: () => VNode[];
   }
 >();
 
 const slots = useSlots();
-const desktopSlotNames = computed(() => Object.keys(slots).filter((n) => n !== 'mobile-item' && n !== 'toolbar'));
+const DESKTOP_HIDDEN_SLOTS = ['mobile-item', 'toolbar', 'empty-cta', 'error-cta', 'loading'];
+const desktopSlotNames = computed(() => Object.keys(slots).filter((n) => !DESKTOP_HIDDEN_SLOTS.includes(n)));
 
 // mobile card title: the mobileTitleKey column when resolvable, else the first
 // column — a card without a title line reads as a rendering bug, so there is
@@ -229,7 +247,7 @@ function cellValue(row: T, col: TableColumn<T>) {
         color="error"
         variant="subtle"
         icon="i-lucide-rotate-cw"
-        label="Retry"
+        label="Try again"
         @click="emit('retry')"
       />
     </div>
@@ -256,6 +274,22 @@ function cellValue(row: T, col: TableColumn<T>) {
       >
         <template v-for="name in desktopSlotNames" :key="name" #[name]="slotProps">
           <slot :name="name" v-bind="slotProps ?? {}" />
+        </template>
+        <!-- UTable only renders this while there are no rows: a first load (or a
+             page switch, keepPreviousData) shows real skeleton rows instead of
+             the empty slot or a blank body -->
+        <template #loading>
+          <slot name="loading">
+            <span class="sr-only">Loading…</span>
+            <div class="space-y-3" aria-hidden="true">
+              <div v-for="i in 5" :key="i" class="flex items-center gap-4">
+                <USkeleton class="h-4 w-1/4" />
+                <USkeleton class="h-4 flex-1" />
+                <USkeleton class="hidden h-4 w-1/6 sm:block" />
+                <USkeleton class="size-8 shrink-0 rounded-full" />
+              </div>
+            </div>
+          </slot>
         </template>
       </UTable>
     </UCard>
@@ -291,7 +325,7 @@ function cellValue(row: T, col: TableColumn<T>) {
       class="flex flex-col items-center justify-center gap-3 py-24 text-center"
     >
       <UIcon
-        :name="emptyIcon ?? (isFiltered ? 'i-lucide-search-x' : 'i-lucide-inbox')"
+        :name="isFiltered ? 'i-lucide-search-x' : (emptyIcon ?? 'i-lucide-inbox')"
         class="text-toned size-12"
         aria-hidden="true"
       />
@@ -311,7 +345,7 @@ function cellValue(row: T, col: TableColumn<T>) {
           error
             ? 'Check the connection and try again.'
             : isFiltered
-              ? 'No results — try a different search.'
+              ? NO_RESULTS_TEXT
               : emptyText || 'Use the button above to create one.'
         }}
       </p>
@@ -327,6 +361,15 @@ function cellValue(row: T, col: TableColumn<T>) {
           />
         </slot>
       </template>
+      <UButton
+        v-else-if="isFiltered"
+        size="sm"
+        color="neutral"
+        variant="outline"
+        icon="i-lucide-x"
+        label="Clear search"
+        @click="emit('clear-search')"
+      />
       <!-- the create CTA belongs to the EMPTY state only — under the error copy
            it reads as 'create anyway' while the data is simply not loaded -->
       <slot v-else name="empty-cta" />

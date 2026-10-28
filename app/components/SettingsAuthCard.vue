@@ -12,28 +12,20 @@ import { saveFailed } from '~/utils/forms';
 
 const { $orpc, $client } = useNuxtApp();
 
+// oidc.list row shape (orpc-types.ts belongs to another batch — local alias,
+// derived from the procedure output rather than a hand-written double cast)
 type OidcProviderRow = {
   id: string;
   label: string;
   issuer: string;
   clientId: string;
-  secretSet: boolean;
+  hasSecret: boolean;
 };
 
 const oidcLive = useQuery($orpc.oidc.list.queryOptions({ queryKey: [CHANGE_RESOURCE.OIDC] }));
 const settingsLive = useQuery($orpc.settings.list.queryOptions({ queryKey: [CHANGE_RESOURCE.SETTINGS] }));
 
-const providers = computed<OidcProviderRow[]>(() =>
-  (
-    (unref(oidcLive.data) ?? []) as Array<{
-      id: string;
-      label: string;
-      issuer: string;
-      clientId: string;
-      hasSecret: boolean;
-    }>
-  ).map((p) => ({ id: p.id, label: p.label, issuer: p.issuer, clientId: p.clientId, secretSet: p.hasSecret })),
-);
+const providers = computed(() => (unref(oidcLive.data) ?? []).map((p) => ({ ...p, secretSet: p.hasSecret })));
 
 const disablePasswordLogin = ref(false);
 watch(
@@ -99,28 +91,38 @@ function openEditor(row?: OidcProviderRow) {
 async function saveProvider() {
   // one write at a time — a double-click or stray Enter must not double-create
   if (busy.value) return;
+  // the registry write is a REPLACE-ALL: it is only safe when the current list
+  // is actually on screen. Saving from a pending/failed list would send just
+  // this one provider and wipe every other — an auth lockout.
+  if (!oidcLive.isSuccess.value) {
+    editorError.value = "Providers haven't loaded — close this, load the list, then try again.";
+    return;
+  }
+  if (editingId.value && !providers.value.some((p) => p.id === editingId.value)) {
+    editorError.value = 'That provider is no longer in the list — reload and try again.';
+    return;
+  }
   busy.value = true;
   message.value = '';
   editorError.value = '';
   try {
-    const list = providers.value
-      .filter((p) => p.id !== editingId.value)
-      .map((p) => ({ id: p.id, label: p.label, issuer: p.issuer, clientId: p.clientId }));
-    const list2: Array<{
+    const list: Array<{
       id: string | undefined;
       label: string;
       issuer: string;
       clientId: string;
       clientSecret?: string;
-    }> = list;
-    list2.push({
+    }> = providers.value
+      .filter((p) => p.id !== editingId.value)
+      .map((p) => ({ id: p.id, label: p.label, issuer: p.issuer, clientId: p.clientId }));
+    list.push({
       id: editingId.value ?? undefined,
       label: form.label.trim(),
       issuer: form.issuer.trim(),
       clientId: form.clientId.trim(),
       ...(form.clientSecret ? { clientSecret: form.clientSecret } : {}),
     });
-    await $client.oidc.replace({ providers: list2 });
+    await $client.oidc.replace({ providers: list });
     editorOpen.value = false;
   } catch (e) {
     // the editor modal stays open — render the failure where the user is
@@ -146,6 +148,16 @@ function askRemove(row: OidcProviderRow) {
 
 async function removeProvider() {
   if (!pendingRemove.value) return;
+  // same replace-all hazard as save: never write a registry built from a list
+  // that hasn't loaded
+  if (!oidcLive.isSuccess.value) {
+    removeError.value = "Providers haven't loaded — close this, load the list, then try again.";
+    return;
+  }
+  if (!providers.value.some((p) => p.id === pendingRemove.value?.id)) {
+    removeError.value = 'That provider is no longer in the list — reload and try again.';
+    return;
+  }
   busy.value = true;
   try {
     const list = providers.value
@@ -195,7 +207,13 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
       <div>
         <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h3 class="text-highlighted text-sm font-semibold">OIDC providers</h3>
-          <UButton icon="i-lucide-plus" size="sm" label="New provider" @click="openEditor()" />
+          <UButton
+            v-if="oidcLive.isSuccess.value"
+            icon="i-lucide-plus"
+            size="sm"
+            label="New identity provider"
+            @click="openEditor()"
+          />
         </div>
         <template v-if="oidcLive.isPending.value">
           <div class="space-y-2" aria-hidden="true">
@@ -203,7 +221,26 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
             <USkeleton class="h-12 w-full rounded-lg" />
           </div>
         </template>
-        <p v-else-if="oidcLive.isError.value" role="alert" class="text-error text-sm">Couldn't load OIDC providers</p>
+        <!-- the registry is replaced wholesale on save: while the list is not
+             loaded, creating/removing is blocked and explained here -->
+        <div
+          v-else-if="oidcLive.isError.value"
+          role="alert"
+          class="border-error/40 bg-error/10 flex flex-wrap items-center gap-2 rounded-md border px-3 py-2"
+        >
+          <UIcon name="i-lucide-circle-alert" class="text-error size-4 shrink-0" aria-hidden="true" />
+          <span class="text-error flex-1 text-sm">
+            Couldn't load OIDC providers — saving is blocked until they load.
+          </span>
+          <UButton
+            size="xs"
+            color="error"
+            variant="subtle"
+            icon="i-lucide-rotate-cw"
+            label="Try again"
+            @click="oidcLive.refetch()"
+          />
+        </div>
         <template v-else-if="providers.length">
           <!-- Mobile: stacked cards (the 5-column table overflows a phone) -->
           <div class="space-y-3 md:hidden">
@@ -347,8 +384,10 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
   <!-- OIDC provider editor modal -->
   <UModal
     :open="editorOpen"
-    :title="editingId ? 'Edit provider' : 'New OIDC provider'"
+    :title="editingId ? 'Edit provider' : 'New identity provider'"
     description="Register the redirect URL shown after saving in your OIDC provider"
+    :dismissible="!busy"
+    :close="!busy"
     @update:open="(v: boolean) => (editorOpen = v)"
   >
     <template #body>
@@ -401,7 +440,8 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
           type="submit"
           :icon="editingId ? 'i-lucide-check' : 'i-lucide-plus'"
           :loading="busy"
-          :label="editingId ? 'Save changes' : 'New provider'"
+          :disabled="!oidcLive.isSuccess.value"
+          :label="editingId ? 'Save changes' : 'Create provider'"
           form="oidc-editor-form"
         />
       </div>
@@ -409,7 +449,7 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
   </UModal>
 
   <!-- delete confirm (same pattern as the vault/environment delete confirms) -->
-  <UModal v-model:open="removeOpen" title="Delete provider">
+  <UModal v-model:open="removeOpen" title="Delete provider" :dismissible="!busy" :close="!busy">
     <template #body>
       <div class="space-y-4">
         <p class="text-muted text-sm">
@@ -430,18 +470,9 @@ onServerPrefetch(() => Promise.all([oidcLive.suspense(), settingsLive.suspense()
     </template>
     <template #footer>
       <div class="flex w-full justify-end gap-2">
-        <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingRemove = null" />
+        <UButton variant="ghost" color="neutral" label="Cancel" :disabled="busy" @click="pendingRemove = null" />
         <UButton icon="i-lucide-trash-2" color="error" label="Delete" :loading="busy" @click="removeProvider" />
       </div>
     </template>
   </UModal>
 </template>
-
-<style scoped>
-/* desktop hover-reveal for row actions — always visible on touch/mobile */
-@media (min-width: 768px) and (hover: hover) {
-  :deep(tbody tr:not(:hover):not(:focus-within)) .row-actions {
-    opacity: 0;
-  }
-}
-</style>

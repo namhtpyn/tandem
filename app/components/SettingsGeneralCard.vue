@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// General settings card: company identity (name, prompt), run policy (timeout,
+// General settings card: workspace identity (name, prompt), run policy (timeout,
 // tasks per agent) and the workspace AI assignments (decision engine + internal
 // LLM). Self-loading — it shares the settings/providers/vault query keys with
 // the rest of the app, so SSE invalidation keeps every section in sync.
@@ -8,8 +8,9 @@ import { z } from 'zod';
 
 import { PROVIDER_KIND, endpointKind, isModelsEndpoint } from '#shared/api-styles';
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { RUN_TIMEOUT_MAX_COPY, RUN_TIMEOUT_MINUTES } from '#shared/run-policy';
 import { NONE_ID, saveFailed } from '~/utils/forms';
-import type { SettingsPayload } from '~/utils/orpc-types';
+import type { ModelProviderRow, SettingsPayload } from '~/utils/orpc-types';
 import type { SecretOption, VaultSecretOptionRow } from '~/utils/vault-options';
 import { groupedSecretOptions } from '~/utils/vault-options';
 
@@ -87,17 +88,24 @@ const tasksState = reactive({ tasksPerAgent });
 // UForm only renders per-field errors when it has a schema — these six forms had
 // none, so a blank name or bad limit silently did nothing.
 const companyNameSchema = z.object({
-  companyName: z.string().trim().min(1, 'Company name is required'),
+  companyName: z.string().trim().min(1, 'Workspace name is required'),
 });
 const companyPromptSchema = z.object({
   companyPrompt: z.string().trim().max(8000, 'Keep it under 8000 characters'),
 });
+// one range for the form and the schema; the server caps a run at the same 6h
 const runTimeoutSchema = z.object({
   runTimeoutMinutes: z
-    .number('Enter a number of minutes')
-    .int('Enter a whole number of minutes')
-    .min(1, 'Enter at least 1 minute')
-    .max(1440, 'Keep it under a day'),
+    .number(`Enter a whole number of minutes between ${RUN_TIMEOUT_MINUTES.min} and ${RUN_TIMEOUT_MINUTES.max}`)
+    .int(`Enter a whole number of minutes between ${RUN_TIMEOUT_MINUTES.min} and ${RUN_TIMEOUT_MINUTES.max}`)
+    .min(
+      RUN_TIMEOUT_MINUTES.min,
+      `Enter a whole number of minutes between ${RUN_TIMEOUT_MINUTES.min} and ${RUN_TIMEOUT_MINUTES.max}`,
+    )
+    .max(
+      RUN_TIMEOUT_MINUTES.max,
+      `Enter a whole number of minutes between ${RUN_TIMEOUT_MINUTES.min} and ${RUN_TIMEOUT_MINUTES.max}`,
+    ),
 });
 const tasksPerAgentSchema = z.object({
   tasksPerAgent: z
@@ -122,27 +130,66 @@ const assignmentSchema = z
       ctx.addIssue({ code: 'custom', path: ['model'], message: 'Model is required' });
     }
   });
-const savingCompanyPrompt = ref(false);
-const companyPromptMessage = ref('');
-const companyPromptOk = ref(false); // message tone: success green, failures red
-async function saveCompanyPrompt() {
-  savingCompanyPrompt.value = true;
-  companyPromptMessage.value = '';
-  companyPromptOk.value = false;
-  try {
-    const text = companyPrompt.value.trim();
-    if (text.length > 8000) {
-      companyPromptMessage.value = 'Keep it under 8000 characters';
-      return;
+// ---- one save lifecycle for the four single-field forms ----
+type SettingsUpdateInput = Parameters<typeof $client.settings.update>[0];
+
+/** busy + message + tone for one settings form; build() returns the update
+ *  input, or a validation message string when the local check fails */
+function useSettingsSaver(field: string) {
+  const saving = ref(false);
+  const message = ref('');
+  const ok = ref(false);
+  async function save(build: () => SettingsUpdateInput | string) {
+    saving.value = true;
+    message.value = '';
+    ok.value = false;
+    try {
+      const input = build();
+      if (typeof input === 'string') {
+        message.value = input;
+        return;
+      }
+      await $client.settings.update(input);
+      message.value = 'Saved';
+      ok.value = true;
+    } catch (e) {
+      message.value = saveFailed(e, field);
+    } finally {
+      saving.value = false;
     }
-    await $client.settings.update({ companyPrompt: text });
-    companyPromptMessage.value = 'Saved';
-    companyPromptOk.value = true;
-  } catch (e) {
-    companyPromptMessage.value = saveFailed(e, 'company prompt');
-  } finally {
-    savingCompanyPrompt.value = false;
   }
+  return reactive({ saving, message, ok, save });
+}
+const nameSaver = useSettingsSaver('workspace name');
+const promptSaver = useSettingsSaver('workspace prompt');
+const timeoutSaver = useSettingsSaver('run timeout');
+const tasksSaver = useSettingsSaver('task limit');
+
+async function saveCompanyName() {
+  await nameSaver.save(() => ({ companyName: companyName.value.trim() }));
+}
+async function saveCompanyPrompt() {
+  await promptSaver.save(() => {
+    const text = companyPrompt.value.trim();
+    if (text.length > 8000) return 'Keep it under 8000 characters';
+    return { companyPrompt: text };
+  });
+}
+async function saveRunTimeout() {
+  await timeoutSaver.save(() => {
+    const minutes = Number(runTimeoutMinutes.value);
+    if (!Number.isInteger(minutes) || minutes < RUN_TIMEOUT_MINUTES.min || minutes > RUN_TIMEOUT_MINUTES.max) {
+      return `Enter a whole number of minutes between ${RUN_TIMEOUT_MINUTES.min} and ${RUN_TIMEOUT_MINUTES.max}`;
+    }
+    return { runTimeoutMs: Math.round(minutes * 60_000) };
+  });
+}
+async function saveTasksPerAgent() {
+  await tasksSaver.save(() => {
+    const n = Number(tasksPerAgent.value);
+    if (!Number.isInteger(n) || n < 1 || n > 32) return 'Enter a whole number between 1 and 32';
+    return { tasksPerAgent: n };
+  });
 }
 // ---- Workspace AI: internal LLM + decision assignments ----
 // vault picker source — one shared [VAULT,'all'] walk (useAllVaultSecrets)
@@ -168,21 +215,23 @@ const decisionSaving = ref(false);
 // each picker carries an explicit 'No provider' entry: once a provider is
 // picked the select must still be able to go back to unset (sentinel law)
 const NO_PROVIDER_ITEM = { label: 'No provider', value: NONE_ID };
-const llmProviders = computed(() => [
-  NO_PROVIDER_ITEM,
-  ...((unref(providersLive.data) ?? []) as Array<{ id: string; label: string; endpoints?: string[] }>)
-    .filter((p) => (p.endpoints ?? []).some((st) => endpointKind(st) === PROVIDER_KIND.LLM))
-    .map((p) => ({ label: p.label, value: p.id })),
-]);
-const decisionProviders = computed(() => [
-  NO_PROVIDER_ITEM,
-  ...((unref(providersLive.data) ?? []) as Array<{ id: string; label: string; endpoints?: string[] }>)
-    .filter((p) => (p.endpoints ?? []).some((st) => endpointKind(st) === PROVIDER_KIND.DECISION))
-    .map((p) => ({ label: p.label, value: p.id })),
-]);
+const allProviders = computed<ModelProviderRow[]>(() => unref(providersLive.data) ?? []);
+/** provider options for one endpoint kind — the two pickers were identical
+ *  copies apart from the kind they filter on */
+function providerOptionsFor(kind: typeof PROVIDER_KIND.LLM | typeof PROVIDER_KIND.DECISION) {
+  return [
+    NO_PROVIDER_ITEM,
+    ...allProviders.value
+      .filter((p) => (p.endpoints ?? []).some((st) => endpointKind(st) === kind))
+      .map((p) => ({ label: p.label, value: p.id })),
+  ];
+}
+const llmProviders = computed(() => providerOptionsFor(PROVIDER_KIND.LLM));
+const decisionProviders = computed(() => providerOptionsFor(PROVIDER_KIND.DECISION));
 
-// model autocomplete for the Workspace AI slots: fires only when the chosen
-// provider speaks a /v1/models endpoint; the picked key unlocks the probe
+// model autocomplete for the Workspace AI slots: fires when the chosen provider
+// speaks a /v1/models endpoint; the picked key unlocks the probe. immediate so a
+// saved assignment shows its model list on first paint, not only after an edit.
 function aiModelsState(form: AiAssignmentForm) {
   const items = ref<string[]>([]);
   const loading = ref(false);
@@ -191,8 +240,7 @@ function aiModelsState(form: AiAssignmentForm) {
     async ([providerId, keySecretId]) => {
       items.value = [];
       if (!providerId || providerId === NONE_ID || !keySecretId) return;
-      const providers = (unref(providersLive.data) ?? []) as Array<{ id: string; endpoints: string[] }>;
-      const p = providers.find((x) => x.id === providerId);
+      const p = allProviders.value.find((x) => x.id === providerId);
       if (!p || !(p.endpoints ?? []).some((st) => isModelsEndpoint(st))) return;
       loading.value = true;
       try {
@@ -204,7 +252,7 @@ function aiModelsState(form: AiAssignmentForm) {
         loading.value = false;
       }
     },
-    { immediate: false },
+    { immediate: true },
   );
   return { items, loading };
 }
@@ -249,70 +297,6 @@ watch(
   { immediate: true },
 );
 
-const savingTasksPerAgent = ref(false);
-const tasksPerAgentMessage = ref('');
-const tasksPerAgentOk = ref(false); // message tone: success green, failures red
-async function saveTasksPerAgent() {
-  savingTasksPerAgent.value = true;
-  tasksPerAgentMessage.value = '';
-  tasksPerAgentOk.value = false;
-  try {
-    const n = Number(tasksPerAgent.value);
-    if (!Number.isInteger(n) || n < 1 || n > 32) {
-      tasksPerAgentMessage.value = 'Enter a whole number between 1 and 32';
-      return;
-    }
-    await $client.settings.update({ tasksPerAgent: n });
-    tasksPerAgentMessage.value = 'Saved';
-    tasksPerAgentOk.value = true;
-  } catch (e) {
-    tasksPerAgentMessage.value = saveFailed(e, 'task limit');
-  } finally {
-    savingTasksPerAgent.value = false;
-  }
-}
-
-const savingRunTimeout = ref(false);
-const runTimeoutMessage = ref('');
-const runTimeoutOk = ref(false); // message tone: success green, failures red
-async function saveRunTimeout() {
-  savingRunTimeout.value = true;
-  runTimeoutMessage.value = '';
-  runTimeoutOk.value = false;
-  try {
-    const minutes = Number(runTimeoutMinutes.value);
-    if (!Number.isFinite(minutes) || minutes < 1) {
-      runTimeoutMessage.value = 'Enter at least 1 minute';
-      return;
-    }
-    await $client.settings.update({ runTimeoutMs: Math.round(minutes * 60_000) });
-    runTimeoutMessage.value = 'Saved';
-    runTimeoutOk.value = true;
-  } catch (e) {
-    runTimeoutMessage.value = saveFailed(e, 'run timeout');
-  } finally {
-    savingRunTimeout.value = false;
-  }
-}
-
-const savingName = ref(false);
-const nameMessage = ref('');
-const nameMessageOk = ref(false); // message tone: success green, failures red
-async function saveCompanyName() {
-  savingName.value = true;
-  nameMessage.value = '';
-  nameMessageOk.value = false;
-  try {
-    await $client.settings.update({ companyName: companyName.value });
-    nameMessage.value = 'Saved';
-    nameMessageOk.value = true;
-  } catch (e) {
-    nameMessage.value = saveFailed(e, 'company name');
-  } finally {
-    savingName.value = false;
-  }
-}
-
 onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspense(), vaultLive.suspense()]));
 </script>
 
@@ -354,57 +338,61 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
         class="flex flex-wrap items-end gap-3"
         @submit="saveCompanyName"
       >
-        <UFormField label="Company name" name="companyName" class="min-w-56 flex-1">
+        <UFormField label="Workspace name" name="companyName" class="min-w-56 flex-1">
           <template #hint><FormHint text="Shown in the sidebar and on the login screen" /></template>
           <UInput
             v-model="companyName"
             icon="i-lucide-building-2"
-            placeholder="Company name"
+            placeholder="Workspace name"
             class="w-full"
-            :disabled="savingName"
+            :disabled="nameSaver.saving"
           />
         </UFormField>
-        <UButton type="submit" icon="i-lucide-save" :loading="savingName" :disabled="!settingsLive.isSuccess.value"
+        <UButton
+          type="submit"
+          icon="i-lucide-save"
+          :loading="nameSaver.saving"
+          :disabled="!settingsLive.isSuccess.value"
           >Save name</UButton
         >
         <span
-          v-if="nameMessage"
+          v-if="nameSaver.message"
           class="pb-2 text-xs"
-          :class="nameMessageOk ? 'text-success' : 'text-error'"
-          :role="nameMessageOk ? 'status' : 'alert'"
-          >{{ nameMessage }}</span
+          :class="nameSaver.ok ? 'text-success' : 'text-error'"
+          :role="nameSaver.ok ? 'status' : 'alert'"
+          >{{ nameSaver.message }}</span
         >
       </UForm>
 
       <USeparator class="my-5" />
 
       <UForm :state="promptState" :schema="companyPromptSchema" class="flex flex-col gap-3" @submit="saveCompanyPrompt">
-        <UFormField label="Company prompt" name="companyPrompt">
+        <UFormField label="Workspace prompt" name="companyPrompt">
           <template #hint
-            ><FormHint text="Added to every agent brief — company-wide context, standards, tone (empty = omitted)"
+            ><FormHint text="Added to every agent brief — workspace-wide context, standards, tone (empty = omitted)"
           /></template>
           <UTextarea
             v-model="companyPrompt"
             placeholder="e.g. We are a shipping-integration agency. Always prefer pinned dependencies. Reply in English…"
             :rows="5"
             class="w-full"
-            :disabled="savingCompanyPrompt"
+            :disabled="promptSaver.saving"
           />
         </UFormField>
         <div class="flex items-center gap-3">
           <UButton
             type="submit"
             icon="i-lucide-save"
-            :loading="savingCompanyPrompt"
+            :loading="promptSaver.saving"
             :disabled="!settingsLive.isSuccess.value"
             >Save prompt</UButton
           >
           <span
-            v-if="companyPromptMessage"
+            v-if="promptSaver.message"
             class="pb-2 text-xs"
-            :class="companyPromptOk ? 'text-success' : 'text-error'"
-            :role="companyPromptOk ? 'status' : 'alert'"
-            >{{ companyPromptMessage }}</span
+            :class="promptSaver.ok ? 'text-success' : 'text-error'"
+            :role="promptSaver.ok ? 'status' : 'alert'"
+            >{{ promptSaver.message }}</span
           >
         </div>
       </UForm>
@@ -419,31 +407,31 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
       >
         <UFormField label="Agent run timeout (minutes)" name="runTimeoutMinutes" class="min-w-56">
           <template #hint
-            ><FormHint text="Hard cap on one agent run — the run is cancelled when it exceeds this"
+            ><FormHint :text="`Hard cap on one agent run — cancelled when it exceeds this. ${RUN_TIMEOUT_MAX_COPY}.`"
           /></template>
           <UInput
             v-model.number="runTimeoutMinutes"
             type="number"
-            :min="1"
-            :max="360"
+            :min="RUN_TIMEOUT_MINUTES.min"
+            :max="RUN_TIMEOUT_MINUTES.max"
             icon="i-lucide-timer"
             class="w-40"
-            :disabled="savingRunTimeout"
+            :disabled="timeoutSaver.saving"
           />
         </UFormField>
         <UButton
           type="submit"
           icon="i-lucide-save"
-          :loading="savingRunTimeout"
+          :loading="timeoutSaver.saving"
           :disabled="!settingsLive.isSuccess.value"
           >Save timeout</UButton
         >
         <span
-          v-if="runTimeoutMessage"
+          v-if="timeoutSaver.message"
           class="pb-2 text-xs"
-          :class="runTimeoutOk ? 'text-success' : 'text-error'"
-          :role="runTimeoutOk ? 'status' : 'alert'"
-          >{{ runTimeoutMessage }}</span
+          :class="timeoutSaver.ok ? 'text-success' : 'text-error'"
+          :role="timeoutSaver.ok ? 'status' : 'alert'"
+          >{{ timeoutSaver.message }}</span
         >
       </UForm>
 
@@ -467,22 +455,22 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
             :max="32"
             icon="i-lucide-layers"
             class="w-40"
-            :disabled="savingTasksPerAgent"
+            :disabled="tasksSaver.saving"
           />
         </UFormField>
         <UButton
           type="submit"
           icon="i-lucide-save"
-          :loading="savingTasksPerAgent"
+          :loading="tasksSaver.saving"
           :disabled="!settingsLive.isSuccess.value"
           >Save task limit</UButton
         >
         <span
-          v-if="tasksPerAgentMessage"
+          v-if="tasksSaver.message"
           class="pb-2 text-xs"
-          :class="tasksPerAgentOk ? 'text-success' : 'text-error'"
-          :role="tasksPerAgentOk ? 'status' : 'alert'"
-          >{{ tasksPerAgentMessage }}</span
+          :class="tasksSaver.ok ? 'text-success' : 'text-error'"
+          :role="tasksSaver.ok ? 'status' : 'alert'"
+          >{{ tasksSaver.message }}</span
         >
       </UForm>
 

@@ -57,14 +57,14 @@ const cards = computed(() => [
 <template>
   <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
     <template #body>
-      <UDashboardNavbar title="Overview">
+      <UDashboardNavbar title="Overview" :ui="{ root: 'lg:px-8' }">
         <template #leading>
           <UDashboardSidebarCollapse />
         </template>
       </UDashboardNavbar>
       <!-- top-aligned: content sits under the navbar and the empty space falls
            BELOW the cards — vertical centering left a dead void above them -->
-      <div class="flex min-h-full flex-1 flex-col space-y-6 p-6 lg:p-8">
+      <div class="flex min-h-full flex-1 flex-col space-y-6 p-4 sm:p-6 lg:p-8">
         <p class="text-muted hidden text-sm sm:block">Humans and AI employees, one workspace</p>
 
         <!-- one row saying one thing: link + live count per area. The chevron is

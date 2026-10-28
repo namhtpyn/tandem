@@ -7,7 +7,7 @@ import { computed, onServerPrefetch } from 'vue';
 
 import { CHANGE_RESOURCE, REVIEW_STATUS } from '#shared/enums';
 import type { EmployeeRow, ReviewRow } from '~/utils/orpc-types';
-import { kindLabel } from '~/utils/ui-labels';
+import { kindLabel, verdictLabel } from '~/utils/ui-labels';
 
 const props = defineProps<{ taskId: string }>();
 
@@ -31,15 +31,8 @@ const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRo
 const kindOf = (id: string | null, fallback: string | null) =>
   kindLabel(employees.value.find((e) => e.userId === id)?.kind ?? fallback);
 
-/** the verdict in words — the row communicates state by icon today, which is
- *  invisible to screen readers (and to anyone who can't tell the glyphs apart) */
-const VERDICT_LABEL: Record<string, string> = {
-  [REVIEW_STATUS.PENDING]: 'Pending',
-  [REVIEW_STATUS.APPROVED]: 'Approved',
-  [REVIEW_STATUS.CHANGE_REQUESTED]: 'Changes requested',
-  [REVIEW_STATUS.REJECTED]: 'Rejected',
-};
-const verdictLabel = (status: string) => VERDICT_LABEL[status] ?? 'Pending';
+/** the verdict in words — one shared vocabulary (ui-labels); the row communicates
+ *  state by icon, which is invisible to screen readers without this */
 
 /** REVIEW LAW checklist: current-round verdicts per reviewer, history collapsed by round.
  * Status is the SCREAMING ReviewStatus enum — compare through its constants (the old

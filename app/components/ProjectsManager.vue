@@ -12,7 +12,6 @@ import { z } from 'zod';
 import { CHANGE_RESOURCE, PROJECT_STATUS, type ProjectStatus } from '#shared/enums';
 import { NONE_ID, saveFailed } from '~/utils/forms';
 import type { ProjectRow } from '~/utils/orpc-types';
-import { TABLE_PAGE_SIZE } from '~/utils/pagination';
 import { humanizeEnum } from '~/utils/ui-labels';
 
 const { $orpc, $client } = useNuxtApp();
@@ -50,11 +49,13 @@ const message = ref('');
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
 const confirmId = ref<string | null>(null);
-// loose frontend schema (repo law): project name presence — the server owns the rest
+// loose frontend schema (repo law): presence + the server's length caps —
+// description 2000 / prompt 8000 are enforced server-side, mirrored here so a
+// long paste gets a field error instead of a generic Save failure
 const projectSchema = z.object({
   name: z.string().min(1, 'Name is required'),
-  description: z.string(),
-  prompt: z.string(),
+  description: z.string().max(2000, 'Keep the description under 2000 characters'),
+  prompt: z.string().max(8000, 'Keep the project prompt under 8000 characters'),
   parentId: z.string(),
   status: z.string(),
 });
@@ -94,6 +95,13 @@ function toggleCollapse(id: string) {
 }
 
 const hasChildren = (id: string) => (byParent.value.get(id) ?? []).length > 0;
+/** aria-controls target for a row's disclosure: a concise, always-present
+ *  description of the subtree (a tree table has no grouping element to point at) */
+const subtreeId = (id: string) => `project-subtree-${id}`;
+const childCountLabel = (id: string) => {
+  const n = (byParent.value.get(id) ?? []).length;
+  return `${n} subproject${n === 1 ? '' : 's'}`;
+};
 
 const searchQ = computed(() => searchDebounced.value.toLowerCase());
 
@@ -233,7 +241,13 @@ onServerPrefetch(() => liveQuery.suspense());
         aria-label="Search projects"
       />
       <div class="ms-auto flex items-center gap-2 overflow-x-auto">
-        <UButton icon="i-lucide-plus" label="New project" size="sm" @click="openEditor()" />
+        <UButton
+          v-if="allRows.length > 0 || !!search"
+          icon="i-lucide-plus"
+          label="New project"
+          size="sm"
+          @click="openEditor()"
+        />
       </div>
     </div>
 
@@ -243,16 +257,17 @@ onServerPrefetch(() => liveQuery.suspense());
       class="mt-3"
       :data="flat"
       :loading="liveQuery.isPending.value"
-      :refreshing="liveQuery.isFetching.value"
+      :refreshing="liveQuery.isFetching.value && !liveQuery.isPending.value"
+      :filtered="isFiltered"
       :error="liveQuery.isError.value"
       @retry="liveQuery.refetch()"
+      @clear-search="search = ''"
       :columns="columns"
-      :page-size="TABLE_PAGE_SIZE"
-      :reset-page-key="searchDebounced"
+      :pager="false"
       show-empty-state
-      :empty-icon="isFiltered ? 'i-lucide-search-x' : 'i-lucide-folder-tree'"
+      empty-icon="i-lucide-folder-tree"
       empty-noun="projects"
-      :empty-text="isFiltered ? 'No results — try a different search.' : 'Create your first one.'"
+      empty-text="Create your first one."
     >
       <template #empty-cta>
         <UButton v-if="!isFiltered" icon="i-lucide-plus" label="New project" @click="openEditor()" />
@@ -266,9 +281,14 @@ onServerPrefetch(() => liveQuery.suspense());
             color="neutral"
             size="xs"
             :aria-label="`${collapsed.has(row.original.id) ? 'Expand' : 'Collapse'} ${row.original.name}`"
-            class="min-h-8 px-0.5"
+            :aria-expanded="!collapsed.has(row.original.id)"
+            :aria-controls="subtreeId(row.original.id)"
+            class="min-h-8 min-w-8 px-0.5"
             @click="toggleCollapse(row.original.id)"
           />
+          <span v-if="hasChildren(row.original.id)" :id="subtreeId(row.original.id)" class="sr-only">{{
+            childCountLabel(row.original.id)
+          }}</span>
           <div class="min-w-0">
             <p class="text-highlighted truncate font-medium">{{ row.original.name }}</p>
             <p v-if="row.original.description" class="text-dimmed truncate text-xs">
@@ -331,14 +351,31 @@ onServerPrefetch(() => liveQuery.suspense());
         </div>
       </template>
       <template #mobile-item="{ row }">
-        <UCard :ui="{ root: 'shadow-sm' }" :class="row.depth > 0 ? 'ml-4' : ''">
+        <UCard :ui="{ root: 'shadow-sm' }" :style="{ marginLeft: `${Math.min(row.depth, 4)}rem` }">
           <div class="flex items-start justify-between gap-2">
-            <div class="min-w-0">
-              <p class="text-highlighted truncate text-sm font-medium">
-                <UIcon v-if="row.depth > 0" name="i-lucide-corner-down-right" class="text-dimmed mr-1 size-3.5" />
-                {{ row.name }}
-              </p>
-              <p v-if="row.description" class="text-muted mt-0.5 line-clamp-2 text-xs">{{ row.description }}</p>
+            <div class="flex min-w-0 items-start gap-1">
+              <UButton
+                v-if="hasChildren(row.id)"
+                :icon="collapsed.has(row.id) ? 'i-lucide-chevron-right' : 'i-lucide-chevron-down'"
+                variant="ghost"
+                color="neutral"
+                size="xs"
+                :aria-label="`${collapsed.has(row.id) ? 'Expand' : 'Collapse'} ${row.name}`"
+                :aria-expanded="!collapsed.has(row.id)"
+                class="-ms-1 min-h-8 min-w-8 shrink-0"
+                @click="toggleCollapse(row.id)"
+              />
+              <div class="min-w-0">
+                <p class="text-highlighted truncate text-sm font-medium">
+                  <UIcon
+                    v-if="row.depth > 0 && !hasChildren(row.id)"
+                    name="i-lucide-corner-down-right"
+                    class="text-dimmed mr-1 size-3.5"
+                  />
+                  {{ row.name }}
+                </p>
+                <p v-if="row.description" class="text-muted mt-0.5 line-clamp-2 text-xs">{{ row.description }}</p>
+              </div>
             </div>
             <UBadge :color="statusColor(row.status)" variant="subtle" size="sm">{{ statusLabel(row.status) }}</UBadge>
           </div>
@@ -396,12 +433,14 @@ onServerPrefetch(() => liveQuery.suspense());
     <UModal
       v-model:open="editorOpen"
       :title="editingId ? 'Edit project' : 'New project'"
+      :dismissible="!busy"
+      :close="!busy"
       :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
     >
       <template #body>
         <UForm id="project-editor-form" :schema="projectSchema" :state="form" class="space-y-4" @submit="save">
-          <UFormField label="Name" name="name">
-            <UInput v-model="form.name" icon="i-lucide-folder" placeholder="Project name" class="w-full" required />
+          <UFormField label="Name" name="name" required>
+            <UInput v-model="form.name" icon="i-lucide-folder" placeholder="Project name" class="w-full" />
           </UFormField>
           <UFormField name="parentId">
             <template #label> Parent </template>
@@ -431,7 +470,13 @@ onServerPrefetch(() => liveQuery.suspense());
             />
           </UFormField>
           <UFormField label="Description" name="description">
-            <UTextarea v-model="form.description" placeholder="What this project is about" :rows="3" class="w-full" />
+            <UTextarea
+              v-model="form.description"
+              placeholder="What this project is about"
+              :rows="3"
+              maxlength="2000"
+              class="w-full"
+            />
           </UFormField>
           <UFormField label="Project prompt" name="prompt">
             <template #hint>
@@ -441,6 +486,7 @@ onServerPrefetch(() => liveQuery.suspense());
               v-model="form.prompt"
               placeholder="e.g. This project integrates FedEx/UPS APIs into a NestJS checkout. Never store raw API keys in the repo…"
               :rows="5"
+              maxlength="8000"
               class="w-full"
             />
           </UFormField>
@@ -464,6 +510,8 @@ onServerPrefetch(() => liveQuery.suspense());
     <UModal
       :open="confirmId !== null"
       title="Delete project"
+      :dismissible="!busy"
+      :close="!busy"
       @update:open="
         (v: boolean) => {
           if (!v) confirmId = null;
@@ -489,19 +537,10 @@ onServerPrefetch(() => liveQuery.suspense());
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
-          <UButton variant="ghost" color="neutral" label="Cancel" @click="confirmId = null" />
+          <UButton variant="ghost" color="neutral" label="Cancel" :disabled="busy" @click="confirmId = null" />
           <UButton color="error" label="Delete" :loading="busy" @click="remove" />
         </div>
       </template>
     </UModal>
   </div>
 </template>
-
-<style scoped>
-/* desktop hover-reveal for row actions — always visible on touch/mobile */
-@media (min-width: 768px) and (hover: hover) {
-  :deep(tbody tr:not(:hover):not(:focus-within)) .row-actions {
-    opacity: 0;
-  }
-}
-</style>

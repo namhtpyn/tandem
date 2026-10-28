@@ -8,12 +8,12 @@ useHead({ title: 'Employees' });
 <template>
   <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
     <template #body>
-      <UDashboardNavbar title="Employees">
+      <UDashboardNavbar title="Employees" :ui="{ root: 'lg:px-8' }">
         <template #leading>
           <UDashboardSidebarCollapse />
         </template>
       </UDashboardNavbar>
-      <div class="flex min-h-full flex-col space-y-6 p-6 lg:p-8">
+      <div class="flex min-h-full flex-col space-y-6 p-4 sm:p-6 lg:p-8">
         <p class="text-muted hidden text-sm sm:block">
           Manage human and AI-agent accounts, titles, and reporting lines
         </p>

@@ -7,6 +7,7 @@ import { computed, reactive, ref } from 'vue';
 import { z } from 'zod';
 
 import { CATEGORIES, CATEGORY, CHANGE_RESOURCE, type Category } from '#shared/enums';
+import { STATUS } from '#shared/status';
 import { saveFailed } from '~/utils/forms';
 import type { TaskStatusRow } from '~/utils/orpc-types';
 import { categoryColor, categoryLabel } from '~/utils/ui-labels';
@@ -115,6 +116,18 @@ async function removeStatus() {
   }
 }
 
+function openStatusDelete(row: TaskStatusRow) {
+  // a previous delete's failure must not surface under this confirm
+  deleteError.value = '';
+  pendingDelete.value = row;
+}
+
+// Built-in statuses anchor the workflow (ready/working/done gates, review round
+// handling) — deleting one would strand every task in that category, so the UI
+// refuses before the server has to.
+const BUILTIN_STATUS_IDS: ReadonlySet<string> = new Set(Object.values(STATUS));
+const isBuiltinStatus = (id: string) => BUILTIN_STATUS_IDS.has(id);
+
 // loose frontend schema (repo law): name presence only — the server owns the rest
 const statusSchema = z.object({ name: z.string().min(1, 'Name is required') });
 
@@ -160,7 +173,7 @@ const categoryOptions = CATEGORIES.map((value) => ({
             Define the workflow statuses and which moves are allowed between them (used by the board and the task
             editor).
           </p>
-          <p v-if="statusMessage" role="alert" class="text-error text-sm">{{ statusMessage }}</p>
+          <p v-if="statusMessage && !statusEditorOpen" role="alert" class="text-error text-sm">{{ statusMessage }}</p>
           <div v-if="statuses.length" class="divide-default divide-y">
             <div v-for="st in statuses" :key="st.id" class="flex items-center justify-between gap-2 py-2">
               <div class="min-w-0">
@@ -171,11 +184,12 @@ const categoryOptions = CATEGORIES.map((value) => ({
                   }}</UBadge>
                 </p>
                 <p class="text-dimmed truncate text-xs">
-                  {{
-                    st.nextIds.length
-                      ? `→ ${st.nextIds.map((n) => statusById.get(n)?.name ?? 'Unknown status').join(', ')}`
-                      : 'No transitions'
-                  }}
+                  <template v-if="st.nextIds.length">
+                    <span class="sr-only">Moves to </span>
+                    <span aria-hidden="true">→ </span>
+                    {{ st.nextIds.map((n) => statusById.get(n)?.name ?? 'Unknown status').join(', ') }}
+                  </template>
+                  <template v-else>No transitions</template>
                 </p>
               </div>
               <div class="flex shrink-0 gap-1">
@@ -200,15 +214,16 @@ const categoryOptions = CATEGORIES.map((value) => ({
                     color="neutral"
                     class="text-muted hover:text-error"
                     size="sm"
-                    :aria-label="`Delete ${st.name}`"
-                    :disabled="statusBusy"
-                    @click="
-                      deleteError = '';
-                      pendingDelete = st;
+                    :aria-label="
+                      isBuiltinStatus(st.id) ? `${st.name} is built in and can't be deleted` : `Delete ${st.name}`
                     "
+                    :disabled="statusBusy || isBuiltinStatus(st.id)"
+                    @click="openStatusDelete(st)"
                   />
                   <template #content>
-                    <div class="px-3 py-1.5 text-xs">Delete status</div>
+                    <div class="px-3 py-1.5 text-xs">
+                      {{ isBuiltinStatus(st.id) ? "Built-in status — can't be deleted" : 'Delete status' }}
+                    </div>
                   </template>
                 </UPopover>
               </div>
@@ -235,7 +250,7 @@ const categoryOptions = CATEGORIES.map((value) => ({
     </UModal>
 
     <!-- delete confirm (same pattern as the vault/environment delete confirms) -->
-    <UModal v-model:open="deleteOpen" title="Delete status">
+    <UModal v-model:open="deleteOpen" title="Delete status?">
       <template #body>
         <div class="space-y-4">
           <p class="text-toned text-sm">

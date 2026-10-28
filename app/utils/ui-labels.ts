@@ -4,13 +4,17 @@ import { isAnthropicWire, endpointKind, isModelsEndpoint, PROVIDER_KIND } from '
 import {
   ACTIVITY_KIND,
   CATEGORY,
+  REVIEW_STATUS,
   ROLE,
   RUN_STATUS,
   type ActivityKind,
   type Category,
+  type ReviewStatus,
   type Role,
   type RunStatus,
 } from '#shared/enums';
+
+import { NONE_ID } from './forms';
 
 export type BadgeColor = 'primary' | 'success' | 'warning' | 'error' | 'info' | 'neutral';
 
@@ -37,10 +41,19 @@ const CATEGORY_VIEWS: Record<Category, CategoryView> = {
   [CATEGORY.CANCELLED]: { color: 'error', text: 'text-error', icon: 'i-lucide-circle-x', label: 'Cancelled' },
 };
 
-const CATEGORY_VIEW: Record<string, CategoryView> = CATEGORY_VIEWS;
+/**
+ * Map hit for a runtime string key, `undefined` on a miss. The maps below stay
+ * exhaustively typed as `Record<Enum, T>` — this helper is the ONE place a loose
+ * wire value is narrowed, instead of widening every map to `Record<string, T>`
+ * (which silently drops the exhaustiveness check).
+ */
+export function lookup<K extends string, T>(map: Record<K, T>, key: string | null | undefined): T | undefined {
+  if (key === null || key === undefined || !Object.prototype.hasOwnProperty.call(map, key)) return undefined;
+  return map[key as K];
+}
 
 export function categoryColor(category: string | null | undefined): BadgeColor {
-  return (category && CATEGORY_VIEW[category]?.color) || 'neutral';
+  return lookup(CATEGORY_VIEWS, category ?? '')?.color ?? 'neutral';
 }
 
 /** map-miss fallback: humanize the raw enum ('IN_PROGRESS' → 'In progress') —
@@ -53,7 +66,7 @@ export function humanizeEnum(value: string): string {
 
 export function categoryLabel(category: string | null | undefined): string {
   if (!category) return '';
-  return CATEGORY_VIEW[category]?.label ?? humanizeEnum(category);
+  return lookup(CATEGORY_VIEWS, category)?.label ?? humanizeEnum(category);
 }
 
 // solid-dot background class per badge color — the borderless status selects
@@ -68,18 +81,18 @@ const BADGE_DOT: Record<BadgeColor, string> = {
 };
 
 export function dotClass(color: string): string {
-  return BADGE_DOT[color as BadgeColor] ?? BADGE_DOT.neutral;
+  return lookup(BADGE_DOT, color) ?? BADGE_DOT.neutral;
 }
 
 // board column heading: category-driven text color (mirrors categoryColor's mapping)
 export function categoryText(category: string | null | undefined): string {
-  return (category && CATEGORY_VIEW[category]?.text) || 'text-dimmed';
+  return lookup(CATEGORY_VIEWS, category ?? '')?.text ?? 'text-dimmed';
 }
 
 // distinct glyph per category — Doing (clock) vs Waiting answer (speech bubble)
 // read as the same yellow dot without one
 export function categoryIcon(category: string | null | undefined): string {
-  return (category && CATEGORY_VIEW[category]?.icon) || 'i-lucide-circle-dot';
+  return lookup(CATEGORY_VIEWS, category ?? '')?.icon ?? 'i-lucide-circle-dot';
 }
 
 export function kindLabel(kind: string | null | undefined): string {
@@ -115,7 +128,18 @@ export function endpointBadgeColor(endpoint: string): BadgeColor {
 
 /** shared composer placeholders — the task page and the workflow drawer stay word-identical */
 export function composerPlaceholder(waitingAnswer: boolean): string {
-  return waitingAnswer ? 'Write an answer — the agent resumes' : 'Write a note…';
+  return waitingAnswer ? 'Write an answer' : 'Write a note';
+}
+
+/** assignee/reviewer picker options — one label voice ('Ada (AI)') on every surface */
+export function employeeOptions<T extends { id: string; name: string; kind?: string | null }>(
+  rows: readonly T[],
+  opts: { noneLabel?: string; excludeId?: string | null } = {},
+): Array<{ label: string; value: string }> {
+  const options = rows
+    .filter((e) => e.id !== opts.excludeId)
+    .map((e) => ({ label: aiOptionLabel(e.name, e.kind), value: e.id }));
+  return opts.noneLabel ? [{ label: opts.noneLabel, value: NONE_ID }, ...options] : options;
 }
 
 const ROLE_LABELS: { readonly [K in Role]: string } = {
@@ -135,17 +159,17 @@ export function roleLabel(role: string | null | undefined): string {
 // report — derived from the shared enum so the wire tokens are never re-typed.
 export type AgentRunStatus = Lowercase<RunStatus> | 'cancelled' | 'timeout' | 'stopped';
 
-const AGENT_RUN_STATUSES: Record<string, AgentRunStatus> = {
+const AGENT_RUN_STATUSES = {
   [RUN_STATUS.RUNNING.toLowerCase()]: 'running',
   [RUN_STATUS.DONE.toLowerCase()]: 'done',
   [RUN_STATUS.FAILED.toLowerCase()]: 'failed',
   cancelled: 'cancelled',
   timeout: 'timeout',
-};
+} as const satisfies Record<string, AgentRunStatus>;
 
 /** settled run status from its raw stored form — an unknown value reads as stopped */
 export function runStatus(raw: string): AgentRunStatus {
-  return AGENT_RUN_STATUSES[raw.toLowerCase()] ?? 'stopped';
+  return lookup(AGENT_RUN_STATUSES, raw.toLowerCase()) ?? 'stopped';
 }
 
 /** one map, three renderings: the thread's short word, the drawer's run sentence,
@@ -160,26 +184,46 @@ export const AGENT_RUN_VIEW: { readonly [K in AgentRunStatus]: { label: string; 
 };
 
 // ---- activity kinds: one word + one glyph for the drawer feed and the chat thread ----
-const ACTIVITY_LABELS: { readonly [K in ActivityKind]: string } = {
-  [ACTIVITY_KIND.NOTE]: 'Note',
-  [ACTIVITY_KIND.QUESTION]: 'Question',
-  [ACTIVITY_KIND.ANSWER]: 'Answer',
-  [ACTIVITY_KIND.VERDICT]: 'Review verdict',
-  [ACTIVITY_KIND.FORWARD]: 'Forwarded',
-  [ACTIVITY_KIND.STATUS]: 'Status changed',
+const ACTIVITY_VIEWS: { readonly [K in ActivityKind]: { label: string; icon: string } } = {
+  [ACTIVITY_KIND.NOTE]: { label: 'Note', icon: 'i-lucide-message-square' },
+  [ACTIVITY_KIND.QUESTION]: { label: 'Question', icon: 'i-lucide-help-circle' },
+  [ACTIVITY_KIND.ANSWER]: { label: 'Answer', icon: 'i-lucide-check-check' },
+  [ACTIVITY_KIND.VERDICT]: { label: 'Review verdict', icon: 'i-lucide-gavel' },
+  [ACTIVITY_KIND.FORWARD]: { label: 'Forwarded', icon: 'i-lucide-corner-up-right' },
+  [ACTIVITY_KIND.STATUS]: { label: 'Status changed', icon: 'i-lucide-info' },
 };
 
-/** activity kind as a word — map hit, upper-cased legacy row, or humanized fallback */
-export function activityLabel(kind: string): string {
-  const hit = ACTIVITY_LABELS[kind as ActivityKind] ?? ACTIVITY_LABELS[kind.toUpperCase() as ActivityKind];
-  return hit ?? humanizeEnum(kind);
+/** one lookup per activity row — label + glyph can never disagree */
+export function activityView(kind: ActivityKind): { label: string; icon: string } {
+  // activity rows arrive in both casings (legacy lowercase rows, SCREAMING enum
+  // values); unknown kinds still read as words, never as raw tokens
+  return (
+    lookup(ACTIVITY_VIEWS, kind) ??
+    lookup(ACTIVITY_VIEWS, kind.toUpperCase()) ?? {
+      label: humanizeEnum(kind),
+      icon: ACTIVITY_VIEWS[ACTIVITY_KIND.NOTE].icon,
+    }
+  );
 }
 
-export function activityIcon(kind: string): string {
-  const k = kind.toLowerCase();
-  if (k === 'question') return 'i-lucide-help-circle';
-  if (k === 'answer') return 'i-lucide-check-check';
-  if (k === 'forward') return 'i-lucide-corner-up-right';
-  if (k === 'verdict') return 'i-lucide-gavel';
-  return 'i-lucide-info';
+/** activity kind as a word — typed source, so no case-compensation at the call sites */
+export function activityLabel(kind: ActivityKind): string {
+  return activityView(kind).label;
+}
+
+export function activityIcon(kind: ActivityKind): string {
+  return activityView(kind).icon;
+}
+
+// ---- review verdicts: one vocabulary for the checklist and every review surface ----
+const VERDICT_LABELS: { readonly [K in ReviewStatus]: string } = {
+  [REVIEW_STATUS.PENDING]: 'Pending',
+  [REVIEW_STATUS.APPROVED]: 'Approved',
+  [REVIEW_STATUS.CHANGE_REQUESTED]: 'Changes requested',
+  [REVIEW_STATUS.REJECTED]: 'Rejected',
+};
+
+/** verdict in words — a row communicates state by icon; screen readers need the word */
+export function verdictLabel(status: string): string {
+  return lookup(VERDICT_LABELS, status) ?? 'Pending';
 }

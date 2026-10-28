@@ -1,6 +1,8 @@
 <script setup lang="ts">
 // Global error page (Nuxt 4: app/error.vue) — rendered outside the app shell,
 // so it carries its own UApp and the zinc palette used by login/dashboard.
+import { SERVER_UNREACHABLE_COPY } from '~/utils/copy';
+
 const error = useError();
 
 const statusCode = computed(() => error.value?.statusCode ?? 500);
@@ -8,7 +10,7 @@ const title = computed(() => (statusCode.value === 404 ? 'Page not found' : 'Som
 // user-facing copy only — never echo error.message (it can carry ops/stack detail)
 const description = computed(() => {
   if (statusCode.value === 404) return "This page doesn't exist.";
-  if (statusCode.value === 503) return "Can't reach the server. Try again in a moment.";
+  if (statusCode.value === 503) return SERVER_UNREACHABLE_COPY;
   return 'This page failed to load. Try again — if it keeps happening, contact your workspace admin.';
 });
 
@@ -25,7 +27,7 @@ function backToOverview() {
 
 <template>
   <UApp>
-    <div class="bg-default flex min-h-screen flex-col items-center justify-center p-6 text-center">
+    <div class="bg-default flex min-h-dvh flex-col items-center justify-center p-6 text-center">
       <div class="bg-primary/10 flex size-14 items-center justify-center rounded-xl shadow-sm">
         <UIcon
           :name="statusCode === 404 ? 'i-lucide-file-question' : 'i-lucide-triangle-alert'"

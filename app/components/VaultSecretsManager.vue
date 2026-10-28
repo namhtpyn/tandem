@@ -238,9 +238,17 @@ onServerPrefetch(() => liveQuery.suspense());
     <DataTable
       class="mt-3"
       :data="rows"
-      :loading="liveQuery.isFetching.value || liveQuery.isPlaceholderData.value"
+      :loading="liveQuery.isPending.value || liveQuery.isPlaceholderData.value"
+      :refreshing="liveQuery.isFetching.value && !liveQuery.isPending.value"
+      :filtered="isFiltered"
       :error="liveQuery.isError.value"
       @retry="liveQuery.refetch()"
+      @clear-search="
+        () => {
+          search = '';
+          folderId = null;
+        }
+      "
       v-model:page="page"
       :page-count="pageCount"
       :page-size="pageSize"
@@ -252,15 +260,9 @@ onServerPrefetch(() => liveQuery.suspense());
         { id: 'actions', header: 'Actions', meta: { class: { th: 'sr-only' } } },
       ]"
       show-empty-state
-      :empty-icon="isFiltered ? 'i-lucide-search-x' : 'i-lucide-shield'"
+      empty-icon="i-lucide-shield"
       :empty-noun="folderId && !searchDebounced ? undefined : 'secrets'"
-      :empty-text="
-        searchDebounced
-          ? 'No results — try a different search.'
-          : folderId
-            ? 'This folder is empty — add a secret here or move one in.'
-            : 'Store SSH keys and API tokens, encrypted and write-only.'
-      "
+      empty-text="Store SSH keys and API tokens, encrypted and write-only."
     >
       <template #empty-cta>
         <UButton v-if="editable && !isFiltered" icon="i-lucide-plus" label="New secret" @click="openEditor()" />
@@ -355,6 +357,8 @@ onServerPrefetch(() => liveQuery.suspense());
     <UModal
       v-model:open="editorOpen"
       :title="isEdit ? 'Edit secret' : 'New secret'"
+      :dismissible="!busy"
+      :close="!busy"
       :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
     >
       <template #body>
@@ -443,6 +447,8 @@ onServerPrefetch(() => liveQuery.suspense());
     <UModal
       :open="confirmingRow !== null"
       title="Delete secret"
+      :dismissible="!busy"
+      :close="!busy"
       @update:open="
         (o: boolean) => {
           if (!o) confirmingRow = null;
@@ -452,8 +458,8 @@ onServerPrefetch(() => liveQuery.suspense());
       <template #body>
         <p class="text-muted text-sm">
           Delete <span class="text-highlighted font-medium">{{ confirmingRow?.name }}</span
-          >? Environments linked to this secret lose SSH access and their agent runs fail until a new key is attached.
-          This cannot be undone.
+          >? This cannot be undone. A secret still in use by environments or AI employees can't be deleted — unlink it
+          first.
         </p>
         <UAlert
           v-if="removeError"
@@ -468,7 +474,7 @@ onServerPrefetch(() => liveQuery.suspense());
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
-          <UButton variant="ghost" color="neutral" @click="confirmingRow = null">Cancel</UButton>
+          <UButton variant="ghost" color="neutral" :disabled="busy" @click="confirmingRow = null">Cancel</UButton>
           <UButton color="error" icon="i-lucide-trash-2" :loading="busy" @click="reallyRemove()">Delete</UButton>
         </div>
       </template>
@@ -480,12 +486,5 @@ onServerPrefetch(() => liveQuery.suspense());
 /* mask secret text while the eye toggle is closed (Chromium/WebKit) */
 :deep(.secret-masked textarea) {
   -webkit-text-security: disc;
-}
-
-/* desktop hover-reveal for row actions — always visible on touch/mobile */
-@media (min-width: 768px) and (hover: hover) {
-  :deep(tbody tr:not(:hover):not(:focus-within)) .row-actions {
-    opacity: 0;
-  }
 }
 </style>

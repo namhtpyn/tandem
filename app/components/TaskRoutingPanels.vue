@@ -130,9 +130,7 @@ async function decideProposal(id: string, action: 'confirmProposal' | 'rejectPro
   }
 }
 
-const openProposals = computed(() =>
-  proposalRows.value.filter((p) => p.status?.toUpperCase() === PROPOSAL_STATUS.PROPOSED),
-);
+const openProposals = computed(() => proposalRows.value.filter((p) => p.status === PROPOSAL_STATUS.PROPOSED));
 
 /** subtask badge: joined status row — its NAME in the shared category color (never the raw id) */
 function subtaskBadge(c: SubtaskRow): {

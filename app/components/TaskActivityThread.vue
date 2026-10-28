@@ -12,7 +12,7 @@ import { nonNull } from '#shared/utils/non-null';
 import { attachmentUrl, employeeAvatarUrl } from '~/utils/api-urls';
 import { formatWhenShort } from '~/utils/format-when';
 import type { EmployeeRow, TaskRow, ThreadRow } from '~/utils/orpc-types';
-import { buildThread, parseRunEnvelope } from '~/utils/task-thread';
+import { activityNotes, buildThread, parseRunEnvelope } from '~/utils/task-thread';
 import type { ThreadItem } from '~/utils/task-thread';
 import { parseTaskText } from '~/utils/task-tokens';
 import {
@@ -49,18 +49,7 @@ const runFeed = computed(() =>
     r.run ? [{ ...r.run, body: r.body, authorId: r.authorId, authorName: r.authorName }] : [],
   ),
 );
-const workflowFeed = computed(() =>
-  threadRows.value
-    .filter((r) => r.activity)
-    .map((r) => ({
-      id: r.id,
-      kind: String(r.activity?.kind ?? ''),
-      body: r.body,
-      authorName: r.authorName,
-      authorId: r.authorId,
-      createdAt: r.createdAt,
-    })),
-);
+const workflowFeed = computed(() => activityNotes(threadRows.value));
 const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES] }));
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[]);
 /** userId -> hasAvatar: chat avatars render via employeeAvatarUrl(), initials otherwise */
@@ -103,14 +92,7 @@ const thread = computed<ThreadItem[]>(() =>
       startedAt: r.startedAt,
       finishedAt: r.finishedAt ?? null,
     })),
-    activity: workflowFeed.value.map((a) => ({
-      id: a.id,
-      noteKind: a.kind,
-      body: a.body,
-      authorName: a.authorName,
-      authorId: a.authorId,
-      createdAt: a.createdAt,
-    })),
+    activity: workflowFeed.value,
   }),
 );
 

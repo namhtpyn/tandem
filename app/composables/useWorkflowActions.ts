@@ -6,7 +6,7 @@
 import { useQueryClient } from '@tanstack/vue-query';
 import { ref } from 'vue';
 
-import { CHANGE_RESOURCE } from '#shared/enums';
+import { CATEGORY, CHANGE_RESOURCE, type Category } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 import { errorMessage } from '~/utils/forms';
 
@@ -23,6 +23,34 @@ export type WorkflowAction =
   | 'abandon';
 
 export type WorkflowExtra = { body?: string; toEmployeeId?: string };
+
+/** what the note verb reports back: steered a live run, dispatched, or thread-only */
+export type NoteOutcome = { steered: boolean; dispatched?: true };
+
+const VERDICT_ACTIONS: ReadonlySet<WorkflowAction> = new Set(['approve', 'requestChanges', 'reject']);
+
+/** success copy per note outcome — the server decides, the UI never guesses */
+export function noteSuccessCopy(outcome: NoteOutcome): string {
+  if (outcome.steered) return 'Note sent — the running agent has it';
+  if (outcome.dispatched) return 'Note sent — agent dispatched';
+  return WF_COPY.note.ok;
+}
+
+/**
+ * Composer hint that matches the note verb's server rules: only a READY task
+ * with an AI assignee dispatches; a live run steers; everything else is a
+ * thread-only note (done/cancelled/in-review and human assignees never dispatch).
+ */
+export function composerHint(input: {
+  category: Category | null | undefined;
+  assigneeKind: string | null | undefined;
+  running: boolean;
+}): string {
+  if (input.running) return 'Sends a steering note to the running agent';
+  if (input.category === CATEGORY.READY && input.assigneeKind === 'ai')
+    return 'Sends the note and dispatches the agent';
+  return 'Adds the note to the thread';
+}
 
 // every verb names what just happened (and what to retry) — no bare 'done'/'action failed'
 export const WF_COPY: Record<WorkflowAction, { ok: string; fail: string }> = {
@@ -53,6 +81,12 @@ export function useWorkflowActions(taskId: () => string | null | undefined) {
   const workflowOk = ref(true); // message tone: success copy vs failure copy
   // the review box disarms its reject confirm + keeps the note on a failed verdict
   const workflowFailed = ref(false);
+  // verdict-specific settlement signal (bumped once per approve/requestChanges/
+  // reject, success or failure) — the review box clears on THIS, never on the
+  // shared busy flag (a composer send or an upload finishing must not wipe a
+  // half-written review note)
+  const verdictSeq = ref(0);
+  const verdictFailed = ref(false);
 
   /** returns true when the verb landed (callers gate on it before closing a drawer) */
   async function wfAction(action: WorkflowAction, extra: WorkflowExtra = {}): Promise<boolean> {
@@ -63,9 +97,10 @@ export function useWorkflowActions(taskId: () => string | null | undefined) {
     workflowBusy.value = true;
     workflowMessage.value = '';
     workflowFailed.value = false;
+    let ok = false;
     try {
       const input = { taskId: id, ...extra };
-      await {
+      const result = await {
         dispatch: () => $client.tasks.dispatch({ taskId: input.taskId }),
         note: () => $client.tasks.note({ ...input, body: nonNull(input.body) }),
         // body is optional server-side (submitResult defaults it) — an empty note is fine
@@ -78,9 +113,9 @@ export function useWorkflowActions(taskId: () => string | null | undefined) {
         reject: () => $client.tasks.reject(input),
         abandon: () => $client.tasks.abandon(input),
       }[action]();
-      // only clear the text this call actually sent: a note typed while the
-      // request was in flight must survive the success clear
-      if (workflowNote.value === (extra.body ?? workflowNote.value)) workflowNote.value = '';
+      // only clear the text this call actually sent — a bodyless verb carries no
+      // note, and a note typed while the request was in flight must survive
+      if (extra.body !== undefined && workflowNote.value === extra.body) workflowNote.value = '';
       // invalidate ALL dependent feeds: TASKS re-syncs the row (status/reviewers),
       // TASK_ACTIVITY keeps the thread, review checklist and activity feed current
       // (the reviews cache sits under the TASK_ACTIVITY prefix), RUNS refreshes the
@@ -88,8 +123,11 @@ export function useWorkflowActions(taskId: () => string | null | undefined) {
       void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
       void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, id] });
       void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.RUNS, id] });
-      workflowMessage.value = WF_COPY[action].ok;
+      // the note verb reports whether the send steered a live run or dispatched —
+      // the success copy must say what actually happened, never guess
+      workflowMessage.value = action === 'note' ? noteSuccessCopy(result as NoteOutcome) : WF_COPY[action].ok;
       workflowOk.value = true;
+      ok = true;
       return true;
     } catch (e) {
       // surface the server's oRPC message, not ofetch's generic '[POST] …: 400'
@@ -99,6 +137,10 @@ export function useWorkflowActions(taskId: () => string | null | undefined) {
       return false;
     } finally {
       workflowBusy.value = false;
+      if (VERDICT_ACTIONS.has(action)) {
+        verdictFailed.value = !ok;
+        verdictSeq.value += 1;
+      }
     }
   }
 
@@ -114,6 +156,7 @@ export function useWorkflowActions(taskId: () => string | null | undefined) {
     workflowNote.value = '';
     workflowMessage.value = '';
     workflowFailed.value = false;
+    verdictFailed.value = false;
     workflowOk.value = true;
   }
 
@@ -123,6 +166,8 @@ export function useWorkflowActions(taskId: () => string | null | undefined) {
     workflowMessage,
     workflowOk,
     workflowFailed,
+    verdictSeq,
+    verdictFailed,
     wfAction,
     sendNote,
     resetWorkflow,

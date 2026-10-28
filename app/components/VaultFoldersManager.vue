@@ -131,6 +131,8 @@ async function removeFolder() {
     <UModal
       v-model:open="open"
       title="Vault folders"
+      :dismissible="!busy"
+      :close="!busy"
       :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
     >
       <template #body>
@@ -140,9 +142,12 @@ async function removeFolder() {
           searchable
           search-placeholder="Search folders…"
           :data="folders"
-          :loading="foldersQuery.isFetching.value || foldersQuery.isPlaceholderData.value"
+          :loading="foldersQuery.isPending.value || foldersQuery.isPlaceholderData.value"
+          :refreshing="foldersQuery.isFetching.value && !foldersQuery.isPending.value"
+          :filtered="!!search.trim()"
           :error="foldersQuery.isError.value"
           @retry="foldersQuery.refetch()"
+          @clear-search="search = ''"
           :page-count="pageCount"
           :page-size="pageSize"
           :columns="columns"
@@ -228,6 +233,8 @@ async function removeFolder() {
       v-if="editable"
       v-model:open="editorOpen"
       :title="editingId ? 'Rename folder' : 'New folder'"
+      :dismissible="!busy"
+      :close="!busy"
       :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
     >
       <template #body>
@@ -255,7 +262,7 @@ async function removeFolder() {
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
-          <UButton variant="ghost" color="neutral" @click="editorOpen = false">Cancel</UButton>
+          <UButton variant="ghost" color="neutral" :disabled="busy" @click="editorOpen = false">Cancel</UButton>
           <UButton
             type="submit"
             form="folder-editor-form"
@@ -270,6 +277,8 @@ async function removeFolder() {
     <!-- folder delete confirm: secrets survive -->
     <UModal
       :open="confirming !== null"
+      :dismissible="!busy"
+      :close="!busy"
       @update:open="
         (v: boolean) => {
           if (!v) confirming = null;
@@ -295,19 +304,10 @@ async function removeFolder() {
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
-          <UButton variant="ghost" color="neutral" @click="confirming = null">Cancel</UButton>
+          <UButton variant="ghost" color="neutral" :disabled="busy" @click="confirming = null">Cancel</UButton>
           <UButton color="error" icon="i-lucide-trash-2" :loading="busy" @click="removeFolder()">Delete</UButton>
         </div>
       </template>
     </UModal>
   </div>
 </template>
-
-<style scoped>
-/* desktop hover-reveal for row actions — always visible on touch/mobile */
-@media (min-width: 768px) and (hover: hover) {
-  :deep(tbody tr:not(:hover):not(:focus-within)) .row-actions {
-    opacity: 0;
-  }
-}
-</style>

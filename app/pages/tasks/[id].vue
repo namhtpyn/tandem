@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
 
-import { CHANGE_RESOURCE, RUN_STATUS } from '#shared/enums';
+import { CATEGORIES, CATEGORY, CHANGE_RESOURCE, RUN_STATUS } from '#shared/enums';
+import type { Category } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 // Task detail — Paperclip-style layout: chat-like main content (description bubble,
 // run turns, activity notes, composer at the bottom) + right sidebar with task info
@@ -10,7 +11,7 @@ import { nonNull } from '#shared/utils/non-null';
 // workflow-action state; thread and sidebar panels are self-loading components
 // (TaskActivityThread, TaskDetailsFields, TaskReviewPanel, TaskRoutingPanels,
 // TaskWorkflowActions) that share query keys with the app-wide SSE subscription.
-import { composerReady, useWorkflowActions } from '~/composables/useWorkflowActions';
+import { composerHint, composerReady, useWorkflowActions } from '~/composables/useWorkflowActions';
 import type { TaskRow, TaskRunRow, TaskStatusRow } from '~/utils/orpc-types';
 import { categoryColor, composerPlaceholder } from '~/utils/ui-labels';
 
@@ -31,23 +32,34 @@ const statusById = computed(() => new Map(statuses.value.map((x) => [x.id, x])))
 
 // category (not the seeded uuid) decides the workflow gates: custom statuses in
 // the working/waiting_answer/in_review categories behave like the seeded ones
-const taskStatusCategory = computed<TaskStatusRow['category'] | null>(() =>
-  task.value ? (statusById.value.get(task.value.status)?.category ?? null) : null,
-);
+const taskStatusCategory = computed<Category | null>(() => {
+  const raw = task.value ? statusById.value.get(task.value.status)?.category : null;
+  // server sends a plain string column — narrow to the workflow vocabulary
+  return CATEGORIES.find((c) => c === raw) ?? null;
+});
 
 // review verdicts are an explicit-reviewer surface — nobody else sees the box.
 // Gate on ids, never names: a name is display data and two employees can share it.
 const isReviewer = computed(() => !!session.value && !!task.value?.reviewers.includes(session.value.user.id));
 
 // the workflow ladder (copy + invalidation) is shared with the list drawer
-const { workflowNote, workflowBusy, workflowMessage, workflowOk, workflowFailed, wfAction, sendNote, resetWorkflow } =
-  useWorkflowActions(() => task.value?.id ?? null);
+const {
+  workflowNote,
+  workflowBusy,
+  workflowMessage,
+  workflowOk,
+  verdictSeq,
+  verdictFailed,
+  wfAction,
+  sendNote,
+  resetWorkflow,
+} = useWorkflowActions(() => task.value?.id ?? null);
 
 /** composer verb: a null category (statuses loading/failed) must not read as 'note' */
 const composerSendReady = computed(() => composerReady(taskStatusCategory.value, workflowNote.value));
 function sendComposer() {
   if (!composerSendReady.value) return;
-  void sendNote(taskStatusCategory.value === 'waiting_answer');
+  void sendNote(taskStatusCategory.value === CATEGORY.WAITING_ANSWER);
 }
 
 /** a live run turns the composer into a steer box; stopped = send dispatches */
@@ -66,6 +78,20 @@ const agentRunning = computed(() => runs.value.some((r) => r.status === RUN_STAT
  * locked behind a neutral hint instead of letting an edit race the settle */
 const runsSettled = computed(() => runsLive.isSuccess.value || runsLive.isError.value);
 const runLocked = computed(() => !runsSettled.value || agentRunning.value);
+
+/** dispatch is a SERVER rule: only a ready-category task with an AI assignee is
+ *  picked up by a note send — the hint must not promise anything else */
+const willDispatch = computed(
+  () =>
+    !agentRunning.value && taskStatusCategory.value === CATEGORY.READY && (task.value?.assigneeKind ?? null) === 'ai',
+);
+const composerHintText = computed(() =>
+  composerHint({
+    category: taskStatusCategory.value,
+    assigneeKind: task.value?.assigneeKind,
+    running: agentRunning.value,
+  }),
+);
 
 const infoSheetOpen = ref(false);
 const subtaskEditorOpen = ref(false);
@@ -154,6 +180,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                     :color="categoryColor(statusById.get(task.status)?.category)"
                     variant="subtle"
                     size="sm"
+                    data-testid="task-status-badge"
                     >{{ statusById.get(task.status)?.name }}</UBadge
                   >
                   <NuxtLink
@@ -219,7 +246,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                   :maxrows="6"
                   variant="none"
                   :disabled="workflowBusy"
-                  :placeholder="composerPlaceholder(taskStatusCategory === 'waiting_answer')"
+                  :placeholder="composerPlaceholder(taskStatusCategory === CATEGORY.WAITING_ANSWER)"
                   aria-label="Task note"
                   class="w-full"
                   :ui="{ base: 'px-1 py-1 text-sm placeholder:text-dimmed' }"
@@ -237,19 +264,13 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                        Terminal tasks never re-dispatch (server note verb), so the hint
                        must not promise it. -->
                   <span v-else class="text-muted shrink-0 text-xs">
-                    {{
-                      agentRunning
-                        ? 'Sends a steering note to the running agent'
-                        : taskStatusCategory === 'done' || taskStatusCategory === 'cancelled'
-                          ? 'Adds the note to the thread'
-                          : 'Sends the note and dispatches the agent'
-                    }}
+                    {{ composerHintText }}
                   </span>
                   <UButton
                     size="lg"
                     color="primary"
                     :icon="agentRunning ? 'i-lucide-reply' : 'i-lucide-arrow-up'"
-                    :aria-label="agentRunning ? 'Steer agent' : 'Send and dispatch'"
+                    :aria-label="agentRunning ? 'Steer agent' : willDispatch ? 'Send and dispatch' : 'Send note'"
                     class="size-10 shrink-0"
                     :disabled="workflowBusy || !composerSendReady"
                     @click="sendComposer()"
@@ -260,11 +281,12 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
 
             <!-- GitHub-style review verdicts: own card, reviewers only, in review only -->
             <TaskReviewBox
-              v-if="taskStatusCategory === 'in_review' && isReviewer"
+              v-if="taskStatusCategory === CATEGORY.IN_REVIEW && isReviewer"
               :key="task.id"
               class="mt-3"
               :busy="workflowBusy"
-              :failed="workflowFailed"
+              :verdict-seq="verdictSeq"
+              :verdict-failed="verdictFailed"
               @verdict="
                 (action: 'approve' | 'requestChanges' | 'reject', body?: string) =>
                   wfAction(action, { body: body || undefined })

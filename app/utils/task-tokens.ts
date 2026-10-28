@@ -18,9 +18,15 @@ const UNSAFE_NAME = /[[\]()\r\n]+/g;
 
 const safeName = (name: string) => name.replace(UNSAFE_NAME, '_').trim() || 'file';
 
+/** the src/ref a markdown attachment marker carries — one format for the token
+ * builder, the editor image node and the render fallback */
+export function attachmentRef(id: string): string {
+  return `attachment-${id}`;
+}
+
 export function attachmentToken(mime: string, filename: string, id: string): string {
   const marker = mime.startsWith('image/') ? '!' : '@';
-  return `${marker}[${safeName(filename)}](attachment-${id})`;
+  return `${marker}[${safeName(filename)}](${attachmentRef(id)})`;
 }
 
 export function mentionToken(label: string, id: string): string {

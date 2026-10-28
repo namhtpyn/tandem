@@ -155,7 +155,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
         <div class="border-default inline-flex overflow-hidden rounded-md border" role="group" aria-label="View">
           <button
             type="button"
-            class="px-3 py-1.5 text-sm font-medium transition-colors"
+            class="focus-visible:ring-primary px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
             :class="view === 'list' ? 'bg-elevated text-highlighted' : 'text-muted hover:text-highlighted'"
             aria-label="List view"
             :aria-pressed="view === 'list'"
@@ -165,7 +165,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
           </button>
           <button
             type="button"
-            class="border-default border-l px-3 py-1.5 text-sm font-medium transition-colors"
+            class="border-default focus-visible:ring-primary border-l px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
             :class="view === 'graph' ? 'bg-elevated text-highlighted' : 'text-muted hover:text-highlighted'"
             aria-label="Graph view"
             :aria-pressed="view === 'graph'"
@@ -182,7 +182,16 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
           size="sm"
           @click="titleManagerOpen = true"
         />
-        <UButton icon="i-lucide-plus" label="New employee" size="sm" @click="openEditor()" />
+        <!-- the empty state carries the only create CTA on a truly empty list;
+             while a search is active the toolbar keeps it (zero matches must
+             not read as a zero-employee workspace) -->
+        <UButton
+          v-if="total > 0 || !!search"
+          icon="i-lucide-plus"
+          label="New employee"
+          size="sm"
+          @click="openEditor()"
+        />
       </div>
     </div>
 
@@ -190,17 +199,20 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
       v-if="view === 'list'"
       class="mt-3"
       :data="rows"
-      :loading="listQuery.isFetching.value || listQuery.isPlaceholderData.value"
+      :loading="listQuery.isPending.value || listQuery.isPlaceholderData.value"
+      :refreshing="listQuery.isFetching.value && !listQuery.isPending.value"
+      :filtered="isFiltered"
       :error="listQuery.isError.value"
       @retry="listQuery.refetch()"
+      @clear-search="search = ''"
       v-model:page="page"
       :page-count="pageCount"
       :page-size="pageSize"
       :columns="columns"
       show-empty-state
-      :empty-icon="isFiltered ? 'i-lucide-search-x' : 'i-lucide-users'"
+      empty-icon="i-lucide-users"
       empty-noun="employees"
-      :empty-text="isFiltered ? 'No results — try a different search.' : 'Add the first human or AI teammate.'"
+      empty-text="Add the first human or AI teammate."
     >
       <template #empty-cta>
         <UButton v-if="!isFiltered" icon="i-lucide-plus" label="New employee" @click="openEditor()" />
@@ -410,7 +422,13 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
       @retry="allQuery.refetch()"
     />
 
-    <UModal v-model:open="deleteOpen" title="Delete employee" :ui="{ content: 'max-w-sm' }">
+    <UModal
+      v-model:open="deleteOpen"
+      title="Delete employee"
+      :dismissible="!busy"
+      :close="!busy"
+      :ui="{ content: 'max-w-sm' }"
+    >
       <template #body>
         <div class="space-y-4">
           <p class="text-muted text-sm">
@@ -432,7 +450,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
-          <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingDelete = null" />
+          <UButton variant="ghost" color="neutral" label="Cancel" :disabled="busy" @click="pendingDelete = null" />
           <UButton icon="i-lucide-trash-2" color="error" label="Delete" :loading="busy" @click="remove" />
         </div>
       </template>
@@ -443,12 +461,3 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
     <EmployeeKeysDrawer v-model:open="keysOpen" :employee="keysEmployee" />
   </div>
 </template>
-
-<style scoped>
-/* desktop hover-reveal for row actions — always visible on touch/mobile */
-@media (min-width: 768px) and (hover: hover) {
-  :deep(tbody tr:not(:hover):not(:focus-within)) .row-actions {
-    opacity: 0;
-  }
-}
-</style>
