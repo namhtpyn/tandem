@@ -82,9 +82,11 @@ export default defineConfig({
           name: 'nuxt',
           include: ['test/nuxt/**/*.test.ts'],
           environment: 'nuxt',
-          // component coverage stays OFF: only 3 components mount in vitest, so
-          // app/components drags the GLOBAL v8 threshold to ~95% even ungated
-          // (per-project thresholds:{} does not opt out of the global merge)
+          // explicit coverage opt-out: only 3 components mount here, and without
+          // this block the project INHERITS the root collector — the nuxt module
+          // graph then re-records app/composables+utils as uncovered (0-24%) and
+          // craters the global threshold (CI red at 95.3% vs 99.5%)
+          coverage: { enabled: false, reporter: [], reportsDirectory: null, thresholds: {} },
         },
       }),
     ],
