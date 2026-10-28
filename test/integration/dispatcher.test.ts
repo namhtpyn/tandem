@@ -308,8 +308,6 @@ describe('runner service guards', () => {
   });
 
   it('tail keeps the last N lines', async () => {
-    const { TAIL_MAX_LINES } = await import('#server/domains/tasks/runner.service');
-    void TAIL_MAX_LINES;
     // exercise via a long fake run
     const agentId = await mkAiAgent();
     await callProc('tasks.create', { title: 'Long', assigneeId: agentId });

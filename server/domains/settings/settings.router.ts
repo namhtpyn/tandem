@@ -49,32 +49,16 @@ export const settingsRouter = os.router({
       const { setSetting, deleteSetting, INTERNAL_ASSIGNMENT_KEYS } = await import('./settings.service');
       const { rebuildAuth } = await import('../auth/auth.service');
       const { getOidcProviders } = await import('../auth/oidc.service');
+      // ---- validate FIRST: no row is written until every check has passed ----
       if (input.disablePasswordLogin === true) {
         const providers = await getOidcProviders();
         if (providers.length === 0) {
           throw new ORPCError('BAD_REQUEST', { message: 'configure an OIDC provider before disabling password login' });
         }
       }
-      if (input.disablePasswordLogin !== undefined) {
-        await setSetting('disablePasswordLogin', input.disablePasswordLogin ? 'true' : 'false');
-      }
-      if (input.companyName !== undefined) {
-        await setSetting('companyName', input.companyName.trim());
-      }
-      if (input.companyPrompt !== undefined) {
-        await setSetting('company_prompt', input.companyPrompt);
-      }
-      if (input.tasksPerAgent !== undefined) {
-        await setSetting('tasks_per_agent', String(input.tasksPerAgent));
-        // per-agent dispatch workers must re-sync to the new cap without a redeploy
-        const { onDispatcherSettingsChanged } = await import('../tasks/dispatcher.service');
-        await onDispatcherSettingsChanged();
-      }
-      if (input.runTimeoutMs !== undefined) {
-        await setSetting('run_timeout_ms', String(input.runTimeoutMs));
-      }
       // Workspace AI assignments: provider must exist and speak the right kind;
       // key secret must exist (keys are write-only vault references).
+      const assignments: Array<{ key: string; raw: string | null }> = [];
       if (input.internalLlm !== undefined || input.internalDecision !== undefined) {
         const provRows = await db.query.modelProviders.findMany({
           columns: { id: true, endpoints: true },
@@ -102,15 +86,42 @@ export const settingsRouter = os.router({
           return JSON.stringify({ providerId: a.providerId, model: a.model, keySecretId: a.keySecretId });
         };
         if (input.internalLlm !== undefined) {
-          const raw = await validate(input.internalLlm, 'LLM');
-          if (raw) await setSetting(INTERNAL_ASSIGNMENT_KEYS.LLM, raw);
-          else await deleteSetting(INTERNAL_ASSIGNMENT_KEYS.LLM);
+          assignments.push({ key: INTERNAL_ASSIGNMENT_KEYS.LLM, raw: await validate(input.internalLlm, 'LLM') });
         }
         if (input.internalDecision !== undefined) {
-          const raw = await validate(input.internalDecision, 'DECISION');
-          if (raw) await setSetting(INTERNAL_ASSIGNMENT_KEYS.DECISION, raw);
-          else await deleteSetting(INTERNAL_ASSIGNMENT_KEYS.DECISION);
+          assignments.push({
+            key: INTERNAL_ASSIGNMENT_KEYS.DECISION,
+            raw: await validate(input.internalDecision, 'DECISION'),
+          });
         }
+      }
+      // ---- commit: one transaction, so a failed write rolls back every earlier one ----
+      await db.transaction(async (tx) => {
+        if (input.disablePasswordLogin !== undefined) {
+          await setSetting('disablePasswordLogin', input.disablePasswordLogin ? 'true' : 'false', tx);
+        }
+        if (input.companyName !== undefined) {
+          await setSetting('companyName', input.companyName.trim(), tx);
+        }
+        if (input.companyPrompt !== undefined) {
+          await setSetting('company_prompt', input.companyPrompt, tx);
+        }
+        if (input.tasksPerAgent !== undefined) {
+          await setSetting('tasks_per_agent', String(input.tasksPerAgent), tx);
+        }
+        if (input.runTimeoutMs !== undefined) {
+          await setSetting('run_timeout_ms', String(input.runTimeoutMs), tx);
+        }
+        for (const a of assignments) {
+          if (a.raw) await setSetting(a.key, a.raw, tx);
+          else await deleteSetting(a.key, tx);
+        }
+      });
+      // ---- side effects AFTER commit: each re-reads the committed rows ----
+      if (input.tasksPerAgent !== undefined) {
+        // per-agent dispatch workers must re-sync to the new cap without a redeploy
+        const { onDispatcherSettingsChanged } = await import('../tasks/dispatcher.service');
+        await onDispatcherSettingsChanged();
       }
       await rebuildAuth();
       await publishChange(CHANGE_RESOURCE.SETTINGS, CHANGE_ACTION.UPDATE);

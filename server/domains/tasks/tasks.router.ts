@@ -197,7 +197,9 @@ async function listTasksPaged(
       updatedAt: true,
     },
     where: where as never,
-    orderBy: { createdAt: 'desc' },
+    // id tiebreaker: rows sharing a createdAt (same-ms inserts) must have a total
+    // order or limit/offset pages duplicate and skip them
+    orderBy: { createdAt: 'desc', id: 'desc' },
     limit: input.pageSize,
     offset: (input.page - 1) * input.pageSize,
   });
@@ -542,7 +544,7 @@ export const tasksRouter = os.router({
       items: rows.map((x) => ({
         id: x.id,
         employeeId: x.employeeId,
-        employeeName: x.employeeId ? nonNull(nameById.get(x.employeeId)) : null,
+        employeeName: x.employeeId ? (nameById.get(x.employeeId) ?? null) : null,
         reason: x.reason,
         actorId: x.actorId,
         startedAt: x.startedAt.toISOString(),

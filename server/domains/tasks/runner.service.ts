@@ -2,6 +2,7 @@ import { consola } from 'consola';
 import { and, desc, eq, ne, sql } from 'drizzle-orm';
 
 import { PROPOSAL_KIND } from '#shared/enums';
+import type { RoutingProposal } from '#shared/run-verdict';
 // Agent runner: dispatch a task to its AI assignee over SSH as ONE ACP
 // prompt turn (Agent Client Protocol v1 over stdio), stream session updates
 // back, persist the FULL output on the run row (appended in chunks, never
@@ -16,7 +17,6 @@ import { PROPOSAL_KIND } from '#shared/enums';
 // local e2e can exercise the full dispatch→stream→finish loop with no host.
 import { nonNull } from '#shared/utils/non-null';
 
-import type { RoutingProposal } from '#shared/run-verdict';
 import { db } from '../../db/index';
 import { tasks, taskRuns, taskActivity, taskAttachments, taskMessages } from '../../db/schema';
 import { env } from '../kernel/env';
@@ -93,12 +93,21 @@ export async function steerRun(taskId: string, text: string): Promise<'steered' 
   return ok ? 'steered' : 'refused';
 }
 
-async function logRun(taskId: string, runId: string, body: string, meta: Record<string, unknown> = {}) {
+async function logRun(
+  taskId: string,
+  runId: string,
+  body: string,
+  meta: Record<string, unknown> = {},
+  opts: { publishActivity?: boolean } = {},
+) {
   await db
     .insert(taskActivity)
     .values({ id: uuidv7(), taskId, kind: 'status', authorId: null, body, meta: { ...meta, runId } });
-  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
+  // dispatch defers this ping until the run's thread turn exists (see dispatchTask):
+  // an activity publish before createRunMessage lets the thread cache rebuild
+  // without the run bubble and then keep that stale snapshot
+  if (opts.publishActivity !== false) await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
 }
 
 /** push the task's input attachments to the sandbox; failures are logged, never fatal */
@@ -624,7 +633,15 @@ export async function dispatchTask(
   // sits BEFORE the run's startedAt — the timeline shows "dispatched" above the
   // result card, not after it
   const runId = uuidv7();
-  await logRun(taskId, runId, `dispatched to ${plan.agentName} on ${plan.envName}`, { dispatched: true });
+  await logRun(
+    taskId,
+    runId,
+    `dispatched to ${plan.agentName} on ${plan.envName}`,
+    { dispatched: true },
+    {
+      publishActivity: false,
+    },
+  );
   // the run's thread turn: message first (blank body — settle parses the result
   // into it), the run row links the task through it
   const messageId = await createRunMessage({ taskId, authorId: plan.ai.userId });
@@ -636,6 +653,9 @@ export async function dispatchTask(
     status: RUN_STATUS.RUNNING,
     output: '',
   });
+  // only now is the thread turn complete — publish the activity ping here so a
+  // listener rebuilding off it sees the run bubble, not a message-less gap
+  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   // review turns run ON the task but must not claim it: flipping in-review → doing
   // here would make the human verdict verbs (approve/request-changes) throw on the
   // status gate — only the ASSIGNEE's dispatch owns the doing transition
@@ -825,6 +845,10 @@ export async function dispatchTask(
       await scheduleRetryBackoff();
     }
     await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
+    // re-publish the thread feed only after the body rewrite AND the settle: the
+    // pre-dispatch ping predates both, so a listener holding that snapshot would
+    // keep a blank run bubble with a stale status
+    await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   };
 
   const handle: RunHandle = {
