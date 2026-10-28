@@ -1,3 +1,10 @@
+## [2.49.2](https://github.com/namhtpyn/tandem/compare/v2.49.1...v2.49.2) (2026-10-28)
+
+
+### Bug Fixes
+
+* **app:** prod-build oRPC import inlines; dev keeps the opaque specifier ([41d4f6b](https://github.com/namhtpyn/tandem/commit/41d4f6b4b822ba47170a3e4ce0f0a602eeb3d1a8))
+
 ## [2.49.1](https://github.com/namhtpyn/tandem/compare/v2.49.0...v2.49.1) (2026-10-28)
 
 
