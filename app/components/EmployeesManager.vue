@@ -8,12 +8,15 @@ import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { employeeAvatarUrl } from '~/utils/api-urls';
+import { saveFailed } from '~/utils/forms';
 import type { EmployeeRow, EnvironmentRow } from '~/utils/orpc-types';
+import { TABLE_PAGE_SIZE } from '~/utils/pagination';
 
 const { $orpc } = useNuxtApp();
 
 const page = ref(1);
-const pageSize = ref(20);
+const pageSize = ref(TABLE_PAGE_SIZE);
 const search = ref('');
 const searchDebounced = ref('');
 watchDebounced(
@@ -39,9 +42,10 @@ const rows = computed<EmployeeRow[]>(() => listQuery.data.value?.employees ?? []
 const total = computed(() => listQuery.data.value?.total ?? 0);
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 
-// deleting the last row of a high page clamps back into range — skip transient totals
+// deleting the last row of a high page (or an emptied list) clamps back into
+// range — keepPreviousData keeps the previous total while a page fetch lands,
+// so a transient zero can only mean a genuinely empty result (page 1)
 watch(total, (t) => {
-  if (!t) return;
   const maxPage = Math.max(1, Math.ceil(t / pageSize.value));
   if (page.value > maxPage) page.value = maxPage;
 });
@@ -60,10 +64,14 @@ const byId = computed(() => new Map(allEmployees.value.map((r) => [r.id, r])));
 // ---- view toggle ----
 const view = ref<'list' | 'graph'>('list');
 
+// the search box is pointless over an empty, unfiltered list — hide it there
+const showSearch = computed(() => view.value === 'list' && (total.value > 0 || !!search.value));
+const isFiltered = computed(() => !!searchDebounced.value);
+
 const removeMutation = useMutation($orpc.employees.remove.mutationOptions());
 
 const busy = ref(false);
-const message = ref('');
+const deleteError = ref('');
 const pendingDelete = ref<EmployeeRow | null>(null);
 const deleteOpen = computed({
   get: () => pendingDelete.value !== null,
@@ -73,6 +81,7 @@ const deleteOpen = computed({
 });
 
 function askRemove(row: EmployeeRow) {
+  deleteError.value = '';
   pendingDelete.value = row;
 }
 
@@ -83,8 +92,9 @@ async function remove() {
     await removeMutation.mutateAsync({ id: pendingDelete.value.id });
     pendingDelete.value = null;
   } catch (e) {
-    pendingDelete.value = null;
-    message.value = e instanceof Error ? e.message : 'delete failed';
+    // in-modal law: the failure renders where the confirm lives — the modal
+    // stays open so retrying is one click away
+    deleteError.value = saveFailed(e, 'employee', 'delete');
   } finally {
     busy.value = false;
   }
@@ -93,15 +103,26 @@ async function remove() {
 // ---- composed controls ----
 const titleManagerOpen = ref(false);
 const editorOpen = ref(false);
-const editingRow = ref<EmployeeRow | null>(null);
+// the editor keys off the ID, never a frozen row copy: the live row re-resolves
+// from the full list on every EMPLOYEES invalidation, so save+refetch shows the
+// saved values on reopen instead of the stale snapshot from open time
+const editingId = ref<string | null>(null);
+const editingRowFallback = ref<EmployeeRow | null>(null);
+const editingRowLive = computed(() => allEmployees.value.find((r) => r.id === editingId.value) ?? null);
+const editingRow = computed<EmployeeRow | null>(() => editingRowLive.value ?? editingRowFallback.value);
 function openEditor(row?: EmployeeRow) {
-  editingRow.value = row ?? null;
+  editingId.value = row?.id ?? null;
+  editingRowFallback.value = row ?? null;
   editorOpen.value = true;
 }
 const keysOpen = ref(false);
-const keysEmployee = ref<EmployeeRow | null>(null);
+const keysEmployeeId = ref<string | null>(null);
+const keysEmployeeFallback = ref<EmployeeRow | null>(null);
+const keysEmployeeLive = computed(() => allEmployees.value.find((r) => r.id === keysEmployeeId.value) ?? null);
+const keysEmployee = computed<EmployeeRow | null>(() => keysEmployeeLive.value ?? keysEmployeeFallback.value);
 function openKeys(row: EmployeeRow) {
-  keysEmployee.value = row;
+  keysEmployeeId.value = row.id;
+  keysEmployeeFallback.value = row;
   keysOpen.value = true;
 }
 
@@ -111,44 +132,43 @@ const columns = [
   { accessorKey: 'kind', header: 'Kind' },
   { accessorKey: 'supervisors', header: 'Supervisors' },
   { accessorKey: 'environment', header: 'Environment' },
-  { accessorKey: 'actions', header: '' },
+  { id: 'actions', header: 'Actions', meta: { class: { th: 'sr-only' } } },
 ];
 
-onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]));
+onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), allQuery.suspense()]));
 </script>
 
 <template>
-  <div>
-    <div class="flex flex-wrap items-end justify-between gap-2">
-      <span />
-      <div class="flex items-center gap-2">
-        <div
-          class="inline-flex overflow-hidden rounded-md border border-zinc-300 dark:border-zinc-700"
-          role="group"
-          aria-label="View"
-        >
+  <div class="flex min-h-0 flex-1 flex-col">
+    <!-- ONE toolbar row: search left, every action right -->
+    <div class="flex flex-wrap items-center gap-2">
+      <UInput
+        v-if="showSearch"
+        v-model="search"
+        icon="i-lucide-search"
+        placeholder="Search employees…"
+        size="sm"
+        class="w-full sm:max-w-xs"
+        aria-label="Search employees"
+      />
+      <div class="ms-auto flex items-center gap-2 overflow-x-auto">
+        <div class="border-default inline-flex overflow-hidden rounded-md border" role="group" aria-label="View">
           <button
             type="button"
-            class="px-3 py-1.5 text-sm font-medium transition-colors"
-            :class="
-              view === 'list'
-                ? 'bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400'
-                : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
-            "
+            class="focus-visible:ring-primary px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
+            :class="view === 'list' ? 'bg-elevated text-highlighted' : 'text-muted hover:text-highlighted'"
             aria-label="List view"
+            :aria-pressed="view === 'list'"
             @click="view = 'list'"
           >
             List
           </button>
           <button
             type="button"
-            class="border-l border-zinc-300 px-3 py-1.5 text-sm font-medium transition-colors dark:border-zinc-700"
-            :class="
-              view === 'graph'
-                ? 'bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400'
-                : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
-            "
+            class="border-default focus-visible:ring-primary border-l px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
+            :class="view === 'graph' ? 'bg-elevated text-highlighted' : 'text-muted hover:text-highlighted'"
             aria-label="Graph view"
+            :aria-pressed="view === 'graph'"
             @click="view = 'graph'"
           >
             Graph
@@ -159,45 +179,60 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
           label="Titles"
           color="neutral"
           variant="outline"
+          size="sm"
           @click="titleManagerOpen = true"
         />
-        <UButton icon="i-lucide-plus" label="New employee" @click="openEditor()" />
+        <!-- the empty state carries the only create CTA on a truly empty list;
+             while a search is active the toolbar keeps it (zero matches must
+             not read as a zero-employee workspace) -->
+        <UButton
+          v-if="total > 0 || !!search"
+          icon="i-lucide-plus"
+          label="New employee"
+          size="sm"
+          @click="openEditor()"
+        />
       </div>
     </div>
 
-    <p v-if="message && !editorOpen" class="text-error text-sm">{{ message }}</p>
-
-    <!-- Mobile: stacked cards (list view) -->
     <DataTable
       v-if="view === 'list'"
-      v-model:search="search"
-      searchable
-      search-placeholder="Search employees…"
+      class="mt-3"
       :data="rows"
+      :loading="listQuery.isPending.value || listQuery.isPlaceholderData.value"
+      :refreshing="listQuery.isFetching.value && !listQuery.isPending.value"
+      :filtered="isFiltered"
+      :error="listQuery.isError.value"
+      @retry="listQuery.refetch()"
+      @clear-search="search = ''"
       v-model:page="page"
       :page-count="pageCount"
       :page-size="pageSize"
       :columns="columns"
       show-empty-state
       empty-icon="i-lucide-users"
-      empty-text="No employees yet — add the first human or AI teammate."
+      empty-noun="employees"
+      empty-text="Add the first human or AI teammate."
     >
+      <template #empty-cta>
+        <UButton v-if="!isFiltered" icon="i-lucide-plus" label="New employee" @click="openEditor()" />
+      </template>
       <template #name-cell="{ row }">
         <div class="flex items-center gap-2">
           <span class="flex items-center gap-2">
             <img
               v-if="row.original.hasAvatar"
-              :src="`/api/employees/${row.original.id}/avatar`"
+              :src="employeeAvatarUrl(row.original.id)"
               :alt="row.original.name"
               class="size-6 shrink-0 rounded-full object-cover"
             />
-            <span class="text-sm font-medium text-zinc-900 dark:text-white">{{ row.original.name }}</span>
+            <span class="text-highlighted text-sm font-medium">{{ row.original.name }}</span>
           </span>
-          <span class="truncate font-mono text-xs text-zinc-400">{{ row.original.email }}</span>
+          <span class="text-dimmed truncate font-mono text-xs">{{ row.original.email }}</span>
         </div>
       </template>
       <template #title-cell="{ row }">
-        <span class="text-sm text-zinc-600 dark:text-zinc-300">{{ row.original.title }}</span>
+        <span class="text-toned text-sm">{{ row.original.title }}</span>
       </template>
       <template #kind-cell="{ row }">
         <UBadge
@@ -206,34 +241,41 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
           size="sm"
           :icon="row.original.kind === 'ai' ? 'i-lucide-bot' : 'i-lucide-user'"
         >
-          {{ row.original.kind }}
+          {{ kindLabel(row.original.kind) }}
         </UBadge>
       </template>
       <template #supervisors-cell="{ row }">
         <div class="flex flex-wrap gap-1">
           <template v-if="row.original.supervisorIds.length">
-            <UBadge v-for="sid in row.original.supervisorIds" :key="sid" color="neutral" variant="soft" size="sm">
-              {{ byId.get(sid)?.name ?? sid.slice(0, 8) }}
+            <UBadge
+              v-for="sid in row.original.supervisorIds"
+              :key="sid"
+              color="neutral"
+              variant="soft"
+              size="sm"
+              :class="byId.get(sid) ? undefined : 'text-dimmed italic'"
+            >
+              {{ byId.get(sid)?.name ?? 'Unknown' }}
             </UBadge>
           </template>
-          <span v-else class="text-xs text-zinc-400">—</span>
+          <span v-else class="text-dimmed text-xs">—</span>
         </div>
       </template>
       <template #environment-cell="{ row }">
-        <span v-if="row.original.kind === 'ai' && row.original.environmentId" class="font-mono text-xs text-zinc-500">{{
+        <span v-if="row.original.kind === 'ai' && row.original.environmentId" class="text-muted font-mono text-xs">{{
           envName(row.original.environmentId)
         }}</span>
-        <span v-else class="text-xs text-zinc-400">—</span>
+        <span v-else class="text-dimmed text-xs">—</span>
       </template>
       <template #actions-cell="{ row }">
-        <div class="flex justify-end gap-1">
-          <UPopover mode="hover">
+        <div class="row-actions flex justify-end gap-1 transition-opacity">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-key-round"
               variant="ghost"
               color="neutral"
               size="sm"
-              aria-label="Access keys"
+              :aria-label="`Access keys for ${row.original.name}`"
               :disabled="busy"
               @click="openKeys(row.original)"
             />
@@ -241,13 +283,13 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
               <div class="px-3 py-1.5 text-xs">Access keys</div>
             </template>
           </UPopover>
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-pencil"
               variant="ghost"
               color="neutral"
               size="sm"
-              aria-label="Edit employee"
+              :aria-label="`Edit ${row.original.name}`"
               :disabled="busy"
               @click="openEditor(row.original)"
             />
@@ -255,13 +297,14 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
               <div class="px-3 py-1.5 text-xs">Edit employee</div>
             </template>
           </UPopover>
-          <UPopover mode="hover">
+          <UPopover mode="hover" enable-touch>
             <UButton
               icon="i-lucide-trash-2"
               variant="ghost"
-              color="error"
+              color="neutral"
               size="sm"
-              aria-label="Delete employee"
+              class="text-muted hover:text-error"
+              :aria-label="`Delete ${row.original.name}`"
               :disabled="busy"
               @click="askRemove(row.original)"
             />
@@ -277,14 +320,14 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
             <div class="flex min-w-0 items-start gap-2">
               <img
                 v-if="row.hasAvatar"
-                :src="`/api/employees/${row.id}/avatar`"
+                :src="employeeAvatarUrl(row.id)"
                 :alt="row.name"
                 class="size-8 shrink-0 rounded-full object-cover"
               />
               <div class="min-w-0">
-                <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ row.name }}</p>
-                <p class="truncate font-mono text-xs text-zinc-400">{{ row.email }}</p>
-                <p v-if="row.title" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ row.title }}</p>
+                <p class="text-highlighted truncate text-sm font-medium">{{ row.name }}</p>
+                <p class="text-dimmed truncate font-mono text-xs">{{ row.email }}</p>
+                <p v-if="row.title" class="text-muted mt-1 text-xs">{{ row.title }}</p>
               </div>
             </div>
             <UBadge
@@ -293,15 +336,22 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
               size="sm"
               :icon="row.kind === 'ai' ? 'i-lucide-bot' : 'i-lucide-user'"
             >
-              {{ row.kind }}
+              {{ kindLabel(row.kind) }}
             </UBadge>
           </div>
           <div
             v-if="row.supervisorIds.length || (row.kind === 'ai' && row.environmentId)"
             class="mt-2 flex flex-wrap gap-1"
           >
-            <UBadge v-for="sid in row.supervisorIds" :key="sid" color="neutral" variant="soft" size="sm">
-              {{ byId.get(sid)?.name ?? sid.slice(0, 8) }}
+            <UBadge
+              v-for="sid in row.supervisorIds"
+              :key="sid"
+              color="neutral"
+              variant="soft"
+              size="sm"
+              :class="byId.get(sid) ? undefined : 'text-dimmed italic'"
+            >
+              {{ byId.get(sid)?.name ?? 'Unknown' }}
             </UBadge>
             <UBadge
               v-if="row.kind === 'ai' && row.environmentId"
@@ -314,13 +364,13 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
             </UBadge>
           </div>
           <div class="mt-3 flex justify-end gap-1">
-            <UPopover mode="hover">
+            <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-key-round"
                 variant="ghost"
                 color="neutral"
                 size="sm"
-                aria-label="Access keys"
+                :aria-label="`Access keys for ${row.name}`"
                 :disabled="busy"
                 @click="openKeys(row)"
               />
@@ -328,13 +378,13 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
                 <div class="px-3 py-1.5 text-xs">Access keys</div>
               </template>
             </UPopover>
-            <UPopover mode="hover">
+            <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-pencil"
                 variant="ghost"
                 color="neutral"
                 size="sm"
-                aria-label="Edit employee"
+                :aria-label="`Edit ${row.name}`"
                 :disabled="busy"
                 @click="openEditor(row)"
               />
@@ -342,13 +392,14 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
                 <div class="px-3 py-1.5 text-xs">Edit employee</div>
               </template>
             </UPopover>
-            <UPopover mode="hover">
+            <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-trash-2"
                 variant="ghost"
-                color="error"
+                color="neutral"
                 size="sm"
-                aria-label="Delete employee"
+                class="text-muted hover:text-error"
+                :aria-label="`Delete ${row.name}`"
                 :disabled="busy"
                 @click="askRemove(row)"
               />
@@ -362,22 +413,44 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense()]))
     </DataTable>
 
     <!-- graph view: supervision hierarchy -->
-    <EmployeeOrgGraph v-if="view === 'graph'" :rows="allEmployees" />
+    <EmployeeOrgGraph
+      v-if="view === 'graph'"
+      class="mt-3 min-h-72 flex-1"
+      :rows="allEmployees"
+      :loading="allQuery.isPending.value"
+      :error="allQuery.isError.value"
+      @retry="allQuery.refetch()"
+    />
 
-    <UModal v-model:open="deleteOpen" title="Delete employee" :ui="{ content: 'max-w-sm' }">
+    <UModal
+      v-model:open="deleteOpen"
+      title="Delete employee"
+      :dismissible="!busy"
+      :close="!busy"
+      :ui="{ content: 'max-w-sm' }"
+    >
       <template #body>
         <div class="space-y-4">
-          <p class="text-sm text-zinc-600 dark:text-zinc-300">
-            Delete <span class="font-semibold text-zinc-900 dark:text-white">{{ pendingDelete?.name }}</span> ({{
+          <p class="text-muted text-sm">
+            Delete <span class="text-highlighted font-semibold">{{ pendingDelete?.name }}</span> ({{
               pendingDelete?.email
             }})? Their login, supervision links, API keys{{ pendingDelete?.kind === 'ai' ? ', and AI extension' : '' }}
             are removed permanently.
           </p>
+          <UAlert
+            v-if="deleteError"
+            role="alert"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            :title="deleteError"
+            :ui="{ title: 'text-sm' }"
+          />
         </div>
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
-          <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingDelete = null" />
+          <UButton variant="ghost" color="neutral" label="Cancel" :disabled="busy" @click="pendingDelete = null" />
           <UButton icon="i-lucide-trash-2" color="error" label="Delete" :loading="busy" @click="remove" />
         </div>
       </template>

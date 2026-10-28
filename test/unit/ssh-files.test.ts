@@ -30,9 +30,6 @@ class FakeStream {
     return this;
   }
   end() {}
-  get stderr() {
-    return { on: () => {} };
-  }
 }
 
 /** Fake ssh2 Client: records commands, answers exec by script */

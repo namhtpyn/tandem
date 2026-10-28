@@ -1,2 +1,36 @@
 @import 'tailwindcss';
 @import '@nuxt/ui';
+
+/* 11px sidebar meta line (role suffix under the signed-in name) — a named
+   scale step, not a one-off arbitrary value */
+@theme {
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+}
+
+/* token layer: DESIGN_SYSTEM floors + the overlay scrim. Unlayered rules beat
+   Nuxt UI's @layer theme defaults, so these win without !important. */
+:root {
+  /* the text ramp must stay ordered: dimmed < muted < toned. dimmed is meta
+     only — never darker than the neutral-500 floor in light. */
+  --ui-text-dimmed: var(--ui-color-neutral-500);
+  --ui-text-muted: var(--ui-color-neutral-600);
+  /* true dim for modal/slideover/drawer scrims in both modes (bg-inverted
+     flips to white in dark and bg-default equals the panel token) */
+  --ui-overlay: color-mix(in oklab, var(--ui-color-neutral-950) 55%, transparent);
+}
+
+.dark {
+  --ui-text-dimmed: var(--ui-color-neutral-400);
+  --ui-text-muted: var(--ui-color-neutral-300);
+  --ui-overlay: color-mix(in oklab, var(--ui-color-neutral-950) 65%, transparent);
+}
+
+/* desktop hover-reveal for table row actions — always visible on touch/mobile.
+   Global on purpose: the rows live inside UTable's DOM, so every manager used
+   to repeat the same scoped :deep() copy of this rule. */
+@media (min-width: 768px) and (hover: hover) {
+  tbody tr:not(:hover):not(:focus-within) .row-actions {
+    opacity: 0;
+  }
+}

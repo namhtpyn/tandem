@@ -1,14 +1,23 @@
 // E2E: task routing — "needs my decision" inbox toggle with badge, subtask creation
 // with parent chip, parent auto-block while children are open (user laws, 2026-10-15).
-import { expect, test } from '@playwright/test';
-
+// the cleanup fixture sweeps every row the test created (tasks cascade messages/
+// runs/obligations/attachments; then users, projects, environments, vault, providers)
+import { expect, test } from './helpers/cleanup';
 import { login } from './helpers/login.ts';
+import { waitForHydration } from './pages/base.page.ts';
 
 test('inbox toggle filters to tasks pending on me and shows a badge', async ({ page }) => {
   const suffix = Date.now();
   const name = `Inbox toggle ${suffix}`;
   await login(page);
   await page.goto('/tasks');
+  await waitForHydration(page);
+
+  // baseline BEFORE this test creates anything: the badge counts the whole
+  // workspace, so the later assert is an exact delta, not a magic number
+  await expect(page.getByTestId('inbox-count-pending')).toHaveCount(0, { timeout: 10_000 });
+  const inboxBadge = page.getByTestId('inbox-count');
+  const inboxBefore = (await inboxBadge.count()) ? Number(await inboxBadge.textContent()) || 0 : 0;
 
   // task assigned to admin (the logged-in user) and in progress, so Ask routes
   // the question to the owner (= admin) -> inbox obligation on the same user
@@ -34,17 +43,23 @@ test('inbox toggle filters to tasks pending on me and shows a badge', async ({ p
   expect(asked.status()).toBe(200);
 
   await page.goto('/tasks');
+  await waitForHydration(page);
   const toggle = page.getByTestId('needs-decision-toggle');
   await expect(toggle).toContainText('Needs my decision');
-  // badge count ≥1 is the settled state of the ask round-trip (SSE refetches
-  // within ms — the retrying value assert absorbs the server-side routing)
-  await expect(page.getByTestId('inbox-count')).toHaveText(/[1-9]/); // badge count
+  // exact delta: this ask added exactly one pending decision
+  await expect(page.getByTestId('inbox-count')).toHaveText(String(inboxBefore + 1));
 
-  // toggle on: only the pending task remains visible
+  // seed a bystander the inbox must NOT show: no obligation, not pending on me
+  const bystander = `Inbox bystander ${suffix}`;
+  await page.getByRole('button', { name: 'New task' }).first().click();
+  await page.getByPlaceholder('Task title').fill(bystander);
+  await page.getByRole('button', { name: /Save|Create task/ }).click();
+  await expect(page.getByRole('link', { name: bystander }).first()).toBeVisible({ timeout: 15_000 });
+
+  // toggle on: the pending task remains, the bystander disappears
   await toggle.click();
   await expect(page.getByRole('link', { name })).toBeVisible();
-  const otherRows = await page.locator('a[href^="/tasks/"]').count();
-  expect(otherRows).toBeGreaterThanOrEqual(1);
+  await expect(page.getByRole('link', { name: bystander })).toHaveCount(0);
 
   // toggle off: back to the full list label
   await toggle.click();
@@ -57,6 +72,7 @@ test('subtask creation nests under the parent, chips the child, and blocks the p
   const childName = `Gating child ${suffix}`;
   await login(page);
   await page.goto('/tasks');
+  await waitForHydration(page);
 
   await page.getByRole('button', { name: 'New task' }).first().click();
   await page.getByPlaceholder('Task title').fill(parentName);
@@ -69,17 +85,19 @@ test('subtask creation nests under the parent, chips the child, and blocks the p
   const panel = page.getByTestId('subtask-panel');
   await expect(panel).toBeVisible();
   await panel.getByRole('button', { name: 'Add subtask' }).click();
-  const subtaskModal = page.getByRole('dialog', { name: 'New task' });
+  const subtaskModal = page.getByRole('dialog', { name: 'New subtask' });
   await expect(subtaskModal).toBeVisible();
   await subtaskModal.getByPlaceholder('Task title').fill(childName);
-  await subtaskModal.getByRole('button', { name: /Create task/ }).click();
+  await subtaskModal.getByRole('button', { name: /Create subtask/ }).click();
   await expect(panel.getByRole('link', { name: childName })).toBeVisible({ timeout: 10_000 });
 
   // parent flips to blocked (derived from the open child); the reload pulls
   // fresh server state and the retrying 'Blocked' assert absorbs the derive
   await page.reload();
-  // status ids are uuids now — the badge renders the status NAME
-  await expect(page.getByText('Blocked', { exact: true }).first()).toBeVisible({ timeout: 10_000 });
+  // status ids are uuids now — the badge renders the status NAME; scope the
+  // assert to the PARENT's own header badge (a stray 'Blocked' anywhere else on
+  // the page must not satisfy it)
+  await expect(page.getByTestId('task-status-badge')).toHaveText('Blocked', { timeout: 10_000 });
 
   // child page carries the parent chip
   await panel.getByRole('link', { name: childName }).click();

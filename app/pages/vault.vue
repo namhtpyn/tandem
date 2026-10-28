@@ -15,36 +15,22 @@ function onFolderDeleted(id: string) {
 <template>
   <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
     <template #body>
-      <UDashboardNavbar title="Vault">
+      <UDashboardNavbar title="Vault" :ui="{ root: 'lg:px-8' }">
         <template #leading>
           <UDashboardSidebarCollapse />
         </template>
       </UDashboardNavbar>
 
-      <div class="space-y-6 p-6 lg:p-8">
-        <div class="flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <p class="text-sm text-zinc-500">
-              Encrypted secrets for SSH keys and API tokens — write-only, never displayed again
-            </p>
-          </div>
-          <div class="flex items-center gap-2">
-            <UPopover mode="hover">
-              <template #content>
-                <div class="px-3 py-1.5 text-xs">Audit log</div>
-              </template>
-            </UPopover>
-            <UButton
-              icon="i-lucide-folder"
-              label="Folders"
-              color="neutral"
-              variant="outline"
-              @click="folderManagerOpen = true"
-            />
-          </div>
-        </div>
+      <div class="space-y-6 p-4 sm:p-6 lg:p-8">
+        <p class="text-muted hidden text-sm sm:block">
+          Encrypted secrets for SSH keys and API tokens — write-only, never displayed again
+        </p>
 
-        <VaultSecretsManager v-model:folder-id="activeFolder" @deleted="onFolderDeleted" />
+        <VaultSecretsManager
+          v-model:folder-id="activeFolder"
+          @deleted="onFolderDeleted"
+          @manage-folders="folderManagerOpen = true"
+        />
       </div>
 
       <VaultFoldersManager v-model:open="folderManagerOpen" @deleted="onFolderDeleted" />

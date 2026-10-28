@@ -9,7 +9,7 @@ import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { projects as projectsTable, taskStatuses as taskStatusesTable, tasks as tasksTable } from '../../db/schema';
+import { projects as projectsTable, taskStatuses as taskStatusesTable } from '../../db/schema';
 import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 
 async function listStatuses() {
@@ -126,86 +126,91 @@ export const statusesRouter = os.router({
   /** auto-assign a task via Jev (typed choice over employee candidates).
    *  No-op when a Jev key isn't configured or Jev is unsure — the task
    *  stays unassigned for a human decision. */
-  assign: protectedProcedure.input(z.strictObject({ taskId: z.string().min(1) })).handler(async ({ input }) => {
-    const tRows = await db.query.tasks.findMany({
-      columns: { id: true, title: true, description: true, projectId: true },
-      where: { id: { eq: input.taskId } },
-      orderBy: { id: 'asc' },
-    });
-    const task = tRows[0];
-    if (!task) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
+  assign: protectedProcedure
+    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .handler(async ({ input, context }) => {
+      const tRows = await db.query.tasks.findMany({
+        columns: { id: true, title: true, description: true, projectId: true },
+        where: { id: { eq: input.taskId } },
+        orderBy: { id: 'asc' },
+      });
+      const task = tRows[0];
+      if (!task) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
 
-    // candidates: every employee, with open-task load (non-terminal statuses)
-    const users = await db.query.user.findMany({
-      columns: { id: true, name: true, title: true },
-      orderBy: { id: 'asc' },
-    });
-    const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true }, orderBy: { userId: 'asc' } });
-    const aiByUser = new Map(aiRows.map((r) => [r.userId, r]));
-    const statusRows = await db.query.taskStatuses.findMany({
-      columns: { id: true, category: true },
-      orderBy: { position: 'asc' },
-    });
-    const terminal = new Set(
-      statusRows.filter((s) => s.category === 'done' || s.category === 'cancelled').map((s) => s.id),
-    );
-    const allTasks = await db.query.tasks.findMany({
-      columns: { assigneeId: true, status: true },
-      orderBy: { id: 'asc' },
-    });
-    const openByAssignee = new Map<string, number>();
-    for (const t of allTasks) {
-      if (t.assigneeId && !terminal.has(t.status)) {
-        openByAssignee.set(t.assigneeId, (openByAssignee.get(t.assigneeId) ?? 0) + 1);
+      // candidates: every employee, with open-task load (non-terminal statuses)
+      const users = await db.query.user.findMany({
+        columns: { id: true, name: true, title: true },
+        orderBy: { id: 'asc' },
+      });
+      const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true }, orderBy: { userId: 'asc' } });
+      const aiByUser = new Map(aiRows.map((r) => [r.userId, r]));
+      const statusRows = await db.query.taskStatuses.findMany({
+        columns: { id: true, category: true },
+        orderBy: { position: 'asc' },
+      });
+      const terminal = new Set(
+        statusRows.filter((s) => s.category === 'done' || s.category === 'cancelled').map((s) => s.id),
+      );
+      const allTasks = await db.query.tasks.findMany({
+        columns: { assigneeId: true, status: true },
+        orderBy: { id: 'asc' },
+      });
+      const openByAssignee = new Map<string, number>();
+      for (const t of allTasks) {
+        if (t.assigneeId && !terminal.has(t.status)) {
+          openByAssignee.set(t.assigneeId, (openByAssignee.get(t.assigneeId) ?? 0) + 1);
+        }
       }
-    }
-    let projName = null as string | null;
-    if (task.projectId) {
-      const projRows = await db
-        .select({ name: projectsTable.name })
-        .from(projectsTable)
-        .where(eq(projectsTable.id, task.projectId));
-      projName = projRows.length > 0 ? nonNull(projRows[0]).name : null;
-    }
+      let projName = null as string | null;
+      if (task.projectId) {
+        const projRows = await db
+          .select({ name: projectsTable.name })
+          .from(projectsTable)
+          .where(eq(projectsTable.id, task.projectId));
+        projName = projRows.length > 0 ? nonNull(projRows[0]).name : null;
+      }
 
-    const { pickAssignee } = await import('./decision.service');
-    const { getSettings } = await import('../settings/settings.service');
-    const decision = (await getSettings()).internalDecision;
-    const result = await pickAssignee({
-      taskTitle: task.title,
-      taskDescription: task.description,
-      projectName: projName,
-      keySecretId: decision?.keySecretId ?? null,
-      model: decision?.model ?? null,
-      candidates: users.map((u) => ({
-        id: u.id,
-        name: u.name,
-        kind: aiByUser.has(u.id) ? ('ai' as const) : ('human' as const),
-        title: u.title ?? null,
-        openTasks: openByAssignee.get(u.id) ?? 0,
-      })),
-    });
+      const { pickAssignee } = await import('./decision.service');
+      const { getSettings } = await import('../settings/settings.service');
+      const decision = (await getSettings()).internalDecision;
+      const result = await pickAssignee({
+        taskTitle: task.title,
+        taskDescription: task.description,
+        projectName: projName,
+        keySecretId: decision?.keySecretId ?? null,
+        model: decision?.model ?? null,
+        candidates: users.map((u) => ({
+          id: u.id,
+          name: u.name,
+          kind: aiByUser.has(u.id) ? ('ai' as const) : ('human' as const),
+          title: u.title ?? null,
+          openTasks: openByAssignee.get(u.id) ?? 0,
+        })),
+      });
 
-    if (!result.employeeId) {
+      if (!result.employeeId) {
+        return {
+          assigned: false as const,
+          reason: result.fallbackReason,
+          confidence: result.confidence,
+          model: result.model,
+          probabilities: result.probabilities,
+        };
+      }
+      // route through the ledger writer — a raw assigneeId update would leave the
+      // assignment history with no row for this move
+      const { assignTask } = await import('../tasks/assignments.service');
+      const session = await (
+        context as unknown as { getSession: () => Promise<{ user: { id: string } } | null> }
+      ).getSession();
+      await assignTask(task.id, result.employeeId, 'auto', session?.user?.id ?? null);
+      await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
       return {
-        assigned: false as const,
-        reason: result.fallbackReason,
+        assigned: true as const,
+        employeeId: result.employeeId,
         confidence: result.confidence,
         model: result.model,
         probabilities: result.probabilities,
       };
-    }
-    await db
-      .update(tasksTable)
-      .set({ assigneeId: result.employeeId, updatedAt: new Date() })
-      .where(eq(tasksTable.id, task.id));
-    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
-    return {
-      assigned: true as const,
-      employeeId: result.employeeId,
-      confidence: result.confidence,
-      model: result.model,
-      probabilities: result.probabilities,
-    };
-  }),
+    }),
 });

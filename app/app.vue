@@ -1,5 +1,7 @@
 <script setup lang="ts">
 // Tandem shell: resolve session/auth-config/version once (SSR), share via useState.
+import { SERVER_UNREACHABLE_COPY } from '~/utils/copy';
+
 const session = useAppSession();
 const authConfig = useAuthConfigState();
 const appVersion = useAppVersion();
@@ -27,7 +29,7 @@ try {
     fatal: true,
     statusCode: 503,
     statusMessage: 'Tandem is unreachable',
-    message: 'Could not reach the Tandem server — it may be restarting. Try again in a moment.',
+    message: SERVER_UNREACHABLE_COPY,
   });
 }
 
@@ -59,7 +61,7 @@ function reload() {
     <NuxtRouteAnnouncer />
     <a
       href="#main"
-      class="focus:bg-primary focus:text-inverted sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:rounded-md focus:px-3 focus:py-2"
+      class="focus:bg-inverted focus:text-inverted sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:rounded-md focus:px-3 focus:py-2"
     >
       Skip to main content
     </a>
@@ -83,13 +85,18 @@ function reload() {
           <div class="flex items-start gap-3">
             <UIcon name="i-lucide-refresh-cw" class="text-primary mt-0.5 size-5 shrink-0" />
             <div class="min-w-0 flex-1">
-              <p class="text-sm font-medium text-zinc-900 dark:text-white">New version available</p>
-              <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-                A newer build of Tandem is deployed. Reload to update.
-              </p>
+              <p class="text-highlighted text-sm font-medium">New version available</p>
+              <p class="text-muted mt-0.5 text-xs">A newer build of Tandem is deployed. Reload to update.</p>
               <div class="mt-3 flex gap-2">
-                <UButton size="xs" label="Reload" icon="i-lucide-rotate-cw" @click="reload" />
-                <UButton size="xs" color="neutral" variant="ghost" label="Later" @click="dismissed = true" />
+                <UButton size="xs" class="min-h-8" label="Reload" icon="i-lucide-rotate-cw" @click="reload" />
+                <UButton
+                  size="xs"
+                  class="min-h-8"
+                  color="neutral"
+                  variant="ghost"
+                  label="Later"
+                  @click="dismissed = true"
+                />
               </div>
             </div>
           </div>

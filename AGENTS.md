@@ -240,3 +240,11 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
 - **Reviews happen ON the task:** AI reviewers get a review TURN (a run row on the same task), never a review subtask; reviews are never re-reviewed.
 - **Note verb:** the task-page composer posts plain notes (`tasks.note`, no state change) and auto-becomes Send answer while the task waits for one.
 - **Contextual workflow verbs:** review verdicts live in the TaskReviewBox (own input); Ask is an agent verb only (envelope question — no human button); sidebar verbs render per state (Submit for review is the human assignee's move — agents submit via the envelope).
+
+### Owner laws (2026-10-27)
+
+- **Status freedom:** manual status changes are free on every surface — the transition graph is advisory UI only; the server nextIds/terminal guards are deleted (`tasks.setStatus` sets anything); built-in statuses are editable, blocked transitions = {todo, cancelled}, no self-edge (baseline seed + data migration `20261027120000_blocked_edges`).
+- **Run lock:** while a run is live, the running agent owns the task — `runningRunIdForTask` gates status AND assignee edits (server reject + UI disable).
+- **Composer steer/dispatch:** one state-aware Send — agent running → steer the live run (second `session/prompt` on the open ACP stream via the `onSessionOpen` hook; `steerRun` tri-state steered|refused|stopped; a live run always blocks a second dispatch); stopped → dispatch (AI assignee + non-terminal status). `tasks.note` returns the outcome.
+- **No-real-DB units:** unit tests never touch Postgres — `drizzle.mock()` harness (`test/unit/helpers/mock-db.ts`) for SQL shape; execution stays in `test/integration`.
+- **Visual QA loop:** UI ships only after a full vision pass (every major view, desktop + mobile, harsh independent review); DESIGN_SYSTEM.md is the law for tokens (semantic only), accent rationing, page anatomy, empty states, and a11y floor.

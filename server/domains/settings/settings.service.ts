@@ -2,7 +2,7 @@
 // defaults; OIDC providers live under key 'oidc_providers' as JSON.
 import { eq } from 'drizzle-orm';
 
-import { db } from '../../db/index';
+import { asDb, db, type DbExecutor } from '../../db/index';
 import { settings } from '../../db/schema';
 
 export async function getSetting(key: string) {
@@ -10,16 +10,18 @@ export async function getSetting(key: string) {
   return row?.value ?? null;
 }
 
-export async function setSetting(key: string, value: string) {
+/** upsert one key; pass a tx to join the caller's transaction */
+export async function setSetting(key: string, value: string, ex: DbExecutor = db) {
   const now = new Date();
-  await db
+  await asDb(ex)
     .insert(settings)
     .values({ key, value, updatedAt: now })
     .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: now } });
 }
 
-export async function deleteSetting(key: string) {
-  await db.delete(settings).where(eq(settings.key, key));
+/** delete one key; pass a tx to join the caller's transaction */
+export async function deleteSetting(key: string, ex: DbExecutor = db) {
+  await asDb(ex).delete(settings).where(eq(settings.key, key));
 }
 
 /** Default hard cap for one agent run (ACP turn); the Settings page overrides it. */

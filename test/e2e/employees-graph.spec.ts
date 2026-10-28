@@ -1,11 +1,12 @@
-import { expect, test } from '@playwright/test';
-
+import { expect, test } from './helpers/cleanup';
 import { login } from './helpers/login.ts';
+import { waitForHydration } from './pages/base.page.ts';
 
 test('graph view renders the supervision hierarchy', async ({ page }) => {
   const suffix = Date.now().toString(36).slice(-6);
   await login(page);
   await page.goto('/employees');
+  await waitForHydration(page);
   await expect(page.getByRole('heading', { name: /Employees/ })).toBeVisible();
 
   // supervisor first
@@ -16,7 +17,7 @@ test('graph view renders the supervision hierarchy', async ({ page }) => {
   await page.getByPlaceholder('Job title').fill('Lead');
   await page.getByRole('button', { name: /Create employee/ }).click();
   await expect(page.locator('tr:visible', { hasText: `Gb ${suffix}` })).toBeVisible({ timeout: 15_000 });
-  await page.getByRole('button', { name: /Done — I saved the key/ }).click();
+  await page.getByRole('button', { name: /Done, key saved/ }).click();
 
   // report
   await page.getByRole('button', { name: 'New employee' }).first().click();
@@ -29,11 +30,11 @@ test('graph view renders the supervision hierarchy', async ({ page }) => {
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: /Create employee/ }).click();
   await expect(page.locator('tr:visible', { hasText: `Gs ${suffix}` })).toBeVisible({ timeout: 15_000 });
-  await page.getByRole('button', { name: /Done — I saved the key/ }).click();
+  await page.getByRole('button', { name: /Done, key saved/ }).click();
 
   // graph view
   await page.getByRole('button', { name: 'Graph view' }).click();
-  const svg = page.locator('svg[aria-label="Supervision hierarchy"]');
+  const svg = page.getByTestId('supervision-graph');
   await expect(svg).toBeVisible({ timeout: 10_000 });
   // the org chart pans horizontally — assert presence (text is clipped by the
   // scroll container when off-viewport, so count beats visibility)
@@ -43,7 +44,7 @@ test('graph view renders the supervision hierarchy', async ({ page }) => {
   // sub renders one depth below boss (top-down rows) with a connector
   const rows = await page.evaluate(
     ([boss, sub]) => {
-      const el = document.querySelector('svg[aria-label="Supervision hierarchy"]');
+      const el = document.querySelector('svg[data-testid="supervision-graph"]');
       const gs = [...(el?.querySelectorAll('g') ?? [])].filter((g) => g.querySelector('rect'));
       const byName = (needle: string) =>
         gs.find((g) => [...g.querySelectorAll('text')].some((t) => t.textContent?.includes(needle)));

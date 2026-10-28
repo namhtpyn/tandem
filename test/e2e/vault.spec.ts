@@ -1,5 +1,4 @@
-import { expect, test } from '@playwright/test';
-
+import { expect, test } from './helpers/cleanup.ts';
 import { VaultPage } from './pages/vault.page.ts';
 
 // Unique-per-run names: a crashed prior run can't poison the unique-name
@@ -23,16 +22,19 @@ test.describe('vault', () => {
     await expect(page.getByText('e2e-secret-value-123')).toHaveCount(0);
 
     // replace: value rotates, still never shown
-    await row.getByRole('button', { name: 'Replace secret' }).click();
+    await row.getByRole('button', { name: /Edit / }).click();
     await page.getByRole('textbox', { name: 'Value' }).fill('e2e-rotated-value-999');
-    await page.getByRole('button', { name: 'Replace' }).click();
+    await page.getByRole('button', { name: 'Save changes' }).click();
     await expect(page.locator('tr:visible', { hasText: secName }).getByText('•••• -999')).toBeVisible({
       timeout: 15_000,
     });
     await expect(page.getByText('e2e-rotated-value-999')).toHaveCount(0);
 
     // delete with confirmation
-    await page.locator('tr:visible', { hasText: secName }).getByRole('button', { name: 'Delete secret' }).click();
+    await page
+      .locator('tr:visible', { hasText: secName })
+      .getByRole('button', { name: /Delete / })
+      .click();
     await vault.confirmDelete();
     await expect(page.locator('tr:visible', { hasText: secName })).toHaveCount(0, { timeout: 15_000 });
   });
@@ -55,7 +57,7 @@ test.describe('vault', () => {
       await page
         .locator('tr:visible', { hasText: dupName })
         .first()
-        .getByRole('button', { name: 'Delete secret' })
+        .getByRole('button', { name: /Delete / })
         .click();
       await vault.confirmDelete();
       // each delete settles (row count drops) before the next '.first()' re-resolves

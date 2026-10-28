@@ -1,5 +1,6 @@
-import { expect, test } from '@playwright/test';
-
+// the cleanup fixture sweeps every row the test created (tasks cascade messages/
+// runs/obligations/attachments; then users, projects, environments, vault, providers)
+import { expect, test } from './helpers/cleanup';
 import { TasksPage } from './pages/tasks.page.ts';
 
 test('task CRUD round-trip, assignee badge, status via select', async ({ page }) => {
@@ -14,18 +15,24 @@ test('task CRUD round-trip, assignee badge, status via select', async ({ page })
   // status flip via the inline select (task descriptions no longer render on the list)
   await page.locator('tbody').getByLabel(`Status for E2E Task ${suffix}`).click();
   await page.getByRole('option', { name: 'Doing' }).click();
-  await expect(page.locator('tr:visible').filter({ hasText: 'doing' }).first()).toBeVisible({ timeout: 10_000 });
+  await expect(tasks.rowFor(`E2E Task ${suffix}`)).toContainText('Doing', { timeout: 10_000 });
 
   // edit: rename + reassign UI opens with values (scoped to THIS task's row —
   // leftovers from other specs share the DB and can sort first)
-  await tasks.rowFor(`E2E Task ${suffix}`).getByRole('button', { name: 'Edit task' }).click();
+  await tasks
+    .rowFor(`E2E Task ${suffix}`)
+    .getByRole('button', { name: `Edit E2E Task ${suffix}` })
+    .click();
   await expect(page.getByPlaceholder('Task title')).toHaveValue(`E2E Task ${suffix}`);
   await tasks.fillTaskForm({ title: `E2E Task ${suffix} v2` });
   await tasks.saveTask();
   await expect(tasks.rowFor(`E2E Task ${suffix} v2`)).toBeVisible({ timeout: 15_000 });
 
   // delete requires confirmation
-  await tasks.rowFor(`E2E Task ${suffix} v2`).getByRole('button', { name: 'Delete task' }).click();
+  await tasks
+    .rowFor(`E2E Task ${suffix} v2`)
+    .getByRole('button', { name: `Delete E2E Task ${suffix} v2` })
+    .click();
   await expect(page.getByRole('dialog').getByText(/cannot be undone/i)).toBeVisible();
   await tasks.confirmDelete();
   await expect(tasks.rowFor(`E2E Task ${suffix} v2`)).toHaveCount(0, {
@@ -43,8 +50,8 @@ test('task assignee picker lists AI employees with (AI)', async ({ page }) => {
   await page.getByRole('button', { name: 'New environment' }).first().click();
   await page.getByPlaceholder('Environment name').fill(envName);
   await page.getByPlaceholder('Hostname or IP').fill('127.0.0.1');
-  await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('textbox', { name: /Username/ }).fill('tandem');
+  await page.getByRole('button', { name: /Save changes|Create environment/ }).click();
   await expect(page.locator('tr', { hasText: envName }).first()).toBeVisible({ timeout: 15_000 });
 
   const botName = `E2e Bot ${suffix}`;
@@ -59,7 +66,7 @@ test('task assignee picker lists AI employees with (AI)', async ({ page }) => {
   await page.getByRole('option', { name: envName }).click();
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
   await expect(page.getByText(/shown only once/i)).toBeVisible({ timeout: 15_000 });
-  await page.getByRole('button', { name: /Done — I saved the key/ }).click();
+  await page.getByRole('button', { name: /Done, key saved/ }).click();
   await expect(page.locator('tr:visible', { hasText: botName })).toBeVisible({ timeout: 15_000 });
 
   // tasks: picker shows the bot with (AI)
@@ -73,8 +80,8 @@ test('task assignee picker lists AI employees with (AI)', async ({ page }) => {
     .first()
     .click();
   await tasks.saveTask();
-  // row shows the bot as assignee
-  await expect(page.locator('tr:visible').filter({ hasText: botName }).first()).toBeVisible({ timeout: 15_000 });
+  // row shows the bot as assignee (scoped to THIS task's row)
+  await expect(tasks.rowFor(`AI task ${suffix}`)).toContainText(botName, { timeout: 15_000 });
 });
 
 test('workflow drawer shows activity and lets the owner answer', async ({ page }) => {
@@ -91,7 +98,7 @@ test('workflow drawer shows activity and lets the owner answer', async ({ page }
   // the composer posts a plain note (no state change, no verb picker)
   await drawer.locator('textarea').fill('who owns the spec?');
   await drawer.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(drawer.getByText('done', { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(drawer.getByText('Note added', { exact: true })).toBeVisible({ timeout: 10_000 });
 });
 
 test('workflow drawer streams an agent run to completion', async ({ page }) => {
@@ -104,8 +111,8 @@ test('workflow drawer streams an agent run to completion', async ({ page }) => {
   await page.getByRole('button', { name: 'New environment' }).first().click();
   await page.getByPlaceholder('Environment name').fill(envName);
   await page.getByPlaceholder('Hostname or IP').fill('127.0.0.1');
-  await page.getByRole('textbox', { name: 'Username', exact: true }).fill('tandem');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('textbox', { name: /Username/ }).fill('tandem');
+  await page.getByRole('button', { name: /Save changes|Create environment/ }).click();
   await expect(page.locator('tr', { hasText: envName }).first()).toBeVisible({ timeout: 15_000 });
   await tasks.navigate('/employees');
   await page.getByRole('button', { name: 'New employee' }).first().click();
@@ -117,7 +124,7 @@ test('workflow drawer streams an agent run to completion', async ({ page }) => {
   await page.getByRole('button', { name: 'Environment', exact: true }).click();
   await page.getByRole('option', { name: envName }).click();
   await page.getByRole('button', { name: /Save|Create employee/ }).click();
-  await page.getByRole('button', { name: /Done — I saved the key/ }).click();
+  await page.getByRole('button', { name: /Done, key saved/ }).click();
   await tasks.navigate('/tasks');
   // create a task assigned to the AI employee
   await tasks.openCreateModal();
@@ -142,9 +149,6 @@ test('workflow drawer streams an agent run to completion', async ({ page }) => {
       .getByText(/RESULT: task complete/i)
       .first(),
   ).toBeVisible({ timeout: 30_000 });
-  // the run card reports done + exit 0
-  await expect(drawer.getByText(/done · exit 0/i)).toBeVisible();
-  // the activity feed logs dispatch; the run card's status pill is the verdict
-  await expect(drawer.getByText(/dispatched to/i).first()).toBeVisible();
-  await expect(drawer.getByText(/done/i).first()).toBeVisible();
+  // the run card reads as a sentence; exit code 0 is hidden
+  await expect(drawer.getByText(/Run completed/i)).toBeVisible();
 });

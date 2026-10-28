@@ -5,7 +5,9 @@ import { useQuery } from '@tanstack/vue-query';
 // query keys wfAction invalidates after each verdict. Props: `taskId`.
 import { computed, onServerPrefetch } from 'vue';
 
-import { CHANGE_RESOURCE } from '#shared/enums';
+import { CHANGE_RESOURCE, REVIEW_STATUS } from '#shared/enums';
+import type { EmployeeRow, ReviewRow } from '~/utils/orpc-types';
+import { kindLabel, verdictLabel } from '~/utils/ui-labels';
 
 const props = defineProps<{ taskId: string }>();
 
@@ -15,29 +17,29 @@ const reviewsQuery = useQuery(
   computed(() =>
     $orpc.tasks.reviews.queryOptions({
       input: { taskId: props.taskId },
-      queryKey: ['taskReviews', props.taskId],
+      // suffix on the TASK_ACTIVITY prefix: the SSE subscription invalidates the
+      // prefix, and each surface keeps its own cache slot
+      queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, props.taskId, 'reviews'],
     }),
   ),
 );
 const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES] }));
-const employees = computed(
-  () => (unref(employeesLive.data) ?? []) as unknown as Array<{ userId: string; name: string; kind?: string }>,
-);
+const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[]);
 
-/** reviewer kind comes from the employee record — a PENDING verdict row has no source yet */
-const kindOf = (id: string, fallback: string | null) =>
-  employees.value.find((e) => e.userId === id)?.kind ?? (fallback === 'ai' ? 'AI' : 'human');
+/** reviewer kind comes from the employee record — a PENDING verdict row has no source yet;
+ * shared kindLabel vocabulary ('AI agent'/'Human'), never lowercase fragments */
+const kindOf = (id: string | null, fallback: string | null) =>
+  kindLabel(employees.value.find((e) => e.userId === id)?.kind ?? fallback);
 
-/** REVIEW LAW checklist: current-round verdicts per reviewer, history collapsed by round */
+/** the verdict in words — one shared vocabulary (ui-labels); the row communicates
+ *  state by icon, which is invisible to screen readers without this */
+
+/** REVIEW LAW checklist: current-round verdicts per reviewer, history collapsed by round.
+ * Status is the SCREAMING ReviewStatus enum — compare through its constants (the old
+ * lowercase literals never matched a stored value, so every row rendered as pending). */
 const reviewChecklist = computed(() => {
-  const rows = (unref(reviewsQuery.data) ?? []) as unknown as Array<{
-    reviewerId: string;
-    round: number;
-    status: string;
-    note: string | null;
-    source: string | null;
-  }>;
-  const nameOf = (id: string) => employees.value.find((e) => e.userId === id)?.name ?? 'reviewer';
+  const rows = (unref(reviewsQuery.data) ?? []) as ReviewRow[];
+  const nameOf = (id: string | null) => employees.value.find((e) => e.userId === id)?.name ?? 'reviewer';
   let maxRound = 0;
   for (const r of rows) maxRound = Math.max(maxRound, r.round);
   return {
@@ -51,31 +53,57 @@ onServerPrefetch(() => Promise.all([reviewsQuery.suspense(), employeesLive.suspe
 
 <template>
   <div>
-    <p class="mb-2 text-xs font-semibold tracking-wide text-zinc-400 uppercase">Review</p>
-    <ul class="space-y-1 text-sm">
-      <li v-for="r in reviewChecklist.current" :key="r.reviewerId" class="flex items-start gap-1.5">
+    <h2 class="text-muted mb-2 text-xs font-medium">Review</h2>
+    <div v-if="reviewsQuery.isPending.value" class="space-y-1.5" aria-hidden="true">
+      <USkeleton class="h-6 w-full rounded" />
+      <USkeleton class="h-6 w-3/4 rounded" />
+    </div>
+    <p v-else-if="reviewsQuery.isError.value" role="alert" class="text-error text-xs">Couldn't load reviews</p>
+    <p v-else-if="!reviewChecklist.current.length" class="text-dimmed text-xs">
+      No reviews yet — verdicts appear here as reviewers weigh in.
+    </p>
+    <ul v-else class="space-y-1 text-sm">
+      <li
+        v-for="r in reviewChecklist.current"
+        :key="`${r.round}-${r.reviewerId ?? r.name}`"
+        class="flex items-start gap-1.5"
+      >
         <UIcon
           :name="
-            r.status === 'approved'
+            r.status === REVIEW_STATUS.APPROVED
               ? 'i-lucide-badge-check'
-              : r.status === 'change_requested'
+              : r.status === REVIEW_STATUS.CHANGE_REQUESTED
                 ? 'i-lucide-undo-2'
-                : r.status === 'rejected'
+                : r.status === REVIEW_STATUS.REJECTED
                   ? 'i-lucide-x-circle'
                   : 'i-lucide-user'
           "
           class="mt-0.5 size-3.5 shrink-0"
-          :class="r.status === 'approved' ? 'text-success' : r.status === 'pending' ? 'text-zinc-400' : 'text-warning'"
+          aria-hidden="true"
+          :class="
+            r.status === REVIEW_STATUS.APPROVED
+              ? 'text-success'
+              : r.status === REVIEW_STATUS.REJECTED
+                ? 'text-error'
+                : r.status === REVIEW_STATUS.PENDING
+                  ? 'text-dimmed'
+                  : 'text-warning'
+          "
         />
         <span class="min-w-0">
-          <span class="block truncate text-zinc-800 dark:text-zinc-200"
-            >{{ r.name }} <span class="text-xs text-zinc-400">({{ kindOf(r.reviewerId, r.source) }})</span></span
+          <span class="sr-only">{{ verdictLabel(r.status) }}: </span>
+          <span class="text-default block truncate"
+            >{{ r.name }}
+            <span v-if="kindOf(r.reviewerId, r.source)" class="text-dimmed text-xs"
+              >({{ kindOf(r.reviewerId, r.source) }})</span
+            ></span
           >
-          <span v-if="r.note" class="block truncate text-xs text-zinc-400" :title="r.note">{{ r.note }}</span>
+          <span v-if="r.note" class="text-dimmed block truncate text-xs" :title="r.note">{{ r.note }}</span>
         </span>
       </li>
-      <li v-if="reviewChecklist.history.length" class="pt-1 text-xs text-zinc-400">
-        {{ reviewChecklist.history.length }} earlier-round verdict(s)
+      <li v-if="reviewChecklist.history.length" class="text-dimmed pt-1 text-xs">
+        {{ reviewChecklist.history.length }} earlier-round
+        {{ reviewChecklist.history.length === 1 ? 'verdict' : 'verdicts' }}
       </li>
     </ul>
   </div>

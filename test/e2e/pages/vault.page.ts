@@ -9,7 +9,7 @@ export class VaultPage extends BasePage {
       await this.page.getByRole('textbox', { name: 'Description' }).fill(secret.description);
     }
     await this.page.getByRole('textbox', { name: 'Value' }).fill(secret.value);
-    await this.page.getByRole('button', { name: 'Save' }).click();
+    await this.page.getByRole('button', { name: /Save changes|Create secret/ }).click();
   }
 
   async search(text: string): Promise<void> {

@@ -7,23 +7,26 @@
  *  - 'run'      an agent dispatch turn (status pill + output bubble)
  *  - 'note'     human/system activity (questions, verdicts, status changes...)
  */
-export type ThreadBriefItem = {
+import { ACTIVITY_KIND, type ActivityKind } from '#shared/enums';
+
+type ThreadBriefItem = {
   kind: 'brief';
   id: string;
   body: string;
   createdAt: string;
   /** task creator shown as the brief author */ authorName?: string | null;
-  /** creator's user id — avatar lookup via /api/employees/:userId/avatar */ authorId?: string | null;
+  /** creator's user id — avatar lookup via employeeAvatarUrl() */ authorId?: string | null;
 };
-export type ThreadRunItem = {
+type ThreadRunItem = {
   kind: 'run';
   id: string;
-  status: 'running' | 'done' | 'failed';
+  /** real settled run status — consumers map it to labels/colors themselves */
+  status: 'running' | 'done' | 'failed' | 'cancelled' | 'timeout' | 'stopped';
   exitCode: number | null;
   output: string;
   /** the agent (employee) that ran this turn, for the chat bubble label */
   agentName?: string | null;
-  /** the thread message's author — avatar lookup via /api/employees/:userId/avatar */
+  /** the thread message's author — avatar lookup via employeeAvatarUrl() */
   authorId?: string | null;
   authorName?: string | null;
   /** the exact prompt (brief) sent for this turn, when recorded */
@@ -36,16 +39,17 @@ export type ThreadRunItem = {
 export type ThreadNoteItem = {
   kind: 'note';
   id: string;
-  noteKind: string;
+  /** typed activity kind — producers narrow through activityNotes(), never a raw string */
+  noteKind: ActivityKind;
   body: string;
   authorName: string | null;
-  /** author's user id — avatar lookup via /api/employees/:userId/avatar */
+  /** author's user id — avatar lookup via employeeAvatarUrl() */
   authorId?: string | null;
   createdAt: string;
 };
 export type ThreadItem = ThreadBriefItem | ThreadRunItem | ThreadNoteItem;
 
-export type ThreadSource = {
+type ThreadSource = {
   description?: string | null;
   createdAt?: string | null;
   briefAuthorName?: string | null;
@@ -69,39 +73,45 @@ export type ThreadSource = {
   activity?: Array<Pick<ThreadNoteItem, 'id' | 'noteKind' | 'body' | 'authorName' | 'authorId' | 'createdAt'>>;
 };
 
-/** Envelope of the output contract: last [RESULT]/[QUESTION]/[BLOCKED] line wins. */
-export type EnvelopeKind = 'result' | 'run' | 'question' | 'blocked';
-export type RunEnvelope = { kind: EnvelopeKind; text: string };
-
-import { PROPOSAL_KIND } from '#shared/enums';
 // verdict parsing lives in shared/run-verdict (zod schema, bottom-up scan) —
 // re-exported here so the UI thread and the runner share one implementation.
-// (the file's own EnvelopeKind/RunEnvelope below include the 'run' thread kind)
-export { parseRunEnvelope, RunVerdictSchema } from '#shared/run-verdict';
+// (the UI never parses envelopes directly: item.kind === 'run' items carry the
+// settled body, and parseRunEnvelope is only the pre-settle fallback)
+export { parseRunEnvelope } from '#shared/run-verdict';
 
-/** routing proposal shapes — the runner maps the settled verdict envelope onto these
- * ([SUBTASKS]/[REASSIGN] text markers are RETIRED: routing rides the envelope JSON) */
-export type SubtaskProposalItem = { title: string; description?: string; assigneeName?: string };
-export type RoutingProposal =
-  | { kind: typeof PROPOSAL_KIND.SUBTASKS; items: SubtaskProposalItem[] }
-  | { kind: typeof PROPOSAL_KIND.REASSIGN; targetName: string; reason?: string };
+/** activity payload kind (jsonb arrives loose) → typed ActivityKind, null when absent/unknown.
+ * The ONE narrowing point: legacy SCREAMING/lowercase rows normalize here so no
+ * producer has to carry String()/toUpperCase() compensation. */
+export function noteKindOf(activity: Record<string, unknown> | null | undefined): ActivityKind | null {
+  const raw = activity?.kind;
+  if (typeof raw !== 'string' || !raw) return null;
+  const upper = raw.toUpperCase();
+  return (Object.values(ACTIVITY_KIND) as string[]).includes(upper) ? (upper as ActivityKind) : null;
+}
 
-/** Compact thread time: same-day -> "14:32", older -> "Oct 12". No seconds, no date spam. */
-export function formatThreadTime(iso: string, now: Date = new Date()) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  const sameDay =
-    d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-  if (sameDay) return hm;
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const sameYear = d.getFullYear() === now.getFullYear();
-  return sameYear
-    ? `${months[d.getMonth()]} ${d.getDate()}, ${hm}`
-    : `${months[d.getMonth()]} ${d.getDate()} ${d.getFullYear()}`;
+type ActivityRowLike = Pick<ThreadNoteItem, 'id' | 'body' | 'authorName' | 'authorId' | 'createdAt'> & {
+  activity: Record<string, unknown> | null;
+};
+
+/** thread rows → typed activity items for buildThread (runs-only surfaces pass []) */
+export function activityNotes(
+  rows: readonly ActivityRowLike[],
+): Array<Pick<ThreadNoteItem, 'id' | 'noteKind' | 'body' | 'authorName' | 'authorId' | 'createdAt'>> {
+  return rows.flatMap((r) => {
+    const noteKind = noteKindOf(r.activity);
+    if (!noteKind) return [];
+    return [
+      { id: r.id, noteKind, body: r.body, authorName: r.authorName, authorId: r.authorId, createdAt: r.createdAt },
+    ];
+  });
 }
 
 /** Merge by stable timestamp: runs by startedAt, notes by createdAt, brief first. */
+/** display timestamp for any thread item (runs carry startedAt, others createdAt) */
+export function threadTime(t: ThreadItem): string | null {
+  return t.kind === 'run' ? (t.startedAt ?? null) : (t.createdAt ?? null);
+}
+
 export function buildThread(src: ThreadSource): ThreadItem[] {
   const items: ThreadItem[] = [];
   if (src.description && src.description.trim()) {

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { useQuery, useQueryClient } from '@tanstack/vue-query';
 
-import { CHANGE_RESOURCE } from '#shared/enums';
-import { STATUS } from '#shared/status';
+import { CATEGORIES, CATEGORY, CHANGE_RESOURCE, RUN_STATUS } from '#shared/enums';
+import type { Category } from '#shared/enums';
+import { nonNull } from '#shared/utils/non-null';
 // Task detail — Paperclip-style layout: chat-like main content (description bubble,
 // run turns, activity notes, composer at the bottom) + right sidebar with task info
 // (status, assignee, reviewers, workflow actions). Mobile-first: single column,
@@ -10,11 +11,12 @@ import { STATUS } from '#shared/status';
 // workflow-action state; thread and sidebar panels are self-loading components
 // (TaskActivityThread, TaskDetailsFields, TaskReviewPanel, TaskRoutingPanels,
 // TaskWorkflowActions) that share query keys with the app-wide SSE subscription.
-import { nonNull } from '#shared/utils/non-null';
-import type { TaskRow, TaskStatusRow } from '~/utils/orpc-types';
+import { composerHint, composerReady, useWorkflowActions } from '~/composables/useWorkflowActions';
+import type { TaskRow, TaskRunRow, TaskStatusRow } from '~/utils/orpc-types';
+import { categoryColor, composerPlaceholder } from '~/utils/ui-labels';
 
 const route = useRoute();
-const { $orpc, $client } = useNuxtApp();
+const { $orpc } = useNuxtApp();
 const session = useAppSession();
 
 const tasksLive = useQuery($orpc.tasks.list.queryOptions({ queryKey: [CHANGE_RESOURCE.TASKS] }));
@@ -30,68 +32,34 @@ const statusById = computed(() => new Map(statuses.value.map((x) => [x.id, x])))
 
 // category (not the seeded uuid) decides the workflow gates: custom statuses in
 // the working/waiting_answer/in_review categories behave like the seeded ones
-const taskStatusCategory = computed<TaskStatusRow['category'] | null>(() =>
-  task.value ? (statusById.value.get(task.value.status)?.category ?? null) : null,
-);
+const taskStatusCategory = computed<Category | null>(() => {
+  const raw = task.value ? statusById.value.get(task.value.status)?.category : null;
+  // server sends a plain string column — narrow to the workflow vocabulary
+  return CATEGORIES.find((c) => c === raw) ?? null;
+});
 
-// review verdicts are an explicit-reviewer surface — nobody else sees the box
-const isReviewer = computed(() => !!task.value?.reviewerNames.includes(session.value?.user.name ?? ''));
+// review verdicts are an explicit-reviewer surface — nobody else sees the box.
+// Gate on ids, never names: a name is display data and two employees can share it.
+const isReviewer = computed(() => !!session.value && !!task.value?.reviewers.includes(session.value.user.id));
 
-const workflowNote = ref('');
-const workflowBusy = ref(false);
-const workflowMessage = ref('');
+// the workflow ladder (copy + invalidation) is shared with the list drawer
+const {
+  workflowNote,
+  workflowBusy,
+  workflowMessage,
+  workflowOk,
+  verdictSeq,
+  verdictFailed,
+  wfAction,
+  sendNote,
+  resetWorkflow,
+} = useWorkflowActions(() => task.value?.id ?? null);
 
-// zod strips unknown keys, so optional extras ride along safely
-type WorkflowAction =
-  | 'dispatch'
-  | 'note'
-  | 'submit'
-  | 'ask'
-  | 'forward'
-  | 'answer'
-  | 'approve'
-  | 'requestChanges'
-  | 'reject'
-  | 'abandon';
-
-async function wfAction(action: WorkflowAction, extra: { body?: string; toEmployeeId?: string } = {}) {
-  if (!task.value) return;
-  workflowBusy.value = true;
-  workflowMessage.value = '';
-  try {
-    const input = { taskId: task.value.id, ...extra };
-    await {
-      dispatch: () => $client.tasks.dispatch({ taskId: input.taskId }),
-      note: () => $client.tasks.note({ ...input, body: nonNull(input.body) }),
-      // body is optional server-side (submitResult defaults it) — an empty note is fine
-      submit: () => $client.tasks.submit({ ...input, body: input.body || undefined }),
-      ask: () => $client.tasks.ask({ ...input, body: nonNull(input.body) }),
-      forward: () => $client.tasks.forward({ ...input, toEmployeeId: nonNull(input.toEmployeeId) }),
-      answer: () => $client.tasks.answer({ ...input, body: nonNull(input.body) }),
-      approve: () => $client.tasks.approve(input),
-      requestChanges: () => $client.tasks.requestChanges({ ...input, body: nonNull(input.body) }),
-      reject: () => $client.tasks.reject(input),
-      abandon: () => $client.tasks.abandon(input),
-    }[action]();
-    workflowNote.value = '';
-    // TASKS refresh keeps the page's task row (and the drawer's snapshot) ahead
-    // of the SSE round-trip — no double-submit window when the verb moves status
-    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
-    void queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASK_ACTIVITY, task.value.id] });
-    void queryClient.invalidateQueries({ queryKey: ['taskReviews', task.value.id] });
-    workflowMessage.value = 'done';
-  } catch (e) {
-    const err = e as { data?: { json?: { message?: string }; message?: string }; message?: string };
-    workflowMessage.value = err.data?.json?.message ?? err.data?.message ?? err.message ?? 'action failed';
-  } finally {
-    workflowBusy.value = false;
-  }
-}
-
-/** while the task waits for an answer the composer's send IS the answer verb */
+/** composer verb: a null category (statuses loading/failed) must not read as 'note' */
+const composerSendReady = computed(() => composerReady(taskStatusCategory.value, workflowNote.value));
 function sendComposer() {
-  if (taskStatusCategory.value === 'waiting_answer') wfAction('answer', { body: workflowNote.value });
-  else wfAction('note', { body: workflowNote.value });
+  if (!composerSendReady.value) return;
+  void sendNote(taskStatusCategory.value === CATEGORY.WAITING_ANSWER);
 }
 
 /** a live run turns the composer into a steer box; stopped = send dispatches */
@@ -103,12 +71,43 @@ const runsLive = useQuery({
   // client-only: the SSR prefetch of this query blanks the whole page render
   enabled: import.meta.client,
 });
-const agentRunning = computed(() =>
-  ((unref(runsLive.data) ?? []) as Array<{ status?: string }>).some((r) => r.status === 'running'),
+const runs = computed<TaskRunRow[]>(() => (unref(runsLive.data) ?? []) as TaskRunRow[]);
+/** the wire token is SCREAMING (RUN_STATUS.RUNNING) — a lowercase compare never matched */
+const agentRunning = computed(() => runs.value.some((r) => r.status === RUN_STATUS.RUNNING));
+/** a pending run list means the lock state is UNKNOWN, not idle: keep the fields
+ * locked behind a neutral hint instead of letting an edit race the settle */
+const runsSettled = computed(() => runsLive.isSuccess.value || runsLive.isError.value);
+const runLocked = computed(() => !runsSettled.value || agentRunning.value);
+
+/** dispatch is a SERVER rule: only a ready-category task with an AI assignee is
+ *  picked up by a note send — the hint must not promise anything else */
+const willDispatch = computed(
+  () =>
+    !agentRunning.value && taskStatusCategory.value === CATEGORY.READY && (task.value?.assigneeKind ?? null) === 'ai',
+);
+const composerHintText = computed(() =>
+  composerHint({
+    category: taskStatusCategory.value,
+    assigneeKind: task.value?.assigneeKind,
+    running: agentRunning.value,
+  }),
 );
 
 const infoSheetOpen = ref(false);
 const subtaskEditorOpen = ref(false);
+
+// task→task navigation REUSES this page instance: page-local workflow/review
+// state belongs to the task it was typed for. Reset it here; the thread,
+// review box and routing panels are also re-keyed by task id in the template so
+// an armed reject or a half-typed note can never follow the navigation.
+watch(
+  () => route.params.id,
+  () => {
+    resetWorkflow();
+    infoSheetOpen.value = false;
+    subtaskEditorOpen.value = false;
+  },
+);
 
 const parentTask = computed(() =>
   task.value?.parentTaskId ? (tasks.value.find((t) => t.id === nonNull(task.value).parentTaskId) ?? null) : null,
@@ -122,7 +121,14 @@ const retryInMin = computed(() => {
 
 const queryClient = useQueryClient();
 
-useHead({ title: () => (task.value ? `${task.value.title} · Tandem` : 'Task · Tandem') });
+// the list page warms a different query key — on client nav this query is
+// pending, and the not-found copy must NOT flash while it resolves
+const tasksPending = computed(() => tasksLive.isPending.value);
+// a settled query error is NOT 'task not found' — say so and offer a retry
+const tasksError = computed(() => tasksLive.isError.value);
+
+// bare title — app.vue's titleTemplate appends '- Tandem'; extra separators render 'X · Tandem - Tandem'
+useHead({ title: () => (task.value ? task.value.title : 'Task') });
 
 onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense()]));
 </script>
@@ -130,33 +136,52 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
 <template>
   <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
     <template #body>
-      <div class="p-3 lg:p-6">
-        <div v-if="!task" class="py-16 text-center text-sm text-zinc-400">
+      <div class="task-gutter p-4 sm:p-6 lg:p-8">
+        <!-- pending: client nav never warms this key — hold a skeleton, never the
+             not-found copy, until the query settles -->
+        <div v-if="tasksPending" class="space-y-4" aria-busy="true">
+          <div class="flex items-start gap-2">
+            <USkeleton class="mt-0.5 size-8 shrink-0 rounded-md" />
+            <div class="flex-1 space-y-2">
+              <USkeleton class="h-6 w-2/3" />
+              <USkeleton class="h-4 w-1/3" />
+            </div>
+          </div>
+          <USkeleton class="h-72 w-full rounded-lg" />
+        </div>
+
+        <div v-else-if="tasksError" role="alert" class="flex flex-col items-center gap-3 py-16 text-center">
+          <p class="text-error text-sm">Couldn't load the task — try again</p>
+          <UButton size="sm" variant="soft" icon="i-lucide-refresh-cw" label="Retry" @click="tasksLive.refetch()" />
+        </div>
+
+        <div v-else-if="!task" class="text-dimmed py-16 text-center text-sm">
           Task not found — it may have been deleted.
           <ULink to="/tasks" class="underline">Back to tasks</ULink>
         </div>
 
-        <div v-else class="flex flex-col lg:h-[calc(100vh-7.5rem)] lg:flex-row lg:gap-6">
+        <div v-else class="flex flex-col lg:h-(--task-h) lg:flex-row lg:gap-6">
           <!-- ============ main: the chat ============ -->
           <section class="flex min-w-0 flex-1 flex-col">
             <!-- thread header (mobile shows the info trigger here) -->
             <div class="mb-3 flex items-start gap-2">
               <NuxtLink
                 to="/tasks"
-                class="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                aria-label="Back to tasks"
+                class="text-dimmed hover:bg-elevated hover:text-highlighted focus-visible:bg-elevated focus-visible:text-highlighted focus-visible:ring-primary mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md focus-visible:ring-2 focus-visible:outline-none"
               >
                 <UIcon name="i-lucide-arrow-left" class="size-4" />
               </NuxtLink>
               <div class="min-w-0 flex-1">
-                <h1 class="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-50">{{ task.title }}</h1>
-                <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-500">
+                <h1 class="text-highlighted truncate text-lg font-semibold" :title="task.title">{{ task.title }}</h1>
+                <div class="text-muted flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
                   <UBadge
-                    :color="
-                      task.status === STATUS.done ? 'success' : task.status === STATUS.todo ? 'neutral' : 'warning'
-                    "
+                    v-if="statusById.get(task.status)?.name"
+                    :color="categoryColor(statusById.get(task.status)?.category)"
                     variant="subtle"
                     size="sm"
-                    >{{ statusById.get(task.status)?.name ?? '' }}</UBadge
+                    data-testid="task-status-badge"
+                    >{{ statusById.get(task.status)?.name }}</UBadge
                   >
                   <NuxtLink
                     v-if="parentTask"
@@ -164,107 +189,120 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
                     class="text-primary inline-flex items-center gap-1 hover:underline"
                     data-testid="parent-task-link"
                   >
-                    <UIcon name="i-lucide-corner-left-up" class="size-3" /> part of: {{ parentTask.title }}
+                    <UIcon name="i-lucide-corner-left-up" class="size-3" /> Part of: {{ parentTask.title }}
                   </NuxtLink>
-                  <span v-if="task.assigneeName"
-                    >{{ task.assigneeName
-                    }}<span v-if="task.assigneeKind === 'ai'" class="text-primary">(AI)</span></span
+                  <!-- assignee lives HERE as the header badge (one display per
+                   surface: Details owns the editable select, Assignment
+                   history owns the trail — a third plain-text line read as a bug).
+                   Neutral fill — the bot icon carries the AI kind; color stays CTA-only -->
+                  <UBadge
+                    v-if="task.assigneeName"
+                    color="neutral"
+                    variant="subtle"
+                    size="sm"
+                    :icon="task.assigneeKind === 'ai' ? 'i-lucide-bot' : 'i-lucide-user-round'"
+                    >{{ task.assigneeName }}</UBadge
                   >
                 </div>
               </div>
               <UButton
                 size="xs"
+                class="min-h-8 lg:hidden"
                 variant="soft"
                 icon="i-lucide-panel-right"
                 aria-label="Task info"
                 data-testid="task-info-trigger"
-                class="lg:hidden"
                 @click="infoSheetOpen = true"
               />
             </div>
 
             <!-- retry banner -->
-            <div
+            <UAlert
               v-if="retryInMin > 0"
-              class="border-warning/30 bg-warning/5 text-warning mb-3 rounded-lg border px-3.5 py-2.5 text-sm"
+              class="mb-3"
+              color="warning"
+              variant="subtle"
+              icon="i-lucide-refresh-cw"
+              :title="`Retrying in ~${retryInMin} min`"
+              :description="`${task.failStreak} consecutive failure${task.failStreak === 1 ? '' : 's'}. The most recent run's error is in the thread.`"
+            />
+
+            <!-- ONE card: the thread and the composer share a single border.
+                 Shrink-to-fit when short (max-h, no fixed fill — a two-message
+                 thread must not center itself in a viewport-tall void); the
+                 composer stays pinned at its bottom. -->
+            <div
+              class="border-default bg-default flex min-h-0 flex-col rounded-lg border shadow-sm lg:max-h-[calc(var(--task-h)-4.5rem)]"
             >
-              <span class="font-medium">Retrying in ~{{ retryInMin }} min</span>
-              <span class="text-warning/80">
-                — {{ task.failStreak }} consecutive failure{{ task.failStreak === 1 ? '' : 's' }}. The most recent run's
-                error is in the thread.</span
-              >
+              <!-- the thread (TaskActivityThread) -->
+              <TaskActivityThread :key="task.id" :task="task" />
+
+              <!-- composer: workflow note + primary actions -->
+              <div class="border-default border-t p-2.5">
+                <UTextarea
+                  v-model="workflowNote"
+                  :rows="1"
+                  autoresize
+                  :maxrows="6"
+                  variant="none"
+                  :disabled="workflowBusy"
+                  :placeholder="composerPlaceholder(taskStatusCategory === CATEGORY.WAITING_ANSWER)"
+                  aria-label="Task note"
+                  class="w-full"
+                  :ui="{ base: 'px-1 py-1 text-sm placeholder:text-dimmed' }"
+                />
+                <div class="mt-1.5 flex items-center justify-between gap-2">
+                  <p
+                    v-if="workflowMessage"
+                    class="text-xs"
+                    :class="workflowOk ? 'text-success' : 'text-error'"
+                    :role="workflowOk ? 'status' : 'alert'"
+                  >
+                    {{ workflowMessage }}
+                  </p>
+                  <!-- the ONE send hint — the send button carries no duplicate hover popover.
+                       Terminal tasks never re-dispatch (server note verb), so the hint
+                       must not promise it. -->
+                  <span v-else class="text-muted shrink-0 text-xs">
+                    {{ composerHintText }}
+                  </span>
+                  <UButton
+                    size="lg"
+                    color="primary"
+                    :icon="agentRunning ? 'i-lucide-reply' : 'i-lucide-arrow-up'"
+                    :aria-label="agentRunning ? 'Steer agent' : willDispatch ? 'Send and dispatch' : 'Send note'"
+                    class="size-10 shrink-0"
+                    :disabled="workflowBusy || !composerSendReady"
+                    @click="sendComposer()"
+                  />
+                </div>
+              </div>
             </div>
 
-            <!-- the thread (TaskActivityThread) -->
-            <TaskActivityThread :task="task" />
-
-            <!-- GitHub-style review verdicts: own input, reviewers only, in review only -->
+            <!-- GitHub-style review verdicts: own card, reviewers only, in review only -->
             <TaskReviewBox
-              v-if="taskStatusCategory === 'in_review' && isReviewer"
-              class="mb-3"
+              v-if="taskStatusCategory === CATEGORY.IN_REVIEW && isReviewer"
+              :key="task.id"
+              class="mt-3"
               :busy="workflowBusy"
+              :verdict-seq="verdictSeq"
+              :verdict-failed="verdictFailed"
               @verdict="
                 (action: 'approve' | 'requestChanges' | 'reject', body?: string) =>
                   wfAction(action, { body: body || undefined })
               "
             />
-
-            <!-- composer: workflow note + primary actions -->
-            <div
-              class="mt-3 rounded-2xl border border-zinc-200 bg-white p-2.5 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
-            >
-              <UTextarea
-                v-model="workflowNote"
-                :rows="1"
-                autoresize
-                :maxrows="6"
-                variant="none"
-                :placeholder="taskStatusCategory === 'waiting_answer' ? 'Write an answer…' : 'Write a note…'"
-                class="w-full"
-                :ui="{ base: 'px-1 py-1 text-sm placeholder:text-zinc-400' }"
-              />
-              <div class="mt-1.5 flex items-center justify-between">
-                <p
-                  v-if="workflowMessage"
-                  class="text-xs"
-                  :class="workflowMessage === 'done' ? 'text-success' : 'text-error'"
-                >
-                  {{ workflowMessage }}
-                </p>
-                <span v-else class="text-[11px] text-zinc-400 dark:text-zinc-500">
-                  ⏎ {{ agentRunning ? 'steer the running agent' : 'send + dispatch agent' }}
-                </span>
-                <div class="ml-auto flex items-center gap-1.5">
-                  <UPopover mode="hover" enable-touch>
-                    <template #content>
-                      <div class="px-3 py-1.5 text-xs">
-                        {{
-                          agentRunning ? 'Steer — the running agent gets this message' : 'Send — dispatches the agent'
-                        }}
-                      </div>
-                    </template>
-                    <UButton
-                      size="lg"
-                      color="primary"
-                      :icon="agentRunning ? 'i-lucide-reply' : 'i-lucide-arrow-up'"
-                      :aria-label="agentRunning ? 'Steer agent' : 'Send and dispatch'"
-                      class="size-10"
-                      :disabled="workflowBusy || !workflowNote.trim()"
-                      @click="sendComposer()"
-                  /></UPopover>
-                </div>
-              </div>
-            </div>
           </section>
 
           <!-- ============ sidebar: task info (desktop docked; mobile via sheet above) ============ -->
           <aside
-            class="hidden w-full shrink-0 self-start rounded-xl border border-zinc-200/70 bg-zinc-50/70 p-3.5 lg:sticky lg:top-4 lg:mt-0 lg:block lg:max-h-[calc(100vh-8.5rem)] lg:w-72 lg:overflow-y-auto dark:border-zinc-800 dark:bg-zinc-900/60"
+            class="border-default bg-elevated/50 hidden w-full shrink-0 self-start rounded-xl border p-3.5 lg:sticky lg:top-4 lg:mt-0 lg:block lg:max-h-[calc(var(--task-h)-1rem)] lg:w-72 lg:overflow-y-auto"
           >
             <div class="space-y-4">
-              <TaskDetailsFields :task="task" :run-locked="agentRunning" />
-              <TaskReviewPanel v-if="task.reviewerNames.length" :task-id="task.id" />
+              <TaskDetailsFields :key="task.id" :task="task" :run-locked="runLocked" :run-pending="!runsSettled" />
+              <TaskReviewPanel v-if="task.reviewerNames.length" :key="task.id" :task-id="task.id" />
               <TaskRoutingPanels
+                :key="task.id"
                 :task-id="task.id"
                 :status-by-id="statusById"
                 @add-subtask="subtaskEditorOpen = true"
@@ -272,24 +310,22 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
             </div>
           </aside>
         </div>
-
-        <!-- mobile info sheet: same sidebar content -->
-        <USlideover v-if="task" v-model:open="infoSheetOpen" title="Task info" side="right" class="lg:hidden">
-          <template #body>
-            <div class="space-y-4">
-              <TaskDetailsFields :task="task" :run-locked="agentRunning" />
-              <TaskReviewPanel v-if="task.reviewerNames.length" :task-id="task.id" />
-              <TaskRoutingPanels
-                :task-id="task.id"
-                :status-by-id="statusById"
-                @add-subtask="subtaskEditorOpen = true"
-              />
-            </div>
-          </template>
-        </USlideover>
       </div>
     </template>
   </UDashboardPanel>
+
+  <!-- mobile info sheet: same sidebar content (OUTSIDE the panel — the panel
+       renders only named slots, so a loose child blanks the body on client nav) -->
+  <USlideover v-if="task" v-model:open="infoSheetOpen" title="Task info" side="right" class="lg:hidden">
+    <template #body>
+      <div class="space-y-4">
+        <TaskDetailsFields :key="task.id" :task="task" :run-locked="runLocked" :run-pending="!runsSettled" />
+        <TaskReviewPanel v-if="task.reviewerNames.length" :key="task.id" :task-id="task.id" />
+        <TaskRoutingPanels :task-id="task.id" :status-by-id="statusById" @add-subtask="subtaskEditorOpen = true" />
+      </div>
+    </template>
+  </USlideover>
+
   <TaskEditorModal
     v-if="subtaskEditorOpen"
     v-model:open="subtaskEditorOpen"
@@ -298,3 +334,11 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
     @saved="queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] })"
   />
 </template>
+
+<style scoped>
+/* ONE viewport constant for the chat row height and the docked aside's max
+   height — the two calcs used to drift as separate magic numbers */
+.task-gutter {
+  --task-h: calc(100vh - 7.5rem);
+}
+</style>

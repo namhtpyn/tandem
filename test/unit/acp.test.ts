@@ -34,16 +34,20 @@ async function lastClient() {
   const {
     default: { Client },
   } = await import('ssh2');
-  const FakeClient = Client as unknown as { last?: FakeSshClient };
-  for (let i = 0; i < 400; i++) {
-    const candidate = FakeClient.last;
-    if (candidate && candidate !== lastReturnedClient) {
-      lastReturnedClient = candidate;
-      return candidate;
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  throw new Error('no ssh2 fake client was constructed');
+  const FakeClient = Client as unknown as {
+    last?: FakeSshClient;
+    constructed: number;
+    until: (n: number) => Promise<void>;
+  };
+  // DEFFERED, not polled: `until` resolves the moment the fake constructs the next
+  // client (the old 400×25ms loop sat on the clock for up to 10s on a failure)
+  const seen = FakeClient.constructed;
+  const candidate = FakeClient.last;
+  if (!candidate || candidate === lastReturnedClient) await FakeClient.until(seen);
+  const next = FakeClient.last;
+  if (!next || next === lastReturnedClient) throw new Error('no ssh2 fake client was constructed');
+  lastReturnedClient = next;
+  return next;
 }
 
 vi.mock('ssh2', () => {
@@ -114,6 +118,11 @@ vi.mock('ssh2', () => {
     }
   }
   class FakeClient {
+    static constructed = 0;
+    static waiters: Array<() => void> = [];
+    static async until(n: number) {
+      while (FakeClient.constructed <= n) await new Promise<void>((res) => FakeClient.waiters.push(res));
+    }
     static last: FakeClient;
     static blobLen: number | null = null;
     handlers: Record<string, Array<(d: unknown) => void>> = {};
@@ -122,6 +131,10 @@ vi.mock('ssh2', () => {
     ended = false;
     constructor() {
       FakeClient.last = this;
+      FakeClient.constructed += 1;
+      const wake = FakeClient.waiters;
+      FakeClient.waiters = [];
+      for (const res of wake) res();
     }
     on(ev: string, fn: (d: unknown) => void) {
       this.handlers[ev] = [...(this.handlers[ev] ?? []), fn];

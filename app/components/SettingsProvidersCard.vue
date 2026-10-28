@@ -4,18 +4,14 @@
 // providers.list query (shared key: the General card's pickers and the auth
 // policy read the same cache) and the save/remove mutations.
 import { useQuery } from '@tanstack/vue-query';
+import { z } from 'zod';
 
-import {
-  PROVIDER_KIND,
-  endpointKind,
-  isAnthropicWire,
-  ENDPOINT_OPTIONS,
-  PROVIDER_ENDPOINT_LABEL,
-  isModelsEndpoint,
-} from '#shared/api-styles';
-import { CHANGE_RESOURCE } from '#shared/enums';
+import { ENDPOINT_OPTIONS, PROVIDER_ENDPOINT_LABEL, isModelsEndpoint } from '#shared/api-styles';
+import { CHANGE_RESOURCE, ROLE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
+import { saveFailed } from '~/utils/forms';
 import type { ModelProviderRow, ProviderSaveInput } from '~/utils/orpc-types';
+import { endpointBadgeColor, humanizeEnum } from '~/utils/ui-labels';
 
 const { $orpc, $client } = useNuxtApp();
 
@@ -31,6 +27,16 @@ const mProvForm = reactive({
   extraHeaders: '',
   notes: '',
 });
+// loose frontend schema (repo law): presence only — the server re-validates the URL shape
+const mProvSchema = z.object({
+  label: z.string().trim().min(1, 'Label is required'),
+  baseUrl: z.string().trim().min(1, 'Base URL is required'),
+});
+
+/** short badge label for an endpoint — catalog label without the parenthetical,
+ * humanized (never the raw enum) when the value isn't in the catalog */
+const endpointShortLabel = (st: string) =>
+  (PROVIDER_ENDPOINT_LABEL[st as keyof typeof PROVIDER_ENDPOINT_LABEL] ?? humanizeEnum(st)).split(' (')[0];
 
 // at most one /v1/models endpoint: picking another replaces the previous one
 function onEndpointsChange(next: Array<string | undefined>) {
@@ -45,6 +51,20 @@ function onEndpointsChange(next: Array<string | undefined>) {
 }
 const mProvBusy = ref(false);
 const mProvMessage = ref('');
+const mProvMessageOk = ref(false); // message tone: success green, failures red
+// list() returns extraHeaders: null for non-admins (router credentials) — the
+// editor must say so instead of implying the provider has none
+const session = useAppSession();
+const mProvHeadersHidden = ref(false);
+// headers are only sent when the user actually edited the textarea; an omitted
+// field tells the server to keep the stored value (a wiped textarea on a
+// non-admin's screen would otherwise clear real credentials)
+const mProvHeadersDirty = ref(false);
+const headersHint = computed(() =>
+  mProvHeadersHidden.value
+    ? 'Hidden for your role — saving keeps the stored headers'
+    : "Optional, one 'Name: value' per line",
+);
 
 function openMProvEditor(row?: ModelProviderRow) {
   mProvEditingId.value = row?.id ?? null;
@@ -57,13 +77,18 @@ function openMProvEditor(row?: ModelProviderRow) {
         .join('\n')
     : '';
   mProvForm.notes = row?.notes ?? '';
+  mProvHeadersHidden.value = !!row && row.extraHeaders === null && session.value?.user.role !== ROLE.ADMIN;
+  mProvHeadersDirty.value = false;
   mProvMessage.value = '';
   mProvEditorOpen.value = true;
 }
 
 async function saveMProv() {
+  // one write at a time — a double-click or stray Enter must not double-create
+  if (mProvBusy.value) return;
   mProvBusy.value = true;
   mProvMessage.value = '';
+  mProvMessageOk.value = false;
   try {
     // one 'Name: value' per line — split on the FIRST ':' only, so values with
     // colons (https:// URLs, timestamps) survive; unparsable lines are skipped
@@ -80,15 +105,20 @@ async function saveMProv() {
       : undefined;
     await $client.providers.save({
       ...(mProvEditingId.value ? { id: mProvEditingId.value } : {}),
-      label: mProvForm.label,
-      baseUrl: mProvForm.baseUrl,
+      label: mProvForm.label.trim(),
+      baseUrl: mProvForm.baseUrl.trim(),
       endpoints: mProvForm.endpoints as ProviderSaveInput['endpoints'],
-      ...(headers && Object.keys(headers).length ? { extraHeaders: headers } : {}),
-      ...(mProvForm.notes ? { notes: mProvForm.notes } : {}),
+      // extraHeaders ride along ONLY when the textarea was edited ({} = clear);
+      // otherwise the field is omitted and the server keeps the stored value
+      ...(mProvHeadersDirty.value && !mProvHeadersHidden.value ? { extraHeaders: headers ?? {} } : {}),
+      notes: mProvForm.notes,
     });
+    mProvMessage.value = mProvEditingId.value ? 'Provider saved' : 'Provider created';
+    mProvMessageOk.value = true;
     mProvEditorOpen.value = false;
   } catch (e) {
-    mProvMessage.value = e instanceof Error ? e.message : 'save failed';
+    mProvMessage.value = saveFailed(e, 'provider');
+    mProvMessageOk.value = false;
   } finally {
     mProvBusy.value = false;
   }
@@ -101,16 +131,22 @@ const removeOpen = computed({
     if (!v) pendingRemove.value = null;
   },
 });
+const removeError = ref('');
+
+function askRemove(row: ModelProviderRow) {
+  removeError.value = '';
+  pendingRemove.value = row;
+}
 
 async function removeMProv() {
   if (!pendingRemove.value) return;
   mProvBusy.value = true;
-  mProvMessage.value = '';
   try {
     await $client.providers.remove({ id: pendingRemove.value.id });
     pendingRemove.value = null;
   } catch (e) {
-    mProvMessage.value = e instanceof Error ? e.message : 'delete failed';
+    // in-modal law: the confirm stays open, the failure renders inside it
+    removeError.value = saveFailed(e, 'provider', 'delete');
   } finally {
     mProvBusy.value = false;
   }
@@ -123,67 +159,64 @@ onServerPrefetch(() => providersLive.suspense());
   <UCard :ui="{ root: 'shadow-sm' }">
     <template #header>
       <div class="flex items-center gap-2">
-        <UIcon name="i-lucide-cpu" class="size-4 text-zinc-400" />
-        <h3 class="text-sm font-semibold text-zinc-900 dark:text-white">Model providers</h3>
+        <UIcon name="i-lucide-cpu" class="text-dimmed size-4" />
+        <h2 class="text-highlighted text-sm font-semibold">Model providers</h2>
       </div>
     </template>
     <div class="space-y-5">
       <div>
         <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <h4 class="text-xs font-semibold tracking-wide text-zinc-400 uppercase">Catalog</h4>
-          <UButton icon="i-lucide-plus" size="sm" label="Add provider" @click="openMProvEditor()" />
+          <h3 class="text-highlighted text-sm font-semibold">Catalog</h3>
+          <UButton
+            v-if="mProvList.length > 0"
+            icon="i-lucide-plus"
+            size="sm"
+            label="New provider"
+            @click="openMProvEditor()"
+          />
         </div>
         <!-- Mobile: stacked cards -->
         <div v-if="mProvList.length" class="space-y-3 md:hidden">
           <UCard v-for="p in mProvList" :key="p.id" :ui="{ root: 'shadow-sm' }">
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0">
-                <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ p.label }}</p>
-                <p class="truncate font-mono text-xs text-zinc-400">{{ p.baseUrl }}</p>
+                <p class="text-highlighted truncate text-sm font-medium">{{ p.label }}</p>
+                <p class="text-dimmed truncate font-mono text-xs">{{ p.baseUrl }}</p>
               </div>
               <UBadge
                 v-for="st in p.endpoints"
                 :key="st"
-                :color="
-                  endpointKind(st) === PROVIDER_KIND.DECISION
-                    ? 'info'
-                    : isModelsEndpoint(st)
-                      ? 'success'
-                      : isAnthropicWire([st])
-                        ? 'warning'
-                        : 'primary'
-                "
+                :color="endpointBadgeColor(st)"
                 variant="subtle"
                 size="sm"
                 class="max-w-52 truncate"
-                >{{
-                  (PROVIDER_ENDPOINT_LABEL[st as keyof typeof PROVIDER_ENDPOINT_LABEL] ?? st).split(' (')[0]
-                }}</UBadge
+                >{{ endpointShortLabel(st) }}</UBadge
               >
             </div>
-            <div class="mt-3 flex justify-end gap-1">
-              <UPopover mode="hover">
+            <div class="row-actions mt-3 flex justify-end gap-1 transition-opacity">
+              <UPopover mode="hover" enable-touch>
                 <UButton
                   icon="i-lucide-pencil"
                   variant="ghost"
                   color="neutral"
                   size="sm"
-                  aria-label="Edit provider"
+                  :aria-label="`Edit ${p.label}`"
                   @click="openMProvEditor(p)"
                 />
                 <template #content>
                   <div class="px-3 py-1.5 text-xs">Edit provider</div>
                 </template>
               </UPopover>
-              <UPopover mode="hover">
+              <UPopover mode="hover" enable-touch>
                 <UButton
                   icon="i-lucide-trash-2"
                   variant="ghost"
-                  color="error"
+                  color="neutral"
+                  class="text-muted hover:text-error"
                   size="sm"
-                  aria-label="Delete provider"
+                  :aria-label="`Delete ${p.label}`"
                   :disabled="mProvBusy"
-                  @click="pendingRemove = p"
+                  @click="askRemove(p)"
                 />
                 <template #content>
                   <div class="px-3 py-1.5 text-xs">Delete provider</div>
@@ -199,60 +232,51 @@ onServerPrefetch(() => providersLive.suspense());
             :data="mProvList"
             :columns="[
               { accessorKey: 'label', header: 'Provider' },
-              { accessorKey: 'actions', header: '' },
+              { id: 'actions', header: 'Actions', meta: { class: { th: 'sr-only' } } },
             ]"
           >
             <template #label-cell="{ row }">
               <div class="min-w-0">
-                <p class="flex items-center gap-2 truncate font-medium text-zinc-900 dark:text-white">
+                <p class="text-highlighted flex items-center gap-2 truncate font-medium">
                   {{ row.original.label }}
                   <UBadge
                     v-for="st in row.original.endpoints"
                     :key="st"
-                    :color="
-                      endpointKind(st) === PROVIDER_KIND.DECISION
-                        ? 'info'
-                        : isModelsEndpoint(st)
-                          ? 'success'
-                          : isAnthropicWire([st])
-                            ? 'warning'
-                            : 'primary'
-                    "
+                    :color="endpointBadgeColor(st)"
                     variant="subtle"
                     size="sm"
                     class="max-w-52 truncate"
-                    >{{
-                      (PROVIDER_ENDPOINT_LABEL[st as keyof typeof PROVIDER_ENDPOINT_LABEL] ?? st).split(' (')[0]
-                    }}</UBadge
+                    >{{ endpointShortLabel(st) }}</UBadge
                   >
                 </p>
-                <p class="truncate font-mono text-xs text-zinc-400">{{ row.original.baseUrl }}</p>
+                <p class="text-dimmed truncate font-mono text-xs">{{ row.original.baseUrl }}</p>
               </div>
             </template>
             <template #actions-cell="{ row }">
-              <div class="flex justify-end gap-1">
-                <UPopover mode="hover">
+              <div class="row-actions flex justify-end gap-1 transition-opacity">
+                <UPopover mode="hover" enable-touch>
                   <UButton
                     icon="i-lucide-pencil"
                     variant="ghost"
                     color="neutral"
-                    size="xs"
-                    aria-label="Edit provider"
+                    size="sm"
+                    :aria-label="`Edit ${row.original.label}`"
                     @click="openMProvEditor(row.original)"
                   />
                   <template #content>
                     <div class="px-3 py-1.5 text-xs">Edit provider</div>
                   </template>
                 </UPopover>
-                <UPopover mode="hover">
+                <UPopover mode="hover" enable-touch>
                   <UButton
                     icon="i-lucide-trash-2"
                     variant="ghost"
-                    color="error"
-                    size="xs"
-                    aria-label="Delete provider"
+                    color="neutral"
+                    class="text-muted hover:text-error"
+                    size="sm"
+                    :aria-label="`Delete ${row.original.label}`"
                     :disabled="mProvBusy"
-                    @click="pendingRemove = row.original"
+                    @click="askRemove(row.original)"
                   />
                   <template #content>
                     <div class="px-3 py-1.5 text-xs">Delete provider</div>
@@ -262,8 +286,40 @@ onServerPrefetch(() => providersLive.suspense());
             </template>
           </UTable>
         </UCard>
-        <p v-if="mProvMessage" class="text-error mt-2 text-xs">{{ mProvMessage }}</p>
-        <p v-else-if="!mProvList.length" class="py-4 text-center text-sm text-zinc-500">No providers yet.</p>
+        <!-- pending: skeleton cards (mobile) + rows (desktop) before any empty copy -->
+        <template v-if="providersLive.isPending.value">
+          <div class="space-y-3 md:hidden" aria-hidden="true">
+            <USkeleton class="h-24 w-full rounded-lg" />
+            <USkeleton class="h-24 w-full rounded-lg" />
+          </div>
+          <UCard class="hidden md:block" :ui="{ root: 'shadow-sm', body: 'p-0 sm:p-0' }">
+            <div class="space-y-2 p-4" aria-hidden="true">
+              <USkeleton class="h-8 w-full rounded" />
+              <USkeleton class="h-8 w-3/4 rounded" />
+            </div>
+          </UCard>
+        </template>
+        <p v-else-if="providersLive.isError.value" role="alert" class="text-error py-4 text-center text-sm">
+          Couldn't load providers
+        </p>
+        <div
+          v-else-if="!mProvList.length"
+          class="border-default flex flex-col items-center gap-3 rounded-xl border border-dashed p-8 text-center"
+        >
+          <UIcon name="i-lucide-cpu" class="text-toned size-10" aria-hidden="true" />
+          <p class="text-muted text-sm">No providers yet — add one to power agents and auto-assign.</p>
+          <UButton icon="i-lucide-plus" size="sm" label="New provider" @click="openMProvEditor()" />
+        </div>
+        <!-- save/error copy sits OUTSIDE the pending/error/empty chain: as the
+             chain's v-if it masked the load states while showing a stale error -->
+        <p
+          v-if="mProvMessage"
+          class="mt-2 text-sm"
+          :class="mProvMessageOk ? 'text-success' : 'text-error'"
+          :role="mProvMessageOk ? 'status' : 'alert'"
+        >
+          {{ mProvMessage }}
+        </p>
       </div>
     </div>
   </UCard>
@@ -271,22 +327,23 @@ onServerPrefetch(() => providersLive.suspense());
   <!-- model provider editor -->
   <UModal
     v-model:open="mProvEditorOpen"
-    :title="mProvEditingId ? 'Edit provider' : 'Add provider'"
+    :title="mProvEditingId ? 'Edit provider' : 'New provider'"
+    :dismissible="!mProvBusy"
+    :close="!mProvBusy"
     :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
   >
     <template #body>
-      <UForm id="provider-editor-form" :state="mProvForm" class="space-y-4" @submit="saveMProv">
-        <UFormField label="Label" name="label">
-          <UInput v-model="mProvForm.label" icon="i-lucide-tag" placeholder="Provider name" class="w-full" required />
+      <UForm id="provider-editor-form" :schema="mProvSchema" :state="mProvForm" class="space-y-4" @submit="saveMProv">
+        <UFormField label="Label" name="label" required>
+          <UInput v-model="mProvForm.label" icon="i-lucide-tag" placeholder="Provider name" class="w-full" />
         </UFormField>
-        <UFormField label="Base URL" name="baseUrl">
+        <UFormField label="Base URL" name="baseUrl" required>
           <template #hint><FormHint text="OpenAI- or Anthropic-compatible endpoint root" /></template>
           <UInput
             v-model="mProvForm.baseUrl"
             icon="i-lucide-globe"
             placeholder="https://api.openai.com"
             class="w-full"
-            required
           />
         </UFormField>
         <UFormField label="Available endpoints" name="endpoints">
@@ -309,19 +366,11 @@ onServerPrefetch(() => providersLive.suspense());
                 <UBadge
                   v-for="ep in modelValue"
                   :key="ep"
-                  :color="
-                    endpointKind(String(ep)) === PROVIDER_KIND.DECISION
-                      ? 'info'
-                      : isModelsEndpoint(String(ep))
-                        ? 'success'
-                        : 'primary'
-                  "
+                  :color="endpointBadgeColor(String(ep))"
                   variant="subtle"
                   size="sm"
                   class="max-w-52 truncate"
-                  >{{
-                    (PROVIDER_ENDPOINT_LABEL[ep as keyof typeof PROVIDER_ENDPOINT_LABEL] ?? ep).split(' (')[0]
-                  }}</UBadge
+                  >{{ endpointShortLabel(String(ep)) }}</UBadge
                 >
               </span>
               <span v-else class="text-dimmed">Pick at least one endpoint</span>
@@ -330,12 +379,16 @@ onServerPrefetch(() => providersLive.suspense());
         </UFormField>
 
         <UFormField label="Extra headers" name="extraHeaders">
-          <template #hint><FormHint text="Optional, one 'Name: value' per line" /></template>
+          <template #hint>
+            <FormHint :text="headersHint" />
+          </template>
           <UTextarea
             v-model="mProvForm.extraHeaders"
             placeholder="HTTP-Referer: https://tandem.local"
             :rows="2"
             class="w-full"
+            :disabled="mProvHeadersHidden"
+            @update:model-value="mProvHeadersDirty = true"
           />
         </UFormField>
         <UFormField label="Notes" name="notes">
@@ -346,7 +399,7 @@ onServerPrefetch(() => providersLive.suspense());
             class="w-full"
           />
         </UFormField>
-        <p v-if="mProvMessage" class="text-error text-sm">{{ mProvMessage }}</p>
+        <p v-if="mProvMessage" role="alert" class="text-error text-sm">{{ mProvMessage }}</p>
       </UForm>
     </template>
     <template #footer>
@@ -361,7 +414,7 @@ onServerPrefetch(() => providersLive.suspense());
         <UButton
           type="submit"
           :loading="mProvBusy"
-          :label="mProvEditingId ? 'Save changes' : 'Add provider'"
+          :label="mProvEditingId ? 'Save changes' : 'Create provider'"
           form="provider-editor-form"
         />
       </div>
@@ -369,19 +422,28 @@ onServerPrefetch(() => providersLive.suspense());
   </UModal>
 
   <!-- delete confirm (same pattern as the vault/environment delete confirms) -->
-  <UModal v-model:open="removeOpen" title="Delete provider">
+  <UModal v-model:open="removeOpen" title="Delete provider" :dismissible="!mProvBusy" :close="!mProvBusy">
     <template #body>
       <div class="space-y-4">
-        <p class="text-sm text-zinc-600 dark:text-zinc-300">
+        <p class="text-muted text-sm">
           Delete provider
-          <span class="font-semibold text-zinc-900 dark:text-white">{{ pendingRemove?.label }}</span
-          >? Agents and workspace assignments using it will need a new endpoint.
+          <span class="text-highlighted font-semibold">{{ pendingRemove?.label }}</span
+          >? Agents using it will stop working until you pick a new provider.
         </p>
+        <UAlert
+          v-if="removeError"
+          role="alert"
+          icon="i-lucide-circle-alert"
+          color="error"
+          variant="subtle"
+          :title="removeError"
+          :ui="{ title: 'text-sm' }"
+        />
       </div>
     </template>
     <template #footer>
       <div class="flex w-full justify-end gap-2">
-        <UButton variant="ghost" color="neutral" label="Cancel" @click="pendingRemove = null" />
+        <UButton variant="ghost" color="neutral" label="Cancel" :disabled="mProvBusy" @click="pendingRemove = null" />
         <UButton icon="i-lucide-trash-2" color="error" label="Delete" :loading="mProvBusy" @click="removeMProv" />
       </div>
     </template>

@@ -1,10 +1,12 @@
-// Redis hub integration tests — real redis on 127.0.0.1:6399 (docker redis-spike), skipped when unreachable.
+// Redis hub integration tests — real redis via the suite REDIS_URL (CI runs a
+// service on 6399; worker-setup pins each worker to its own db index), skipped
+// when unreachable.
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 
 import { env, setEnv } from '#server/domains/kernel/env';
 import { CHANGE_ACTION, CHANGE_RESOURCE } from '#shared/enums';
 
-const REDIS_URL = 'redis://127.0.0.1:6399';
+const REDIS_URL = process.env.REDIS_URL ?? 'redis://127.0.0.1:6399';
 
 async function redisUp() {
   try {
@@ -26,7 +28,7 @@ const up = await redisUp();
 
 describe.skipIf(!up)('redis hub (integration)', () => {
   beforeAll(() => {
-    setEnv({ REDIS_URL: REDIS_URL });
+    setEnv({ REDIS_URL });
   });
 
   it('enqueues and processes a job through the queue', async () => {

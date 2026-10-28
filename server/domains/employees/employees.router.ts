@@ -1,6 +1,6 @@
 import { os } from '@orpc/server';
 // employees router — business logic lives in services/utils; this file only wires procedures
-import { count, desc, EmptyFilter, eq, inArray } from 'drizzle-orm';
+import { and, count, desc, EmptyFilter, eq, inArray, ne } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
@@ -24,6 +24,10 @@ import {
 import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/;
+
+/** one cap for an employee's title and the catalog entry it points at — a longer
+ *  catalog name could never be applied to an employee, so both share this */
+const EMPLOYEE_TITLE_MAX = 100;
 
 // avatar writes must be raster-image data URLs (svg/xml excluded — served with nosniff,
 // never allowed to carry active content); '' / null still clear the avatar
@@ -303,7 +307,7 @@ export const employeesRouter = os.router({
         email: z.email(),
         kind: z.enum(['human', 'ai']),
         image: avatarImageSchema,
-        title: z.string().min(1).max(100),
+        title: z.string().min(1).max(EMPLOYEE_TITLE_MAX),
         supervisorIds: z.array(z.string().min(1)).max(20).default([]),
         environmentId: z.string().min(1).optional(),
         instructions: z.string().max(10_000).optional(),
@@ -379,7 +383,7 @@ export const employeesRouter = os.router({
         id: z.string().min(1),
         name: z.string().min(1).max(100),
         email: z.email().optional(),
-        title: z.string().min(1).max(100),
+        title: z.string().min(1).max(EMPLOYEE_TITLE_MAX),
         supervisorIds: z.array(z.string().min(1)).max(20),
         environmentId: z.string().min(1).nullable().optional(),
         instructions: z.string().max(10_000).nullable().optional(),
@@ -421,30 +425,34 @@ export const employeesRouter = os.router({
       // supervisors must exist; cycle check over the supervision graph
       await assertSupervisorsExist(input.supervisorIds);
       await assertAcyclicSupervision(input.id, input.supervisorIds);
-      // AI fields — only when this employee IS an AI (extension row exists)
-      if (aiRow && hasAiExtensionField(input)) {
-        const patch = await aiExtensionPatch(input);
-        await db.update(aiEmployeesTable).set(patch).where(eq(aiEmployeesTable.userId, aiRow.userId));
-      }
+      // ---- validate everything else BEFORE the first write ----
       if (input.email !== undefined && input.email !== emp.email) {
         await assertEmailAvailable(input.email);
       }
-      await db
-        .update(userTable)
-        .set({
-          name: input.name,
-          title: input.title,
-          ...(input.email !== undefined ? { email: input.email } : {}),
-          ...(input.image !== undefined ? { image: input.image } : {}),
-          updatedAt: new Date(),
-        })
-        .where(eq(userTable.id, input.id));
-      await db.delete(supervisorsTable).where(eq(supervisorsTable.employeeId, input.id));
-      if (input.supervisorIds.length > 0) {
-        await db
-          .insert(supervisorsTable)
-          .values(input.supervisorIds.map((s) => ({ employeeId: input.id, supervisorId: s })));
-      }
+      // AI fields — only when this employee IS an AI (extension row exists)
+      const aiPatch = aiRow && hasAiExtensionField(input) ? await aiExtensionPatch(input) : null;
+      // ---- commit: ai extension + user row + supervisor graph land together ----
+      await db.transaction(async (tx) => {
+        if (aiPatch && aiRow) {
+          await tx.update(aiEmployeesTable).set(aiPatch).where(eq(aiEmployeesTable.userId, aiRow.userId));
+        }
+        await tx
+          .update(userTable)
+          .set({
+            name: input.name,
+            title: input.title,
+            ...(input.email !== undefined ? { email: input.email } : {}),
+            ...(input.image !== undefined ? { image: input.image } : {}),
+            updatedAt: new Date(),
+          })
+          .where(eq(userTable.id, input.id));
+        await tx.delete(supervisorsTable).where(eq(supervisorsTable.employeeId, input.id));
+        if (input.supervisorIds.length > 0) {
+          await tx
+            .insert(supervisorsTable)
+            .values(input.supervisorIds.map((s) => ({ employeeId: input.id, supervisorId: s })));
+        }
+      });
       await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.UPDATE);
       return { ok: true };
     }),
@@ -482,38 +490,47 @@ export const employeesRouter = os.router({
       .input(
         z.strictObject({
           id: z.string().min(1).optional(),
-          name: z.string().min(1).max(80),
+          name: z.string().min(1).max(EMPLOYEE_TITLE_MAX),
         }),
       )
       .handler(async ({ input }) => {
-        if (input.id === undefined) {
-          const dupe = await db
+        const id = input.id ?? uuidv7();
+        // one transaction: the employee cascade and the catalog rename land together,
+        // and the name clash is checked inside it (a UNIQUE trip must roll back the
+        // cascade instead of leaving employees renamed under the old catalog entry)
+        await db.transaction(async (tx) => {
+          const clash = await tx
             .select({ id: employeeTitlesTable.id })
             .from(employeeTitlesTable)
-            .where(eq(employeeTitlesTable.name, input.name));
-          if (dupe.length > 0) throw new ORPCError('BAD_REQUEST', { message: 'a title with that name already exists' });
-          const inserted = await db.insert(employeeTitlesTable).values({ id: uuidv7(), name: input.name }).returning();
-          await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.CREATE);
-          return { id: nonNull(inserted[0]).id };
-        }
-        const existing = (
-          await db
-            .select({ name: employeeTitlesTable.name })
-            .from(employeeTitlesTable)
-            .where(eq(employeeTitlesTable.id, input.id))
-        )[0];
-        if (!existing) throw new ORPCError('NOT_FOUND', { message: 'title not found' });
-        // rename cascades to employees holding the old title (free-text column, no FK)
-        await db
-          .update(userTable)
-          .set({ title: input.name, updatedAt: new Date() })
-          .where(eq(userTable.title, existing.name));
-        await db
-          .update(employeeTitlesTable)
-          .set({ name: input.name, updatedAt: new Date() })
-          .where(eq(employeeTitlesTable.id, input.id));
-        await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.UPDATE);
-        return { id: input.id };
+            .where(and(eq(employeeTitlesTable.name, input.name), ne(employeeTitlesTable.id, id)));
+          if (clash.length > 0)
+            throw new ORPCError('BAD_REQUEST', { message: 'a title with that name already exists' });
+          if (input.id === undefined) {
+            await tx.insert(employeeTitlesTable).values({ id, name: input.name });
+            return;
+          }
+          const existing = (
+            await tx
+              .select({ name: employeeTitlesTable.name })
+              .from(employeeTitlesTable)
+              .where(eq(employeeTitlesTable.id, id))
+          )[0];
+          if (!existing) throw new ORPCError('NOT_FOUND', { message: 'title not found' });
+          // rename cascades to employees holding the old title (free-text column, no FK)
+          await tx
+            .update(userTable)
+            .set({ title: input.name, updatedAt: new Date() })
+            .where(eq(userTable.title, existing.name));
+          await tx
+            .update(employeeTitlesTable)
+            .set({ name: input.name, updatedAt: new Date() })
+            .where(eq(employeeTitlesTable.id, id));
+        });
+        await publishChange(
+          CHANGE_RESOURCE.EMPLOYEES,
+          input.id === undefined ? CHANGE_ACTION.CREATE : CHANGE_ACTION.UPDATE,
+        );
+        return { id };
       }),
 
     /** removing a catalog entry leaves employees' free-text titles untouched */
@@ -604,11 +621,13 @@ export const employeesRouter = os.router({
       return { key: created.key, id: created.id };
     }),
 
-  /** rename an access key */
+  /** rename an access key — employeeId scopes the write to that employee's keys */
   updateApiKey: protectedProcedure
     .input(
       z.strictObject({
         keyId: z.string().min(1),
+        /** owner scope: a key that belongs to another employee reads as NOT_FOUND */
+        employeeId: z.string().min(1).optional(),
         name: z.string().min(1).max(100),
       }),
     )
@@ -618,9 +637,14 @@ export const employeesRouter = os.router({
       const updated = await db
         .update(apikeyTable)
         .set({ name })
-        .where(eq(apikeyTable.id, input.keyId))
+        .where(
+          input.employeeId
+            ? and(eq(apikeyTable.id, input.keyId), eq(apikeyTable.referenceId, input.employeeId))
+            : eq(apikeyTable.id, input.keyId),
+        )
         .returning({ id: apikeyTable.id });
       if (updated.length === 0) throw new ORPCError('NOT_FOUND', { message: 'api key not found' });
+      await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.UPDATE);
       return { ok: true };
     }),
 
@@ -650,15 +674,28 @@ export const employeesRouter = os.router({
       }));
     }),
 
-  /** revoke one API key */
-  revokeApiKey: protectedProcedure.input(z.strictObject({ keyId: z.string().min(1) })).handler(async ({ input }) => {
-    const deleted = await db
-      .delete(apikeyTable)
-      .where(eq(apikeyTable.id, input.keyId))
-      .returning({ id: apikeyTable.id });
-    if (deleted.length === 0) {
-      throw new ORPCError('NOT_FOUND', { message: 'api key not found' });
-    }
-    return { ok: true };
-  }),
+  /** revoke one API key — employeeId scopes the delete to that employee's keys */
+  revokeApiKey: protectedProcedure
+    .input(
+      z.strictObject({
+        keyId: z.string().min(1),
+        /** owner scope: a key that belongs to another employee reads as NOT_FOUND */
+        employeeId: z.string().min(1).optional(),
+      }),
+    )
+    .handler(async ({ input }) => {
+      const deleted = await db
+        .delete(apikeyTable)
+        .where(
+          input.employeeId
+            ? and(eq(apikeyTable.id, input.keyId), eq(apikeyTable.referenceId, input.employeeId))
+            : eq(apikeyTable.id, input.keyId),
+        )
+        .returning({ id: apikeyTable.id });
+      if (deleted.length === 0) {
+        throw new ORPCError('NOT_FOUND', { message: 'api key not found' });
+      }
+      await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.UPDATE);
+      return { ok: true };
+    }),
 });

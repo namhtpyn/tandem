@@ -26,6 +26,13 @@ const open = ref(false);
 const activeIndex = ref(0);
 const root = ref<HTMLElement | null>(null);
 
+// combobox ARIA: the UInput lands attrs on the real <input>; options carry ids
+// so aria-activedescendant can point at the active one
+const listboxId = useId();
+const activeDescendant = computed(() =>
+  open.value && matches.value.length ? `${listboxId}-option-${activeIndex.value}` : undefined,
+);
+
 const text = computed(() => props.modelValue);
 const matches = computed(() => {
   const q = text.value.trim().toLowerCase();
@@ -74,26 +81,34 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick));
       :disabled="disabled"
       class="w-full"
       autocomplete="off"
+      role="combobox"
+      aria-autocomplete="list"
+      :aria-expanded="open"
+      :aria-controls="open ? listboxId : undefined"
+      :aria-activedescendant="activeDescendant"
       @update:model-value="input"
       @focus="open = true"
+      @blur="open = false"
       @keydown="onKeydown"
     />
     <div
+      :id="listboxId"
       v-if="open && (matches.length > 0 || (createHint && text.trim() && !exactMatch))"
       class="border-default bg-default absolute top-full right-0 left-0 z-20 mt-1 max-h-56 overflow-auto rounded-md border shadow-lg"
       role="listbox"
     >
       <button
         v-for="(m, i) in matches"
+        :id="`${listboxId}-option-${i}`"
         :key="m"
         type="button"
         role="option"
+        :aria-selected="i === activeIndex"
         class="hover:bg-elevated/60 flex w-full items-center gap-2 px-3 py-2 text-left text-sm"
         :class="i === activeIndex ? 'bg-elevated/60' : ''"
         @mousedown.prevent="pick(m)"
         @mousemove="activeIndex = i"
       >
-        <UIcon :name="icon ?? 'i-lucide-check'" class="text-primary size-3.5 shrink-0" />
         <span class="truncate">{{ m }}</span>
       </button>
       <div

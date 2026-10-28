@@ -6,8 +6,12 @@
 import { useMutation, useQuery, keepPreviousData } from '@tanstack/vue-query';
 import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
+import { z } from 'zod';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { saveFailed } from '~/utils/forms';
+import type { FolderRow } from '~/utils/orpc-types';
+import { TABLE_PAGE_SIZE } from '~/utils/pagination';
 
 const open = defineModel<boolean>('open', { default: false });
 const emit = defineEmits<{ deleted: [id: string] }>();
@@ -17,7 +21,7 @@ const { editable = true } = defineProps<{ editable?: boolean }>();
 
 const { $orpc } = useNuxtApp();
 
-const pageSize = ref(10);
+const pageSize = ref(TABLE_PAGE_SIZE);
 const page = ref(1);
 const search = ref('');
 const debouncedSearch = ref('');
@@ -42,10 +46,13 @@ const foldersQuery = useQuery(
     }),
   ),
 );
-const folders = computed(
-  () => (foldersQuery.data.value?.folders ?? []) as Array<{ id: string; name: string; secrets: number }>,
-);
+const folders = computed<FolderRow[]>(() => foldersQuery.data.value?.folders ?? []);
 const total = computed(() => foldersQuery.data.value?.total ?? 0);
+const columns = [
+  { accessorKey: 'name', header: 'Folder' },
+  { accessorKey: 'secrets', header: 'Secrets' },
+  { id: 'actions', header: 'Actions', meta: { class: { th: 'sr-only' } } },
+];
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 
 // a delete or a narrowed search can shrink the total below the current page
@@ -56,10 +63,14 @@ watch(pageCount, (pc) => {
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
 const form = ref({ name: '' });
+// loose frontend schema (repo law): name presence only
+const folderSchema = z.object({ name: z.string().min(1, 'Name is required') });
 const busy = ref(false);
 const error = ref<string | null>(null);
-const confirmId = ref<string | null>(null);
-const confirming = computed(() => folders.value.find((f) => f.id === confirmId.value) ?? null);
+const removeError = ref<string | null>(null);
+// snapshot at ask-time: the row can leave the current page between the click
+// and the confirm, and a live lookup would blank the name / delete target
+const confirming = ref<{ id: string; name: string } | null>(null);
 
 const saveMutation = useMutation({ ...$orpc.vault.folders.save.mutationOptions() });
 const removeMutation = useMutation({ ...$orpc.vault.folders.remove.mutationOptions() });
@@ -72,6 +83,8 @@ function openEditor(id?: string) {
 }
 
 async function saveFolder() {
+  // one write at a time — a double-click or stray Enter must not double-create
+  if (busy.value) return;
   error.value = null;
   if (!form.value.name.trim()) {
     error.value = 'Name is required';
@@ -85,18 +98,28 @@ async function saveFolder() {
     });
     editorOpen.value = false;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Save failed';
+    error.value = saveFailed(e, 'folder');
   } finally {
     busy.value = false;
   }
 }
 
-async function removeFolder(id: string) {
+function askRemove(row: FolderRow) {
+  removeError.value = null;
+  confirming.value = { id: row.id, name: row.name };
+}
+
+async function removeFolder() {
+  if (!confirming.value) return;
+  const target = confirming.value;
+  removeError.value = null;
   busy.value = true;
   try {
-    await removeMutation.mutateAsync({ id });
-    confirmId.value = null;
-    emit('deleted', id);
+    await removeMutation.mutateAsync({ id: target.id });
+    confirming.value = null;
+    emit('deleted', target.id);
+  } catch (e) {
+    removeError.value = saveFailed(e, 'folder', 'delete');
   } finally {
     busy.value = false;
   }
@@ -108,56 +131,64 @@ async function removeFolder(id: string) {
     <UModal
       v-model:open="open"
       title="Vault folders"
+      :dismissible="!busy"
+      :close="!busy"
       :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
     >
       <template #body>
-        <div v-if="error" class="bg-error/10 text-error mb-3 rounded-md px-3 py-2 text-xs">{{ error }}</div>
         <DataTable
           v-model:search="search"
           v-model:page="page"
           searchable
           search-placeholder="Search folders…"
           :data="folders"
+          :loading="foldersQuery.isPending.value || foldersQuery.isPlaceholderData.value"
+          :refreshing="foldersQuery.isFetching.value && !foldersQuery.isPending.value"
+          :filtered="!!search.trim()"
+          :error="foldersQuery.isError.value"
+          @retry="foldersQuery.refetch()"
+          @clear-search="search = ''"
           :page-count="pageCount"
           :page-size="pageSize"
-          :columns="[
-            { accessorKey: 'name', header: 'Folder' },
-            { accessorKey: 'secrets', header: 'Secrets' },
-            { id: 'actions', header: '' },
-          ]"
+          :columns="columns"
           mobile-title-key="name"
+          show-empty-state
+          empty-icon="i-lucide-folder"
+          empty-noun="folders"
+          empty-text="Create one to categorize secrets."
         >
-          <template #toolbar>
-            <UButton v-if="editable" icon="i-lucide-plus" size="sm" label="New folder" @click="openEditor()" />
+          <template #empty-cta>
+            <UButton v-if="editable" icon="i-lucide-plus" label="New folder" @click="openEditor()" />
           </template>
           <template #secrets-cell="{ row }">
-            <span class="text-xs text-zinc-500"
+            <span class="text-muted text-xs"
               >{{ row.original.secrets }} {{ row.original.secrets === 1 ? 'secret' : 'secrets' }}</span
             >
           </template>
           <template v-if="editable" #actions-cell="{ row }">
-            <div class="flex justify-end gap-1">
-              <UPopover mode="hover">
+            <div class="row-actions flex justify-end gap-1 transition-opacity">
+              <UPopover mode="hover" enable-touch>
                 <UButton
                   icon="i-lucide-pencil"
-                  size="xs"
+                  size="sm"
                   color="neutral"
                   variant="ghost"
-                  aria-label="Rename folder"
+                  :aria-label="`Rename ${row.original.name}`"
                   :disabled="busy"
                   @click="openEditor(row.original.id)"
                 />
                 <template #content><div class="px-3 py-1.5 text-xs">Rename</div></template>
               </UPopover>
-              <UPopover mode="hover">
+              <UPopover mode="hover" enable-touch>
                 <UButton
                   icon="i-lucide-trash-2"
-                  size="xs"
+                  size="sm"
                   color="neutral"
                   variant="ghost"
-                  aria-label="Delete folder"
+                  class="text-muted hover:text-error"
+                  :aria-label="`Delete ${row.original.name}`"
                   :disabled="busy"
-                  @click="confirmId = row.original.id"
+                  @click="askRemove(row.original)"
                 />
                 <template #content><div class="px-3 py-1.5 text-xs">Delete</div></template>
               </UPopover>
@@ -171,32 +202,29 @@ async function removeFolder(id: string) {
                 <template v-if="editable">
                   <UButton
                     icon="i-lucide-pencil"
-                    size="xs"
+                    size="sm"
                     color="neutral"
                     variant="ghost"
-                    aria-label="Rename folder"
+                    :aria-label="`Rename ${row.name}`"
+                    :disabled="busy"
                     @click="openEditor(row.id)"
                   />
                   <UButton
                     icon="i-lucide-trash-2"
-                    size="xs"
+                    size="sm"
                     color="neutral"
                     variant="ghost"
-                    aria-label="Delete folder"
-                    @click="confirmId = row.id"
+                    class="text-muted hover:text-error"
+                    :aria-label="`Delete ${row.name}`"
+                    :disabled="busy"
+                    @click="askRemove(row)"
                   />
                 </template>
               </div>
-              <p class="mt-1 text-xs text-zinc-500">{{ row.secrets }} {{ row.secrets === 1 ? 'secret' : 'secrets' }}</p>
+              <p class="text-muted mt-1 text-xs">{{ row.secrets }} {{ row.secrets === 1 ? 'secret' : 'secrets' }}</p>
             </UCard>
           </template>
         </DataTable>
-        <p v-if="!folders.length" class="py-6 text-center text-sm text-zinc-500">
-          No folders yet — create one to categorize secrets.
-        </p>
-      </template>
-      <template #footer>
-        <div class="flex w-full items-center justify-end" />
       </template>
     </UModal>
 
@@ -205,33 +233,55 @@ async function removeFolder(id: string) {
       v-if="editable"
       v-model:open="editorOpen"
       :title="editingId ? 'Rename folder' : 'New folder'"
+      :dismissible="!busy"
+      :close="!busy"
       :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
     >
       <template #body>
-        <UFormField label="Name" name="name" required>
-          <UInput
-            v-model="form.name"
-            icon="i-lucide-folder"
-            placeholder="e.g. Production keys"
-            class="w-full"
-            :disabled="busy"
+        <UForm id="folder-editor-form" :schema="folderSchema" :state="form" @submit="saveFolder">
+          <UFormField label="Name" name="name" required>
+            <UInput
+              v-model="form.name"
+              icon="i-lucide-folder"
+              placeholder="e.g. Production keys"
+              class="w-full"
+              :disabled="busy"
+            />
+          </UFormField>
+          <UAlert
+            v-if="error"
+            role="alert"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            :title="error"
+            class="mt-3"
+            :ui="{ title: 'text-sm' }"
           />
-        </UFormField>
+        </UForm>
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
-          <UButton variant="ghost" color="neutral" @click="editorOpen = false">Cancel</UButton>
-          <UButton icon="i-lucide-check" :loading="busy" @click="saveFolder">Save</UButton>
+          <UButton variant="ghost" color="neutral" :disabled="busy" @click="editorOpen = false">Cancel</UButton>
+          <UButton
+            type="submit"
+            form="folder-editor-form"
+            icon="i-lucide-check"
+            :loading="busy"
+            :label="editingId ? 'Save changes' : 'Create folder'"
+          />
         </div>
       </template>
     </UModal>
 
     <!-- folder delete confirm: secrets survive -->
     <UModal
-      :open="confirmId !== null"
+      :open="confirming !== null"
+      :dismissible="!busy"
+      :close="!busy"
       @update:open="
         (v: boolean) => {
-          if (!v) confirmId = null;
+          if (!v) confirming = null;
         }
       "
       title="Delete folder"
@@ -241,13 +291,21 @@ async function removeFolder(id: string) {
           Delete <strong>{{ confirming?.name }}</strong
           >? Secrets in it stay — they just become uncategorized.
         </p>
+        <UAlert
+          v-if="removeError"
+          role="alert"
+          icon="i-lucide-circle-alert"
+          color="error"
+          variant="subtle"
+          :title="removeError"
+          class="mt-3"
+          :ui="{ title: 'text-sm' }"
+        />
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
-          <UButton variant="ghost" color="neutral" @click="confirmId = null">Cancel</UButton>
-          <UButton color="error" icon="i-lucide-trash-2" :loading="busy" @click="removeFolder(confirming!.id)"
-            >Delete</UButton
-          >
+          <UButton variant="ghost" color="neutral" :disabled="busy" @click="confirming = null">Cancel</UButton>
+          <UButton color="error" icon="i-lucide-trash-2" :loading="busy" @click="removeFolder()">Delete</UButton>
         </div>
       </template>
     </UModal>

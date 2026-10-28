@@ -2,9 +2,12 @@
 // description renders as inline image + file chip in the task-detail thread; the serve
 // route honors etag revalidation. (The full push/collect/cleanup sandbox leg is covered
 // by unit tests against the ssh seam — e2e stays DB/UI only.)
-import { expect, test } from '@playwright/test';
-
+// the cleanup fixture sweeps every row the test created (tasks cascade messages/
+// runs/obligations/attachments; then users, projects, environments, vault, providers)
+import { expect, test } from './helpers/cleanup';
 import { login } from './helpers/login.ts';
+import { waitForHydration } from './pages/base.page.ts';
+import { TasksPage } from './pages/tasks.page.ts';
 
 const PNG = Buffer.from(
   '89504e470d0a1a0a0000000d4948445200000001000000010806000000' +
@@ -13,14 +16,17 @@ const PNG = Buffer.from(
 );
 
 test('attachment upload renders inline in the task thread', async ({ page, request, context }) => {
+  const tasksPage = new TasksPage(page);
+  const title = `Attachment probe ${Date.now().toString(36)}`;
   await login(page);
   await page.goto('/tasks');
+  await waitForHydration(page);
   await page.getByRole('button', { name: 'New task' }).first().click();
-  await page.getByPlaceholder('Task title').fill('Attachment probe');
+  await page.getByPlaceholder('Task title').fill(title);
   await page.getByRole('button', { name: /Save|Create task/ }).click();
-  await expect(page.getByRole('link', { name: 'Attachment probe' }).first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole('link', { name: title }).first()).toBeVisible({ timeout: 10_000 });
 
-  await page.getByRole('link', { name: 'Attachment probe' }).first().click();
+  await page.getByRole('link', { name: title }).first().click();
   await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
   const taskId = page.url().split('/').pop()!;
 
@@ -69,4 +75,7 @@ test('attachment upload renders inline in the task thread', async ({ page, reque
     multipart: { file: { name: 'x.sh', mimeType: 'application/x-sh', buffer: Buffer.from('rm -rf /') } },
   });
   expect(bad.status()).toBe(415);
+
+  // teardown: the run's task must not linger in the shared DB
+  await tasksPage.deleteTask(title);
 });

@@ -1,6 +1,5 @@
 // E2E: model provider registry — seeds, CRUD, model sync placeholder, agent linkage.
-import { expect, test } from '@playwright/test';
-
+import { expect, test } from './helpers/cleanup.ts';
 import { BasePage } from './pages/base.page.ts';
 
 test.describe('model providers', () => {
@@ -11,26 +10,32 @@ test.describe('model providers', () => {
     await ui.navigate('/settings');
     await expect(page.getByRole('heading', { name: 'Model providers' })).toBeVisible();
     const name = `OpenAI QA ${Date.now().toString(36)}`;
-    await page.getByRole('button', { name: 'Add provider' }).first().click();
+    await page.getByRole('button', { name: 'New provider' }).first().click();
     await page.getByLabel('Label').fill(name);
     await page.getByLabel('Base URL').fill('https://api.openai.com');
-    await page.getByRole('button', { name: 'Add provider' }).last().click();
+    await page.getByRole('button', { name: 'Create provider' }).click();
     // mobile cards + desktop table both render provider names; only one is visible per breakpoint
     await expect(page.getByText(name).filter({ visible: true }).first()).toBeVisible();
+
+    // teardown: the created provider must not linger in the shared catalog
+    const row = page.locator('tr:visible', { hasText: name }).first();
+    await row.getByRole('button', { name: /Delete / }).click();
+    await ui.confirmDelete();
+    await expect(page.locator('tr', { hasText: name })).toHaveCount(0);
   });
 
   test('add provider with models, then delete', async ({ page }) => {
     const ui = new BasePage(page);
     await ui.navigate('/settings');
     const name = `Groq ${Date.now().toString(36)}`;
-    await page.getByRole('button', { name: 'Add provider' }).first().click();
+    await page.getByRole('button', { name: 'New provider' }).first().click();
     await page.getByLabel('Label').fill(name);
     await page.getByLabel('Base URL').fill('https://api.groq.com/openai/v1');
-    await page.getByRole('button', { name: 'Add provider' }).last().click();
+    await page.getByRole('button', { name: 'Create provider' }).click();
     const row = page.locator('tr', { hasText: name });
     await expect(row).toBeVisible();
     // delete via that row's own button, then confirm in the modal (two-step delete law)
-    await row.getByRole('button', { name: 'Delete provider' }).click();
+    await row.getByRole('button', { name: /Delete / }).click();
     await ui.confirmDelete();
     await expect(page.locator('tr', { hasText: name })).toHaveCount(0);
   });
@@ -40,10 +45,10 @@ test.describe('model providers', () => {
     // no baseline provider seeds — create the provider the agent editor will offer
     const provName = `Agent Prov ${Date.now().toString(36)}`;
     await ui.navigate('/settings');
-    await page.getByRole('button', { name: 'Add provider' }).first().click();
+    await page.getByRole('button', { name: 'New provider' }).first().click();
     await page.getByLabel('Label').fill(provName);
     await page.getByLabel('Base URL').fill('https://api.openai.com');
-    await page.getByRole('button', { name: 'Add provider' }).last().click();
+    await page.getByRole('button', { name: 'Create provider' }).click();
     await expect(page.getByText(provName).filter({ visible: true }).first()).toBeVisible();
     await ui.navigate('/employees');
     await page.getByRole('button', { name: 'New employee' }).first().click();
@@ -57,5 +62,12 @@ test.describe('model providers', () => {
     await expect(page.getByRole('option', { name: provName })).toBeVisible();
     await page.getByRole('option', { name: provName }).click();
     await ui.dismissOverlay('Base URL');
+
+    // teardown: the editor was never saved — only the provider row needs deleting
+    await ui.navigate('/settings');
+    const row = page.locator('tr:visible', { hasText: provName }).first();
+    await row.getByRole('button', { name: /Delete / }).click();
+    await ui.confirmDelete();
+    await expect(page.locator('tr', { hasText: provName })).toHaveCount(0);
   });
 });
