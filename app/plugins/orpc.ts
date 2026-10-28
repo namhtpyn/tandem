@@ -47,8 +47,11 @@ export default defineNuxtPlugin(async () => {
 
   if (import.meta.server) {
     const { createRouterClient } = await import('@orpc/server');
-    const { appRouter: serverRouter } = await import('#server/domains/app.router');
-    const { buildServerContext } = await import('#server/domains/kernel/context');
+    // variable specifier: keeps vite's client crawler out of the server graph in dev
+    const routerSpec = '#server/domains/app.router';
+    const serverRouter: typeof appRouter = (await import(routerSpec)).appRouter;
+    const ctxSpec = '#server/domains/kernel/context';
+    const { buildServerContext } = await import(ctxSpec);
     const event = useRequestEvent();
     client = createRouterClient(serverRouter, {
       context: buildServerContext(event?.headers),
