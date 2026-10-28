@@ -77,22 +77,14 @@ export default defineConfig({
       },
       // component tests in a real Nuxt environment (auto-imports, plugins, injections)
       // — mountSuspended etc. Docs: defineVitestProject is only for nuxt-env tests.
-      // Component coverage is REPORTED here (it used to be switched off, so
-      // app/components/** never appeared in any report) but it is not gated: the
-      // strict thresholds above are the server/util surface, and one component
-      // mount must not decide whether the suite passes.
       await defineVitestProject({
         test: {
           name: 'nuxt',
           include: ['test/nuxt/**/*.test.ts'],
           environment: 'nuxt',
-          coverage: {
-            enabled: true,
-            include: ['app/components/**/*.vue'],
-            reporter: ['text'],
-            reportsDirectory: './coverage/components',
-            thresholds: {},
-          },
+          // component coverage stays OFF: only 3 components mount in vitest, so
+          // app/components drags the GLOBAL v8 threshold to ~95% even ungated
+          // (per-project thresholds:{} does not opt out of the global merge)
         },
       }),
     ],
