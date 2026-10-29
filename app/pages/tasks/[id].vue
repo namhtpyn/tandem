@@ -288,7 +288,7 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
               :verdict-seq="verdictSeq"
               :verdict-failed="verdictFailed"
               @verdict="
-                (action: 'approve' | 'requestChanges' | 'reject' | 'escalate', body?: string) =>
+                (action: 'approve' | 'requestChanges' | 'reject', body?: string) =>
                   wfAction(action, { body: body || undefined })
               "
             />

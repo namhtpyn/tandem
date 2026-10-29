@@ -6,7 +6,7 @@
 const props = defineProps<{ busy: boolean; verdictSeq: number; verdictFailed?: boolean }>();
 
 const emit = defineEmits<{
-  verdict: [action: 'approve' | 'requestChanges' | 'reject' | 'escalate', body?: string];
+  verdict: [action: 'approve' | 'requestChanges' | 'reject', body?: string];
 }>();
 
 const reviewNote = ref('');
@@ -19,10 +19,6 @@ function disarmReject() {
   rejectArmed.value = false;
   if (rejectTimer) clearTimeout(rejectTimer);
   rejectTimer = null;
-}
-
-function onEscalateClick() {
-  emit('verdict', 'escalate', reviewNote.value);
 }
 
 function onRejectClick() {
@@ -89,15 +85,6 @@ onUnmounted(disarmReject);
         :disabled="busy || !reviewNote.trim()"
         @click="emit('verdict', 'requestChanges', reviewNote)"
         >Request changes</UButton
-      >
-      <UButton
-        size="md"
-        color="neutral"
-        variant="outline"
-        icon="i-lucide-arrow-up-right"
-        :disabled="busy || !reviewNote.trim()"
-        @click="onEscalateClick"
-        >Escalate</UButton
       >
       <UButton
         size="md"
