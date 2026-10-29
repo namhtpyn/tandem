@@ -2,7 +2,7 @@ import { consola } from 'consola';
 import { and, eq } from 'drizzle-orm';
 
 import { PROPOSAL_STATUS } from '#shared/enums';
-import { parseRunEnvelope, RunVerdictSchema } from '#shared/run-verdict';
+import { parseRunEnvelope, ReviewVerdictSchema, RunVerdictSchema } from '#shared/run-verdict';
 import { renderOutputContract } from '#shared/structured-output';
 import { nonNull } from '#shared/utils/non-null';
 
@@ -104,7 +104,10 @@ type BriefInput = {
     parentTitle?: string | null;
   };
   /** exact deliverable out-dir for this run's task — agents must not guess it */
-  outDir: string;
+  outDir?: string;
+  /** REVIEW turn (final spec 2026-10-29): same composer, review vocabulary — the
+   * submitted result is judged, verdicts-so-far ride every later brief, no out-dir */
+  review?: { resultBody: string; verdictsSoFar: string[] };
   recentActivity: Array<{ kind: string; authorName: string | null; body: string | null }>;
   /** reader already ran this task: the ticket lives in their session, prompt is a relay */
   relay: boolean;
@@ -112,6 +115,17 @@ type BriefInput = {
 };
 
 export function buildBrief(input: BriefInput) {
+  if (input.review) {
+    return [
+      ...orgSection(input),
+      ...contextSection(input),
+      ...reviewTaskSection(input),
+      ...verdictsSoFarSection(input.review.verdictsSoFar),
+      ...activitySection(input),
+      ...attachmentsSection(input),
+      ...reviewContractSection(),
+    ].join('\n');
+  }
   if (input.relay) {
     // continuation: the ticket already lives in this agent's session
     return [
@@ -183,6 +197,43 @@ function taskSection(input: BriefInput) {
   return lines;
 }
 
+/** review-mode TASK block: same facts, review header — verify and verdict */
+function reviewTaskSection(input: BriefInput) {
+  const lines = ['', 'TASK UNDER REVIEW', `Title: ${input.task.title}`];
+  if (input.task.description.trim())
+    lines.push(`Description: ${stripAttachments(stripMentions(input.task.description))}`);
+  lines.push(`Owner: ${input.task.ownerName ?? 'unassigned'}`);
+  if (input.task.projectName) lines.push(`Project: ${input.task.projectName}`);
+  lines.push('');
+  lines.push('SUBMITTED RESULT (by the assignee — this is what you judge):');
+  lines.push(input.review?.resultBody || '(no result text)');
+  return lines;
+}
+
+/** verdicts-so-far: the current round's decided verdicts ALWAYS ship (sequential
+ * reviewers vote informed, never blind) — cutoff rules never hide them */
+function verdictsSoFarSection(verdicts: string[]) {
+  if (!verdicts.length) return [];
+  return ['', 'VERDICTS SO FAR (other reviewers of this round):', ...verdicts.map((v) => `- ${v}`)];
+}
+
+/** review output contract: pure-3 verdicts + escalate, no routing, no out-dir */
+function reviewContractSection() {
+  return [
+    '',
+    renderOutputContract(ReviewVerdictSchema, {
+      intro:
+        'VERDICT — end your response with exactly one JSON line (no code fence). kind "approved" APPROVES the submission, "rejected" votes to cancel the task, "request_change" sends it back to the assignee with your note, "escalate" hands YOUR review to your supervisor when you cannot judge it (wrong domain, missing access) — write it as "escalate to <their name> for reviewing — <why>". This is a REVIEW turn: verify, do not redo the work. Never write your verdict as a file (no review-verdict.md) — the JSON line is the only verdict:',
+      examples: [
+        '{"kind": "approved", "body": "<why it passes>"}',
+        '{"kind": "rejected", "body": "<why the task is wrong entirely>"}',
+        '{"kind": "request_change", "body": "<what must change — sent back to the assignee>"}',
+        '{"kind": "escalate", "body": "escalate to <supervisor name> for reviewing — <why>"}',
+      ],
+    }),
+  ];
+}
+
 /** what already happened on this task (loader keeps the newest 20) */
 function activitySection(input: BriefInput) {
   if (!input.recentActivity.length) return [];
@@ -220,7 +271,7 @@ function contractSection(input: BriefInput) {
       ],
     }),
     '',
-    `DELIVERABLES (artifacts only) — real output files (screenshots, exports, generated docs) go to ${input.outDir} (create it if needed; that EXACT path, not the environment name) and are collected automatically. NEVER write your result, summary or verdict as a file there — no RESULT.md: the JSON line above is the only result; files never substitute for it.`,
+    `DELIVERABLES (artifacts only) — real output files (screenshots, exports, generated docs) go to ${nonNull(input.outDir)} (create it if needed; that EXACT path, not the environment name) and are collected automatically. NEVER write your result, summary or verdict as a file there — no RESULT.md: the JSON line above is the only result; files never substitute for it.`,
   ];
 }
 

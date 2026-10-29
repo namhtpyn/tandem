@@ -25,7 +25,14 @@ import { tasks, taskActivity, employeeSupervisors, taskReviews } from '../../db/
 import { publishChange } from '../kernel/kernel';
 import { refreshParentGating, hasOpenChildren } from './gating.service';
 import { spawnObligation, resolveObligation, cancelObligations, answerHolder } from './obligations.service';
-import { openRoundLive, dispatchAiReviewTurns, openReviewRound, recordVerdict, currentRound } from './review.service';
+import {
+  openRoundLive,
+  dispatchAiReviewTurns,
+  openReviewRound,
+  recordVerdict,
+  currentRound,
+  teardownOpenRound,
+} from './review.service';
 
 export const WAITING_ANSWER_STATUS = STATUS.waitingAnswer;
 export const IN_REVIEW_STATUS = STATUS.inReview;
@@ -263,23 +270,9 @@ export async function abandonReview(taskId: string, authorId: string, body: stri
   if (!isReviewer && !isOwner) throw new Error('only a reviewer or the owner can abandon');
   await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
   await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
-  // close the round's PENDING rows too: once cancelled, nothing PENDING may remain
-  // for a late AI verdict to settle (recordVerdict's terminal gate backstops this).
-  // CHANGE_REQUESTED is the closed-round marker — the closed enum has no SUPERSEDED
-  // value, and the task status carries the real outcome (cancelled).
-  const round = await currentRound(taskId);
-  if (round > 0) {
-    await db
-      .update(taskReviews)
-      .set({ status: REVIEW_STATUS.CHANGE_REQUESTED, decidedAt: new Date() })
-      .where(
-        and(
-          eq(taskReviews.taskId, taskId),
-          eq(taskReviews.round, round),
-          eq(taskReviews.status, REVIEW_STATUS.PENDING),
-        ),
-      );
-  }
+  // teardown first (pending rows -> superseded, obligations cancel) — the task
+  // status carries the real outcome (cancelled)
+  await teardownOpenRound(taskId, 'cancelled');
   // abandoned == cancelled (one terminal, no fake distinction)
   await db.update(tasks).set({ status: CANCELLED_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   await logActivity(taskId, ACTIVITY_KIND.VERDICT, authorId, body || 'cancelled', { abandon: true });

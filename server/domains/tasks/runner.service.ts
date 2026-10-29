@@ -229,11 +229,10 @@ import { v7 as uuidv7 } from 'uuid';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION, SECRET_USAGE } from '#shared/enums';
 import { RUN_STATUS, REVIEW_STATUS, type FinishedStatus } from '#shared/enums';
-import { RunVerdictSchema, type RunEnvelope } from '#shared/run-verdict';
+import type { ReviewEnvelope, RunEnvelope } from '#shared/run-verdict';
 import { STATUS } from '#shared/status';
 // One shared verdict contract: the review brief renders the SAME JSON envelope as the
 // work brief (owner no-truncation law: title/description/result/activity ship WHOLE).
-import { renderOutputContract } from '#shared/structured-output';
 
 import {
   attachmentExists,
@@ -469,56 +468,6 @@ function envelopeProposals(envelope: RunEnvelope | null): RoutingProposal[] {
   return payloads;
 }
 
-function reviewBrief(
-  reviewerName: string,
-  taskTitle: string,
-  taskDescription: string,
-  briefData: {
-    recentActivity: Array<{ kind: string; authorName: string | null; body: string | null }>;
-    relay: boolean;
-  },
-  resultBody: string,
-  relay = false,
-) {
-  const lines: string[] = [];
-  lines.push(
-    `You are ${reviewerName}, reviewing a submitted result. This is a REVIEW turn — do the work again is NOT the goal; verify and verdict.`,
-  );
-  lines.push('');
-  // relay law: on the reviewer's repeat turns the ticket lives in their session
-  if (!relay) {
-    lines.push('TASK UNDER REVIEW');
-    lines.push(`Title: ${taskTitle}`);
-    if (taskDescription.trim()) lines.push(`Description: ${taskDescription.trim()}`);
-    lines.push('');
-  }
-  lines.push('SUBMITTED RESULT (by the assignee)');
-  /* v8 ignore next -- '(no result text)' is defensive; submits carry a body */
-  lines.push(resultBody || '(no result text)');
-  /* v8 ignore start -- fresh tasks have no activity; the block is optional by design */
-  if (briefData.recentActivity.length) {
-    lines.push('');
-    lines.push('Recent activity (oldest first):');
-    for (const a of briefData.recentActivity) lines.push(`- ${a.kind} by ${a.authorName ?? 'system'}: ${a.body ?? ''}`);
-  }
-  /* v8 ignore stop */
-  lines.push('');
-  lines.push(
-    renderOutputContract(RunVerdictSchema, {
-      // same verbs the verdict parser settles on: result = approve, blocked =
-      // change request, question = park on the owner; a verdict-less review never approves
-      intro:
-        'VERDICT — end your response with exactly one JSON line (no code fence). kind "result" APPROVES the submission, "blocked" sends it back to the assignee with your note, "question" parks the task on the owner. Never write your verdict as a file (no review-verdict.md) — the JSON line is the only verdict:',
-      examples: [
-        '{"kind": "result", "body": "<verdict note — approval>"}',
-        '{"kind": "blocked", "body": "<what must change — sent back to the assignee>"}',
-        '{"kind": "question", "body": "<blocking question for the owner>"}',
-      ],
-    }),
-  );
-  return lines.join('\n');
-}
-
 /** the env blob written to the remote agent's stdin (never argv) */
 /** hermes reads the API key for a custom endpoint from <VENDOR>_API_KEY where VENDOR is
  * derived from the endpoint HOST (registrable label, api./www. stripped, non-alnum -> _,
@@ -699,18 +648,20 @@ export async function createRun(taskId: string, opts?: DispatchOpts) {
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 
   // freeze the brief NOW (the drift fix): every attempt of this run replays exactly
-  // this prompt — no rebuild at retry time
+  // this prompt — no rebuild at retry time. Review turns compose through the SAME
+  // buildBrief in review mode (org, company, task-under-review, relay, submitted
+  // result, collected evidence, verdict contract — one composer, no parallel system).
   const briefData = await loadBriefData(taskId, plan.ai.userId);
-  const brief = plan.review
-    ? reviewBrief(
-        plan.agentName,
-        plan.task.title,
-        plan.task.description,
-        briefData,
-        plan.review.resultBody,
-        briefData.relay,
-      )
-    : buildBrief({ ...briefData, outDir: `~/.tandem/${taskId}/attachments/out/` });
+  let reviewCtx: { resultBody: string; verdictsSoFar: string[] } | undefined;
+  if (plan.review) {
+    const { verdictsSoFarFor } = await import('./review.service');
+    reviewCtx = { resultBody: plan.review.resultBody, verdictsSoFar: await verdictsSoFarFor(taskId) };
+  }
+  const brief = buildBrief({
+    ...briefData,
+    outDir: `~/.tandem/${taskId}/attachments/out/`,
+    review: reviewCtx,
+  });
   await db.update(taskRuns).set({ prompt: brief }).where(eq(taskRuns.id, runId));
 
   return { runId, employeeId: plan.ai.userId };
@@ -801,8 +752,16 @@ export async function dispatchTask(taskId: string, tandemUrl: string, opts?: Dis
 /** REVIEW LAW: a review turn's envelope writes the reviewer's verdict row
  * ([RESULT] approve / [BLOCKED] change request); a verdict-less review NEVER
  * silently approves — it parks on the owner. */
-async function settleReviewVerdict(taskId: string, reviewerId: string, envelope: RunEnvelope | null) {
-  if (envelope?.kind === 'blocked') {
+async function settleReviewVerdict(taskId: string, reviewerId: string, envelope: ReviewEnvelope | null) {
+  // IDENTITY MAP (final spec 2026-10-29): the review envelope kind IS the verdict —
+  // no translation layer. `escalate` is the one non-settling kind: a referral.
+  if (envelope?.kind === 'approved') {
+    /* v8 ignore next -- empty-text fallback */
+    await recordVerdict(taskId, reviewerId, REVIEW_STATUS.APPROVED, envelope.text || 'approved by review', 'ai');
+  } else if (envelope?.kind === 'rejected') {
+    /* v8 ignore next -- empty-text fallback */
+    await recordVerdict(taskId, reviewerId, REVIEW_STATUS.REJECTED, envelope.text || 'rejected by review', 'ai');
+  } else if (envelope?.kind === 'request_change') {
     /* v8 ignore next -- empty-text fallback */
     await recordVerdict(
       taskId,
@@ -811,12 +770,11 @@ async function settleReviewVerdict(taskId: string, reviewerId: string, envelope:
       envelope.text || 'changes requested by review',
       'ai',
     );
-  } else if (envelope?.kind === 'question') {
-    /* v8 ignore next -- empty-text fallback */
-    await askQuestion(taskId, reviewerId, envelope.text || 'question during review');
-  } else if (envelope?.kind === 'result') {
-    /* v8 ignore next -- empty-text fallback */
-    await recordVerdict(taskId, reviewerId, REVIEW_STATUS.APPROVED, envelope.text || 'approved by review', 'ai');
+  } else if (envelope?.kind === 'escalate') {
+    // referral: swap the reviewer up-chain on the TASK roster; a stuck referral
+    // (no eligible target) parks the round on the owner with the why intact
+    const { escalateReview } = await import('./review.service');
+    await escalateReview(taskId, reviewerId, envelope.text || 'escalate for reviewing', 'ai');
   } else {
     // verdict-less review: the reviewer's turn never produced a verdict envelope —
     // a transport-class failure of the review, so re-dispatch its turn ONCE before
@@ -832,7 +790,8 @@ async function settleReviewVerdict(taskId: string, reviewerId: string, envelope:
       await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
       return;
     }
-    await askQuestion(taskId, reviewerId, 'review finished without a verdict — approve or request changes');
+    const { parkRound } = await import('./review.service');
+    await parkRound(taskId, 'review finished without a verdict after a re-dispatch — needs a human');
   }
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
@@ -846,21 +805,22 @@ async function settleDoneRun(
   plan: { review?: { resultBody: string }; ai: { userId: string } },
   buffer: string,
 ): Promise<'settled' | 'backoff'> {
-  const { parseRunEnvelope } = await import('#shared/run-verdict');
-  let envelope = parseRunEnvelope(buffer);
-  if (!envelope) {
-    // the ACP 400-char force-flush splits ONE long JSON verdict into adjacent buffer
-    // lines; rejoin the last 3 lines with NO separator (the newline was a flush
-    // artifact — a '\n' join would re-split identically) once before falling back
-    envelope = parseRunEnvelope(buffer.split('\n').slice(-3).join(''));
-  }
+  const { parseRunEnvelope, parseReviewEnvelope } = await import('#shared/run-verdict');
+  // the ACP 400-char force-flush splits ONE long JSON verdict into adjacent buffer
+  // lines; rejoin the last 3 lines with NO separator (the newline was a flush
+  // artifact — a '\n' join would re-split identically) once before falling back.
+  // REVIEW turns parse the REVIEW vocabulary (strict — legacy result/blocked kinds
+  // are unknown here and read as verdict-less).
+  const rejoin = (out: string) => out.split('\n').slice(-3).join('');
+  const reviewEnvelope = plan.review ? (parseReviewEnvelope(buffer) ?? parseReviewEnvelope(rejoin(buffer))) : null;
+  const workEnvelope = plan.review ? null : (parseRunEnvelope(buffer) ?? parseRunEnvelope(rejoin(buffer)));
 
   // routing folded into the envelope (owner ruling 2026-10-26): proposals are read
   // ONLY from the agent's own verdict line — echoed task content can never route.
   // REVIEW runs are exempt: a reviewer's envelope must never route work — recording
   // proposals on the REVIEWER's chain could self-reassign the task to the reviewer.
   if (!plan.review) {
-    const payloads = envelopeProposals(envelope);
+    const payloads = envelopeProposals(workEnvelope);
     if (payloads.length) {
       try {
         await recordProposals(taskId, runId, plan.ai.userId, payloads);
@@ -871,17 +831,17 @@ async function settleDoneRun(
   }
   try {
     if (plan.review) {
-      await settleReviewVerdict(taskId, plan.ai.userId, envelope);
-    } else if (envelope && (envelope.kind === 'question' || envelope.kind === 'blocked')) {
+      await settleReviewVerdict(taskId, plan.ai.userId, reviewEnvelope);
+    } else if (workEnvelope && (workEnvelope.kind === 'question' || workEnvelope.kind === 'blocked')) {
       // empty-text envelopes fall back to the kind as the question body
       /* v8 ignore next */
-      await askQuestion(taskId, plan.ai.userId, envelope.text || envelope.kind);
+      await askQuestion(taskId, plan.ai.userId, workEnvelope.text || workEnvelope.kind);
     } else {
       // the REAL result rides the submit — the supervisor's review brief needs it
       // (envelope text, else the tail of what the agent actually said)
       /* v8 ignore next -- bare 'run complete' only when the agent said nothing at all */
       const resultBody =
-        envelope?.text?.trim() || buffer.trim().split('\n').slice(-12).join('\n').slice(-2000) || 'run complete';
+        workEnvelope?.text?.trim() || buffer.trim().split('\n').slice(-12).join('\n').slice(-2000) || 'run complete';
       await submitResult(taskId, plan.ai.userId, resultBody);
     }
   } catch (e) {
@@ -1120,8 +1080,13 @@ export async function executeRun(
     // sessions are per (task, employee) — every run persists its own session id
     await db.update(taskRuns).set({ sessionId: acp.sessionId }).where(eq(taskRuns.id, runId));
     const { status, exitCode } = verdictFor(acp.stopReason);
-    // settle attachments DETACHED: collection/cleanup must never block the verdict
-    void settleAttachments(taskId, runId, sshPlan, status);
+    // evidence ordering (final spec 2026-10-29): an assignee run that submits for
+    // review must have its collected artifacts on the server BEFORE the reviewer's
+    // brief is frozen — bounded await (slow/unreachable host must never stall the
+    // verdict path). Review runs collect detached: their outputs feed no one.
+    const collectP = settleAttachments(taskId, runId, sshPlan, status).catch(() => {});
+    if (!plan.review) await Promise.race([collectP, new Promise((r) => setTimeout(r, 20_000))]);
+    else void collectP;
     await writer.finish(taskId, status, exitCode, plan);
     return { status, exitCode };
   } catch (e) {

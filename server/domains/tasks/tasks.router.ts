@@ -30,7 +30,7 @@ import { recordAssignment, listAssignments } from './assignments.service';
 import { refreshParentGating } from './gating.service';
 import { approvalsInRoundBatch, openObligations, pendingForUser, pendingCounts } from './obligations.service';
 import { confirmProposal, rejectProposal } from './proposals.service';
-import { listReviews, logActivity } from './review.service';
+import { escalateReview, listReviews, logActivity } from './review.service';
 import { dispatchTask, listRuns } from './runner.service';
 import { listTaskThread } from './thread.service';
 import {
@@ -504,6 +504,19 @@ export const tasksRouter = os.router({
         .update(tasksTable)
         .set({ status: input.status, updatedAt: new Date() })
         .where(eq(tasksTable.id, input.id));
+      // manual settle tears the round down (final spec 2026-10-29 #8): the owner's
+      // move IS the verdict of record — pending rows supersede, obligations cancel
+      const { STATUS } = await import('#shared/status');
+      const terminal: string[] = [STATUS.done, STATUS.cancelled];
+      if (terminal.includes(input.status) && !terminal.includes(cur)) {
+        const { teardownOpenRound } = await import('./review.service');
+        await teardownOpenRound(input.id, input.status);
+      }
+      // unblock-resume: back to in-review with a live round → the sequence continues
+      if (input.status === STATUS.inReview) {
+        const { openRoundLive, dispatchAiReviewTurns } = await import('./review.service');
+        if (await openRoundLive(input.id)) await dispatchAiReviewTurns(input.id);
+      }
       await logActivity(input.id, ACTIVITY_KIND.STATUS, actorId, `status: ${cur} → ${input.status}`, {});
       const parentId = rows.at(0)?.parentTaskId;
       if (parentId) await refreshParentGating(parentId);
@@ -659,7 +672,7 @@ export const tasksRouter = os.router({
       return await runWorkflow(() => requestChanges(input.taskId, selfId, input.body));
     }),
 
-  /** REVIEW LAW: reviewer rejects — HUMAN-only terminal verdict, task cancelled */
+  /** reviewer's reject vote — unanimous reject (round end) cancels the task */
   reject: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1), body: z.string().max(4_000).optional() }))
     .handler(async ({ input, context }) => {
@@ -667,6 +680,18 @@ export const tasksRouter = os.router({
       /* v8 ignore next -- protectedProcedure already rejects sessionless callers */
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
       return await runWorkflow(() => rejectReview(input.taskId, selfId, input.body ?? ''));
+    }),
+
+  /** review referral: this reviewer steps aside, their supervisor takes the vote.
+   * Body: "escalate to <name> for reviewing — <why>" (a bare why picks the direct
+   * supervisor). Never settles — see escalateReview. */
+  escalate: protectedProcedure
+    .input(z.strictObject({ taskId: z.string().min(1), body: z.string().min(1).max(4_000) }))
+    .handler(async ({ input, context }) => {
+      const selfId = await selfIdOf(context);
+      /* v8 ignore next -- protectedProcedure already rejects sessionless callers */
+      if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
+      return await runWorkflow(() => escalateReview(input.taskId, selfId, input.body, 'human'));
     }),
 
   /** REVIEW LAW: per-reviewer verdict checklist for the task page */
