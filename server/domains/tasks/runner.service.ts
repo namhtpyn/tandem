@@ -508,7 +508,7 @@ function reviewBrief(
       // same verbs the verdict parser settles on: result = approve, blocked =
       // change request, question = park on the owner; a verdict-less review never approves
       intro:
-        'VERDICT — end your response with exactly one JSON line (no code fence). kind "result" APPROVES the submission, "blocked" sends it back to the assignee with your note, "question" parks the task on the owner:',
+        'VERDICT — end your response with exactly one JSON line (no code fence). kind "result" APPROVES the submission, "blocked" sends it back to the assignee with your note, "question" parks the task on the owner. Never write your verdict as a file (no review-verdict.md) — the JSON line is the only verdict:',
       examples: [
         '{"kind": "result", "body": "<verdict note — approval>"}',
         '{"kind": "blocked", "body": "<what must change — sent back to the assignee>"}',
