@@ -3,7 +3,7 @@
 // Activity rows dual-write task_activity during the transition.
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 
-import { parseRunEnvelope } from '#shared/run-verdict';
+import { parseReviewEnvelope, parseRunEnvelope } from '#shared/run-verdict';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db, asDb, type DbExecutor } from '../../db/index';
@@ -79,8 +79,12 @@ export function humanRunTail(output: string | null | undefined, maxLines = 12): 
   return lines.slice(-maxLines).join('\n').trim() || 'run complete';
 }
 
-export async function updateRunMessageBody(messageId: string, output: string) {
-  const envelope = parseRunEnvelope((output ?? '').trimEnd());
+export async function updateRunMessageBody(messageId: string, output: string, review = false) {
+  // review turns speak the verdict vocabulary — parse with the review schema so the
+  // run bubble carries the verdict itself, not the transcript tail around it
+  const envelope = review
+    ? (parseReviewEnvelope((output ?? '').trimEnd()) ?? parseRunEnvelope((output ?? '').trimEnd()))
+    : parseRunEnvelope((output ?? '').trimEnd());
   const body = envelope?.text ?? humanRunTail(output);
   await db.update(taskMessages).set({ body }).where(eq(taskMessages.id, messageId));
 }

@@ -50,11 +50,14 @@ export async function logActivity(
   body: string,
   meta: Record<string, unknown>,
   ex: DbExecutor = db,
+  opts: { thread?: boolean } = {},
 ) {
   const { taskActivity } = await import('../../db/schema');
   await asDb(ex).insert(taskActivity).values({ id: uuidv7(), taskId, authorId, kind, body, meta });
-  // dual-write: the conversation thread carries the same item (payload keeps the kind)
-  await insertActivityMessage({ taskId, authorId, body, payload: { kind, ...meta } }, ex);
+  // dual-write: the conversation thread carries the same item (payload keeps the kind).
+  // AI verdicts SKIP the thread copy (owner ruling 2026-10-29): the reviewer's run
+  // bubble already carries the verdict — one response per turn.
+  if (opts.thread !== false) await insertActivityMessage({ taskId, authorId, body, payload: { kind, ...meta } }, ex);
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
@@ -208,6 +211,20 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
   }
 }
 
+/** verdict audit line; AI verdicts skip the thread copy — the run bubble carries
+ * the verdict (one response per turn, owner ruling 2026-10-29) */
+async function logVerdict(
+  taskId: string,
+  reviewerId: string,
+  note: string,
+  meta: Record<string, unknown>,
+  source: 'human' | 'ai',
+) {
+  await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note, meta, db, {
+    thread: source !== 'ai',
+  });
+}
+
 /** write one reviewer's verdict, then apply the END-OF-ROUND matrix. A round never
  * closes early: a request_change (or a split vote) waits for the remaining reviewers;
  * the LAST verdict triggers the transition. Unanimity is judged over the LIVE set —
@@ -257,14 +274,20 @@ export async function recordVerdict(
   if (pending.length > 0) {
     // round still waiting — advance the sequence (lazy mint: the settle path fires
     // the next reviewer's turn; humans just keep their card)
-    await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || verdict.toLowerCase(), {
-      [verdict === REVIEW_STATUS.APPROVED
-        ? 'approved'
-        : verdict === REVIEW_STATUS.REJECTED
-          ? 'rejected'
-          : 'changeRequested']: true,
-      round,
-    });
+    await logVerdict(
+      taskId,
+      reviewerId,
+      note || verdict.toLowerCase(),
+      {
+        [verdict === REVIEW_STATUS.APPROVED
+          ? 'approved'
+          : verdict === REVIEW_STATUS.REJECTED
+            ? 'rejected'
+            : 'changeRequested']: true,
+        round,
+      },
+      source,
+    );
     await dispatchAiReviewTurns(taskId);
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'waiting' };
@@ -278,21 +301,20 @@ export async function recordVerdict(
   if (allRejected) {
     await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
     await db.update(tasks).set({ status: CANCELLED_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
-    await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || 'rejected — task cancelled', {
-      rejected: true,
-      round,
-    });
+    await logVerdict(taskId, reviewerId, note || 'rejected — task cancelled', { rejected: true, round }, source);
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'cancelled' };
   }
   if (allApproved) {
     await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
     await db.update(tasks).set({ status: DONE_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
-    await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || REVIEW_STATUS.APPROVED, {
-      approved: true,
-      unanimous: true,
-      round,
-    });
+    await logVerdict(
+      taskId,
+      reviewerId,
+      note || REVIEW_STATUS.APPROVED,
+      { approved: true, unanimous: true, round },
+      source,
+    );
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'done' };
   }
@@ -300,10 +322,7 @@ export async function recordVerdict(
   // assignee; the verdict notes already sit on the thread and ride the next brief
   await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
   await db.update(tasks).set({ status: TODO_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
-  await logActivity(taskId, ACTIVITY_KIND.VERDICT, reviewerId, note || 'changes requested', {
-    changeRequested: true,
-    round,
-  });
+  await logVerdict(taskId, reviewerId, note || 'changes requested', { changeRequested: true, round }, source);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   return { outcome: 'returned' };
 }
