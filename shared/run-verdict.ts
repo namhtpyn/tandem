@@ -28,6 +28,19 @@ export const RunVerdictSchema = z.object({
 
 export type RunVerdict = z.infer<typeof RunVerdictSchema>;
 
+// REVIEW verdict contract (owner spec 2026-10-29): the reviewer's vocabulary IS the
+// verdict vocabulary — approved/rejected/request_change map identity onto
+// task_reviews.status, and `escalate` is a REFERRAL that can never settle a round.
+// Strict: legacy `result`/`blocked` kinds are NOT accepted (a review run emitting
+// them reads as verdict-less and parks after one bounded re-dispatch).
+export const ReviewVerdictSchema = z.object({
+  kind: z.enum(['approved', 'rejected', 'request_change', 'escalate']),
+  body: z.string().max(50_000),
+});
+
+export type ReviewVerdict = z.infer<typeof ReviewVerdictSchema>;
+export type ReviewEnvelope = { kind: ReviewVerdict['kind']; text: string };
+
 export type EnvelopeKind = RunVerdict['kind'];
 export type RunEnvelope = {
   kind: EnvelopeKind;
@@ -66,6 +79,23 @@ const toEnvelope = (v: RunVerdict): RunEnvelope => ({
  * and parsed once before the scan moves on.
  */
 export function parseRunEnvelope(output: string | null | undefined): RunEnvelope | null {
+  return parseVerdictOutput(output, RunVerdictSchema, (v) => toEnvelope(v as RunVerdict)) as RunEnvelope | null;
+}
+
+/** review-mode parse: same grammar, review vocabulary (strict — see ReviewVerdictSchema) */
+export function parseReviewEnvelope(output: string | null | undefined): ReviewEnvelope | null {
+  return parseVerdictOutput(output, ReviewVerdictSchema, (v) => ({
+    kind: v.kind,
+    text: v.body,
+  })) as ReviewEnvelope | null;
+}
+
+/** the shared bottom-up scan; the schema is the ONLY vocabulary difference */
+function parseVerdictOutput(
+  output: string | null | undefined,
+  schema: z.ZodType<{ kind: string; body: string }>,
+  toEnv: (v: { kind: string; body: string }) => unknown,
+): unknown {
   if (!output) return null;
   const lines = output.trimEnd().split('\n');
   for (let i = lines.length - 1; i >= Math.max(0, lines.length - 40); i--) {
@@ -78,8 +108,8 @@ export function parseRunEnvelope(output: string | null | undefined): RunEnvelope
     if (!raw.startsWith('{')) continue;
     if (raw.endsWith('}')) {
       try {
-        const parsed = RunVerdictSchema.safeParse(JSON.parse(raw));
-        if (parsed.success) return toEnvelope(parsed.data);
+        const parsed = schema.safeParse(JSON.parse(raw));
+        if (parsed.success) return toEnv(parsed.data);
       } catch {
         /* not JSON — keep scanning */
       }
@@ -97,8 +127,8 @@ export function parseRunEnvelope(output: string | null | undefined): RunEnvelope
         const block = seg.join(joiner);
         if (!block.trim().endsWith('}')) continue; // not closed yet — keep growing
         try {
-          const parsed = RunVerdictSchema.safeParse(JSON.parse(block));
-          if (parsed.success) return toEnvelope(parsed.data);
+          const parsed = schema.safeParse(JSON.parse(block));
+          if (parsed.success) return toEnv(parsed.data);
         } catch {
           /* keep growing */
         }

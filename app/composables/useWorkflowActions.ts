@@ -20,6 +20,7 @@ export type WorkflowAction =
   | 'approve'
   | 'requestChanges'
   | 'reject'
+  | 'escalate'
   | 'abandon';
 
 export type WorkflowExtra = { body?: string; toEmployeeId?: string };
@@ -27,7 +28,7 @@ export type WorkflowExtra = { body?: string; toEmployeeId?: string };
 /** what the note verb reports back: steered a live run, dispatched, or thread-only */
 export type NoteOutcome = { steered: boolean; dispatched?: true };
 
-const VERDICT_ACTIONS: ReadonlySet<WorkflowAction> = new Set(['approve', 'requestChanges', 'reject']);
+const VERDICT_ACTIONS: ReadonlySet<WorkflowAction> = new Set(['approve', 'requestChanges', 'reject', 'escalate']);
 
 /** success copy per note outcome — the server decides, the UI never guesses */
 export function noteSuccessCopy(outcome: NoteOutcome): string {
@@ -63,6 +64,7 @@ export const WF_COPY: Record<WorkflowAction, { ok: string; fail: string }> = {
   approve: { ok: 'Approved', fail: "Couldn't approve — try again" },
   requestChanges: { ok: 'Changes requested', fail: "Couldn't request changes — try again" },
   reject: { ok: 'Rejected', fail: "Couldn't reject — try again" },
+  escalate: { ok: 'Review escalated to your supervisor', fail: "Couldn't escalate — try again" },
   abandon: { ok: 'Task cancelled', fail: "Couldn't cancel the task — try again" },
 };
 
@@ -111,6 +113,7 @@ export function useWorkflowActions(taskId: () => string | null | undefined) {
         approve: () => $client.tasks.approve(input),
         requestChanges: () => $client.tasks.requestChanges({ ...input, body: nonNull(input.body) }),
         reject: () => $client.tasks.reject(input),
+        escalate: () => $client.tasks.escalate({ ...input, body: nonNull(input.body) }),
         abandon: () => $client.tasks.abandon(input),
       }[action]();
       // only clear the text this call actually sent — a bodyless verb carries no

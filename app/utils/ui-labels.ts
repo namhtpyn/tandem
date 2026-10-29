@@ -221,6 +221,8 @@ const VERDICT_LABELS: { readonly [K in ReviewStatus]: string } = {
   [REVIEW_STATUS.APPROVED]: 'Approved',
   [REVIEW_STATUS.CHANGE_REQUESTED]: 'Changes requested',
   [REVIEW_STATUS.REJECTED]: 'Rejected',
+  [REVIEW_STATUS.ESCALATED]: 'Escalated',
+  [REVIEW_STATUS.SUPERSEDED]: 'Superseded',
 };
 
 /** verdict in words — a row communicates state by icon; screen readers need the word */

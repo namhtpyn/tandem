@@ -76,7 +76,11 @@ onServerPrefetch(() => Promise.all([reviewsQuery.suspense(), employeesLive.suspe
                 ? 'i-lucide-undo-2'
                 : r.status === REVIEW_STATUS.REJECTED
                   ? 'i-lucide-x-circle'
-                  : 'i-lucide-user'
+                  : r.status === REVIEW_STATUS.ESCALATED
+                    ? 'i-lucide-arrow-up-right'
+                    : r.status === REVIEW_STATUS.SUPERSEDED
+                      ? 'i-lucide-minus-circle'
+                      : 'i-lucide-user'
           "
           class="mt-0.5 size-3.5 shrink-0"
           aria-hidden="true"
