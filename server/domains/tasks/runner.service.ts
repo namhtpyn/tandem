@@ -64,28 +64,36 @@ export function __setLiveSteerForTests(runId: string, fn: ((text: string) => Pro
   else liveSteers.delete(runId);
 }
 
-/** the task's live run id, if any — status/assignee edits are locked while it runs */
+/** pure decision: the newest candidate run that is still RUNNING (candidates newest-first) */
+export function pickLiveRun(candidates: Array<{ id: string; status: string }>): string | null {
+  return candidates.find((r) => r.status === RUN_STATUS.RUNNING)?.id ?? null;
+}
+
+/** the runs lookup config — exported so the query shape is pinned by test:
+ *  runs joined to THEIR message's task, newest run first (never newest-message) */
+export function liveRunsQuery(taskId: string) {
+  return {
+    columns: { id: true, status: true },
+    where: { message: { taskId: { eq: taskId } } },
+    orderBy: { startedAt: 'desc', id: 'desc' },
+    limit: 10,
+  } as const;
+}
+
+/** the task's live run id, if any — status/assignee edits are locked while it runs.
+ *  Queries the RUNS table (runs → its thread message → task), never "newest thread
+ *  message": notes dual-write to the thread, so the newest message is usually a
+ *  bare note whose runless row answered "stopped" and poisoned both the steer
+ *  lookup and the run-lock guard (composer law dead since 2026-10-26). */
 export async function runningRunIdForTask(taskId: string): Promise<string | null> {
-  const msg = await db.query.taskMessages.findFirst({
-    columns: { id: true },
-    where: { taskId: { eq: taskId } },
-    orderBy: { createdAt: 'desc', id: 'desc' },
-    with: { run: { columns: { id: true, status: true } } },
-  });
-  return msg?.run && msg.run.status === RUN_STATUS.RUNNING ? msg.run.id : null;
+  const runs = await db.query.taskRuns.findMany(liveRunsQuery(taskId));
+  return pickLiveRun(runs);
 }
 
 /** steer the task's live run. 'stopped' = no live run (safe to dispatch);
  *  'refused' = a run is live but this turn can't take input (fake runner) */
 export async function steerRun(taskId: string, text: string): Promise<'steered' | 'stopped' | 'refused'> {
-  // message-first: the task is reached through the run's thread message
-  const msg = await db.query.taskMessages.findFirst({
-    columns: { id: true },
-    where: { taskId: { eq: taskId } },
-    orderBy: { createdAt: 'desc', id: 'desc' },
-    with: { run: { columns: { id: true, status: true } } },
-  });
-  const runId = msg?.run && msg.run.status === RUN_STATUS.RUNNING ? msg.run.id : null;
+  const runId = await runningRunIdForTask(taskId);
   if (!runId) return 'stopped';
   const steer = liveSteers.get(runId);
   if (!steer) return 'refused';
