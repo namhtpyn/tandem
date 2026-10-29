@@ -11,13 +11,30 @@ export function swallowRedisError(_e: unknown) {
 export type QueueDomain = {
   queue: <T>(
     name: string,
-    process: (data: T) => Promise<void>,
-    opts?: { concurrency?: number; attempts?: number },
+    process: (data: T, meta: { attempt: number; maxAttempts: number }) => Promise<void>,
+    opts?: {
+      concurrency?: number;
+      attempts?: number;
+      /** custom retry-delay fn — jobs added with `backoff: { type: 'custom' }` resolve
+       * their delay through this (BullMQ Worker settings.backoffStrategy) */
+      backoffStrategy?: (
+        attemptsMade: number,
+        type: string,
+        err: Error,
+        job: { data: unknown },
+      ) => Promise<number> | number;
+    },
   ) => Promise<{ close: () => Promise<void> }>;
   enqueue: <T>(
     name: string,
     data: T,
-    opts?: { delayMs?: number; attempts?: number; jobId?: string; removeOnComplete?: boolean },
+    opts?: {
+      delayMs?: number;
+      attempts?: number;
+      jobId?: string;
+      removeOnComplete?: boolean;
+      backoff?: { type: 'fixed' | 'exponential' | 'custom'; delay?: number };
+    },
   ) => Promise<string>;
   close: () => Promise<void>;
 };
@@ -90,13 +107,22 @@ async function createQueueDomain(): Promise<QueueDomain> {
       queues.set(name, q);
       const w = new Worker(
         name,
-        async (job: { data: unknown }) => {
-          await (process as (d: unknown) => Promise<void>)(job.data);
+        async (job: { data: unknown; attemptsMade: number; opts: { attempts?: number } }) => {
+          // attempt = 1-based execution number (BullMQ attemptsMade is 0-based during
+          // a run); the processor uses it for run-level retry bookkeeping
+          await (process as (d: unknown, m: { attempt: number; maxAttempts: number }) => Promise<void>)(job.data, {
+            attempt: job.attemptsMade + 1,
+            maxAttempts: job.opts.attempts ?? 1,
+          });
         },
         {
           connection: workerConn,
           concurrency: opts?.concurrency ?? 1,
           attempts: opts?.attempts ?? 1,
+          // custom retry-delay computation (run-level retry law, 2026-10-28): the
+          // owner ladder (60s/5m/15m + quota jump) is a function of the FAILED
+          // attempt's context, so the worker carries the strategy the jobs reference
+          settings: opts?.backoffStrategy ? { backoffStrategy: opts.backoffStrategy } : undefined,
         } as import('bullmq').WorkerOptions,
       );
       const handle = { close: () => w.close() };
@@ -107,17 +133,18 @@ async function createQueueDomain(): Promise<QueueDomain> {
       const q = queues.get(name) ?? new Queue(name, { connection: workerConn });
       queues.set(name, q);
       // jobId = idempotency key: bullmq rejects a duplicate add while a job with
-      // the same id waits/runs — dispatch uses the taskId so duplicates can't stack
+      // the same id waits/runs — dispatch uses the RUN id so duplicates of one
+      // dispatch intent can't stack while leaving later intents free to enqueue
       const job = await q.add('job', data, {
         jobId: opts?.jobId,
         delay: opts?.delayMs ?? 0,
         attempts: opts?.attempts ?? 1,
-        backoff: { type: 'exponential', delay: 1000 },
+        backoff: opts?.backoff ?? { type: 'exponential', delay: 1000 },
         // with jobId dedup, a KEPT completed job would block re-dispatch of the
         // same task until it ages out — dispatch queues remove immediately
         removeOnComplete: opts?.removeOnComplete ? true : 100,
-        // same for FAILED jobs: jobId = taskId, so a long-kept failed job PERMANENTLY
-        // dedupes the task — free the id quickly (50 kept max) so retries can re-enqueue
+        // same for FAILED jobs: a long-kept failed job PERMANENTLY dedupes the
+        // same id — free the id quickly (50 kept max) so retries can re-enqueue
         removeOnFail: { count: 50 },
       });
       /* v8 ignore next -- bullmq always assigns an id */

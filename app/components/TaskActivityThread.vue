@@ -89,6 +89,7 @@ const thread = computed<ThreadItem[]>(() =>
       authorId: r.authorId ?? null,
       authorName: r.authorName ?? null,
       exitCode: r.exitCode,
+      attempts: r.attempts ?? 1,
       startedAt: r.startedAt,
       finishedAt: r.finishedAt ?? null,
     })),
@@ -273,7 +274,9 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
                     class="size-3 motion-safe:animate-spin"
                   />
                   {{ AGENT_RUN_VIEW[runStatusById.get(item.id) ?? 'stopped'].label
-                  }}<span
+                  }}<span v-if="(item.attempts ?? 1) > 1" class="font-normal normal-case">
+                    (attempt {{ item.attempts }})</span
+                  ><span
                     v-if="runStatusById.get(item.id) === 'failed' && item.exitCode"
                     class="font-normal normal-case"
                   >

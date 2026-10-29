@@ -34,7 +34,6 @@ jobs:
     env:
       DATABASE_URL: postgresql://tandem:tandem@127.0.0.1:5432/tandem_test
       REDIS_URL: redis://127.0.0.1:6399
-      TANDEM_TEST_DATABASE_URL: postgresql://tandem:tandem@127.0.0.1:5432/tandem_test
       BETTER_AUTH_SECRET: ci-secret-not-for-prod
     steps:
       - uses: actions/checkout@v7

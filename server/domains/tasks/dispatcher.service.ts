@@ -14,7 +14,14 @@ import { tasks, taskRuns, taskMessages } from '../../db/schema';
 import { publishChange } from '../kernel/change-bus';
 import { env } from '../kernel/env';
 import { redisQueue } from '../kernel/queue';
-import { dispatchTask } from './runner.service';
+import {
+  DISPATCH_ATTEMPTS,
+  dispatchQueueName,
+  backoffFor,
+  dispatchTask,
+  executeRun,
+  type DispatchJob,
+} from './runner.service';
 
 const log = consola.withTag('tandem');
 
@@ -121,50 +128,34 @@ export async function findEligible(): Promise<{ taskId: string; employeeId: stri
   return first ? { taskId: first.id, employeeId: nonNull(first.assigneeId) } : null;
 }
 
-/** one scan step: claim + dispatch at most one task. Returns true if dispatched. */
+/** one scan step: claim + dispatch at most one task. Returns true if dispatched.
+ * The run row (frozen brief) is created HERE and the job carries its id — retries
+ * replay the run, they never rebuild it (run-level retry law, 2026-10-28). */
 export async function scanOnce(tandemUrl: string) {
   const hit = await findEligible();
   if (!hit) return false;
   try {
     const hub = await redisQueue();
     /* v8 ignore next -- lazy resync; the catch arrow only fires on a redis failure */
-    void syncDispatchWorkers(hub).catch(() => {});
-    // jobId = taskId: while a dispatch for this task waits or runs, duplicate
-    // enqueues (scanner ticks during a worker backlog) are rejected by bullmq
-    await hub.enqueue<DispatchJob>(
-      dispatchQueueName(hit.employeeId),
-      { taskId: hit.taskId, tandemUrl },
-      { attempts: 3, jobId: hit.taskId, removeOnComplete: true },
-    );
+    void syncDispatchWorkers(hub).catch(() => {}); // workers may not exist yet (first dispatch after boot)
+    await dispatchTask(hit.taskId, tandemUrl);
     return true;
   } catch (e) {
-    log.warn('dispatch enqueue failed, retrying next scan:', (e as Error).message);
-    return false; // redis hiccup: try next scan
+    log.warn('dispatch failed, retrying next scan:', (e as Error).message);
+    return false; // redis hiccup or plan failure: try next scan
   }
 }
 
-/** per-agent dispatch queue name (bullmq forbids ':' in queue names). The
- * optional namespace is set per test file (worker-setup.ts) so a file's queues
- * can never collide with a zombie worker left by a previous file sharing the
- * same process and redis db index. */
-export function dispatchQueueName(employeeId: string) {
-  const ns = process.env.TANDEM_QUEUE_NS;
-  return `${DISPATCH_QUEUE_PREFIX}${ns ? `-${ns}` : ''}-${employeeId}`;
-}
-
-export const DISPATCH_QUEUE_PREFIX = 'tandem-dispatch';
-
-export type DispatchJob = { taskId: string; tandemUrl: string };
+// queue naming + job payload live in runner.service (next to the run they carry);
+// re-exported here for the boot plugin and tests
+export { dispatchQueueName, DISPATCH_QUEUE_PREFIX } from './runner.service';
+export type { DispatchJob } from './runner.service';
 
 /** live per-agent workers: agentId -> { concurrency, close } */
 const workers = new Map<string, { concurrency: number; close: () => Promise<void> }>();
 
-/** spawn one worker per AI employee at the current tasksPerAgent cap; recreate
- * any whose concurrency is stale (setting changed) and drop the ones whose
- * employee row is gone. Idempotent — safe to call on every sweep. */
-/** a queued job may be STALE (task already running/done/waiting — duplicates could
- * stack while the worker was busy). The worker skips ineligible tasks quietly: no
- * re-run, no retry storm, no status flip back to doing. */
+/** a stale dispatch call (task already running/done/waiting) must quietly no-op: no
+ * re-run, no retry storm, no status flip. */
 export async function dispatchIfEligible(taskId: string, tandemUrl: string) {
   const statuses = await db.query.taskStatuses.findMany({
     columns: { id: true, category: true },
@@ -176,11 +167,20 @@ export async function dispatchIfEligible(taskId: string, tandemUrl: string) {
     where: { id: { eq: taskId } },
   });
   if (!row || !readyIds.has(row.status)) return; // stale duplicate: skip
-  // backoff law: a QUEUED job must not bypass the failure backoff the runner set —
-  // the scan loop respects dispatch_after; the worker path has to as well
+  // backoff law: a dispatch call must not bypass the failure backoff the runner set —
+  // the scan loop respects dispatch_after; the direct path has to as well
   if (row.dispatchAfter && row.dispatchAfter.getTime() > Date.now()) return;
-  const run = await dispatchTask(taskId, tandemUrl);
-  await run.finished;
+  // returns after enqueue — the per-agent worker executes the run (composer law:
+  // submitting dispatches the run; the RPC never rides the turn)
+  await dispatchTask(taskId, tandemUrl);
+}
+
+/** the retry-delay ladder for run-level transport retries: same steps as the
+ * task-level backoff, keyed by the FAILED attempt number, with the quota jump
+ * reading the run's appended error output. */
+async function dispatchBackoffDelay(failedAttempt: number, runId: string): Promise<number> {
+  const row = await db.query.taskRuns.findFirst({ columns: { output: true }, where: { id: { eq: runId } } });
+  return backoffFor(failedAttempt, row?.output ?? '');
 }
 
 export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<typeof redisQueue>>>) {
@@ -199,10 +199,22 @@ export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<ty
     if (existing?.concurrency === cap) continue;
     const handle = await hub.queue<DispatchJob>(
       dispatchQueueName(agentId),
-      async (job) => {
-        await dispatchIfEligible(job.taskId, job.tandemUrl); // stale jobs no-op
+      async (job, meta) => {
+        // stale guard lives on the RUN row: settled (cancelled/reaped) mid-backoff
+        // rows make later attempts no-op inside executeRun
+        await executeRun(job.runId, job.tandemUrl, {
+          attempt: meta.attempt,
+          maxAttempts: meta.maxAttempts,
+          reviewBy: job.reviewBy,
+          resultBody: job.resultBody,
+        });
       },
-      { concurrency: cap, attempts: 3 },
+      {
+        concurrency: cap,
+        attempts: DISPATCH_ATTEMPTS,
+        backoffStrategy: (failedAttempt, _type, _err, job) =>
+          dispatchBackoffDelay(failedAttempt, (job.data as DispatchJob).runId),
+      },
     );
     workers.set(agentId, { concurrency: cap, close: handle.close });
   }

@@ -1,0 +1,47 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "bd71a9b4-d03b-488e-bcb2-d97d531468e0",
+  "prevIds": [
+    "3bb70a02-e342-49c7-9b39-fdd429f6f115"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "task_runs",
+        "attempts"
+      ],
+      "writes": [
+        "s|col|public.task_runs.attempts",
+        "n|col|public.task_runs.attempts",
+        "e|col|public.task_runs.attempts"
+      ],
+      "reads": [
+        "n|tbl|public.task_runs",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "task_runs",
+        "name": "attempts",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "1",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

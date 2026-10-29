@@ -23,6 +23,8 @@ type ThreadRunItem = {
   /** real settled run status — consumers map it to labels/colors themselves */
   status: 'running' | 'done' | 'failed' | 'cancelled' | 'timeout' | 'stopped';
   exitCode: number | null;
+  /** executions of this dispatch intent (run-level retries replay the same row) */
+  attempts?: number;
   output: string;
   /** the agent (employee) that ran this turn, for the chat bubble label */
   agentName?: string | null;
@@ -61,6 +63,7 @@ type ThreadSource = {
       | 'status'
       | 'output'
       | 'exitCode'
+      | 'attempts'
       | 'prompt'
       | 'body'
       | 'agentName'
@@ -130,6 +133,7 @@ export function buildThread(src: ThreadSource): ThreadItem[] {
       id: r.id,
       status: r.status,
       exitCode: r.exitCode,
+      attempts: r.attempts ?? 1,
       output: r.output,
       prompt: r.prompt,
       body: r.body,
