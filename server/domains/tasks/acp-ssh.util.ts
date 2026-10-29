@@ -107,6 +107,9 @@ export async function openAcpSshStream(
     write: (message: unknown) => {
       stream?.write(`${JSON.stringify(message)}\n`);
     },
+    writeRaw: (text: string) => {
+      stream?.write(text.endsWith('\n') ? text : `${text}\n`);
+    },
     close: () => {
       try {
         stream?.signal('KILL');
