@@ -782,7 +782,7 @@ async function settleReviewVerdict(taskId: string, reviewerId: string, envelope:
     // referral: swap the reviewer up-chain on the TASK roster; a stuck referral
     // (no eligible target) parks the round on the owner with the why intact
     const { escalateReview } = await import('./review.service');
-    await escalateReview(taskId, reviewerId, envelope.text || 'escalate for reviewing', 'ai');
+    await escalateReview(taskId, reviewerId, envelope.text || 'escalate for reviewing');
   } else {
     // verdict-less review: the reviewer's turn never produced a verdict envelope —
     // a transport-class failure of the review, so re-dispatch its turn ONCE before
