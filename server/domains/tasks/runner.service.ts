@@ -818,6 +818,20 @@ async function settleReviewVerdict(taskId: string, reviewerId: string, envelope:
     /* v8 ignore next -- empty-text fallback */
     await recordVerdict(taskId, reviewerId, REVIEW_STATUS.APPROVED, envelope.text || 'approved by review', 'ai');
   } else {
+    // verdict-less review: the reviewer's turn never produced a verdict envelope —
+    // a transport-class failure of the review, so re-dispatch its turn ONCE before
+    // parking on the owner (bound: a reviewer with 2+ runs this round has already
+    // had its second chance — that parks instead of looping forever)
+    const reviewRuns = await db.query.taskRuns.findMany({
+      columns: { id: true },
+      where: { employeeId: { eq: reviewerId }, message: { taskId: { eq: taskId } } },
+    });
+    if (reviewRuns.length <= 1) {
+      const { dispatchAiReviewTurns } = await import('./review.service');
+      await dispatchAiReviewTurns(taskId);
+      await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+      return;
+    }
     await askQuestion(taskId, reviewerId, 'review finished without a verdict — approve or request changes');
   }
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
