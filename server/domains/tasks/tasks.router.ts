@@ -30,7 +30,7 @@ import { recordAssignment, listAssignments } from './assignments.service';
 import { refreshParentGating } from './gating.service';
 import { approvalsInRoundBatch, openObligations, pendingForUser, pendingCounts } from './obligations.service';
 import { confirmProposal, rejectProposal } from './proposals.service';
-import { escalateReview, listReviews, logActivity } from './review.service';
+import { listReviews, logActivity } from './review.service';
 import { dispatchTask, listRuns } from './runner.service';
 import { listTaskThread } from './thread.service';
 import {
@@ -680,18 +680,6 @@ export const tasksRouter = os.router({
       /* v8 ignore next -- protectedProcedure already rejects sessionless callers */
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
       return await runWorkflow(() => rejectReview(input.taskId, selfId, input.body ?? ''));
-    }),
-
-  /** review referral: this reviewer steps aside, their supervisor takes the vote.
-   * Body: "escalate to <name> for reviewing — <why>" (a bare why picks the direct
-   * supervisor). Never settles — see escalateReview. */
-  escalate: protectedProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: z.string().min(1).max(4_000) }))
-    .handler(async ({ input, context }) => {
-      const selfId = await selfIdOf(context);
-      /* v8 ignore next -- protectedProcedure already rejects sessionless callers */
-      if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
-      return await runWorkflow(() => escalateReview(input.taskId, selfId, input.body, 'human'));
     }),
 
   /** REVIEW LAW: per-reviewer verdict checklist for the task page */

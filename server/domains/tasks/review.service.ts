@@ -374,7 +374,6 @@ export async function escalateReview(
   taskId: string,
   reviewerId: string,
   body: string,
-  source: 'human' | 'ai',
 ): Promise<{ outcome: 'escalated' | 'parked' }> {
   const task = (
     await db
@@ -445,7 +444,7 @@ export async function escalateReview(
     .where(eq(tasks.id, taskId));
   await db
     .update(taskReviews)
-    .set({ status: REVIEW_STATUS.ESCALATED, note: body || null, decidedAt: new Date(), source })
+    .set({ status: REVIEW_STATUS.ESCALATED, note: body || null, decidedAt: new Date(), source: 'ai' })
     .where(eq(taskReviews.id, row.id));
   await db
     .insert(taskReviews)
@@ -455,7 +454,7 @@ export async function escalateReview(
   await logActivity(
     taskId,
     ACTIVITY_KIND.STATUS,
-    source === 'ai' ? reviewerId : null,
+    reviewerId,
     `review escalated to ${targetName2}${why ? ` — ${why}` : ''}`,
     { escalated: true, from: reviewerId, to: targetId, round },
   );

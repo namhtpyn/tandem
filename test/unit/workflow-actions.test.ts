@@ -186,11 +186,9 @@ describe('wfAction', () => {
     expect(wf.verdictSeq.value).toBe(1);
     expect(wf.verdictFailed.value).toBe(false);
 
-    // escalate is a verdict verb too: it posts to tasks.escalate and counts a bump
-    await expect(wf.wfAction('escalate', { body: 'escalate to Zed for reviewing — no vault access' })).resolves.toBe(
-      true,
-    );
-    expect(calls.at(-1)).toMatchObject({ proc: 'escalate', input: { taskId: 'task-1' } });
+    // requestChanges is a verdict verb too — it counts a bump
+    await expect(wf.wfAction('requestChanges', { body: 'tighten the test' })).resolves.toBe(true);
+    expect(calls.at(-1)).toMatchObject({ proc: 'requestChanges', input: { taskId: 'task-1' } });
     expect(wf.verdictSeq.value).toBe(2);
 
     nextError = new Error('no round');

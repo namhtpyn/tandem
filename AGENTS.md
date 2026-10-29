@@ -18,6 +18,7 @@ fan-out, cache — no in-memory fallbacks).
 - Sequential: ONE AI review turn in flight per task; the settle path lazy-mints the next pending reviewer's run. Redis never holds waiting state (BullMQ = execution bus + retry ladder; time-based extras = delayed jobs; dependency-based sequence = settle path).
 - End-of-round matrix: all approve -> done; all reject -> cancelled (AI-only included); any request_change or split -> bounce ready. Round settles after the LAST verdict; unanimity over the live set.
 - Escalation mutates the TASK reviewer roster (escalator out, supervisor in, up-chain validated; no target -> park). Jury shrink accepted. Escalated/superseded rows never count.
+- ESCALATE IS AI-ONLY (owner ruling 2026-10-29): humans never submit an escalate review — no UI verb, no router procedure; a human reassigns or forwards instead.
 - Review parks flip the task to BLOCKED (no target / verdict-less exhausted / access missing); waiting-answer stays agent-only; owner resolution unblocks and resumes.
 - Manual done/cancel tears the round down: PENDING -> superseded, obligations cancelled, terminal gate refuses in-flight verdicts.
 - Review briefs compose through buildBrief review-mode only (evidence = collected submission attachments; verdicts-so-far always ship). Review settle-failure parks — never the work backoff ladder.
