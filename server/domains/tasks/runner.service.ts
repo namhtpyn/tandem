@@ -921,7 +921,8 @@ function createRunWriter(runId: string, initial: string, messageId: string) {
       .set({ status, exitCode, output: buffer, finishedAt: new Date() })
       .where(and(eq(taskRuns.id, runId), eq(taskRuns.status, RUN_STATUS.RUNNING)));
     // the thread message body becomes the parsed result of the final output
-    await updateRunMessageBody(messageId, buffer);
+    // the run bubble carries the VERDICT on review turns (one response per turn)
+    await updateRunMessageBody(messageId, buffer, Boolean(plan.review));
     // no settle note: the run card's status pill (completed / failed exit N) IS the
     // verdict — a separate 'run finished' pill only duplicated it in the thread
     if (status === RUN_STATUS.DONE) {
