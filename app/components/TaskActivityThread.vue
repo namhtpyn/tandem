@@ -335,7 +335,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
                 Full output from {{ item.agentName ?? 'the agent' }}
               </summary>
               <pre
-                class="bg-inverted text-inverted mt-1 rounded-md px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
+                class="bg-elevated text-toned mt-1 rounded-md px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
                 >{{ item.output }}</pre>
             </details>
           </div>
