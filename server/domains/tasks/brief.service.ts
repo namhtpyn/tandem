@@ -208,11 +208,9 @@ function attachmentsSection(input: BriefInput) {
 function contractSection(input: BriefInput) {
   return [
     '',
-    `DELIVERABLES — write any output files to ${input.outDir} (create it if needed; that EXACT path, not the environment name); everything left there when you exit is collected and attached to your result.`,
-    '',
     renderOutputContract(RunVerdictSchema, {
       intro:
-        'OUTPUT CONTRACT — end your response with exactly one JSON line (no code fence). ROUTING rides the same line: propose subtasks when a meaningful part belongs to someone else; reassign only when the WHOLE task belongs elsewhere; routing inside your own supervision chain executes immediately, anything outside goes to a human:',
+        'OUTPUT CONTRACT — end your response with exactly one JSON line (no code fence). ROUTING rides the same line: propose subtasks when a meaningful part belongs to someone else; reassign only when the WHOLE task belongs elsewhere; routing inside your own supervision chain executes immediately, anything outside goes to a human. This JSON line is MANDATORY on every turn:',
       examples: [
         '{"kind": "result", "body": "<final answer or summary of work done>"}',
         '{"kind": "question", "body": "<blocking question for the owner>"}',
@@ -221,6 +219,8 @@ function contractSection(input: BriefInput) {
         '{"kind": "result", "body": "<…>", "reassign": {"assigneeName": "<name>", "reason": "<why>"}}',
       ],
     }),
+    '',
+    `DELIVERABLES (artifacts only) — real output files (screenshots, exports, generated docs) go to ${input.outDir} (create it if needed; that EXACT path, not the environment name) and are collected automatically. NEVER write your result, summary or verdict as a file there — no RESULT.md: the JSON line above is the only result; files never substitute for it.`,
   ];
 }
 
@@ -293,7 +293,7 @@ export async function loadBriefData(taskId: string, readerEmployeeId?: string) {
       limit: 200,
       with: {
         author: { columns: { name: true } },
-        run: { columns: { finishedAt: true, employeeId: true, output: true } },
+        run: { columns: { finishedAt: true, employeeId: true, output: true, sessionId: true } },
         activityExt: { columns: { payload: true } },
       },
     })
@@ -317,6 +317,15 @@ export async function loadBriefData(taskId: string, readerEmployeeId?: string) {
   );
   const hasPrior = ownFinished.length > 0;
   const lastFinished = hasPrior ? (ownFinished.at(-1) ?? null) : null;
+  // relay keys on a RESUMABLE session (owner ruling 2026-10-29): the reader has a
+  // run whose ACP turn actually opened (sessionId set). Failed pre-turn runs count
+  // as finished but hold no session — treating them as prior shipped a
+  // CONTINUATION with zero context (task 01a182f2's drift run); a session-less
+  // reader gets the full ticket again instead.
+  const resumable = readerEmployeeId
+    ? threadRows.some((m) => m.run?.employeeId === readerEmployeeId && !!m.run.sessionId)
+    : false;
+  const isRelay = hasPrior && resumable;
   // declined proposals ride the same relay cutoff as thread rows — pre-cutoff
   // declines are old news to a reader who already saw them
   const rejectedNotes = (
@@ -395,7 +404,7 @@ export async function loadBriefData(taskId: string, readerEmployeeId?: string) {
       projectName: projectRow?.name ?? null,
     },
     recentActivity: [...recent, ...rejectedNotes.map((n) => ({ kind: 'note', authorName: 'system', body: n }))],
-    relay: hasPrior,
+    relay: isRelay,
     attachments,
   };
 }

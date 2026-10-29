@@ -40,9 +40,12 @@ async function logActivity(
   authorId: string | null,
   body: string,
   meta: Record<string, unknown> = {},
+  opts: { thread?: boolean } = {},
 ) {
   await db.insert(taskActivity).values({ id: uuidv7(), taskId, kind, authorId, body, meta });
   // dual-write: the thread is the relay-brief source, every activity must land there
+  // — EXCEPT agent result submissions, whose run message already carries the result
+  if (opts.thread === false) return;
   const { insertActivityMessage } = await import('./thread.service');
   await insertActivityMessage({ taskId, authorId, body, payload: { kind, ...meta } });
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
@@ -205,7 +208,10 @@ export async function submitResult(taskId: string, authorId: string, body: strin
   // explicit reviewers only (owner ruling 2026-10-26): the org supervisor is NOT a
   // quality gate — a task with nobody set completes immediately
   const reviewers = task.reviewers;
-  await logActivity(taskId, ACTIVITY_KIND.VERDICT, authorId, body, { submitted: true, reviewers });
+  // thread law (owner ruling 2026-10-29): the result lives on the run's OWN message
+  // (updateRunMessageBody) — the submission must not post a second agent-authored
+  // thread row; the activity row stays for the review brief + audit
+  await logActivity(taskId, ACTIVITY_KIND.VERDICT, authorId, body, { submitted: true, reviewers }, { thread: false });
   if (reviewers.length > 0) {
     // open the round BEFORE flipping the status: a failed round-open must leave the
     // task doing (error surfaced to the caller), never parked in-review with no
