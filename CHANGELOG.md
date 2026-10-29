@@ -1,3 +1,10 @@
+# [2.51.0](https://github.com/namhtpyn/tandem/compare/v2.50.1...v2.51.0) (2026-10-29)
+
+
+### Features
+
+* **review:** sequential rounds, verdict-identity envelope, escalation, blocked parks ([c930258](https://github.com/namhtpyn/tandem/commit/c9302582869f12ddb72a6b8e29f8dd210f10db79))
+
 ## [2.50.1](https://github.com/namhtpyn/tandem/compare/v2.50.0...v2.50.1) (2026-10-29)
 
 
