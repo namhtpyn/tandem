@@ -1,3 +1,10 @@
+# [2.52.0](https://github.com/namhtpyn/tandem/compare/v2.51.1...v2.52.0) (2026-10-29)
+
+
+### Features
+
+* **review:** humans cannot submit an escalate review (AI-only verb) ([66db1ee](https://github.com/namhtpyn/tandem/commit/66db1ee0d92f88772afe57e87ef6ba2ec065d047))
+
 ## [2.51.1](https://github.com/namhtpyn/tandem/compare/v2.51.0...v2.51.1) (2026-10-29)
 
 
