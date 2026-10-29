@@ -33,6 +33,7 @@
     "test:integration": "bun --bun vitest run --project integration"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^2.1.0",
     "@better-auth/api-key": "1.7.14",
     "@better-auth/drizzle-adapter": "1.7.14",
     "@keyv/redis": "6.1.0",

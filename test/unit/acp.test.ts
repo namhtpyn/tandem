@@ -170,6 +170,9 @@ vi.mock('ssh2', () => {
 type AgentScript = (msg: Record<string, unknown>, send: (o: unknown) => void, stream: FakeAcp) => void;
 class FakeAcp implements AcpStream {
   stdoutCb: ((l: string) => void) | null = null;
+  writeRaw(t: string) {
+    this.write(t);
+  }
   stderrCb: ((l: string) => void) | null = null;
   closeCb: ((c: number | null) => void) | null = null;
   closed = false;
@@ -189,7 +192,10 @@ class FakeAcp implements AcpStream {
     this.closeCb = cb;
   }
   write(m: unknown) {
-    const line = `${JSON.stringify(m)}\n`;
+    this.writeRaw(`${JSON.stringify(m)}\n`);
+  }
+  writeRaw(text: string) {
+    const line = text.endsWith('\n') ? text : `${text}\n`;
     this.written.push(line);
     for (const l of line.split('\n')) {
       if (!l.trim()) continue;
@@ -222,7 +228,11 @@ function happyAgent(final: Record<string, unknown> = { stopReason: 'end_turn' })
     const method = msg.method as string | undefined;
     if (!method) return;
     if (method === 'initialize')
-      send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+      send({
+        jsonrpc: '2.0',
+        id: msg.id,
+        result: { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { resume: {} } } },
+      });
     else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-1' } });
     else if (method === 'session/resume') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-r' } });
     else if (method === 'session/prompt') {
@@ -250,7 +260,13 @@ function happyAgent(final: Record<string, unknown> = { stopReason: 'end_turn' })
         method: 'session/update',
         params: {
           sessionId: 'sess-1',
-          update: { sessionUpdate: 'tool_call', title: 'read_file', status: 'in_progress' },
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 't1',
+            toolCallId: 't1',
+            title: 'read_file',
+            status: 'in_progress',
+          },
         },
       });
       send({
@@ -295,6 +311,7 @@ describe('acp.client turns', () => {
   it('onSessionOpen exposes a mid-turn steer (second session/prompt); agent error => false', async () => {
     let steer: ((text: string) => Promise<boolean>) | undefined;
     let promptsSeen = 0;
+    let firstPromptId: number | undefined;
     const stream = fakeAgent((msg, send) => {
       const method = msg.method as string | undefined;
       if (!method) return;
@@ -303,7 +320,8 @@ describe('acp.client turns', () => {
       else if (method === 'session/prompt') {
         promptsSeen += 1;
         if (promptsSeen === 1) {
-          send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+          // hold the MAIN turn open until the steer prompts have been exercised
+          firstPromptId = msg.id as number;
         } else if (promptsSeen === 2) {
           send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
         } else {
@@ -311,14 +329,19 @@ describe('acp.client turns', () => {
         }
       }
     });
-    await turn(stream, {
+    const turnP = turn(stream, {
       onSessionOpen: (fn) => {
         steer = fn;
       },
     });
+    // mid-turn: the steer fires while the main prompt is still open
+    for (let i = 0; i < 200 && promptsSeen < 1; i++) await new Promise((r) => setTimeout(r, 5));
     expect(steer).toBeTruthy();
     await expect(steer!('pivot: use sqlite')).resolves.toBe(true);
     await expect(steer!('again')).resolves.toBe(false);
+    // release the main prompt — the turn completes
+    stream.send({ jsonrpc: '2.0', id: firstPromptId, result: { stopReason: 'end_turn' } });
+    await turnP;
   });
 
   it('notifications never split a half-streamed envelope line (queued behind chunks)', async () => {
@@ -334,6 +357,7 @@ describe('acp.client turns', () => {
           jsonrpc: '2.0',
           method: 'session/update',
           params: {
+            sessionId: 's',
             update: {
               sessionUpdate: 'agent_message_chunk',
               content: { type: 'text', text: '{"kind": "result", "body": "half' },
@@ -343,12 +367,15 @@ describe('acp.client turns', () => {
         send({
           jsonrpc: '2.0',
           method: 'session/update',
-          params: { update: { sessionUpdate: 'usage_update', used: 18506, size: 1000000 } },
+          params: { sessionId: 's', update: { sessionUpdate: 'usage_update', used: 18506, size: 1000000 } },
         });
         send({
           jsonrpc: '2.0',
           method: 'session/update',
-          params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' half"}' } } },
+          params: {
+            sessionId: 's',
+            update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' half"}' } },
+          },
         });
         send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
       }
@@ -376,12 +403,16 @@ describe('acp.client turns', () => {
         send({
           jsonrpc: '2.0',
           method: 'session/update',
-          params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'analysis\n' } } },
+          params: {
+            sessionId: 's',
+            update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'analysis\n' } },
+          },
         });
         send({
           jsonrpc: '2.0',
           method: 'session/update',
           params: {
+            sessionId: 's',
             update: {
               sessionUpdate: 'agent_message_chunk',
               content: { type: 'text', text: '{"score": 8, "notes": "solid"}' },
@@ -405,6 +436,7 @@ describe('acp.client turns', () => {
           jsonrpc: '2.0',
           method: 'session/update',
           params: {
+            sessionId: 's',
             update: {
               sessionUpdate: 'agent_message_chunk',
               content: { type: 'text', text: 'analysis\n{"score": 8, "notes": "solid"}' },
@@ -457,39 +489,6 @@ describe('acp.client turns', () => {
     expect(lines.some((l) => l.includes('starting a new session'))).toBe(true);
   });
 
-  it('full agent_message replaces chunk content; image chunks carry no text', async () => {
-    const stream = fakeAgent((msg, send) => {
-      const method = msg.method as string | undefined;
-      if (!method) return;
-      if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} });
-      else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's' } });
-      else if (method === 'session/prompt') {
-        send({
-          jsonrpc: '2.0',
-          method: 'session/update',
-          params: {
-            sessionId: 's',
-            update: { sessionUpdate: 'agent_message_chunk', content: { type: 'image', url: 'data:x' } },
-          },
-        });
-        send({
-          jsonrpc: '2.0',
-          method: 'session/update',
-          params: {
-            sessionId: 's',
-            update: {
-              sessionUpdate: 'agent_message',
-              content: [{ type: 'text', text: '{"kind": "result", "body": "replaced"}' }],
-            },
-          },
-        });
-        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
-      }
-    });
-    const res = await turn(stream);
-    expect(res.transcript).toBe('{"kind": "result", "body": "replaced"}');
-  });
-
   it('permission requests are auto-allowed and logged; unknown agent calls get -32601', async () => {
     const stream = fakeAgent((msg, send) => {
       const method = msg.method as string | undefined;
@@ -500,7 +499,11 @@ describe('acp.client turns', () => {
           jsonrpc: '2.0',
           id: 999,
           method: 'session/request_permission',
-          params: { sessionId: 's', options: [{ id: 'o1', title: 'run terminal' }] },
+          params: {
+            sessionId: 's',
+            toolCall: { toolCallId: 't0' },
+            options: [{ optionId: 'o1', name: 'run terminal', kind: 'allow_once' }],
+          },
         });
         send({ jsonrpc: '2.0', id: 998, method: 'fs/read_text_file', params: { path: '/etc/passwd' } });
         send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's' } });
@@ -509,9 +512,10 @@ describe('acp.client turns', () => {
     const lines: string[] = [];
     await turn(stream, { onLine: (l) => lines.push(l) });
     expect(lines.some((l) => l.includes('allowed: run terminal'))).toBe(true);
-    // the client's own writes contain the allow outcome and the method-not-found error
+    // the client's own writes contain the SELECTED allow option and the
+    // method-not-found error for agent calls we never advertised
     const wrote = stream.written.join('');
-    expect(wrote).toContain('"outcome":"allow"');
+    expect(wrote).toContain('"optionId":"o1"');
     expect(wrote).toContain('-32601');
   });
 
@@ -530,7 +534,9 @@ describe('acp.client turns', () => {
     const lines: string[] = [];
     const res = await turn(stream, { onLine: (l) => lines.push(l) });
     expect(lines.some((l) => l === '[acp] adapter log line')).toBe(true);
-    expect(lines.some((l) => l.includes('agent cancelled the turn'))).toBe(true);
+    // v1 SDK: an agent-initiated session/cancel notification is logged-and-dropped
+    // (never routed to the client) — the turn still ends by the prompt response
+    expect(lines.some((l) => l.includes('agent cancelled the turn'))).toBe(false);
     expect(res.stopReason).toBe(OBLIGATION_STATUS.CANCELLED);
   });
 
@@ -546,7 +552,9 @@ describe('acp.client turns', () => {
     });
     const lines: string[] = [];
     const res = await turn(stream, { onLine: (l) => lines.push(l) });
-    expect(lines.some((l) => l.includes('non-JSON stdout'))).toBe(true);
+    // v1 SDK: unparseable stdout lines are swallowed by the framing layer (never
+    // crash, never log) — the turn completes regardless
+    expect(lines.some((l) => l.includes('non-JSON stdout'))).toBe(false);
     expect(res.stopReason).toBe('end_turn');
   });
 
@@ -561,6 +569,7 @@ describe('acp.client turns', () => {
               jsonrpc: '2.0',
               method: 'session/update',
               params: {
+                sessionId: 's',
                 update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial work' } },
               },
             });
@@ -574,15 +583,16 @@ describe('acp.client turns', () => {
             jsonrpc: '2.0',
             method: 'session/update',
             params: {
+              sessionId: 's',
               update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial work' } },
             },
           });
           send({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'prompt boom' } });
         }
       });
-    await expect(turn(mk('initialize'))).rejects.toThrow('initialize failed');
-    await expect(turn(mk('session/new'))).rejects.toThrow('session/new failed');
-    await expect(turn(mk('session/prompt'))).rejects.toThrow(/prompt failed.*partial work/);
+    await expect(turn(mk('initialize'))).rejects.toThrow('initialize boom');
+    await expect(turn(mk('session/new'))).rejects.toThrow('session/new boom');
+    await expect(turn(mk('session/prompt'))).rejects.toThrow(/prompt boom.*partial work/);
   });
 
   it('timeout: session/cancel sent, grace kills the stream, prompt rejects', async () => {
@@ -620,12 +630,19 @@ describe('acp.client turns', () => {
   });
 
   it('odd-shape protocol traffic never breaks the turn', async () => {
-    // permission options without titles -> id used; session/update without update; resume echo without sessionId
+    // the SDK validates both directions now: an invalid session/update payload or an
+    // invalid permission request is rejected WITHOUT killing the turn
     const stream = fakeAgent((msg, send) => {
       const method = msg.method as string | undefined;
       if (!method) return;
       if (method === 'initialize') {
-        send({ jsonrpc: '2.0', id: msg.id, result: {} });
+        send({
+          jsonrpc: '2.0',
+          id: msg.id,
+          result: { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { resume: {} } } },
+        });
+        // malformed permission request (legacy id-only option, no toolCall): the SDK
+        // rejects it on the wire — our auto-allow handler never sees it
         send({
           jsonrpc: '2.0',
           id: 42,
@@ -633,14 +650,15 @@ describe('acp.client turns', () => {
           params: { sessionId: 's', options: [{ id: 'op-raw' }] },
         });
       } else if (method === 'session/resume') {
-        send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 's' } }); // no update payload
-        send({ jsonrpc: '2.0', id: msg.id, result: {} }); // no sessionId echo
+        send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 's' } }); // no update payload — dropped by the SDK, connection survives
+        send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: '' } }); // empty echo falls back to the requested id in our layer
       } else if (method === 'session/prompt') send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
     });
     const lines: string[] = [];
     const res = await turn(stream, { resumeSessionId: 'keep-me', onLine: (l) => lines.push(l) });
-    expect(res.sessionId).toBe('keep-me'); // echo-less resume keeps the requested id
-    expect(lines.some((l) => l.includes('allowed: op-raw'))).toBe(true);
+    expect(res.sessionId).toBe('keep-me'); // empty echo keeps the requested id
+    // the malformed permission request never reached our handler
+    expect(lines.some((l) => l.includes('allowed: op-raw'))).toBe(false);
   });
 
   it('cancel grace skips the kill when the agent settles after cancel', async () => {
@@ -688,7 +706,7 @@ describe('acp.client turns', () => {
         send({
           jsonrpc: '2.0',
           method: 'session/update',
-          params: { update: { sessionUpdate: 'agent_message', content: [{ type: 'text' }] } },
+          params: { sessionId: 's', update: { sessionUpdate: 'agent_message', content: [{ type: 'text' }] } },
         });
         send({ jsonrpc: '2.0', id: msg.id, result: {} });
       }
@@ -710,7 +728,10 @@ describe('acp.client turns', () => {
           send({
             jsonrpc: '2.0',
             method: 'session/update',
-            params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } },
+            params: {
+              sessionId: 's',
+              update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } },
+            },
           });
         chunk('Hello '); // no newline yet — held
         chunk('world\nsecond line\n\n'); // flushes 'Hello world', 'second line', '' (paragraph break)
@@ -736,12 +757,15 @@ describe('acp.client turns', () => {
         send({
           jsonrpc: '2.0',
           method: 'session/update',
-          params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: long } } },
+          params: {
+            sessionId: 's',
+            update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: long } },
+          },
         });
         send({
           jsonrpc: '2.0',
           method: 'session/update',
-          params: { update: { sessionUpdate: 'tool_call', toolName: 'bash' } },
+          params: { sessionId: 's', update: { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'bash' } },
         });
         send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
       }
@@ -750,38 +774,6 @@ describe('acp.client turns', () => {
     const i = lines.indexOf('[tool] bash');
     expect(i).toBeGreaterThan(0); // the long line flushed BEFORE the tool line
     expect(lines[i - 1]).toBe(long);
-  });
-
-  it('full agent_message with no chunks logs once; after chunks it never duplicates', async () => {
-    const lines: string[] = [];
-    const stream = fakeAgent((msg, send) => {
-      const method = msg.method as string | undefined;
-      if (!method) return;
-      if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} });
-      else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's' } });
-      else if (method === 'session/prompt') {
-        send({
-          jsonrpc: '2.0',
-          method: 'session/update',
-          params: {
-            update: {
-              sessionUpdate: 'agent_message',
-              content: [{ type: 'text', text: 'full message, no chunks before' }],
-            },
-          },
-        });
-        send({
-          jsonrpc: '2.0',
-          method: 'session/update',
-          params: { update: { sessionUpdate: 'agent_message', content: [{ type: 'text', text: 'replaced final' }] } },
-        });
-        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
-      }
-    });
-    const res = await turn(stream, { onLine: (l) => lines.push(l) });
-    expect(res.transcript).toBe('replaced final'); // replace semantics kept
-    const textLines = lines.filter((l) => !l.startsWith('['));
-    expect(textLines).toEqual(['full message, no chunks before']); // second full text never duplicated
   });
 
   it('sparse stream shapes WITH logging: mixed content, images, partial tool metadata', async () => {
@@ -797,6 +789,7 @@ describe('acp.client turns', () => {
           jsonrpc: '2.0',
           method: 'session/update',
           params: {
+            sessionId: 's',
             update: {
               sessionUpdate: 'agent_message',
               content: [
@@ -810,59 +803,70 @@ describe('acp.client turns', () => {
         send({
           jsonrpc: '2.0',
           method: 'session/update',
-          params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'image' } } },
+          params: { sessionId: 's', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'image' } } },
         });
         // empty-text chunk: appended as '' but never logged
         send({
           jsonrpc: '2.0',
           method: 'session/update',
-          params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '' } } },
+          params: {
+            sessionId: 's',
+            update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '' } },
+          },
         });
         // tools with partial metadata
         send({
           jsonrpc: '2.0',
           method: 'session/update',
-          params: { update: { sessionUpdate: 'tool_call', toolName: 'bash' } },
+          params: { sessionId: 's', update: { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'bash' } },
         });
         send({
           jsonrpc: '2.0',
           method: 'session/update',
-          params: { update: { sessionUpdate: 'tool_call_update', status: 'pending' } }, // ACP wire status
+          params: {
+            sessionId: 's',
+            update: { sessionUpdate: 'tool_call_update', toolCallId: 't1', status: 'pending' },
+          }, // ACP wire status
         });
         // usage with only one field (each side)
         send({
           jsonrpc: '2.0',
           method: 'session/update',
-          params: { update: { sessionUpdate: 'usage_update', size: 1000 } },
+          params: { sessionId: 's', update: { sessionUpdate: 'usage_update', size: 1000 } },
         });
         send({
           jsonrpc: '2.0',
           method: 'session/update',
-          params: { update: { sessionUpdate: 'usage_update', used: 7 } },
+          params: { sessionId: 's', update: { sessionUpdate: 'usage_update', used: 7 } },
         });
         // chunk with no content payload at all — ignored everywhere
         send({
           jsonrpc: '2.0',
           method: 'session/update',
-          params: { update: { sessionUpdate: 'agent_message_chunk' } },
+          params: { sessionId: 's', update: { sessionUpdate: 'agent_message_chunk' } },
         });
         // text chunk with an undefined text field — appends the ?? fallback
         send({
           jsonrpc: '2.0',
           method: 'session/update',
-          params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text' } } },
+          params: { sessionId: 's', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text' } } },
         });
         // unknown update kind — falls through every logging branch untouched
-        send({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'plan', plan: [] } } });
+        send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: { sessionId: 's', update: { sessionUpdate: 'plan', plan: [] } },
+        });
         send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
       }
     });
     const res = await turn(stream, { onLine: (l) => lines.push(l) });
-    expect(res.transcript).toBe('final'); // full message REPLACED the chunk-built text
+    // v1 SDK drops the non-schema pieces: agent_message (no variant), partial usage
+    // updates (both fields required), contentless chunks — transcript stays empty
+    expect(res.transcript).toBe('');
     expect(lines).toContain('[tool] bash');
     expect(lines).toContain('[tool] tool pending');
-    expect(lines).toContain('[context] ?/1000 tokens');
-    expect(lines).toContain('[context] 7/? tokens');
+    expect(lines.some((l) => l.includes('[context]'))).toBe(false);
   });
 
   it('onLine-less operation: sparse tool/usage/permission shapes never crash', async () => {
@@ -873,8 +877,16 @@ describe('acp.client turns', () => {
         send({ jsonrpc: '2.0', id: msg.id, result: {} });
         send({ jsonrpc: '2.0', id: 7, method: 'session/request_permission', params: {} }); // no options at all
       } else if (method === 'session/new') {
-        send({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'tool_call' } } }); // no title/name/status
-        send({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'usage_update' } } }); // no used/size
+        send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: { sessionId: 's', update: { sessionUpdate: 'tool_call' } },
+        }); // no title/name/status
+        send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: { sessionId: 's', update: { sessionUpdate: 'usage_update' } },
+        }); // no used/size
         send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's' } });
       } else if (method === 'session/prompt') send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
     });
