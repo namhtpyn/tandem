@@ -1,3 +1,11 @@
+## [2.51.1](https://github.com/namhtpyn/tandem/compare/v2.51.0...v2.51.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **review:** one Ash item per review turn — verdict rides the run bubble ([c0273e9](https://github.com/namhtpyn/tandem/commit/c0273e9f0e741af69bebbf1d6566b02e8a1b0797))
+* **steering:** the live-run lookup reads the runs table — the composer law works again ([6115976](https://github.com/namhtpyn/tandem/commit/61159765bd22bc7adc91aebcf9f43fb440d0c737))
+
 # [2.51.0](https://github.com/namhtpyn/tandem/compare/v2.50.1...v2.51.0) (2026-10-29)
 
 
