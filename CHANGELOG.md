@@ -1,3 +1,10 @@
+# [2.50.0](https://github.com/namhtpyn/tandem/compare/v2.49.2...v2.50.0) (2026-10-29)
+
+
+### Features
+
+* **dispatch:** run-level retries — the run is the unit of work ([f145d32](https://github.com/namhtpyn/tandem/commit/f145d32a5647a5f673a08f31bfb5795ff4a1a70b))
+
 ## [2.49.2](https://github.com/namhtpyn/tandem/compare/v2.49.1...v2.49.2) (2026-10-28)
 
 
