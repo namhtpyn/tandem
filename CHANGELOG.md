@@ -1,3 +1,11 @@
+## [2.50.1](https://github.com/namhtpyn/tandem/compare/v2.50.0...v2.50.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **brief:** relay keys on a resumable session; deliverables fold into the output contract ([ea983f8](https://github.com/namhtpyn/tandem/commit/ea983f81fd4ae20f06b3214dcf2dfc33f553c6f4))
+* **runner:** verdicts always land — parser recovery, one Jay response, review re-dispatch ([586934a](https://github.com/namhtpyn/tandem/commit/586934afe13a0d54adc1319ef1007b52f73944d0))
+
 # [2.50.0](https://github.com/namhtpyn/tandem/compare/v2.49.2...v2.50.0) (2026-10-29)
 
 
