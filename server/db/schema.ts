@@ -376,6 +376,10 @@ export const taskRuns = pgTable(
     sessionId: text('session_id'),
     environmentId: text('environment_id'),
     status: text('status').notNull().default('RUNNING'),
+    /** run-level retry bookkeeping (owner ruling 2026-10-28): the BullMQ job replays
+     * THIS row on transport retries (same frozen prompt), so attempts counts
+     * executions of one dispatch intent — 1 = first try. */
+    attempts: integer('attempts').notNull().default(1),
     exitCode: integer('exit_code'),
     output: text('output').notNull().default(''),
     /** the exact brief (prompt) sent to the agent for this turn; null on pre-2.26 rows */
