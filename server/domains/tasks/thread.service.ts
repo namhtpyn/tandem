@@ -65,8 +65,23 @@ export async function insertActivityMessage(
 }
 
 /** the run settled: the thread message body becomes the parsed result */
+// [context]/[tool]/[dispatch]/[retry]/[reaper] streaming telemetry — never a result
+const SYSTEM_LINE = /^\[(context|tool|dispatch|retry|reaper|warn|settle|collect)\b/i;
+
+/** envelope text, else the human tail of the transcript (system lines stripped) —
+ * a run's own message must always carry the agent's answer (owner law 2026-10-29:
+ * task 01a182f2 shipped a blank run message + a tool-spam submission message) */
+export function humanRunTail(output: string | null | undefined, maxLines = 12): string {
+  const lines = (output ?? '')
+    .split('\n')
+    .map((l) => l.trimEnd())
+    .filter((l) => l.trim() !== '' && !SYSTEM_LINE.test(l.trim()));
+  return lines.slice(-maxLines).join('\n').trim() || 'run complete';
+}
+
 export async function updateRunMessageBody(messageId: string, output: string) {
-  const body = parseRunEnvelope((output ?? '').trimEnd())?.text ?? '';
+  const envelope = parseRunEnvelope((output ?? '').trimEnd());
+  const body = envelope?.text ?? humanRunTail(output);
   await db.update(taskMessages).set({ body }).where(eq(taskMessages.id, messageId));
 }
 

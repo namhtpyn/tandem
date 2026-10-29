@@ -85,17 +85,24 @@ export function parseRunEnvelope(output: string | null | undefined): RunEnvelope
       }
       continue;
     }
-    // open object without a close on one line: join the trailing block (fence
-    // lines dropped) and parse once — bottom-up order still wins the match
-    try {
-      const block = lines
-        .slice(i)
-        .filter((l) => !l.trim().startsWith('```'))
-        .join('\n');
-      const parsed = RunVerdictSchema.safeParse(JSON.parse(block));
-      if (parsed.success) return toEnvelope(parsed.data);
-    } catch {
-      /* not JSON — keep scanning */
+    // open object without a close on one line: GROW the block line by line until it
+    // parses. Two real-world split shapes (task 01a182f2 deadlock, fixed 2026-10-29):
+    //  - pretty-printed verdicts break between tokens -> '\n' join is legal whitespace
+    //  - the 400-char force-flush splits ONE long line mid-token -> '' join rebuilds it
+    // Telemetry lines ([context]/[tool]) may trail the verdict; neither join-to-end
+    // nor single-shape joins parsed that real blocked reviewer verdict.
+    for (let end = i + 2; end <= Math.min(lines.length, i + 200); end++) {
+      const seg = lines.slice(i, end).filter((l) => !l.trim().startsWith('```'));
+      for (const joiner of ['\n', '']) {
+        const block = seg.join(joiner);
+        if (!block.trim().endsWith('}')) continue; // not closed yet — keep growing
+        try {
+          const parsed = RunVerdictSchema.safeParse(JSON.parse(block));
+          if (parsed.success) return toEnvelope(parsed.data);
+        } catch {
+          /* keep growing */
+        }
+      }
     }
   }
   return null;
