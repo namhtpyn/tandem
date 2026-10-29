@@ -1,0 +1,1 @@
+ALTER TABLE "task_runs" ADD COLUMN "attempts" integer DEFAULT 1 NOT NULL;

@@ -21,6 +21,7 @@ import { db } from '../../db/index';
 import { tasks, taskRuns, taskActivity, taskAttachments, taskMessages } from '../../db/schema';
 import { env } from '../kernel/env';
 import { publishChange } from '../kernel/kernel';
+import { redisQueue } from '../kernel/queue';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
 
 // FULL output is kept on the run row (user law 2026-10-15: "the task output must
@@ -617,12 +618,45 @@ function fakeRun(onLine: (line: string) => void, scriptOverride?: string[]): Run
   return { runId, finished: promise };
 }
 
-/** dispatch a task to its AI assignee. Records the run row, streams output into it. */
-export async function dispatchTask(
-  taskId: string,
-  tandemUrl: string,
-  opts?: { reviewBy?: string; resultBody?: string },
-) {
+/**
+ * Run-level retry law (owner ruling 2026-10-28, task 01a182f2): a dispatch intent is
+ * ONE run row. Transport failures (SSH refused, plan load, pre-turn errors) are
+ * retried by BullMQ ON THE SAME ROW — same frozen prompt, appended output — so a
+ * retry can never drift the prompt the way scan-loop re-enqueues did (fresh
+ * `buildBrief` per attempt pulled newer context each time). Attempts live on the
+ * job (DISPATCH_ATTEMPTS + custom ladder backoff); `task_runs.attempts` mirrors the
+ * executions for the UI. The task-level ladder (fail_streak/dispatch_after) now only
+ * governs the NEXT dispatch intent after a run settles FAILED.
+ */
+export const DISPATCH_ATTEMPTS = 4; // first try + 3 retries = the 60s/5m/15m ladder
+
+/** per-agent dispatch queue name (bullmq forbids ':' in queue names). The optional
+ * namespace is set per test file (worker-setup.ts) so a file's queues can never
+ * collide with a zombie worker left by a previous file sharing the same process
+ * and redis db index. */
+export function dispatchQueueName(employeeId: string) {
+  const ns = process.env.TANDEM_QUEUE_NS;
+  return `${DISPATCH_QUEUE_PREFIX}${ns ? `-${ns}` : ''}-${employeeId}`;
+}
+
+export const DISPATCH_QUEUE_PREFIX = 'tandem-dispatch';
+
+/** the dispatch job payload — the RUN is the unit of work (identity only; the row
+ * owns the frozen prompt/output, never the queue) */
+export type DispatchJob = {
+  runId: string;
+  tandemUrl: string;
+  reviewBy?: string;
+  resultBody?: string;
+};
+
+/** dispatch intent options — review turns carry their reviewer + the body being reviewed */
+export type DispatchOpts = { reviewBy?: string; resultBody?: string };
+
+/** create the run row for a dispatch intent: load the plan, write the dispatch note,
+ * create the run's thread turn, freeze the brief on the row, flip the task to doing.
+ * Transport-neutral — the caller enqueues {runId} (or executes inline in tests). */
+export async function createRun(taskId: string, opts?: DispatchOpts) {
   const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & {
     review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'];
   } = opts?.reviewBy // eslint-disable-line @typescript-eslint/consistent-type-definitions -- union widening
@@ -652,6 +686,7 @@ export async function dispatchTask(
     environmentId: plan.env.id,
     status: RUN_STATUS.RUNNING,
     output: '',
+    attempts: 1,
   });
   // only now is the thread turn complete — publish the activity ping here so a
   // listener rebuilding off it sees the run bubble, not a message-less gap
@@ -663,9 +698,196 @@ export async function dispatchTask(
     await db.update(tasks).set({ status: STATUS.doing, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 
-  let buffer = '';
-  /** how much of buffer the run row already holds — each flush appends ONLY the new slice */
-  let flushedLen = 0;
+  // freeze the brief NOW (the drift fix): every attempt of this run replays exactly
+  // this prompt — no rebuild at retry time
+  const briefData = await loadBriefData(taskId, plan.ai.userId);
+  const brief = plan.review
+    ? reviewBrief(
+        plan.agentName,
+        plan.task.title,
+        plan.task.description,
+        briefData,
+        plan.review.resultBody,
+        briefData.relay,
+      )
+    : buildBrief({ ...briefData, outDir: `~/.tandem/${taskId}/attachments/out/` });
+  await db.update(taskRuns).set({ prompt: brief }).where(eq(taskRuns.id, runId));
+
+  return { runId, employeeId: plan.ai.userId };
+}
+
+/** settle a failed run's TASK side: bounce to ready under the fail-streak ladder so
+ * the NEXT dispatch intent waits. Only the latest run of a still-doing task may
+ * bounce it — a cancelled/done/waiting-answer/in-review task is never resurrected. */
+async function bounceTaskAfterRun(taskId: string, runId: string, output: string) {
+  const current = (
+    await db.query.tasks.findMany({
+      columns: { status: true, failStreak: true },
+      where: { id: { eq: taskId } },
+      orderBy: { createdAt: 'asc' },
+    })
+  )[0];
+  const latestRun = await db.query.taskRuns.findFirst({
+    columns: { id: true },
+    where: { message: { taskId: { eq: taskId } } },
+    orderBy: { startedAt: 'desc' },
+  });
+  if (latestRun?.id !== runId || current?.status !== STATUS.doing) return;
+  const streak = current.failStreak + 1;
+  const waitMs = backoffFor(streak, output);
+  const bounced = await db
+    .update(tasks)
+    .set({
+      status: STATUS.todo,
+      failStreak: streak,
+      dispatchAfter: new Date(Date.now() + waitMs),
+      updatedAt: new Date(),
+    })
+    // atomic re-check of the guard: a settle/cancel between read and write wins
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, STATUS.doing)))
+    .returning({ id: tasks.id });
+  if (!bounced.length) return; // raced with a status change — nothing to retry
+  /* v8 ignore next -- the catch only guards a task deleted between the update and the log */
+  await logRun(taskId, runId, `retry scheduled in ${Math.round(waitMs / 60_000)} min (streak ${streak})`, {
+    backoffMs: waitMs,
+  }).catch(() => {});
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+}
+
+/** enqueue a created run for execution on the per-agent queue. Throws when redis is
+ * unreachable — callers decide the retry (the scan's next tick / the RPC error). */
+export async function enqueueRun(runId: string, employeeId: string, tandemUrl: string, opts?: DispatchOpts) {
+  const hub = await redisQueue();
+  await hub.enqueue<DispatchJob>(
+    dispatchQueueName(employeeId),
+    { runId, tandemUrl, reviewBy: opts?.reviewBy, resultBody: opts?.resultBody },
+    {
+      attempts: DISPATCH_ATTEMPTS,
+      jobId: runId,
+      removeOnComplete: true,
+      // custom strategy = the owner ladder; the worker registers the fn
+      backoff: { type: 'custom' },
+    },
+  );
+}
+
+/** dispatch a task to its AI assignee: create the run row (frozen brief) and enqueue
+ * it. Returns immediately — the per-agent worker executes; BullMQ retries transport
+ * failures on the same row. */
+export async function dispatchTask(taskId: string, tandemUrl: string, opts?: DispatchOpts) {
+  const { runId, employeeId } = await createRun(taskId, opts);
+  try {
+    await enqueueRun(runId, employeeId, tandemUrl, opts);
+  } catch (e) {
+    // redis down between create and enqueue: settle the row so it can't hang RUNNING
+    // past its timeout, and bounce the task — the scan/ladder re-dispatches a fresh
+    // intent with a fresh frozen brief
+    const msg = e instanceof Error ? e.message : String(e);
+    await bounceTaskAfterRun(taskId, runId, `[dispatch] enqueue failed: ${msg}`);
+    await db
+      .update(taskRuns)
+      .set({
+        status: RUN_STATUS.FAILED,
+        exitCode: null,
+        output: `[dispatch] enqueue failed: ${msg}`,
+        finishedAt: new Date(),
+      })
+      .where(and(eq(taskRuns.id, runId), eq(taskRuns.status, RUN_STATUS.RUNNING)));
+    throw e;
+  }
+  return { runId };
+}
+
+/** REVIEW LAW: a review turn's envelope writes the reviewer's verdict row
+ * ([RESULT] approve / [BLOCKED] change request); a verdict-less review NEVER
+ * silently approves — it parks on the owner. */
+async function settleReviewVerdict(taskId: string, reviewerId: string, envelope: RunEnvelope | null) {
+  if (envelope?.kind === 'blocked') {
+    /* v8 ignore next -- empty-text fallback */
+    await recordVerdict(
+      taskId,
+      reviewerId,
+      REVIEW_STATUS.CHANGE_REQUESTED,
+      envelope.text || 'changes requested by review',
+      'ai',
+    );
+  } else if (envelope?.kind === 'question') {
+    /* v8 ignore next -- empty-text fallback */
+    await askQuestion(taskId, reviewerId, envelope.text || 'question during review');
+  } else if (envelope?.kind === 'result') {
+    /* v8 ignore next -- empty-text fallback */
+    await recordVerdict(taskId, reviewerId, REVIEW_STATUS.APPROVED, envelope.text || 'approved by review', 'ai');
+  } else {
+    await askQuestion(taskId, reviewerId, 'review finished without a verdict — approve or request changes');
+  }
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+}
+
+/** settle a DONE run: parse the envelope, route proposals, submit the result (or
+ * park the task on a question / a verdict-less review). Returns 'backoff' when the
+ * settle itself failed (the task ladder stays armed). */
+async function settleDoneRun(
+  taskId: string,
+  runId: string,
+  plan: { review?: { resultBody: string }; ai: { userId: string } },
+  buffer: string,
+): Promise<'settled' | 'backoff'> {
+  const { parseRunEnvelope } = await import('#shared/run-verdict');
+  let envelope = parseRunEnvelope(buffer);
+  if (!envelope) {
+    // the ACP 400-char force-flush splits ONE long JSON verdict into adjacent buffer
+    // lines; rejoin the last 3 lines with NO separator (the newline was a flush
+    // artifact — a '\n' join would re-split identically) once before falling back
+    envelope = parseRunEnvelope(buffer.split('\n').slice(-3).join(''));
+  }
+
+  // routing folded into the envelope (owner ruling 2026-10-26): proposals are read
+  // ONLY from the agent's own verdict line — echoed task content can never route.
+  // REVIEW runs are exempt: a reviewer's envelope must never route work — recording
+  // proposals on the REVIEWER's chain could self-reassign the task to the reviewer.
+  if (!plan.review) {
+    const payloads = envelopeProposals(envelope);
+    if (payloads.length) {
+      try {
+        await recordProposals(taskId, runId, plan.ai.userId, payloads);
+      } catch {
+        /* proposal recording is best-effort */
+      }
+    }
+  }
+  try {
+    if (plan.review) {
+      await settleReviewVerdict(taskId, plan.ai.userId, envelope);
+    } else if (envelope && (envelope.kind === 'question' || envelope.kind === 'blocked')) {
+      // empty-text envelopes fall back to the kind as the question body
+      /* v8 ignore next */
+      await askQuestion(taskId, plan.ai.userId, envelope.text || envelope.kind);
+    } else {
+      // the REAL result rides the submit — the supervisor's review brief needs it
+      // (envelope text, else the tail of what the agent actually said)
+      /* v8 ignore next -- bare 'run complete' only when the agent said nothing at all */
+      const resultBody =
+        envelope?.text?.trim() || buffer.trim().split('\n').slice(-12).join('\n').slice(-2000) || 'run complete';
+      await submitResult(taskId, plan.ai.userId, resultBody);
+    }
+  } catch (e) {
+    // a submit/verdict failure is REAL: log it and take the retry/backoff path —
+    // swallowing it here then resetting failStreak wedged the task with no retry
+    /* v8 ignore start */ // needs a mid-flight workflow mutation so submit throws; the reaper/backoff arms cover the ladder
+    consola.error(`[settle] task ${taskId} run ${runId} settle failed: ${e instanceof Error ? e.message : String(e)}`);
+    await bounceTaskAfterRun(taskId, runId, buffer);
+    return 'backoff';
+  }
+  // streak reset only AFTER a successful settle — a failed settle must keep the ladder
+  await db.update(tasks).set({ failStreak: 0, dispatchAfter: null, updatedAt: new Date() }).where(eq(tasks.id, taskId));
+  return 'settled';
+}
+
+/** flush/finish machinery for one run execution: appends streamed lines to the row
+ * (chunked sql-concat, never a full rewrite) and settles the row exactly once. */
+function createRunWriter(runId: string, initial: string, messageId: string) {
+  let buffer = initial;
+  let flushedLen = buffer.length;
   let lastFlush = 0;
   let flushing = false;
   const onLine = (line: string) => {
@@ -696,138 +918,27 @@ export async function dispatchTask(
     }
   };
 
-  // DONE verdict: the envelope decides the workflow. [QUESTION]/[BLOCKED] park the
-  // task on the owner (waiting-answer + answer obligation) instead of completing
-  // it; [RESULT] (or none) submits for review / completes as before.
-  const settleReviewVerdict = async (envelope: RunEnvelope | null) => {
-    // REVIEW LAW: this run WAS a review turn BY a reviewer on this task. The
-    // envelope writes their verdict row ([RESULT] approve / [BLOCKED] change request);
-    // a verdict-less review NEVER silently approves — it parks on the owner.
-    if (envelope?.kind === 'blocked') {
-      /* v8 ignore next -- empty-text fallback */
-      await recordVerdict(
-        taskId,
-        plan.ai.userId,
-        REVIEW_STATUS.CHANGE_REQUESTED,
-        envelope.text || 'changes requested by review',
-        'ai',
-      );
-    } else if (envelope?.kind === 'question') {
-      /* v8 ignore next -- empty-text fallback */
-      await askQuestion(taskId, plan.ai.userId, envelope.text || 'question during review');
-    } else if (envelope?.kind === 'result') {
-      /* v8 ignore next -- empty-text fallback */
-      await recordVerdict(taskId, plan.ai.userId, REVIEW_STATUS.APPROVED, envelope.text || 'approved by review', 'ai');
-    } else {
-      await askQuestion(taskId, plan.ai.userId, 'review finished without a verdict — approve or request changes');
-    }
-    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
-  };
-
-  const settleDoneRun = async () => {
-    const { parseRunEnvelope } = await import('#shared/run-verdict');
-    let envelope = parseRunEnvelope(buffer);
-    if (!envelope) {
-      // the ACP 400-char force-flush splits ONE long JSON verdict into adjacent buffer
-      // lines; rejoin the last 3 lines with NO separator (the newline was a flush
-      // artifact — a '\n' join would re-split identically) once before falling back
-      envelope = parseRunEnvelope(buffer.split('\n').slice(-3).join(''));
-    }
-
-    // routing folded into the envelope (owner ruling 2026-10-26): proposals are read
-    // ONLY from the agent's own verdict line — echoed task content can never route.
-    // REVIEW runs are exempt: a reviewer's envelope must never route work — recording
-    // proposals on the REVIEWER's chain could self-reassign the task to the reviewer.
-    if (!plan.review) {
-      const payloads = envelopeProposals(envelope);
-      if (payloads.length) {
-        try {
-          await recordProposals(taskId, runId, plan.ai.userId, payloads);
-        } catch {
-          /* proposal recording is best-effort */
-        }
-      }
-    }
-    try {
-      if (plan.review) {
-        await settleReviewVerdict(envelope);
-      } else if (envelope && (envelope.kind === 'question' || envelope.kind === 'blocked')) {
-        // empty-text envelopes fall back to the kind as the question body
-        /* v8 ignore next */
-        await askQuestion(taskId, plan.ai.userId, envelope.text || envelope.kind);
-      } else {
-        // the REAL result rides the submit — the supervisor's review brief needs it
-        // (envelope text, else the tail of what the agent actually said)
-        /* v8 ignore next -- bare 'run complete' only when the agent said nothing at all */
-        const resultBody =
-          envelope?.text?.trim() || buffer.trim().split('\n').slice(-12).join('\n').slice(-2000) || 'run complete';
-        await submitResult(taskId, plan.ai.userId, resultBody);
-      }
-    } catch (e) {
-      // a submit/verdict failure is REAL: log it and take the retry/backoff path —
-      // swallowing it here then resetting failStreak wedged the task with no retry
-      /* v8 ignore start */ // needs a mid-flight workflow mutation so submit throws; the reaper/backoff arms cover the ladder
-      consola.error(
-        `[settle] task ${taskId} run ${runId} settle failed: ${e instanceof Error ? e.message : String(e)}`,
-      );
-      await scheduleRetryBackoff();
-      return;
-    }
-    // streak reset only AFTER a successful settle — a failed settle must keep the ladder
+  // flushSync: the retry path throws right after logging — the cadence flush would
+  // never fire, and the NEXT attempt seeds its buffer from the row, so the error
+  // text must already be on it
+  const flushSync = async () => {
+    const chunk = buffer.slice(flushedLen);
+    flushedLen = buffer.length;
     await db
-      .update(tasks)
-      .set({ failStreak: 0, dispatchAfter: null, updatedAt: new Date() })
-      .where(eq(tasks.id, taskId));
-  };
-
-  // bounce to ready, but back off: consecutive failures (and quota walls) must not
-  // turn into a 5s retry storm — see BACKOFF_STEPS_MS / QUOTA_PATTERN
-  const scheduleRetryBackoff = async () => {
-    const current = (
-      await db.query.tasks.findMany({
-        columns: { status: true, failStreak: true },
-        where: { id: { eq: taskId } },
-        orderBy: { createdAt: 'asc' },
-      })
-    )[0];
-    // resurrection guard: only THIS task's latest run may bounce it, and only while
-    // the task still sits in the doing state this run owns — a cancelled/done/
-    // waiting-answer/in-review task must never be dragged back into the ready queue
-    const latestRun = (
-      await db
-        .select({ id: taskRuns.id })
-        .from(taskRuns)
-        .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
-        .where(eq(taskMessages.taskId, taskId))
-        .orderBy(desc(taskRuns.startedAt))
-        .limit(1)
-    )[0];
-    if (latestRun?.id !== runId || current?.status !== STATUS.doing) return;
-    const streak = current.failStreak + 1;
-    const waitMs = backoffFor(streak, buffer);
-    const bounced = await db
-      .update(tasks)
-      .set({
-        status: STATUS.todo,
-        failStreak: streak,
-        dispatchAfter: new Date(Date.now() + waitMs),
-        updatedAt: new Date(),
-      })
-      // atomic re-check of the guard: a settle/cancel between read and write wins
-      .where(and(eq(tasks.id, taskId), eq(tasks.status, STATUS.doing)))
-      .returning({ id: tasks.id });
-    if (!bounced.length) return; // raced with a status change — nothing to retry
-    /* v8 ignore next -- the catch only guards a task deleted between the update and the log */
-    await logRun(taskId, runId, `retry scheduled in ${Math.round(waitMs / 60_000)} min (streak ${streak})`, {
-      backoffMs: waitMs,
-    }).catch(() => {});
-    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+      .update(taskRuns)
+      .set({ output: sql`coalesce(${taskRuns.output}, '') || ${chunk}` })
+      .where(and(eq(taskRuns.id, runId), eq(taskRuns.status, RUN_STATUS.RUNNING)));
   };
 
   // finish() settles a run EXACTLY once: a settle error after DONE must not re-enter
   // as FAILED (overwriting submitted work), and a second call must not double-settle
   let settled = false;
-  const finish = async (status: FinishedStatus, exitCode: number | null) => {
+  const finish = async (
+    taskId: string,
+    status: FinishedStatus,
+    exitCode: number | null,
+    plan: { review?: { resultBody: string }; ai: { userId: string } },
+  ) => {
     if (settled) return;
     settled = true;
     // RUNNING predicate: a reaper-settled row is never overwritten mid-flight
@@ -840,9 +951,9 @@ export async function dispatchTask(
     // no settle note: the run card's status pill (completed / failed exit N) IS the
     // verdict — a separate 'run finished' pill only duplicated it in the thread
     if (status === RUN_STATUS.DONE) {
-      await settleDoneRun();
+      await settleDoneRun(taskId, runId, plan, buffer);
     } else {
-      await scheduleRetryBackoff();
+      await bounceTaskAfterRun(taskId, runId, buffer);
     }
     await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
     // re-publish the thread feed only after the body rewrite AND the settle: the
@@ -851,93 +962,167 @@ export async function dispatchTask(
     await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   };
 
-  const handle: RunHandle = {
-    runId,
-    finished: new Promise((resolve) => {
-      void (async () => {
-        try {
-          const briefData = await loadBriefData(taskId, plan.ai.userId);
-          const brief = plan.review
-            ? reviewBrief(
-                plan.agentName,
-                plan.task.title,
-                plan.task.description,
-                briefData,
-                plan.review.resultBody,
-                briefData.relay,
-              )
-            : buildBrief({ ...briefData, outDir: `~/.tandem/${taskId}/attachments/out/` });
-          // persist the exact prompt so the run is auditable from the task page
-          await db.update(taskRuns).set({ prompt: brief }).where(eq(taskRuns.id, runId));
-          if (env.TANDEM_FAKE_RUNNER === '1') {
-            // fake path: deterministic per-(task, employee) session so resume
-            // separation (assignee vs reviewer) is exercised without a real ACP host
-            const fakeSession = `${plan.review ? 'rev' : 'sess'}-${taskId}-${plan.ai.userId}`;
-            await db.update(taskRuns).set({ sessionId: fakeSession }).where(eq(taskRuns.id, runId));
-            const fake = fakeRun(
-              onLine,
-              fakeScriptFromEnv(plan.review ? 'TANDEM_FAKE_SCRIPT_REVIEW' : 'TANDEM_FAKE_SCRIPT') ?? undefined,
-            );
-            const r = await fake.finished;
-            await finish(r.status, r.exitCode);
-            resolve(r);
-            return;
-          }
-          const envBlob = buildEnvBlob(plan, tandemUrl);
-          const { openAcpSshStream } = await import('./acp-ssh.util');
-          const { runAcpTurn, verdictFor } = await import('./acp.client');
-          const { loadClient: loadSshClient } = await import('./ssh-exec.util');
-          const sshPlan = { env: plan.env, sshKey: plan.sshKey, sshPassword: plan.sshPassword };
-          // push input attachments (idempotent; no-op when none)
-          await pushInputAttachments(taskId, briefData, sshPlan, plan.envName, loadSshClient, onLine);
-          // ALWAYS pre-create the out dir so deliverables have a real home (7d06bae0
-          // law). Fired detached: mkdir lands in ms, the turn starts immediately, and a
-          // slow/unreachable host must never delay dispatch.
-          /* v8 ignore next 2 -- the catch only fires on ssh failure before the turn */
-          void ensureOutDir(await loadSshClient(), sshPlan, taskId).catch((e) =>
-            onLine(`[dispatch] out-dir prepare failed: ${e instanceof Error ? e.message : String(e)}`),
-          );
-          // one ACP prompt turn: session per task (resume when one exists)
-          const stream = await openAcpSshStream(sshPlan, envBlob, plan.ai.executable, onLine);
-          const acp = await runAcpTurn({
-            stream,
-            onSessionOpen: (steer) => {
-              liveSteers.set(runId, steer);
-            },
-            /* v8 ignore next -- the review-resume arm runs on real ACP review turns;
-             * unit coverage drives review turns through the fake runner */
-            resumeSessionId: plan.review
-              ? plan.review.resumeSessionId
-              : await lastSessionFor(taskId, plan.ai.userId, runId),
-            prompt: brief,
-            timeoutMs: await getRunTimeoutMs(),
-            onLine,
-          });
-          // sessions are per (task, employee) — every run persists its own session id
-          await db.update(taskRuns).set({ sessionId: acp.sessionId }).where(eq(taskRuns.id, runId));
-          const { status, exitCode } = verdictFor(acp.stopReason);
-          // settle attachments DETACHED: collection/cleanup must never block the verdict
-          void settleAttachments(taskId, runId, sshPlan, status);
-          await finish(status, exitCode);
-          resolve({ status, exitCode });
-        } catch (e) {
-          /* v8 ignore next -- service throws are Error by construction */
-          onLine(`[dispatch] ${e instanceof Error ? e.message : String(e)}`);
-          try {
-            // no-ops when finish() already settled this run (e.g. after DONE)
-            await finish(RUN_STATUS.FAILED, null);
-          } catch (finishError) {
-            /* v8 ignore start -- needs settle + finish to BOTH fail; injected in e2e only */
-            // the worker slot frees via resolve — a failing settle must never leak it
-            consola.error(`[dispatch] run ${runId} finish failed: ${String(finishError)}`);
-            /* v8 ignore stop */
-          }
-          resolve({ status: RUN_STATUS.FAILED, exitCode: null });
-        }
-      })();
-    }),
+  return {
+    onLine,
+    flushSync,
+    finish,
+    get buffer() {
+      return buffer;
+    },
   };
-  return handle;
+}
+
+/** classify + settle a failed attempt: a PRE-TURN transport failure with attempts
+ * left returns 'retry' (the caller rethrows for BullMQ backoff — same row, frozen
+ * prompt); anything else settles the run FAILED and bounces the task. */
+async function attemptFailed(
+  runId: string,
+  taskId: string,
+  attempt: { attempt: number; maxAttempts: number },
+  turnStarted: boolean,
+  writer: ReturnType<typeof createRunWriter>,
+  plan: { review?: { resultBody: string }; ai: { userId: string } },
+  e: unknown,
+): Promise<{ status: FinishedStatus; exitCode: number | null } | 'retry'> {
+  const message = e instanceof Error ? e.message : String(e);
+  writer.onLine(`[dispatch] ${message}`);
+  // run-level retry: only PRE-TURN transport failures replay the row (the turn
+  // never reached the agent); post-turn errors settle as a real FAILED verdict
+  const retryable = !turnStarted && attempt.attempt < attempt.maxAttempts;
+  if (!turnStarted) {
+    // record the execution + the error on the row synchronously (see flushSync):
+    // the next attempt seeds its buffer from the row — the error text must be on it
+    if (retryable)
+      writer.onLine(`[retry] attempt ${attempt.attempt}/${attempt.maxAttempts} failed — retrying with backoff`);
+    await writer.flushSync();
+    await db
+      .update(taskRuns)
+      .set({ attempts: attempt.attempt })
+      .where(and(eq(taskRuns.id, runId), eq(taskRuns.status, RUN_STATUS.RUNNING)));
+    if (retryable) return 'retry';
+  }
+  try {
+    // no-ops when finish() already settled this run (e.g. after DONE)
+    await writer.finish(taskId, RUN_STATUS.FAILED, null, plan);
+  } catch (finishError) {
+    /* v8 ignore start -- needs settle + finish to BOTH fail; injected in e2e only */
+    // the worker slot frees via return — a failing settle must never leak it
+    consola.error(`[dispatch] run ${runId} finish failed: ${String(finishError)}`);
+    /* v8 ignore stop */
+  }
+  return { status: RUN_STATUS.FAILED, exitCode: null };
+}
+
+/** execute ONE attempt of a created run on the per-agent queue worker (or inline in
+ * tests). Retryable PRE-TURN failures throw so BullMQ backs off and replays the SAME
+ * row with its frozen prompt; post-turn failures and the final attempt settle the run. */
+export async function executeRun(
+  runId: string,
+  tandemUrl: string,
+  attempt: { attempt: number; maxAttempts: number; reviewBy?: string; resultBody?: string },
+): Promise<{ status: FinishedStatus; exitCode: number | null }> {
+  const row = await db.query.taskRuns.findFirst({
+    columns: { id: true, status: true, attempts: true, output: true, prompt: true, messageId: true },
+    where: { id: { eq: runId } },
+    with: { message: { columns: { taskId: true } } },
+  });
+  // stale-job guard: the run was settled while this attempt sat in backoff
+  // (cancelled + reaped, human re-dispatched) — nothing to execute, job completes
+  if (!row || row.status !== RUN_STATUS.RUNNING || !row.message) {
+    return { status: RUN_STATUS.FAILED, exitCode: null };
+  }
+  const taskId = row.message.taskId;
+  // superseded-intent guard: a NEWER run for this task (re-arm, human re-dispatch)
+  // makes this job stale — replaying it would apply an outdated prompt (e.g. a
+  // review turn queued before the owner answered the question it asked)
+  const newest = await db.query.taskRuns.findFirst({
+    columns: { id: true },
+    where: { message: { taskId: { eq: taskId } } },
+    orderBy: { startedAt: 'desc' },
+  });
+  if (newest?.id !== runId) return { status: RUN_STATUS.FAILED, exitCode: null };
+
+  const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & {
+    review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'];
+  } = attempt.reviewBy // eslint-disable-line @typescript-eslint/consistent-type-definitions -- union widening
+    ? await loadReviewPlan(taskId, attempt.reviewBy, attempt.resultBody ?? '')
+    : await loadDispatchPlan(taskId);
+  // THE drift fix: the prompt is the one frozen at createRun — never rebuilt here
+  const brief = nonNull(row.prompt, 'run prompt (frozen at createRun)');
+  const briefData = await loadBriefData(taskId, plan.ai.userId);
+  const writer = createRunWriter(runId, row.output ?? '', row.messageId);
+  const { onLine } = writer;
+
+  // turnStarted marks the point of no return for retries: once the ACP stream is
+  // open the agent may have begun acting on the prompt — a failure past it is a
+  // real FAILED verdict, never a transport replay (double-apply protection)
+  let turnStarted = false;
+  try {
+    if (env.TANDEM_FAKE_RUNNER === '1') {
+      // fake path: deterministic per-(task, employee) session so resume
+      // separation (assignee vs reviewer) is exercised without a real ACP host
+      const fakeSession = `${plan.review ? 'rev' : 'sess'}-${taskId}-${plan.ai.userId}`;
+      await db.update(taskRuns).set({ sessionId: fakeSession }).where(eq(taskRuns.id, runId));
+      const fake = fakeRun(
+        onLine,
+        fakeScriptFromEnv(plan.review ? 'TANDEM_FAKE_SCRIPT_REVIEW' : 'TANDEM_FAKE_SCRIPT') ?? undefined,
+      );
+      const r = await fake.finished;
+      await writer.finish(taskId, r.status, r.exitCode, plan);
+      return r;
+    }
+    const envBlob = buildEnvBlob(plan, tandemUrl);
+    const { openAcpSshStream } = await import('./acp-ssh.util');
+    const { runAcpTurn, verdictFor } = await import('./acp.client');
+    const { loadClient: loadSshClient } = await import('./ssh-exec.util');
+    const sshPlan = { env: plan.env, sshKey: plan.sshKey, sshPassword: plan.sshPassword };
+    // push input attachments (idempotent; no-op when none)
+    await pushInputAttachments(taskId, briefData, sshPlan, plan.envName, loadSshClient, onLine);
+    // ALWAYS pre-create the out dir so deliverables have a real home (7d06bae0
+    // law). Fired detached: mkdir lands in ms, the turn starts immediately, and a
+    // slow/unreachable host must never delay dispatch.
+    /* v8 ignore next 2 -- the catch only fires on ssh failure before the turn */
+    void ensureOutDir(await loadSshClient(), sshPlan, taskId).catch((e) =>
+      onLine(`[dispatch] out-dir prepare failed: ${e instanceof Error ? e.message : String(e)}`),
+    );
+    // one ACP prompt turn: session per task (resume when one exists)
+    const stream = await openAcpSshStream(sshPlan, envBlob, plan.ai.executable, onLine);
+    // the turn is ON THE HOST from here: a failure past this point is the agent's
+    // run (terminal verdict), never a transport replay — replaying the same prompt
+    // after a half-executed turn would double-apply work
+    turnStarted = true;
+    const acp = await runAcpTurn({
+      stream,
+      onSessionOpen: (steer) => {
+        liveSteers.set(runId, steer);
+      },
+      /* v8 ignore next -- the review-resume arm runs on real ACP review turns;
+       * unit coverage drives review turns through the fake runner */
+      resumeSessionId: plan.review ? plan.review.resumeSessionId : await lastSessionFor(taskId, plan.ai.userId, runId),
+      prompt: brief,
+      timeoutMs: await getRunTimeoutMs(),
+      onLine,
+    });
+    // sessions are per (task, employee) — every run persists its own session id
+    await db.update(taskRuns).set({ sessionId: acp.sessionId }).where(eq(taskRuns.id, runId));
+    const { status, exitCode } = verdictFor(acp.stopReason);
+    // settle attachments DETACHED: collection/cleanup must never block the verdict
+    void settleAttachments(taskId, runId, sshPlan, status);
+    await writer.finish(taskId, status, exitCode, plan);
+    return { status, exitCode };
+  } catch (e) {
+    /* v8 ignore next -- service throws are Error by construction */
+    const failed = await attemptFailed(runId, taskId, attempt, turnStarted, writer, plan, e);
+    if (failed === 'retry') throw e instanceof Error ? e : new Error(String(e));
+    return failed;
+  }
+}
+
+/** integration-test convenience: create the run and execute attempt 1 INLINE (what
+ * the worker does) without the queue — the caller awaits the verdict directly. */
+export async function runInline(taskId: string, tandemUrl: string, opts?: DispatchOpts) {
+  const { runId } = await createRun(taskId, opts);
+  return { runId, finished: executeRun(runId, tandemUrl, { attempt: 1, maxAttempts: 1, ...opts }) };
 }
 
 /** runs for one task, newest first */
@@ -948,6 +1133,7 @@ export async function listRuns(taskId: string) {
       employeeId: taskRuns.employeeId,
       environmentId: taskRuns.environmentId,
       status: taskRuns.status,
+      attempts: taskRuns.attempts,
       exitCode: taskRuns.exitCode,
       output: taskRuns.output,
       prompt: taskRuns.prompt,

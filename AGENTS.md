@@ -117,16 +117,19 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
   lives HERE in AGENTS.md or SPEC.md. **Every functional change ships with matching
   README.md (user impact) + SPEC.md (schema/behavior) updates in the SAME commit.** Stale
   docs = shipped bug.
-- **Dev workflow:** `bun run dev` (Nuxt), `bun run test` (needs local Postgres; one throwaway
-  DB per file via `TANDEM_TEST_DATABASE_URL`), `bun run test:coverage` (100% gates),
+- **Dev workflow:** `bun run dev` (Nuxt), `bun run test` (pure unit + nuxt component tests,
+  no Postgres), `bun run test:coverage` (app-layer gates: 99.5 stmt / 97 branch / 99.5 fn / 99.5 lines),
   `bun run test:e2e` (Playwright, `tandem_e2e` DB, webServer :4100; logins are cookie-injected
   via better-auth test-utils by default — `TANDEM_E2E_FAST_LOGIN=0` forces the UI form),
-  `bun run typecheck`. CI adds a redis service (port 6399) for the bullmq/pubsub integration tests.
-- **Test layout:** vitest projects — `unit` (server/composables, 100%×4 coverage law) and
-  `nuxt` (happy-dom component tests in `test/nuxt/` via `@nuxt/test-utils` `mountSuspended`;
-  coverage off). Router procedures are invoked through the official `call()` helper
-  (`test/unit/helpers/procs.ts`) — never poke `['~orpc']` internals. The better-auth test instance
-  is `buildAuthForTest()` (ctx.test helpers); the production singleton must never expose them.
+  `bun run typecheck`. CI adds a redis service (port 6399) for the e2e server's queue.
+- **Test layout (owner ruling 2026-10-28 — integration project removed):** vitest projects —
+  `unit` (pure: app composables/utils + server modules that run without I/O; no-real-DB law)
+  and `nuxt` (happy-dom component tests in `test/nuxt/` via `@nuxt/test-utils` `mountSuspended`;
+  coverage off). SERVER BEHAVIOR is verified by the e2e suite against the real built server,
+  not by a coverage number — the coverage gate covers the app layer only. Router procedures are
+  invoked through the official `call()` helper (`test/unit/helpers/procs.ts`) — never poke
+  `['~orpc']` internals. The better-auth test instance is `buildAuthForTest()` (ctx.test helpers);
+  the production singleton must never expose them.
 - **Roadmap:** M1 auth/settings/health/admin ✅ · M2 environments ✅ · M3 employees + org chart ✅ ·
   M4 tasks ✅ (+workflow, agent runs) · M5 SSH runner ✅ · M6 ship: CI/release/GHCR/docs ✅.
 - bun-only toolchain; Nuxt UI components; zod strict inputs on every procedure.
@@ -246,5 +249,5 @@ it AND `bun run test` / `bun run typecheck` / `bun run build` are green.
 - **Status freedom:** manual status changes are free on every surface — the transition graph is advisory UI only; the server nextIds/terminal guards are deleted (`tasks.setStatus` sets anything); built-in statuses are editable, blocked transitions = {todo, cancelled}, no self-edge (baseline seed + data migration `20261027120000_blocked_edges`).
 - **Run lock:** while a run is live, the running agent owns the task — `runningRunIdForTask` gates status AND assignee edits (server reject + UI disable).
 - **Composer steer/dispatch:** one state-aware Send — agent running → steer the live run (second `session/prompt` on the open ACP stream via the `onSessionOpen` hook; `steerRun` tri-state steered|refused|stopped; a live run always blocks a second dispatch); stopped → dispatch (AI assignee + non-terminal status). `tasks.note` returns the outcome.
-- **No-real-DB units:** unit tests never touch Postgres — `drizzle.mock()` harness (`test/unit/helpers/mock-db.ts`) for SQL shape; execution stays in `test/integration`.
+- **No-real-DB units:** unit tests never touch Postgres — `drizzle.mock()` harness (`test/unit/helpers/mock-db.ts`) for SQL shape; behavior verification lives in e2e (integration project removed 2026-10-28).
 - **Visual QA loop:** UI ships only after a full vision pass (every major view, desktop + mobile, harsh independent review); DESIGN_SYSTEM.md is the law for tokens (semantic only), accent rationing, page anatomy, empty states, and a11y floor.
