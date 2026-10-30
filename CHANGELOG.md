@@ -1,3 +1,10 @@
+## [2.52.3](https://github.com/namhtpyn/tandem/compare/v2.52.2...v2.52.3) (2026-10-30)
+
+
+### Bug Fixes
+
+* **tasks:** pin the review-round result body — regression net for the task_activity drop ([a30707f](https://github.com/namhtpyn/tandem/commit/a30707f478cffff54e97604416723252aaecd629))
+
 ## [2.52.2](https://github.com/namhtpyn/tandem/compare/v2.52.1...v2.52.2) (2026-10-30)
 
 
