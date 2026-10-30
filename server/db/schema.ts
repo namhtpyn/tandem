@@ -414,6 +414,9 @@ export const taskReviews = pgTable(
     note: text('note'),
     /** human click | ai review turn */
     source: text('source'),
+    /** the submitted result this round judges — set at round open; re-armed
+     * review turns (answer/unblock) replay it without an activity archive */
+    resultBody: text('result_body'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .$default(() => new Date()),
@@ -450,27 +453,6 @@ export const taskAttachments = pgTable(
       .$default(() => new Date()),
   },
   (t) => [index('task_attachments_task_idx').on(t.taskId, t.createdAt)],
-);
-
-export const taskActivity = pgTable(
-  'task_activity',
-  {
-    id: text('id')
-      .primaryKey()
-      .$default(() => uuidv7()),
-    taskId: text('task_id')
-      .notNull()
-      .references(() => tasks.id, { onDelete: 'cascade' }),
-    /** question | answer | forward | note | verdict | status */
-    kind: text('kind').notNull(),
-    authorId: uuid('author_id').references(() => user.id, { onDelete: 'set null' }),
-    body: text('body').notNull().default(''),
-    meta: jsonb('meta').notNull().default({}),
-    createdAt: timestamp('created_at', { withTimezone: true })
-      .notNull()
-      .$default(() => new Date()),
-  },
-  (t) => [index('task_activity_task_idx').on(t.taskId, t.createdAt)],
 );
 
 // Task conversation: one ordered thread per task. Base rows carry the rendered
@@ -518,7 +500,6 @@ export const relations = defineRelations(
     vaultFolders,
     employeeTitles,
     tasks,
-    taskActivity,
     taskRuns,
     taskMessages,
     taskMessageActivities,

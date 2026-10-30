@@ -1,0 +1,113 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "8ab75d3f-8034-42e7-b4f7-636e15fe06c0",
+  "prevIds": [
+    "bd71a9b4-d03b-488e-bcb2-d97d531468e0"
+  ],
+  "footprints": [
+    {
+      "statementType": "drop_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "task_activity"
+      ],
+      "writes": [
+        "s|tbl|public.task_activity",
+        "n|tbl|public.task_activity",
+        "e|tbl|public.task_activity",
+        "n|rel|public.task_activity",
+        "n|type|public.task_activity"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "task_reviews",
+        "result_body"
+      ],
+      "writes": [
+        "s|col|public.task_reviews.result_body",
+        "n|col|public.task_reviews.result_body",
+        "e|col|public.task_reviews.result_body"
+      ],
+      "reads": [
+        "n|tbl|public.task_reviews",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "task_reviews",
+        "name": "result_body",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "drop",
+      "key": "tables\u0000[\"public\",\"task_activity\"]"
+    },
+    {
+      "op": "drop",
+      "key": "columns\u0000[\"public\",\"task_activity\",\"id\"]"
+    },
+    {
+      "op": "drop",
+      "key": "columns\u0000[\"public\",\"task_activity\",\"task_id\"]"
+    },
+    {
+      "op": "drop",
+      "key": "columns\u0000[\"public\",\"task_activity\",\"kind\"]"
+    },
+    {
+      "op": "drop",
+      "key": "columns\u0000[\"public\",\"task_activity\",\"author_id\"]"
+    },
+    {
+      "op": "drop",
+      "key": "columns\u0000[\"public\",\"task_activity\",\"body\"]"
+    },
+    {
+      "op": "drop",
+      "key": "columns\u0000[\"public\",\"task_activity\",\"meta\"]"
+    },
+    {
+      "op": "drop",
+      "key": "columns\u0000[\"public\",\"task_activity\",\"created_at\"]"
+    },
+    {
+      "op": "drop",
+      "key": "indexes\u0000[\"public\",\"task_activity_task_idx\"]"
+    },
+    {
+      "op": "drop",
+      "key": "fks\u0000[\"public\",\"task_activity\",\"task_activity_task_id_tasks_id_fkey\"]"
+    },
+    {
+      "op": "drop",
+      "key": "fks\u0000[\"public\",\"task_activity\",\"task_activity_author_id_user_id_fkey\"]"
+    },
+    {
+      "op": "drop",
+      "key": "pks\u0000[\"public\",\"task_activity\",\"task_activity_pkey\"]"
+    }
+  ]
+}
