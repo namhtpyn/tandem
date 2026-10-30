@@ -1,6 +1,6 @@
 // task thread: one ordered conversation per task — base message rows; a run's
 // thread presence is task_runs.message_id (the task is reached via the message).
-// Activity rows dual-write task_activity during the transition.
+// The thread IS the activity store (task_activity retired 2026-10-30).
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 
 import { parseReviewEnvelope, parseRunEnvelope } from '#shared/run-verdict';
@@ -45,8 +45,8 @@ export async function createRunMessage(
   return nonNull(rows[0]).id;
 }
 
-/** activity side of the thread — the structured payload lives in task_activity
- * during the dual-write window, so this only places the base row */
+/** activity side of the thread — the structured payload lives on the message's
+ * task_message_activities extension row, so this places base row + extension */
 export async function insertActivityMessage(
   input: { taskId: string; authorId: string | null; body: string; payload: Record<string, unknown> },
   ex: DbExecutor = db,

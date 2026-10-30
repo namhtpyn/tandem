@@ -18,7 +18,7 @@ import type { RoutingProposal } from '#shared/run-verdict';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { tasks, taskRuns, taskActivity, taskAttachments, taskMessages } from '../../db/schema';
+import { tasks, taskRuns, taskAttachments, taskMessages } from '../../db/schema';
 import { env } from '../kernel/env';
 import { publishChange } from '../kernel/kernel';
 import { redisQueue } from '../kernel/queue';
@@ -109,9 +109,9 @@ async function logRun(
   meta: Record<string, unknown> = {},
   opts: { publishActivity?: boolean } = {},
 ) {
-  await db
-    .insert(taskActivity)
-    .values({ id: uuidv7(), taskId, kind: 'status', authorId: null, body, meta: { ...meta, runId } });
+  // run bookkeeping lives on the run row + the run card's status pill — no
+  // activity row since task_activity retired (2026-10-30). The publishes keep
+  // the task surface (thread/review caches) current.
   await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
   // dispatch defers this ping until the run's thread turn exists (see dispatchTask):
   // an activity publish before createRunMessage lets the thread cache rebuild

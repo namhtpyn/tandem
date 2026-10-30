@@ -1,5 +1,4 @@
-import { eq, asc, and } from 'drizzle-orm';
-import { v7 as uuidv7 } from 'uuid';
+import { eq, and } from 'drizzle-orm';
 
 import {
   CHANGE_RESOURCE,
@@ -21,7 +20,7 @@ import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { tasks, taskActivity, employeeSupervisors, taskReviews } from '../../db/schema';
+import { tasks, employeeSupervisors, taskReviews } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { refreshParentGating, hasOpenChildren } from './gating.service';
 import { spawnObligation, resolveObligation, cancelObligations, answerHolder } from './obligations.service';
@@ -33,6 +32,7 @@ import {
   currentRound,
   teardownOpenRound,
 } from './review.service';
+import { normalizeActivityPayload } from './thread.service';
 
 export const WAITING_ANSWER_STATUS = STATUS.waitingAnswer;
 export const IN_REVIEW_STATUS = STATUS.inReview;
@@ -49,9 +49,9 @@ async function logActivity(
   meta: Record<string, unknown> = {},
   opts: { thread?: boolean } = {},
 ) {
-  await db.insert(taskActivity).values({ id: uuidv7(), taskId, kind, authorId, body, meta });
-  // dual-write: the thread is the relay-brief source, every activity must land there
-  // — EXCEPT agent result submissions, whose run message already carries the result
+  // the thread IS the activity store (task_activity retired 2026-10-30) — every
+  // activity lands there with its structured payload, EXCEPT agent result
+  // submissions, whose run message already carries the result
   if (opts.thread === false) return;
   const { insertActivityMessage } = await import('./thread.service');
   await insertActivityMessage({ taskId, authorId, body, payload: { kind, ...meta } });
@@ -280,19 +280,29 @@ export async function abandonReview(taskId: string, authorId: string, body: stri
   return { ok: true };
 }
 
-/** activity feed for one task, oldest first */
+/** activity feed for one task, oldest first — the thread carries the rows
+ * (task_activity retired 2026-10-30): kind + meta live in the message's activity
+ * payload extension; run-linked rows are runs, not activity */
 export async function listActivity(taskId: string) {
-  return db
-    .select({
-      id: taskActivity.id,
-      taskId: taskActivity.taskId,
-      kind: taskActivity.kind,
-      authorId: taskActivity.authorId,
-      body: taskActivity.body,
-      meta: taskActivity.meta,
-      createdAt: taskActivity.createdAt,
-    })
-    .from(taskActivity)
-    .where(eq(taskActivity.taskId, taskId))
-    .orderBy(asc(taskActivity.createdAt));
+  const rows = await db.query.taskMessages.findMany({
+    columns: { id: true, body: true, authorId: true, createdAt: true },
+    where: { taskId },
+    orderBy: { createdAt: 'asc', id: 'asc' },
+    with: { activityExt: { columns: { payload: true } }, run: { columns: { id: true } } },
+  });
+  return rows
+    .filter((m) => !m.run)
+    .map((m) => {
+      const payload = normalizeActivityPayload(m.activityExt?.payload) ?? {};
+      const { kind, ...meta } = payload;
+      return {
+        id: m.id,
+        taskId,
+        kind: typeof kind === 'string' ? kind : 'note',
+        authorId: m.authorId,
+        body: m.body,
+        meta,
+        createdAt: m.createdAt,
+      };
+    });
 }
