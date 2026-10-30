@@ -1,3 +1,88 @@
+## [2.52.2](https://github.com/namhtpyn/tandem/compare/v2.52.1...v2.52.2) (2026-10-30)
+
+
+### Bug Fixes
+
+* **tasks:** setStatus resolves the target against seeded status ids ([a221cfd](https://github.com/namhtpyn/tandem/commit/a221cfdff3a7d75c10a2254019e983ba8c3f31b1)), closes [#62](https://github.com/namhtpyn/tandem/issues/62)
+
+## [2.52.1](https://github.com/namhtpyn/tandem/compare/v2.52.0...v2.52.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **acp:** cancel gateway-resident turns on failure and on resume ([5503c17](https://github.com/namhtpyn/tandem/commit/5503c179a0ca3d8729e627006bc86c0e4d878faf))
+* **dispatch:** enforce the per-agent cap at claim time ([1ecefa1](https://github.com/namhtpyn/tandem/commit/1ecefa1af8a7f8fd4e17bfaa19c99557d89fc628))
+
+# [2.52.0](https://github.com/namhtpyn/tandem/compare/v2.51.1...v2.52.0) (2026-10-29)
+
+
+### Features
+
+* **review:** humans cannot submit an escalate review (AI-only verb) ([66db1ee](https://github.com/namhtpyn/tandem/commit/66db1ee0d92f88772afe57e87ef6ba2ec065d047))
+
+## [2.51.1](https://github.com/namhtpyn/tandem/compare/v2.51.0...v2.51.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **review:** one Ash item per review turn — verdict rides the run bubble ([c0273e9](https://github.com/namhtpyn/tandem/commit/c0273e9f0e741af69bebbf1d6566b02e8a1b0797))
+* **steering:** the live-run lookup reads the runs table — the composer law works again ([6115976](https://github.com/namhtpyn/tandem/commit/61159765bd22bc7adc91aebcf9f43fb440d0c737))
+
+# [2.51.0](https://github.com/namhtpyn/tandem/compare/v2.50.1...v2.51.0) (2026-10-29)
+
+
+### Features
+
+* **review:** sequential rounds, verdict-identity envelope, escalation, blocked parks ([c930258](https://github.com/namhtpyn/tandem/commit/c9302582869f12ddb72a6b8e29f8dd210f10db79))
+
+## [2.50.1](https://github.com/namhtpyn/tandem/compare/v2.50.0...v2.50.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **brief:** relay keys on a resumable session; deliverables fold into the output contract ([ea983f8](https://github.com/namhtpyn/tandem/commit/ea983f81fd4ae20f06b3214dcf2dfc33f553c6f4))
+* **runner:** verdicts always land — parser recovery, one Jay response, review re-dispatch ([586934a](https://github.com/namhtpyn/tandem/commit/586934afe13a0d54adc1319ef1007b52f73944d0))
+
+# [2.50.0](https://github.com/namhtpyn/tandem/compare/v2.49.2...v2.50.0) (2026-10-29)
+
+
+### Features
+
+* **dispatch:** run-level retries — the run is the unit of work ([f145d32](https://github.com/namhtpyn/tandem/commit/f145d32a5647a5f673a08f31bfb5795ff4a1a70b))
+
+## [2.49.2](https://github.com/namhtpyn/tandem/compare/v2.49.1...v2.49.2) (2026-10-28)
+
+
+### Bug Fixes
+
+* **app:** prod-build oRPC import inlines; dev keeps the opaque specifier ([41d4f6b](https://github.com/namhtpyn/tandem/commit/41d4f6b4b822ba47170a3e4ce0f0a602eeb3d1a8))
+
+## [2.49.1](https://github.com/namhtpyn/tandem/compare/v2.49.0...v2.49.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **ci:** keep component coverage out of the global v8 gate ([6fbe95d](https://github.com/namhtpyn/tandem/commit/6fbe95d5b89d7edb7145e821462ae11ecc92cb09))
+* **ci:** restore the nuxt project's explicit coverage opt-out ([03b1ff8](https://github.com/namhtpyn/tandem/commit/03b1ff89740de4e5644b5e99dc8fa0c91149e041))
+* **dev:** orpc plugin's SSR dynamic imports use variable specifiers ([486f0e1](https://github.com/namhtpyn/tandem/commit/486f0e1ff92dcab3f21d293c8783b76b24b0d86f))
+* **e2e:** global-setup applies drizzle migrations itself ([e8398aa](https://github.com/namhtpyn/tandem/commit/e8398aadd2653c650ca360564ab1a70fc5aaac95))
+* **e2e:** one migrator — server owns boot migration, hook waits ([01c0f57](https://github.com/namhtpyn/tandem/commit/01c0f5766b1e779f8bfc0ce1c76b3dc623cb7ca7))
+* **package:** update scripts to use bun and upgrade dependencies ([e312e3a](https://github.com/namhtpyn/tandem/commit/e312e3a52ad4d50dbfbc8dcc820ab5ec87ed1888))
+* **server:** audit round 8a — transactions, ordering, publishes ([8b1e216](https://github.com/namhtpyn/tandem/commit/8b1e2161d7c2d709fcc9c0b18a1ec9185e5133da))
+* **ui:** audit round 4 — consistency batch (component law, copy, a11y) ([612025c](https://github.com/namhtpyn/tandem/commit/612025cc712d423fb3cabe0b99f326c3bbae97fe)), closes [#label-cell](https://github.com/namhtpyn/tandem/issues/label-cell)
+* **ui:** audit round 5 — consistency, sanitize, component law ([1da94b8](https://github.com/namhtpyn/tandem/commit/1da94b869e1e51e56209bbad13b67ad0db289944))
+* **ui:** audit round 6 — state edges, a11y, sanitize, test hygiene ([f45b5af](https://github.com/namhtpyn/tandem/commit/f45b5af3eb89860656694a96628d320e0b0a02a0)), closes [#shared](https://github.com/namhtpyn/tandem/issues/shared) [#hint](https://github.com/namhtpyn/tandem/issues/hint)
+* **ui:** audit round 7a — theme, shell, managers, tests ([376c52b](https://github.com/namhtpyn/tandem/commit/376c52bdf000a6a0385a8bd1a53228ede8f2d49b))
+* **ui:** audit round 7b — tasks domain, a11y, test infra ([862735d](https://github.com/namhtpyn/tandem/commit/862735d57d0fa43716a365cd73d58848ad8bbc43))
+* **ui:** audit round 8b/c — tokens, gutters, tasks, managers, a11y, copy ([c378624](https://github.com/namhtpyn/tandem/commit/c378624ca4fe5f3733f27f634c308180ff9adc85))
+* **ui:** audit-loop round 2 — blind visual + code findings ([5f75653](https://github.com/namhtpyn/tandem/commit/5f75653062b448089fe5db777aa4b6b435be3510))
+* **ui:** audit-loop round 3 — code-audit findings ([45aa5ed](https://github.com/namhtpyn/tandem/commit/45aa5ed99cf46e9f639965a5baacc5d397f26bde))
+* **ui:** audit-loop round 3 — dead slot, board polish, overview pluralization ([7a1d6ea](https://github.com/namhtpyn/tandem/commit/7a1d6ea265bb205fe7a58d95f49f6c91065b930d)), closes [#assignee-cell](https://github.com/namhtpyn/tandem/issues/assignee-cell)
+* **ui:** board status legibility — distinct category glyphs + waiting_answer color ([e7be39d](https://github.com/namhtpyn/tandem/commit/e7be39d956bfd397e7c9221e57c031aede379bef))
+* **ui:** frontend audit remediation — all 85 findings ([8958cae](https://github.com/namhtpyn/tandem/commit/8958cae163047be8f5086360b07e77a51a963dc7)), closes [#body](https://github.com/namhtpyn/tandem/issues/body)
+* **ui:** visual pass 9 — gutter parity, one CTA per empty list, board scroll cue, calmer settings saves ([a5082a3](https://github.com/namhtpyn/tandem/commit/a5082a38cd382d9de5be6758c9e30ac6ee4a69ac))
+* **ui:** visual-audit remediation round 1 + docs ([856222d](https://github.com/namhtpyn/tandem/commit/856222d2e975cc54bb1a56686db710ac5800702f)), closes [#empty-cta](https://github.com/namhtpyn/tandem/issues/empty-cta)
+
 # [2.49.0](https://github.com/namhtpyn/tandem/compare/v2.48.0...v2.49.0) (2026-10-27)
 
 
