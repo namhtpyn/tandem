@@ -1,3 +1,11 @@
+## [2.52.1](https://github.com/namhtpyn/tandem/compare/v2.52.0...v2.52.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **acp:** cancel gateway-resident turns on failure and on resume ([5503c17](https://github.com/namhtpyn/tandem/commit/5503c179a0ca3d8729e627006bc86c0e4d878faf))
+* **dispatch:** enforce the per-agent cap at claim time ([1ecefa1](https://github.com/namhtpyn/tandem/commit/1ecefa1af8a7f8fd4e17bfaa19c99557d89fc628))
+
 # [2.52.0](https://github.com/namhtpyn/tandem/compare/v2.51.1...v2.52.0) (2026-10-29)
 
 
