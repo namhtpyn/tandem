@@ -14,7 +14,7 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
-import { db, asDb, type DbExecutor } from '../../db/index';
+import { db, type DbExecutor } from '../../db/index';
 import { tasks, taskReviews, taskRuns, taskMessages } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { spawnObligation, cancelObligations, cancelAllObligations, resolveObligation } from './obligations.service';
@@ -52,9 +52,8 @@ export async function logActivity(
   ex: DbExecutor = db,
   opts: { thread?: boolean } = {},
 ) {
-  const { taskActivity } = await import('../../db/schema');
-  await asDb(ex).insert(taskActivity).values({ id: uuidv7(), taskId, authorId, kind, body, meta });
-  // dual-write: the conversation thread carries the same item (payload keeps the kind).
+  // the thread IS the activity store (task_activity retired 2026-10-30); the
+  // conversation row carries the same item (payload keeps the kind).
   // AI verdicts SKIP the thread copy (owner ruling 2026-10-29): the reviewer's run
   // bubble already carries the verdict — one response per turn.
   if (opts.thread !== false) await insertActivityMessage({ taskId, authorId, body, payload: { kind, ...meta } }, ex);
@@ -109,9 +108,15 @@ export async function openReviewRound(taskId: string, reviewers: string[], resul
   const round = (await currentRound(taskId)) + 1;
   const now = new Date();
   for (const reviewerId of uniqueReviewers) {
-    await db
-      .insert(taskReviews)
-      .values({ id: uuidv7(), taskId, reviewerId, round, status: REVIEW_STATUS.PENDING, createdAt: now });
+    await db.insert(taskReviews).values({
+      id: uuidv7(),
+      taskId,
+      reviewerId,
+      round,
+      status: REVIEW_STATUS.PENDING,
+      resultBody,
+      createdAt: now,
+    });
     await spawnObligation(taskId, reviewerId, OBLIGATION_ROLE.APPROVAL, now);
   }
   await logActivity(
@@ -139,20 +144,17 @@ export async function openRoundLive(taskId: string) {
   return rows.some((r) => r.status === REVIEW_STATUS.PENDING);
 }
 
-/** the submitted result the current round is judging (latest submit activity body) */
-async function latestSubmittedBody(taskId: string) {
-  const { taskActivity } = await import('../../db/schema');
+/** the submitted result the current round is judging — the round rows carry it
+ * (set at openReviewRound; task_activity retired 2026-10-30) */
+async function roundResultBody(taskId: string) {
+  const round = await currentRound(taskId);
+  if (round === 0) return '';
   const rows = await db
-    .select()
-    .from(taskActivity)
-    .where(eq(taskActivity.taskId, taskId))
-    .orderBy(desc(taskActivity.createdAt))
-    .limit(50);
-  const submitted = rows.find(
-    (a) => a.kind === ACTIVITY_KIND.VERDICT && (a.meta as Record<string, unknown> | null)?.submitted,
-  );
-  /* v8 ignore next -- the submit activity always carries a body in practice */
-  return submitted?.body ?? '';
+    .select({ resultBody: taskReviews.resultBody })
+    .from(taskReviews)
+    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)))
+    .limit(1);
+  return rows[0]?.resultBody ?? '';
 }
 
 /** fire the NEXT pending AI reviewer's turn — exactly one per call (sequential law:
@@ -171,7 +173,7 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
     .orderBy(taskReviews.createdAt);
   const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true }, orderBy: { userId: 'asc' } });
   const aiIds = new Set(aiRows.map((r) => r.userId));
-  const body = resultBody ?? (await latestSubmittedBody(taskId));
+  const body = resultBody ?? (await roundResultBody(taskId));
   for (const row of rows) {
     if (!row.reviewerId || !aiIds.has(row.reviewerId)) continue; // human reviewer: the card is enough
     // one LIVE review turn per reviewer: skip while theirs is still running
