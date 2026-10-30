@@ -101,9 +101,30 @@ async function reapStaleRunsInner() {
   return reaped;
 }
 
-/** find one eligible task: ready-category status, AI assignee, agent under its cap.
+/** the per-agent cap (Settings override, default 1); dynamic import keeps the
+ * settings domain out of the dispatcher's static graph */
+async function tasksPerAgentCap(): Promise<number> {
+  const { getTasksPerAgent } = await import('../settings/settings.service');
+  return await getTasksPerAgent();
+}
+
+/** pure cap decision: an agent at/over its live-run cap claims nothing (CAP LAW 2026-10-16) */
+export function atCap(liveRuns: number, cap: number): boolean {
+  return liveRuns >= cap;
+}
+
+/** live RUNNING run count for one employee across all their tasks — the cap is per
+ * agent, so the dispatcher must know how many turns an agent already owns */
+export async function liveRunCountFor(employeeId: string): Promise<number> {
+  return await db.query.taskRuns.count({ employeeId: { eq: employeeId }, status: { eq: RUN_STATUS.RUNNING } });
+}
+
+/** find one eligible task: ready-category status, AI assignee, backoff elapsed,
+ * agent under its cap (oldest first).
  * CAP LAW (2026-10-16): one concurrent task per agent by default; the Settings page's
- * tasksPerAgent raises it. Agents run in PARALLEL — the cap is per agent, never global. */
+ * tasksPerAgent raises it. Agents run in PARALLEL — the cap is per agent, never global.
+ * The cap is checked HERE at claim time, not left to queue concurrency: a dispatch
+ * claim (run row RUNNING + task doing) must never outrun the agent's slot count. */
 export async function findEligible(): Promise<{ taskId: string; employeeId: string } | null> {
   const statuses = await db.query.taskStatuses.findMany({
     columns: { id: true, category: true },
@@ -118,14 +139,19 @@ export async function findEligible(): Promise<{ taskId: string; employeeId: stri
   });
   const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true }, orderBy: { userId: 'asc' } });
   const aiIds = new Set(aiRows.map((r) => r.userId));
+  const cap = await tasksPerAgentCap();
   const now = Date.now();
   const eligible = rows
     .filter((t) => readyIds.includes(t.status) && t.assigneeId && aiIds.has(t.assigneeId))
     // failure backoff: not claimable until dispatch_after passes (null = immediately)
     .filter((t) => !t.dispatchAfter || t.dispatchAfter.getTime() <= now)
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-  const first = eligible[0];
-  return first ? { taskId: first.id, employeeId: nonNull(first.assigneeId) } : null;
+  for (const t of eligible) {
+    const employeeId = nonNull(t.assigneeId);
+    if (atCap(await liveRunCountFor(employeeId), cap)) continue;
+    return { taskId: t.id, employeeId };
+  }
+  return null;
 }
 
 /** one scan step: claim + dispatch at most one task. Returns true if dispatched.
@@ -163,13 +189,17 @@ export async function dispatchIfEligible(taskId: string, tandemUrl: string) {
   });
   const readyIds = new Set(statuses.filter((s) => s.category === 'ready').map((s) => s.id));
   const row = await db.query.tasks.findFirst({
-    columns: { status: true, dispatchAfter: true },
+    columns: { status: true, dispatchAfter: true, assigneeId: true },
     where: { id: { eq: taskId } },
   });
   if (!row || !readyIds.has(row.status)) return; // stale duplicate: skip
   // backoff law: a dispatch call must not bypass the failure backoff the runner set —
   // the scan loop respects dispatch_after; the direct path has to as well
   if (row.dispatchAfter && row.dispatchAfter.getTime() > Date.now()) return;
+  // CAP LAW: the direct path obeys the same per-agent cap as the scan — a busy agent
+  // gains no second claim because a human typed at the right moment. The scan picks
+  // the task up as soon as a slot frees.
+  if (row.assigneeId && atCap(await liveRunCountFor(row.assigneeId), await tasksPerAgentCap())) return;
   // returns after enqueue — the per-agent worker executes the run (composer law:
   // submitting dispatches the run; the RPC never rides the turn)
   await dispatchTask(taskId, tandemUrl);
@@ -184,8 +214,7 @@ async function dispatchBackoffDelay(failedAttempt: number, runId: string): Promi
 }
 
 export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<typeof redisQueue>>>) {
-  const { getTasksPerAgent } = await import('../settings/settings.service');
-  const cap = await getTasksPerAgent();
+  const cap = await tasksPerAgentCap();
   const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true }, orderBy: { userId: 'asc' } });
   const wanted = new Set(aiRows.map((r) => r.userId));
   for (const [agentId, w] of workers) {
