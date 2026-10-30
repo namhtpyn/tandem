@@ -211,6 +211,12 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
             cwd: SESSION_CWD,
             mcpServers: [],
           });
+          // orphan sweep: the previous run on this session may have died with its
+          // turn still executing in the agent's gateway. Cancelling HERE is ordered
+          // before the main prompt on the same stream — a no-op when idle, a kill
+          // when a stale turn lingers. (Prod 2026-10-29: a resumed session met its
+          // own still-running zombie.)
+          await ctx.notify(acp.methods.agent.session.cancel, { sessionId: resumeId }).catch(() => {});
           return resumeId;
         } catch (e) {
           onLine?.(
@@ -299,9 +305,15 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
             dead,
           ]);
         } catch (e) {
-          throw new Error(
-            `acp session/prompt failed: ${e instanceof Error ? e.message : String(e)} (transcript so far: ${transcript.slice(0, 500)})`,
-          );
+          const message = e instanceof Error ? e.message : String(e);
+          // the turn lives in the agent's gateway, not on this wire: a JSON-RPC
+          // rejection (wire still open) leaves it RUNNING unless we cancel it.
+          // Prod 2026-10-29: a -32603 prompt failure orphaned a turn that kept
+          // burning tokens for 15+ minutes after Tandem marked the run failed.
+          if (message !== 'acp stream closed') {
+            await ctx.notify(acp.methods.agent.session.cancel, { sessionId }).catch(() => {});
+          }
+          throw new Error(`acp session/prompt failed: ${message} (transcript so far: ${transcript.slice(0, 500)})`);
         }
         clearTimeout(turnTimer);
         settled = true;
