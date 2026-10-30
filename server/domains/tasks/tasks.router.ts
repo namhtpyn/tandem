@@ -308,6 +308,18 @@ const updateInput = z.preprocess(
   }),
 );
 
+/** every status write must reference a seeded task_statuses id: tasks.status has
+ *  no FK by design (status deletes re-home their tasks), so a dangling value —
+ *  e.g. the legacy string 'doing' that survived the uuid remap — persists
+ *  silently and turns the task into a dispatch/board ghost (inner-join drops it) */
+async function requireExistingStatus(status: string) {
+  const found = await db.query.taskStatuses.findFirst({
+    columns: { id: true },
+    where: { id: { eq: status } },
+  });
+  if (!found) throw new ORPCError('BAD_REQUEST', { message: 'status does not exist' });
+}
+
 /** the dispatcher's eligibility rule restated for the manual path: ready-category
  *  status, AI assignee, and no run already in flight */
 async function requireDispatchable(taskId: string) {
@@ -492,6 +504,8 @@ export const tasksRouter = os.router({
         orderBy: { createdAt: 'asc' },
       });
       if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
+      // membership first: an unknown status id is dead input regardless of run state
+      await requireExistingStatus(input.status);
       // owner rulings 2026-10-27: manual status is free (graph is advisory), but a
       // live run locks it — the running agent owns the status until it settles
       const { runningRunIdForTask } = await import('./runner.service');
