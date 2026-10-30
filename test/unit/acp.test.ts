@@ -661,6 +661,50 @@ describe('acp.client turns', () => {
     expect(lines.some((l) => l.includes('allowed: op-raw'))).toBe(false);
   });
 
+  it('a JSON-RPC prompt error cancels the gateway-resident turn before failing', async () => {
+    let promptsSeen = 0;
+    const stream = fakeAgent((msg, send) => {
+      const method = msg.method as string | undefined;
+      if (!method) return;
+      if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1 } });
+      else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-err' } });
+      else if (method === 'session/prompt') {
+        promptsSeen += 1;
+        // the agent's handler raised: generic -32603, turn keeps running server-side
+        send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Internal error' } });
+      }
+    });
+    await expect(turn(stream)).rejects.toThrow('Internal error');
+    // the client told the agent to stop the (still live) turn
+    const cancels = stream.written.filter((l) => l.includes('"session/cancel"'));
+    expect(cancels.length).toBe(1);
+    expect(JSON.parse(cancels[0]).params).toEqual({ sessionId: 'sess-err' });
+    expect(promptsSeen).toBe(1);
+  });
+
+  it('resuming a session sweeps stale turns: cancel lands before the main prompt', async () => {
+    const stream = fakeAgent((msg, send) => {
+      const method = msg.method as string | undefined;
+      if (!method) return;
+      if (method === 'initialize')
+        send({
+          jsonrpc: '2.0',
+          id: msg.id,
+          result: { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { resume: {} } } },
+        });
+      else if (method === 'session/resume') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-old' } });
+      else if (method === 'session/prompt') send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+    });
+    const res = await turn(stream, { resumeSessionId: 'sess-old' });
+    expect(res.sessionId).toBe('sess-old');
+    const cancelIdx = stream.written.findIndex((l) => l.includes('"session/cancel"'));
+    const promptIdx = stream.written.findIndex((l) => l.includes('"session/prompt"'));
+    expect(cancelIdx).toBeGreaterThanOrEqual(0);
+    // ordered on the same stream: the orphan sweep can never race the new turn
+    expect(cancelIdx).toBeLessThan(promptIdx);
+    expect(JSON.parse(stream.written[cancelIdx]).params).toEqual({ sessionId: 'sess-old' });
+  });
+
   it('cancel grace skips the kill when the agent settles after cancel', async () => {
     setEnv({ TANDEM_ACP_CANCEL_GRACE_MS: '100' });
     try {
