@@ -1,3 +1,10 @@
+## [2.52.2](https://github.com/namhtpyn/tandem/compare/v2.52.1...v2.52.2) (2026-10-30)
+
+
+### Bug Fixes
+
+* **tasks:** setStatus resolves the target against seeded status ids ([a221cfd](https://github.com/namhtpyn/tandem/commit/a221cfdff3a7d75c10a2254019e983ba8c3f31b1)), closes [#62](https://github.com/namhtpyn/tandem/issues/62)
+
 ## [2.52.1](https://github.com/namhtpyn/tandem/compare/v2.52.0...v2.52.1) (2026-10-30)
 
 
