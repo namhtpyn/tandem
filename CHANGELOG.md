@@ -1,3 +1,10 @@
+## [2.56.3](https://github.com/namhtpyn/tandem/compare/v2.56.2...v2.56.3) (2026-10-31)
+
+
+### Bug Fixes
+
+* **tasks:** view toggle pinned outside the toolbar action scroller ([#99](https://github.com/namhtpyn/tandem/issues/99)) ([#101](https://github.com/namhtpyn/tandem/issues/101)) ([ed14c4c](https://github.com/namhtpyn/tandem/commit/ed14c4c8763a29ab64f945533ea53497fc10bdf6)), closes [#96](https://github.com/namhtpyn/tandem/issues/96)
+
 ## [2.56.2](https://github.com/namhtpyn/tandem/compare/v2.56.1...v2.56.2) (2026-10-31)
 
 
