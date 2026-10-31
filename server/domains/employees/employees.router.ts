@@ -21,7 +21,7 @@ import {
   user as userTable,
   vaultSecrets as vaultSecretsTable,
 } from '../../db/schema';
-import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { ORPCError, adminProcedure, liveGenerator, protectedProcedure, publishChange } from '../kernel/kernel';
 
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/;
 
@@ -300,7 +300,7 @@ export const employeesRouter = os.router({
 
   /** create an employee AND its login user. kind=ai also mints an API key
    *  (returned once) and the AI extension row. */
-  create: protectedProcedure
+  create: adminProcedure
     .input(
       z.strictObject({
         name: z.string().min(1).max(100),
@@ -377,7 +377,7 @@ export const employeesRouter = os.router({
       return { id: userId, userId, apiKey };
     }),
 
-  update: protectedProcedure
+  update: adminProcedure
     .input(
       z.strictObject({
         id: z.string().min(1),
@@ -534,7 +534,7 @@ export const employeesRouter = os.router({
       }),
 
     /** removing a catalog entry leaves employees' free-text titles untouched */
-    remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+    remove: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
       const deleted = await db
         .delete(employeeTitlesTable)
         .where(eq(employeeTitlesTable.id, input.id))
@@ -545,7 +545,7 @@ export const employeesRouter = os.router({
     }),
   },
 
-  remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input, context }) => {
+  remove: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input, context }) => {
     // guard: cannot delete yourself (session may be absent in raw handler tests)
     const selfId = (context as { session?: { user?: { id?: string } } }).session?.user?.id;
     if (selfId && selfId === input.id) {
@@ -602,7 +602,7 @@ export const employeesRouter = os.router({
   }),
 
   /** mint a fresh access key for any employee — AI or human (old keys stay valid) */
-  createApiKey: protectedProcedure
+  createApiKey: adminProcedure
     .input(
       z.strictObject({
         employeeId: z.string().min(1),
@@ -622,7 +622,7 @@ export const employeesRouter = os.router({
     }),
 
   /** rename an access key — employeeId scopes the write to that employee's keys */
-  updateApiKey: protectedProcedure
+  updateApiKey: adminProcedure
     .input(
       z.strictObject({
         keyId: z.string().min(1),
@@ -675,7 +675,7 @@ export const employeesRouter = os.router({
     }),
 
   /** revoke one API key — employeeId scopes the delete to that employee's keys */
-  revokeApiKey: protectedProcedure
+  revokeApiKey: adminProcedure
     .input(
       z.strictObject({
         keyId: z.string().min(1),

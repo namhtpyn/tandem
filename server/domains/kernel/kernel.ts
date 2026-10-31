@@ -1,10 +1,10 @@
 import { ORPCError, os } from '@orpc/server';
-// oRPC v2 kernel: context type, base, protected procedure, live generator,
-// change-bus re-exports. Modules import from here — never from each other's
-// routers; services never import routers.
+// oRPC v2 kernel: context type, base, protected procedure, role-gated
+// procedures (Roles & access), live generator, change-bus re-exports. Modules
+// import from here — never from each other's routers; services never import routers.
 import type { RequestHeadersHandlerPluginContext } from '@orpc/server/plugins';
 
-import type { Role } from '#shared/enums';
+import { ROLE, type Role } from '#shared/enums';
 
 import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from './change-bus';
 
@@ -27,6 +27,27 @@ const requireSession = base.middleware(async ({ context, next }) => {
 });
 
 export const protectedProcedure = base.use(requireSession);
+
+/** Role gate (SPEC "Roles & access") — resolves the session (cached per
+ *  request) and checks the role in one hop: anonymous → UNAUTHORIZED (401
+ *  before 403), wrong role → FORBIDDEN; session stays injected downstream. */
+const requireRole = (...allowed: Role[]) =>
+  base.middleware(async ({ context, next }) => {
+    const session = await context.getSession();
+    if (!session) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'authentication required' });
+    }
+    if (!allowed.includes(session.user.role)) {
+      throw new ORPCError('FORBIDDEN', { message: 'insufficient role' });
+    }
+    return next({ context: { session } });
+  });
+
+/** work-surface writes (tasks, projects, Jev auto-assign) — EMPLOYEE + ADMIN */
+export const employeeProcedure = base.use(requireRole(ROLE.EMPLOYEE, ROLE.ADMIN));
+
+/** admin surfaces (vault, providers, oidc, env/employee/status/settings writes) */
+export const adminProcedure = base.use(requireRole(ROLE.ADMIN));
 
 /** Live generator: initial snapshot, then fresh snapshots on relevant changes. */
 export async function* liveGenerator<T>(resources: ChangeResource[], fetch: () => Promise<T>) {
