@@ -127,6 +127,7 @@ test.describe('authenticated settings', () => {
         runTimeoutMs: 1_800_000,
         tasksPerAgent: 1,
         companyPrompt: '',
+        flags: {},
       });
 
       // add an OIDC provider via oRPC
