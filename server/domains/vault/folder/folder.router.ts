@@ -18,21 +18,21 @@ const listFolderOptionsInput = z.object({
 
 import { CHANGE_RESOURCE } from '#shared/enums';
 
-import { protectedProcedure, liveGenerator } from '../../kernel/kernel';
+import { adminProcedure, liveGenerator } from '../../kernel/kernel';
 import { listFolders, listFoldersPaged, listFolderOptions, saveFolder, removeFolder } from './folder.service';
 
 export const folderRouter = os.router({
-  list: protectedProcedure.handler(() => listFolders()),
+  list: adminProcedure.handler(() => listFolders()),
 
   /** paged {id,name} option rows for pickers — no secret counts */
-  options: protectedProcedure.input(listFolderOptionsInput).handler(({ input }) => listFolderOptions(input)),
+  options: adminProcedure.input(listFolderOptionsInput).handler(({ input }) => listFolderOptions(input)),
 
-  listPaged: protectedProcedure.input(listFoldersPagedInput).handler(({ input }) => listFoldersPaged(input)),
+  listPaged: adminProcedure.input(listFoldersPagedInput).handler(({ input }) => listFoldersPaged(input)),
 
-  live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.VAULT], listFolders)),
+  live: adminProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.VAULT], listFolders)),
 
   /** create/rename a folder (admin-only write) */
-  save: protectedProcedure
+  save: adminProcedure
     .input(
       z.strictObject({
         id: z.string().min(1).optional(),
@@ -42,7 +42,5 @@ export const folderRouter = os.router({
     .handler(({ input }) => saveFolder(input)),
 
   /** deleting a folder never deletes secrets — they fall back to uncategorized (FK SET NULL) */
-  remove: protectedProcedure
-    .input(z.strictObject({ id: z.string().min(1) }))
-    .handler(({ input }) => removeFolder(input)),
+  remove: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(({ input }) => removeFolder(input)),
 });

@@ -10,7 +10,7 @@ import type { ProjectRow } from '#shared/types';
 
 import { db } from '../../db/index';
 import { projects as projectsTable } from '../../db/schema';
-import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { ORPCError, employeeProcedure, liveGenerator, protectedProcedure, publishChange } from '../kernel/kernel';
 
 export const projectsRouter = os.router({
   /** live list — flat rows; nesting resolved client-side from parentId */
@@ -69,7 +69,7 @@ export const projectsRouter = os.router({
   ),
 
   /** create (staff only — employees and admins) */
-  create: protectedProcedure
+  create: employeeProcedure
     .input(
       z.strictObject({
         name: z.string().min(1).max(120),
@@ -99,7 +99,7 @@ export const projectsRouter = os.router({
     }),
 
   /** update (name/description/status/parent — cycle-guarded, staff only) */
-  update: protectedProcedure
+  update: employeeProcedure
     .input(
       z.strictObject({
         id: z.string().min(1),
@@ -159,7 +159,7 @@ export const projectsRouter = os.router({
     }),
 
   /** delete — tasks orphan to no-project (set null); children orphan to root (set null); staff only */
-  remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+  remove: employeeProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
     const deleted = await db
       .delete(projectsTable)
       .where(eq(projectsTable.id, input.id))

@@ -99,6 +99,26 @@ ssh -p <port> <user>@<host> hermes chat -q --query-file - --format stream-json
 - `oidcEnabled = providers.length > 0`
 - invariant: disabling password login with no OIDC provider configured is rejected 400
 
+## Roles & access
+
+Three roles on `user.role` — ADMIN, EMPLOYEE, VIEWER (unknown values read as
+VIEWER; new users default VIEWER; the first boot user claims ADMIN).
+**Enforcement is server-side at the oRPC kernel; UI gating is UX, never the
+boundary.** Tier matrix:
+
+| tier     | who                    | surface                                                                                                                                                                                                                               |
+| -------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| public   | anonymous              | `auth.config`, `auth.configLive`, `auth.session`, `meta.version`, better-auth `/auth/**`, `/health/*`                                                                                                                                 |
+| session  | any authenticated user | every read procedure (list/listPaged/live/detail/thread/runs/inbox/subtasks/assignments/proposals/reviews/activity/titles/apiKeys), `changes.live`                                                                                    |
+| employee | EMPLOYEE + ADMIN       | every `tasks.*` and `projects.*` write (create/update/setStatus/note/ask/forward/answer/submit/approve/requestChanges/reject/abandon/dispatch/remove/proposals confirm+reject) and `statuses.assign` (Jev auto-assign)                |
+| admin    | ADMIN only             | vault (secrets + folders, all verbs), providers (all verbs incl. models), oidc.replace, settings.update, environments create/update/remove/probe, employees create/update/remove, access-key mint/update/revoke, statuses save/remove |
+
+Wrong role → `FORBIDDEN`; anonymous → `UNAUTHORIZED`. Reads never exceed the
+session tier; an admin-surface write is never wired below the admin tier. A
+role gate is part of the procedure definition itself (kernel middleware), so a
+router file wired with bare `protectedProcedure` on an admin-tier write is a
+defect even if a client never calls it.
+
 ## API law (app-wide)
 
 **Every** application API is an **oRPC v2** procedure mounted at `/rpc`
@@ -125,7 +145,8 @@ better-auth's own `/auth/**` protocol and the `/health/*` infra probes. Rules:
 - session context: lazy `getSession()` from better-auth per request (cookie
   headers forwarded); `UNAUTHORIZED` (401) for anonymous calls via middleware
 - procedure errors map to oRPC codes: `CONFLICT` 409 duplicate name,
-  `NOT_FOUND` 404, `BAD_REQUEST` 400 schema violations
+  `NOT_FOUND` 404, `BAD_REQUEST` 400 schema violations, `FORBIDDEN` 403 role gate
+  (see Roles & access)
 - input validation: zod `strictObject` everywhere (unknown keys rejected)
 - wire format: POST `/rpc/<path>`, body `{ "json": <input> }`,
   `content-type: application/json`; responses `{ "json": <result> }`
@@ -140,14 +161,14 @@ better-auth's own `/auth/**` protocol and the `/health/*` infra probes. Rules:
 | `auth.configLive`     | none    | —                                                         | live `{passwordEnabled, oidcEnabled, providers:[{id,label}]}`                                       |
 | `auth.session`        | none    | —                                                         | session payload or null                                                                             |
 | `settings.live`       | session | —                                                         | live `{disablePasswordLogin}`                                                                       |
-| `settings.update`     | session | `{disablePasswordLogin?}`                                 | `{ok}` (400 when disabling with no OIDC provider)                                                   |
+| `settings.update`     | admin   | `{disablePasswordLogin?}`                                 | `{ok}` (400 when disabling with no OIDC provider)                                                   |
 | `oidc.live`           | session | —                                                         | live provider list with `hasSecret`, never secrets                                                  |
-| `oidc.replace`        | session | `{providers:[{id?,label,issuer,clientId,clientSecret?}]}` | `{ok,count}` (secrets write-only; ids server-generated for new providers)                           |
+| `oidc.replace`        | admin   | `{providers:[{id?,label,issuer,clientId,clientSecret?}]}` | `{ok,count}` (secrets write-only; ids server-generated for new providers)                           |
 | `environments.live`   | session | —                                                         | live snapshot of all environments                                                                   |
-| `environments.create` | session | `{name,host,port?,username}`                              | created row                                                                                         |
-| `environments.update` | session | `{id,name,host,port?,username}`                           | updated row                                                                                         |
-| `environments.remove` | session | `{id}`                                                    | `{ok}`                                                                                              |
-| `environments.probe`  | session | `{id}`                                                    | `{ok,detail,durationMs}`                                                                            |
+| `environments.create` | admin   | `{name,host,port?,username}`                              | created row                                                                                         |
+| `environments.update` | admin   | `{id,name,host,port?,username}`                           | updated row                                                                                         |
+| `environments.remove` | admin   | `{id}`                                                    | `{ok}`                                                                                              |
+| `environments.probe`  | admin   | `{id}`                                                    | `{ok,detail,durationMs}`                                                                            |
 
 Wiring follows the official oRPC docs: Nuxt adapter (`toWebRequest` +
 `RPCHandler` with `onError` interceptor), Better Auth lazy `getSession`
