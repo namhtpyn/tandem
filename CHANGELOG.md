@@ -1,3 +1,10 @@
+## [2.56.5](https://github.com/namhtpyn/tandem/compare/v2.56.4...v2.56.5) (2026-10-31)
+
+
+### Bug Fixes
+
+* **supply-chain:** pin actions by SHA, least-privilege workflow permissions, digest-pinned bases, CI gate ([#112](https://github.com/namhtpyn/tandem/issues/112)) ([#118](https://github.com/namhtpyn/tandem/issues/118)) ([fedd647](https://github.com/namhtpyn/tandem/commit/fedd647df16670611ac5410841e48247523a102e))
+
 ## [2.56.4](https://github.com/namhtpyn/tandem/compare/v2.56.3...v2.56.4) (2026-10-31)
 
 
