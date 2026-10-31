@@ -11,7 +11,7 @@ import { computed, ref, watch } from 'vue';
 
 import { CATEGORY, CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
-import { composerHint, composerReady, useWorkflowActions } from '~/composables/useWorkflowActions';
+import { composerHint, composerReady, forwardReady, useWorkflowActions } from '~/composables/useWorkflowActions';
 import { formatWhenShort } from '~/utils/format-when';
 import { NONE_ID, errorMessage, saveFailed } from '~/utils/forms';
 import type { EmployeeRow, TaskRow, TaskRunRow, ThreadRow } from '~/utils/orpc-types';
@@ -331,7 +331,8 @@ const {
   resetWorkflow,
 } = useWorkflowActions(() => workflowTask.value?.id ?? null);
 // the workflow gate keys off the status CATEGORY (not seeded uuids): ready /
-// working / paused are the work states where forward/abandon/submit apply
+// working / paused are the work states where submit/cancel apply (forward has
+// its own holder-scoped gate — see canForward)
 const workflowStatusCategory = computed(() =>
   workflowTask.value ? (statusById.value.get(workflowTask.value.status)?.category ?? null) : null,
 );
@@ -440,6 +441,16 @@ function openWorkflow(row: TaskRow) {
 const session = useAppSession();
 const drawerCanReview = computed(
   () => !!session.value && !!workflowTask.value?.reviewers.includes(session.value.user.id),
+);
+/** forward renders ONLY where the server accepts it (SPEC): the task is
+ *  waiting-answer AND the viewer is the pending answer obligation's holder —
+ *  never while the task is merely working (the server rejects that, #92). */
+const canForward = computed(() =>
+  forwardReady({
+    category: workflowStatusCategory.value,
+    holderId: workflowTask.value?.questionHolderId,
+    userId: session.value?.user.id,
+  }),
 );
 
 // ---- board (kanban) view ----
@@ -1100,7 +1111,9 @@ onServerPrefetch(() =>
               <p v-if="workflowTask.reviewers.length">Reviewers: {{ workflowTask.reviewerNames.join(', ') }}</p>
             </div>
           </div>
-          <!-- contextual verbs only (owner rulings 2026-10-26): notes/answers ride the composer -->
+          <!-- contextual verbs only (owner rulings 2026-10-26): notes/answers ride the composer.
+               Working states carry submit + cancel; Forward lives in its own block below —
+               the server accepts it only from the answer holder while waiting-answer (#92). -->
           <div v-if="workflowIsWorking" class="flex flex-wrap gap-2">
             <UButton
               v-if="workflowTask.assigneeKind !== 'ai'"
@@ -1114,6 +1127,19 @@ onServerPrefetch(() =>
             >
             <UButton
               size="sm"
+              color="error"
+              variant="soft"
+              icon="i-lucide-ban"
+              :disabled="workflowBusy"
+              @click="cancelArmed = true"
+              >Cancel task</UButton
+            >
+          </div>
+          <!-- forward: renders ONLY where it can succeed — waiting-answer + the
+               viewer is the pending answer obligation's holder (SPEC, #92) -->
+          <div v-if="canForward" class="flex flex-wrap gap-2">
+            <UButton
+              size="sm"
               color="neutral"
               variant="soft"
               icon="i-lucide-corner-up-right"
@@ -1124,15 +1150,6 @@ onServerPrefetch(() =>
                 wfAction('forward', { toEmployeeId: forwardTo, body: workflowNote })
               "
               >Forward</UButton
-            >
-            <UButton
-              size="sm"
-              color="error"
-              variant="soft"
-              icon="i-lucide-ban"
-              :disabled="workflowBusy"
-              @click="cancelArmed = true"
-              >Cancel task</UButton
             >
           </div>
           <!-- cancelling is terminal: confirm it inline instead of firing on one click -->
@@ -1148,9 +1165,9 @@ onServerPrefetch(() =>
               <UButton size="xs" color="neutral" variant="ghost" label="Keep it" @click="cancelArmed = false" />
             </div>
           </div>
-          <!-- forward picker only applies while the task is in a working state -->
+          <!-- forward picker rides the forward verb's own gate (waiting-answer + holder) -->
           <USelect
-            v-if="workflowIsWorking"
+            v-if="canForward"
             v-model="forwardTo"
             :items="forwardItems"
             value-key="value"
