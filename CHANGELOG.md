@@ -1,3 +1,17 @@
+## [2.56.4](https://github.com/namhtpyn/tandem/compare/v2.56.3...v2.56.4) (2026-10-31)
+
+
+### Bug Fixes
+
+* **release:** releaseRules must use the long {type, release} form ([990c861](https://github.com/namhtpyn/tandem/commit/990c8614a82636318989a691a0c2a78d550f38d3)), closes [#107](https://github.com/namhtpyn/tandem/issues/107) [#108](https://github.com/namhtpyn/tandem/issues/108)
+* **release:** treat revert commits as patch releases ([beb206b](https://github.com/namhtpyn/tandem/commit/beb206bf311d0a8893bd4217ee47bc2bbe697f07))
+* **tasks:** scrollable control rows carry a right-edge affordance and 44px phone targets ([#106](https://github.com/namhtpyn/tandem/issues/106)) ([#103](https://github.com/namhtpyn/tandem/issues/103)) ([b94a398](https://github.com/namhtpyn/tandem/commit/b94a39881aeb1e75ca16b2791b1eef6f4af5e611))
+
+
+### Reverts
+
+* **dispatch:** remove peak/off-peak cadence — agents run full speed 24/7 ([a0209e0](https://github.com/namhtpyn/tandem/commit/a0209e072274fd3c7ed507789528684dbf269498)), closes [#70](https://github.com/namhtpyn/tandem/issues/70)
+
 ## [2.56.3](https://github.com/namhtpyn/tandem/compare/v2.56.2...v2.56.3) (2026-10-31)
 
 
