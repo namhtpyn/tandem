@@ -33,11 +33,6 @@ export function generateVaultKeyB64() {
   return randomBytes(32).toString('base64');
 }
 
-/** Test hook: drop the cached key so env changes take effect. */
-export function resetVaultKeyCache() {
-  cachedKey = null;
-}
-
 export function encryptSecret(plaintext: string) {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', getVaultKey(), iv);

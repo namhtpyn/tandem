@@ -156,8 +156,6 @@ export async function pushTaskFiles(
   }
 }
 
-export type CollectedFile = { localPath: string; filename: string; size: number };
-
 /** collect files the agent left in out/: returns local copies (caller stores them) */
 export async function collectRunOutputs(
   ClientCtor: typeof Client,

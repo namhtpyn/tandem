@@ -6,7 +6,7 @@ import type { RequestHeadersHandlerPluginContext } from '@orpc/server/plugins';
 
 import { ROLE, type Role } from '#shared/enums';
 
-import { changeBus, publishChange, type ChangeEvent, type ChangeResource } from './change-bus';
+import { changeBus, publishChange, type ChangeResource } from './change-bus';
 
 export interface ServerContext extends RequestHeadersHandlerPluginContext {
   getSession: () => Promise<{
@@ -60,5 +60,4 @@ export async function* liveGenerator<T>(resources: ChangeResource[], fetch: () =
 }
 
 export { changeBus, publishChange };
-export type ChangeBusEvent = ChangeEvent;
 export { ORPCError };
