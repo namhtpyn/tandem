@@ -95,7 +95,9 @@ fi
 # the test stack is shared with the local unit/e2e gates — never overlap them
 exec 9>/tmp/tandem-drill.lock
 flock -n 9 || refuse "another drill holds the lock"
-if pgrep -f 'playwright|vitest' >/dev/null 2>&1; then
+# bracketed pattern: an ancestor shell whose argv merely QUOTES this pattern
+# must never match (pgrep self-match class — see pkill law)
+if pgrep -f '[p]laywright|[v]itest' >/dev/null 2>&1; then
   refuse "unit/e2e processes in flight on the shared test stack"
 fi
 
