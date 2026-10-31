@@ -1,0 +1,101 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "8fad3378-c213-4d3c-8a23-8bb6c3b4b4c4",
+  "prevIds": [
+    "babe880d-3dcd-4fc3-a839-de0e493503eb"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "task_runs",
+        "task_runs_status_idx"
+      ],
+      "writes": [
+        "s|idx|public.task_runs_status_idx",
+        "n|idx|public.task_runs_status_idx",
+        "e|idx|public.task_runs_status_idx",
+        "n|rel|public.task_runs_status_idx"
+      ],
+      "reads": [
+        "n|tbl|public.task_runs",
+        "n|sch|public",
+        "n|col|public.task_runs.status"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tasks",
+        "tasks_parent_task_idx"
+      ],
+      "writes": [
+        "s|idx|public.tasks_parent_task_idx",
+        "n|idx|public.tasks_parent_task_idx",
+        "e|idx|public.tasks_parent_task_idx",
+        "n|rel|public.tasks_parent_task_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tasks",
+        "n|sch|public",
+        "n|col|public.tasks.parent_task_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "task_runs",
+        "name": "task_runs_status_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "status",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "tasks",
+        "name": "tasks_parent_task_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "parent_task_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    }
+  ]
+}

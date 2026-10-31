@@ -1,5 +1,5 @@
 import { consola } from 'consola';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, sql } from 'drizzle-orm';
 
 import { ACTIVITY_KIND, CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
@@ -7,9 +7,12 @@ import { STATUS } from '#shared/status';
 // and dispatches them to the runner. One task at a time per agent (serial);
 // extra ready tasks queue until the agent is idle. Intended to run on a
 // server-side interval (boot plugin), skippable in tests via env.
+// SCAN BOUNDING LAW (#130): the tick never loads the whole tasks table — the
+// eligible scan filters ready + AI-assignee in SQL and live-run counts come
+// back in one GROUP BY; the reaper never reads transcripts.
 import { nonNull } from '#shared/utils/non-null';
 
-import { db } from '../../db/index';
+import { asDb, db, type DbExecutor } from '../../db/index';
 import { aiEmployees, tasks, taskRuns, taskMessages, taskStatuses } from '../../db/schema';
 import { publishChange } from '../kernel/change-bus';
 import { env } from '../kernel/env';
@@ -35,27 +38,39 @@ export async function reapStaleRuns() {
   }
 }
 
+/** reaper sweep shape (#130): RUNNING rows already past the timeout cutoff —
+ * id/started_at + the task-id join only, NEVER the transcript columns; the
+ * status filter rides task_runs_status_idx. */
+export function reapSweepScan(cutoff: Date) {
+  return {
+    columns: { id: true, startedAt: true },
+    where: { status: { eq: RUN_STATUS.RUNNING }, startedAt: { lte: cutoff } },
+    orderBy: { startedAt: 'asc' },
+    with: { message: { columns: { taskId: true } } },
+  } as const;
+}
+
+/** timed-out marker appended in the UPDATE's own SQL (#130) — the reaper marks
+ * a stale run without re-reading (or shipping) its transcript */
+export function reapOutputMarker(minutes: number) {
+  return sql`CASE WHEN ${taskRuns.output} = '' THEN '[reaper] run timed out' ELSE ${taskRuns.output} || ${`\n[reaper] run timed out after ${minutes} min`} END`;
+}
+
 async function reapStaleRunsInner() {
   const { getRunTimeoutMs } = await import('../settings/settings.service');
   const grace = 2 * 60_000;
   const cutoff = new Date(Date.now() - (await getRunTimeoutMs()) - grace);
-  const stale = await db.query.taskRuns.findMany({
-    columns: { id: true, output: true, startedAt: true },
-    where: { status: { eq: RUN_STATUS.RUNNING } },
-    orderBy: { startedAt: 'asc' },
-    with: { message: { columns: { taskId: true } } },
-  });
+  const stale = await db.query.taskRuns.findMany(reapSweepScan(cutoff));
   let reaped = 0;
   for (const run of stale) {
     if (run.startedAt.getTime() > cutoff.getTime()) continue;
+    const minutes = Math.round((Date.now() - run.startedAt.getTime()) / 60_000);
     const reapedRows = await db
       .update(taskRuns)
       .set({
         status: RUN_STATUS.FAILED,
         exitCode: null,
-        output: run.output
-          ? `${run.output}\n[reaper] run timed out after ${Math.round((Date.now() - run.startedAt.getTime()) / 60_000)} min`
-          : '[reaper] run timed out',
+        output: reapOutputMarker(minutes),
         finishedAt: new Date(),
       })
       // RUNNING predicate: a run that just settled (finish() flipped it) must never
@@ -207,6 +222,28 @@ export async function liveRunCountFor(employeeId: string): Promise<number> {
   return await db.query.taskRuns.count({ employeeId: { eq: employeeId }, status: { eq: RUN_STATUS.RUNNING } });
 }
 
+/** eligible-task scan shape (#130): ready-category + AI-assignee ride the SQL
+ * WHERE (created_at order preserved); the backoff filter stays app-side — it
+ * is an OR over dispatch_after, not expressible as a column AND. The tick never
+ * loads tasks outside the ready∩AI set. */
+export function eligibleTaskScan(readyIds: string[], aiIds: string[]) {
+  return {
+    columns: { id: true, status: true, assigneeId: true, dispatchAfter: true, createdAt: true },
+    where: { status: { in: readyIds }, assigneeId: { in: aiIds } },
+    orderBy: { createdAt: 'asc' },
+  } as const;
+}
+
+/** one GROUP BY query for every agent's live-run count (#130) — never a
+ * serialized COUNT per candidate; executor-injected for query-shape tests */
+export function liveRunsByAgent(ex: DbExecutor, aiIds: string[]) {
+  return asDb(ex)
+    .select({ employeeId: taskRuns.employeeId, live: count() })
+    .from(taskRuns)
+    .where(and(eq(taskRuns.status, RUN_STATUS.RUNNING), inArray(taskRuns.employeeId, aiIds)))
+    .groupBy(taskRuns.employeeId);
+}
+
 /** find one eligible task: ready-category status, AI assignee, backoff elapsed,
  * agent under its cap (oldest first).
  * CAP LAW (2026-10-16): one concurrent task per agent by default; the Settings page's
@@ -220,23 +257,22 @@ export async function findEligible(): Promise<{ taskId: string; employeeId: stri
   });
   const readyIds = statuses.filter((s) => s.category === 'ready').map((s) => s.id);
   if (readyIds.length === 0) return null;
-
-  const rows = await db.query.tasks.findMany({
-    columns: { id: true, status: true, assigneeId: true, dispatchAfter: true, createdAt: true },
-    orderBy: { createdAt: 'asc' },
-  });
   const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true }, orderBy: { userId: 'asc' } });
-  const aiIds = new Set(aiRows.map((r) => r.userId));
-  const cap = await tasksPerAgentCap();
+  const aiIds = aiRows.map((r) => r.userId);
+  if (aiIds.length === 0) return null;
+
+  // SCAN BOUNDING LAW (#130): ready ∩ AI-assignee filtered in SQL
+  const rows = await db.query.tasks.findMany(eligibleTaskScan(readyIds, aiIds));
   const now = Date.now();
   const eligible = rows
-    .filter((t) => readyIds.includes(t.status) && t.assigneeId && aiIds.has(t.assigneeId))
     // failure backoff: not claimable until dispatch_after passes (null = immediately)
-    .filter((t) => !t.dispatchAfter || t.dispatchAfter.getTime() <= now)
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    .filter((t) => !t.dispatchAfter || t.dispatchAfter.getTime() <= now);
+  if (eligible.length === 0) return null;
+  const cap = await tasksPerAgentCap();
+  const liveByAgent = new Map((await liveRunsByAgent(db, aiIds)).map((r) => [r.employeeId, r.live]));
   for (const t of eligible) {
     const employeeId = nonNull(t.assigneeId);
-    if (atCap(await liveRunCountFor(employeeId), cap)) continue;
+    if (atCap(liveByAgent.get(employeeId) ?? 0, cap)) continue;
     return { taskId: t.id, employeeId };
   }
   return null;
