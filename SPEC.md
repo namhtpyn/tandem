@@ -76,6 +76,12 @@ ssh -p <port> <user>@<host> hermes chat -q --query-file - --format stream-json
 - password email + generic OIDC (any count, discovery via `issuer/.well-known/openid-configuration`)
 - sign-up is **closed** after any user exists (403 `sign-up is closed`); the FIRST user (boot-seeded admin) holds the instance; the first user to sign up is promoted to `admin` via the user.create after hook
 - OIDC user creation is never gated
+- account linking: an OIDC account NEVER links into an existing local user on the strength of the
+  provider being admin-configured (`trustedProviders` stays unset — a trusted provider id bypasses
+  the `email_verified` gate in better-auth's implicit linking, so any identity on the IdP that
+  self-asserts an existing user's email could take over that account, incl. the boot-seeded admin).
+  Implicit linking requires the IdP to assert a verified email claim (`email_verified`), and the
+  local target user must itself be verified (`requireLocalEmailVerified` default true)
 - model providers carry a SET of endpoints (const-object enum in `shared/api-styles.ts`, kinds
   LLM/DECISION/MODELS; at most one MODELS endpoint per provider) and are pure connection info — NO
   keys stored on the provider row. Base URL LAW: baseUrl = host root before /v1; adapters append
