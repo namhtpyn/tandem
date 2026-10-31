@@ -57,6 +57,21 @@ async function loadStoredRegistry(): Promise<OidcProvider[] | null> {
   return parseRegistry(json);
 }
 
+/** Integrity probe (SPEC: Health — settings integrity): true iff raw is a
+ * stored registry value the read path accepts. Missing (null/empty) is valid;
+ * an envelope decrypts then schema-parses, legacy plaintext parses as-is.
+ * Uses the reader's own decrypt + schema — never a divergent copy. */
+export async function isValidStoredRegistry(raw: string | null): Promise<boolean> {
+  if (!raw) return true;
+  let json = raw;
+  try {
+    json = decryptSecret(raw);
+  } catch {
+    // not a vault envelope — legacy-plaintext path
+  }
+  return parseRegistry(json) !== null;
+}
+
 export async function getOidcProviders() {
   const stored = await loadStoredRegistry();
   if (stored) return stored;

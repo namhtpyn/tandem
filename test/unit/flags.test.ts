@@ -2,7 +2,7 @@
 // every invalid shape reads as NO flags; valid maps pass through untouched
 import { describe, expect, it } from 'vitest';
 
-import { FLAG_NAME_RE, MAX_FLAGS, parseFlags } from '../../shared/flags.ts';
+import { FLAG_NAME_RE, MAX_FLAGS, isValidFlagsPayload, parseFlags } from '../../shared/flags.ts';
 
 describe('FLAG_NAME_RE', () => {
   it('accepts lowercase names starting with a letter', () => {
@@ -60,5 +60,31 @@ describe('parseFlags', () => {
   it('a map at the cap passes', () => {
     const atCap = Object.fromEntries(Array.from({ length: MAX_FLAGS }, (_, i) => [`flag${i}x`, i % 2 === 0]));
     expect(parseFlags(JSON.stringify(atCap))).toEqual(atCap);
+  });
+});
+
+describe('isValidFlagsPayload', () => {
+  it('a missing key (null) is not corruption', () => {
+    expect(isValidFlagsPayload(null)).toBe(true);
+  });
+
+  it('valid payloads pass — including the empty map', () => {
+    expect(isValidFlagsPayload('{}')).toBe(true);
+    expect(isValidFlagsPayload('{"tasks.turn-durations":true}')).toBe(true);
+    const atCap = Object.fromEntries(Array.from({ length: MAX_FLAGS }, (_, i) => [`flag${i}x`, true]));
+    expect(isValidFlagsPayload(JSON.stringify(atCap))).toBe(true);
+  });
+
+  it.each(['', '{bad', '"on"', '42', '[true]', 'true', 'null', '{"Bad Name":true}', '{"ok":1}', '{"ok":null}'])(
+    'invalid payload %s fails (parseFlags reads the same payload as {})',
+    (raw) => {
+      expect(isValidFlagsPayload(raw)).toBe(false);
+      expect(parseFlags(raw)).toEqual({});
+    },
+  );
+
+  it('a map over the cap is invalid, not truncated', () => {
+    const tooMany = Object.fromEntries(Array.from({ length: MAX_FLAGS + 1 }, (_, i) => [`flag${i}x`, true]));
+    expect(isValidFlagsPayload(JSON.stringify(tooMany))).toBe(false);
   });
 });

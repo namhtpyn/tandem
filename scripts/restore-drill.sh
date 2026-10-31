@@ -211,7 +211,7 @@ EOF
 
 s_settings_corrupt() {
   DETECTOR=integrity-probe
-  GAP="no live app-level detector for settings corruption — heal fired via drill probe (gap, not restore, is the finding)"
+  GAP="app-level detection is LIVE: /health/ready 503s while any known settings key fails its write-shape validation (unit+e2e asserted, SPEC Health); this drill probe remains the heal verifier"
   local t0
   t0=$(now_s)
   docker exec "$PG_CONTAINER" psql -U tandem -d postgres -tAc "DROP DATABASE IF EXISTS $DRILL_DB" >/dev/null || { STATUS=setup-failed; return 1; }
