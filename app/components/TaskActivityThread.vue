@@ -141,8 +141,27 @@ function fileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** run result bodies: one parse per run turn — settled body -> renderable parts +
+ * the attachment ids the body already carries (the gallery must not duplicate them).
+ * envelope parse stays the pre-settle fallback (see envelopeById). */
+const runBodyById = computed(() => {
+  const m = new Map<string, { parts: ReturnType<typeof parseTaskText>; inlined: Set<string> }>();
+  for (const item of thread.value) {
+    if (item.kind !== 'run') continue;
+    const body = item.body || envelopeOf(item)?.text || '';
+    const parts = parseTaskText(body);
+    const inlined = new Set(parts.flatMap((p) => (p.type === 'image' || p.type === 'file' ? [p.id] : [])));
+    m.set(item.id, { parts, inlined });
+  }
+  return m;
+});
+
 function runOutputs(item: ThreadItem) {
-  return item.kind === 'run' ? (outputsByRun.value.get(item.id) ?? []) : [];
+  if (item.kind !== 'run') return [];
+  const all = outputsByRun.value.get(item.id) ?? [];
+  // RESULT-MESSAGE ATTACHMENTS: images the body already inlines leave the gallery
+  const inlined = runBodyById.value.get(item.id)?.inlined;
+  return inlined && inlined.size ? all.filter((f) => !inlined.has(f.id)) : all;
 }
 
 /** split the brief description into text + attachment + mention parts — the
@@ -222,27 +241,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
             <div
               class="border-default bg-muted text-default inline-block max-w-[85%] rounded-xl rounded-tl-sm border px-3.5 py-2.5 text-sm leading-relaxed"
             >
-              <template v-for="(p, i) in briefParts" :key="i">
-                <span
-                  v-if="p.type === 'mention'"
-                  class="bg-primary/10 text-primary mx-0.5 inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-medium"
-                  >@{{ p.label }}</span
-                >
-                <span v-if="p.type === 'text'" class="whitespace-pre-wrap">{{ p.body }}</span>
-                <img
-                  v-else-if="p.type === 'image'"
-                  :src="attachmentUrl(p.id)"
-                  :alt="p.alt"
-                  class="border-default my-1.5 max-h-64 rounded-lg border"
-                />
-                <a
-                  v-else-if="p.type === 'file'"
-                  :href="attachmentUrl(p.id)"
-                  target="_blank"
-                  class="border-default bg-default text-toned hover:border-primary/50 hover:text-primary my-1 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium"
-                  ><UIcon name="i-lucide-file-text" class="size-3.5 shrink-0" />{{ p.name }}</a
-                >
-              </template>
+              <TaskTextParts :parts="briefParts" />
             </div>
           </div>
         </div>
@@ -286,12 +285,15 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
                 <span data-allow-mismatch>{{ formatWhenShort(item.startedAt) }}</span>
               </span>
             </p>
-            <!-- message: the settled result body; envelope parse only as a pre-settle fallback -->
+            <!-- message: the settled result body; envelope parse only as a pre-settle fallback.
+                 Body tokens render like the brief (RESULT-MESSAGE ATTACHMENTS): the collected
+                 screenshots ride the message itself, not only the gallery below. -->
             <div
               v-if="item.body || envelopeOf(item)"
               class="bg-elevated text-default inline-block max-w-[85%] rounded-xl rounded-tl-sm px-3.5 py-2 text-sm leading-relaxed"
             >
-              {{ item.body || envelopeOf(item)?.text || 'No output' }}
+              <TaskTextParts :parts="runBodyById.get(item.id)?.parts ?? []" />
+              <span v-if="!runBodyById.get(item.id)?.parts.length">No output</span>
             </div>
             <!-- collected output files (agent deliverables) -->
             <div v-if="runOutputs(item).length" class="mt-1.5 flex flex-wrap gap-1.5">

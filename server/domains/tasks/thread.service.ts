@@ -89,6 +89,17 @@ export async function updateRunMessageBody(messageId: string, output: string, re
   await db.update(taskMessages).set({ body }).where(eq(taskMessages.id, messageId));
 }
 
+/** RESULT-MESSAGE ATTACHMENTS (SPEC 2026-10-31): append the collected-image tokens
+ * AFTER the parsed result body — the write must follow updateRunMessageBody (which
+ * owns the body) or the tokens are overwritten. Blank body -> tokens only. */
+export async function appendMessageAttachments(messageId: string, tokens: string[]) {
+  if (!tokens.length) return;
+  const row = await db.query.taskMessages.findFirst({ columns: { body: true }, where: { id: messageId } });
+  if (!row) return;
+  const body = row.body?.trim() ? `${row.body}\n\n${tokens.join('\n')}` : tokens.join('\n');
+  await db.update(taskMessages).set({ body }).where(eq(taskMessages.id, messageId));
+}
+
 /** one ordered thread: base rows with their run + author attached */
 export async function listTaskThread(taskId: string) {
   const messages = await db.query.taskMessages.findMany({
