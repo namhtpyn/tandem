@@ -206,4 +206,17 @@ describe('runOverSsh (mocked ssh2)', () => {
     FakeClient.last.stream.close(0);
     await p;
   });
+
+  it('passes the host-key verifier to ssh2 (host-key law, #129)', async () => {
+    const { lines, finish, resolve } = await collected();
+    const clientMod = (await import('ssh2')).default;
+    const FakeClient = clientMod.Client as unknown as {
+      last: { connectOpts: Record<string, unknown> | null; stream: { close(c: number | null): void } };
+    };
+    const p = runOverSsh(plan, 'cmd', 'blob', (l) => lines.push(l), finish, resolve as never);
+    await vi.waitFor(() => expect(FakeClient.last.connectOpts).not.toBeNull());
+    expect(typeof FakeClient.last.connectOpts?.hostVerifier).toBe('function');
+    FakeClient.last.stream.close(0);
+    await p;
+  });
 });

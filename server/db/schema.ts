@@ -38,6 +38,10 @@ export const environments = pgTable('environments', {
   secretId: text('secret_id').references(() => vaultSecrets.id, { onDelete: 'set null' }),
   // how the linked secret is used: as an SSH identity file or as a password
   secretUsage: text('secret_usage').notNull().default('SSH_KEY'),
+  // SSH host-key TOFU store (SPEC: Environments procedures): 'sha256:<base64
+  // nopad>' fingerprint of the server's wire-format host key; null = first
+  // contact. A mismatch fails the connection closed before auth.
+  hostKeyFingerprint: text('host_key_fingerprint'),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .$default(() => new Date()),
