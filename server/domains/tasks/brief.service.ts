@@ -12,6 +12,7 @@ import { db } from '../../db/index';
 import { taskProposals } from '../../db/schema';
 import { stripAttachments } from './attachments.util';
 import { dropEchoNotes } from './echo-notes';
+import { promptImageSplit } from './prompt-images.util';
 
 /** jsonb payloads arrive as raw strings through RQB relation selects — normalize to the
  * kind; one corrupt payload must never brick dispatch, so unparseable reads as '' (note) */
@@ -111,8 +112,28 @@ type BriefInput = {
   recentActivity: Array<{ kind: string; authorName: string | null; body: string | null }>;
   /** reader already ran this task: the ticket lives in their session, prompt is a relay */
   relay: boolean;
-  attachments?: Array<{ id: string; filename: string; mime: string; size: number; remotePath: string }>;
+  attachments?: BriefAttachment[];
 };
+
+/** files listed in the brief's ATTACHMENTS section; inline marks the ones that
+ * also ride the ACP prompt as image content blocks (SPEC 2026-10-31) */
+export type BriefAttachment = {
+  id: string;
+  filename: string;
+  mime: string;
+  size: number;
+  remotePath: string;
+  inline: boolean;
+};
+
+/** PROMPT-INLINE IMAGES (SPEC 2026-10-31): label which inputs will ride the
+ * prompt as image blocks — the same pure split the runner applies at execute
+ * time, so the frozen brief's labels match the blocks it actually sends. */
+function markInline(attachments: Array<Omit<BriefAttachment, 'inline'>>): BriefAttachment[] {
+  const { inline } = promptImageSplit(attachments);
+  const ids = new Set(inline.map((i) => i.id));
+  return attachments.map((a) => ({ ...a, inline: ids.has(a.id) }));
+}
 
 export function buildBrief(input: BriefInput) {
   if (input.review) {
@@ -249,7 +270,13 @@ function attachmentsSection(input: BriefInput) {
   if (!input.attachments?.length) return [];
   const lines = ['', 'ATTACHMENTS (already on this machine — do not re-download):'];
   for (const a of input.attachments) {
-    const kind = a.mime.startsWith('image/') ? 'image — view with your image tool' : 'document — read with file tools';
+    // PROMPT-INLINE IMAGES (SPEC 2026-10-31): inlined images ride the prompt
+    // itself as image blocks; staged-only ones point at the sandbox copy
+    const kind = a.mime.startsWith('image/')
+      ? a.inline
+        ? 'image — inlined into this prompt'
+        : 'image — view with your image tool'
+      : 'document — read with file tools';
     lines.push(`- ${a.remotePath} (${a.filename}, ${kind}, ${Math.max(1, Math.round(a.size / 1024))}KB)`);
   }
   return lines;
@@ -428,15 +455,17 @@ export async function loadBriefData(taskId: string, readerEmployeeId?: string) {
     where: { taskId: { eq: taskId } },
     orderBy: { createdAt: 'asc' },
   });
-  const attachments = attachmentRows
-    .filter((a) => a.kind === 'input')
-    .map((a) => ({
-      id: a.id,
-      filename: a.filename,
-      mime: a.mime,
-      size: a.size,
-      remotePath: `~/.tandem/${taskId}/attachments/${a.filename}`,
-    }));
+  const attachments = markInline(
+    attachmentRows
+      .filter((a) => a.kind === 'input')
+      .map((a) => ({
+        id: a.id,
+        filename: a.filename,
+        mime: a.mime,
+        size: a.size,
+        remotePath: `~/.tandem/${taskId}/attachments/${a.filename}`,
+      })),
+  );
   return {
     companyPrompt,
     projectPrompt: projectRow?.prompt ?? '',
