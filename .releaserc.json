@@ -8,7 +8,24 @@
           "headerPattern": "^(\\w*)(?:\\(([\\w$@.+\\-*/ ]*)\\))?!?: (.*)$",
           "breakingHeaderPattern": "^(\\w*)(?:\\(([\\w$@.\\-*/ ]*)\\))?!: (.*)$",
           "headerCorrespondence": ["type", "scope", "subject"]
-        }
+        },
+        "releaseRules": [
+          {
+            "breaking": "major"
+          },
+          {
+            "feat": "minor"
+          },
+          {
+            "fix": "patch"
+          },
+          {
+            "perf": "patch"
+          },
+          {
+            "revert": "patch"
+          }
+        ]
       }
     ],
     [
