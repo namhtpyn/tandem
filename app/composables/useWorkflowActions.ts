@@ -175,6 +175,20 @@ export function useWorkflowActions(taskId: () => string | null | undefined) {
 }
 
 /**
+ * Forward gate (SPEC: workflow verbs render ONLY where the server accepts
+ * them): the server rejects forward unless the task is waiting-answer AND the
+ * caller is the pending answer obligation's holder — so the verb renders
+ * exactly then, never while the task is merely working.
+ */
+export function forwardReady(input: {
+  category: string | null | undefined;
+  holderId: string | null | undefined;
+  userId: string | null | undefined;
+}): boolean {
+  return input.category === CATEGORY.WAITING_ANSWER && !!input.holderId && input.holderId === input.userId;
+}
+
+/**
  * Composer/send gate: `statuses` must have resolved AND named a category. While a
  * status list is loading (or failed) the category is null, and defaulting to the
  * note verb would silently post a note where the user expected an answer.
