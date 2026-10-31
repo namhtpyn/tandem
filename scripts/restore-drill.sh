@@ -28,7 +28,12 @@ REPORT=
 while [ $# -gt 0 ]; do
   case "$1" in
     --selfcheck) MODE=selfcheck ;;
-    --scenario) SCENARIOS+=("$2"); shift ;;
+    --scenario)
+      case "$2" in
+        redis-stop|bad-tag-deploy|settings-corrupt) SCENARIOS+=("$2") ;;
+        *) echo "unknown scenario: $2" >&2; exit 2 ;;
+      esac
+      shift ;;
     --report) REPORT="$2"; shift ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -173,7 +178,7 @@ s_redis_stop() {
   fi
 }
 
-s_bad_tag() {
+s_bad_tag_deploy() {
   DETECTOR=deploy-exit-status
   GAP=
   COMPOSE_DIR=$(mktemp -d)
@@ -257,7 +262,8 @@ RESULTS=
 RESULTS_GAPS=
 for s in "${SCENARIOS[@]}"; do
   DETECTOR=unknown T_DETECT= T_HEAL= STATUS=not-run GAP=
-  "s_$s"
+  # scenario names carry dashes; function names carry underscores
+  "s_$(printf '%s' "$s" | tr - _)"
   rc=$?
   [ "$STATUS" = OK ] || FAILED=1
   RESULTS+="| $s | $DETECTOR | ${T_DETECT:--} | ${T_HEAL:--} | $STATUS |"$'\n'
