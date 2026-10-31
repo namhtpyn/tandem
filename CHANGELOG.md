@@ -1,3 +1,11 @@
+# [2.56.0](https://github.com/namhtpyn/tandem/compare/v2.55.2...v2.56.0) (2026-10-31)
+
+
+### Features
+
+* **tasks:** awaiting-decision company queue — chip with live count, row badges, overview card ([#91](https://github.com/namhtpyn/tandem/issues/91)) ([f57d3fd](https://github.com/namhtpyn/tandem/commit/f57d3fd731d14cc715493248a03d2622886e5066))
+* **tasks:** awaitingDecision company-wide filter on tasks.listPaged ([#91](https://github.com/namhtpyn/tandem/issues/91)) ([276cf2a](https://github.com/namhtpyn/tandem/commit/276cf2a9880538b56f26a7cc873321b060d8a4fa))
+
 ## [2.55.2](https://github.com/namhtpyn/tandem/compare/v2.55.1...v2.55.2) (2026-10-31)
 
 
