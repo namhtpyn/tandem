@@ -60,8 +60,10 @@ export type InternalAiAssignment = {
   keySecretId: string;
 };
 
-/** Parse one assignment; invalid JSON or a non-object yields null. */
-function parseAssignment(raw: string | null): InternalAiAssignment | null {
+/** Parse one assignment; invalid JSON or a non-object yields null. Exported
+ * for the settings integrity auditor — the corruption check must use the
+ * reader's own parse, never a copy. */
+export function parseAssignment(raw: string | null): InternalAiAssignment | null {
   if (!raw) return null;
   try {
     const v = JSON.parse(raw) as Partial<InternalAiAssignment>;

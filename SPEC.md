@@ -207,6 +207,11 @@ OIDC env fallback (exactly ONE provider via `TANDEM_OIDC_ISSUER/_CLIENT_ID/
 _CLIENT_SECRET/_LABEL`) applies only when no stored registry exists; stored
 secrets are never returned.
 
+Stored settings are integrity-audited: each KNOWN key must hold a value its
+write path could have produced — checked at boot and on every readiness call
+(see Health); a corrupt value reads fail-closed AND degrades readiness until
+the row is repaired.
+
 ### Feature flags
 
 One settings key `flags` stores a JSON object `{ "<name>": boolean }` — the
@@ -231,7 +236,17 @@ non-positive deltas render no duration.
 ## Health
 
 - `GET /health/live` → 200 always, `{ ok: true }`; touches nothing
-- `GET /health/ready` → 200 `{ ok: true, migrations: 'complete' }` only when Postgres answers `SELECT 1` AND every migration has applied; otherwise 503 `{ ok: false, error }`
+- `GET /health/ready` → 200 `{ ok: true, migrations: 'complete' }` only when
+  Postgres answers `SELECT 1`, every migration has applied, AND every stored
+  settings value passes its integrity validation; otherwise 503
+  `{ ok: false }` — the body stays generic in every failure case, corrupt
+  keys and reasons go to server logs only, never to the unauthenticated probe
+- Settings integrity (live detector): every KNOWN settings key's stored value
+  is validated against the shape its write path produces — logged once at
+  boot, re-checked on every readiness call. One or more corrupt values
+  degrade readiness (503) until the rows are repaired; tolerant fail-closed
+  READS are unchanged (validation detects corruption, it never alters read
+  results), and unknown keys are never validated (extensible namespace)
 
 ## Boot sequence
 
@@ -292,7 +307,9 @@ non-positive deltas render no duration.
   (dispatch bus down; detector: service ping), `bad-tag-deploy` (nonexistent
   image tag — the v-prefix deploy class; detector: deploy exit status plus a
   silent-no-op container check), `settings-corrupt` (garbage in a `settings`
-  row; detector: row integrity probe against the pre-inject backup). Each
+  row; detector: row integrity probe against the pre-inject backup — the
+  drill's heal verifier; the LIVE app-level detector is readiness 503 while
+  any known key fails validation, per Health). Each
   scenario backs up before it injects, heals, and verifies green; per-scenario
   time-to-detect and time-to-heal are recorded.
 - A scenario that heals only because the drill itself probed it is a detection

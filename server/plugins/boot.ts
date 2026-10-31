@@ -20,6 +20,21 @@ export default defineNitroPlugin(async () => {
   const applied = await applyMigrations();
   if (applied.length > 0) log.info('applied migrations:', applied.join(', '));
 
+  // settings integrity audit (SPEC: Health) — log-only at boot; /health/ready
+  // 503s while any known key is corrupt. The detector never breaks boot.
+  try {
+    const { auditSettingsIntegrity } = await import('../domains/settings/settings.integrity');
+    const integrity = await auditSettingsIntegrity();
+    if (integrity.ok) log.info('settings integrity: ok');
+    else
+      log.error(
+        'settings corrupt (readiness will report not-ready):',
+        integrity.corrupt.map((c) => `${c.key} (${c.reason})`).join(', '),
+      );
+  } catch (e) {
+    log.error('settings integrity audit failed:', e);
+  }
+
   // agent dispatcher: eligible tasks (ready + AI assignee) fire automatically.
   // Opt out with TANDEM_NO_DISPATCHER=1 (tests); fake runner with TANDEM_FAKE_RUNNER=1.
   const { maybeStartDispatcher } = await import('../domains/tasks/dispatcher.service');

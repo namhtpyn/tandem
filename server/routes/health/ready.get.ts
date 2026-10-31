@@ -18,6 +18,17 @@ export default defineEventHandler(async (event) => {
       if (applied.length > 0) log.info('applied migrations:', applied.join(', '));
       migrationsDone = true;
     }
+    // settings integrity (SPEC: Health) — a corrupt KNOWN key degrades
+    // readiness: this is the live detector for the fail-closed read path.
+    const { auditSettingsIntegrity } = await import('../../domains/settings/settings.integrity');
+    const integrity = await auditSettingsIntegrity();
+    if (!integrity.ok) {
+      // details go to the logs only — the body stays generic for the
+      // unauthenticated probe
+      log.error('readiness: corrupt settings —', integrity.corrupt.map((c) => `${c.key} (${c.reason})`).join(', '));
+      setResponseStatus(event, 503);
+      return { ok: false };
+    }
     setResponseStatus(event, 200);
     return { ok: true, migrations: 'complete' };
   } catch (e) {
