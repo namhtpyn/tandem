@@ -1,3 +1,10 @@
+## [2.55.1](https://github.com/namhtpyn/tandem/compare/v2.55.0...v2.55.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* **auth:** server-side RBAC — role-gate every write procedure ([#82](https://github.com/namhtpyn/tandem/issues/82)) ([2f9483d](https://github.com/namhtpyn/tandem/commit/2f9483d33b468db42292e794a9c5a4217d54cc1c))
+
 # [2.55.0](https://github.com/namhtpyn/tandem/compare/v2.54.0...v2.55.0) (2026-10-31)
 
 
