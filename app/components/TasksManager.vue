@@ -27,6 +27,7 @@ import {
   employeeOptions,
   statusLabel,
   runStatus,
+  waitingOnLabel,
   AGENT_RUN_VIEW,
 } from '~/utils/ui-labels';
 
@@ -45,18 +46,28 @@ watchDebounced(
   { debounce: 300, maxWait: 1000 },
 );
 
-// server-side filters: status chips + needs-my-decision (inbox) — rows come
-// pre-filtered from the API
+// server-side filters: status chips + needs-my-decision (inbox) + the
+// company-wide awaiting-decision queue — rows come pre-filtered from the API
 const statusId = ref<string | null>(null);
 const needsDecision = ref(false);
-watch([statusId, needsDecision], () => {
+// deep link: /tasks?awaiting=1 opens the company queue (#91); the toggle keeps
+// the URL in sync so a filtered view survives a share/reload
+const route = useRoute();
+const router = useRouter();
+const awaitingDecision = ref(route.query.awaiting === '1');
+watch(awaitingDecision, (v) => {
+  void router.replace({ query: { ...route.query, awaiting: v ? '1' : undefined } });
+});
+watch([statusId, needsDecision, awaitingDecision], () => {
   page.value = 1;
 });
 function toggleStatusFilter(id: string) {
   statusId.value = statusId.value === id ? null : id;
 }
-/** any active server-side filter (search / status chip / inbox) — drives the empty-state copy */
-const listFiltered = computed(() => !!searchDebounced.value || statusId.value !== null || needsDecision.value);
+/** any active server-side filter (search / status chip / inbox / awaiting) — drives the empty-state copy */
+const listFiltered = computed(
+  () => !!searchDebounced.value || statusId.value !== null || needsDecision.value || awaitingDecision.value,
+);
 
 /** empty-state copy names WHICH filter came up empty — 'no results' under the inbox toggle reads as a bug */
 const emptyCopy = computed(() => {
@@ -64,6 +75,7 @@ const emptyCopy = computed(() => {
   // matches yet') — repeating a 'No …' sentence here printed it twice
   if (!listFiltered.value) return 'Create the first one for your humans or agents.';
   if (needsDecision.value) return 'Nothing is waiting on your decision right now.';
+  if (awaitingDecision.value) return 'Nothing is waiting on a decision right now.';
   if (statusId.value !== null)
     return `Nothing in ${statusLabel(statusId.value, statusById.value)} — try another filter.`;
   return 'Try a different search.';
@@ -79,6 +91,7 @@ const pagedQuery = useQuery(
         q: searchDebounced.value || undefined,
         statusId: statusId.value ?? undefined,
         inboxOfMe: needsDecision.value,
+        awaitingDecision: awaitingDecision.value,
       },
       queryKey: [
         CHANGE_RESOURCE.TASKS,
@@ -88,6 +101,7 @@ const pagedQuery = useQuery(
         searchDebounced.value,
         statusId.value ?? 'all',
         needsDecision.value,
+        awaitingDecision.value,
       ],
       placeholderData: keepPreviousData,
     }),
@@ -119,6 +133,14 @@ const projectNameById = computed(() => new Map(projectRows.value.map((p) => [p.i
 // ---- "needs my decision" inbox: this query drives the COUNT/badge only; the
 // list itself is filtered server-side via the inboxOfMe input ----
 const inboxQuery = useQuery($orpc.tasks.inbox.queryOptions({ queryKey: [CHANGE_RESOURCE.TASKS, 'inbox'] }));
+// ---- company queue count (#91): same listPaged total the overview card uses ----
+const awaitingCountQuery = useQuery(
+  $orpc.tasks.listPaged.queryOptions({
+    input: { page: 1, pageSize: 1, awaitingDecision: true },
+    queryKey: [CHANGE_RESOURCE.TASKS, 'count', 'awaiting'],
+  }),
+);
+const awaitingCount = computed(() => unref(awaitingCountQuery.data)?.total ?? 0);
 type InboxItem = {
   taskId: string;
   role: string;
@@ -138,6 +160,11 @@ const statusOptions = computed(() => statuses.value.map((x) => ({ label: x.name,
 // the shared category→color mapping, rendered as a filled dot instead of a badge
 function statusDot(s: string) {
   return dotClass(categoryColor(statusById.value.get(s)?.category));
+}
+
+/** "Waiting on …" badge text for one row (#91) — null hides the badge */
+function waitingForRow(row: TaskRow) {
+  return waitingOnLabel(row, statusById.value.get(row.status)?.category);
 }
 
 // ---- mutations (list rows) ----
@@ -554,6 +581,28 @@ onServerPrefetch(() =>
           </span>
         </UButton>
         <UButton
+          color="neutral"
+          :variant="awaitingDecision ? 'solid' : 'outline'"
+          size="sm"
+          aria-label="Awaiting decision"
+          :aria-pressed="awaitingDecision"
+          data-testid="awaiting-decision-toggle"
+          @click="awaitingDecision = !awaitingDecision"
+        >
+          <span class="inline-flex items-center gap-1.5">
+            <UIcon name="i-lucide-hourglass" class="size-4" />
+            <!-- mobile shows the short label — the full words wrap at 390px -->
+            <span class="whitespace-nowrap sm:hidden">Awaiting</span>
+            <span class="hidden whitespace-nowrap sm:inline">Awaiting decision</span>
+            <span
+              v-if="awaitingCount > 0"
+              class="bg-accented text-default inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
+              data-testid="awaiting-count"
+              >{{ awaitingCount }}</span
+            >
+          </span>
+        </UButton>
+        <UButton
           icon="i-lucide-settings-2"
           label="Statuses"
           color="neutral"
@@ -650,6 +699,11 @@ onServerPrefetch(() =>
           }}</NuxtLink>
           <p v-if="row.original.projectName" class="text-primary flex items-center gap-1 text-xs">
             <UIcon name="i-lucide-folder-kanban" class="size-3" />{{ row.original.projectName }}
+          </p>
+          <p v-if="waitingForRow(row.original)" class="flex w-fit items-center gap-1 text-xs">
+            <UBadge color="warning" variant="subtle" size="sm" icon="i-lucide-hourglass" class="gap-1">
+              {{ waitingForRow(row.original) }}
+            </UBadge>
           </p>
         </div>
       </template>
@@ -781,6 +835,11 @@ onServerPrefetch(() =>
               <p class="text-dimmed mt-0.5 flex items-center gap-1 text-xs">
                 <UIcon name="i-lucide-clock" class="size-3 shrink-0" />
                 <span data-allow-mismatch>{{ formatWhenShort(row.updatedAt) }}</span>
+              </p>
+              <p v-if="waitingForRow(row)" class="mt-0.5 flex w-fit items-center gap-1 text-xs">
+                <UBadge color="warning" variant="subtle" size="sm" icon="i-lucide-hourglass" class="gap-1">
+                  {{ waitingForRow(row) }}
+                </UBadge>
               </p>
             </div>
             <!-- every card action hides behind one kebab — no visible trash row
@@ -972,6 +1031,11 @@ onServerPrefetch(() =>
                 </div>
                 <p v-if="row.projectName" class="text-primary mt-1 flex items-center gap-1 text-xs">
                   <UIcon name="i-lucide-folder-kanban" class="size-3 shrink-0" />{{ row.projectName }}
+                </p>
+                <p v-if="waitingForRow(row)" class="mt-1 flex w-fit items-center gap-1 text-xs">
+                  <UBadge color="warning" variant="subtle" size="sm" icon="i-lucide-hourglass" class="gap-1">
+                    {{ waitingForRow(row) }}
+                  </UBadge>
                 </p>
                 <p class="text-dimmed mt-1 flex items-center gap-1 text-xs">
                   <UIcon v-if="row.assigneeKind === 'ai'" name="i-lucide-bot" class="text-primary size-3 shrink-0" />

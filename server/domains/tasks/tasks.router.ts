@@ -28,7 +28,13 @@ import { env } from '../kernel/env';
 import { ORPCError, employeeProcedure, liveGenerator, protectedProcedure, publishChange } from '../kernel/kernel';
 import { recordAssignment, listAssignments } from './assignments.service';
 import { refreshParentGating } from './gating.service';
-import { approvalsInRoundBatch, openObligations, pendingForUser, pendingCounts, pendingTaskIds } from './obligations.service';
+import {
+  approvalsInRoundBatch,
+  openObligations,
+  pendingForUser,
+  pendingCounts,
+  pendingTaskIds,
+} from './obligations.service';
 import { confirmProposal, rejectProposal } from './proposals.service';
 import { listReviews, logActivity } from './review.service';
 import { dispatchTask, listRuns } from './runner.service';
@@ -160,7 +166,14 @@ async function mapTaskRows(rows: TaskListRow[]): Promise<TaskRow[]> {
 
 /** paged/searched/filtered variant of the snapshot; total reflects the same filters */
 async function listTasksPaged(
-  input: { page: number; pageSize: number; q?: string; statusId?: string; inboxOfMe?: boolean; awaitingDecision?: boolean },
+  input: {
+    page: number;
+    pageSize: number;
+    q?: string;
+    statusId?: string;
+    inboxOfMe?: boolean;
+    awaitingDecision?: boolean;
+  },
   selfId: string,
 ) {
   const q = input.q?.trim();
