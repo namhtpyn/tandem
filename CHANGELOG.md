@@ -1,3 +1,10 @@
+## [2.56.2](https://github.com/namhtpyn/tandem/compare/v2.56.1...v2.56.2) (2026-10-31)
+
+
+### Bug Fixes
+
+* **tasks:** mobile card kebab carries the Workflow drawer entry ([#96](https://github.com/namhtpyn/tandem/issues/96)) ([#98](https://github.com/namhtpyn/tandem/issues/98)) ([d88f00c](https://github.com/namhtpyn/tandem/commit/d88f00cba27ae7ae10eb26ce6897277a02294d95))
+
 ## [2.56.1](https://github.com/namhtpyn/tandem/compare/v2.56.0...v2.56.1) (2026-10-31)
 
 
