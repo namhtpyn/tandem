@@ -559,80 +559,96 @@ onServerPrefetch(() =>
           Board
         </button>
       </div>
-      <div class="ms-auto flex items-center gap-2 overflow-x-auto">
-        <UButton
-          color="neutral"
-          :variant="needsDecision ? 'solid' : 'outline'"
-          size="sm"
-          aria-label="Needs my decision"
-          :aria-pressed="needsDecision"
-          data-testid="needs-decision-toggle"
-          @click="needsDecision = !needsDecision"
+      <!-- #103: the action scroller gets the same right-edge affordance as the
+           status strip below — a trailing control clipped by the edge reads as
+           scrollable (fade + peek padding), never as broken. pr-16 lets the
+           last control scroll fully clear of the fade. -->
+      <div class="relative ms-auto flex min-w-0 items-center">
+        <div
+          class="flex [scrollbar-width:thin] items-center gap-2 overflow-x-auto [mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)] pr-16"
         >
-          <span class="inline-flex items-center gap-1.5">
-            <UIcon name="i-lucide-inbox" class="size-4" />
-            <!-- mobile shows the short label — the full words wrap to 3 lines at 390px -->
-            <span class="whitespace-nowrap sm:hidden">Decisions</span>
-            <span class="hidden whitespace-nowrap sm:inline">Needs my decision</span>
-            <span
-              v-if="inboxQuery.isPending.value"
-              class="bg-accented text-muted inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
-              data-testid="inbox-count-pending"
-              aria-label="Loading the decision count"
-              >…</span
-            >
-            <span
-              v-else-if="inboxQuery.isError.value"
-              class="bg-error/15 text-error inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
-              data-testid="inbox-count-error"
-              title="Couldn't load the decision count — reopen the page to retry"
-              aria-label="Decision count unavailable"
-              >!</span
-            >
-            <span
-              v-else-if="inboxCount > 0"
-              class="bg-accented text-default inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
-              data-testid="inbox-count"
-              >{{ inboxCount }}</span
-            >
-          </span>
-        </UButton>
-        <UButton
-          color="neutral"
-          :variant="awaitingDecision ? 'solid' : 'outline'"
-          size="sm"
-          aria-label="Awaiting decision"
-          :aria-pressed="awaitingDecision"
-          data-testid="awaiting-decision-toggle"
-          @click="awaitingDecision = !awaitingDecision"
-        >
-          <span class="inline-flex items-center gap-1.5">
-            <UIcon name="i-lucide-hourglass" class="size-4" />
-            <!-- mobile shows the short label — the full words wrap at 390px -->
-            <span class="whitespace-nowrap sm:hidden">Awaiting</span>
-            <span class="hidden whitespace-nowrap sm:inline">Awaiting decision</span>
-            <span
-              v-if="awaitingCount > 0"
-              class="bg-accented text-default inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
-              data-testid="awaiting-count"
-              >{{ awaitingCount }}</span
-            >
-          </span>
-        </UButton>
-        <UButton
-          icon="i-lucide-settings-2"
-          label="Statuses"
-          color="neutral"
-          variant="outline"
-          size="sm"
-          @click="statusManagerOpen = true"
-        />
-        <UButton
-          v-if="rows.length > 0 || listFiltered"
-          icon="i-lucide-plus"
-          label="New task"
-          size="sm"
-          @click="openEditor()"
+          <UButton
+            color="neutral"
+            :variant="needsDecision ? 'solid' : 'outline'"
+            size="sm"
+            class="h-11 sm:h-8"
+            aria-label="Needs my decision"
+            :aria-pressed="needsDecision"
+            data-testid="needs-decision-toggle"
+            @click="needsDecision = !needsDecision"
+          >
+            <span class="inline-flex items-center gap-1.5">
+              <UIcon name="i-lucide-inbox" class="size-4" />
+              <!-- mobile shows the short label — the full words wrap to 3 lines at 390px -->
+              <span class="whitespace-nowrap sm:hidden">Decisions</span>
+              <span class="hidden whitespace-nowrap sm:inline">Needs my decision</span>
+              <span
+                v-if="inboxQuery.isPending.value"
+                class="bg-accented text-muted inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
+                data-testid="inbox-count-pending"
+                aria-label="Loading the decision count"
+                >…</span
+              >
+              <span
+                v-else-if="inboxQuery.isError.value"
+                class="bg-error/15 text-error inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
+                data-testid="inbox-count-error"
+                title="Couldn't load the decision count — reopen the page to retry"
+                aria-label="Decision count unavailable"
+                >!</span
+              >
+              <span
+                v-else-if="inboxCount > 0"
+                class="bg-accented text-default inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
+                data-testid="inbox-count"
+                >{{ inboxCount }}</span
+              >
+            </span>
+          </UButton>
+          <UButton
+            color="neutral"
+            :variant="awaitingDecision ? 'solid' : 'outline'"
+            size="sm"
+            class="h-11 sm:h-8"
+            aria-label="Awaiting decision"
+            :aria-pressed="awaitingDecision"
+            data-testid="awaiting-decision-toggle"
+            @click="awaitingDecision = !awaitingDecision"
+          >
+            <span class="inline-flex items-center gap-1.5">
+              <UIcon name="i-lucide-hourglass" class="size-4" />
+              <!-- mobile shows the short label — the full words wrap at 390px -->
+              <span class="whitespace-nowrap sm:hidden">Awaiting</span>
+              <span class="hidden whitespace-nowrap sm:inline">Awaiting decision</span>
+              <span
+                v-if="awaitingCount > 0"
+                class="bg-accented text-default inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
+                data-testid="awaiting-count"
+                >{{ awaitingCount }}</span
+              >
+            </span>
+          </UButton>
+          <UButton
+            icon="i-lucide-settings-2"
+            label="Statuses"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            class="h-11 sm:h-8"
+            @click="statusManagerOpen = true"
+          />
+          <UButton
+            v-if="rows.length > 0 || listFiltered"
+            icon="i-lucide-plus"
+            label="New task"
+            size="sm"
+            class="h-11 sm:h-8"
+            @click="openEditor()"
+          />
+        </div>
+        <div
+          class="from-default pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l to-transparent"
+          aria-hidden="true"
         />
       </div>
     </div>
@@ -660,7 +676,7 @@ onServerPrefetch(() =>
           size="sm"
           color="neutral"
           variant="soft"
-          class="shrink-0"
+          class="h-11 shrink-0 sm:h-7"
           :class="statusId === null ? 'text-highlighted' : 'text-muted'"
           :aria-pressed="statusId === null"
           @click="statusId = null"
@@ -673,7 +689,7 @@ onServerPrefetch(() =>
           size="sm"
           color="neutral"
           variant="soft"
-          class="shrink-0"
+          class="h-11 shrink-0 sm:h-7"
           :class="statusId === st.id ? 'text-highlighted' : 'text-muted'"
           :aria-pressed="statusId === st.id"
           @click="toggleStatusFilter(st.id)"
