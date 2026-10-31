@@ -223,3 +223,29 @@ describe('wfAction', () => {
     expect(wf.workflowNote.value).toBe('keep me');
   });
 });
+
+// forwardReady — the Forward verb renders ONLY where the server accepts it
+// (SPEC: waiting-answer + viewer is the current answer holder). The drawer
+// showed the verb in ready/working/paused states where the server always
+// rejected it (#92) and hid it in the only legal state.
+describe('forwardReady gate', () => {
+  it.each([
+    ['waiting_answer + holder is the viewer', CATEGORY.WAITING_ANSWER, 'u-1', 'u-1', true],
+    ['waiting_answer but a non-holder viewer', CATEGORY.WAITING_ANSWER, 'u-1', 'u-2', false],
+    ['working state, even for the holder', CATEGORY.WORKING, 'u-1', 'u-1', false],
+    ['ready state', CATEGORY.READY, 'u-1', 'u-1', false],
+    ['in-review state', CATEGORY.IN_REVIEW, 'u-1', 'u-1', false],
+  ])('%s', async (_label, category, holderId, userId, expected) => {
+    const m = await import('../../app/composables/useWorkflowActions.ts');
+    expect(m.forwardReady({ category, holderId, userId })).toBe(expected);
+  });
+
+  it('loading/failed statuses (null category) and a missing holder never arm the verb', async () => {
+    const m = await import('../../app/composables/useWorkflowActions.ts');
+    expect(m.forwardReady({ category: null, holderId: 'u-1', userId: 'u-1' })).toBe(false);
+    expect(m.forwardReady({ category: undefined, holderId: 'u-1', userId: 'u-1' })).toBe(false);
+    expect(m.forwardReady({ category: CATEGORY.WAITING_ANSWER, holderId: null, userId: 'u-1' })).toBe(false);
+    expect(m.forwardReady({ category: CATEGORY.WAITING_ANSWER, holderId: undefined, userId: 'u-1' })).toBe(false);
+    expect(m.forwardReady({ category: CATEGORY.WAITING_ANSWER, holderId: 'u-1', userId: null })).toBe(false);
+  });
+});
