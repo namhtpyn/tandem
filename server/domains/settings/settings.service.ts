@@ -2,6 +2,15 @@
 // defaults; OIDC providers live under key 'oidc_providers' as JSON.
 import { eq } from 'drizzle-orm';
 
+import {
+  DEFAULT_PEAK_END_HOUR,
+  DEFAULT_PEAK_START_HOUR,
+  effectiveCap,
+  isPeak,
+  parsePeakHour,
+  parsePeakMultiplier,
+} from '#shared/cadence';
+
 import { asDb, db, type DbExecutor } from '../../db/index';
 import { settings } from '../../db/schema';
 
@@ -46,6 +55,30 @@ export async function getTasksPerAgent() {
   return Number.isInteger(n) && n >= 1 ? n : DEFAULT_TASKS_PER_AGENT;
 }
 
+/** The peak window (ICT wall-clock hours); defaults 08–17 per the owner ruling. */
+export type PeakWindow = { startHour: number; endHour: number };
+
+export async function getPeakWindow(): Promise<PeakWindow> {
+  const [start, end] = await Promise.all([getSetting('peak_start_hour'), getSetting('peak_end_hour')]);
+  return {
+    startHour: parsePeakHour(start, DEFAULT_PEAK_START_HOUR, 0, 23),
+    endHour: parsePeakHour(end, DEFAULT_PEAK_END_HOUR, 1, 24),
+  };
+}
+
+/** The peak multiplier (0 pauses new in-window dispatches, 1 = no throttling). */
+export async function getPeakMultiplier() {
+  return parsePeakMultiplier(await getSetting('peak_multiplier'));
+}
+
+/** The EFFECTIVE per-agent cap: `floor(tasks_per_agent × peak_multiplier)` inside
+ * the peak window (Mon–Fri only — weekends always full cadence), the full cap
+ * outside. The dispatcher's claim checks and worker concurrency read THIS. */
+export async function getEffectiveTasksPerAgent() {
+  const [base, window, multiplier] = await Promise.all([getTasksPerAgent(), getPeakWindow(), getPeakMultiplier()]);
+  return effectiveCap(base, multiplier, isPeak(new Date(), window.startHour, window.endHour));
+}
+
 /** The company prompt — prepended to EVERY agent brief (Settings page; 8k cap at the boundary). */
 export async function getCompanyPrompt() {
   return ((await getSetting('company_prompt')) ?? '').trim();
@@ -65,6 +98,11 @@ export type AppSettings = {
   runTimeoutMs: number;
   /** concurrent tasks allowed per agent */
   tasksPerAgent: number;
+  /** peak window in ICT hours (Mon–Fri only — weekends always full cadence) */
+  peakStartHour: number;
+  peakEndHour: number;
+  /** in-window cap multiplier (0 = pause new dispatches, 1 = no throttling) */
+  peakMultiplier: number;
   /** prepended to every agent brief */
   companyPrompt: string;
   /** LLM used by Tandem's own server-side features (null = unassigned). */
@@ -99,6 +137,9 @@ export async function getSettings() {
     internalDecision: decision,
     runTimeoutMs: await getRunTimeoutMs(),
     tasksPerAgent: await getTasksPerAgent(),
+    peakStartHour: (await getPeakWindow()).startHour,
+    peakEndHour: (await getPeakWindow()).endHour,
+    peakMultiplier: await getPeakMultiplier(),
     companyPrompt: await getCompanyPrompt(),
   };
 }
