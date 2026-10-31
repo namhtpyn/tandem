@@ -32,15 +32,12 @@ test('workflow drawer opens from a mobile board card kebab too', async ({ page }
   const tasks = new TasksPage(page);
   const suffix = Date.now().toString(36).slice(-6);
   await tasks.navigate('/tasks');
-  // create in list view — the board toolbar hides New task while the board is
-  // empty, and the List/Board toggle itself is not reliably clickable at
-  // 390×844 (separate audit finding); neither is what this test is about
   await tasks.createTask({ title: `MWB ${suffix}` });
 
-  // flip to board view the way a returning user arrives: persisted preference
-  // (vueuse's string serializer stores RAW values — no JSON quotes)
-  await page.evaluate(() => localStorage.setItem('tasks:view', 'board'));
-  await page.reload();
+  // flip to board like a real user — the List/Board toggle is tappable at
+  // 390×844 since #99 pinned it outside the toolbar action scroller
+  await page.getByRole('button', { name: 'Board view' }).click();
+  await expect(page.getByTestId('board-column').first()).toBeVisible();
 
   const kebab = page.getByRole('button', { name: `Actions for MWB ${suffix}` });
   await expect(kebab).toBeVisible({ timeout: 15_000 });

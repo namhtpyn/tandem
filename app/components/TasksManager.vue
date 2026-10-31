@@ -525,37 +525,41 @@ onServerPrefetch(() =>
         class="w-full sm:max-w-xs"
         aria-label="Search tasks"
       />
-      <div class="ms-auto flex items-center gap-2 overflow-x-auto">
-        <div
-          class="border-default bg-default inline-flex overflow-hidden rounded-md border"
-          role="group"
-          aria-label="View"
+      <!-- #99: the List/Board toggle is pinned OUTSIDE the right-aligned action
+           scroller — inside it, the overflow group pushed the toggle out of the
+           visible row at 390×844 and board view had no touch entry point.
+           44px tap targets at phone widths (MOBILE-FIRST law), compact from sm. -->
+      <div
+        class="border-default bg-default inline-flex overflow-hidden rounded-md border"
+        role="group"
+        aria-label="View"
+      >
+        <button
+          type="button"
+          class="h-11 px-3 py-1.5 text-sm font-medium transition-colors sm:h-8"
+          :class="
+            view === 'list' ? 'bg-elevated text-highlighted' : 'text-muted hover:bg-elevated hover:text-highlighted'
+          "
+          aria-label="List view"
+          :aria-pressed="view === 'list'"
+          @click="view = 'list'"
         >
-          <button
-            type="button"
-            class="h-8 px-3 py-1.5 text-sm font-medium transition-colors"
-            :class="
-              view === 'list' ? 'bg-elevated text-highlighted' : 'text-muted hover:bg-elevated hover:text-highlighted'
-            "
-            aria-label="List view"
-            :aria-pressed="view === 'list'"
-            @click="view = 'list'"
-          >
-            List
-          </button>
-          <button
-            type="button"
-            class="border-default h-8 border-l px-3 py-1.5 text-sm font-medium transition-colors"
-            :class="
-              view === 'board' ? 'bg-elevated text-highlighted' : 'text-muted hover:bg-elevated hover:text-highlighted'
-            "
-            aria-label="Board view"
-            :aria-pressed="view === 'board'"
-            @click="view = 'board'"
-          >
-            Board
-          </button>
-        </div>
+          List
+        </button>
+        <button
+          type="button"
+          class="border-default h-11 border-l px-3 py-1.5 text-sm font-medium transition-colors sm:h-8"
+          :class="
+            view === 'board' ? 'bg-elevated text-highlighted' : 'text-muted hover:bg-elevated hover:text-highlighted'
+          "
+          aria-label="Board view"
+          :aria-pressed="view === 'board'"
+          @click="view = 'board'"
+        >
+          Board
+        </button>
+      </div>
+      <div class="ms-auto flex items-center gap-2 overflow-x-auto">
         <UButton
           color="neutral"
           :variant="needsDecision ? 'solid' : 'outline'"
