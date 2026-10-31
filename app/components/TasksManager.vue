@@ -462,8 +462,10 @@ const boardColumns = computed(() => statuses.value);
 
 // board card kebab menu items — the actions hide behind one menu instead of an
 // always-on icon row (accent rationing: delete is a menu item, not a red button)
+// kebab menu items are phone-first tap targets (MOBILE-FIRST law: ≥44px) —
+// the menu is the ONLY action surface on mobile cards
 const BOARD_MENU_ITEM =
-  'flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-xs text-muted transition-colors hover:bg-elevated hover:text-highlighted';
+  'flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-xs text-muted transition-colors hover:bg-elevated hover:text-highlighted';
 
 // manual status is FREE on every surface (owner ruling) — any column is a legal drop
 
@@ -854,7 +856,9 @@ onServerPrefetch(() =>
               </p>
             </div>
             <!-- every card action hides behind one kebab — no visible trash row
-                 to mis-tap on a phone; Move to… is the touch/keyboard status path -->
+                 to mis-tap on a phone; Move to… is the touch/keyboard status path.
+                 The trigger's ::after hit-area bleed keeps the small icon ≥44px
+                 tappable without growing the visible glyph. -->
             <UPopover :ui="{ content: 'w-44 p-1' }">
               <UButton
                 icon="i-lucide-ellipsis-vertical"
@@ -862,12 +866,15 @@ onServerPrefetch(() =>
                 color="neutral"
                 variant="ghost"
                 :aria-label="`Actions for ${row.title}`"
-                class="shrink-0"
+                class="relative shrink-0 after:absolute after:-inset-2 after:content-['']"
               />
               <template #content>
                 <div class="flex flex-col">
                   <button type="button" :class="BOARD_MENU_ITEM" :disabled="busy" @click="autoAssign(row)">
                     <UIcon name="i-lucide-wand-sparkles" class="size-3.5 shrink-0" />Auto-assign
+                  </button>
+                  <button type="button" :class="BOARD_MENU_ITEM" @click="openWorkflow(row)">
+                    <UIcon name="i-lucide-message-circle-more" class="size-3.5 shrink-0" />Workflow
                   </button>
                   <p class="text-dimmed px-2 pt-1.5 pb-1 text-[10px] font-medium">Move to…</p>
                   <div class="max-h-40 overflow-y-auto">
@@ -998,12 +1005,17 @@ onServerPrefetch(() =>
                       color="neutral"
                       variant="ghost"
                       :aria-label="`Actions for ${row.title}`"
-                      class="transition-opacity max-md:opacity-100 md:opacity-0 md:group-focus-within/card:opacity-100 md:group-hover/card:opacity-100"
+                      class="relative transition-opacity after:absolute after:-inset-2 after:content-[''] max-md:opacity-100 md:opacity-0 md:group-focus-within/card:opacity-100 md:group-hover/card:opacity-100"
                     />
                     <template #content>
                       <div class="flex flex-col">
                         <button type="button" :class="BOARD_MENU_ITEM" :disabled="busy" @click="autoAssign(row)">
                           <UIcon name="i-lucide-wand-sparkles" class="size-3.5 shrink-0" />Auto-assign
+                        </button>
+                        <!-- Workflow: the same drawer the desktop row button opens —
+                           at phone widths the drawer's only entry is this item -->
+                        <button type="button" :class="BOARD_MENU_ITEM" @click="openWorkflow(row)">
+                          <UIcon name="i-lucide-message-circle-more" class="size-3.5 shrink-0" />Workflow
                         </button>
                         <!-- Move to…: the same setStatus the drag fires — the
                            touch/keyboard path onto the drag-only board -->
