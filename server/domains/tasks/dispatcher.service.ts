@@ -1,7 +1,7 @@
 import { consola } from 'consola';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 
-import { CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS } from '#shared/enums';
+import { ACTIVITY_KIND, CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 // Dispatcher: scans for eligible tasks (ready-category status + AI assignee)
 // and dispatches them to the runner. One task at a time per agent (serial);
@@ -10,7 +10,7 @@ import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { tasks, taskRuns, taskMessages } from '../../db/schema';
+import { aiEmployees, tasks, taskRuns, taskMessages, taskStatuses } from '../../db/schema';
 import { publishChange } from '../kernel/change-bus';
 import { env } from '../kernel/env';
 import { redisQueue } from '../kernel/queue';
@@ -99,6 +99,94 @@ async function reapStaleRunsInner() {
     reaped += 1;
   }
   return reaped;
+}
+
+/** LIVENESS SWEEP (#88, 2026-10-31): a working-category task is backed by a live run
+ * or it bounces to ready. Covers subtask-unblock relics, missed status remaps and
+ * settle-path regressions — shapes the reaper cannot see (it only reaps stale RUNNING
+ * rows). Liveness repair, not failure: fail_streak/dispatch_after untouched, no backoff;
+ * human-assigned tasks are exempt (manual status freedom). */
+export const LIVENESS_GRACE_MS = 15 * 60_000;
+
+/** pure sweep decision: bounce iff working + AI assignee + no live run + idle past grace */
+export function livenessBounce(
+  t: {
+    category: string | null;
+    isAiAssignee: boolean;
+    newestRunStatus: string | null;
+    newestRunSettledAt: Date | null;
+    updatedAt: Date;
+  },
+  now: number,
+  graceMs = LIVENESS_GRACE_MS,
+): boolean {
+  if (t.category !== 'working' || !t.isAiAssignee) return false;
+  if (t.newestRunStatus === RUN_STATUS.RUNNING) return false;
+  // a run that just settled is mid-settle flow (synchronous); updatedAt backs the
+  // zero-run shape (manual move / data relic) and settled runs missing finished_at
+  const idleSince = t.newestRunSettledAt ?? t.updatedAt;
+  return now - idleSince.getTime() > graceMs;
+}
+
+export async function sweepIdleWorking(): Promise<number> {
+  try {
+    return await sweepIdleWorkingInner();
+  } catch (e) {
+    log.warn('liveness sweep failed:', (e as Error).message);
+    return 0; // best-effort sweep: try again next tick
+  }
+}
+
+async function sweepIdleWorkingInner(): Promise<number> {
+  const now = Date.now();
+  const rows = await db
+    .select({ id: tasks.id, updatedAt: tasks.updatedAt })
+    .from(tasks)
+    .innerJoin(taskStatuses, eq(taskStatuses.id, tasks.status))
+    .innerJoin(aiEmployees, eq(aiEmployees.userId, tasks.assigneeId))
+    .where(eq(taskStatuses.category, 'working'));
+  let bounced = 0;
+  for (const row of rows) {
+    // runs link tasks via task_runs.message_id -> task_messages.task_id (no task_id on runs)
+    const newest = (
+      await db
+        .select({ status: taskRuns.status, finishedAt: taskRuns.finishedAt })
+        .from(taskRuns)
+        .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+        .where(eq(taskMessages.taskId, row.id))
+        .orderBy(desc(taskRuns.startedAt))
+        .limit(1)
+    )[0];
+    if (
+      !livenessBounce(
+        {
+          category: 'working',
+          isAiAssignee: true,
+          newestRunStatus: newest?.status ?? null,
+          newestRunSettledAt: newest?.finishedAt ?? null,
+          updatedAt: row.updatedAt,
+        },
+        now,
+      )
+    )
+      continue;
+    await db
+      .update(tasks)
+      .set({ status: STATUS.todo, dispatchAfter: null, updatedAt: new Date() })
+      .where(eq(tasks.id, row.id));
+    const { logActivity } = await import('./review.service');
+    await logActivity(
+      row.id,
+      ACTIVITY_KIND.STATUS,
+      null,
+      '[liveness] idle in a working status with no live run — returned to to-do',
+      { livenessBounce: true, idleSince: (newest?.finishedAt ?? row.updatedAt).toISOString() },
+    );
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+    bounced += 1;
+  }
+  if (bounced > 0) log.info(`liveness sweep: ${bounced} idle working task(s) back to to-do`);
+  return bounced;
 }
 
 /** the EFFECTIVE per-agent cap — tasks_per_agent scaled down inside the peak
@@ -304,6 +392,7 @@ export function startDispatcher(tandemUrl: string, intervalMs = 5000): () => voi
   const timer = setInterval(() => {
     void scanOnce(tandemUrl); // scanOnce never rejects: its own catch turns errors into false
     void reapStaleRuns(); // never rejects: its own catch turns errors into 0 reaped
+    void sweepIdleWorking(); // never rejects: its own catch turns errors into 0 bounced
     void resyncOnCapChange().catch(() => {}); // peak window opened/closed: workers re-sync, no redeploy
   }, intervalMs);
   return () => clearInterval(timer);

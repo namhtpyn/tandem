@@ -31,6 +31,23 @@ export async function terminalStatusIds(ex: DbExecutor = db) {
   return new Set(rows.map((r) => r.id));
 }
 
+/** UNBLOCK RESTORE LAW (#88, 2026-10-31): resolve the pre-block restore target before
+ * the write — this write bypasses the setStatus membership guard, so an unknown/malformed
+ * id would re-create a dangling tasks.status (the #62 class): it falls back to to-do.
+ * A working-category target also restores to to-do: a working status must be backed by
+ * a live run and the dispatcher scans ready-category only — restore-to-doing dead-ended
+ * the task (prod 9515f3f8 sat stranded 4+ days after its unblock). */
+export function resolveRestoreTarget(restoreId: string, known: ReadonlyMap<string, string>): string {
+  const category = known.get(restoreId);
+  if (!category || category === 'working') return STATUS.todo;
+  return restoreId;
+}
+
+async function statusCategoryMap(ex: DbExecutor = db): Promise<Map<string, string>> {
+  const rows = await asDb(ex).select({ id: taskStatuses.id, category: taskStatuses.category }).from(taskStatuses);
+  return new Map(rows.map((r) => [r.id, r.category]));
+}
+
 /**
  * recompute the auto-block for every ancestor of this task. Call after ANY status
  * change on a task (its own transition may release or tighten its parents' gates).
@@ -60,7 +77,8 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
         .where(eq(tasks.id, cur.id));
       await logActivity(cur.id, `auto-blocked: ${open} subtask(s) open`, { autoBlocked: true, open });
     } else if (open === 0 && cur.status === BLOCKED_STATUS && cur.preBlockStatus) {
-      const restore = cur.preBlockStatus;
+      const known = await statusCategoryMap(ex);
+      const restore = resolveRestoreTarget(cur.preBlockStatus, known);
       await d
         .update(tasks)
         .set({ status: restore, preBlockStatus: null, updatedAt: new Date() })
