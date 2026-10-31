@@ -1,3 +1,10 @@
+## [2.55.2](https://github.com/namhtpyn/tandem/compare/v2.55.1...v2.55.2) (2026-10-31)
+
+
+### Bug Fixes
+
+* **dispatch:** liveness sweep + unblock restore resolution — working statuses are run-backed ([#88](https://github.com/namhtpyn/tandem/issues/88)) ([#89](https://github.com/namhtpyn/tandem/issues/89)) ([3f33e4e](https://github.com/namhtpyn/tandem/commit/3f33e4eb7996be3e1e365e6987fa934c2cb6f8cd))
+
 ## [2.55.1](https://github.com/namhtpyn/tandem/compare/v2.55.0...v2.55.1) (2026-10-31)
 
 
