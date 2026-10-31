@@ -1,3 +1,10 @@
+# [2.57.0](https://github.com/namhtpyn/tandem/compare/v2.56.5...v2.57.0) (2026-10-31)
+
+
+### Features
+
+* **settings:** settings-backed feature flags — off-state default, tasks.turn-durations ([#111](https://github.com/namhtpyn/tandem/issues/111)) ([#120](https://github.com/namhtpyn/tandem/issues/120)) ([3a98d2b](https://github.com/namhtpyn/tandem/commit/3a98d2bcca19908bf397ecf4aaf856c137dfd146))
+
 ## [2.56.5](https://github.com/namhtpyn/tandem/compare/v2.56.4...v2.56.5) (2026-10-31)
 
 
