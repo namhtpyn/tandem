@@ -37,7 +37,6 @@ function projectionOf(v: SettingsPayload) {
     companyName: v.companyName.trim() || 'Tandem',
     runTimeoutMinutes: Math.round(v.runTimeoutMs / 60_000),
     tasksPerAgent: v.tasksPerAgent,
-    peak: { peakStartHour: v.peakStartHour, peakEndHour: v.peakEndHour, peakMultiplier: v.peakMultiplier },
     companyPrompt: v.companyPrompt,
     internalLlm: assignment(v.internalLlm),
     internalDecision: assignment(v.internalDecision),
@@ -48,14 +47,7 @@ const lastProjection = ref<ReturnType<typeof projectionOf> | null>(null);
 
 /** untouched = no arrival seen yet, or the ref still holds what we last seeded */
 function isUntouched(
-  key:
-    | 'companyName'
-    | 'runTimeoutMinutes'
-    | 'tasksPerAgent'
-    | 'peak'
-    | 'companyPrompt'
-    | 'internalLlm'
-    | 'internalDecision',
+  key: 'companyName' | 'runTimeoutMinutes' | 'tasksPerAgent' | 'companyPrompt' | 'internalLlm' | 'internalDecision',
   current: unknown,
 ) {
   const prior = lastProjection.value;
@@ -68,11 +60,6 @@ function applySettings(v: SettingsPayload) {
   if (isUntouched('companyName', companyName.value)) companyName.value = seeded.companyName;
   if (isUntouched('runTimeoutMinutes', runTimeoutMinutes.value)) runTimeoutMinutes.value = seeded.runTimeoutMinutes;
   if (isUntouched('tasksPerAgent', tasksPerAgent.value)) tasksPerAgent.value = seeded.tasksPerAgent;
-  if (isUntouched('peak', peakForm)) {
-    peakForm.peakStartHour = seeded.peak.peakStartHour;
-    peakForm.peakEndHour = seeded.peak.peakEndHour;
-    peakForm.peakMultiplier = seeded.peak.peakMultiplier;
-  }
   if (isUntouched('companyPrompt', companyPrompt.value)) companyPrompt.value = seeded.companyPrompt;
   if (isUntouched('internalLlm', llmForm)) {
     llmForm.providerId = seeded.internalLlm.providerId;
@@ -96,9 +83,6 @@ const nameState = reactive({ companyName });
 const promptState = reactive({ companyPrompt });
 const timeoutState = reactive({ runTimeoutMinutes });
 const tasksState = reactive({ tasksPerAgent });
-// peak cadence (#70): one form for the window + multiplier triple
-const peakForm = reactive({ peakStartHour: 8, peakEndHour: 17, peakMultiplier: 1 });
-const peakState = reactive({ peakForm });
 
 // loose frontend schemas (repo law): presence/shape only, the server re-validates.
 // UForm only renders per-field errors when it has a schema — these six forms had
@@ -132,13 +116,6 @@ const tasksPerAgentSchema = z.object({
 });
 // loose frontend check (repo law): presence/shape only — the server re-validates
 // the start<end window rule against the saved other half
-const peakSchema = z.object({
-  peakForm: z.object({
-    peakStartHour: z.number('Enter a whole hour between 0 and 23').int().min(0).max(23),
-    peakEndHour: z.number('Enter a whole hour between 1 and 24').int().min(1).max(24),
-    peakMultiplier: z.number('Enter a factor between 0 and 1').min(0).max(1),
-  }),
-});
 /** assignment forms: provider optional; a chosen provider needs a key + model */
 const assignmentSchema = z
   .object({
@@ -189,7 +166,6 @@ const nameSaver = useSettingsSaver('workspace name');
 const promptSaver = useSettingsSaver('workspace prompt');
 const timeoutSaver = useSettingsSaver('run timeout');
 const tasksSaver = useSettingsSaver('task limit');
-const peakSaver = useSettingsSaver('peak cadence');
 
 async function saveCompanyName() {
   await nameSaver.save(() => ({ companyName: companyName.value.trim() }));
@@ -215,16 +191,6 @@ async function saveTasksPerAgent() {
     const n = Number(tasksPerAgent.value);
     if (!Number.isInteger(n) || n < 1 || n > 32) return 'Enter a whole number between 1 and 32';
     return { tasksPerAgent: n };
-  });
-}
-async function savePeakCadence() {
-  await peakSaver.save(() => {
-    const { peakStartHour: s, peakEndHour: e, peakMultiplier: m } = peakForm;
-    const hoursOk = Number.isInteger(s) && s >= 0 && s <= 23 && Number.isInteger(e) && e >= 1 && e <= 24;
-    if (!hoursOk) return 'Enter whole hours: start 0–23, end 1–24';
-    if (s >= e) return 'The peak window start must be before its end';
-    if (!(m >= 0 && m <= 1)) return 'Enter a multiplier between 0 and 1';
-    return { peakStartHour: s, peakEndHour: e, peakMultiplier: m };
   });
 }
 // ---- Workspace AI: internal LLM + decision assignments ----
@@ -517,69 +483,6 @@ onServerPrefetch(() => Promise.all([settingsLive.suspense(), providersLive.suspe
       </UForm>
 
       <USeparator class="my-5" />
-
-      <UForm :state="peakState" :schema="peakSchema" class="flex flex-wrap items-end gap-3" @submit="savePeakCadence">
-        <UFormField label="Peak window start (ICT)" name="peakStartHour" class="min-w-40">
-          <template #hint
-            ><FormHint text="Hour the peak window opens (Mon–Fri only, ICT). Weekends always run full cadence"
-          /></template>
-          <UInput
-            v-model.number="peakForm.peakStartHour"
-            type="number"
-            :min="0"
-            :max="23"
-            icon="i-lucide-sunrise"
-            class="w-32"
-            :disabled="peakSaver.saving"
-          />
-        </UFormField>
-        <UFormField label="Peak window end (ICT)" name="peakEndHour" class="min-w-40">
-          <template #hint
-            ><FormHint text="Hour the peak window closes (Mon–Fri only, ICT). 17 = 17:00 sharp"
-          /></template>
-          <UInput
-            v-model.number="peakForm.peakEndHour"
-            type="number"
-            :min="1"
-            :max="24"
-            icon="i-lucide-sunset"
-            class="w-32"
-            :disabled="peakSaver.saving"
-          />
-        </UFormField>
-        <UFormField label="Peak multiplier" name="peakMultiplier" class="min-w-40">
-          <template #hint
-            ><FormHint
-              text="In-window cap factor: each agent runs floor(tasks per agent × this) during peak. 1 = no throttling, 0 = pause new dispatches"
-          /></template>
-          <UInput
-            v-model.number="peakForm.peakMultiplier"
-            type="number"
-            :min="0"
-            :max="1"
-            :step="0.1"
-            icon="i-lucide-gauge"
-            class="w-32"
-            :disabled="peakSaver.saving"
-          />
-        </UFormField>
-        <UButton
-          type="submit"
-          icon="i-lucide-save"
-          color="neutral"
-          variant="soft"
-          :loading="peakSaver.saving"
-          :disabled="!settingsLive.isSuccess.value"
-          >Save peak cadence</UButton
-        >
-        <span
-          v-if="peakSaver.message"
-          class="pb-2 text-xs"
-          :class="peakSaver.ok ? 'text-success' : 'text-error'"
-          :role="peakSaver.ok ? 'status' : 'alert'"
-          >{{ peakSaver.message }}</span
-        >
-      </UForm>
 
       <USeparator class="my-5" />
 
