@@ -288,6 +288,8 @@ export const tasks = pgTable(
     index('tasks_assignee_idx').on(t.assigneeId),
     index('tasks_project_idx').on(t.projectId),
     index('tasks_status_idx').on(t.status),
+    // gating walks children on every status change (#130)
+    index('tasks_parent_task_idx').on(t.parentTaskId),
   ],
 );
 
@@ -396,6 +398,8 @@ export const taskRuns = pgTable(
   (t) => [
     index('task_runs_message_idx').on(t.messageId, t.startedAt),
     index('task_runs_employee_started_idx').on(t.employeeId, t.startedAt),
+    // the reaper's RUNNING sweep every dispatcher tick (#130)
+    index('task_runs_status_idx').on(t.status),
   ],
 );
 
