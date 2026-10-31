@@ -149,7 +149,8 @@ vi.mock('ssh2', () => {
       this.stream.blobExpected = FakeClient.blobLen;
       cb(this.execError, this.execError ? null : this.stream);
     }
-    connect(_o: unknown) {
+    connect(o: unknown) {
+      (this as unknown as { connectOpts: unknown }).connectOpts = o; // host-key law wiring (#129)
       /* tests drive ready/error manually */
     }
     emitReady() {
@@ -1075,6 +1076,20 @@ describe('acp-ssh transport', () => {
     client.emitReady();
     await p; // default port 22 + password arm exercised through connect()
     expect(client.stream.blob).toBe('blob');
+  });
+
+  it('passes the host-key verifier to ssh2 (host-key law, #129)', async () => {
+    const { openAcpSshStream } = await import('#server/domains/tasks/acp-ssh.util');
+    const plan = {
+      env: { host: 'h', port: '22', username: '00000000-0000-7000-8000-51e69892ab49' },
+      sshKey: 'k',
+    };
+    const p = openAcpSshStream(plan, 'blob', 'hermes acp', () => {});
+    const client = await lastClient();
+    client.emitReady();
+    await p;
+    const opts = (client as unknown as { connectOpts: Record<string, unknown> | null }).connectOpts;
+    expect(typeof opts?.hostVerifier).toBe('function');
   });
 
   it('write guards + close survives throwing signal/close + non-number exit codes', async () => {

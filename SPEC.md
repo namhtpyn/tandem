@@ -32,7 +32,7 @@ APP, never the DB — drizzle `.$default(() => uuidv7())` on ids (v7 from the
 supplies values). Applies to both schema.ts and the generated schema.auth.ts.
 
 ```
-environments(id, name, host, port, username, created_at, updated_at)
+environments(id, name, host, port, username, secret_id -> vault_secrets.id set null, secret_usage SSH_KEY|SSH_PASSWORD, host_key_fingerprint (TOFU store — see Environments procedures), created_at, updated_at)
 employees(id, name, kind: human|ai, title, manager_id -> employees.id, environment_id -> environments.id, instructions, created_at, updated_at)
 tasks(id, title, description, assignee_id -> employees.id, status, created_at, updated_at)
 task_messages(id, task_id -> tasks.id cascade, author_id -> user.id set null, body, created_at) — one ordered conversation thread per task AND the single activity store (task_activity DROPPED 2026-10-30 — workflow verbs write here + a task_message_activities extension row; run bookkeeping lives on the run rows only); per-kind extension tables (1:1; task_message_activities(message_id -> task_messages.id cascade, payload jsonb)) hold the structured payload — the kind is whichever extension exists, no kind column; STATUS rows are pipeline bookkeeping (never thread items, never shipped in briefs)
@@ -207,6 +207,15 @@ HTTP hop; per-request so cookies stay current).
 - probe: BatchMode ssh (`StrictHostKeyChecking=accept-new`, ConnectTimeout 5),
   marker `tandem-probe-ok`; Bun Shell first, node `child_process` fallback for
   non-bun runtimes; `TANDEM_SSH_TIMEOUT_MS` overrides the 10s kill timer
+- SSH host-key law (TOFU): EVERY ssh2 transport — run exec, file shuttle,
+  ACP-over-SSH — passes a `hostVerifier`: the presented wire-format host key is
+  fingerprinted `sha256:<base64 nopad>` and compared against
+  `environments.host_key_fingerprint`. First contact (no stored fingerprint)
+  accepts and PERSISTS the fingerprint (trust-on-first-use); a stored
+  fingerprint mismatch FAILS CLOSED — connection refused, step FAILED,
+  `[ssh-hostkey] HOST KEY MISMATCH` audit line. A first-contact persist failure
+  degrades to per-connection accept-new (the mismatch guard stays intact). The
+  probe keeps spawn-ssh `StrictHostKeyChecking=accept-new` (unchanged).
 
 ### Realtime client
 

@@ -18,7 +18,7 @@ import type { RoutingProposal } from '#shared/run-verdict';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { tasks, taskRuns, taskAttachments, taskMessages } from '../../db/schema';
+import { environments, tasks, taskRuns, taskAttachments, taskMessages } from '../../db/schema';
 import { env } from '../kernel/env';
 import { publishChange } from '../kernel/kernel';
 import { redisQueue } from '../kernel/queue';
@@ -133,11 +133,33 @@ async function readInlineImages(
   return out;
 }
 
+/** persist the first-contact host key fingerprint (TOFU store, SPEC: Environments) */
+export async function saveHostKeyFingerprint(envId: string, fingerprint: string) {
+  await db.update(environments).set({ hostKeyFingerprint: fingerprint }).where(eq(environments.id, envId));
+}
+
+/** sshPlan + host-key TOFU trust state (host-key law, SPEC: Environments) —
+ * every transport built from it verifies through this one store */
+function sshPlanOf(plan: {
+  env: { id: string; host: string; port: string; username: string; hostKeyFingerprint: string | null };
+  sshKey?: string;
+  sshPassword?: string;
+}): SshPlan {
+  return {
+    env: plan.env,
+    sshKey: plan.sshKey,
+    sshPassword: plan.sshPassword,
+    envId: plan.env.id,
+    knownHostFingerprint: plan.env.hostKeyFingerprint ?? null,
+    saveHostFingerprint: (fingerprint) => saveHostKeyFingerprint(plan.env.id, fingerprint),
+  };
+}
+
 /** push the task's input attachments to the sandbox; failures are logged, never fatal */
 export async function pushInputAttachments(
   taskId: string,
   briefData: { attachments?: Array<{ id: string; filename: string; mime: string; size: number; remotePath: string }> },
-  sshPlan: { env: { host: string; port: string; username: string }; sshKey?: string; sshPassword?: string },
+  sshPlan: SshPlan,
   envName: string,
   loadSshClient: () => Promise<Parameters<typeof pushTaskFiles>[0]>,
   onLine: (line: string) => void,
@@ -164,7 +186,7 @@ export async function pushInputAttachments(
 export async function settleAttachments(
   taskId: string,
   runId: string,
-  sshPlan: { env: { host: string; port: string; username: string }; sshKey?: string; sshPassword?: string },
+  sshPlan: SshPlan,
   _status: FinishedStatus,
 ): Promise<{ collected: number; tokens: string[] }> {
   try {
@@ -279,6 +301,7 @@ import { promptImageSplit } from './prompt-images.util';
 import { recordProposals } from './proposals.service';
 import { resultImageTokens, type ResultFile } from './result-attachments.util';
 import { recordVerdict } from './review.service';
+import type { SshPlan } from './ssh-exec.util';
 import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles, ensureOutDir } from './ssh-files.util';
 import { appendMessageAttachments, createRunMessage, updateRunMessageBody } from './thread.service';
 import { submitResult, askQuestion } from './workflow.service';
@@ -307,7 +330,16 @@ export async function loadDispatchPlan(taskId: string) {
   const ai = aiRows[0];
   if (!ai) throw new Error('assignee is not an AI employee');
   const envRows = await db.query.environments.findMany({
-    columns: { id: true, name: true, host: true, port: true, username: true, secretId: true, secretUsage: true },
+    columns: {
+      id: true,
+      name: true,
+      host: true,
+      port: true,
+      username: true,
+      secretId: true,
+      secretUsage: true,
+      hostKeyFingerprint: true,
+    },
     where: { id: { eq: ai.environmentId } },
     orderBy: { createdAt: 'asc' },
   });
@@ -426,7 +458,16 @@ async function loadDispatchPlanFor(employeeId: string, taskId: string) {
   const ai = aiRows[0];
   if (!ai) throw new Error('reviewer is not an AI employee');
   const envRows = await db.query.environments.findMany({
-    columns: { id: true, name: true, host: true, port: true, username: true, secretId: true, secretUsage: true },
+    columns: {
+      id: true,
+      name: true,
+      host: true,
+      port: true,
+      username: true,
+      secretId: true,
+      secretUsage: true,
+      hostKeyFingerprint: true,
+    },
     where: { id: { eq: ai.environmentId } },
     orderBy: { createdAt: 'asc' },
   });
@@ -1085,7 +1126,9 @@ export async function executeRun(
     const { openAcpSshStream } = await import('./acp-ssh.util');
     const { runAcpTurn, verdictFor } = await import('./acp.client');
     const { loadClient: loadSshClient } = await import('./ssh-exec.util');
-    const sshPlan = { env: plan.env, sshKey: plan.sshKey, sshPassword: plan.sshPassword };
+    // host-key law (SPEC: Environments): the plan carries the TOFU trust state —
+    // every transport (push, out-dir, ACP stream, collect) verifies through it
+    const sshPlan = sshPlanOf(plan);
     // push input attachments (idempotent; no-op when none)
     await pushInputAttachments(taskId, briefData, sshPlan, plan.envName, loadSshClient, onLine);
     // PROMPT-INLINE IMAGES (SPEC 2026-10-31): selected input images ride the turn

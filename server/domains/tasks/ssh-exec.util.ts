@@ -6,11 +6,13 @@ import type { Client } from 'ssh2';
 
 import { RUN_STATUS, type FinishedStatus } from '#shared/enums';
 
+import { sshHostVerifier, type HostKeyTrust } from './ssh-hostkey.util';
+
 export type SshPlan = {
   env: { host: string; port: string; username: string };
   sshKey?: string;
   sshPassword?: string;
-};
+} & HostKeyTrust;
 
 type Finish = (status: FinishedStatus, exitCode: number | null) => Promise<void>;
 type Resolve = (v: { status: FinishedStatus; exitCode: number | null }) => void;
@@ -94,5 +96,7 @@ export async function runOverSsh(
       keepaliveInterval: 15_000,
       keepaliveCountMax: 4,
       readyTimeout: 20_000,
+      // host-key law (SPEC: Environments): TOFU verify before auth completes
+      hostVerifier: sshHostVerifier(plan),
     });
 }

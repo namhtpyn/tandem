@@ -44,7 +44,8 @@ function makeFakeClient(
       instances.push(this);
     }
     private handlers = new Map<string, Array<(arg?: unknown) => void>>();
-    connect(_opts: unknown) {
+    connect(opts: Record<string, unknown>) {
+      (this as unknown as { connectOpts: Record<string, unknown> }).connectOpts = opts; // #129 wiring
       queueMicrotask(() => this.emit('ready'));
       return this;
     }
@@ -455,5 +456,15 @@ describe('cleanupTaskFiles', () => {
     await cleanupTaskFiles(Fake, plan, 't5');
     const all = (Fake as unknown as { __instances: Array<{ __cmds: string[] }> }).__instances.flatMap((i) => i.__cmds);
     expect(all.some((c) => c.includes(`rm -rf ${TASK_FILES_HOME}/t5`))).toBe(true);
+  });
+});
+
+describe('host-key law wiring (#129)', () => {
+  it('the shuttle passes the hostVerifier to ssh2', async () => {
+    const Fake = makeFakeClient({ 'mkdir -p': '' });
+    await ensureOutDir(Fake, plan, 't6');
+    const inst = (Fake as unknown as { __instances: Array<{ connectOpts: Record<string, unknown> | null }> })
+      .__instances[0];
+    expect(typeof inst?.connectOpts?.hostVerifier).toBe('function');
   });
 });

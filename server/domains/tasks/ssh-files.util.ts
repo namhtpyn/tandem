@@ -8,11 +8,13 @@
 import { consola } from 'consola';
 import type { Client } from 'ssh2';
 
+import { sshHostVerifier, type HostKeyTrust } from './ssh-hostkey.util';
+
 export type SshFilePlan = {
   env: { host: string; port: string; username: string };
   sshKey?: string;
   sshPassword?: string;
-};
+} & HostKeyTrust;
 
 /** agent-side staging subtree, relative to the environment SSH user's home */
 export const TASK_FILES_HOME = '.tandem';
@@ -75,6 +77,8 @@ function connect(ClientCtor: typeof Client, plan: SshFilePlan, timeoutMs = 20_00
         // idle NAT/firewall drops kill silent connections mid-transfer — keepalive
         // keeps the shuttle channel alive for long collect/put sessions
         keepaliveInterval: 10_000,
+        // host-key law (SPEC: Environments): TOFU verify before auth completes
+        hostVerifier: sshHostVerifier(plan),
       });
   });
 }
