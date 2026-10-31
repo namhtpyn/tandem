@@ -961,6 +961,54 @@ describe('acp.client turns', () => {
     expect(verdictFor(OBLIGATION_STATUS.CANCELLED)).toEqual({ status: RUN_STATUS.FAILED, exitCode: 1 });
     expect(verdictFor('_custom')).toEqual({ status: RUN_STATUS.FAILED, exitCode: 1 });
   });
+
+  it('prompt images ride session/prompt as image blocks after the text block (SPEC 2026-10-31)', async () => {
+    let promptArg: Array<Record<string, unknown>> | null = null;
+    const stream = fakeAgent((msg, send) => {
+      const method = msg.method as string | undefined;
+      if (method === 'initialize')
+        send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+      else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-1' } });
+      else if (method === 'session/prompt') {
+        promptArg = (msg as { params: { prompt: Array<Record<string, unknown>> } }).params.prompt;
+        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+      }
+    });
+    await import('#server/domains/tasks/acp.client').then(({ runAcpTurn }) =>
+      runAcpTurn({
+        stream,
+        prompt: 'do the thing',
+        images: [
+          { data: 'QUJD', mimeType: 'image/png' },
+          { data: 'REVG', mimeType: 'image/jpeg' },
+        ],
+        timeoutMs: 2_000,
+      }),
+    );
+    expect(promptArg).toEqual([
+      { type: 'text', text: 'do the thing' },
+      { type: 'image', data: 'QUJD', mimeType: 'image/png' },
+      { type: 'image', data: 'REVG', mimeType: 'image/jpeg' },
+    ]);
+  });
+
+  it('no images -> the prompt is the single text block (legacy shape preserved)', async () => {
+    let promptArg: Array<Record<string, unknown>> | null = null;
+    const stream = fakeAgent((msg, send) => {
+      const method = msg.method as string | undefined;
+      if (method === 'initialize')
+        send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+      else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-1' } });
+      else if (method === 'session/prompt') {
+        promptArg = (msg as { params: { prompt: Array<Record<string, unknown>> } }).params.prompt;
+        send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+      }
+    });
+    await import('#server/domains/tasks/acp.client').then(({ runAcpTurn }) =>
+      runAcpTurn({ stream, prompt: 'do the thing', timeoutMs: 2_000 }),
+    );
+    expect(promptArg).toEqual([{ type: 'text', text: 'do the thing' }]);
+  });
 });
 
 describe('acp-ssh transport', () => {

@@ -147,6 +147,38 @@ describe('buildBrief', () => {
     const b = buildBrief({ ...base, agent: P('00000000-0000-7000-8000-cba5723598ca', 'Zed') });
     expect(b.startsWith('You are Zed.')).toBe(true);
   });
+  it('attachments label inlined vs staged-only images (SPEC 2026-10-31)', () => {
+    const b = buildBrief({
+      ...base,
+      attachments: [
+        {
+          id: 'att-1',
+          filename: 'shot.png',
+          mime: 'image/png',
+          size: 2048,
+          remotePath: '~/.tandem/t-123/attachments/shot.png',
+          inline: true,
+        },
+        {
+          id: 'att-2',
+          filename: 'huge.png',
+          mime: 'image/png',
+          size: 9 * 1024 * 1024,
+          remotePath: '~/.tandem/t-123/attachments/huge.png',
+        },
+        {
+          id: 'att-3',
+          filename: 'notes.txt',
+          mime: 'text/plain',
+          size: 512,
+          remotePath: '~/.tandem/t-123/attachments/notes.txt',
+        },
+      ],
+    });
+    expect(b).toContain('shot.png, image — inlined into this prompt, 2KB');
+    expect(b).toContain('huge.png, image — view with your image tool, 9216KB');
+    expect(b).toContain('notes.txt, document — read with file tools, 1KB');
+  });
   it('no direct reports and empty reviewers/project omit their lines', () => {
     const b = buildBrief({ ...base, directReports: [], task: { ...base.task, reviewerNames: [], projectName: null } });
     expect(b).not.toContain('Reports to you');

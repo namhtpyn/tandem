@@ -119,6 +119,26 @@ async function logRun(
   if (opts.publishActivity !== false) await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
 }
 
+/** PROMPT-INLINE IMAGES (SPEC 2026-10-31): read the split's selected input images
+ * for the turn's image content blocks; an unreadable file logs and leaves the
+ * agent its staged copy — never fails the dispatch. */
+async function readInlineImages(
+  taskId: string,
+  files: Array<{ id: string; filename: string; mime: string; size: number }> | undefined,
+  onLine: (line: string) => void,
+): Promise<Array<{ data: string; mimeType: string }>> {
+  const out: Array<{ data: string; mimeType: string }> = [];
+  for (const f of promptImageSplit(files ?? []).inline) {
+    try {
+      const bytes = await readAttachmentBytes(taskId, f.id);
+      out.push({ data: bytes.toString('base64'), mimeType: f.mime });
+    } catch {
+      onLine(`[dispatch] inline image ${f.filename} unavailable — the agent should use the staged copy`);
+    }
+  }
+  return out;
+}
+
 /** push the task's input attachments to the sandbox; failures are logged, never fatal */
 export async function pushInputAttachments(
   taskId: string,
@@ -254,12 +274,14 @@ import {
   COLLECTION_MAX_BYTES,
   mimeAllowed,
   normalizeMime,
+  readAttachmentBytes,
   sanitizeFilename,
   saveAttachmentBytes,
   sha256Hex,
 } from './attachments.util';
 /** everything the dispatched agent needs, decrypted; returns null pieces when unconfigured */
 import { buildBrief, loadBriefData } from './brief.service';
+import { promptImageSplit } from './prompt-images.util';
 import { recordProposals } from './proposals.service';
 import { resultImageTokens, type ResultFile } from './result-attachments.util';
 import { recordVerdict } from './review.service';
@@ -1072,6 +1094,10 @@ export async function executeRun(
     const sshPlan = { env: plan.env, sshKey: plan.sshKey, sshPassword: plan.sshPassword };
     // push input attachments (idempotent; no-op when none)
     await pushInputAttachments(taskId, briefData, sshPlan, plan.envName, loadSshClient, onLine);
+    // PROMPT-INLINE IMAGES (SPEC 2026-10-31): selected input images ride the turn
+    // as ACP image content blocks (staging already covered every input — this is
+    // additive; an unreadable file logs and leaves the agent the staged copy)
+    const inlineImages = await readInlineImages(taskId, briefData.attachments, onLine);
     // ALWAYS pre-create the out dir so deliverables have a real home (7d06bae0
     // law). Fired detached: mkdir lands in ms, the turn starts immediately, and a
     // slow/unreachable host must never delay dispatch.
@@ -1094,6 +1120,7 @@ export async function executeRun(
        * unit coverage drives review turns through the fake runner */
       resumeSessionId: plan.review ? plan.review.resumeSessionId : await lastSessionFor(taskId, plan.ai.userId, runId),
       prompt: brief,
+      images: inlineImages,
       timeoutMs: await getRunTimeoutMs(),
       onLine,
     });
