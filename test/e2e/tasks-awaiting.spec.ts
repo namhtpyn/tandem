@@ -47,7 +47,9 @@ test('awaiting-decision queue: company-wide filter, row badge, deep link, overvi
   // must stay hidden while the company queue still lists the task
   await page.getByTestId('awaiting-decision-toggle').click();
   await expect(page.getByTestId('awaiting-decision-toggle')).toHaveAttribute('aria-pressed', 'true');
-  expect(page.url()).toContain('awaiting=1');
+  // URL sync rides a post-toggle watcher tick — poll, never assert once (flaked
+  // the v2.60.0 release train 2026-10-31: both CI attempts lost the race)
+  await expect.poll(() => page.url()).toContain('awaiting=1');
   await expect(tasks.rowFor(taskTitle)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId('inbox-count')).toHaveCount(0);
 
