@@ -102,6 +102,7 @@ describe('settings allowlist pin (never exposes the OIDC registry)', () => {
       'companyName',
       'companyPrompt',
       'disablePasswordLogin',
+      'flags',
       'internalDecision',
       'internalLlm',
       'runTimeoutMs',

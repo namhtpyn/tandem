@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { FLAG_NAME_RE, MAX_FLAGS } from '#shared/flags';
 
 import { db } from '../../db/index';
 import { vaultSecrets as vaultSecretsTable } from '../../db/schema';
@@ -35,6 +36,7 @@ export const settingsRouter = os.router({
           .optional(),
         tasksPerAgent: z.number().int().min(1).max(32).optional(),
         companyPrompt: z.string().max(8000).optional(),
+        flags: z.record(z.string().regex(FLAG_NAME_RE), z.boolean()).optional(),
         internalLlm: z
           .strictObject({ providerId: z.string().min(1), model: z.string().min(1), keySecretId: z.string().min(1) })
           .nullable()
@@ -56,8 +58,12 @@ export const settingsRouter = os.router({
           throw new ORPCError('BAD_REQUEST', { message: 'configure an OIDC provider before disabling password login' });
         }
       }
-      // validate against the would-be FINAL state, so a start-only or end-only
-      // edit is checked against the currently saved other half
+      // feature flags: the stored map is capped (SPEC) — the zod schema already
+      // enforced per-entry name/shape, the count is checked against the would-be
+      // FINAL map before any write
+      if (input.flags !== undefined && Object.keys(input.flags).length > MAX_FLAGS) {
+        throw new ORPCError('BAD_REQUEST', { message: `at most ${MAX_FLAGS} flags` });
+      }
       // Workspace AI assignments: provider must exist and speak the right kind;
       // key secret must exist (keys are write-only vault references).
       const assignments: Array<{ key: string; raw: string | null }> = [];
@@ -113,6 +119,10 @@ export const settingsRouter = os.router({
         }
         if (input.runTimeoutMs !== undefined) {
           await setSetting('run_timeout_ms', String(input.runTimeoutMs), tx);
+        }
+        if (input.flags !== undefined) {
+          // REPLACE semantics (SPEC): a flags write replaces the whole map
+          await setSetting('flags', JSON.stringify(input.flags), tx);
         }
         for (const a of assignments) {
           if (a.raw) await setSetting(a.key, a.raw, tx);

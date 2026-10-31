@@ -8,9 +8,10 @@ import { useQuery } from '@tanstack/vue-query';
 import { computed, nextTick, onMounted, onServerPrefetch, ref, watch } from 'vue';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { FLAG_TASKS_TURN_DURATIONS } from '#shared/flags';
 import { nonNull } from '#shared/utils/non-null';
 import { attachmentUrl, employeeAvatarUrl } from '~/utils/api-urls';
-import { formatWhenShort } from '~/utils/format-when';
+import { formatWhenShort, turnDurationLabel } from '~/utils/format-when';
 import type { EmployeeRow, TaskRow, ThreadRow } from '~/utils/orpc-types';
 import { activityNotes, buildThread, parseRunEnvelope } from '~/utils/task-thread';
 import type { ThreadItem } from '~/utils/task-thread';
@@ -96,6 +97,22 @@ const thread = computed<ThreadItem[]>(() =>
     activity: workflowFeed.value,
   }),
 );
+
+// flagged surface (SPEC: Settings > Feature flags): settled run turns render
+// their wall-clock duration ONLY when the flag is explicitly on — off state
+// renders exactly the pre-flag header (off-state default)
+const settingsLive = useQuery($orpc.settings.list.queryOptions({ queryKey: [CHANGE_RESOURCE.SETTINGS] }));
+const turnDurationsOn = computed(() => unref(settingsLive.data)?.flags?.[FLAG_TASKS_TURN_DURATIONS] ?? false);
+const durationLabels = computed(() => {
+  const m = new Map<string, string>();
+  if (!turnDurationsOn.value) return m;
+  for (const item of thread.value) {
+    if (item.kind !== 'run') continue;
+    const label = turnDurationLabel(item.startedAt, item.finishedAt);
+    if (label) m.set(item.id, label);
+  }
+  return m;
+});
 
 const scroller = ref<HTMLElement | null>(null);
 
@@ -282,7 +299,13 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
                     (exit code {{ item.exitCode }})</span
                   >
                 </span>
-                <span data-allow-mismatch>{{ formatWhenShort(item.startedAt) }}</span>
+                <span data-allow-mismatch>{{ formatWhenShort(item.startedAt) }}</span
+                ><span
+                  v-if="durationLabels.get(item.id)"
+                  class="text-dimmed normal-case tabular-nums"
+                  data-testid="run-duration"
+                  >· {{ durationLabels.get(item.id) }}</span
+                >
               </span>
             </p>
             <!-- message: the settled result body; envelope parse only as a pre-settle fallback.
