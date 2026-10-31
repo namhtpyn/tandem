@@ -13,8 +13,6 @@ import { db } from '../../../db/index';
 import { vaultSecrets as vaultSecretsTable, vaultFolders as vaultFoldersTable } from '../../../db/schema';
 import { ORPCError, publishChange } from '../../kernel/kernel';
 
-export type FolderWithCount = { id: string; name: string; secrets: number };
-
 export type ListFoldersPagedInput = { page?: number; pageSize?: number; q?: string };
 
 export async function listFoldersPaged(input: ListFoldersPagedInput = {}) {

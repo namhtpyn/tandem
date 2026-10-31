@@ -21,14 +21,6 @@ export type JevAssignCandidate = {
   openTasks: number;
 };
 
-export type JevAssignResult = {
-  employeeId: string | null;
-  confidence: number;
-  probabilities: Record<string, number>;
-  model: string;
-  fallbackReason: string | null;
-};
-
 /** Normalized pick returned by every decision adapter. */
 export type DecisionPick = {
   employeeId: string | null;
