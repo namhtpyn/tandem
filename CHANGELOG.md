@@ -1,3 +1,11 @@
+## [2.59.2](https://github.com/namhtpyn/tandem/compare/v2.59.1...v2.59.2) (2026-10-31)
+
+
+### Bug Fixes
+
+* **auth:** OIDC linking requires a verified IdP email claim — closes admin takeover path ([#127](https://github.com/namhtpyn/tandem/issues/127)) ([#131](https://github.com/namhtpyn/tandem/issues/131)) ([f5d398b](https://github.com/namhtpyn/tandem/commit/f5d398b770449f651463695518c13423e8f33408))
+* **authz:** verdict procedures are human-only — API-key sessions rejected server-side ([#128](https://github.com/namhtpyn/tandem/issues/128)) ([#133](https://github.com/namhtpyn/tandem/issues/133)) ([a0e8c5f](https://github.com/namhtpyn/tandem/commit/a0e8c5fbb383ac6fc3cf14eb6a575b64b23e9396))
+
 ## [2.59.1](https://github.com/namhtpyn/tandem/compare/v2.59.0...v2.59.1) (2026-10-31)
 
 
