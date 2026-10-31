@@ -11,19 +11,20 @@
         },
         "releaseRules": [
           {
-            "breaking": "major"
+            "type": "feat",
+            "release": "minor"
           },
           {
-            "feat": "minor"
+            "type": "fix",
+            "release": "patch"
           },
           {
-            "fix": "patch"
+            "type": "perf",
+            "release": "patch"
           },
           {
-            "perf": "patch"
-          },
-          {
-            "revert": "patch"
+            "type": "revert",
+            "release": "patch"
           }
         ]
       }
