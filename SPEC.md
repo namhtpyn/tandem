@@ -106,12 +106,12 @@ VIEWER; new users default VIEWER; the first boot user claims ADMIN).
 **Enforcement is server-side at the oRPC kernel; UI gating is UX, never the
 boundary.** Tier matrix:
 
-| tier                | who                    | surface                                                                                                                                                        |
-| ------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| public              | anonymous              | `auth.config`, `auth.configLive`, `auth.session`, `meta.version`, better-auth `/auth/**`, `/health/*`                                                           |
-| session             | any authenticated user | every read procedure (list/listPaged/live/detail/thread/runs/inbox/subtasks/assignments/proposals/reviews/activity/titles/apiKeys), `changes.live`              |
-| employee            | EMPLOYEE + ADMIN       | every `tasks.*` and `projects.*` write (create/update/setStatus/note/ask/forward/answer/submit/approve/requestChanges/reject/abandon/dispatch/remove/proposals confirm+reject) and `statuses.assign` (Jev auto-assign) |
-| admin               | ADMIN only             | vault (secrets + folders, all verbs), providers (all verbs incl. models), oidc.replace, settings.update, environments create/update/remove/probe, employees create/update/remove, access-key mint/update/revoke, statuses save/remove |
+| tier     | who                    | surface                                                                                                                                                                                                                               |
+| -------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| public   | anonymous              | `auth.config`, `auth.configLive`, `auth.session`, `meta.version`, better-auth `/auth/**`, `/health/*`                                                                                                                                 |
+| session  | any authenticated user | every read procedure (list/listPaged/live/detail/thread/runs/inbox/subtasks/assignments/proposals/reviews/activity/titles/apiKeys), `changes.live`                                                                                    |
+| employee | EMPLOYEE + ADMIN       | every `tasks.*` and `projects.*` write (create/update/setStatus/note/ask/forward/answer/submit/approve/requestChanges/reject/abandon/dispatch/remove/proposals confirm+reject) and `statuses.assign` (Jev auto-assign)                |
+| admin    | ADMIN only             | vault (secrets + folders, all verbs), providers (all verbs incl. models), oidc.replace, settings.update, environments create/update/remove/probe, employees create/update/remove, access-key mint/update/revoke, statuses save/remove |
 
 Wrong role → `FORBIDDEN`; anonymous → `UNAUTHORIZED`. Reads never exceed the
 session tier; an admin-surface write is never wired below the admin tier. A
@@ -161,14 +161,14 @@ better-auth's own `/auth/**` protocol and the `/health/*` infra probes. Rules:
 | `auth.configLive`     | none    | —                                                         | live `{passwordEnabled, oidcEnabled, providers:[{id,label}]}`                                       |
 | `auth.session`        | none    | —                                                         | session payload or null                                                                             |
 | `settings.live`       | session | —                                                         | live `{disablePasswordLogin}`                                                                       |
-| `settings.update`     | admin | `{disablePasswordLogin?}`                                 | `{ok}` (400 when disabling with no OIDC provider)                                                   |
+| `settings.update`     | admin   | `{disablePasswordLogin?}`                                 | `{ok}` (400 when disabling with no OIDC provider)                                                   |
 | `oidc.live`           | session | —                                                         | live provider list with `hasSecret`, never secrets                                                  |
-| `oidc.replace`        | admin | `{providers:[{id?,label,issuer,clientId,clientSecret?}]}` | `{ok,count}` (secrets write-only; ids server-generated for new providers)                           |
+| `oidc.replace`        | admin   | `{providers:[{id?,label,issuer,clientId,clientSecret?}]}` | `{ok,count}` (secrets write-only; ids server-generated for new providers)                           |
 | `environments.live`   | session | —                                                         | live snapshot of all environments                                                                   |
-| `environments.create` | admin | `{name,host,port?,username}`                              | created row                                                                                         |
-| `environments.update` | admin | `{id,name,host,port?,username}`                           | updated row                                                                                         |
-| `environments.remove` | admin | `{id}`                                                    | `{ok}`                                                                                              |
-| `environments.probe`  | admin | `{id}`                                                    | `{ok,detail,durationMs}`                                                                            |
+| `environments.create` | admin   | `{name,host,port?,username}`                              | created row                                                                                         |
+| `environments.update` | admin   | `{id,name,host,port?,username}`                           | updated row                                                                                         |
+| `environments.remove` | admin   | `{id}`                                                    | `{ok}`                                                                                              |
+| `environments.probe`  | admin   | `{id}`                                                    | `{ok,detail,durationMs}`                                                                            |
 
 Wiring follows the official oRPC docs: Nuxt adapter (`toWebRequest` +
 `RPCHandler` with `onError` interceptor), Better Auth lazy `getSession`

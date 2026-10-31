@@ -25,7 +25,7 @@ import {
   taskMessages,
 } from '../../db/schema';
 import { env } from '../kernel/env';
-import { liveGenerator, ORPCError, protectedProcedure, publishChange } from '../kernel/kernel';
+import { ORPCError, employeeProcedure, liveGenerator, protectedProcedure, publishChange } from '../kernel/kernel';
 import { recordAssignment, listAssignments } from './assignments.service';
 import { refreshParentGating } from './gating.service';
 import { approvalsInRoundBatch, openObligations, pendingForUser, pendingCounts } from './obligations.service';
@@ -401,7 +401,7 @@ export const tasksRouter = os.router({
   live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.TASKS], listTasksSnapshot)),
 
   /** create a task */
-  create: protectedProcedure
+  create: employeeProcedure
     .input(
       z.strictObject({
         title: z.string().min(1).max(200),
@@ -449,7 +449,7 @@ export const tasksRouter = os.router({
     }),
 
   /** update a task (title/description/assignee) — status moves live in the workflow */
-  update: protectedProcedure.input(updateInput).handler(async ({ input, context }) => {
+  update: employeeProcedure.input(updateInput).handler(async ({ input, context }) => {
     const rows = await db.query.tasks.findMany({
       columns: { status: true, assigneeId: true },
       where: { id: { eq: input.id } },
@@ -495,7 +495,7 @@ export const tasksRouter = os.router({
   }),
 
   /** manual status move: graph-legal + category-allowed; done/in-review stay workflow-only */
-  setStatus: protectedProcedure
+  setStatus: employeeProcedure
     .input(z.strictObject({ id: z.string().min(1), status: z.string().min(1) }))
     .handler(async ({ input, context }) => {
       const rows = await db.query.tasks.findMany({
@@ -600,7 +600,7 @@ export const tasksRouter = os.router({
   }),
 
   /** confirm an agent proposal (single writer executes: creates subtasks / reassigns) */
-  confirmProposal: protectedProcedure
+  confirmProposal: employeeProcedure
     .input(z.object({ proposalId: z.string().min(1), note: z.string().max(2000).optional() }))
     .handler(async ({ input, context }) => {
       const me = await selfIdOf(context);
@@ -608,14 +608,14 @@ export const tasksRouter = os.router({
     }),
 
   /** reject an agent proposal (note rides the next brief to prevent re-propose loops) */
-  rejectProposal: protectedProcedure
+  rejectProposal: employeeProcedure
     .input(z.object({ proposalId: z.string().min(1), note: z.string().max(2000).optional() }))
     .handler(async ({ input, context }) => {
       const me = await selfIdOf(context);
       return rejectProposal(input.proposalId, me, input.note ?? '');
     }),
 
-  ask: protectedProcedure
+  ask: employeeProcedure
     .input(z.strictObject({ taskId: z.string().min(1), body: z.string().min(1).max(4_000) }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
@@ -624,7 +624,7 @@ export const tasksRouter = os.router({
     }),
 
   /** a plain conversation note: thread-only, no state change */
-  note: protectedProcedure
+  note: employeeProcedure
     .input(z.strictObject({ taskId: z.string().min(1), body: z.string().min(1).max(10_000) }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
@@ -636,7 +636,7 @@ export const tasksRouter = os.router({
     }),
 
   /** current holder forwards the question down the chain */
-  forward: protectedProcedure
+  forward: employeeProcedure
     .input(
       z.strictObject({
         taskId: z.string().min(1),
@@ -651,7 +651,7 @@ export const tasksRouter = os.router({
     }),
 
   /** anyone in the chain answers → assignee resumes */
-  answer: protectedProcedure
+  answer: employeeProcedure
     .input(z.strictObject({ taskId: z.string().min(1), body: z.string().min(1).max(10_000) }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
@@ -660,7 +660,7 @@ export const tasksRouter = os.router({
     }),
 
   /** assignee submits the result for review (or done when no reviewers) */
-  submit: protectedProcedure
+  submit: employeeProcedure
     .input(z.strictObject({ taskId: z.string().min(1), body: z.string().max(10_000).optional() }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
@@ -669,7 +669,7 @@ export const tasksRouter = os.router({
     }),
 
   /** reviewer approves (unanimous → done) */
-  approve: protectedProcedure
+  approve: employeeProcedure
     .input(z.strictObject({ taskId: z.string().min(1), body: z.string().max(4_000).optional() }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
@@ -678,7 +678,7 @@ export const tasksRouter = os.router({
     }),
 
   /** reviewer requests changes → assignee back to work */
-  requestChanges: protectedProcedure
+  requestChanges: employeeProcedure
     .input(z.strictObject({ taskId: z.string().min(1), body: z.string().min(1).max(10_000) }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
@@ -687,7 +687,7 @@ export const tasksRouter = os.router({
     }),
 
   /** reviewer's reject vote — unanimous reject (round end) cancels the task */
-  reject: protectedProcedure
+  reject: employeeProcedure
     .input(z.strictObject({ taskId: z.string().min(1), body: z.string().max(4_000).optional() }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
@@ -702,7 +702,7 @@ export const tasksRouter = os.router({
     .handler(({ input }) => listReviews(input.taskId)),
 
   /** reviewer or owner abandons the task outright */
-  abandon: protectedProcedure
+  abandon: employeeProcedure
     .input(z.strictObject({ taskId: z.string().min(1), body: z.string().max(4_000).optional() }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
@@ -746,7 +746,7 @@ export const tasksRouter = os.router({
     ),
 
   /** manually dispatch a task to its AI assignee (the dispatcher also fires automatically) */
-  dispatch: protectedProcedure
+  dispatch: employeeProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))
     .handler(async ({ input, context }) => {
       const session = await (
@@ -764,7 +764,7 @@ export const tasksRouter = os.router({
     }),
 
   /** delete a task — blocked while a run is in flight; parents re-gate after */
-  remove: protectedProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+  remove: employeeProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
     const rows = await db.query.tasks.findMany({
       columns: { id: true, parentTaskId: true },
       where: { id: { eq: input.id } },
