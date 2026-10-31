@@ -1,7 +1,5 @@
 {
-  "branches": [
-    "main"
-  ],
+  "branches": ["main"],
   "plugins": [
     [
       "@semantic-release/commit-analyzer",
@@ -9,11 +7,7 @@
         "parserOpts": {
           "headerPattern": "^(\\w*)(?:\\(([\\w$@.+\\-*/ ]*)\\))?!?: (.*)$",
           "breakingHeaderPattern": "^(\\w*)(?:\\(([\\w$@.\\-*/ ]*)\\))?!: (.*)$",
-          "headerCorrespondence": [
-            "type",
-            "scope",
-            "subject"
-          ]
+          "headerCorrespondence": ["type", "scope", "subject"]
         },
         "releaseRules": [
           {
@@ -40,11 +34,7 @@
         "parserOpts": {
           "headerPattern": "^(\\w*)(?:\\(([\\w$@.+\\-*/ ]*)\\))?!?: (.*)$",
           "breakingHeaderPattern": "^(\\w*)(?:\\(([\\w$@.\\-*/ ]*)\\))?!: (.*)$",
-          "headerCorrespondence": [
-            "type",
-            "scope",
-            "subject"
-          ]
+          "headerCorrespondence": ["type", "scope", "subject"]
         }
       }
     ],
@@ -58,11 +48,7 @@
         "parserOpts": {
           "headerPattern": "^(\\w*)(?:\\(([\\w$@.+\\-*/ ]*)\\))?!?: (.*)$",
           "breakingHeaderPattern": "^(\\w*)(?:\\(([\\w$@.\\-*/ ]*)\\))?!: (.*)$",
-          "headerCorrespondence": [
-            "type",
-            "scope",
-            "subject"
-          ]
+          "headerCorrespondence": ["type", "scope", "subject"]
         }
       }
     ]
