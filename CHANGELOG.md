@@ -1,3 +1,10 @@
+## [2.60.2](https://github.com/namhtpyn/tandem/compare/v2.60.1...v2.60.2) (2026-10-31)
+
+
+### Performance Improvements
+
+* **dispatch:** bound the 5s tick — scan WHERE pushdown, one GROUP BY cap count, transcript-free reaper + hot-path indexes ([#130](https://github.com/namhtpyn/tandem/issues/130)) ([#139](https://github.com/namhtpyn/tandem/issues/139)) ([6ecf131](https://github.com/namhtpyn/tandem/commit/6ecf131f028ba046660c83687c648ebc3c4d8923))
+
 ## [2.60.1](https://github.com/namhtpyn/tandem/compare/v2.60.0...v2.60.1) (2026-10-31)
 
 
