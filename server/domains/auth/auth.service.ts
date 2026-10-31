@@ -145,15 +145,29 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}) {
         : []),
     ],
     account: {
-      accountLinking: {
-        // generic-oauth providers are configured by the instance admin, so they
-        // are trusted to link by email (custom providers are not in better-auth's
-        // builtin trusted list; without this, auto-linking requires an
-        // email_verified claim the IdP may not send)
-        trustedProviders: p.oidcProviders.map((x) => x.id),
-      },
+      accountLinking: accountLinkingPolicy(p.oidcProviders),
     },
   }) as unknown as Auth;
+}
+
+/**
+ * Account-linking policy — SECURITY CONTRACT (SPEC "Auth", issue #127).
+ *
+ * Admin-configured OIDC providers are NEVER granted `trustedProviders`. In
+ * better-auth's implicit linking, a trusted provider id bypasses the IdP
+ * `email_verified` check, so any account on the IdP that self-asserts the email
+ * of an existing verified local user (incl. the boot-seeded admin) would be
+ * silently linked into it — full takeover without Tandem credentials. Linking
+ * therefore proceeds only on an IdP-verified email claim, into a verified local
+ * user (`requireLocalEmailVerified` default true). The providers argument is
+ * deliberately accepted and ignored: this seam is the ONLY sanctioned place to
+ * express linking trust, and the unit test pins that no provider id ever
+ * reaches `trustedProviders`.
+ */
+export function accountLinkingPolicy(_providers: ReadonlyArray<{ id: string }>): {
+  enabled: true;
+} {
+  return { enabled: true };
 }
 
 /**
