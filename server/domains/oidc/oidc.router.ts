@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 
 // oidc router — business logic lives in services/utils; this file only wires procedures
-import { protectedProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
+import { adminProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
 
 async function listOidcProviders() {
   const { getOidcProviders } = await import('../auth/oidc.service');
@@ -21,13 +21,13 @@ async function listOidcProviders() {
 
 export const oidcRouter = os.router({
   /** plain GET list (first-load data per the SSE law) */
-  list: protectedProcedure.handler(() => listOidcProviders()),
+  list: adminProcedure.handler(() => listOidcProviders()),
 
   /** live provider list (secrets never leave the server) */
-  live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.OIDC], listOidcProviders)),
+  live: adminProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.OIDC], listOidcProviders)),
 
   /** replace the provider registry (secrets write-only, admin-only) */
-  replace: protectedProcedure
+  replace: adminProcedure
     .input(
       z.strictObject({
         providers: z

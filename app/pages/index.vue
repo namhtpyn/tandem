@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query';
 
-import { CHANGE_RESOURCE } from '#shared/enums';
+import { CHANGE_RESOURCE, ROLE } from '#shared/enums';
 
 useHead({ title: 'Overview' });
 
@@ -10,6 +10,11 @@ useHead({ title: 'Overview' });
 // findManyAndCount is one cheap query per resource, no invented count endpoint.
 // The change-events subscription invalidates these keys, so counts stay live.
 const { $orpc } = useNuxtApp();
+
+const session = useAppSession();
+// admin-surface cards (environments, employees) hide for non-admins — the
+// server enforces the tier (SPEC Roles & access); this is UX, never the boundary
+const isAdmin = computed(() => session.value?.user.role === ROLE.ADMIN);
 
 const envCount = useQuery(
   $orpc.environments.listPaged.queryOptions({
@@ -30,20 +35,24 @@ const taskCount = useQuery(
 // number + unit label reads as a live count ('12 environments'), not a bare
 // placeholder stat — these are the same totals the section pages show
 const cards = computed(() => [
-  {
-    to: '/environments',
-    icon: 'i-lucide-server',
-    count: envCount.data.value?.total,
-    label: { singular: 'environment', plural: 'environments' },
-    blurb: 'SSH hosts the agents run on',
-  },
-  {
-    to: '/employees',
-    icon: 'i-lucide-users',
-    count: employeeCount.data.value?.total,
-    label: { singular: 'person', plural: 'people' },
-    blurb: 'People and AI agents, one directory',
-  },
+  ...(isAdmin.value
+    ? [
+        {
+          to: '/environments',
+          icon: 'i-lucide-server',
+          count: envCount.data.value?.total,
+          label: { singular: 'environment', plural: 'environments' },
+          blurb: 'SSH hosts the agents run on',
+        },
+        {
+          to: '/employees',
+          icon: 'i-lucide-users',
+          count: employeeCount.data.value?.total,
+          label: { singular: 'person', plural: 'people' },
+          blurb: 'People and AI agents, one directory',
+        },
+      ]
+    : []),
   {
     to: '/tasks',
     icon: 'i-lucide-list-todo',
