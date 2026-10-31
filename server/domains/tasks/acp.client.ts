@@ -64,6 +64,9 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
   /** task's existing harness session; falsy = create a new one */
   resumeSessionId?: string | null;
   prompt: string;
+  /** PROMPT-INLINE IMAGES (SPEC 2026-10-31): input images riding the turn as
+   * ACP image content blocks (base64 + mimeType), appended AFTER the text block */
+  images?: Array<{ data: string; mimeType: string }>;
   timeoutMs: number;
   /** human-visible activity lines (streamed into the run output) */
   onLine?: (line: string) => void;
@@ -85,6 +88,12 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
     const contract = renderOutputContract(opts.outputSchema, { examples: opts.outputContractExtras });
     promptText = `${promptText}\n\n${contract}`;
   }
+  // content blocks: the brief text first, then the prompt-inlined input images
+  // (SPEC 2026-10-31) as ACP image blocks — agent sees the evidence first-hand
+  const promptBlocks: acp.ContentBlock[] = [
+    { type: 'text', text: promptText },
+    ...(opts.images ?? []).map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })),
+  ];
   const clientInfo = opts.clientInfo ?? { name: 'tandem', version: '1' };
 
   let transcript = '';
@@ -300,7 +309,7 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
           prompt = await Promise.race([
             ctx.request(acp.methods.agent.session.prompt, {
               sessionId,
-              prompt: [{ type: 'text', text: promptText }],
+              prompt: promptBlocks,
             }),
             dead,
           ]);
