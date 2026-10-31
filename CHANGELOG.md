@@ -1,3 +1,10 @@
+## [2.56.1](https://github.com/namhtpyn/tandem/compare/v2.56.0...v2.56.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* **tasks:** forward verb renders only where the server accepts it ([#92](https://github.com/namhtpyn/tandem/issues/92)) ([#95](https://github.com/namhtpyn/tandem/issues/95)) ([8abce91](https://github.com/namhtpyn/tandem/commit/8abce9141ac346681b800555ff2d6c64564f1d86))
+
 # [2.56.0](https://github.com/namhtpyn/tandem/compare/v2.55.2...v2.56.0) (2026-10-31)
 
 
