@@ -1,3 +1,10 @@
+# [2.53.0](https://github.com/namhtpyn/tandem/compare/v2.52.3...v2.53.0) (2026-10-31)
+
+
+### Features
+
+* **tasks:** attach collected screenshots to the run result message ([a6d96e9](https://github.com/namhtpyn/tandem/commit/a6d96e9cfc9fa0d8afe8db774bcc93fc4b0b505c)), closes [#69](https://github.com/namhtpyn/tandem/issues/69)
+
 ## [2.52.3](https://github.com/namhtpyn/tandem/compare/v2.52.2...v2.52.3) (2026-10-30)
 
 
