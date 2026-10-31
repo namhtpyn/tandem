@@ -25,7 +25,12 @@ type ThreadRunItem = {
   exitCode: number | null;
   /** executions of this dispatch intent (run-level retries replay the same row) */
   attempts?: number;
-  output: string;
+  /** RUN-TRANSCRIPT LAW: live (RUNNING) run's streamed output, else null —
+   * settled transcripts fetch on demand via tasks.runTranscript (fold-open) */
+  output: string | null;
+  /** snapshot flags: a fold has transcript/prompt content to fetch */
+  hasOutput?: boolean;
+  hasPrompt?: boolean;
   /** the agent (employee) that ran this turn, for the chat bubble label */
   agentName?: string | null;
   /** the thread message's author — avatar lookup via employeeAvatarUrl() */
@@ -62,6 +67,8 @@ type ThreadSource = {
       | 'id'
       | 'status'
       | 'output'
+      | 'hasOutput'
+      | 'hasPrompt'
       | 'exitCode'
       | 'attempts'
       | 'prompt'
@@ -134,7 +141,9 @@ export function buildThread(src: ThreadSource): ThreadItem[] {
       status: r.status,
       exitCode: r.exitCode,
       attempts: r.attempts ?? 1,
-      output: r.output,
+      output: r.output ?? null,
+      hasOutput: r.hasOutput,
+      hasPrompt: r.hasPrompt,
       prompt: r.prompt,
       body: r.body,
       agentName: r.agentName,

@@ -44,6 +44,7 @@ import {
 } from './obligations.service';
 import { confirmProposal, rejectProposal } from './proposals.service';
 import { listReviews, logActivity } from './review.service';
+import { fetchRunTranscript } from './run-transcript';
 import { dispatchTask, listRuns } from './runner.service';
 import { listTaskThread } from './thread.service';
 import {
@@ -261,8 +262,11 @@ async function runsSnapshot(taskId: string) {
     environmentId: r.environmentId,
     status: r.status as RunStatus,
     exitCode: r.exitCode,
+    // RUN-TRANSCRIPT LAW (#130 slice 2): output rides ONLY for the RUNNING run;
+    // settled transcripts + prompts fetch on demand via tasks.runTranscript
     output: r.output,
-    prompt: r.prompt,
+    hasOutput: r.hasOutput,
+    hasPrompt: r.hasPrompt,
     startedAt: r.startedAt.toISOString(),
     finishedAt: r.finishedAt ? r.finishedAt.toISOString() : null,
     outputs: outputsByRun.get(r.id) ?? [],
@@ -754,6 +758,14 @@ export const tasksRouter = os.router({
   runsList: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))
     .handler(({ input }) => runsSnapshot(input.taskId)),
+
+  /** on-demand full transcript (fold-open) — RUN-TRANSCRIPT LAW (#130 slice 2):
+   * settled transcripts + every prompt never ride list snapshots */
+  runTranscript: protectedProcedure.input(z.strictObject({ runId: z.string().min(1) })).handler(async ({ input }) => {
+    const row = await fetchRunTranscript(input.runId);
+    if (!row) throw new ORPCError('NOT_FOUND', { message: 'run does not exist' });
+    return row;
+  }),
 
   /** the unified conversation thread (snapshot) — base messages with their run/activity extension */
   threadList: protectedProcedure
