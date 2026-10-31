@@ -9,6 +9,7 @@ import { nonNull } from '#shared/utils/non-null';
 
 import type { AcpStream } from './acp.client';
 import type { SshPlan } from './ssh-exec.util';
+import { sshHostVerifier } from './ssh-hostkey.util';
 
 /** remote wrapper: source the blob, then hand the pipe to the ACP server */
 export function acpRemoteCommand(envBlobBytes: number, acpExecutable: string) {
@@ -99,6 +100,8 @@ export async function openAcpSshStream(
       keepaliveInterval: 15_000,
       keepaliveCountMax: 4,
       readyTimeout: 20_000,
+      // host-key law (SPEC: Environments): TOFU verify before auth completes
+      hostVerifier: sshHostVerifier(plan),
     });
 
   await readyPromise;
