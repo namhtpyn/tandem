@@ -252,5 +252,6 @@ secrets are never returned.
 ## Deployment
 
 - Docker multi-stage ( bun; `APP_VERSION` build arg bakes the served version
-- CI: build + typecheck; release: semantic-release (conventional commits) on main + GHCR image publish
+- CI: build + typecheck + supply-chain gate; release: semantic-release (conventional commits) on main + GHCR image publish
+- supply-chain contract: every GitHub Actions `uses:` ref is pinned to a full 40-hex commit SHA (in-repo `./path` actions and `docker://image@sha256:…` refs excepted); every workflow file declares an explicit top-level `permissions:` block, scoped per job to only what that job consumes; Dockerfile `FROM` bases are pinned `tag@sha256:<digest>`. The gate (`scripts/check-supply-chain.sh`) runs as a CI job on every PR and push — any violation fails the run; a violation landing on main auto-files a `[supply-chain]` issue carrying the exact findings (deduped against the already-open one by findings fingerprint)
 - image: `ghcr.io/namhtpyn/tandem`

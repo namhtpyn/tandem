@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   ci:
     runs-on: ubuntu-latest
@@ -36,8 +39,8 @@ jobs:
       REDIS_URL: redis://127.0.0.1:6399
       BETTER_AUTH_SECRET: ci-secret-not-for-prod
     steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
@@ -61,7 +64,7 @@ jobs:
           TANDEM_E2E_DATABASE_URL: postgresql://tandem:tandem@127.0.0.1:5432/tandem_e2e
       - name: Upload playwright traces
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-traces
           path: test-results/
@@ -72,3 +75,42 @@ jobs:
       # fail CI here, before anything ships. Build only; no push.
       - name: Docker build smoke
         run: docker build --build-arg APP_VERSION=ci -t tandem:ci .
+
+  # Supply-chain gate — contract: SPEC.md Deployment / supply-chain contract.
+  # Independent of the build job: a floating ref fails THIS job on every PR
+  # and push; a violation landing on main auto-files a deduped
+  # `[supply-chain]` issue with the exact findings.
+  supply-chain:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write # main-push failure auto-files the findings issue
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Supply-chain gate
+        run: |
+          bash scripts/check-supply-chain.sh | tee supply-chain-findings.txt
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: Auto-file findings (main pushes only)
+        if: failure() && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # exact findings + fingerprint; dedupe: skip when the open issue
+          # already carries this fingerprint, comment-free
+          fp=$(sha256sum supply-chain-findings.txt | cut -d' ' -f1)
+          existing=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "supply-chain in:title" --json number,body --jq ".[] | select(.body | contains(\"$fp\")) | .number" | head -n1)
+          if [ -n "$existing" ]; then
+            echo "issue #$existing already tracks fingerprint $fp"
+            exit 0
+          fi
+          {
+            echo "supply-chain gate findings on main @ $GITHUB_SHA:"
+            echo
+            echo '```'
+            cat supply-chain-findings.txt
+            echo '```'
+            echo
+            echo "fingerprint: \`$fp\`"
+          } > supply-chain-issue-body.md
+          gh issue create -R "$GITHUB_REPOSITORY" --title "[supply-chain] gate findings on main" --body-file supply-chain-issue-body.md --label bug
