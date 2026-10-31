@@ -18,6 +18,21 @@ import { NONE_ID } from './forms';
 
 export type BadgeColor = 'primary' | 'success' | 'warning' | 'error' | 'info' | 'neutral';
 
+/** "Waiting on" row badge (#91, SPEC tasks page): the pending answer holder by
+ *  name; while the task sits IN_REVIEW with approvers outstanding, "Review
+ *  pending" (reviewers − fulfilled approvals). null = nothing owed. Pure —
+ *  the caller supplies the row's status category. */
+export function waitingOnLabel(
+  row: { questionHolderName: string | null; reviewerNames: string[]; reviewApprovals: string[] },
+  statusCategory: string | null | undefined,
+): string | null {
+  if (row.questionHolderName) return `Waiting on ${row.questionHolderName}`;
+  if (statusCategory === CATEGORY.IN_REVIEW && row.reviewerNames.length > row.reviewApprovals.length) {
+    return 'Review pending';
+  }
+  return null;
+}
+
 type CategoryView = { color: BadgeColor; text: string; icon: string; label: string };
 
 // ONE row per category: a status badge, its board-column heading, its glyph and

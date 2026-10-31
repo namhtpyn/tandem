@@ -31,6 +31,14 @@ const employeeCount = useQuery(
 const taskCount = useQuery(
   $orpc.tasks.listPaged.queryOptions({ input: { page: 1, pageSize: 1 }, queryKey: [CHANGE_RESOURCE.TASKS, 'count'] }),
 );
+// company-wide awaiting-decision queue (#91): same listPaged proc, pageSize:1 —
+// the total IS the count; the card links to the pre-filtered tasks list
+const awaitingCount = useQuery(
+  $orpc.tasks.listPaged.queryOptions({
+    input: { page: 1, pageSize: 1, awaitingDecision: true },
+    queryKey: [CHANGE_RESOURCE.TASKS, 'count', 'awaiting'],
+  }),
+);
 
 // number + unit label reads as a live count ('12 environments'), not a bare
 // placeholder stat — these are the same totals the section pages show
@@ -60,6 +68,13 @@ const cards = computed(() => [
     label: { singular: 'task', plural: 'tasks' },
     blurb: 'Work for humans and agents, one board',
   },
+  {
+    to: '/tasks?awaiting=1',
+    icon: 'i-lucide-hourglass',
+    count: awaitingCount.data.value?.total,
+    label: { singular: 'task awaiting', plural: 'tasks awaiting' },
+    blurb: 'Waiting on a decision from anyone',
+  },
 ]);
 </script>
 
@@ -79,7 +94,7 @@ const cards = computed(() => [
         <!-- one row saying one thing: link + live count per area. The chevron is
              the single affordance — no 'Open →' copy, no hover-translate motion.
              Cards stack below sm; the count + label pair wraps inside a card. -->
-        <div class="grid gap-4 sm:grid-cols-3">
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <NuxtLink
             v-for="card in cards"
             :key="card.to"
