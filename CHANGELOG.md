@@ -1,3 +1,10 @@
+# [2.60.0](https://github.com/namhtpyn/tandem/compare/v2.59.2...v2.60.0) (2026-10-31)
+
+
+### Features
+
+* **security:** SSH transports verify the host key — TOFU store, mismatch fails closed ([#129](https://github.com/namhtpyn/tandem/issues/129)) ([#135](https://github.com/namhtpyn/tandem/issues/135)) ([8ddc19a](https://github.com/namhtpyn/tandem/commit/8ddc19a71a35500158137fd88ead55ce9d035f9f))
+
 ## [2.59.2](https://github.com/namhtpyn/tandem/compare/v2.59.1...v2.59.2) (2026-10-31)
 
 
