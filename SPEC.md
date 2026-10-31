@@ -276,3 +276,27 @@ non-positive deltas render no duration.
 - CI: build + typecheck + supply-chain gate; release: semantic-release (conventional commits) on main + GHCR image publish
 - supply-chain contract: every GitHub Actions `uses:` ref is pinned to a full 40-hex commit SHA (in-repo `./path` actions and `docker://image@sha256:…` refs excepted); every workflow file declares an explicit top-level `permissions:` block, scoped per job to only what that job consumes; Dockerfile `FROM` bases are pinned `tag@sha256:<digest>`. The gate (`scripts/check-supply-chain.sh`) runs as a CI job on every PR and push — any violation fails the run; a violation landing on main auto-files a `[supply-chain]` issue carrying the exact findings (deduped against the already-open one by findings fingerprint)
 - image: `ghcr.io/namhtpyn/tandem`
+
+## Ops drills (game-day restore drill)
+
+- The restore drill is a game day run against the TEST stack only: the local
+  `tandem-pg` / `tandem-test-redis` containers, a throwaway compose project,
+  and a drill-owned `tandem_drill` database inside the test Postgres. It never
+  touches prod. `scripts/restore-drill.sh` refuses to run unless the operator
+  passed `DRILL_TEST_STACK=1`, `DATABASE_URL` points at the local test stack,
+  no prod marker (prod stack/host names) appears in the environment or in the
+  host's container list, and no unit/e2e run is in flight (file lock + process
+  check) — the test stack is shared with the local gates.
+- A drill that only restores rows proves backup paths, not detection paths, so
+  every scenario injects a real failure and times the response: `redis-stop`
+  (dispatch bus down; detector: service ping), `bad-tag-deploy` (nonexistent
+  image tag — the v-prefix deploy class; detector: deploy exit status plus a
+  silent-no-op container check), `settings-corrupt` (garbage in a `settings`
+  row; detector: row integrity probe against the pre-inject backup). Each
+  scenario backs up before it injects, heals, and verifies green; per-scenario
+  time-to-detect and time-to-heal are recorded.
+- A scenario that heals only because the drill itself probed it is a detection
+  gap: gaps are recorded in the drill report and become watchdog/audit issues.
+  `scripts/restore-drill.sh --selfcheck` validates the guards with zero side
+  effects and is asserted by a unit test; drill reports land with the ops
+  evidence.
