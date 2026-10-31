@@ -1,6 +1,5 @@
 // Message-queue domain: BullMQ per-agent dispatch queues (durable, retrying).
 // REDIS_URL is REQUIRED (validated at boot) — redis is a hard dependency.
-import type { ChangeAction, ChangeResource } from './change-bus';
 import { env } from './env';
 
 /** node-redis emits 'error' on every dropped/reconnecting socket — swallow to keep the process alive */
@@ -160,6 +159,3 @@ async function createQueueDomain(): Promise<QueueDomain> {
     },
   };
 }
-
-/** change event wire types — shared by queue payloads and the change-bus publisher */
-export type ChangeWire = { resource: ChangeResource; action: ChangeAction; id: string; at: string };

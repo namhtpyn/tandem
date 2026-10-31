@@ -58,12 +58,6 @@ export type RunHandle = {
  * session/prompt on the open stream); gone the moment the turn settles */
 const liveSteers = new Map<string, (text: string) => Promise<boolean>>();
 
-/** test seam: register/clear a fake live turn so steerRun's arms are unit-testable */
-export function __setLiveSteerForTests(runId: string, fn: ((text: string) => Promise<boolean>) | null) {
-  if (fn) liveSteers.set(runId, fn);
-  else liveSteers.delete(runId);
-}
-
 /** pure decision: the newest candidate run that is still RUNNING (candidates newest-first) */
 export function pickLiveRun(candidates: Array<{ id: string; status: string }>): string | null {
   return candidates.find((r) => r.status === RUN_STATUS.RUNNING)?.id ?? null;
@@ -1153,11 +1147,6 @@ export async function executeRun(
 
 /** integration-test convenience: create the run and execute attempt 1 INLINE (what
  * the worker does) without the queue — the caller awaits the verdict directly. */
-export async function runInline(taskId: string, tandemUrl: string, opts?: DispatchOpts) {
-  const { runId } = await createRun(taskId, opts);
-  return { runId, finished: executeRun(runId, tandemUrl, { attempt: 1, maxAttempts: 1, ...opts }) };
-}
-
 /** runs for one task, newest first */
 export async function listRuns(taskId: string) {
   const rows = await db

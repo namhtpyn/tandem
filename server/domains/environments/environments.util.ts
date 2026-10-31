@@ -16,8 +16,6 @@ export const environmentInput = z.strictObject({
   secretUsage: z.enum(SECRET_USAGE).default(SECRET_USAGE.SSH_KEY),
 });
 
-export type EnvironmentInput = z.infer<typeof environmentInput>;
-
 /** update variant: optional keys — an omitted field keeps its stored value
  *  instead of silently resetting (port/secret) */
 export const environmentUpdateInput = z.strictObject({
@@ -29,5 +27,3 @@ export const environmentUpdateInput = z.strictObject({
   secretId: environmentInput.shape.secretId.removeDefault().optional(),
   secretUsage: environmentInput.shape.secretUsage.removeDefault().optional(),
 });
-
-export type EnvironmentUpdateInput = z.infer<typeof environmentUpdateInput>;

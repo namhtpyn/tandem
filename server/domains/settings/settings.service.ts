@@ -91,26 +91,6 @@ export type InternalAiAssignment = {
   keySecretId: string;
 };
 
-export type AppSettings = {
-  disablePasswordLogin: boolean;
-  companyName: string;
-  /** hard cap for one agent run (ms) */
-  runTimeoutMs: number;
-  /** concurrent tasks allowed per agent */
-  tasksPerAgent: number;
-  /** peak window in ICT hours (Mon–Fri only — weekends always full cadence) */
-  peakStartHour: number;
-  peakEndHour: number;
-  /** in-window cap multiplier (0 = pause new dispatches, 1 = no throttling) */
-  peakMultiplier: number;
-  /** prepended to every agent brief */
-  companyPrompt: string;
-  /** LLM used by Tandem's own server-side features (null = unassigned). */
-  internalLlm: InternalAiAssignment | null;
-  /** Decision engine used for auto-assign (null = unassigned). */
-  internalDecision: InternalAiAssignment | null;
-};
-
 /** Parse one assignment; invalid JSON or a non-object yields null. */
 function parseAssignment(raw: string | null): InternalAiAssignment | null {
   if (!raw) return null;
@@ -145,4 +125,3 @@ export async function getSettings() {
 }
 
 export const INTERNAL_ASSIGNMENT_KEYS = { LLM: 'internal_llm', DECISION: 'internal_decision' } as const;
-export type InternalAssignmentKey = (typeof INTERNAL_ASSIGNMENT_KEYS)[keyof typeof INTERNAL_ASSIGNMENT_KEYS];
