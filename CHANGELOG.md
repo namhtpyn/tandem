@@ -1,3 +1,10 @@
+## [2.59.1](https://github.com/namhtpyn/tandem/compare/v2.59.0...v2.59.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* **auth:** OIDC linking requires a verified IdP email claim — closes admin takeover path ([#127](https://github.com/namhtpyn/tandem/issues/127)) ([#131](https://github.com/namhtpyn/tandem/issues/131)) ([#132](https://github.com/namhtpyn/tandem/issues/132)) ([901d5a1](https://github.com/namhtpyn/tandem/commit/901d5a19a2cf58b7839e04daff06347bb2d2627c))
+
 # [2.59.0](https://github.com/namhtpyn/tandem/compare/v2.58.0...v2.59.0) (2026-10-31)
 
 
