@@ -11,19 +11,8 @@
         },
         "releaseRules": [
           {
-            "breaking": "major"
-          },
-          {
-            "feat": "minor"
-          },
-          {
-            "fix": "patch"
-          },
-          {
-            "perf": "patch"
-          },
-          {
-            "revert": "patch"
+            "type": "revert",
+            "release": "patch"
           }
         ]
       }
