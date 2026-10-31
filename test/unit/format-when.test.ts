@@ -55,3 +55,56 @@ describe('formatWhenShort', () => {
     expect(formatWhenShort('nope')).toBe('');
   });
 });
+
+import { formatDurationMs, turnDurationLabel } from '../../app/utils/format-when.ts';
+
+describe('formatDurationMs', () => {
+  it('sub-second spans read as <1s (negatives included — callers guard, we degrade)', () => {
+    expect(formatDurationMs(0)).toBe('<1s');
+    expect(formatDurationMs(999)).toBe('<1s');
+    expect(formatDurationMs(-5)).toBe('<1s');
+  });
+
+  it('whole seconds render bare', () => {
+    expect(formatDurationMs(1000)).toBe('1s');
+    expect(formatDurationMs(59_999)).toBe('59s');
+  });
+
+  it('minutes carry padded seconds — fixed width reads as a duration', () => {
+    expect(formatDurationMs(60_000)).toBe('1m 00s');
+    expect(formatDurationMs(245_000)).toBe('4m 05s');
+    expect(formatDurationMs(3599_999)).toBe('59m 59s');
+  });
+
+  it('hours carry padded minutes', () => {
+    expect(formatDurationMs(3_600_000)).toBe('1h 00m');
+    expect(formatDurationMs(3_600_000 + 23 * 60_000 + 59_999)).toBe('1h 23m');
+  });
+});
+
+describe('turnDurationLabel', () => {
+  const start = '2026-10-31T10:00:00Z';
+  const end = '2026-10-31T10:04:05Z';
+
+  it('settled turns label their wall-clock span', () => {
+    expect(turnDurationLabel(start, end)).toBe('4m 05s');
+    expect(turnDurationLabel(new Date(start), new Date(end))).toBe('4m 05s');
+  });
+
+  it('unfinished turns (null finish) render nothing', () => {
+    expect(turnDurationLabel(start, null)).toBe(null);
+    expect(turnDurationLabel(start, undefined)).toBe(null);
+    expect(turnDurationLabel(null, end)).toBe(null);
+    expect(turnDurationLabel(undefined, end)).toBe(null);
+  });
+
+  it('unparsable timestamps render nothing', () => {
+    expect(turnDurationLabel('nope', end)).toBe(null);
+    expect(turnDurationLabel(start, 'nope')).toBe(null);
+  });
+
+  it('non-positive deltas (clock skew, same-instant) render nothing', () => {
+    expect(turnDurationLabel(end, start)).toBe(null);
+    expect(turnDurationLabel(start, start)).toBe(null);
+  });
+});

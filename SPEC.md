@@ -160,8 +160,8 @@ better-auth's own `/auth/**` protocol and the `/health/*` infra probes. Rules:
 | `auth.config`         | none    | —                                                         | plain GET `{passwordEnabled, oidcEnabled, providers:[{id,label}]}`                                  |
 | `auth.configLive`     | none    | —                                                         | live `{passwordEnabled, oidcEnabled, providers:[{id,label}]}`                                       |
 | `auth.session`        | none    | —                                                         | session payload or null                                                                             |
-| `settings.live`       | session | —                                                         | live `{disablePasswordLogin}`                                                                       |
-| `settings.update`     | admin   | `{disablePasswordLogin?}`                                 | `{ok}` (400 when disabling with no OIDC provider)                                                   |
+| `settings.live`       | session | —                                                         | live `{disablePasswordLogin, flags}`                                                                |
+| `settings.update`     | admin   | `{disablePasswordLogin?, flags?}`                         | `{ok}` (400 when disabling with no OIDC provider; 400 on flag-name/flag-count violations)           |
 | `oidc.live`           | session | —                                                         | live provider list with `hasSecret`, never secrets                                                  |
 | `oidc.replace`        | admin   | `{providers:[{id?,label,issuer,clientId,clientSecret?}]}` | `{ok,count}` (secrets write-only; ids server-generated for new providers)                           |
 | `environments.live`   | session | —                                                         | live snapshot of all environments                                                                   |
@@ -206,6 +206,27 @@ Handled by `settings.*` and `oidc.*` procedures above (see API law). The
 OIDC env fallback (exactly ONE provider via `TANDEM_OIDC_ISSUER/_CLIENT_ID/
 _CLIENT_SECRET/_LABEL`) applies only when no stored registry exists; stored
 secrets are never returned.
+
+### Feature flags
+
+One settings key `flags` stores a JSON object `{ "<name>": boolean }` — the
+runtime feature-flag namespace. Flags are managed ONLY through
+`settings.update({ flags })`; a flags write REPLACES the stored map. Flag
+names match `^[a-z][a-z0-9_.-]{0,39}$` and at most 20 flags are stored; the
+update proc validates and rejects violations BEFORE any write. Reads are
+tolerant and fail closed: a missing key, unparsable JSON, a non-object
+payload, invalid names or a map over the cap all read as NO flags — every
+flag is OFF unless explicitly `true`, and an unrecognized flag name is
+simply off. `settings.list` / `settings.live` carry the parsed map as
+`flags`.
+
+Off is the default state of every flagged feature: with the flag off, the
+feature surface renders exactly its pre-flag behavior. Flags decouple
+release from deployment — behavior flips through `settings.update` with no
+image change and no redeploy. First flagged feature: `tasks.turn-durations` —
+the task thread renders each settled run turn's wall-clock duration
+(`finishedAt − startedAt`, e.g. `4m 05s`); running/unfinished turns and
+non-positive deltas render no duration.
 
 ## Health
 

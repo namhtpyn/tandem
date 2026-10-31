@@ -2,6 +2,8 @@
 // defaults; OIDC providers live under key 'oidc_providers' as JSON.
 import { eq } from 'drizzle-orm';
 
+import { parseFlags } from '#shared/flags';
+
 import { asDb, db, type DbExecutor } from '../../db/index';
 import { settings } from '../../db/schema';
 
@@ -72,6 +74,12 @@ function parseAssignment(raw: string | null): InternalAiAssignment | null {
   }
 }
 
+/** The stored feature-flag map (SPEC: Settings > Feature flags) — tolerant,
+ * fail-closed: any invalid payload reads as {} (every flag off). */
+export async function getFlags() {
+  return parseFlags(await getSetting('flags'));
+}
+
 export async function getSettings() {
   const v = await getSetting('disablePasswordLogin');
   const name = await getSetting('companyName');
@@ -85,6 +93,7 @@ export async function getSettings() {
     runTimeoutMs: await getRunTimeoutMs(),
     tasksPerAgent: await getTasksPerAgent(),
     companyPrompt: await getCompanyPrompt(),
+    flags: await getFlags(),
   };
 }
 
