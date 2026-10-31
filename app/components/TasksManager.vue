@@ -402,9 +402,41 @@ const workflowFeed = computed<ThreadNoteItem[]>(() =>
 /** one view lookup per activity row — label and glyph always agree */
 const activityViewById = computed(() => new Map(workflowFeed.value.map((a) => [a.id, activityView(a.noteKind)])));
 
-/** a settled run's output as the thread shows it — the envelope's text, else raw */
+/** RUN-TRANSCRIPT LAW (#130 slice 2): settled runs' transcript text is fetched
+ * on demand once per run (cached for the drawer's lifetime) — the live run's
+ * output rides the snapshot; drawer cards keep the always-visible transcript */
+const drawerTranscripts = ref(new Map<string, { output: string; prompt: string | null }>());
+const drawerTranscriptInFlight = new Set<string>();
+async function ensureDrawerTranscript(runId: string) {
+  if (drawerTranscripts.value.has(runId) || drawerTranscriptInFlight.has(runId)) return;
+  drawerTranscriptInFlight.add(runId);
+  try {
+    // one-shot imperative GET — $orpc is the TanStack utils surface (queryOptions
+    // only); raw procedure calls ride $client (same client useChangeEvents uses)
+    const row = await $client.tasks.runTranscript({ runId });
+    drawerTranscripts.value = new Map(drawerTranscripts.value).set(runId, {
+      output: row.output,
+      prompt: row.prompt,
+    });
+  } catch {
+    // unknown/gone run: leave uncached — the card simply renders no transcript
+  } finally {
+    drawerTranscriptInFlight.delete(runId);
+  }
+}
+// pull transcripts for every run the drawer shows without live output (once —
+// the in-flight guard + cache keep SSE refetches from re-downloading them)
+watch(runFeed, (rows) => {
+  for (const r of rows) {
+    if (r.output == null && r.hasOutput) void ensureDrawerTranscript(r.id);
+  }
+});
+
+/** a run's transcript text — live stream, else the fetched transcript; rendered
+ * as the thread shows it: the envelope's text, else raw */
 function runText(r: TaskRunRow): string {
-  return parseRunEnvelope(r.output)?.text ?? r.output;
+  const output = r.output ?? drawerTranscripts.value.get(r.id)?.output ?? '';
+  return parseRunEnvelope(output)?.text ?? output;
 }
 
 // run rows read as sentences — 'Run failed (exit code 1)', never bare status jargon.

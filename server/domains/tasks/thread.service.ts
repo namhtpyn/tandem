@@ -10,6 +10,7 @@ import { db, asDb, type DbExecutor } from '../../db/index';
 import { taskAttachments, taskMessageActivities, taskMessages } from '../../db/schema';
 import { activityKindOf } from './brief.service';
 import { dropEchoNotes } from './echo-notes';
+import { loadTranscriptBits } from './run-transcript';
 
 /** jsonb payloads arrive as raw strings through RQB relation selects — parse once so the
  * client gets an object; corrupt/non-object payloads ship as null instead of a dead string */
@@ -100,7 +101,9 @@ export async function appendMessageAttachments(messageId: string, tokens: string
   await db.update(taskMessages).set({ body }).where(eq(taskMessages.id, messageId));
 }
 
-/** one ordered thread: base rows with their run + author attached */
+/** one ordered thread: base rows with their run + author attached —
+ * RUN-TRANSCRIPT LAW (#130 slice 2): the RQB never selects transcript text;
+ * live output + flags ride via the post-merge bits query (run-transcript.ts) */
 export async function listTaskThread(taskId: string) {
   const messages = await db.query.taskMessages.findMany({
     where: { taskId },
@@ -111,8 +114,6 @@ export async function listTaskThread(taskId: string) {
         columns: {
           id: true,
           status: true,
-          output: true,
-          prompt: true,
           exitCode: true,
           startedAt: true,
           finishedAt: true,
@@ -130,6 +131,8 @@ export async function listTaskThread(taskId: string) {
   const deduped = dropEchoNotes(visible);
 
   const runIds = deduped.flatMap((m) => (m.run ? [m.run.id] : []));
+  // live output + has* flags for the thread's runs (transcript text never rides)
+  const bitsByRun = await loadTranscriptBits(runIds);
   const outputs = runIds.length
     ? await db
         .select({
@@ -167,6 +170,11 @@ export async function listTaskThread(taskId: string) {
     const run = runRow
       ? {
           ...runRow,
+          // RUN-TRANSCRIPT LAW: output rides only while RUNNING (bits query);
+          // settled transcripts + prompts fetch on demand via tasks.runTranscript
+          output: bitsByRun.get(runRow.id)?.output ?? null,
+          hasOutput: bitsByRun.get(runRow.id)?.hasOutput ?? false,
+          hasPrompt: bitsByRun.get(runRow.id)?.hasPrompt ?? false,
           startedAt: runRow.startedAt.toISOString(),
           finishedAt: runRow.finishedAt ? runRow.finishedAt.toISOString() : null,
           // `?? null` unreachable by FK (employee_id references user.id) — defensive only

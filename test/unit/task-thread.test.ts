@@ -145,6 +145,24 @@ describe('buildThread', () => {
     });
     expect(item).toMatchObject({ kind: 'run', status: RUN_STATUS.RUNNING, output: 'partial', exitCode: null });
   });
+
+  it('carries the transcript flags and a null settled output through (RUN-TRANSCRIPT LAW)', () => {
+    const [item] = buildThread({
+      runs: [
+        {
+          id: 'r1',
+          status: RUN_STATUS.DONE,
+          output: null,
+          hasOutput: true,
+          hasPrompt: false,
+          exitCode: 0,
+          startedAt: 't',
+          finishedAt: 't2',
+        },
+      ],
+    });
+    expect(item).toMatchObject({ kind: 'run', output: null, hasOutput: true, hasPrompt: false });
+  });
 });
 
 describe('buildThread degenerate sources', () => {

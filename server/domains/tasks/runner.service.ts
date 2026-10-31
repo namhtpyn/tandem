@@ -17,12 +17,13 @@ import type { RoutingProposal } from '#shared/run-verdict';
 // local e2e can exercise the full dispatch→stream→finish loop with no host.
 import { nonNull } from '#shared/utils/non-null';
 
-import { db } from '../../db/index';
+import { asDb, db, type DbExecutor } from '../../db/index';
 import { environments, tasks, taskRuns, taskAttachments, taskMessages } from '../../db/schema';
 import { env } from '../kernel/env';
 import { publishChange } from '../kernel/kernel';
 import { redisQueue } from '../kernel/queue';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
+import { transcriptSnapshotColumns } from './run-transcript';
 
 // FULL output is kept on the run row (user law 2026-10-15: "the task output must
 // show full output") — no line tailing; the DB text column carries whatever the
@@ -1190,9 +1191,11 @@ export async function executeRun(
 
 /** integration-test convenience: create the run and execute attempt 1 INLINE (what
  * the worker does) without the queue — the caller awaits the verdict directly. */
-/** runs for one task, newest first */
-export async function listRuns(taskId: string) {
-  const rows = await db
+/** runs for one task, newest first — RUN-TRANSCRIPT LAW (#130 slice 2): the
+ * snapshot select never carries transcript text; `output` rides ONLY for the
+ * RUNNING run (live stream surface) and `prompt` never rides (flags instead) */
+export function runsListScan(ex: DbExecutor, taskId: string) {
+  return asDb(ex)
     .select({
       id: taskRuns.id,
       employeeId: taskRuns.employeeId,
@@ -1200,13 +1203,16 @@ export async function listRuns(taskId: string) {
       status: taskRuns.status,
       attempts: taskRuns.attempts,
       exitCode: taskRuns.exitCode,
-      output: taskRuns.output,
-      prompt: taskRuns.prompt,
+      ...transcriptSnapshotColumns(),
       startedAt: taskRuns.startedAt,
       finishedAt: taskRuns.finishedAt,
     })
     .from(taskRuns)
     .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
     .where(eq(taskMessages.taskId, taskId));
+}
+
+export async function listRuns(taskId: string) {
+  const rows = await runsListScan(db, taskId);
   return rows.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
 }

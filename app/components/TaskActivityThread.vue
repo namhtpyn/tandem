@@ -27,7 +27,7 @@ import {
 
 const props = defineProps<{ task: TaskRow }>();
 
-const { $orpc } = useNuxtApp();
+const { $orpc, $client } = useNuxtApp();
 
 const taskId = computed(() => props.task.id);
 
@@ -50,6 +50,61 @@ const runFeed = computed(() =>
     r.run ? [{ ...r.run, body: r.body, authorId: r.authorId, authorName: r.authorName }] : [],
   ),
 );
+
+// ---- RUN-TRANSCRIPT LAW (#130 slice 2): snapshots carry transcript text only
+// for the LIVE run; settled transcripts + prompts fetch on demand via
+// tasks.runTranscript the first time a fold opens (cached for the view)
+type RunTranscript = { output: string; prompt: string | null };
+const transcripts = ref(new Map<string, RunTranscript>());
+const openOutputs = ref(new Set<string>());
+const transcriptInFlight = new Set<string>();
+async function ensureTranscript(runId: string) {
+  if (transcripts.value.has(runId) || transcriptInFlight.has(runId)) return;
+  transcriptInFlight.add(runId);
+  try {
+    // one-shot imperative GET — $orpc is the TanStack utils surface (queryOptions
+    // only); raw procedure calls ride $client (same client useChangeEvents uses)
+    const row = await $client.tasks.runTranscript({ runId });
+    transcripts.value = new Map(transcripts.value).set(runId, { output: row.output, prompt: row.prompt });
+  } catch {
+    // unknown/gone run: leave uncached — the fold simply renders empty
+  } finally {
+    transcriptInFlight.delete(runId);
+  }
+}
+/** output text for a run turn: the live stream, else the fetched transcript */
+function transcriptOf(item: ThreadItem): string {
+  if (item.kind !== 'run') return '';
+  return item.output ?? transcripts.value.get(item.id)?.output ?? '';
+}
+/** prompt text for a run turn: always fetched on demand (never in snapshots) */
+function promptOf(item: ThreadItem): string | null {
+  if (item.kind !== 'run') return null;
+  return item.prompt ?? transcripts.value.get(item.id)?.prompt ?? null;
+}
+function toggleOutput(item: ThreadItem, open: boolean) {
+  if (item.kind !== 'run') return;
+  if (open) {
+    openOutputs.value = new Set(openOutputs.value).add(item.id);
+    if (item.output == null && item.hasOutput) void ensureTranscript(item.id);
+  } else {
+    // cache stays — reopening must not re-download; only the open-set shrinks
+    openOutputs.value = new Set([...openOutputs.value].filter((id) => id !== item.id));
+  }
+}
+function togglePrompt(item: ThreadItem, open: boolean) {
+  if (item.kind !== 'run') return;
+  if (open) void ensureTranscript(item.id);
+}
+// a run settled while its output fold was open: the snapshot dropped the live
+// output — pull the settled transcript so the open fold doesn't go blank
+// (watches runFeed — declared above; `thread` is a TDZ hazard from here)
+watch(runFeed, (rows) => {
+  for (const r of rows) {
+    if (r.output != null || !r.hasOutput) continue;
+    if (openOutputs.value.has(r.id)) void ensureTranscript(r.id);
+  }
+});
 const workflowFeed = computed(() => activityNotes(threadRows.value));
 const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES] }));
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[]);
@@ -83,8 +138,10 @@ const thread = computed<ThreadItem[]>(() =>
     runs: runFeed.value.map((r) => ({
       id: r.id,
       status: runStatus(r.status),
-      output: r.output,
-      prompt: r.prompt,
+      output: r.output ?? null,
+      hasOutput: r.hasOutput ?? false,
+      hasPrompt: r.hasPrompt ?? false,
+      prompt: r.prompt ?? null,
       body: r.body,
       agentName: r.agentName,
       authorId: r.authorId ?? null,
@@ -339,8 +396,13 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
                 >
               </template>
             </div>
-            <!-- raw input: the exact brief, expandable below the message -->
-            <details v-if="item.prompt" class="group mt-1">
+            <!-- raw input: the exact brief — RUN-TRANSCRIPT LAW: prompts never ride
+                 snapshots; the fold fetches the transcript on first open -->
+            <details
+              v-if="item.hasPrompt"
+              class="group mt-1"
+              @toggle="togglePrompt(item, ($event.target as HTMLDetailsElement).open)"
+            >
               <summary
                 class="text-muted hover:bg-elevated focus-visible:ring-primary inline-flex min-h-8 cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-xs select-none focus-visible:ring-2 focus-visible:outline-none"
               >
@@ -349,10 +411,16 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
               </summary>
               <pre
                 class="bg-elevated text-toned mt-1 rounded-md px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
-                >{{ item.prompt }}</pre>
+                >{{ promptOf(item) }}</pre>
             </details>
-            <!-- raw output: FULL transcript, expandable below the message -->
-            <details v-if="item.output" class="group mt-1">
+            <!-- raw output: FULL transcript, expandable below the message — the live
+                 run streams inline (snapshot carries RUNNING output); settled runs
+                 fetch the transcript on first open (RUN-TRANSCRIPT LAW) -->
+            <details
+              v-if="item.output || item.hasOutput"
+              class="group mt-1"
+              @toggle="toggleOutput(item, ($event.target as HTMLDetailsElement).open)"
+            >
               <summary
                 class="text-muted hover:bg-elevated focus-visible:ring-primary inline-flex min-h-8 cursor-pointer list-none items-center gap-1 rounded-md px-1.5 py-1 text-xs select-none focus-visible:ring-2 focus-visible:outline-none"
               >
@@ -361,7 +429,7 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
               </summary>
               <pre
                 class="bg-elevated text-toned mt-1 rounded-md px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
-                >{{ item.output }}</pre>
+                >{{ transcriptOf(item) }}</pre>
             </details>
           </div>
         </div>
