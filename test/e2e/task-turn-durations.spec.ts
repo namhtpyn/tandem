@@ -76,6 +76,14 @@ test('turn durations: off by default, bad writes rejected, flag flip renders set
     const durations = page.getByTestId('run-duration');
     await expect(durations).toHaveCount(1);
     await expect(durations.first()).toHaveText('· 4m 05s');
+
+    // RUN-TRANSCRIPT LAW (#130 slice 2): the settled turn's transcript text is
+    // NOT in the snapshot — the fold renders (hasOutput) and fetches the text
+    // on first open; the RUNNING turn (empty output) renders no fold
+    const outputFold = page.getByText(/Full output from/).first();
+    await expect(outputFold).toBeVisible();
+    await outputFold.click();
+    await expect(page.getByText('seeded settled output')).toBeVisible({ timeout: 10_000 });
   } finally {
     // reset the namespace: settings rows survive the db sweep
     await setFlags(page, {}).catch(() => {});
