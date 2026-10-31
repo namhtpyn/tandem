@@ -1,3 +1,10 @@
+## [2.60.1](https://github.com/namhtpyn/tandem/compare/v2.60.0...v2.60.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* **e2e:** poll the awaiting=1 URL sync instead of a single assert (flaked the v2.60.0 release train twice) ([#137](https://github.com/namhtpyn/tandem/issues/137)) ([1d6a161](https://github.com/namhtpyn/tandem/commit/1d6a161050547a08edeee3a3e845c2b78ff871a1))
+
 # [2.60.0](https://github.com/namhtpyn/tandem/compare/v2.59.2...v2.60.0) (2026-10-31)
 
 
