@@ -25,7 +25,14 @@ import {
   taskMessages,
 } from '../../db/schema';
 import { env } from '../kernel/env';
-import { ORPCError, employeeProcedure, liveGenerator, protectedProcedure, publishChange } from '../kernel/kernel';
+import {
+  ORPCError,
+  employeeProcedure,
+  humanProcedure,
+  liveGenerator,
+  protectedProcedure,
+  publishChange,
+} from '../kernel/kernel';
 import { recordAssignment, listAssignments } from './assignments.service';
 import { refreshParentGating } from './gating.service';
 import {
@@ -690,8 +697,8 @@ export const tasksRouter = os.router({
       return await runWorkflow(() => submitResult(input.taskId, selfId, input.body ?? ''));
     }),
 
-  /** reviewer approves (unanimous → done) */
-  approve: employeeProcedure
+  /** reviewer approves (unanimous → done) — HUMAN-only verdict */
+  approve: humanProcedure
     .input(z.strictObject({ taskId: z.string().min(1), body: z.string().max(4_000).optional() }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
@@ -699,8 +706,8 @@ export const tasksRouter = os.router({
       return await runWorkflow(() => approveReview(input.taskId, selfId, input.body ?? ''));
     }),
 
-  /** reviewer requests changes → assignee back to work */
-  requestChanges: employeeProcedure
+  /** reviewer requests changes → assignee back to work — HUMAN-only verdict */
+  requestChanges: humanProcedure
     .input(z.strictObject({ taskId: z.string().min(1), body: z.string().min(1).max(10_000) }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
@@ -708,8 +715,8 @@ export const tasksRouter = os.router({
       return await runWorkflow(() => requestChanges(input.taskId, selfId, input.body));
     }),
 
-  /** reviewer's reject vote — unanimous reject (round end) cancels the task */
-  reject: employeeProcedure
+  /** reviewer's reject vote — unanimous reject (round end) cancels the task — HUMAN-only verdict */
+  reject: humanProcedure
     .input(z.strictObject({ taskId: z.string().min(1), body: z.string().max(4_000).optional() }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);

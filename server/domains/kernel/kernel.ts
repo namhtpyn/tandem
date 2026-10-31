@@ -10,6 +10,8 @@ import { changeBus, publishChange, type ChangeResource } from './change-bus';
 
 export interface ServerContext extends RequestHeadersHandlerPluginContext {
   getSession: () => Promise<{
+    /** credential origin — an id that resolves to an `apikey` row is an agent credential */
+    sessionId?: string;
     user: { id: string; name: string; email: string; role: Role };
   } | null>;
 }
@@ -45,6 +47,29 @@ const requireRole = (...allowed: Role[]) =>
 
 /** work-surface writes (tasks, projects, Jev auto-assign) — EMPLOYEE + ADMIN */
 export const employeeProcedure = base.use(requireRole(ROLE.EMPLOYEE, ROLE.ADMIN));
+
+/** REVIEW LAW (SPEC "Roles & access"): verdict procedures (approve/
+ *  requestChanges/reject) are HUMAN-only — the role gate plus a credential-
+ *  origin check; a session backed by an API key (agent credential) is
+ *  FORBIDDEN even with the right role. The origin lookup is lazy-imported so
+ *  the db chain loads only when a human-only procedure executes. */
+const requireHuman = (...allowed: Role[]) =>
+  base.middleware(async ({ context, next }) => {
+    const session = await context.getSession();
+    if (!session) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'authentication required' });
+    }
+    if (!allowed.includes(session.user.role)) {
+      throw new ORPCError('FORBIDDEN', { message: 'insufficient role' });
+    }
+    const { isApiKeySession } = await import('./session-origin');
+    if (await isApiKeySession(session.sessionId)) {
+      throw new ORPCError('FORBIDDEN', { message: 'review verdicts are human-only' });
+    }
+    return next({ context: { session } });
+  });
+
+export const humanProcedure = base.use(requireHuman(ROLE.EMPLOYEE, ROLE.ADMIN));
 
 /** admin surfaces (vault, providers, oidc, env/employee/status/settings writes) */
 export const adminProcedure = base.use(requireRole(ROLE.ADMIN));

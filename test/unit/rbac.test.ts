@@ -76,7 +76,8 @@ describe('router wiring scan (tiers per SPEC Roles & access)', () => {
   const read = (rel: string) => readFile(join(DOMAINS, rel), 'utf8');
 
   const EMPLOYEE_WRITES: Record<string, string[]> = {
-    // work surface: every write is employee-tier
+    // work surface: every write is employee-tier (verdict writes below are
+    // additionally human-gated — see HUMAN_WRITES)
     'tasks/tasks.router.ts': [
       'create',
       'update',
@@ -88,14 +89,17 @@ describe('router wiring scan (tiers per SPEC Roles & access)', () => {
       'forward',
       'answer',
       'submit',
-      'approve',
-      'requestChanges',
-      'reject',
       'abandon',
       'dispatch',
       'remove',
     ],
     'projects/projects.router.ts': ['create', 'update', 'remove'],
+  };
+
+  // REVIEW LAW: verdict writes are HUMAN-only — role gate + credential-origin
+  // check (an API-key session is FORBIDDEN even with the right role)
+  const HUMAN_WRITES: Record<string, string[]> = {
+    'tasks/tasks.router.ts': ['approve', 'requestChanges', 'reject'],
   };
 
   const ADMIN_WRITES: Record<string, string[]> = {
@@ -117,6 +121,15 @@ describe('router wiring scan (tiers per SPEC Roles & access)', () => {
       const src = await read(file);
       for (const p of procs) {
         expect(src, `${file}::${p} must be employeeProcedure`).toMatch(new RegExp(`${p}: employeeProcedure`));
+      }
+    }
+  });
+
+  it('verdict writes are human-gated (role + credential origin)', async () => {
+    for (const [file, procs] of Object.entries(HUMAN_WRITES)) {
+      const src = await read(file);
+      for (const p of procs) {
+        expect(src, `${file}::${p} must be humanProcedure`).toMatch(new RegExp(`${p}: humanProcedure`));
       }
     }
   });

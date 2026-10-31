@@ -112,18 +112,29 @@ VIEWER; new users default VIEWER; the first boot user claims ADMIN).
 **Enforcement is server-side at the oRPC kernel; UI gating is UX, never the
 boundary.** Tier matrix:
 
-| tier     | who                    | surface                                                                                                                                                                                                                               |
-| -------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| public   | anonymous              | `auth.config`, `auth.configLive`, `auth.session`, `meta.version`, better-auth `/auth/**`, `/health/*`                                                                                                                                 |
-| session  | any authenticated user | every read procedure (list/listPaged/live/detail/thread/runs/inbox/subtasks/assignments/proposals/reviews/activity/titles/apiKeys), `changes.live`                                                                                    |
-| employee | EMPLOYEE + ADMIN       | every `tasks.*` and `projects.*` write (create/update/setStatus/note/ask/forward/answer/submit/approve/requestChanges/reject/abandon/dispatch/remove/proposals confirm+reject) and `statuses.assign` (Jev auto-assign)                |
-| admin    | ADMIN only             | vault (secrets + folders, all verbs), providers (all verbs incl. models), oidc.replace, settings.update, environments create/update/remove/probe, employees create/update/remove, access-key mint/update/revoke, statuses save/remove |
+| tier     | who                    | surface                                                                                                                                                                                                                                                                        |
+| -------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| public   | anonymous              | `auth.config`, `auth.configLive`, `auth.session`, `meta.version`, better-auth `/auth/**`, `/health/*`                                                                                                                                                                          |
+| session  | any authenticated user | every read procedure (list/listPaged/live/detail/thread/runs/inbox/subtasks/assignments/proposals/reviews/activity/titles/apiKeys), `changes.live`                                                                                                                             |
+| employee | EMPLOYEE + ADMIN       | every `tasks.*` and `projects.*` write (create/update/setStatus/note/ask/forward/answer/submit/approve/requestChanges/reject/abandon/dispatch/remove/proposals confirm+reject) and `statuses.assign` (Jev auto-assign); verdict writes are additionally HUMAN-only (see below) |
+| admin    | ADMIN only             | vault (secrets + folders, all verbs), providers (all verbs incl. models), oidc.replace, settings.update, environments create/update/remove/probe, employees create/update/remove, access-key mint/update/revoke, statuses save/remove                                          |
 
 Wrong role → `FORBIDDEN`; anonymous → `UNAUTHORIZED`. Reads never exceed the
 session tier; an admin-surface write is never wired below the admin tier. A
 role gate is part of the procedure definition itself (kernel middleware), so a
 router file wired with bare `protectedProcedure` on an admin-tier write is a
 defect even if a client never calls it.
+
+Review verdicts are HUMAN-only: `tasks.approve`, `tasks.requestChanges` and
+`tasks.reject` additionally verify the session's credential origin — a session
+backed by an API key (agent credential) is `FORBIDDEN` even with the right
+role, enforced server-side in the same gate middleware. Origin resolution:
+better-auth's apiKey plugin fabricates the session for an `x-api-key` request
+with `session.id = apiKey.id`, so a session id that resolves to an `apikey`
+row is an agent credential; a human UI session (a `session` row) is never
+affected. Agent review verdicts ride the run envelope (`source: 'ai'` in
+`recordVerdict`), never these procedures — the gate guards the human verdict
+surface, not the agent one.
 
 ## API law (app-wide)
 
