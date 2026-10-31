@@ -1,3 +1,10 @@
+# [2.59.0](https://github.com/namhtpyn/tandem/compare/v2.58.0...v2.59.0) (2026-10-31)
+
+
+### Features
+
+* **health:** live settings-corruption detector — corrupt known keys degrade readiness ([#123](https://github.com/namhtpyn/tandem/issues/123)) ([85886f3](https://github.com/namhtpyn/tandem/commit/85886f39e980386e01d41d1c23c73ed12020fb44)), closes [#113](https://github.com/namhtpyn/tandem/issues/113)
+
 # [2.58.0](https://github.com/namhtpyn/tandem/compare/v2.57.0...v2.58.0) (2026-10-31)
 
 
