@@ -144,19 +144,22 @@ export async function pushInputAttachments(
   }
 }
 
-/** after a run settles: collect agent outputs from the sandbox, then clean up when last */
+/** after a run settles: collect agent outputs from the sandbox, then clean up when last.
+ * Returns the message-attachment tokens for the collected images (RESULT-MESSAGE
+ * ATTACHMENTS, SPEC 2026-10-31) — the caller appends them to the run message body. */
 export async function settleAttachments(
   taskId: string,
   runId: string,
   sshPlan: { env: { host: string; port: string; username: string }; sshKey?: string; sshPassword?: string },
   _status: FinishedStatus,
-) {
+): Promise<{ collected: number; tokens: string[] }> {
   try {
     const { loadClient } = await import('./ssh-exec.util');
     const ClientCtor = await loadClient();
     const tmp = mkdtempSync(path.join(tmpdir(), 'tandem-out-'));
     try {
       const collected = await collectRunOutputs(ClientCtor, sshPlan, taskId, tmp, COLLECTION_MAX_BYTES);
+      const stored: ResultFile[] = [];
       for (const f of collected) {
         try {
           const bytes = Buffer.from(await Bun.file(f.localPath).arrayBuffer());
@@ -176,6 +179,7 @@ export async function settleAttachments(
             sha256: sha256Hex(bytes),
             createdBy: null,
           });
+          stored.push({ id, filename: sanitizeFilename(f.filename), mime, size: bytes.byteLength });
         } catch (e) {
           // one unreadable/unstorable file never aborts the rest of the batch
           consola.warn(`[settle] skipped collected output '${f.filename}': ${String(e)}`);
@@ -187,6 +191,7 @@ export async function settleAttachments(
         });
         await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
       }
+      return { collected: collected.length, tokens: resultImageTokens(stored) };
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }
@@ -208,6 +213,7 @@ export async function settleAttachments(
   } catch {
     /* cleanup is best-effort */
   }
+  return { collected: 0, tokens: [] };
 }
 
 export function guessMime(filename: string) {
@@ -255,9 +261,10 @@ import {
 /** everything the dispatched agent needs, decrypted; returns null pieces when unconfigured */
 import { buildBrief, loadBriefData } from './brief.service';
 import { recordProposals } from './proposals.service';
+import { resultImageTokens, type ResultFile } from './result-attachments.util';
 import { recordVerdict } from './review.service';
 import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles, ensureOutDir } from './ssh-files.util';
-import { createRunMessage, updateRunMessageBody } from './thread.service';
+import { appendMessageAttachments, createRunMessage, updateRunMessageBody } from './thread.service';
 import { submitResult, askQuestion } from './workflow.service';
 
 export async function loadDispatchPlan(taskId: string) {
@@ -920,6 +927,7 @@ function createRunWriter(runId: string, initial: string, messageId: string) {
     status: FinishedStatus,
     exitCode: number | null,
     plan: { review?: { resultBody: string }; ai: { userId: string } },
+    attachTokens: string[] = [],
   ) => {
     if (settled) return;
     settled = true;
@@ -931,6 +939,9 @@ function createRunWriter(runId: string, initial: string, messageId: string) {
     // the thread message body becomes the parsed result of the final output
     // the run bubble carries the VERDICT on review turns (one response per turn)
     await updateRunMessageBody(messageId, buffer, Boolean(plan.review));
+    // RESULT-MESSAGE ATTACHMENTS: collected images ride the message body — appended
+    // AFTER the body write (the parse owns the body; the append must not be overwritten)
+    await appendMessageAttachments(messageId, attachTokens);
     // no settle note: the run card's status pill (completed / failed exit N) IS the
     // verdict — a separate 'run finished' pill only duplicated it in the thread
     if (status === RUN_STATUS.DONE) {
@@ -1093,10 +1104,17 @@ export async function executeRun(
     // review must have its collected artifacts on the server BEFORE the reviewer's
     // brief is frozen — bounded await (slow/unreachable host must never stall the
     // verdict path). Review runs collect detached: their outputs feed no one.
-    const collectP = settleAttachments(taskId, runId, sshPlan, status).catch(() => {});
-    if (!plan.review) await Promise.race([collectP, new Promise((r) => setTimeout(r, 20_000))]);
+    const collectP = settleAttachments(taskId, runId, sshPlan, status).catch(() => undefined);
+    // tokens are only known once collect returns: work runs bound the wait at 20s —
+    // a slower collect still stores its rows (gallery) but the message ships without
+    // them. Review runs collect detached: their outputs feed no one.
+    let attachTokens: string[] = [];
+    if (!plan.review)
+      attachTokens =
+        (await Promise.race([collectP, new Promise<undefined>((r) => setTimeout(() => r(undefined), 20_000))]))
+          ?.tokens ?? [];
     else void collectP;
-    await writer.finish(taskId, status, exitCode, plan);
+    await writer.finish(taskId, status, exitCode, plan, attachTokens);
     return { status, exitCode };
   } catch (e) {
     /* v8 ignore next -- service throws are Error by construction */

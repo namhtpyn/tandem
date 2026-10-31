@@ -12,6 +12,16 @@ required backing services (REDIS_URL — validated at boot by
 `server/domains/kernel/env.ts`; BullMQ dispatch queue, pub/sub change-bus
 fan-out, cache — no in-memory fallbacks).
 
+## SPEC-FIRST LAW (owner ruling 2026-10-30)
+
+**Anything we do updates the spec first, always.** SPEC.md is the behavioral
+contract; code implements the spec, never the reverse. Every behavior or design
+change lands as: (1) SPEC.md diff stating the new/changed contract — first commit
+or first in the PR, (2) tests asserting the specced behavior, (3) implementation.
+Pure bug fixes that already match SPEC need no spec diff — but if reality and SPEC
+disagree, SPEC wins and the code is wrong. A behavior-changing PR without a
+SPEC.md diff is a review blocker.
+
 ## Review round laws (final spec v2 — owner-locked 2026-10-29)
 
 - Reviews ARE runs (same pipeline); the round (task_reviews) is the state machine. Envelope vocabulary IS the verdict vocabulary: approved/rejected/request_change (+ escalate = referral, never settles). Strict parser — legacy result/blocked kinds are unknown.
