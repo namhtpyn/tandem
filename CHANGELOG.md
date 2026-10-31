@@ -1,3 +1,10 @@
+# [2.58.0](https://github.com/namhtpyn/tandem/compare/v2.57.0...v2.58.0) (2026-10-31)
+
+
+### Features
+
+* **ops:** game-day restore drill — inject/detect/heal with TEST-stack guards ([#113](https://github.com/namhtpyn/tandem/issues/113)) ([#122](https://github.com/namhtpyn/tandem/issues/122)) ([1b9210f](https://github.com/namhtpyn/tandem/commit/1b9210fd062543e068f985aa9eb3187c9163f634))
+
 # [2.57.0](https://github.com/namhtpyn/tandem/compare/v2.56.5...v2.57.0) (2026-10-31)
 
 
