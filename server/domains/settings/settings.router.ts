@@ -34,6 +34,9 @@ export const settingsRouter = os.router({
           .max(6 * 60 * 60_000)
           .optional(),
         tasksPerAgent: z.number().int().min(1).max(32).optional(),
+        peakStartHour: z.number().int().min(0).max(23).optional(),
+        peakEndHour: z.number().int().min(1).max(24).optional(),
+        peakMultiplier: z.number().min(0).max(1).optional(),
         companyPrompt: z.string().max(8000).optional(),
         internalLlm: z
           .strictObject({ providerId: z.string().min(1), model: z.string().min(1), keySecretId: z.string().min(1) })
@@ -54,6 +57,18 @@ export const settingsRouter = os.router({
         const providers = await getOidcProviders();
         if (providers.length === 0) {
           throw new ORPCError('BAD_REQUEST', { message: 'configure an OIDC provider before disabling password login' });
+        }
+      }
+      // peak cadence window: the pair must stay a real window (start < end) —
+      // validate against the would-be FINAL state, so a start-only or end-only
+      // edit is checked against the currently saved other half
+      if (input.peakStartHour !== undefined || input.peakEndHour !== undefined) {
+        const { getPeakWindow } = await import('./settings.service');
+        const cur = await getPeakWindow();
+        const start = input.peakStartHour ?? cur.startHour;
+        const end = input.peakEndHour ?? cur.endHour;
+        if (start >= end) {
+          throw new ORPCError('BAD_REQUEST', { message: 'peak window start hour must be before the end hour' });
         }
       }
       // Workspace AI assignments: provider must exist and speak the right kind;
@@ -109,6 +124,15 @@ export const settingsRouter = os.router({
         if (input.tasksPerAgent !== undefined) {
           await setSetting('tasks_per_agent', String(input.tasksPerAgent), tx);
         }
+        if (input.peakStartHour !== undefined) {
+          await setSetting('peak_start_hour', String(input.peakStartHour), tx);
+        }
+        if (input.peakEndHour !== undefined) {
+          await setSetting('peak_end_hour', String(input.peakEndHour), tx);
+        }
+        if (input.peakMultiplier !== undefined) {
+          await setSetting('peak_multiplier', String(input.peakMultiplier), tx);
+        }
         if (input.runTimeoutMs !== undefined) {
           await setSetting('run_timeout_ms', String(input.runTimeoutMs), tx);
         }
@@ -118,8 +142,14 @@ export const settingsRouter = os.router({
         }
       });
       // ---- side effects AFTER commit: each re-reads the committed rows ----
-      if (input.tasksPerAgent !== undefined) {
+      if (
+        input.tasksPerAgent !== undefined ||
+        input.peakStartHour !== undefined ||
+        input.peakEndHour !== undefined ||
+        input.peakMultiplier !== undefined
+      ) {
         // per-agent dispatch workers must re-sync to the new cap without a redeploy
+        // (tasksPerAgent AND the peak cadence keys both feed the effective cap)
         const { onDispatcherSettingsChanged } = await import('../tasks/dispatcher.service');
         await onDispatcherSettingsChanged();
       }

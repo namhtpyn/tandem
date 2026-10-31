@@ -126,6 +126,9 @@ test.describe('authenticated settings', () => {
         internalDecision: null,
         runTimeoutMs: 1_800_000,
         tasksPerAgent: 1,
+        peakStartHour: 8,
+        peakEndHour: 17,
+        peakMultiplier: 1,
         companyPrompt: '',
       });
 

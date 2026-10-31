@@ -101,11 +101,12 @@ async function reapStaleRunsInner() {
   return reaped;
 }
 
-/** the per-agent cap (Settings override, default 1); dynamic import keeps the
- * settings domain out of the dispatcher's static graph */
+/** the EFFECTIVE per-agent cap — tasks_per_agent scaled down inside the peak
+ * window (peak cadence #70); dynamic import keeps the settings domain out of the
+ * dispatcher's static graph */
 async function tasksPerAgentCap(): Promise<number> {
-  const { getTasksPerAgent } = await import('../settings/settings.service');
-  return await getTasksPerAgent();
+  const { getEffectiveTasksPerAgent } = await import('../settings/settings.service');
+  return await getEffectiveTasksPerAgent();
 }
 
 /** pure cap decision: an agent at/over its live-run cap claims nothing (CAP LAW 2026-10-16) */
@@ -180,6 +181,10 @@ export type { DispatchJob } from './runner.service';
 /** live per-agent workers: agentId -> { concurrency, close } */
 const workers = new Map<string, { concurrency: number; close: () => Promise<void> }>();
 
+/** the effective cap the workers are currently synced to — window-flip detection
+ * compares the live cap against this each scan tick */
+let syncedCap: number | null = null;
+
 /** a stale dispatch call (task already running/done/waiting) must quietly no-op: no
  * re-run, no retry storm, no status flip. */
 export async function dispatchIfEligible(taskId: string, tandemUrl: string) {
@@ -247,6 +252,23 @@ export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<ty
     );
     workers.set(agentId, { concurrency: cap, close: handle.close });
   }
+  syncedCap = cap; // stamped only after a full pass — a throw above leaves it stale on purpose
+}
+
+/** window-flip detection: the peak cadence changes the effective cap with no
+ * settings write to hook (the clock crosses 08:00 / 17:00 ICT), so the scan tick
+ * compares the live effective cap to what the workers run and resyncs on drift.
+ * Never rejects (the resync is best-effort by contract). */
+export async function resyncOnCapChange(): Promise<boolean> {
+  let cap: number;
+  try {
+    cap = await tasksPerAgentCap();
+  } catch {
+    return false; // a settings read hiccup just means try again next tick
+  }
+  if (syncedCap === cap) return false;
+  await onDispatcherSettingsChanged();
+  return true;
 }
 
 /** settings.update calls this so a tasksPerAgent change applies without a redeploy.
@@ -262,9 +284,10 @@ export async function onDispatcherSettingsChanged() {
 
 /** boot hook: start the dispatcher unless opted out (tests set TANDEM_NO_DISPATCHER=1).
  * With REDIS_URL set, dispatch flows through BullMQ PER-AGENT queues (durable,
- * exponential-backoff retries) — one worker per AI employee, concurrency =
- * tasksPerAgent (default 1). Agents run in parallel; the scan loop still runs as a
- * sweep for tasks queued while redis was down. */
+ * exponential-backoff retries) — one worker per AI employee, concurrency = the
+ * EFFECTIVE per-agent cap (tasksPerAgent scaled by the peak multiplier in-window).
+ * Agents run in parallel; the scan loop still runs as a sweep for tasks queued
+ * while redis was down. */
 export async function maybeStartDispatcher(): Promise<(() => void) | null> {
   if (env.TANDEM_NO_DISPATCHER) return null;
   const url = env.TANDEM_PUBLIC_URL ?? 'http://localhost:3000';
@@ -281,6 +304,7 @@ export function startDispatcher(tandemUrl: string, intervalMs = 5000): () => voi
   const timer = setInterval(() => {
     void scanOnce(tandemUrl); // scanOnce never rejects: its own catch turns errors into false
     void reapStaleRuns(); // never rejects: its own catch turns errors into 0 reaped
+    void resyncOnCapChange().catch(() => {}); // peak window opened/closed: workers re-sync, no redeploy
   }, intervalMs);
   return () => clearInterval(timer);
 }
