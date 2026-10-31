@@ -20,6 +20,7 @@ import {
   runStatus,
   statusLabel,
   verdictLabel,
+  waitingOnLabel,
 } from '../../app/utils/ui-labels';
 import { PROVIDER_ENDPOINT } from '../../shared/api-styles';
 import { CATEGORIES, CATEGORY } from '../../shared/enums';
@@ -159,5 +160,34 @@ describe('ui-labels: composer/roles/verdicts', () => {
       value: NONE_ID,
     });
     expect(employeeOptions(rows, { excludeId: 'a' }).map((o) => o.value)).toEqual(['b']);
+  });
+
+  it('waitingOnLabel names the answer holder, else flags outstanding review approvers', () => {
+    // the answer holder wins whenever one exists (waiting-answer category)
+    expect(
+      waitingOnLabel(
+        { questionHolderName: 'Ada', reviewerNames: ['Ada'], reviewApprovals: [] },
+        CATEGORY.WAITING_ANSWER,
+      ),
+    ).toBe('Waiting on Ada');
+    // in-review with approvers outstanding → review pending
+    expect(
+      waitingOnLabel(
+        { questionHolderName: null, reviewerNames: ['Ada', 'Bob'], reviewApprovals: ['x'] },
+        CATEGORY.IN_REVIEW,
+      ),
+    ).toBe('Review pending');
+    // in-review fully approved → nothing owed
+    expect(
+      waitingOnLabel(
+        { questionHolderName: null, reviewerNames: ['Ada', 'Bob'], reviewApprovals: ['a', 'b'] },
+        CATEGORY.IN_REVIEW,
+      ),
+    ).toBe(null);
+    // a non-review category never reads as review pending
+    expect(
+      waitingOnLabel({ questionHolderName: null, reviewerNames: ['Ada'], reviewApprovals: [] }, CATEGORY.READY),
+    ).toBe(null);
+    expect(waitingOnLabel({ questionHolderName: null, reviewerNames: [], reviewApprovals: [] }, null)).toBe(null);
   });
 });

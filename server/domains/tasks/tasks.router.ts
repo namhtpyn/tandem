@@ -28,7 +28,13 @@ import { env } from '../kernel/env';
 import { ORPCError, employeeProcedure, liveGenerator, protectedProcedure, publishChange } from '../kernel/kernel';
 import { recordAssignment, listAssignments } from './assignments.service';
 import { refreshParentGating } from './gating.service';
-import { approvalsInRoundBatch, openObligations, pendingForUser, pendingCounts } from './obligations.service';
+import {
+  approvalsInRoundBatch,
+  openObligations,
+  pendingForUser,
+  pendingCounts,
+  pendingTaskIds,
+} from './obligations.service';
 import { confirmProposal, rejectProposal } from './proposals.service';
 import { listReviews, logActivity } from './review.service';
 import { dispatchTask, listRuns } from './runner.service';
@@ -160,7 +166,14 @@ async function mapTaskRows(rows: TaskListRow[]): Promise<TaskRow[]> {
 
 /** paged/searched/filtered variant of the snapshot; total reflects the same filters */
 async function listTasksPaged(
-  input: { page: number; pageSize: number; q?: string; statusId?: string; inboxOfMe?: boolean },
+  input: {
+    page: number;
+    pageSize: number;
+    q?: string;
+    statusId?: string;
+    inboxOfMe?: boolean;
+    awaitingDecision?: boolean;
+  },
   selfId: string,
 ) {
   const q = input.q?.trim();
@@ -177,7 +190,15 @@ async function listTasksPaged(
     if (ids.length === 0) return { data: [] as TaskRow[], total: 0 };
     inboxFilter = { id: { inArray: ids } };
   }
-  const filters = [searchFilter, statusFilter, inboxFilter].filter((f) => f !== undefined);
+  // awaitingDecision = tasks with a PENDING obligation for ANYONE — the
+  // company-wide queue (#91, SPEC: session tier); empty set short-circuits
+  let awaitingFilter: { id: { inArray: string[] } } | undefined;
+  if (input.awaitingDecision) {
+    const ids = await pendingTaskIds();
+    if (ids.length === 0) return { data: [] as TaskRow[], total: 0 };
+    awaitingFilter = { id: { inArray: ids } };
+  }
+  const filters = [searchFilter, statusFilter, inboxFilter, awaitingFilter].filter((f) => f !== undefined);
   const where = filters.length === 0 ? EmptyFilter : filters.length === 1 ? nonNull(filters[0]) : { AND: filters };
   const { data, total } = await db.query.tasks.findManyAndCount({
     columns: {
@@ -391,6 +412,7 @@ export const tasksRouter = os.router({
         q: z.string().trim().optional(),
         statusId: z.string().min(1).optional(),
         inboxOfMe: z.boolean().optional(),
+        awaitingDecision: z.boolean().optional(),
       }),
     )
     .handler(async ({ input, context }) =>

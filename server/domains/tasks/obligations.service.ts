@@ -129,6 +129,16 @@ export async function approvalsInRoundBatch(taskIds: string[]) {
   return out;
 }
 
+/** distinct task ids holding ≥1 PENDING obligation (any role, any holder) —
+ *  the company-wide awaiting-decision set (#91); empty = nobody owes anything */
+export async function pendingTaskIds() {
+  const rows = await db
+    .selectDistinct({ taskId: taskObligations.taskId })
+    .from(taskObligations)
+    .where(eq(taskObligations.status, OBLIGATION_STATUS.PENDING));
+  return rows.map((r) => r.taskId);
+}
+
 /** the inbox: tasks with a pending obligation on me (any role), newest first */
 export async function pendingForUser(employeeId: string) {
   return db
@@ -143,7 +153,6 @@ export async function pendingForUser(employeeId: string) {
     .where(and(eq(taskObligations.employeeId, employeeId), eq(taskObligations.status, OBLIGATION_STATUS.PENDING)))
     .orderBy(desc(taskObligations.createdAt));
 }
-
 /** pending obligation counts by role for one user (badge) */
 export async function pendingCounts(employeeId: string) {
   const rows = await db
