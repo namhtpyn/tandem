@@ -1,3 +1,10 @@
+# [2.55.0](https://github.com/namhtpyn/tandem/compare/v2.54.0...v2.55.0) (2026-10-31)
+
+
+### Features
+
+* **dispatch:** peak-window cadence — effective per-agent cap ([#70](https://github.com/namhtpyn/tandem/issues/70)) ([1d26251](https://github.com/namhtpyn/tandem/commit/1d262519348a6a212da6d8c364330df8cf909aba))
+
 # [2.54.0](https://github.com/namhtpyn/tandem/compare/v2.53.0...v2.54.0) (2026-10-31)
 
 
