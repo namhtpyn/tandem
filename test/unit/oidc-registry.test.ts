@@ -104,9 +104,6 @@ describe('settings allowlist pin (never exposes the OIDC registry)', () => {
       'disablePasswordLogin',
       'internalDecision',
       'internalLlm',
-      'peakEndHour',
-      'peakMultiplier',
-      'peakStartHour',
       'runTimeoutMs',
       'tasksPerAgent',
     ]);
