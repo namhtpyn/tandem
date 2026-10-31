@@ -1,3 +1,10 @@
+# [2.54.0](https://github.com/namhtpyn/tandem/compare/v2.53.0...v2.54.0) (2026-10-31)
+
+
+### Features
+
+* **tasks:** inline input images as ACP prompt image blocks ([fc37716](https://github.com/namhtpyn/tandem/commit/fc37716cfa61340b25b4431a2290c14aff1b6253))
+
 # [2.53.0](https://github.com/namhtpyn/tandem/compare/v2.52.3...v2.53.0) (2026-10-31)
 
 
