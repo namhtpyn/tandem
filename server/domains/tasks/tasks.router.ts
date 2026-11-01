@@ -48,7 +48,7 @@ import { listReviews, logActivity } from './review.service';
 import { fetchRunTranscript } from './run-transcript';
 import { dispatchTask, listRuns } from './runner.service';
 import { fetchTaskDescription, taskListColumns } from './task-description';
-import { listTaskThread } from './thread.service';
+import { listTaskThread, threadOlderPage } from './thread.service';
 import {
   addNote,
   askQuestion,
@@ -745,10 +745,22 @@ export const tasksRouter = os.router({
     return row;
   }),
 
-  /** the unified conversation thread (snapshot) — base messages with their run/activity extension */
+  /** the unified conversation thread (snapshot) — base messages with their run/activity extension;
+   * bounded envelope {items, hasMore} (THREAD BOUNDING LAW #175) */
   threadList: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))
     .handler(({ input }) => listTaskThread(input.taskId)),
+
+  /** on-demand previous thread page (older history) — THREAD BOUNDING LAW (#175):
+   * cursor = the oldest held item's (createdAt,id) -> same {items, hasMore} envelope */
+  threadOlderPage: protectedProcedure
+    .input(
+      z.strictObject({
+        taskId: z.string().min(1),
+        before: z.strictObject({ createdAt: z.string().min(1), id: z.string().min(1) }),
+      }),
+    )
+    .handler(({ input }) => threadOlderPage(input.taskId, input.before)),
 
   thread: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))
