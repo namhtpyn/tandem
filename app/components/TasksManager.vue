@@ -11,7 +11,14 @@ import { computed, ref, watch } from 'vue';
 
 import { CATEGORY, CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
-import { composerHint, composerReady, forwardReady, useWorkflowActions } from '~/composables/useWorkflowActions';
+import {
+  cancelReady,
+  composerHint,
+  composerReady,
+  forwardReady,
+  submitReady,
+  useWorkflowActions,
+} from '~/composables/useWorkflowActions';
 import { formatWhenShort } from '~/utils/format-when';
 import { NONE_ID, errorMessage, saveFailed } from '~/utils/forms';
 import type { EmployeeRow, TaskRow, TaskRunRow, ThreadPage, ThreadRow } from '~/utils/orpc-types';
@@ -330,17 +337,30 @@ const {
   sendNote,
   resetWorkflow,
 } = useWorkflowActions(() => workflowTask.value?.id ?? null);
-// the workflow gate keys off the status CATEGORY (not seeded uuids): ready /
-// working / paused are the work states where submit/cancel apply (forward has
-// its own holder-scoped gate — see canForward)
+// the workflow gate keys off the status CATEGORY (not seeded uuids) via the
+// shared server-truth helpers below — submit/cancel render ONLY where the
+// server accepts them (#177)
 const workflowStatusCategory = computed(() =>
   workflowTask.value ? (statusById.value.get(workflowTask.value.status)?.category ?? null) : null,
 );
-const workflowIsWorking = computed(
-  () =>
-    workflowStatusCategory.value === CATEGORY.READY ||
-    workflowStatusCategory.value === CATEGORY.WORKING ||
-    workflowStatusCategory.value === CATEGORY.PAUSED,
+// the SAME gates as the task-page verbs (submit = viewer is the human assignee
+// in a working-category status; cancel = owner or assignee in a work state) —
+// the drawer renders no verb the server would refuse (#177)
+const drawerCanSubmit = computed(() =>
+  submitReady({
+    category: workflowStatusCategory.value,
+    assigneeId: workflowTask.value?.assigneeId,
+    assigneeKind: workflowTask.value?.assigneeKind,
+    userId: session.value?.user.id,
+  }),
+);
+const drawerCanCancel = computed(() =>
+  cancelReady({
+    category: workflowStatusCategory.value,
+    assigneeId: workflowTask.value?.assigneeId,
+    ownerId: workflowTask.value?.ownerId,
+    userId: session.value?.user.id,
+  }),
 );
 
 /** drawer composer: send is the answer verb while the task waits for one; a null
@@ -1224,11 +1244,13 @@ onServerPrefetch(() =>
             </div>
           </div>
           <!-- contextual verbs only (owner rulings 2026-10-26): notes/answers ride the composer.
-               Working states carry submit + cancel; Forward lives in its own block below —
-               the server accepts it only from the answer holder while waiting-answer (#92). -->
-          <div v-if="workflowIsWorking" class="flex flex-wrap gap-2">
+               Working states carry submit + cancel — each gated by the SHARED server-truth
+               helpers (submit = viewer is the human assignee, working category; cancel = owner
+               or assignee); Forward lives in its own block below — the server accepts it only
+               from the answer holder while waiting-answer (#92). -->
+          <div v-if="drawerCanSubmit || drawerCanCancel" class="flex flex-wrap gap-2">
             <UButton
-              v-if="workflowTask.assigneeKind !== 'ai'"
+              v-if="drawerCanSubmit"
               size="sm"
               color="primary"
               variant="soft"
@@ -1238,6 +1260,7 @@ onServerPrefetch(() =>
               >Submit for review</UButton
             >
             <UButton
+              v-if="drawerCanCancel"
               size="sm"
               color="error"
               variant="soft"

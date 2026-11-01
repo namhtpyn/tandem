@@ -1,9 +1,11 @@
 import { eq, and } from 'drizzle-orm';
 
 import {
+  CATEGORY,
   CHANGE_RESOURCE,
   CHANGE_ACTION,
   REVIEW_STATUS,
+  RUN_STATUS,
   OBLIGATION_ROLE,
   ACTIVITY_KIND,
   type ActivityKind,
@@ -20,7 +22,7 @@ import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { tasks, employeeSupervisors, taskReviews } from '../../db/schema';
+import { tasks, employeeSupervisors, taskReviews, taskRuns, taskMessages } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { refreshParentGating, hasOpenChildren } from './gating.service';
 import { spawnObligation, resolveObligation, cancelObligations, answerHolder } from './obligations.service';
@@ -209,7 +211,15 @@ export async function addNote(
 
 export async function submitResult(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId);
-  if (task.status !== DOING_STATUS) throw new Error('only a task in progress can submit');
+  // WORKING-CATEGORY gate (SPEC: submit from "a working status" — the seeded
+  // Doing row carries category working; custom working statuses submit too, the
+  // old seeded-doing-id-only check 400'd them forever)
+  const statusRows = await db.query.taskStatuses.findMany({
+    columns: { category: true },
+    where: { id: { eq: task.status } },
+    orderBy: { position: 'asc' },
+  });
+  if (statusRows[0]?.category !== CATEGORY.WORKING) throw new Error('only a task in progress can submit');
   if (task.assigneeId !== authorId) throw new Error('only the assignee can submit');
   if (await hasOpenChildren(taskId)) throw new Error('task has open subtasks — they must be done or cancelled first');
   // explicit reviewers only (owner ruling 2026-10-26): the org supervisor is NOT a
@@ -260,19 +270,47 @@ export async function requestChanges(taskId: string, authorId: string, body: str
   return { ok: true };
 }
 
-/** reviewer proposes abandon → owner confirms → cancelled (handled by owner via normal status move or this) */
-export async function abandonReview(taskId: string, authorId: string, body: string) {
+/** abandon = cancel, one terminal (SPEC: the Abandon verb renders in working
+ *  states — review rounds abandon the round path; tasks still in the work
+ *  states cancel directly, owner or assignee only, never over a live run
+ *  (RUN LOCK — the runner owns the task while it runs, parity with remove)). */
+export async function abandonTask(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId);
-  if (task.status !== IN_REVIEW_STATUS) throw new Error('task is not in review');
-  const reviewers = task.reviewers;
-  const isReviewer = reviewers.includes(authorId);
   const isOwner = task.ownerId === authorId || task.createdBy === authorId;
-  if (!isReviewer && !isOwner) throw new Error('only a reviewer or the owner can abandon');
-  await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
-  await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
-  // teardown first (pending rows -> superseded, obligations cancel) — the task
-  // status carries the real outcome (cancelled)
-  await teardownOpenRound(taskId, 'cancelled');
+  const isReviewer = task.reviewers.includes(authorId);
+  if (task.status === IN_REVIEW_STATUS) {
+    if (!isReviewer && !isOwner) throw new Error('only a reviewer or the owner can abandon');
+    await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+    await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
+    // teardown first (pending rows -> superseded, obligations cancel) — the task
+    // status carries the real outcome (cancelled)
+    await teardownOpenRound(taskId, 'cancelled');
+  } else {
+    const statusRows = await db.query.taskStatuses.findMany({
+      columns: { id: true, category: true },
+      where: { id: { eq: task.status } },
+      orderBy: { position: 'asc' },
+    });
+    const category = statusRows[0]?.category;
+    if (
+      category !== CATEGORY.READY &&
+      category !== CATEGORY.WORKING &&
+      category !== CATEGORY.PAUSED &&
+      category !== CATEGORY.BACKLOG
+    ) {
+      throw new Error('task is not in a cancellable state');
+    }
+    if (!isOwner && task.assigneeId !== authorId)
+      throw new Error('only the owner or the assignee can cancel a working task');
+    const running = await db
+      .select({ id: taskRuns.id })
+      .from(taskRuns)
+      .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+      .where(and(eq(taskMessages.taskId, taskId), eq(taskRuns.status, RUN_STATUS.RUNNING)));
+    if (running.length > 0) throw new Error('cancel the running run first');
+    // a paused task can still hold a pending answer obligation — cancel it
+    await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
+  }
   // abandoned == cancelled (one terminal, no fake distinction)
   await db.update(tasks).set({ status: CANCELLED_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   await logActivity(taskId, ACTIVITY_KIND.VERDICT, authorId, body || 'cancelled', { abandon: true });

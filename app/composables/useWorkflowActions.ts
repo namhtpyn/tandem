@@ -175,6 +175,68 @@ export function useWorkflowActions(taskId: () => string | null | undefined) {
 }
 
 /**
+ * Working gate (the drawer + task-page verbs): ready/working/paused are the
+ * work states where cancel applies (the server's abandon accepts exactly
+ * these). A null category (statuses loading or failed) is NEVER a working
+ * state — the verbs would render where the server cannot tell the task's
+ * state yet.
+ */
+export function workingReady(category: string | null | undefined): boolean {
+  return category === CATEGORY.READY || category === CATEGORY.WORKING || category === CATEGORY.PAUSED;
+}
+
+/**
+ * Submit gate (SPEC #177 + the server's submitResult: working category AND the
+ * viewer IS the human assignee — nobody else's submit lands, 'only the
+ * assignee can submit'; AI assignees submit via the run envelope). In-progress
+ * only: ready/paused submit is refused server-side, so the verb never renders
+ * there.
+ */
+export function submitReady(input: {
+  category: string | null | undefined;
+  assigneeId: string | null | undefined;
+  assigneeKind: string | null | undefined;
+  userId: string | null | undefined;
+}): boolean {
+  return (
+    input.category === CATEGORY.WORKING &&
+    input.assigneeKind !== 'ai' &&
+    !!input.assigneeId &&
+    input.assigneeId === input.userId
+  );
+}
+
+/**
+ * Cancel gate (the server's abandon in work states: the task's owner or its
+ * assignee — a third-party viewer gets a refused verb, never a dead button).
+ */
+export function cancelReady(input: {
+  category: string | null | undefined;
+  assigneeId: string | null | undefined;
+  ownerId: string | null | undefined;
+  userId: string | null | undefined;
+}): boolean {
+  return (
+    workingReady(input.category) &&
+    !!input.userId &&
+    (input.ownerId === input.userId || input.assigneeId === input.userId)
+  );
+}
+
+/**
+ * Dispatch gate (SPEC #177): Dispatch now renders ONLY for an AI assignee in a
+ * ready-category status with NO live run — the server (requireDispatchable)
+ * refuses everything else, so the verb renders exactly then, never disabled.
+ */
+export function dispatchReady(input: {
+  category: string | null | undefined;
+  assigneeKind: string | null | undefined;
+  running: boolean;
+}): boolean {
+  return !input.running && input.category === CATEGORY.READY && input.assigneeKind === 'ai';
+}
+
+/**
  * Forward gate (SPEC: workflow verbs render ONLY where the server accepts
  * them): the server rejects forward unless the task is waiting-answer AND the
  * caller is the pending answer obligation's holder — so the verb renders
