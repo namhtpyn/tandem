@@ -10,6 +10,11 @@ Human + AI employees, one hierarchy. Work is assigned as tasks; AI assignees
 execute via the Hermes agent on SSH environments the operator controls.
 Remote-only: the agent never runs on the Tandem server itself.
 
+HUMAN-ONLY FRONTEND LAW: the frontend serves humans exclusively — agents
+integrate via API/ACP and never shape the UI. UX MUST be great; the steps to
+complete any task MUST be as few as possible. Every UI change is judged
+against human clarity and step count first.
+
 ## Milestones
 
 | id  | scope                                                                                 | status  |
