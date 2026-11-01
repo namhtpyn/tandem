@@ -1,3 +1,10 @@
+## [2.61.3](https://github.com/namhtpyn/tandem/compare/v2.61.2...v2.61.3) (2026-11-01)
+
+
+### Bug Fixes
+
+* **api:** titles catalog save wired at admin tier — cascade rename is an admin write ([#174](https://github.com/namhtpyn/tandem/issues/174)) ([83fc6b4](https://github.com/namhtpyn/tandem/commit/83fc6b46531e667bc58e1ef6fabb93ce778b42c8))
+
 ## [2.61.2](https://github.com/namhtpyn/tandem/compare/v2.61.1...v2.61.2) (2026-11-01)
 
 
