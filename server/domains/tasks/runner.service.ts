@@ -85,6 +85,24 @@ export function liveRunsQuery(taskId: string) {
   } as const;
 }
 
+/** the "newest run of a task" findFirst shape — pinned by test (#163: the check
+ * was triplicated; the reaper's copy fetched ALL runs of the task and JS-sorted,
+ * an unbounded scan; this is the one shared query: newest started_at, LIMIT 1) */
+export function latestRunOfTaskScan(taskId: string) {
+  return {
+    columns: { id: true },
+    where: { message: { taskId: { eq: taskId } } },
+    orderBy: { startedAt: 'desc' },
+  } as const;
+}
+
+/** id of the newest run of a task (startedAt desc) — the single shared helper for
+ * every is-this-the-latest-run check (run bounce, superseded-intent, reaper bounce) */
+export async function latestRunIdForTask(taskId: string): Promise<string | null> {
+  const latest = await db.query.taskRuns.findFirst(latestRunOfTaskScan(taskId));
+  return latest?.id ?? null;
+}
+
 /** the task's live run id, if any — status/assignee edits are locked while it runs.
  *  Queries the RUNS table (runs → its thread message → task), never "newest thread
  *  message": notes dual-write to the thread, so the newest message is usually a
@@ -836,12 +854,9 @@ async function bounceTaskAfterRun(taskId: string, runId: string, output: string)
       orderBy: { createdAt: 'asc' },
     })
   )[0];
-  const latestRun = await db.query.taskRuns.findFirst({
-    columns: { id: true },
-    where: { message: { taskId: { eq: taskId } } },
-    orderBy: { startedAt: 'desc' },
-  });
-  if (latestRun?.id !== runId || current?.status !== STATUS.doing) return;
+  // only bounce the task if this was its latest run (shared findFirst, #163)
+  const latestRunId = await latestRunIdForTask(taskId);
+  if (latestRunId !== runId || current?.status !== STATUS.doing) return;
   const streak = current.failStreak + 1;
   const waitMs = backoffFor(streak, output);
   const bounced = await db
@@ -1199,12 +1214,8 @@ async function runnableRowOrSettled(runId: string) {
  * The loser row settles FAILED (GUARD-SETTLE #162) instead of RUNNING for the
  * reaper while consuming a per-agent cap slot. */
 async function supersededByNewerRun(runId: string, taskId: string, priorOutput: string) {
-  const newest = await db.query.taskRuns.findFirst({
-    columns: { id: true },
-    where: { message: { taskId: { eq: taskId } } },
-    orderBy: { startedAt: 'desc' },
-  });
-  if (newest?.id === runId) return false;
+  const newestRunId = await latestRunIdForTask(taskId);
+  if (newestRunId === runId) return false;
   await settleZombieRow(runId, priorOutput, 'superseded by a newer run of this task — never executed');
   return true;
 }

@@ -4,8 +4,8 @@ import { join } from 'node:path';
 
 // vitest worker setup (ALL projects): test-only env defaults that pure code
 // requires. The DB URL is intentionally NOT asserted here — the unit project
-// must run without Postgres/testcontainers; the integration project's own setup
-// owns that contract.
+// must run without Postgres (no DB contract; server behavior is verified by
+// the e2e suite against the real built server).
 process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET || 'test-secret-not-for-prod';
 // vault key is REQUIRED in app code — deterministic test key (encrypt/decrypt in-run only)
 process.env.TANDEM_VAULT_KEY = process.env.TANDEM_VAULT_KEY || Buffer.alloc(32, 7).toString('base64');

@@ -23,6 +23,7 @@ import {
   backoffFor,
   dispatchTask,
   executeRun,
+  latestRunIdForTask,
   type DispatchJob,
 } from './runner.service';
 
@@ -89,14 +90,9 @@ async function reapStaleRunsInner() {
       .where(and(eq(taskRuns.id, run.id), eq(taskRuns.status, RUN_STATUS.RUNNING)))
       .returning({ id: taskRuns.id });
     if (!reapedRows.length) continue; // settled concurrently — nothing to reap
-    // only bounce the task if this was its latest run
-    const latest = await db
-      .select({ id: taskRuns.id, startedAt: taskRuns.startedAt })
-      .from(taskRuns)
-      .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
-      .where(eq(taskMessages.taskId, nonNull(run.message).taskId));
-    const newest = latest.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0];
-    if (newest?.id === run.id) {
+    // only bounce the task if this was its latest run (shared findFirst, #163 —
+    // was fetch-ALL runs of the task + JS sort: an unbounded scan)
+    if ((await latestRunIdForTask(nonNull(run.message).taskId)) === run.id) {
       const taskId = nonNull(run.message).taskId;
       // FK cascade: a present run implies its task row exists
       const current = nonNull(
@@ -315,9 +311,6 @@ export type { DispatchJob } from './runner.service';
 
 /** live per-agent workers: agentId -> { concurrency, close } */
 const workers = new Map<string, { concurrency: number; close: () => Promise<void> }>();
-
-/** the effective cap the workers are currently synced to — window-flip detection
- * compares the live cap against this each scan tick */
 
 /** a stale dispatch call (task already running/done/waiting) must quietly no-op: no
  * re-run, no retry storm, no status flip. */
