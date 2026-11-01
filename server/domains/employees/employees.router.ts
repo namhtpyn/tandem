@@ -374,6 +374,13 @@ export const employeesRouter = os.router({
       // every new employee — AI or human — gets an initial access key (shown once)
       apiKey = (await mintAccessKey(`${input.name.slice(0, 40)} access key`, userId)).key;
       await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.CREATE);
+      // a runtime-minted AI agent needs its per-agent worker NOW: workers sync on
+      // boot + settings.update only, so a create without this resync left every
+      // dispatch of the new agent queued forever (run row stuck RUNNING, #177)
+      if (input.kind === 'ai') {
+        const { onDispatcherSettingsChanged } = await import('../tasks/dispatcher.service');
+        await onDispatcherSettingsChanged();
+      }
       return { id: userId, userId, apiKey };
     }),
 
@@ -600,6 +607,10 @@ export const employeesRouter = os.router({
     // (existence already verified above — no race window worth a second check)
     await db.delete(userTable).where(eq(userTable.id, input.id));
     await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.DELETE);
+    // the per-agent worker roster follows the AI roster — a removed agent's
+    // worker closes on the same resync (cheap no-op for human deletes, #177)
+    const { onDispatcherSettingsChanged } = await import('../tasks/dispatcher.service');
+    await onDispatcherSettingsChanged();
     return { ok: true };
   }),
 

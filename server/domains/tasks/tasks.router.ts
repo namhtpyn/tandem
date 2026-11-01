@@ -58,7 +58,7 @@ import {
   approveReview,
   requestChanges,
   rejectReview,
-  abandonReview,
+  abandonTask,
   listActivity,
 } from './workflow.service';
 
@@ -704,13 +704,14 @@ export const tasksRouter = os.router({
     .input(z.strictObject({ taskId: z.string().min(1) }))
     .handler(({ input }) => listReviews(input.taskId)),
 
-  /** reviewer or owner abandons the task outright */
+  /** abandon = cancel: review rounds (reviewer/owner) and work states (owner or
+   *  assignee, never over a live run — RUN LOCK) land the same terminal */
   abandon: employeeProcedure
     .input(z.strictObject({ taskId: z.string().min(1), body: z.string().max(4_000).optional() }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
-      return await runWorkflow(() => abandonReview(input.taskId, selfId, input.body ?? ''));
+      return await runWorkflow(() => abandonTask(input.taskId, selfId, input.body ?? ''));
     }),
 
   /** activity feed for one task (live) */
