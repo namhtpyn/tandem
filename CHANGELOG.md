@@ -1,3 +1,10 @@
+## [2.60.3](https://github.com/namhtpyn/tandem/compare/v2.60.2...v2.60.3) (2026-11-01)
+
+
+### Performance Improvements
+
+* **tasks:** transcripts on demand — snapshots carry live output only, tasks.runTranscript serves settled text ([#141](https://github.com/namhtpyn/tandem/issues/141)) ([2d952c1](https://github.com/namhtpyn/tandem/commit/2d952c1379811967e84efa1b677e7bb0a48652ca)), closes [#130](https://github.com/namhtpyn/tandem/issues/130) [#130](https://github.com/namhtpyn/tandem/issues/130)
+
 ## [2.60.2](https://github.com/namhtpyn/tandem/compare/v2.60.1...v2.60.2) (2026-10-31)
 
 
