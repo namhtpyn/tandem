@@ -1,3 +1,10 @@
+## [2.60.7](https://github.com/namhtpyn/tandem/compare/v2.60.6...v2.60.7) (2026-11-01)
+
+
+### Bug Fixes
+
+* **tasks:** task removal sweeps the stored attachment bytes — BYTES-WITH-TASK ([#150](https://github.com/namhtpyn/tandem/issues/150)) ([db02572](https://github.com/namhtpyn/tandem/commit/db0257234f1b0f5497dee813bcf6816f91f38ca3))
+
 ## [2.60.6](https://github.com/namhtpyn/tandem/compare/v2.60.5...v2.60.6) (2026-11-01)
 
 
