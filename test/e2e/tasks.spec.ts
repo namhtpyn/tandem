@@ -151,4 +151,20 @@ test('workflow drawer streams an agent run to completion', async ({ page }) => {
   ).toBeVisible({ timeout: 30_000 });
   // the run card reads as a sentence; exit code 0 is hidden
   await expect(drawer.getByText(/Run completed/i)).toBeVisible();
+
+  // #148: the settled card rides tasks.runTranscript, not the live snapshot
+  // (snapshot output collapses to NULL on settle — RUN-TRANSCRIPT LAW). A
+  // reload wipes the streamed text and the drawer's transcript cache, so the
+  // re-opened drawer can ONLY fill the card from the on-demand fetch — a
+  // broken runTranscript leaves the settled card blank right here.
+  await page.reload();
+  const settledRow = tasks.rowFor(`Run ${suffix}`);
+  await expect(settledRow).toBeVisible({ timeout: 15_000 });
+  const drawerAfter = await tasks.openWorkflowDrawer(settledRow);
+  await expect(
+    drawerAfter
+      .locator('pre')
+      .getByText(/RESULT: task complete/i)
+      .first(),
+  ).toBeVisible({ timeout: 15_000 });
 });
