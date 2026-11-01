@@ -46,6 +46,7 @@ import { confirmProposal, rejectProposal } from './proposals.service';
 import { listReviews, logActivity } from './review.service';
 import { fetchRunTranscript } from './run-transcript';
 import { dispatchTask, listRuns } from './runner.service';
+import { fetchTaskDescription, taskListColumns } from './task-description';
 import { listTaskThread } from './thread.service';
 import {
   addNote,
@@ -93,22 +94,7 @@ export function groupOutputsByRun(
 
 const listTasksSnapshot = async (): Promise<TaskRow[]> => {
   const rows = await db.query.tasks.findMany({
-    columns: {
-      id: true,
-      title: true,
-      description: true,
-      status: true,
-      projectId: true,
-      assigneeId: true,
-      ownerId: true,
-      createdBy: true,
-      reviewers: true,
-      parentTaskId: true,
-      dispatchAfter: true,
-      failStreak: true,
-      createdAt: true,
-      updatedAt: true,
-    },
+    columns: taskListColumns(),
     orderBy: { createdAt: 'desc' },
   });
   return mapTaskRows(rows);
@@ -119,7 +105,6 @@ type TaskListRow = Pick<
   typeof tasksTable.$inferSelect,
   | 'id'
   | 'title'
-  | 'description'
   | 'status'
   | 'projectId'
   | 'assigneeId'
@@ -148,7 +133,6 @@ async function mapTaskRows(rows: TaskListRow[]): Promise<TaskRow[]> {
   return rows.map((r) => ({
     id: r.id,
     title: r.title,
-    description: r.description,
     status: r.status,
     projectId: r.projectId,
     projectName: (r.projectId && projNameById.get(r.projectId)) || null,
@@ -209,22 +193,7 @@ async function listTasksPaged(
   const filters = [searchFilter, statusFilter, inboxFilter, awaitingFilter].filter((f) => f !== undefined);
   const where = filters.length === 0 ? EmptyFilter : filters.length === 1 ? nonNull(filters[0]) : { AND: filters };
   const { data, total } = await db.query.tasks.findManyAndCount({
-    columns: {
-      id: true,
-      title: true,
-      description: true,
-      status: true,
-      projectId: true,
-      assigneeId: true,
-      ownerId: true,
-      createdBy: true,
-      reviewers: true,
-      parentTaskId: true,
-      dispatchAfter: true,
-      failStreak: true,
-      createdAt: true,
-      updatedAt: true,
-    },
+    columns: taskListColumns(),
     where: where as never,
     // id tiebreaker: rows sharing a createdAt (same-ms inserts) must have a total
     // order or limit/offset pages duplicate and skip them
@@ -764,6 +733,14 @@ export const tasksRouter = os.router({
   runTranscript: protectedProcedure.input(z.strictObject({ runId: z.string().min(1) })).handler(async ({ input }) => {
     const row = await fetchRunTranscript(input.runId);
     if (!row) throw new ORPCError('NOT_FOUND', { message: 'run does not exist' });
+    return row;
+  }),
+
+  /** on-demand description body (task page brief + editor modal prefill) —
+   * SNAPSHOT-SLIMMING LAW (#130 slice 3): never rides list payloads */
+  getDescription: protectedProcedure.input(z.strictObject({ taskId: z.string().min(1) })).handler(async ({ input }) => {
+    const row = await fetchTaskDescription(input.taskId);
+    if (!row) throw new ORPCError('NOT_FOUND', { message: 'task does not exist' });
     return row;
   }),
 

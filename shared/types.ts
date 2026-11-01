@@ -64,7 +64,6 @@ export type TaskStatusRow = {
 export type TaskRow = {
   id: string;
   title: string;
-  description: string;
   status: string;
   projectId: string | null;
   projectName: string | null;

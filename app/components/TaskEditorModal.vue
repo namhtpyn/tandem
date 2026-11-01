@@ -120,13 +120,35 @@ watch(open, (v) => {
   createdInSession.value = false;
   draftStatus.value = null;
   form.title = row?.title ?? '';
-  form.description = row?.description ?? '';
+  // SNAPSHOT-SLIMMING LAW (#130 slice 3): list rows no longer carry the body —
+  // it lands below via the on-open getDescription fetch
+  form.description = '';
   form.assigneeId = row?.assigneeId ?? NONE_ID;
   form.projectId = row?.projectId ?? NONE_ID;
   form.reviewers = row?.reviewers ? [...row.reviewers] : [];
   form.status = row?.status ?? defaultStatusId.value;
   message.value = '';
+  void fetchOpenDescription();
 });
+
+/** SNAPSHOT-SLIMMING LAW (#130 slice 3): the description body fetches on open —
+ * one-shot imperative GET via $client (same surface as runTranscript in
+ * TaskActivityThread). Clobber guard: apply only while the field still holds
+ * its open-time value ('') — user typing (or a queued attachment append) since
+ * open keeps their content and skips the fetched body entirely; reopening
+ * re-fetches. */
+async function fetchOpenDescription() {
+  const taskId = editingId.value;
+  if (!taskId) return;
+  try {
+    const full = await $client.tasks.getDescription({ taskId });
+    // closed, or re-opened on a different row meanwhile → this fetch is stale
+    if (!open.value || editingId.value !== taskId) return;
+    if (form.description === '') form.description = full.description;
+  } catch {
+    /* unknown/gone task — the field stays empty and editable */
+  }
+}
 
 // ---- attachment-first creates ------------------------------------------------
 // An image paste needs a task row to hang the upload on, so the first upload
