@@ -25,6 +25,28 @@ const tasks = computed(() => (unref(tasksLive.data) ?? []) as TaskRow[]);
 
 const task = computed(() => tasks.value.find((t) => t.id === String(route.params.id)) ?? null);
 
+// SNAPSHOT-SLIMMING LAW (#130 slice 3): the list snapshot no longer carries the
+// description body — fetch it on demand for the thread's brief bubble (same
+// pattern as runTranscript for settled output). Key rides the TASKS resource so
+// the app-wide change events keep it fresh; client-only: it does not join the
+// SSR suspense, so the brief may pop in one round-trip after hydration.
+const descQuery = useQuery(
+  computed(() => ({
+    ...$orpc.tasks.getDescription.queryOptions({
+      input: { taskId: String(route.params.id) },
+      queryKey: [CHANGE_RESOURCE.TASKS, String(route.params.id), 'description'],
+    }),
+    enabled: import.meta.client && !!task.value,
+  })),
+);
+
+/** the thread's row: list payload + the on-demand description body (the plain
+ * list row keeps feeding the header and the sidebar fields) */
+const taskFull = computed(() => {
+  if (!task.value) return null;
+  return { ...task.value, description: unref(descQuery.data)?.description ?? '' };
+});
+
 // status badge in the thread header (the selects live in TaskDetailsFields)
 const statusesLive = useQuery($orpc.statuses.list.queryOptions({ queryKey: [CHANGE_RESOURCE.STATUSES] }));
 const statuses = computed(() => unref(statusesLive.data) ?? []);
@@ -234,8 +256,9 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
             <div
               class="border-default bg-default flex min-h-0 flex-col rounded-lg border shadow-sm lg:max-h-[calc(var(--task-h)-4.5rem)]"
             >
-              <!-- the thread (TaskActivityThread) -->
-              <TaskActivityThread :key="task.id" :task="task" />
+              <!-- the thread (TaskActivityThread) — taskFull re-attaches the
+                   on-demand description body the list row no longer carries -->
+              <TaskActivityThread :key="task.id" :task="taskFull!" />
 
               <!-- composer: workflow note + primary actions -->
               <div class="border-default border-t p-2.5">
