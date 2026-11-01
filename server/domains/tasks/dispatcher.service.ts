@@ -299,8 +299,9 @@ export async function scanOnce(tandemUrl: string) {
     const hub = await redisQueue();
     /* v8 ignore next -- lazy resync; the catch arrow only fires on a redis failure */
     void syncDispatchWorkers(hub).catch(() => {}); // workers may not exist yet (first dispatch after boot)
-    await dispatchTask(hit.taskId, tandemUrl);
-    return true;
+    // a lost claim (#162) is a stale duplicate, not a dispatch — the scan keeps looking
+    const dispatched = await dispatchTask(hit.taskId, tandemUrl);
+    return dispatched.runId !== null;
   } catch (e) {
     log.warn('dispatch failed, retrying next scan:', (e as Error).message);
     return false; // redis hiccup or plan failure: try next scan

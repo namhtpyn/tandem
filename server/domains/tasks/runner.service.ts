@@ -1,5 +1,5 @@
 import { consola } from 'consola';
-import { and, desc, eq, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 
 import { PROPOSAL_KIND } from '#shared/enums';
 import type { RoutingProposal } from '#shared/run-verdict';
@@ -712,10 +712,51 @@ export type DispatchJob = {
 /** dispatch intent options — review turns carry their reviewer + the body being reviewed */
 export type DispatchOpts = { reviewBy?: string; resultBody?: string };
 
-/** create the run row for a dispatch intent: load the plan, write the dispatch note,
- * create the run's thread turn, freeze the brief on the row, flip the task to doing.
- * Transport-neutral — the caller enqueues {runId} (or executes inline in tests). */
-export async function createRun(taskId: string, opts?: DispatchOpts) {
+/** DISPATCH CLAIM LAW (#162, SPEC): the dispatch claim is ONE conditional flip of
+ * the task row — status must still be in a ready-category when the flip lands; the
+ * flip's RETURNING arbitrates every concurrent claimant (scan tick × direct paths ×
+ * manual dispatch) so exactly one wins. 0 rows = lost the race = stale duplicate:
+ * the caller aborts PRE-INSERT (no run row, no dispatch note, no thread turn, no
+ * per-agent job, no cap consumption — a stale dispatch call must quietly no-op). */
+export async function claimTaskForDispatch(taskId: string): Promise<boolean> {
+  const ready = await db.query.taskStatuses.findMany({
+    columns: { id: true },
+    where: { category: { eq: 'ready' } },
+  });
+  if (ready.length === 0) return false;
+  const claimed = await db
+    .update(tasks)
+    .set({ status: STATUS.doing, updatedAt: new Date() })
+    .where(
+      and(
+        eq(tasks.id, taskId),
+        inArray(
+          tasks.status,
+          ready.map((s) => s.id),
+        ),
+      ),
+    )
+    .returning({ id: tasks.id });
+  return claimed.length > 0;
+}
+
+/** create the run row for a dispatch intent: claim the task (conditional flip — the
+ * race arbiter), load the plan, write the dispatch note, create the run's thread
+ * turn, freeze the brief on the row. Transport-neutral — the caller enqueues
+ * {runId} (or executes inline in tests). Returns null when the claim was lost —
+ * the loser is a stale duplicate and must not insert anything (CLAIM LAW #162). */
+export async function createRun(
+  taskId: string,
+  opts?: DispatchOpts,
+): Promise<{ runId: string; employeeId: string } | null> {
+  // the claim lands BEFORE the plan load: a failure after a won flip leaves a doing
+  // task with no run row, which the LIVENESS SWEEP recovers — never a zombie
+  // RUNNING row. Review turns run ON the task but must not claim it: flipping
+  // in-review → doing here would make the human verdict verbs
+  // (approve/request-changes) throw on the status gate — only the ASSIGNEE's
+  // dispatch owns the doing transition.
+  if (!opts?.reviewBy && !(await claimTaskForDispatch(taskId))) return null;
+
   const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & {
     review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'];
   } = opts?.reviewBy // eslint-disable-line @typescript-eslint/consistent-type-definitions -- union widening
@@ -750,11 +791,8 @@ export async function createRun(taskId: string, opts?: DispatchOpts) {
   // only now is the thread turn complete — publish the activity ping here so a
   // listener rebuilding off it sees the run bubble, not a message-less gap
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
-  // review turns run ON the task but must not claim it: flipping in-review → doing
-  // here would make the human verdict verbs (approve/request-changes) throw on the
-  // status gate — only the ASSIGNEE's dispatch owns the doing transition
-  if (!plan.review)
-    await db.update(tasks).set({ status: STATUS.doing, updatedAt: new Date() }).where(eq(tasks.id, taskId));
+  // the doing flip happened at the CLAIM (claimTaskForDispatch above — #162);
+  // review turns never claimed the task (see the claim block)
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 
   // freeze the brief NOW (the drift fix): every attempt of this run replays exactly
@@ -835,8 +873,15 @@ export async function enqueueRun(runId: string, employeeId: string, tandemUrl: s
 /** dispatch a task to its AI assignee: create the run row (frozen brief) and enqueue
  * it. Returns immediately — the per-agent worker executes; BullMQ retries transport
  * failures on the same row. */
-export async function dispatchTask(taskId: string, tandemUrl: string, opts?: DispatchOpts) {
-  const { runId, employeeId } = await createRun(taskId, opts);
+export async function dispatchTask(
+  taskId: string,
+  tandemUrl: string,
+  opts?: DispatchOpts,
+): Promise<{ runId: string | null }> {
+  // a lost claim is a stale duplicate: quiet no-op, nothing inserted (CLAIM LAW #162)
+  const claimed = await createRun(taskId, opts);
+  if (!claimed) return { runId: null };
+  const { runId, employeeId } = claimed;
   try {
     await enqueueRun(runId, employeeId, tandemUrl, opts);
   } catch (e) {
@@ -1102,14 +1147,26 @@ async function attemptFailed(
   return { status: RUN_STATUS.FAILED, exitCode: null };
 }
 
-/** execute ONE attempt of a created run on the per-agent queue worker (or inline in
- * tests). Retryable PRE-TURN failures throw so BullMQ backs off and replays the SAME
- * row with its frozen prompt; post-turn failures and the final attempt settle the run. */
-export async function executeRun(
-  runId: string,
-  tandemUrl: string,
-  attempt: { attempt: number; maxAttempts: number; reviewBy?: string; resultBody?: string },
-): Promise<{ status: FinishedStatus; exitCode: number | null }> {
+/** GUARD-SETTLE LAW (#162, SPEC): a guard that refuses to execute a still-RUNNING
+ * row settles it FIRST — returning without settling left the row RUNNING until the
+ * reaper (run-timeout + margin), during which it counted toward the agent's
+ * per-agent cap: the agent silently claimed nothing. The TASK is untouched — the
+ * winning intent owns the task's status. */
+async function settleZombieRow(runId: string, priorOutput: string, reason: string) {
+  await db
+    .update(taskRuns)
+    .set({
+      status: RUN_STATUS.FAILED,
+      exitCode: null,
+      output: priorOutput ? `${priorOutput}\n[dispatch] ${reason}` : `[dispatch] ${reason}`,
+      finishedAt: new Date(),
+    })
+    .where(and(eq(taskRuns.id, runId), eq(taskRuns.status, RUN_STATUS.RUNNING)));
+}
+
+/** fetch the run row for execution; the stale-job guard settles a still-RUNNING
+ * relic it refuses (GUARD-SETTLE LAW #162) and returns null. */
+async function runnableRowOrSettled(runId: string) {
   const row = await db.query.taskRuns.findFirst({
     columns: { id: true, status: true, attempts: true, output: true, prompt: true, messageId: true },
     where: { id: { eq: runId } },
@@ -1118,18 +1175,43 @@ export async function executeRun(
   // stale-job guard: the run was settled while this attempt sat in backoff
   // (cancelled + reaped, human re-dispatched) — nothing to execute, job completes
   if (!row || row.status !== RUN_STATUS.RUNNING || !row.message) {
-    return { status: RUN_STATUS.FAILED, exitCode: null };
+    // GUARD-SETTLE (#162): a RUNNING row the guard refuses (a message-less relic)
+    // settles here instead of lingering RUNNING for the reaper
+    if (row && row.status === RUN_STATUS.RUNNING)
+      await settleZombieRow(row.id, row.output, 'stale dispatch job — the run was settled elsewhere');
+    return null;
   }
-  const taskId = row.message.taskId;
-  // superseded-intent guard: a NEWER run for this task (re-arm, human re-dispatch)
-  // makes this job stale — replaying it would apply an outdated prompt (e.g. a
-  // review turn queued before the owner answered the question it asked)
+  return row;
+}
+
+/** superseded-intent check + settle: a NEWER run for this task (re-arm, human
+ * re-dispatch) makes this job stale — replaying it would apply an outdated prompt.
+ * The loser row settles FAILED (GUARD-SETTLE #162) instead of RUNNING for the
+ * reaper while consuming a per-agent cap slot. */
+async function supersededByNewerRun(runId: string, taskId: string, priorOutput: string) {
   const newest = await db.query.taskRuns.findFirst({
     columns: { id: true },
     where: { message: { taskId: { eq: taskId } } },
     orderBy: { startedAt: 'desc' },
   });
-  if (newest?.id !== runId) return { status: RUN_STATUS.FAILED, exitCode: null };
+  if (newest?.id === runId) return false;
+  await settleZombieRow(runId, priorOutput, 'superseded by a newer run of this task — never executed');
+  return true;
+}
+
+/** execute ONE attempt of a created run on the per-agent queue worker (or inline in
+ * tests). Retryable PRE-TURN failures throw so BullMQ backs off and replays the SAME
+ * row with its frozen prompt; post-turn failures and the final attempt settle the run. */
+export async function executeRun(
+  runId: string,
+  tandemUrl: string,
+  attempt: { attempt: number; maxAttempts: number; reviewBy?: string; resultBody?: string },
+): Promise<{ status: FinishedStatus; exitCode: number | null }> {
+  const row = await runnableRowOrSettled(runId);
+  if (!row) return { status: RUN_STATUS.FAILED, exitCode: null };
+  // the helper's guard refused any message-less row — asserted here for the CFA
+  const taskId = nonNull(row.message).taskId;
+  if (await supersededByNewerRun(runId, taskId, row.output)) return { status: RUN_STATUS.FAILED, exitCode: null };
 
   const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & {
     review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'];
