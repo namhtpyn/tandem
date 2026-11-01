@@ -14,6 +14,14 @@ const defaultUrl = `postgresql://tandem:${process.env.TANDEM_E2E_DB_PASSWORD ?? 
 
 export const E2E_DATABASE_URL = process.env.TANDEM_E2E_DATABASE_URL ?? defaultUrl;
 
+// Boot seed credential for the e2e server (SPEC "Boot seed law": no default
+// login exists anymore — the harness pins its own) plus the password the login
+// helper rotates the seeded admin TO on first sign-in. Rotated-first sign-in
+// converges: on a fresh DB the seed password is tried second and rotated.
+export const E2E_ADMIN_EMAIL = 'admin@tandem.local';
+export const E2E_ADMIN_SEED_PASSWORD = 'tandem-e2e-seed-pw';
+export const E2E_ADMIN_ROTATED_PASSWORD = 'tandem-e2e-rotated-pw';
+
 /** URL with the password stripped — safe for error messages and logs */
 export function redactedDatabaseUrl(url: string = E2E_DATABASE_URL): string {
   try {

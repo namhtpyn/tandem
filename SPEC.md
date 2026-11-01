@@ -303,7 +303,7 @@ non-positive deltas render no duration.
 
 1. module init: `sqlClient` built from `DATABASE_URL`; missing env → process exits 1
 2. `migrations` ledger table is created; bundled drizzle SQL is applied in name order
-3. no users & `user` rows → seed admin (`ADMIN_EMAIL`/`ADMIN_PASSWORD`, defaults `admin@tandem.local` / tandem-admin); seed never runs when users exists
+3. no users & `user` rows → seed admin (`ADMIN_EMAIL` default `admin@tandem.local`, `ADMIN_PASSWORD` REQUIRED — no default, `tandem-admin` refused; missing → env-failure report + exit 1; the seeded row carries `must_change_password = true`); seed never runs when users exists (SPEC "Boot seed law")
 4. password stored as better-auth scrypt (`salt:hash`, no prefix label)
 
 ## UI laws

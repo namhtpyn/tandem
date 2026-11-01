@@ -14,6 +14,8 @@ export const auth = betterAuth({
     additionalFields: {
       role: { type: ['ADMIN', 'EMPLOYEE', 'VIEWER'] as const, required: false, defaultValue: 'VIEWER', input: false }, // stored values are SCREAMING (enum law)
       title: { type: 'string', required: false, defaultValue: '', input: false },
+      // boot-seeded admin only (SPEC "Boot seed law"): forced first-login rotation
+      mustChangePassword: { type: 'boolean', required: false, defaultValue: false, input: false },
     },
   },
   plugins: [apiKey({ enableSessionForAPIKeys: true, requireName: true, defaultPrefix: 'tandem_' })],

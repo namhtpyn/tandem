@@ -54,7 +54,15 @@ async function login() {
       else if (res.error.status === 400 || res.error.status === 401) loginError.value = BAD_CREDENTIALS;
       else loginError.value = res.error.message || BAD_CREDENTIALS;
     } else {
+      // ROTATION LOCK: the seeded admin's first login goes straight to the
+      // set-new-password screen IN-PLACE — no reload here, it would wipe the
+      // prefilled current password (the temp one just typed). The rotation
+      // submit reloads instead, landing on the dashboard with the flag cleared.
       await refreshSession();
+      if (session.value?.user?.mustChangePassword) {
+        rotateCurrent.value = loginPassword.value;
+        return;
+      }
       // cookie is set server-side; a full reload guarantees SSR picks it up
       window.location.reload();
     }
@@ -64,6 +72,36 @@ async function login() {
     loginError.value = SERVER_DOWN;
   } finally {
     busy.value = false;
+  }
+}
+
+// ---- forced password rotation (SPEC "Boot seed law"): the seeded admin's
+// session lands here until auth.changeMyPassword clears the flag server-side
+const rotateCurrent = ref('');
+const rotateNew = ref('');
+const rotateConfirm = ref('');
+const rotateError = ref('');
+const rotateBusy = ref(false);
+// frontend form schemas are deliberately loose; the match refine is the only
+// cross-field rule (server enforces the real policy)
+const rotateSchema = z
+  .object({ current: z.string().min(1), new: z.string().min(8, 'At least 8 characters'), confirm: z.string().min(1) })
+  .refine((v) => v.new === v.confirm, { message: 'Passwords do not match', path: ['confirm'] });
+const rotateState = reactive({ current: rotateCurrent, new: rotateNew, confirm: rotateConfirm });
+
+async function rotatePassword() {
+  rotateBusy.value = true;
+  rotateError.value = '';
+  try {
+    const { $client } = useNuxtApp();
+    await $client.auth.changeMyPassword({ currentPassword: rotateCurrent.value, newPassword: rotateNew.value });
+    await refreshSession();
+    window.location.reload();
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    rotateError.value =
+      code === 'FORBIDDEN' ? 'Current password is incorrect' : "Couldn't change the password — try again";
+    rotateBusy.value = false;
   }
 }
 
@@ -187,6 +225,64 @@ const nav = computed(() =>
               @click="oidcLogin(prov.id, prov.label)"
             />
           </template>
+        </UCard>
+      </div>
+    </div>
+
+    <!-- ===================== FORCED PASSWORD ROTATION (SPEC "Boot seed law") =====
+         the seeded admin's session lands here until the flag clears server-side;
+         minimum steps: current (prefilled from the login just typed) + new + confirm -->
+    <div v-else-if="session.user.mustChangePassword" class="flex min-h-dvh items-center justify-center p-6">
+      <div class="w-full max-w-sm">
+        <div class="mb-8 flex flex-col items-center gap-2 text-center">
+          <div class="bg-primary/10 flex size-12 items-center justify-center rounded-xl shadow-sm">
+            <UIcon name="i-lucide-key-round" class="text-primary size-6" />
+          </div>
+          <h1 class="text-highlighted text-2xl font-bold tracking-tight">Set a new password</h1>
+          <p class="text-muted text-sm">The initial password must be changed before you continue.</p>
+        </div>
+        <UCard :ui="{ root: 'shadow-sm' }">
+          <UForm :schema="rotateSchema" :state="rotateState" class="space-y-4" @submit="rotatePassword">
+            <UFormField label="Current password" name="current" required>
+              <UInput
+                v-model="rotateCurrent"
+                type="password"
+                icon="i-lucide-lock"
+                class="w-full"
+                size="lg"
+                autocomplete="current-password"
+              />
+            </UFormField>
+            <UFormField label="New password" name="new" required>
+              <UInput
+                v-model="rotateNew"
+                type="password"
+                icon="i-lucide-lock"
+                class="w-full"
+                size="lg"
+                autocomplete="new-password"
+              />
+            </UFormField>
+            <UFormField label="Confirm new password" name="confirm" required>
+              <UInput
+                v-model="rotateConfirm"
+                type="password"
+                icon="i-lucide-lock"
+                class="w-full"
+                size="lg"
+                autocomplete="new-password"
+              />
+            </UFormField>
+            <UAlert
+              v-if="rotateError"
+              role="alert"
+              icon="i-lucide-shield-alert"
+              color="error"
+              variant="subtle"
+              :title="rotateError"
+            />
+            <UButton type="submit" block size="lg" :loading="rotateBusy" label="Save password" />
+          </UForm>
         </UCard>
       </div>
     </div>

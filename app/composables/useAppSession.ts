@@ -7,7 +7,7 @@ import type { AuthConfig } from '~/types/auth';
 // better-auth session down to just the user — no session id/expiresAt crosses
 // the wire, so the type must not claim one.
 export type AppSessionPayload = {
-  user: { id: string; name: string; email: string; role: Role };
+  user: { id: string; name: string; email: string; role: Role; mustChangePassword?: boolean };
 };
 
 export function useAppSession() {
