@@ -1,3 +1,10 @@
+## [2.60.9](https://github.com/namhtpyn/tandem/compare/v2.60.8...v2.60.9) (2026-11-01)
+
+
+### Bug Fixes
+
+* **tasks:** sweep sandbox staging after EVERY settle (success included, self-excluded sibling check) and never re-store a byte-identical output ([#160](https://github.com/namhtpyn/tandem/issues/160)) ([53a8a8f](https://github.com/namhtpyn/tandem/commit/53a8a8f46c07cbf2def25e7c33e8d28bfc4e6c22))
+
 ## [2.60.8](https://github.com/namhtpyn/tandem/compare/v2.60.7...v2.60.8) (2026-11-01)
 
 
