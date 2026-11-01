@@ -34,6 +34,8 @@ const log = consola.withTag('tandem');
  * spamming the 5s tick. State exposed for tests. */
 export const REAPER_WARN_INTERVAL_MS = 5 * 60_000;
 export const reaperWarnState = { lastAt: 0 };
+export const TICK_WARN_INTERVAL_MS = 5 * 60_000;
+export const scanWarnState = { lastAt: 0 };
 
 /** reap runs stuck in 'running' past the hard timeout + grace: mark failed, bounce task to
  * ready (with the normal backoff ladder), so orphaned rows never pin a task in doing forever. */
@@ -287,8 +289,24 @@ export async function findEligible(): Promise<{ taskId: string; employeeId: stri
 
 /** one scan step: claim + dispatch at most one task. Returns true if dispatched.
  * The run row (frozen brief) is created HERE and the job carries its id — retries
- * replay the run, they never rebuild it (run-level retry law, 2026-10-28). */
+ * replay the run, they never rebuild it (run-level retry law, 2026-10-28).
+ * TICK-ISOLATION LAW (#172): scanOnce never rejects — findEligible's DB reads are
+ * inside this catch too; the startDispatcher call sites are bare `void scanOnce()`
+ * and on the bun runtime an unhandled rejection terminates the whole process. */
 export async function scanOnce(tandemUrl: string) {
+  try {
+    return await scanOnceInner(tandemUrl);
+  } catch (e) {
+    const now = Date.now();
+    if (now - scanWarnState.lastAt >= TICK_WARN_INTERVAL_MS) {
+      scanWarnState.lastAt = now;
+      log.warn('dispatch scan failed (retrying next tick):', e instanceof Error ? e.message : e);
+    }
+    return false; // failed scan just means try again next tick
+  }
+}
+
+async function scanOnceInner(tandemUrl: string) {
   const hit = await findEligible();
   if (!hit) return false;
   try {
@@ -467,12 +485,31 @@ function dispatcherBootFailLine(e: unknown, retryMs: number) {
   return `dispatcher failed to start (${e instanceof Error ? e.message : String(e)}) — retrying every ${retryMs / 1000}s until the queue is reachable`;
 }
 
+/** DISPATCHER HEARTBEAT (#172): each tick stamps settings `dispatcher_last_tick`
+ * (epoch ms, at most one write per 30s, best-effort) so the prod watchdog can
+ * alert on a dead dispatcher; a missing key = pre-heartbeat image and stays silent. */
+export const DISPATCHER_HEARTBEAT_KEY = 'dispatcher_last_tick';
+const HEARTBEAT_WRITE_INTERVAL_MS = 30_000;
+/** throttle state exposed for tests (same pattern as reaperWarnState) */
+export const heartbeatState = { lastAt: 0 };
+export async function touchDispatcherHeartbeat() {
+  try {
+    if (Date.now() - heartbeatState.lastAt < HEARTBEAT_WRITE_INTERVAL_MS) return;
+    heartbeatState.lastAt = Date.now();
+    const { setSetting } = await import('../settings/settings.service');
+    await setSetting(DISPATCHER_HEARTBEAT_KEY, String(Date.now()));
+  } catch {
+    // heartbeat is best-effort: observability must never crash the tick
+  }
+}
+
 /** start the interval; returns a stop function */
 export function startDispatcher(tandemUrl: string, intervalMs = 5000): () => void {
   const timer = setInterval(() => {
-    void scanOnce(tandemUrl); // scanOnce never rejects: its own catch turns errors into false
+    void scanOnce(tandemUrl); // TICK-ISOLATION (#172): never rejects — its own catch turns errors into false
     void reapStaleRuns(); // never rejects: its own catch turns errors into 0 reaped
     void sweepIdleWorking(); // never rejects: its own catch turns errors into 0 bounced
+    void touchDispatcherHeartbeat(); // best-effort watchdog stamp (its own catch)
   }, intervalMs);
   return () => clearInterval(timer);
 }
