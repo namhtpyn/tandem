@@ -1,3 +1,10 @@
+## [2.60.13](https://github.com/namhtpyn/tandem/compare/v2.60.12...v2.60.13) (2026-11-01)
+
+
+### Bug Fixes
+
+* **dispatcher:** TICK-ISOLATION — scanOnce catches every leg incl. the find-eligible DB reads; a failed tick can no longer crash the process ([#180](https://github.com/namhtpyn/tandem/issues/180)) ([146760c](https://github.com/namhtpyn/tandem/commit/146760cf9fc96f3e928c121e42254138306bc4eb))
+
 ## [2.60.12](https://github.com/namhtpyn/tandem/compare/v2.60.11...v2.60.12) (2026-11-01)
 
 
