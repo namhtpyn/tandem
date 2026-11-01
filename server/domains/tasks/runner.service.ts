@@ -56,8 +56,18 @@ export type RunHandle = {
 };
 
 /** live ACP turns by runId — a note sent while a run executes steers it (a second
- * session/prompt on the open stream); gone the moment the turn settles */
+ * session/prompt on the open stream); gone the moment the turn settles.
+ * STEER-HOOK LIFECYCLE (#161, SPEC): each value closes over the run's ACP client
+ * context (connection + bridged streams) — an entry surviving its run pins that
+ * context forever. executeRun's finally is the single delete point every settle
+ * path passes exactly once (the only other delete is a FAILED steer, :96). */
 const liveSteers = new Map<string, (text: string) => Promise<boolean>>();
+
+/** test/probe visibility (#161): runIds currently holding a live steer hook —
+ * must be empty whenever no run is mid-turn (a settled run retains nothing) */
+export function liveSteerRunIds(): string[] {
+  return [...liveSteers.keys()];
+}
 
 /** pure decision: the newest candidate run that is still RUNNING (candidates newest-first) */
 export function pickLiveRun(candidates: Array<{ id: string; status: string }>): string | null {
@@ -1305,6 +1315,13 @@ export async function executeRun(
     const failed = await attemptFailed(runId, taskId, attempt, turnStarted, writer, plan, e);
     if (failed === 'retry') throw e instanceof Error ? e : new Error(String(e));
     return failed;
+  } finally {
+    // STEER-HOOK LIFECYCLE (#161): the hook is transient — it closes over the ACP
+    // client context, so surviving the run pins one connection per finished run
+    // forever (silent RSS climb). Every settle path (done, failed, retry-throw)
+    // exits through here exactly once; a retry-throw never registered a hook (the
+    // set happens only after the session opens, past the retryable window).
+    liveSteers.delete(runId);
   }
 }
 
