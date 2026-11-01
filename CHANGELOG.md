@@ -1,3 +1,10 @@
+## [2.61.2](https://github.com/namhtpyn/tandem/compare/v2.61.1...v2.61.2) (2026-11-01)
+
+
+### Bug Fixes
+
+* **perf:** bounded thread hot path — newest-page cap + on-demand threadOlderPage proc, task-scoped outputs scan (dead IS NULL arm dropped), runs snapshot cap ([#175](https://github.com/namhtpyn/tandem/issues/175)) ([26db6f5](https://github.com/namhtpyn/tandem/commit/26db6f572aad7f80677746a4e3977b246f34b5d2))
+
 ## [2.61.1](https://github.com/namhtpyn/tandem/compare/v2.61.0...v2.61.1) (2026-11-01)
 
 
