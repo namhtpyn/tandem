@@ -170,8 +170,7 @@ const categoryOptions = CATEGORIES.map((value) => ({
       <template #body>
         <div class="space-y-4">
           <p class="text-muted text-xs">
-            Define the workflow statuses and which moves are allowed between them (used by the board and the task
-            editor).
+            Define the workflow statuses and their suggested next steps — manual status moves are never blocked.
           </p>
           <p v-if="statusMessage && !statusEditorOpen" role="alert" class="text-error text-sm">{{ statusMessage }}</p>
           <div v-if="statuses.length" class="divide-default divide-y">
@@ -189,7 +188,7 @@ const categoryOptions = CATEGORIES.map((value) => ({
                     <span aria-hidden="true">→ </span>
                     {{ st.nextIds.map((n) => statusById.get(n)?.name ?? 'Unknown status').join(', ') }}
                   </template>
-                  <template v-else>No transitions</template>
+                  <template v-else>No suggested next steps</template>
                 </p>
               </div>
               <div class="flex shrink-0 gap-1">
@@ -256,7 +255,7 @@ const categoryOptions = CATEGORIES.map((value) => ({
           <p class="text-toned text-sm">
             <span class="text-highlighted font-semibold">{{ pendingDelete?.name }}</span> will disappear from the
             workflow. If any task still sits in it the delete is refused — move those tasks to another status first.
-            Transitions pointing at it are removed with it.
+            Suggested next steps pointing at it are removed with it.
           </p>
           <UAlert
             v-if="deleteError"
@@ -303,15 +302,17 @@ const categoryOptions = CATEGORIES.map((value) => ({
             /></template>
             <USelect v-model="statusForm.category" :items="categoryOptions" value-key="value" class="w-full" />
           </UFormField>
-          <UFormField label="Can move to" name="nextIds">
-            <template #hint><FormHint text="Allowed transitions from this status" /></template>
+          <UFormField label="Suggested next statuses" name="nextIds">
+            <template #hint
+              ><FormHint text="Suggested next steps from this status — advisory, never enforced"
+            /></template>
             <USelectMenu
               v-model="statusForm.nextIds"
               :items="statuses.filter((x) => x.id !== editingStatusId).map((x) => ({ label: x.name, value: x.id }))"
               value-key="value"
               multiple
               class="w-full"
-              placeholder="Pick allowed next statuses"
+              placeholder="Pick suggested next statuses"
             />
           </UFormField>
           <p v-if="statusMessage" role="alert" class="text-error text-sm">{{ statusMessage }}</p>
