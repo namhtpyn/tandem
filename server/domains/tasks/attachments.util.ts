@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 
+import { consola } from 'consola';
+
 // Task attachments: metadata rows in task_attachments, bytes on disk under
 // a per-task directory <DATA_ROOT>/tasks/<taskId>/attachments/<id> (DATA_ROOT
 // defaults to /tandem — all Tandem data lives under /tandem/**; mount one volume
@@ -82,8 +84,19 @@ export async function attachmentExists(taskId: string, id: string) {
   return idSafe(taskId) && idSafe(id) && (await Bun.file(attachmentPath(taskId, id)).exists());
 }
 
-export async function deleteAttachmentBytes(taskId: string, id: string) {
-  if (idSafe(taskId) && idSafe(id)) await rm(attachmentPath(taskId, id), { force: true });
+/** BYTES-WITH-TASK (#150): removing a task sweeps its whole per-task attachments
+ *  dir — the metadata rows already cascaded with the task row, so anything left
+ *  on disk here is a pure leak. Best-effort by contract: a failed sweep logs and
+ *  never throws; task removal must not depend on byte cleanup succeeding. */
+export async function deleteTaskAttachmentBytes(taskId: string) {
+  if (!idSafe(taskId)) return;
+  try {
+    await rm(taskAttachmentsDir(taskId), { recursive: true, force: true });
+  } catch (err) {
+    consola.warn(
+      `[tandem] attachment byte cleanup failed for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 export function sha256Hex(bytes: Buffer) {
