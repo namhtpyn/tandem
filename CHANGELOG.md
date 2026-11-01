@@ -1,3 +1,10 @@
+## [2.61.5](https://github.com/namhtpyn/tandem/compare/v2.61.4...v2.61.5) (2026-11-01)
+
+
+### Bug Fixes
+
+* **tasks:** abandon lands in work states + submit keys off the working category — verbs render only where the server accepts ([#177](https://github.com/namhtpyn/tandem/issues/177)) ([323b651](https://github.com/namhtpyn/tandem/commit/323b6516687523c2026d2eb85fe4972028777d83))
+
 ## [2.61.4](https://github.com/namhtpyn/tandem/compare/v2.61.3...v2.61.4) (2026-11-01)
 
 
