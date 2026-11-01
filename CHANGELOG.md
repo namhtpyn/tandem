@@ -1,3 +1,10 @@
+## [2.61.4](https://github.com/namhtpyn/tandem/compare/v2.61.3...v2.61.4) (2026-11-01)
+
+
+### Bug Fixes
+
+* **perf:** dispatcher eligible scan bounded — backoff predicate + LIMIT pushed into SQL ([#176](https://github.com/namhtpyn/tandem/issues/176)) ([bd18ed9](https://github.com/namhtpyn/tandem/commit/bd18ed930de70215c56ba568af63ab7e8aa381fa))
+
 ## [2.61.3](https://github.com/namhtpyn/tandem/compare/v2.61.2...v2.61.3) (2026-11-01)
 
 
