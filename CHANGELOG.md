@@ -1,3 +1,10 @@
+## [2.60.5](https://github.com/namhtpyn/tandem/compare/v2.60.4...v2.60.5) (2026-11-01)
+
+
+### Bug Fixes
+
+* **tasks:** editor save with an unresolved/failed description prefetch no longer wipes the stored body ([#145](https://github.com/namhtpyn/tandem/issues/145)) ([#146](https://github.com/namhtpyn/tandem/issues/146)) ([4391271](https://github.com/namhtpyn/tandem/commit/43912714c5524e4cad0d016525f7a8fbd3e94ca1))
+
 ## [2.60.4](https://github.com/namhtpyn/tandem/compare/v2.60.3...v2.60.4) (2026-11-01)
 
 
