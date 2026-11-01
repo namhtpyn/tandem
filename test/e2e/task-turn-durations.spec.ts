@@ -46,8 +46,8 @@ test('turn durations: off by default, bad writes rejected, flag flip renders set
   const now = new Date();
   await sql`insert into task_messages (id, task_id, body, created_at) values (${settledMsg}, ${taskId}, 'flag probe settled turn', ${now})`;
   await sql`insert into task_messages (id, task_id, body, created_at) values (${runningMsg}, ${taskId}, 'flag probe running turn', ${now})`;
-  await sql`insert into task_runs (id, message_id, status, exit_code, output, started_at, finished_at)
-    values (${crypto.randomUUID()}, ${settledMsg}, 'DONE', 0, 'seeded settled output', now() - interval '246 seconds', now() - interval '1 second')`;
+  await sql`insert into task_runs (id, message_id, status, exit_code, output, prompt, started_at, finished_at)
+    values (${crypto.randomUUID()}, ${settledMsg}, 'DONE', 0, 'seeded settled output', 'seeded frozen brief', now() - interval '246 seconds', now() - interval '1 second')`;
   await sql`insert into task_runs (id, message_id, status, output, started_at)
     values (${crypto.randomUUID()}, ${runningMsg}, 'RUNNING', '', now() - interval '10 seconds')`;
 
@@ -77,9 +77,16 @@ test('turn durations: off by default, bad writes rejected, flag flip renders set
     await expect(durations).toHaveCount(1);
     await expect(durations.first()).toHaveText('· 4m 05s');
 
-    // RUN-TRANSCRIPT LAW (#130 slice 2): the settled turn's transcript text is
-    // NOT in the snapshot — the fold renders (hasOutput) and fetches the text
-    // on first open; the RUNNING turn (empty output) renders no fold
+    // RUN-TRANSCRIPT LAW (#130 slice 2, #148): the settled turn's transcript
+    // text + the frozen prompt are NOT in the snapshot — both folds render and
+    // fetch on demand; the RUNNING turn (empty output, no prompt) renders none.
+    // Prompt fold FIRST so IT triggers the transcript fetch (output+prompt
+    // travel together; the open then reuses the cache for the output fold).
+    const promptFold = page.getByText(/Input sent to/).first();
+    await expect(promptFold).toBeVisible();
+    await promptFold.click();
+    await expect(page.getByText('seeded frozen brief')).toBeVisible({ timeout: 10_000 });
+
     const outputFold = page.getByText(/Full output from/).first();
     await expect(outputFold).toBeVisible();
     await outputFold.click();
