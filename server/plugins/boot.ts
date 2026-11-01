@@ -37,8 +37,11 @@ export default defineNitroPlugin(async () => {
 
   // agent dispatcher: eligible tasks (ready + AI assignee) fire automatically.
   // Opt out with TANDEM_NO_DISPATCHER=1 (tests); fake runner with TANDEM_FAKE_RUNNER=1.
-  const { maybeStartDispatcher } = await import('../domains/tasks/dispatcher.service');
-  await maybeStartDispatcher();
+  // REAPER LIVENESS (#147): a bare await here meant a redis blip at restart left
+  // the server serving with NO dispatcher and NO reaper — the start now retries
+  // on a fixed machine interval and logs every failed attempt loudly.
+  const { maybeStartDispatcher, ensureDispatcherRunning } = await import('../domains/tasks/dispatcher.service');
+  ensureDispatcherRunning({ start: maybeStartDispatcher });
   const { bridgeRedisChanges } = await import('../domains/kernel/change-bus');
   await bridgeRedisChanges();
 
