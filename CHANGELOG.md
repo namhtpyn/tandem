@@ -1,3 +1,10 @@
+# [2.61.0](https://github.com/namhtpyn/tandem/compare/v2.60.13...v2.61.0) (2026-11-01)
+
+
+### Features
+
+* **auth:** no default admin credential — boot seed requires ADMIN_PASSWORD, seeded admin rotates on first login ([#172](https://github.com/namhtpyn/tandem/issues/172)) ([d626a5b](https://github.com/namhtpyn/tandem/commit/d626a5b3826bcd5a57ce85f3c458fe47973c5a8b))
+
 ## [2.60.13](https://github.com/namhtpyn/tandem/compare/v2.60.12...v2.60.13) (2026-11-01)
 
 
