@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { OBLIGATION_ROLE, OBLIGATION_STATUS, type ObligationRole } from '#shared/enums';
@@ -10,7 +10,7 @@ import { OBLIGATION_ROLE, OBLIGATION_STATUS, type ObligationRole } from '#shared
 //   - approvals re-round on request-changes (old rows cancelled, fresh rows spawned)
 import { nonNull } from '#shared/utils/non-null';
 
-import { db } from '../../db/index';
+import { asDb, db, type DbExecutor } from '../../db/index';
 import { tasks, taskObligations } from '../../db/schema';
 
 function id() {
@@ -101,29 +101,52 @@ export async function answerHolder(taskId: string) {
   return rows[0]?.employeeId ?? null;
 }
 
-/** fulfilled approvals in the current round = the latest spawned batch.
+/** SNAPSHOT-SLIMMING LAW (#130 slice 3): per-snapshot batch reads never load
+ * full obligation rows or earlier rounds. Approvals resolve each task's LATEST
+ * round in SQL — max(created_at) per task over role='APPROVAL', joined back for
+ * that round only — and project only the decision columns (task_id,
+ * employee_id, status); the dead-round vs fulfilled decision stays in JS.
+ * Executor-injected for query-shape tests. */
+export function approvalsRoundScan(ex: DbExecutor, taskIds: string[]) {
+  const latestRound = asDb(ex)
+    .select({
+      taskId: taskObligations.taskId,
+      latestAt: sql`max(${taskObligations.createdAt})`.as('latest_at'),
+    })
+    .from(taskObligations)
+    .where(and(inArray(taskObligations.taskId, taskIds), eq(taskObligations.role, OBLIGATION_ROLE.APPROVAL)))
+    .groupBy(taskObligations.taskId)
+    .as('latest_round');
+  return asDb(ex)
+    .select({
+      taskId: taskObligations.taskId,
+      employeeId: taskObligations.employeeId,
+      status: taskObligations.status,
+    })
+    .from(taskObligations)
+    .innerJoin(
+      latestRound,
+      and(eq(taskObligations.taskId, latestRound.taskId), eq(taskObligations.createdAt, latestRound.latestAt)),
+    )
+    .where(and(inArray(taskObligations.taskId, taskIds), eq(taskObligations.role, OBLIGATION_ROLE.APPROVAL)));
+}
+
+/** fulfilled approvals per task for the LATEST round each (batch, for list payloads).
  *  A round whose rows are all cancelled (request-changes / abandon) is dead → []. */
-/** remaining pending approvers for the current round */
-/** fulfilled approvals per task for the LATEST round each (batch, for list payloads) */
 export async function approvalsInRoundBatch(taskIds: string[]) {
   if (taskIds.length === 0) return new Map<string, string[]>();
-  const rows = await db
-    .select()
-    .from(taskObligations)
-    .where(and(inArray(taskObligations.taskId, taskIds), eq(taskObligations.role, OBLIGATION_ROLE.APPROVAL)));
+  const rows = await approvalsRoundScan(db, taskIds);
   const byTask = new Map<string, typeof rows>();
   for (const r of rows) byTask.set(r.taskId, [...(byTask.get(r.taskId) ?? []), r]);
   const out = new Map<string, string[]>();
   for (const [tid, list] of byTask) {
-    const latest = Math.max(...list.map((r) => r.createdAt.getTime()));
-    const roundRows = list.filter((r) => r.createdAt.getTime() === latest);
-    if (roundRows.some((r) => r.status === OBLIGATION_STATUS.CANCELLED)) {
+    if (list.some((r) => r.status === OBLIGATION_STATUS.CANCELLED)) {
       out.set(tid, []);
       continue;
     }
     out.set(
       tid,
-      roundRows.filter((r) => r.status === OBLIGATION_STATUS.FULFILLED).map((r) => nonNull(r.employeeId)),
+      list.filter((r) => r.status === OBLIGATION_STATUS.FULFILLED).map((r) => nonNull(r.employeeId)),
     );
   }
   return out;
@@ -164,13 +187,23 @@ export async function pendingCounts(employeeId: string) {
   return counts;
 }
 
+/** open (PENDING) obligations per task, projected to only the columns the
+ * holders/approvers maps consume (#130 slice 3) — executor-injected for tests */
+export function openObligationsScan(ex: DbExecutor, taskIds: string[]) {
+  return asDb(ex)
+    .select({
+      taskId: taskObligations.taskId,
+      employeeId: taskObligations.employeeId,
+      role: taskObligations.role,
+    })
+    .from(taskObligations)
+    .where(and(inArray(taskObligations.taskId, taskIds), eq(taskObligations.status, OBLIGATION_STATUS.PENDING)));
+}
+
 /** open obligations for a task (pending rows only), for the task payload */
 export async function openObligations(taskIds: string[]) {
   if (taskIds.length === 0) return new Map<string, { holders: string[]; approvers: string[] }>();
-  const rows = await db
-    .select()
-    .from(taskObligations)
-    .where(and(inArray(taskObligations.taskId, taskIds), eq(taskObligations.status, OBLIGATION_STATUS.PENDING)));
+  const rows = await openObligationsScan(db, taskIds);
   const map = new Map<string, { holders: string[]; approvers: string[] }>();
   for (const r of rows) {
     const entry = map.get(r.taskId) ?? { holders: [], approvers: [] };
