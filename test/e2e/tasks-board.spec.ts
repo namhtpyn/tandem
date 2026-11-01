@@ -53,6 +53,8 @@ test('statuses manager: create, edit, transitions line, and delete a custom stat
   await waitForHydration(page);
   await page.getByRole('button', { name: 'Statuses' }).click();
   await expect(page.getByText('Task statuses')).toBeVisible();
+  // truthful copy: the graph is advisory (SPEC STATUS FREEDOM) — no enforcement claims
+  await expect(page.getByText('manual status moves are never blocked')).toBeVisible();
 
   // create (create-mode submit reads 'Create status')
   await page.getByRole('button', { name: 'New status' }).click();
@@ -66,8 +68,8 @@ test('statuses manager: create, edit, transitions line, and delete a custom stat
     .filter({ has: page.getByRole('button', { name: new RegExp(`Edit ${statusName}`) }) })
     .last();
   await expect(row).toBeVisible();
-  // a fresh status carries its transitions line (none yet)
-  await expect(row).toContainText('No transitions');
+  // a fresh status carries its next-steps line (none yet)
+  await expect(row).toContainText('No suggested next steps');
 
   // edit mode: the submit reads 'Save changes' and a rename lands in the list
   await row.getByRole('button', { name: new RegExp(`Edit ${statusName}`) }).click();
