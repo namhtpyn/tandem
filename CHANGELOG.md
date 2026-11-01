@@ -1,3 +1,10 @@
+## [2.60.6](https://github.com/namhtpyn/tandem/compare/v2.60.5...v2.60.6) (2026-11-01)
+
+
+### Bug Fixes
+
+* **dispatcher:** reaper liveness — rate-limited warn on failed sweeps, boot dispatcher start retries until the queue is reachable ([#147](https://github.com/namhtpyn/tandem/issues/147)) ([0da20b6](https://github.com/namhtpyn/tandem/commit/0da20b684c96deb8ffea5b7e1d6856113c8f8d30))
+
 ## [2.60.5](https://github.com/namhtpyn/tandem/compare/v2.60.4...v2.60.5) (2026-11-01)
 
 
