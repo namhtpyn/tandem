@@ -21,6 +21,55 @@ describe('DATA_ROOT default', () => {
   });
 });
 
+describe('deleteTaskAttachmentBytes — BYTES-WITH-TASK (#150)', () => {
+  it('sweeps the whole per-task dir — inputs, outputs and stray files gone', async () => {
+    const { mkdtemp, rm: fsRm, stat } = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const tmp = await mkdtemp(path.join(os.tmpdir(), 'tandem-att-'));
+    const saved = env.TANDEM_ATTACHMENTS_DIR;
+    setEnv({ TANDEM_ATTACHMENTS_DIR: tmp });
+    try {
+      const mod = await import('#server/domains/tasks/attachments.util');
+      await mod.saveAttachmentBytes('t1', 'a1', Buffer.from('input bytes'));
+      await mod.saveAttachmentBytes('t1', 'a2', Buffer.from('collected output'));
+      const dir = mod.taskAttachmentsDir('t1');
+      expect(await mod.attachmentExists('t1', 'a1')).toBe(true);
+      expect(await mod.attachmentExists('t1', 'a2')).toBe(true);
+
+      await mod.deleteTaskAttachmentBytes('t1');
+
+      await expect(stat(dir)).rejects.toThrow(); // the whole dir is gone, not just the files
+      expect(await mod.attachmentExists('t1', 'a1')).toBe(false);
+      expect(await mod.attachmentExists('t1', 'a2')).toBe(false);
+    } finally {
+      setEnv({ TANDEM_ATTACHMENTS_DIR: saved });
+      await fsRm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('is idempotent and never throws on an already-gone or never-existing dir', async () => {
+    const { mkdtemp, rm: fsRm } = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const tmp = await mkdtemp(path.join(os.tmpdir(), 'tandem-att-'));
+    const saved = env.TANDEM_ATTACHMENTS_DIR;
+    setEnv({ TANDEM_ATTACHMENTS_DIR: tmp });
+    try {
+      const mod = await import('#server/domains/tasks/attachments.util');
+      // a task that never had bytes — fine
+      await expect(mod.deleteTaskAttachmentBytes('t-none')).resolves.toBeUndefined();
+      // sweep twice — the second pass finds nothing and still resolves
+      await mod.saveAttachmentBytes('t1', 'a1', Buffer.from('x'));
+      await expect(mod.deleteTaskAttachmentBytes('t1')).resolves.toBeUndefined();
+      await expect(mod.deleteTaskAttachmentBytes('t1')).resolves.toBeUndefined();
+    } finally {
+      setEnv({ TANDEM_ATTACHMENTS_DIR: saved });
+      await fsRm(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('attachmentPath guards', () => {
   it('rejects unsafe task ids and attachment ids', async () => {
     const mod = await import('#server/domains/tasks/attachments.util');
@@ -29,9 +78,8 @@ describe('attachmentPath guards', () => {
     expect(() => mod.taskAttachmentsDir('../../escape')).toThrow('bad task id');
     expect(mod.taskAttachmentsDir('t1')).toBe(`${mod.dataRoot()}/tasks/t1/attachments`);
     expect(() => mod.attachmentPath('t1', 'a b')).toThrow('bad attachment id');
-    // delete with unsafe ids is a no-op, never a throw
-    await expect(mod.deleteAttachmentBytes('../../escape', 'x')).resolves.toBeUndefined();
-    await expect(mod.deleteAttachmentBytes('t1', '../../escape')).resolves.toBeUndefined();
+    // cleanup with an unsafe task id is a no-op, never a throw
+    await expect(mod.deleteTaskAttachmentBytes('../../escape')).resolves.toBeUndefined();
     expect(await mod.attachmentExists('../../escape', 'x')).toBe(false);
     expect(await mod.attachmentExists('t1', 'x')).toBe(false);
   });
