@@ -231,16 +231,26 @@ export async function liveRunCountFor(employeeId: string): Promise<number> {
   return await db.query.taskRuns.count({ employeeId: { eq: employeeId }, status: { eq: RUN_STATUS.RUNNING } });
 }
 
-/** eligible-task scan shape (#130): ready-category + AI-assignee ride the SQL
- * WHERE (created_at order preserved); the backoff filter stays app-side — it
- * is an OR over dispatch_after, not expressible as a column AND. The tick never
- * loads tasks outside the ready∩AI set. */
-export function eligibleTaskScan(readyIds: string[], aiIds: string[]) {
+/** fixed margin on the scan LIMIT (#176): covers rows claimed between the cap
+ * read and the scan landing — the bounded read can never miss a claimable task
+ * that the next 5s tick would not pick up anyway. */
+const DISPATCH_SCAN_MARGIN = 16;
+
+/** eligible-task scan shape (#130, #176): ready-category + AI-assignee + the
+ * elapsed-backoff predicate all ride the SQL WHERE (created_at order preserved)
+ * and the read is LIMIT-bounded to cap×agents+margin — the tick never re-reads
+ * the whole ready∩AI backlog while agents sit at cap. */
+export function eligibleTaskScan(readyIds: string[], aiIds: string[], backoffCutoff: Date, limit: number) {
   return {
-    columns: { id: true, status: true, assigneeId: true, dispatchAfter: true, createdAt: true },
-    where: { status: { in: readyIds }, assigneeId: { in: aiIds } },
-    orderBy: { createdAt: 'asc' },
-  } as const;
+    columns: { id: true, status: true, assigneeId: true, dispatchAfter: true, createdAt: true } as const,
+    where: {
+      status: { in: readyIds },
+      assigneeId: { in: aiIds },
+      OR: [{ dispatchAfter: { isNull: true as const } }, { dispatchAfter: { lte: backoffCutoff } }],
+    },
+    orderBy: { createdAt: 'asc' as const },
+    limit,
+  };
 }
 
 /** one GROUP BY query for every agent's live-run count (#130) — never a
@@ -270,14 +280,12 @@ export async function findEligible(): Promise<{ taskId: string; employeeId: stri
   const aiIds = aiRows.map((r) => r.userId);
   if (aiIds.length === 0) return null;
 
-  // SCAN BOUNDING LAW (#130): ready ∩ AI-assignee filtered in SQL
-  const rows = await db.query.tasks.findMany(eligibleTaskScan(readyIds, aiIds));
-  const now = Date.now();
-  const eligible = rows
-    // failure backoff: not claimable until dispatch_after passes (null = immediately)
-    .filter((t) => !t.dispatchAfter || t.dispatchAfter.getTime() <= now);
-  if (eligible.length === 0) return null;
+  // SCAN BOUNDING LAW (#130, #176): ready ∩ AI ∩ elapsed-backoff filtered in SQL,
+  // read LIMIT-bounded to cap×agents+margin — cap read BEFORE the scan
   const cap = await tasksPerAgentCap();
+  const limit = cap * aiIds.length + DISPATCH_SCAN_MARGIN;
+  const eligible = await db.query.tasks.findMany(eligibleTaskScan(readyIds, aiIds, new Date(), limit));
+  if (eligible.length === 0) return null;
   const liveByAgent = new Map((await liveRunsByAgent(db, aiIds)).map((r) => [r.employeeId, r.live]));
   for (const t of eligible) {
     const employeeId = nonNull(t.assigneeId);
