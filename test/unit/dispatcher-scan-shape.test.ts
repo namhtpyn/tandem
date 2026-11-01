@@ -15,24 +15,39 @@ import {
 
 import { mockDb } from './helpers/mock-db';
 
-describe('eligible-task scan shape (#130)', () => {
+describe('eligible-task scan shape (#130, #176)', () => {
+  const CUTOFF = new Date('2026-11-01T00:00:00Z');
+
   it('filters ready-category + AI-assignee in the SQL WHERE', () => {
     const db = mockDb();
-    const { sql, params } = db.query.tasks.findMany(eligibleTaskScan(['ready-1', 'ready-2'], ['jay', 'zed'])).toSQL();
+    const { sql, params } = db.query.tasks
+      .findMany(eligibleTaskScan(['ready-1', 'ready-2'], ['jay', 'zed'], CUTOFF, 18))
+      .toSQL();
     expect(sql).toContain('"status" in');
     expect(sql).toContain('"assignee_id" in');
-    expect(params).toEqual(['ready-1', 'ready-2', 'jay', 'zed']);
+    expect(params).toContain('ready-1');
+    expect(params).toContain('jay');
   });
 
-  it('orders by created_at (oldest-first claim preserved in SQL)', () => {
+  it('pushes the elapsed-backoff predicate into the SQL WHERE (#176)', () => {
     const db = mockDb();
-    const { sql } = db.query.tasks.findMany(eligibleTaskScan(['r'], ['a'])).toSQL();
+    const { sql } = db.query.tasks.findMany(eligibleTaskScan(['r'], ['a'], CUTOFF, 17)).toSQL();
+    const flat = sql.replace(/\s+/g, ' ').toLowerCase();
+    expect(flat).toContain('"dispatch_after" is null');
+    expect(flat).toContain('or ("d0"."dispatch_after" <=');
+  });
+
+  it('is LIMIT-bounded (#176) and orders by created_at (oldest-first preserved)', () => {
+    const db = mockDb();
+    const { sql, params } = db.query.tasks.findMany(eligibleTaskScan(['r'], ['a'], CUTOFF, 33)).toSQL();
+    expect(sql.replace(/\s+/g, ' ').toLowerCase()).toContain('limit $');
+    expect(params).toEqual(expect.arrayContaining(['r', 'a', CUTOFF.toISOString(), 33]));
     expect(sql.replace(/\s+/g, ' ').toLowerCase()).toContain('order by "d0"."created_at" asc');
   });
 
   it('projects no oversized columns (no description, no output)', () => {
     const db = mockDb();
-    const { sql } = db.query.tasks.findMany(eligibleTaskScan(['r'], ['a'])).toSQL();
+    const { sql } = db.query.tasks.findMany(eligibleTaskScan(['r'], ['a'], CUTOFF, 17)).toSQL();
     expect(sql.toLowerCase()).not.toContain('description');
     expect(sql.toLowerCase()).not.toContain('output');
   });
