@@ -1,3 +1,10 @@
+## [2.60.8](https://github.com/namhtpyn/tandem/compare/v2.60.7...v2.60.8) (2026-11-01)
+
+
+### Bug Fixes
+
+* **spec:** contract-reality alignment - single ACP v1 runner contract, required redis, shipped M3, exact REST exception set ([#149](https://github.com/namhtpyn/tandem/issues/149)) ([abd131c](https://github.com/namhtpyn/tandem/commit/abd131c214ed080d9eeeda369fb7e889bb67dd89))
+
 ## [2.60.7](https://github.com/namhtpyn/tandem/compare/v2.60.6...v2.60.7) (2026-11-01)
 
 
