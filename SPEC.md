@@ -210,7 +210,7 @@ capabilities), `POST /api/tasks/:id/attachments` (multipart upload),
 | `environments.create` | admin   | `{name,host,port?,username}`                              | created row                                                                                         |
 | `environments.update` | admin   | `{id,name,host,port?,username}`                           | updated row                                                                                         |
 | `environments.remove` | admin   | `{id}`                                                    | `{ok}`                                                                                              |
-| `environments.probe`  | admin   | `{id}`                                                    | `{ok,detail,durationMs}`                                                                            |
+| `environments.probe`  | admin   | `{id}`                                                    | `{ok,detail,durationMs,lastProbeAt}` (verdict persisted on the row)                                 |
 
 Wiring follows the official oRPC docs: Nuxt adapter (`toWebRequest` +
 `RPCHandler` with `onError` interceptor), Better Auth lazy `getSession`
@@ -226,9 +226,19 @@ HTTP hop; per-request so cookies stay current).
 | `environments.create` | `{name,host,port?,username}`    | created row                              |
 | `environments.update` | `{id,name,host,port?,username}` | updated row                              |
 | `environments.remove` | `{id}`                          | `{ok:true}`                              |
-| `environments.probe`  | `{id}`                          | `{ok,detail,durationMs}`                 |
+| `environments.probe`  | `{id}`                          | `{ok,detail,durationMs,lastProbeAt}`     |
 
 - names unique (409 on clash, including rename onto another row)
+- PROBE VERDICT LAW (#178): every probe result — success AND failure — is
+  persisted on the environment row (`last_probe_ok`, `last_probe_detail`,
+  `last_probe_at`; null = never probed) and the environments manager renders
+  the Status column from that persisted row data: a verdict survives reload
+  and navigation with zero clicks, and a manual probe is a re-check that
+  refreshes it. create/save never probe — a fresh row reads "Not probed"
+  until the first probe. An update that changes a connection field (host,
+  port, username, secretId, secretUsage) clears the verdict (a stale OK on a
+  changed target would lie); a name-only edit keeps it. Probes are
+  independent per row — no serialized one-at-a-time lock.
 - probe: BatchMode ssh (`StrictHostKeyChecking=accept-new`, ConnectTimeout 5),
   marker `tandem-probe-ok`; Bun Shell first, node `child_process` fallback for
   non-bun runtimes; `TANDEM_SSH_TIMEOUT_MS` overrides the 10s kill timer
