@@ -27,9 +27,13 @@ test('task title click opens the task detail page', async ({ page }) => {
   await expect(page.getByText('No activity yet — write a note below or dispatch the agent.')).toBeVisible();
   await expect(page.getByPlaceholder('Write a note')).toBeVisible();
 
-  // sidebar: Details section (the Workflow block is gone — status is manual)
+  // sidebar: Details section + the contextual Workflow verb block (#177 — back
+  // by contract). The probe task is unassigned: no Submit (nobody can submit),
+  // no Dispatch (no AI assignee); Cancel renders for the owner in a work state
   await expect(page.getByText('Details', { exact: true }).first()).toBeVisible();
-  await expect(page.getByText('Workflow', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Workflow', { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Submit for review' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Dispatch now' })).toHaveCount(0);
   await expect(page.getByText('Status').first()).toBeVisible();
   await expect(page.getByText('Assignee').first()).toBeVisible();
 

@@ -10,7 +10,8 @@ import { nonNull } from '#shared/utils/non-null';
 // sidebar collapses into a sheet. The page owns the task row and the shared
 // workflow-action state; thread and sidebar panels are self-loading components
 // (TaskActivityThread, TaskDetailsFields, TaskReviewPanel, TaskRoutingPanels,
-// TaskWorkflowActions) that share query keys with the app-wide SSE subscription.
+// TaskWorkflowActions — the sidebar's contextual verb block, #177) that share
+// query keys with the app-wide SSE subscription.
 import { composerHint, composerReady, useWorkflowActions } from '~/composables/useWorkflowActions';
 import type { TaskRow, TaskRunRow, TaskStatusRow } from '~/utils/orpc-types';
 import { categoryColor, composerPlaceholder } from '~/utils/ui-labels';
@@ -322,6 +323,19 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
             class="border-default bg-elevated/50 hidden w-full shrink-0 self-start rounded-xl border p-3.5 lg:sticky lg:top-4 lg:mt-0 lg:block lg:max-h-[calc(var(--task-h)-1rem)] lg:w-72 lg:overflow-y-auto"
           >
             <div class="space-y-4">
+              <!-- contextual workflow verbs FIRST — the most actionable thing in the
+                   sidebar (#177); the drawer is a second surface, never a round-trip -->
+              <TaskWorkflowActions
+                :key="task.id"
+                :task="task"
+                :status-category="taskStatusCategory"
+                :agent-running="agentRunning"
+                :note="workflowNote"
+                :busy="workflowBusy"
+                :message="workflowMessage"
+                :message-ok="workflowOk"
+                @action="(action, extra) => wfAction(action, extra)"
+              />
               <TaskDetailsFields :key="task.id" :task="task" :run-locked="runLocked" :run-pending="!runsSettled" />
               <TaskReviewPanel v-if="task.reviewerNames.length" :key="task.id" :task-id="task.id" />
               <TaskRoutingPanels
@@ -342,6 +356,17 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
   <USlideover v-if="task" v-model:open="infoSheetOpen" title="Task info" side="right" class="lg:hidden">
     <template #body>
       <div class="space-y-4">
+        <TaskWorkflowActions
+          :key="task.id"
+          :task="task"
+          :status-category="taskStatusCategory"
+          :agent-running="agentRunning"
+          :note="workflowNote"
+          :busy="workflowBusy"
+          :message="workflowMessage"
+          :message-ok="workflowOk"
+          @action="(action, extra) => wfAction(action, extra)"
+        />
         <TaskDetailsFields :key="task.id" :task="task" :run-locked="runLocked" :run-pending="!runsSettled" />
         <TaskReviewPanel v-if="task.reviewerNames.length" :key="task.id" :task-id="task.id" />
         <TaskRoutingPanels :task-id="task.id" :status-by-id="statusById" @add-subtask="subtaskEditorOpen = true" />

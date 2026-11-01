@@ -249,3 +249,60 @@ describe('forwardReady gate', () => {
     expect(m.forwardReady({ category: CATEGORY.WAITING_ANSWER, holderId: 'u-1', userId: null })).toBe(false);
   });
 });
+
+// task-page verb gates (#177, SPEC: verbs render ONLY where the server accepts
+// them — requireDispatchable = ready category + AI assignee + no live run;
+// submit = working category + HUMAN assignee; cancel = working states). A null
+// category (statuses loading/failed) arms NOTHING.
+describe('task-page verb gates (working/submit/dispatch)', () => {
+  it.each([
+    ['ready', CATEGORY.READY, true],
+    ['working', CATEGORY.WORKING, true],
+    ['paused', CATEGORY.PAUSED, true],
+    ['in-review', CATEGORY.IN_REVIEW, false],
+    ['waiting_answer', CATEGORY.WAITING_ANSWER, false],
+    ['null category (statuses still loading)', null, false],
+  ])('workingReady: %s', async (_label, category, expected) => {
+    const m = await import('../../app/composables/useWorkflowActions.ts');
+    expect(m.workingReady(category as never)).toBe(expected);
+  });
+
+  it.each([
+    ['human assignee, in progress, viewer IS the assignee', CATEGORY.WORKING, 'u-1', 'human', 'u-1', true],
+    ['viewer is NOT the assignee — server refuses', CATEGORY.WORKING, 'u-2', 'human', 'u-1', false],
+    ['unassigned task — nobody can submit', CATEGORY.WORKING, null, null, 'u-1', false],
+    ['AI assignee submits via the envelope, never the verb', CATEGORY.WORKING, 'ai-1', 'ai', 'ai-1', false],
+    ['ready state is not in progress — server refuses', CATEGORY.READY, 'u-1', 'human', 'u-1', false],
+    ['paused state — server refuses', CATEGORY.PAUSED, 'u-1', 'human', 'u-1', false],
+    ['statuses not yet loaded (null category)', null, 'u-1', 'human', 'u-1', false],
+  ])('submitReady: %s', async (_label, category, assigneeId, kind, userId, expected) => {
+    const m = await import('../../app/composables/useWorkflowActions.ts');
+    expect(
+      m.submitReady({ category: category as never, assigneeId: assigneeId as never, assigneeKind: kind, userId }),
+    ).toBe(expected);
+  });
+
+  it.each([
+    ['owner in a work state', CATEGORY.READY, 'u-2', 'u-1', 'u-1', true],
+    ['assignee in a work state', CATEGORY.WORKING, 'u-1', 'u-2', 'u-1', true],
+    ['third-party viewer — server refuses the abandon', CATEGORY.WORKING, 'u-2', 'u-2', 'u-1', false],
+    ['terminal state (done)', CATEGORY.DONE, 'u-2', 'u-1', 'u-1', false],
+    ['no session', CATEGORY.WORKING, 'u-2', 'u-1', null, false],
+  ])('cancelReady: %s', async (_label, category, assigneeId, ownerId, userId, expected) => {
+    const m = await import('../../app/composables/useWorkflowActions.ts');
+    expect(m.cancelReady({ category: category as never, assigneeId: assigneeId as never, ownerId, userId })).toBe(
+      expected,
+    );
+  });
+
+  it.each([
+    ['AI assignee, ready, no live run', CATEGORY.READY, 'ai', false, true],
+    ['a live run blocks re-dispatch', CATEGORY.READY, 'ai', true, false],
+    ['left the ready category (doing)', CATEGORY.WORKING, 'ai', false, false],
+    ['human assignee — nothing to dispatch', CATEGORY.READY, 'human', false, false],
+    ['AI assignee, statuses not yet loaded', null, 'ai', false, false],
+  ])('dispatchReady: %s', async (_label, category, kind, running, expected) => {
+    const m = await import('../../app/composables/useWorkflowActions.ts');
+    expect(m.dispatchReady({ category: category as never, assigneeKind: kind, running })).toBe(expected);
+  });
+});
