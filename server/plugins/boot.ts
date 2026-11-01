@@ -1,20 +1,17 @@
 import { consola } from 'consola';
-import { v7 as uuidv7 } from 'uuid';
-
-import { ROLE } from '#shared/enums';
 
 export const log = consola.withTag('tandem');
 
-import { env } from '#server/domains/kernel/env';
+import { reportInvalidEnvironment } from '#server/domains/kernel/env';
 
 // Boot: apply migrations, then seed the default admin when the instance has NO
-// users. A brand-new deployment therefore always has a known login:
-//   email    = env ADMIN_EMAIL    (default admin@tandem.local)
-//   password = env ADMIN_PASSWORD (default tandem-admin)
-// Skipped when any user row exists — restarts never overwrite real accounts.
+// users (SPEC "Boot seed law", #172): seeding REQUIRES an explicit ADMIN_PASSWORD
+// — no default credential exists — and the seeded admin must rotate the password
+// on first login. Policy lives in admin-seed.service; a violation exits here via
+// the shared env-failure report. Skipped when any user row exists — restarts
+// never overwrite real accounts.
 import { db } from '../db/index';
 import { applyMigrations } from '../db/index';
-import { user, account } from '../db/schema';
 
 export default defineNitroPlugin(async () => {
   const applied = await applyMigrations();
@@ -48,29 +45,12 @@ export default defineNitroPlugin(async () => {
   const existing = await db.query.user.findFirst({ columns: { id: true } });
   if (existing) return;
 
-  const email = env.ADMIN_EMAIL ?? 'admin@tandem.local';
-  const password = env.ADMIN_PASSWORD ?? 'tandem-admin';
-  const id = uuidv7();
-  const now = new Date();
-  await db.insert(user).values({
-    id,
-    name: 'Admin',
-    email,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-    role: ROLE.ADMIN,
-  });
-  // password hash via better-auth's own hasher for compatibility
-  const { hashPassword } = await import('../domains/auth/auth-hash.util');
-  await db.insert(account).values({
-    id: uuidv7(),
-    accountId: id,
-    providerId: 'credential',
-    userId: id,
-    password: await hashPassword(password),
-    createdAt: now,
-    updatedAt: now,
-  });
-  log.info(`seeded admin ${email} (change the password after first login)`);
+  const { AdminSeedError, seedAdminIfEmpty } = await import('../domains/auth/admin-seed.service');
+  try {
+    const seeded = await seedAdminIfEmpty();
+    if (seeded) log.info(`seeded admin ${seeded.email} (password change required on first login)`);
+  } catch (e) {
+    if (e instanceof AdminSeedError) reportInvalidEnvironment(e.issues);
+    throw e;
+  }
 });

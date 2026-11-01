@@ -27,6 +27,8 @@ const envSchema = z.preprocess(
     APP_VERSION: z.string().optional(),
     // runtime knobs — read lazily at call sites so setEnv() lands
     TANDEM_NO_DISPATCHER: z.string().optional(),
+    // test-only: seed the admin WITHOUT the forced-rotation flag (e2e/CI knob)
+    TANDEM_SEED_NO_ROTATION: z.string().optional(),
     TANDEM_RUN_FLUSH_MS: z.string().optional(),
     TANDEM_ACP_CANCEL_GRACE_MS: z.string().optional(),
     TANDEM_SSH_TIMEOUT_MS: z.string().optional(),

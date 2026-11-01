@@ -75,13 +75,15 @@ volumes:
   redis-data:
 ```
 
-Open `http://localhost:3000` and sign in with the seeded admin:
+Open `http://localhost:3000` and sign in as the seeded admin:
 
-- email `admin@tandem.local`
-- password `tandem-admin`
+- email `ADMIN_EMAIL` (default `admin@tandem.local`)
+- password: whatever you set in `ADMIN_PASSWORD` — there is **no default**.
+  First boot without `ADMIN_PASSWORD` exits with an error instead of seeding a
+  known login, the historical `tandem-admin` value is refused, and the seeded
+  admin must set a new password on first sign-in.
 
-Override `ADMIN_EMAIL` / `ADMIN_PASSWORD` before first boot. The seed runs
-only on a fresh database — never on restarts.
+The seed runs only on a fresh database — never on restarts.
 
 ## Configuration
 

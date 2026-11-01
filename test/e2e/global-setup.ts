@@ -4,7 +4,7 @@ import { SQL } from 'bun';
 import { drizzle } from 'drizzle-orm/bun-sql';
 import { migrate } from 'drizzle-orm/bun-sql/migrator';
 
-import { E2E_DATABASE_URL, redactedDatabaseUrl } from './helpers/env';
+import { E2E_ADMIN_SEED_PASSWORD, E2E_DATABASE_URL, redactedDatabaseUrl } from './helpers/env';
 // E2E reset: every run starts from a fresh data set. playwright starts the
 // webServer and this hook together, so the SERVER owns the boot migration on a
 // virgin database and this hook waits for the schema before resetting; with
@@ -154,6 +154,21 @@ export default async function globalSetup() {
       const list = names.map((name) => `public."${name.replaceAll('"', '""')}"`).join(', ');
       await sql.unsafe(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`);
     }
+
+    // BOOT SEED LAW (SPEC, #172): normalize the kept admin to the harness
+    // credential — user/account survive the reset (boot only seeds an EMPTY
+    // table), so a legacy e2e DB would otherwise carry an old seed password
+    // forever. Pin the credential hash to the seed password and force the
+    // rotation flag: every run's first login exercises the set-new-password
+    // flow (login() completes it deterministically).
+    const { hashPassword } = await import('better-auth/crypto');
+    const seedHash = await hashPassword(E2E_ADMIN_SEED_PASSWORD);
+    await sql`
+      update account set password = ${seedHash}
+      where provider_id = 'credential'
+        and user_id in (select id from "user" where role = 'ADMIN')
+    `;
+    await sql`update "user" set must_change_password = true where role = 'ADMIN'`;
 
     // baseline statuses only: custom rows + edited transitions from earlier runs
     // must not leak into the next suite (tests create their own custom statuses)

@@ -7,7 +7,7 @@ type AuthSessionPayload = {
    *  fabricates the session for an x-api-key request with session.id =
    *  apiKey.id — a human login always carries a `session` row id here */
   sessionId?: string;
-  user: { id: string; name: string; email: string; role: Role };
+  user: { id: string; name: string; email: string; role: Role; mustChangePassword?: boolean };
 };
 
 export function buildServerContext(headers: Headers | undefined): ServerContext {
@@ -36,6 +36,7 @@ export function buildServerContext(headers: Headers | undefined): ServerContext 
           name: session.user.name,
           email: session.user.email,
           role,
+          mustChangePassword: Boolean(session.user.mustChangePassword),
         },
       };
       return cached;

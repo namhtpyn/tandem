@@ -8,6 +8,7 @@ import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 //   BETTER_AUTH_SECRET  — session signing (required)
 //   BETTER_AUTH_URL     — canonical origin override
 import { betterAuth } from 'better-auth';
+import { verifyPassword } from 'better-auth/crypto';
 import { testUtils } from 'better-auth/plugins';
 import { genericOAuth } from 'better-auth/plugins/generic-oauth';
 import { eq } from 'drizzle-orm';
@@ -16,7 +17,7 @@ import { v7 as uuidv7 } from 'uuid';
 import { ROLE, type Role } from '#shared/enums';
 
 import { db } from '../../db/index';
-import { user as userTable } from '../../db/schema';
+import { account, user as userTable } from '../../db/schema';
 import { authSchema } from '../../db/schema';
 import { env as sharedEnv } from '../kernel/env';
 import { getSettings } from '../settings/settings.service';
@@ -54,6 +55,7 @@ type Auth = {
         emailVerified: boolean;
         image?: string | null;
         role?: string | null;
+        mustChangePassword?: boolean;
       };
       session: { id: string; userId: string; expiresAt: Date };
     } | null>;
@@ -112,6 +114,9 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}) {
         // employment title rides the identity row; AI-ness is derived from
         // the ai_employees extension row, never a user column
         title: { type: 'string', required: false, defaultValue: '', input: false },
+        // boot-seeded admin only (SPEC "Boot seed law") — server-owned flag,
+        // cleared exclusively by changeMyPassword
+        mustChangePassword: { type: 'boolean', required: false, defaultValue: false, input: false },
       },
     },
     emailAndPassword: {
@@ -193,4 +198,39 @@ export async function getAuth() {
 export async function rebuildAuth() {
   instance = null;
   return getAuth();
+}
+
+/**
+ * ROTATION LOCK completion (SPEC "Boot seed law", #172): verify the current
+ * credential, replace it, clear must_change_password — one transaction. The
+ * ONLY path that clears the flag; result-union instead of throwing so the
+ * router maps reasons to oRPC errors (services never import oRPC).
+ */
+export type ChangeMyPasswordResult =
+  | { ok: true }
+  | { ok: false; reason: 'TOO_SHORT' | 'NO_CREDENTIAL' | 'WRONG_PASSWORD' };
+
+export async function changeMyPassword(opts: {
+  userId: string;
+  currentPassword: string;
+  newPassword: string;
+}): Promise<ChangeMyPasswordResult> {
+  if (opts.newPassword.length < 8) return { ok: false, reason: 'TOO_SHORT' };
+  const row = await db.query.account.findFirst({
+    where: { userId: { eq: opts.userId }, providerId: { eq: 'credential' } },
+    columns: { id: true, password: true },
+  });
+  if (!row?.password) return { ok: false, reason: 'NO_CREDENTIAL' };
+  if (!(await verifyPassword({ hash: row.password, password: opts.currentPassword })))
+    return { ok: false, reason: 'WRONG_PASSWORD' };
+  const { hashPassword } = await import('./auth-hash.util');
+  const hash = await hashPassword(opts.newPassword);
+  await db.transaction(async (tx) => {
+    await tx.update(account).set({ password: hash, updatedAt: new Date() }).where(eq(account.id, row.id));
+    await tx
+      .update(userTable)
+      .set({ mustChangePassword: false, updatedAt: new Date() })
+      .where(eq(userTable.id, opts.userId));
+  });
+  return { ok: true };
 }

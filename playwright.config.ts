@@ -37,7 +37,7 @@ export default defineConfig({
   webServer: process.env.TANDEM_E2E_NO_SERVER
     ? undefined
     : {
-        command: `PORT=4100 TANDEM_FAKE_RUNNER=1 REDIS_URL=${process.env.TANDEM_E2E_REDIS_URL || process.env.REDIS_URL || 'redis://127.0.0.1:6399'} TANDEM_PUBLIC_URL=http://localhost:4100 TANDEM_VAULT_KEY=${process.env.TANDEM_E2E_VAULT_KEY || Buffer.alloc(32, 7).toString('base64')} TANDEM_ATTACHMENTS_DIR=${process.env.TANDEM_E2E_ATTACHMENTS_DIR || '/tmp/tandem-e2e-attachments'} DATABASE_URL=${E2E_DATABASE_URL} bun .output/server/index.mjs`,
+        command: `PORT=4100 TANDEM_FAKE_RUNNER=1 REDIS_URL=${process.env.TANDEM_E2E_REDIS_URL || process.env.REDIS_URL || 'redis://127.0.0.1:6399'} TANDEM_PUBLIC_URL=http://localhost:4100 TANDEM_VAULT_KEY=${process.env.TANDEM_E2E_VAULT_KEY || Buffer.alloc(32, 7).toString('base64')} TANDEM_ATTACHMENTS_DIR=${process.env.TANDEM_E2E_ATTACHMENTS_DIR || '/tmp/tandem-e2e-attachments'} ADMIN_PASSWORD=${process.env.TANDEM_E2E_ADMIN_PASSWORD || 'tandem-e2e-seed-pw'} DATABASE_URL=${E2E_DATABASE_URL} bun .output/server/index.mjs`,
         env: {
           TANDEM_E2E_DATABASE_URL: E2E_DATABASE_URL,
         },

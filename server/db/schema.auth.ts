@@ -16,7 +16,8 @@ export const user = pgTable("user", {
  createdAt: timestamp('created_at', { withTimezone: true }).$default(() => new Date()).notNull(),
  updatedAt: timestamp('updated_at', { withTimezone: true }).$default(() => new Date()).$onUpdate(() => /* @__PURE__ */ new Date()).notNull(),
  role: text('role', { enum: ['ADMIN', 'EMPLOYEE', 'VIEWER'] }).default("VIEWER"),
- title: text('title').default("")
+ title: text('title').default(""),
+ mustChangePassword: boolean('must_change_password').default(false)
 					});
 
 export const session = pgTable("session", {
