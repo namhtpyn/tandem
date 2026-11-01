@@ -97,6 +97,10 @@ const busy = computed(() => saving.value || uploadCount.value > 0);
 let uploadChain: Promise<unknown> = Promise.resolve();
 const message = ref('');
 const messageOk = ref(false); // tone: success paths ('Attached …') render green
+/** NO-SILENT-WIPE GUARD (#145): is this session's on-open getDescription fetch
+ *  resolved? 'loading' | 'failed' mean the stored body is UNKNOWN — an unedited
+ *  save must then omit description entirely instead of shipping '' over it. */
+const descriptionState = ref<'loading' | 'loaded' | 'failed'>('loaded');
 
 const form = reactive({
   title: '',
@@ -123,6 +127,8 @@ watch(open, (v) => {
   // SNAPSHOT-SLIMMING LAW (#130 slice 3): list rows no longer carry the body —
   // it lands below via the on-open getDescription fetch
   form.description = '';
+  // #145: a create has no stored body to protect; an edit starts UNKNOWN
+  descriptionState.value = row ? 'loading' : 'loaded';
   form.assigneeId = row?.assigneeId ?? NONE_ID;
   form.projectId = row?.projectId ?? NONE_ID;
   form.reviewers = row?.reviewers ? [...row.reviewers] : [];
@@ -145,8 +151,14 @@ async function fetchOpenDescription() {
     // closed, or re-opened on a different row meanwhile → this fetch is stale
     if (!open.value || editingId.value !== taskId) return;
     if (form.description === '') form.description = full.description;
+    descriptionState.value = 'loaded';
   } catch {
     /* unknown/gone task — the field stays empty and editable */
+    if (!open.value || editingId.value !== taskId) return;
+    descriptionState.value = 'failed';
+    // #145: say it — saving now will keep the stored body, not blank it
+    messageOk.value = false;
+    message.value = "Couldn't load the saved description — saving will keep it unchanged.";
   }
 }
 
@@ -339,11 +351,19 @@ async function save() {
     // tokens land in the description as their uploads finish — save the doc the
     // user can actually see, after the queued uploads appended theirs
     if (uploadCount.value > 0) await uploadChain;
+    const md = (descriptionEditor.value?.getMarkdown() ?? '').trim();
+    // NO-SILENT-WIPE GUARD (#145): while the on-open getDescription fetch is
+    // unsettled or failed, the stored body is unknown — an unedited save must
+    // OMIT description (the update patch skips it) instead of sending '' and
+    // erasing a body the user never saw. Authoring content this session makes
+    // the field known regardless of fetch state; explicit clearing still saves
+    // '' once the fetch resolved.
+    const descriptionKnown = descriptionState.value === 'loaded' || md !== '' || form.description.trim() !== '';
     const payload = {
       title: form.title.trim(),
       // prefer the live doc's markdown; the string form.description is the
       // fallback (defensive against editor remounts)
-      description: (descriptionEditor.value?.getMarkdown() ?? '').trim() || form.description,
+      ...(descriptionKnown ? { description: md || form.description } : {}),
       assigneeId: form.assigneeId === NONE_ID ? null : form.assigneeId,
       projectId: form.projectId === NONE_ID ? null : form.projectId,
       reviewers: form.reviewers,
@@ -359,6 +379,8 @@ async function save() {
     } else {
       await createMutation.mutateAsync({
         ...payload,
+        // create: fresh row — the description always rides (nothing to wipe)
+        description: md || form.description,
         status: form.status,
         ...(props.parentTaskId ? { parentId: props.parentTaskId } : {}),
       });
