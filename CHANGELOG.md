@@ -1,3 +1,10 @@
+## [2.60.11](https://github.com/namhtpyn/tandem/compare/v2.60.10...v2.60.11) (2026-11-01)
+
+
+### Bug Fixes
+
+* **tasks:** liveSteers entry deleted when the run settles — one ACP client context retained per finished run forever ([#161](https://github.com/namhtpyn/tandem/issues/161)) ([f494d1b](https://github.com/namhtpyn/tandem/commit/f494d1bed8de1338401887a5f3ef1f6a9eb38eaf))
+
 ## [2.60.10](https://github.com/namhtpyn/tandem/compare/v2.60.9...v2.60.10) (2026-11-01)
 
 
