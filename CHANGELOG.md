@@ -1,3 +1,10 @@
+## [2.62.2](https://github.com/namhtpyn/tandem/compare/v2.62.1...v2.62.2) (2026-11-01)
+
+
+### Bug Fixes
+
+* **reviews:** failed review turns park the round — settle-failure parks replace the wedging work ladder ([#199](https://github.com/namhtpyn/tandem/issues/199)) ([2e4ba8e](https://github.com/namhtpyn/tandem/commit/2e4ba8e29ae23964334ed9a6edbf32b3c249a104))
+
 ## [2.62.1](https://github.com/namhtpyn/tandem/compare/v2.62.0...v2.62.1) (2026-11-01)
 
 
