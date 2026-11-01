@@ -1,3 +1,10 @@
+## [2.60.12](https://github.com/namhtpyn/tandem/compare/v2.60.11...v2.60.12) (2026-11-01)
+
+
+### Bug Fixes
+
+* **tasks:** newest-run-of-task is ONE shared bounded findFirst — reaper stops fetch-alling + JS-sorting runs ([#163](https://github.com/namhtpyn/tandem/issues/163)) ([3753425](https://github.com/namhtpyn/tandem/commit/37534259334b4f07a9ff395571974042c7d85da3))
+
 ## [2.60.11](https://github.com/namhtpyn/tandem/compare/v2.60.10...v2.60.11) (2026-11-01)
 
 
