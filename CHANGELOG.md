@@ -1,3 +1,10 @@
+## [2.60.10](https://github.com/namhtpyn/tandem/compare/v2.60.9...v2.60.10) (2026-11-01)
+
+
+### Bug Fixes
+
+* **tasks:** dispatch claim is a conditional flip — losers abort pre-insert, guard-rejected RUNNING rows settle ([#162](https://github.com/namhtpyn/tandem/issues/162)) ([d58f229](https://github.com/namhtpyn/tandem/commit/d58f22974fe20bd51e6827c948ef1e34f81922a7))
+
 ## [2.60.9](https://github.com/namhtpyn/tandem/compare/v2.60.8...v2.60.9) (2026-11-01)
 
 
