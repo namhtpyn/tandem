@@ -14,7 +14,7 @@ import { nonNull } from '#shared/utils/non-null';
 import { composerHint, composerReady, forwardReady, useWorkflowActions } from '~/composables/useWorkflowActions';
 import { formatWhenShort } from '~/utils/format-when';
 import { NONE_ID, errorMessage, saveFailed } from '~/utils/forms';
-import type { EmployeeRow, TaskRow, TaskRunRow, ThreadRow } from '~/utils/orpc-types';
+import type { EmployeeRow, TaskRow, TaskRunRow, ThreadPage, ThreadRow } from '~/utils/orpc-types';
 import { activityNotes, buildThread, parseRunEnvelope, threadTime, type ThreadNoteItem } from '~/utils/task-thread';
 import {
   activityView,
@@ -391,7 +391,55 @@ const drawerThreadQuery = useQuery(
     }),
   ),
 );
-const drawerThreadRows = computed(() => (unref(drawerThreadQuery.data) ?? []) as ThreadRow[]);
+const drawerOlderRows = ref<ThreadRow[]>([]);
+const drawerOlderHasMore = ref<boolean | null>(null); // null: never paginated — the newest page decides
+const drawerThreadRows = computed<ThreadRow[]>(() => {
+  // THREAD BOUNDING LAW (#175): same bounded envelope as the task page — the
+  // newest page rides the GET, older pages accumulate on demand below it; SSE
+  // refetches replace only the newest page (id-dedupe absorbs boundary overlap)
+  const newest = (unref(drawerThreadQuery.data) ?? null) as ThreadPage | null;
+  const items = newest?.items ?? [];
+  if (!drawerOlderRows.value.length) return items;
+  const seen = new Set<string>();
+  const merged: ThreadRow[] = [];
+  for (const r of [...drawerOlderRows.value, ...items]) {
+    if (!seen.has(r.id)) merged.push(r);
+    seen.add(r.id);
+  }
+  return merged;
+});
+const drawerHasMore = computed(
+  () => drawerOlderHasMore.value ?? (unref(drawerThreadQuery.data) as ThreadPage | null)?.hasMore ?? false,
+);
+const drawerOlderLoading = ref(false);
+const drawerOlderFailed = ref(false);
+// a drawer opened for another task starts at the newest page — held older pages
+// must never leak across tasks (this component is not remounted per task)
+watch(drawerTaskId, () => {
+  drawerOlderRows.value = [];
+  drawerOlderHasMore.value = null;
+  drawerOlderFailed.value = false;
+});
+/** one-shot previous page ($client imperative GET — queryOptions stay on $orpc);
+ * cursor = the OLDEST held row's (createdAt,id), same contract as the task page */
+async function loadDrawerOlderPage() {
+  const oldest = drawerThreadRows.value[0];
+  if (!oldest || drawerOlderLoading.value || !drawerHasMore.value) return;
+  drawerOlderLoading.value = true;
+  drawerOlderFailed.value = false;
+  try {
+    const page = await $client.tasks.threadOlderPage({
+      taskId: drawerTaskId.value,
+      before: { createdAt: oldest.createdAt, id: oldest.id },
+    });
+    drawerOlderRows.value = [...page.items, ...drawerOlderRows.value];
+    drawerOlderHasMore.value = page.hasMore;
+  } catch {
+    drawerOlderFailed.value = true; // the pager button stays — it is the retry
+  } finally {
+    drawerOlderLoading.value = false;
+  }
+}
 // runs render in their own card above, so the feed keeps notes only
 const workflowFeed = computed<ThreadNoteItem[]>(() =>
   buildThread({
@@ -1317,6 +1365,21 @@ onServerPrefetch(() =>
           </div>
           <div class="space-y-2">
             <h3 class="text-muted text-xs font-medium">Activity</h3>
+            <!-- THREAD BOUNDING LAW: older activity loads on demand, above the feed -->
+            <div v-if="drawerHasMore" class="text-center">
+              <UButton
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                icon="i-lucide-chevron-up"
+                label="Load earlier activity"
+                :loading="drawerOlderLoading"
+                class="min-h-11"
+                data-testid="drawer-thread-older"
+                @click="loadDrawerOlderPage"
+              />
+            </div>
+            <p v-if="drawerOlderFailed" role="alert" class="text-error text-xs">Couldn't load earlier activity.</p>
             <div v-for="a in workflowFeed" :key="a.id" class="border-default rounded-md border px-2.5 py-2 text-xs">
               <p class="text-toned flex items-center gap-1.5 font-medium">
                 <UIcon :name="activityViewById.get(a.id)?.icon ?? 'i-lucide-info'" class="size-3.5" />

@@ -1341,6 +1341,10 @@ export async function executeRun(
 /** runs for one task, newest first — RUN-TRANSCRIPT LAW (#130 slice 2): the
  * snapshot select never carries transcript text; `output` rides ONLY for the
  * RUNNING run (live stream surface) and `prompt` never rides (flags instead) */
+/** THREAD BOUNDING LAW (#175): the runs snapshot carries the newest 50 runs —
+ * a run history beyond that is history, not a live snapshot surface */
+export const RUNS_SNAPSHOT_CAP = 50;
+
 export function runsListScan(ex: DbExecutor, taskId: string) {
   return asDb(ex)
     .select({
@@ -1356,7 +1360,9 @@ export function runsListScan(ex: DbExecutor, taskId: string) {
     })
     .from(taskRuns)
     .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
-    .where(eq(taskMessages.taskId, taskId));
+    .where(eq(taskMessages.taskId, taskId))
+    .orderBy(desc(taskRuns.startedAt), desc(taskRuns.id))
+    .limit(RUNS_SNAPSHOT_CAP);
 }
 
 export async function listRuns(taskId: string) {
