@@ -10,6 +10,11 @@ export type EnvironmentRow = {
   secretId: string | null;
   /** how the linked secret is used */
   secretUsage: SecretUsage;
+  /** last probe verdict (PROBE VERDICT LAW): null = never probed */
+  lastProbeOk: boolean | null;
+  lastProbeDetail: string | null;
+  /** ISO timestamp of the last probe */
+  lastProbeAt: string | null;
   createdAt: string;
   updatedAt: string;
 };

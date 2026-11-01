@@ -1,7 +1,7 @@
 // Environment validation + serialization shared by the API routes.
 import { z } from 'zod';
 
-import { SECRET_USAGE } from '#shared/enums';
+import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
 
 export const environmentInput = z.strictObject({
   name: z.string().min(1).max(64),
@@ -27,3 +27,25 @@ export const environmentUpdateInput = z.strictObject({
   secretId: environmentInput.shape.secretId.removeDefault().optional(),
   secretUsage: environmentInput.shape.secretUsage.removeDefault().optional(),
 });
+
+/** PROBE VERDICT LAW: any connection-affecting field in an update patch
+ *  invalidates the stored probe verdict — a stale OK on a changed target
+ *  would lie. A name-only edit keeps it. */
+export function connectionChanged(
+  data: Partial<{
+    name: string;
+    host: string;
+    port: string;
+    username: string;
+    secretId: string | null;
+    secretUsage: SecretUsage;
+  }>,
+): boolean {
+  return (
+    data.host !== undefined ||
+    data.port !== undefined ||
+    data.username !== undefined ||
+    data.secretId !== undefined ||
+    data.secretUsage !== undefined
+  );
+}

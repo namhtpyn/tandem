@@ -17,8 +17,8 @@ import {
 } from '../../db/schema';
 import { ORPCError, adminProcedure, liveGenerator, protectedProcedure, publishChange } from '../kernel/kernel';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
-import { listEnvironments, listEnvironmentsPaged, toRow } from './environments.service';
-import { environmentInput, environmentUpdateInput } from './environments.util';
+import { listEnvironments, listEnvironmentsPaged, persistProbeVerdict, toRow } from './environments.service';
+import { connectionChanged, environmentInput, environmentUpdateInput } from './environments.util';
 import { probeSsh } from './ssh-probe.service';
 
 export const environmentsRouter = os.router({
@@ -86,19 +86,23 @@ export const environmentsRouter = os.router({
     }
     // partial update: only provided keys land in the patch — omitted port/secret
     // fields keep their stored values (the update schema carries no defaults)
-    const updated = await db
-      .update(environmentsTable)
-      .set({
-        ...(data.name !== undefined ? { name: data.name } : {}),
-        ...(data.host !== undefined ? { host: data.host } : {}),
-        ...(data.username !== undefined ? { username: data.username } : {}),
-        ...(data.port !== undefined ? { port: data.port } : {}),
-        ...(data.secretId !== undefined ? { secretId: data.secretId } : {}),
-        ...(data.secretUsage !== undefined ? { secretUsage: data.secretUsage } : {}),
-        updatedAt: new Date(),
-      })
-      .where(eq(environmentsTable.id, id))
-      .returning();
+    // PROBE VERDICT LAW: a connection-affecting change invalidates the stored
+    // probe verdict — a stale OK on a changed target would lie
+    const patch: Partial<typeof environmentsTable.$inferInsert> = {
+      ...(data.name !== undefined ? { name: data.name } : {}),
+      ...(data.host !== undefined ? { host: data.host } : {}),
+      ...(data.username !== undefined ? { username: data.username } : {}),
+      ...(data.port !== undefined ? { port: data.port } : {}),
+      ...(data.secretId !== undefined ? { secretId: data.secretId } : {}),
+      ...(data.secretUsage !== undefined ? { secretUsage: data.secretUsage } : {}),
+      updatedAt: new Date(),
+    };
+    if (connectionChanged(data)) {
+      patch.lastProbeOk = null;
+      patch.lastProbeDetail = null;
+      patch.lastProbeAt = null;
+    }
+    const updated = await db.update(environmentsTable).set(patch).where(eq(environmentsTable.id, id)).returning();
     if (updated.length === 0) {
       throw new ORPCError('NOT_FOUND', { message: 'environment not found' });
     }
@@ -158,6 +162,11 @@ export const environmentsRouter = os.router({
     }
     const started = Date.now();
     const result = await probeSsh(env.host, env.port, env.username, privateKey, usage);
-    return { ...result, durationMs: Date.now() - started };
+    const durationMs = Date.now() - started;
+    // PROBE VERDICT LAW: persist BOTH outcomes on the row; the SSE publish
+    // refetches the paged list so the Status column renders the fresh verdict
+    await persistProbeVerdict(input.id, result);
+    await publishChange(CHANGE_RESOURCE.ENVIRONMENTS, CHANGE_ACTION.UPDATE);
+    return { ...result, durationMs, lastProbeAt: new Date().toISOString() };
   }),
 });
