@@ -181,6 +181,37 @@ export async function pushInputAttachments(
   }
 }
 
+/** active-sibling scan for the staging sweep (#160): RUNNING runs of the task
+ * EXCLUDING the settling run itself — its own status flips only later, in
+ * writer.finish (after collect), so a self-inclusive check would block the
+ * sweep forever and out/ would grow until the 50MB cap silently dropped every
+ * later deliverable. */
+export function sweepActiveSiblingScan(ex: DbExecutor, taskId: string, runId: string) {
+  return asDb(ex)
+    .select({ id: taskRuns.id })
+    .from(taskRuns)
+    .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+    .where(and(eq(taskRuns.status, RUN_STATUS.RUNNING), eq(taskMessages.taskId, taskId), ne(taskRuns.id, runId)));
+}
+
+/** remove the task's whole sandbox staging dir once NO OTHER run of the task is
+ * still running (SPEC attachments flow). Best-effort on both sides: a failed
+ * sweep never fails a settle, and an active sibling just leaves staging for its
+ * own settle to sweep. Returns whether the sweep ran. */
+export async function sweepTaskSandboxWhenLastRun(taskId: string, runId: string, sshPlan: SshPlan): Promise<boolean> {
+  try {
+    const active = await sweepActiveSiblingScan(db, taskId, runId);
+    if (active.length > 0) return false;
+    const { loadClient } = await import('./ssh-exec.util');
+    const ClientCtor = await loadClient();
+    await cleanupTaskFiles(ClientCtor, sshPlan, taskId);
+    return true;
+  } catch {
+    /* sweep is best-effort */
+    return false;
+  }
+}
+
 /** after a run settles: collect agent outputs from the sandbox, then clean up when last.
  * Returns the message-attachment tokens for the collected images (RESULT-MESSAGE
  * ATTACHMENTS, SPEC 2026-10-31) — the caller appends them to the run message body. */
@@ -202,6 +233,22 @@ export async function settleAttachments(
           const bytes = Buffer.from(await Bun.file(f.localPath).arrayBuffer());
           const mime = normalizeMime(guessMime(f.filename));
           if (!mimeAllowed(mime)) continue;
+          const sha256 = sha256Hex(bytes);
+          // idempotent collect (#160): staging survives while a sibling run is
+          // active, so the next collect re-lists files this task already stores
+          // — a byte-identical output must not become a second row (it would
+          // also re-embed old images into every new result message)
+          const dups = await db
+            .select({ id: taskAttachments.id })
+            .from(taskAttachments)
+            .where(
+              and(
+                eq(taskAttachments.taskId, taskId),
+                eq(taskAttachments.kind, 'output'),
+                eq(taskAttachments.sha256, sha256),
+              ),
+            );
+          if (dups.length > 0) continue;
           const id = uuidv7();
           await saveAttachmentBytes(taskId, id, bytes);
           await db.insert(taskAttachments).values({
@@ -213,7 +260,7 @@ export async function settleAttachments(
             filename: sanitizeFilename(f.filename),
             mime,
             size: bytes.byteLength,
-            sha256: sha256Hex(bytes),
+            sha256,
             createdBy: null,
           });
           stored.push({ id, filename: sanitizeFilename(f.filename), mime, size: bytes.byteLength });
@@ -228,6 +275,10 @@ export async function settleAttachments(
         });
         await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
       }
+      // sweep staging on the SUCCESS path too (#160): the old code returned
+      // before cleanup, so out/ only ever grew until the 50MB cap silently
+      // dropped all later deliverables
+      await sweepTaskSandboxWhenLastRun(taskId, runId, sshPlan);
       return { collected: collected.length, tokens: resultImageTokens(stored) };
     } finally {
       await rm(tmp, { recursive: true, force: true });
@@ -235,21 +286,7 @@ export async function settleAttachments(
   } catch {
     /* collection is best-effort; never fail a finished run over it */
   }
-  // cleanup only when no other run of this task is still running
-  try {
-    const active = await db
-      .select({ id: taskRuns.id })
-      .from(taskRuns)
-      .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
-      .where(and(eq(taskRuns.status, RUN_STATUS.RUNNING), eq(taskMessages.taskId, taskId)));
-    if (active.length === 0) {
-      const { loadClient } = await import('./ssh-exec.util');
-      const ClientCtor = await loadClient();
-      await cleanupTaskFiles(ClientCtor, sshPlan, taskId);
-    }
-  } catch {
-    /* cleanup is best-effort */
-  }
+  await sweepTaskSandboxWhenLastRun(taskId, runId, sshPlan);
   return { collected: 0, tokens: [] };
 }
 
