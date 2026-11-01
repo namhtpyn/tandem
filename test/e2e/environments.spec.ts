@@ -82,11 +82,21 @@ test('environment CRUD round-trip on the live page', async ({ page }) => {
     page.locator('tr:visible', { hasText: rowName }).locator('span:visible', { hasText: '10.9.8.7' }),
   ).toBeVisible({ timeout: 15_000 });
 
-  // probe (refused port -> failed badge with detail), scoped to the row
+  // probe (refused port -> failed badge with detail), scoped to the row — the
+  // verdict persists on the row (PROBE VERDICT LAW) with the probed-when label
   await row.getByRole('button', { name: /Probe / }).click();
   await expect(page.locator('tr:visible', { hasText: rowName }).getByText(RUN_STATUS.FAILED)).toBeVisible({
     timeout: 20_000,
   });
+  await expect(page.locator('tr:visible', { hasText: rowName }).getByText(/probed /)).toBeVisible();
+
+  // the verdict survives a reload with ZERO clicks (was ephemeral client state)
+  await page.reload();
+  await waitForHydration(page);
+  await expect(page.locator('tr:visible', { hasText: rowName }).getByText(RUN_STATUS.FAILED)).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.locator('tr:visible', { hasText: rowName }).getByText(/probed /)).toBeVisible();
 
   // delete requires confirmation, scoped to this row
   await page

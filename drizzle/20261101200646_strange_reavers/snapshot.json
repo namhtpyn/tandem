@@ -1,0 +1,115 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "f4fe4e27-cbca-4dfd-b2a9-587a4778cf91",
+  "prevIds": [
+    "9bc918df-060e-4164-9a44-4356cc089459"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "environments",
+        "last_probe_ok"
+      ],
+      "writes": [
+        "s|col|public.environments.last_probe_ok",
+        "n|col|public.environments.last_probe_ok",
+        "e|col|public.environments.last_probe_ok"
+      ],
+      "reads": [
+        "n|tbl|public.environments",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "environments",
+        "last_probe_detail"
+      ],
+      "writes": [
+        "s|col|public.environments.last_probe_detail",
+        "n|col|public.environments.last_probe_detail",
+        "e|col|public.environments.last_probe_detail"
+      ],
+      "reads": [
+        "n|tbl|public.environments",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "environments",
+        "last_probe_at"
+      ],
+      "writes": [
+        "s|col|public.environments.last_probe_at",
+        "n|col|public.environments.last_probe_at",
+        "e|col|public.environments.last_probe_at"
+      ],
+      "reads": [
+        "n|tbl|public.environments",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "environments",
+        "name": "last_probe_ok",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "environments",
+        "name": "last_probe_detail",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "environments",
+        "name": "last_probe_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}
