@@ -12,7 +12,7 @@ import { FLAG_TASKS_TURN_DURATIONS } from '#shared/flags';
 import { nonNull } from '#shared/utils/non-null';
 import { attachmentUrl, employeeAvatarUrl } from '~/utils/api-urls';
 import { formatWhenShort, turnDurationLabel } from '~/utils/format-when';
-import type { EmployeeRow, TaskRow, ThreadRow } from '~/utils/orpc-types';
+import type { EmployeeRow, TaskRow, ThreadPage, ThreadRow } from '~/utils/orpc-types';
 import { activityNotes, buildThread, parseRunEnvelope } from '~/utils/task-thread';
 import type { ThreadItem } from '~/utils/task-thread';
 import { parseTaskText } from '~/utils/task-tokens';
@@ -43,7 +43,54 @@ const threadQuery = useQuery(
     }),
   ),
 );
-const threadRows = computed(() => (unref(threadQuery.data) ?? []) as ThreadRow[]);
+// ---- THREAD BOUNDING LAW (#175): the GET returns a bounded envelope — the newest
+// up to 200 visible items + hasMore. Older history loads on demand page by page:
+// each fetched page is strictly older than the oldest held row, so prepending
+// keeps the union chronological; SSE refetches replace only the newest page and
+// the id-dedupe absorbs the boundary overlap.
+const newestPage = computed(() => (unref(threadQuery.data) ?? null) as ThreadPage | null);
+const olderRows = ref<ThreadRow[]>([]);
+const olderHasMore = ref<boolean | null>(null); // null: never paginated — the newest page decides
+const threadRows = computed<ThreadRow[]>(() => {
+  const newest = newestPage.value?.items ?? [];
+  if (!olderRows.value.length) return newest;
+  const seen = new Set<string>();
+  const merged: ThreadRow[] = [];
+  for (const r of [...olderRows.value, ...newest]) {
+    if (!seen.has(r.id)) merged.push(r);
+    seen.add(r.id);
+  }
+  return merged;
+});
+const hasMoreRows = computed(() => olderHasMore.value ?? newestPage.value?.hasMore ?? false);
+const olderLoading = ref(false);
+const olderFailed = ref(false);
+/** one-shot previous page ($client imperative GET — same pattern as
+ * ensureTranscript; $orpc stays queryOptions-only). The cursor is the OLDEST held
+ * row's (createdAt,id). Prepends must not yank the reader's scroll position:
+ * the viewport shifts by exactly the height the new rows added. */
+async function loadOlderPage() {
+  const oldest = threadRows.value[0];
+  if (!oldest || olderLoading.value || !hasMoreRows.value) return;
+  olderLoading.value = true;
+  olderFailed.value = false;
+  const el = scroller.value;
+  const prevHeight = el?.scrollHeight ?? 0;
+  try {
+    const page = await $client.tasks.threadOlderPage({
+      taskId: taskId.value,
+      before: { createdAt: oldest.createdAt, id: oldest.id },
+    });
+    olderRows.value = [...page.items, ...olderRows.value];
+    olderHasMore.value = page.hasMore;
+    await nextTick();
+    if (el) el.scrollTop += el.scrollHeight - prevHeight;
+  } catch {
+    olderFailed.value = true; // the pager button stays — it is the retry
+  } finally {
+    olderLoading.value = false;
+  }
+}
 // the run's thread message carries the settled result body — attach it to the run feed
 const runFeed = computed(() =>
   threadRows.value.flatMap((r) =>
@@ -289,6 +336,24 @@ onServerPrefetch(() => Promise.all([threadQuery.suspense(), employeesLive.suspen
       No activity yet — write a note below or dispatch the agent.
     </p>
     <div v-else :class="thread.length < 3 ? 'my-auto space-y-4' : 'mt-auto space-y-4'">
+      <!-- THREAD BOUNDING LAW: older history loads on demand — the pager sits at
+           the top of the timeline and prepends without moving the viewport -->
+      <div v-if="hasMoreRows" class="flex justify-center pb-1">
+        <UButton
+          size="xs"
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-chevron-up"
+          label="Load earlier messages"
+          :loading="olderLoading"
+          class="min-h-11"
+          data-testid="thread-older"
+          @click="loadOlderPage"
+        />
+      </div>
+      <p v-if="olderFailed" role="alert" class="text-error text-center text-xs">
+        Couldn't load earlier messages — try again.
+      </p>
       <template v-for="item in thread" :key="item.id">
         <!-- brief: the task description as the opening message -->
         <div v-if="item.kind === 'brief'" class="flex gap-2.5">
