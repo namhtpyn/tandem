@@ -106,7 +106,15 @@ describe('router wiring scan (tiers per SPEC Roles & access)', () => {
     'statuses/statuses.router.ts': ['save', 'remove'],
     'settings/settings.router.ts': ['update'],
     'environments/environments.router.ts': ['create', 'update', 'remove', 'probe'],
-    'employees/employees.router.ts': ['create', 'update', 'remove', 'createApiKey', 'updateApiKey', 'revokeApiKey'],
+    'employees/employees.router.ts': [
+      'create',
+      'update',
+      'remove',
+      'save',
+      'createApiKey',
+      'updateApiKey',
+      'revokeApiKey',
+    ],
   };
 
   const ADMIN_ONLY_FILES = [

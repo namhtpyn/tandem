@@ -486,7 +486,9 @@ export const employeesRouter = os.router({
       }),
     ),
 
-    save: protectedProcedure
+    // admin-tier: the rename cascades onto every employee holding the old
+    // title — same tier as statuses.save / titles.remove (SPEC write tiers)
+    save: adminProcedure
       .input(
         z.strictObject({
           id: z.string().min(1).optional(),
