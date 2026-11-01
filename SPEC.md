@@ -110,6 +110,12 @@ transport contract in one place:
 - admin manages the OIDC provider set at runtime (secrets live in the registry, never returned by `oidc.live` (only `hasSecret: true`)
 - env fallback: exactly ONE provider (TANDEM_OIDC_ISSUER/_CLIENT_ID/_CLIENT_SECRET/_LABEL), used only when no stored registry exists
 
+### Boot seed law (no default credential, #172)
+
+- seeding runs ONLY when the `user` table is empty (restarts never touch real accounts). Seeding REQUIRES an explicit `ADMIN_PASSWORD` (min 8 chars): when seeding is due and it is unset, boot prints the env-failure report and exits nonzero — there is NO hardcoded fallback login. The known literal `tandem-admin` is refused as a seed value the same way. `ADMIN_EMAIL` may default to `admin@tandem.local`.
+- forced rotation: the seeded admin's row carries `must_change_password = true`. While the session user carries that flag, every oRPC procedure above the public tier (`auth.session`/`auth.config`/`auth.configLive`/`meta.version`/`/health/*`/`/auth/**` excepted) rejects FORBIDDEN `password change required`; `auth.changeMyPassword` stays reachable — it verifies the current credential and replaces it, clearing the flag in one transaction. `auth.session` carries `mustChangePassword`, and the UI shows a single set-new-password screen for that session (minimum steps: current + new + confirm).
+- test-only escape: `TANDEM_SEED_NO_ROTATION=1` seeds without the flag — the e2e/CI knob; production never sets it.
+
 ### Vault key law
 
 - `TANDEM_VAULT_KEY` is REQUIRED (32-byte base64, `openssl rand -base64 32`); there is NO hardcoded fallback — a key shipped in the repo is a key everyone has. Wrong size or missing key throws at first use with a clear message. Losing the key loses every stored secret.
@@ -297,7 +303,7 @@ non-positive deltas render no duration.
 
 1. module init: `sqlClient` built from `DATABASE_URL`; missing env → process exits 1
 2. `migrations` ledger table is created; bundled drizzle SQL is applied in name order
-3. no users & `user` rows → seed admin (`ADMIN_EMAIL`/`ADMIN_PASSWORD`, defaults `admin@tandem.local` / tandem-admin); seed never runs when users exists
+3. no users & `user` rows → seed admin (`ADMIN_EMAIL` default `admin@tandem.local`, `ADMIN_PASSWORD` REQUIRED — no default, `tandem-admin` refused; missing → env-failure report + exit 1; the seeded row carries `must_change_password = true`); seed never runs when users exists (SPEC "Boot seed law")
 4. password stored as better-auth scrypt (`salt:hash`, no prefix label)
 
 ## UI laws
