@@ -1,3 +1,10 @@
+## [2.60.4](https://github.com/namhtpyn/tandem/compare/v2.60.3...v2.60.4) (2026-11-01)
+
+
+### Performance Improvements
+
+* **tasks:** bound list-time obligation reads + take description off the wire ([#130](https://github.com/namhtpyn/tandem/issues/130) slice 3) ([#143](https://github.com/namhtpyn/tandem/issues/143)) ([ac8b3da](https://github.com/namhtpyn/tandem/commit/ac8b3da4081b767af6e78be82a7f99698b067e29))
+
 ## [2.60.3](https://github.com/namhtpyn/tandem/compare/v2.60.2...v2.60.3) (2026-11-01)
 
 
