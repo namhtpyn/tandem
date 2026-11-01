@@ -366,7 +366,7 @@ import { buildBrief, loadBriefData } from './brief.service';
 import { promptImageSplit } from './prompt-images.util';
 import { recordProposals } from './proposals.service';
 import { resultImageTokens, type ResultFile } from './result-attachments.util';
-import { recordVerdict } from './review.service';
+import { recordVerdict, parkRound } from './review.service';
 import type { SshPlan } from './ssh-exec.util';
 import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles, ensureOutDir } from './ssh-files.util';
 import { appendMessageAttachments, createRunMessage, updateRunMessageBody } from './thread.service';
@@ -1028,8 +1028,15 @@ async function settleDoneRun(
     // a submit/verdict failure is REAL: log it and take the retry/backoff path —
     // swallowing it here then resetting failStreak wedged the task with no retry
     /* v8 ignore start */ // needs a mid-flight workflow mutation so submit throws; the reaper/backoff arms cover the ladder
-    consola.error(`[settle] task ${taskId} run ${runId} settle failed: ${e instanceof Error ? e.message : String(e)}`);
-    await bounceTaskAfterRun(taskId, runId, buffer);
+    const msg = e instanceof Error ? e.message : String(e);
+    consola.error(`[settle] task ${taskId} run ${runId} settle failed: ${msg}`);
+    if (plan.review) {
+      // a lost review verdict is a settle failure: park on the owner (SPEC #199) —
+      // the work ladder's bounce no-ops on an in-review task and the round would wedge
+      await parkRound(taskId, `review verdict settle failed — ${msg}`);
+    } else {
+      await bounceTaskAfterRun(taskId, runId, buffer);
+    }
     return 'backoff';
   }
   // streak reset only AFTER a successful settle — a failed settle must keep the ladder
@@ -1111,6 +1118,12 @@ function createRunWriter(runId: string, initial: string, messageId: string) {
     // verdict — a separate 'run finished' pill only duplicated it in the thread
     if (status === RUN_STATUS.DONE) {
       await settleDoneRun(taskId, runId, plan, buffer);
+    } else if (plan.review) {
+      // SETTLE-FAILURE PARK (SPEC, #199): a review turn that settles FAILED never
+      // rides the work backoff ladder — bounceTaskAfterRun's doing-guard no-ops on an
+      // in-review task, wedging the round (PENDING row, nothing re-fires it). parkRound
+      // flips in-review -> BLOCKED; owner unblock re-dispatches the parked reviewer.
+      await parkRound(taskId, `review turn failed — run settled ${status}`);
     } else {
       await bounceTaskAfterRun(taskId, runId, buffer);
     }

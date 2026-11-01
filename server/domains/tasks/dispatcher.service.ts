@@ -100,23 +100,33 @@ async function reapStaleRunsInner() {
       const current = nonNull(
         (
           await db.query.tasks.findMany({
-            columns: { failStreak: true },
+            columns: { failStreak: true, status: true },
             where: { id: { eq: taskId } },
             orderBy: { createdAt: 'asc' },
           })
         )[0],
       );
-      const streak = current.failStreak + 1;
-      const waitMs = 15 * 60_000; // timeout = worst tier; something is wrong with the agent
-      await db
-        .update(tasks)
-        .set({
-          status: STATUS.todo,
-          failStreak: streak,
-          dispatchAfter: new Date(Date.now() + waitMs),
-          updatedAt: new Date(),
-        })
-        .where(eq(tasks.id, taskId));
+      if (current.status === STATUS.inReview) {
+        // a review turn that timed out never rides the work ladder (#199): the todo-flip
+        // yanks an in-review task out of its open round (rows stay PENDING, nothing
+        // re-fires them). Park on the owner; unblock re-dispatches the reviewer.
+        const { parkRound } = await import('./review.service');
+        await parkRound(taskId, `review turn timed out — reaped after ${minutes} min`);
+      } else {
+        const streak = current.failStreak + 1;
+        const waitMs = 15 * 60_000; // timeout = worst tier; something is wrong with the agent
+        await db
+          .update(tasks)
+          .set({
+            status: STATUS.todo,
+            failStreak: streak,
+            dispatchAfter: new Date(Date.now() + waitMs),
+            updatedAt: new Date(),
+          })
+          // atomic re-check (#162 pattern): a settle/status change between read and
+          // write wins — a work reap only bounces a task still in doing
+          .where(and(eq(tasks.id, taskId), eq(tasks.status, STATUS.doing)));
+      }
     }
     await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);

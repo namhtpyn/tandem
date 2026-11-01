@@ -200,14 +200,16 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
         round,
       });
     } catch (e) {
-      /* v8 ignore next 2 -- best-effort: a review-dispatch failure logs and the human card remains */
-      await logActivity(
-        taskId,
-        ACTIVITY_KIND.STATUS,
-        null,
-        `review turn failed to dispatch: ${e instanceof Error ? e.message : String(e)}`,
-        { reviewTurnFailed: true, reviewerId: row.reviewerId, round },
-      );
+      const reason = e instanceof Error ? e.message : String(e);
+      await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review turn failed to dispatch: ${reason}`, {
+        reviewTurnFailed: true,
+        reviewerId: row.reviewerId,
+        round,
+      });
+      // SETTLE-FAILURE PARK (SPEC, #199): a mint failure leaves the PENDING row with
+      // nothing to re-fire it — park instead of stranding the round silently. Owner
+      // unblock (status -> in-review) re-dispatches through the unblock-resume path.
+      await parkRound(taskId, `review turn failed to dispatch — ${reason}`);
     }
     return; // SEQUENTIAL: one turn in flight — the next fires from this verdict's settle
   }
@@ -473,7 +475,14 @@ export async function parkRound(taskId: string, why: string) {
     await db.select({ status: tasks.status, ownerId: tasks.ownerId }).from(tasks).where(eq(tasks.id, taskId))
   )[0];
   if (!task) throw new Error('task not found');
-  await db.update(tasks).set({ status: BLOCKED_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
+  // park only from in-review (#199): a manual settle that won the race owns the
+  // outcome — parking over a terminal/owner-moved status would resurrect a dead round
+  if (task.status !== IN_REVIEW_STATUS) return;
+  await db
+    .update(tasks)
+    .set({ status: BLOCKED_STATUS, updatedAt: new Date() })
+    // atomic re-check: a settle/status change between read and write wins
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, IN_REVIEW_STATUS)));
   await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review parked — ${why}`, { reviewParked: true, why });
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
