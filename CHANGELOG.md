@@ -1,3 +1,10 @@
+## [2.61.1](https://github.com/namhtpyn/tandem/compare/v2.61.0...v2.61.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* **api:** attachment upload wired at write tier — role gate, pre-parse body cap, per-task input quota ([#173](https://github.com/namhtpyn/tandem/issues/173)) ([ea0b513](https://github.com/namhtpyn/tandem/commit/ea0b513cbd53a3a9b1d1828b94f98ef8ef155573))
+
 # [2.61.0](https://github.com/namhtpyn/tandem/compare/v2.60.13...v2.61.0) (2026-11-01)
 
 
