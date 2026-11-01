@@ -94,7 +94,7 @@ const deleteOpen = computed({
     if (!v) pendingDelete.value = null;
   },
 });
-const probeResults = ref<Record<string, { ok: boolean; detail: string; durationMs: number } | undefined>>({});
+const probeErrors = ref<Record<string, string | undefined>>({});
 
 const createMutation = useMutation($orpc.environments.create.mutationOptions());
 const updateMutation = useMutation($orpc.environments.update.mutationOptions());
@@ -117,8 +117,6 @@ function openEditor(row?: EnvironmentRow) {
   form.username = row?.username ?? '';
   form.secretId = row?.secretId ?? NONE_ID;
   form.secretUsage = row?.secretUsage ?? SECRET_USAGE.SSH_KEY;
-  // a stale probe verdict must not survive an edit session that changed the target
-  if (row) probeResults.value[row.id] = undefined;
   message.value = '';
   editorOpen.value = true;
 }
@@ -137,7 +135,7 @@ async function save() {
     };
     if (editingId.value) {
       await updateMutation.mutateAsync({ id: editingId.value, ...payload });
-      probeResults.value[editingId.value] = undefined;
+      // the server clears the stored verdict when a connection field changed
     } else {
       await createMutation.mutateAsync(payload);
     }
@@ -169,25 +167,34 @@ async function remove() {
   }
 }
 
+/** PROBE VERDICT LAW: the Status column renders the verdict persisted on the
+ *  row — probeResults client state is gone. A probe's fresh verdict lands via
+ *  the SSE invalidation; the ephemeral probeErrors map only carries the rare
+ *  case where the RPC itself failed (nothing was persisted server-side). */
 async function probe(row: EnvironmentRow) {
   probingId.value = row.id;
   message.value = '';
   try {
-    const res = await probeCall({ id: row.id });
-    probeResults.value[row.id] = res as { ok: boolean; detail: string; durationMs: number };
+    await probeCall({ id: row.id });
+    probeErrors.value[row.id] = undefined;
   } catch (e) {
-    probeResults.value[row.id] = { ok: false, detail: saveFailed(e, 'connection', 'probe'), durationMs: 0 };
+    probeErrors.value[row.id] = saveFailed(e, 'connection', 'probe');
   } finally {
     probingId.value = null;
   }
 }
 
-/** probed state for one row — optional chaining instead of template non-null assertions */
-function probeResult(id: string) {
-  return probeResults.value[id];
+/** relative 'probed <when>' label; ISO full date in the title attr */
+function probedWhen(iso: string | null | undefined) {
+  if (!iso) return '';
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
-
-const probeLabel = (ok: boolean | undefined) => (ok ? 'OK' : 'Failed');
 
 // the search box is pointless over an empty, unfiltered list — hide it there
 const showSearch = computed(() => total.value > 0 || !!search.value);
@@ -257,22 +264,40 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
       </template>
       <template #probe-cell="{ row }">
         <div class="flex items-center gap-2">
+          <UBadge v-if="probeErrors[row.original.id]" color="error" variant="subtle" size="sm" icon="i-lucide-circle">
+            Failed
+          </UBadge>
           <UBadge
-            v-if="probeResult(row.original.id)"
-            :color="probeResult(row.original.id)?.ok ? 'success' : 'error'"
+            v-else-if="row.original.lastProbeOk === null || row.original.lastProbeOk === undefined"
+            color="neutral"
             variant="subtle"
             size="sm"
             icon="i-lucide-circle"
           >
-            {{ probeLabel(probeResult(row.original.id)?.ok) }}
+            Not probed
           </UBadge>
-          <UBadge v-else color="neutral" variant="subtle" size="sm" icon="i-lucide-circle">Not probed</UBadge>
-          <span
-            v-if="probeResult(row.original.id)"
-            class="text-dimmed truncate text-xs"
-            :title="probeResult(row.original.id)?.detail"
+          <UBadge
+            v-else
+            :color="row.original.lastProbeOk ? 'success' : 'error'"
+            variant="subtle"
+            size="sm"
+            icon="i-lucide-circle"
           >
-            {{ probeResult(row.original.id)?.detail }} ({{ probeResult(row.original.id)?.durationMs }} ms)
+            {{ row.original.lastProbeOk ? 'OK' : 'Failed' }}
+          </UBadge>
+          <span
+            v-if="probeErrors[row.original.id]"
+            class="text-dimmed truncate text-xs"
+            :title="probeErrors[row.original.id]"
+          >
+            {{ probeErrors[row.original.id] }}
+          </span>
+          <span
+            v-else-if="row.original.lastProbeAt"
+            class="text-dimmed truncate text-xs"
+            :title="`${row.original.lastProbeDetail ?? ''} · probed ${row.original.lastProbeAt}`"
+          >
+            {{ row.original.lastProbeDetail }} · probed {{ probedWhen(row.original.lastProbeAt) }}
           </span>
         </div>
       </template>
@@ -286,7 +311,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               size="sm"
               :aria-label="`Probe ${row.original.name}`"
               :loading="probingId === row.original.id"
-              :disabled="busy || probingId !== null"
+              :disabled="busy || probingId === row.original.id"
               @click="probe(row.original)"
             />
             <template #content>
@@ -332,19 +357,30 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
               <p class="text-dimmed truncate font-mono text-xs">{{ row.username }}@{{ row.host }}:{{ row.port }}</p>
             </div>
             <div class="flex flex-col items-end gap-1">
+              <UBadge v-if="probeErrors[row.id]" color="error" variant="subtle" size="sm"> Failed </UBadge>
               <UBadge
-                v-if="probeResult(row.id)"
-                :color="probeResult(row.id)?.ok ? 'success' : 'error'"
+                v-else-if="row.lastProbeOk === null || row.lastProbeOk === undefined"
+                color="neutral"
                 variant="subtle"
                 size="sm"
+                icon="i-lucide-circle"
               >
-                {{ probeLabel(probeResult(row.id)?.ok) }}
+                Not probed
               </UBadge>
-              <UBadge v-else color="neutral" variant="subtle" size="sm" icon="i-lucide-circle">Not probed</UBadge>
+              <UBadge v-else :color="row.lastProbeOk ? 'success' : 'error'" variant="subtle" size="sm">
+                {{ row.lastProbeOk ? 'OK' : 'Failed' }}
+              </UBadge>
             </div>
           </div>
-          <p v-if="probeResult(row.id)" class="text-dimmed mt-1 truncate text-xs" :title="probeResult(row.id)?.detail">
-            {{ probeResult(row.id)?.detail }} ({{ probeResult(row.id)?.durationMs }} ms)
+          <p v-if="probeErrors[row.id]" class="text-dimmed mt-1 truncate text-xs" :title="probeErrors[row.id]">
+            {{ probeErrors[row.id] }}
+          </p>
+          <p
+            v-else-if="row.lastProbeAt"
+            class="text-dimmed mt-1 truncate text-xs"
+            :title="`${row.lastProbeDetail ?? ''} · probed ${row.lastProbeAt}`"
+          >
+            {{ row.lastProbeDetail }} · probed {{ probedWhen(row.lastProbeAt) }}
           </p>
           <div v-if="editable" class="mt-3 flex justify-end gap-1">
             <UPopover mode="hover" enable-touch>
@@ -355,7 +391,7 @@ onServerPrefetch(() => Promise.all([liveQuery.suspense(), secretsQuery.suspense(
                 size="sm"
                 :aria-label="`Probe ${row.name}`"
                 :loading="probingId === row.id"
-                :disabled="busy || probingId !== null"
+                :disabled="busy || probingId === row.id"
                 @click="probe(row)"
               />
               <template #content>

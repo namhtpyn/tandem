@@ -3,6 +3,7 @@ import { defineRelations } from 'drizzle-orm';
 // Drizzle rc (Relations v2) over Postgres.
 import {
   type AnyPgColumn,
+  boolean,
   pgTable,
   text,
   timestamp,
@@ -42,6 +43,12 @@ export const environments = pgTable('environments', {
   // nopad>' fingerprint of the server's wire-format host key; null = first
   // contact. A mismatch fails the connection closed before auth.
   hostKeyFingerprint: text('host_key_fingerprint'),
+  // last probe verdict (PROBE VERDICT LAW, SPEC Environments procedures):
+  // persisted so the manager's Status column renders from data — null = never
+  // probed. Cleared by an update that changes a connection field.
+  lastProbeOk: boolean('last_probe_ok'),
+  lastProbeDetail: text('last_probe_detail'),
+  lastProbeAt: timestamp('last_probe_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .$default(() => new Date()),

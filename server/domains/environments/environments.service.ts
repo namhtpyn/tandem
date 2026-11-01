@@ -1,6 +1,6 @@
 // environments service: row mapping + list helpers
 
-import { EmptyFilter } from 'drizzle-orm';
+import { EmptyFilter, eq } from 'drizzle-orm';
 
 import type { SecretUsage } from '#shared/enums';
 import type { EnvironmentRow } from '#shared/types';
@@ -12,7 +12,18 @@ import { environments as environmentsTable } from '../../db/schema';
 export function toRow(
   r: Pick<
     typeof environmentsTable.$inferSelect,
-    'id' | 'name' | 'host' | 'port' | 'username' | 'secretId' | 'secretUsage' | 'createdAt' | 'updatedAt'
+    | 'id'
+    | 'name'
+    | 'host'
+    | 'port'
+    | 'username'
+    | 'secretId'
+    | 'secretUsage'
+    | 'lastProbeOk'
+    | 'lastProbeDetail'
+    | 'lastProbeAt'
+    | 'createdAt'
+    | 'updatedAt'
   >,
 ): EnvironmentRow {
   return {
@@ -23,24 +34,32 @@ export function toRow(
     username: r.username,
     secretId: r.secretId,
     secretUsage: r.secretUsage as SecretUsage,
+    lastProbeOk: r.lastProbeOk,
+    lastProbeDetail: r.lastProbeDetail,
+    lastProbeAt: r.lastProbeAt ? r.lastProbeAt.toISOString() : null,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   };
 }
 
+const ROW_COLUMNS = {
+  id: true,
+  name: true,
+  host: true,
+  port: true,
+  username: true,
+  secretId: true,
+  secretUsage: true,
+  lastProbeOk: true,
+  lastProbeDetail: true,
+  lastProbeAt: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
 export async function listEnvironments() {
   const rows = await db.query.environments.findMany({
-    columns: {
-      id: true,
-      name: true,
-      host: true,
-      port: true,
-      username: true,
-      secretId: true,
-      secretUsage: true,
-      createdAt: true,
-      updatedAt: true,
-    },
+    columns: { ...ROW_COLUMNS },
     orderBy: { createdAt: 'desc' },
   });
   return rows.map(toRow);
@@ -51,17 +70,7 @@ export async function listEnvironmentsPaged(input: { page?: number; pageSize?: n
   const pageSize = input.pageSize ?? 10;
   const q = input.q?.trim();
   const { data, total } = await db.query.environments.findManyAndCount({
-    columns: {
-      id: true,
-      name: true,
-      host: true,
-      port: true,
-      username: true,
-      secretId: true,
-      secretUsage: true,
-      createdAt: true,
-      updatedAt: true,
-    },
+    columns: { ...ROW_COLUMNS },
     where: q
       ? {
           OR: [
@@ -76,4 +85,13 @@ export async function listEnvironmentsPaged(input: { page?: number; pageSize?: n
     offset: (page - 1) * pageSize,
   });
   return { environments: data.map(toRow), total };
+}
+
+/** PROBE VERDICT LAW: persist the probe outcome (success AND failure) on the
+ *  row — the manager's Status column renders from this, never client state. */
+export async function persistProbeVerdict(id: string, result: { ok: boolean; detail: string }) {
+  await db
+    .update(environmentsTable)
+    .set({ lastProbeOk: result.ok, lastProbeDetail: result.detail, lastProbeAt: new Date() })
+    .where(eq(environmentsTable.id, id));
 }
