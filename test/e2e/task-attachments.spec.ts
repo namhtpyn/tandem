@@ -121,3 +121,39 @@ test('task removal sweeps the attachment bytes off disk (#150)', async ({ page, 
     'per-task attachments dir must be gone',
   ).rejects.toThrow();
 });
+
+test('upload route enforces the write tier + pre-parse body cap (#173)', async ({ page, context, playwright }) => {
+  const tasksPage = new TasksPage(page);
+  const title = `Attachment gate ${Date.now().toString(36)}`;
+  await login(page);
+  await page.goto('/tasks');
+  await waitForHydration(page);
+  await page.getByRole('button', { name: 'New task' }).first().click();
+  await page.getByPlaceholder('Task title').fill(title);
+  await page.getByRole('button', { name: /Save|Create task/ }).click();
+  await expect(page.getByRole('link', { name: title }).first()).toBeVisible({ timeout: 10_000 });
+
+  await page.getByRole('link', { name: title }).first().click();
+  await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
+  const taskId = page.url().split('/').pop()!;
+
+  // anonymous session (explicitly empty storageState — a bare newContext
+  // inherits the run's signed-in storageState) -> 401
+  const anon = await playwright.request.newContext({ storageState: { cookies: [], origins: [] } });
+  try {
+    const r = await anon.post(`/api/tasks/${taskId}/attachments`, {
+      multipart: { file: { name: 'anon.png', mimeType: 'image/png', buffer: PNG } },
+    });
+    expect(r.status()).toBe(401);
+  } finally {
+    await anon.dispose();
+  }
+
+  // body over the 21MB request cap -> 413 (the file-part check never sees it)
+  const big = await context.request.post(`/api/tasks/${taskId}/attachments`, {
+    multipart: { file: { name: 'big.png', mimeType: 'image/png', buffer: Buffer.alloc(22 * 1024 * 1024) } },
+  });
+  expect(big.status()).toBe(413);
+
+  await tasksPage.deleteTask(title);
+});
