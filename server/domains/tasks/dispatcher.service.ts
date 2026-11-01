@@ -28,12 +28,23 @@ import {
 
 const log = consola.withTag('tandem');
 
+/** REAPER LIVENESS (#147): a failed sweep is never silent — rate-limited to one
+ * warn per 5 min so a persistent DB failure shows up in log shipping without
+ * spamming the 5s tick. State exposed for tests. */
+export const REAPER_WARN_INTERVAL_MS = 5 * 60_000;
+export const reaperWarnState = { lastAt: 0 };
+
 /** reap runs stuck in 'running' past the hard timeout + grace: mark failed, bounce task to
  * ready (with the normal backoff ladder), so orphaned rows never pin a task in doing forever. */
 export async function reapStaleRuns() {
   try {
     return await reapStaleRunsInner();
-  } catch {
+  } catch (e) {
+    const now = Date.now();
+    if (now - reaperWarnState.lastAt >= REAPER_WARN_INTERVAL_MS) {
+      reaperWarnState.lastAt = now;
+      log.warn('stale-run reaper sweep failed (retrying next tick):', e instanceof Error ? e.message : e);
+    }
     return 0; // best-effort sweep: a failed DB read just means try again next tick
   }
 }
@@ -401,6 +412,65 @@ export async function maybeStartDispatcher(): Promise<(() => void) | null> {
   const stop = startDispatcher(url);
   log.success('dispatcher started (redis+interval)');
   return stop;
+}
+
+/** fixed boot-retry cadence (#147): machine interval, 24/7 — no wall-clock logic. */
+export const DISPATCHER_BOOT_RETRY_MS = 30_000;
+
+/** REAPER LIVENESS boot path (#147): attempt `start` (maybeStartDispatcher) once
+ * immediately, then retry on a fixed interval until it succeeds. A redis blip at
+ * restart must not leave the server serving with no dispatcher and no reaper.
+ * A null return means the dispatcher is intentionally disabled
+ * (TANDEM_NO_DISPATCHER) — retries stop, no error. Returns a stop fn that ends
+ * retries and stops a dispatcher the loop started. */
+export function ensureDispatcherRunning(opts: {
+  start: () => Promise<(() => void) | null>;
+  intervalMs?: number;
+}): () => void {
+  const retryMs = opts.intervalMs ?? DISPATCHER_BOOT_RETRY_MS;
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let startedStop: (() => void) | null = null;
+  const attempt = () => {
+    if (startedStop) return;
+    let p: Promise<(() => void) | null>;
+    try {
+      p = opts.start();
+    } catch (e) {
+      log.error(dispatcherBootFailLine(e, retryMs));
+      return;
+    }
+    p.then((stop) => {
+      if (stop === null) {
+        if (timer) {
+          clearInterval(timer);
+          timer = null;
+        }
+        return;
+      }
+      startedStop = stop;
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      log.success('dispatcher started (after boot retry)');
+    }).catch((e) => {
+      log.error(dispatcherBootFailLine(e, retryMs));
+    });
+  };
+  attempt();
+  timer = setInterval(attempt, retryMs);
+  return () => {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+    startedStop?.();
+    startedStop = null;
+  };
+}
+
+function dispatcherBootFailLine(e: unknown, retryMs: number) {
+  return `dispatcher failed to start (${e instanceof Error ? e.message : String(e)}) — retrying every ${retryMs / 1000}s until the queue is reachable`;
 }
 
 /** start the interval; returns a stop function */
