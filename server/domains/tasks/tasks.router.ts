@@ -34,6 +34,7 @@ import {
   publishChange,
 } from '../kernel/kernel';
 import { recordAssignment, listAssignments } from './assignments.service';
+import { deleteTaskAttachmentBytes } from './attachments.util';
 import { refreshParentGating } from './gating.service';
 import {
   approvalsInRoundBatch,
@@ -796,6 +797,9 @@ export const tasksRouter = os.router({
       .where(and(eq(taskMessages.taskId, input.id), eq(taskRunsTable.status, RUN_STATUS.RUNNING)));
     if (running.length > 0) throw new ORPCError('BAD_REQUEST', { message: 'cancel the running run first' });
     await db.delete(tasksTable).where(eq(tasksTable.id, input.id));
+    // BYTES-WITH-TASK (#150): the rows are gone (attachments cascaded) — sweep the
+    // per-task byte dir best-effort; the sweep never throws, the remove stays atomic
+    await deleteTaskAttachmentBytes(input.id);
     // deleting a subtask can release the parent's auto-block
     const parentId = nonNull(rows[0]).parentTaskId;
     if (parentId) await refreshParentGating(parentId);

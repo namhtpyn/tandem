@@ -4,10 +4,16 @@
 // by unit tests against the ssh seam — e2e stays DB/UI only.)
 // the cleanup fixture sweeps every row the test created (tasks cascade messages/
 // runs/obligations/attachments; then users, projects, environments, vault, providers)
+import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import { expect, test } from './helpers/cleanup';
 import { login } from './helpers/login.ts';
 import { waitForHydration } from './pages/base.page.ts';
 import { TasksPage } from './pages/tasks.page.ts';
+
+// must mirror the webServer env in playwright.config.ts — same host filesystem
+const ATTACHMENTS_DIR = process.env.TANDEM_E2E_ATTACHMENTS_DIR || '/tmp/tandem-e2e-attachments';
 
 const PNG = Buffer.from(
   '89504e470d0a1a0a0000000d4948445200000001000000010806000000' +
@@ -78,4 +84,40 @@ test('attachment upload renders inline in the task thread', async ({ page, reque
 
   // teardown: the run's task must not linger in the shared DB
   await tasksPage.deleteTask(title);
+});
+
+test('task removal sweeps the attachment bytes off disk (#150)', async ({ page, context }) => {
+  const tasksPage = new TasksPage(page);
+  const title = `Attachment sweep ${Date.now().toString(36)}`;
+  await login(page);
+  await page.goto('/tasks');
+  await waitForHydration(page);
+  await page.getByRole('button', { name: 'New task' }).first().click();
+  await page.getByPlaceholder('Task title').fill(title);
+  await page.getByRole('button', { name: /Save|Create task/ }).click();
+  await expect(page.getByRole('link', { name: title }).first()).toBeVisible({ timeout: 10_000 });
+
+  await page.getByRole('link', { name: title }).first().click();
+  await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
+  const taskId = page.url().split('/').pop()!;
+
+  const up = await context.request.post(`/api/tasks/${taskId}/attachments`, {
+    multipart: { file: { name: 'sweep.png', mimeType: 'image/png', buffer: PNG } },
+  });
+  expect(up.status()).toBe(201);
+  const att = (await up.json()) as { id: string };
+
+  // BYTES-WITH-TASK: the bytes exist while the task does
+  const bytesPath = join(ATTACHMENTS_DIR, 'tasks', taskId, 'attachments', att.id);
+  expect((await stat(bytesPath)).isFile()).toBe(true);
+
+  // remove through the real UI path — the row delete cascades and the sweep follows
+  await tasksPage.deleteTask(title);
+
+  // the attachments dir is gone, not just the one file (the parent tasks/<id> husk stays — never in the contract)
+  await expect(stat(bytesPath), 'attachment bytes must be gone after tasks.remove').rejects.toThrow();
+  await expect(
+    stat(join(ATTACHMENTS_DIR, 'tasks', taskId, 'attachments')),
+    'per-task attachments dir must be gone',
+  ).rejects.toThrow();
 });
