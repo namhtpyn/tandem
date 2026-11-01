@@ -3,7 +3,7 @@
 // seeds them, the uuid-status-ids remap moves existing DBs onto them, and this
 // constant map is the single source the server and app code use instead of the
 // old semantic strings ('todo', 'doing', …). Custom statuses minted via the
-// admin UI get fresh uuidv7s from kernel/ids and are addressed by row, never by
+// admin UI get fresh uuidv7s from the `uuid` package (v7) directly and are addressed by row, never by
 // constant.
 export const STATUS = {
   todo: '01a14743-43f4-7053-a698-5b4ef36ed046',
