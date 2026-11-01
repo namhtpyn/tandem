@@ -1,3 +1,10 @@
+# [2.62.0](https://github.com/namhtpyn/tandem/compare/v2.61.5...v2.62.0) (2026-11-01)
+
+
+### Features
+
+* **environments:** probe verdict persists on the row — Status survives reload, updates invalidate on connection change, probes run independently ([#178](https://github.com/namhtpyn/tandem/issues/178)) ([2e9c20e](https://github.com/namhtpyn/tandem/commit/2e9c20eda2deb4e236c42d1c145a008f5545e972))
+
 ## [2.61.5](https://github.com/namhtpyn/tandem/compare/v2.61.4...v2.61.5) (2026-11-01)
 
 
