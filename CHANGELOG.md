@@ -1,3 +1,10 @@
+## [2.62.1](https://github.com/namhtpyn/tandem/compare/v2.62.0...v2.62.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* **statuses:** truthful advisory copy — transitions editor relabeled as suggestions ([#179](https://github.com/namhtpyn/tandem/issues/179)) ([7e1bcef](https://github.com/namhtpyn/tandem/commit/7e1bceffb93169940fcdff67d2703805530b0b26))
+
 # [2.62.0](https://github.com/namhtpyn/tandem/compare/v2.61.5...v2.62.0) (2026-11-01)
 
 
