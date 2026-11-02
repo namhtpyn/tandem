@@ -1,3 +1,10 @@
+## [2.62.6](https://github.com/namhtpyn/tandem/compare/v2.62.5...v2.62.6) (2026-11-02)
+
+
+### Bug Fixes
+
+* **tasks:** drawer Dispatch now obeys the shared server-truth gate — render parity with the task page ([#209](https://github.com/namhtpyn/tandem/issues/209)) ([d0b52d1](https://github.com/namhtpyn/tandem/commit/d0b52d195ce17c72c45cb3539530344ffe8b7e6a))
+
 ## [2.62.5](https://github.com/namhtpyn/tandem/compare/v2.62.4...v2.62.5) (2026-11-02)
 
 
