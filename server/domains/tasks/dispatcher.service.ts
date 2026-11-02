@@ -555,6 +555,28 @@ export async function touchDispatcherHeartbeat() {
   }
 }
 
+/** REDIS-OK STAMP (#238): each tick pings the queue domain and stamps settings
+ * `dispatcher_redis_ok` (epoch ms, same 30s throttle + best-effort catch as the
+ * heartbeat) ONLY on success — during an outage the stamp goes stale while the
+ * heartbeat keeps writing, and the prod probe alerts the brick signature
+ * (heartbeat fresh + redis stamp stale) instead of reporting healthy. */
+export const REDIS_OK_KEY = 'dispatcher_redis_ok';
+/** throttle state exposed for tests (same pattern as heartbeatState) */
+export const redisOkState = { lastAt: 0 };
+export async function touchDispatcherRedisOk() {
+  try {
+    if (Date.now() - redisOkState.lastAt < HEARTBEAT_WRITE_INTERVAL_MS) return;
+    redisOkState.lastAt = Date.now();
+    const { redisQueue } = await import('../kernel/queue');
+    const ok = await (await redisQueue()).ping();
+    if (!ok) return; // stale stamp = the detection signal; never write on failure
+    const { setSetting } = await import('../settings/settings.service');
+    await setSetting(REDIS_OK_KEY, String(Date.now()));
+  } catch {
+    // redis down may make redisQueue()/ping() throw — same best-effort law
+  }
+}
+
 /** start the interval; returns a stop function */
 export function startDispatcher(tandemUrl: string, intervalMs = 5000): () => void {
   const timer = setInterval(() => {
@@ -563,6 +585,7 @@ export function startDispatcher(tandemUrl: string, intervalMs = 5000): () => voi
     void sweepIdleWorking(); // never rejects: its own catch turns errors into 0 bounced
     void rearmParkedRounds(); // never rejects: its own catch turns errors into 0 rearmed
     void touchDispatcherHeartbeat(); // best-effort watchdog stamp (its own catch)
+    void touchDispatcherRedisOk(); // best-effort watchdog stamp (#238, its own catch)
   }, intervalMs);
   return () => clearInterval(timer);
 }
