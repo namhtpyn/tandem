@@ -1,3 +1,10 @@
+## [2.65.1](https://github.com/namhtpyn/tandem/compare/v2.65.0...v2.65.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* **dispatcher:** liveness sweep read bounded to ONE LATERAL statement ([#225](https://github.com/namhtpyn/tandem/issues/225)) ([1a85e0c](https://github.com/namhtpyn/tandem/commit/1a85e0c6b635f4edbda9722ddc17f93c6d6d2be3))
+
 # [2.65.0](https://github.com/namhtpyn/tandem/compare/v2.64.2...v2.65.0) (2026-11-02)
 
 
