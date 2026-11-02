@@ -1,3 +1,10 @@
+## [2.65.5](https://github.com/namhtpyn/tandem/compare/v2.65.4...v2.65.5) (2026-11-02)
+
+
+### Bug Fixes
+
+* **auth:** rotation lock enforced on REST file reads — attachment/avatar GETs 403 while locked (audit [#242](https://github.com/namhtpyn/tandem/issues/242)) ([82c1afc](https://github.com/namhtpyn/tandem/commit/82c1afc403004b2b7a6a524de0faca8b478016a9))
+
 ## [2.65.4](https://github.com/namhtpyn/tandem/compare/v2.65.3...v2.65.4) (2026-11-02)
 
 
