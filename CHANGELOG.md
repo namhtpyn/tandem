@@ -1,3 +1,11 @@
+# [2.63.0](https://github.com/namhtpyn/tandem/compare/v2.62.7...v2.63.0) (2026-11-02)
+
+
+### Features
+
+* **db:** park_rearm_attempts + park_rearm_after + partial index for the [#211](https://github.com/namhtpyn/tandem/issues/211) re-arm ladder ([b3e5031](https://github.com/namhtpyn/tandem/commit/b3e50314220a3b05ee9d645601b37d3683da1a4a))
+* **park:** PARK-REARM LAW ([#211](https://github.com/namhtpyn/tandem/issues/211)) — infra-class review parks re-arm on a bounded ladder via a tick scan; decision parks never re-arm ([9e5148c](https://github.com/namhtpyn/tandem/commit/9e5148c1905d1135e3a67176c1e9beb3512e3059))
+
 ## [2.62.7](https://github.com/namhtpyn/tandem/compare/v2.62.6...v2.62.7) (2026-11-02)
 
 
