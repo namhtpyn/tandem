@@ -17,7 +17,8 @@ import { v7 as uuidv7 } from 'uuid';
 // ![filename](attachment-<id>) / @[filename](attachment-<id>) into the description.
 // WRITE-TIER (audit #173): gated like employeeProcedure — anonymous 401,
 // rotation-locked 403, VIEWER 403; the body is capped BEFORE multipart parsing
-// (declared length rejected pre-read, buffered length before parse) and input
+// (declared length rejected pre-read, undeclared chunked bodies 411 pre-read —
+// no pre-read bound exists for them, buffered length before parse) and input
 // uploads are quota-bounded per task. The body is consumed ONCE via h3's own
 // readRawBody (self-caching, bun-shim-safe) so every rejection is deliverable —
 // responding with bytes still in flight resets the socket client-side.
@@ -26,6 +27,7 @@ import { nonNull } from '#shared/utils/non-null';
 import { db } from '../../../../db/index';
 import { taskAttachments } from '../../../../db/schema';
 import { buildServerContext } from '../../../../domains/kernel/context';
+import { hasUndeclaredBodySize } from '../../../../domains/kernel/request-body';
 import {
   assertBodyBytes,
   assertContentLength,
@@ -59,6 +61,14 @@ export default defineEventHandler(async (event) => {
   } catch (err) {
     if (err instanceof UploadRejection && shouldDrainBeforeReject(contentLength)) await readRawBody(event, false);
     throw err;
+  }
+
+  // undeclared-length (chunked) bodies: no pre-read size bound exists (h3
+  // buffers the whole body; the bun preset allows no mid-stream cap) — refused
+  // before any byte is buffered, before the session gate, before multipart
+  // parsing (SPEC §Routes, audit #241)
+  if (hasUndeclaredBodySize(getRequestHeaders(event))) {
+    throw createError({ statusCode: 411, statusMessage: 'length required' });
   }
 
   // consume the body ONCE via h3 (cached under the hood — the later
