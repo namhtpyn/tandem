@@ -1,3 +1,10 @@
+## [2.62.7](https://github.com/namhtpyn/tandem/compare/v2.62.6...v2.62.7) (2026-11-02)
+
+
+### Bug Fixes
+
+* **tasks:** toolbar New task renders on every view state — the empty board keeps a one-step create entry ([#210](https://github.com/namhtpyn/tandem/issues/210)) ([ed56068](https://github.com/namhtpyn/tandem/commit/ed560681284c967d8a14e69c8b5b15f9cd8d43b2))
+
 ## [2.62.6](https://github.com/namhtpyn/tandem/compare/v2.62.5...v2.62.6) (2026-11-02)
 
 
