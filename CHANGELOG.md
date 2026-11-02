@@ -1,3 +1,10 @@
+# [2.65.0](https://github.com/namhtpyn/tandem/compare/v2.64.2...v2.65.0) (2026-11-02)
+
+
+### Features
+
+* **tasks:** stop-run verb — human stop for a live run ([#229](https://github.com/namhtpyn/tandem/issues/229)) ([bd07bdc](https://github.com/namhtpyn/tandem/commit/bd07bdc8c45d18bc0b9c88d1a6cfc35a1f1b5285))
+
 ## [2.64.2](https://github.com/namhtpyn/tandem/compare/v2.64.1...v2.64.2) (2026-11-02)
 
 
