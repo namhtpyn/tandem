@@ -11,6 +11,7 @@ import type { H3Event } from 'h3';
 
 import { getAuth, resolveAuthPolicy, anyUserExists } from '../../domains/auth/auth.service';
 import { hasUndeclaredBodySize } from '../../domains/kernel/request-body';
+import { normalizedAuthPath } from '../../domains/kernel/request-path';
 
 /** generous for JSON auth payloads, small enough that a hostile body cannot balloon memory */
 const MAX_AUTH_BODY_BYTES = 1_000_000;
@@ -46,6 +47,11 @@ function buildIncomingRequest(event: H3Event, body: ArrayBuffer | undefined): Re
 
 export default defineEventHandler(async (event) => {
   const full = event.node.req.url ?? '';
+  // gates match the ROUTER's path shape, not the raw url: better-auth routes on
+  // the WHATWG-normalized pathname, which collapses /./ and /../ — gating on the
+  // raw string let `POST /auth/sign-up/./email` bypass the closure gate entirely
+  // while the endpoint still served (audit #251)
+  const authPath = normalizedAuthPath(full);
   // undeclared-length (chunked) bodies: h3 buffers the whole body before the
   // 1MB cap can fire and the bun preset allows no mid-stream cap — refuse
   // before a byte is read (SPEC §Auth request-body law, audit #241)
@@ -54,18 +60,18 @@ export default defineEventHandler(async (event) => {
   }
   // public deployments: password sign-up closes after the first user claims the
   // instance. OIDC user creation is NOT gated (admin enabled the provider).
-  if (event.method === 'POST' && full.includes('/auth/sign-up/email')) {
+  if (event.method === 'POST' && authPath.startsWith('/auth/sign-up/')) {
     if (await anyUserExists()) {
       throw createError({ statusCode: 403, statusMessage: 'sign-up is closed' });
     }
   }
-  if (event.method === 'POST' && full.includes('/auth/sign-in/email')) {
+  if (event.method === 'POST' && authPath.startsWith('/auth/sign-in/')) {
     const { passwordEnabled } = await resolveAuthPolicy();
     if (!passwordEnabled) {
       throw createError({ statusCode: 403, statusMessage: 'password login is disabled' });
     }
   }
-  if (full.includes('/auth/oauth2/')) {
+  if (authPath.startsWith('/auth/oauth2/')) {
     const { oidcEnabled } = await resolveAuthPolicy();
     if (!oidcEnabled) {
       throw createError({ statusCode: 404, statusMessage: 'OIDC not configured' });
