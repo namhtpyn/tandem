@@ -282,6 +282,8 @@ export const tasks = pgTable(
 
     /** status to restore when the auto-block (open children) lifts; null = not auto-blocked */
     preBlockStatus: text('pre_block_status'),
+    /** park origin (#202): the status a review park flipped BLOCKED from; null = not parked */
+    parkFromStatus: text('park_from_status'),
     createdBy: uuid('created_by').references(() => user.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()

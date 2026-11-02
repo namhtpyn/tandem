@@ -1,0 +1,47 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "e8dcc27e-1c0f-4ea8-9c04-d9470ab9eed3",
+  "prevIds": [
+    "f4fe4e27-cbca-4dfd-b2a9-587a4778cf91"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "tasks",
+        "park_from_status"
+      ],
+      "writes": [
+        "s|col|public.tasks.park_from_status",
+        "n|col|public.tasks.park_from_status",
+        "e|col|public.tasks.park_from_status"
+      ],
+      "reads": [
+        "n|tbl|public.tasks",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "tasks",
+        "name": "park_from_status",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}
