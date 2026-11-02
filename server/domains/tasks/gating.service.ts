@@ -5,7 +5,8 @@
 //   - last child lands terminal → parent restores pre_block_status (or 'todo')
 //   - recursive by construction: a child isn't complete while ITS children are open,
 //     because the same rule keeps that child non-terminal until its own gate lifts.
-import { and, eq, inArray, ne } from 'drizzle-orm';
+import { consola } from 'consola';
+import { and, asc, eq, inArray, isNotNull, lte, ne } from 'drizzle-orm';
 
 import { ACTIVITY_KIND } from '#shared/enums';
 import { STATUS } from '#shared/status';
@@ -13,9 +14,11 @@ import { nonNull } from '#shared/utils/non-null';
 
 import { db, asDb, type DbExecutor } from '../../db/index';
 import { tasks, taskStatuses } from '../../db/schema';
-import { logActivity as publishActivity, dispatchAiReviewTurns } from './review.service';
+import { logActivity as publishActivity, dispatchAiReviewTurns, PARK_REARM_LADDER_MS } from './review.service';
 
 export const BLOCKED_STATUS = STATUS.blocked;
+
+const log = consola.withTag('tandem');
 
 // activity rows are notification state, not gating state — they ride the pool db even mid-tx
 async function logActivity(taskId: string, body: string, meta: Record<string, unknown> = {}) {
@@ -147,4 +150,60 @@ export async function hasOpenChildren(taskId: string) {
   if (children.length === 0) return false;
   const terminal = await terminalStatusIds();
   return children.some((c) => !terminal.has(c.status));
+}
+
+// PARK-REARM scan (#211): a parked review round whose infra-class re-arm ladder is due
+// re-runs the unblock arm — the one-shot arm fired into an outage once (#211's frozen
+// shape), so the tick revisits it. Never rejects (tick-isolation contract); best-effort
+// like the sweeps.
+export const REARM_SCAN_LIMIT = 5;
+
+export async function rearmParkedRounds(): Promise<number> {
+  try {
+    return await rearmParkedRoundsInner();
+  } catch (e) {
+    log.warn('park re-arm scan failed:', e instanceof Error ? e.message : e);
+    return 0; // best-effort scan: a failed read just means try again next tick
+  }
+}
+
+async function rearmParkedRoundsInner(): Promise<number> {
+  // the WHERE carries the whole shape in SQL (bounding law): BLOCKED + a scheduled
+  // re-arm that is due; decision parks (after null) and exhausted ladders (final
+  // park, after null) never match. Partial-index-backed + LIMIT-bounded.
+  const due = await db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(
+      and(eq(tasks.status, BLOCKED_STATUS), isNotNull(tasks.parkRearmAfter), lte(tasks.parkRearmAfter, new Date())),
+    )
+    .orderBy(asc(tasks.parkRearmAfter))
+    .limit(REARM_SCAN_LIMIT);
+  if (due.length === 0) return 0;
+  const terminal = await terminalStatusIds();
+  let rearmed = 0;
+  for (const row of due) {
+    // arm precondition first: zero open children. A parked parent whose children are
+    // still open re-fires from the child's settle path — defer one ladder step instead
+    // of hot-revisiting every tick (no attempt burned: the ladder only advances on a
+    // park write).
+    const kids = await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.parentTaskId, row.id));
+    if (kids.some((k) => !terminal.has(k.status))) {
+      await db
+        .update(tasks)
+        .set({ parkRearmAfter: new Date(Date.now() + PARK_REARM_LADDER_MS[0]) })
+        .where(and(eq(tasks.id, row.id), eq(tasks.status, BLOCKED_STATUS)));
+      continue;
+    }
+    // the unblock arm owns the flip: guarded restore + re-dispatch of the parked
+    // reviewer's turn — the exact one-shot path, revisited
+    await refreshParentGating(row.id);
+    const after = await db.query.tasks.findFirst({
+      columns: { status: true },
+      where: { id: { eq: row.id } },
+    });
+    if (after && after.status !== BLOCKED_STATUS) rearmed += 1;
+  }
+  if (rearmed > 0) log.info(`park re-arm scan: ${rearmed} parked round(s) re-armed`);
+  return rearmed;
 }

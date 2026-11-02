@@ -210,7 +210,8 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
       // SETTLE-FAILURE PARK (SPEC, #199): a mint failure leaves the PENDING row with
       // nothing to re-fire it — park instead of stranding the round silently. Owner
       // unblock (status -> in-review) re-dispatches through the unblock-resume path.
-      await parkRound(taskId, `review turn failed to dispatch — ${reason}`);
+      // REARMABLE (#211): a mint failure is infra-class — the re-arm ladder re-fires it.
+      await parkRound(taskId, `review turn failed to dispatch — ${reason}`, { rearmable: true });
     }
     return; // SEQUENTIAL: one turn in flight — the next fires from this verdict's settle
   }
@@ -470,26 +471,53 @@ export async function escalateReview(
 
 /** park the round: the task cannot progress without a human. The task flips to
  * BLOCKED (system, not reviewer), the why lands on the thread, and the round stays
- * exactly as it is — owner resolution unblocks and the sequence resumes. */
-export async function parkRound(taskId: string, why: string) {
+ * exactly as it is — owner resolution unblocks and the sequence resumes.
+ * PARK-REARM LAW (#211): an infra-class park (opts.rearmable — mint failure, failed
+ * or timed-out review turn, verdict-settle throw) is machine-recoverable and schedules
+ * a bounded re-arm on the ladder; a decision park (default) resets the ledger and
+ * schedules nothing — owner resolution stays the only resume. Attempts survive the
+ * restore (the unblock arm never rewrites them), so a re-fire cycle is bounded; the
+ * columns are inert off BLOCKED and every park write rewrites them. */
+export const PARK_REARM_LADDER_MS = [5 * 60_000, 30 * 60_000, 2 * 60 * 60_000, 6 * 60 * 60_000] as const;
+
+export async function parkRound(taskId: string, why: string, opts: { rearmable?: boolean } = {}) {
   const task = (
-    await db.select({ status: tasks.status, ownerId: tasks.ownerId }).from(tasks).where(eq(tasks.id, taskId))
+    await db
+      .select({ status: tasks.status, ownerId: tasks.ownerId, rearmAttempts: tasks.parkRearmAttempts })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
   )[0];
   if (!task) throw new Error('task not found');
   // park only from in-review (#199): a manual settle that won the race owns the
   // outcome — parking over a terminal/owner-moved status would resurrect a dead round
   if (task.status !== IN_REVIEW_STATUS) return;
+  const rearmable = opts.rearmable === true;
+  // attempts = parks burned in the current cycle; ladder[attempts-1] schedules the
+  // next re-fire; past the ladder the round parks FINAL (after = null) and the
+  // watchdog alerts the exhausted shape
+  const attempts = rearmable ? Math.min(task.rearmAttempts + 1, PARK_REARM_LADDER_MS.length + 1) : 0;
+  const rearmAfter =
+    rearmable && attempts <= PARK_REARM_LADDER_MS.length
+      ? new Date(Date.now() + nonNull(PARK_REARM_LADDER_MS[attempts - 1]))
+      : null;
   await db
     .update(tasks)
     // park-origin memory (#202): the BLOCKED flip carries the status it flipped from —
     // the parent-gating unblock restores this, never a stale pre_block_status
-    .set({ status: BLOCKED_STATUS, parkFromStatus: task.status, updatedAt: new Date() })
+    .set({
+      status: BLOCKED_STATUS,
+      parkFromStatus: task.status,
+      updatedAt: new Date(),
+      parkRearmAttempts: attempts,
+      parkRearmAfter: rearmAfter,
+    })
     // atomic re-check: a settle/status change between read and write wins
     .where(and(eq(tasks.id, taskId), eq(tasks.status, IN_REVIEW_STATUS)));
   await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review parked — ${why}`, {
     reviewParked: true,
     why,
     fromStatus: task.status,
+    ...(rearmable ? { rearm: { attempt: attempts, rearmAfter: rearmAfter?.toISOString() ?? null } } : {}),
   });
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
