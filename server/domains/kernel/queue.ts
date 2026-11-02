@@ -36,6 +36,9 @@ export type QueueDomain = {
     },
   ) => Promise<string>;
   close: () => Promise<void>;
+  /** liveness probe for the watchdog (REDIS RECONNECT-SELF-HEAL LAW, #238):
+   * false when the connection is down/reconnecting — never throws, never hangs */
+  ping: () => Promise<boolean>;
 };
 
 let domainPromise: Promise<QueueDomain> | null = null;
@@ -59,10 +62,16 @@ async function createQueueDomain(): Promise<QueueDomain> {
   const makeRaw = () =>
     createClient({
       url,
-      // long-lived: a redis blip must reconnect, not brick enqueues for the process
       socket: {
         connectTimeout: 2000,
-        reconnectStrategy: (retries: number) => (retries > 3 ? new Error('no-retry') : Math.min(retries * 200, 1_000)),
+        // long-lived: a redis blip must reconnect, not brick enqueues for the process.
+        // UNLIMITED reconnects with capped backoff (REDIS RECONNECT-SELF-HEAL LAW,
+        // #238): any outage length must self-heal — workers resume and offline-queued
+        // enqueues flush when redis returns. A retry COUNT here (the old `retries > 3
+        // ? Error`) terminally abandons the client after ~2s while the cached domain
+        // keeps serving it — dispatch stays bricked until process restart with every
+        // watchdog green. Fail-fast stays boot-only (the ping client below).
+        reconnectStrategy: (retries: number) => Math.min(retries * 200, 1_000),
       },
     });
   type Raw = ReturnType<typeof makeRaw>;
@@ -96,7 +105,8 @@ async function createQueueDomain(): Promise<QueueDomain> {
   // one adapter per role; bullmq duplicates it internally for blocking commands
   // long-lived connection: reconnect with capped backoff — a redis blip must not
   // brick enqueues for the rest of the process (no-retry would)
-  const workerConn = createNodeRedisClient(await connectRaw());
+  const workerRaw = await connectRaw();
+  const workerConn = createNodeRedisClient(workerRaw);
   workerConn.on('error', swallowRedisError);
   raws.push(workerConn as unknown as Raw);
 
@@ -157,5 +167,21 @@ async function createQueueDomain(): Promise<QueueDomain> {
       ]);
       domainPromise = null;
     },
+    ping: () =>
+      // watchdog leg (#238): report liveness, never throw. isReady first — a
+      // command issued on a down client would sit in the offline queue instead
+      // of reporting; the timeout guards a pathological half-open socket.
+      Promise.race([
+        (async () => {
+          if (!(workerRaw as { isReady?: boolean }).isReady) return false;
+          try {
+            await workerRaw.ping();
+            return true;
+          } catch {
+            return false;
+          }
+        })(),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2_000)),
+      ]),
   };
 }
