@@ -754,14 +754,11 @@ onServerPrefetch(() =>
             class="h-11 sm:h-8"
             @click="statusManagerOpen = true"
           />
-          <UButton
-            v-if="rows.length > 0 || listFiltered"
-            icon="i-lucide-plus"
-            label="New task"
-            size="sm"
-            class="h-11 sm:h-8"
-            @click="openEditor()"
-          />
+          <!-- #210 CREATE-AFFORDANCE LAW: the create entry renders on EVERY
+               view state — List and Board, empty, filtered or not — so
+               deleting the last task never leaves the surface without a
+               one-step create entry (the List empty-state CTA coexists). -->
+          <UButton icon="i-lucide-plus" label="New task" size="sm" class="h-11 sm:h-8" @click="openEditor()" />
         </div>
         <div
           class="from-default pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l to-transparent"
