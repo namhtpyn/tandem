@@ -1,3 +1,10 @@
+## [2.65.2](https://github.com/namhtpyn/tandem/compare/v2.65.1...v2.65.2) (2026-11-02)
+
+
+### Performance Improvements
+
+* drop dead cache domain + 3 orphaned prod deps ([#226](https://github.com/namhtpyn/tandem/issues/226)) ([da5950b](https://github.com/namhtpyn/tandem/commit/da5950be93b95ce02f4b2d6ac8a2238d31b9cebc))
+
 ## [2.65.1](https://github.com/namhtpyn/tandem/compare/v2.65.0...v2.65.1) (2026-11-02)
 
 
