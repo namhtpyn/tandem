@@ -1,3 +1,11 @@
+# [2.64.0](https://github.com/namhtpyn/tandem/compare/v2.63.0...v2.64.0) (2026-11-02)
+
+
+### Features
+
+* **tasks:** single-task surfaces read tasks.get — page, editor parent, drawer fallback ([#220](https://github.com/namhtpyn/tandem/issues/220)) ([1f2a2a4](https://github.com/namhtpyn/tandem/commit/1f2a2a4b03d72f04de4ed713b1f9f51b9117a752))
+* **tasks:** tasks.get by-id proc + tasks_created_id_idx ([#220](https://github.com/namhtpyn/tandem/issues/220)) ([ca4b287](https://github.com/namhtpyn/tandem/commit/ca4b28798fd5bacd9abde877eb651800d0fecd81))
+
 # [2.63.0](https://github.com/namhtpyn/tandem/compare/v2.62.7...v2.63.0) (2026-11-02)
 
 
