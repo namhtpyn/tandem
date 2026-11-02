@@ -296,17 +296,21 @@ const workflowTaskId = ref<string | null>(null);
 const workflowTaskFallback = ref<TaskRow | null>(null);
 const workflowTaskLive = computed(() => rows.value.find((t) => t.id === workflowTaskId.value) ?? null);
 // the fallback row freezes at open time; when the drawer's task leaves the current
-// page/filter (a verdict moved it), the unfiltered list snapshot is the truthful
-// source — otherwise the drawer would show yesterday's status forever
+// page/filter (a verdict moved it), the by-id read is the truthful source —
+// otherwise the drawer would show yesterday's status forever (BY-ID READ LAW:
+// one row, never the whole-list snapshot)
 const workflowSnapshotQuery = useQuery(
   computed(() => ({
-    ...$orpc.tasks.list.queryOptions({ queryKey: [CHANGE_RESOURCE.TASKS] }),
+    ...$orpc.tasks.get.queryOptions({
+      input: { taskId: workflowTaskId.value ?? '' },
+      queryKey: [CHANGE_RESOURCE.TASKS, workflowTaskId.value ?? ''],
+    }),
     enabled: workflowOpen.value && !!workflowTaskId.value && !workflowTaskLive.value,
   })),
 );
 const workflowTaskSnapshot = computed<TaskRow | null>(() => {
-  const all = (unref(workflowSnapshotQuery.data) ?? []) as TaskRow[];
-  return all.find((t) => t.id === workflowTaskId.value) ?? null;
+  const row = (unref(workflowSnapshotQuery.data) ?? null) as TaskRowFull | null;
+  return row && row.id === workflowTaskId.value ? row : null;
 });
 const workflowTask = computed<TaskRow | null>(
   () => workflowTaskLive.value ?? workflowTaskSnapshot.value ?? workflowTaskFallback.value,

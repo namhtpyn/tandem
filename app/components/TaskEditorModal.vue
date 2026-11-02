@@ -16,7 +16,7 @@ import { STATUS } from '#shared/status';
 import type { EditorView, ClipboardEventLike, DragEventLike } from '~/types/editor-typing';
 import { taskAttachmentsUrl } from '~/utils/api-urls';
 import { NONE_ID, saveFailed } from '~/utils/forms';
-import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
+import type { EmployeeRow, TaskRow, TaskRowFull } from '~/utils/orpc-types';
 import { attachmentRef, attachmentToken } from '~/utils/task-tokens';
 import { employeeOptions, kindLabel } from '~/utils/ui-labels';
 
@@ -316,14 +316,20 @@ const statusOptions = computed(() =>
 );
 
 /** parent name for the subtask submit copy ('Adding to <parent>') */
-const parentTaskQuery = useQuery({
-  ...$orpc.tasks.list.queryOptions({ queryKey: [CHANGE_RESOURCE.TASKS] }),
-  enabled: !!props.parentTaskId,
-});
+// BY-ID READ LAW (#220): the parent title needs ONE task — read it by id,
+// never the whole-list snapshot
+const parentTaskQuery = useQuery(
+  computed(() => ({
+    ...$orpc.tasks.get.queryOptions({
+      input: { taskId: props.parentTaskId ?? '' },
+      queryKey: [CHANGE_RESOURCE.TASKS, props.parentTaskId ?? ''],
+    }),
+    enabled: !!props.parentTaskId,
+  })),
+);
 const parentTitle = computed(() => {
   if (!props.parentTaskId) return '';
-  const rows = (unref(parentTaskQuery.data) ?? []) as TaskRow[];
-  return rows.find((t) => t.id === props.parentTaskId)?.title ?? 'the parent task';
+  return (unref(parentTaskQuery.data) as TaskRowFull | undefined)?.title ?? 'the parent task';
 });
 
 /** a live review round owns the reviewer list — editing it would strand live

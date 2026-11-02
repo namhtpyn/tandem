@@ -3,7 +3,6 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query';
 
 import { CATEGORIES, CATEGORY, CHANGE_RESOURCE, RUN_STATUS } from '#shared/enums';
 import type { Category } from '#shared/enums';
-import { nonNull } from '#shared/utils/non-null';
 // Task detail — Paperclip-style layout: chat-like main content (description bubble,
 // run turns, activity notes, composer at the bottom) + right sidebar with task info
 // (status, assignee, reviewers, workflow actions). Mobile-first: single column,
@@ -13,40 +12,27 @@ import { nonNull } from '#shared/utils/non-null';
 // TaskWorkflowActions — the sidebar's contextual verb block, #177) that share
 // query keys with the app-wide SSE subscription.
 import { composerHint, composerReady, useWorkflowActions } from '~/composables/useWorkflowActions';
-import type { TaskRow, TaskRunRow, TaskStatusRow } from '~/utils/orpc-types';
+import type { TaskRowFull, TaskRunRow, TaskStatusRow } from '~/utils/orpc-types';
 import { categoryColor, composerPlaceholder } from '~/utils/ui-labels';
 
 const route = useRoute();
 const { $orpc } = useNuxtApp();
 const session = useAppSession();
 
-const tasksLive = useQuery($orpc.tasks.list.queryOptions({ queryKey: [CHANGE_RESOURCE.TASKS] }));
-
-const tasks = computed(() => (unref(tasksLive.data) ?? []) as TaskRow[]);
-
-const task = computed(() => tasks.value.find((t) => t.id === String(route.params.id)) ?? null);
-
-// SNAPSHOT-SLIMMING LAW (#130 slice 3): the list snapshot no longer carries the
-// description body — fetch it on demand for the thread's brief bubble (same
-// pattern as runTranscript for settled output). Key rides the TASKS resource so
-// the app-wide change events keep it fresh; client-only: it does not join the
-// SSR suspense, so the brief may pop in one round-trip after hydration.
-const descQuery = useQuery(
-  computed(() => ({
-    ...$orpc.tasks.getDescription.queryOptions({
-      input: { taskId: String(route.params.id) },
-      queryKey: [CHANGE_RESOURCE.TASKS, String(route.params.id), 'description'],
-    }),
-    enabled: import.meta.client && !!task.value,
-  })),
+// BY-ID READ LAW (#220): the page renders ONE task — read it by id, never the
+// whole-list snapshot (a TASKS change event refetches one row, not the table).
+// The by-id row carries the description body, so the brief bubble needs no
+// second query. Key rides the TASKS resource so app-wide change events keep
+// it fresh.
+const taskId = String(route.params.id);
+const taskQuery = useQuery(
+  $orpc.tasks.get.queryOptions({ input: { taskId }, queryKey: [CHANGE_RESOURCE.TASKS, taskId] }),
 );
 
-/** the thread's row: list payload + the on-demand description body (the plain
- * list row keeps feeding the header and the sidebar fields) */
-const taskFull = computed(() => {
-  if (!task.value) return null;
-  return { ...task.value, description: unref(descQuery.data)?.description ?? '' };
-});
+const task = computed(() => (unref(taskQuery.data) ?? null) as TaskRowFull | null);
+
+/** the thread's row = the by-id payload (the description body rides tasks.get) */
+const taskFull = computed(() => task.value);
 
 // status badge in the thread header (the selects live in TaskDetailsFields)
 const statusesLive = useQuery($orpc.statuses.list.queryOptions({ queryKey: [CHANGE_RESOURCE.STATUSES] }));
@@ -132,9 +118,19 @@ watch(
   },
 );
 
-const parentTask = computed(() =>
-  task.value?.parentTaskId ? (tasks.value.find((t) => t.id === nonNull(task.value).parentTaskId) ?? null) : null,
+// the parent breadcrumb reads the parent by id (BY-ID READ LAW) — one row,
+// enabled only while the task actually nests; brief pop-in matches the old
+// on-demand fetches (SSR prefetch covers hard navigations)
+const parentTaskQuery = useQuery(
+  computed(() => ({
+    ...$orpc.tasks.get.queryOptions({
+      input: { taskId: task.value?.parentTaskId ?? '' },
+      queryKey: [CHANGE_RESOURCE.TASKS, task.value?.parentTaskId ?? ''],
+    }),
+    enabled: !!task.value?.parentTaskId,
+  })),
 );
+const parentTask = computed(() => (unref(parentTaskQuery.data) ?? null) as TaskRowFull | null);
 
 const retryInMin = computed(() => {
   if (!task.value?.dispatchAfter) return 0;
@@ -144,16 +140,17 @@ const retryInMin = computed(() => {
 
 const queryClient = useQueryClient();
 
-// the list page warms a different query key — on client nav this query is
+// the list page warms a different (paged) key — on client nav this query is
 // pending, and the not-found copy must NOT flash while it resolves
-const tasksPending = computed(() => tasksLive.isPending.value);
-// a settled query error is NOT 'task not found' — say so and offer a retry
-const tasksError = computed(() => tasksLive.isError.value);
+const tasksPending = computed(() => taskQuery.isPending.value);
+// a settled query error is 'task not found' only when the server said NOT_FOUND
+const tasksError = computed(() => taskQuery.isError.value);
+const tasksNotFound = computed(() => (taskQuery.error.value as { code?: string } | null)?.code === 'NOT_FOUND');
 
 // bare title — app.vue's titleTemplate appends '- Tandem'; extra separators render 'X · Tandem - Tandem'
 useHead({ title: () => (task.value ? task.value.title : 'Task') });
 
-onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense()]));
+onServerPrefetch(() => Promise.all([taskQuery.suspense(), statusesLive.suspense()]));
 </script>
 
 <template>
@@ -173,9 +170,13 @@ onServerPrefetch(() => Promise.all([tasksLive.suspense(), statusesLive.suspense(
           <USkeleton class="h-72 w-full rounded-lg" />
         </div>
 
-        <div v-else-if="tasksError" role="alert" class="flex flex-col items-center gap-3 py-16 text-center">
+        <div
+          v-else-if="tasksError && !tasksNotFound"
+          role="alert"
+          class="flex flex-col items-center gap-3 py-16 text-center"
+        >
           <p class="text-error text-sm">Couldn't load the task — try again</p>
-          <UButton size="sm" variant="soft" icon="i-lucide-refresh-cw" label="Retry" @click="tasksLive.refetch()" />
+          <UButton size="sm" variant="soft" icon="i-lucide-refresh-cw" label="Retry" @click="taskQuery.refetch()" />
         </div>
 
         <div v-else-if="!task" class="text-dimmed py-16 text-center text-sm">
