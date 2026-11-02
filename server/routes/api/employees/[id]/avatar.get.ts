@@ -23,6 +23,7 @@ import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../../../db/index';
 import { user as userTable } from '../../../../db/schema';
+import { gateReadSession } from '../../../../domains/kernel/rest-gates';
 
 /** only raster types are served; svg+xml and everything else 404s (nosniff below is the belt) */
 const AVATAR_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
@@ -36,7 +37,10 @@ export default defineEventHandler(async (event) => {
     headers.set(k, String(v));
   }
   const session = await buildServerContext(headers).getSession();
-  if (!session) throw createError({ statusCode: 401, statusMessage: 'unauthorized' });
+  // rotation lock included (SPEC "Boot seed law", audit #242) — same tier as
+  // every oRPC read: a locked session sees only the password-change screen
+  const gate = gateReadSession(session);
+  if (!gate.ok) throw createError({ statusCode: gate.statusCode, statusMessage: gate.statusMessage });
   const rows = await db
     .select({ image: userTable.image, updatedAt: userTable.updatedAt })
     .from(userTable)
