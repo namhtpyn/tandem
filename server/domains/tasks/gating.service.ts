@@ -5,7 +5,7 @@
 //   - last child lands terminal → parent restores pre_block_status (or 'todo')
 //   - recursive by construction: a child isn't complete while ITS children are open,
 //     because the same rule keeps that child non-terminal until its own gate lifts.
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, ne } from 'drizzle-orm';
 
 import { ACTIVITY_KIND } from '#shared/enums';
 import { STATUS } from '#shared/status';
@@ -85,11 +85,17 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
       // to its current status); the block arm never fires on BLOCKED, so the status
       // term below can never record BLOCKED itself
       const pre = cur.preBlockStatus ?? cur.parkFromStatus ?? cur.status;
-      await d
+      // GUARDED GATING WRITE (#208): one conditional flip — a row that flipped BLOCKED
+      // between the read and this write (a park, another gate) wins; zero rows = the
+      // concurrent writer owns the outcome and its own thread note
+      const gated = await d
         .update(tasks)
         .set({ status: BLOCKED_STATUS, preBlockStatus: pre, updatedAt: new Date() })
-        .where(eq(tasks.id, cur.id));
-      await logActivity(cur.id, `auto-blocked: ${open} subtask(s) open`, { autoBlocked: true, open });
+        .where(and(eq(tasks.id, cur.id), ne(tasks.status, BLOCKED_STATUS)))
+        .returning({ id: tasks.id });
+      if (gated.length > 0) {
+        await logActivity(cur.id, `auto-blocked: ${open} subtask(s) open`, { autoBlocked: true, open });
+      }
     } else if (open === 0 && cur.status === BLOCKED_STATUS && (cur.preBlockStatus || cur.parkFromStatus)) {
       // PARK-ORIGIN RESTORE (#202): a parked task (park_from_status set) restores its
       // recorded pre-park status even with no pre_block_status — pure parks stranded
@@ -100,10 +106,20 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
       const restore = parked
         ? resolveParkRestoreTarget(nonNull(cur.parkFromStatus), known)
         : resolveRestoreTarget(nonNull(cur.preBlockStatus), known);
-      await d
+      // GUARDED GATING WRITE (#208): atomic on the row still being BLOCKED (same
+      // pattern as bounceTaskAfterRun) — the statusCategoryMap await above opens a
+      // window a concurrent owner settle/unblock can win
+      const restored = await d
         .update(tasks)
         .set({ status: restore, preBlockStatus: null, parkFromStatus: null, updatedAt: new Date() })
-        .where(eq(tasks.id, cur.id));
+        .where(and(eq(tasks.id, cur.id), eq(tasks.status, BLOCKED_STATUS)))
+        .returning({ id: tasks.id });
+      if (restored.length === 0) {
+        // the concurrent writer is the verdict of record: no restore, no note, no
+        // turn replay, and the walk stops — the winner re-runs refreshParentGating
+        // itself (every status write path does), so its outcome propagates upstream
+        break;
+      }
       await logActivity(cur.id, `unblocked: all subtasks terminal → ${restore}`, {
         autoUnblocked: true,
         restored: restore,
