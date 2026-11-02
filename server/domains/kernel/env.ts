@@ -30,6 +30,7 @@ const envSchema = z.preprocess(
     // test-only: seed the admin WITHOUT the forced-rotation flag (e2e/CI knob)
     TANDEM_SEED_NO_ROTATION: z.string().optional(),
     TANDEM_RUN_FLUSH_MS: z.string().optional(),
+    TANDEM_RUN_PUBLISH_MS: z.string().optional(),
     TANDEM_ACP_CANCEL_GRACE_MS: z.string().optional(),
     TANDEM_SSH_TIMEOUT_MS: z.string().optional(),
     // boot-time knob — the pool is built once at import, so the contract (not a
