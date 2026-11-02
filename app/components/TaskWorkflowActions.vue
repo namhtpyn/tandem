@@ -21,6 +21,9 @@ const props = defineProps<{
   task: TaskRow;
   statusCategory: Category | null;
   agentRunning: boolean;
+  /** the run feed LOADED (not pending, not failed) — false = unknown run state,
+   *  never idle (#223) */
+  runsKnown: boolean;
   note: string;
   busy: boolean;
   message: string;
@@ -42,13 +45,19 @@ const canSubmit = computed(() =>
     userId: userId.value,
   }),
 );
-const canCancel = computed(() =>
-  cancelReady({
-    category: props.statusCategory,
-    assigneeId: props.task.assigneeId,
-    ownerId: props.task.ownerId,
-    userId: userId.value,
-  }),
+const canCancel = computed(
+  () =>
+    // the run feed must be KNOWN first: a pending/failed feed is unknown run
+    // state, not idle — an armed confirm over an unknown lock is a false promise
+    // (#223, VERB RENDER-PARITY — same fold as dispatchReady on the drawer)
+    props.runsKnown &&
+    cancelReady({
+      category: props.statusCategory,
+      assigneeId: props.task.assigneeId,
+      ownerId: props.task.ownerId,
+      userId: userId.value,
+      running: props.agentRunning,
+    }),
 );
 const canDispatch = computed(() =>
   dispatchReady({ category: props.statusCategory, assigneeKind: props.task.assigneeKind, running: props.agentRunning }),
@@ -162,12 +171,12 @@ function onDispatch() {
 
     <!-- cancelling is terminal: confirm it inline instead of firing on one click -->
     <div
-      v-if="cancelArmed"
+      v-if="cancelArmed && canCancel"
       class="border-error/40 bg-error/10 space-y-2 rounded-md border p-2.5 text-xs"
       role="alertdialog"
       aria-label="Confirm cancelling the task"
     >
-      <p class="text-toned">Cancelling ends this task: the agent stops and it can no longer be dispatched.</p>
+      <p class="text-toned">Cancelling ends this task: it can no longer be worked on or dispatched.</p>
       <div class="flex gap-2">
         <UButton size="xs" color="error" label="Confirm cancel" :loading="busy" @click="confirmCancel()" />
         <UButton size="xs" color="neutral" variant="ghost" label="Keep it" @click="cancelArmed = false" />

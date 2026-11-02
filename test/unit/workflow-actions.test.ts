@@ -282,17 +282,23 @@ describe('task-page verb gates (working/submit/dispatch)', () => {
     ).toBe(expected);
   });
 
+  // #223 VERB RENDER-PARITY: cancel obeys the SAME server truth as dispatch —
+  // the abandon refuses over a live run ('cancel the running run first'), so a
+  // live run hides the verb on every surface and the confirm copy never lies.
   it.each([
-    ['owner in a work state', CATEGORY.READY, 'u-2', 'u-1', 'u-1', true],
-    ['assignee in a work state', CATEGORY.WORKING, 'u-1', 'u-2', 'u-1', true],
-    ['third-party viewer — server refuses the abandon', CATEGORY.WORKING, 'u-2', 'u-2', 'u-1', false],
-    ['terminal state (done)', CATEGORY.DONE, 'u-2', 'u-1', 'u-1', false],
-    ['no session', CATEGORY.WORKING, 'u-2', 'u-1', null, false],
-  ])('cancelReady: %s', async (_label, category, assigneeId, ownerId, userId, expected) => {
+    ['owner in a work state, no live run', CATEGORY.READY, 'u-2', 'u-1', 'u-1', false, true],
+    ['assignee in a work state, no live run', CATEGORY.WORKING, 'u-1', 'u-2', 'u-1', false, true],
+    ['a live run blocks cancel — server refuses the abandon', CATEGORY.WORKING, 'u-1', 'u-1', 'u-1', true, false],
+    ['live run in a ready state', CATEGORY.READY, 'u-2', 'u-1', 'u-1', true, false],
+    ['third-party viewer — server refuses the abandon', CATEGORY.WORKING, 'u-2', 'u-2', 'u-1', false, false],
+    ['terminal state (done)', CATEGORY.DONE, 'u-2', 'u-1', 'u-1', false, false],
+    ['no session', CATEGORY.WORKING, 'u-2', 'u-1', null, false, false],
+    ['statuses not yet loaded (null category)', null, 'u-2', 'u-1', 'u-1', false, false],
+  ])('cancelReady: %s', async (_label, category, assigneeId, ownerId, userId, running, expected) => {
     const m = await import('../../app/composables/useWorkflowActions.ts');
-    expect(m.cancelReady({ category: category as never, assigneeId: assigneeId as never, ownerId, userId })).toBe(
-      expected,
-    );
+    expect(
+      m.cancelReady({ category: category as never, assigneeId: assigneeId as never, ownerId, userId, running }),
+    ).toBe(expected);
   });
 
   it.each([
