@@ -520,8 +520,16 @@ export const tasksRouter = os.router({
       await db
         .update(tasksTable)
         // owner resolution clears park-origin memory (#202): the owner's move is the
-        // verdict of record — a stale park_from_status must never outlive the park
-        .set({ status: input.status, parkFromStatus: null, updatedAt: new Date() })
+        // verdict of record — a stale park_from_status must never outlive the park.
+        // PARK-REARM LAW (#211): the owner's move also clears the re-arm ladder —
+        // a fresh owner context restarts the machine ledger at zero.
+        .set({
+          status: input.status,
+          parkFromStatus: null,
+          parkRearmAttempts: 0,
+          parkRearmAfter: null,
+          updatedAt: new Date(),
+        })
         .where(eq(tasksTable.id, input.id));
       // manual settle tears the round down (final spec 2026-10-29 #8): the owner's
       // move IS the verdict of record — pending rows supersede, obligations cancel.

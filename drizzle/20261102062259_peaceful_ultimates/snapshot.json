@@ -1,0 +1,125 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "c8cb0603-2ffa-4c3c-a2dc-869e096fde74",
+  "prevIds": [
+    "e8dcc27e-1c0f-4ea8-9c04-d9470ab9eed3"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "tasks",
+        "park_rearm_attempts"
+      ],
+      "writes": [
+        "s|col|public.tasks.park_rearm_attempts",
+        "n|col|public.tasks.park_rearm_attempts",
+        "e|col|public.tasks.park_rearm_attempts"
+      ],
+      "reads": [
+        "n|tbl|public.tasks",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "tasks",
+        "park_rearm_after"
+      ],
+      "writes": [
+        "s|col|public.tasks.park_rearm_after",
+        "n|col|public.tasks.park_rearm_after",
+        "e|col|public.tasks.park_rearm_after"
+      ],
+      "reads": [
+        "n|tbl|public.tasks",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "tasks",
+        "tasks_park_rearm_idx"
+      ],
+      "writes": [
+        "s|idx|public.tasks_park_rearm_idx",
+        "n|idx|public.tasks_park_rearm_idx",
+        "e|idx|public.tasks_park_rearm_idx",
+        "n|rel|public.tasks_park_rearm_idx"
+      ],
+      "reads": [
+        "n|tbl|public.tasks",
+        "n|sch|public",
+        "n|col|public.tasks.park_rearm_after"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "tasks",
+        "name": "park_rearm_attempts",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "0",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "tasks",
+        "name": "park_rearm_after",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "tasks",
+        "name": "tasks_park_rearm_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "park_rearm_after",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": "park_rearm_after is not null",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    }
+  ]
+}

@@ -1032,8 +1032,9 @@ async function settleDoneRun(
     consola.error(`[settle] task ${taskId} run ${runId} settle failed: ${msg}`);
     if (plan.review) {
       // a lost review verdict is a settle failure: park on the owner (SPEC #199) —
-      // the work ladder's bounce no-ops on an in-review task and the round would wedge
-      await parkRound(taskId, `review verdict settle failed — ${msg}`);
+      // the work ladder's bounce no-ops on an in-review task and the round would wedge.
+      // REARMABLE (#211): a settle throw is infra-class — the re-arm ladder re-fires it.
+      await parkRound(taskId, `review verdict settle failed — ${msg}`, { rearmable: true });
     } else {
       await bounceTaskAfterRun(taskId, runId, buffer);
     }
@@ -1123,7 +1124,8 @@ function createRunWriter(runId: string, initial: string, messageId: string) {
       // rides the work backoff ladder — bounceTaskAfterRun's doing-guard no-ops on an
       // in-review task, wedging the round (PENDING row, nothing re-fires it). parkRound
       // flips in-review -> BLOCKED; owner unblock re-dispatches the parked reviewer.
-      await parkRound(taskId, `review turn failed — run settled ${status}`);
+      // REARMABLE (#211): a failed review turn is infra-class — the ladder re-fires it.
+      await parkRound(taskId, `review turn failed — run settled ${status}`, { rearmable: true });
     } else {
       await bounceTaskAfterRun(taskId, runId, buffer);
     }
