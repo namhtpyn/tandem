@@ -1,8 +1,8 @@
 // SNAPSHOT-SLIMMING LAW (#130 slice 3): a task's description body never rides
 // list payloads — tasks.list / tasks.listPaged rows ship id..updatedAt only.
-// The body travels exclusively through tasks.getDescription (task page brief
-// bubble, editor modal prefill), mirroring the RUN-TRANSCRIPT LAW's
-// tasks.runTranscript. Server-internal readers (brief builder, listPaged
+// The body travels on the by-id read (tasks.get, BY-ID READ LAW #220) and via
+// tasks.getDescription (editor modal prefill), mirroring the RUN-TRANSCRIPT
+// LAW's tasks.runTranscript. Server-internal readers (brief builder, listPaged
 // search filter) keep their own selects — this module is the WIRE path.
 import { db } from '../../db/index';
 
@@ -36,6 +36,16 @@ export function taskListColumns() {
 export function taskDescriptionScan(taskId: string) {
   return {
     columns: { id: true, description: true },
+    where: { id: { eq: taskId } },
+  } as const;
+}
+
+/** RQB options for the BY-ID READ (#220) — every list column PLUS the
+ * description body (the by-id read is the other wire surface where the body
+ * travels), keyed by PK. Exported so unit tests can pin the shape. */
+export function taskGetScan(taskId: string) {
+  return {
+    columns: { ...taskListColumns(), description: true },
     where: { id: { eq: taskId } },
   } as const;
 }

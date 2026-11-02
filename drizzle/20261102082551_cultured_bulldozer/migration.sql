@@ -1,0 +1,1 @@
+CREATE INDEX "tasks_created_id_idx" ON "tasks" ("created_at","id");
