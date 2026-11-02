@@ -34,6 +34,15 @@ function flushMs() {
   return Number(env.TANDEM_RUN_FLUSH_MS ?? 500);
 }
 
+// SSE-AMPLIFICATION LAW (#253): RUNS change events ride lifecycle transitions
+// (start, settle) plus AT MOST one publish per heartbeat while streaming — never
+// the DB-append flush. The row lands at flush cadence (durable); the SSE feed
+// re-emits at heartbeat cadence, so the transcript payload ships bounded per
+// viewer regardless of output size. Overridable so tests can exercise the gate.
+function publishHeartbeatMs() {
+  return Number(env.TANDEM_RUN_PUBLISH_MS ?? 3000);
+}
+
 // hard cap on one run; a hung agent (frozen process, TCP never drops) becomes a failure
 import { getRunTimeoutMs } from '../settings/settings.service';
 
@@ -1146,12 +1155,15 @@ async function settleDoneRun(
 }
 
 /** flush/finish machinery for one run execution: appends streamed lines to the row
- * (chunked sql-concat, never a full rewrite) and settles the row exactly once. */
-function createRunWriter(runId: string, initial: string, messageId: string) {
+ * (chunked sql-concat, never a full rewrite) and settles the row exactly once.
+ * Exported for the publish-cadence unit test (#253). */
+export function createRunWriter(runId: string, initial: string, messageId: string) {
   let buffer = initial;
   let flushedLen = buffer.length;
   let lastFlush = 0;
   let flushing = false;
+  // start publish already fired pre-execution — the first flush must not re-publish
+  let lastPublish = Date.now();
   const onLine = (line: string) => {
     buffer = `${buffer}${buffer ? '\n' : ''}${line}`;
     const now = Date.now();
@@ -1167,7 +1179,15 @@ function createRunWriter(runId: string, initial: string, messageId: string) {
         .update(taskRuns)
         .set({ output: sql`coalesce(${taskRuns.output}, '') || ${chunk}` })
         .where(and(eq(taskRuns.id, runId), eq(taskRuns.status, RUN_STATUS.RUNNING)))
-        .then(() => publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE))
+        .then(() => {
+          // SSE-AMPLIFICATION LAW (#253): at most one RUNS publish per heartbeat
+          // window while streaming — the flush keeps its DB cadence, the SSE
+          // feed does not ride it. Lifecycle publishes (start/finish) are outside.
+          const now = Date.now();
+          if (now - lastPublish < publishHeartbeatMs()) return;
+          lastPublish = now;
+          return publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
+        })
         // flush is best-effort; finish() writes the final tail. A late flush can
         // race teardown (test DB drops, shutdown) — swallow, never an unhandled rejection.
         .catch(
