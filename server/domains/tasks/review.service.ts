@@ -24,6 +24,7 @@ import { insertActivityMessage } from './thread.service';
 export type ReviewVerdict = Exclude<ReviewStatus, typeof REVIEW_STATUS.PENDING>;
 
 import {
+  CATEGORY,
   CHANGE_RESOURCE,
   CHANGE_ACTION,
   REVIEW_STATUS,
@@ -491,6 +492,37 @@ export async function parkRound(taskId: string, why: string) {
     fromStatus: task.status,
   });
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+}
+
+/** OBLIGATION LIFECYCLE (#205): a PENDING obligation must never outlive the
+ * state that makes it actionable. The owner's manual move is the verdict of
+ * record, so setStatus resolves status CATEGORIES — never seeded ids:
+ *  - settling into ANY done/cancelled-category status (seeded or custom) tears
+ *    the round down and cancels every PENDING obligation (both roles). The old
+ *    seeded-id guard skipped custom terminal statuses entirely;
+ *  - leaving the waiting_answer category cancels PENDING ANSWER obligations —
+ *    a round-0 (question-flow) task early-returns in teardownOpenRound, so its
+ *    ANSWER obligation otherwise survives the settle forever (phantom inbox). */
+export async function teardownOnManualMove(taskId: string, fromStatus: string, toStatus: string) {
+  const statuses = await db.query.taskStatuses.findMany({
+    columns: { id: true, category: true },
+    orderBy: { position: 'asc' },
+  });
+  const byId = new Map(statuses.map((s) => [s.id, s.category]));
+  const from = byId.get(fromStatus);
+  const to = byId.get(toStatus);
+  if (to === CATEGORY.DONE || to === CATEGORY.CANCELLED) {
+    if (from !== to) {
+      await teardownOpenRound(taskId, toStatus);
+      // question-flow tasks (round 0) skip teardownOpenRound; any stale ANSWER
+      // obligation dies with the settle regardless of review state
+      await cancelAllObligations(taskId, OBLIGATION_ROLE.ANSWER);
+    }
+    return;
+  }
+  if (from === CATEGORY.WAITING_ANSWER && to !== CATEGORY.WAITING_ANSWER) {
+    await cancelAllObligations(taskId, OBLIGATION_ROLE.ANSWER);
+  }
 }
 
 /** MANUAL SETTLE teardown: the owner moved the task to a terminal status — the
