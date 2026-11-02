@@ -1,5 +1,5 @@
 import { consola } from 'consola';
-import { and, count, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 
 import { ACTIVITY_KIND, CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
@@ -164,6 +164,48 @@ export function livenessBounce(
   return now - idleSince.getTime() > graceMs;
 }
 
+/** fixed bound on the sweep read (#225): idle relics bounce at ≤ this per tick
+ * and the remainder waits for the next 5s tick — the sweep never fans out over
+ * a stuck-relic backlog. */
+export const LIVENESS_SWEEP_MARGIN = 25;
+
+/** sweep read shape (#225): ONE statement per tick — the newest run per
+ * working candidate arrives via a LATERAL join (task_runs ⋈ task_messages via
+ * message_id — runs carry no task_id, newest started_at first), the
+ * no-live-run and idle-past-grace predicates ride the SQL WHERE and the read
+ * is LIMIT-bounded; executor-injected for query-shape tests. */
+export function idleSweepScan(ex: DbExecutor, cutoff: Date, limit: number) {
+  return asDb(ex)
+    .select({
+      id: tasks.id,
+      updatedAt: tasks.updatedAt,
+      newestStatus: sql<string | null>`newest.status`,
+      newestFinishedAt: sql<Date | null>`newest.finished_at`,
+    })
+    .from(tasks)
+    .innerJoin(taskStatuses, eq(taskStatuses.id, tasks.status))
+    .innerJoin(aiEmployees, eq(aiEmployees.userId, tasks.assigneeId))
+    .leftJoinLateral(
+      asDb(ex)
+        .select({ status: taskRuns.status, finished_at: taskRuns.finishedAt })
+        .from(taskRuns)
+        .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+        .where(eq(taskMessages.taskId, tasks.id))
+        .orderBy(desc(taskRuns.startedAt))
+        .limit(1)
+        .as('newest'),
+      sql`true`,
+    )
+    .where(
+      and(
+        eq(taskStatuses.category, 'working'),
+        or(isNull(sql`newest.status`), ne(sql`newest.status`, RUN_STATUS.RUNNING)),
+        sql`coalesce(newest.finished_at, ${tasks.updatedAt}) < ${cutoff}`,
+      ),
+    )
+    .limit(limit);
+}
+
 export async function sweepIdleWorking(): Promise<number> {
   try {
     return await sweepIdleWorkingInner();
@@ -175,31 +217,21 @@ export async function sweepIdleWorking(): Promise<number> {
 
 async function sweepIdleWorkingInner(): Promise<number> {
   const now = Date.now();
-  const rows = await db
-    .select({ id: tasks.id, updatedAt: tasks.updatedAt })
-    .from(tasks)
-    .innerJoin(taskStatuses, eq(taskStatuses.id, tasks.status))
-    .innerJoin(aiEmployees, eq(aiEmployees.userId, tasks.assigneeId))
-    .where(eq(taskStatuses.category, 'working'));
+  // bounded ONE-statement read (#225): newest run + idle predicate + limit all
+  // in SQL — the tick never issues a per-row newest-run query
+  const rows = await idleSweepScan(db, new Date(now - LIVENESS_GRACE_MS), LIVENESS_SWEEP_MARGIN);
   let bounced = 0;
   for (const row of rows) {
-    // runs link tasks via task_runs.message_id -> task_messages.task_id (no task_id on runs)
-    const newest = (
-      await db
-        .select({ status: taskRuns.status, finishedAt: taskRuns.finishedAt })
-        .from(taskRuns)
-        .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
-        .where(eq(taskMessages.taskId, row.id))
-        .orderBy(desc(taskRuns.startedAt))
-        .limit(1)
-    )[0];
+    // parity guard: the SQL WHERE and the pure decision agree by construction;
+    // routing through livenessBounce keeps the bounce decision single-sourced
+    const newestFinishedAt = row.newestFinishedAt ? new Date(row.newestFinishedAt) : null;
     if (
       !livenessBounce(
         {
           category: 'working',
           isAiAssignee: true,
-          newestRunStatus: newest?.status ?? null,
-          newestRunSettledAt: newest?.finishedAt ?? null,
+          newestRunStatus: row.newestStatus ?? null,
+          newestRunSettledAt: newestFinishedAt,
           updatedAt: row.updatedAt,
         },
         now,
@@ -216,7 +248,7 @@ async function sweepIdleWorkingInner(): Promise<number> {
       ACTIVITY_KIND.STATUS,
       null,
       '[liveness] idle in a working status with no live run — returned to to-do',
-      { livenessBounce: true, idleSince: (newest?.finishedAt ?? row.updatedAt).toISOString() },
+      { livenessBounce: true, idleSince: (newestFinishedAt ?? row.updatedAt).toISOString() },
     );
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     bounced += 1;
