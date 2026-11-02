@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   eligibleTaskScan,
+  idleSweepScan,
   liveRunsByAgent,
   reapOutputMarker,
   reapSweepScan,
@@ -90,5 +91,53 @@ describe('live-run counts shape (#130)', () => {
     expect(sql).toContain('"task_runs"."status" =');
     expect(sql).toContain('"task_runs"."employee_id" in');
     expect(params).toEqual(['RUNNING', 'jay', 'zed']);
+  });
+});
+
+describe('liveness sweep shape (#225)', () => {
+  const CUTOFF = new Date('2026-11-02T00:00:00Z');
+  const MARGIN = 25;
+
+  it('is ONE statement: the newest run arrives via a LATERAL join, never a per-row query', () => {
+    const db = mockDb();
+    const { sql } = idleSweepScan(db, CUTOFF, MARGIN).toSQL();
+    const flat = sql.replace(/\s+/g, ' ').toLowerCase();
+    expect(flat).toContain('left join lateral');
+    expect(flat).toContain('order by "task_runs"."started_at" desc');
+  });
+
+  it('pushes the no-live-run predicate into the WHERE', () => {
+    const db = mockDb();
+    const { sql, params } = idleSweepScan(db, CUTOFF, MARGIN).toSQL();
+    const flat = sql.replace(/\s+/g, ' ').toLowerCase();
+    expect(flat).toContain('newest.status is null');
+    expect(flat).toContain('newest.status <>');
+    expect(params).toContain('RUNNING');
+  });
+
+  it('pushes the idle-past-grace predicate into the WHERE (coalesce of finished_at/updated_at)', () => {
+    const db = mockDb();
+    const { sql, params } = idleSweepScan(db, CUTOFF, MARGIN).toSQL();
+    const flat = sql.replace(/\s+/g, ' ').toLowerCase();
+    expect(flat).toContain('coalesce(newest.finished_at');
+    // raw sql template binds the Date as-is (RQB operators ISO-serialize, this path does not)
+    expect(params.some((p: unknown) => p instanceof Date && p.getTime() === CUTOFF.getTime())).toBe(true);
+  });
+
+  it('filters working-category + AI-assignee in SQL and is LIMIT-bounded', () => {
+    const db = mockDb();
+    const { sql, params } = idleSweepScan(db, CUTOFF, MARGIN).toSQL();
+    const flat = sql.replace(/\s+/g, ' ').toLowerCase();
+    expect(flat).toContain('"task_statuses"."category" =');
+    expect(flat).toContain('"ai_employees"."user_id" =');
+    expect(flat).toContain('limit $');
+    expect(params).toContain(MARGIN);
+  });
+
+  it('projects no oversized columns (no description, no output)', () => {
+    const db = mockDb();
+    const { sql } = idleSweepScan(db, CUTOFF, MARGIN).toSQL();
+    expect(sql.toLowerCase()).not.toContain('description');
+    expect(sql.toLowerCase()).not.toContain('"output"');
   });
 });
