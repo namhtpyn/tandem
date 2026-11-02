@@ -37,7 +37,9 @@ export const environmentsRouter = os.router({
     .handler(({ input }) => listEnvironmentsPaged(input)),
 
   /** live list — pushes a fresh snapshot on every environments change */
-  live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.ENVIRONMENTS], listEnvironments)),
+  live: protectedProcedure.handler(({ context }) =>
+    liveGenerator([CHANGE_RESOURCE.ENVIRONMENTS], listEnvironments, context),
+  ),
 
   create: adminProcedure.input(environmentInput).handler(async ({ input }) => {
     const clash = await db

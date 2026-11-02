@@ -19,7 +19,7 @@ export const secretRouter = {
   /** live list — metadata only; ciphertext never leaves the server */
   list: adminProcedure.input(listVaultSecretsInput).handler(({ input }) => listVaultSecrets(input)),
 
-  live: adminProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.VAULT], listVaultSecrets)),
+  live: adminProcedure.handler(({ context }) => liveGenerator([CHANGE_RESOURCE.VAULT], listVaultSecrets, context)),
 
   create: adminProcedure
     .input(

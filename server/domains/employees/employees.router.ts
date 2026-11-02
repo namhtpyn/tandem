@@ -296,7 +296,9 @@ export const employeesRouter = os.router({
     )
     .handler(({ input }) => listEmployeesPaged(input)),
 
-  live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.EMPLOYEES], listEmployeesSnapshot)),
+  live: protectedProcedure.handler(({ context }) =>
+    liveGenerator([CHANGE_RESOURCE.EMPLOYEES], listEmployeesSnapshot, context),
+  ),
 
   /** create an employee AND its login user. kind=ai also mints an API key
    *  (returned once) and the AI extension row. */
@@ -478,19 +480,23 @@ export const employeesRouter = os.router({
       return { titles: rows.map((t) => ({ id: t.id, name: t.name, employees: byTitle.get(t.name) ?? 0 })) };
     }),
 
-    live: protectedProcedure.handler(() =>
-      liveGenerator([CHANGE_RESOURCE.EMPLOYEES], async () => {
-        const rows = await db.query.employeeTitles.findMany({
-          columns: { id: true, name: true },
-          orderBy: { name: 'asc' },
-        });
-        const counts = await db
-          .select({ title: userTable.title, count: count() })
-          .from(userTable)
-          .groupBy(userTable.title);
-        const byTitle = new Map(counts.map((c) => [c.title, Number(c.count)]));
-        return { titles: rows.map((t) => ({ id: t.id, name: t.name, employees: byTitle.get(t.name) ?? 0 })) };
-      }),
+    live: protectedProcedure.handler(({ context }) =>
+      liveGenerator(
+        [CHANGE_RESOURCE.EMPLOYEES],
+        async () => {
+          const rows = await db.query.employeeTitles.findMany({
+            columns: { id: true, name: true },
+            orderBy: { name: 'asc' },
+          });
+          const counts = await db
+            .select({ title: userTable.title, count: count() })
+            .from(userTable)
+            .groupBy(userTable.title);
+          const byTitle = new Map(counts.map((c) => [c.title, Number(c.count)]));
+          return { titles: rows.map((t) => ({ id: t.id, name: t.name, employees: byTitle.get(t.name) ?? 0 })) };
+        },
+        context,
+      ),
     ),
 
     // admin-tier: the rename cascades onto every employee holding the old

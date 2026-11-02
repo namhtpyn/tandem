@@ -23,7 +23,9 @@ export const authRouter = os.router({
   config: base.handler(() => resolveAuthConfig()),
 
   /** live auth capabilities (SSE updater only) */
-  configLive: base.handler(() => liveGenerator([CHANGE_RESOURCE.SETTINGS, CHANGE_RESOURCE.OIDC], resolveAuthConfig)),
+  configLive: base.handler(({ context }) =>
+    liveGenerator([CHANGE_RESOURCE.SETTINGS, CHANGE_RESOURCE.OIDC], resolveAuthConfig, context),
+  ),
 
   /** current session (null when anonymous) */
   session: base.handler(async ({ context }) => {

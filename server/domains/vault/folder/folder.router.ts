@@ -29,7 +29,7 @@ export const folderRouter = os.router({
 
   listPaged: adminProcedure.input(listFoldersPagedInput).handler(({ input }) => listFoldersPaged(input)),
 
-  live: adminProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.VAULT], listFolders)),
+  live: adminProcedure.handler(({ context }) => liveGenerator([CHANGE_RESOURCE.VAULT], listFolders, context)),
 
   /** create/rename a folder (admin-only write) */
   save: adminProcedure

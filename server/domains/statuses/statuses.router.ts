@@ -39,7 +39,7 @@ export const statusesRouter = os.router({
   list: protectedProcedure.handler(() => listStatuses()),
 
   /** live task-status list (ordered) */
-  live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.STATUSES], listStatuses)),
+  live: protectedProcedure.handler(({ context }) => liveGenerator([CHANGE_RESOURCE.STATUSES], listStatuses, context)),
 
   /** create or update a status (upsert by id, admin-only) */
   save: adminProcedure

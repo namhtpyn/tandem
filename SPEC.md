@@ -145,6 +145,14 @@ session tier; an admin-surface write is never wired below the admin tier. A
 role gate is part of the procedure definition itself (kernel middleware), so a
 router file wired with bare `protectedProcedure` on an admin-tier write is a
 defect even if a client never calls it.
+**LIVE-STREAM RE-AUTH (#224):** a `live` stream outlives its open-time check, so
+every live generator re-asserts the procedure's own tier against a FRESH
+session (never the per-request latch) before emitting a snapshot — at most once
+per 5s window per stream. A revoked/deleted session → `UNAUTHORIZED`;
+rotation-locked, demoted, or API-key-on-human-only → `FORBIDDEN`; the stream
+tears down rather than yielding. Public streams (`auth.configLive`) skip the
+check by design; a live procedure whose generator never calls the gate is a
+review blocker.
 
 Review verdicts are HUMAN-only: `tasks.approve`, `tasks.requestChanges` and
 `tasks.reject` additionally verify the session's credential origin — a session
