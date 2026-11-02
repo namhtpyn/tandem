@@ -1,3 +1,10 @@
+## [2.65.8](https://github.com/namhtpyn/tandem/compare/v2.65.7...v2.65.8) (2026-11-02)
+
+
+### Bug Fixes
+
+* **rpc:** pre-read body-cap gate on /rpc — 411 chunked, 413 over 2MB input (audit [#252](https://github.com/namhtpyn/tandem/issues/252)) ([d2483d0](https://github.com/namhtpyn/tandem/commit/d2483d0dea22f2e193207ed1bbc5ff7f34751492)), closes [#241](https://github.com/namhtpyn/tandem/issues/241)
+
 ## [2.65.7](https://github.com/namhtpyn/tandem/compare/v2.65.6...v2.65.7) (2026-11-02)
 
 
