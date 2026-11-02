@@ -103,17 +103,6 @@ export type TaskRow = {
  * is the single-row surface where it travels. */
 export type TaskRowFull = TaskRow & { description: string };
 
-export type TaskActivityRow = {
-  id: string;
-  taskId: string;
-  kind: 'question' | 'answer' | 'forward' | 'note' | 'verdict' | 'status';
-  authorId: string | null;
-  authorName: string | null;
-  body: string;
-  meta: Record<string, unknown>;
-  createdAt: string;
-};
-
 export type ApiKeyRow = {
   id: string;
   name: string | null;
