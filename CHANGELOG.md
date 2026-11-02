@@ -1,3 +1,10 @@
+## [2.65.9](https://github.com/namhtpyn/tandem/compare/v2.65.8...v2.65.9) (2026-11-02)
+
+
+### Performance Improvements
+
+* **runs:** gate streaming RUNS publishes behind a 3s heartbeat — transcript no longer ships per 500ms flush (audit [#253](https://github.com/namhtpyn/tandem/issues/253)) ([f9a078d](https://github.com/namhtpyn/tandem/commit/f9a078d916448ee2ab109824ae2d4c15aa68e535))
+
 ## [2.65.8](https://github.com/namhtpyn/tandem/compare/v2.65.7...v2.65.8) (2026-11-02)
 
 
