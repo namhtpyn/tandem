@@ -1,3 +1,10 @@
+## [2.62.3](https://github.com/namhtpyn/tandem/compare/v2.62.2...v2.62.3) (2026-11-02)
+
+
+### Bug Fixes
+
+* **reviews:** park-origin memory — review parks restore to in-review when the parent gate lifts ([#202](https://github.com/namhtpyn/tandem/issues/202)) ([cd6c214](https://github.com/namhtpyn/tandem/commit/cd6c214a149a738c2f00fa0672915bb92cfdb7be))
+
 ## [2.62.2](https://github.com/namhtpyn/tandem/compare/v2.62.1...v2.62.2) (2026-11-01)
 
 
