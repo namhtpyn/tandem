@@ -98,6 +98,11 @@ export type TaskRow = {
   updatedAt: string;
 };
 
+/** BY-ID READ LAW (#220): the tasks.get payload — a full row plus the description
+ * body. The body NEVER rides list rows (SNAPSHOT-SLIMMING LAW); the by-id read
+ * is the single-row surface where it travels. */
+export type TaskRowFull = TaskRow & { description: string };
+
 export type TaskActivityRow = {
   id: string;
   taskId: string;

@@ -16,6 +16,8 @@ export type EmployeeRow = Outputs['employees']['list'][number];
 export type EnvironmentRow = Outputs['environments']['list'][number];
 export type ProjectRow = Outputs['projects']['list'][number];
 export type TaskRow = Outputs['tasks']['list'][number];
+/** BY-ID READ LAW (#220): the tasks.get payload — full row + description body */
+export type TaskRowFull = Outputs['tasks']['get'];
 export type ApiKeyRow = Outputs['employees']['listApiKeys'][number];
 export type ModelProviderRow = Outputs['providers']['list'][number];
 export type ProviderSaveInput = Parameters<Client['providers']['save']>[0];

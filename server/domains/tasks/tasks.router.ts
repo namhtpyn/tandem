@@ -12,7 +12,7 @@ import {
   type RunStatus,
   type ActivityKind,
 } from '#shared/enums';
-import type { TaskRow } from '#shared/types';
+import type { TaskRow, TaskRowFull } from '#shared/types';
 import { escapeIlike } from '#shared/utils/escape-ilike';
 import { nonNull } from '#shared/utils/non-null';
 
@@ -47,7 +47,7 @@ import { confirmProposal, rejectProposal } from './proposals.service';
 import { listReviews, logActivity } from './review.service';
 import { fetchRunTranscript } from './run-transcript';
 import { dispatchTask, listRuns } from './runner.service';
-import { fetchTaskDescription, taskListColumns } from './task-description';
+import { fetchTaskDescription, taskGetScan, taskListColumns } from './task-description';
 import { listTaskThread, threadOlderPage } from './thread.service';
 import {
   addNote,
@@ -100,6 +100,18 @@ const listTasksSnapshot = async (): Promise<TaskRow[]> => {
   });
   return mapTaskRows(rows);
 };
+
+/** BY-ID READ LAW (#220): single-task surfaces read one row — the list-row shape
+ * plus the description body; null = unknown task (the router maps to NOT_FOUND).
+ * One PK lookup + the same mapping joins the snapshot uses, scoped to ONE id. */
+export async function fetchTaskRowFull(taskId: string): Promise<TaskRowFull | null> {
+  const row = await db.query.tasks.findFirst(taskGetScan(taskId));
+  if (!row) return null;
+  const rows = await mapTaskRows([row]);
+  const mapped = rows[0];
+  if (!mapped) return null;
+  return { ...mapped, description: row.description };
+}
 
 /** exact list column set — the snapshot and the paged variant share it */
 type TaskListRow = Pick<
@@ -383,6 +395,14 @@ export const tasksRouter = os.router({
   /** live list — tasks with assignee info, newest first */
   /** plain GET list (first-load data per the SSE law) */
   list: protectedProcedure.handler(() => listTasksSnapshot()),
+
+  /** BY-ID READ LAW (#220): single-task read — full row + description body,
+   * NOT_FOUND on unknown id; single-task surfaces never subscribe to the snapshot */
+  get: protectedProcedure.input(z.strictObject({ taskId: z.string().min(1) })).handler(async ({ input }) => {
+    const row = await fetchTaskRowFull(input.taskId);
+    if (!row) throw new ORPCError('NOT_FOUND', { message: 'task does not exist' });
+    return row;
+  }),
 
   /** paged + searched + filtered rows for the tasks manager table (same row shape as list) */
   listPaged: protectedProcedure

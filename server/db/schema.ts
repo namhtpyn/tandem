@@ -309,6 +309,8 @@ export const tasks = pgTable(
     index('tasks_park_rearm_idx')
       .on(t.parkRearmAfter)
       .where(sql`park_rearm_after is not null`),
+    // newest-first sort for every list shape — snapshot + listPaged top-N (#220)
+    index('tasks_created_id_idx').on(t.createdAt, t.id),
   ],
 );
 
