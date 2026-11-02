@@ -1,3 +1,10 @@
+## [2.62.5](https://github.com/namhtpyn/tandem/compare/v2.62.4...v2.62.5) (2026-11-02)
+
+
+### Bug Fixes
+
+* **tasks:** guarded gating writes — unblock restore atomic on still-BLOCKED, auto-block on not-yet-BLOCKED; a lost race owns nothing and stops the walk ([#208](https://github.com/namhtpyn/tandem/issues/208)) ([9e250a1](https://github.com/namhtpyn/tandem/commit/9e250a1feb245cfc7aed781944e3f6a49c69ed90))
+
 ## [2.62.4](https://github.com/namhtpyn/tandem/compare/v2.62.3...v2.62.4) (2026-11-02)
 
 
