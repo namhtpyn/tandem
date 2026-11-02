@@ -284,6 +284,12 @@ export const tasks = pgTable(
     preBlockStatus: text('pre_block_status'),
     /** park origin (#202): the status a review park flipped BLOCKED from; null = not parked */
     parkFromStatus: text('park_from_status'),
+    /** PARK-REARM LAW (#211): an infra-class review park re-arms on a bounded backoff
+     * ladder — attempts burned in the current cycle (ladder length + 1 = exhausted,
+     * final park) and the earliest time the dispatcher tick may re-run the unblock
+     * arm; null = nothing scheduled (decision park, exhausted ladder, or no park) */
+    parkRearmAttempts: integer('park_rearm_attempts').notNull().default(0),
+    parkRearmAfter: timestamp('park_rearm_after', { withTimezone: true }),
     createdBy: uuid('created_by').references(() => user.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
@@ -299,6 +305,8 @@ export const tasks = pgTable(
     index('tasks_status_idx').on(t.status),
     // gating walks children on every status change (#130)
     index('tasks_parent_task_idx').on(t.parentTaskId),
+    // PARK-REARM scan (#211): partial — only rows with a scheduled re-arm, near-empty
+    index('tasks_park_rearm_idx').on(t.parkRearmAfter).where(sql`park_rearm_after is not null`),
   ],
 );
 
