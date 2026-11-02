@@ -1,0 +1,1 @@
+ALTER TABLE "tasks" ADD COLUMN "park_from_status" text;

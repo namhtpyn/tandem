@@ -480,10 +480,16 @@ export async function parkRound(taskId: string, why: string) {
   if (task.status !== IN_REVIEW_STATUS) return;
   await db
     .update(tasks)
-    .set({ status: BLOCKED_STATUS, updatedAt: new Date() })
+    // park-origin memory (#202): the BLOCKED flip carries the status it flipped from —
+    // the parent-gating unblock restores this, never a stale pre_block_status
+    .set({ status: BLOCKED_STATUS, parkFromStatus: task.status, updatedAt: new Date() })
     // atomic re-check: a settle/status change between read and write wins
     .where(and(eq(tasks.id, taskId), eq(tasks.status, IN_REVIEW_STATUS)));
-  await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review parked — ${why}`, { reviewParked: true, why });
+  await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review parked — ${why}`, {
+    reviewParked: true,
+    why,
+    fromStatus: task.status,
+  });
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
 

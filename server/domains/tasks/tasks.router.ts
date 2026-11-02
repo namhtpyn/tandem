@@ -519,7 +519,9 @@ export const tasksRouter = os.router({
       const actorId = await selfIdOf(context);
       await db
         .update(tasksTable)
-        .set({ status: input.status, updatedAt: new Date() })
+        // owner resolution clears park-origin memory (#202): the owner's move is the
+        // verdict of record — a stale park_from_status must never outlive the park
+        .set({ status: input.status, parkFromStatus: null, updatedAt: new Date() })
         .where(eq(tasksTable.id, input.id));
       // manual settle tears the round down (final spec 2026-10-29 #8): the owner's
       // move IS the verdict of record — pending rows supersede, obligations cancel

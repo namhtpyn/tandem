@@ -9,7 +9,7 @@ import { STATUS } from '#shared/status';
 const h = vi.hoisted(() => ({
   taskRows: [] as Array<Record<string, unknown>>,
   updates: [] as Array<{ table: string; set: Record<string, unknown>; hasPredicate: boolean }>,
-  activities: [] as Array<{ body: string }>,
+  activities: [] as Array<{ body: string; payload: Record<string, unknown> }>,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -40,8 +40,8 @@ vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/thread.service')>();
   return {
     ...mod,
-    insertActivityMessage: async (args: { body: string }) => {
-      h.activities.push({ body: args.body });
+    insertActivityMessage: async (args: { body: string; payload: Record<string, unknown> }) => {
+      h.activities.push({ body: args.body, payload: args.payload });
     },
   };
 });
@@ -76,5 +76,18 @@ describe('parkRound in-review guard (#199)', () => {
     expect(h.updates[0]?.hasPredicate).toBe(true);
     expect(h.activities).toHaveLength(1);
     expect(h.activities[0]?.body).toContain('review parked — review turn timed out');
+  });
+
+  it('the park write carries park-origin memory (#202): park_from_status = the in-review status', async () => {
+    h.taskRows = [{ status: STATUS.inReview, ownerId: 'u1' }];
+    await parkRound('task-1', 'escalation stalled — no eligible supervisor');
+    expect(h.updates[0]?.set.parkFromStatus).toBe(STATUS.inReview);
+  });
+
+  it('the park activity row records the from-status (#202)', async () => {
+    h.taskRows = [{ status: STATUS.inReview, ownerId: 'u1' }];
+    await parkRound('task-1', 'verdict-less review — re-dispatch exhausted');
+    expect(h.activities[0]?.payload.fromStatus).toBe(STATUS.inReview);
+    expect(h.activities[0]?.payload.reviewParked).toBe(true);
   });
 });
