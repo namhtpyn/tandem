@@ -306,7 +306,9 @@ export const tasks = pgTable(
     // gating walks children on every status change (#130)
     index('tasks_parent_task_idx').on(t.parentTaskId),
     // PARK-REARM scan (#211): partial — only rows with a scheduled re-arm, near-empty
-    index('tasks_park_rearm_idx').on(t.parkRearmAfter).where(sql`park_rearm_after is not null`),
+    index('tasks_park_rearm_idx')
+      .on(t.parkRearmAfter)
+      .where(sql`park_rearm_after is not null`),
   ],
 );
 
