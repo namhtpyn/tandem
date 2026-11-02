@@ -17,6 +17,7 @@ import {
   composerReady,
   dispatchReady,
   forwardReady,
+  stopReady,
   submitReady,
   useWorkflowActions,
 } from '~/composables/useWorkflowActions';
@@ -428,6 +429,15 @@ const drawerCanDispatch = computed(
       assigneeKind: workflowTask.value?.assigneeKind,
       running: drawerAgentRunning.value,
     }),
+);
+// STOP-RUN VERB (#229): drawer render-parity — the same gate as the task page's
+// stop verb, read from the drawer's OWN run feed; an unsettled feed is unknown
+// run state and renders nothing rather than a dead click
+const drawerCanStop = computed(
+  () =>
+    !drawerRunsQuery.isPending.value &&
+    !drawerRunsQuery.isError.value &&
+    stopReady({ running: drawerAgentRunning.value }),
 );
 // the drawer timeline reads the SAME source as the task page (threadList, which
 // already drops STATUS bookkeeping rows) through the same buildThread merge —
@@ -1293,6 +1303,7 @@ onServerPrefetch(() =>
               variant="soft"
               icon="i-lucide-ban"
               :disabled="workflowBusy"
+              data-testid="drawer-verb-cancel"
               @click="cancelArmed = true"
               >Cancel task</UButton
             >
@@ -1377,20 +1388,37 @@ onServerPrefetch(() =>
           <div class="space-y-2">
             <div class="flex items-center justify-between">
               <h3 class="text-muted text-xs font-medium">Agent runs</h3>
-              <!-- dispatch is an agent verb gated by the SAME server truth as the
-                   task page (#209: AI assignee + ready category + no live run) —
-                   it hides instead of sitting enabled where the server refuses -->
-              <UButton
-                v-if="drawerCanDispatch"
-                size="sm"
-                variant="soft"
-                icon="i-lucide-play"
-                :disabled="workflowBusy"
-                data-testid="drawer-verb-dispatch"
-                @click="wfAction('dispatch')"
-              >
-                Dispatch now
-              </UButton>
+              <div class="flex gap-2">
+                <!-- stop is the live run's one-click end (#229): honest confirm in the
+                     accessible name — the task itself is never touched by a stop -->
+                <UButton
+                  v-if="drawerCanStop"
+                  size="sm"
+                  color="warning"
+                  variant="soft"
+                  icon="i-lucide-octagon-x"
+                  :disabled="workflowBusy"
+                  data-testid="drawer-verb-stop"
+                  aria-label="Stop run — ends the agent's current turn; the task keeps its status"
+                  @click="wfAction('stop')"
+                >
+                  Stop run
+                </UButton>
+                <!-- dispatch is an agent verb gated by the SAME server truth as the
+                     task page (#209: AI assignee + ready category + no live run) —
+                     it hides instead of sitting enabled where the server refuses -->
+                <UButton
+                  v-if="drawerCanDispatch"
+                  size="sm"
+                  variant="soft"
+                  icon="i-lucide-play"
+                  :disabled="workflowBusy"
+                  data-testid="drawer-verb-dispatch"
+                  @click="wfAction('dispatch')"
+                >
+                  Dispatch now
+                </UButton>
+              </div>
             </div>
             <div v-for="r in runFeed" :key="r.id" class="border-default rounded-md border">
               <p class="text-toned flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium">

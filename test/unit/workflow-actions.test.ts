@@ -312,3 +312,39 @@ describe('task-page verb gates (working/submit/dispatch)', () => {
     expect(m.dispatchReady({ category: category as never, assigneeKind: kind, running })).toBe(expected);
   });
 });
+
+// #229 STOP-RUN VERB: one click ends the task's live agent run. The gate is the
+// pure run-state flag (the server's stopRunForTask owns every other rule —
+// owner checks, the CAS against the settled turn), so the verb renders exactly
+// while agentRunning and its truth table has NO other inputs.
+describe('stop verb (#229)', () => {
+  it('stopReady is exactly the live-run flag — no category/assignee field arms or leaks in', async () => {
+    const m = await import('../../app/composables/useWorkflowActions.ts');
+    expect(m.stopReady({ running: true })).toBe(true);
+    // the gate takes NO other fields: `{ running }` alone must typecheck and
+    // decide — a task's category/assignee state can never arm a stop button
+    expect(m.stopReady({ running: false })).toBe(false);
+  });
+
+  it('calls the tasks.stop proxy with the task id, names the stop copy, invalidates the three feeds', async () => {
+    const { wf } = await fresh();
+    await expect(wf.wfAction('stop')).resolves.toBe(true);
+    expect(calls).toEqual([{ proc: 'stop', input: { taskId: 'task-1' } }]);
+    expect(wf.workflowMessage.value).toBe('Run stopped');
+    expect(wf.workflowOk.value).toBe(true);
+    // the same three feeds every verb invalidates: TASKS, TASK_ACTIVITY+id, RUNS+id
+    expect(invalidated.map((k) => k[0])).toEqual(['TASKS', 'TASK_ACTIVITY', 'RUNS']);
+    expect(invalidated[1]).toContain('task-1');
+    expect(invalidated[2]).toContain('task-1');
+  });
+
+  it('falls back to the stop copy on failure and marks the verb failed', async () => {
+    const { wf } = await fresh();
+    nextError = 'no message'; // not an Error instance → the ladder reaches the verb copy
+    await expect(wf.wfAction('stop')).resolves.toBe(false);
+    expect(wf.workflowMessage.value).toBe("Couldn't stop the run — try again");
+    expect(wf.workflowOk.value).toBe(false);
+    expect(wf.workflowFailed.value).toBe(true);
+    expect(invalidated).toHaveLength(0);
+  });
+});

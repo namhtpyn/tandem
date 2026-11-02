@@ -20,7 +20,8 @@ export type WorkflowAction =
   | 'approve'
   | 'requestChanges'
   | 'reject'
-  | 'abandon';
+  | 'abandon'
+  | 'stop';
 
 export type WorkflowExtra = { body?: string; toEmployeeId?: string };
 
@@ -64,6 +65,7 @@ export const WF_COPY: Record<WorkflowAction, { ok: string; fail: string }> = {
   requestChanges: { ok: 'Changes requested', fail: "Couldn't request changes — try again" },
   reject: { ok: 'Rejected', fail: "Couldn't reject — try again" },
   abandon: { ok: 'Task cancelled', fail: "Couldn't cancel the task — try again" },
+  stop: { ok: 'Run stopped', fail: "Couldn't stop the run — try again" },
 };
 
 /**
@@ -112,6 +114,7 @@ export function useWorkflowActions(taskId: () => string | null | undefined) {
         requestChanges: () => $client.tasks.requestChanges({ ...input, body: nonNull(input.body) }),
         reject: () => $client.tasks.reject(input),
         abandon: () => $client.tasks.abandon(input),
+        stop: () => $client.tasks.stop({ taskId: input.taskId }),
       }[action]();
       // only clear the text this call actually sent — a bodyless verb carries no
       // note, and a note typed while the request was in flight must survive
@@ -240,6 +243,16 @@ export function dispatchReady(input: {
   running: boolean;
 }): boolean {
   return !input.running && input.category === CATEGORY.READY && input.assigneeKind === 'ai';
+}
+
+/**
+ * Stop gate (SPEC #229): the verb renders ONLY while a run is live — the
+ * server's stop settles any live run (work or review turn) and no-ops an
+ * already-settled one, so the gate is exactly the run feed's RUNNING bit.
+ * Every surface folds its own feed; an unsettled feed is unknown, never idle.
+ */
+export function stopReady(input: { running: boolean }): boolean {
+  return input.running;
 }
 
 /**

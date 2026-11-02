@@ -76,9 +76,10 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
   outputSchema?: S;
   /** extra lines appended after the auto-rendered contract (e.g. examples) */
   outputContractExtras?: string[];
-  /** called once the session exists — the hook receives a mid-turn steer fn
-   *  (a second session/prompt on the live stream; agents queue or interrupt it) */
-  onSessionOpen?: (steer: (text: string) => Promise<boolean>) => void;
+  /** called once the session exists — the hooks close over the live stream:
+   *  `steer` injects a mid-turn session/prompt, `stop` (#229) sends session/cancel
+   *  and tears the wire down after the cancel grace when the turn is still open */
+  onSessionOpen?: (hooks: { steer: (text: string) => Promise<boolean>; stop: () => void }) => void;
 }): Promise<[S] extends [never] ? AcpTurnResult : AcpStructuredTurnResult<S>> {
   const { stream, timeoutMs, onLine } = opts;
   // promptText: the caller's prompt plus the auto-rendered structured-output
@@ -277,17 +278,29 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
         };
 
         if (opts.onSessionOpen) {
-          opts.onSessionOpen(async (text: string) => {
-            try {
-              await ctx.request(acp.methods.agent.session.prompt, {
-                sessionId,
-                prompt: [{ type: 'text', text }],
-              });
-              return true;
-            } catch {
-              /* v8 ignore next -- request() rejects on error frames; a throw is transport-level */
-              return false;
-            }
+          opts.onSessionOpen({
+            steer: async (text: string) => {
+              try {
+                await ctx.request(acp.methods.agent.session.prompt, {
+                  sessionId,
+                  prompt: [{ type: 'text', text }],
+                });
+                return true;
+              } catch {
+                /* v8 ignore next -- request() rejects on error frames; a throw is transport-level */
+                return false;
+              }
+            },
+            // STOP-RUN VERB (#229): the same transport the timeout uses —
+            // session/cancel asks the agent to end its turn, the cancel grace
+            // then kills the wire if it never settles. Idempotent after settle.
+            stop: () => {
+              onLine?.('[acp] run stopped by a human — sending session/cancel');
+              notifyCancel(sessionId);
+              setTimeout(() => {
+                if (!settled) teardown();
+              }, cancelGraceMs()).unref?.();
+            },
           });
         }
 

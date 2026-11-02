@@ -178,6 +178,7 @@ const AGENT_RUN_STATUSES = {
   [RUN_STATUS.RUNNING.toLowerCase()]: 'running',
   [RUN_STATUS.DONE.toLowerCase()]: 'done',
   [RUN_STATUS.FAILED.toLowerCase()]: 'failed',
+  [RUN_STATUS.STOPPED.toLowerCase()]: 'stopped',
   cancelled: 'cancelled',
   timeout: 'timeout',
 } as const satisfies Record<string, AgentRunStatus>;

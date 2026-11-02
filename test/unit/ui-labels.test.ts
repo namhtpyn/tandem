@@ -23,7 +23,7 @@ import {
   waitingOnLabel,
 } from '../../app/utils/ui-labels';
 import { PROVIDER_ENDPOINT } from '../../shared/api-styles';
-import { CATEGORIES, CATEGORY } from '../../shared/enums';
+import { CATEGORIES, CATEGORY, RUN_STATUS } from '../../shared/enums';
 
 describe('ui-labels', () => {
   it('maps every category in the shared enum to a badge color and label', () => {
@@ -189,5 +189,20 @@ describe('ui-labels: composer/roles/verdicts', () => {
       waitingOnLabel({ questionHolderName: null, reviewerNames: ['Ada'], reviewApprovals: [] }, CATEGORY.READY),
     ).toBe(null);
     expect(waitingOnLabel({ questionHolderName: null, reviewerNames: [], reviewApprovals: [] }, null)).toBe(null);
+  });
+});
+
+// #229 STOPPED run status: the explicit key joins the map (until then any
+// unknown value silently FELL BACK to 'stopped' — the round-trip below pins
+// that the real wire token resolves from the map itself, enum-law derived).
+describe('ui-labels: STOPPED run status (#229)', () => {
+  it('runStatus maps the STOPPED wire token; the shared view labels it Stopped', () => {
+    expect(RUN_STATUS.STOPPED).toBe('STOPPED'); // enum law: SCREAMING wire token
+    expect(runStatus('STOPPED')).toBe('stopped');
+    // the raw token round-trips through the shared enum, never a re-typed literal
+    expect(runStatus(RUN_STATUS.STOPPED)).toBe('stopped');
+    expect(AGENT_RUN_VIEW.stopped.label).toBe('Stopped');
+    expect(AGENT_RUN_VIEW.stopped.run).toBe('Run stopped');
+    expect(AGENT_RUN_VIEW.stopped.dot).toBe('bg-accented');
   });
 });
