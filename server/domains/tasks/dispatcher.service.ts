@@ -17,6 +17,7 @@ import { aiEmployees, tasks, taskRuns, taskMessages, taskStatuses } from '../../
 import { publishChange } from '../kernel/change-bus';
 import { env } from '../kernel/env';
 import { redisQueue } from '../kernel/queue';
+import { rearmParkedRounds } from './gating.service';
 import {
   DISPATCH_ATTEMPTS,
   dispatchQueueName,
@@ -111,7 +112,8 @@ async function reapStaleRunsInner() {
         // yanks an in-review task out of its open round (rows stay PENDING, nothing
         // re-fires them). Park on the owner; unblock re-dispatches the reviewer.
         const { parkRound } = await import('./review.service');
-        await parkRound(taskId, `review turn timed out — reaped after ${minutes} min`);
+        // REARMABLE (#211): a timed-out review turn is infra-class (env/runner outage).
+        await parkRound(taskId, `review turn timed out — reaped after ${minutes} min`, { rearmable: true });
       } else {
         const streak = current.failStreak + 1;
         const waitMs = 15 * 60_000; // timeout = worst tier; something is wrong with the agent
@@ -527,6 +529,7 @@ export function startDispatcher(tandemUrl: string, intervalMs = 5000): () => voi
     void scanOnce(tandemUrl); // TICK-ISOLATION (#172): never rejects — its own catch turns errors into false
     void reapStaleRuns(); // never rejects: its own catch turns errors into 0 reaped
     void sweepIdleWorking(); // never rejects: its own catch turns errors into 0 bounced
+    void rearmParkedRounds(); // never rejects: its own catch turns errors into 0 rearmed
     void touchDispatcherHeartbeat(); // best-effort watchdog stamp (its own catch)
   }, intervalMs);
   return () => clearInterval(timer);

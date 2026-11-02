@@ -116,3 +116,107 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
     await sql2.close();
   }
 });
+
+// E2E (#211): the reaper's infra-class park now carries a RE-ARM ledger — and when the
+// ladder is due (seeded into the past), the dispatcher tick's re-arm scan re-runs the
+// unblock arm: the parked reviewer's turn MINTS again without any owner action. The
+// default review script's verdict-less double then re-parks as a DECISION park, which
+// resets the ledger — a decision park never re-arms (owner resolution is the only
+// resume there). Together: a parked round whose machine resume failed is never a
+// silent terminal state; the machine re-fires within one tick of the ladder coming due.
+test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', async ({ page }) => {
+  const tasks = new TasksPage(page);
+  const tag = Date.now().toString(36).slice(-6);
+  const botName = await seedAiEmployee(page, tag);
+  const taskTitle = `REARM ${tag}`;
+
+  await tasks.navigate('/tasks');
+  await tasks.openCreateModal();
+  await tasks.fillTaskForm({ title: taskTitle, assignee: 'Admin' });
+  await page.getByText('Add reviewers…').click();
+  await page.getByRole('option', { name: botName }).first().click();
+  await page.keyboard.press('Escape');
+  await tasks.saveTask();
+  await expect(tasks.rowFor(taskTitle)).toBeVisible({ timeout: 15_000 });
+
+  await page.locator('tbody').getByLabel(`Status for ${taskTitle}`).click();
+  await page.getByRole('option', { name: 'Doing' }).click();
+  await expect(tasks.rowFor(taskTitle)).toContainText('Doing', { timeout: 10_000 });
+
+  // inject the stale RUNNING review turn — the reaper's park is infra-class (#211)
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  let taskId = '';
+  try {
+    const inserted = await sql`
+      insert into task_messages (id, task_id, author_id, body, created_at)
+      select gen_random_uuid()::text, t.id, u.id, '[e2e] stale review turn', now()
+      from tasks t, "user" u
+      where t.title = ${taskTitle} and u.name = ${botName}
+      returning id, task_id
+    `;
+    expect(inserted.length).toBe(1);
+    taskId = inserted[0]!.task_id as string;
+    expect(taskId).toBeTruthy();
+    await sql`
+      insert into task_runs (id, message_id, employee_id, status, output, started_at)
+      select gen_random_uuid()::text, m.id, u.id, 'RUNNING', '[e2e] reviewer host died mid-turn', now() - interval '2 hours'
+      from task_messages m, "user" u
+      where m.id = ${inserted[0]!.id} and u.name = ${botName}
+    `;
+  } finally {
+    await sql.close();
+  }
+
+  await tasks.rowFor(taskTitle).getByRole('link', { name: taskTitle }).first().click();
+  await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
+  const verbs = page.locator('aside').getByTestId('task-workflow-actions');
+  await expect(verbs.getByTestId('task-verb-submit')).toBeVisible({ timeout: 10_000 });
+  await verbs.getByTestId('task-verb-submit').click();
+  await expect(page.getByTestId('task-status-badge')).toHaveText('In review', { timeout: 15_000 });
+
+  // the reaper parks the round — the park write carries the re-arm ledger
+  await expect(page.getByTestId('task-status-badge')).toHaveText('Blocked', { timeout: 30_000 });
+  const sql3 = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    const ledger = await sql3`
+      select park_rearm_attempts::int as attempts, park_rearm_after is not null as scheduled
+      from tasks where id = ${taskId}
+    `;
+    expect(Number(ledger[0]!.attempts)).toBe(1);
+    expect(ledger[0]!.scheduled).toBe(true);
+
+    // pull the ladder due: the NEXT tick re-arms — restore + re-mint, no owner action
+    await sql3`update tasks set park_rearm_after = now() - interval '1 second' where id = ${taskId}`;
+    const runsBefore = await sql3`
+      select count(*)::int as n from task_runs r
+      join task_messages m on m.id = r.message_id
+      where m.task_id = ${taskId}
+    `;
+    const before = Number(runsBefore[0]!.n);
+    await expect
+      .poll(
+        async () => {
+          const r = await sql3`
+            select count(*)::int as n from task_runs r
+            join task_messages m on m.id = r.message_id
+            where m.task_id = ${taskId}
+          `;
+          return Number(r[0]!.n);
+        },
+        { timeout: 45_000, intervals: [2_000, 5_000, 5_000, 10_000] },
+      )
+      .toBeGreaterThanOrEqual(before + 1); // the re-arm re-minted the reviewer's turn
+
+    // the re-fired turn settles verdict-less — with 2+ reviewer runs this round the
+    // DECISION bound re-parks: ledger resets, nothing scheduled (a decision park
+    // never re-arms; owner resolution is the only resume there)
+    await expect(page.getByTestId('task-status-badge')).toHaveText('Blocked', { timeout: 30_000 });
+    const ledger2 = await sql3`
+      select park_rearm_attempts::int as attempts, park_rearm_after as after from tasks where id = ${taskId}
+    `;
+    expect(Number(ledger2[0]!.attempts)).toBe(0);
+    expect(ledger2[0]!.after).toBeNull();
+  } finally {
+    await sql3.close();
+  }
+});
