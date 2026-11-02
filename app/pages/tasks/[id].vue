@@ -86,6 +86,9 @@ const agentRunning = computed(() => runs.value.some((r) => r.status === RUN_STAT
 /** a pending run list means the lock state is UNKNOWN, not idle: keep the fields
  * locked behind a neutral hint instead of letting an edit race the settle */
 const runsSettled = computed(() => runsLive.isSuccess.value || runsLive.isError.value);
+/** known run state for the verb gates (#223): the feed loaded successfully — a
+ * pending or failed feed is UNKNOWN, never idle, so cancel renders nothing */
+const runsKnown = computed(() => runsLive.isSuccess.value);
 const runLocked = computed(() => !runsSettled.value || agentRunning.value);
 
 /** dispatch is a SERVER rule: only a ready-category task with an AI assignee is
@@ -331,6 +334,7 @@ onServerPrefetch(() => Promise.all([taskQuery.suspense(), statusesLive.suspense(
                 :task="task"
                 :status-category="taskStatusCategory"
                 :agent-running="agentRunning"
+                :runs-known="runsKnown"
                 :note="workflowNote"
                 :busy="workflowBusy"
                 :message="workflowMessage"
@@ -362,6 +366,7 @@ onServerPrefetch(() => Promise.all([taskQuery.suspense(), statusesLive.suspense(
           :task="task"
           :status-category="taskStatusCategory"
           :agent-running="agentRunning"
+          :runs-known="runsKnown"
           :note="workflowNote"
           :busy="workflowBusy"
           :message="workflowMessage"

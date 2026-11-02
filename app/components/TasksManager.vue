@@ -349,21 +349,14 @@ const workflowStatusCategory = computed(() =>
   workflowTask.value ? (statusById.value.get(workflowTask.value.status)?.category ?? null) : null,
 );
 // the SAME gates as the task-page verbs (submit = viewer is the human assignee
-// in a working-category status; cancel = owner or assignee in a work state) —
-// the drawer renders no verb the server would refuse (#177)
+// in a working-category status; cancel = owner or assignee in a work state with
+// NO live run, fed below from the drawer's own run feed) — the drawer renders
+// no verb the server would refuse (#177, #223)
 const drawerCanSubmit = computed(() =>
   submitReady({
     category: workflowStatusCategory.value,
     assigneeId: workflowTask.value?.assigneeId,
     assigneeKind: workflowTask.value?.assigneeKind,
-    userId: session.value?.user.id,
-  }),
-);
-const drawerCanCancel = computed(() =>
-  cancelReady({
-    category: workflowStatusCategory.value,
-    assigneeId: workflowTask.value?.assigneeId,
-    ownerId: workflowTask.value?.ownerId,
     userId: session.value?.user.id,
   }),
 );
@@ -410,6 +403,22 @@ const runFeed = computed<TaskRunRow[]>(() => (unref(drawerRunsQuery.data) ?? [])
 // feed (loading or failed) means unknown run state: the verb renders nothing
 // rather than a guaranteed-refusal click.
 const drawerAgentRunning = computed(() => runFeed.value.some((r) => r.status === RUN_STATUS.RUNNING));
+// cancel render parity (#223): the same server-truth gate as the page — owner or
+// assignee in a work state AND no live run — with the live-run bit read from the
+// drawer's own feed. An unsettled feed (pending or failed) is unknown run state,
+// never idle: an armed confirm must not promise a cancel the server refuses.
+const drawerCanCancel = computed(
+  () =>
+    !drawerRunsQuery.isPending.value &&
+    !drawerRunsQuery.isError.value &&
+    cancelReady({
+      category: workflowStatusCategory.value,
+      assigneeId: workflowTask.value?.assigneeId,
+      ownerId: workflowTask.value?.ownerId,
+      userId: session.value?.user.id,
+      running: drawerAgentRunning.value,
+    }),
+);
 const drawerCanDispatch = computed(
   () =>
     !drawerRunsQuery.isPending.value &&
@@ -1307,12 +1316,12 @@ onServerPrefetch(() =>
           </div>
           <!-- cancelling is terminal: confirm it inline instead of firing on one click -->
           <div
-            v-if="cancelArmed"
+            v-if="cancelArmed && drawerCanCancel"
             class="border-error/40 bg-error/10 space-y-2 rounded-md border p-2.5 text-xs"
             role="alertdialog"
             aria-label="Confirm cancelling the task"
           >
-            <p class="text-toned">Cancelling ends this task: the agent stops and it can no longer be dispatched.</p>
+            <p class="text-toned">Cancelling ends this task: it can no longer be worked on or dispatched.</p>
             <div class="flex gap-2">
               <UButton size="xs" color="error" label="Cancel task" :loading="workflowBusy" @click="confirmCancel" />
               <UButton size="xs" color="neutral" variant="ghost" label="Keep it" @click="cancelArmed = false" />

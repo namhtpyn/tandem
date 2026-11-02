@@ -208,16 +208,22 @@ export function submitReady(input: {
 
 /**
  * Cancel gate (the server's abandon in work states: the task's owner or its
- * assignee — a third-party viewer gets a refused verb, never a dead button).
+ * assignee — a third-party viewer gets a refused verb, never a dead button —
+ * and NEVER over a live run: the server's abandon throws 'cancel the running
+ * run first' while a run is RUNNING, so the verb renders exactly where it can
+ * land. Callers fold their own run feed's settled state: an unsettled feed is
+ * unknown run state, not idle (#223, VERB RENDER-PARITY).
  */
 export function cancelReady(input: {
   category: string | null | undefined;
   assigneeId: string | null | undefined;
   ownerId: string | null | undefined;
   userId: string | null | undefined;
+  running: boolean;
 }): boolean {
   return (
     workingReady(input.category) &&
+    !input.running &&
     !!input.userId &&
     (input.ownerId === input.userId || input.assigneeId === input.userId)
   );
