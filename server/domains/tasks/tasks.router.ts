@@ -107,7 +107,9 @@ const listTasksSnapshot = async (): Promise<TaskRow[]> => {
 export async function fetchTaskRowFull(taskId: string): Promise<TaskRowFull | null> {
   const row = await db.query.tasks.findFirst(taskGetScan(taskId));
   if (!row) return null;
-  const [mapped] = await mapTaskRows([row]);
+  const rows = await mapTaskRows([row]);
+  const mapped = rows[0];
+  if (!mapped) return null;
   return { ...mapped, description: row.description };
 }
 
