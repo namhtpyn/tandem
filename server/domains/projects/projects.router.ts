@@ -40,32 +40,36 @@ export const projectsRouter = os.router({
     }));
   }),
 
-  live: protectedProcedure.handler(() =>
-    liveGenerator([CHANGE_RESOURCE.PROJECTS], async (): Promise<ProjectRow[]> => {
-      const rows = await db.query.projects.findMany({
-        columns: {
-          id: true,
-          name: true,
-          description: true,
-          prompt: true,
-          status: true,
-          parentId: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-        orderBy: { name: 'asc' },
-      });
-      return rows.map((r) => ({
-        id: r.id,
-        name: r.name,
-        description: r.description,
-        prompt: r.prompt,
-        status: r.status as ProjectStatus,
-        parentId: r.parentId,
-        createdAt: r.createdAt.toISOString(),
-        updatedAt: r.updatedAt.toISOString(),
-      }));
-    }),
+  live: protectedProcedure.handler(({ context }) =>
+    liveGenerator(
+      [CHANGE_RESOURCE.PROJECTS],
+      async (): Promise<ProjectRow[]> => {
+        const rows = await db.query.projects.findMany({
+          columns: {
+            id: true,
+            name: true,
+            description: true,
+            prompt: true,
+            status: true,
+            parentId: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+          orderBy: { name: 'asc' },
+        });
+        return rows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          description: r.description,
+          prompt: r.prompt,
+          status: r.status as ProjectStatus,
+          parentId: r.parentId,
+          createdAt: r.createdAt.toISOString(),
+          updatedAt: r.updatedAt.toISOString(),
+        }));
+      },
+      context,
+    ),
   ),
 
   /** create (staff only — employees and admins) */
