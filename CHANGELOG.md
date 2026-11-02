@@ -1,3 +1,10 @@
+## [2.62.4](https://github.com/namhtpyn/tandem/compare/v2.62.3...v2.62.4) (2026-11-02)
+
+
+### Bug Fixes
+
+* **tasks:** manual-settle teardown is category-resolved — custom terminal statuses settle and ANSWER obligations die with waiting_answer leaves ([#205](https://github.com/namhtpyn/tandem/issues/205)) ([4894d91](https://github.com/namhtpyn/tandem/commit/4894d915ea54a560593ce7528923cc73b5daa603))
+
 ## [2.62.3](https://github.com/namhtpyn/tandem/compare/v2.62.2...v2.62.3) (2026-11-02)
 
 
