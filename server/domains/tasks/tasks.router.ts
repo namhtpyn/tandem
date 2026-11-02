@@ -421,7 +421,7 @@ export const tasksRouter = os.router({
       listTasksPaged(input, input.inboxOfMe ? await selfIdOf(context) : ''),
     ),
 
-  live: protectedProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.TASKS], listTasksSnapshot)),
+  live: protectedProcedure.handler(({ context }) => liveGenerator([CHANGE_RESOURCE.TASKS], listTasksSnapshot, context)),
 
   /** create a task */
   create: employeeProcedure
@@ -751,8 +751,12 @@ export const tasksRouter = os.router({
 
   activity: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))
-    .handler(({ input }) =>
-      liveGenerator([CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_RESOURCE.TASKS], () => activitySnapshot(input.taskId)),
+    .handler(({ input, context }) =>
+      liveGenerator(
+        [CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_RESOURCE.TASKS],
+        () => activitySnapshot(input.taskId),
+        context,
+      ),
     ),
 
   /** runs for a task (live) — streaming output tail from agent dispatches */
@@ -795,16 +799,18 @@ export const tasksRouter = os.router({
 
   thread: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))
-    .handler(({ input }) =>
-      liveGenerator([CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_RESOURCE.RUNS, CHANGE_RESOURCE.TASKS], () =>
-        listTaskThread(input.taskId),
+    .handler(({ input, context }) =>
+      liveGenerator(
+        [CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_RESOURCE.RUNS, CHANGE_RESOURCE.TASKS],
+        () => listTaskThread(input.taskId),
+        context,
       ),
     ),
 
   runs: protectedProcedure
     .input(z.strictObject({ taskId: z.string().min(1) }))
-    .handler(({ input }) =>
-      liveGenerator([CHANGE_RESOURCE.RUNS, CHANGE_RESOURCE.TASKS], () => runsSnapshot(input.taskId)),
+    .handler(({ input, context }) =>
+      liveGenerator([CHANGE_RESOURCE.RUNS, CHANGE_RESOURCE.TASKS], () => runsSnapshot(input.taskId), context),
     ),
 
   /** manually dispatch a task to its AI assignee (the dispatcher also fires automatically) */

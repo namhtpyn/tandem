@@ -22,11 +22,15 @@ export const providersRouter = os.router({
   }),
 
   live: adminProcedure.handler(({ context }) =>
-    liveGenerator([CHANGE_RESOURCE.PROVIDERS], async () => {
-      const { listModelProviders } = await import('./model-providers.service');
-      // extra headers stay admin-only
-      return await listModelProviders(context.session.user.role);
-    }),
+    liveGenerator(
+      [CHANGE_RESOURCE.PROVIDERS],
+      async () => {
+        const { listModelProviders } = await import('./model-providers.service');
+        // extra headers stay admin-only
+        return await listModelProviders(context.session.user.role);
+      },
+      context,
+    ),
   ),
 
   /** replace ONE provider (upsert by id, admin-only) */

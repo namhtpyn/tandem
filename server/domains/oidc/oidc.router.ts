@@ -24,7 +24,7 @@ export const oidcRouter = os.router({
   list: adminProcedure.handler(() => listOidcProviders()),
 
   /** live provider list (secrets never leave the server) */
-  live: adminProcedure.handler(() => liveGenerator([CHANGE_RESOURCE.OIDC], listOidcProviders)),
+  live: adminProcedure.handler(({ context }) => liveGenerator([CHANGE_RESOURCE.OIDC], listOidcProviders, context)),
 
   /** replace the provider registry (secrets write-only, admin-only) */
   replace: adminProcedure
