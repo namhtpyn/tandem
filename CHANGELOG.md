@@ -1,3 +1,10 @@
+## [2.65.6](https://github.com/namhtpyn/tandem/compare/v2.65.5...v2.65.6) (2026-11-02)
+
+
+### Bug Fixes
+
+* **test:** pin BETTER_AUTH_URL in e2e webserver env — better-auth origin warn spammed every run ([02aeff9](https://github.com/namhtpyn/tandem/commit/02aeff9d90a3926eff0b22758deff1a5fd246f0b))
+
 ## [2.65.5](https://github.com/namhtpyn/tandem/compare/v2.65.4...v2.65.5) (2026-11-02)
 
 
