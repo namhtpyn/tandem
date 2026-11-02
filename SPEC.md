@@ -116,7 +116,7 @@ transport contract in one place:
   shape exists for `internal_llm` for future server-side features. Every decrypt is audited `use`
 - admin manages the OIDC provider set at runtime (secrets live in the registry, never returned by `oidc.live` (only `hasSecret: true`)
 - env fallback: exactly ONE provider (TANDEM_OIDC_ISSUER/_CLIENT_ID/_CLIENT_SECRET/_LABEL), used only when no stored registry exists
-- request bodies: `/auth/**` reads only DECLARED-length bodies — a `transfer-encoding: chunked` body with no usable `content-length` is refused `411 length required` BEFORE a byte is read (h3 buffers the whole body before any size check fires, and the bun preset allows no mid-stream cap — an undeclared body has no pre-read bound); the 1MB auth body cap (`413 payload too large`) applies to the read body. Every byte the server buffers was declared up-front and carries its own pre-read cap
+- request bodies: `/auth/**` and `/rpc` read only DECLARED-length bodies — a `transfer-encoding: chunked` body with no usable `content-length` is refused `411 length required` BEFORE a byte is read (h3 buffers the whole body before any size check fires, and the bun preset allows no mid-stream cap — an undeclared body has no pre-read bound); the 1MB auth body cap and the 2MB `/rpc` procedure-input cap (`413 payload too large`) apply to the read body, and the `/rpc` gates fire before the oRPC handler decodes input (oRPC buffers the whole body in `request.json()` before any procedure middleware, so `requireSession` would never see an oversized body there). Every byte the server buffers was declared up-front and carries its own pre-read cap
 
 ### Boot seed law (no default credential, #172)
 

@@ -7,43 +7,14 @@ import {
   setResponseHeader,
   setResponseStatus,
 } from 'h3';
-import type { H3Event } from 'h3';
 
 import { getAuth, resolveAuthPolicy, anyUserExists } from '../../domains/auth/auth.service';
 import { hasUndeclaredBodySize } from '../../domains/kernel/request-body';
+import { buildForwardedRequest } from '../../domains/kernel/request-forward';
 import { normalizedAuthPath } from '../../domains/kernel/request-path';
 
 /** generous for JSON auth payloads, small enough that a hostile body cannot balloon memory */
 const MAX_AUTH_BODY_BYTES = 1_000_000;
-
-function headerValue(v: string | string[] | undefined): string | undefined {
-  // node never delivers undefined header values; arrays collapse to first
-  return Array.isArray(v) ? v[0] : v;
-}
-
-function buildIncomingRequest(event: H3Event, body: ArrayBuffer | undefined): Request {
-  const headers = event.node.req.headers;
-  const host = headers.host ?? 'localhost';
-  const proto = headerValue(headers['x-forwarded-proto']) ?? 'http';
-  const full = event.node.req.url ?? '/';
-
-  const method = event.method;
-  const hasBody = method !== 'GET' && method !== 'HEAD' && body !== undefined && body.byteLength > 0;
-  return new Request(`${proto}://${host}${full}`, {
-    method,
-    headers: new Headers(
-      Object.entries(headers).flatMap(([k, v]) =>
-        v === undefined
-          ? []
-          : Array.isArray(v)
-            ? v.map((item) => [k, item] as [string, string])
-            : [[k, v] as [string, string]],
-      ),
-    ),
-    body: hasBody ? body : undefined,
-    ...(hasBody ? { duplex: 'half' as const } : {}),
-  });
-}
 
 export default defineEventHandler(async (event) => {
   const full = event.node.req.url ?? '';
@@ -91,7 +62,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const auth = await getAuth();
-  const res = await auth.handler(buildIncomingRequest(event, body));
+  const res = await auth.handler(buildForwardedRequest(event, body));
 
   for (const [k, v] of res.headers) setResponseHeader(event, k, v);
   setResponseStatus(event, res.status);
