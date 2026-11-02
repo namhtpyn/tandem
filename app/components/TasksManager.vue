@@ -9,12 +9,13 @@ import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tansta
 import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
 
-import { CATEGORY, CHANGE_RESOURCE } from '#shared/enums';
+import { CATEGORY, CHANGE_RESOURCE, RUN_STATUS } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 import {
   cancelReady,
   composerHint,
   composerReady,
+  dispatchReady,
   forwardReady,
   submitReady,
   useWorkflowActions,
@@ -399,6 +400,22 @@ const drawerRunsQuery = useQuery(
   ),
 );
 const runFeed = computed<TaskRunRow[]>(() => (unref(drawerRunsQuery.data) ?? []) as TaskRunRow[]);
+// dispatch render parity (#209): the drawer's 'Dispatch now' obeys the SAME
+// server-truth gate as the task page — AI assignee, ready category, NO live run
+// — with the live-run bit read from the drawer's own run feed. An unsettled
+// feed (loading or failed) means unknown run state: the verb renders nothing
+// rather than a guaranteed-refusal click.
+const drawerAgentRunning = computed(() => runFeed.value.some((r) => r.status === RUN_STATUS.RUNNING));
+const drawerCanDispatch = computed(
+  () =>
+    !drawerRunsQuery.isPending.value &&
+    !drawerRunsQuery.isError.value &&
+    dispatchReady({
+      category: workflowStatusCategory.value,
+      assigneeKind: workflowTask.value?.assigneeKind,
+      running: drawerAgentRunning.value,
+    }),
+);
 // the drawer timeline reads the SAME source as the task page (threadList, which
 // already drops STATUS bookkeeping rows) through the same buildThread merge —
 // the old raw activity feed showed a different, noisier timeline than the thread
@@ -1350,14 +1367,16 @@ onServerPrefetch(() =>
           <div class="space-y-2">
             <div class="flex items-center justify-between">
               <h3 class="text-muted text-xs font-medium">Agent runs</h3>
-              <!-- dispatch is an agent verb — humans have nothing to dispatch, so
-                   the button hides instead of sitting disabled with no why -->
+              <!-- dispatch is an agent verb gated by the SAME server truth as the
+                   task page (#209: AI assignee + ready category + no live run) —
+                   it hides instead of sitting enabled where the server refuses -->
               <UButton
-                v-if="workflowTask?.assigneeKind === 'ai'"
+                v-if="drawerCanDispatch"
                 size="sm"
                 variant="soft"
                 icon="i-lucide-play"
                 :disabled="workflowBusy"
+                data-testid="drawer-verb-dispatch"
                 @click="wfAction('dispatch')"
               >
                 Dispatch now
