@@ -1,3 +1,10 @@
+## [2.65.3](https://github.com/namhtpyn/tandem/compare/v2.65.2...v2.65.3) (2026-11-02)
+
+
+### Bug Fixes
+
+* **dispatcher:** redis outage self-heals — unlimited capped reconnect + redis-ok watchdog stamp ([#238](https://github.com/namhtpyn/tandem/issues/238)) ([2ace105](https://github.com/namhtpyn/tandem/commit/2ace105d33748abb3ebd33c41c02b22e813d67cb)), closes [#147](https://github.com/namhtpyn/tandem/issues/147)
+
 ## [2.65.2](https://github.com/namhtpyn/tandem/compare/v2.65.1...v2.65.2) (2026-11-02)
 
 
