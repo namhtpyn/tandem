@@ -1,3 +1,10 @@
+## [2.64.2](https://github.com/namhtpyn/tandem/compare/v2.64.1...v2.64.2) (2026-11-02)
+
+
+### Bug Fixes
+
+* **kernel:** live streams re-assert the caller tier with a fresh session ([#224](https://github.com/namhtpyn/tandem/issues/224)) ([c8362d9](https://github.com/namhtpyn/tandem/commit/c8362d9d0d2b9dc0987ace7802cde57f35034140))
+
 ## [2.64.1](https://github.com/namhtpyn/tandem/compare/v2.64.0...v2.64.1) (2026-11-02)
 
 
