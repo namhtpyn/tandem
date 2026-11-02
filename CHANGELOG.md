@@ -1,3 +1,10 @@
+## [2.65.4](https://github.com/namhtpyn/tandem/compare/v2.65.3...v2.65.4) (2026-11-02)
+
+
+### Bug Fixes
+
+* **auth:** refuse undeclared chunked request bodies pre-read — 411 on /auth/** + attachment upload (audit [#241](https://github.com/namhtpyn/tandem/issues/241)) ([23acd04](https://github.com/namhtpyn/tandem/commit/23acd04e2ec7219a851e07c8b4d872a16a3e0d0e))
+
 ## [2.65.3](https://github.com/namhtpyn/tandem/compare/v2.65.2...v2.65.3) (2026-11-02)
 
 
