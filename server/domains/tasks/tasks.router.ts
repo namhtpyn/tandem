@@ -46,7 +46,7 @@ import {
 import { confirmProposal, rejectProposal } from './proposals.service';
 import { listReviews, logActivity } from './review.service';
 import { fetchRunTranscript } from './run-transcript';
-import { dispatchTask, listRuns } from './runner.service';
+import { dispatchTask, listRuns, stopRunForTask } from './runner.service';
 import { fetchTaskDescription, taskGetScan, taskListColumns } from './task-description';
 import { listTaskThread, threadOlderPage } from './thread.service';
 import {
@@ -830,6 +830,15 @@ export const tasksRouter = os.router({
         return { runId: handle.runId };
       });
     }),
+
+  /** STOP-RUN VERB (#229): settle the task's live run STOPPED — aborts the open
+   * ACP turn over the runner's stream and releases the RUN LOCK; the task row is
+   * untouched. Idempotent (a settled run returns ok). */
+  stop: employeeProcedure.input(z.strictObject({ taskId: z.string().min(1) })).handler(async ({ input, context }) => {
+    const selfId = await selfIdOf(context);
+    if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
+    return await runWorkflow(() => stopRunForTask(input.taskId, selfId));
+  }),
 
   /** delete a task — blocked while a run is in flight; parents re-gate after */
   remove: employeeProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {

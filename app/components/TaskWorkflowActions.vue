@@ -13,7 +13,7 @@ import { computed, ref, unref, watch } from 'vue';
 
 import { CHANGE_RESOURCE } from '#shared/enums';
 import type { Category } from '#shared/enums';
-import { cancelReady, dispatchReady, forwardReady, submitReady } from '~/composables/useWorkflowActions';
+import { cancelReady, dispatchReady, forwardReady, stopReady, submitReady } from '~/composables/useWorkflowActions';
 import type { WorkflowAction, WorkflowExtra } from '~/composables/useWorkflowActions';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 
@@ -62,6 +62,9 @@ const canCancel = computed(
 const canDispatch = computed(() =>
   dispatchReady({ category: props.statusCategory, assigneeKind: props.task.assigneeKind, running: props.agentRunning }),
 );
+// stop gate (#229): renders ONLY while a run is live — the server settles any
+// live run and no-ops a settled one, so the gate is exactly the live-run bit
+const canStop = computed(() => stopReady({ running: props.agentRunning }));
 // forward is holder-scoped: waiting-answer + the viewer holds the obligation
 const canForward = computed(() =>
   forwardReady({
@@ -72,7 +75,9 @@ const canForward = computed(() =>
 );
 
 /** a verb block with zero verbs is noise, not a feature */
-const anyVerb = computed(() => canSubmit.value || canCancel.value || canDispatch.value || canForward.value);
+const anyVerb = computed(
+  () => canSubmit.value || canCancel.value || canDispatch.value || canForward.value || canStop.value,
+);
 
 // ---- cancel: terminal → armed inline confirm instead of one-click fire ----
 const cancelArmed = ref(false);
@@ -104,6 +109,9 @@ function onSubmit() {
 }
 function onDispatch() {
   emit('action', 'dispatch');
+}
+function onStop() {
+  emit('action', 'stop');
 }
 </script>
 
@@ -145,7 +153,25 @@ function onDispatch() {
         @click="onDispatch()"
         >Dispatch now</UButton
       >
+      <!-- STOP-RUN VERB (#229): one click — the confirm is the honest hint below,
+           not a second dialog; gone the moment the run feed shows settled -->
+      <UButton
+        v-if="canStop"
+        size="sm"
+        color="warning"
+        variant="soft"
+        icon="i-lucide-octagon-x"
+        :disabled="busy"
+        data-testid="task-verb-stop"
+        @click="onStop()"
+        >Stop run</UButton
+      >
     </div>
+
+    <!-- the stop verb's honest confirm: exactly what one click does -->
+    <p v-if="canStop" class="text-dimmed text-xs" data-testid="task-stop-hint">
+      Stopping ends the agent's current turn — the task keeps its status.
+    </p>
 
     <template v-if="canForward">
       <USelect

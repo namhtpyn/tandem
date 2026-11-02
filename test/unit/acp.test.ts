@@ -288,6 +288,8 @@ type TurnOpts = {
   resumeSessionId?: string | null;
   timeoutMs?: number;
   onLine?: (line: string) => void;
+  /** #229: the hook hands over the mid-turn steer AND the user-issued stop */
+  onSessionOpen?: (hooks: { steer: (text: string) => Promise<boolean>; stop: () => void }) => void;
 };
 const turn = (stream: AcpStream, extra: TurnOpts = {}) =>
   import('#server/domains/tasks/acp.client').then(({ runAcpTurn }) =>
@@ -331,8 +333,8 @@ describe('acp.client turns', () => {
       }
     });
     const turnP = turn(stream, {
-      onSessionOpen: (fn) => {
-        steer = fn;
+      onSessionOpen: ({ steer: s }) => {
+        steer = s;
       },
     });
     // mid-turn: the steer fires while the main prompt is still open
@@ -343,6 +345,73 @@ describe('acp.client turns', () => {
     // release the main prompt — the turn completes
     stream.send({ jsonrpc: '2.0', id: firstPromptId, result: { stopReason: 'end_turn' } });
     await turnP;
+  });
+
+  // #229 STOP-RUN: the session-open hook also hands over a stop() — session/cancel
+  // for the open session, then the cancel grace kills the stream when the turn has
+  // not settled (a user-issued stop, not the timeout path).
+  it('stop() notifies session/cancel for the open session; the grace kills the unsettled stream', async () => {
+    setEnv({ TANDEM_ACP_CANCEL_GRACE_MS: '40' });
+    try {
+      let hooks: { steer?: unknown; stop?: () => void } = {};
+      const stream = fakeAgent((msg, send) => {
+        const method = msg.method as string | undefined;
+        if (!method) return;
+        if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1 } });
+        else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-stop' } });
+        // session/prompt intentionally NEVER answered — the turn is held open
+      });
+      const turnP = turn(stream, {
+        onSessionOpen: (h) => {
+          hooks = h;
+        },
+      });
+      turnP.catch(() => {}); // handler rides from creation — the rejection must never go unhandled
+      for (let i = 0; i < 400 && !hooks.stop; i++) await new Promise((r) => setTimeout(r, 5));
+      expect(hooks.stop).toBeTruthy();
+      hooks.stop!();
+      // the cancel notify is immediate and names the OPEN session
+      let cancelLine = '';
+      for (let i = 0; i < 100 && !cancelLine; i++) {
+        await new Promise((r) => setTimeout(r, 2));
+        cancelLine = stream.written.find((l) => l.includes('"session/cancel"')) ?? '';
+      }
+      expect(JSON.parse(cancelLine).params).toEqual({ sessionId: 'sess-stop' });
+      // the grace holds the wire open briefly — a settling agent can still land its answer
+      expect(stream.closed).toBe(false);
+      await new Promise((r) => setTimeout(r, 100));
+      // grace elapsed, turn unsettled → teardown
+      expect(stream.closed).toBe(true);
+      await expect(turnP).rejects.toThrow();
+    } finally {
+      setEnv({ TANDEM_ACP_CANCEL_GRACE_MS: undefined });
+    }
+  });
+
+  it('a stop after the turn settled is inert — the grace never re-tears-down a finished stream', async () => {
+    setEnv({ TANDEM_ACP_CANCEL_GRACE_MS: '30' });
+    try {
+      let hooks: { steer?: unknown; stop?: () => void } = {};
+      const stream = happyAgent();
+      const res = await turn(stream, {
+        onSessionOpen: (h) => {
+          hooks = h;
+        },
+      });
+      expect(res.stopReason).toBe('end_turn');
+      expect(stream.closed).toBe(true); // the settle path already tore the stream down
+      let extraCloses = 0;
+      const origClose = stream.close.bind(stream);
+      stream.close = () => {
+        extraCloses += 1;
+        origClose();
+      };
+      expect(() => hooks.stop!()).not.toThrow();
+      await new Promise((r) => setTimeout(r, 90)); // past the grace
+      expect(extraCloses).toBe(0); // a settled turn is never re-torn-down by its stop
+    } finally {
+      setEnv({ TANDEM_ACP_CANCEL_GRACE_MS: undefined });
+    }
   });
 
   it('notifications never split a half-streamed envelope line (queued behind chunks)', async () => {
