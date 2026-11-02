@@ -524,14 +524,14 @@ export const tasksRouter = os.router({
         .set({ status: input.status, parkFromStatus: null, updatedAt: new Date() })
         .where(eq(tasksTable.id, input.id));
       // manual settle tears the round down (final spec 2026-10-29 #8): the owner's
-      // move IS the verdict of record — pending rows supersede, obligations cancel
-      const { STATUS } = await import('#shared/status');
-      const terminal: string[] = [STATUS.done, STATUS.cancelled];
-      if (terminal.includes(input.status) && !terminal.includes(cur)) {
-        const { teardownOpenRound } = await import('./review.service');
-        await teardownOpenRound(input.id, input.status);
-      }
+      // move IS the verdict of record — pending rows supersede, obligations cancel.
+      // OBLIGATION LIFECYCLE (#205): category-resolved, never seeded ids — custom
+      // done/cancelled statuses settle too, and leaving waiting_answer cancels
+      // the ANSWER obligation
+      const { teardownOnManualMove } = await import('./review.service');
+      await teardownOnManualMove(input.id, cur, input.status);
       // unblock-resume: back to in-review with a live round → the sequence continues
+      const { STATUS } = await import('#shared/status');
       if (input.status === STATUS.inReview) {
         const { openRoundLive, dispatchAiReviewTurns } = await import('./review.service');
         if (await openRoundLive(input.id)) await dispatchAiReviewTurns(input.id);
