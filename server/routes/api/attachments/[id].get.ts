@@ -4,6 +4,7 @@ import { defineEventHandler, createError, getRequestHeader, getRequestHeaders, g
 
 import { db } from '../../../db/index';
 import { buildServerContext } from '../../../domains/kernel/context';
+import { gateReadSession } from '../../../domains/kernel/rest-gates';
 import { attachmentPath, mimeAllowed } from '../../../domains/tasks/attachments.util';
 
 export default defineEventHandler(async (event) => {
@@ -11,7 +12,10 @@ export default defineEventHandler(async (event) => {
   const headers = new Headers();
   for (const [k, v] of Object.entries(getRequestHeaders(event))) headers.set(k, String(v));
   const session = await buildServerContext(headers).getSession();
-  if (!session) throw createError({ statusCode: 401, statusMessage: 'unauthorized' });
+  // rotation lock included (SPEC "Boot seed law", audit #242): a locked session
+  // must not reach attachment bytes any more than an oRPC read
+  const gate = gateReadSession(session);
+  if (!gate.ok) throw createError({ statusCode: gate.statusCode, statusMessage: gate.statusMessage });
 
   const row = await db.query.taskAttachments.findFirst({
     columns: { taskId: true, filename: true, mime: true, sha256: true },
