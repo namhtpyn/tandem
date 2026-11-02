@@ -63,6 +63,24 @@ export type RunHandle = {
  * path passes exactly once (the only other delete is a FAILED steer, :96). */
 const liveSteers = new Map<string, (text: string) => Promise<boolean>>();
 
+/** live ACP stop hooks by runId — the STOP-RUN VERB's transport (#229): each
+ * closes over the run's open stream (session/cancel + cancel-grace kill) and is
+ * gone the moment the turn settles — same TRANSIENT lifecycle law as liveSteers. */
+const liveStops = new Map<string, () => void>();
+
+/** runIds settled STOPPED by a human stop while their execution is still unwinding
+ * (#229) — writer.finish consults it to skip every settle side effect (a stop is
+ * not a verdict: no message rewrite, no bounce, no park). Entries live exactly as
+ * long as the in-flight execution: added only on a won CAS, deleted in executeRun's
+ * finally alongside the hooks. */
+const stoppedRuns = new Set<string>();
+
+/** test/probe visibility (#161/#229): runIds currently holding a live stop hook —
+ * must be empty whenever no run is mid-turn (a settled run retains nothing) */
+export function liveStopRunIds(): string[] {
+  return [...liveStops.keys()];
+}
+
 /** test/probe visibility (#161): runIds currently holding a live steer hook —
  * must be empty whenever no run is mid-turn (a settled run retains nothing) */
 export function liveSteerRunIds(): string[] {
@@ -114,7 +132,7 @@ export async function runningRunIdForTask(taskId: string): Promise<string | null
 }
 
 /** steer the task's live run. 'stopped' = no live run (safe to dispatch);
- *  'refused' = a run is live but this turn can't take input (fake runner) */
+ * 'refused' = a run is live but this turn can't take input (fake runner) */
 export async function steerRun(taskId: string, text: string): Promise<'steered' | 'stopped' | 'refused'> {
   const runId = await runningRunIdForTask(taskId);
   if (!runId) return 'stopped';
@@ -123,6 +141,73 @@ export async function steerRun(taskId: string, text: string): Promise<'steered' 
   const ok = await steer(text).catch(() => false);
   if (!ok) liveSteers.delete(runId);
   return ok ? 'steered' : 'refused';
+}
+
+/** STOP-RUN VERB (#229, SPEC): settle the task's live run STOPPED — abort the open
+ * ACP turn over the runner's stream (session/cancel, then the cancel-grace kill via
+ * the live stop hook), flip the row with ONE guarded write whose CAS is the sole
+ * race arbiter against the turn's own settle, publish the change event, and
+ * thereby release the RUN LOCK. A stop is NOT a verdict: the TASK row is untouched.
+ * Idempotent: no live run, or a run whose turn settled first, returns ok and
+ * touches nothing. A stopped REVIEW turn never auto-re-fires (re-firing a stopped
+ * reviewer fights the human's stop) — the round parks decision-class. */
+export async function stopRunForTask(taskId: string, actorId: string): Promise<{ ok: true; stopped: boolean }> {
+  void actorId; // the verb is employee-tier; the actor names nothing on the row (the pill is the verdict)
+  // the live-run lookup widened with the run's employee (the review-park check
+  // needs the reviewer identity); newest-first, RUNNING only (same WHERE as the
+  // run lock's liveRunsQuery — the newest live run IS the run the lock holds)
+  const live = (
+    await db.query.taskRuns.findMany({
+      columns: { id: true, employeeId: true },
+      where: { message: { taskId: { eq: taskId } }, status: { eq: RUN_STATUS.RUNNING } },
+      orderBy: { startedAt: 'desc', id: 'desc' },
+      limit: 10,
+    })
+  )[0];
+  const runId = live?.id ?? null;
+  const employeeId = live?.employeeId ?? null;
+  if (!runId) return { ok: true, stopped: false };
+  // THE MARKER GOES DOWN BEFORE THE HOOK FIRES: a stop hook may resolve the turn
+  // synchronously (fake runner) or on the next wire message (real ACP) — either
+  // way the turn's settle path must already see the stop-settled marker and skip
+  // every side effect (a STOPPED run must never bounce or park the task)
+  stoppedRuns.add(runId);
+  // abort the open turn (no-op when none is registered: pre-turn or queued run —
+  // the row flip below is still the settle; the queued job's stale-row guard no-ops)
+  liveStops.get(runId)?.();
+  const settled = await db
+    .update(taskRuns)
+    .set({
+      status: RUN_STATUS.STOPPED,
+      exitCode: null,
+      output: sql`coalesce(${taskRuns.output}, '') || '\n[run] stopped'`,
+      finishedAt: new Date(),
+    })
+    // the CAS is the arbiter: the turn's own settle (writer.finish / the reaper)
+    // winning first keeps ITS verdict and this stop becomes a quiet no-op
+    .where(and(eq(taskRuns.id, runId), eq(taskRuns.status, RUN_STATUS.RUNNING)))
+    .returning({ id: taskRuns.id });
+  if (settled.length === 0) {
+    // the turn settled first with its own verdict — unwind the marker so a late
+    // finish keeps its normal path (the winner owns the outcome)
+    stoppedRuns.delete(runId);
+    return { ok: true, stopped: false };
+  }
+  await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
+  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+  // a stopped review turn: the round parks decision-class — owner unblock
+  // re-dispatches the parked reviewer (never an auto re-fire against the stop)
+  if (employeeId) {
+    const pendingReview = await db.query.taskReviews.findFirst({
+      columns: { id: true },
+      where: { taskId: { eq: taskId }, reviewerId: { eq: employeeId }, status: { eq: REVIEW_STATUS.PENDING } },
+    });
+    if (pendingReview) {
+      const { parkRound } = await import('./review.service');
+      await parkRound(taskId, 'review turn stopped — needs a human', { rearmable: false });
+    }
+  }
+  return { ok: true, stopped: true };
 }
 
 async function logRun(
@@ -674,7 +759,11 @@ export function fakeScriptFromEnv(envName?: 'TANDEM_FAKE_SCRIPT' | 'TANDEM_FAKE_
   return raw.split('\n');
 }
 
-function fakeRun(onLine: (line: string) => void, scriptOverride?: string[]): RunHandle {
+function fakeRun(
+  onLine: (line: string) => void,
+  scriptOverride?: string[],
+  onStop?: (stop: () => void) => void,
+): RunHandle {
   const script = scriptOverride ??
     fakeScriptFromEnv() ?? [
       'thinking about the task…',
@@ -691,9 +780,20 @@ function fakeRun(onLine: (line: string) => void, scriptOverride?: string[]): Run
   const promise = new Promise<{ status: FinishedStatus; exitCode: number | null }>((resolve) => {
     finished = resolve;
   });
+  // STOP-RUN VERB (#229): the fake turn is stoppable exactly like a real one —
+  // the registered hook resolves the turn STOPPED (the stop path's CAS wins the
+  // row; the e2e suite drives the human stop through this)
+  onStop?.(() => finished({ status: RUN_STATUS.STOPPED, exitCode: null }));
   void (async () => {
     const delay = Number(env.TANDEM_FAKE_DELAY_MS ?? 30);
     for (const line of script) {
+      // ::wait:<ms> — a silent pause inside the script (e2e live-window: a run
+      // must stay RUNNING long enough for a human stop click to land)
+      const wait = /^::wait:(\d+)$/.exec(line);
+      if (wait) {
+        await new Promise((r) => setTimeout(r, Number(wait[1])));
+        continue;
+      }
       await new Promise((r) => setTimeout(r, delay));
       onLine(line);
     }
@@ -1103,6 +1203,14 @@ function createRunWriter(runId: string, initial: string, messageId: string) {
     attachTokens: string[] = [],
   ) => {
     if (settled) return;
+    // STOP-RUN VERB (#229): a stop-settled run's verdict is already on the row —
+    // finish must not re-settle (its RUNNING predicate would no-op anyway) and
+    // must not run ANY settle side effect: no message rewrite, no DONE-envelope
+    // settle, no bounce, no review park. A stop is not a verdict.
+    if (stoppedRuns.has(runId)) {
+      settled = true;
+      return;
+    }
     settled = true;
     // RUNNING predicate: a reaper-settled row is never overwritten mid-flight
     await db
@@ -1273,6 +1381,7 @@ export async function executeRun(
       const fake = fakeRun(
         onLine,
         fakeScriptFromEnv(plan.review ? 'TANDEM_FAKE_SCRIPT_REVIEW' : 'TANDEM_FAKE_SCRIPT') ?? undefined,
+        (stop) => liveStops.set(runId, stop),
       );
       const r = await fake.finished;
       await writer.finish(taskId, r.status, r.exitCode, plan);
@@ -1306,8 +1415,11 @@ export async function executeRun(
     turnStarted = true;
     const acp = await runAcpTurn({
       stream,
-      onSessionOpen: (steer) => {
+      onSessionOpen: ({ steer, stop }) => {
         liveSteers.set(runId, steer);
+        // STOP-RUN VERB (#229): the stop hook rides the same TRANSIENT lifecycle —
+        // registered at session open, deleted with the steer hook in the finally
+        liveStops.set(runId, stop);
       },
       /* v8 ignore next -- the review-resume arm runs on real ACP review turns;
        * unit coverage drives review turns through the fake runner */
@@ -1319,6 +1431,10 @@ export async function executeRun(
     });
     // sessions are per (task, employee) — every run persists its own session id
     await db.update(taskRuns).set({ sessionId: acp.sessionId }).where(eq(taskRuns.id, runId));
+    // STOP-RUN VERB (#229): a stop-settled row owns its verdict — the stop path's
+    // CAS already wrote STOPPED + finishedAt; skip the whole verdict machinery
+    // (collect, envelope settle, message rewrite). The finally clears the registry.
+    if (stoppedRuns.has(runId)) return { status: RUN_STATUS.STOPPED, exitCode: null };
     const { status, exitCode } = verdictFor(acp.stopReason);
     // evidence ordering (final spec 2026-10-29): an assignee run that submits for
     // review must have its collected artifacts on the server BEFORE the reviewer's
@@ -1348,6 +1464,10 @@ export async function executeRun(
     // exits through here exactly once; a retry-throw never registered a hook (the
     // set happens only after the session opens, past the retryable window).
     liveSteers.delete(runId);
+    // STOP-RUN VERB (#229): the stop hook + the stop-settled marker share the
+    // same lifecycle — nothing survives a settled run
+    liveStops.delete(runId);
+    stoppedRuns.delete(runId);
   }
 }
 

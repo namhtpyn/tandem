@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   runRow: null as Record<string, unknown> | null,
   updates: [] as Array<Record<string, unknown>>,
   midRunSteerIds: [] as string[][],
+  midRunStopIds: [] as string[][],
   workflow: [] as string[],
   stream: null as AcpStream | null,
 }));
@@ -107,7 +108,7 @@ vi.mock('../../server/domains/tasks/acp-ssh.util', async (importOriginal) => {
 import { RUN_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
-import { executeRun, liveSteerRunIds } from '../../server/domains/tasks/runner.service';
+import { executeRun, liveSteerRunIds, liveStopRunIds } from '../../server/domains/tasks/runner.service';
 
 /** scripted in-memory AcpStream (pared from acp.test's FakeAcp — vi.mock is per-file) */
 type AgentScript = (msg: Record<string, unknown>, send: (o: unknown) => void) => void;
@@ -202,6 +203,7 @@ const runAttempt = { attempt: 4, maxAttempts: 4 };
 beforeEach(() => {
   h.updates = [];
   h.midRunSteerIds = [];
+  h.midRunStopIds = [];
   h.workflow = [];
   h.stream = null;
   seedDb();
@@ -243,5 +245,49 @@ describe('STEER-HOOK LIFECYCLE (#161): a settled run retains no steer hook', () 
     expect(liveSteerRunIds()).toEqual([]);
     // terminal settle actually happened (row settled FAILED, not left RUNNING)
     expect(h.updates.some((u) => u.status === RUN_STATUS.FAILED)).toBe(true);
+  });
+});
+
+// STOP-HOOK LIFECYCLE (#229): the user-issued stop hook rides the SAME transient
+// lifecycle as the steer hook — registered on session open (liveStops; the run's
+// user-stopped bookkeeping lands in stoppedRuns), deleted in executeRun's finally
+// alongside liveSteers. A settled run must retain no stop hook either: a surviving
+// entry pins the run's ACP client context forever (the #161 leak, via a second map).
+describe('STOP-HOOK LIFECYCLE (#229): a settled run retains no stop hook', () => {
+  it('SUCCESS settle: stop hook is live mid-turn, gone once executeRun resolves', async () => {
+    h.stream = agent((msg, send) => {
+      // runs when the session/prompt request arrives — the stop hook must be registered
+      h.midRunStopIds.push(liveStopRunIds());
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: 'sess-1',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: '{"kind": "result", "body": "done"}' },
+          },
+        },
+      });
+      send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+    });
+    const res = await executeRun('r1', 'http://127.0.0.1:3000', runAttempt);
+    expect(res.status).toBe(RUN_STATUS.DONE);
+    expect(h.midRunStopIds).toHaveLength(1);
+    expect(h.midRunStopIds[0]).toEqual(['r1']); // hook live while the turn runs
+    expect(liveStopRunIds()).toEqual([]); // and gone the moment the run settles
+    expect(liveSteerRunIds()).toEqual([]); // both maps clean together
+  });
+
+  it('FAILED settle (agent error frame): still gone — the failure path cleans up too', async () => {
+    h.stream = agent((msg, send) => {
+      h.midRunStopIds.push(liveStopRunIds());
+      send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'agent exploded' } });
+    });
+    const res = await executeRun('r1', 'http://127.0.0.1:3000', runAttempt);
+    expect(res.status).toBe(RUN_STATUS.FAILED);
+    expect(h.midRunStopIds[0]).toEqual(['r1']);
+    expect(liveStopRunIds()).toEqual([]);
+    expect(liveSteerRunIds()).toEqual([]);
   });
 });

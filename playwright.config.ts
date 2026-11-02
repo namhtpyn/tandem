@@ -40,6 +40,19 @@ export default defineConfig({
         command: `PORT=4100 TANDEM_FAKE_RUNNER=1 REDIS_URL=${process.env.TANDEM_E2E_REDIS_URL || process.env.REDIS_URL || 'redis://127.0.0.1:6399'} TANDEM_PUBLIC_URL=http://localhost:4100 TANDEM_VAULT_KEY=${process.env.TANDEM_E2E_VAULT_KEY || Buffer.alloc(32, 7).toString('base64')} TANDEM_ATTACHMENTS_DIR=${process.env.TANDEM_E2E_ATTACHMENTS_DIR || '/tmp/tandem-e2e-attachments'} ADMIN_PASSWORD=${process.env.TANDEM_E2E_ADMIN_PASSWORD || 'tandem-e2e-seed-pw'} DATABASE_URL=${E2E_DATABASE_URL} bun .output/server/index.mjs`,
         env: {
           TANDEM_E2E_DATABASE_URL: E2E_DATABASE_URL,
+          // #229: the fake script carries ::wait pauses so a dispatched run stays
+          // RUNNING ~5s — a live window a human stop click can land inside. Every
+          // other fake-run e2e just completes a few seconds later (same RESULT line).
+          TANDEM_FAKE_SCRIPT: [
+            'thinking about the task…',
+            '::wait:2500',
+            'reading context',
+            '::wait:2500',
+            'working: step 1/3',
+            'working: step 2/3',
+            'working: step 3/3',
+            'RESULT: task complete as requested',
+          ].join('\n'),
         },
         url: 'http://localhost:4100/health/live',
         reuseExistingServer: !process.env.CI,
