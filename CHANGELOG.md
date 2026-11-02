@@ -1,3 +1,10 @@
+## [2.65.7](https://github.com/namhtpyn/tandem/compare/v2.65.6...v2.65.7) (2026-11-02)
+
+
+### Bug Fixes
+
+* **auth:** gate auth policy checks on the router-normalized pathname (audit [#251](https://github.com/namhtpyn/tandem/issues/251)) ([cc6f3fe](https://github.com/namhtpyn/tandem/commit/cc6f3fe045cc500c9a8f146caf12baf1f3174811))
+
 ## [2.65.6](https://github.com/namhtpyn/tandem/compare/v2.65.5...v2.65.6) (2026-11-02)
 
 
