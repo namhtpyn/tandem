@@ -1,3 +1,10 @@
+## [2.64.1](https://github.com/namhtpyn/tandem/compare/v2.64.0...v2.64.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* **tasks:** cancel verb obeys the run lock on every surface ([#223](https://github.com/namhtpyn/tandem/issues/223)) ([fb10e78](https://github.com/namhtpyn/tandem/commit/fb10e78204fbb25102db5bcdbca3734826b804be))
+
 # [2.64.0](https://github.com/namhtpyn/tandem/compare/v2.63.0...v2.64.0) (2026-11-02)
 
 
