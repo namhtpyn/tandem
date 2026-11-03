@@ -18,7 +18,7 @@ import { db, type DbExecutor } from '../../db/index';
 import { tasks, taskReviews, taskRuns, taskMessages } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { spawnObligation, cancelObligations, cancelAllObligations, resolveObligation } from './obligations.service';
-import { dispatchTask } from './runner.service';
+import { dispatchTask, type DispatchOpts } from './runner.service';
 import { insertActivityMessage } from './thread.service';
 
 export type ReviewVerdict = Exclude<ReviewStatus, typeof REVIEW_STATUS.PENDING>;
@@ -82,24 +82,39 @@ export function dedupeReviewers(reviewers: string[]): string[] {
 /** the round an AI reviewer's LATEST run on the task was dispatched for: the newest
  * round whose review row already existed when that run started. Reading the
  * dispatched round at settle — instead of currentRound — is what keeps a stale run
- * from settling a newer round it was never part of. */
-async function dispatchedReviewRound(taskId: string, reviewerId: string) {
-  const runRows = await db
-    .select({ startedAt: taskRuns.startedAt })
-    .from(taskRuns)
-    .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
-    .where(and(eq(taskMessages.taskId, taskId), eq(taskRuns.employeeId, reviewerId)))
-    .orderBy(desc(taskRuns.startedAt))
-    .limit(1);
-  const startedAt = runRows[0]?.startedAt;
-  if (!startedAt) return 0;
+ * from settling a newer round it was never part of. Exported for the verdict-less
+ * bound (#276): the re-dispatch decision must bind to the SAME round as the verdict;
+ * `at` pins the SETTLING run's start (a late-completing run must not bind to a
+ * newer round via the latest-run lookup — #276 blind-review r4). */
+export async function dispatchedReviewRoundRow(
+  taskId: string,
+  reviewerId: string,
+  at?: Date,
+): Promise<{ round: number; createdAt: Date } | null> {
+  let startedAt = at ?? null;
+  if (!startedAt) {
+    const runRows = await db
+      .select({ startedAt: taskRuns.startedAt })
+      .from(taskRuns)
+      .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+      .where(and(eq(taskMessages.taskId, taskId), eq(taskRuns.employeeId, reviewerId)))
+      .orderBy(desc(taskRuns.startedAt))
+      .limit(1);
+    startedAt = runRows[0]?.startedAt ?? null;
+  }
+  if (!startedAt) return null;
   const rows = await db
     .select({ round: taskReviews.round, createdAt: taskReviews.createdAt })
     .from(taskReviews)
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.reviewerId, reviewerId)))
     .orderBy(desc(taskReviews.round));
   // rounds are minted in order; the dispatched round is the newest one open at run start
-  return rows.find((r) => r.createdAt.getTime() <= startedAt.getTime())?.round ?? 0;
+  return rows.find((r) => r.createdAt.getTime() <= startedAt.getTime()) ?? null;
+}
+
+/** the round NUMBER of the reviewer's dispatched round (0 = none) — see the row helper */
+export async function dispatchedReviewRound(taskId: string, reviewerId: string, at?: Date) {
+  return (await dispatchedReviewRoundRow(taskId, reviewerId, at))?.round ?? 0;
 }
 
 /** open a fresh review round: one pending row per reviewer + inbox obligations.
@@ -161,8 +176,10 @@ async function roundResultBody(taskId: string) {
 /** fire the NEXT pending AI reviewer's turn — exactly one per call (sequential law:
  * one review turn in flight per task; the verdict's settle path lazy-mints the next).
  * Round order = row order. Human reviewers are skipped (the card is their UI).
- * Sessions are per (task, reviewer) — never the assignee's session. */
-export async function dispatchAiReviewTurns(taskId: string, resultBody?: string) {
+ * Sessions are per (task, reviewer) — never the assignee's session.
+ * opts.verdictCorrection (#276): rides ONLY the verdict-less settle path's bounded
+ * re-dispatch — the retry brief carries the CORRECTION block. */
+export async function dispatchAiReviewTurns(taskId: string, resultBody?: string, opts?: DispatchOpts) {
   const round = await currentRound(taskId);
   if (round === 0) return;
   const rows = await db
@@ -177,6 +194,12 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
   const body = resultBody ?? (await roundResultBody(taskId));
   for (const row of rows) {
     if (!row.reviewerId || !aiIds.has(row.reviewerId)) continue; // human reviewer: the card is enough
+    // VERDICT-LESS CORRECTION (#276, blind-review r5): a correction re-dispatch is
+    // TARGET-scoped — only the verdict-less reviewer's own row is retried (row order
+    // ties would otherwise hand the retry to a different first-turn reviewer and
+    // drop the verdict-less one's retry entirely). Target row not pending anymore
+    // (a human verdict landed mid-flight) -> nothing mints: the round moved on.
+    if (opts?.verdictlessReviewerId && row.reviewerId !== opts.verdictlessReviewerId) continue;
     // one LIVE review turn per reviewer: skip while theirs is still running
     const running =
       (
@@ -194,7 +217,13 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
       ).length > 0;
     if (running) continue;
     try {
-      await dispatchTask(taskId, 'http://tandem.internal', { reviewBy: row.reviewerId, resultBody: body });
+      // target-scoped above: a correction dispatch can only ever reach the
+      // verdict-less reviewer's own turn
+      await dispatchTask(taskId, 'http://tandem.internal', {
+        reviewBy: row.reviewerId,
+        resultBody: body,
+        verdictCorrection: opts?.verdictCorrection === true,
+      });
       await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review turn dispatched to reviewer ${row.reviewerId}`, {
         reviewTurn: true,
         reviewerId: row.reviewerId,
@@ -268,6 +297,7 @@ export async function recordVerdict(
   verdict: ReviewVerdict,
   note: string,
   source: 'human' | 'ai',
+  at?: Date,
 ): Promise<{ outcome: 'waiting' | 'done' | 'returned' | 'cancelled' | 'superseded' }> {
   const taskRow = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
   if (!taskRow) throw new Error('task not found');
@@ -278,7 +308,10 @@ export async function recordVerdict(
   // round binding: a human click decides the CURRENT round; an AI verdict belongs to
   // the round its review run was DISPATCHED for (a stale run must not settle a newer
   // round it was never part of)
-  const round = source === 'human' ? await currentRound(taskId) : await dispatchedReviewRound(taskId, reviewerId);
+  // `at` pins the SETTLING run's start for AI verdicts (#276 blind-review r6): the
+  // verdict binds to the round its run was minted for, exactly like the verdict-less
+  // bound — a stale settle must never write into a newer round's row.
+  const round = source === 'human' ? await currentRound(taskId) : await dispatchedReviewRound(taskId, reviewerId, at);
   if (round === 0) throw new Error('task has no open review round');
   const row = (
     await db

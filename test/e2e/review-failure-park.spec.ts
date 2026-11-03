@@ -8,7 +8,8 @@
 // work ladder's todo-flip, which would yank an in-review task out of its open round.
 // The second half proves the recovery loop: unblock (status -> in-review) re-fires
 // the reviewer's turn through the unblock-resume path; the verdict-less bound
-// (default review script emits no envelope, 2+ runs this round) re-parks it.
+// (#276: per-round) re-dispatches ONCE with the CORRECTION block and the corrected
+// fake script settles the round — the loop recovers without a second park.
 import { SQL } from 'bun';
 
 import { expect, test } from './helpers/cleanup';
@@ -95,23 +96,24 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
   // the reaper reaps the stale turn (next 5s tick) and parks the round on the owner
   await expect(page.getByTestId('task-status-badge')).toHaveText('Blocked', { timeout: 30_000 });
 
-  // owner resolution: unblock re-fires the parked reviewer via the unblock-resume path
+  // owner resolution: unblock re-fires the parked reviewer via the unblock-resume path.
+  // The re-fired turn settles verdict-less (default review script emits no envelope);
+  // the per-round bound (#276) then re-dispatches ONCE with the CORRECTION block and
+  // the corrected script settles the round — one park cycle, never a wedge.
   await tasks.navigate('/tasks');
   await page.locator('tbody').getByLabel(`Status for ${taskTitle}`).click();
   await page.getByRole('option', { name: 'In review' }).click();
-  // the re-fired turn settles verdict-less (default review script emits no envelope)
-  // and the round's 2-run bound re-parks it — the loop is recoverable, never a wedge
-  await expect(tasks.rowFor(taskTitle)).toContainText('Blocked', { timeout: 30_000 });
+  await expect(tasks.rowFor(taskTitle)).toContainText('Done', { timeout: 45_000 });
 
-  // both park cycles left their notes in the activity store (STATUS rows are
-  // pipeline chatter — deliberately excluded from the thread timeline)
+  // the only park on this path is the reaper's infra park; the corrected re-dispatch
+  // settled the round instead of parking again (decision parks are unit-pinned)
   const sql2 = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
     const notes = await sql2`
       select count(*)::int as n from task_messages
       where task_id = ${injectedTaskId} and body like 'review parked —%'
     `;
-    expect(Number(notes[0]!.n)).toBe(2);
+    expect(Number(notes[0]!.n)).toBe(1);
   } finally {
     await sql2.close();
   }
@@ -120,10 +122,11 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
 // E2E (#211): the reaper's infra-class park now carries a RE-ARM ledger — and when the
 // ladder is due (seeded into the past), the dispatcher tick's re-arm scan re-runs the
 // unblock arm: the parked reviewer's turn MINTS again without any owner action. The
-// default review script's verdict-less double then re-parks as a DECISION park, which
-// resets the ledger — a decision park never re-arms (owner resolution is the only
-// resume there). Together: a parked round whose machine resume failed is never a
-// silent terminal state; the machine re-fires within one tick of the ladder coming due.
+// re-minted turn's verdict-less settle then takes the per-round corrected re-dispatch
+// (#276) and the corrected script settles the round — the ladder recovered the round
+// end-to-end with no owner move. Together: a parked round whose machine resume failed
+// is never a silent terminal state; the machine re-fires within one tick of the ladder
+// coming due.
 test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', async ({ page }) => {
   const tasks = new TasksPage(page);
   const tag = Date.now().toString(36).slice(-6);
@@ -207,15 +210,16 @@ test('infra park re-arms on the ladder and re-mints the reviewer turn (#211)', a
       )
       .toBeGreaterThanOrEqual(before + 1); // the re-arm re-minted the reviewer's turn
 
-    // the re-fired turn settles verdict-less — with 2+ reviewer runs this round the
-    // DECISION bound re-parks: ledger resets, nothing scheduled (a decision park
-    // never re-arms; owner resolution is the only resume there)
-    await expect(page.getByTestId('task-status-badge')).toHaveText('Blocked', { timeout: 30_000 });
+    // the re-fired turn settles verdict-less; the per-round bound's corrected
+    // re-dispatch (#276) then carries the CORRECTION block and the corrected script
+    // settles the round — the ladder recovered it, no owner action, no re-park
+    await expect(page.getByTestId('task-status-badge')).toHaveText('Done', { timeout: 45_000 });
     const ledger2 = await sql3`
       select park_rearm_attempts::int as attempts, park_rearm_after as after from tasks where id = ${taskId}
     `;
-    expect(Number(ledger2[0]!.attempts)).toBe(0);
-    expect(ledger2[0]!.after).toBeNull();
+    // the ledger keeps the ladder's history (attempts survive the resume); a stale
+    // park_rearm_after is INERT — the scan keys on BLOCKED, and the round is done
+    expect(Number(ledger2[0]!.attempts)).toBe(1);
   } finally {
     await sql3.close();
   }
