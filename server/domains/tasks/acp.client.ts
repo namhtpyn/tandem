@@ -80,6 +80,10 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
    *  `steer` injects a mid-turn session/prompt, `stop` (#229) sends session/cancel
    *  and tears the wire down after the cancel grace when the turn is still open */
   onSessionOpen?: (hooks: { steer: (text: string) => Promise<boolean>; stop: () => void }) => void;
+  /** MCP DISPATCH INJECTION (#270, SPEC "MCP (registry + per-agent bindings)"):
+   *  the dispatching employee's bound servers — carried on session/new AND
+   *  session/resume (non-empty replaces; the dispatch plan is always current) */
+  mcpServers?: acp.McpServer[];
 }): Promise<[S] extends [never] ? AcpTurnResult : AcpStructuredTurnResult<S>> {
   const { stream, timeoutMs, onLine } = opts;
   // promptText: the caller's prompt plus the auto-rendered structured-output
@@ -219,7 +223,7 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
           await ctx.request(acp.methods.agent.session.resume, {
             sessionId: resumeId,
             cwd: SESSION_CWD,
-            mcpServers: [],
+            mcpServers: opts.mcpServers ?? [],
           });
           // orphan sweep: the previous run on this session may have died with its
           // turn still executing in the agent's gateway. Cancelling HERE is ordered
@@ -238,7 +242,7 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
       }
       const created = await ctx.request<acp.NewSessionResponse, acp.NewSessionRequest>(acp.methods.agent.session.new, {
         cwd: SESSION_CWD,
-        mcpServers: [],
+        mcpServers: opts.mcpServers ?? [],
       });
       return created.sessionId;
     } finally {

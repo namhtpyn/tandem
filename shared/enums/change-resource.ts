@@ -12,5 +12,6 @@ export const CHANGE_RESOURCE = {
   STATUSES: 'STATUSES',
   RUNS: 'RUNS',
   VAULT: 'VAULT',
+  MCP: 'MCP',
 } as const;
 export type ChangeResource = ValuesOf<typeof CHANGE_RESOURCE>;

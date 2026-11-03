@@ -58,6 +58,7 @@ attachments flow: inputs upload via REST multipart (20MB cap, MIME allowlist png
 redis (REDIS_URL; REQUIRED — the boot env schema rejects boot when unset, every mode; no in-process fallback path exists): bullmq queue 'tandem-dispatch' (retries/backoff) + pub/sub change-bus fanout (the app's only in-memory model cache is a plain Map, no redis cache layer exists)
 
 REDIS RECONNECT-SELF-HEAL LAW (#238): redis unavailability of ANY duration self-heals without a process restart — the long-lived queue connection (worker + enqueue paths) reconnects FOREVER with capped backoff (never a retry count that terminally abandons the client), so workers resume and offline-queued enqueues flush when redis returns; only the BOOT connectivity ping keeps a fail-fast no-retry strategy (a dead redis at boot must reject loudly and let the boot retry loop re-fire, #147). Brick-detection contract: the dispatcher tick best-effort stamps settings key `dispatcher_redis_ok` (epoch ms, written ONLY when a redis ping succeeds, same 30s throttle + best-effort catch as the dispatcher heartbeat) so the prod watchdog can distinguish "app alive but dispatch path dead" (heartbeat fresh + redis stamp stale >120s → probe alerts `dispatch_redis_unreachable`) from "dispatcher dead" (heartbeat stale). An absent key is a pre-image shape and stays silent, same rule as the heartbeat.
+mcp_servers(id, name unique, url http/https, notes, created_at, updated_at) + mcp_server_bindings(id, employee_id -> user.id cascade, server_id -> mcp_servers.id cascade, secret_id -> vault_secrets.id set null, last_probe_ok, last_probe_detail, last_probe_at, unique(employee_id, server_id)) — MCP registry + per-agent bindings: the BINDING is the permission unit (registry admin-written); the binding's optional vault credential rides dispatch as the server's Authorization header; binding-level PROBE VERDICT LAW persists last_probe_* (see "MCP (registry + per-agent bindings)")
 bun serve: NITRO_BUN_IDLE_TIMEOUT defaults to 255 (code, boot plugin — Bun's max; default 10s would kill idle SSE feeds); env can override
 resilience: tasks.dispatch_after + fail_streak (backoff ladder 1m/5m/15m, quota -> 15m); reaper fails stale running rows past the run-timeout setting + grace; sweep failures log rate-limited and boot's dispatcher start retries on a fixed interval until the queue is reachable (#147); ssh keepalive 15s
 ```
@@ -85,8 +86,65 @@ transport contract in one place:
   and settles the run STOPPED (the CAS settles; the turn's own settle path skips
   every side effect for a stop-settled row). The stop hook shares the steer hook's
   TRANSIENT lifecycle (registered at onSessionOpen, deleted when execution exits)
+- MCP injection (#270 slice 1, SPEC "MCP (registry + per-agent bindings)"): the
+  runner serializes the dispatching employee's bindings onto EVERY
+  `session/new` + `session/resume` `mcpServers` param — http servers
+  `{ type: 'http', name, url, headers: [{ name: 'Authorization', value:
+  <plaintext verbatim> }] }`, decrypted server-side at dispatch only; no
+  bindings = the spec-shape empty list; unbinding revokes on the next dispatch
 - concurrency: PER-AGENT BullMQ queues (`tandem-dispatch-<agentId>`), each
   worker's concurrency = `tasksPerAgent` — there is NO per-environment serial queue
+
+## MCP (registry + per-agent bindings)
+
+Slice 1 — transport `http` only (stdio/OAuth are later slices, #270):
+
+- **Registry** = admin-managed catalog of MCP servers (`mcp_servers`): name
+  (unique, 409 on clash incl. rename), url (http/https), notes. Reads are
+  session-tier.
+- **Binding = the permission unit**: `mcp_server_bindings` links one AI
+  employee to one registry entry (unique pair) with an OPTIONAL vault
+  credential. The secret's plaintext IS the credential — sent verbatim as the
+  `Authorization` header value to that MCP server. Write-only vault law: no
+  API ever returns it; the binding carries the vault ref + last-four hint
+  only. Bindings are written by admin verbs only.
+- **Dispatch injection (ACP contract)**: every ACP dispatch of an employee
+  carries ALL of that employee's bindings in `session/new` and
+  `session/resume` `mcpServers` as `{ type: 'http', name, url, headers:
+  [{ name: 'Authorization', value: <plaintext verbatim> }] }` (ACP v1 wire:
+  `headers` is a REQUIRED array — empty when the binding has no credential) —
+  decrypted
+  server-side at dispatch only, never logged, never written to run output
+  (the run output NAMES bound servers, never credentials). No bindings = the
+  spec-shape empty list. Unbinding revokes on the NEXT dispatch; a live
+  session keeps its servers until it ends.
+- **Probe (binding-level)** — mirrors the environments PROBE VERDICT LAW:
+  POSTs the registry url with a JSON-RPC `initialize` handshake (Accept
+  `application/json, text/event-stream`, 10s cap), Authorization from the
+  bound secret when present; BOTH outcomes persist on the binding row
+  (`last_probe_ok/detail/at`; null = never probed). A registry url change
+  clears every verdict of that server's bindings; a binding credential change
+  clears its own verdict. Failure detail carries the first error line — never
+  a bare "unreachable".
+- **In-use guards**: registry remove with live bindings → 400 (unbind first);
+  secret remove joins the vault in-use guard for MCP bindings.
+- **Fake-runner parity** (test transport): the fake runner prints
+  `[mcp] servers: <names asc, comma-space>` into the run output exactly when
+  the dispatch plan carries bindings — the same plan the real runner
+  serializes onto the wire.
+
+### MCP procedures
+
+| procedure            | auth    | input                             | result                                                                                                       |
+| -------------------- | ------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `mcp.registryList`   | session | —                                 | `{data:[{id,name,url,notes,createdAt,updatedAt,bindingCount}]}`                                              |
+| `mcp.registryCreate` | admin   | `{name,url,notes}`                | created row                                                                                                  |
+| `mcp.registryUpdate` | admin   | `{id,name?,url?,notes?}`          | updated row (url change clears that server's binding verdicts)                                               |
+| `mcp.registryRemove` | admin   | `{id}`                            | `{ok}` (400 while bindings exist)                                                                            |
+| `mcp.bindingsList`   | admin   | `{employeeId}`                    | `{data:[{id,serverId,serverName,url,secretId,secretName,lastFour,lastProbeOk,lastProbeDetail,lastProbeAt}]}` |
+| `mcp.bindingsSet`    | admin   | `{employeeId,serverId,secretId?}` | binding row (upsert; verdict cleared on credential change)                                                   |
+| `mcp.bindingsRemove` | admin   | `{employeeId,serverId}`           | `{ok}`                                                                                                       |
+| `mcp.probe`          | admin   | `{employeeId,serverId}`           | `{ok,detail,durationMs,lastProbeAt}`                                                                         |
 
 ## Vault key law
 
@@ -141,12 +199,12 @@ VIEWER; new users default VIEWER; the first boot user claims ADMIN).
 **Enforcement is server-side at the oRPC kernel; UI gating is UX, never the
 boundary.** Tier matrix:
 
-| tier     | who                    | surface                                                                                                                                                                                                                                                                        |
-| -------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| public   | anonymous              | `auth.config`, `auth.configLive`, `auth.session`, `meta.version`, better-auth `/auth/**`, `/health/*`                                                                                                                                                                          |
-| session  | any authenticated user | every read procedure (list/listPaged/live/detail/thread/runs/inbox/subtasks/assignments/proposals/reviews/activity/titles/apiKeys), `changes.live`                                                                                                                             |
-| employee | EMPLOYEE + ADMIN       | every `tasks.*` and `projects.*` write (create/update/setStatus/note/ask/forward/answer/submit/approve/requestChanges/reject/abandon/dispatch/remove/proposals confirm+reject) and `statuses.assign` (Jev auto-assign); verdict writes are additionally HUMAN-only (see below) |
-| admin    | ADMIN only             | vault (secrets + folders, all verbs), providers (all verbs incl. models), oidc.replace, settings.update, environments create/update/remove/probe, employees create/update/remove, access-key mint/update/revoke, statuses save/remove                                          |
+| tier     | who                    | surface                                                                                                                                                                                                                                                                            |
+| -------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| public   | anonymous              | `auth.config`, `auth.configLive`, `auth.session`, `meta.version`, better-auth `/auth/**`, `/health/*`                                                                                                                                                                              |
+| session  | any authenticated user | every read procedure (list/listPaged/live/detail/thread/runs/inbox/subtasks/assignments/proposals/reviews/activity/titles/apiKeys), `changes.live`                                                                                                                                 |
+| employee | EMPLOYEE + ADMIN       | every `tasks.*` and `projects.*` write (create/update/setStatus/note/ask/forward/answer/submit/approve/requestChanges/reject/abandon/dispatch/remove/proposals confirm+reject) and `statuses.assign` (Jev auto-assign); verdict writes are additionally HUMAN-only (see below)     |
+| admin    | ADMIN only             | vault (secrets + folders, all verbs), providers (all verbs incl. models), oidc.replace, settings.update, environments create/update/remove/probe, employees create/update/remove, access-key mint/update/revoke, statuses save/remove, mcp registry + bindings + probe (all verbs) |
 
 Wrong role → `FORBIDDEN`; anonymous → `UNAUTHORIZED`. Reads never exceed the
 session tier; an admin-surface write is never wired below the admin tier. A
@@ -227,6 +285,14 @@ capabilities), `POST /api/tasks/:id/attachments` (multipart upload),
 | `environments.update` | admin   | `{id,name,host,port?,username}`                           | updated row                                                                                         |
 | `environments.remove` | admin   | `{id}`                                                    | `{ok}`                                                                                              |
 | `environments.probe`  | admin   | `{id}`                                                    | `{ok,detail,durationMs,lastProbeAt}` (verdict persisted on the row)                                 |
+| `mcp.registryList`    | session | —                                                         | `{data:[…registry rows + bindingCount]}`                                                            |
+| `mcp.registryCreate`  | admin   | `{name,url,notes}`                                        | created row                                                                                         |
+| `mcp.registryUpdate`  | admin   | `{id,name?,url?,notes?}`                                  | updated row                                                                                         |
+| `mcp.registryRemove`  | admin   | `{id}`                                                    | `{ok}`                                                                                              |
+| `mcp.bindingsList`    | admin   | `{employeeId}`                                            | `{data:[…binding rows, masked secret]}`                                                             |
+| `mcp.bindingsSet`     | admin   | `{employeeId,serverId,secretId?}`                         | binding row (upsert)                                                                                |
+| `mcp.bindingsRemove`  | admin   | `{employeeId,serverId}`                                   | `{ok}` (unbind = revoke at next dispatch)                                                           |
+| `mcp.probe`           | admin   | `{employeeId,serverId}`                                   | `{ok,detail,durationMs,lastProbeAt}` (verdict persisted on the binding)                             |
 
 Wiring follows the official oRPC docs: Nuxt adapter (`toWebRequest` +
 `RPCHandler` with `onError` interceptor), Better Auth lazy `getSession`
@@ -352,6 +418,7 @@ non-positive deltas render no duration.
 | POST     | `/api/tasks/:id/attachments` | employee                     | multipart attachment upload (REST exception, like avatar) — a WRITE: anonymous → 401, rotation-locked → 403, VIEWER → 403; 20MB file cap enforced pre-parse on the request body — declared length rejected pre-read, undeclared-length (chunked) bodies refused `411 length required` pre-read (no pre-read bound exists), buffered length before parse (1MB multipart-overhead allowance); ≤20 input attachments per task → 409                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | GET      | `/api/attachments/:id`       | session                      | serve attachment bytes (etag = sha256, 304 revalidation)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | GET      | `/api/employees/:id/avatar`  | session                      | serve employee avatar bytes (REST exception)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| GET      | `/mcp`                       | session (verbs admin-gated)  | MCP registry manager (registry CRUD + probe law; bindings live in the agent editor)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | GET      | `/`                          | none                         | 302 → `/admin`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | GET      | `/tasks`                     | session                      | task list/board (mobile-first cards; titles link to the task page; every card kebab carries Workflow opening the same workflow drawer as the desktop row button (the drawer's verbs obey the same server-truth gates as the task page — #209: Dispatch now renders only where the server accepts dispatch) — the drawer is reachable at phone widths with ≥44px tap targets; the List/Board view toggle is pinned OUTSIDE the toolbar's right-aligned action scroller — always visible at phone widths, ≥44px tap targets, no horizontal scrolling to reach it; every horizontally scrollable control row in the toolbar area (the status filter strip and the toolbar action scroller) carries a right-edge scroll affordance (fade mask — a clipped trailing control reads as scrollable, never as broken) and every control in them (status tabs, Decisions/Awaiting chips, toolbar buttons) exposes a ≥44px touch target at phone widths, visual size unchanged from sm up) |
 | GET      | `/tasks/:id`                 | session                      | task info page: chat thread (brief, run turns with raw input/output folds, activity) + sidebar (details, review checklist, routing proposals, contextual verbs) + composer; data loads via GET procs and refetches on change events                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |

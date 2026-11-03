@@ -4,6 +4,7 @@ import { authRouter } from './auth/auth.router';
 import { changesRouter } from './changes/changes.router';
 import { employeesRouter } from './employees/employees.router';
 import { environmentsRouter } from './environments/environments.router';
+import { mcpRouter } from './mcp/mcp.router';
 // App router: merge every module router. Server routes/rpc/[...].ts imports
 // this to build the oRPC handler. Adding a resource = new module folder with
 // X.router.ts (+ X.service.ts when logic outgrows the handlers) + registration
@@ -30,4 +31,5 @@ export const appRouter = os.router({
   employees: employeesRouter,
   environments: environmentsRouter,
   vault: vaultRouter,
+  mcp: mcpRouter,
 });
