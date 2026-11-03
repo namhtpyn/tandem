@@ -99,7 +99,10 @@ test('run lock: list select, board drag and Move-to all disable on a live run (#
   // the card, so the Workflow item rides the menu dialog, not the article
   await page.keyboard.press('Escape');
   await card.getByRole('button', { name: `Actions for ${title}` }).click();
-  await page.getByRole('dialog', { name: `Actions for ${title}` }).getByRole('button', { name: 'Workflow' }).click();
+  await page
+    .getByRole('dialog', { name: `Actions for ${title}` })
+    .getByRole('button', { name: 'Workflow' })
+    .click();
   const drawer = page.getByRole('dialog', { name: 'Task workflow' });
   await expect(drawer).toBeVisible();
   await expect(drawer.getByTestId('drawer-composer-hint')).toContainText('steering', { timeout: 10_000 });
