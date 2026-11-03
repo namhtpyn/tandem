@@ -175,7 +175,16 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
     logUpdateProgress(kind, update);
   };
 
-  let teardown: () => void = () => {};
+  // #285: the teardown is effective from the moment the stream is registered —
+  // the session-setup timeout must kill a silent agent BEFORE the session body
+  // (which used to reassign this no-op) ever runs
+  const teardown: () => void = () => {
+    try {
+      stream.close();
+    } catch {
+      /* already gone */
+    }
+  };
   let notifyCancel: (sessionId: string) => void = () => {};
 
   const stdoutBridge = StdoutBridge(stream);
@@ -189,6 +198,12 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
   const dead = new Promise<never>((_, reject) => {
     deadReject = reject;
   });
+  // #284: a rejected promise must never be handlerless — the per-race handlers
+  // below attach only AFTER openSession resolves, so a wire death during session
+  // setup (initialize/resume/session-new) would raise an unhandledRejection and
+  // terminate the whole bun process. This no-op catch owns the rejection until
+  // then; race handlers still fire alongside it (multiple handlers all observe).
+  dead.catch(() => {});
   stream.onClose(() => {
     flushPendingLine();
     stdoutBridge.end();
@@ -199,6 +214,10 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
   // initialize + capability-gated resume/fresh-session (v1 spec shape: sessionId+cwd+
   // mcpServers — the lazy legacy form is what Invalid-params'd 2026-10-29). Setup
   // shares the run timeout: a silent agent must fail the turn, never hang it.
+  // #285: every setup await races the dead-wire promise — a killed wire must settle
+  // the turn immediately (the SDK's request can stay pending forever on a dead
+  // web-stream), never wedge the per-agent worker slot until restart.
+  const raceDead = <T>(p: Promise<T>): Promise<T> => Promise.race([p, dead]) as Promise<T>;
   const openSession = async (ctx: acp.ClientContext): Promise<string | null> => {
     const setupTimer = setTimeout(() => {
       onLine?.('[acp] session setup timed out — killing the agent process');
@@ -206,11 +225,13 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
     }, timeoutMs);
     setupTimer.unref?.();
     try {
-      const init = await ctx.request<acp.InitializeResponse, acp.InitializeRequest>(acp.methods.agent.initialize, {
-        protocolVersion: acp.PROTOCOL_VERSION,
-        clientCapabilities: {},
-        clientInfo,
-      });
+      const init = await raceDead(
+        ctx.request<acp.InitializeResponse, acp.InitializeRequest>(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientCapabilities: {},
+          clientInfo,
+        }),
+      );
       const resumeId = opts.resumeSessionId?.trim() || null;
       const canResume = Boolean(
         resumeId &&
@@ -220,17 +241,19 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
       );
       if (resumeId && canResume) {
         try {
-          await ctx.request(acp.methods.agent.session.resume, {
-            sessionId: resumeId,
-            cwd: SESSION_CWD,
-            mcpServers: opts.mcpServers ?? [],
-          });
+          await raceDead(
+            ctx.request(acp.methods.agent.session.resume, {
+              sessionId: resumeId,
+              cwd: SESSION_CWD,
+              mcpServers: opts.mcpServers ?? [],
+            }),
+          );
           // orphan sweep: the previous run on this session may have died with its
           // turn still executing in the agent's gateway. Cancelling HERE is ordered
           // before the main prompt on the same stream — a no-op when idle, a kill
           // when a stale turn lingers. (Prod 2026-10-29: a resumed session met its
           // own still-running zombie.)
-          await ctx.notify(acp.methods.agent.session.cancel, { sessionId: resumeId }).catch(() => {});
+          await raceDead(ctx.notify(acp.methods.agent.session.cancel, { sessionId: resumeId })).catch(() => {});
           return resumeId;
         } catch (e) {
           onLine?.(
@@ -240,10 +263,12 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
       } else if (resumeId) {
         onLine?.('[acp] agent does not advertise session resume — starting a new session');
       }
-      const created = await ctx.request<acp.NewSessionResponse, acp.NewSessionRequest>(acp.methods.agent.session.new, {
-        cwd: SESSION_CWD,
-        mcpServers: opts.mcpServers ?? [],
-      });
+      const created = await raceDead(
+        ctx.request<acp.NewSessionResponse, acp.NewSessionRequest>(acp.methods.agent.session.new, {
+          cwd: SESSION_CWD,
+          mcpServers: opts.mcpServers ?? [],
+        }),
+      );
       return created.sessionId;
     } finally {
       clearTimeout(setupTimer);
@@ -278,13 +303,8 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
         // other session/cancel send in this file
         notifyCancel = (sid: string) =>
           void ctx.notify(acp.methods.agent.session.cancel, { sessionId: sid }).catch(() => {});
-        teardown = () => {
-          try {
-            stream.close();
-          } catch {
-            /* already gone */
-          }
-        };
+        // teardown is live from stream registration (#285) — no late assignment: the
+        // setup timeout, the onClose path and this body all share the same killer
 
         if (opts.onSessionOpen) {
           opts.onSessionOpen({
