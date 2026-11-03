@@ -10,6 +10,8 @@ import { z } from 'zod';
 
 import { formatWhenShort } from '~/utils/format-when';
 import { errorMessage, saveFailed } from '~/utils/forms';
+import type { SecretOption } from '~/utils/vault-options';
+import { groupedSecretOptions } from '~/utils/vault-options';
 
 // change-bus resource token the MCP domain publishes under — useChangeEvents
 // invalidates [resource] prefixes, so the key must start with it. (Swapped to
@@ -27,20 +29,57 @@ const removeError = ref<string | null>(null);
 const editorOpen = ref(false);
 const isEdit = ref(false);
 const editingId = ref<string | null>(null);
-const form = ref({ name: '', url: '', notes: '' });
-// loose frontend schema (repo law): presence + URL shape only — the server
-// re-validates strictly (unique name, http/https). UForm blocks submit and
-// points at the offending field.
-const registrySchema = z.object({
-  name: z.string().min(1, 'Name is required'),
-  url: z
-    .string()
-    .min(1, 'URL is required')
-    .url('Enter a valid URL')
-    .refine((v) => /^https?:\/\//i.test(v), { message: 'Only http/https URLs are supported' }),
-  notes: z.string(),
+const form = ref({
+  name: '',
+  url: '',
+  notes: '',
+  authKind: 'none' as 'none' | 'oauth',
+  oauthAuthorizeUrl: '',
+  oauthTokenUrl: '',
+  oauthRevocationUrl: '',
+  oauthScopes: '',
+  oauthClientId: '',
+  oauthClientSecretId: null as string | null,
 });
+// loose frontend schema (repo law): presence + URL shape only — the server
+// re-validates strictly (unique name, http/https, oauth required fields).
+// UForm blocks submit and points at the offending field.
+const registrySchema = z
+  .object({
+    name: z.string().min(1, 'Name is required'),
+    url: z
+      .string()
+      .min(1, 'URL is required')
+      .url('Enter a valid URL')
+      .refine((v) => /^https?:\/\//i.test(v), { message: 'Only http/https URLs are supported' }),
+    notes: z.string(),
+    authKind: z.enum(['none', 'oauth']),
+    // '' allowed — these only carry content for oauth servers (superRefine
+    // enforces presence there); empty strings must not block plain creates
+    oauthAuthorizeUrl: z
+      .string()
+      .refine((v) => v === '' || /^https?:\/\//i.test(v), { message: 'Only http/https URLs are supported' }),
+    oauthTokenUrl: z
+      .string()
+      .refine((v) => v === '' || /^https?:\/\//i.test(v), { message: 'Only http/https URLs are supported' }),
+    oauthRevocationUrl: z
+      .string()
+      .refine((v) => v === '' || /^https?:\/\//i.test(v), { message: 'Only http/https URLs are supported' }),
+    oauthScopes: z.string(),
+    oauthClientId: z.string(),
+    oauthClientSecretId: z.string().nullable(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.authKind !== 'oauth') return;
+    for (const field of ['oauthAuthorizeUrl', 'oauthTokenUrl', 'oauthClientId'] as const) {
+      if (!v[field]) ctx.addIssue({ code: 'custom', path: [field], message: 'Required for OAuth servers' });
+    }
+  });
 const saveError = ref<string | null>(null);
+
+// confidential-client secret select — same vault surface as the binding editor
+const secretsLive = useAllVaultSecrets();
+const secretItems = computed<SecretOption[]>(() => groupedSecretOptions(secretsLive.data.value ?? []));
 
 // snapshot at ask-time: resolving the row live from `rows` breaks the confirm
 // copy (and the delete target) the moment the list refetches
@@ -50,16 +89,56 @@ const createMutation = useMutation({ ...$orpc.mcp.registryCreate.mutationOptions
 const updateMutation = useMutation({ ...$orpc.mcp.registryUpdate.mutationOptions() });
 const removeMutation = useMutation({ ...$orpc.mcp.registryRemove.mutationOptions() });
 
-function openEditor(row?: { id: string; name: string; url: string; notes: string | null }) {
+type RegistryRow = {
+  id: string;
+  name: string;
+  url: string;
+  notes: string | null;
+  authKind: string;
+  oauth: {
+    authorizeUrl: string | null;
+    tokenUrl: string | null;
+    revocationUrl: string | null;
+    scopes: string | null;
+    clientId: string | null;
+    clientSecretId: string | null;
+    clientSecretName: string | null;
+  };
+};
+
+function emptyOauth() {
+  return {
+    oauthAuthorizeUrl: '',
+    oauthTokenUrl: '',
+    oauthRevocationUrl: '',
+    oauthScopes: '',
+    oauthClientId: '',
+    oauthClientSecretId: null as string | null,
+  };
+}
+
+function openEditor(row?: RegistryRow) {
   saveError.value = null;
   if (row) {
     isEdit.value = true;
     editingId.value = row.id;
-    form.value = { name: row.name, url: row.url, notes: row.notes ?? '' };
+    form.value = {
+      name: row.name,
+      url: row.url,
+      notes: row.notes ?? '',
+      authKind: row.authKind === 'oauth' ? 'oauth' : 'none',
+      ...emptyOauth(),
+      oauthAuthorizeUrl: row.oauth.authorizeUrl ?? '',
+      oauthTokenUrl: row.oauth.tokenUrl ?? '',
+      oauthRevocationUrl: row.oauth.revocationUrl ?? '',
+      oauthScopes: row.oauth.scopes ?? '',
+      oauthClientId: row.oauth.clientId ?? '',
+      oauthClientSecretId: row.oauth.clientSecretId ?? null,
+    };
   } else {
     isEdit.value = false;
     editingId.value = null;
-    form.value = { name: '', url: '', notes: '' };
+    form.value = { name: '', url: '', notes: '', authKind: 'none', ...emptyOauth() };
   }
   editorOpen.value = true;
 }
@@ -69,6 +148,20 @@ async function save() {
   if (busy.value) return;
   saveError.value = null;
   busy.value = true;
+  // OAuth block rides the write only for oauth servers — 'none' clears it
+  // server-side (SPEC: editing the OAuth config wipes that server's tokens)
+  const oauthBlock =
+    form.value.authKind === 'oauth'
+      ? {
+          authKind: 'oauth' as const,
+          oauthAuthorizeUrl: form.value.oauthAuthorizeUrl.trim() || null,
+          oauthTokenUrl: form.value.oauthTokenUrl.trim() || null,
+          oauthRevocationUrl: form.value.oauthRevocationUrl.trim() || null,
+          oauthScopes: form.value.oauthScopes.trim() || null,
+          oauthClientId: form.value.oauthClientId.trim() || null,
+          oauthClientSecretId: form.value.oauthClientSecretId,
+        }
+      : { authKind: 'none' as const };
   try {
     if (isEdit.value && editingId.value) {
       await updateMutation.mutateAsync({
@@ -76,12 +169,14 @@ async function save() {
         name: form.value.name.trim(),
         url: form.value.url.trim(),
         notes: form.value.notes.trim(),
+        ...oauthBlock,
       });
     } else {
       await createMutation.mutateAsync({
         name: form.value.name.trim(),
         url: form.value.url.trim(),
         notes: form.value.notes.trim(),
+        ...oauthBlock,
       });
     }
     editorOpen.value = false;
@@ -148,6 +243,21 @@ onServerPrefetch(() => liveQuery.suspense());
       <template #empty-cta>
         <UButton icon="i-lucide-plus" label="New server" @click="openEditor()" />
       </template>
+      <template #name-cell="{ row }">
+        <span class="flex items-center gap-2">
+          <span class="text-highlighted text-sm font-medium">{{ row.original.name }}</span>
+          <UBadge
+            v-if="row.original.authKind === 'oauth'"
+            color="info"
+            variant="subtle"
+            size="sm"
+            icon="i-lucide-key-round"
+            data-testid="mcp-oauth-badge"
+          >
+            OAuth
+          </UBadge>
+        </span>
+      </template>
       <template #url-cell="{ row }">
         <span class="text-dimmed block max-w-64 truncate font-mono text-xs" :title="row.original.url">
           {{ row.original.url }}
@@ -207,7 +317,19 @@ onServerPrefetch(() => liveQuery.suspense());
         <UCard :ui="{ root: 'shadow-sm' }">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
-              <p class="text-highlighted truncate text-sm font-medium">{{ row.name }}</p>
+              <p class="text-highlighted truncate text-sm font-medium">
+                {{ row.name }}
+                <UBadge
+                  v-if="row.authKind === 'oauth'"
+                  color="info"
+                  variant="subtle"
+                  size="sm"
+                  icon="i-lucide-key-round"
+                  class="align-middle"
+                >
+                  OAuth
+                </UBadge>
+              </p>
               <p class="text-dimmed mt-1 truncate font-mono text-xs" :title="row.url">{{ row.url }}</p>
             </div>
             <UBadge :color="row.bindingCount > 0 ? 'primary' : 'neutral'" variant="subtle" size="sm">
@@ -288,6 +410,93 @@ onServerPrefetch(() => liveQuery.suspense());
             </template>
             <UTextarea v-model="form.notes" placeholder="Notes (optional)" :rows="2" class="w-full" :disabled="busy" />
           </UFormField>
+          <UFormField name="authKind">
+            <template #label> Authentication </template>
+            <template #hint>
+              <FormHint text="Static credential rides the binding; OAuth authorizes per agent" />
+            </template>
+            <USelect
+              v-model="form.authKind"
+              data-testid="mcp-auth-kind"
+              :items="[
+                { label: 'Static credential (per binding)', value: 'none' },
+                { label: 'OAuth 2.0 (authorize per agent)', value: 'oauth' },
+              ]"
+              class="w-full"
+              :disabled="busy"
+            />
+          </UFormField>
+          <template v-if="form.authKind === 'oauth'">
+            <UFormField name="oauthAuthorizeUrl">
+              <template #label> Authorize URL </template>
+              <UInput
+                v-model="form.oauthAuthorizeUrl"
+                placeholder="https://provider.com/oauth/authorize"
+                class="w-full"
+                :disabled="busy"
+                spellcheck="false"
+              />
+            </UFormField>
+            <UFormField name="oauthTokenUrl">
+              <template #label> Token URL </template>
+              <UInput
+                v-model="form.oauthTokenUrl"
+                placeholder="https://provider.com/oauth/token"
+                class="w-full"
+                :disabled="busy"
+                spellcheck="false"
+              />
+            </UFormField>
+            <UFormField name="oauthRevocationUrl">
+              <template #label> Revocation URL </template>
+              <template #hint>
+                <FormHint text="Optional — RFC 7009; unbinding revokes best-effort" />
+              </template>
+              <UInput
+                v-model="form.oauthRevocationUrl"
+                placeholder="https://provider.com/oauth/revoke (optional)"
+                class="w-full"
+                :disabled="busy"
+                spellcheck="false"
+              />
+            </UFormField>
+            <UFormField name="oauthClientId">
+              <template #label> Client ID </template>
+              <UInput
+                v-model="form.oauthClientId"
+                placeholder="client id from the provider"
+                class="w-full"
+                :disabled="busy"
+              />
+            </UFormField>
+            <UFormField name="oauthClientSecretId">
+              <template #label> Client secret </template>
+              <template #hint>
+                <FormHint text="Optional vault secret for confidential clients — write-only, never returned" />
+              </template>
+              <USelectMenu
+                v-model="form.oauthClientSecretId"
+                data-testid="mcp-oauth-client-secret"
+                :items="secretItems"
+                value-key="value"
+                clear
+                placeholder="None (public client + PKCE)"
+                icon="i-lucide-key-round"
+                class="w-full"
+                :disabled="busy"
+              />
+            </UFormField>
+            <UFormField name="oauthScopes">
+              <template #label> Scopes </template>
+              <UInput
+                v-model="form.oauthScopes"
+                placeholder="space-separated scopes (optional)"
+                class="w-full"
+                :disabled="busy"
+                spellcheck="false"
+              />
+            </UFormField>
+          </template>
           <UAlert
             v-if="saveError"
             role="alert"

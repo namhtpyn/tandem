@@ -195,7 +195,8 @@ export const aiEmployees = pgTable('ai_employees', {
 });
 
 // MCP registry: admin-managed catalog of MCP servers agents bind to
-// (slice 1: transport http — SPEC "MCP (registry + per-agent bindings)")
+// (slice 1: transport http; slice 2 adds OAuth per binding — SPEC
+// "MCP (registry + per-agent bindings) — OAuth per binding (#270 slice 2)")
 export const mcpServers = pgTable('mcp_servers', {
   id: text('id')
     .primaryKey()
@@ -203,6 +204,16 @@ export const mcpServers = pgTable('mcp_servers', {
   name: text('name').notNull().unique(),
   url: text('url').notNull(),
   notes: text('notes').notNull().default(''),
+  // authKind 'none' = slice-1 contract (static credential verbatim);
+  // 'oauth' = per-binding authorization via the Tandem-hosted PKCE flow
+  authKind: text('auth_kind').notNull().default('none'),
+  oauthAuthorizeUrl: text('oauth_authorize_url'),
+  oauthTokenUrl: text('oauth_token_url'),
+  oauthRevocationUrl: text('oauth_revocation_url'),
+  oauthScopes: text('oauth_scopes'),
+  oauthClientId: text('oauth_client_id'),
+  // confidential-client secret (registry-level, write-only vault law)
+  oauthClientSecretId: text('oauth_client_secret_id').references(() => vaultSecrets.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .$default(() => new Date()),
@@ -245,6 +256,47 @@ export const mcpServerBindings = pgTable(
     index('mcp_server_bindings_server_idx').on(t.serverId),
   ],
 );
+
+// OAuth tokens per binding (#270 slice 2): access + refresh tokens encrypted
+// at rest under the vault envelope law — decrypted server-side at
+// dispatch/probe ONLY; no API surface ever returns them (masked status only).
+export const mcpOauthTokens = pgTable('mcp_oauth_tokens', {
+  id: text('id')
+    .primaryKey()
+    .$default(() => uuidv7()),
+  bindingId: text('binding_id')
+    .notNull()
+    .unique()
+    .references(() => mcpServerBindings.id, { onDelete: 'cascade' }),
+  accessTokenEnc: text('access_enc').notNull(),
+  refreshTokenEnc: text('refresh_enc'),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  scope: text('scope').notNull().default(''),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .$default(() => new Date()),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .$default(() => new Date())
+    .$onUpdate(() => new Date()),
+});
+
+// Single-use authorize-flow state (#270 slice 2): the state row IS the
+// authorization proof — consumed on FIRST callback use, 10-minute TTL.
+export const mcpOauthStates = pgTable('mcp_oauth_states', {
+  id: text('id')
+    .primaryKey()
+    .$default(() => uuidv7()),
+  bindingId: text('binding_id')
+    .notNull()
+    .references(() => mcpServerBindings.id, { onDelete: 'cascade' }),
+  codeVerifier: text('code_verifier').notNull(),
+  redirectUri: text('redirect_uri').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .$default(() => new Date()),
+});
 
 // Tasks: work items assigned to employees (human or AI). AI assignees get
 // dispatched to their environment by the runner (M5).
@@ -592,6 +644,8 @@ export const relations = defineRelations(
     taskAttachments,
     mcpServers,
     mcpServerBindings,
+    mcpOauthTokens,
+    mcpOauthStates,
   },
   (helpers) => ({
     user: {
@@ -659,6 +713,18 @@ export const relations = defineRelations(
       employee: helpers.one.user({ from: helpers.mcpServerBindings.employeeId, to: helpers.user.id }),
       server: helpers.one.mcpServers({ from: helpers.mcpServerBindings.serverId, to: helpers.mcpServers.id }),
       secret: helpers.one.vaultSecrets({ from: helpers.mcpServerBindings.secretId, to: helpers.vaultSecrets.id }),
+    },
+    mcpOauthTokens: {
+      binding: helpers.one.mcpServerBindings({
+        from: helpers.mcpOauthTokens.bindingId,
+        to: helpers.mcpServerBindings.id,
+      }),
+    },
+    mcpOauthStates: {
+      binding: helpers.one.mcpServerBindings({
+        from: helpers.mcpOauthStates.bindingId,
+        to: helpers.mcpServerBindings.id,
+      }),
     },
     verification: {},
   }),
