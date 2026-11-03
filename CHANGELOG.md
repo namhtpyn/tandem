@@ -1,3 +1,17 @@
+# [2.66.0](https://github.com/namhtpyn/tandem/compare/v2.65.11...v2.66.0) (2026-11-03)
+
+
+### Bug Fixes
+
+* **e2e:** mcp revoke assert reads per-fold raw output; return to task page before turn asserts ([8c2471c](https://github.com/namhtpyn/tandem/commit/8c2471c5ffbfc14bfd76be9d8c478c176b6d673e))
+
+
+### Features
+
+* **mcp:** registry + per-agent bindings + ACP dispatch injection ([#270](https://github.com/namhtpyn/tandem/issues/270) slice 1) ([1df9fd4](https://github.com/namhtpyn/tandem/commit/1df9fd41114dc049c80c6a8c4f433dfbb024ab6d))
+* **spec:** MCP registry + per-agent bindings contract ([#270](https://github.com/namhtpyn/tandem/issues/270) slice 1) ([f51bbfe](https://github.com/namhtpyn/tandem/commit/f51bbfebfa3d84dc4b58cd21818733ae651269b1))
+* **ui:** MCP registry page + agent-editor binding/probe section ([#270](https://github.com/namhtpyn/tandem/issues/270) slice 1) ([038583d](https://github.com/namhtpyn/tandem/commit/038583d60725637b8be9e6c58b326ae3d9bea6ce))
+
 ## [2.65.11](https://github.com/namhtpyn/tandem/compare/v2.65.10...v2.65.11) (2026-11-03)
 
 
