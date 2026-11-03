@@ -11,7 +11,7 @@
 // that swaps the reviewer up-chain on the TASK roster and never settles.
 // Parks (round cannot progress without a human) flip the task to BLOCKED; owner
 // resolution unblocks and the round resumes. Manual done/cancel supersedes the round.
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, notInArray } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { db, type DbExecutor } from '../../db/index';
@@ -235,6 +235,32 @@ async function logVerdict(
  * closes early: a request_change (or a split vote) waits for the remaining reviewers;
  * the LAST verdict triggers the transition. Unanimity is judged over the LIVE set —
  * escalated/superseded rows never count. Fires the next sequential reviewer when the
+ * still waiting. */
+
+/** terminal-category status ids, resolved fresh so the flip predicate is evaluated
+ * in SQL at WRITE time — never a stale read and never seeded ids only (#260). */
+async function terminalStatusIds(): Promise<string[]> {
+  const statuses = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
+  return statuses.filter((s) => s.category === CATEGORY.DONE || s.category === CATEGORY.CANCELLED).map((s) => s.id);
+}
+
+/** END-OF-ROUND FLIP CAS (#260): the settle flip is a conditional write refusing
+ * done/cancelled-category statuses — a manual settle that lands between this
+ * verdict's row write and the flip wins the race, keeps the owner's status and
+ * makes the verdict a recorded-but-superseded audit row (returns false). */
+async function flipTask(taskId: string, status: string): Promise<boolean> {
+  const flipped = await db
+    .update(tasks)
+    .set({ status, updatedAt: new Date() })
+    .where(and(eq(tasks.id, taskId), notInArray(tasks.status, await terminalStatusIds())))
+    .returning({ id: tasks.id });
+  return flipped.length > 0;
+}
+
+/** write one reviewer's verdict, then apply the END-OF-ROUND matrix. A round never
+ * closes early: a request_change (or a split vote) waits for the remaining reviewers;
+ * the LAST verdict triggers the transition. Unanimity is judged over the LIVE set —
+ * escalated/superseded rows never count. Fires the next sequential reviewer when the
  * round is still waiting. */
 export async function recordVerdict(
   taskId: string,
@@ -242,7 +268,7 @@ export async function recordVerdict(
   verdict: ReviewVerdict,
   note: string,
   source: 'human' | 'ai',
-): Promise<{ outcome: 'waiting' | 'done' | 'returned' | 'cancelled' }> {
+): Promise<{ outcome: 'waiting' | 'done' | 'returned' | 'cancelled' | 'superseded' }> {
   const taskRow = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
   if (!taskRow) throw new Error('task not found');
   // terminal gate: a settled (done/cancelled) task must never be moved by a verdict
@@ -262,16 +288,32 @@ export async function recordVerdict(
   )[0];
   if (!row) throw new Error('not a reviewer in the current round');
   if (row.status !== REVIEW_STATUS.PENDING) throw new Error('verdict already recorded for this round');
-  await db
+  // VERDICT CAS (#260): the write is its own arbiter — a concurrent double-submit
+  // or a manual-settle teardown (rows superseded) landing between the read above
+  // and this write makes the CAS miss (0 rows) and the late verdict is refused.
+  const settled = await db
     .update(taskReviews)
     .set({ status: verdict, note: note || null, decidedAt: new Date(), source })
-    .where(eq(taskReviews.id, row.id));
+    .where(and(eq(taskReviews.id, row.id), eq(taskReviews.status, REVIEW_STATUS.PENDING)))
+    .returning({ id: taskReviews.id });
+  if (settled.length === 0) throw new Error('verdict already recorded for this round');
   /* v8 ignore next -- the obligation always exists for a verdict author; the
    * catch only guards a race with a concurrent round close */
   await resolveObligation(taskId, reviewerId, OBLIGATION_ROLE.APPROVAL, reviewerId).catch(() => {});
+  return settleRound(taskId, reviewerId, verdict, note, source, round);
+}
 
-  // END-OF-ROUND MATRIX: read the round fresh — this verdict already landed, so any
-  // PENDING row here belongs to another reviewer whose turn is still owed
+/** END-OF-ROUND MATRIX (recordVerdict's tail): read the round fresh — the verdict
+ * already landed, so any PENDING row here belongs to another reviewer whose turn is
+ * still owed. Settles only on the LAST verdict; flips ride the #260 CAS. */
+async function settleRound(
+  taskId: string,
+  reviewerId: string,
+  verdict: ReviewVerdict,
+  note: string,
+  source: 'human' | 'ai',
+  round: number,
+): Promise<{ outcome: 'waiting' | 'done' | 'returned' | 'cancelled' | 'superseded' }> {
   const roundRows = await db
     .select()
     .from(taskReviews)
@@ -305,15 +347,15 @@ export async function recordVerdict(
   const allRejected = live.length > 0 && live.every((r) => r.status === REVIEW_STATUS.REJECTED);
 
   if (allRejected) {
+    if (!(await flipTask(taskId, CANCELLED_STATUS))) return { outcome: 'superseded' };
     await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
-    await db.update(tasks).set({ status: CANCELLED_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     await logVerdict(taskId, reviewerId, note || 'rejected — task cancelled', { rejected: true, round }, source);
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'cancelled' };
   }
   if (allApproved) {
+    if (!(await flipTask(taskId, DONE_STATUS))) return { outcome: 'superseded' };
     await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
-    await db.update(tasks).set({ status: DONE_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     await logVerdict(
       taskId,
       reviewerId,
@@ -326,8 +368,8 @@ export async function recordVerdict(
   }
   // any request_change — or a split approve/reject — bounces the task to the
   // assignee; the verdict notes already sit on the thread and ride the next brief
+  if (!(await flipTask(taskId, TODO_STATUS))) return { outcome: 'superseded' };
   await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
-  await db.update(tasks).set({ status: TODO_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   await logVerdict(taskId, reviewerId, note || 'changes requested', { changeRequested: true, round }, source);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   return { outcome: 'returned' };
