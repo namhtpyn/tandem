@@ -312,7 +312,16 @@ export async function abandonTask(taskId: string, authorId: string, body: string
     await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
   }
   // abandoned == cancelled (one terminal, no fake distinction)
-  await db.update(tasks).set({ status: CANCELLED_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
+  // TERMINAL ARBITRATION (#287): the cancel write arbitrates on the status this call
+  // read — a concurrent verdict settle (-> done) or submit flip (-> in-review) that
+  // won the task between the read and this write owns the outcome; a 0-row miss
+  // refuses the abandon instead of overwriting a settled task.
+  const cancelled = await db
+    .update(tasks)
+    .set({ status: CANCELLED_STATUS, updatedAt: new Date() })
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status)))
+    .returning({ id: tasks.id });
+  if (cancelled.length === 0) throw new Error('task state changed during cancel — a settle owns the outcome');
   await logActivity(taskId, ACTIVITY_KIND.VERDICT, authorId, body || 'cancelled', { abandon: true });
   await refreshParentGating(taskId);
   return { ok: true };

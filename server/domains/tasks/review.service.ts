@@ -142,7 +142,15 @@ export async function openReviewRound(taskId: string, reviewers: string[], resul
     `review round ${round} opened — waiting on ${uniqueReviewers.length} reviewer(s)`,
     { reviewRound: round },
   );
-  await dispatchAiReviewTurns(taskId, resultBody);
+  try {
+    await dispatchAiReviewTurns(taskId, resultBody);
+  } catch (e) {
+    // ROUND-OPEN FAILURE (#282): the contract is a failed round-open leaves the task
+    // working with the error surfaced — the just-minted rows supersede and their
+    // approval obligations cancel, so no round is left behind for a settle to wedge on.
+    await teardownOpenRound(taskId, 'round-open failed');
+    throw e;
+  }
   return round;
 }
 
@@ -240,7 +248,13 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string,
       // nothing to re-fire it — park instead of stranding the round silently. Owner
       // unblock (status -> in-review) re-dispatches through the unblock-resume path.
       // REARMABLE (#211): a mint failure is infra-class — the re-arm ladder re-fires it.
-      await parkRound(taskId, `review turn failed to dispatch — ${reason}`, { rearmable: true });
+      const parked = await parkRound(taskId, `review turn failed to dispatch — ${reason}`, { rearmable: true });
+      if (!parked)
+        // ROUND-OPEN WINDOW (#282): the park only lands from in-review — pre-flip
+        // (the submit's round-open call) there is nothing to park, and returning
+        // quietly strands a live round with no run and no re-fire. Rethrow so
+        // openReviewRound fails the submit with the task left working.
+        throw new Error(`review turn dispatch failed before the round opened — ${reason}`);
     }
     return; // SEQUENTIAL: one turn in flight — the next fires from this verdict's settle
   }
@@ -508,8 +522,18 @@ export async function escalateReview(
   }
 
   const targetName2 = nonNull(users.find((u) => u.id === targetId)).name;
+  // VERDICT CAS (#260 sibling, #283): the escalator's row flip is its own arbiter —
+  // a verdict that won the race (recordVerdict) or a teardown that superseded the row
+  // lands here as a 0-row miss: refuse the escalation and mint nothing (no roster
+  // mutation, no target row, no obligation — a settled task never gains a reviewer).
+  const escalated = await db
+    .update(taskReviews)
+    .set({ status: REVIEW_STATUS.ESCALATED, note: body || null, decidedAt: new Date(), source: 'ai' })
+    .where(and(eq(taskReviews.id, row.id), eq(taskReviews.status, REVIEW_STATUS.PENDING)))
+    .returning({ id: taskReviews.id });
+  if (escalated.length === 0) throw new Error('verdict already recorded for this round');
   // roster mutation IS the handoff (one source of truth): the escalator leaves the
-  // task, the replacement joins it
+  // task, the replacement joins it — written only once the row flip won
   await db
     .update(tasks)
     .set({
@@ -517,10 +541,6 @@ export async function escalateReview(
       updatedAt: new Date(),
     })
     .where(eq(tasks.id, taskId));
-  await db
-    .update(taskReviews)
-    .set({ status: REVIEW_STATUS.ESCALATED, note: body || null, decidedAt: new Date(), source: 'ai' })
-    .where(eq(taskReviews.id, row.id));
   await db
     .insert(taskReviews)
     .values({ id: uuidv7(), taskId, reviewerId: targetId, round, status: REVIEW_STATUS.PENDING });
@@ -546,10 +566,12 @@ export async function escalateReview(
  * a bounded re-arm on the ladder; a decision park (default) resets the ledger and
  * schedules nothing — owner resolution stays the only resume. Attempts survive the
  * restore (the unblock arm never rewrites them), so a re-fire cycle is bounded; the
- * columns are inert off BLOCKED and every park write rewrites them. */
+ * columns are inert off BLOCKED and every park write rewrites them.
+ * Returns whether the park flip WON (the task was still in-review) — callers use
+ * the miss to detect the round-open window (#282). */
 export const PARK_REARM_LADDER_MS = [5 * 60_000, 30 * 60_000, 2 * 60 * 60_000, 6 * 60 * 60_000] as const;
 
-export async function parkRound(taskId: string, why: string, opts: { rearmable?: boolean } = {}) {
+export async function parkRound(taskId: string, why: string, opts: { rearmable?: boolean } = {}): Promise<boolean> {
   const task = (
     await db
       .select({ status: tasks.status, ownerId: tasks.ownerId, rearmAttempts: tasks.parkRearmAttempts })
@@ -559,7 +581,7 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
   if (!task) throw new Error('task not found');
   // park only from in-review (#199): a manual settle that won the race owns the
   // outcome — parking over a terminal/owner-moved status would resurrect a dead round
-  if (task.status !== IN_REVIEW_STATUS) return;
+  if (task.status !== IN_REVIEW_STATUS) return false;
   const rearmable = opts.rearmable === true;
   // attempts = parks burned in the current cycle; ladder[attempts-1] schedules the
   // next re-fire; past the ladder the round parks FINAL (after = null) and the
@@ -569,7 +591,7 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
     rearmable && attempts <= PARK_REARM_LADDER_MS.length
       ? new Date(Date.now() + nonNull(PARK_REARM_LADDER_MS[attempts - 1]))
       : null;
-  await db
+  const parkedRows = await db
     .update(tasks)
     // park-origin memory (#202): the BLOCKED flip carries the status it flipped from —
     // the parent-gating unblock restores this, never a stale pre_block_status
@@ -581,7 +603,9 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
       parkRearmAfter: rearmAfter,
     })
     // atomic re-check: a settle/status change between read and write wins
-    .where(and(eq(tasks.id, taskId), eq(tasks.status, IN_REVIEW_STATUS)));
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, IN_REVIEW_STATUS)))
+    .returning({ id: tasks.id });
+  if (parkedRows.length === 0) return false;
   await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review parked — ${why}`, {
     reviewParked: true,
     why,
@@ -589,6 +613,7 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
     ...(rearmable ? { rearm: { attempt: attempts, rearmAfter: rearmAfter?.toISOString() ?? null } } : {}),
   });
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+  return true;
 }
 
 /** OBLIGATION LIFECYCLE (#205): a PENDING obligation must never outlive the
