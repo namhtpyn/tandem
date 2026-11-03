@@ -21,6 +21,7 @@ const REVOKE_HTTP_TIMEOUT_MS = 5_000;
 const b64url = (buf: Buffer) => buf.toString('base64url');
 
 export type OauthServerConfig = {
+  authKind: string;
   oauthTokenUrl: string | null;
   oauthRevocationUrl: string | null;
   oauthClientId: string | null;
@@ -90,6 +91,7 @@ async function loadOauthServerConfig(serverId: string): Promise<OauthServerConfi
     secretEnc = secretRows[0]?.ciphertext ?? null;
   }
   return {
+    authKind: server?.authKind ?? 'none',
     oauthTokenUrl: server?.oauthTokenUrl ?? null,
     oauthRevocationUrl: server?.oauthRevocationUrl ?? null,
     oauthClientId: server?.oauthClientId ?? null,
@@ -171,7 +173,9 @@ export async function startOauthConnect(input: { employeeId: string; serverId: s
 }
 
 /** provider callback: consume the state, exchange the code server-side, store
- * the binding's tokens; the thrown message lands on the result page */
+ * the binding's tokens; the thrown message lands on the result page. The
+ * server's CURRENT config rules — a state minted before an OAuth-config edit
+ * (or a kind flip) can never complete against the old contract. */
 export async function handleOauthCallback(input: { code: string; state: string }) {
   const state = await consumeState(input.state);
   const bindingRows = await db.query.mcpServerBindings.findMany({
@@ -181,6 +185,7 @@ export async function handleOauthCallback(input: { code: string; state: string }
   const binding = bindingRows[0];
   if (!binding) throw new Error('binding vanished before the code exchange');
   const server = await loadOauthServerConfig(binding.serverId);
+  if (server.authKind !== 'oauth') throw new Error('registry entry is no longer OAuth-configured');
   if (!server.oauthTokenUrl) throw new Error('registry entry lost its token endpoint');
   const token = await tokenRequest(server.oauthTokenUrl, {
     ...(await clientAuthParams(server)),
@@ -214,8 +219,13 @@ export async function getFreshAccessToken(bindingId: string): Promise<string | n
   const rows = await db.query.mcpOauthTokens.findMany({ where: { bindingId: { eq: bindingId } } });
   const row = rows[0];
   if (!row) return null;
-  const access = decryptSecret(row.accessTokenEnc);
-  if (!row.expiresAt || row.expiresAt.getTime() > Date.now() + REFRESH_SKEW_MS) return access;
+  try {
+    const access = decryptSecret(row.accessTokenEnc);
+    if (!row.expiresAt || row.expiresAt.getTime() > Date.now() + REFRESH_SKEW_MS) return access;
+  } catch {
+    // undecryptable row (corrupt ciphertext / rotated key): fall through to the
+    // guarded refresh — dispatch still ships nothing and NEVER throws
+  }
   let pending = refreshInFlight.get(bindingId);
   if (!pending) {
     pending = refreshBindingTokens(bindingId).finally(() => refreshInFlight.delete(bindingId));
@@ -264,14 +274,12 @@ async function refreshBindingTokens(bindingId: string): Promise<string | null> {
   }
 }
 
-/** UNBIND = REVOKE: best-effort RFC 7009 revocation + token-row delete; a
- * failed revoke never blocks the unbind */
+/** UNBIND = REVOKE: best-effort RFC 7009 revocation of BOTH tokens (the
+ * refresh token is the durable grant — revoking only the access token would
+ * leave it alive) + token-row delete; a failed revoke never blocks the unbind */
 export async function revokeOauthTokens(bindingId: string): Promise<void> {
   try {
-    const rows = await db.query.mcpOauthTokens.findMany({
-      columns: { accessTokenEnc: true },
-      where: { bindingId: { eq: bindingId } },
-    });
+    const rows = await db.query.mcpOauthTokens.findMany({ where: { bindingId: { eq: bindingId } } });
     const row = rows[0];
     const bindingRows = await db.query.mcpServerBindings.findMany({
       columns: { serverId: true },
@@ -281,12 +289,18 @@ export async function revokeOauthTokens(bindingId: string): Promise<void> {
     if (row && serverId) {
       const server = await loadOauthServerConfig(serverId);
       if (server.oauthRevocationUrl) {
-        await fetch(server.oauthRevocationUrl, {
-          method: 'POST',
-          headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
-          body: new URLSearchParams({ ...(await clientAuthParams(server)), token: decryptSecret(row.accessTokenEnc) }),
-          signal: AbortSignal.timeout(REVOKE_HTTP_TIMEOUT_MS),
-        });
+        const clientParams = await clientAuthParams(server);
+        const revocationUrl = server.oauthRevocationUrl;
+        const revokeOne = async (token: string) => {
+          await fetch(revocationUrl, {
+            method: 'POST',
+            headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+            body: new URLSearchParams({ ...clientParams, token }),
+            signal: AbortSignal.timeout(REVOKE_HTTP_TIMEOUT_MS),
+          });
+        };
+        await revokeOne(decryptSecret(row.accessTokenEnc));
+        if (row.refreshTokenEnc) await revokeOne(decryptSecret(row.refreshTokenEnc));
       }
     }
   } catch {
@@ -295,12 +309,27 @@ export async function revokeOauthTokens(bindingId: string): Promise<void> {
   await db.delete(mcpOauthTokens).where(eq(mcpOauthTokens.bindingId, bindingId));
 }
 
-/** registry OAuth-config changes wipe stored tokens for that server's
- * bindings — tokens minted under an old client contract never survive it */
+/** employee removal cascades their bindings — revoke the provider grants
+ * best-effort BEFORE the cascade deletes the rows (unbind = revoke holds on
+ * every path that removes a binding) */
+export async function revokeOauthTokensForEmployee(employeeId: string): Promise<void> {
+  const rows = await db.query.mcpServerBindings.findMany({
+    columns: { id: true },
+    where: { employeeId: { eq: employeeId } },
+  });
+  for (const binding of rows) await revokeOauthTokens(binding.id);
+}
+
+/** registry OAuth-config changes wipe stored tokens AND pending connect state
+ * for that server's bindings — tokens minted under an old client contract
+ * never survive it, and a pre-edit callback can never complete against it */
 export async function wipeOauthTokensForServer(serverId: string): Promise<void> {
   const rows = await db.query.mcpServerBindings.findMany({
     columns: { id: true },
     where: { serverId: { eq: serverId } },
   });
-  for (const binding of rows) await db.delete(mcpOauthTokens).where(eq(mcpOauthTokens.bindingId, binding.id));
+  for (const binding of rows) {
+    await db.delete(mcpOauthTokens).where(eq(mcpOauthTokens.bindingId, binding.id));
+    await db.delete(mcpOauthStates).where(eq(mcpOauthStates.bindingId, binding.id));
+  }
 }

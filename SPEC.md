@@ -141,14 +141,19 @@ Slice 2 adds OAuth per binding (section below):
   requires authorizeUrl + tokenUrl + clientId (http/https); optional:
   revocationUrl (RFC 7009), scopes (space-separated), clientSecret as a
   registry-level vault secret ref (confidential client; PKCE always rides
-  the flow). Editing any OAuth config field (or the kind switch) wipes the
-  stored tokens of every binding to that server and clears their verdicts —
-  tokens minted under an old client contract never survive it.
+  the flow). An OAuth-config write that CHANGES the effective config (the
+  kind switch or any endpoint/client/secret value) wipes the stored tokens
+  AND pending connect state of every binding to that server and clears
+  their verdicts — tokens minted under an old client contract never
+  survive it, and a pre-edit callback can never complete against it. A
+  no-op save (same values echoed back) keeps tokens and verdicts intact.
 - **Tokens are per binding**: `mcp_oauth_tokens` (unique per binding) holds
   the access + refresh tokens AES-GCM encrypted at rest under the SAME vault
   envelope law — decrypted server-side at dispatch/probe only, never
   returned by any API, never logged, never written to run output. Masked
-  status only rides reads (`connected` + expiry + granted scope).
+  status only rides reads (`connected` + expiry). The session-tier
+  registry read carries the client-secret ref + presence flag, never the
+  secret's name; the OAuth client secret joins the vault in-use guard.
 - **Authorize flow**: admin-only `GET /api/mcp/oauth/connect`
   (`employeeId` + `serverId`) requires an existing binding and an `oauth`
   registry entry, persists a single-use state row (PKCE S256 verifier,
@@ -171,22 +176,24 @@ Slice 2 adds OAuth per binding (section below):
   the JSON-RPC initialize with the Bearer token; the verdict persists per
   the law above.
 - **Unbind = revoke**: removing a binding POSTs the configured revocationUrl
-  best-effort (5s cap; a failed revoke never blocks the unbind) and deletes
-  the token row. OAuth authorization is binding-scoped, never task- or
-  session-scoped.
+  best-effort (5s cap; a failed revoke never blocks the unbind) for BOTH the
+  access and the refresh token (the refresh token is the durable grant) and
+  deletes the token row — the same revocation rides employee removal, whose
+  cascade deletes bindings. OAuth authorization is binding-scoped, never
+  task- or session-scoped.
 
 ### MCP procedures
 
-| procedure            | auth    | input                                     | result                                                                                                                                              |
-| -------------------- | ------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mcp.registryList`   | session | —                                         | `{data:[{id,name,url,notes,createdAt,updatedAt,bindingCount}]}`                                                                                     |
-| `mcp.registryCreate` | admin   | `{name,url,notes,authKind?,oauth*}`       | created row                                                                                                                                         |
-| `mcp.registryUpdate` | admin   | `{id,name?,url?,notes?,authKind?,oauth*}` | updated row (url or OAuth-config change clears that server's binding verdicts + wipes its oauth tokens)                                             |
-| `mcp.registryRemove` | admin   | `{id}`                                    | `{ok}` (400 while bindings exist)                                                                                                                   |
-| `mcp.bindingsList`   | admin   | `{employeeId}`                            | `{data:[{id,serverId,serverName,url,authKind,secretId,secretName,lastFour,oauthConnected,oauthExpiresAt,lastProbeOk,lastProbeDetail,lastProbeAt}]}` |
-| `mcp.bindingsSet`    | admin   | `{employeeId,serverId,secretId?}`         | binding row (upsert; verdict cleared on credential change)                                                                                          |
-| `mcp.bindingsRemove` | admin   | `{employeeId,serverId}`                   | `{ok}`                                                                                                                                              |
-| `mcp.probe`          | admin   | `{employeeId,serverId}`                   | `{ok,detail,durationMs,lastProbeAt}`                                                                                                                |
+| procedure            | auth    | input                                     | result                                                                                                                                                              |
+| -------------------- | ------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mcp.registryList`   | session | —                                         | `{data:[{id,name,url,notes,authKind,oauth:{authorizeUrl,tokenUrl,revocationUrl,scopes,clientId,clientSecretId,hasClientSecret},createdAt,updatedAt,bindingCount}]}` |
+| `mcp.registryCreate` | admin   | `{name,url,notes,authKind?,oauth*}`       | created row                                                                                                                                                         |
+| `mcp.registryUpdate` | admin   | `{id,name?,url?,notes?,authKind?,oauth*}` | updated row (url change clears that server's binding verdicts; a CHANGED OAuth config additionally wipes its oauth tokens + pending connect state)                  |
+| `mcp.registryRemove` | admin   | `{id}`                                    | `{ok}` (400 while bindings exist)                                                                                                                                   |
+| `mcp.bindingsList`   | admin   | `{employeeId}`                            | `{data:[{id,serverId,serverName,url,authKind,secretId,secretName,lastFour,oauth:{connected,expiresAt},lastProbeOk,lastProbeDetail,lastProbeAt}]}`                   |
+| `mcp.bindingsSet`    | admin   | `{employeeId,serverId,secretId?}`         | binding row (upsert; verdict cleared on credential change)                                                                                                          |
+| `mcp.bindingsRemove` | admin   | `{employeeId,serverId}`                   | `{ok}`                                                                                                                                                              |
+| `mcp.probe`          | admin   | `{employeeId,serverId}`                   | `{ok,detail,durationMs,lastProbeAt}`                                                                                                                                |
 
 OAuth flow rides REST browser redirects (NOT oRPC): `GET
 /api/mcp/oauth/connect?employeeId&serverId` (admin session; 302 to the

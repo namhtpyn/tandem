@@ -20,11 +20,7 @@ export type AcpMcpServer = import('@agentclientprotocol/sdk').McpServer;
 
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
 
-export function toRegistryRow(
-  r: typeof mcpServers.$inferSelect,
-  bindingCount = 0,
-  clientSecretName: string | null = null,
-) {
+export function toRegistryRow(r: typeof mcpServers.$inferSelect, bindingCount = 0) {
   return {
     id: r.id,
     name: r.name,
@@ -38,7 +34,9 @@ export function toRegistryRow(
       scopes: r.oauthScopes,
       clientId: r.oauthClientId,
       clientSecretId: r.oauthClientSecretId,
-      clientSecretName,
+      // masked vault law: the session-tier read carries the ref + presence
+      // only — never the secret's name (that inverts the vault picker)
+      hasClientSecret: !!r.oauthClientSecretId,
     },
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
@@ -209,30 +207,13 @@ async function normalizeOauthFields(
 }
 
 /** session-tier read: registry + live binding counts (OAuth config is
- * non-secret and session-visible; the client SECRET only shows its name) */
+ * non-secret and session-visible; the client SECRET shows presence only) */
 export async function listRegistry() {
   const rows = await db.query.mcpServers.findMany({ orderBy: { name: 'asc' } });
   const bindings = await db.query.mcpServerBindings.findMany({ columns: { serverId: true } });
   const counts = new Map<string, number>();
   for (const b of bindings) counts.set(b.serverId, (counts.get(b.serverId) ?? 0) + 1);
-  const secretNames = new Map<string, string>();
-  const secretIds = rows.map((r) => r.oauthClientSecretId).filter((id): id is string => !!id);
-  if (secretIds.length > 0) {
-    const secrets = await db.query.vaultSecrets.findMany({
-      columns: { id: true, name: true },
-      where: { id: { in: secretIds } },
-    });
-    for (const s of secrets) secretNames.set(s.id, s.name);
-  }
-  return {
-    data: rows.map((r) =>
-      toRegistryRow(
-        r,
-        counts.get(r.id) ?? 0,
-        r.oauthClientSecretId ? (secretNames.get(r.oauthClientSecretId) ?? null) : null,
-      ),
-    ),
-  };
+  return { data: rows.map((r) => toRegistryRow(r, counts.get(r.id) ?? 0)) };
 }
 
 export async function registryCreate(input: { name: string; url: string; notes: string } & RegistryOauthInput) {
@@ -281,19 +262,34 @@ export async function registryUpdate(
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
     updatedAt: new Date(),
   };
-  // OAuth config edit = ANY authKind/oauth* key present: tokens minted under
-  // the old client contract never survive it, and verdicts clear with it.
+  // OAuth config edit = ANY authKind/oauth* key present; the wipe fires only
+  // when the EFFECTIVE config changed — a no-op save (same values echoed back,
+  // e.g. a notes-only edit from the UI's full-form submit) keeps tokens and
+  // verdicts intact.
   const oauthPatch = await normalizeOauthFields(existing, input);
   Object.assign(patch, oauthPatch);
   const updated = await db.update(mcpServers).set(patch).where(eq(mcpServers.id, input.id)).returning();
-  const oauthTouched = Object.keys(oauthPatch).length > 0;
-  if (urlChanged || oauthTouched) {
+  const oauthChanged =
+    (oauthPatch.authKind !== undefined && oauthPatch.authKind !== existing.authKind) ||
+    [
+      'oauthAuthorizeUrl',
+      'oauthTokenUrl',
+      'oauthRevocationUrl',
+      'oauthScopes',
+      'oauthClientId',
+      'oauthClientSecretId',
+    ].some(
+      (k) =>
+        oauthPatch[k as keyof typeof oauthPatch] !== undefined &&
+        oauthPatch[k as keyof typeof oauthPatch] !== existing[k as keyof typeof existing],
+    );
+  if (urlChanged || oauthChanged) {
     await db
       .update(mcpServerBindings)
       .set({ lastProbeOk: null, lastProbeDetail: null, lastProbeAt: null })
       .where(eq(mcpServerBindings.serverId, input.id));
   }
-  if (oauthTouched) await wipeOauthTokensForServer(input.id);
+  if (oauthChanged) await wipeOauthTokensForServer(input.id);
   await publishChange(CHANGE_RESOURCE.MCP, CHANGE_ACTION.UPDATE);
   const bindings = await db.query.mcpServerBindings.findMany({
     columns: { serverId: true },

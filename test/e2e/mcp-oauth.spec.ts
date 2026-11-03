@@ -391,8 +391,13 @@ test.describe('mcp oauth per binding', () => {
       await bindingRow.getByRole('button', { name: `Unbind ${serverName}` }).click();
       await bindingRow.getByRole('button', { name: 'Unbind', exact: true }).click();
       await expect(editor.getByTestId('mcp-binding-row')).toHaveCount(0, { timeout: 15_000 });
-      expect(provider.revokes).toHaveLength(1);
-      expect((provider.revokes[0] as Record<string, string>).token).toBe('e2e-access-1');
+      // unbind = revoke: BOTH tokens revoke (the refresh token is the durable
+      // grant) — the mock provider saw two RFC 7009 POSTs
+      expect(provider.revokes).toHaveLength(2);
+      expect(provider.revokes.map((r) => (r as Record<string, string>).token).sort()).toEqual([
+        'e2e-access-1',
+        'e2e-refresh-1',
+      ]);
     } finally {
       provider.stop();
     }

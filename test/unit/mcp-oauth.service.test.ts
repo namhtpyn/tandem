@@ -310,10 +310,14 @@ describe('getFreshAccessToken (silent refresh)', () => {
 });
 
 describe('revokeOauthTokens (unbind = revoke)', () => {
-  it('POSTs the revocation endpoint then deletes the token row', async () => {
+  it('POSTs the revocation endpoint for BOTH tokens then deletes the token row', async () => {
     h.bindingRows.push({ id: BINDING_ID, serverId: SERVER_ID });
     seedOauthServer();
-    h.tokenRows.push({ bindingId: BINDING_ID, accessTokenEnc: encryptSecret('at-gone') });
+    h.tokenRows.push({
+      bindingId: BINDING_ID,
+      accessTokenEnc: encryptSecret('at-gone'),
+      refreshTokenEnc: encryptSecret('rt-gone'),
+    });
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string | URL, init?: { body?: string }) => {
@@ -322,11 +326,14 @@ describe('revokeOauthTokens (unbind = revoke)', () => {
       }),
     );
     await revokeOauthTokens(BINDING_ID);
-    expect(h.fetchCalls).toHaveLength(1);
+    // the refresh token is the durable grant — it revokes with the access token
+    expect(h.fetchCalls).toHaveLength(2);
     expect(h.fetchCalls[0]?.url).toBe('https://provider.example.com/revoke');
-    const params = new URLSearchParams(h.fetchCalls[0]?.body);
-    expect(params.get('token')).toBe('at-gone');
-    expect(params.get('client_id')).toBe('client-123');
+    const first = new URLSearchParams(h.fetchCalls[0]?.body);
+    const second = new URLSearchParams(h.fetchCalls[1]?.body);
+    expect(first.get('token')).toBe('at-gone');
+    expect(second.get('token')).toBe('rt-gone');
+    expect(first.get('client_id')).toBe('client-123');
     expect(h.deletedTokenBindingIds).toHaveLength(1);
   });
 
@@ -341,12 +348,24 @@ describe('revokeOauthTokens (unbind = revoke)', () => {
     await expect(revokeOauthTokens(BINDING_ID)).resolves.toBeUndefined();
     expect(h.deletedTokenBindingIds).toHaveLength(1);
   });
+
+  it('returns null (never throws) on an undecryptable token row', async () => {
+    h.tokenRows.push({
+      bindingId: BINDING_ID,
+      accessTokenEnc: 'v1:garbage',
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
+    vi.stubGlobal('fetch', vi.fn());
+    expect(await getFreshAccessToken(BINDING_ID)).toBeNull();
+    expect(h.fetchCalls).toHaveLength(0);
+  });
 });
 
 describe('wipeOauthTokensForServer (registry OAuth-config edit)', () => {
-  it('deletes every binding token row of that server', async () => {
+  it('deletes token rows AND pending connect state for every binding of that server', async () => {
     h.bindingRows.push({ id: 'b-1', serverId: SERVER_ID }, { id: 'b-2', serverId: SERVER_ID });
     await wipeOauthTokensForServer(SERVER_ID);
-    expect(h.deletedTokenBindingIds).toHaveLength(2);
+    // 2 bindings × (tokens + states) = 4 deletes
+    expect(h.deletedTokenBindingIds).toHaveLength(4);
   });
 });

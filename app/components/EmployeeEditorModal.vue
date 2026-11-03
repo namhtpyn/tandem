@@ -434,24 +434,45 @@ function probedWhen(iso: string | null | undefined) {
 // Tandem callback stores the binding's tokens → the callback page postMessages
 // `mcp-oauth` to this opener and we refetch the bindings (masked status only).
 const connectingServerId = ref<string | null>(null);
+let connectPopupWatcher: number | null = null;
+
+function stopConnectWatcher() {
+  if (connectPopupWatcher !== null) {
+    window.clearInterval(connectPopupWatcher);
+    connectPopupWatcher = null;
+  }
+}
 
 function onOauthMessage(event: MessageEvent) {
   if (event.origin !== window.location.origin) return;
   const data = event.data as { type?: string } | null;
   if (data?.type !== 'mcp-oauth') return;
   connectingServerId.value = null;
+  stopConnectWatcher();
   void loadBindings();
 }
 
 onMounted(() => window.addEventListener('message', onOauthMessage));
-onBeforeUnmount(() => window.removeEventListener('message', onOauthMessage));
+onBeforeUnmount(() => {
+  window.removeEventListener('message', onOauthMessage);
+  stopConnectWatcher();
+});
 
 function connectOauth(binding: McpBindingRow) {
   const employeeId = editingId.value;
   if (!employeeId || connectingServerId.value) return;
   connectingServerId.value = binding.serverId;
   const url = `/api/mcp/oauth/connect?employeeId=${encodeURIComponent(employeeId)}&serverId=${encodeURIComponent(binding.serverId)}`;
-  window.open(url, 'mcp-oauth-connect', 'popup,width=520,height=680');
+  const popup = window.open(url, 'mcp-oauth-connect', 'popup,width=520,height=680');
+  // a cancelled/closed popup never postMessages — stop the spinner so the
+  // Connect button stays usable (reopening was the only recovery before)
+  stopConnectWatcher();
+  connectPopupWatcher = window.setInterval(() => {
+    if (!popup || popup.closed) {
+      stopConnectWatcher();
+      connectingServerId.value = null;
+    }
+  }, 500);
 }
 
 /** 'connected · expires <when>' label for oauth bindings */

@@ -13,6 +13,7 @@ import {
   aiEmployees as aiEmployeesTable,
   environments as environmentsTable,
   mcpServerBindings as mcpServerBindingsTable,
+  mcpServers as mcpServersTable,
   vaultSecrets as vaultSecretsTable,
 } from '../../../db/schema';
 import { ORPCError, publishChange } from '../../kernel/kernel';
@@ -130,11 +131,19 @@ export async function removeSecret(input: { id: string }, _actorId: string) {
     .from(mcpServerBindingsTable)
     .where(eq(mcpServerBindingsTable.secretId, input.id))
     .limit(1);
-  if (envLinks.length > 0 || aiLinks.length > 0 || mcpLinks.length > 0) {
+  // the OAuth confidential-client secret joins the same guard — a silent
+  // SET NULL would change every refresh's client contract invisibly
+  const mcpClientLinks = await db
+    .select({ id: mcpServersTable.id })
+    .from(mcpServersTable)
+    .where(eq(mcpServersTable.oauthClientSecretId, input.id))
+    .limit(1);
+  if (envLinks.length > 0 || aiLinks.length > 0 || mcpLinks.length > 0 || mcpClientLinks.length > 0) {
     const blockers = [
       envLinks.length > 0 ? 'environments' : '',
       aiLinks.length > 0 ? 'AI employees' : '',
       mcpLinks.length > 0 ? 'MCP bindings' : '',
+      mcpClientLinks.length > 0 ? 'MCP OAuth client config' : '',
     ].filter(Boolean);
     throw new ORPCError('BAD_REQUEST', {
       message: `secret is in use by ${blockers.join(' and ')} — unlink or delete those first`,

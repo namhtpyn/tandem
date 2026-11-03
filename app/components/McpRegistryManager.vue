@@ -102,7 +102,7 @@ type RegistryRow = {
     scopes: string | null;
     clientId: string | null;
     clientSecretId: string | null;
-    clientSecretName: string | null;
+    hasClientSecret: boolean;
   };
 };
 
