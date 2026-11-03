@@ -37,10 +37,27 @@ export function noteSuccessCopy(outcome: NoteOutcome): string {
   return WF_COPY.note.ok;
 }
 
+/** the note verb's dispatch rule, mirrored 1:1 from the server's tasks.note
+ *  (workflow.service addNote): a send starts an agent turn for EVERY task in a
+ *  non-terminal, non-in-review category with an AI assignee — not just ready —
+ *  so the hint and the aria labels must promise exactly this (#265). */
+export function noteWillDispatch(input: {
+  category: Category | null | undefined;
+  assigneeKind: string | null | undefined;
+}): boolean {
+  if (input.assigneeKind !== 'ai') return false;
+  // null category = statuses loading/failed → no dispatch promise
+  if (!input.category) return false;
+  const excluded: readonly Category[] = [CATEGORY.DONE, CATEGORY.CANCELLED, CATEGORY.IN_REVIEW];
+  return !excluded.includes(input.category);
+}
+
 /**
- * Composer hint that matches the note verb's server rules: only a READY task
- * with an AI assignee dispatches; a live run steers; everything else is a
- * thread-only note (done/cancelled/in-review and human assignees never dispatch).
+ * Composer hint that matches the note verb's server rules: a live run steers;
+ * every non-terminal, non-in-review category with an AI assignee dispatches
+ * (the server flips the status to to-do and fires the run); everything else is
+ * a thread-only note (done/cancelled/in-review and human assignees never
+ * dispatch).
  */
 export function composerHint(input: {
   category: Category | null | undefined;
@@ -48,8 +65,7 @@ export function composerHint(input: {
   running: boolean;
 }): string {
   if (input.running) return 'Sends a steering note to the running agent';
-  if (input.category === CATEGORY.READY && input.assigneeKind === 'ai')
-    return 'Sends the note and dispatches the agent';
+  if (noteWillDispatch(input)) return 'Sends the note and dispatches the agent';
   return 'Adds the note to the thread';
 }
 

@@ -238,9 +238,15 @@ export async function addNote(
   const { steerRun } = await import('./runner.service');
   const steerState = await steerRun(taskId, body);
   if (steerState === 'steered' || steerState === 'refused') return { steered: steerState === 'steered' };
-  const { STATUS } = await import('#shared/status');
-  if (([STATUS.done, STATUS.cancelled, STATUS.inReview] as string[]).includes(task.status))
-    return { steered: false as const };
+  // COMPOSER LAW: the send dispatches every non-terminal, non-in-review task with
+  // an AI assignee — the exclusion keys off the status CATEGORY (custom done/
+  // cancelled/in-review statuses included), never the seeded ids (#265).
+  const statusRows = await db.query.taskStatuses.findMany({
+    columns: { category: true },
+    where: { id: { eq: task.status } },
+  });
+  const excluded = [CATEGORY.DONE, CATEGORY.CANCELLED, CATEGORY.IN_REVIEW] as string[];
+  if (statusRows[0] && excluded.includes(statusRows[0].category)) return { steered: false as const };
   if (!task.assigneeId) return { steered: false as const };
   const ai = await db.query.aiEmployees.findFirst({
     columns: { userId: true },

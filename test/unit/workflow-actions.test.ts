@@ -62,13 +62,41 @@ describe('workflow copy helpers', () => {
     expect(m.noteSuccessCopy({ steered: false })).toBe(m.WF_COPY.note.ok);
   });
 
-  it('composerHint mirrors the note verb’s server rules', async () => {
+  it('composerHint mirrors the note verb’s server rules (#265: every non-terminal, non-in-review AI task dispatches)', async () => {
     const m = await import('../../app/composables/useWorkflowActions.ts');
     expect(m.composerHint({ category: CATEGORY.READY, assigneeKind: 'ai', running: true })).toContain('steering');
     expect(m.composerHint({ category: CATEGORY.READY, assigneeKind: 'ai', running: false })).toContain('dispatches');
-    expect(m.composerHint({ category: CATEGORY.READY, assigneeKind: 'human', running: false })).toContain('thread');
+    // #265: the dispatch branch is the SERVER's rule — ready was a lie for
+    // working/blocked/backlog/paused/waiting AI tasks (the send dispatches there)
+    expect(m.composerHint({ category: CATEGORY.WORKING, assigneeKind: 'ai', running: false })).toContain('dispatches');
+    expect(m.composerHint({ category: CATEGORY.PAUSED, assigneeKind: 'ai', running: false })).toContain('dispatches');
+    expect(m.composerHint({ category: CATEGORY.BACKLOG, assigneeKind: 'ai', running: false })).toContain('dispatches');
+    expect(m.composerHint({ category: CATEGORY.WAITING_ANSWER, assigneeKind: 'ai', running: false })).toContain(
+      'dispatches',
+    );
+    // exclusions mirror the server: in-review and terminal categories, humans
+    expect(m.composerHint({ category: CATEGORY.IN_REVIEW, assigneeKind: 'ai', running: false })).toContain('thread');
     expect(m.composerHint({ category: CATEGORY.DONE, assigneeKind: 'ai', running: false })).toContain('thread');
+    expect(m.composerHint({ category: CATEGORY.CANCELLED, assigneeKind: 'ai', running: false })).toContain('thread');
+    expect(m.composerHint({ category: CATEGORY.READY, assigneeKind: 'human', running: false })).toContain('thread');
     expect(m.composerHint({ category: null, assigneeKind: null, running: false })).toContain('thread');
+  });
+
+  it('noteWillDispatch is the shared dispatch predicate (#265)', async () => {
+    const m = await import('../../app/composables/useWorkflowActions.ts');
+    for (const category of [
+      CATEGORY.READY,
+      CATEGORY.WORKING,
+      CATEGORY.PAUSED,
+      CATEGORY.BACKLOG,
+      CATEGORY.WAITING_ANSWER,
+    ])
+      expect(m.noteWillDispatch({ category, assigneeKind: 'ai' }), category).toBe(true);
+    for (const category of [CATEGORY.IN_REVIEW, CATEGORY.DONE, CATEGORY.CANCELLED])
+      expect(m.noteWillDispatch({ category, assigneeKind: 'ai' }), category).toBe(false);
+    expect(m.noteWillDispatch({ category: CATEGORY.READY, assigneeKind: 'human' })).toBe(false);
+    expect(m.noteWillDispatch({ category: CATEGORY.READY, assigneeKind: null })).toBe(false);
+    expect(m.noteWillDispatch({ category: null, assigneeKind: 'ai' })).toBe(false);
   });
 
   it('WF_COPY names every verb', async () => {

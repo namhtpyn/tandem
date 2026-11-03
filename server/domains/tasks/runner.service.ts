@@ -131,6 +131,20 @@ export async function latestRunIdForTask(taskId: string): Promise<string | null>
   return latest?.id ?? null;
 }
 
+/** the tasks on this page holding a live RUNNING run — the RUN LOCK bit for
+ *  list/board rows (#264). ONE batched join over the page's task ids (runs reach
+ *  the task through their thread message — task_runs has no task_id), never a
+ *  serialized runningRunIdForTask per row. */
+export async function runningTaskIdsFor(taskIds: string[]): Promise<Set<string>> {
+  if (taskIds.length === 0) return new Set();
+  const rows = await db
+    .select({ taskId: taskMessages.taskId })
+    .from(taskRuns)
+    .innerJoin(taskMessages, eq(taskRuns.messageId, taskMessages.id))
+    .where(and(inArray(taskMessages.taskId, taskIds), eq(taskRuns.status, RUN_STATUS.RUNNING)));
+  return new Set(rows.map((r) => r.taskId));
+}
+
 /** the task's live run id, if any — status/assignee edits are locked while it runs.
  *  Queries the RUNS table (runs → its thread message → task), never "newest thread
  *  message": notes dual-write to the thread, so the newest message is usually a

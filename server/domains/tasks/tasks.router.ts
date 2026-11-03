@@ -46,7 +46,7 @@ import {
 import { confirmProposal, rejectProposal } from './proposals.service';
 import { listReviews, logActivity } from './review.service';
 import { fetchRunTranscript } from './run-transcript';
-import { dispatchTask, listRuns, stopRunForTask } from './runner.service';
+import { dispatchTask, listRuns, runningTaskIdsFor, stopRunForTask } from './runner.service';
 import { fetchTaskDescription, taskGetScan, taskListColumns } from './task-description';
 import { listTaskThread, threadOlderPage } from './thread.service';
 import {
@@ -137,6 +137,9 @@ async function mapTaskRows(rows: TaskListRow[]): Promise<TaskRow[]> {
   const holders = new Map<string, string>();
   for (const [tid, o] of open) if (o.holders[0]) holders.set(tid, o.holders[0]);
   const approvalsByTask = await approvalsInRoundBatch(rows.map((r) => r.id));
+  // RUN LOCK bit (#264): one batched live-run lookup per page — the list/board
+  // surfaces disable status moves on it instead of erroring after the fact
+  const lockedIds = await runningTaskIdsFor(rows.map((r) => r.id));
   const projRows = await db.query.projects.findMany({ columns: { id: true, name: true }, orderBy: { name: 'asc' } });
   const projNameById = new Map(projRows.map((p) => [p.id, p.name]));
   const users = await db.query.user.findMany({ columns: { id: true, name: true }, orderBy: { name: 'asc' } });
@@ -163,6 +166,7 @@ async function mapTaskRows(rows: TaskListRow[]): Promise<TaskRow[]> {
     parentTaskId: r.parentTaskId,
     dispatchAfter: r.dispatchAfter ? r.dispatchAfter.toISOString() : null,
     failStreak: r.failStreak,
+    runLocked: lockedIds.has(r.id),
     createdBy: r.createdBy,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),

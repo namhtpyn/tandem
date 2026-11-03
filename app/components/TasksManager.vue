@@ -192,6 +192,12 @@ const pendingStatus = ref(new Map<string, string>());
 function rowStatus(row: TaskRow): string {
   return pendingStatus.value.get(row.id) ?? row.status;
 }
+/** RUN LOCK on the list/board (#264): the paged row carries the server's live-run
+ *  bit — the same lock the detail page honors, so no move can end in the error */
+function rowLocked(row: TaskRow): boolean {
+  return !!row.runLocked;
+}
+const LOCK_HINT = 'Status is locked while the agent runs.';
 watch(rows, (list) => {
   for (const r of list) {
     if (pendingStatus.value.get(r.id) === r.status) pendingStatus.value.delete(r.id);
@@ -202,7 +208,13 @@ async function setStatus(row: TaskRow, status: string) {
   if (rowStatus(row) === status || busy.value) return;
   // manual status is FREE (owner ruling 2026-10-27): every status is reachable from
   // every surface — the server is the only gate. busy gates selects + drops so a
-  // second move can't race the first one's refetch.
+  // second move can't race the first one's refetch. A run-locked row refuses the
+  // doomed call outright (#264) — the UI never ends in the lock error.
+  if (rowLocked(row)) {
+    message.value = LOCK_HINT;
+    messageOk.value = false;
+    return;
+  }
   message.value = '';
   messageOk.value = false;
   busy.value = true;
@@ -439,6 +451,18 @@ const drawerCanStop = computed(
     !drawerRunsQuery.isError.value &&
     stopReady({ running: drawerAgentRunning.value }),
 );
+/** COMPOSER HINT LAW (#265): the drawer renders the same send hint as the task
+ *  page, mirroring the note verb's server rule — dispatch wording wherever the
+ *  send would start an agent turn, steering on a live run, thread-only otherwise */
+const drawerComposerHint = computed(() =>
+  composerHint({
+    category: workflowStatusCategory.value,
+    assigneeKind: workflowTask.value?.assigneeKind,
+    // the run feed rides the same convention as the task page: pending = no live
+    // run observed yet
+    running: drawerAgentRunning.value,
+  }),
+);
 // the drawer timeline reads the SAME source as the task page (threadList, which
 // already drops STATUS bookkeeping rows) through the same buildThread merge —
 // the old raw activity feed showed a different, noisier timeline than the thread
@@ -614,6 +638,10 @@ function tasksByStatus(status: string) {
 }
 
 function onDragStart(e: DragEvent, id: string) {
+  // RUN LOCK (#264): a locked card is not draggable (draggable=false) — this
+  // guard keeps a stale bit or a programmatic drag from firing the doomed move
+  const row = rows.value.find((t) => t.id === id);
+  if (row && rowLocked(row)) return;
   draggingId.value = id;
   if (!e.dataTransfer) return;
   // the payload IS the task id — the drop handler reads it back instead of
@@ -893,24 +921,35 @@ onServerPrefetch(() =>
       </template>
       <template #status-cell="{ row }">
         <!-- borderless select: the row already reads as a table — no OS chrome,
-             just a category dot + name + chevron, hover reveals an elevated bg -->
+             just a category dot + name + chevron, hover reveals an elevated bg.
+             RUN LOCK (#264): a live run disables it, the detail page's affordance
+             (disabled control + lock hint), never a post-facto error. -->
         <USelect
           :model-value="rowStatus(row.original)"
           :items="statusOptions"
           value-key="value"
           size="sm"
           variant="none"
-          :disabled="busy"
+          :disabled="busy || rowLocked(row.original)"
           class="hover:bg-elevated rounded-md"
-          :aria-label="`Status for ${row.original.title}`"
+          :title="rowLocked(row.original) ? LOCK_HINT : undefined"
+          :aria-label="`Status for ${row.original.title}${rowLocked(row.original) ? ` (${LOCK_HINT})` : ''}`"
           @update:model-value="(v: string) => setStatus(row.original, v)"
         >
           <template #leading>
-            <span
-              class="inline-block size-2 shrink-0 rounded-full"
-              :class="statusDot(rowStatus(row.original))"
-              aria-hidden="true"
-            />
+            <span class="inline-flex items-center gap-1">
+              <UIcon
+                v-if="rowLocked(row.original)"
+                name="i-lucide-lock"
+                class="text-dimmed size-3 shrink-0"
+                aria-hidden="true"
+              />
+              <span
+                class="inline-block size-2 shrink-0 rounded-full"
+                :class="statusDot(rowStatus(row.original))"
+                aria-hidden="true"
+              />
+            </span>
           </template>
         </USelect>
       </template>
@@ -1034,13 +1073,20 @@ onServerPrefetch(() =>
                     <UIcon name="i-lucide-message-circle-more" class="size-3.5 shrink-0" />Workflow
                   </button>
                   <p class="text-dimmed px-2 pt-1.5 pb-1 text-[10px] font-medium">Move to…</p>
+                  <!-- RUN LOCK (#264): a live run disables the move path too — the
+                       hint states why, mirroring the detail page's lock copy -->
+                  <p v-if="rowLocked(row)" class="text-dimmed px-2 pb-1 text-[10px]" data-testid="move-to-locked">
+                    <UIcon name="i-lucide-lock" class="mr-1 inline size-3 align-[-2px]" aria-hidden="true" />{{
+                      LOCK_HINT
+                    }}
+                  </p>
                   <div class="max-h-40 overflow-y-auto">
                     <button
                       v-for="st in statuses"
                       :key="st.id"
                       type="button"
                       :class="BOARD_MENU_ITEM"
-                      :disabled="busy || rowStatus(row) === st.id"
+                      :disabled="busy || rowLocked(row) || rowStatus(row) === st.id"
                       @click="setStatus(row, st.id)"
                     >
                       <span
@@ -1136,11 +1182,13 @@ onServerPrefetch(() =>
               <article
                 v-for="row in tasksByStatus(col.id)"
                 :key="row.id"
-                draggable="true"
-                class="border-default bg-default group/card relative cursor-grab rounded-lg border p-2.5 shadow-sm active:cursor-grabbing"
+                :draggable="!rowLocked(row)"
+                class="border-default bg-default group/card relative rounded-lg border p-2.5 shadow-sm"
                 :class="[
                   draggingId === row.id ? 'opacity-40' : '',
                   statusById.get(rowStatus(row))?.category === CATEGORY.DONE ? 'opacity-70' : '',
+                  // RUN LOCK (#264): a locked card doesn't read as draggable
+                  rowLocked(row) ? '' : 'cursor-grab active:cursor-grabbing',
                 ]"
                 @dragstart="onDragStart($event, row.id)"
                 @dragend="
@@ -1175,15 +1223,21 @@ onServerPrefetch(() =>
                           <UIcon name="i-lucide-message-circle-more" class="size-3.5 shrink-0" />Workflow
                         </button>
                         <!-- Move to…: the same setStatus the drag fires — the
-                           touch/keyboard path onto the drag-only board -->
+                           touch/keyboard path onto the drag-only board.
+                           RUN LOCK (#264): disabled while a run is live. -->
                         <p class="text-dimmed px-2 pt-1.5 pb-1 text-[10px] font-medium">Move to…</p>
+                        <p v-if="rowLocked(row)" class="text-dimmed px-2 pb-1 text-[10px]" data-testid="move-to-locked">
+                          <UIcon name="i-lucide-lock" class="mr-1 inline size-3 align-[-2px]" aria-hidden="true" />{{
+                            LOCK_HINT
+                          }}
+                        </p>
                         <div class="max-h-40 overflow-y-auto">
                           <button
                             v-for="st in statuses"
                             :key="st.id"
                             type="button"
                             :class="BOARD_MENU_ITEM"
-                            :disabled="busy || rowStatus(row) === st.id"
+                            :disabled="busy || rowLocked(row) || rowStatus(row) === st.id"
                             @click="setStatus(row, st.id)"
                           >
                             <span
@@ -1216,6 +1270,16 @@ onServerPrefetch(() =>
                   <UBadge color="warning" variant="subtle" size="sm" icon="i-lucide-hourglass" class="gap-1">
                     {{ waitingForRow(row) }}
                   </UBadge>
+                </p>
+                <!-- RUN LOCK (#264): the detail page's lock affordance on the card —
+                     the drag is off and the copy says why -->
+                <p
+                  v-if="rowLocked(row)"
+                  class="text-dimmed mt-1 flex items-center gap-1 text-xs"
+                  data-testid="board-card-locked"
+                >
+                  <UIcon name="i-lucide-lock" class="size-3 shrink-0" aria-hidden="true" />
+                  {{ LOCK_HINT }}
                 </p>
                 <p class="text-dimmed mt-1 flex items-center gap-1 text-xs">
                   <UIcon v-if="row.assigneeKind === 'ai'" name="i-lucide-bot" class="text-primary size-3 shrink-0" />
@@ -1367,12 +1431,16 @@ onServerPrefetch(() =>
             aria-label="Task note"
             class="w-full"
           />
+          <!-- COMPOSER HINT LAW (#265): the hint mirrors the server's dispatch rule
+               and the send's accessible name carries the same wording -->
+          <p class="text-dimmed text-xs" data-testid="drawer-composer-hint">{{ drawerComposerHint }}</p>
           <UButton
             size="sm"
             color="primary"
             variant="soft"
             icon="i-lucide-arrow-up"
             :disabled="workflowBusy || !drawerSendReady"
+            :aria-label="drawerComposerHint"
             @click="sendDrawerNote()"
           >
             {{ workflowStatusCategory === CATEGORY.WAITING_ANSWER ? 'Send answer' : 'Send' }}
