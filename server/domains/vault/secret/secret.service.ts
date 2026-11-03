@@ -13,6 +13,7 @@ import {
   aiEmployees as aiEmployeesTable,
   environments as environmentsTable,
   mcpServerBindings as mcpServerBindingsTable,
+  mcpServers as mcpServersTable,
   vaultSecrets as vaultSecretsTable,
 } from '../../../db/schema';
 import { ORPCError, publishChange } from '../../kernel/kernel';
@@ -107,6 +108,25 @@ export async function updateSecret(
   if (updated.length === 0) {
     throw new ORPCError('NOT_FOUND', { message: 'secret not found' });
   }
+  // ROTATION = CONTRACT CHANGE (SPEC "OAuth per binding"): the same invariant as
+  // a registry OAuth-config edit — tokens minted under the old client secret
+  // must never survive it, so the rotation wipes the referencing servers' tokens
+  // + pending state and clears their binding verdicts.
+  if (rotated) {
+    const { wipeOauthTokensForServer } = await import('../../mcp/mcp-oauth.service');
+    const servers = await db
+      .select({ id: mcpServersTable.id })
+      .from(mcpServersTable)
+      .where(eq(mcpServersTable.oauthClientSecretId, id));
+    for (const server of servers) {
+      await db
+        .update(mcpServerBindingsTable)
+        .set({ lastProbeOk: null, lastProbeDetail: null, lastProbeAt: null })
+        .where(eq(mcpServerBindingsTable.serverId, server.id));
+      await wipeOauthTokensForServer(server.id);
+      await publishChange(CHANGE_RESOURCE.MCP, CHANGE_ACTION.UPDATE);
+    }
+  }
   await publishChange(CHANGE_RESOURCE.VAULT, CHANGE_ACTION.UPDATE);
   return toVaultRow(nonNull(updated[0]));
 }
@@ -130,11 +150,19 @@ export async function removeSecret(input: { id: string }, _actorId: string) {
     .from(mcpServerBindingsTable)
     .where(eq(mcpServerBindingsTable.secretId, input.id))
     .limit(1);
-  if (envLinks.length > 0 || aiLinks.length > 0 || mcpLinks.length > 0) {
+  // the OAuth confidential-client secret joins the same guard — a silent
+  // SET NULL would change every refresh's client contract invisibly
+  const mcpClientLinks = await db
+    .select({ id: mcpServersTable.id })
+    .from(mcpServersTable)
+    .where(eq(mcpServersTable.oauthClientSecretId, input.id))
+    .limit(1);
+  if (envLinks.length > 0 || aiLinks.length > 0 || mcpLinks.length > 0 || mcpClientLinks.length > 0) {
     const blockers = [
       envLinks.length > 0 ? 'environments' : '',
       aiLinks.length > 0 ? 'AI employees' : '',
       mcpLinks.length > 0 ? 'MCP bindings' : '',
+      mcpClientLinks.length > 0 ? 'MCP OAuth client config' : '',
     ].filter(Boolean);
     throw new ORPCError('BAD_REQUEST', {
       message: `secret is in use by ${blockers.join(' and ')} — unlink or delete those first`,

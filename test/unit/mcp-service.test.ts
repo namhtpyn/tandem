@@ -43,90 +43,91 @@ vi.mock('../../server/db/index', async () => {
       const id = w.id?.eq;
       return (!emp || r.employeeId === emp) && (!srv || r.serverId === srv) && (!id || r.id === id);
     });
-  return {
-    asDb: (x: unknown) => x,
-    db: {
-      query: new Proxy(
-        {},
-        {
-          get: (_t, table: string) => ({
-            findMany: async (args?: { where?: Record<string, { eq?: string }> }) => {
-              if (table === 'mcpServers') return h.serverRows;
-              if (table === 'mcpServerBindings') return filterBindings(args);
-              if (table === 'aiEmployees') return h.aiRows;
-              if (table === 'vaultSecrets') return h.secretRows;
-              return [];
-            },
+  const moduleDb = {
+    // registryUpdate commits its writes in a transaction — the mock runs the
+    // callback against the same scripted db object (self-reference at CALL time)
+    transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn(moduleDb as unknown),
+    query: new Proxy(
+      {},
+      {
+        get: (_t, table: string) => ({
+          findMany: async (args?: { where?: Record<string, { eq?: string }> }) => {
+            if (table === 'mcpServers') return h.serverRows;
+            if (table === 'mcpServerBindings') return filterBindings(args);
+            if (table === 'aiEmployees') return h.aiRows;
+            if (table === 'vaultSecrets') return h.secretRows;
+            return [];
+          },
+        }),
+      },
+    ),
+    select: () => ({
+      // select().from(<table>) — rows resolved by table identity (the eq
+      // predicates are opaque drizzle objects; scripted tables answer instead)
+      from: (table: unknown) => {
+        const rows = rowsForTable(table);
+        return {
+          where: () => ({
+            limit: async () => rows,
+            then: (res: (v: Array<Record<string, unknown>>) => unknown, rej: (e: unknown) => unknown) =>
+              Promise.resolve(rows).then(res, rej),
           }),
+        };
+      },
+    }),
+    insert: (table: unknown) => ({
+      values: (values: Record<string, unknown>) => {
+        h.inserts.push({ table: tableName(table), values });
+        // append to the scripted table — the service re-reads after write;
+        // bindings get their nested refs resolved like the real RQB would
+        const row: Record<string, unknown> = {
+          ...values,
+          id: values.id ?? 'srv-new',
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        };
+        if (table === schema.mcpServerBindings)
+          h.bindingRows.push({
+            ...row,
+            server: h.serverRows.find((s) => s.id === row.serverId) ?? { name: '?', url: '?' },
+            secret: h.secretRows.find((s) => s.id === row.secretId) ?? null,
+          });
+        else if (table === schema.mcpServers) h.serverRows.push(row);
+        return { returning: async () => [row] };
+      },
+    }),
+    update: (table: unknown) => ({
+      set: (set: Record<string, unknown>) => ({
+        where: () => {
+          // record ONCE whether the caller awaits the where() or calls returning()
+          let recorded = false;
+          const record = () => {
+            if (recorded) return;
+            recorded = true;
+            h.updates.push({ table: tableName(table), set });
+          };
+          const promise = Promise.resolve().then(record);
+          return Object.assign(promise, {
+            returning: async () => {
+              record();
+              const rows = rowsForTable(table);
+              return rows.length ? [rows[0]] : [];
+            },
+          });
         },
-      ),
-      select: () => ({
-        // select().from(<table>) — rows resolved by table identity (the eq
-        // predicates are opaque drizzle objects; scripted tables answer instead)
-        from: (table: unknown) => {
+      }),
+    }),
+    delete: (table: unknown) => ({
+      where: () => ({
+        returning: async () => {
+          h.deletes.push({ table: tableName(table) });
           const rows = rowsForTable(table);
-          return {
-            where: () => ({
-              limit: async () => rows,
-              then: (res: (v: Array<Record<string, unknown>>) => unknown, rej: (e: unknown) => unknown) =>
-                Promise.resolve(rows).then(res, rej),
-            }),
-          };
+          return rows.length ? [{ id: rows[0]!.id }] : [];
         },
       }),
-      insert: (table: unknown) => ({
-        values: (values: Record<string, unknown>) => {
-          h.inserts.push({ table: tableName(table), values });
-          // append to the scripted table — the service re-reads after write;
-          // bindings get their nested refs resolved like the real RQB would
-          const row: Record<string, unknown> = {
-            ...values,
-            id: values.id ?? 'srv-new',
-            createdAt: new Date(0),
-            updatedAt: new Date(0),
-          };
-          if (table === schema.mcpServerBindings)
-            h.bindingRows.push({
-              ...row,
-              server: h.serverRows.find((s) => s.id === row.serverId) ?? { name: '?', url: '?' },
-              secret: h.secretRows.find((s) => s.id === row.secretId) ?? null,
-            });
-          else if (table === schema.mcpServers) h.serverRows.push(row);
-          return { returning: async () => [row] };
-        },
-      }),
-      update: (table: unknown) => ({
-        set: (set: Record<string, unknown>) => ({
-          where: () => {
-            // record ONCE whether the caller awaits the where() or calls returning()
-            let recorded = false;
-            const record = () => {
-              if (recorded) return;
-              recorded = true;
-              h.updates.push({ table: tableName(table), set });
-            };
-            const promise = Promise.resolve().then(record);
-            return Object.assign(promise, {
-              returning: async () => {
-                record();
-                const rows = rowsForTable(table);
-                return rows.length ? [rows[0]] : [];
-              },
-            });
-          },
-        }),
-      }),
-      delete: (table: unknown) => ({
-        where: () => ({
-          returning: async () => {
-            h.deletes.push({ table: tableName(table) });
-            const rows = rowsForTable(table);
-            return rows.length ? [{ id: rows[0]!.id }] : [];
-          },
-        }),
-      }),
-    },
+    }),
   };
+  return { asDb: (x: unknown) => x, db: moduleDb };
 });
 
 vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {

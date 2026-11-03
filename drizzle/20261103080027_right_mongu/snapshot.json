@@ -1,0 +1,47 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "9639edd7-ad5f-4ca1-b964-a1ac86d55967",
+  "prevIds": [
+    "992af357-1a09-4fd9-b394-d0f84e2c6ac6"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "mcp_oauth_tokens",
+        "config_fingerprint"
+      ],
+      "writes": [
+        "s|col|public.mcp_oauth_tokens.config_fingerprint",
+        "n|col|public.mcp_oauth_tokens.config_fingerprint",
+        "e|col|public.mcp_oauth_tokens.config_fingerprint"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_oauth_tokens",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_tokens",
+        "name": "config_fingerprint",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "''",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

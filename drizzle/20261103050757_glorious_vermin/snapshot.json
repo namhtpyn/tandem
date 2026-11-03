@@ -1,0 +1,701 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "be203539-7cfd-4ad8-9991-2acc5cae9245",
+  "prevIds": [
+    "55e29d02-3fbd-47ed-af82-743ca85560a3"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "mcp_oauth_states"
+      ],
+      "writes": [
+        "s|tbl|public.mcp_oauth_states",
+        "n|tbl|public.mcp_oauth_states",
+        "e|tbl|public.mcp_oauth_states",
+        "n|rel|public.mcp_oauth_states",
+        "n|type|public.mcp_oauth_states",
+        "n|rel|public.mcp_oauth_states_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "mcp_oauth_tokens"
+      ],
+      "writes": [
+        "s|tbl|public.mcp_oauth_tokens",
+        "n|tbl|public.mcp_oauth_tokens",
+        "e|tbl|public.mcp_oauth_tokens",
+        "n|rel|public.mcp_oauth_tokens",
+        "n|type|public.mcp_oauth_tokens",
+        "n|rel|public.mcp_oauth_tokens_pkey",
+        "n|rel|public.mcp_oauth_tokens_binding_id_key"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "mcp_servers",
+        "auth_kind"
+      ],
+      "writes": [
+        "s|col|public.mcp_servers.auth_kind",
+        "n|col|public.mcp_servers.auth_kind",
+        "e|col|public.mcp_servers.auth_kind"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_servers",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "mcp_servers",
+        "oauth_authorize_url"
+      ],
+      "writes": [
+        "s|col|public.mcp_servers.oauth_authorize_url",
+        "n|col|public.mcp_servers.oauth_authorize_url",
+        "e|col|public.mcp_servers.oauth_authorize_url"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_servers",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "mcp_servers",
+        "oauth_token_url"
+      ],
+      "writes": [
+        "s|col|public.mcp_servers.oauth_token_url",
+        "n|col|public.mcp_servers.oauth_token_url",
+        "e|col|public.mcp_servers.oauth_token_url"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_servers",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "mcp_servers",
+        "oauth_revocation_url"
+      ],
+      "writes": [
+        "s|col|public.mcp_servers.oauth_revocation_url",
+        "n|col|public.mcp_servers.oauth_revocation_url",
+        "e|col|public.mcp_servers.oauth_revocation_url"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_servers",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "mcp_servers",
+        "oauth_scopes"
+      ],
+      "writes": [
+        "s|col|public.mcp_servers.oauth_scopes",
+        "n|col|public.mcp_servers.oauth_scopes",
+        "e|col|public.mcp_servers.oauth_scopes"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_servers",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "mcp_servers",
+        "oauth_client_id"
+      ],
+      "writes": [
+        "s|col|public.mcp_servers.oauth_client_id",
+        "n|col|public.mcp_servers.oauth_client_id",
+        "e|col|public.mcp_servers.oauth_client_id"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_servers",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "mcp_servers",
+        "oauth_client_secret_id"
+      ],
+      "writes": [
+        "s|col|public.mcp_servers.oauth_client_secret_id",
+        "n|col|public.mcp_servers.oauth_client_secret_id",
+        "e|col|public.mcp_servers.oauth_client_secret_id"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_servers",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "mcp_oauth_states"
+      ],
+      "writes": [
+        "s|fk|public.mcp_oauth_states.mcp_oauth_states_binding_id_mcp_server_bindings_id_fkey",
+        "n|fk|public.mcp_oauth_states.mcp_oauth_states_binding_id_mcp_server_bindings_id_fkey",
+        "e|fk|public.mcp_oauth_states.mcp_oauth_states_binding_id_mcp_server_bindings_id_fkey",
+        "n|con|public.mcp_oauth_states.mcp_oauth_states_binding_id_mcp_server_bindings_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_oauth_states",
+        "n|sch|public",
+        "n|tbl|public.mcp_server_bindings",
+        "n|sch|public",
+        "n|col|public.mcp_oauth_states.binding_id",
+        "n|col|public.mcp_server_bindings.id",
+        "e|uniqueness|public.mcp_server_bindings.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "mcp_oauth_tokens"
+      ],
+      "writes": [
+        "s|fk|public.mcp_oauth_tokens.mcp_oauth_tokens_binding_id_mcp_server_bindings_id_fkey",
+        "n|fk|public.mcp_oauth_tokens.mcp_oauth_tokens_binding_id_mcp_server_bindings_id_fkey",
+        "e|fk|public.mcp_oauth_tokens.mcp_oauth_tokens_binding_id_mcp_server_bindings_id_fkey",
+        "n|con|public.mcp_oauth_tokens.mcp_oauth_tokens_binding_id_mcp_server_bindings_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_oauth_tokens",
+        "n|sch|public",
+        "n|tbl|public.mcp_server_bindings",
+        "n|sch|public",
+        "n|col|public.mcp_oauth_tokens.binding_id",
+        "n|col|public.mcp_server_bindings.id",
+        "e|uniqueness|public.mcp_server_bindings.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "mcp_servers"
+      ],
+      "writes": [
+        "s|fk|public.mcp_servers.mcp_servers_oauth_client_secret_id_vault_secrets_id_fkey",
+        "n|fk|public.mcp_servers.mcp_servers_oauth_client_secret_id_vault_secrets_id_fkey",
+        "e|fk|public.mcp_servers.mcp_servers_oauth_client_secret_id_vault_secrets_id_fkey",
+        "n|con|public.mcp_servers.mcp_servers_oauth_client_secret_id_vault_secrets_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_servers",
+        "n|sch|public",
+        "n|tbl|public.vault_secrets",
+        "n|sch|public",
+        "n|col|public.mcp_servers.oauth_client_secret_id",
+        "n|col|public.vault_secrets.id",
+        "e|uniqueness|public.vault_secrets.id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "mcp_oauth_states",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "mcp_oauth_tokens",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_states",
+        "name": "id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_states",
+        "name": "binding_id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_states",
+        "name": "code_verifier",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_states",
+        "name": "redirect_uri",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_states",
+        "name": "expires_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_states",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_tokens",
+        "name": "id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_tokens",
+        "name": "binding_id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_tokens",
+        "name": "access_enc",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_tokens",
+        "name": "refresh_enc",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_tokens",
+        "name": "expires_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_tokens",
+        "name": "scope",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "''",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_tokens",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_tokens",
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "auth_kind",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'none'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "oauth_authorize_url",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "oauth_token_url",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "oauth_revocation_url",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "oauth_scopes",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "oauth_client_id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "oauth_client_secret_id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_states",
+        "name": "mcp_oauth_states_binding_id_mcp_server_bindings_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "binding_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "mcp_server_bindings",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_tokens",
+        "name": "mcp_oauth_tokens_binding_id_mcp_server_bindings_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "binding_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "mcp_server_bindings",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "mcp_servers_oauth_client_secret_id_vault_secrets_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "oauth_client_secret_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "vault_secrets",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "SET NULL",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_states",
+        "name": "mcp_oauth_states_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_tokens",
+        "name": "mcp_oauth_tokens_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_oauth_tokens",
+        "name": "mcp_oauth_tokens_binding_id_key",
+        "nameExplicit": false,
+        "columns": [
+          "binding_id"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    }
+  ]
+}
