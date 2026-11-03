@@ -11,13 +11,14 @@ const h = vi.hoisted(() => ({
   closed: [] as string[],
   gated: false,
   waiters: [] as Array<() => void>,
+  cap: 1,
 }));
 
 vi.mock('#server/domains/kernel/queue', () => ({ redisQueue: async () => ({}) }));
 
 vi.mock('#server/domains/settings/settings.service', () => ({
   getRunTimeoutMs: vi.fn(async () => 30 * 60_000),
-  getTasksPerAgent: vi.fn(async () => 1),
+  getTasksPerAgent: vi.fn(async () => h.cap),
 }));
 
 vi.mock('../../server/db/index', () => ({
@@ -66,6 +67,7 @@ beforeEach(() => {
   h.closed = [];
   h.gated = false;
   h.waiters = [];
+  h.cap = 1;
 });
 
 describe('syncDispatchWorkers coalescing (#290)', () => {
@@ -98,5 +100,33 @@ describe('syncDispatchWorkers coalescing (#290)', () => {
     expect(h.closed.filter((n) => n === 'tandem-dispatch-e-290')).toHaveLength(1); // e closed exactly once
     expect(h.created.filter((n) => n === 'tandem-dispatch-d-290')).toHaveLength(1); // d never re-minted
     expect(h.closed.filter((n) => n === 'tandem-dispatch-d-290')).toHaveLength(0);
+  });
+
+  it('a resync-intent caller colliding with an in-flight sync chains ONE follow-up — the new cap applies immediately', async () => {
+    h.roster = [{ userId: 'f-290' }];
+    h.gated = true;
+    const p1 = syncDispatchWorkers(hub()); // in-flight, already read cap=1
+    for (let i = 0; i < 200 && h.created.length < 1; i++) await new Promise((r) => setTimeout(r, 5));
+    h.cap = 3; // the settings write lands UNDER the in-flight sync
+    const p2 = syncDispatchWorkers(hub(), { resyncAfter: true });
+    expect(p2).not.toBe(p1); // chained — a fresh execution must follow, not the stale one
+    releaseAll();
+    await Promise.all([p1, p2]);
+    // the follow-up re-minted at the new cap (close + recreate), immediately
+    expect(h.created.filter((n) => n === 'tandem-dispatch-f-290')).toHaveLength(2);
+    expect(h.closed.filter((n) => n === 'tandem-dispatch-f-290')).toHaveLength(1);
+  });
+
+  it('a plain concurrent caller (no resync intent) still coalesces onto the in-flight sync', async () => {
+    h.roster = [{ userId: 'g-290' }];
+    h.gated = true;
+    const p1 = syncDispatchWorkers(hub());
+    for (let i = 0; i < 200 && h.created.length < 1; i++) await new Promise((r) => setTimeout(r, 5));
+    h.cap = 4;
+    const p2 = syncDispatchWorkers(hub()); // no resyncAfter: shares the in-flight read
+    expect(p2).toBe(p1);
+    releaseAll();
+    await Promise.all([p1, p2]);
+    expect(h.created).toEqual(['tandem-dispatch-g-290']); // single execution
   });
 });

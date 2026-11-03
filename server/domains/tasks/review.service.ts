@@ -11,7 +11,7 @@
 // that swaps the reviewer up-chain on the TASK roster and never settles.
 // Parks (round cannot progress without a human) flip the task to BLOCKED; owner
 // resolution unblocks and the round resumes. Manual done/cancel supersedes the round.
-import { and, desc, eq, notInArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, notInArray } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { db, type DbExecutor } from '../../db/index';
@@ -347,11 +347,42 @@ async function holdVerdictForWaitingAnswer(
         eq(taskReviews.status, verdict),
       ),
     );
+  // the revert re-opens the round: the held reviewer owes their vote again —
+  // re-spawn the APPROVAL obligation so inbox/decision surfaces re-arm for HUMAN
+  // reviewers too (the verdict CAS resolved it; spawnObligation dedupes a PENDING
+  // duplicate, so a rapid re-vote cannot stack rows)
+  await spawnObligation(taskId, reviewerId, OBLIGATION_ROLE.APPROVAL);
+  // IN-WINDOW RESCUE (#288 r1): the holder's answer may have landed between the
+  // hold's status read and this revert — its openRoundLive read saw the row still
+  // decided, flipped the task off waiting_answer (todo when it believed the round
+  // dead) and skipped the re-dispatch. The revert just made the round live again:
+  // restore its home (guarded ready->in_review flip) and re-fire the held reviewer,
+  // exactly as the unblock path would have.
+  const after = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  if (after && after.status !== cur.status) {
+    if (after.status === IN_REVIEW_STATUS) {
+      await dispatchAiReviewTurns(taskId); // answer landed post-revert: re-fire (its own live-turn check dedupes)
+    } else {
+      const readyIds = cats.filter((c) => c.category === CATEGORY.READY).map((c) => c.id);
+      if (readyIds.includes(after.status)) {
+        const restored = await db
+          .update(tasks)
+          .set({ status: IN_REVIEW_STATUS, updatedAt: new Date() })
+          .where(and(eq(tasks.id, taskId), inArray(tasks.status, readyIds)))
+          .returning({ id: tasks.id });
+        if (restored.length > 0) await dispatchAiReviewTurns(taskId);
+      }
+      // any other status (owner moved it mid-window): the owner owns the task — no
+      // fight (terminal moves already tore the round down; working moves keep it
+      // under the pre-existing manual-move semantics)
+    }
+    return true; // held mid-flight, then resumed — outcome stays 'parked'
+  }
   await logActivity(
     taskId,
     ACTIVITY_KIND.STATUS,
     null,
-    'review round parked — verdict arrived while the task is waiting for an answer; it re-fires when the answer lands',
+    'review round parked — verdict arrived while the task is waiting for an answer; it re-fires when the answer lands (owner unblock works too)',
     { reviewParked: true, why: 'waiting_answer owns the flow', round, source },
   );
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);

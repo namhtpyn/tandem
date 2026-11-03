@@ -388,11 +388,23 @@ const workers = new Map<string, { concurrency: number; close: () => Promise<void
  * X" and both created one, doubling the execution concurrency and leaving a
  * duplicate no later sync ever removes. One execution in flight per process;
  * concurrent callers await the SAME promise; the roster re-check stays
- * authoritative once it lands. */
+ * authoritative once it lands. A caller whose intent POST-DATES the in-flight read
+ * (settings cap / employee roster changed just before its call) passes
+ * resyncAfter: true — the in-flight sync may have read pre-change state, so the
+ * caller's promise chains ONE follow-up execution after it lands (the new cap or
+ * roster applies without waiting for the next trigger; simultaneous follow-ups
+ * coalesce onto each other like any other sync). */
 let syncInFlight: Promise<void> | null = null;
 
-export function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<typeof redisQueue>>>): Promise<void> {
-  syncInFlight ??= syncDispatchWorkersInner(hub).finally(() => {
+export function syncDispatchWorkers(
+  hub: NonNullable<Awaited<ReturnType<typeof redisQueue>>>,
+  opts: { resyncAfter?: boolean } = {},
+): Promise<void> {
+  if (syncInFlight) {
+    if (opts.resyncAfter) return syncInFlight.then(() => syncDispatchWorkers(hub));
+    return syncInFlight;
+  }
+  syncInFlight = syncDispatchWorkersInner(hub).finally(() => {
     syncInFlight = null;
   });
   return syncInFlight;
@@ -473,7 +485,9 @@ async function syncDispatchWorkersInner(hub: NonNullable<Awaited<ReturnType<type
 export async function onDispatcherSettingsChanged() {
   try {
     const hub = await redisQueue();
-    await syncDispatchWorkers(hub);
+    // resyncAfter: the settings write post-dates any in-flight sync's cap read —
+    // the follow-up execution guarantees the NEW cap applies now, not next trigger
+    await syncDispatchWorkers(hub, { resyncAfter: true });
   } catch (e) {
     log.warn('dispatch worker resync failed:', (e as Error).message);
   }
