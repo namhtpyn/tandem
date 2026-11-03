@@ -32,6 +32,10 @@ export async function openAcpSshStream(
   let stderrCb: ((line: string) => void) | null = null;
   let closeCb: ((code: number | null) => void) | null = null;
   let stream: { write: (d: Buffer | string) => void; close: () => void; signal: (s: string) => void } | null = null;
+  // #262: post-close writes hit a dead ssh2 channel whose 'error' listener only
+  // exists pre-exec — a synchronous throw here would ride the SDK's write queue
+  // into an unhandled rejection, so every write is guarded by this flag
+  let closed = false;
   let stdoutBuf = '';
   let stderrBuf = '';
   let ready: (() => void) | null = null;
@@ -108,12 +112,15 @@ export async function openAcpSshStream(
 
   return {
     write: (message: unknown) => {
+      if (closed) return; // #262: a dead channel can throw synchronously on write
       stream?.write(`${JSON.stringify(message)}\n`);
     },
     writeRaw: (text: string) => {
+      if (closed) return; // #262: same guard — the SDK's write queue never sees a throw
       stream?.write(text.endsWith('\n') ? text : `${text}\n`);
     },
     close: () => {
+      closed = true;
       try {
         stream?.signal('KILL');
       } catch {

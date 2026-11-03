@@ -414,6 +414,56 @@ describe('acp.client turns', () => {
     }
   });
 
+  // #262: a stop fired at a DEAD wire (transport blip between the turn's start
+  // and the stop) must not escape a rejection — an unhandled one terminates the
+  // whole bun server. The fake's writeRaw throws post-close the way a dead ssh2
+  // channel does, so the cancel notify's write genuinely fails.
+  it('a stop on a dead wire (writeRaw throws post-close) never escapes a rejection', async () => {
+    setEnv({ TANDEM_ACP_CANCEL_GRACE_MS: '20' });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (r: unknown) => unhandled.push(r);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      let hooks: { steer?: unknown; stop?: () => void } = {};
+      const stream = fakeAgent((msg, send) => {
+        const method = msg.method as string | undefined;
+        if (!method) return;
+        if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1 } });
+        else if (method === 'session/new') send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-dead' } });
+        // session/prompt intentionally NEVER answered
+      });
+      const turnP = turn(stream, {
+        onSessionOpen: (h) => {
+          hooks = h;
+        },
+      });
+      turnP.catch(() => {});
+      for (let i = 0; i < 400 && !hooks.stop; i++) await new Promise((r) => setTimeout(r, 5));
+      expect(hooks.stop).toBeTruthy();
+      // the wire dies on the WRITE side first (channel gone, close not yet
+      // propagated — the exact Stop-during-a-transport-blip window): every write
+      // throws like a dead ssh2 channel
+      let deadWrites = 0;
+      const origWriteRaw = stream.writeRaw.bind(stream);
+      stream.writeRaw = (t: string) => {
+        deadWrites += 1;
+        origWriteRaw(t);
+        throw new Error('write EPIPE: channel gone');
+      };
+      await new Promise((r) => setTimeout(r, 5)); // any queued writes land first
+      expect(() => hooks.stop!()).not.toThrow(); // cancel notify rides the dead wire
+      stream.close(); // THEN the close propagates: the dead-wire race rejects the prompt
+      await new Promise((r) => setTimeout(r, 80)); // grace + notify write queue settle
+      await expect(turnP).rejects.toThrow('acp stream closed');
+      await new Promise((r) => setTimeout(r, 20)); // one macrotask for any escapee
+      expect(unhandled).toEqual([]); // NO rejection escaped — the process survives
+      expect(deadWrites).toBeGreaterThan(0); // the throwing path was genuinely exercised
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+      setEnv({ TANDEM_ACP_CANCEL_GRACE_MS: undefined });
+    }
+  });
+
   it('notifications never split a half-streamed envelope line (queued behind chunks)', async () => {
     const lines: string[] = [];
     const stream = fakeAgent((msg, send) => {
@@ -1193,6 +1243,16 @@ describe('acp-ssh transport', () => {
     };
     expect(() => stream.close()).not.toThrow();
     expect(client.ended).toBe(true);
+    // #262: writeRaw post-close is a silent no-op — never a throw into the SDK's
+    // write queue, never a byte to the dead channel
+    let bytesToDeadChannel = 0;
+    (client.stream as unknown as { write: (d: unknown) => void }).write = (d: unknown) => {
+      bytesToDeadChannel += 1;
+      void d;
+    };
+    expect(() => stream.writeRaw('late frame')).not.toThrow();
+    stream.write({ jsonrpc: '2.0', method: 'late' });
+    expect(bytesToDeadChannel).toBe(0);
   });
 
   it('ssh/exec errors reject the open', async () => {
