@@ -183,8 +183,8 @@ describe('submit/answer terminal arbitration (#292 r1 mirror of #287)', () => {
       /task state changed during submit/,
     );
     expect(h.teardowns).toContain('submit lost the race');
-    // exactly one tasks write attempted (the losing flip) — the write returned 0 rows
-    expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(1);
+    // the losing flip + the park-ladder disarm were the only tasks writes
+    expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(2);
   });
 
   it('a submit with no reviewers flips DONE through the same guarded write', async () => {

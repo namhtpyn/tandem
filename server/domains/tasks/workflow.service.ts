@@ -63,7 +63,15 @@ async function logActivity(
 
 async function getTask(id: string) {
   const rows = await db.query.tasks.findMany({
-    columns: { status: true, assigneeId: true, ownerId: true, createdBy: true, questionChain: true, reviewers: true },
+    columns: {
+      status: true,
+      assigneeId: true,
+      ownerId: true,
+      createdBy: true,
+      questionChain: true,
+      reviewers: true,
+      updatedAt: true,
+    },
     where: { id: { eq: id } },
     orderBy: { createdAt: 'asc' },
   });
@@ -170,7 +178,7 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
       questionChain: [],
       updatedAt: new Date(),
     })
-    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status)))
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
     .returning({ id: tasks.id });
   if (flipped.length === 0) throw new Error('task state changed during answer — a settle owns the outcome');
   if (backTo === IN_REVIEW_STATUS) {
@@ -245,10 +253,19 @@ export async function submitResult(taskId: string, authorId: string, body: strin
     const flipped = await db
       .update(tasks)
       .set({ status: IN_REVIEW_STATUS, updatedAt: new Date() })
-      .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status)))
+      // the updatedAt stamp closes the ABA hole (#292 r2): a doing->todo->claim->doing
+      // cycle re-matching the read status must not flip in-review over a live run —
+      // ANY concurrent task write wins and the stale flip refuses
+      .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
       .returning({ id: tasks.id });
     if (flipped.length === 0) {
       await teardownOpenRound(taskId, 'submit lost the race');
+      // a park that landed on the task during this window (owner dragged it in-review
+      // mid-open) must not keep an armed ladder re-firing into the now-dead round
+      await db
+        .update(tasks)
+        .set({ parkRearmAttempts: 0, parkRearmAfter: null, parkFromStatus: null })
+        .where(and(eq(tasks.id, taskId), eq(tasks.status, STATUS.blocked)));
       throw new Error('task state changed during submit — a settle owns the outcome');
     }
     await refreshParentGating(taskId);
@@ -257,7 +274,7 @@ export async function submitResult(taskId: string, authorId: string, body: strin
   const done = await db
     .update(tasks)
     .set({ status: DONE_STATUS, updatedAt: new Date() })
-    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status)))
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
     .returning({ id: tasks.id });
   if (done.length === 0) throw new Error('task state changed during submit — a settle owns the outcome');
   await refreshParentGating(taskId);
@@ -340,7 +357,7 @@ export async function abandonTask(taskId: string, authorId: string, body: string
   const cancelled = await db
     .update(tasks)
     .set({ status: CANCELLED_STATUS, updatedAt: new Date() })
-    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status)))
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
     .returning({ id: tasks.id });
   if (cancelled.length === 0) throw new Error('task state changed during cancel — a settle owns the outcome');
   await logActivity(taskId, ACTIVITY_KIND.VERDICT, authorId, body || 'cancelled', { abandon: true });

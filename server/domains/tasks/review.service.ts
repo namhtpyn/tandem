@@ -448,11 +448,17 @@ export async function listReviews(taskId: string) {
   }));
 }
 
-/** POST-CAS RE-GATE (#292 r1): did the task settle during the escalation window?
- * The escalator's row flip already won (audit truth) — the caller mints nothing. */
-async function escalationSettledMidFlight(taskId: string): Promise<boolean> {
+/** MINT SELF-HEAL (#292 r2): the escalate mint spans four awaited writes with no
+ * single arbiter — a settle landing inside the window must never leave the freshly
+ * minted target row + obligation alive on a terminal task. The standard teardown
+ * supersedes PENDING rows and cancels approval obligations; the roster reverts.
+ * A vanished task (read returns nothing) heals nothing. True = healed. */
+async function selfHealEscalationIfSettled(taskId: string, originalReviewers: string[]): Promise<boolean> {
   const postGate = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
-  return postGate?.status !== IN_REVIEW_STATUS;
+  if (postGate == null || postGate.status === IN_REVIEW_STATUS) return false;
+  await teardownOpenRound(taskId, 'escalation lost the race');
+  await db.update(tasks).set({ reviewers: originalReviewers, updatedAt: new Date() }).where(eq(tasks.id, taskId));
+  return true;
 }
 
 /** parse "escalate to <name> for reviewing — <why>" into target name + reason.
@@ -545,21 +551,6 @@ export async function escalateReview(
     .where(and(eq(taskReviews.id, row.id), eq(taskReviews.status, REVIEW_STATUS.PENDING)))
     .returning({ id: taskReviews.id });
   if (escalated.length === 0) throw new Error('verdict already recorded for this round');
-  // POST-CAS RE-GATE (#292 review r1): the mint sequence below spans four awaited
-  // writes — a manual settle/teardown landing inside it must never leave a target
-  // PENDING row + a live approval obligation on a terminal task. The row flip already
-  // won (audit truth: the escalation was attempted), so mint nothing and report
-  // superseded — the settled outcome owns the task.
-  if (await escalationSettledMidFlight(taskId)) {
-    await logActivity(
-      taskId,
-      ACTIVITY_KIND.STATUS,
-      reviewerId,
-      'escalation aborted — the task settled during escalation',
-      { escalated: true, aborted: true, round },
-    );
-    return { outcome: 'superseded' };
-  }
   // roster mutation IS the handoff (one source of truth): the escalator leaves the
   // task, the replacement joins it — written only once the row flip won
   await db
@@ -582,6 +573,7 @@ export async function escalateReview(
     { escalated: true, from: reviewerId, to: targetId, round },
   );
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+  if (await selfHealEscalationIfSettled(taskId, task.reviewers)) return { outcome: 'superseded' };
   await dispatchAiReviewTurns(taskId);
   return { outcome: 'escalated' };
 }

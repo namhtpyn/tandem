@@ -167,17 +167,28 @@ describe('escalateReview verdict-row CAS (#283)', () => {
     expect(h.published).toBe(0);
   });
 
-  it('a settle landing inside the mint window aborts the escalation — no phantom reviewer row or obligation on the settled task', async () => {
-    // post-CAS re-gate read: the task settled (cancelled) between the flip and the mint
+  it('a settle landing inside the mint window self-heals — target row superseded, obligation cancelled, roster reverted', async () => {
+    // [gate read, heal read] — the settle landed between the mint and the heal
     h.taskReads = [
       [{ status: STATUS.inReview, reviewers: ['rev-1'], assigneeId: 'assignee-1' }],
       [{ status: STATUS.cancelled }],
     ];
+    // review FIFO: [currentRound, ownRow, onRound, heal-round-read, heal-rows-read]
+    h.reviewReads = [
+      [{ round: 2 }],
+      [{ id: 'row-1', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }],
+      [{ reviewerId: 'rev-1' }],
+      [{ round: 2 }],
+      [{ id: 'row-t', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'sup-1' }],
+    ];
     const outcome = await escalateReview('task-1', 'rev-1', 'escalate to Sup for reviewing — need eyes');
     expect(outcome).toEqual({ outcome: 'superseded' });
-    expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(0);
-    expect(h.inserts).toHaveLength(0);
-    expect(h.spawned).toHaveLength(0);
-    expect(h.notes.some((n) => n.payload.aborted === true)).toBe(true);
+    // the mint happened, then the heal: roster write + roster revert
+    const taskWrites = h.updates.filter((u) => u.table === 'tasks');
+    expect(taskWrites).toHaveLength(2);
+    expect(taskWrites[1]?.set.reviewers).toEqual(['rev-1']);
+    // the freshly minted target row was superseded by the standard teardown
+    const supersede = h.updates.filter((u) => u.table === 'taskReviews' && u.set.status === REVIEW_STATUS.SUPERSEDED);
+    expect(supersede.length).toBeGreaterThan(0);
   });
 });
