@@ -40,6 +40,7 @@ const envSchema = z.preprocess(
     TANDEM_FAKE_RUNNER: z.string().optional(),
     TANDEM_FAKE_SCRIPT: z.string().optional(),
     TANDEM_FAKE_SCRIPT_REVIEW: z.string().optional(),
+    TANDEM_FAKE_SCRIPT_REVIEW_CORRECTED: z.string().optional(),
     TANDEM_FAKE_FAIL: z.string().optional(),
     TANDEM_FAKE_DELAY_MS: z.string().optional(),
     // static OIDC fallback (DB-configured providers take precedence)

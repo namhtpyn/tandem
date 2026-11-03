@@ -107,8 +107,12 @@ type BriefInput = {
   /** exact deliverable out-dir for this run's task — agents must not guess it */
   outDir?: string;
   /** REVIEW turn (final spec 2026-10-29): same composer, review vocabulary — the
-   * submitted result is judged, verdicts-so-far ride every later brief, no out-dir */
-  review?: { resultBody: string; verdictsSoFar: string[] };
+   * submitted result is judged, verdicts-so-far ride every later brief, no out-dir.
+   * correction (VERDICT-LESS CORRECTION #276): true ONLY on the verdict-less
+   * settle path's one bounded re-dispatch — the brief then carries the CORRECTION
+   * block (previous turn had no valid envelope; final line MUST be the envelope
+   * JSON; incomplete verification rides request_change, never prose). */
+  review?: { resultBody: string; verdictsSoFar: string[]; correction?: boolean };
   recentActivity: Array<{ kind: string; authorName: string | null; body: string | null }>;
   /** reader already ran this task: the ticket lives in their session, prompt is a relay */
   relay: boolean;
@@ -144,7 +148,7 @@ export function buildBrief(input: BriefInput) {
       ...verdictsSoFarSection(input.review.verdictsSoFar),
       ...activitySection(input),
       ...attachmentsSection(input),
-      ...reviewContractSection(),
+      ...reviewContractSection(input.review.correction === true),
     ].join('\n');
   }
   if (input.relay) {
@@ -238,10 +242,24 @@ function verdictsSoFarSection(verdicts: string[]) {
   return ['', 'VERDICTS SO FAR (other reviewers of this round):', ...verdicts.map((v) => `- ${v}`)];
 }
 
-/** review output contract: pure-3 verdicts + escalate, no routing, no out-dir */
-function reviewContractSection() {
-  return [
-    '',
+/** review output contract: pure-3 verdicts + escalate, no routing, no out-dir.
+ * VERDICT-LESS CORRECTION (#276): on the bounded re-dispatch (correction=true) a
+ * CORRECTION block precedes the contract — the previous turn produced no valid
+ * verdict envelope, the final line MUST be the envelope JSON, and incomplete
+ * verification rides request_change (what is unresolved), never prose. */
+export const REVIEW_CORRECTION_MARKER = 'CORRECTION (verdict-less re-dispatch)';
+
+function reviewContractSection(correction = false) {
+  const lines: string[] = [''];
+  if (correction)
+    lines.push(
+      REVIEW_CORRECTION_MARKER,
+      'Your previous review turn ended WITHOUT a valid verdict envelope, so this turn was re-dispatched with the same brief.',
+      'The FINAL line of your response MUST be exactly one verdict JSON envelope as specified below (no code fence, no prose after it).',
+      'If your verification is incomplete, do NOT answer in prose — emit {"kind": "request_change", "body": "<what is unresolved>"} instead.',
+      '',
+    );
+  lines.push(
     renderOutputContract(ReviewVerdictSchema, {
       intro:
         'VERDICT — end your response with exactly one JSON line (no code fence). kind "approved" APPROVES the submission, "rejected" votes to cancel the task, "request_change" sends it back to the assignee with your note, "escalate" hands YOUR review to your supervisor when you cannot judge it (wrong domain, missing access) — write it as "escalate to <their name> for reviewing — <why>". This is a REVIEW turn: verify, do not redo the work. Never write your verdict as a file (no review-verdict.md) — the JSON line is the only verdict:',
@@ -252,7 +270,8 @@ function reviewContractSection() {
         '{"kind": "escalate", "body": "escalate to <supervisor name> for reviewing — <why>"}',
       ],
     }),
-  ];
+  );
+  return lines;
 }
 
 /** what already happened on this task (loader keeps the newest 20) */

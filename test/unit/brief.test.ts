@@ -242,3 +242,40 @@ describe('buildBrief', () => {
     expect(b).not.toContain('mention-00000000-0000-7000-8000-4a10b4d22ecf');
   });
 });
+
+describe('buildBrief review mode — VERDICT-LESS CORRECTION (#276)', () => {
+  const reviewBase = {
+    agent: P('00000000-0000-7000-8000-cba5723598ca', 'Zed', 'Reviewer'),
+    agentInstructions: '',
+    upChain: [] as never[],
+    directReports: [] as never[],
+    extraChains: [] as never[],
+    task: {
+      title: 'Fix the bug',
+      description: 'do the thing',
+      ownerName: 'Nam Hoang',
+      reviewerNames: ['Zed'],
+      projectName: null,
+    },
+    recentActivity: [] as never[],
+    relay: false,
+    review: { resultBody: 'the submitted work', verdictsSoFar: [] as string[] },
+  };
+
+  it('first-turn review brief carries NO correction block', () => {
+    const b = buildBrief(reviewBase);
+    expect(b).toContain('TASK UNDER REVIEW');
+    expect(b).not.toContain('CORRECTION (verdict-less re-dispatch)');
+  });
+
+  it('the verdict-less re-dispatch brief carries the CORRECTION block', () => {
+    const b = buildBrief({ ...reviewBase, review: { ...reviewBase.review, correction: true } });
+    expect(b).toContain('CORRECTION (verdict-less re-dispatch)');
+    expect(b).toContain('ended WITHOUT a valid verdict envelope');
+    expect(b).toContain('The FINAL line of your response MUST be exactly one verdict JSON envelope');
+    // incomplete verification routes to request_change, never prose (#276)
+    expect(b).toContain('{"kind": "request_change", "body": "<what is unresolved>"}');
+    // the block PRECEDES the verdict contract (contract still rides the same brief)
+    expect(b.indexOf('CORRECTION (verdict-less re-dispatch)')).toBeLessThan(b.indexOf('VERDICT — end your response'));
+  });
+});

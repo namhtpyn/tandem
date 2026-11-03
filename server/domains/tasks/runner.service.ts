@@ -457,7 +457,7 @@ import {
   sha256Hex,
 } from './attachments.util';
 /** everything the dispatched agent needs, decrypted; returns null pieces when unconfigured */
-import { buildBrief, loadBriefData } from './brief.service';
+import { buildBrief, loadBriefData, REVIEW_CORRECTION_MARKER } from './brief.service';
 import { promptImageSplit } from './prompt-images.util';
 import { recordProposals } from './proposals.service';
 import { resultImageTokens, type ResultFile } from './result-attachments.util';
@@ -763,7 +763,9 @@ export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>,
 }
 
 /** fake runner: synthetic streaming emitter for tests/CI */
-export function fakeScriptFromEnv(envName?: 'TANDEM_FAKE_SCRIPT' | 'TANDEM_FAKE_SCRIPT_REVIEW'): string[] | null {
+export function fakeScriptFromEnv(
+  envName?: 'TANDEM_FAKE_SCRIPT' | 'TANDEM_FAKE_SCRIPT_REVIEW' | 'TANDEM_FAKE_SCRIPT_REVIEW_CORRECTED',
+): string[] | null {
   const raw = env[envName ?? 'TANDEM_FAKE_SCRIPT'];
   if (!raw) return null;
   return raw.split('\n');
@@ -847,8 +849,11 @@ export type DispatchJob = {
   resultBody?: string;
 };
 
-/** dispatch intent options — review turns carry their reviewer + the body being reviewed */
-export type DispatchOpts = { reviewBy?: string; resultBody?: string };
+/** dispatch intent options — review turns carry their reviewer + the body being reviewed.
+ * verdictCorrection (VERDICT-LESS CORRECTION #276): set ONLY by the verdict-less
+ * settle path's bounded re-dispatch — the frozen brief then carries the CORRECTION
+ * block (never on a first-turn brief). */
+export type DispatchOpts = { reviewBy?: string; resultBody?: string; verdictCorrection?: boolean };
 
 /** DISPATCH CLAIM LAW (#162, SPEC): the dispatch claim is ONE conditional flip of
  * the task row — status must still be in a ready-category when the flip lands; the
@@ -938,10 +943,14 @@ export async function createRun(
   // buildBrief in review mode (org, company, task-under-review, relay, submitted
   // result, collected evidence, verdict contract — one composer, no parallel system).
   const briefData = await loadBriefData(taskId, plan.ai.userId);
-  let reviewCtx: { resultBody: string; verdictsSoFar: string[] } | undefined;
+  let reviewCtx: { resultBody: string; verdictsSoFar: string[]; correction?: boolean } | undefined;
   if (plan.review) {
     const { verdictsSoFarFor } = await import('./review.service');
-    reviewCtx = { resultBody: plan.review.resultBody, verdictsSoFar: await verdictsSoFarFor(taskId) };
+    reviewCtx = {
+      resultBody: plan.review.resultBody,
+      verdictsSoFar: await verdictsSoFarFor(taskId),
+      correction: opts?.verdictCorrection === true,
+    };
   }
   const brief = buildBrief({
     ...briefData,
@@ -1076,7 +1085,10 @@ async function settleReviewVerdict(taskId: string, reviewerId: string, envelope:
     });
     if (reviewRuns.length <= 1) {
       const { dispatchAiReviewTurns } = await import('./review.service');
-      await dispatchAiReviewTurns(taskId);
+      // VERDICT-LESS CORRECTION (#276): the retry brief carries the CORRECTION block —
+      // a bare replay of the identical brief failed identically in prod (the reviewer
+      // never learned its prior turn produced no envelope).
+      await dispatchAiReviewTurns(taskId, undefined, { verdictCorrection: true });
       await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
       return;
     }
@@ -1406,9 +1418,18 @@ export async function executeRun(
       // fake-runner MCP parity (SPEC): the dispatch plan really carried these
       const mcpLine = mcpDispatchLine(mcpServers);
       if (mcpLine) onLine(mcpLine);
+      // VERDICT-LESS CORRECTION (#276, fake-runner parity): a frozen brief carrying
+      // the correction marker picks the corrected-script env when set — e2e drives
+      // "verdict-less first turn -> conforming envelope on the corrected re-dispatch".
       const fake = fakeRun(
         onLine,
-        fakeScriptFromEnv(plan.review ? 'TANDEM_FAKE_SCRIPT_REVIEW' : 'TANDEM_FAKE_SCRIPT') ?? undefined,
+        fakeScriptFromEnv(
+          plan.review
+            ? brief.includes(REVIEW_CORRECTION_MARKER)
+              ? 'TANDEM_FAKE_SCRIPT_REVIEW_CORRECTED'
+              : 'TANDEM_FAKE_SCRIPT_REVIEW'
+            : 'TANDEM_FAKE_SCRIPT',
+        ) ?? undefined,
         (stop) => liveStops.set(runId, stop),
       );
       const r = await fake.finished;

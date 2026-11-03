@@ -18,7 +18,7 @@ import { db, type DbExecutor } from '../../db/index';
 import { tasks, taskReviews, taskRuns, taskMessages } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { spawnObligation, cancelObligations, cancelAllObligations, resolveObligation } from './obligations.service';
-import { dispatchTask } from './runner.service';
+import { dispatchTask, type DispatchOpts } from './runner.service';
 import { insertActivityMessage } from './thread.service';
 
 export type ReviewVerdict = Exclude<ReviewStatus, typeof REVIEW_STATUS.PENDING>;
@@ -161,8 +161,10 @@ async function roundResultBody(taskId: string) {
 /** fire the NEXT pending AI reviewer's turn — exactly one per call (sequential law:
  * one review turn in flight per task; the verdict's settle path lazy-mints the next).
  * Round order = row order. Human reviewers are skipped (the card is their UI).
- * Sessions are per (task, reviewer) — never the assignee's session. */
-export async function dispatchAiReviewTurns(taskId: string, resultBody?: string) {
+ * Sessions are per (task, reviewer) — never the assignee's session.
+ * opts.verdictCorrection (#276): rides ONLY the verdict-less settle path's bounded
+ * re-dispatch — the retry brief carries the CORRECTION block. */
+export async function dispatchAiReviewTurns(taskId: string, resultBody?: string, opts?: DispatchOpts) {
   const round = await currentRound(taskId);
   if (round === 0) return;
   const rows = await db
@@ -194,7 +196,11 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string)
       ).length > 0;
     if (running) continue;
     try {
-      await dispatchTask(taskId, 'http://tandem.internal', { reviewBy: row.reviewerId, resultBody: body });
+      await dispatchTask(taskId, 'http://tandem.internal', {
+        reviewBy: row.reviewerId,
+        resultBody: body,
+        verdictCorrection: opts?.verdictCorrection === true,
+      });
       await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review turn dispatched to reviewer ${row.reviewerId}`, {
         reviewTurn: true,
         reviewerId: row.reviewerId,
