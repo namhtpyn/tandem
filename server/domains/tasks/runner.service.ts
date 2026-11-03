@@ -1077,6 +1077,20 @@ export async function settleReviewVerdict(
   envelope: ReviewEnvelope | null,
   runStartedAt: Date,
 ) {
+  // SETTLE BINDING (ALL kinds — #276 blind-review r7): one read resolves the round
+  // THIS run was minted for and its row. A settle bound to an older closed round is
+  // a quiet no-op for EVERY envelope kind — a stale verdict must not run that
+  // round's end-of-round matrix (it would flip the task and cancel the LIVE round's
+  // obligations), and a stale referral must not rewrite the live roster. A null
+  // binding is an anomaly (rows are minted before any dispatch) and parks.
+  const binding = await dispatchedReviewRoundRow(taskId, reviewerId, runStartedAt);
+  const current = await currentRound(taskId);
+  if (!binding) {
+    const { parkRound } = await import('./review.service');
+    await parkRound(taskId, 'review finished without a verdict — no round row for the reviewer (anomaly)');
+    return;
+  }
+  if (binding.round < current) return; // stale settle: the live round owns progression
   // IDENTITY MAP (final spec 2026-10-29): the review envelope kind IS the verdict —
   // no translation layer. `escalate` is the one non-settling kind: a referral.
   if (envelope?.kind === 'approved') {
@@ -1117,24 +1131,10 @@ export async function settleReviewVerdict(
   } else {
     // verdict-less review: the reviewer's turn never produced a verdict envelope —
     // a transport-class failure of the review, so re-dispatch its turn with the
-    // CORRECTION block ONCE, then park on the owner (#276). The round is the
-    // DISPATCHED one of THIS settling run (never currentRound and never the
-    // latest-run lookup): a stale settle must not touch a newer round's state
-    // machine. The bound counts the reviewer's COMPLETED turns in that round — a
-    // reaped/failed turn is not a verdict-less attempt and never consumes the
-    // corrected retry (blind-review r4).
-    // one read resolves the dispatched round AND its row (no second lookup to race)
-    const binding = await dispatchedReviewRoundRow(taskId, reviewerId, runStartedAt);
-    const current = await currentRound(taskId);
-    if (!binding) {
-      // anomaly: no review row existed when this run was dispatched — rows are
-      // minted before any dispatch, so this is a data anomaly. Park decision-class;
-      // no correction block may attach to a round the reviewer has no row in.
-      const { parkRound } = await import('./review.service');
-      await parkRound(taskId, 'review finished without a verdict — no round row for the reviewer (anomaly)');
-      return;
-    }
-    if (binding.round < current) return; // stale settle: the live round owns progression
+    // CORRECTION block ONCE, then park on the owner (#276). Binding + staleness
+    // guards resolved once above (all envelope kinds). The bound counts the
+    // reviewer's COMPLETED turns in that round — a reaped/failed turn is not a
+    // verdict-less attempt and never consumes the corrected retry.
     const reviewRuns = await db.query.taskRuns.findMany({
       columns: { id: true, startedAt: true, status: true },
       where: { employeeId: { eq: reviewerId }, message: { taskId: { eq: taskId } } },

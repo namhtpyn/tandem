@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   dispatched: [] as Array<Record<string, unknown>>,
   parks: [] as string[],
   verdictAt: [] as Array<Date | undefined>,
+  escalated: 0,
 }));
 
 vi.mock('../../server/db/index', () => ({
@@ -53,6 +54,10 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
       h.verdictAt.push(at);
       return 'waiting' as const;
     },
+    escalateReview: async () => {
+      h.escalated += 1;
+      return { outcome: 'escalated' as const };
+    },
     parkRound: async (_taskId: string, why: string) => {
       h.parks.push(why);
     },
@@ -73,6 +78,7 @@ beforeEach(() => {
   h.dispatched = [];
   h.parks = [];
   h.verdictAt = [];
+  h.escalated = 0;
 });
 
 describe('settleReviewVerdict verdict-less bound (#276)', () => {
@@ -119,6 +125,29 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
     h.runs = [run('stale', self)];
     await settleReviewVerdict('task-1', 'rev-1', null, self);
     expect(h.dispatched).toHaveLength(0);
+    expect(h.parks).toHaveLength(0);
+  });
+
+  it('a STALE verdict-carrying settle records NOTHING — no old-round matrix flip (r7)', async () => {
+    // r6's `at` pin bound stale verdicts to their own round; without this guard the
+    // old round's end-of-round matrix would run and cancel the live round's work
+    h.round = 2;
+    h.boundRow = { round: 1, createdAt: roundOpen };
+    await settleReviewVerdict('task-1', 'rev-1', { kind: 'approved', text: 'ok' } as never, self);
+    expect(h.verdictAt).toHaveLength(0);
+    expect(h.parks).toHaveLength(0);
+  });
+
+  it('a STALE escalate settle rewrites NOTHING on the live roster (r7)', async () => {
+    h.round = 2;
+    h.boundRow = { round: 1, createdAt: roundOpen };
+    await settleReviewVerdict(
+      'task-1',
+      'rev-1',
+      { kind: 'escalate', text: 'escalate to Zed for reviewing' } as never,
+      self,
+    );
+    expect(h.escalated).toBe(0);
     expect(h.parks).toHaveLength(0);
   });
 
