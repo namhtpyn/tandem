@@ -17,7 +17,10 @@ import { login } from './helpers/login.ts';
 import { waitForHydration } from './pages/base.page.ts';
 import { TasksPage } from './pages/tasks.page.ts';
 
-async function seedAiEmployee(page: import('@playwright/test').Page, tag: string): Promise<string> {
+async function seedAiEmployee(
+  page: import('@playwright/test').Page,
+  tag: string,
+): Promise<{ name: string; id: string }> {
   const env = await page.request.post('/rpc/environments/create', {
     data: { json: { name: `E2E Env ${tag}`, host: '127.0.0.1', port: '22', username: 'e2e' } },
   });
@@ -35,7 +38,24 @@ async function seedAiEmployee(page: import('@playwright/test').Page, tag: string
     },
   });
   expect(emp.status()).toBe(200);
-  return `E2E Bot ${tag}`;
+  const id = ((await emp.json()) as { json?: { id?: string } }).json?.id;
+  expect(id, 'employee create returns the user id').toBeTruthy();
+  return { name: `E2E Bot ${tag}`, id: id as string };
+}
+
+async function rowTaskId(row: ReturnType<TasksPage['rowFor']>): Promise<string> {
+  const href = await row.locator('a[href^="/tasks/"]').first().getAttribute('href');
+  expect(href, 'row links to the task page').toBeTruthy();
+  return (href as string).split('/').pop() as string;
+}
+
+/** attach the AI assignee AFTER the dispatch_after hold is set: the task is born
+ *  ineligible (no assignee), so the 5s scan can never claim it mid-test */
+async function attachAssignee(page: import('@playwright/test').Page, taskId: string, employeeId: string) {
+  const res = await page.request.post('/rpc/tasks/update', {
+    data: { json: { id: taskId, assigneeId: employeeId } },
+  });
+  expect(res.status()).toBe(200);
 }
 
 async function seedRunningRun(taskId: string) {
@@ -148,17 +168,19 @@ test('composer hint: blocked AI task promises dispatch on both surfaces; human t
 }) => {
   const tasks = new TasksPage(page);
   const tag = Date.now().toString(36).slice(-6);
-  const botName = await seedAiEmployee(page, tag);
+  const bot = await seedAiEmployee(page, tag);
   const aiTitle = `HINTAI ${tag}`;
   const humanTitle = `HINTHU ${tag}`;
   await login(page);
   await page.goto('/tasks');
   await waitForHydration(page);
 
-  const ai = await createRow(page, tasks, aiTitle, botName);
-  await expect(ai.row).toContainText(botName, { timeout: 10_000 });
-  // the task sits ready (dispatch-eligible) while the moves happen — hold the scan
+  // born ineligible: the AI task attaches its assignee AFTER the hold is set,
+  // so the 5s scan can never claim it while the moves happen
+  const ai = await createRow(page, tasks, aiTitle);
   await holdScan(ai.taskId);
+  await attachAssignee(page, ai.taskId, bot.id);
+  await expect(ai.row).toContainText(bot.name, { timeout: 10_000 });
   // leave ready (the old hint's only dispatch state) — blocked still dispatches
   await page.locator('tbody').getByLabel(`Status for ${aiTitle}`).click();
   await page.getByRole('option', { name: 'Blocked' }).click();

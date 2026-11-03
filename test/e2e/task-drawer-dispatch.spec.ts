@@ -21,7 +21,10 @@ async function holdScan(taskId: string) {
   await sql.close();
 }
 
-async function seedAiEmployee(page: import('@playwright/test').Page, tag: string): Promise<string> {
+async function seedAiEmployee(
+  page: import('@playwright/test').Page,
+  tag: string,
+): Promise<{ name: string; id: string }> {
   const env = await page.request.post('/rpc/environments/create', {
     data: { json: { name: `E2E Env ${tag}`, host: '127.0.0.1', port: '22', username: 'e2e' } },
   });
@@ -39,24 +42,43 @@ async function seedAiEmployee(page: import('@playwright/test').Page, tag: string
     },
   });
   expect(emp.status()).toBe(200);
-  return `E2E Bot ${tag}`;
+  const id = ((await emp.json()) as { json?: { id?: string } }).json?.id;
+  expect(id, 'employee create returns the user id').toBeTruthy();
+  return { name: `E2E Bot ${tag}`, id: id as string };
+}
+
+async function rowTaskId(row: ReturnType<TasksPage['rowFor']>): Promise<string> {
+  const href = await row.locator('a[href^="/tasks/"]').first().getAttribute('href');
+  expect(href, 'row links to the task page').toBeTruthy();
+  return (href as string).split('/').pop() as string;
+}
+
+/** attach the AI assignee AFTER the dispatch_after hold is set: the task is born
+ *  ineligible (no assignee), so the 5s scan can never claim it mid-test */
+async function attachAssignee(page: import('@playwright/test').Page, taskId: string, employeeId: string) {
+  const res = await page.request.post('/rpc/tasks/update', {
+    data: { json: { id: taskId, assigneeId: employeeId } },
+  });
+  expect(res.status()).toBe(200);
 }
 
 test('drawer dispatch: ready AI task fires in one click; the verb dies with the claim', async ({ page }) => {
   const tasks = new TasksPage(page);
   const tag = Date.now().toString(36).slice(-6);
-  const botName = await seedAiEmployee(page, tag);
+  const bot = await seedAiEmployee(page, tag);
   const taskTitle = `DDRD ${tag}`;
 
   await tasks.navigate('/tasks');
   await tasks.openCreateModal();
-  await tasks.fillTaskForm({ title: taskTitle, assignee: botName });
+  // born ineligible: the assignee attaches AFTER the dispatch_after hold is set
+  await tasks.fillTaskForm({ title: taskTitle });
   await tasks.saveTask();
   const row = tasks.rowFor(taskTitle);
   await expect(row).toBeVisible({ timeout: 15_000 });
-  await holdScan(
-    ((await row.locator('a[href^="/tasks/"]').first().getAttribute('href')) as string).split('/').pop() as string,
-  );
+  const taskId = await rowTaskId(row);
+  await holdScan(taskId);
+  await attachAssignee(page, taskId, bot.id);
+  await expect(row).toContainText(bot.name, { timeout: 10_000 });
 
   const drawer = await tasks.openWorkflowDrawer(row);
   const dispatch = drawer.getByTestId('drawer-verb-dispatch');
@@ -78,22 +100,21 @@ test('drawer dispatch: ready AI task fires in one click; the verb dies with the 
 test('drawer dispatch: non-ready AI task renders no verb the server would refuse', async ({ page }) => {
   const tasks = new TasksPage(page);
   const tag = Date.now().toString(36).slice(-6);
-  const botName = await seedAiEmployee(page, tag);
+  const bot = await seedAiEmployee(page, tag);
   const taskTitle = `DDNR ${tag}`;
 
   await tasks.navigate('/tasks');
   await tasks.openCreateModal();
-  await tasks.fillTaskForm({ title: taskTitle, assignee: botName });
+  await tasks.fillTaskForm({ title: taskTitle });
   await tasks.saveTask();
   const row = tasks.rowFor(taskTitle);
   await expect(row).toBeVisible({ timeout: 15_000 });
+  const taskId = await rowTaskId(row);
+  await holdScan(taskId);
+  await attachAssignee(page, taskId, bot.id);
   // let the create refetch wave settle before driving the row's status select —
   // a mid-settle click can submit a select value before statuses resolve
-  await expect(row).toContainText(botName, { timeout: 10_000 });
-  // the task sits ready while the moves happen — hold the scan off it
-  await holdScan(
-    ((await row.locator('a[href^="/tasks/"]').first().getAttribute('href')) as string).split('/').pop() as string,
-  );
+  await expect(row).toContainText(bot.name, { timeout: 10_000 });
 
   // in-review: same AI assignee, non-ready category — no verb
   await page.locator('tbody').getByLabel(`Status for ${taskTitle}`).click();

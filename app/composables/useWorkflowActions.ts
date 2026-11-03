@@ -37,11 +37,12 @@ export function noteSuccessCopy(outcome: NoteOutcome): string {
   return WF_COPY.note.ok;
 }
 
-/** the note verb's dispatch rule, mirrored 1:1 from the server's tasks.note
- *  (workflow.service addNote): a send starts an agent turn for EVERY task in a
- *  non-terminal, non-in-review, non-waiting-answer category with an AI assignee
- *  — not just ready. waiting-answer routes the send to the ANSWER verb (a
- *  different verb with its own server rule), so it is excluded here. */
+/** the note verb's dispatch rule (workflow.service addNote's exclusion, modeled
+ *  for the composer's routing): a send starts an agent turn for EVERY task in a
+ *  non-terminal, non-in-review category with an AI assignee — not just ready.
+ *  waiting-answer is excluded CLIENT-side because the composer routes that send
+ *  to the ANSWER verb (a different verb with its own server rule) — addNote
+ *  itself never sees it from these surfaces. */
 export function noteWillDispatch(input: {
   category: Category | null | undefined;
   assigneeKind: string | null | undefined;
@@ -71,12 +72,13 @@ export function composerHint(input: {
   assigneeKind: string | null | undefined;
   running: boolean | null | undefined;
 }): string {
-  if (input.running === null || input.running === undefined) return 'Sends the note';
-  if (input.running) return 'Sends a steering note to the running agent';
-  // waiting-answer routes the send to the ANSWER verb (the agent's turn
-  // re-arms on an AI assignee) — its own wording, never the note verb's
+  // waiting-answer routes the send to the ANSWER verb — the routing depends only
+  // on the category, never on the run feed, so it precedes the unknown/running
+  // checks (r3: the unknown fallback must not name the wrong verb)
   if (input.category === CATEGORY.WAITING_ANSWER)
     return input.assigneeKind === 'ai' ? 'Sends the answer — the agent picks the task back up' : 'Sends the answer';
+  if (input.running === null || input.running === undefined) return 'Sends the note';
+  if (input.running) return 'Sends a steering note to the running agent';
   if (noteWillDispatch(input)) return 'Sends the note and dispatches the agent';
   return 'Adds the note to the thread';
 }

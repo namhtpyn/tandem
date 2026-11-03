@@ -41,7 +41,30 @@ async function seedAiEmployee(page: import('@playwright/test').Page, tag: string
     },
   });
   expect(emp.status()).toBe(200);
-  return `E2E Bot ${tag}`;
+  const id = ((await emp.json()) as { json?: { id?: string } }).json?.id;
+  expect(id, 'employee create returns the user id').toBeTruthy();
+  return { name: `E2E Bot ${tag}`, id: id as string };
+}
+
+async function rowTaskIdFromLink(link: ReturnType<import('@playwright/test').Locator['first']>): Promise<string> {
+  const href = await link.getAttribute('href');
+  expect(href, 'row links to the task page').toBeTruthy();
+  return (href as string).split('/').pop() as string;
+}
+
+async function rowTaskId(row: ReturnType<TasksPage['rowFor']>): Promise<string> {
+  const href = await row.locator('a[href^="/tasks/"]').first().getAttribute('href');
+  expect(href, 'row links to the task page').toBeTruthy();
+  return (href as string).split('/').pop() as string;
+}
+
+/** attach the AI assignee AFTER the dispatch_after hold is set: the task is born
+ *  ineligible (no assignee), so the 5s scan can never claim it mid-test */
+async function attachAssignee(page: import('@playwright/test').Page, taskId: string, employeeId: string) {
+  const res = await page.request.post('/rpc/tasks/update', {
+    data: { json: { id: taskId, assigneeId: employeeId } },
+  });
+  expect(res.status()).toBe(200);
 }
 
 // MOBILE FIRST: the task-page stop fires at a phone viewport (390×844, the
@@ -54,17 +77,19 @@ test.describe('task page stop at a phone viewport', () => {
   }) => {
     const tasks = new TasksPage(page);
     const tag = Date.now().toString(36).slice(-6);
-    const botName = await seedAiEmployee(page, tag);
+    const bot = await seedAiEmployee(page, tag);
     const taskTitle = `STOP PG ${tag}`;
 
     await tasks.navigate('/tasks');
     await tasks.openCreateModal();
-    await tasks.fillTaskForm({ title: taskTitle, assignee: botName });
+    await tasks.fillTaskForm({ title: taskTitle });
     await tasks.saveTask();
     // MOBILE: the list renders CARDS (no table) — the title link opens the page
     const cardLink = page.getByRole('link', { name: taskTitle }).first();
     await expect(cardLink).toBeVisible({ timeout: 15_000 });
-    await holdScan(((await cardLink.getAttribute('href')) as string).split('/').pop() as string);
+    // born ineligible: hold the scan, then attach the AI assignee
+    await holdScan(await rowTaskIdFromLink(cardLink));
+    await attachAssignee(page, await rowTaskIdFromLink(cardLink), bot.id);
     await cardLink.click();
     await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
 
@@ -115,17 +140,19 @@ test.describe('task page stop at a phone viewport', () => {
 test('drawer stop: renders only while live, settles the run, then cancel completes the flow', async ({ page }) => {
   const tasks = new TasksPage(page);
   const tag = Date.now().toString(36).slice(-6);
-  const botName = await seedAiEmployee(page, tag);
+  const bot = await seedAiEmployee(page, tag);
   const taskTitle = `STOP DR ${tag}`;
 
   await tasks.navigate('/tasks');
   await tasks.openCreateModal();
-  await tasks.fillTaskForm({ title: taskTitle, assignee: botName });
+  await tasks.fillTaskForm({ title: taskTitle });
   await tasks.saveTask();
   const row = tasks.rowFor(taskTitle);
   await expect(row).toBeVisible({ timeout: 15_000 });
-  const href = await row.locator('a[href^="/tasks/"]').first().getAttribute('href');
-  await holdScan((href as string).split('/').pop() as string);
+  const taskId = await rowTaskId(row);
+  // born ineligible: hold the scan, then attach the AI assignee
+  await holdScan(taskId);
+  await attachAssignee(page, taskId, bot.id);
 
   const drawer = await tasks.openWorkflowDrawer(row);
   await expect(drawer.getByTestId('drawer-verb-dispatch')).toBeVisible({ timeout: 10_000 });

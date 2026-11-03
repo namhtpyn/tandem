@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   statuses: [] as Array<{ id: string; category: string }>,
   flips: [] as Array<{ set: Record<string, unknown>; pred: boolean }>,
   cancelled: [] as string[],
+  holder: 'human-1' as string | null,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -19,19 +20,36 @@ vi.mock('../../server/db/index', async () => {
   return {
     asDb: (x: unknown) => x,
     db: {
+      // workflow.service's hasSupervisors selects the supervisors table
+      select: () => {
+        const chain = {
+          from: () => chain,
+          where: () => ({
+            then: (onF?: (v: Array<Record<string, unknown>>) => unknown) =>
+              Promise.resolve([{ supervisorId: 'sup-1' }]).then(onF),
+          }),
+        };
+        return chain as never;
+      },
       update: (table: unknown) => ({
         set: (set: Record<string, unknown>) => ({
-          where: (_cond: unknown) => ({
-            returning: async () => {
+          where: (_cond: unknown) => {
+            const applied = () => {
               h.flips.push({ set, pred: table === tasks });
               return [{ id: 'task-1' }];
-            },
-          }),
+            };
+            return {
+              returning: async () => applied(),
+              then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => Promise.resolve(applied()).then(onF),
+              catch: (onR: (e: unknown) => unknown) => Promise.resolve(applied()).catch(onR),
+            };
+          },
         }),
       }),
       query: {
         tasks: { findMany: async () => h.taskRows },
         taskStatuses: { findMany: async () => h.statuses },
+        user: { findFirst: async () => ({ id: 'target-1', name: 'Target One' }) },
       },
     },
   };
@@ -49,7 +67,7 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
     cancelObligations: async (_t: unknown, role: unknown) => void h.cancelled.push(String(role)),
     spawnObligation: async () => {},
     resolveObligation: async () => {},
-    answerHolder: async () => null,
+    answerHolder: async () => h.holder,
   };
 });
 
@@ -68,7 +86,7 @@ vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {
   return { ...mod, insertActivityMessage: async () => {} };
 });
 
-import { answerQuestion } from '../../server/domains/tasks/workflow.service';
+import { answerQuestion, forwardQuestion } from '../../server/domains/tasks/workflow.service';
 
 function seedTask(statusId: string) {
   h.taskRows = [
@@ -111,5 +129,20 @@ describe('answer verb gate keys off the waiting_answer category (#265 r2)', () =
     h.statuses = [];
     await expect(answerQuestion('task-1', 'human-1', 'not an answer')).rejects.toThrow(/not waiting for an answer/);
     expect(h.flips).toHaveLength(0);
+  });
+});
+
+describe('forward verb gate keys off the waiting_answer category (#265 r3 sibling)', () => {
+  it('a CUSTOM waiting_answer-category status forwards — the holder moves to the target', async () => {
+    seedTask('st-custom-waiting');
+    h.statuses = [{ id: 'st-custom-waiting', category: CATEGORY.WAITING_ANSWER }];
+    const res = await forwardQuestion('task-1', 'human-1', 'target-1', 'take this one');
+    expect(res.holderId).toBe('target-1');
+  });
+
+  it('a non-waiting category refuses — Forward never fires there', async () => {
+    seedTask('st-custom-doing');
+    h.statuses = [{ id: 'st-custom-doing', category: CATEGORY.WORKING }];
+    await expect(forwardQuestion('task-1', 'human-1', 'target-1', 'nope')).rejects.toThrow(/not waiting for an answer/);
   });
 });

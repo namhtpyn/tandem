@@ -137,7 +137,15 @@ export async function askQuestion(taskId: string, authorId: string, body: string
 /** current holder forwards to someone new; they become holder. Top of the org must answer. */
 export async function forwardQuestion(taskId: string, authorId: string, toEmployeeId: string, body: string) {
   const task = await getTask(taskId);
-  if (task.status !== WAITING_ANSWER_STATUS) throw new Error('task is not waiting for an answer');
+  // the gate reads the waiting_answer CATEGORY (status freedom) — the client
+  // renders Forward by category, so a custom waiting status forwards too
+  // (#265 r3, the answer gate's sibling)
+  const statusRows = await db.query.taskStatuses.findMany({
+    columns: { id: true, category: true },
+    where: { id: { eq: task.status } },
+  });
+  if (statusRows.find((r) => r.id === task.status)?.category !== CATEGORY.WAITING_ANSWER)
+    throw new Error('task is not waiting for an answer');
   const holder = await answerHolder(taskId);
   if (holder !== authorId) throw new Error('only the current holder can forward');
   const chain = task.questionChain;

@@ -292,6 +292,19 @@ function openEditor(row?: TaskRow) {
   editingTask.value = row ?? null;
   editorOpen.value = true;
 }
+// RUN LOCK freshness (#264 r3): the modal's lock reads props.task.runLocked —
+// keep the bit live from the paged rows so a run STARTING mid-edit disables the
+// assignee/status fields instead of ending in the server's lock error. The
+// modal's form populates on open only (watch on `open`), so the fresh object
+// never clobbers in-progress typing.
+const editingTaskLive = computed(() =>
+  editingTask.value ? (rows.value.find((t) => t.id === editingTask.value?.id) ?? null) : null,
+);
+const editingTaskWithLock = computed<TaskRow | null>(() => {
+  if (!editingTask.value) return null;
+  const live = editingTaskLive.value;
+  return live ? { ...editingTask.value, runLocked: live.runLocked } : editingTask.value;
+});
 const statusManagerOpen = ref(false);
 
 function onSaved() {
@@ -1565,7 +1578,7 @@ onServerPrefetch(() =>
     </UModal>
 
     <TaskStatusesManager v-model:open="statusManagerOpen" />
-    <TaskEditorModal v-model:open="editorOpen" :task="editingTask" @saved="onSaved" />
+    <TaskEditorModal v-model:open="editorOpen" :task="editingTaskWithLock" @saved="onSaved" />
 
     <!-- delete confirm -->
     <UModal v-model:open="deleteOpen" title="Delete task" :ui="{ content: 'max-w-sm' }">
