@@ -4,11 +4,14 @@
 // (0-row miss) and never overwrites a settled task.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { CATEGORY } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 const h = vi.hoisted(() => ({
   taskRows: [] as Array<Record<string, unknown>>,
   cancelWins: true,
+  statuses: [] as Array<{ id: string; category: string }>,
+  teardowns: [] as string[],
   updates: [] as Array<{ table: string; set: Record<string, unknown>; pred: boolean }>,
   notes: [] as Array<{ kind: unknown; payload: Record<string, unknown> }>,
   published: 0,
@@ -59,7 +62,7 @@ vi.mock('../../server/db/index', async () => {
         tasks: {
           findMany: async () => h.taskRows,
         },
-        taskStatuses: { findMany: async () => [] },
+        taskStatuses: { findMany: async () => h.statuses },
       },
     },
   };
@@ -96,11 +99,13 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     openReviewRound: async () => 1,
     recordVerdict: async () => ({ outcome: 'superseded' }),
     currentRound: async () => 1,
-    teardownOpenRound: async () => {},
+    teardownOpenRound: async (_t: unknown, settledTo: string) => {
+      h.teardowns.push(settledTo);
+    },
   };
 });
 
-import { abandonTask } from '../../server/domains/tasks/workflow.service';
+import { abandonTask, answerQuestion, submitResult } from '../../server/domains/tasks/workflow.service';
 
 beforeEach(() => {
   h.taskRows = [
@@ -114,6 +119,8 @@ beforeEach(() => {
     },
   ];
   h.cancelWins = true;
+  h.statuses = [{ id: STATUS.inReview, category: CATEGORY.IN_REVIEW }];
+  h.teardowns = [];
   h.updates = [];
   h.notes = [];
   h.published = 0;
@@ -135,5 +142,85 @@ describe('abandonTask terminal arbitration (#287)', () => {
     // only the losing write was attempted — no retry, no second flip
     expect(h.updates).toHaveLength(1);
     expect(h.updates[0]?.pred).toBe(true);
+  });
+});
+
+describe('submit/answer terminal arbitration (#292 r1 mirror of #287)', () => {
+  it('a won submit flips in-review through a guarded write on the read status', async () => {
+    h.taskRows = [
+      {
+        status: 'st-doing',
+        assigneeId: 'worker-1',
+        ownerId: 'owner-1',
+        createdBy: 'owner-1',
+        questionChain: [],
+        reviewers: ['rev-1'],
+      },
+    ];
+    h.statuses = [{ id: 'st-doing', category: CATEGORY.WORKING }];
+    const res = await submitResult('task-1', 'worker-1', 'the work is done');
+    expect(res).toEqual({ status: STATUS.inReview });
+    const flip = h.updates.find((u) => u.table === 'tasks');
+    expect(flip?.pred).toBe(true);
+    expect(flip?.set.status).toBe(STATUS.inReview);
+    expect(h.teardowns).toHaveLength(0);
+  });
+
+  it('an abandon that won between the gate read and the flip owns the outcome — the submit refuses and tears its just-opened round down', async () => {
+    h.taskRows = [
+      {
+        status: 'st-doing',
+        assigneeId: 'worker-1',
+        ownerId: 'owner-1',
+        createdBy: 'owner-1',
+        questionChain: [],
+        reviewers: ['rev-1'],
+      },
+    ];
+    h.statuses = [{ id: 'st-doing', category: CATEGORY.WORKING }];
+    h.cancelWins = false;
+    await expect(submitResult('task-1', 'worker-1', 'the work is done')).rejects.toThrow(
+      /task state changed during submit/,
+    );
+    expect(h.teardowns).toContain('submit lost the race');
+    // exactly one tasks write attempted (the losing flip) — the write returned 0 rows
+    expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(1);
+  });
+
+  it('a submit with no reviewers flips DONE through the same guarded write', async () => {
+    h.taskRows = [
+      {
+        status: 'st-doing',
+        assigneeId: 'worker-1',
+        ownerId: 'owner-1',
+        createdBy: 'owner-1',
+        questionChain: [],
+        reviewers: [],
+      },
+    ];
+    h.statuses = [{ id: 'st-doing', category: CATEGORY.WORKING }];
+    const res = await submitResult('task-1', 'worker-1', 'the work is done');
+    expect(res).toEqual({ status: STATUS.done });
+    const flip = h.updates.find((u) => u.table === 'tasks');
+    expect(flip?.pred).toBe(true);
+    expect(flip?.set.status).toBe(STATUS.done);
+  });
+
+  it('a late answer losing the race to a settle refuses — the settled outcome stands', async () => {
+    h.taskRows = [
+      {
+        status: STATUS.waitingAnswer,
+        assigneeId: 'worker-1',
+        ownerId: 'owner-1',
+        createdBy: 'owner-1',
+        questionChain: ['owner-1'],
+        reviewers: [],
+      },
+    ];
+    h.statuses = [{ id: STATUS.waitingAnswer, category: CATEGORY.WAITING_ANSWER }];
+    h.cancelWins = false;
+    await expect(answerQuestion('task-1', 'owner-1', 'here is the answer')).rejects.toThrow(
+      /task state changed during answer/,
+    );
   });
 });

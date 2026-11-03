@@ -1049,10 +1049,12 @@ export async function dispatchTask(
     await enqueueRun(runId, employeeId, tandemUrl, opts);
   } catch (e) {
     // redis down between create and enqueue: settle the row so it can't hang RUNNING
-    // past its timeout, and bounce the task — the scan/ladder re-dispatches a fresh
-    // intent with a fresh frozen brief
+    // past its timeout. Work dispatches bounce the task — the scan/ladder re-dispatches
+    // a fresh intent with a fresh frozen brief. REVIEW dispatches never bounce the
+    // work task (#292 r1): the review lifecycle owns recovery (park/re-arm in-review;
+    // the round-open window fails the submit with the task left working).
     const msg = e instanceof Error ? e.message : String(e);
-    await bounceTaskAfterRun(taskId, runId, `[dispatch] enqueue failed: ${msg}`);
+    if (!opts?.reviewBy) await bounceTaskAfterRun(taskId, runId, `[dispatch] enqueue failed: ${msg}`);
     await db
       .update(taskRuns)
       .set({

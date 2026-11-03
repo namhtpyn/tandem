@@ -249,12 +249,18 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string,
       // unblock (status -> in-review) re-dispatches through the unblock-resume path.
       // REARMABLE (#211): a mint failure is infra-class — the re-arm ladder re-fires it.
       const parked = await parkRound(taskId, `review turn failed to dispatch — ${reason}`, { rearmable: true });
-      if (!parked)
-        // ROUND-OPEN WINDOW (#282): the park only lands from in-review — pre-flip
-        // (the submit's round-open call) there is nothing to park, and returning
-        // quietly strands a live round with no run and no re-fire. Rethrow so
-        // openReviewRound fails the submit with the task left working.
-        throw new Error(`review turn dispatch failed before the round opened — ${reason}`);
+      if (!parked) {
+        // ROUND-OPEN WINDOW (#282): the park only lands from in-review — a miss means
+        // the task is elsewhere. Rethrow ONLY from the round-open window (the task
+        // still sits in a working category, so the submit must fail and leave it
+        // working); any other off-in-review state (owner move, settle) already won —
+        // throwing there would only 500 a caller that did nothing wrong (#292 r1).
+        const cur = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
+        const cats = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
+        const cat = cats.find((c) => c.id === cur?.status)?.category;
+        if (cat === CATEGORY.WORKING)
+          throw new Error(`review turn dispatch failed before the round opened — ${reason}`);
+      }
     }
     return; // SEQUENTIAL: one turn in flight — the next fires from this verdict's settle
   }
@@ -442,6 +448,13 @@ export async function listReviews(taskId: string) {
   }));
 }
 
+/** POST-CAS RE-GATE (#292 r1): did the task settle during the escalation window?
+ * The escalator's row flip already won (audit truth) — the caller mints nothing. */
+async function escalationSettledMidFlight(taskId: string): Promise<boolean> {
+  const postGate = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  return postGate?.status !== IN_REVIEW_STATUS;
+}
+
 /** parse "escalate to <name> for reviewing — <why>" into target name + reason.
  * Null name when the body carries no explicit target — the caller then picks the
  * direct supervisor. */
@@ -463,7 +476,7 @@ export async function escalateReview(
   taskId: string,
   reviewerId: string,
   body: string,
-): Promise<{ outcome: 'escalated' | 'parked' }> {
+): Promise<{ outcome: 'escalated' | 'parked' | 'superseded' }> {
   const task = (
     await db
       .select({ status: tasks.status, reviewers: tasks.reviewers, assigneeId: tasks.assigneeId })
@@ -532,6 +545,21 @@ export async function escalateReview(
     .where(and(eq(taskReviews.id, row.id), eq(taskReviews.status, REVIEW_STATUS.PENDING)))
     .returning({ id: taskReviews.id });
   if (escalated.length === 0) throw new Error('verdict already recorded for this round');
+  // POST-CAS RE-GATE (#292 review r1): the mint sequence below spans four awaited
+  // writes — a manual settle/teardown landing inside it must never leave a target
+  // PENDING row + a live approval obligation on a terminal task. The row flip already
+  // won (audit truth: the escalation was attempted), so mint nothing and report
+  // superseded — the settled outcome owns the task.
+  if (await escalationSettledMidFlight(taskId)) {
+    await logActivity(
+      taskId,
+      ACTIVITY_KIND.STATUS,
+      reviewerId,
+      'escalation aborted — the task settled during escalation',
+      { escalated: true, aborted: true, round },
+    );
+    return { outcome: 'superseded' };
+  }
   // roster mutation IS the handoff (one source of truth): the escalator leaves the
   // task, the replacement joins it — written only once the row flip won
   await db

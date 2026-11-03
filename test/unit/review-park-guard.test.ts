@@ -32,7 +32,8 @@ vi.mock('../../server/db/index', async () => {
               return cond != null ? [{ id: 'task-1' }] : [];
             };
             return {
-              then: <R>(onFulfilled?: (v: Array<Record<string, unknown>>) => R) => Promise.resolve(applied()).then(onFulfilled),
+              then: <R>(onFulfilled?: (v: Array<Record<string, unknown>>) => R) =>
+                Promise.resolve(applied()).then(onFulfilled),
               returning: async () => applied(),
             };
           },

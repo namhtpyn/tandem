@@ -123,7 +123,10 @@ beforeEach(() => {
     [],
     [],
   ];
-  h.taskReads = [[{ status: STATUS.inReview, reviewers: ['rev-1'], assigneeId: 'assignee-1' }]];
+  h.taskReads = [
+    [{ status: STATUS.inReview, reviewers: ['rev-1'], assigneeId: 'assignee-1' }],
+    [{ status: STATUS.inReview }],
+  ];
   h.casMiss = false;
   h.updates = [];
   h.inserts = [];
@@ -162,5 +165,19 @@ describe('escalateReview verdict-row CAS (#283)', () => {
     expect(h.spawned).toHaveLength(0);
     expect(h.notes).toHaveLength(0);
     expect(h.published).toBe(0);
+  });
+
+  it('a settle landing inside the mint window aborts the escalation — no phantom reviewer row or obligation on the settled task', async () => {
+    // post-CAS re-gate read: the task settled (cancelled) between the flip and the mint
+    h.taskReads = [
+      [{ status: STATUS.inReview, reviewers: ['rev-1'], assigneeId: 'assignee-1' }],
+      [{ status: STATUS.cancelled }],
+    ];
+    const outcome = await escalateReview('task-1', 'rev-1', 'escalate to Sup for reviewing — need eyes');
+    expect(outcome).toEqual({ outcome: 'superseded' });
+    expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(0);
+    expect(h.inserts).toHaveLength(0);
+    expect(h.spawned).toHaveLength(0);
+    expect(h.notes.some((n) => n.payload.aborted === true)).toBe(true);
   });
 });
