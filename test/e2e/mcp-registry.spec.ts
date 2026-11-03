@@ -262,7 +262,8 @@ test.describe('mcp registry + bindings', () => {
     // dispatch #1 through the workflow drawer — the plan carries the binding
     const drawer = await tasks.openWorkflowDrawer(row);
     const dispatch = drawer.getByTestId('drawer-verb-dispatch');
-    await expect(dispatch).toBeVisible({ timeout: 10_000 });
+    // 20s: a cold e2e database renders the gate data (statuses, run state) slowly
+    await expect(dispatch).toBeVisible({ timeout: 20_000 });
     await dispatch.click();
     await expect(drawer.getByText('Agent dispatched')).toBeVisible({ timeout: 10_000 });
     // the fake runner settles; its RESULT line completes the task (terminal)
@@ -296,14 +297,29 @@ test.describe('mcp registry + bindings', () => {
     const run2 = await rpcPost(page, '/rpc/tasks/dispatch', { taskId });
     expect(run2.status).toBe(200);
 
-    // dispatch #2's turn settles with NO [mcp] line — the revoke took effect
+    // dispatch #2's turn settles — back to the task page (the editor step left
+    // us on /employees) — assert on the RAW OUTPUT surfaces: open every run's
+    // output fold (each fetches its transcript on first open) and require
+    // exactly ONE (the bound run) to name the server. Whole-page count asserts
+    // raced the folds' open/toggle + lazy-fetch state; per-fold pre inspection
+    // is deterministic. Unbind = revoke: run 2 must NOT name the server.
     await page.goto(`/tasks/${taskId}`);
     await waitForHydration(page);
     await expect(page.getByText('Completed')).toHaveCount(2, { timeout: 60_000 });
-    const foldsAfter = page.getByText(/Full output from/);
-    await expect(foldsAfter.first()).toBeVisible({ timeout: 15_000 });
-    for (const fold of await foldsAfter.all()) await fold.click();
-    // exactly one fold carries the line: the FIRST run's — the unbound run must not
-    await expect(page.getByText(`[mcp] servers: ${serverName}`)).toHaveCount(1, { timeout: 15_000 });
+    const outFolds = page
+      .locator('details')
+      .filter({ has: page.locator('summary', { hasText: 'Full output from' }) });
+    await expect(outFolds).toHaveCount(2, { timeout: 15_000 });
+    for (let i = 0; i < 2; i++) {
+      await outFolds.nth(i).locator('summary').click();
+      await expect(outFolds.nth(i).locator('pre').first()).not.toBeEmpty({ timeout: 15_000 });
+    }
+    const foldsNamingServer = await outFolds
+      .locator('pre')
+      .evaluateAll(
+        (pres, name: string) => pres.filter((p) => (p.textContent ?? '').includes(`[mcp] servers: ${name}`)).length,
+        serverName,
+      );
+    expect(foldsNamingServer).toBe(1);
   });
 });
