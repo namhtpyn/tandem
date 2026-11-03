@@ -196,10 +196,14 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string,
       ).length > 0;
     if (running) continue;
     try {
+      // VERDICT-LESS CORRECTION (#276, blind-review r1): the block binds to the
+      // verdict-less reviewer — any OTHER pending reviewer picked by this loop
+      // gets a clean first-turn brief.
+      const correction = opts?.verdictCorrection === true && row.reviewerId === opts?.verdictlessReviewerId;
       await dispatchTask(taskId, 'http://tandem.internal', {
         reviewBy: row.reviewerId,
         resultBody: body,
-        verdictCorrection: opts?.verdictCorrection === true,
+        verdictCorrection: correction,
       });
       await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review turn dispatched to reviewer ${row.reviewerId}`, {
         reviewTurn: true,

@@ -75,11 +75,25 @@ beforeEach(() => {
 });
 
 describe('dispatchAiReviewTurns verdictCorrection threading (#276)', () => {
-  it('carries verdictCorrection=true only when the verdict-less settle path asks for it', async () => {
-    await dispatchAiReviewTurns('task-1', 'submitted work', { verdictCorrection: true });
+  it('carries verdictCorrection=true only for the verdict-less reviewer it re-dispatches', async () => {
+    await dispatchAiReviewTurns('task-1', 'submitted work', {
+      verdictCorrection: true,
+      verdictlessReviewerId: 'rev-1',
+    });
     expect(h.dispatchCalls).toHaveLength(1);
     expect(h.dispatchCalls[0]?.verdictCorrection).toBe(true);
     expect(h.dispatchCalls[0]?.reviewBy).toBe('rev-1');
+  });
+
+  it('a DIFFERENT pending reviewer picked by the loop gets a clean first-turn brief', async () => {
+    // blind-review r1: the block binds to the verdict-less reviewer, not to
+    // "whoever the sequential loop picks"
+    await dispatchAiReviewTurns('task-1', 'submitted work', {
+      verdictCorrection: true,
+      verdictlessReviewerId: 'someone-else',
+    });
+    expect(h.dispatchCalls).toHaveLength(1);
+    expect(h.dispatchCalls[0]?.verdictCorrection).toBe(false);
   });
 
   it('first-turn / next-reviewer dispatches never carry the correction', async () => {

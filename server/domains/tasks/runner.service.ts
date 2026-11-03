@@ -18,7 +18,7 @@ import type { RoutingProposal } from '#shared/run-verdict';
 import { nonNull } from '#shared/utils/non-null';
 
 import { asDb, db, type DbExecutor } from '../../db/index';
-import { environments, tasks, taskRuns, taskAttachments, taskMessages } from '../../db/schema';
+import { environments, tasks, taskReviews, taskRuns, taskAttachments, taskMessages } from '../../db/schema';
 import { env } from '../kernel/env';
 import { publishChange } from '../kernel/kernel';
 import { redisQueue } from '../kernel/queue';
@@ -457,11 +457,11 @@ import {
   sha256Hex,
 } from './attachments.util';
 /** everything the dispatched agent needs, decrypted; returns null pieces when unconfigured */
-import { buildBrief, loadBriefData, REVIEW_CORRECTION_MARKER } from './brief.service';
+import { buildBrief, loadBriefData } from './brief.service';
 import { promptImageSplit } from './prompt-images.util';
 import { recordProposals } from './proposals.service';
 import { resultImageTokens, type ResultFile } from './result-attachments.util';
-import { recordVerdict, parkRound } from './review.service';
+import { recordVerdict, parkRound, currentRound } from './review.service';
 import type { SshPlan } from './ssh-exec.util';
 import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles, ensureOutDir } from './ssh-files.util';
 import { appendMessageAttachments, createRunMessage, updateRunMessageBody } from './thread.service';
@@ -588,10 +588,15 @@ async function lastSessionFor(taskId: string, employeeId: string, excludeRunId?:
 /** REVIEW LAW: a review turn runs ON the task but BY a reviewer — their own AI env,
  * their own ACP session (per task PER EMPLOYEE — never the assignee's session), and a
  * review brief carrying the submitted result. Envelope settles the verdict at run end. */
-export async function loadReviewPlan(taskId: string, reviewerId: string, resultBody: string) {
+export async function loadReviewPlan(taskId: string, reviewerId: string, resultBody: string, correction = false) {
   const base = await loadDispatchPlanFor(reviewerId, taskId);
-  // reviewer's own session on this task = their latest run's sessionId (null on first)
-  return { ...base, review: { reviewerId, resultBody, resumeSessionId: await lastSessionFor(taskId, reviewerId) } };
+  // reviewer's own session on this task = their latest run's sessionId (null on first).
+  // correction (#276): structured flag — the fake runner keys on the PLAN, never on
+  // user-authored brief content.
+  return {
+    ...base,
+    review: { reviewerId, resultBody, correction, resumeSessionId: await lastSessionFor(taskId, reviewerId) },
+  };
 }
 
 /** loadDispatchPlan for a specific employee (the reviewer), not the task assignee.
@@ -847,13 +852,21 @@ export type DispatchJob = {
   tandemUrl: string;
   reviewBy?: string;
   resultBody?: string;
+  verdictCorrection?: boolean;
 };
 
 /** dispatch intent options — review turns carry their reviewer + the body being reviewed.
  * verdictCorrection (VERDICT-LESS CORRECTION #276): set ONLY by the verdict-less
  * settle path's bounded re-dispatch — the frozen brief then carries the CORRECTION
- * block (never on a first-turn brief). */
-export type DispatchOpts = { reviewBy?: string; resultBody?: string; verdictCorrection?: boolean };
+ * block (never on a first-turn brief). verdictlessReviewerId binds the block to
+ * THAT reviewer: a different pending reviewer picked by the sequential loop gets a
+ * clean first-turn brief. */
+export type DispatchOpts = {
+  reviewBy?: string;
+  resultBody?: string;
+  verdictCorrection?: boolean;
+  verdictlessReviewerId?: string;
+};
 
 /** DISPATCH CLAIM LAW (#162, SPEC): the dispatch claim is ONE conditional flip of
  * the task row — status must still be in a ready-category when the flip lands; the
@@ -903,7 +916,7 @@ export async function createRun(
   const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & {
     review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'];
   } = opts?.reviewBy // eslint-disable-line @typescript-eslint/consistent-type-definitions -- union widening
-    ? await loadReviewPlan(taskId, opts.reviewBy, opts.resultBody ?? '')
+    ? await loadReviewPlan(taskId, opts.reviewBy, opts.resultBody ?? '', opts?.verdictCorrection === true)
     : await loadDispatchPlan(taskId);
 
   // claim: dispatch note is written BEFORE the run row exists so its createdAt
@@ -1003,7 +1016,13 @@ export async function enqueueRun(runId: string, employeeId: string, tandemUrl: s
   const hub = await redisQueue();
   await hub.enqueue<DispatchJob>(
     dispatchQueueName(employeeId),
-    { runId, tandemUrl, reviewBy: opts?.reviewBy, resultBody: opts?.resultBody },
+    {
+      runId,
+      tandemUrl,
+      reviewBy: opts?.reviewBy,
+      resultBody: opts?.resultBody,
+      verdictCorrection: opts?.verdictCorrection === true,
+    },
     {
       attempts: DISPATCH_ATTEMPTS,
       jobId: runId,
@@ -1050,8 +1069,9 @@ export async function dispatchTask(
 
 /** REVIEW LAW: a review turn's envelope writes the reviewer's verdict row
  * ([RESULT] approve / [BLOCKED] change request); a verdict-less review NEVER
- * silently approves — it parks on the owner. */
-async function settleReviewVerdict(taskId: string, reviewerId: string, envelope: ReviewEnvelope | null) {
+ * silently approves — it re-dispatches once per round with the CORRECTION block,
+ * then parks on the owner. Exported for the per-round-bound unit pin (#276). */
+export async function settleReviewVerdict(taskId: string, reviewerId: string, envelope: ReviewEnvelope | null) {
   // IDENTITY MAP (final spec 2026-10-29): the review envelope kind IS the verdict —
   // no translation layer. `escalate` is the one non-settling kind: a referral.
   if (envelope?.kind === 'approved') {
@@ -1076,19 +1096,40 @@ async function settleReviewVerdict(taskId: string, reviewerId: string, envelope:
     await escalateReview(taskId, reviewerId, envelope.text || 'escalate for reviewing');
   } else {
     // verdict-less review: the reviewer's turn never produced a verdict envelope —
-    // a transport-class failure of the review, so re-dispatch its turn ONCE before
-    // parking on the owner (bound: a reviewer with 2+ runs this round has already
-    // had its second chance — that parks instead of looping forever)
+    // a transport-class failure of the review, so re-dispatch its turn ONCE PER
+    // ROUND before parking on the owner (bound, #276 blind-review r1: PER-ROUND —
+    // the pre-fix query counted the reviewer's runs across ALL rounds, so from the
+    // reviewer's second round onward the FIRST verdict-less turn parked with no
+    // retry and no correction block; runs this round = started after the current
+    // round's row was minted — unknown row falls back to the lifetime count)
+    const round = await currentRound(taskId);
+    let roundStart: Date | null = null;
+    if (round > 0) {
+      const roundRow = (
+        await db
+          .select({ createdAt: taskReviews.createdAt })
+          .from(taskReviews)
+          .where(
+            and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round), eq(taskReviews.reviewerId, reviewerId)),
+          )
+          .limit(1)
+      )[0];
+      roundStart = roundRow?.createdAt ?? null;
+    }
     const reviewRuns = await db.query.taskRuns.findMany({
-      columns: { id: true },
+      columns: { id: true, startedAt: true },
       where: { employeeId: { eq: reviewerId }, message: { taskId: { eq: taskId } } },
     });
-    if (reviewRuns.length <= 1) {
+    const thisRound = roundStart
+      ? reviewRuns.filter((r) => r.startedAt && r.startedAt.getTime() >= roundStart.getTime())
+      : reviewRuns;
+    if (thisRound.length <= 1) {
       const { dispatchAiReviewTurns } = await import('./review.service');
       // VERDICT-LESS CORRECTION (#276): the retry brief carries the CORRECTION block —
       // a bare replay of the identical brief failed identically in prod (the reviewer
-      // never learned its prior turn produced no envelope).
-      await dispatchAiReviewTurns(taskId, undefined, { verdictCorrection: true });
+      // never learned its prior turn produced no envelope). Bound to THIS reviewer:
+      // the block must never land on a different pending reviewer's first turn.
+      await dispatchAiReviewTurns(taskId, undefined, { verdictCorrection: true, verdictlessReviewerId: reviewerId });
       await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
       return;
     }
@@ -1382,7 +1423,13 @@ async function supersededByNewerRun(runId: string, taskId: string, priorOutput: 
 export async function executeRun(
   runId: string,
   tandemUrl: string,
-  attempt: { attempt: number; maxAttempts: number; reviewBy?: string; resultBody?: string },
+  attempt: {
+    attempt: number;
+    maxAttempts: number;
+    reviewBy?: string;
+    resultBody?: string;
+    verdictCorrection?: boolean;
+  },
 ): Promise<{ status: FinishedStatus; exitCode: number | null }> {
   const row = await runnableRowOrSettled(runId);
   if (!row) return { status: RUN_STATUS.FAILED, exitCode: null };
@@ -1393,7 +1440,7 @@ export async function executeRun(
   const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & {
     review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'];
   } = attempt.reviewBy // eslint-disable-line @typescript-eslint/consistent-type-definitions -- union widening
-    ? await loadReviewPlan(taskId, attempt.reviewBy, attempt.resultBody ?? '')
+    ? await loadReviewPlan(taskId, attempt.reviewBy, attempt.resultBody ?? '', attempt.verdictCorrection === true)
     : await loadDispatchPlan(taskId);
   // THE drift fix: the prompt is the one frozen at createRun — never rebuilt here
   const brief = nonNull(row.prompt, 'run prompt (frozen at createRun)');
@@ -1418,14 +1465,15 @@ export async function executeRun(
       // fake-runner MCP parity (SPEC): the dispatch plan really carried these
       const mcpLine = mcpDispatchLine(mcpServers);
       if (mcpLine) onLine(mcpLine);
-      // VERDICT-LESS CORRECTION (#276, fake-runner parity): a frozen brief carrying
-      // the correction marker picks the corrected-script env when set — e2e drives
-      // "verdict-less first turn -> conforming envelope on the corrected re-dispatch".
+      // VERDICT-LESS CORRECTION (#276, fake-runner parity): the STRUCTURED plan flag
+      // (never user-authored brief content) picks the corrected-script env — e2e
+      // drives "verdict-less first turn -> conforming envelope on the corrected
+      // re-dispatch".
       const fake = fakeRun(
         onLine,
         fakeScriptFromEnv(
           plan.review
-            ? brief.includes(REVIEW_CORRECTION_MARKER)
+            ? plan.review.correction
               ? 'TANDEM_FAKE_SCRIPT_REVIEW_CORRECTED'
               : 'TANDEM_FAKE_SCRIPT_REVIEW'
             : 'TANDEM_FAKE_SCRIPT',
