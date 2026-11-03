@@ -1,0 +1,575 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "55e29d02-3fbd-47ed-af82-743ca85560a3",
+  "prevIds": [
+    "4bdfb92f-c74b-4be1-8657-4723733d8600"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "mcp_server_bindings"
+      ],
+      "writes": [
+        "s|tbl|public.mcp_server_bindings",
+        "n|tbl|public.mcp_server_bindings",
+        "e|tbl|public.mcp_server_bindings",
+        "n|rel|public.mcp_server_bindings",
+        "n|type|public.mcp_server_bindings",
+        "n|rel|public.mcp_server_bindings_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "mcp_servers"
+      ],
+      "writes": [
+        "s|tbl|public.mcp_servers",
+        "n|tbl|public.mcp_servers",
+        "e|tbl|public.mcp_servers",
+        "n|rel|public.mcp_servers",
+        "n|type|public.mcp_servers",
+        "n|rel|public.mcp_servers_pkey",
+        "n|rel|public.mcp_servers_name_key"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "mcp_server_bindings",
+        "mcp_server_bindings_employee_server_uniq"
+      ],
+      "writes": [
+        "s|idx|public.mcp_server_bindings_employee_server_uniq",
+        "n|idx|public.mcp_server_bindings_employee_server_uniq",
+        "e|idx|public.mcp_server_bindings_employee_server_uniq",
+        "n|rel|public.mcp_server_bindings_employee_server_uniq"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_server_bindings",
+        "n|sch|public",
+        "n|col|public.mcp_server_bindings.employee_id",
+        "n|col|public.mcp_server_bindings.server_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "mcp_server_bindings",
+        "mcp_server_bindings_server_idx"
+      ],
+      "writes": [
+        "s|idx|public.mcp_server_bindings_server_idx",
+        "n|idx|public.mcp_server_bindings_server_idx",
+        "e|idx|public.mcp_server_bindings_server_idx",
+        "n|rel|public.mcp_server_bindings_server_idx"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_server_bindings",
+        "n|sch|public",
+        "n|col|public.mcp_server_bindings.server_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "mcp_server_bindings"
+      ],
+      "writes": [
+        "s|fk|public.mcp_server_bindings.mcp_server_bindings_employee_id_user_id_fkey",
+        "n|fk|public.mcp_server_bindings.mcp_server_bindings_employee_id_user_id_fkey",
+        "e|fk|public.mcp_server_bindings.mcp_server_bindings_employee_id_user_id_fkey",
+        "n|con|public.mcp_server_bindings.mcp_server_bindings_employee_id_user_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_server_bindings",
+        "n|sch|public",
+        "n|tbl|public.user",
+        "n|sch|public",
+        "n|col|public.mcp_server_bindings.employee_id",
+        "n|col|public.user.id",
+        "e|uniqueness|public.user.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "mcp_server_bindings"
+      ],
+      "writes": [
+        "s|fk|public.mcp_server_bindings.mcp_server_bindings_server_id_mcp_servers_id_fkey",
+        "n|fk|public.mcp_server_bindings.mcp_server_bindings_server_id_mcp_servers_id_fkey",
+        "e|fk|public.mcp_server_bindings.mcp_server_bindings_server_id_mcp_servers_id_fkey",
+        "n|con|public.mcp_server_bindings.mcp_server_bindings_server_id_mcp_servers_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_server_bindings",
+        "n|sch|public",
+        "n|tbl|public.mcp_servers",
+        "n|sch|public",
+        "n|col|public.mcp_server_bindings.server_id",
+        "n|col|public.mcp_servers.id",
+        "e|uniqueness|public.mcp_servers.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "mcp_server_bindings"
+      ],
+      "writes": [
+        "s|fk|public.mcp_server_bindings.mcp_server_bindings_secret_id_vault_secrets_id_fkey",
+        "n|fk|public.mcp_server_bindings.mcp_server_bindings_secret_id_vault_secrets_id_fkey",
+        "e|fk|public.mcp_server_bindings.mcp_server_bindings_secret_id_vault_secrets_id_fkey",
+        "n|con|public.mcp_server_bindings.mcp_server_bindings_secret_id_vault_secrets_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_server_bindings",
+        "n|sch|public",
+        "n|tbl|public.vault_secrets",
+        "n|sch|public",
+        "n|col|public.mcp_server_bindings.secret_id",
+        "n|col|public.vault_secrets.id",
+        "e|uniqueness|public.vault_secrets.id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "mcp_server_bindings",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "mcp_servers",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_server_bindings",
+        "name": "id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_server_bindings",
+        "name": "employee_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_server_bindings",
+        "name": "server_id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_server_bindings",
+        "name": "secret_id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_server_bindings",
+        "name": "last_probe_ok",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_server_bindings",
+        "name": "last_probe_detail",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_server_bindings",
+        "name": "last_probe_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_server_bindings",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_server_bindings",
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "name",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "url",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "notes",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "''",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_server_bindings",
+        "name": "mcp_server_bindings_employee_server_uniq",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "employee_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "server_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_server_bindings",
+        "name": "mcp_server_bindings_server_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "server_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_server_bindings",
+        "name": "mcp_server_bindings_employee_id_user_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "employee_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "user",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_server_bindings",
+        "name": "mcp_server_bindings_server_id_mcp_servers_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "server_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "mcp_servers",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_server_bindings",
+        "name": "mcp_server_bindings_secret_id_vault_secrets_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "secret_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "vault_secrets",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "SET NULL",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_server_bindings",
+        "name": "mcp_server_bindings_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "mcp_servers_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "mcp_servers_name_key",
+        "nameExplicit": false,
+        "columns": [
+          "name"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    }
+  ]
+}

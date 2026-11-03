@@ -194,6 +194,58 @@ export const aiEmployees = pgTable('ai_employees', {
     .$onUpdate(() => new Date()),
 });
 
+// MCP registry: admin-managed catalog of MCP servers agents bind to
+// (slice 1: transport http — SPEC "MCP (registry + per-agent bindings)")
+export const mcpServers = pgTable('mcp_servers', {
+  id: text('id')
+    .primaryKey()
+    .$default(() => uuidv7()),
+  name: text('name').notNull().unique(),
+  url: text('url').notNull(),
+  notes: text('notes').notNull().default(''),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .$default(() => new Date()),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .$default(() => new Date())
+    .$onUpdate(() => new Date()),
+});
+
+// Binding = the permission unit: one AI employee × one registry entry with an
+// optional vault credential (the secret plaintext is the Authorization header
+// value, decrypted server-side at dispatch ONLY) + the binding-level probe
+// verdict (PROBE VERDICT LAW: both outcomes persist; null = never probed).
+export const mcpServerBindings = pgTable(
+  'mcp_server_bindings',
+  {
+    id: text('id')
+      .primaryKey()
+      .$default(() => uuidv7()),
+    employeeId: uuid('employee_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    serverId: text('server_id')
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: 'cascade' }),
+    secretId: text('secret_id').references(() => vaultSecrets.id, { onDelete: 'set null' }),
+    lastProbeOk: boolean('last_probe_ok'),
+    lastProbeDetail: text('last_probe_detail'),
+    lastProbeAt: timestamp('last_probe_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .$default(() => new Date()),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .$default(() => new Date())
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex('mcp_server_bindings_employee_server_uniq').on(t.employeeId, t.serverId),
+    index('mcp_server_bindings_server_idx').on(t.serverId),
+  ],
+);
+
 // Tasks: work items assigned to employees (human or AI). AI assignees get
 // dispatched to their environment by the runner (M5).
 export const projects = pgTable(
@@ -538,6 +590,8 @@ export const relations = defineRelations(
     projects,
     taskProposals,
     taskAttachments,
+    mcpServers,
+    mcpServerBindings,
   },
   (helpers) => ({
     user: {
@@ -599,6 +653,12 @@ export const relations = defineRelations(
     },
     taskRuns: {
       message: helpers.one.taskMessages({ from: helpers.taskRuns.messageId, to: helpers.taskMessages.id }),
+    },
+    mcpServers: {},
+    mcpServerBindings: {
+      employee: helpers.one.user({ from: helpers.mcpServerBindings.employeeId, to: helpers.user.id }),
+      server: helpers.one.mcpServers({ from: helpers.mcpServerBindings.serverId, to: helpers.mcpServers.id }),
+      secret: helpers.one.vaultSecrets({ from: helpers.mcpServerBindings.secretId, to: helpers.vaultSecrets.id }),
     },
     verification: {},
   }),
