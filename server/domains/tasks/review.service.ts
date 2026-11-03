@@ -260,12 +260,6 @@ async function logVerdict(
   });
 }
 
-/** write one reviewer's verdict, then apply the END-OF-ROUND matrix. A round never
- * closes early: a request_change (or a split vote) waits for the remaining reviewers;
- * the LAST verdict triggers the transition. Unanimity is judged over the LIVE set —
- * escalated/superseded rows never count. Fires the next sequential reviewer when the
- * still waiting. */
-
 /** terminal-category status ids, resolved fresh so the flip predicate is evaluated
  * in SQL at WRITE time — never a stale read and never seeded ids only (#260). */
 async function terminalStatusIds(): Promise<string[]> {
