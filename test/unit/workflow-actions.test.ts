@@ -80,6 +80,18 @@ describe('workflow copy helpers', () => {
     expect(m.composerHint({ category: CATEGORY.WAITING_ANSWER, assigneeKind: 'human', running: false })).toBe(
       'Sends the answer',
     );
+    // the answer verb's actor is the question's current holder — other viewers
+    // read neutral wording (tasks.answer refuses non-chain senders, r4)
+    expect(m.composerHint({ category: CATEGORY.WAITING_ANSWER, assigneeKind: 'ai', viewerCanAnswer: false })).toBe(
+      'Sends the note',
+    );
+    expect(m.composerHint({ category: CATEGORY.WAITING_ANSWER, assigneeKind: 'ai', viewerCanAnswer: true })).toContain(
+      'answer',
+    );
+    // a pending dispatch backoff defers the run — never promise it (r4)
+    expect(m.composerHint({ category: CATEGORY.READY, assigneeKind: 'ai', backoffPending: true })).toBe(
+      'Sends the note',
+    );
     // exclusions mirror the server: in-review and terminal categories, humans
     expect(m.composerHint({ category: CATEGORY.IN_REVIEW, assigneeKind: 'ai', running: false })).toContain('thread');
     expect(m.composerHint({ category: CATEGORY.DONE, assigneeKind: 'ai', running: false })).toContain('thread');

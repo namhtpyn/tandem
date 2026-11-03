@@ -50,7 +50,9 @@ async function rowTaskId(row: ReturnType<TasksPage['rowFor']>): Promise<string> 
 }
 
 /** attach the AI assignee AFTER the dispatch_after hold is set: the task is born
- *  ineligible (no assignee), so the 5s scan can never claim it mid-test */
+ *  ineligible (no assignee), so the 5s scan can never claim it mid-test. The
+ *  scan AND the note path respect dispatch_after; the manual dispatch verb
+ *  ignores it — which is what these specs exercise */
 async function attachAssignee(page: import('@playwright/test').Page, taskId: string, employeeId: string) {
   const res = await page.request.post('/rpc/tasks/update', {
     data: { json: { id: taskId, assigneeId: employeeId } },
@@ -74,6 +76,14 @@ async function seedRunningRun(taskId: string) {
 async function holdScan(taskId: string) {
   const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
   await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId}`;
+  await sql.close();
+}
+
+/** lift the hold once the task left the ready category — the hint test reads the
+ *  dispatch wording, which a pending backoff correctly suppresses (r4) */
+async function clearHold(taskId: string) {
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  await sql`update tasks set dispatch_after = null where id = ${taskId}`;
   await sql.close();
 }
 
@@ -185,6 +195,9 @@ test('composer hint: blocked AI task promises dispatch on both surfaces; human t
   await page.locator('tbody').getByLabel(`Status for ${aiTitle}`).click();
   await page.getByRole('option', { name: 'Blocked' }).click();
   await expect(ai.row).toContainText('Blocked', { timeout: 10_000 });
+  // out of the scan's reach: lift the hold so the pending-backoff suppression
+  // (which the hint honestly honors, r4) doesn't mask the dispatch wording
+  await clearHold(ai.taskId);
 
   await createRow(page, tasks, humanTitle);
 

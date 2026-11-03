@@ -59,7 +59,9 @@ async function rowTaskId(row: ReturnType<TasksPage['rowFor']>): Promise<string> 
 }
 
 /** attach the AI assignee AFTER the dispatch_after hold is set: the task is born
- *  ineligible (no assignee), so the 5s scan can never claim it mid-test */
+ *  ineligible (no assignee), so the 5s scan can never claim it mid-test. The
+ *  scan AND the note path respect dispatch_after; the manual dispatch verb
+ *  ignores it — which is what these specs exercise */
 async function attachAssignee(page: import('@playwright/test').Page, taskId: string, employeeId: string) {
   const res = await page.request.post('/rpc/tasks/update', {
     data: { json: { id: taskId, assigneeId: employeeId } },

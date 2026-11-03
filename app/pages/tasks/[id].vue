@@ -102,6 +102,11 @@ const composerHintText = computed(() =>
     // promises nothing rather than a dispatch claim that could steer (#265 r1;
     // runsKnown, not runsSettled — a failed feed knows nothing, r3)
     running: runsKnown.value ? agentRunning.value : null,
+    // the answer verb's actor is the question's current holder (tasks.answer
+    // refuses non-chain viewers, r4)
+    viewerCanAnswer: task.value?.questionHolderId ? task.value.questionHolderId === session.value?.user.id : undefined,
+    // a pending dispatch backoff defers the run — never promise it (r4)
+    backoffPending: retryInMin.value > 0,
   }),
 );
 

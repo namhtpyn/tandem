@@ -641,7 +641,9 @@ export const tasksRouter = os.router({
     .input(z.object({ proposalId: z.string().min(1), note: z.string().max(2000).optional() }))
     .handler(async ({ input, context }) => {
       const me = await selfIdOf(context);
-      return confirmProposal(input.proposalId, me, input.note ?? '');
+      // runWorkflow maps service errors (the RUN LOCK refusal among them) to
+      // BAD_REQUEST — a bare throw surfaced as an opaque 500 (r4)
+      return await runWorkflow(() => confirmProposal(input.proposalId, me, input.note ?? ''));
     }),
 
   /** reject an agent proposal (note rides the next brief to prevent re-propose loops) */

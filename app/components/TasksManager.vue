@@ -474,6 +474,12 @@ const drawerComposerHint = computed(() =>
     category: workflowStatusCategory.value,
     assigneeKind: workflowTask.value?.assigneeKind,
     running: !drawerRunsQuery.isPending.value && !drawerRunsQuery.isError.value ? drawerAgentRunning.value : null,
+    // the answer verb's actor is the question's current holder (r4)
+    viewerCanAnswer: workflowTask.value?.questionHolderId
+      ? workflowTask.value.questionHolderId === session.value?.user.id
+      : undefined,
+    // a pending dispatch backoff defers the run — never promise it (r4)
+    backoffPending: retryInMin.value > 0,
   }),
 );
 // the drawer timeline reads the SAME source as the task page (threadList, which
