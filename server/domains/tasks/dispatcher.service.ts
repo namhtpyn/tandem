@@ -438,6 +438,7 @@ export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<ty
           maxAttempts: meta.maxAttempts,
           reviewBy: job.reviewBy,
           resultBody: job.resultBody,
+          verdictCorrection: job.verdictCorrection,
         });
       },
       {

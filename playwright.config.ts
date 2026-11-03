@@ -53,6 +53,12 @@ export default defineConfig({
             'working: step 3/3',
             'RESULT: task complete as requested',
           ].join('\n'),
+          // #276: the CORRECTED re-dispatch's script — used ONLY when the frozen
+          // brief carries the verdict-less correction marker (fake-runner parity)
+          TANDEM_FAKE_SCRIPT_REVIEW_CORRECTED: [
+            're-verifying with the correction contract in mind…',
+            '{"kind": "approved", "body": "verified with the corrected contract — passes"}',
+          ].join('\n'),
         },
         url: 'http://localhost:4100/health/live',
         reuseExistingServer: !process.env.CI,

@@ -461,7 +461,7 @@ import { buildBrief, loadBriefData } from './brief.service';
 import { promptImageSplit } from './prompt-images.util';
 import { recordProposals } from './proposals.service';
 import { resultImageTokens, type ResultFile } from './result-attachments.util';
-import { recordVerdict, parkRound } from './review.service';
+import { recordVerdict, parkRound, currentRound, dispatchedReviewRoundRow } from './review.service';
 import type { SshPlan } from './ssh-exec.util';
 import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles, ensureOutDir } from './ssh-files.util';
 import { appendMessageAttachments, createRunMessage, updateRunMessageBody } from './thread.service';
@@ -588,10 +588,15 @@ async function lastSessionFor(taskId: string, employeeId: string, excludeRunId?:
 /** REVIEW LAW: a review turn runs ON the task but BY a reviewer — their own AI env,
  * their own ACP session (per task PER EMPLOYEE — never the assignee's session), and a
  * review brief carrying the submitted result. Envelope settles the verdict at run end. */
-export async function loadReviewPlan(taskId: string, reviewerId: string, resultBody: string) {
+export async function loadReviewPlan(taskId: string, reviewerId: string, resultBody: string, correction = false) {
   const base = await loadDispatchPlanFor(reviewerId, taskId);
-  // reviewer's own session on this task = their latest run's sessionId (null on first)
-  return { ...base, review: { reviewerId, resultBody, resumeSessionId: await lastSessionFor(taskId, reviewerId) } };
+  // reviewer's own session on this task = their latest run's sessionId (null on first).
+  // correction (#276): structured flag — the fake runner keys on the PLAN, never on
+  // user-authored brief content.
+  return {
+    ...base,
+    review: { reviewerId, resultBody, correction, resumeSessionId: await lastSessionFor(taskId, reviewerId) },
+  };
 }
 
 /** loadDispatchPlan for a specific employee (the reviewer), not the task assignee.
@@ -763,7 +768,9 @@ export function buildEnvBlob(plan: Awaited<ReturnType<typeof loadDispatchPlan>>,
 }
 
 /** fake runner: synthetic streaming emitter for tests/CI */
-export function fakeScriptFromEnv(envName?: 'TANDEM_FAKE_SCRIPT' | 'TANDEM_FAKE_SCRIPT_REVIEW'): string[] | null {
+export function fakeScriptFromEnv(
+  envName?: 'TANDEM_FAKE_SCRIPT' | 'TANDEM_FAKE_SCRIPT_REVIEW' | 'TANDEM_FAKE_SCRIPT_REVIEW_CORRECTED',
+): string[] | null {
   const raw = env[envName ?? 'TANDEM_FAKE_SCRIPT'];
   if (!raw) return null;
   return raw.split('\n');
@@ -845,10 +852,21 @@ export type DispatchJob = {
   tandemUrl: string;
   reviewBy?: string;
   resultBody?: string;
+  verdictCorrection?: boolean;
 };
 
-/** dispatch intent options — review turns carry their reviewer + the body being reviewed */
-export type DispatchOpts = { reviewBy?: string; resultBody?: string };
+/** dispatch intent options — review turns carry their reviewer + the body being reviewed.
+ * verdictCorrection (VERDICT-LESS CORRECTION #276): set ONLY by the verdict-less
+ * settle path's bounded re-dispatch — the frozen brief then carries the CORRECTION
+ * block (never on a first-turn brief). verdictlessReviewerId binds the block to
+ * THAT reviewer: a different pending reviewer picked by the sequential loop gets a
+ * clean first-turn brief. */
+export type DispatchOpts = {
+  reviewBy?: string;
+  resultBody?: string;
+  verdictCorrection?: boolean;
+  verdictlessReviewerId?: string;
+};
 
 /** DISPATCH CLAIM LAW (#162, SPEC): the dispatch claim is ONE conditional flip of
  * the task row — status must still be in a ready-category when the flip lands; the
@@ -898,7 +916,7 @@ export async function createRun(
   const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & {
     review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'];
   } = opts?.reviewBy // eslint-disable-line @typescript-eslint/consistent-type-definitions -- union widening
-    ? await loadReviewPlan(taskId, opts.reviewBy, opts.resultBody ?? '')
+    ? await loadReviewPlan(taskId, opts.reviewBy, opts.resultBody ?? '', opts?.verdictCorrection === true)
     : await loadDispatchPlan(taskId);
 
   // claim: dispatch note is written BEFORE the run row exists so its createdAt
@@ -938,10 +956,14 @@ export async function createRun(
   // buildBrief in review mode (org, company, task-under-review, relay, submitted
   // result, collected evidence, verdict contract — one composer, no parallel system).
   const briefData = await loadBriefData(taskId, plan.ai.userId);
-  let reviewCtx: { resultBody: string; verdictsSoFar: string[] } | undefined;
+  let reviewCtx: { resultBody: string; verdictsSoFar: string[]; correction?: boolean } | undefined;
   if (plan.review) {
     const { verdictsSoFarFor } = await import('./review.service');
-    reviewCtx = { resultBody: plan.review.resultBody, verdictsSoFar: await verdictsSoFarFor(taskId) };
+    reviewCtx = {
+      resultBody: plan.review.resultBody,
+      verdictsSoFar: await verdictsSoFarFor(taskId),
+      correction: opts?.verdictCorrection === true,
+    };
   }
   const brief = buildBrief({
     ...briefData,
@@ -994,7 +1016,13 @@ export async function enqueueRun(runId: string, employeeId: string, tandemUrl: s
   const hub = await redisQueue();
   await hub.enqueue<DispatchJob>(
     dispatchQueueName(employeeId),
-    { runId, tandemUrl, reviewBy: opts?.reviewBy, resultBody: opts?.resultBody },
+    {
+      runId,
+      tandemUrl,
+      reviewBy: opts?.reviewBy,
+      resultBody: opts?.resultBody,
+      verdictCorrection: opts?.verdictCorrection === true,
+    },
     {
       attempts: DISPATCH_ATTEMPTS,
       jobId: runId,
@@ -1041,16 +1069,50 @@ export async function dispatchTask(
 
 /** REVIEW LAW: a review turn's envelope writes the reviewer's verdict row
  * ([RESULT] approve / [BLOCKED] change request); a verdict-less review NEVER
- * silently approves — it parks on the owner. */
-async function settleReviewVerdict(taskId: string, reviewerId: string, envelope: ReviewEnvelope | null) {
+ * silently approves — it re-dispatches once per round with the CORRECTION block,
+ * then parks on the owner. Exported for the per-round-bound unit pin (#276). */
+export async function settleReviewVerdict(
+  taskId: string,
+  reviewerId: string,
+  envelope: ReviewEnvelope | null,
+  runStartedAt: Date,
+) {
+  // SETTLE BINDING (ALL kinds — #276 blind-review r7): one read resolves the round
+  // THIS run was minted for and its row. A settle bound to an older closed round is
+  // a quiet no-op for EVERY envelope kind — a stale verdict must not run that
+  // round's end-of-round matrix (it would flip the task and cancel the LIVE round's
+  // obligations), and a stale referral must not rewrite the live roster. A null
+  // binding is an anomaly (rows are minted before any dispatch) and parks.
+  const binding = await dispatchedReviewRoundRow(taskId, reviewerId, runStartedAt);
+  const current = await currentRound(taskId);
+  if (!binding) {
+    const { parkRound } = await import('./review.service');
+    await parkRound(taskId, 'review finished without a verdict — no round row for the reviewer (anomaly)');
+    return;
+  }
+  if (binding.round < current) return; // stale settle: the live round owns progression
   // IDENTITY MAP (final spec 2026-10-29): the review envelope kind IS the verdict —
   // no translation layer. `escalate` is the one non-settling kind: a referral.
   if (envelope?.kind === 'approved') {
     /* v8 ignore next -- empty-text fallback */
-    await recordVerdict(taskId, reviewerId, REVIEW_STATUS.APPROVED, envelope.text || 'approved by review', 'ai');
+    await recordVerdict(
+      taskId,
+      reviewerId,
+      REVIEW_STATUS.APPROVED,
+      envelope.text || 'approved by review',
+      'ai',
+      runStartedAt,
+    );
   } else if (envelope?.kind === 'rejected') {
     /* v8 ignore next -- empty-text fallback */
-    await recordVerdict(taskId, reviewerId, REVIEW_STATUS.REJECTED, envelope.text || 'rejected by review', 'ai');
+    await recordVerdict(
+      taskId,
+      reviewerId,
+      REVIEW_STATUS.REJECTED,
+      envelope.text || 'rejected by review',
+      'ai',
+      runStartedAt,
+    );
   } else if (envelope?.kind === 'request_change') {
     /* v8 ignore next -- empty-text fallback */
     await recordVerdict(
@@ -1059,6 +1121,7 @@ async function settleReviewVerdict(taskId: string, reviewerId: string, envelope:
       REVIEW_STATUS.CHANGE_REQUESTED,
       envelope.text || 'changes requested by review',
       'ai',
+      runStartedAt,
     );
   } else if (envelope?.kind === 'escalate') {
     // referral: swap the reviewer up-chain on the TASK roster; a stuck referral
@@ -1067,16 +1130,35 @@ async function settleReviewVerdict(taskId: string, reviewerId: string, envelope:
     await escalateReview(taskId, reviewerId, envelope.text || 'escalate for reviewing');
   } else {
     // verdict-less review: the reviewer's turn never produced a verdict envelope —
-    // a transport-class failure of the review, so re-dispatch its turn ONCE before
-    // parking on the owner (bound: a reviewer with 2+ runs this round has already
-    // had its second chance — that parks instead of looping forever)
+    // a transport-class failure of the review, so re-dispatch its turn with the
+    // CORRECTION block ONCE, then park on the owner (#276). Binding + staleness
+    // guards resolved once above (all envelope kinds). The bound counts the
+    // reviewer's COMPLETED turns in that round — a reaped/failed turn is not a
+    // verdict-less attempt and never consumes the corrected retry.
     const reviewRuns = await db.query.taskRuns.findMany({
-      columns: { id: true },
+      columns: { id: true, startedAt: true, status: true },
       where: { employeeId: { eq: reviewerId }, message: { taskId: { eq: taskId } } },
     });
-    if (reviewRuns.length <= 1) {
+    // COMPLETED turns this round BEFORE this one: the settling run is already DONE
+    // and must not count itself — the corrected retry is consumed only by a prior
+    // completed (verdict-less) turn, never by a reaped/failed one.
+    const priorDone = reviewRuns.filter(
+      (r) =>
+        r.startedAt &&
+        r.startedAt.getTime() >= binding.createdAt.getTime() &&
+        r.startedAt.getTime() < runStartedAt.getTime() &&
+        r.status === RUN_STATUS.DONE,
+    );
+    if (priorDone.length === 0) {
       const { dispatchAiReviewTurns } = await import('./review.service');
-      await dispatchAiReviewTurns(taskId);
+      // VERDICT-LESS CORRECTION (#276): the retry brief carries the CORRECTION block —
+      // a bare replay of the identical brief failed identically in prod (the reviewer
+      // never learned its prior turn produced no envelope). Bound to THIS reviewer:
+      // the block must never land on a different pending reviewer's first turn.
+      await dispatchAiReviewTurns(taskId, undefined, {
+        verdictCorrection: true,
+        verdictlessReviewerId: reviewerId,
+      });
       await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
       return;
     }
@@ -1094,6 +1176,7 @@ async function settleDoneRun(
   runId: string,
   plan: { review?: { resultBody: string }; ai: { userId: string } },
   buffer: string,
+  runStartedAt: Date,
 ): Promise<'settled' | 'backoff'> {
   const { parseRunEnvelope, parseReviewEnvelope } = await import('#shared/run-verdict');
   // the ACP 400-char force-flush splits ONE long JSON verdict into adjacent buffer
@@ -1121,7 +1204,7 @@ async function settleDoneRun(
   }
   try {
     if (plan.review) {
-      await settleReviewVerdict(taskId, plan.ai.userId, reviewEnvelope);
+      await settleReviewVerdict(taskId, plan.ai.userId, reviewEnvelope, runStartedAt);
     } else if (workEnvelope && (workEnvelope.kind === 'question' || workEnvelope.kind === 'blocked')) {
       // empty-text envelopes fall back to the kind as the question body
       /* v8 ignore next */
@@ -1222,6 +1305,7 @@ export function createRunWriter(runId: string, initial: string, messageId: strin
     exitCode: number | null,
     plan: { review?: { resultBody: string }; ai: { userId: string } },
     attachTokens: string[] = [],
+    runStartedAt: Date = new Date(),
   ) => {
     if (settled) return;
     // STOP-RUN VERB (#229): a stop-settled run's verdict is already on the row —
@@ -1247,7 +1331,7 @@ export function createRunWriter(runId: string, initial: string, messageId: strin
     // no settle note: the run card's status pill (completed / failed exit N) IS the
     // verdict — a separate 'run finished' pill only duplicated it in the thread
     if (status === RUN_STATUS.DONE) {
-      await settleDoneRun(taskId, runId, plan, buffer);
+      await settleDoneRun(taskId, runId, plan, buffer, runStartedAt);
     } else if (plan.review) {
       // SETTLE-FAILURE PARK (SPEC, #199): a review turn that settles FAILED never
       // rides the work backoff ladder — bounceTaskAfterRun's doing-guard no-ops on an
@@ -1337,7 +1421,7 @@ async function settleZombieRow(runId: string, priorOutput: string, reason: strin
  * relic it refuses (GUARD-SETTLE LAW #162) and returns null. */
 async function runnableRowOrSettled(runId: string) {
   const row = await db.query.taskRuns.findFirst({
-    columns: { id: true, status: true, attempts: true, output: true, prompt: true, messageId: true },
+    columns: { id: true, status: true, attempts: true, output: true, prompt: true, messageId: true, startedAt: true },
     where: { id: { eq: runId } },
     with: { message: { columns: { taskId: true } } },
   });
@@ -1370,7 +1454,13 @@ async function supersededByNewerRun(runId: string, taskId: string, priorOutput: 
 export async function executeRun(
   runId: string,
   tandemUrl: string,
-  attempt: { attempt: number; maxAttempts: number; reviewBy?: string; resultBody?: string },
+  attempt: {
+    attempt: number;
+    maxAttempts: number;
+    reviewBy?: string;
+    resultBody?: string;
+    verdictCorrection?: boolean;
+  },
 ): Promise<{ status: FinishedStatus; exitCode: number | null }> {
   const row = await runnableRowOrSettled(runId);
   if (!row) return { status: RUN_STATUS.FAILED, exitCode: null };
@@ -1381,7 +1471,7 @@ export async function executeRun(
   const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & {
     review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'];
   } = attempt.reviewBy // eslint-disable-line @typescript-eslint/consistent-type-definitions -- union widening
-    ? await loadReviewPlan(taskId, attempt.reviewBy, attempt.resultBody ?? '')
+    ? await loadReviewPlan(taskId, attempt.reviewBy, attempt.resultBody ?? '', attempt.verdictCorrection === true)
     : await loadDispatchPlan(taskId);
   // THE drift fix: the prompt is the one frozen at createRun — never rebuilt here
   const brief = nonNull(row.prompt, 'run prompt (frozen at createRun)');
@@ -1406,13 +1496,23 @@ export async function executeRun(
       // fake-runner MCP parity (SPEC): the dispatch plan really carried these
       const mcpLine = mcpDispatchLine(mcpServers);
       if (mcpLine) onLine(mcpLine);
+      // VERDICT-LESS CORRECTION (#276, fake-runner parity): the STRUCTURED plan flag
+      // (never user-authored brief content) picks the corrected-script env — e2e
+      // drives "verdict-less first turn -> conforming envelope on the corrected
+      // re-dispatch".
       const fake = fakeRun(
         onLine,
-        fakeScriptFromEnv(plan.review ? 'TANDEM_FAKE_SCRIPT_REVIEW' : 'TANDEM_FAKE_SCRIPT') ?? undefined,
+        fakeScriptFromEnv(
+          plan.review
+            ? plan.review.correction
+              ? 'TANDEM_FAKE_SCRIPT_REVIEW_CORRECTED'
+              : 'TANDEM_FAKE_SCRIPT_REVIEW'
+            : 'TANDEM_FAKE_SCRIPT',
+        ) ?? undefined,
         (stop) => liveStops.set(runId, stop),
       );
       const r = await fake.finished;
-      await writer.finish(taskId, r.status, r.exitCode, plan);
+      await writer.finish(taskId, r.status, r.exitCode, plan, [], row.startedAt);
       return r;
     }
     const envBlob = buildEnvBlob(plan, tandemUrl);
@@ -1479,7 +1579,7 @@ export async function executeRun(
         (await Promise.race([collectP, new Promise<undefined>((r) => setTimeout(() => r(undefined), 20_000))]))
           ?.tokens ?? [];
     else void collectP;
-    await writer.finish(taskId, status, exitCode, plan, attachTokens);
+    await writer.finish(taskId, status, exitCode, plan, attachTokens, row.startedAt);
     return { status, exitCode };
   } catch (e) {
     /* v8 ignore next -- service throws are Error by construction */
