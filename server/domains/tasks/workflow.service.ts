@@ -205,6 +205,17 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
         'review round resumed — the answer landed while a verdict was being held; the reviewer re-fires now',
         { reviewResumed: true },
       );
+    } else {
+      // the repair flip lost (the task moved again mid-window — e.g. the dispatcher
+      // claimed it to doing): the owner owns it now — say so, owner unblock to
+      // in-review re-fires the held reviewer once the RUN LOCK lifts
+      await logActivity(
+        taskId,
+        ACTIVITY_KIND.STATUS,
+        null,
+        'review round resumed — the answer landed while a verdict was held; the task moved again, owner unblock to in-review re-fires the held reviewer',
+        { reviewResumed: true },
+      );
     }
   }
   await logActivity(taskId, OBLIGATION_ROLE.ANSWER, authorId, body, {});

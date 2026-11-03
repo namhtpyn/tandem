@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   roundLiveFirst: false,
   roundLiveSecond: false,
   taskUpdates: [] as Array<{ set: Record<string, unknown>; where: unknown }>,
+  lossyRepair: false,
   dispatched: [] as string[],
   cancelled: [] as string[],
   notes: [] as Array<{ body: string; payload: Record<string, unknown> }>,
@@ -41,8 +42,9 @@ vi.mock('../../server/db/index', async () => {
             returning: async () => {
               if (table !== tasks) return [];
               h.taskUpdates.push({ set, where: cond });
-              // the answer's arbitration flip always wins; the repair flip wins when
-              // a ready status is present in the guard (modeled as always-wins)
+              // the answer's arbitration flip always wins; the repair flip wins
+              // unless the test models it losing (h.lossyRepair)
+              if (h.lossyRepair && h.taskUpdates.length === 2) return [];
               return [{ id: 'task-1' }];
             },
           }),
@@ -117,6 +119,7 @@ const BEFORE = () => {
   h.roundLiveFirst = false;
   h.roundLiveSecond = false;
   h.taskUpdates = [];
+  h.lossyRepair = false;
   h.dispatched = [];
   h.cancelled = [];
   h.notes = [];
@@ -146,5 +149,15 @@ describe('answerQuestion hold-window repair (#288 r5)', () => {
     expect(h.taskUpdates[1]!.where).not.toBeNull(); // the repair is guarded (ready-category only)
     expect(h.dispatched).toEqual(['task-1']); // the held reviewer re-fires
     expect(h.notes.some((n) => n.payload.reviewResumed)).toBe(true); // the repair is on the thread
+  });
+
+  it('a repair flip lost to a yet-another move still notes the thread (never a silent strand)', async () => {
+    h.roundLiveSecond = true;
+    h.lossyRepair = true; // the dispatcher claimed the task to doing between the answer's flip and the repair
+    const res = await answerQuestion('task-1', 'holder-1', 'the answer');
+    expect(res).toEqual({ ok: true });
+    expect(h.taskUpdates).toHaveLength(2); // return flip + attempted repair flip
+    expect(h.dispatched).toHaveLength(0); // nothing re-fired — the task moved again
+    expect(h.notes.some((n) => n.payload.reviewResumed)).toBe(true); // documented, never silent
   });
 });
