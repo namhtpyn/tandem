@@ -197,6 +197,7 @@ describe('handleOauthCallback', () => {
         // minted under THIS config — the fingerprint check must pass
         configFingerprint: oauthConfigFingerprint({
           authKind: 'oauth',
+          oauthAuthorizeUrl: 'https://provider.example.com/authorize',
           oauthTokenUrl: 'https://provider.example.com/token',
           oauthRevocationUrl: 'https://provider.example.com/revoke',
           oauthClientId: 'client-123',

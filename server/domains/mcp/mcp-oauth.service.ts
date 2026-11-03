@@ -23,6 +23,7 @@ const b64url = (buf: Buffer) => buf.toString('base64url');
 
 export type OauthServerConfig = {
   authKind: string;
+  oauthAuthorizeUrl: string | null;
   oauthTokenUrl: string | null;
   oauthRevocationUrl: string | null;
   oauthClientId: string | null;
@@ -98,6 +99,7 @@ async function loadOauthServerConfig(serverId: string): Promise<OauthServerConfi
   }
   return {
     authKind: server?.authKind ?? 'none',
+    oauthAuthorizeUrl: server?.oauthAuthorizeUrl ?? null,
     oauthTokenUrl: server?.oauthTokenUrl ?? null,
     oauthRevocationUrl: server?.oauthRevocationUrl ?? null,
     oauthClientId: server?.oauthClientId ?? null,
@@ -150,11 +152,12 @@ async function persistTokens(bindingId: string, r: TokenResponse) {
 /** config fingerprint bound into the state row at connect and re-verified at
  * the callback — a pre-edit callback can never complete against a changed
  * contract (SPEC: old-contract tokens never survive a config change) */
-export function oauthConfigFingerprint(config: OauthServerConfig): string {
+export function oauthConfigFingerprint(config: OauthServerConfig & { oauthAuthorizeUrl?: string | null }): string {
   return createHash('sha256')
     .update(
       [
         config.authKind,
+        config.oauthAuthorizeUrl ?? '',
         config.oauthTokenUrl ?? '',
         config.oauthRevocationUrl ?? '',
         config.oauthClientId ?? '',
@@ -228,6 +231,16 @@ export async function handleOauthCallback(input: { code: string; state: string }
     redirect_uri: state.redirectUri,
     code_verifier: state.codeVerifier,
   });
+  // re-check AFTER the multi-second exchange: a config change committing while
+  // the POST was in flight must not resurrect old-contract tokens
+  const serverAfterExchange = await loadOauthServerConfig(binding.serverId);
+  if (
+    serverAfterExchange.authKind !== 'oauth' ||
+    !serverAfterExchange.oauthTokenUrl ||
+    oauthConfigFingerprint(serverAfterExchange) !== state.configFingerprint
+  ) {
+    throw new Error('registry entry changed during the exchange — start the connect again');
+  }
   await persistTokens(state.bindingId, token);
 }
 
