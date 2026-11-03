@@ -1164,6 +1164,53 @@ describe('acp.client turns', () => {
     );
     expect(promptArg).toEqual([{ type: 'text', text: 'do the thing' }]);
   });
+
+  // #284: a wire death DURING session setup (before any per-race handler exists —
+  // the prompt race attaches only after openSession resolves) must never raise an
+  // unhandledRejection: one handlerless rejected promise terminated the whole bun
+  // process, taking every in-flight run, the dispatcher and the SSE hub with it.
+  it('stream dying during the initialize await settles the turn with no unhandled rejection (#284)', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (r: unknown) => unhandled.push(r);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const stream = fakeAgent(() => {}); // never answers initialize
+      const turnP = turn(stream, {});
+      turnP.catch(() => {}); // the caller's own handler rides from creation
+      for (let i = 0; i < 200 && stream.written.length === 0; i++) await new Promise((r) => setTimeout(r, 5));
+      expect(stream.written.length).toBeGreaterThan(0); // initialize is on the wire
+      stream.close(); // the channel dies mid-setup (bad executable / ssh drop)
+      await expect(turnP).rejects.toThrow('acp stream closed'); // the turn SETTLES
+      await new Promise((r) => setTimeout(r, 20)); // one macrotask for any escapee
+      expect(unhandled).toEqual([]); // NO rejection escaped — the process survives
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  // #285: a silent agent (alive, never answers initialize, wire never closes) —
+  // the setup timeout must genuinely KILL the stream and settle the turn, never
+  // log "killing" while a no-op teardown leaves the worker slot wedged for hours.
+  it('silent agent: the setup timeout kills the wire and settles the turn (#285)', async () => {
+    const stream = fakeAgent(() => {}); // never answers anything, wire stays open
+    const lines: string[] = [];
+    await expect(turn(stream, { timeoutMs: 60, onLine: (l) => lines.push(l) })).rejects.toThrow('acp stream closed');
+    expect(stream.closed).toBe(true); // the timeout tore the wire down (pre-#285: still open)
+    expect(lines.some((l) => l.includes('session setup timed out'))).toBe(true);
+  });
+
+  // #285: the dead-wire race covers the WHOLE setup — a wire death between
+  // initialize and session/new settles the turn instead of hanging it unraced.
+  it('wire death during session/new settles the turn (#285)', async () => {
+    const stream = fakeAgent((msg, send, s) => {
+      const method = msg.method as string | undefined;
+      if (!method) return;
+      if (method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} });
+      else if (method === 'session/new') setTimeout(() => s.close(), 20); // dies before the answer
+    });
+    await expect(turn(stream)).rejects.toThrow('acp stream closed');
+    expect(stream.closed).toBe(true);
+  });
 });
 
 describe('acp-ssh transport', () => {

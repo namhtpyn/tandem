@@ -382,6 +382,34 @@ export type { DispatchJob } from './runner.service';
 /** live per-agent workers: agentId -> { concurrency, close } */
 const workers = new Map<string, { concurrency: number; close: () => Promise<void> }>();
 
+/** WORKER-SYNC COALESCING (#290): syncDispatchWorkers is check-then-act across an
+ * await and runs from four entry points (per-tick detached resync, settings update,
+ * employee create/update, boot) — overlapping calls both saw "no worker for agent
+ * X" and both created one, doubling the execution concurrency and leaving a
+ * duplicate no later sync ever removes. One execution in flight per process;
+ * concurrent callers await the SAME promise; the roster re-check stays
+ * authoritative once it lands. A caller whose intent POST-DATES the in-flight read
+ * (settings cap / employee roster changed just before its call) passes
+ * resyncAfter: true — the in-flight sync may have read pre-change state, so the
+ * caller's promise chains ONE follow-up execution after it lands (the new cap or
+ * roster applies without waiting for the next trigger; simultaneous follow-ups
+ * coalesce onto each other like any other sync). */
+let syncInFlight: Promise<void> | null = null;
+
+export function syncDispatchWorkers(
+  hub: NonNullable<Awaited<ReturnType<typeof redisQueue>>>,
+  opts: { resyncAfter?: boolean } = {},
+): Promise<void> {
+  if (syncInFlight) {
+    if (opts.resyncAfter) return syncInFlight.then(() => syncDispatchWorkers(hub));
+    return syncInFlight;
+  }
+  syncInFlight = syncDispatchWorkersInner(hub).finally(() => {
+    syncInFlight = null;
+  });
+  return syncInFlight;
+}
+
 /** a stale dispatch call (task already running/done/waiting) must quietly no-op: no
  * re-run, no retry storm, no status flip. */
 export async function dispatchIfEligible(taskId: string, tandemUrl: string) {
@@ -415,7 +443,7 @@ async function dispatchBackoffDelay(failedAttempt: number, runId: string): Promi
   return backoffFor(failedAttempt, row?.output ?? '');
 }
 
-export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<typeof redisQueue>>>) {
+async function syncDispatchWorkersInner(hub: NonNullable<Awaited<ReturnType<typeof redisQueue>>>) {
   const cap = await tasksPerAgentCap();
   const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true }, orderBy: { userId: 'asc' } });
   const wanted = new Set(aiRows.map((r) => r.userId));
@@ -457,7 +485,9 @@ export async function syncDispatchWorkers(hub: NonNullable<Awaited<ReturnType<ty
 export async function onDispatcherSettingsChanged() {
   try {
     const hub = await redisQueue();
-    await syncDispatchWorkers(hub);
+    // resyncAfter: the settings write post-dates any in-flight sync's cap read —
+    // the follow-up execution guarantees the NEW cap applies now, not next trigger
+    await syncDispatchWorkers(hub, { resyncAfter: true });
   } catch (e) {
     log.warn('dispatch worker resync failed:', (e as Error).message);
   }

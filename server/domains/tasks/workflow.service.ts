@@ -1,4 +1,4 @@
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 
 import {
   CATEGORY,
@@ -184,6 +184,39 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
   if (backTo === IN_REVIEW_STATUS) {
     // a review-round question was answered — the AI reviewer's turn re-arms
     await dispatchAiReviewTurns(taskId);
+  } else if (await openRoundLive(taskId)) {
+    // HOLD-WINDOW REPAIR (#288 r5): the verdict hold's revert can land between our
+    // openRoundLive read and this flip — the round is LIVE again while we returned
+    // the task to todo (nothing re-fires a ready-status round). Guarded restore to
+    // in-review + the reviewer re-fire.
+    const cats = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
+    const readyIds = cats.filter((c) => c.category === CATEGORY.READY).map((c) => c.id);
+    const resumed = await db
+      .update(tasks)
+      .set({ status: IN_REVIEW_STATUS, updatedAt: new Date() })
+      .where(and(eq(tasks.id, taskId), inArray(tasks.status, readyIds)))
+      .returning({ id: tasks.id });
+    if (resumed.length > 0) {
+      await dispatchAiReviewTurns(taskId);
+      await logActivity(
+        taskId,
+        ACTIVITY_KIND.STATUS,
+        null,
+        'review round resumed — the answer landed while a verdict was being held; the reviewer re-fires now',
+        { reviewResumed: true },
+      );
+    } else {
+      // the repair flip lost (the task moved again mid-window — e.g. the dispatcher
+      // claimed it to doing): the owner owns it now — say so, owner unblock to
+      // in-review re-fires the held reviewer once the RUN LOCK lifts
+      await logActivity(
+        taskId,
+        ACTIVITY_KIND.STATUS,
+        null,
+        'review round resumed — the answer landed while a verdict was held; the task moved again, owner unblock to in-review re-fires the held reviewer',
+        { reviewResumed: true },
+      );
+    }
   }
   await logActivity(taskId, OBLIGATION_ROLE.ANSWER, authorId, body, {});
   await refreshParentGating(taskId);

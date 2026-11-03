@@ -39,8 +39,11 @@ export default defineNitroPlugin(async () => {
   // on a fixed machine interval and logs every failed attempt loudly.
   const { maybeStartDispatcher, ensureDispatcherRunning } = await import('../domains/tasks/dispatcher.service');
   ensureDispatcherRunning({ start: maybeStartDispatcher });
-  const { bridgeRedisChanges } = await import('../domains/kernel/change-bus');
-  await bridgeRedisChanges();
+  const { bridgeRedisChangesWithRetry } = await import('../domains/kernel/change-bus');
+  // REDIS-BLIP BOOT LAW (#289): bounded retry then CONTINUE with degraded fanout
+  // (logged loudly by the helper) — a late redis never aborts boot (the admin seed
+  // below still runs) and never crash-loops the process.
+  await bridgeRedisChangesWithRetry();
 
   const existing = await db.query.user.findFirst({ columns: { id: true } });
   if (existing) return;

@@ -1,11 +1,14 @@
 // In-process change bus for oRPC live queries (pathbridge pattern).
 // Every mutation publishes; live generators re-emit fresh snapshots over SSE.
 import { MemoryPublisher } from '@orpc/publisher/memory';
+import { consola } from 'consola';
 
 import type { ChangeAction, ChangeResource } from '#shared/enums';
 
 export type { ChangeAction, ChangeResource };
 import { redisPubsub } from './pubsub';
+
+const log = consola.withTag('tandem');
 
 /** change-bus fanout channel + wire codec (encoded change events over pub/sub) */
 export const CHANGE_CHANNEL = 'tandem:changes';
@@ -64,6 +67,37 @@ export async function bridgeRedisChanges() {
     if (recentPublishedIds.has(e.id)) return; // own echo: already on the local bus
     void changeBus.publish('change', e);
   });
+}
+
+/** REDIS-BLIP BOOT LAW (#289): the boot-time bridge retries a bounded number of
+ * attempts and then logs loudly and CONTINUES — a redis blip at restart must never
+ * abort boot (the admin seed would never run) nor kill the process (crash-loop),
+ * and a replica must never come up silently with no cross-replica fanout for its
+ * whole lifetime (degraded fanout is VISIBLE in logs; the queue/pubsub paths
+ * reconnect independently). Returns whether the bridge came up. */
+export async function bridgeRedisChangesWithRetry(
+  opts: { attempts?: number; delayMs?: number; log?: { warn: (m: string) => void; error: (m: string) => void } } = {},
+): Promise<boolean> {
+  const attempts = Math.max(1, opts.attempts ?? 5);
+  const delayMs = opts.delayMs ?? 2_000;
+  const sink = opts.log ?? { warn: (m: string) => log.warn(m), error: (m: string) => log.error(m) };
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      await bridgeRedisChanges();
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (attempt >= attempts) {
+        sink.error(
+          `change-fanout bridge failed after ${attempt} attempt(s) — continuing with DEGRADED cross-replica fanout: ${msg}`,
+        );
+        return false;
+      }
+      sink.warn(`change-fanout bridge attempt ${attempt}/${attempts} failed — retrying: ${msg}`);
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  return false; // unreachable (the loop returns on every path)
 }
 
 // Bounded window of ids we published: a single id raced with any overlapping
