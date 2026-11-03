@@ -24,12 +24,19 @@ vi.mock('../../server/db/index', async () => {
       }),
       update: (table: unknown) => ({
         set: (set: Record<string, unknown>) => ({
-          where: (cond: unknown) => ({
-            then: <R>(onFulfilled?: (v: undefined) => R) => {
+          where: (cond: unknown) => {
+            const applied = () => {
               h.updates.push({ table: table === tasks ? 'tasks' : 'other', set, hasPredicate: cond != null });
-              return Promise.resolve(undefined).then(() => onFulfilled?.(undefined));
-            },
-          }),
+              // parkRound's guarded write now .returning()s the flipped rows (#282):
+              // the atomic predicate decides the flip — here the guard always wins
+              return cond != null ? [{ id: 'task-1' }] : [];
+            };
+            return {
+              then: <R>(onFulfilled?: (v: Array<Record<string, unknown>>) => R) =>
+                Promise.resolve(applied()).then(onFulfilled),
+              returning: async () => applied(),
+            };
+          },
         }),
       }),
     },

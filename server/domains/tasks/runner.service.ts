@@ -1049,10 +1049,12 @@ export async function dispatchTask(
     await enqueueRun(runId, employeeId, tandemUrl, opts);
   } catch (e) {
     // redis down between create and enqueue: settle the row so it can't hang RUNNING
-    // past its timeout, and bounce the task — the scan/ladder re-dispatches a fresh
-    // intent with a fresh frozen brief
+    // past its timeout. Work dispatches bounce the task — the scan/ladder re-dispatches
+    // a fresh intent with a fresh frozen brief. REVIEW dispatches never bounce the
+    // work task (#292 r1): the review lifecycle owns recovery (park/re-arm in-review;
+    // the round-open window fails the submit with the task left working).
     const msg = e instanceof Error ? e.message : String(e);
-    await bounceTaskAfterRun(taskId, runId, `[dispatch] enqueue failed: ${msg}`);
+    if (!opts?.reviewBy) await bounceTaskAfterRun(taskId, runId, `[dispatch] enqueue failed: ${msg}`);
     await db
       .update(taskRuns)
       .set({
@@ -1317,11 +1319,17 @@ export function createRunWriter(runId: string, initial: string, messageId: strin
       return;
     }
     settled = true;
-    // RUNNING predicate: a reaper-settled row is never overwritten mid-flight
-    await db
+    // RUNNING predicate: a reaper-settled row is never overwritten mid-flight.
+    // SETTLE ARBITRATION (#286): the guarded row write is the arbiter — 0 updated rows
+    // (a reaper or cross-replica stop already settled this run) skips every settle side
+    // effect: no message rewrite, no attachments, no envelope settle, no park, no
+    // bounce, no publishes. The winner owns the outcome.
+    const settledRows = await db
       .update(taskRuns)
       .set({ status, exitCode, output: buffer, finishedAt: new Date() })
-      .where(and(eq(taskRuns.id, runId), eq(taskRuns.status, RUN_STATUS.RUNNING)));
+      .where(and(eq(taskRuns.id, runId), eq(taskRuns.status, RUN_STATUS.RUNNING)))
+      .returning({ id: taskRuns.id });
+    if (settledRows.length === 0) return;
     // the thread message body becomes the parsed result of the final output
     // the run bubble carries the VERDICT on review turns (one response per turn)
     await updateRunMessageBody(messageId, buffer, Boolean(plan.review));
