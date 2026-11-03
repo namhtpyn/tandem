@@ -306,9 +306,7 @@ test.describe('mcp registry + bindings', () => {
     await page.goto(`/tasks/${taskId}`);
     await waitForHydration(page);
     await expect(page.getByText('Completed')).toHaveCount(2, { timeout: 60_000 });
-    const outFolds = page
-      .locator('details')
-      .filter({ has: page.locator('summary', { hasText: 'Full output from' }) });
+    const outFolds = page.locator('details').filter({ has: page.locator('summary', { hasText: 'Full output from' }) });
     await expect(outFolds).toHaveCount(2, { timeout: 15_000 });
     for (let i = 0; i < 2; i++) {
       await outFolds.nth(i).locator('summary').click();
