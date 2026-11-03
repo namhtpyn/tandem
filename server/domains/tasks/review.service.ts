@@ -287,17 +287,75 @@ async function terminalStatusIds(): Promise<string[]> {
   return statuses.filter((s) => s.category === CATEGORY.DONE || s.category === CATEGORY.CANCELLED).map((s) => s.id);
 }
 
+/** waiting_answer-category status ids, resolved fresh (#288): the settle flip
+ * refuses them — waiting_answer owns the flow, a question can never be stomped. */
+async function waitingAnswerStatusIds(): Promise<string[]> {
+  const statuses = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
+  return statuses.filter((s) => s.category === CATEGORY.WAITING_ANSWER).map((s) => s.id);
+}
+
 /** END-OF-ROUND FLIP CAS (#260): the settle flip is a conditional write refusing
  * done/cancelled-category statuses — a manual settle that lands between this
  * verdict's row write and the flip wins the race, keeps the owner's status and
- * makes the verdict a recorded-but-superseded audit row (returns false). */
+ * makes the verdict a recorded-but-superseded audit row (returns false).
+ * #288: the gate ALSO refuses waiting_answer-category statuses — a verdict
+ * settling over an open question would orphan the ANSWER obligation and kill the
+ * question thread; the refused flip re-checks and parks (hold arm below). */
 async function flipTask(taskId: string, status: string): Promise<boolean> {
   const flipped = await db
     .update(tasks)
     .set({ status, updatedAt: new Date() })
-    .where(and(eq(tasks.id, taskId), notInArray(tasks.status, await terminalStatusIds())))
+    .where(
+      and(
+        eq(tasks.id, taskId),
+        notInArray(tasks.status, [...(await terminalStatusIds()), ...(await waitingAnswerStatusIds())]),
+      ),
+    )
     .returning({ id: tasks.id });
   return flipped.length > 0;
+}
+
+/** WAITING-ANSWER HOLD (#288): the task is in a waiting_answer category at settle
+ * time — the round parks instead of flipping. The settling verdict's row returns
+ * to PENDING (scoped to THIS reviewer+round, only while it still carries this
+ * verdict — a concurrent teardown/escalation moving the row makes the revert miss
+ * and we keep our hands off: the round's own path owns it, never a foreign-state
+ * clobber); the ANSWER obligation and the waiting_answer status stay untouched;
+ * the thread notes the park. The answer's unblock re-dispatches the held reviewer
+ * (row PENDING again) and the round then settles normally on a live in-review
+ * task. Returns false when the task is not waiting_answer (normal settle). */
+async function holdVerdictForWaitingAnswer(
+  taskId: string,
+  reviewerId: string,
+  verdict: ReviewVerdict,
+  source: 'human' | 'ai',
+  round: number,
+): Promise<boolean> {
+  const cur = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  if (!cur) return false;
+  const cats = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
+  const cat = cats.find((c) => c.id === cur.status)?.category;
+  if (cat !== CATEGORY.WAITING_ANSWER) return false;
+  await db
+    .update(taskReviews)
+    .set({ status: REVIEW_STATUS.PENDING, note: null, decidedAt: null, source: null })
+    .where(
+      and(
+        eq(taskReviews.taskId, taskId),
+        eq(taskReviews.round, round),
+        eq(taskReviews.reviewerId, reviewerId),
+        eq(taskReviews.status, verdict),
+      ),
+    );
+  await logActivity(
+    taskId,
+    ACTIVITY_KIND.STATUS,
+    null,
+    'review round parked — verdict arrived while the task is waiting for an answer; it re-fires when the answer lands',
+    { reviewParked: true, why: 'waiting_answer owns the flow', round, source },
+  );
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+  return true;
 }
 
 /** write one reviewer's verdict, then apply the END-OF-ROUND matrix. A round never
@@ -312,7 +370,7 @@ export async function recordVerdict(
   note: string,
   source: 'human' | 'ai',
   at?: Date,
-): Promise<{ outcome: 'waiting' | 'done' | 'returned' | 'cancelled' | 'superseded' }> {
+): Promise<{ outcome: 'waiting' | 'done' | 'returned' | 'cancelled' | 'superseded' | 'parked' }> {
   const taskRow = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
   if (!taskRow) throw new Error('task not found');
   // terminal gate: a settled (done/cancelled) task must never be moved by a verdict
@@ -360,7 +418,7 @@ async function settleRound(
   note: string,
   source: 'human' | 'ai',
   round: number,
-): Promise<{ outcome: 'waiting' | 'done' | 'returned' | 'cancelled' | 'superseded' }> {
+): Promise<{ outcome: 'waiting' | 'done' | 'returned' | 'cancelled' | 'superseded' | 'parked' }> {
   const roundRows = await db
     .select()
     .from(taskReviews)
@@ -393,15 +451,26 @@ async function settleRound(
   const allApproved = live.length > 0 && live.every((r) => r.status === REVIEW_STATUS.APPROVED);
   const allRejected = live.length > 0 && live.every((r) => r.status === REVIEW_STATUS.REJECTED);
 
+  // WAITING-ANSWER HOLD (#288): waiting_answer owns the flow — a settling verdict
+  // parks the round instead of flipping the task (obligation intact, status stays
+  // waiting_answer; the answer's unblock re-fires the held reviewer)
+  if (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round)) return { outcome: 'parked' };
+
   if (allRejected) {
-    if (!(await flipTask(taskId, CANCELLED_STATUS))) return { outcome: 'superseded' };
+    if (!(await flipTask(taskId, CANCELLED_STATUS)))
+      return (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round))
+        ? { outcome: 'parked' }
+        : { outcome: 'superseded' };
     await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
     await logVerdict(taskId, reviewerId, note || 'rejected — task cancelled', { rejected: true, round }, source);
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'cancelled' };
   }
   if (allApproved) {
-    if (!(await flipTask(taskId, DONE_STATUS))) return { outcome: 'superseded' };
+    if (!(await flipTask(taskId, DONE_STATUS)))
+      return (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round))
+        ? { outcome: 'parked' }
+        : { outcome: 'superseded' };
     await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
     await logVerdict(
       taskId,
@@ -415,7 +484,10 @@ async function settleRound(
   }
   // any request_change — or a split approve/reject — bounces the task to the
   // assignee; the verdict notes already sit on the thread and ride the next brief
-  if (!(await flipTask(taskId, TODO_STATUS))) return { outcome: 'superseded' };
+  if (!(await flipTask(taskId, TODO_STATUS)))
+    return (await holdVerdictForWaitingAnswer(taskId, reviewerId, verdict, source, round))
+      ? { outcome: 'parked' }
+      : { outcome: 'superseded' };
   await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
   await logVerdict(taskId, reviewerId, note || 'changes requested', { changeRequested: true, round }, source);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
