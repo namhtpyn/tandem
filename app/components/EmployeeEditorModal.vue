@@ -12,7 +12,7 @@ import { PROVIDER_KIND, endpointKind, isModelsEndpoint } from '#shared/api-style
 import { CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 import { employeeAvatarUrl } from '~/utils/api-urls';
-import { NONE_ID, saveFailed } from '~/utils/forms';
+import { errorMessage, NONE_ID, saveFailed } from '~/utils/forms';
 import type { EmployeeRow, EnvironmentRow, TitleRow } from '~/utils/orpc-types';
 import { kindLabel } from '~/utils/ui-labels';
 import type { SecretOption } from '~/utils/vault-options';
@@ -299,6 +299,145 @@ async function save() {
 onServerPrefetch(() =>
   Promise.all([titlesQuery.suspense(), envQuery.suspense(), providersLive.suspense(), secretsLive.suspense()]),
 );
+
+// ---- MCP bindings (SPEC "MCP (registry + per-agent bindings)") -------------
+// Per-agent permission units: one registry entry + an optional vault secret
+// whose plaintext rides the dispatch as the Authorization header (write-only
+// vault law — the binding carries the ref + last-four only). Admin verbs; the
+// /employees surface is admin-tier so this section only renders there.
+
+// change-bus resource token the MCP domain publishes under — same key prefix
+// as McpRegistryManager so both surfaces share one cache entry (swapped to
+// CHANGE_RESOURCE.MCP once the enum gains the entry).
+const MCP_RESOURCE = 'MCP';
+
+/** binding row per the mcp.bindingsList result (SPEC procedure table) */
+type McpBindingRow = {
+  id: string;
+  serverId: string;
+  serverName: string;
+  url: string;
+  secretId: string | null;
+  secretName: string | null;
+  lastFour: string | null;
+  lastProbeOk: boolean | null;
+  lastProbeDetail: string | null;
+  lastProbeAt: string | null;
+};
+
+const mcpRegistryLive = useQuery($orpc.mcp.registryList.queryOptions({ queryKey: [MCP_RESOURCE, 'registry'] }));
+const mcpRegistryItems = computed(() =>
+  (mcpRegistryLive.data.value?.data ?? []).map((r: { id: string; name: string }) => ({ label: r.name, value: r.id })),
+);
+
+const mcpBindings = ref<McpBindingRow[]>([]);
+const mcpLoading = ref(false);
+const mcpBusy = ref(false);
+const mcpError = ref<string | null>(null);
+const newBindingServerId = ref<string | null>(null);
+const newBindingSecretId = ref<string | null>(null);
+const probingServerId = ref<string | null>(null);
+const unbindCandidate = ref<string | null>(null);
+/** ephemeral per-server probe feedback (the persisted verdict rides the row via the refetch) */
+const probeResults = ref<Record<string, string | undefined>>({});
+
+async function loadBindings() {
+  const employeeId = editingId.value;
+  if (!employeeId) {
+    mcpBindings.value = [];
+    return;
+  }
+  mcpLoading.value = true;
+  try {
+    const res = await $client.mcp.bindingsList({ employeeId });
+    mcpBindings.value = res.data;
+  } catch (e) {
+    mcpError.value = errorMessage(e, "Couldn't load MCP bindings — try again");
+  } finally {
+    mcpLoading.value = false;
+  }
+}
+
+async function addBinding() {
+  const employeeId = editingId.value;
+  const serverId = newBindingServerId.value;
+  if (!employeeId || !serverId || mcpBusy.value) return;
+  mcpBusy.value = true;
+  mcpError.value = null;
+  try {
+    // upsert (SPEC): re-binding an entry swaps its credential and clears the verdict
+    await $client.mcp.bindingsSet({
+      employeeId,
+      serverId,
+      ...(newBindingSecretId.value ? { secretId: newBindingSecretId.value } : {}),
+    });
+    newBindingServerId.value = null;
+    newBindingSecretId.value = null;
+    await loadBindings();
+  } catch (e) {
+    mcpError.value = errorMessage(e, "Couldn't bind the server — try again");
+  } finally {
+    mcpBusy.value = false;
+  }
+}
+
+async function probeBinding(binding: McpBindingRow) {
+  const employeeId = editingId.value;
+  if (!employeeId || probingServerId.value) return;
+  probingServerId.value = binding.serverId;
+  try {
+    const res = await $client.mcp.probe({ employeeId, serverId: binding.serverId });
+    // surface the returned detail line directly — the persisted verdict badge
+    // updates via the bindings refetch below
+    probeResults.value[binding.serverId] = res.detail || (res.ok ? 'Handshake OK' : 'Probe failed');
+    await loadBindings();
+  } catch (e) {
+    probeResults.value[binding.serverId] = errorMessage(e, "Couldn't probe the server — try again");
+  } finally {
+    probingServerId.value = null;
+  }
+}
+
+async function confirmUnbind() {
+  const employeeId = editingId.value;
+  const serverId = unbindCandidate.value;
+  if (!employeeId || !serverId || mcpBusy.value) return;
+  mcpBusy.value = true;
+  mcpError.value = null;
+  try {
+    await $client.mcp.bindingsRemove({ employeeId, serverId });
+    unbindCandidate.value = null;
+    await loadBindings();
+  } catch (e) {
+    mcpError.value = errorMessage(e, "Couldn't unbind the server — try again");
+  } finally {
+    mcpBusy.value = false;
+  }
+}
+
+/** relative 'probed <when>' label (same voice as the environments verdict) */
+function probedWhen(iso: string | null | undefined) {
+  if (!iso) return '';
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+// load when the modal opens with an AI employee in edit (create has no id to
+// bind against — the section says so instead); an AI-kind switch in create mode
+// re-fires with no id and stays a no-op
+watch(
+  [open, showAiFields, editingId] as const,
+  async ([o, ai, id]) => {
+    if (!o || !ai || !id) return;
+    await loadBindings();
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -527,6 +666,158 @@ onServerPrefetch(() =>
               placeholder="Custom instructions for this agent…"
               class="w-full"
             />
+          </UFormField>
+          <UFormField name="mcpBindings">
+            <template #label> MCP servers </template>
+            <template #hint>
+              <FormHint text="Bound servers ride every dispatch of this agent" />
+            </template>
+            <UAlert
+              v-if="mcpError"
+              role="alert"
+              icon="i-lucide-circle-alert"
+              color="error"
+              variant="subtle"
+              :title="mcpError"
+              class="mb-2"
+              :ui="{ title: 'text-sm' }"
+            />
+            <!-- edit mode: the live binding list — unbinding revokes on the agent's next dispatch -->
+            <div v-if="editingId" class="space-y-2">
+              <p v-if="mcpLoading && !mcpBindings.length" class="text-muted text-sm">Loading bindings…</p>
+              <p v-else-if="!mcpBindings.length" class="text-muted text-sm">No MCP servers bound.</p>
+              <div
+                v-for="b in mcpBindings"
+                :key="b.id"
+                data-testid="mcp-binding-row"
+                class="border-default rounded-md p-3"
+              >
+                <div class="flex min-h-11 flex-wrap items-center justify-between gap-2">
+                  <div class="min-w-0">
+                    <p class="text-highlighted truncate text-sm font-medium">{{ b.serverName }}</p>
+                    <p class="text-dimmed truncate font-mono text-xs" :title="b.url">{{ b.url }}</p>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <UBadge
+                      v-if="b.lastProbeOk === true"
+                      color="success"
+                      variant="subtle"
+                      size="sm"
+                      icon="i-lucide-circle-check"
+                      data-testid="mcp-probe-ok"
+                    >
+                      OK
+                    </UBadge>
+                    <UBadge
+                      v-else-if="b.lastProbeOk === false"
+                      color="error"
+                      variant="subtle"
+                      size="sm"
+                      icon="i-lucide-circle-alert"
+                      data-testid="mcp-probe-detail"
+                    >
+                      Not OK
+                    </UBadge>
+                    <UBadge
+                      v-else
+                      color="neutral"
+                      variant="subtle"
+                      size="sm"
+                      icon="i-lucide-circle"
+                      data-testid="mcp-probe-never"
+                    >
+                      Not probed
+                    </UBadge>
+                    <span
+                      v-if="b.lastProbeAt"
+                      class="text-dimmed hidden text-xs sm:inline"
+                      :title="`${b.lastProbeDetail ?? ''} · probed ${b.lastProbeAt}`"
+                    >
+                      probed {{ probedWhen(b.lastProbeAt) }}
+                    </span>
+                    <UButton
+                      icon="i-lucide-plug-zap"
+                      variant="ghost"
+                      color="neutral"
+                      size="sm"
+                      :aria-label="`Probe ${b.serverName}`"
+                      :loading="probingServerId === b.serverId"
+                      :disabled="mcpBusy || (probingServerId !== null && probingServerId !== b.serverId)"
+                      @click="probeBinding(b)"
+                    />
+                    <template v-if="unbindCandidate !== b.serverId">
+                      <UButton
+                        icon="i-lucide-unlink"
+                        variant="ghost"
+                        color="neutral"
+                        size="sm"
+                        class="text-muted hover:text-error"
+                        :aria-label="`Unbind ${b.serverName}`"
+                        :disabled="mcpBusy"
+                        @click="unbindCandidate = b.serverId"
+                      />
+                    </template>
+                    <template v-else>
+                      <span class="text-muted text-xs">Revoke access?</span>
+                      <UButton
+                        label="Unbind"
+                        color="error"
+                        variant="soft"
+                        size="sm"
+                        :loading="mcpBusy"
+                        @click="confirmUnbind"
+                      />
+                      <UButton label="Keep" variant="ghost" color="neutral" size="sm" @click="unbindCandidate = null" />
+                    </template>
+                  </div>
+                </div>
+                <p class="text-muted mt-1 text-xs">
+                  <template v-if="b.secretName">
+                    Credential
+                    <span class="text-highlighted">{{ b.secretName }}</span>
+                    <span class="text-dimmed font-mono"> •••• {{ b.lastFour }}</span>
+                  </template>
+                  <template v-else>No credential — anonymous requests</template>
+                </p>
+                <p v-if="probeResults[b.serverId]" class="text-dimmed mt-1 text-xs">
+                  {{ probeResults[b.serverId] }}
+                </p>
+              </div>
+            </div>
+            <p v-else class="text-muted text-sm">Save the agent first, then bind MCP servers here.</p>
+            <!-- add-binding row: registry entry + optional vault credential (write-only: the secret's plaintext is never returned) -->
+            <div v-if="editingId" class="mt-2 space-y-2">
+              <USelectMenu
+                v-model="newBindingServerId"
+                :items="mcpRegistryItems"
+                value-key="value"
+                :search-input="{ placeholder: 'Search servers' }"
+                placeholder="MCP server…"
+                icon="i-lucide-plug"
+                class="w-full"
+              />
+              <div class="flex items-center gap-2">
+                <USelectMenu
+                  v-model="newBindingSecretId"
+                  :items="secretItems"
+                  value-key="value"
+                  :search-input="{ placeholder: 'Search secrets' }"
+                  clear
+                  placeholder="Credential (optional)"
+                  icon="i-lucide-key-round"
+                  class="w-full flex-1"
+                />
+                <UButton
+                  icon="i-lucide-plus"
+                  label="Bind"
+                  size="sm"
+                  class="shrink-0"
+                  :disabled="!newBindingServerId || mcpBusy"
+                  :loading="mcpBusy"
+                  @click="addBinding"
+                />
+              </div>
+            </div>
           </UFormField>
         </template>
         <UAlert

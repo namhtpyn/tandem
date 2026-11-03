@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { z } from 'zod';
 
+import { ROLE } from '#shared/enums';
 import { SERVER_UNREACHABLE_COPY } from '~/utils/copy';
 // Dashboard shell (Nuxt UI UDashboardGroup): login screen when unauthenticated,
 // sidebar + content when signed in. Session/auth-config via useState (app.vue).
@@ -138,6 +139,9 @@ const nav = computed(() =>
   [
     { label: 'Overview', icon: 'i-lucide-layout-dashboard', to: '/' },
     { label: 'Vault', icon: 'i-lucide-shield', to: '/vault' },
+    // MCP registry is an admin surface (SPEC registry + per-agent bindings):
+    // hidden for non-admins — UX, never the boundary (the /mcp page re-gates)
+    ...(session.value?.user.role === ROLE.ADMIN ? [{ label: 'MCP', icon: 'i-lucide-plug', to: '/mcp' }] : []),
     { label: 'Environments', icon: 'i-lucide-server', to: '/environments' },
     { label: 'Employees', icon: 'i-lucide-users', to: '/employees' },
     { label: 'Tasks', icon: 'i-lucide-list-todo', to: '/tasks' },

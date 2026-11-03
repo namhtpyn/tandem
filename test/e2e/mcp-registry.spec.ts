@@ -1,0 +1,309 @@
+// E2E: MCP registry + per-agent bindings (SPEC "## MCP (registry + per-agent
+// bindings)"). Covers: registry CRUD through /mcp, the in-use remove guard
+// (400 while a binding exists, surfaced then unbind+delete succeeds), the
+// binding-level probe verdict badges against a local JSON-RPC initialize
+// server, fake-runner dispatch naming bound servers in the run output, and
+// unbind = revoke on the next dispatch.
+//
+// The shared cleanup fixture sweeps users/tasks/environments/vault rows but
+// NOT the mcp tables — the mcpSweep fixture below removes this file's
+// bindings + servers BEFORE the shared sweep (they reference the employee
+// user + vault secret that sweep deletes).
+import { SQL } from 'bun';
+
+import { expect, test as cleanupTest } from './helpers/cleanup';
+import { E2E_DATABASE_URL } from './helpers/env';
+import { waitForHydration } from './pages/base.page.ts';
+import { McpPage } from './pages/mcp.page.ts';
+import { TasksPage } from './pages/tasks.page.ts';
+
+const test = cleanupTest.extend<{ mcpSweep: void }>({
+  // auto fixture, teardown-ordered BEFORE the shared dbCleanup sweep (fixtures
+  // tear down LIFO): mcp_server_bindings join the employee user and the vault
+  // secret — both swept — so the child rows must die first.
+  mcpSweep: [
+    // eslint-disable-next-line no-empty-pattern -- Playwright fixtures need a destructuring pattern
+    async ({}, use) => {
+      const startedAt = new Date();
+      await use();
+      const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+      const failures: string[] = [];
+      try {
+        for (const statement of [
+          'delete from mcp_server_bindings where created_at >= $1',
+          'delete from mcp_servers where created_at >= $1',
+        ]) {
+          try {
+            await sql.unsafe(statement, [startedAt]);
+          } catch (e) {
+            failures.push(`${statement}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+      } finally {
+        await sql.close();
+      }
+      if (failures.length) throw new Error(`mcp cleanup failed:\n${failures.join('\n')}`);
+    },
+    { auto: true },
+  ],
+});
+// ---- oRPC seeding: every write rides the browser session's cookies via
+// page.request (oRPC v2 wraps payloads in { json }) --------------------------
+
+async function rpcPost(page: import('@playwright/test').Page, path: string, input: unknown) {
+  const res = await page.request.post(path, { data: { json: input } });
+  let json: { json?: unknown } = {};
+  try {
+    json = (await res.json()) as { json?: unknown };
+  } catch {
+    /* error statuses may carry no json envelope */
+  }
+  return { status: res.status(), json: json.json as { id?: string } | undefined };
+}
+
+/** AI employee on a throwaway environment — the dispatch/probe subject */
+async function seedAiEmployee(
+  page: import('@playwright/test').Page,
+  tag: string,
+): Promise<{ employeeId: string; employeeName: string }> {
+  const env = await rpcPost(page, '/rpc/environments/create', {
+    name: `E2E MCP Env ${tag}`,
+    host: '127.0.0.1',
+    port: '22',
+    username: 'e2e',
+  });
+  expect(env.status).toBe(200);
+  const employeeName = `E2E MCP Bot ${tag}`;
+  const emp = await rpcPost(page, '/rpc/employees/create', {
+    name: employeeName,
+    email: `e2e-mcp-${tag}@tandem.local`,
+    kind: 'ai',
+    title: 'Runner',
+    environmentId: env.json?.id,
+    executable: 'hermes acp',
+  });
+  expect(emp.status).toBe(200);
+  return { employeeId: emp.json?.id as string, employeeName };
+}
+
+async function seedSecret(page: import('@playwright/test').Page, tag: string): Promise<string> {
+  const res = await rpcPost(page, '/rpc/vault/secrets/create', {
+    name: `MCP cred ${tag}`,
+    description: '',
+    value: `sk-e2e-mcp-${tag}`,
+    folderId: null,
+  });
+  expect(res.status).toBe(200);
+  return res.json?.id as string;
+}
+
+async function seedServer(page: import('@playwright/test').Page, name: string, url: string): Promise<string> {
+  const res = await rpcPost(page, '/rpc/mcp/registryCreate', { name, url, notes: '' });
+  expect(res.status).toBe(200);
+  return res.json?.id as string;
+}
+
+async function bindServer(
+  page: import('@playwright/test').Page,
+  employeeId: string,
+  serverId: string,
+  secretId?: string,
+): Promise<void> {
+  const res = await rpcPost(page, '/rpc/mcp/bindingsSet', {
+    employeeId,
+    serverId,
+    ...(secretId ? { secretId } : {}),
+  });
+  expect(res.status).toBe(200);
+}
+
+/** first seeded ready-category status id — the re-dispatch status flip target */
+async function readyStatusId(): Promise<string> {
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    const rows = await sql`select id from task_statuses where category = 'ready' order by position asc limit 1`;
+    return rows[0].id as string;
+  } finally {
+    await sql.end();
+  }
+}
+
+/** open the agent editor's MCP bindings section for a seeded employee */
+async function openMcpSection(page: import('@playwright/test').Page, employeeName: string) {
+  await page.goto('/employees');
+  await waitForHydration(page);
+  await page.getByPlaceholder('Search employees…').fill(employeeName);
+  const empRow = page.locator('tr:visible', { hasText: employeeName }).first();
+  await expect(empRow).toBeVisible({ timeout: 15_000 });
+  await empRow.getByRole('button', { name: /Edit / }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit employee' });
+  await expect(editor).toBeVisible();
+  const bindingRow = editor.getByTestId('mcp-binding-row');
+  await expect(bindingRow).toBeVisible({ timeout: 15_000 });
+  return { editor, bindingRow };
+}
+
+test.describe('mcp registry + bindings', () => {
+  test('registry CRUD through the /mcp UI; admin nav item present', async ({ page }) => {
+    const mcp = new McpPage(page);
+    const tag = Date.now().toString(36).slice(-6);
+    const name = `E2E MCP ${tag}`;
+
+    await mcp.open();
+    // layout law: the MCP item sits right after Vault, admin-only
+    await expect(page.getByRole('link', { name: 'MCP', exact: true })).toBeVisible();
+
+    await mcp.createServer({ name, url: `http://127.0.0.1:9/${tag}`, notes: 'first notes' });
+    await expect(mcp.rowFor(name)).toBeVisible({ timeout: 15_000 });
+
+    // edit notes
+    await mcp.rowFor(name).getByRole('button', { name: /Edit / }).click();
+    await page.getByRole('textbox', { name: 'Notes' }).fill('updated notes');
+    await page.getByRole('button', { name: 'Save changes' }).click();
+    await expect(mcp.rowFor(name)).toContainText('updated notes', { timeout: 15_000 });
+
+    // two-step delete
+    await mcp
+      .rowFor(name)
+      .getByRole('button', { name: /Delete / })
+      .click();
+    await mcp.confirmDelete();
+    await expect(mcp.rowFor(name)).toHaveCount(0, { timeout: 15_000 });
+  });
+
+  test('registry remove is guarded while a binding exists; unbind then delete succeeds', async ({ page }) => {
+    const mcp = new McpPage(page);
+    const tag = Date.now().toString(36).slice(-6);
+    const { employeeId } = await seedAiEmployee(page, tag);
+    const serverName = `E2E Guarded ${tag}`;
+    const serverId = await seedServer(page, serverName, `http://127.0.0.1:9/${tag}`);
+    const secretId = await seedSecret(page, tag);
+    await bindServer(page, employeeId, serverId, secretId);
+
+    await mcp.open();
+    const row = mcp.rowFor(serverName);
+    await expect(row).toBeVisible({ timeout: 15_000 });
+    // the binding shows in the count column
+    await expect(row.getByTestId('mcp-binding-count')).toHaveText('1', { timeout: 15_000 });
+
+    // remove → the server refuses (SPEC in-use guard, 400) and its message line
+    // is surfaced in the confirm; the entry survives
+    await row.getByRole('button', { name: /Delete / }).click();
+    const confirm = page.getByRole('dialog', { name: 'Delete server' });
+    await confirm.getByRole('button', { name: 'Delete', exact: true }).click();
+    await expect(confirm.getByRole('alert')).toBeVisible({ timeout: 15_000 });
+    await expect(mcp.rowFor(serverName)).toBeVisible();
+
+    // unbind via the admin verb, retry the delete from the still-open confirm
+    const unbind = await rpcPost(page, '/rpc/mcp/bindingsRemove', { employeeId, serverId });
+    expect(unbind.status).toBe(200);
+    await confirm.getByRole('button', { name: 'Delete', exact: true }).click();
+    await expect(mcp.rowFor(serverName)).toHaveCount(0, { timeout: 15_000 });
+  });
+
+  test('probe verdict: initialize handshake flips the badge to OK; credential stays masked', async ({ page }) => {
+    const tag = Date.now().toString(36).slice(-6);
+    const { employeeId, employeeName } = await seedAiEmployee(page, tag);
+
+    // in-spec MCP server answering POST with a JSON-RPC initialize result
+    const mcpServer = Bun.serve({
+      port: 0, // ephemeral
+      fetch: () =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            result: { protocolVersion: '2025-06-18', capabilities: {}, serverInfo: { name: 't', version: '1' } },
+          }),
+          { headers: { 'content-type': 'application/json' } },
+        ),
+    });
+    const serverName = `E2E Probe ${tag}`;
+    const serverId = await seedServer(page, serverName, `http://127.0.0.1:${mcpServer.port}/mcp`);
+    const secretId = await seedSecret(page, tag);
+    await bindServer(page, employeeId, serverId, secretId);
+
+    try {
+      const { editor, bindingRow } = await openMcpSection(page, employeeName);
+
+      // never-probed verdict first
+      await expect(bindingRow.getByTestId('mcp-probe-never')).toBeVisible();
+      // write-only vault law: secret name + last-four hint, never the plaintext
+      await expect(bindingRow).toContainText(`MCP cred ${tag}`);
+      await expect(bindingRow).toContainText('••••');
+      await expect(bindingRow).not.toContainText(`sk-e2e-mcp-${tag}`);
+
+      // probe → the OK verdict persists on the binding row and renders
+      await bindingRow.getByRole('button', { name: `Probe ${serverName}` }).click();
+      await expect(bindingRow.getByTestId('mcp-probe-ok')).toBeVisible({ timeout: 15_000 });
+      await editor.getByRole('button', { name: 'Cancel' }).click();
+      await expect(editor).toBeHidden({ timeout: 10_000 });
+    } finally {
+      mcpServer.stop(true);
+    }
+  });
+
+  test('fake-runner dispatch names bound servers; unbind revokes on the next dispatch', async ({ page }) => {
+    const tasks = new TasksPage(page);
+    const tag = Date.now().toString(36).slice(-6);
+    const { employeeId, employeeName } = await seedAiEmployee(page, tag);
+    const serverName = `E2E Dispatch ${tag}`;
+    const serverId = await seedServer(page, serverName, `http://127.0.0.1:9/${tag}`);
+    await bindServer(page, employeeId, serverId);
+
+    const taskTitle = `MCPD ${tag}`;
+    await tasks.navigate('/tasks');
+    await tasks.openCreateModal();
+    await tasks.fillTaskForm({ title: taskTitle, assignee: employeeName });
+    await tasks.saveTask();
+    const row = tasks.rowFor(taskTitle);
+    await expect(row).toBeVisible({ timeout: 15_000 });
+
+    // dispatch #1 through the workflow drawer — the plan carries the binding
+    const drawer = await tasks.openWorkflowDrawer(row);
+    const dispatch = drawer.getByTestId('drawer-verb-dispatch');
+    await expect(dispatch).toBeVisible({ timeout: 10_000 });
+    await dispatch.click();
+    await expect(drawer.getByText('Agent dispatched')).toBeVisible({ timeout: 10_000 });
+    // the fake runner settles; its RESULT line completes the task (terminal)
+    await expect(drawer.getByText(/Run completed/i)).toBeVisible({ timeout: 45_000 });
+
+    // run output names the bound server (SPEC fake-runner parity format)
+    await page.goto('/tasks');
+    await waitForHydration(page);
+    const link = page.getByRole('link', { name: taskTitle }).first();
+    await expect(link).toBeVisible({ timeout: 15_000 });
+    await link.click();
+    await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
+    const taskId = page.url().split('/').pop() as string;
+    await expect(page.getByText('Completed').first()).toBeVisible({ timeout: 15_000 });
+    const folds = page.getByText(/Full output from/);
+    await expect(folds.first()).toBeVisible({ timeout: 15_000 });
+    for (const fold of await folds.all()) await fold.click();
+    await expect(page.getByText(`[mcp] servers: ${serverName}`)).toBeVisible({ timeout: 15_000 });
+
+    // unbind = revoke (SPEC) — via the editor's binding row, confirmed inline
+    const { editor, bindingRow } = await openMcpSection(page, employeeName);
+    await bindingRow.getByRole('button', { name: `Unbind ${serverName}` }).click();
+    await bindingRow.getByRole('button', { name: 'Unbind', exact: true }).click();
+    await expect(editor.getByTestId('mcp-binding-row')).toHaveCount(0, { timeout: 15_000 });
+    await tasks.dismissOverlay('New employee');
+
+    // the RESULT settle left the task terminal — manual status is free (owner
+    // law 2026-10-27), flip it back to the ready category and re-dispatch
+    const setStatus = await rpcPost(page, '/rpc/tasks/setStatus', { id: taskId, status: await readyStatusId() });
+    expect(setStatus.status).toBe(200);
+    const run2 = await rpcPost(page, '/rpc/tasks/dispatch', { taskId });
+    expect(run2.status).toBe(200);
+
+    // dispatch #2's turn settles with NO [mcp] line — the revoke took effect
+    await page.goto(`/tasks/${taskId}`);
+    await waitForHydration(page);
+    await expect(page.getByText('Completed')).toHaveCount(2, { timeout: 60_000 });
+    const foldsAfter = page.getByText(/Full output from/);
+    await expect(foldsAfter.first()).toBeVisible({ timeout: 15_000 });
+    for (const fold of await foldsAfter.all()) await fold.click();
+    // exactly one fold carries the line: the FIRST run's — the unbound run must not
+    await expect(page.getByText(`[mcp] servers: ${serverName}`)).toHaveCount(1, { timeout: 15_000 });
+  });
+});
