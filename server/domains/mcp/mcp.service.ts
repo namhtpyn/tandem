@@ -356,7 +356,7 @@ export async function bindingsList(employeeId: string) {
       (rows as BindingWithRefs[]).map(async (b) => ({
         ...toBindingRow(b),
         authKind: b.server.authKind,
-        oauth: await oauthStatusFor(b.id),
+        oauth: await oauthStatusFor(b.id, oauthConfigFromServerRow(b.server)),
       })),
     ),
   };

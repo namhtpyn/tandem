@@ -103,6 +103,7 @@ import {
   handleOauthCallback,
   oauthConfigFingerprint,
   oauthRedirectUri,
+  oauthStatusFor,
   revokeOauthTokens,
   startOauthConnect,
   wipeOauthTokensForServer,
@@ -457,6 +458,29 @@ describe('revokeOauthTokens (unbind = revoke)', () => {
     vi.stubGlobal('fetch', vi.fn());
     expect(await getFreshAccessToken(BINDING_ID, SERVER_CONFIG)).toBeNull();
     expect(h.fetchCalls).toHaveLength(0);
+  });
+});
+
+describe('oauthStatusFor (masked status obeys the inert-row law)', () => {
+  it('a fingerprint-matching row reports connected with masked expiry', async () => {
+    const expires = new Date(Date.now() + 3_600_000);
+    h.tokenRows.push({ bindingId: BINDING_ID, accessTokenEnc: 'x', expiresAt: expires, configFingerprint: CONFIG_FP });
+    const status = await oauthStatusFor(BINDING_ID, SERVER_CONFIG);
+    expect(status.connected).toBe(true);
+    expect(status.expiresAt).toBe(expires.toISOString());
+  });
+
+  it('an inert row (stale fingerprint) reports NOT connected and is deleted on the read', async () => {
+    h.tokenRows.push({
+      bindingId: BINDING_ID,
+      accessTokenEnc: 'x',
+      expiresAt: new Date(Date.now() + 3_600_000),
+      configFingerprint: 'minted-under-the-old-contract',
+    });
+    const status = await oauthStatusFor(BINDING_ID, SERVER_CONFIG);
+    expect(status.connected).toBe(false);
+    expect(status.expiresAt).toBeNull();
+    expect(h.deletedTokenBindingIds).toHaveLength(1);
   });
 });
 

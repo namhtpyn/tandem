@@ -288,14 +288,25 @@ export function oauthConfigFromServerRow(server: {
   };
 }
 
-/** masked read model for binding rows — never the tokens */
-export async function oauthStatusFor(bindingId: string): Promise<{ connected: boolean; expiresAt: string | null }> {
+/** masked read model for binding rows — never the tokens. The inert-row law
+ * applies here too: a row whose fingerprint no longer matches the server
+ * config reports NOT connected and is deleted on this read (never ships,
+ * never lingers as a dead "Connected" badge). */
+export async function oauthStatusFor(
+  bindingId: string,
+  server: OauthServerConfig,
+): Promise<{ connected: boolean; expiresAt: string | null }> {
   const rows = await db.query.mcpOauthTokens.findMany({
-    columns: { expiresAt: true },
+    columns: { expiresAt: true, configFingerprint: true },
     where: { bindingId: { eq: bindingId } },
   });
   const row = rows[0];
-  return { connected: !!row, expiresAt: row?.expiresAt ? row.expiresAt.toISOString() : null };
+  if (!row) return { connected: false, expiresAt: null };
+  if (row.configFingerprint !== oauthConfigFingerprint(server)) {
+    await db.delete(mcpOauthTokens).where(eq(mcpOauthTokens.bindingId, bindingId));
+    return { connected: false, expiresAt: null };
+  }
+  return { connected: true, expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null };
 }
 
 /**
