@@ -234,6 +234,14 @@ export async function confirmProposal(proposalId: string, confirmedBy: string, n
     if (p.kind === PROPOSAL_KIND.SUBTASKS) {
       await executeSubtasks(task, p.payload as { items?: SubtaskItem[] }, confirmedBy, events, tx);
     } else if (p.kind === PROPOSAL_KIND.REASSIGN) {
+      // RUN LOCK (#264, r1 finding): the human confirm must not swap the assignee
+      // under a live run — the confirm refuses (the transaction rolls back, the
+      // proposal stays PROPOSED) and the owner re-confirms once the run settles.
+      // The settle-time auto-execution arm is unaffected: the lock is released
+      // before a settle can route.
+      const { runningRunIdForTask } = await import('./runner.service');
+      if (await runningRunIdForTask(task.id))
+        throw new Error('task is running — the reassign waits until the run settles');
       const payload = p.payload as { targetName?: string; reason?: string };
       const target = await findByName(payload.targetName, tx);
       if (!target) throw new Error(`employee "${payload.targetName}" not found`);

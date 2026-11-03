@@ -141,6 +141,11 @@ export const statusesRouter = os.router({
     });
     const task = tRows[0];
     if (!task) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
+    // RUN LOCK (#264): a live run owns the assignee — the auto path obeys the
+    // same lock as tasks.update (SPEC: assignee edits rejected server-side)
+    const { runningRunIdForTask } = await import('../tasks/runner.service');
+    if (await runningRunIdForTask(task.id))
+      throw new ORPCError('BAD_REQUEST', { message: 'task is running — assignee is locked until it settles' });
 
     // candidates: every employee, with open-task load (non-terminal statuses)
     const users = await db.query.user.findMany({

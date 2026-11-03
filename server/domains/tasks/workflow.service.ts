@@ -246,7 +246,9 @@ export async function addNote(
     where: { id: { eq: task.status } },
   });
   const excluded = [CATEGORY.DONE, CATEGORY.CANCELLED, CATEGORY.IN_REVIEW] as string[];
-  if (statusRows[0] && excluded.includes(statusRows[0].category)) return { steered: false as const };
+  // an unresolved status id (dangling legacy row) is dead input like everywhere
+  // else the membership rule applies — thread-only, never a dispatch guess
+  if (!statusRows[0] || excluded.includes(statusRows[0].category)) return { steered: false as const };
   if (!task.assigneeId) return { steered: false as const };
   const ai = await db.query.aiEmployees.findFirst({
     columns: { userId: true },

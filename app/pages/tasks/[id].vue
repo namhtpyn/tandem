@@ -98,7 +98,9 @@ const composerHintText = computed(() =>
   composerHint({
     category: taskStatusCategory.value,
     assigneeKind: task.value?.assigneeKind,
-    running: agentRunning.value,
+    // an unsettled run feed is UNKNOWN run state — the hint promises nothing
+    // rather than a dispatch claim that could actually steer (#265 r1)
+    running: runsSettled.value ? agentRunning.value : null,
   }),
 );
 

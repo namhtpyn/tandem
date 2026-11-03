@@ -158,6 +158,15 @@ describe('tasks.note dispatch rule keys off the category (#265)', () => {
     expect(h.dispatches).toHaveLength(0);
   });
 
+  it('a dangling status id (no task_statuses row) refuses — dead input, never a dispatch guess', async () => {
+    seedTask('st-legacy-dangling', 'worker-1');
+    h.statuses = [];
+    const res = await addNote('task-1', 'human-1', 'note');
+    expect(res).toEqual({ steered: false });
+    expect(h.updates).toHaveLength(0);
+    expect(h.dispatches).toHaveLength(0);
+  });
+
   it('a steered live run returns before any status read or flip', async () => {
     seedTask('st-working', 'worker-1');
     h.statuses = [{ id: 'st-working', category: CATEGORY.WORKING }];

@@ -80,6 +80,11 @@ describe('workflow copy helpers', () => {
     expect(m.composerHint({ category: CATEGORY.CANCELLED, assigneeKind: 'ai', running: false })).toContain('thread');
     expect(m.composerHint({ category: CATEGORY.READY, assigneeKind: 'human', running: false })).toContain('thread');
     expect(m.composerHint({ category: null, assigneeKind: null, running: false })).toContain('thread');
+    // an UNKNOWN run state (feed pending/failed) promises nothing — no dispatch,
+    // no steering, no thread-only claim it cannot back (#265 r1)
+    expect(m.composerHint({ category: CATEGORY.READY, assigneeKind: 'ai', running: null })).toBe('Sends the note');
+    expect(m.composerHint({ category: CATEGORY.READY, assigneeKind: 'ai', running: undefined })).toBe('Sends the note');
+    expect(m.composerHint({ category: CATEGORY.WORKING, assigneeKind: 'ai', running: null })).toBe('Sends the note');
   });
 
   it('noteWillDispatch is the shared dispatch predicate (#265)', async () => {

@@ -49,6 +49,14 @@ async function seedRunningRun(taskId: string) {
   await sql.close();
 }
 
+/** hold the dispatcher scan off a fresh ready AI task (the 5s tick would claim
+ *  it mid-test; the manual verb ignores dispatch_after — only the scan does) */
+async function holdScan(taskId: string) {
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId}`;
+  await sql.close();
+}
+
 async function createRow(page: import('@playwright/test').Page, tasks: TasksPage, title: string, assignee?: string) {
   await tasks.createTask({ title, ...(assignee ? { assignee } : {}) });
   const row = tasks.rowFor(title);
@@ -75,9 +83,13 @@ test('run lock: list select, board drag and Move-to all disable on a live run (#
   await expect(row).toBeVisible({ timeout: 15_000 });
 
   // list select: disabled with the honest accessible name (the lock affordance
-  // — icon + hint — rides the same state)
+  // — icon + hint — rides the same state); Auto-assign is an assignee edit, the
+  // same lock folds it (r1: the server now refuses it too)
   const select = row.getByLabel(`Status for ${title} (Status is locked while the agent runs.)`);
   await expect(select).toBeDisabled({ timeout: 10_000 });
+  const autoAssign = row.getByRole('button', { name: `Auto-assign ${title}` });
+  await expect(autoAssign).toBeDisabled();
+  await expect(autoAssign).toHaveAttribute('title', 'Status is locked while the agent runs.');
 
   // board: drag is off at dragstart, the card says why, the kebab Move-to path
   // is disabled with the same hint, and the drawer hint reads steering
@@ -145,6 +157,8 @@ test('composer hint: blocked AI task promises dispatch on both surfaces; human t
 
   const ai = await createRow(page, tasks, aiTitle, botName);
   await expect(ai.row).toContainText(botName, { timeout: 10_000 });
+  // the task sits ready (dispatch-eligible) while the moves happen — hold the scan
+  await holdScan(ai.taskId);
   // leave ready (the old hint's only dispatch state) — blocked still dispatches
   await page.locator('tbody').getByLabel(`Status for ${aiTitle}`).click();
   await page.getByRole('option', { name: 'Blocked' }).click();

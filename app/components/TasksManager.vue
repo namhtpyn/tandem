@@ -453,14 +453,14 @@ const drawerCanStop = computed(
 );
 /** COMPOSER HINT LAW (#265): the drawer renders the same send hint as the task
  *  page, mirroring the note verb's server rule — dispatch wording wherever the
- *  send would start an agent turn, steering on a live run, thread-only otherwise */
+ *  send would start an agent turn, steering on a live run, thread-only
+ *  otherwise. An unsettled feed is UNKNOWN run state (the same convention the
+ *  drawer's verb gates render by): the hint promises nothing (#265 r1). */
 const drawerComposerHint = computed(() =>
   composerHint({
     category: workflowStatusCategory.value,
     assigneeKind: workflowTask.value?.assigneeKind,
-    // the run feed rides the same convention as the task page: pending = no live
-    // run observed yet
-    running: drawerAgentRunning.value,
+    running: !drawerRunsQuery.isPending.value && !drawerRunsQuery.isError.value ? drawerAgentRunning.value : null,
   }),
 );
 // the drawer timeline reads the SAME source as the task page (threadList, which
@@ -967,7 +967,8 @@ onServerPrefetch(() =>
               color="neutral"
               size="sm"
               :aria-label="`Auto-assign ${row.original.title}`"
-              :disabled="busy"
+              :disabled="busy || rowLocked(row.original)"
+              :title="rowLocked(row.original) ? LOCK_HINT : undefined"
               @click="autoAssign(row.original)"
             />
             <template #content>
@@ -1066,7 +1067,12 @@ onServerPrefetch(() =>
               />
               <template #content>
                 <div class="flex flex-col">
-                  <button type="button" :class="BOARD_MENU_ITEM" :disabled="busy" @click="autoAssign(row)">
+                  <button
+                    type="button"
+                    :class="BOARD_MENU_ITEM"
+                    :disabled="busy || rowLocked(row)"
+                    @click="autoAssign(row)"
+                  >
                     <UIcon name="i-lucide-wand-sparkles" class="size-3.5 shrink-0" />Auto-assign
                   </button>
                   <button type="button" :class="BOARD_MENU_ITEM" @click="openWorkflow(row)">
@@ -1214,7 +1220,12 @@ onServerPrefetch(() =>
                     />
                     <template #content>
                       <div class="flex flex-col">
-                        <button type="button" :class="BOARD_MENU_ITEM" :disabled="busy" @click="autoAssign(row)">
+                        <button
+                          type="button"
+                          :class="BOARD_MENU_ITEM"
+                          :disabled="busy || rowLocked(row)"
+                          @click="autoAssign(row)"
+                        >
                           <UIcon name="i-lucide-wand-sparkles" class="size-3.5 shrink-0" />Auto-assign
                         </button>
                         <!-- Workflow: the same drawer the desktop row button opens —

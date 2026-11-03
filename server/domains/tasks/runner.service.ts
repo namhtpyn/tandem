@@ -219,6 +219,11 @@ export async function stopRunForTask(taskId: string, actorId: string): Promise<{
   }
   await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+  // the RUN LOCK's release must reach list/board viewers (#264, r1 finding):
+  // the stop leaves the task row untouched, but their rows' runLocked bit rides
+  // the TASKS resource — without this publish the board card stays locked until
+  // an unrelated TASKS event lands
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   // a stopped review turn: the round parks decision-class — owner unblock
   // re-dispatches the parked reviewer (never an auto re-fire against the stop)
   if (employeeId) {

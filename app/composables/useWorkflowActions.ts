@@ -57,13 +57,15 @@ export function noteWillDispatch(input: {
  * every non-terminal, non-in-review category with an AI assignee dispatches
  * (the server flips the status to to-do and fires the run); everything else is
  * a thread-only note (done/cancelled/in-review and human assignees never
- * dispatch).
+ * dispatch). `running: null` = the run state is UNKNOWN (feed pending/failed) —
+ * the hint promises nothing rather than a wrong claim (#265 r1).
  */
 export function composerHint(input: {
   category: Category | null | undefined;
   assigneeKind: string | null | undefined;
-  running: boolean;
+  running: boolean | null | undefined;
 }): string {
+  if (input.running === null || input.running === undefined) return 'Sends the note';
   if (input.running) return 'Sends a steering note to the running agent';
   if (noteWillDispatch(input)) return 'Sends the note and dispatches the agent';
   return 'Adds the note to the thread';
