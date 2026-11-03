@@ -27,7 +27,7 @@ export type OauthServerConfig = {
   oauthTokenUrl: string | null;
   oauthRevocationUrl: string | null;
   oauthClientId: string | null;
-  oauthClientSecretEnc: string | null;
+  oauthClientSecretId: string | null;
   oauthScopes: string | null;
 };
 
@@ -77,33 +77,32 @@ async function findOauthBinding(employeeId: string, serverId: string): Promise<O
   return (rows[0] as OauthBindingRow | undefined) ?? null;
 }
 
-/** client credential form params (client_id always; client_secret when the
- * registry entry carries a confidential-client vault secret) */
+/** client credential form params (client_id always; client_secret decrypted
+ * from the registry entry's confidential-client vault ref when set) */
 async function clientAuthParams(server: OauthServerConfig): Promise<Record<string, string>> {
   const params: Record<string, string> = {};
   if (server.oauthClientId) params.client_id = server.oauthClientId;
-  if (server.oauthClientSecretEnc) params.client_secret = decryptSecret(server.oauthClientSecretEnc);
+  if (server.oauthClientSecretId) {
+    const rows = await db.query.vaultSecrets.findMany({
+      columns: { ciphertext: true },
+      where: { id: { eq: server.oauthClientSecretId } },
+    });
+    const ciphertext = rows[0]?.ciphertext;
+    if (ciphertext) params.client_secret = decryptSecret(ciphertext);
+  }
   return params;
 }
 
 async function loadOauthServerConfig(serverId: string): Promise<OauthServerConfig> {
   const rows = await db.query.mcpServers.findMany({ where: { id: { eq: serverId } } });
   const server = rows[0];
-  let secretEnc: string | null = null;
-  if (server?.oauthClientSecretId) {
-    const secretRows = await db.query.vaultSecrets.findMany({
-      columns: { ciphertext: true },
-      where: { id: { eq: server.oauthClientSecretId } },
-    });
-    secretEnc = secretRows[0]?.ciphertext ?? null;
-  }
   return {
     authKind: server?.authKind ?? 'none',
     oauthAuthorizeUrl: server?.oauthAuthorizeUrl ?? null,
     oauthTokenUrl: server?.oauthTokenUrl ?? null,
     oauthRevocationUrl: server?.oauthRevocationUrl ?? null,
     oauthClientId: server?.oauthClientId ?? null,
-    oauthClientSecretEnc: secretEnc,
+    oauthClientSecretId: server?.oauthClientSecretId ?? null,
     oauthScopes: server?.oauthScopes ?? null,
   };
 }
@@ -137,22 +136,45 @@ async function tokenRequest(tokenUrl: string, params: Record<string, string>): P
   return json as TokenResponse;
 }
 
-async function persistTokens(bindingId: string, r: TokenResponse) {
+async function persistTokens(bindingId: string, r: TokenResponse, configFingerprint: string) {
   const values = {
     bindingId,
     accessTokenEnc: encryptSecret(r.access_token),
     refreshTokenEnc: r.refresh_token ? encryptSecret(r.refresh_token) : null,
     expiresAt: typeof r.expires_in === 'number' ? new Date(Date.now() + r.expires_in * 1000) : null,
     scope: r.scope ?? '',
+    configFingerprint,
     updatedAt: new Date(),
   };
   await db.insert(mcpOauthTokens).values(values).onConflictDoUpdate({ target: mcpOauthTokens.bindingId, set: values });
 }
 
+/** REFRESH persistence is UPDATE-ONLY: a refresh never CREATES a token row —
+ * the callback owns creation. A config wipe deletes the row atomically, so a
+ * refresh response landing after the wipe updates 0 rows and can never
+ * resurrect old-contract tokens (SPEC invariant, race-free by construction). */
+async function updateTokens(bindingId: string, r: TokenResponse, configFingerprint: string): Promise<boolean> {
+  const updated = await db
+    .update(mcpOauthTokens)
+    .set({
+      accessTokenEnc: encryptSecret(r.access_token),
+      refreshTokenEnc: r.refresh_token ? encryptSecret(r.refresh_token) : null,
+      expiresAt: typeof r.expires_in === 'number' ? new Date(Date.now() + r.expires_in * 1000) : null,
+      scope: r.scope ?? '',
+      configFingerprint,
+      updatedAt: new Date(),
+    })
+    .where(eq(mcpOauthTokens.bindingId, bindingId))
+    .returning({ id: mcpOauthTokens.id });
+  return updated.length > 0;
+}
+
 /** config fingerprint bound into the state row at connect and re-verified at
  * the callback — a pre-edit callback can never complete against a changed
- * contract (SPEC: old-contract tokens never survive a config change) */
-export function oauthConfigFingerprint(config: OauthServerConfig & { oauthAuthorizeUrl?: string | null }): string {
+ * contract (SPEC: old-contract tokens never survive a config change). Uses the
+ * secret REF, not its value: a vault-side rotation is handled by the
+ * rotation wipe in the secret service (same invariant, own trigger). */
+export function oauthConfigFingerprint(config: OauthServerConfig): string {
   return createHash('sha256')
     .update(
       [
@@ -161,7 +183,7 @@ export function oauthConfigFingerprint(config: OauthServerConfig & { oauthAuthor
         config.oauthTokenUrl ?? '',
         config.oauthRevocationUrl ?? '',
         config.oauthClientId ?? '',
-        config.oauthClientSecretEnc ?? '',
+        config.oauthClientSecretId ?? '',
         config.oauthScopes ?? '',
       ].join('|'),
     )
@@ -241,7 +263,29 @@ export async function handleOauthCallback(input: { code: string; state: string }
   ) {
     throw new Error('registry entry changed during the exchange — start the connect again');
   }
-  await persistTokens(state.bindingId, token);
+  await persistTokens(state.bindingId, token, state.configFingerprint);
+}
+
+/** map a registry row (or a binding's joined server) onto the OauthServerConfig
+ * the flow helpers consume — one shape, no drift */
+export function oauthConfigFromServerRow(server: {
+  authKind: string;
+  oauthAuthorizeUrl: string | null;
+  oauthTokenUrl: string | null;
+  oauthRevocationUrl: string | null;
+  oauthClientId: string | null;
+  oauthClientSecretId: string | null;
+  oauthScopes: string | null;
+}): OauthServerConfig {
+  return {
+    authKind: server.authKind,
+    oauthAuthorizeUrl: server.oauthAuthorizeUrl,
+    oauthTokenUrl: server.oauthTokenUrl,
+    oauthRevocationUrl: server.oauthRevocationUrl,
+    oauthClientId: server.oauthClientId,
+    oauthClientSecretId: server.oauthClientSecretId,
+    oauthScopes: server.oauthScopes,
+  };
 }
 
 /** masked read model for binding rows — never the tokens */
@@ -262,10 +306,17 @@ export async function oauthStatusFor(bindingId: string): Promise<{ connected: bo
  */
 const refreshInFlight = new Map<string, Promise<string | null>>();
 
-export async function getFreshAccessToken(bindingId: string): Promise<string | null> {
+export async function getFreshAccessToken(bindingId: string, server: OauthServerConfig): Promise<string | null> {
   const rows = await db.query.mcpOauthTokens.findMany({ where: { bindingId: { eq: bindingId } } });
   const row = rows[0];
   if (!row) return null;
+  // READ-TIME CONTRACT GUARD: a token minted under a different config is inert —
+  // delete it on sight and ship nothing (old-contract tokens can never ride a
+  // dispatch, whatever write race the wipe path lost)
+  if (row.configFingerprint !== oauthConfigFingerprint(server)) {
+    await db.delete(mcpOauthTokens).where(eq(mcpOauthTokens.bindingId, bindingId));
+    return null;
+  }
   try {
     const access = decryptSecret(row.accessTokenEnc);
     if (!row.expiresAt || row.expiresAt.getTime() > Date.now() + REFRESH_SKEW_MS) return access;
@@ -273,18 +324,22 @@ export async function getFreshAccessToken(bindingId: string): Promise<string | n
     // undecryptable row (corrupt ciphertext / rotated key): fall through to the
     // guarded refresh — dispatch still ships nothing and NEVER throws
   }
+  return refreshSingleFlight(bindingId, server);
+}
+
+function refreshSingleFlight(bindingId: string, server: OauthServerConfig): Promise<string | null> {
   let pending = refreshInFlight.get(bindingId);
   if (!pending) {
-    pending = refreshBindingTokens(bindingId).finally(() => refreshInFlight.delete(bindingId));
+    pending = refreshBindingTokens(bindingId, server).finally(() => refreshInFlight.delete(bindingId));
     refreshInFlight.set(bindingId, pending);
   }
   return pending;
 }
 
-async function refreshBindingTokens(bindingId: string): Promise<string | null> {
+async function refreshBindingTokens(bindingId: string, server: OauthServerConfig): Promise<string | null> {
   const rows = await db.query.mcpOauthTokens.findMany({ where: { bindingId: { eq: bindingId } } });
   const row = rows[0];
-  if (!row) return null;
+  if (!row?.refreshTokenEnc) return null;
   // stale access decrypt is best-effort — the refresh grant needs only the
   // refresh token, so an undecryptable access ciphertext must not stop the re-arm
   let stale: string | null = null;
@@ -293,15 +348,7 @@ async function refreshBindingTokens(bindingId: string): Promise<string | null> {
   } catch {
     stale = null;
   }
-  if (!row.refreshTokenEnc) return stale;
-  const bindingRows = await db.query.mcpServerBindings.findMany({
-    columns: { serverId: true },
-    where: { id: { eq: bindingId } },
-  });
-  const binding = bindingRows[0];
-  if (!binding) return stale;
   try {
-    const server = await loadOauthServerConfig(binding.serverId);
     if (!server.oauthTokenUrl) throw new Error('no token endpoint');
     const refresh = decryptSecret(row.refreshTokenEnc);
     const token = await tokenRequest(server.oauthTokenUrl, {
@@ -309,13 +356,18 @@ async function refreshBindingTokens(bindingId: string): Promise<string | null> {
       grant_type: 'refresh_token',
       refresh_token: refresh,
     });
-    // keep the old refresh token when the provider does not rotate it
-    await persistTokens(bindingId, {
-      access_token: token.access_token,
-      refresh_token: token.refresh_token ?? refresh,
-      expires_in: token.expires_in,
-      scope: token.scope,
-    });
+    // UPDATE-ONLY: a wiped row (config change committed mid-refresh) updates 0
+    // rows — the fresh token ships for THIS dispatch and nothing is persisted
+    await updateTokens(
+      bindingId,
+      {
+        access_token: token.access_token,
+        refresh_token: token.refresh_token ?? refresh,
+        expires_in: token.expires_in,
+        scope: token.scope,
+      },
+      oauthConfigFingerprint(server),
+    );
     return token.access_token;
   } catch (e) {
     // stale token ships — dispatch must never break on a refresh failure; the

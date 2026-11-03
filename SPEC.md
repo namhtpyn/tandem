@@ -58,7 +58,7 @@ attachments flow: inputs upload via REST multipart (20MB cap, MIME allowlist png
 redis (REDIS_URL; REQUIRED — the boot env schema rejects boot when unset, every mode; no in-process fallback path exists): bullmq queue 'tandem-dispatch' (retries/backoff) + pub/sub change-bus fanout (the app's only in-memory model cache is a plain Map, no redis cache layer exists)
 
 REDIS RECONNECT-SELF-HEAL LAW (#238): redis unavailability of ANY duration self-heals without a process restart — the long-lived queue connection (worker + enqueue paths) reconnects FOREVER with capped backoff (never a retry count that terminally abandons the client), so workers resume and offline-queued enqueues flush when redis returns; only the BOOT connectivity ping keeps a fail-fast no-retry strategy (a dead redis at boot must reject loudly and let the boot retry loop re-fire, #147). Brick-detection contract: the dispatcher tick best-effort stamps settings key `dispatcher_redis_ok` (epoch ms, written ONLY when a redis ping succeeds, same 30s throttle + best-effort catch as the dispatcher heartbeat) so the prod watchdog can distinguish "app alive but dispatch path dead" (heartbeat fresh + redis stamp stale >120s → probe alerts `dispatch_redis_unreachable`) from "dispatcher dead" (heartbeat stale). An absent key is a pre-image shape and stays silent, same rule as the heartbeat.
-mcp_servers(id, name unique, url http/https, notes, auth_kind none|oauth, oauth_authorize_url, oauth_token_url, oauth_revocation_url, oauth_scopes, oauth_client_id, oauth_client_secret_id -> vault_secrets.id set null, created_at, updated_at) + mcp_server_bindings(id, employee_id -> user.id cascade, server_id -> mcp_servers.id cascade, secret_id -> vault_secrets.id set null, last_probe_ok, last_probe_detail, last_probe_at, unique(employee_id, server_id)) + mcp_oauth_tokens(id, binding_id -> mcp_server_bindings.id cascade UNIQUE, access_enc, refresh_enc, expires_at, scope, created_at, updated_at) + mcp_oauth_states(id=state pk, binding_id -> mcp_server_bindings.id cascade, code_verifier, redirect_uri, config_fingerprint, expires_at, created_at) — MCP registry + per-agent bindings: the BINDING is the permission unit (registry admin-written); the binding's optional vault credential rides dispatch as the server's Authorization header; auth_kind=oauth servers authorize per binding via the Tandem-hosted PKCE flow (see "MCP (registry + per-agent bindings) — OAuth per binding") and their binding-level PROBE VERDICT LAW persists last_probe_*
+mcp_servers(id, name unique, url http/https, notes, auth_kind none|oauth, oauth_authorize_url, oauth_token_url, oauth_revocation_url, oauth_scopes, oauth_client_id, oauth_client_secret_id -> vault_secrets.id set null, created_at, updated_at) + mcp_server_bindings(id, employee_id -> user.id cascade, server_id -> mcp_servers.id cascade, secret_id -> vault_secrets.id set null, last_probe_ok, last_probe_detail, last_probe_at, unique(employee_id, server_id)) + mcp_oauth_tokens(id, binding_id -> mcp_server_bindings.id cascade UNIQUE, access_enc, refresh_enc, expires_at, scope, config_fingerprint, created_at, updated_at) + mcp_oauth_states(id=state pk, binding_id -> mcp_server_bindings.id cascade, code_verifier, redirect_uri, config_fingerprint, expires_at, created_at) — MCP registry + per-agent bindings: the BINDING is the permission unit (registry admin-written); the binding's optional vault credential rides dispatch as the server's Authorization header; auth_kind=oauth servers authorize per binding via the Tandem-hosted PKCE flow (see "MCP (registry + per-agent bindings) — OAuth per binding") and their binding-level PROBE VERDICT LAW persists last_probe_*
 bun serve: NITRO_BUN_IDLE_TIMEOUT defaults to 255 (code, boot plugin — Bun's max; default 10s would kill idle SSE feeds); env can override
 resilience: tasks.dispatch_after + fail_streak (backoff ladder 1m/5m/15m, quota -> 15m); reaper fails stale running rows past the run-timeout setting + grace; sweep failures log rate-limited and boot's dispatcher start retries on a fixed interval until the queue is reachable (#147); ssh keepalive 15s
 ```
@@ -152,10 +152,17 @@ Slice 2 adds OAuth per binding (section below):
 - **Tokens are per binding**: `mcp_oauth_tokens` (unique per binding) holds
   the access + refresh tokens AES-GCM encrypted at rest under the SAME vault
   envelope law — decrypted server-side at dispatch/probe only, never
-  returned by any API, never logged, never written to run output. Masked
-  status only rides reads (`connected` + expiry). The session-tier
-  registry read carries the client-secret ref + presence flag, never the
-  secret's name; the OAuth client secret joins the vault in-use guard.
+  returned by any API, never logged, never written to run output. Every
+  token row carries the config fingerprint it was minted under; a row whose
+  fingerprint no longer matches the server config is INERT — deleted on
+  read, never shipped (read-time enforcement makes old-contract tokens
+  harmless regardless of any write race). Refresh persistence is
+  UPDATE-only — a refresh can never re-create a wiped row. Masked status
+  only rides reads (`connected` + expiry). The session-tier registry read
+  carries the client-secret ref + presence flag, never the secret's name;
+  the OAuth client secret joins the vault in-use guard, and ROTATING that
+  secret is a contract change: it wipes the referencing servers' tokens +
+  pending state and clears their binding verdicts.
 - **Authorize flow**: admin-only `GET /api/mcp/oauth/connect`
   (`employeeId` + `serverId`) requires an existing binding and an `oauth`
   registry entry, persists a single-use state row (PKCE S256 verifier,

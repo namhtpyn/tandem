@@ -108,6 +108,25 @@ export async function updateSecret(
   if (updated.length === 0) {
     throw new ORPCError('NOT_FOUND', { message: 'secret not found' });
   }
+  // ROTATION = CONTRACT CHANGE (SPEC "OAuth per binding"): the same invariant as
+  // a registry OAuth-config edit — tokens minted under the old client secret
+  // must never survive it, so the rotation wipes the referencing servers' tokens
+  // + pending state and clears their binding verdicts.
+  if (rotated) {
+    const { wipeOauthTokensForServer } = await import('../../mcp/mcp-oauth.service');
+    const servers = await db
+      .select({ id: mcpServersTable.id })
+      .from(mcpServersTable)
+      .where(eq(mcpServersTable.oauthClientSecretId, id));
+    for (const server of servers) {
+      await db
+        .update(mcpServerBindingsTable)
+        .set({ lastProbeOk: null, lastProbeDetail: null, lastProbeAt: null })
+        .where(eq(mcpServerBindingsTable.serverId, server.id));
+      await wipeOauthTokensForServer(server.id);
+      await publishChange(CHANGE_RESOURCE.MCP, CHANGE_ACTION.UPDATE);
+    }
+  }
   await publishChange(CHANGE_RESOURCE.VAULT, CHANGE_ACTION.UPDATE);
   return toVaultRow(nonNull(updated[0]));
 }

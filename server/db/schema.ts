@@ -260,6 +260,10 @@ export const mcpServerBindings = pgTable(
 // OAuth tokens per binding (#270 slice 2): access + refresh tokens encrypted
 // at rest under the vault envelope law — decrypted server-side at
 // dispatch/probe ONLY; no API surface ever returns them (masked status only).
+// config_fingerprint pins the contract the tokens were minted under: a token
+// row whose fingerprint no longer matches the server config is INERT (deleted
+// on read) — old-contract tokens can never ride a dispatch, whatever race the
+// wipe path lost.
 export const mcpOauthTokens = pgTable('mcp_oauth_tokens', {
   id: text('id')
     .primaryKey()
@@ -272,6 +276,7 @@ export const mcpOauthTokens = pgTable('mcp_oauth_tokens', {
   refreshTokenEnc: text('refresh_enc'),
   expiresAt: timestamp('expires_at', { withTimezone: true }),
   scope: text('scope').notNull().default(''),
+  configFingerprint: text('config_fingerprint').notNull().default(''),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .$default(() => new Date()),

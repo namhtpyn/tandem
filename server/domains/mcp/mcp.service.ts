@@ -13,7 +13,13 @@ import { db } from '../../db/index';
 import { mcpServerBindings, mcpServers, vaultSecrets } from '../../db/schema';
 import { ORPCError, publishChange } from '../kernel/kernel';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
-import { getFreshAccessToken, oauthStatusFor, revokeOauthTokens, wipeOauthTokensForServer } from './mcp-oauth.service';
+import {
+  getFreshAccessToken,
+  oauthConfigFromServerRow,
+  oauthStatusFor,
+  revokeOauthTokens,
+  wipeOauthTokensForServer,
+} from './mcp-oauth.service';
 
 /** ACP wire shape for slice 1 — the SDK's own McpServer union (http member used) */
 export type AcpMcpServer = import('@agentclientprotocol/sdk').McpServer;
@@ -79,9 +85,12 @@ type BindingWithRefs = {
     name: string;
     url: string;
     authKind: string;
+    oauthAuthorizeUrl: string | null;
     oauthTokenUrl: string | null;
     oauthRevocationUrl: string | null;
     oauthClientId: string | null;
+    oauthClientSecretId: string | null;
+    oauthScopes: string | null;
   };
   secret: { name: string; lastFour: string; ciphertext: string } | null;
 };
@@ -200,7 +209,7 @@ async function normalizeOauthFields(
   );
   assertHttpUrl(authorizeUrl, 'oauthAuthorizeUrl');
   assertHttpUrl(tokenUrl, 'oauthTokenUrl');
-  const revocationUrl = input.oauthRevocationUrl ?? existing.oauthRevocationUrl;
+  const revocationUrl = input.oauthRevocationUrl !== undefined ? input.oauthRevocationUrl : existing.oauthRevocationUrl;
   if (revocationUrl) assertHttpUrl(revocationUrl, 'oauthRevocationUrl');
   const scopes = input.oauthScopes !== undefined ? input.oauthScopes?.trim() || null : existing.oauthScopes;
   const clientSecretId =
@@ -413,7 +422,7 @@ export async function buildMcpServersFor(employeeId: string): Promise<AcpMcpServ
         // OAuth binding: silent refresh first, then Bearer. A failed refresh
         // ships the stale token (empty headers when none) — dispatch NEVER
         // breaks on a refresh failure (SPEC: dispatch injection, OAuth).
-        const token = await getFreshAccessToken(b.id);
+        const token = await getFreshAccessToken(b.id, oauthConfigFromServerRow(b.server));
         if (token) headers = [{ name: 'Authorization', value: `Bearer ${token}` }];
       } else if (b.secret?.ciphertext) {
         headers = [{ name: 'Authorization', value: decryptSecret(b.secret.ciphertext) }];
@@ -504,7 +513,7 @@ export async function probeMcpBinding(input: { employeeId: string; serverId: str
   // ride the same silent-refresh path dispatch uses, then Bearer.
   let authorization: string | undefined;
   if (binding.server.authKind === 'oauth') {
-    const token = await getFreshAccessToken(binding.id);
+    const token = await getFreshAccessToken(binding.id, oauthConfigFromServerRow(binding.server));
     if (token) authorization = `Bearer ${token}`;
   } else if (binding.secret?.ciphertext) {
     authorization = decryptSecret(binding.secret.ciphertext);

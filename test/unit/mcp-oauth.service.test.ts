@@ -66,6 +66,20 @@ vi.mock('../../server/db/index', () => {
             }, rej),
         }),
       }),
+      // refresh persistence is UPDATE-ONLY — applies to the single scripted row;
+      // an empty table returns zero rows (the wiped-row race)
+      update: () => ({
+        set: (values: Record<string, unknown>) => ({
+          where: () => ({
+            returning: async () => {
+              const row = h.tokenRows[0];
+              if (!row) return [];
+              Object.assign(row, values);
+              return [{ id: row.id ?? 'tok-1' }];
+            },
+          }),
+        }),
+      }),
       delete: () => ({
         where: () => ({
           returning: async () => {
@@ -97,6 +111,18 @@ import { decryptSecret, encryptSecret } from '../../server/domains/vault/secret/
 
 const BINDING_ID = 'b-1';
 const SERVER_ID = 's-1';
+
+/** the canonical oauth server contract these units run against */
+const SERVER_CONFIG = {
+  authKind: 'oauth',
+  oauthAuthorizeUrl: 'https://provider.example.com/authorize',
+  oauthTokenUrl: 'https://provider.example.com/token',
+  oauthRevocationUrl: 'https://provider.example.com/revoke',
+  oauthClientId: 'client-123',
+  oauthClientSecretId: 'sec-1',
+  oauthScopes: 'read write',
+};
+const CONFIG_FP = oauthConfigFingerprint(SERVER_CONFIG);
 
 function seedOauthServer(overrides: Record<string, unknown> = {}) {
   h.serverRows.length = 0;
@@ -195,15 +221,7 @@ describe('handleOauthCallback', () => {
         redirectUri: 'https://tandem.example.com/api/mcp/oauth/callback',
         expiresAt: new Date(Date.now() + 60_000),
         // minted under THIS config — the fingerprint check must pass
-        configFingerprint: oauthConfigFingerprint({
-          authKind: 'oauth',
-          oauthAuthorizeUrl: 'https://provider.example.com/authorize',
-          oauthTokenUrl: 'https://provider.example.com/token',
-          oauthRevocationUrl: 'https://provider.example.com/revoke',
-          oauthClientId: 'client-123',
-          oauthClientSecretEnc: secretEnc,
-          oauthScopes: 'read write',
-        }),
+        configFingerprint: CONFIG_FP,
       },
     ];
     vi.stubGlobal(
@@ -277,20 +295,34 @@ describe('handleOauthCallback', () => {
   });
 });
 
-describe('getFreshAccessToken (silent refresh)', () => {
+describe('getFreshAccessToken (silent refresh + read-time contract guard)', () => {
   it('returns the decrypted access token without a fetch when fresh', async () => {
     h.tokenRows.push({
       bindingId: BINDING_ID,
       accessTokenEnc: encryptSecret('at-fresh'),
       expiresAt: new Date(Date.now() + 3_600_000),
+      configFingerprint: CONFIG_FP,
     });
     vi.stubGlobal('fetch', vi.fn());
-    expect(await getFreshAccessToken(BINDING_ID)).toBe('at-fresh');
+    expect(await getFreshAccessToken(BINDING_ID, SERVER_CONFIG)).toBe('at-fresh');
     expect(h.fetchCalls).toHaveLength(0);
   });
 
   it('returns null when no token row exists', async () => {
-    expect(await getFreshAccessToken(BINDING_ID)).toBeNull();
+    expect(await getFreshAccessToken(BINDING_ID, SERVER_CONFIG)).toBeNull();
+  });
+
+  it('a token row minted under a DIFFERENT config is inert — deleted on read, never shipped', async () => {
+    h.tokenRows.push({
+      bindingId: BINDING_ID,
+      accessTokenEnc: encryptSecret('at-old-contract'),
+      expiresAt: new Date(Date.now() + 3_600_000),
+      configFingerprint: 'minted-under-the-old-contract',
+    });
+    vi.stubGlobal('fetch', vi.fn());
+    expect(await getFreshAccessToken(BINDING_ID, SERVER_CONFIG)).toBeNull();
+    expect(h.fetchCalls).toHaveLength(0);
+    expect(h.deletedTokenBindingIds).toHaveLength(1); // inert row deleted on sight
   });
 
   it('refreshes an expiring token exactly once under concurrent callers', async () => {
@@ -302,6 +334,7 @@ describe('getFreshAccessToken (silent refresh)', () => {
       accessTokenEnc: encryptSecret('at-stale'),
       refreshTokenEnc: encryptSecret('rt-old'),
       expiresAt: new Date(Date.now() + 10_000), // inside the 60s skew window
+      configFingerprint: CONFIG_FP,
     });
     vi.stubGlobal(
       'fetch',
@@ -310,7 +343,10 @@ describe('getFreshAccessToken (silent refresh)', () => {
         return new Response(JSON.stringify(tokenJson()), { status: 200 });
       }),
     );
-    const [a, b] = await Promise.all([getFreshAccessToken(BINDING_ID), getFreshAccessToken(BINDING_ID)]);
+    const [a, b] = await Promise.all([
+      getFreshAccessToken(BINDING_ID, SERVER_CONFIG),
+      getFreshAccessToken(BINDING_ID, SERVER_CONFIG),
+    ]);
     expect(a).toBe('at-new');
     expect(b).toBe('at-new');
     expect(h.fetchCalls).toHaveLength(1); // single-flight per binding
@@ -321,6 +357,32 @@ describe('getFreshAccessToken (silent refresh)', () => {
     // refreshed tokens persisted (rotation kept the old refresh when absent)
     const row = h.tokenRows[0] as Record<string, unknown>;
     expect(decryptSecret(row.accessTokenEnc as string)).toBe('at-new');
+    expect(row.configFingerprint).toBe(CONFIG_FP);
+  });
+
+  it('a refresh landing after a config wipe persists NOTHING (UPDATE-only row)', async () => {
+    h.bindingRows.push({ id: BINDING_ID, serverId: SERVER_ID });
+    seedOauthServer();
+    h.secretRows.push({ id: 'sec-1', ciphertext: encryptSecret('super-secret-client') });
+    h.tokenRows.push({
+      bindingId: BINDING_ID,
+      accessTokenEnc: encryptSecret('at-stale'),
+      refreshTokenEnc: encryptSecret('rt-old'),
+      expiresAt: new Date(Date.now() - 1000),
+      configFingerprint: CONFIG_FP,
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        h.fetchCalls.push({ url: String(url), body: '' });
+        // the wipe deletes the row WHILE the token POST is in flight
+        h.tokenRows.length = 0;
+        return new Response(JSON.stringify(tokenJson()), { status: 200 });
+      }),
+    );
+    // the fresh token may ship for THIS call, but no row may be re-created
+    await getFreshAccessToken(BINDING_ID, SERVER_CONFIG);
+    expect(h.tokenRows).toHaveLength(0);
   });
 
   it('ships the STALE token when the refresh fails — dispatch never breaks', async () => {
@@ -331,6 +393,7 @@ describe('getFreshAccessToken (silent refresh)', () => {
       accessTokenEnc: encryptSecret('at-stale'),
       refreshTokenEnc: encryptSecret('rt-old'),
       expiresAt: new Date(Date.now() - 1000),
+      configFingerprint: CONFIG_FP,
     });
     vi.stubGlobal(
       'fetch',
@@ -339,7 +402,7 @@ describe('getFreshAccessToken (silent refresh)', () => {
         return new Response('server error line', { status: 500 });
       }),
     );
-    expect(await getFreshAccessToken(BINDING_ID)).toBe('at-stale');
+    expect(await getFreshAccessToken(BINDING_ID, SERVER_CONFIG)).toBe('at-stale');
     expect(h.fetchCalls).toHaveLength(1);
   });
 });
@@ -389,9 +452,10 @@ describe('revokeOauthTokens (unbind = revoke)', () => {
       bindingId: BINDING_ID,
       accessTokenEnc: 'v1:garbage',
       expiresAt: new Date(Date.now() + 3_600_000),
+      configFingerprint: CONFIG_FP,
     });
     vi.stubGlobal('fetch', vi.fn());
-    expect(await getFreshAccessToken(BINDING_ID)).toBeNull();
+    expect(await getFreshAccessToken(BINDING_ID, SERVER_CONFIG)).toBeNull();
     expect(h.fetchCalls).toHaveLength(0);
   });
 });
