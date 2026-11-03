@@ -5,8 +5,21 @@
 // task Doing; the drawer verb renders only while the run is live; a second
 // stop is an idempotent ok; cancel (the RUN LOCK's other half) lands cancelled
 // once the run is settled — the exact sequence #223 refused pre-stop.
+import { SQL } from 'bun';
+
 import { expect, test } from './helpers/cleanup';
+import { E2E_DATABASE_URL } from './helpers/env';
 import { TasksPage } from './pages/tasks.page.ts';
+
+/** hold the dispatcher scan off the fresh ready AI task: the tick would claim it
+ *  mid-test (create → drawer → manual dispatch crosses the 5s scan) and the run
+ *  settles Done before the spec's own click. The MANUAL verb ignores
+ *  dispatch_after — only the scan respects it — so the spec's dispatch fires. */
+async function holdScan(taskId: string) {
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId}`;
+  await sql.close();
+}
 
 async function seedAiEmployee(page: import('@playwright/test').Page, tag: string): Promise<string> {
   const env = await page.request.post('/rpc/environments/create', {
@@ -51,6 +64,7 @@ test.describe('task page stop at a phone viewport', () => {
     // MOBILE: the list renders CARDS (no table) — the title link opens the page
     const cardLink = page.getByRole('link', { name: taskTitle }).first();
     await expect(cardLink).toBeVisible({ timeout: 15_000 });
+    await holdScan(((await cardLink.getAttribute('href')) as string).split('/').pop() as string);
     await cardLink.click();
     await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
 
@@ -110,8 +124,11 @@ test('drawer stop: renders only while live, settles the run, then cancel complet
   await tasks.saveTask();
   const row = tasks.rowFor(taskTitle);
   await expect(row).toBeVisible({ timeout: 15_000 });
+  const href = await row.locator('a[href^="/tasks/"]').first().getAttribute('href');
+  await holdScan((href as string).split('/').pop() as string);
 
   const drawer = await tasks.openWorkflowDrawer(row);
+  await expect(drawer.getByTestId('drawer-verb-dispatch')).toBeVisible({ timeout: 10_000 });
   await drawer.getByTestId('drawer-verb-dispatch').click();
   await expect(drawer.getByText('Agent dispatched')).toBeVisible({ timeout: 15_000 });
 
