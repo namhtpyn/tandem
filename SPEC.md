@@ -58,7 +58,7 @@ attachments flow: inputs upload via REST multipart (20MB cap, MIME allowlist png
 redis (REDIS_URL; REQUIRED — the boot env schema rejects boot when unset, every mode; no in-process fallback path exists): bullmq queue 'tandem-dispatch' (retries/backoff) + pub/sub change-bus fanout (the app's only in-memory model cache is a plain Map, no redis cache layer exists)
 
 REDIS RECONNECT-SELF-HEAL LAW (#238): redis unavailability of ANY duration self-heals without a process restart — the long-lived queue connection (worker + enqueue paths) reconnects FOREVER with capped backoff (never a retry count that terminally abandons the client), so workers resume and offline-queued enqueues flush when redis returns; only the BOOT connectivity ping keeps a fail-fast no-retry strategy (a dead redis at boot must reject loudly and let the boot retry loop re-fire, #147). Brick-detection contract: the dispatcher tick best-effort stamps settings key `dispatcher_redis_ok` (epoch ms, written ONLY when a redis ping succeeds, same 30s throttle + best-effort catch as the dispatcher heartbeat) so the prod watchdog can distinguish "app alive but dispatch path dead" (heartbeat fresh + redis stamp stale >120s → probe alerts `dispatch_redis_unreachable`) from "dispatcher dead" (heartbeat stale). An absent key is a pre-image shape and stays silent, same rule as the heartbeat.
-mcp_servers(id, name unique, url http/https, notes, created_at, updated_at) + mcp_server_bindings(id, employee_id -> user.id cascade, server_id -> mcp_servers.id cascade, secret_id -> vault_secrets.id set null, last_probe_ok, last_probe_detail, last_probe_at, unique(employee_id, server_id)) — MCP registry + per-agent bindings: the BINDING is the permission unit (registry admin-written); the binding's optional vault credential rides dispatch as the server's Authorization header; binding-level PROBE VERDICT LAW persists last_probe_* (see "MCP (registry + per-agent bindings)")
+mcp_servers(id, name unique, url http/https, notes, auth_kind none|oauth, oauth_authorize_url, oauth_token_url, oauth_revocation_url, oauth_scopes, oauth_client_id, oauth_client_secret_id -> vault_secrets.id set null, created_at, updated_at) + mcp_server_bindings(id, employee_id -> user.id cascade, server_id -> mcp_servers.id cascade, secret_id -> vault_secrets.id set null, last_probe_ok, last_probe_detail, last_probe_at, unique(employee_id, server_id)) + mcp_oauth_tokens(id, binding_id -> mcp_server_bindings.id cascade UNIQUE, access_enc, refresh_enc, expires_at, scope, created_at, updated_at) + mcp_oauth_states(id=state pk, binding_id -> mcp_server_bindings.id cascade, code_verifier, redirect_uri, expires_at, created_at) — MCP registry + per-agent bindings: the BINDING is the permission unit (registry admin-written); the binding's optional vault credential rides dispatch as the server's Authorization header; auth_kind=oauth servers authorize per binding via the Tandem-hosted PKCE flow (see "MCP (registry + per-agent bindings) — OAuth per binding") and their binding-level PROBE VERDICT LAW persists last_probe_*
 bun serve: NITRO_BUN_IDLE_TIMEOUT defaults to 255 (code, boot plugin — Bun's max; default 10s would kill idle SSE feeds); env can override
 resilience: tasks.dispatch_after + fail_streak (backoff ladder 1m/5m/15m, quota -> 15m); reaper fails stale running rows past the run-timeout setting + grace; sweep failures log rate-limited and boot's dispatcher start retries on a fixed interval until the queue is reachable (#147); ssh keepalive 15s
 ```
@@ -97,7 +97,8 @@ transport contract in one place:
 
 ## MCP (registry + per-agent bindings)
 
-Slice 1 — transport `http` only (stdio/OAuth are later slices, #270):
+Slice 1 — transport `http`, static credential only (stdio is a later slice, #270).
+Slice 2 adds OAuth per binding (section below):
 
 - **Registry** = admin-managed catalog of MCP servers (`mcp_servers`): name
   (unique, 409 on clash incl. rename), url (http/https), notes. Reads are
@@ -133,18 +134,65 @@ Slice 1 — transport `http` only (stdio/OAuth are later slices, #270):
   the dispatch plan carries bindings — the same plan the real runner
   serializes onto the wire.
 
+### OAuth per binding (#270 slice 2)
+
+- **Registry OAuth config**: a registry entry carries `authKind`
+  `none | oauth` (default `none` = exactly the slice-1 contract). `oauth`
+  requires authorizeUrl + tokenUrl + clientId (http/https); optional:
+  revocationUrl (RFC 7009), scopes (space-separated), clientSecret as a
+  registry-level vault secret ref (confidential client; PKCE always rides
+  the flow). Editing any OAuth config field (or the kind switch) wipes the
+  stored tokens of every binding to that server and clears their verdicts —
+  tokens minted under an old client contract never survive it.
+- **Tokens are per binding**: `mcp_oauth_tokens` (unique per binding) holds
+  the access + refresh tokens AES-GCM encrypted at rest under the SAME vault
+  envelope law — decrypted server-side at dispatch/probe only, never
+  returned by any API, never logged, never written to run output. Masked
+  status only rides reads (`connected` + expiry + granted scope).
+- **Authorize flow**: admin-only `GET /api/mcp/oauth/connect`
+  (`employeeId` + `serverId`) requires an existing binding and an `oauth`
+  registry entry, persists a single-use state row (PKCE S256 verifier,
+  redirect_uri, 10-minute TTL) and 302-redirects the admin browser to the
+  provider's authorizeUrl. The provider returns to
+  `GET /api/mcp/oauth/callback` (`code` + `state`): the state is consumed
+  on FIRST use (replay/expiry = 400), the code is exchanged server-side
+  (client secret + code_verifier when configured), and the resulting tokens
+  are stored on the binding. The callback renders a close-this-window
+  result page and notifies the opener — the single-use state row is the
+  authorization proof.
+- **Dispatch injection (OAuth)**: an `oauth` binding injects
+  `Authorization: Bearer <accessToken>`; when the token is missing, expired
+  or expiring within 60s the dispatch refreshes it first (grant_type
+  `refresh_token`, single-flight per binding, refreshed tokens persisted).
+  A failed refresh NEVER breaks the dispatch — the stale access token ships
+  (none = empty headers), the next dispatch re-arms. Static-credential
+  bindings keep the verbatim slice-1 header.
+- **Probe**: an `oauth` binding probes through the same refresh path, then
+  the JSON-RPC initialize with the Bearer token; the verdict persists per
+  the law above.
+- **Unbind = revoke**: removing a binding POSTs the configured revocationUrl
+  best-effort (5s cap; a failed revoke never blocks the unbind) and deletes
+  the token row. OAuth authorization is binding-scoped, never task- or
+  session-scoped.
+
 ### MCP procedures
 
-| procedure            | auth    | input                             | result                                                                                                       |
-| -------------------- | ------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `mcp.registryList`   | session | —                                 | `{data:[{id,name,url,notes,createdAt,updatedAt,bindingCount}]}`                                              |
-| `mcp.registryCreate` | admin   | `{name,url,notes}`                | created row                                                                                                  |
-| `mcp.registryUpdate` | admin   | `{id,name?,url?,notes?}`          | updated row (url change clears that server's binding verdicts)                                               |
-| `mcp.registryRemove` | admin   | `{id}`                            | `{ok}` (400 while bindings exist)                                                                            |
-| `mcp.bindingsList`   | admin   | `{employeeId}`                    | `{data:[{id,serverId,serverName,url,secretId,secretName,lastFour,lastProbeOk,lastProbeDetail,lastProbeAt}]}` |
-| `mcp.bindingsSet`    | admin   | `{employeeId,serverId,secretId?}` | binding row (upsert; verdict cleared on credential change)                                                   |
-| `mcp.bindingsRemove` | admin   | `{employeeId,serverId}`           | `{ok}`                                                                                                       |
-| `mcp.probe`          | admin   | `{employeeId,serverId}`           | `{ok,detail,durationMs,lastProbeAt}`                                                                         |
+| procedure            | auth    | input                                     | result                                                                                                                                              |
+| -------------------- | ------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mcp.registryList`   | session | —                                         | `{data:[{id,name,url,notes,createdAt,updatedAt,bindingCount}]}`                                                                                     |
+| `mcp.registryCreate` | admin   | `{name,url,notes,authKind?,oauth*}`       | created row                                                                                                                                         |
+| `mcp.registryUpdate` | admin   | `{id,name?,url?,notes?,authKind?,oauth*}` | updated row (url or OAuth-config change clears that server's binding verdicts + wipes its oauth tokens)                                             |
+| `mcp.registryRemove` | admin   | `{id}`                                    | `{ok}` (400 while bindings exist)                                                                                                                   |
+| `mcp.bindingsList`   | admin   | `{employeeId}`                            | `{data:[{id,serverId,serverName,url,authKind,secretId,secretName,lastFour,oauthConnected,oauthExpiresAt,lastProbeOk,lastProbeDetail,lastProbeAt}]}` |
+| `mcp.bindingsSet`    | admin   | `{employeeId,serverId,secretId?}`         | binding row (upsert; verdict cleared on credential change)                                                                                          |
+| `mcp.bindingsRemove` | admin   | `{employeeId,serverId}`                   | `{ok}`                                                                                                                                              |
+| `mcp.probe`          | admin   | `{employeeId,serverId}`                   | `{ok,detail,durationMs,lastProbeAt}`                                                                                                                |
+
+OAuth flow rides REST browser redirects (NOT oRPC): `GET
+/api/mcp/oauth/connect?employeeId&serverId` (admin session; 302 to the
+provider authorizeUrl) and `GET /api/mcp/oauth/callback?code&state`
+(consumes the single-use state, exchanges + stores the binding's tokens,
+renders the close-this-window result page).
 
 ## Vault key law
 
