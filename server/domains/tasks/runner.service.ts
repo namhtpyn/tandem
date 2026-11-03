@@ -1071,7 +1071,12 @@ export async function dispatchTask(
  * ([RESULT] approve / [BLOCKED] change request); a verdict-less review NEVER
  * silently approves — it re-dispatches once per round with the CORRECTION block,
  * then parks on the owner. Exported for the per-round-bound unit pin (#276). */
-export async function settleReviewVerdict(taskId: string, reviewerId: string, envelope: ReviewEnvelope | null) {
+export async function settleReviewVerdict(
+  taskId: string,
+  reviewerId: string,
+  envelope: ReviewEnvelope | null,
+  runStartedAt: Date,
+) {
   // IDENTITY MAP (final spec 2026-10-29): the review envelope kind IS the verdict —
   // no translation layer. `escalate` is the one non-settling kind: a referral.
   if (envelope?.kind === 'approved') {
@@ -1096,17 +1101,24 @@ export async function settleReviewVerdict(taskId: string, reviewerId: string, en
     await escalateReview(taskId, reviewerId, envelope.text || 'escalate for reviewing');
   } else {
     // verdict-less review: the reviewer's turn never produced a verdict envelope —
-    // a transport-class failure of the review, so re-dispatch its turn ONCE PER
-    // ROUND before parking on the owner (#276; per-round: the pre-fix lifetime
-    // count denied returning reviewers their retry from round 2 onward). The round
-    // is the DISPATCHED one, mirroring recordVerdict — a stale settle must never
-    // touch a newer round's state machine (it can neither park the live round nor
-    // put a correction block on its first-turn brief); runs this round = started
-    // after that round's row was minted. A missing row for the dispatched round is
-    // an anomaly (rows are minted before any dispatch) — park decision-class.
-    const round = await dispatchedReviewRound(taskId, reviewerId);
+    // a transport-class failure of the review, so re-dispatch its turn with the
+    // CORRECTION block ONCE, then park on the owner (#276). The round is the
+    // DISPATCHED one of THIS settling run (never currentRound and never the
+    // latest-run lookup): a stale settle must not touch a newer round's state
+    // machine. The bound counts the reviewer's COMPLETED turns in that round — a
+    // reaped/failed turn is not a verdict-less attempt and never consumes the
+    // corrected retry (blind-review r4).
+    const round = await dispatchedReviewRound(taskId, reviewerId, runStartedAt);
     const current = await currentRound(taskId);
-    if (round === 0 || round < current) return; // stale settle: the live round owns progression
+    if (round === 0) {
+      // anomaly: no review row existed when this run was dispatched — rows are
+      // minted before any dispatch, so this is a data anomaly. Park decision-class;
+      // no correction block may attach to a round the reviewer has no row in.
+      const { parkRound } = await import('./review.service');
+      await parkRound(taskId, 'review finished without a verdict — no round row for the reviewer (anomaly)');
+      return;
+    }
+    if (round < current) return; // stale settle: the live round owns progression
     const roundRow = (
       await db
         .select({ createdAt: taskReviews.createdAt })
@@ -1117,30 +1129,40 @@ export async function settleReviewVerdict(taskId: string, reviewerId: string, en
         .limit(1)
     )[0];
     if (!roundRow) {
+      // TOCTOU: the row vanished between the dispatched-round read and this read
       const { parkRound } = await import('./review.service');
       await parkRound(taskId, 'review finished without a verdict — no round row for the reviewer (anomaly)');
-    } else {
-      const reviewRuns = await db.query.taskRuns.findMany({
-        columns: { id: true, startedAt: true },
-        where: { employeeId: { eq: reviewerId }, message: { taskId: { eq: taskId } } },
-      });
-      const thisRound = reviewRuns.filter((r) => r.startedAt && r.startedAt.getTime() >= roundRow.createdAt.getTime());
-      if (thisRound.length === 1) {
-        const { dispatchAiReviewTurns } = await import('./review.service');
-        // VERDICT-LESS CORRECTION (#276): the retry brief carries the CORRECTION block —
-        // a bare replay of the identical brief failed identically in prod (the reviewer
-        // never learned its prior turn produced no envelope). Bound to THIS reviewer:
-        // the block must never land on a different pending reviewer's first turn.
-        await dispatchAiReviewTurns(taskId, undefined, {
-          verdictCorrection: true,
-          verdictlessReviewerId: reviewerId,
-        });
-        await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
-        return;
-      }
-      const { parkRound } = await import('./review.service');
-      await parkRound(taskId, 'review finished without a verdict after a re-dispatch — needs a human');
+      return;
     }
+    const reviewRuns = await db.query.taskRuns.findMany({
+      columns: { id: true, startedAt: true, status: true },
+      where: { employeeId: { eq: reviewerId }, message: { taskId: { eq: taskId } } },
+    });
+    // COMPLETED turns this round BEFORE this one: the settling run is already DONE
+    // and must not count itself — the corrected retry is consumed only by a prior
+    // completed (verdict-less) turn, never by a reaped/failed one.
+    const priorDone = reviewRuns.filter(
+      (r) =>
+        r.startedAt &&
+        r.startedAt.getTime() >= roundRow.createdAt.getTime() &&
+        r.startedAt.getTime() < runStartedAt.getTime() &&
+        r.status === RUN_STATUS.DONE,
+    );
+    if (priorDone.length === 0) {
+      const { dispatchAiReviewTurns } = await import('./review.service');
+      // VERDICT-LESS CORRECTION (#276): the retry brief carries the CORRECTION block —
+      // a bare replay of the identical brief failed identically in prod (the reviewer
+      // never learned its prior turn produced no envelope). Bound to THIS reviewer:
+      // the block must never land on a different pending reviewer's first turn.
+      await dispatchAiReviewTurns(taskId, undefined, {
+        verdictCorrection: true,
+        verdictlessReviewerId: reviewerId,
+      });
+      await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+      return;
+    }
+    const { parkRound } = await import('./review.service');
+    await parkRound(taskId, 'review finished without a verdict after a re-dispatch — needs a human');
   }
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
@@ -1153,6 +1175,7 @@ async function settleDoneRun(
   runId: string,
   plan: { review?: { resultBody: string }; ai: { userId: string } },
   buffer: string,
+  runStartedAt: Date,
 ): Promise<'settled' | 'backoff'> {
   const { parseRunEnvelope, parseReviewEnvelope } = await import('#shared/run-verdict');
   // the ACP 400-char force-flush splits ONE long JSON verdict into adjacent buffer
@@ -1180,7 +1203,7 @@ async function settleDoneRun(
   }
   try {
     if (plan.review) {
-      await settleReviewVerdict(taskId, plan.ai.userId, reviewEnvelope);
+      await settleReviewVerdict(taskId, plan.ai.userId, reviewEnvelope, runStartedAt);
     } else if (workEnvelope && (workEnvelope.kind === 'question' || workEnvelope.kind === 'blocked')) {
       // empty-text envelopes fall back to the kind as the question body
       /* v8 ignore next */
@@ -1281,6 +1304,7 @@ export function createRunWriter(runId: string, initial: string, messageId: strin
     exitCode: number | null,
     plan: { review?: { resultBody: string }; ai: { userId: string } },
     attachTokens: string[] = [],
+    runStartedAt: Date = new Date(),
   ) => {
     if (settled) return;
     // STOP-RUN VERB (#229): a stop-settled run's verdict is already on the row —
@@ -1306,7 +1330,7 @@ export function createRunWriter(runId: string, initial: string, messageId: strin
     // no settle note: the run card's status pill (completed / failed exit N) IS the
     // verdict — a separate 'run finished' pill only duplicated it in the thread
     if (status === RUN_STATUS.DONE) {
-      await settleDoneRun(taskId, runId, plan, buffer);
+      await settleDoneRun(taskId, runId, plan, buffer, runStartedAt);
     } else if (plan.review) {
       // SETTLE-FAILURE PARK (SPEC, #199): a review turn that settles FAILED never
       // rides the work backoff ladder — bounceTaskAfterRun's doing-guard no-ops on an
@@ -1396,7 +1420,7 @@ async function settleZombieRow(runId: string, priorOutput: string, reason: strin
  * relic it refuses (GUARD-SETTLE LAW #162) and returns null. */
 async function runnableRowOrSettled(runId: string) {
   const row = await db.query.taskRuns.findFirst({
-    columns: { id: true, status: true, attempts: true, output: true, prompt: true, messageId: true },
+    columns: { id: true, status: true, attempts: true, output: true, prompt: true, messageId: true, startedAt: true },
     where: { id: { eq: runId } },
     with: { message: { columns: { taskId: true } } },
   });
@@ -1487,7 +1511,7 @@ export async function executeRun(
         (stop) => liveStops.set(runId, stop),
       );
       const r = await fake.finished;
-      await writer.finish(taskId, r.status, r.exitCode, plan);
+      await writer.finish(taskId, r.status, r.exitCode, plan, [], row.startedAt);
       return r;
     }
     const envBlob = buildEnvBlob(plan, tandemUrl);
@@ -1554,7 +1578,7 @@ export async function executeRun(
         (await Promise.race([collectP, new Promise<undefined>((r) => setTimeout(() => r(undefined), 20_000))]))
           ?.tokens ?? [];
     else void collectP;
-    await writer.finish(taskId, status, exitCode, plan, attachTokens);
+    await writer.finish(taskId, status, exitCode, plan, attachTokens, row.startedAt);
     return { status, exitCode };
   } catch (e) {
     /* v8 ignore next -- service throws are Error by construction */

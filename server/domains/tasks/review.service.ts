@@ -83,16 +83,21 @@ export function dedupeReviewers(reviewers: string[]): string[] {
  * round whose review row already existed when that run started. Reading the
  * dispatched round at settle — instead of currentRound — is what keeps a stale run
  * from settling a newer round it was never part of. Exported for the verdict-less
- * bound (#276): the re-dispatch decision must bind to the SAME round as the verdict. */
-export async function dispatchedReviewRound(taskId: string, reviewerId: string) {
-  const runRows = await db
-    .select({ startedAt: taskRuns.startedAt })
-    .from(taskRuns)
-    .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
-    .where(and(eq(taskMessages.taskId, taskId), eq(taskRuns.employeeId, reviewerId)))
-    .orderBy(desc(taskRuns.startedAt))
-    .limit(1);
-  const startedAt = runRows[0]?.startedAt;
+ * bound (#276): the re-dispatch decision must bind to the SAME round as the verdict;
+ * `at` pins the SETTLING run's start (a late-completing run must not bind to a
+ * newer round via the latest-run lookup — #276 blind-review r4). */
+export async function dispatchedReviewRound(taskId: string, reviewerId: string, at?: Date) {
+  let startedAt = at ?? null;
+  if (!startedAt) {
+    const runRows = await db
+      .select({ startedAt: taskRuns.startedAt })
+      .from(taskRuns)
+      .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+      .where(and(eq(taskMessages.taskId, taskId), eq(taskRuns.employeeId, reviewerId)))
+      .orderBy(desc(taskRuns.startedAt))
+      .limit(1);
+    startedAt = runRows[0]?.startedAt ?? null;
+  }
   if (!startedAt) return 0;
   const rows = await db
     .select({ round: taskReviews.round, createdAt: taskReviews.createdAt })
