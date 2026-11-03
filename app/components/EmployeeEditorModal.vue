@@ -844,10 +844,9 @@ watch(
                       {{ oauthStatusLabel(b) }}
                     </UBadge>
                     <UButton
-                      v-if="!b.oauth?.connected"
                       class="ms-2"
                       icon="i-lucide-key-round"
-                      label="Connect"
+                      :label="b.oauth?.connected ? 'Reconnect' : 'Connect'"
                       variant="soft"
                       color="primary"
                       size="sm"

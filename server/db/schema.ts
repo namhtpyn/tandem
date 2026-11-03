@@ -282,7 +282,9 @@ export const mcpOauthTokens = pgTable('mcp_oauth_tokens', {
 });
 
 // Single-use authorize-flow state (#270 slice 2): the state row IS the
-// authorization proof — consumed on FIRST callback use, 10-minute TTL.
+// authorization proof — consumed on FIRST callback use, 10-minute TTL, and
+// bound to a fingerprint of the OAuth config it was minted under (a pre-edit
+// callback can never complete against a changed contract).
 export const mcpOauthStates = pgTable('mcp_oauth_states', {
   id: text('id')
     .primaryKey()
@@ -292,6 +294,7 @@ export const mcpOauthStates = pgTable('mcp_oauth_states', {
     .references(() => mcpServerBindings.id, { onDelete: 'cascade' }),
   codeVerifier: text('code_verifier').notNull(),
   redirectUri: text('redirect_uri').notNull(),
+  configFingerprint: text('config_fingerprint').notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()

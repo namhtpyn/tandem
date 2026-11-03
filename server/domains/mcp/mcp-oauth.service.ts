@@ -6,7 +6,8 @@
 // state row IS the authorization proof for the provider's callback.
 import { createHash, randomBytes } from 'node:crypto';
 
-import { eq } from 'drizzle-orm';
+import { eq, lt } from 'drizzle-orm';
+import { consola } from 'consola';
 
 import { db } from '../../db/index';
 import { mcpOauthStates, mcpOauthTokens } from '../../db/schema';
@@ -39,12 +40,17 @@ export function oauthRedirectUri(origin?: string | null): string {
 /** single-use state consume: the row is the proof — deleted on FIRST use */
 async function consumeState(
   stateId: string,
-): Promise<{ bindingId: string; codeVerifier: string; redirectUri: string }> {
+): Promise<{ bindingId: string; codeVerifier: string; redirectUri: string; configFingerprint: string }> {
   const deleted = await db.delete(mcpOauthStates).where(eq(mcpOauthStates.id, stateId)).returning();
   const row = deleted[0];
   if (!row) throw new Error('unknown or already-used state');
   if (row.expiresAt.getTime() < Date.now()) throw new Error('state expired — start the connect again');
-  return { bindingId: row.bindingId, codeVerifier: row.codeVerifier, redirectUri: row.redirectUri };
+  return {
+    bindingId: row.bindingId,
+    codeVerifier: row.codeVerifier,
+    redirectUri: row.redirectUri,
+    configFingerprint: row.configFingerprint,
+  };
 }
 
 /** binding + its server's oauth config, or null (the server join is typed
@@ -141,6 +147,24 @@ async function persistTokens(bindingId: string, r: TokenResponse) {
   await db.insert(mcpOauthTokens).values(values).onConflictDoUpdate({ target: mcpOauthTokens.bindingId, set: values });
 }
 
+/** config fingerprint bound into the state row at connect and re-verified at
+ * the callback — a pre-edit callback can never complete against a changed
+ * contract (SPEC: old-contract tokens never survive a config change) */
+export function oauthConfigFingerprint(config: OauthServerConfig): string {
+  return createHash('sha256')
+    .update(
+      [
+        config.authKind,
+        config.oauthTokenUrl ?? '',
+        config.oauthRevocationUrl ?? '',
+        config.oauthClientId ?? '',
+        config.oauthClientSecretEnc ?? '',
+        config.oauthScopes ?? '',
+      ].join('|'),
+    )
+    .digest('hex');
+}
+
 /** admin-only: build the provider authorize URL (302 target) + the single-use
  * state row; requires an existing binding on an oauth-configured server */
 export async function startOauthConnect(input: { employeeId: string; serverId: string; origin?: string | null }) {
@@ -151,14 +175,19 @@ export async function startOauthConnect(input: { employeeId: string; serverId: s
   if (!server.oauthAuthorizeUrl || !server.oauthTokenUrl || !server.oauthClientId) {
     throw new Error('registry entry is missing OAuth endpoints — complete the OAuth config first');
   }
+  // opportunistic TTL sweep: abandoned connects (closed popup, provider-error
+  // return) leave state rows — every new connect clears the expired ones
+  await db.delete(mcpOauthStates).where(lt(mcpOauthStates.expiresAt, new Date()));
   const state = b64url(randomBytes(32));
   const verifier = b64url(randomBytes(64));
   const redirectUri = oauthRedirectUri(input.origin);
+  const serverConfig = await loadOauthServerConfig(input.serverId);
   await db.insert(mcpOauthStates).values({
     id: state,
     bindingId: binding.id,
     codeVerifier: verifier,
     redirectUri,
+    configFingerprint: oauthConfigFingerprint(serverConfig),
     expiresAt: new Date(Date.now() + STATE_TTL_MS),
   });
   const url = new URL(server.oauthAuthorizeUrl);
@@ -187,6 +216,11 @@ export async function handleOauthCallback(input: { code: string; state: string }
   const server = await loadOauthServerConfig(binding.serverId);
   if (server.authKind !== 'oauth') throw new Error('registry entry is no longer OAuth-configured');
   if (!server.oauthTokenUrl) throw new Error('registry entry lost its token endpoint');
+  // contract guard: the config must be byte-identical to what the state was
+  // minted under — a config edit between connect and callback invalidates the flow
+  if (oauthConfigFingerprint(server) !== state.configFingerprint) {
+    throw new Error('registry entry changed since the connect started — start the connect again');
+  }
   const token = await tokenRequest(server.oauthTokenUrl, {
     ...(await clientAuthParams(server)),
     grant_type: 'authorization_code',
@@ -238,11 +272,13 @@ async function refreshBindingTokens(bindingId: string): Promise<string | null> {
   const rows = await db.query.mcpOauthTokens.findMany({ where: { bindingId: { eq: bindingId } } });
   const row = rows[0];
   if (!row) return null;
+  // stale access decrypt is best-effort — the refresh grant needs only the
+  // refresh token, so an undecryptable access ciphertext must not stop the re-arm
   let stale: string | null = null;
   try {
     stale = decryptSecret(row.accessTokenEnc);
   } catch {
-    return null;
+    stale = null;
   }
   if (!row.refreshTokenEnc) return stale;
   const bindingRows = await db.query.mcpServerBindings.findMany({
@@ -268,15 +304,33 @@ async function refreshBindingTokens(bindingId: string): Promise<string | null> {
       scope: token.scope,
     });
     return token.access_token;
-  } catch {
-    // stale token ships — dispatch must never break on a refresh failure
+  } catch (e) {
+    // stale token ships — dispatch must never break on a refresh failure; the
+    // failure still leaves a rate-limited trace (a permanently failing binding
+    // must not 401 silently forever)
+    warnRefreshFailure(bindingId, e);
     return stale;
   }
 }
 
-/** UNBIND = REVOKE: best-effort RFC 7009 revocation of BOTH tokens (the
- * refresh token is the durable grant — revoking only the access token would
- * leave it alive) + token-row delete; a failed revoke never blocks the unbind */
+const REFRESH_WARN_INTERVAL_MS = 5 * 60_000;
+const refreshWarnedAt = new Map<string, number>();
+const log = consola.withTag('tandem');
+
+/** rate-limited (once per binding per 5 min) trace of silent refresh failures */
+function warnRefreshFailure(bindingId: string, e: unknown) {
+  const now = Date.now();
+  const last = refreshWarnedAt.get(bindingId) ?? 0;
+  if (now - last < REFRESH_WARN_INTERVAL_MS) return;
+  refreshWarnedAt.set(bindingId, now);
+  const message = (e instanceof Error ? e.message : String(e)).split('\n')[0];
+  log.warn(`token refresh failed for binding ${bindingId} (stale token ships): ${message}`);
+}
+
+/** UNBIND = REVOKE: best-effort RFC 7009 revocation of BOTH tokens — the
+ * DURABLE refresh token revokes FIRST and each POST stands alone, so a failed
+ * access-token POST can never skip the grant that matters — then the token-row
+ * delete; a failed revoke never blocks the unbind */
 export async function revokeOauthTokens(bindingId: string): Promise<void> {
   try {
     const rows = await db.query.mcpOauthTokens.findMany({ where: { bindingId: { eq: bindingId } } });
@@ -299,8 +353,19 @@ export async function revokeOauthTokens(bindingId: string): Promise<void> {
             signal: AbortSignal.timeout(REVOKE_HTTP_TIMEOUT_MS),
           });
         };
-        await revokeOne(decryptSecret(row.accessTokenEnc));
-        if (row.refreshTokenEnc) await revokeOne(decryptSecret(row.refreshTokenEnc));
+        // the refresh token is the durable grant — it goes first, independently
+        if (row.refreshTokenEnc) {
+          try {
+            await revokeOne(decryptSecret(row.refreshTokenEnc));
+          } catch {
+            /* each revocation is individually best-effort */
+          }
+        }
+        try {
+          await revokeOne(decryptSecret(row.accessTokenEnc));
+        } catch {
+          /* each revocation is individually best-effort */
+        }
       }
     }
   } catch {
@@ -322,14 +387,18 @@ export async function revokeOauthTokensForEmployee(employeeId: string): Promise<
 
 /** registry OAuth-config changes wipe stored tokens AND pending connect state
  * for that server's bindings — tokens minted under an old client contract
- * never survive it, and a pre-edit callback can never complete against it */
-export async function wipeOauthTokensForServer(serverId: string): Promise<void> {
-  const rows = await db.query.mcpServerBindings.findMany({
+ * never survive it, and a pre-edit callback can never complete against it.
+ * Accepts a transaction client so the wipe commits atomically with the config
+ * change (a failed save must not leave old tokens under a live new config). */
+type DbClient = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+export async function wipeOauthTokensForServer(serverId: string, client: DbClient | typeof db = db): Promise<void> {
+  const rows = await client.query.mcpServerBindings.findMany({
     columns: { id: true },
     where: { serverId: { eq: serverId } },
   });
   for (const binding of rows) {
-    await db.delete(mcpOauthTokens).where(eq(mcpOauthTokens.bindingId, binding.id));
-    await db.delete(mcpOauthStates).where(eq(mcpOauthStates.bindingId, binding.id));
+    await client.delete(mcpOauthTokens).where(eq(mcpOauthTokens.bindingId, binding.id));
+    await client.delete(mcpOauthStates).where(eq(mcpOauthStates.bindingId, binding.id));
   }
 }

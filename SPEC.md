@@ -142,11 +142,13 @@ Slice 2 adds OAuth per binding (section below):
   revocationUrl (RFC 7009), scopes (space-separated), clientSecret as a
   registry-level vault secret ref (confidential client; PKCE always rides
   the flow). An OAuth-config write that CHANGES the effective config (the
-  kind switch or any endpoint/client/secret value) wipes the stored tokens
-  AND pending connect state of every binding to that server and clears
-  their verdicts — tokens minted under an old client contract never
-  survive it, and a pre-edit callback can never complete against it. A
-  no-op save (same values echoed back) keeps tokens and verdicts intact.
+  kind switch or any endpoint/client/secret/scope value) wipes the stored
+  tokens AND pending connect state of every binding to that server and
+  clears their verdicts — tokens minted under an old client contract never
+  survive it, and a pre-edit callback can never complete against it (the
+  state row carries a fingerprint of the config it was minted under). A
+  no-op save (same values echoed back) keeps tokens and verdicts intact,
+  and the wipe commits atomically with the config write.
 - **Tokens are per binding**: `mcp_oauth_tokens` (unique per binding) holds
   the access + refresh tokens AES-GCM encrypted at rest under the SAME vault
   envelope law — decrypted server-side at dispatch/probe only, never
@@ -165,8 +167,9 @@ Slice 2 adds OAuth per binding (section below):
   are stored on the binding. The callback renders a close-this-window
   result page and notifies the opener — the single-use state row is the
   authorization proof.
-- **Dispatch injection (OAuth)**: an `oauth` binding injects
-  `Authorization: Bearer <accessToken>`; when the token is missing, expired
+- **Dispatch injection (OAuth)**: an `oauth` binding injects the
+  `Authorization` header with scheme `Bearer` and the binding's decrypted
+  access token as the value; when the token is missing, expired
   or expiring within 60s the dispatch refreshes it first (grant_type
   `refresh_token`, single-flight per binding, refreshed tokens persisted).
   A failed refresh NEVER breaks the dispatch — the stale access token ships
@@ -341,12 +344,12 @@ capabilities), `POST /api/tasks/:id/attachments` (multipart upload),
 | `environments.remove` | admin   | `{id}`                                                    | `{ok}`                                                                                              |
 | `environments.probe`  | admin   | `{id}`                                                    | `{ok,detail,durationMs,lastProbeAt}` (verdict persisted on the row)                                 |
 | `mcp.registryList`    | session | —                                                         | `{data:[…registry rows + bindingCount]}`                                                            |
-| `mcp.registryCreate`  | admin   | `{name,url,notes}`                                        | created row                                                                                         |
-| `mcp.registryUpdate`  | admin   | `{id,name?,url?,notes?}`                                  | updated row                                                                                         |
+| `mcp.registryCreate`  | admin   | `{name,url,notes,authKind?,oauth*}`                       | created row (oauth validation per "OAuth per binding")                                              |
+| `mcp.registryUpdate`  | admin   | `{id,name?,url?,notes?,authKind?,oauth*}`                 | updated row (changed OAuth config wipes tokens + verdicts atomically)                               |
 | `mcp.registryRemove`  | admin   | `{id}`                                                    | `{ok}`                                                                                              |
-| `mcp.bindingsList`    | admin   | `{employeeId}`                                            | `{data:[…binding rows, masked secret]}`                                                             |
+| `mcp.bindingsList`    | admin   | `{employeeId}`                                            | `{data:[…binding rows, masked secret + oauth status]}`                                              |
 | `mcp.bindingsSet`     | admin   | `{employeeId,serverId,secretId?}`                         | binding row (upsert)                                                                                |
-| `mcp.bindingsRemove`  | admin   | `{employeeId,serverId}`                                   | `{ok}` (unbind = revoke at next dispatch)                                                           |
+| `mcp.bindingsRemove`  | admin   | `{employeeId,serverId}`                                   | `{ok}` (unbind = revoke at next dispatch; oauth grants revoke best-effort)                          |
 | `mcp.probe`           | admin   | `{employeeId,serverId}`                                   | `{ok,detail,durationMs,lastProbeAt}` (verdict persisted on the binding)                             |
 
 Wiring follows the official oRPC docs: Nuxt adapter (`toWebRequest` +

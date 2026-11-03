@@ -268,7 +268,6 @@ export async function registryUpdate(
   // verdicts intact.
   const oauthPatch = await normalizeOauthFields(existing, input);
   Object.assign(patch, oauthPatch);
-  const updated = await db.update(mcpServers).set(patch).where(eq(mcpServers.id, input.id)).returning();
   const oauthChanged =
     (oauthPatch.authKind !== undefined && oauthPatch.authKind !== existing.authKind) ||
     [
@@ -283,19 +282,27 @@ export async function registryUpdate(
         oauthPatch[k as keyof typeof oauthPatch] !== undefined &&
         oauthPatch[k as keyof typeof oauthPatch] !== existing[k as keyof typeof existing],
     );
-  if (urlChanged || oauthChanged) {
-    await db
-      .update(mcpServerBindings)
-      .set({ lastProbeOk: null, lastProbeDetail: null, lastProbeAt: null })
-      .where(eq(mcpServerBindings.serverId, input.id));
-  }
-  if (oauthChanged) await wipeOauthTokensForServer(input.id);
+  // Atomic config change (SPEC): the update, the verdict clear and the token/
+  // state wipe commit together — a failed save leaves the OLD config with its
+  // tokens intact, never a live new config with old-contract tokens.
+  let updatedRow: typeof mcpServers.$inferSelect | undefined;
+  await db.transaction(async (tx) => {
+    const rows = await tx.update(mcpServers).set(patch).where(eq(mcpServers.id, input.id)).returning();
+    updatedRow = rows[0];
+    if (urlChanged || oauthChanged) {
+      await tx
+        .update(mcpServerBindings)
+        .set({ lastProbeOk: null, lastProbeDetail: null, lastProbeAt: null })
+        .where(eq(mcpServerBindings.serverId, input.id));
+    }
+    if (oauthChanged) await wipeOauthTokensForServer(input.id, tx);
+  });
   await publishChange(CHANGE_RESOURCE.MCP, CHANGE_ACTION.UPDATE);
   const bindings = await db.query.mcpServerBindings.findMany({
     columns: { serverId: true },
     where: { serverId: { eq: input.id } },
   });
-  return toRegistryRow(nonNull(updated[0]), bindings.length);
+  return toRegistryRow(nonNull(updatedRow), bindings.length);
 }
 
 export async function registryRemove(input: { id: string }) {

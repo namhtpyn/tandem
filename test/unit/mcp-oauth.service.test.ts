@@ -87,6 +87,7 @@ vi.mock('../../server/db/index', () => {
 import {
   getFreshAccessToken,
   handleOauthCallback,
+  oauthConfigFingerprint,
   oauthRedirectUri,
   revokeOauthTokens,
   startOauthConnect,
@@ -167,6 +168,8 @@ describe('startOauthConnect', () => {
     expect(h.insertedStates[0]?.id).toBe(state);
     expect(h.insertedStates[0]?.bindingId).toBe(BINDING_ID);
     expect(h.insertedStates[0]?.redirectUri).toBe('https://tandem.example.com/api/mcp/oauth/callback');
+    // the state binds the config contract it was minted under (64-hex sha256)
+    expect(h.insertedStates[0]?.configFingerprint).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('refuses non-oauth registry entries and missing bindings', async () => {
@@ -183,13 +186,23 @@ describe('handleOauthCallback', () => {
   it('exchanges the code server-side and stores ENCRYPTED tokens on the binding', async () => {
     seedOauthServer();
     seedBinding();
-    h.secretRows.push({ id: 'sec-1', ciphertext: encryptSecret('super-secret-client') });
+    const secretEnc = encryptSecret('super-secret-client');
+    h.secretRows.push({ id: 'sec-1', ciphertext: secretEnc });
     h.stateReturn = [
       {
         bindingId: BINDING_ID,
         codeVerifier: 'verifier-abc',
         redirectUri: 'https://tandem.example.com/api/mcp/oauth/callback',
         expiresAt: new Date(Date.now() + 60_000),
+        // minted under THIS config — the fingerprint check must pass
+        configFingerprint: oauthConfigFingerprint({
+          authKind: 'oauth',
+          oauthTokenUrl: 'https://provider.example.com/token',
+          oauthRevocationUrl: 'https://provider.example.com/revoke',
+          oauthClientId: 'client-123',
+          oauthClientSecretEnc: secretEnc,
+          oauthScopes: 'read write',
+        }),
       },
     ];
     vi.stubGlobal(
@@ -218,6 +231,27 @@ describe('handleOauthCallback', () => {
     expect(decryptSecret(row.refreshTokenEnc as string)).toBe('rt-new');
     expect(row.scope).toBe('read write');
     expect((row.expiresAt as Date).getTime()).toBeGreaterThan(Date.now() + 3500_000);
+  });
+
+  it('refuses a callback whose state was minted under a DIFFERENT oauth config', async () => {
+    seedOauthServer();
+    seedBinding();
+    h.secretRows.push({ id: 'sec-1', ciphertext: encryptSecret('super-secret-client') });
+    h.stateReturn = [
+      {
+        bindingId: BINDING_ID,
+        codeVerifier: 'v',
+        redirectUri: 'https://x/cb',
+        expiresAt: new Date(Date.now() + 60_000),
+        configFingerprint: 'minted-under-the-old-contract',
+      },
+    ];
+    vi.stubGlobal('fetch', vi.fn());
+    await expect(handleOauthCallback({ code: 'c', state: 'st-1' })).rejects.toThrow(
+      /changed since the connect started/,
+    );
+    expect(h.fetchCalls).toHaveLength(0);
+    expect(h.tokenRows).toHaveLength(0);
   });
 
   it('rejects an unknown/already-used state before any exchange', async () => {
@@ -326,13 +360,13 @@ describe('revokeOauthTokens (unbind = revoke)', () => {
       }),
     );
     await revokeOauthTokens(BINDING_ID);
-    // the refresh token is the durable grant — it revokes with the access token
+    // the refresh token is the durable grant — it revokes FIRST, independently
     expect(h.fetchCalls).toHaveLength(2);
     expect(h.fetchCalls[0]?.url).toBe('https://provider.example.com/revoke');
     const first = new URLSearchParams(h.fetchCalls[0]?.body);
     const second = new URLSearchParams(h.fetchCalls[1]?.body);
-    expect(first.get('token')).toBe('at-gone');
-    expect(second.get('token')).toBe('rt-gone');
+    expect(first.get('token')).toBe('rt-gone');
+    expect(second.get('token')).toBe('at-gone');
     expect(first.get('client_id')).toBe('client-123');
     expect(h.deletedTokenBindingIds).toHaveLength(1);
   });
