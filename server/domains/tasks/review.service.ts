@@ -350,21 +350,27 @@ async function holdVerdictForWaitingAnswer(
   // the revert re-opens the round: the held reviewer owes their vote again —
   // re-spawn the APPROVAL obligation so inbox/decision surfaces re-arm for HUMAN
   // reviewers too (the verdict CAS resolved it; spawnObligation dedupes a PENDING
-  // duplicate, so a rapid re-vote cannot stack rows). The spawn waits for the
-  // status re-read below: a manual settle winning the window must not resurrect
-  // obligation state on a terminal task (#288 r2).
-  // IN-WINDOW RESCUE (#288 r1/r2): the holder's answer OR the owner's settle may
-  // have landed between the hold's status read and this revert:
-  //  - an answer flipped the task off waiting_answer and skipped the re-dispatch
-  //    (its openRoundLive read predates the revert) — restore the round's home
-  //    (guarded ready->in_review flip) and re-fire the held reviewer;
-  //  - a manual settle (done/cancelled category) won the race — teardown already
-  //    ran while our row was DECIDED (it supersedes PENDING rows only), so heal:
-  //    supersede the just-reverted row and cancel the APPROVAL obligations the
-  //    teardown skipped. Never resurrect state on a settled task.
+  // duplicate, so a rapid re-vote cannot stack rows). The spawn deliberately runs
+  // BEFORE the status re-read below: a settle landing inside the spawn window
+  // leaves our row PENDING at its own teardown (supersede + obligation cancel run
+  // natively), and a settle already landed by the re-read hits the heal arm — whose
+  // cancel then removes whatever the spawn inserted. Either ordering self-heals.
+  await spawnObligation(taskId, reviewerId, OBLIGATION_ROLE.APPROVAL);
+  // IN-WINDOW RESCUE/HEAL (#288 r1/r2/r3): the holder's answer OR the owner's
+  // settle may have landed between the hold's status read and this revert:
+  //  - an answer flipped the task off waiting_answer believing the round dead (its
+  //    openRoundLive read predates the revert) — restore the round's home (guarded
+  //    ready->in_review flip) and re-fire the held reviewer; IN_REVIEW needs no
+  //    arm: whatever writer flipped it there (answer flip, owner unblock) runs its
+  //    own dispatch — the hold never becomes a second dispatch source;
+  //  - a manual settle (done/cancelled category — or the task vanished) won the
+  //    race: teardown ran while our row was DECIDED (it supersedes PENDING rows
+  //    only), so heal — supersede the just-reverted row and cancel the APPROVAL
+  //    obligations the teardown skipped, including anything the spawn above
+  //    inserted. Never resurrect state on a settled task.
   const after = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
   const afterCat = after ? cats.find((c) => c.id === after.status)?.category : undefined;
-  if (afterCat === CATEGORY.DONE || afterCat === CATEGORY.CANCELLED) {
+  if (!after || afterCat === CATEGORY.DONE || afterCat === CATEGORY.CANCELLED) {
     await db
       .update(taskReviews)
       .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
@@ -377,37 +383,33 @@ async function holdVerdictForWaitingAnswer(
         ),
       );
     await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE); // the heal's row/obligation changes must reach live clients
     return true; // the owner's settle owns the outcome — nothing held anymore
   }
-  await spawnObligation(taskId, reviewerId, OBLIGATION_ROLE.APPROVAL);
-  if (after && after.status !== cur.status) {
-    if (after.status === IN_REVIEW_STATUS) {
-      await dispatchAiReviewTurns(taskId); // answer landed post-revert: re-fire (its own live-turn check dedupes)
-    } else {
-      const readyIds = cats.filter((c) => c.category === CATEGORY.READY).map((c) => c.id);
-      if (readyIds.includes(after.status)) {
-        const restored = await db
-          .update(tasks)
-          .set({ status: IN_REVIEW_STATUS, updatedAt: new Date() })
-          .where(and(eq(tasks.id, taskId), inArray(tasks.status, readyIds)))
-          .returning({ id: tasks.id });
-        if (restored.length > 0) {
-          await dispatchAiReviewTurns(taskId);
-        } else {
-          // the restore flip lost (the task moved again mid-window): the owner owns
-          // it now — say so, the manual unblock to in-review re-fires the held turn
-          await logActivity(
-            taskId,
-            ACTIVITY_KIND.STATUS,
-            null,
-            'review round resumed — the answer landed while a verdict was held; the task moved again, owner unblock to in-review re-fires the held reviewer',
-            { reviewResumed: true, round },
-          );
-        }
+  if (after.status !== cur.status) {
+    const readyIds = cats.filter((c) => c.category === CATEGORY.READY).map((c) => c.id);
+    if (readyIds.includes(after.status)) {
+      const restored = await db
+        .update(tasks)
+        .set({ status: IN_REVIEW_STATUS, updatedAt: new Date() })
+        .where(and(eq(tasks.id, taskId), inArray(tasks.status, readyIds)))
+        .returning({ id: tasks.id });
+      if (restored.length > 0) {
+        await dispatchAiReviewTurns(taskId); // we made this flip — we own its re-fire
+      } else {
+        // the restore flip lost (the task moved again mid-window): the owner owns
+        // it now — say so, the manual unblock to in-review re-fires the held turn
+        await logActivity(
+          taskId,
+          ACTIVITY_KIND.STATUS,
+          null,
+          'review round resumed — the answer landed while a verdict was held; the task moved again, owner unblock to in-review re-fires the held reviewer',
+          { reviewResumed: true, round },
+        );
       }
-      // any other status (owner moved it mid-window): the owner owns the task — no
-      // fight (working moves keep the live round under pre-existing semantics)
     }
+    // in_review / working / other non-terminal: the owner or the answer's own flip
+    // owns the task and its re-fire — no fight, no second dispatch source
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE); // re-opened round/obligation must reach live clients
     return true; // held mid-flight, then resumed — outcome stays 'parked'
   }

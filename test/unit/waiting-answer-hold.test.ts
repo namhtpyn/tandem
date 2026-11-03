@@ -277,7 +277,7 @@ describe('waiting-answer verdict hold (#288)', () => {
     expect(h.notes.some((n) => n.payload.reviewParked)).toBe(false);
   });
 
-  it('IN-WINDOW RESCUE (already in_review): no flip, straight re-fire of the held reviewer', async () => {
+  it('IN-WINDOW RESCUE (already in_review): no flip, no re-fire — the flip writer owns the dispatch', async () => {
     h.taskRows = [
       { status: WAIT_STATUS },
       { status: WAIT_STATUS },
@@ -288,27 +288,30 @@ describe('waiting-answer verdict hold (#288)', () => {
     h.aiEmployees = [{ userId: 'rev-1' }];
     await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
     expect(h.taskUpdates).toHaveLength(0); // no restore flip needed
-    expect(h.dispatched).toEqual(['task-1']);
+    expect(h.dispatched).toHaveLength(0); // never a second dispatch source: the flip's writer re-fires
+    expect(h.spawned).toEqual([`${OBLIGATION_ROLE.APPROVAL}:rev-1`]); // the decision surface re-arms
     expect(h.notes.some((n) => n.payload.reviewParked)).toBe(false);
     expect(h.published).toBeGreaterThanOrEqual(1); // the rescue publishes for live clients
   });
 
-  it('an owner settle winning the hold window heals: reverted row supersedes, obligations cancel, nothing respawns', async () => {
+  it('an owner settle winning the hold window heals: reverted row supersedes, obligations cancel', async () => {
     // reads: gate=waiting, hold=waiting (the park wins), post-revert re-read=done
     // (the owner settled mid-window — teardown ran while our row was DECIDED)
     h.taskRows = [{ status: WAIT_STATUS }, { status: WAIT_STATUS }, { status: 'st-done' }, { status: 'st-done' }];
     const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
     expect(outcome).toEqual({ outcome: 'parked' });
-    // writes: CAS → revert (PENDING) → heal (SUPERSEDED); no tasks writes, no spawn
+    // writes: CAS → revert (PENDING) → heal (SUPERSEDED); no tasks writes
     expect(h.reviewUpdates).toHaveLength(3);
     expect(h.reviewUpdates[1]!.set.status).toBe(REVIEW_STATUS.PENDING);
     expect(h.reviewUpdates[2]!.set.status).toBe(REVIEW_STATUS.SUPERSEDED);
     expect(h.reviewUpdates[2]!.where).not.toBeNull();
     expect(h.taskUpdates).toHaveLength(0);
-    expect(h.spawned).toHaveLength(0); // no phantom decision surface on the settled task
+    // the spawn ran before the re-read — the heal's cancel removes whatever it inserted
+    expect(h.spawned).toEqual([`${OBLIGATION_ROLE.APPROVAL}:rev-1`]);
     expect(h.cancelledAll).toEqual([OBLIGATION_ROLE.APPROVAL]);
     expect(h.notes).toHaveLength(0);
     expect(h.dispatched).toHaveLength(0);
+    expect(h.published).toBeGreaterThanOrEqual(1); // the heal publishes
   });
 
   it('a flip lost to a plain concurrent settle still supersedes (hold arm only fires on waiting_answer)', async () => {
