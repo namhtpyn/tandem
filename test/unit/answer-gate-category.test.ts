@@ -1,0 +1,115 @@
+// ANSWER-VERB GATE (#265 r2): the answer verb's gate reads the waiting_answer
+// CATEGORY, never the seeded id — the composer routes the send to tasks.answer
+// by category, so a custom waiting_answer-category status answers too (the
+// seeded-id gate threw 'task is not waiting for an answer' on them forever,
+// while both composer surfaces promised the send would work).
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { CATEGORY } from '#shared/enums';
+
+const h = vi.hoisted(() => ({
+  taskRows: [] as Array<Record<string, unknown>>,
+  statuses: [] as Array<{ id: string; category: string }>,
+  flips: [] as Array<{ set: Record<string, unknown>; pred: boolean }>,
+  cancelled: [] as string[],
+}));
+
+vi.mock('../../server/db/index', async () => {
+  const { tasks } = await import('../../server/db/schema');
+  return {
+    asDb: (x: unknown) => x,
+    db: {
+      update: (table: unknown) => ({
+        set: (set: Record<string, unknown>) => ({
+          where: (_cond: unknown) => ({
+            returning: async () => {
+              h.flips.push({ set, pred: table === tasks });
+              return [{ id: 'task-1' }];
+            },
+          }),
+        }),
+      }),
+      query: {
+        tasks: { findMany: async () => h.taskRows },
+        taskStatuses: { findMany: async () => h.statuses },
+      },
+    },
+  };
+});
+
+vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../server/domains/kernel/kernel')>();
+  return { ...mod, publishChange: async () => {} };
+});
+
+vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../server/domains/tasks/obligations.service')>();
+  return {
+    ...mod,
+    cancelObligations: async (_t: unknown, role: unknown) => void h.cancelled.push(String(role)),
+    spawnObligation: async () => {},
+    resolveObligation: async () => {},
+    answerHolder: async () => null,
+  };
+});
+
+vi.mock('../../server/domains/tasks/gating.service', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../server/domains/tasks/gating.service')>();
+  return { ...mod, refreshParentGating: async () => {}, hasOpenChildren: async () => false };
+});
+
+vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../server/domains/tasks/review.service')>();
+  return { ...mod, openRoundLive: async () => false, dispatchAiReviewTurns: async () => {} };
+});
+
+vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../server/domains/tasks/thread.service')>();
+  return { ...mod, insertActivityMessage: async () => {} };
+});
+
+import { answerQuestion } from '../../server/domains/tasks/workflow.service';
+
+function seedTask(statusId: string) {
+  h.taskRows = [
+    {
+      status: statusId,
+      assigneeId: 'worker-1',
+      ownerId: 'owner-1',
+      createdBy: 'owner-1',
+      questionChain: ['human-1'],
+      reviewers: [],
+    },
+  ];
+}
+
+beforeEach(() => {
+  h.flips = [];
+  h.cancelled = [];
+});
+
+describe('answer verb gate keys off the waiting_answer category (#265 r2)', () => {
+  it('a CUSTOM waiting_answer-category status answers — the flip returns to to-do', async () => {
+    seedTask('st-custom-waiting');
+    h.statuses = [{ id: 'st-custom-waiting', category: CATEGORY.WAITING_ANSWER }];
+    await answerQuestion('task-1', 'human-1', 'here is the answer');
+    expect(h.cancelled).toEqual(['ANSWER']);
+    expect(h.flips[0]?.set.status).toBeDefined();
+    expect(h.flips[0]?.pred).toBe(true);
+  });
+
+  it('a non-waiting category refuses — the verb is not reachable there', async () => {
+    seedTask('st-custom-doing');
+    h.statuses = [{ id: 'st-custom-doing', category: CATEGORY.WORKING }];
+    await expect(answerQuestion('task-1', 'human-1', 'not an answer')).rejects.toThrow(/not waiting for an answer/);
+    expect(h.cancelled).toHaveLength(0);
+    expect(h.flips).toHaveLength(0);
+  });
+
+  it('a dangling status id refuses — dead input, never a guess', async () => {
+    seedTask('st-legacy-dangling');
+    h.statuses = [];
+    await expect(answerQuestion('task-1', 'human-1', 'not an answer')).rejects.toThrow(/not waiting for an answer/);
+    expect(h.flips).toHaveLength(0);
+  });
+});

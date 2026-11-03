@@ -162,7 +162,16 @@ export async function forwardQuestion(taskId: string, authorId: string, toEmploy
 /** anyone in the chain answers → back to the assignee, status → todo (dispatcher re-fires) */
 export async function answerQuestion(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId);
-  if (task.status !== WAITING_ANSWER_STATUS) throw new Error('task is not waiting for an answer');
+  // the gate reads the waiting_answer CATEGORY (status freedom): the composer
+  // routes the send here by category, so a custom waiting status answers too —
+  // the seeded-id gate 400'd them forever (#265 r2, same class as addNote's
+  // category exclusion)
+  const statusRows = await db.query.taskStatuses.findMany({
+    columns: { id: true, category: true },
+    where: { id: { eq: task.status } },
+  });
+  if (statusRows.find((r) => r.id === task.status)?.category !== CATEGORY.WAITING_ANSWER)
+    throw new Error('task is not waiting for an answer');
   const chain = task.questionChain;
   if (!chain.includes(authorId)) throw new Error('only someone in the question chain can answer');
   await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
@@ -242,13 +251,14 @@ export async function addNote(
   // an AI assignee — the exclusion keys off the status CATEGORY (custom done/
   // cancelled/in-review statuses included), never the seeded ids (#265).
   const statusRows = await db.query.taskStatuses.findMany({
-    columns: { category: true },
+    columns: { id: true, category: true },
     where: { id: { eq: task.status } },
   });
   const excluded = [CATEGORY.DONE, CATEGORY.CANCELLED, CATEGORY.IN_REVIEW] as string[];
   // an unresolved status id (dangling legacy row) is dead input like everywhere
   // else the membership rule applies — thread-only, never a dispatch guess
-  if (!statusRows[0] || excluded.includes(statusRows[0].category)) return { steered: false as const };
+  const statusCat = statusRows.find((r) => r.id === task.status)?.category;
+  if (!statusCat || excluded.includes(statusCat)) return { steered: false as const };
   if (!task.assigneeId) return { steered: false as const };
   const ai = await db.query.aiEmployees.findFirst({
     columns: { userId: true },

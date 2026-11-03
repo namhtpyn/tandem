@@ -25,8 +25,9 @@ const props = defineProps<{ task: TaskRow | null; parentTaskId?: string | null }
 const emit = defineEmits<{ saved: [] }>();
 
 /** RUN LOCK (#264): a live run owns the task's assignee/status — the modal
- *  renders both read-only and keeps the patch valueless instead of ending in
- *  the server's lock error (SPEC: rejected server-side AND disabled in the UI) */
+ *  renders both read-only and echoes the stored values into the patch (the
+ *  server guard trips only on a CHANGED value), so a half-typed pick can never
+ *  end in the lock error (SPEC: rejected server-side AND disabled in the UI) */
 const runLocked = computed(() => !!props.task?.runLocked);
 
 const { $orpc, $client } = useNuxtApp();

@@ -39,8 +39,9 @@ export function noteSuccessCopy(outcome: NoteOutcome): string {
 
 /** the note verb's dispatch rule, mirrored 1:1 from the server's tasks.note
  *  (workflow.service addNote): a send starts an agent turn for EVERY task in a
- *  non-terminal, non-in-review category with an AI assignee — not just ready —
- *  so the hint and the aria labels must promise exactly this (#265). */
+ *  non-terminal, non-in-review, non-waiting-answer category with an AI assignee
+ *  — not just ready. waiting-answer routes the send to the ANSWER verb (a
+ *  different verb with its own server rule), so it is excluded here. */
 export function noteWillDispatch(input: {
   category: Category | null | undefined;
   assigneeKind: string | null | undefined;
@@ -48,7 +49,12 @@ export function noteWillDispatch(input: {
   if (input.assigneeKind !== 'ai') return false;
   // null category = statuses loading/failed → no dispatch promise
   if (!input.category) return false;
-  const excluded: readonly Category[] = [CATEGORY.DONE, CATEGORY.CANCELLED, CATEGORY.IN_REVIEW];
+  const excluded: readonly Category[] = [
+    CATEGORY.DONE,
+    CATEGORY.CANCELLED,
+    CATEGORY.IN_REVIEW,
+    CATEGORY.WAITING_ANSWER,
+  ];
   return !excluded.includes(input.category);
 }
 
@@ -67,6 +73,10 @@ export function composerHint(input: {
 }): string {
   if (input.running === null || input.running === undefined) return 'Sends the note';
   if (input.running) return 'Sends a steering note to the running agent';
+  // waiting-answer routes the send to the ANSWER verb (the agent's turn
+  // re-arms on an AI assignee) — its own wording, never the note verb's
+  if (input.category === CATEGORY.WAITING_ANSWER)
+    return input.assigneeKind === 'ai' ? 'Sends the answer — the agent picks the task back up' : 'Sends the answer';
   if (noteWillDispatch(input)) return 'Sends the note and dispatches the agent';
   return 'Adds the note to the thread';
 }

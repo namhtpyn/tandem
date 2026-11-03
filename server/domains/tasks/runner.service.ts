@@ -1374,6 +1374,12 @@ export function createRunWriter(runId: string, initial: string, messageId: strin
     // pre-dispatch ping predates both, so a listener holding that snapshot would
     // keep a blank run bubble with a stale status
     await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+    // the settle arms flip/leave the task row and the RUN LOCK lifts here — the
+    // TASKS resource must re-emit so list/board rows drop their runLocked bit and
+    // catch the status move (#264 r2: the plain DONE arm published only
+    // RUNS/TASK_ACTIVITY, latching the lock bit on every viewer). Extra TASKS
+    // events on arms that already publish one are harmless snapshot re-emits.
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   };
 
   return {

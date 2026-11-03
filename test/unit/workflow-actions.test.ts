@@ -71,8 +71,14 @@ describe('workflow copy helpers', () => {
     expect(m.composerHint({ category: CATEGORY.WORKING, assigneeKind: 'ai', running: false })).toContain('dispatches');
     expect(m.composerHint({ category: CATEGORY.PAUSED, assigneeKind: 'ai', running: false })).toContain('dispatches');
     expect(m.composerHint({ category: CATEGORY.BACKLOG, assigneeKind: 'ai', running: false })).toContain('dispatches');
+    // waiting-answer routes the send to the ANSWER verb — its own wording, the
+    // agent's turn re-arms on an AI assignee (#265 r2: the note verb's dispatch
+    // promise can never ride a verb the send never reaches)
     expect(m.composerHint({ category: CATEGORY.WAITING_ANSWER, assigneeKind: 'ai', running: false })).toContain(
-      'dispatches',
+      'answer',
+    );
+    expect(m.composerHint({ category: CATEGORY.WAITING_ANSWER, assigneeKind: 'human', running: false })).toBe(
+      'Sends the answer',
     );
     // exclusions mirror the server: in-review and terminal categories, humans
     expect(m.composerHint({ category: CATEGORY.IN_REVIEW, assigneeKind: 'ai', running: false })).toContain('thread');
@@ -89,15 +95,10 @@ describe('workflow copy helpers', () => {
 
   it('noteWillDispatch is the shared dispatch predicate (#265)', async () => {
     const m = await import('../../app/composables/useWorkflowActions.ts');
-    for (const category of [
-      CATEGORY.READY,
-      CATEGORY.WORKING,
-      CATEGORY.PAUSED,
-      CATEGORY.BACKLOG,
-      CATEGORY.WAITING_ANSWER,
-    ])
+    for (const category of [CATEGORY.READY, CATEGORY.WORKING, CATEGORY.PAUSED, CATEGORY.BACKLOG])
       expect(m.noteWillDispatch({ category, assigneeKind: 'ai' }), category).toBe(true);
-    for (const category of [CATEGORY.IN_REVIEW, CATEGORY.DONE, CATEGORY.CANCELLED])
+    // waiting-answer excluded: the send is the ANSWER verb there (r2)
+    for (const category of [CATEGORY.IN_REVIEW, CATEGORY.DONE, CATEGORY.CANCELLED, CATEGORY.WAITING_ANSWER])
       expect(m.noteWillDispatch({ category, assigneeKind: 'ai' }), category).toBe(false);
     expect(m.noteWillDispatch({ category: CATEGORY.READY, assigneeKind: 'human' })).toBe(false);
     expect(m.noteWillDispatch({ category: CATEGORY.READY, assigneeKind: null })).toBe(false);
