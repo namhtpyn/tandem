@@ -99,11 +99,14 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
     expect(h.parks[0]).toContain('finished without a verdict after a re-dispatch');
   });
 
-  it('missing round row falls back to the lifetime count (2 runs -> park)', async () => {
+  it('missing round row is an anomaly -> decision park, never a correction dispatch', async () => {
+    // rows are minted before any dispatch, so a missing row is a data anomaly: the
+    // safe outcome is a park (owner sees it), never a lifetime-count retry decision
     h.roundRow = null;
     h.runs = [run('old', new Date(roundOpen.getTime() - 86_400_000)), run('new', new Date(roundOpen.getTime() + 1000))];
     await settleReviewVerdict('task-1', 'rev-1', null);
     expect(h.dispatched).toHaveLength(0);
     expect(h.parks).toHaveLength(1);
+    expect(h.parks[0]).toContain('no round row for the reviewer');
   });
 });

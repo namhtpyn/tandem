@@ -1097,44 +1097,53 @@ export async function settleReviewVerdict(taskId: string, reviewerId: string, en
   } else {
     // verdict-less review: the reviewer's turn never produced a verdict envelope —
     // a transport-class failure of the review, so re-dispatch its turn ONCE PER
-    // ROUND before parking on the owner (bound, #276 blind-review r1: PER-ROUND —
-    // the pre-fix query counted the reviewer's runs across ALL rounds, so from the
-    // reviewer's second round onward the FIRST verdict-less turn parked with no
-    // retry and no correction block; runs this round = started after the current
-    // round's row was minted — unknown row falls back to the lifetime count)
+    // ROUND before parking on the owner (#276; per-round: the pre-fix lifetime
+    // count denied returning reviewers their retry from round 2 onward). Runs this
+    // round = started after the current round's row was minted. A MISSING round row
+    // is an anomaly (rows are minted before any dispatch) — park decision-class:
+    // a correction block must never attach to a round the reviewer has no row in.
     const round = await currentRound(taskId);
-    let roundStart: Date | null = null;
-    if (round > 0) {
-      const roundRow = (
-        await db
-          .select({ createdAt: taskReviews.createdAt })
-          .from(taskReviews)
-          .where(
-            and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round), eq(taskReviews.reviewerId, reviewerId)),
-          )
-          .limit(1)
-      )[0];
-      roundStart = roundRow?.createdAt ?? null;
+    const roundRow =
+      round > 0
+        ? (
+            await db
+              .select({ createdAt: taskReviews.createdAt })
+              .from(taskReviews)
+              .where(
+                and(
+                  eq(taskReviews.taskId, taskId),
+                  eq(taskReviews.round, round),
+                  eq(taskReviews.reviewerId, reviewerId),
+                ),
+              )
+              .limit(1)
+          )[0]
+        : undefined;
+    if (!roundRow) {
+      const { parkRound } = await import('./review.service');
+      await parkRound(taskId, 'review finished without a verdict — no round row for the reviewer (anomaly)');
+    } else {
+      const reviewRuns = await db.query.taskRuns.findMany({
+        columns: { id: true, startedAt: true },
+        where: { employeeId: { eq: reviewerId }, message: { taskId: { eq: taskId } } },
+      });
+      const thisRound = reviewRuns.filter((r) => r.startedAt && r.startedAt.getTime() >= roundRow.createdAt.getTime());
+      if (thisRound.length <= 1) {
+        const { dispatchAiReviewTurns } = await import('./review.service');
+        // VERDICT-LESS CORRECTION (#276): the retry brief carries the CORRECTION block —
+        // a bare replay of the identical brief failed identically in prod (the reviewer
+        // never learned its prior turn produced no envelope). Bound to THIS reviewer:
+        // the block must never land on a different pending reviewer's first turn.
+        await dispatchAiReviewTurns(taskId, undefined, {
+          verdictCorrection: true,
+          verdictlessReviewerId: reviewerId,
+        });
+        await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+        return;
+      }
+      const { parkRound } = await import('./review.service');
+      await parkRound(taskId, 'review finished without a verdict after a re-dispatch — needs a human');
     }
-    const reviewRuns = await db.query.taskRuns.findMany({
-      columns: { id: true, startedAt: true },
-      where: { employeeId: { eq: reviewerId }, message: { taskId: { eq: taskId } } },
-    });
-    const thisRound = roundStart
-      ? reviewRuns.filter((r) => r.startedAt && r.startedAt.getTime() >= roundStart.getTime())
-      : reviewRuns;
-    if (thisRound.length <= 1) {
-      const { dispatchAiReviewTurns } = await import('./review.service');
-      // VERDICT-LESS CORRECTION (#276): the retry brief carries the CORRECTION block —
-      // a bare replay of the identical brief failed identically in prod (the reviewer
-      // never learned its prior turn produced no envelope). Bound to THIS reviewer:
-      // the block must never land on a different pending reviewer's first turn.
-      await dispatchAiReviewTurns(taskId, undefined, { verdictCorrection: true, verdictlessReviewerId: reviewerId });
-      await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
-      return;
-    }
-    const { parkRound } = await import('./review.service');
-    await parkRound(taskId, 'review finished without a verdict after a re-dispatch — needs a human');
   }
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
