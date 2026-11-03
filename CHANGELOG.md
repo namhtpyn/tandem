@@ -1,3 +1,20 @@
+# [2.67.0](https://github.com/namhtpyn/tandem/compare/v2.66.0...v2.67.0) (2026-11-03)
+
+
+### Bug Fixes
+
+* **mcp:** blind-review round 1 — value-diff oauth wipe (no-op saves keep tokens), client-secret vault guard, state-row wipe + callback kind re-check, revoke both tokens, guarded decrypt, popup-close recovery, employee-cascade revocation, masked hasClientSecret ([ce2921a](https://github.com/namhtpyn/tandem/commit/ce2921a8aae690cc1ffa5d05337e533716d14708))
+* **mcp:** blind-review round 2 — refresh-first revocation (independent per-token POSTs), refresh grant without access decrypt, rate-limited refresh-failure trace, expired-state TTL sweep, config fingerprint bound into state + verified at callback, transactional registry update, always-visible reconnect verb, SPEC table/trigger alignment ([ad1f2e7](https://github.com/namhtpyn/tandem/commit/ad1f2e75ab763af62c000f1f265f454efc7419a2))
+* **mcp:** blind-review round 3 — required oauth trio rejects explicit null (400) instead of silently keeping the old value; SPEC: config_fingerprint in schema line, OAuth REST pair in Routes table + API-law exceptions ([72d369a](https://github.com/namhtpyn/tandem/commit/72d369a0e299dd570f1cdac23523622d763a8ec6))
+* **mcp:** blind-review round 4 — authorizeUrl joins the config fingerprint; post-exchange fingerprint re-check prevents old-contract token resurrection ([597fb73](https://github.com/namhtpyn/tandem/commit/597fb73372bebf43114964d6e08a3d01c2f5a4c3))
+* **mcp:** blind-review round 5 — token rows carry the config fingerprint (inert-and-deleted on read), refresh persistence UPDATE-only, vault client-secret rotation wipes tokens/states/verdicts, revocationUrl null clears ([f10e831](https://github.com/namhtpyn/tandem/commit/f10e83134cb92bed20cb2f3afe563a03b9853902))
+* **mcp:** blind-review round 6 — masked status read obeys the inert-row law (stale-fingerprint rows report not-connected and are deleted on the read) ([b416a0b](https://github.com/namhtpyn/tandem/commit/b416a0b67a8c06786ed0b297fd9f7d878d23197d))
+
+
+### Features
+
+* **mcp:** OAuth per binding — registry auth kinds, PKCE connect/callback, silent refresh at dispatch, revoke on unbind ([#270](https://github.com/namhtpyn/tandem/issues/270) slice 2) ([f49550c](https://github.com/namhtpyn/tandem/commit/f49550cb988f416f68b8fdcc8175c7424b8bbabb))
+
 # [2.66.0](https://github.com/namhtpyn/tandem/compare/v2.65.11...v2.66.0) (2026-11-03)
 
 
