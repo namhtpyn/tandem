@@ -1,0 +1,1 @@
+ALTER TABLE "mcp_oauth_states" ADD COLUMN "config_fingerprint" text NOT NULL;

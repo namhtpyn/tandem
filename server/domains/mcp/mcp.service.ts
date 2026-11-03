@@ -4,7 +4,7 @@
 // permission unit; the bound secret's plaintext IS the credential (sent
 // verbatim as the Authorization header value) and is decrypted server-side at
 // dispatch/probe ONLY — no API surface ever returns it.
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
 import { CHANGE_ACTION, CHANGE_RESOURCE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
@@ -13,6 +13,13 @@ import { db } from '../../db/index';
 import { mcpServerBindings, mcpServers, vaultSecrets } from '../../db/schema';
 import { ORPCError, publishChange } from '../kernel/kernel';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
+import {
+  getFreshAccessToken,
+  oauthConfigFromServerRow,
+  oauthStatusFor,
+  revokeOauthTokens,
+  wipeOauthTokensForServer,
+} from './mcp-oauth.service';
 
 /** ACP wire shape for slice 1 — the SDK's own McpServer union (http member used) */
 export type AcpMcpServer = import('@agentclientprotocol/sdk').McpServer;
@@ -25,6 +32,18 @@ export function toRegistryRow(r: typeof mcpServers.$inferSelect, bindingCount = 
     name: r.name,
     url: r.url,
     notes: r.notes,
+    authKind: r.authKind,
+    oauth: {
+      authorizeUrl: r.oauthAuthorizeUrl,
+      tokenUrl: r.oauthTokenUrl,
+      revocationUrl: r.oauthRevocationUrl,
+      scopes: r.oauthScopes,
+      clientId: r.oauthClientId,
+      clientSecretId: r.oauthClientSecretId,
+      // masked vault law: the session-tier read carries the ref + presence
+      // only — never the secret's name (that inverts the vault picker)
+      hasClientSecret: !!r.oauthClientSecretId,
+    },
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
     bindingCount,
@@ -62,7 +81,17 @@ type BindingWithRefs = {
   lastProbeOk: boolean | null;
   lastProbeDetail: string | null;
   lastProbeAt: Date | null;
-  server: { name: string; url: string };
+  server: {
+    name: string;
+    url: string;
+    authKind: string;
+    oauthAuthorizeUrl: string | null;
+    oauthTokenUrl: string | null;
+    oauthRevocationUrl: string | null;
+    oauthClientId: string | null;
+    oauthClientSecretId: string | null;
+    oauthScopes: string | null;
+  };
   secret: { name: string; lastFour: string; ciphertext: string } | null;
 };
 
@@ -93,7 +122,112 @@ const assertSecret = async (secretId: string) => {
   if (rows.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'credential secret not found' });
 };
 
-/** session-tier read: registry + live binding counts */
+/** OAuth registry fields (slice 2): validated + normalized for insert/update.
+ * authKind 'oauth' requires authorize/token urls + clientId; 'none' clears the
+ * whole oauth block. */
+export type RegistryOauthInput = {
+  authKind?: 'none' | 'oauth';
+  oauthAuthorizeUrl?: string | null;
+  oauthTokenUrl?: string | null;
+  oauthRevocationUrl?: string | null;
+  oauthScopes?: string | null;
+  oauthClientId?: string | null;
+  oauthClientSecretId?: string | null;
+};
+
+const assertHttpUrl = (url: string, field: string) => {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new ORPCError('BAD_REQUEST', { message: `${field} must be an http/https URL` });
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new ORPCError('BAD_REQUEST', { message: `${field} must be an http/https URL` });
+  }
+};
+
+const requireOauthField = (value: string | null | undefined, field: string) => {
+  if (!value) throw new ORPCError('BAD_REQUEST', { message: `${field} is required for oauth servers` });
+  return value;
+};
+
+const oauthCleared = {
+  authKind: 'none',
+  oauthAuthorizeUrl: null,
+  oauthTokenUrl: null,
+  oauthRevocationUrl: null,
+  oauthScopes: null,
+  oauthClientId: null,
+  oauthClientSecretId: null,
+};
+
+/** whether the input carries ANY OAuth config key (an edit by contract) */
+const oauthTouched = (input: RegistryOauthInput) =>
+  input.authKind !== undefined ||
+  input.oauthAuthorizeUrl !== undefined ||
+  input.oauthTokenUrl !== undefined ||
+  input.oauthRevocationUrl !== undefined ||
+  input.oauthScopes !== undefined ||
+  input.oauthClientId !== undefined ||
+  input.oauthClientSecretId !== undefined;
+
+/** OAuth config merge for create/update (slice 2): ANY authKind/oauth* key in
+ * the input is an EDIT — the caller wipes that server's stored tokens + clears
+ * its binding verdicts. Undefined fields keep the existing value; 'none'
+ * clears the whole block; untouched input keeps the row (create → defaults). */
+async function normalizeOauthFields(
+  existing: Pick<
+    typeof mcpServers.$inferSelect,
+    | 'authKind'
+    | 'oauthAuthorizeUrl'
+    | 'oauthTokenUrl'
+    | 'oauthRevocationUrl'
+    | 'oauthScopes'
+    | 'oauthClientId'
+    | 'oauthClientSecretId'
+  >,
+  input: RegistryOauthInput,
+): Promise<Partial<typeof mcpServers.$inferInsert>> {
+  const touched = oauthTouched(input);
+  const kind = input.authKind ?? (existing.authKind as 'none' | 'oauth');
+  if (!touched) return {};
+  if (kind === 'none') return { ...oauthCleared };
+  // the required trio: an explicit null is a CLEAR attempt on a required field —
+  // rejected 400, never silently kept from the existing row
+  const authorizeUrl = requireOauthField(
+    input.oauthAuthorizeUrl !== undefined ? input.oauthAuthorizeUrl : existing.oauthAuthorizeUrl,
+    'oauthAuthorizeUrl',
+  );
+  const tokenUrl = requireOauthField(
+    input.oauthTokenUrl !== undefined ? input.oauthTokenUrl : existing.oauthTokenUrl,
+    'oauthTokenUrl',
+  );
+  const clientId = requireOauthField(
+    input.oauthClientId !== undefined ? input.oauthClientId : existing.oauthClientId,
+    'oauthClientId',
+  );
+  assertHttpUrl(authorizeUrl, 'oauthAuthorizeUrl');
+  assertHttpUrl(tokenUrl, 'oauthTokenUrl');
+  const revocationUrl = input.oauthRevocationUrl !== undefined ? input.oauthRevocationUrl : existing.oauthRevocationUrl;
+  if (revocationUrl) assertHttpUrl(revocationUrl, 'oauthRevocationUrl');
+  const scopes = input.oauthScopes !== undefined ? input.oauthScopes?.trim() || null : existing.oauthScopes;
+  const clientSecretId =
+    input.oauthClientSecretId !== undefined ? input.oauthClientSecretId : existing.oauthClientSecretId;
+  if (clientSecretId) await assertSecret(clientSecretId);
+  return {
+    authKind: 'oauth',
+    oauthAuthorizeUrl: authorizeUrl,
+    oauthTokenUrl: tokenUrl,
+    oauthRevocationUrl: revocationUrl ?? null,
+    oauthScopes: scopes,
+    oauthClientId: clientId,
+    oauthClientSecretId: clientSecretId,
+  };
+}
+
+/** session-tier read: registry + live binding counts (OAuth config is
+ * non-secret and session-visible; the client SECRET shows presence only) */
 export async function listRegistry() {
   const rows = await db.query.mcpServers.findMany({ orderBy: { name: 'asc' } });
   const bindings = await db.query.mcpServerBindings.findMany({ columns: { serverId: true } });
@@ -102,17 +236,35 @@ export async function listRegistry() {
   return { data: rows.map((r) => toRegistryRow(r, counts.get(r.id) ?? 0)) };
 }
 
-export async function registryCreate(input: { name: string; url: string; notes: string }) {
+export async function registryCreate(input: { name: string; url: string; notes: string } & RegistryOauthInput) {
   const clash = await db.query.mcpServers.findMany({ where: { name: { eq: input.name } } });
   if (clash.length > 0) {
     throw new ORPCError('CONFLICT', { message: `MCP server "${input.name}" already exists` });
   }
-  const inserted = await db.insert(mcpServers).values(input).returning();
+  // an empty existing row: untouched input falls back to the column defaults
+  const oauth = await normalizeOauthFields(
+    {
+      authKind: 'none',
+      oauthAuthorizeUrl: null,
+      oauthTokenUrl: null,
+      oauthRevocationUrl: null,
+      oauthScopes: null,
+      oauthClientId: null,
+      oauthClientSecretId: null,
+    },
+    input,
+  );
+  const inserted = await db
+    .insert(mcpServers)
+    .values({ name: input.name, url: input.url, notes: input.notes, ...oauth })
+    .returning();
   await publishChange(CHANGE_RESOURCE.MCP, CHANGE_ACTION.CREATE);
   return toRegistryRow(nonNull(inserted[0]));
 }
 
-export async function registryUpdate(input: { id: string; name?: string; url?: string; notes?: string }) {
+export async function registryUpdate(
+  input: { id: string; name?: string; url?: string; notes?: string } & RegistryOauthInput,
+) {
   const existing = (await db.query.mcpServers.findMany({ where: { id: { eq: input.id } } }))[0];
   if (!existing) throw new ORPCError('NOT_FOUND', { message: 'MCP registry entry not found' });
   if (input.name !== undefined && input.name !== existing.name) {
@@ -130,19 +282,47 @@ export async function registryUpdate(input: { id: string; name?: string; url?: s
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
     updatedAt: new Date(),
   };
-  const updated = await db.update(mcpServers).set(patch).where(eq(mcpServers.id, input.id)).returning();
-  if (urlChanged) {
-    await db
-      .update(mcpServerBindings)
-      .set({ lastProbeOk: null, lastProbeDetail: null, lastProbeAt: null })
-      .where(eq(mcpServerBindings.serverId, input.id));
-  }
+  // OAuth config edit = ANY authKind/oauth* key present; the wipe fires only
+  // when the EFFECTIVE config changed — a no-op save (same values echoed back,
+  // e.g. a notes-only edit from the UI's full-form submit) keeps tokens and
+  // verdicts intact.
+  const oauthPatch = await normalizeOauthFields(existing, input);
+  Object.assign(patch, oauthPatch);
+  const oauthChanged =
+    (oauthPatch.authKind !== undefined && oauthPatch.authKind !== existing.authKind) ||
+    [
+      'oauthAuthorizeUrl',
+      'oauthTokenUrl',
+      'oauthRevocationUrl',
+      'oauthScopes',
+      'oauthClientId',
+      'oauthClientSecretId',
+    ].some(
+      (k) =>
+        oauthPatch[k as keyof typeof oauthPatch] !== undefined &&
+        oauthPatch[k as keyof typeof oauthPatch] !== existing[k as keyof typeof existing],
+    );
+  // Atomic config change (SPEC): the update, the verdict clear and the token/
+  // state wipe commit together — a failed save leaves the OLD config with its
+  // tokens intact, never a live new config with old-contract tokens.
+  let updatedRow: typeof mcpServers.$inferSelect | undefined;
+  await db.transaction(async (tx) => {
+    const rows = await tx.update(mcpServers).set(patch).where(eq(mcpServers.id, input.id)).returning();
+    updatedRow = rows[0];
+    if (urlChanged || oauthChanged) {
+      await tx
+        .update(mcpServerBindings)
+        .set({ lastProbeOk: null, lastProbeDetail: null, lastProbeAt: null })
+        .where(eq(mcpServerBindings.serverId, input.id));
+    }
+    if (oauthChanged) await wipeOauthTokensForServer(input.id, tx);
+  });
   await publishChange(CHANGE_RESOURCE.MCP, CHANGE_ACTION.UPDATE);
   const bindings = await db.query.mcpServerBindings.findMany({
     columns: { serverId: true },
     where: { serverId: { eq: input.id } },
   });
-  return toRegistryRow(nonNull(updated[0]), bindings.length);
+  return toRegistryRow(nonNull(updatedRow), bindings.length);
 }
 
 export async function registryRemove(input: { id: string }) {
@@ -164,14 +344,22 @@ export async function registryRemove(input: { id: string }) {
   return { ok: true };
 }
 
-/** admin read: an employee's bindings, masked credential */
+/** admin read: an employee's bindings, masked credential + oauth status */
 export async function bindingsList(employeeId: string) {
   const rows = await db.query.mcpServerBindings.findMany({
     where: { employeeId: { eq: employeeId } },
     with: { server: true, secret: true },
     orderBy: { id: 'asc' },
   });
-  return { data: rows.map((b) => toBindingRow(b as BindingWithRefs)) };
+  return {
+    data: await Promise.all(
+      (rows as BindingWithRefs[]).map(async (b) => ({
+        ...toBindingRow(b),
+        authKind: b.server.authKind,
+        oauth: await oauthStatusFor(b.id, oauthConfigFromServerRow(b.server)),
+      })),
+    ),
+  };
 }
 
 /** upsert by (employee, server); a credential CHANGE clears the binding's verdict */
@@ -203,13 +391,13 @@ export async function bindingsSet(input: { employeeId: string; serverId: string;
   return toBindingRow(row);
 }
 
-/** unbind = revoke: the agent loses the server on its NEXT dispatch */
+/** unbind = revoke: the agent loses the server on its NEXT dispatch; an oauth
+ * binding's tokens are revoked (best-effort) + deleted with it */
 export async function bindingsRemove(input: { employeeId: string; serverId: string }) {
-  const deleted = await db
-    .delete(mcpServerBindings)
-    .where(and(eq(mcpServerBindings.employeeId, input.employeeId), eq(mcpServerBindings.serverId, input.serverId)))
-    .returning({ id: mcpServerBindings.id });
-  if (deleted.length === 0) throw new ORPCError('NOT_FOUND', { message: 'binding not found' });
+  const existing = await findBinding(input.employeeId, input.serverId);
+  if (!existing) throw new ORPCError('NOT_FOUND', { message: 'binding not found' });
+  if (existing.server.authKind === 'oauth') await revokeOauthTokens(existing.id);
+  await db.delete(mcpServerBindings).where(eq(mcpServerBindings.id, existing.id));
   await publishChange(CHANGE_RESOURCE.MCP, CHANGE_ACTION.DELETE);
   return { ok: true };
 }
@@ -226,13 +414,22 @@ export async function buildMcpServersFor(employeeId: string): Promise<AcpMcpServ
     with: { server: true, secret: true },
   });
   const sorted = [...(rows as BindingWithRefs[])].sort((a, b) => (a.server.name < b.server.name ? -1 : 1));
-  // ACP v1 wire: headers is a REQUIRED array (empty = uncredentialed server)
-  return sorted.map((b) => ({
-    type: 'http' as const,
-    name: b.server.name,
-    url: b.server.url,
-    headers: b.secret?.ciphertext ? [{ name: 'Authorization', value: decryptSecret(b.secret.ciphertext) }] : [],
-  }));
+  return Promise.all(
+    sorted.map(async (b) => {
+      // ACP v1 wire: headers is a REQUIRED array (empty = uncredentialed server)
+      let headers: Array<{ name: string; value: string }> = [];
+      if (b.server.authKind === 'oauth') {
+        // OAuth binding: silent refresh first, then Bearer. A failed refresh
+        // ships the stale token (empty headers when none) — dispatch NEVER
+        // breaks on a refresh failure (SPEC: dispatch injection, OAuth).
+        const token = await getFreshAccessToken(b.id, oauthConfigFromServerRow(b.server));
+        if (token) headers = [{ name: 'Authorization', value: `Bearer ${token}` }];
+      } else if (b.secret?.ciphertext) {
+        headers = [{ name: 'Authorization', value: decryptSecret(b.secret.ciphertext) }];
+      }
+      return { type: 'http' as const, name: b.server.name, url: b.server.url, headers };
+    }),
+  );
 }
 
 /** fake-runner parity (SPEC): name the bound servers in the run output — names only, never credentials */
@@ -312,8 +509,15 @@ export async function persistBindingVerdict(bindingId: string, r: { ok: boolean;
 export async function probeMcpBinding(input: { employeeId: string; serverId: string }) {
   const binding = await findBinding(input.employeeId, input.serverId);
   if (!binding) throw new ORPCError('NOT_FOUND', { message: 'binding not found' });
-  // decrypt server-side at probe only — same law as dispatch
-  const authorization = binding.secret?.ciphertext ? decryptSecret(binding.secret.ciphertext) : undefined;
+  // decrypt server-side at probe only — same law as dispatch. OAuth bindings
+  // ride the same silent-refresh path dispatch uses, then Bearer.
+  let authorization: string | undefined;
+  if (binding.server.authKind === 'oauth') {
+    const token = await getFreshAccessToken(binding.id, oauthConfigFromServerRow(binding.server));
+    if (token) authorization = `Bearer ${token}`;
+  } else if (binding.secret?.ciphertext) {
+    authorization = decryptSecret(binding.secret.ciphertext);
+  }
   const started = Date.now();
   const result = await probeMcpHttp(binding.server.url, authorization);
   const durationMs = Date.now() - started;

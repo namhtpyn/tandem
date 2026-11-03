@@ -32,11 +32,23 @@ const urlField = z
 const notesField = z.string().trim().max(2000).default('');
 const idField = z.string().min(1);
 
+// slice 2 OAuth registry fields — validation of the REQUIRED-for-oauth shape
+// lives in the service (normalizeOauthFields: authorize/token urls + clientId)
+const oauthInputShape = {
+  authKind: z.enum(['none', 'oauth']).optional(),
+  oauthAuthorizeUrl: urlField.nullish(),
+  oauthTokenUrl: urlField.nullish(),
+  oauthRevocationUrl: urlField.nullish(),
+  oauthScopes: z.string().trim().max(500).nullish(),
+  oauthClientId: z.string().trim().min(1).max(500).nullish(),
+  oauthClientSecretId: idField.nullish(),
+};
+
 export const mcpRouter = os.router({
   registryList: protectedProcedure.handler(() => listRegistry()),
 
   registryCreate: adminProcedure
-    .input(z.strictObject({ name: nameField, url: urlField, notes: notesField }))
+    .input(z.strictObject({ name: nameField, url: urlField, notes: notesField, ...oauthInputShape }))
     .handler(({ input }) => registryCreate(input)),
 
   registryUpdate: adminProcedure
@@ -46,6 +58,7 @@ export const mcpRouter = os.router({
         name: nameField.optional(),
         url: urlField.optional(),
         notes: notesField.optional(),
+        ...oauthInputShape,
       }),
     )
     .handler(({ input }) => registryUpdate(input)),

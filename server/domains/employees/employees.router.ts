@@ -611,6 +611,10 @@ export const employeesRouter = os.router({
     }
     // deleting the user cascades supervisors, ai extension, api keys
     // (existence already verified above — no race window worth a second check)
+    // UNBIND = REVOKE (SPEC MCP): the cascade removes the employee's bindings
+    // + token rows — revoke the provider grants best-effort BEFORE the delete
+    const { revokeOauthTokensForEmployee } = await import('../mcp/mcp-oauth.service');
+    await revokeOauthTokensForEmployee(input.id);
     await db.delete(userTable).where(eq(userTable.id, input.id));
     await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.DELETE);
     // the per-agent worker roster follows the AI roster — a removed agent's

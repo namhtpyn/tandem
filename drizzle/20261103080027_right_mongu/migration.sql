@@ -1,0 +1,1 @@
+ALTER TABLE "mcp_oauth_tokens" ADD COLUMN "config_fingerprint" text DEFAULT '' NOT NULL;

@@ -5,7 +5,7 @@
 // stays open while the key is on screen. null employee = create mode; emits
 // `saved` after a successful write.
 import { useMutation, useQuery } from '@tanstack/vue-query';
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { z } from 'zod';
 
 import { PROVIDER_KIND, endpointKind, isModelsEndpoint } from '#shared/api-styles';
@@ -317,6 +317,8 @@ type McpBindingRow = {
   serverId: string;
   serverName: string;
   url: string;
+  authKind?: string;
+  oauth?: { connected: boolean; expiresAt: string | null } | null;
   secretId: string | null;
   secretName: string | null;
   lastFour: string | null;
@@ -425,6 +427,65 @@ function probedWhen(iso: string | null | undefined) {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
+}
+
+// ---- OAuth connect (#270 slice 2) -------------------------------------------
+// The popup rides /api/mcp/oauth/connect (admin REST): provider authorize →
+// Tandem callback stores the binding's tokens → the callback page postMessages
+// `mcp-oauth` to this opener and we refetch the bindings (masked status only).
+const connectingServerId = ref<string | null>(null);
+let connectPopupWatcher: number | null = null;
+
+function stopConnectWatcher() {
+  if (connectPopupWatcher !== null) {
+    window.clearInterval(connectPopupWatcher);
+    connectPopupWatcher = null;
+  }
+}
+
+function onOauthMessage(event: MessageEvent) {
+  if (event.origin !== window.location.origin) return;
+  const data = event.data as { type?: string } | null;
+  if (data?.type !== 'mcp-oauth') return;
+  connectingServerId.value = null;
+  stopConnectWatcher();
+  void loadBindings();
+}
+
+onMounted(() => window.addEventListener('message', onOauthMessage));
+onBeforeUnmount(() => {
+  window.removeEventListener('message', onOauthMessage);
+  stopConnectWatcher();
+});
+
+function connectOauth(binding: McpBindingRow) {
+  const employeeId = editingId.value;
+  if (!employeeId || connectingServerId.value) return;
+  connectingServerId.value = binding.serverId;
+  const url = `/api/mcp/oauth/connect?employeeId=${encodeURIComponent(employeeId)}&serverId=${encodeURIComponent(binding.serverId)}`;
+  const popup = window.open(url, 'mcp-oauth-connect', 'popup,width=520,height=680');
+  // a cancelled/closed popup never postMessages — stop the spinner so the
+  // Connect button stays usable (reopening was the only recovery before)
+  stopConnectWatcher();
+  connectPopupWatcher = window.setInterval(() => {
+    if (!popup || popup.closed) {
+      stopConnectWatcher();
+      connectingServerId.value = null;
+    }
+  }, 500);
+}
+
+/** 'connected · expires <when>' label for oauth bindings */
+function oauthStatusLabel(b: McpBindingRow) {
+  if (!b.oauth?.connected) return 'Not connected';
+  if (!b.oauth.expiresAt) return 'Connected';
+  const ms = new Date(b.oauth.expiresAt).getTime() - Date.now();
+  if (ms <= 0) return 'Connected · token expired (auto-refreshes)';
+  const m = Math.floor(ms / 60000);
+  if (m < 60) return `Connected · expires in ${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `Connected · expires in ${h}h`;
+  return `Connected · expires in ${Math.floor(h / 24)}d`;
 }
 
 // load when the modal opens with an AI employee in edit (create has no id to
@@ -771,8 +832,31 @@ watch(
                     </template>
                   </div>
                 </div>
-                <p class="text-muted mt-1 text-xs">
-                  <template v-if="b.secretName">
+                <p class="text-muted mt-1 text-xs" data-testid="mcp-binding-auth">
+                  <template v-if="b.authKind === 'oauth'">
+                    <UBadge
+                      :color="b.oauth?.connected ? 'success' : 'warning'"
+                      variant="subtle"
+                      size="sm"
+                      :icon="b.oauth?.connected ? 'i-lucide-circle-check' : 'i-lucide-circle-alert'"
+                      data-testid="mcp-oauth-status"
+                    >
+                      {{ oauthStatusLabel(b) }}
+                    </UBadge>
+                    <UButton
+                      class="ms-2"
+                      icon="i-lucide-key-round"
+                      :label="b.oauth?.connected ? 'Reconnect' : 'Connect'"
+                      variant="soft"
+                      color="primary"
+                      size="sm"
+                      data-testid="mcp-oauth-connect"
+                      :loading="connectingServerId === b.serverId"
+                      :disabled="mcpBusy || (connectingServerId !== null && connectingServerId !== b.serverId)"
+                      @click="connectOauth(b)"
+                    />
+                  </template>
+                  <template v-else-if="b.secretName">
                     Credential
                     <span class="text-highlighted">{{ b.secretName }}</span>
                     <span class="text-dimmed font-mono"> •••• {{ b.lastFour }}</span>
