@@ -5,13 +5,14 @@
 // never gains a phantom reviewer and a recorded verdict is never clobbered.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { REVIEW_STATUS } from '#shared/enums';
+import { CATEGORY, REVIEW_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 const h = vi.hoisted(() => ({
   taskReads: [] as Array<Record<string, unknown>[]>,
   reviewReads: [] as Array<Record<string, unknown>[]>,
   casMiss: false,
+  statuses: [] as Array<{ id: string; category: string }>,
   updates: [] as Array<{ table: string; set: Record<string, unknown>; pred: boolean }>,
   inserts: [] as Array<{ table: string; values: Record<string, unknown> }>,
   spawned: [] as string[],
@@ -76,7 +77,7 @@ vi.mock('../../server/db/index', async () => {
       query: {
         user: { findMany: async () => h.users },
         employeeSupervisors: { findMany: async () => h.edges },
-        taskStatuses: { findMany: async () => [] },
+        taskStatuses: { findMany: async () => h.statuses },
       },
     },
   };
@@ -136,6 +137,7 @@ beforeEach(() => {
   h.published = 0;
   h.users = [{ id: 'sup-1', name: 'Sup' }];
   h.edges = [{ employeeId: 'rev-1', supervisorId: 'sup-1' }];
+  h.statuses = [{ id: STATUS.inReview, category: CATEGORY.IN_REVIEW }];
 });
 
 describe('escalateReview verdict-row CAS (#283)', () => {
@@ -173,6 +175,8 @@ describe('escalateReview verdict-row CAS (#283)', () => {
       [{ status: STATUS.inReview, reviewers: ['rev-1'], assigneeId: 'assignee-1' }],
       [{ status: STATUS.cancelled }],
     ];
+    // the heal fires only for a settled (done/cancelled-category) task
+    h.statuses = [{ id: STATUS.cancelled, category: CATEGORY.CANCELLED }];
     // review FIFO: [currentRound, ownRow, onRound, heal-round-read, heal-rows-read]
     h.reviewReads = [
       [{ round: 2 }],

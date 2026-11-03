@@ -260,12 +260,10 @@ export async function submitResult(taskId: string, authorId: string, body: strin
       .returning({ id: tasks.id });
     if (flipped.length === 0) {
       await teardownOpenRound(taskId, 'submit lost the race');
-      // a park that landed on the task during this window (owner dragged it in-review
-      // mid-open) must not keep an armed ladder re-firing into the now-dead round
-      await db
-        .update(tasks)
-        .set({ parkRearmAttempts: 0, parkRearmAfter: null, parkFromStatus: null })
-        .where(and(eq(tasks.id, taskId), eq(tasks.status, STATUS.blocked)));
+      // NO park-disarm here (#292 r3): the loser's own parkRound can never land on a
+      // working-category task (the r1 rethrow owns that window), so a disarm would
+      // only ever strip a CONCURRENT round's legitimate park recovery state — the
+      // re-arm scan and the park-origin restore both depend on those columns.
       throw new Error('task state changed during submit — a settle owns the outcome');
     }
     await refreshParentGating(taskId);

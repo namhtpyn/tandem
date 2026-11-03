@@ -448,14 +448,18 @@ export async function listReviews(taskId: string) {
   }));
 }
 
-/** MINT SELF-HEAL (#292 r2): the escalate mint spans four awaited writes with no
- * single arbiter — a settle landing inside the window must never leave the freshly
- * minted target row + obligation alive on a terminal task. The standard teardown
- * supersedes PENDING rows and cancels approval obligations; the roster reverts.
- * A vanished task (read returns nothing) heals nothing. True = healed. */
+/** MINT SELF-HEAL (#292 r2/r3): the escalate mint spans four awaited writes with no
+ * single arbiter — a SETTLE landing inside the window must never leave the freshly
+ * minted target row + obligation alive on a terminal task. Gated on the task being
+ * in a done/cancelled CATEGORY (a BLOCKED round is still live — healing it would
+ * strand the parked round); the standard teardown supersedes PENDING rows, cancels
+ * approval obligations and the roster reverts. A vanished task heals nothing. */
 async function selfHealEscalationIfSettled(taskId: string, originalReviewers: string[]): Promise<boolean> {
   const postGate = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
-  if (postGate == null || postGate.status === IN_REVIEW_STATUS) return false;
+  if (postGate == null) return false;
+  const cats = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
+  const cat = cats.find((c) => c.id === postGate.status)?.category;
+  if (cat !== CATEGORY.DONE && cat !== CATEGORY.CANCELLED) return false;
   await teardownOpenRound(taskId, 'escalation lost the race');
   await db.update(tasks).set({ reviewers: originalReviewers, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   return true;
