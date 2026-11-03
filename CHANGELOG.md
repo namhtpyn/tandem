@@ -1,3 +1,13 @@
+## [2.67.2](https://github.com/namhtpyn/tandem/compare/v2.67.1...v2.67.2) (2026-11-03)
+
+
+### Bug Fixes
+
+* [#282](https://github.com/namhtpyn/tandem/issues/282) [#283](https://github.com/namhtpyn/tandem/issues/283) [#286](https://github.com/namhtpyn/tandem/issues/286) [#287](https://github.com/namhtpyn/tandem/issues/287) guarded lifecycle writes — round-open failure surfaces instead of stranding, escalate verdict-row CAS, writer.finish settles once (0-row arbiter skips side effects), abandon arbitrates on the read status ([11d5db6](https://github.com/namhtpyn/tandem/commit/11d5db67ed7b9463c3ec9101ed82a37e1b160153))
+* [#292](https://github.com/namhtpyn/tandem/issues/292) r1 — blind-review round 1 findings: submit/answer flips arbitrate on the read status (lost submit tears its round down), escalate mints nothing when the task settles mid-flight, review-dispatch enqueue failures never bounce the work task, round-open rethrow scoped to the working window ([d148d87](https://github.com/namhtpyn/tandem/commit/d148d87155b724853382f5c31b7dab83d14a0ff4))
+* [#292](https://github.com/namhtpyn/tandem/issues/292) r2 — blind-review round 2 findings: escalate mint self-heals a settle landing inside the window (teardown + roster revert), lifecycle flips arbitrate on status AND updatedAt stamp (ABA-proof), lost submit disarms a park ladder landed mid-window ([1d10706](https://github.com/namhtpyn/tandem/commit/1d107067748a863d636f3fd71c90aaadb21cbbcf))
+* [#292](https://github.com/namhtpyn/tandem/issues/292) r3 — blind-review round 3: drop the lost-submit park-disarm (it could only ever strip a concurrent round's legitimate park recovery), gate the escalate self-heal on terminal category (a parked-but-live round is never healed); r3 P1 finding rejected with logged evidence (mint loop sits outside the r1 try/catch — duplicate submits throw the unique violation in the loop, never reaching the teardown) ([00aa5a3](https://github.com/namhtpyn/tandem/commit/00aa5a3a055c02175691aa6cd7902148566ba2d4))
+
 ## [2.67.1](https://github.com/namhtpyn/tandem/compare/v2.67.0...v2.67.1) (2026-11-03)
 
 
