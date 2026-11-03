@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   runs: [] as Array<{ id: string; startedAt: Date | null; status?: string }>,
   dispatched: [] as Array<Record<string, unknown>>,
   parks: [] as string[],
+  verdictAt: [] as Array<Date | undefined>,
 }));
 
 vi.mock('../../server/db/index', () => ({
@@ -41,6 +42,17 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     dispatchAiReviewTurns: async (_taskId: string, _body?: string, opts?: Record<string, unknown>) => {
       h.dispatched.push(opts ?? {});
     },
+    recordVerdict: async (
+      _taskId: string,
+      _reviewerId: string,
+      _verdict: string,
+      _note: string,
+      _source: string,
+      at?: Date,
+    ) => {
+      h.verdictAt.push(at);
+      return 'waiting' as const;
+    },
     parkRound: async (_taskId: string, why: string) => {
       h.parks.push(why);
     },
@@ -60,6 +72,7 @@ beforeEach(() => {
   h.runs = [];
   h.dispatched = [];
   h.parks = [];
+  h.verdictAt = [];
 });
 
 describe('settleReviewVerdict verdict-less bound (#276)', () => {
@@ -107,6 +120,14 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
     await settleReviewVerdict('task-1', 'rev-1', null, self);
     expect(h.dispatched).toHaveLength(0);
     expect(h.parks).toHaveLength(0);
+  });
+
+  it('a verdict-carrying settle pins the SAME settling-run start into recordVerdict (r6)', async () => {
+    // stale AI verdicts must bind to the round their run was minted for — the
+    // recordVerdict path mirrors the verdict-less bound's `at`
+    await settleReviewVerdict('task-1', 'rev-1', { kind: 'approved', text: 'ok' } as never, self);
+    expect(h.verdictAt).toHaveLength(1);
+    expect(h.verdictAt[0]?.getTime()).toBe(self.getTime());
   });
 
   it('no dispatched round row is an anomaly -> decision park, never a correction dispatch', async () => {

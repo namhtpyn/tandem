@@ -297,6 +297,7 @@ export async function recordVerdict(
   verdict: ReviewVerdict,
   note: string,
   source: 'human' | 'ai',
+  at?: Date,
 ): Promise<{ outcome: 'waiting' | 'done' | 'returned' | 'cancelled' | 'superseded' }> {
   const taskRow = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
   if (!taskRow) throw new Error('task not found');
@@ -307,7 +308,10 @@ export async function recordVerdict(
   // round binding: a human click decides the CURRENT round; an AI verdict belongs to
   // the round its review run was DISPATCHED for (a stale run must not settle a newer
   // round it was never part of)
-  const round = source === 'human' ? await currentRound(taskId) : await dispatchedReviewRound(taskId, reviewerId);
+  // `at` pins the SETTLING run's start for AI verdicts (#276 blind-review r6): the
+  // verdict binds to the round its run was minted for, exactly like the verdict-less
+  // bound — a stale settle must never write into a newer round's row.
+  const round = source === 'human' ? await currentRound(taskId) : await dispatchedReviewRound(taskId, reviewerId, at);
   if (round === 0) throw new Error('task has no open review round');
   const row = (
     await db

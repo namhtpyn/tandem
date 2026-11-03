@@ -1081,10 +1081,24 @@ export async function settleReviewVerdict(
   // no translation layer. `escalate` is the one non-settling kind: a referral.
   if (envelope?.kind === 'approved') {
     /* v8 ignore next -- empty-text fallback */
-    await recordVerdict(taskId, reviewerId, REVIEW_STATUS.APPROVED, envelope.text || 'approved by review', 'ai');
+    await recordVerdict(
+      taskId,
+      reviewerId,
+      REVIEW_STATUS.APPROVED,
+      envelope.text || 'approved by review',
+      'ai',
+      runStartedAt,
+    );
   } else if (envelope?.kind === 'rejected') {
     /* v8 ignore next -- empty-text fallback */
-    await recordVerdict(taskId, reviewerId, REVIEW_STATUS.REJECTED, envelope.text || 'rejected by review', 'ai');
+    await recordVerdict(
+      taskId,
+      reviewerId,
+      REVIEW_STATUS.REJECTED,
+      envelope.text || 'rejected by review',
+      'ai',
+      runStartedAt,
+    );
   } else if (envelope?.kind === 'request_change') {
     /* v8 ignore next -- empty-text fallback */
     await recordVerdict(
@@ -1093,6 +1107,7 @@ export async function settleReviewVerdict(
       REVIEW_STATUS.CHANGE_REQUESTED,
       envelope.text || 'changes requested by review',
       'ai',
+      runStartedAt,
     );
   } else if (envelope?.kind === 'escalate') {
     // referral: swap the reviewer up-chain on the TASK roster; a stuck referral
