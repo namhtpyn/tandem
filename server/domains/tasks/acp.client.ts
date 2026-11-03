@@ -268,7 +268,12 @@ export async function runAcpTurn<S extends import('zod').ZodType = never>(opts: 
         const sessionId = await openSession(ctx);
         if (!sessionId) throw new Error('acp session setup returned no sessionId');
 
-        notifyCancel = (sid: string) => void ctx.notify(acp.methods.agent.session.cancel, { sessionId: sid });
+        // #262: this notify rides the wire exactly where it may already be gone
+        // (human Stop verb, turn timeout) — an unhandled rejection terminates the
+        // whole bun process (TICK-ISOLATION class), so it catches like every
+        // other session/cancel send in this file
+        notifyCancel = (sid: string) =>
+          void ctx.notify(acp.methods.agent.session.cancel, { sessionId: sid }).catch(() => {});
         teardown = () => {
           try {
             stream.close();
