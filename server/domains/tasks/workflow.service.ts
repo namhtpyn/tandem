@@ -63,7 +63,15 @@ async function logActivity(
 
 async function getTask(id: string) {
   const rows = await db.query.tasks.findMany({
-    columns: { status: true, assigneeId: true, ownerId: true, createdBy: true, questionChain: true, reviewers: true },
+    columns: {
+      status: true,
+      assigneeId: true,
+      ownerId: true,
+      createdBy: true,
+      questionChain: true,
+      reviewers: true,
+      updatedAt: true,
+    },
     where: { id: { eq: id } },
     orderBy: { createdAt: 'asc' },
   });
@@ -161,14 +169,18 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
   // a LIVE review round returns to in-review (the round is still open); the
   // assignee's own question returns to todo so the agent resumes with the answer
   const backTo = (await openRoundLive(taskId)) ? IN_REVIEW_STATUS : TODO_STATUS;
-  await db
+  // TERMINAL ARBITRATION mirror (#287, #292 r1): the return flip arbitrates on the
+  // status this call read — a won settle keeps its outcome, the late answer refuses.
+  const flipped = await db
     .update(tasks)
     .set({
       status: backTo,
       questionChain: [],
       updatedAt: new Date(),
     })
-    .where(eq(tasks.id, taskId));
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
+    .returning({ id: tasks.id });
+  if (flipped.length === 0) throw new Error('task state changed during answer — a settle owns the outcome');
   if (backTo === IN_REVIEW_STATUS) {
     // a review-round question was answered — the AI reviewer's turn re-arms
     await dispatchAiReviewTurns(taskId);
@@ -234,11 +246,35 @@ export async function submitResult(taskId: string, authorId: string, body: strin
     // task doing (error surfaced to the caller), never parked in-review with no
     // round rows to settle it out
     await openReviewRound(taskId, reviewers, body);
-    await db.update(tasks).set({ status: IN_REVIEW_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
+    // TERMINAL ARBITRATION mirror (#287, #292 r1): the flip arbitrates on the status
+    // this call read — a won abandon/settle between the gate read and this flip owns
+    // the outcome; the just-opened round tears down and the submit refuses (never a
+    // cancelled task resurrected in-review carrying a live round nothing can fire).
+    const flipped = await db
+      .update(tasks)
+      .set({ status: IN_REVIEW_STATUS, updatedAt: new Date() })
+      // the updatedAt stamp closes the ABA hole (#292 r2): a doing->todo->claim->doing
+      // cycle re-matching the read status must not flip in-review over a live run —
+      // ANY concurrent task write wins and the stale flip refuses
+      .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
+      .returning({ id: tasks.id });
+    if (flipped.length === 0) {
+      await teardownOpenRound(taskId, 'submit lost the race');
+      // NO park-disarm here (#292 r3): the loser's own parkRound can never land on a
+      // working-category task (the r1 rethrow owns that window), so a disarm would
+      // only ever strip a CONCURRENT round's legitimate park recovery state — the
+      // re-arm scan and the park-origin restore both depend on those columns.
+      throw new Error('task state changed during submit — a settle owns the outcome');
+    }
     await refreshParentGating(taskId);
     return { status: IN_REVIEW_STATUS };
   }
-  await db.update(tasks).set({ status: DONE_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
+  const done = await db
+    .update(tasks)
+    .set({ status: DONE_STATUS, updatedAt: new Date() })
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
+    .returning({ id: tasks.id });
+  if (done.length === 0) throw new Error('task state changed during submit — a settle owns the outcome');
   await refreshParentGating(taskId);
   return { status: DONE_STATUS };
 }
@@ -312,7 +348,16 @@ export async function abandonTask(taskId: string, authorId: string, body: string
     await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
   }
   // abandoned == cancelled (one terminal, no fake distinction)
-  await db.update(tasks).set({ status: CANCELLED_STATUS, updatedAt: new Date() }).where(eq(tasks.id, taskId));
+  // TERMINAL ARBITRATION (#287): the cancel write arbitrates on the status this call
+  // read — a concurrent verdict settle (-> done) or submit flip (-> in-review) that
+  // won the task between the read and this write owns the outcome; a 0-row miss
+  // refuses the abandon instead of overwriting a settled task.
+  const cancelled = await db
+    .update(tasks)
+    .set({ status: CANCELLED_STATUS, updatedAt: new Date() })
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
+    .returning({ id: tasks.id });
+  if (cancelled.length === 0) throw new Error('task state changed during cancel — a settle owns the outcome');
   await logActivity(taskId, ACTIVITY_KIND.VERDICT, authorId, body || 'cancelled', { abandon: true });
   await refreshParentGating(taskId);
   return { ok: true };
