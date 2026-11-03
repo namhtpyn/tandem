@@ -1,3 +1,10 @@
+## [2.65.10](https://github.com/namhtpyn/tandem/compare/v2.65.9...v2.65.10) (2026-11-03)
+
+
+### Bug Fixes
+
+* **review:** verdict-row CAS + guarded end-of-round flips — a late verdict can no longer override a manual settle ([#260](https://github.com/namhtpyn/tandem/issues/260)) ([89d9e8a](https://github.com/namhtpyn/tandem/commit/89d9e8afc0d6b26168c6103efe5b37bb3f467045))
+
 ## [2.65.9](https://github.com/namhtpyn/tandem/compare/v2.65.8...v2.65.9) (2026-11-02)
 
 
