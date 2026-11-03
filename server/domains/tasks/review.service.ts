@@ -82,8 +82,9 @@ export function dedupeReviewers(reviewers: string[]): string[] {
 /** the round an AI reviewer's LATEST run on the task was dispatched for: the newest
  * round whose review row already existed when that run started. Reading the
  * dispatched round at settle — instead of currentRound — is what keeps a stale run
- * from settling a newer round it was never part of. */
-async function dispatchedReviewRound(taskId: string, reviewerId: string) {
+ * from settling a newer round it was never part of. Exported for the verdict-less
+ * bound (#276): the re-dispatch decision must bind to the SAME round as the verdict. */
+export async function dispatchedReviewRound(taskId: string, reviewerId: string) {
   const runRows = await db
     .select({ startedAt: taskRuns.startedAt })
     .from(taskRuns)

@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   round: 1 as number,
+  dispatchedRound: 1 as number,
   roundRow: { createdAt: new Date('2026-11-03T00:00:00Z') } as Record<string, unknown> | null,
   runs: [] as Array<{ id: string; startedAt: Date | null }>,
   dispatched: [] as Array<Record<string, unknown>>,
@@ -47,6 +48,7 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
   return {
     ...mod,
     currentRound: async () => h.round,
+    dispatchedReviewRound: async () => h.dispatchedRound,
     dispatchAiReviewTurns: async (_taskId: string, _body?: string, opts?: Record<string, unknown>) => {
       h.dispatched.push(opts ?? {});
     },
@@ -63,6 +65,7 @@ const run = (id: string, at: Date) => ({ id, startedAt: at });
 
 beforeEach(() => {
   h.round = 1;
+  h.dispatchedRound = 1;
   h.roundRow = { createdAt: roundOpen };
   h.runs = [];
   h.dispatched = [];
@@ -82,6 +85,7 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
   it('a returning reviewer in round 2 with ONE run this round still gets the corrected retry', async () => {
     // pre-fix defect: lifetime count (round 1 runs + round 2 run = 2) parked here
     h.round = 2;
+    h.dispatchedRound = 2;
     h.runs = [
       run('old-r1', new Date(roundOpen.getTime() - 86_400_000)), // previous round
       run('r2', new Date(roundOpen.getTime() + 1000)),
@@ -97,6 +101,17 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
     expect(h.dispatched).toHaveLength(0);
     expect(h.parks).toHaveLength(1);
     expect(h.parks[0]).toContain('finished without a verdict after a re-dispatch');
+  });
+
+  it('a STALE settle (dispatched round behind current) is a quiet no-op — the live round owns progression', async () => {
+    // stale-run law (#276 blind-review r3): a late settle must not park the live
+    // round nor put a correction block on its first-turn brief
+    h.round = 2;
+    h.dispatchedRound = 1;
+    h.runs = [run('stale', new Date(roundOpen.getTime() + 1000))];
+    await settleReviewVerdict('task-1', 'rev-1', null);
+    expect(h.dispatched).toHaveLength(0);
+    expect(h.parks).toHaveLength(0);
   });
 
   it('missing round row is an anomaly -> decision park, never a correction dispatch', async () => {

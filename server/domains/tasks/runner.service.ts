@@ -461,7 +461,7 @@ import { buildBrief, loadBriefData } from './brief.service';
 import { promptImageSplit } from './prompt-images.util';
 import { recordProposals } from './proposals.service';
 import { resultImageTokens, type ResultFile } from './result-attachments.util';
-import { recordVerdict, parkRound, currentRound } from './review.service';
+import { recordVerdict, parkRound, currentRound, dispatchedReviewRound } from './review.service';
 import type { SshPlan } from './ssh-exec.util';
 import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles, ensureOutDir } from './ssh-files.util';
 import { appendMessageAttachments, createRunMessage, updateRunMessageBody } from './thread.service';
@@ -1098,27 +1098,24 @@ export async function settleReviewVerdict(taskId: string, reviewerId: string, en
     // verdict-less review: the reviewer's turn never produced a verdict envelope —
     // a transport-class failure of the review, so re-dispatch its turn ONCE PER
     // ROUND before parking on the owner (#276; per-round: the pre-fix lifetime
-    // count denied returning reviewers their retry from round 2 onward). Runs this
-    // round = started after the current round's row was minted. A MISSING round row
-    // is an anomaly (rows are minted before any dispatch) — park decision-class:
-    // a correction block must never attach to a round the reviewer has no row in.
-    const round = await currentRound(taskId);
-    const roundRow =
-      round > 0
-        ? (
-            await db
-              .select({ createdAt: taskReviews.createdAt })
-              .from(taskReviews)
-              .where(
-                and(
-                  eq(taskReviews.taskId, taskId),
-                  eq(taskReviews.round, round),
-                  eq(taskReviews.reviewerId, reviewerId),
-                ),
-              )
-              .limit(1)
-          )[0]
-        : undefined;
+    // count denied returning reviewers their retry from round 2 onward). The round
+    // is the DISPATCHED one, mirroring recordVerdict — a stale settle must never
+    // touch a newer round's state machine (it can neither park the live round nor
+    // put a correction block on its first-turn brief); runs this round = started
+    // after that round's row was minted. A missing row for the dispatched round is
+    // an anomaly (rows are minted before any dispatch) — park decision-class.
+    const round = await dispatchedReviewRound(taskId, reviewerId);
+    const current = await currentRound(taskId);
+    if (round === 0 || round < current) return; // stale settle: the live round owns progression
+    const roundRow = (
+      await db
+        .select({ createdAt: taskReviews.createdAt })
+        .from(taskReviews)
+        .where(
+          and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round), eq(taskReviews.reviewerId, reviewerId)),
+        )
+        .limit(1)
+    )[0];
     if (!roundRow) {
       const { parkRound } = await import('./review.service');
       await parkRound(taskId, 'review finished without a verdict — no round row for the reviewer (anomaly)');
@@ -1128,7 +1125,7 @@ export async function settleReviewVerdict(taskId: string, reviewerId: string, en
         where: { employeeId: { eq: reviewerId }, message: { taskId: { eq: taskId } } },
       });
       const thisRound = reviewRuns.filter((r) => r.startedAt && r.startedAt.getTime() >= roundRow.createdAt.getTime());
-      if (thisRound.length <= 1) {
+      if (thisRound.length === 1) {
         const { dispatchAiReviewTurns } = await import('./review.service');
         // VERDICT-LESS CORRECTION (#276): the retry brief carries the CORRECTION block —
         // a bare replay of the identical brief failed identically in prod (the reviewer
