@@ -12,6 +12,7 @@ import { db } from '../../../db/index';
 import {
   aiEmployees as aiEmployeesTable,
   environments as environmentsTable,
+  mcpServerBindings as mcpServerBindingsTable,
   vaultSecrets as vaultSecretsTable,
 } from '../../../db/schema';
 import { ORPCError, publishChange } from '../../kernel/kernel';
@@ -111,8 +112,9 @@ export async function updateSecret(
 }
 
 export async function removeSecret(input: { id: string }, _actorId: string) {
-  // in-use guard: environments (ssh/password key) and AI employees (api key) keep
-  // this secret alive — refuse like providers.remove instead of silently set-null
+  // in-use guard: environments (ssh/password key), AI employees (api key) and
+  // MCP bindings (dispatch credential) keep this secret alive — refuse like
+  // providers.remove instead of silently set-null
   const envLinks = await db
     .select({ id: environmentsTable.id })
     .from(environmentsTable)
@@ -123,10 +125,17 @@ export async function removeSecret(input: { id: string }, _actorId: string) {
     .from(aiEmployeesTable)
     .where(eq(aiEmployeesTable.apiKeySecretId, input.id))
     .limit(1);
-  if (envLinks.length > 0 || aiLinks.length > 0) {
-    const blockers = [envLinks.length > 0 ? 'environments' : '', aiLinks.length > 0 ? 'AI employees' : ''].filter(
-      Boolean,
-    );
+  const mcpLinks = await db
+    .select({ id: mcpServerBindingsTable.id })
+    .from(mcpServerBindingsTable)
+    .where(eq(mcpServerBindingsTable.secretId, input.id))
+    .limit(1);
+  if (envLinks.length > 0 || aiLinks.length > 0 || mcpLinks.length > 0) {
+    const blockers = [
+      envLinks.length > 0 ? 'environments' : '',
+      aiLinks.length > 0 ? 'AI employees' : '',
+      mcpLinks.length > 0 ? 'MCP bindings' : '',
+    ].filter(Boolean);
     throw new ORPCError('BAD_REQUEST', {
       message: `secret is in use by ${blockers.join(' and ')} — unlink or delete those first`,
     });

@@ -22,6 +22,7 @@ import { environments, tasks, taskRuns, taskAttachments, taskMessages } from '..
 import { env } from '../kernel/env';
 import { publishChange } from '../kernel/kernel';
 import { redisQueue } from '../kernel/queue';
+import { buildMcpServersFor, mcpDispatchLine } from '../mcp/mcp.service';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
 import { transcriptSnapshotColumns } from './run-transcript';
 
@@ -1385,6 +1386,10 @@ export async function executeRun(
   // THE drift fix: the prompt is the one frozen at createRun — never rebuilt here
   const brief = nonNull(row.prompt, 'run prompt (frozen at createRun)');
   const briefData = await loadBriefData(taskId, plan.ai.userId);
+  // MCP DISPATCH INJECTION (#270): the employee's bindings ride EVERY dispatch —
+  // decrypted server-side here, serialized onto session/new + session/resume by
+  // acp.client; the fake path prints the plan (server NAMES only, never credentials)
+  const mcpServers = await buildMcpServersFor(plan.ai.userId);
   const writer = createRunWriter(runId, row.output ?? '', row.messageId);
   const { onLine } = writer;
 
@@ -1398,6 +1403,9 @@ export async function executeRun(
       // separation (assignee vs reviewer) is exercised without a real ACP host
       const fakeSession = `${plan.review ? 'rev' : 'sess'}-${taskId}-${plan.ai.userId}`;
       await db.update(taskRuns).set({ sessionId: fakeSession }).where(eq(taskRuns.id, runId));
+      // fake-runner MCP parity (SPEC): the dispatch plan really carried these
+      const mcpLine = mcpDispatchLine(mcpServers);
+      if (mcpLine) onLine(mcpLine);
       const fake = fakeRun(
         onLine,
         fakeScriptFromEnv(plan.review ? 'TANDEM_FAKE_SCRIPT_REVIEW' : 'TANDEM_FAKE_SCRIPT') ?? undefined,
@@ -1446,6 +1454,7 @@ export async function executeRun(
       resumeSessionId: plan.review ? plan.review.resumeSessionId : await lastSessionFor(taskId, plan.ai.userId, runId),
       prompt: brief,
       images: inlineImages,
+      mcpServers,
       timeoutMs: await getRunTimeoutMs(),
       onLine,
     });

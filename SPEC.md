@@ -111,7 +111,9 @@ Slice 1 — transport `http` only (stdio/OAuth are later slices, #270):
 - **Dispatch injection (ACP contract)**: every ACP dispatch of an employee
   carries ALL of that employee's bindings in `session/new` and
   `session/resume` `mcpServers` as `{ type: 'http', name, url, headers:
-  [{ name: 'Authorization', value: <plaintext verbatim> }] }` — decrypted
+  [{ name: 'Authorization', value: <plaintext verbatim> }] }` (ACP v1 wire:
+  `headers` is a REQUIRED array — empty when the binding has no credential) —
+  decrypted
   server-side at dispatch only, never logged, never written to run output
   (the run output NAMES bound servers, never credentials). No bindings = the
   spec-shape empty list. Unbinding revokes on the NEXT dispatch; a live
@@ -197,12 +199,12 @@ VIEWER; new users default VIEWER; the first boot user claims ADMIN).
 **Enforcement is server-side at the oRPC kernel; UI gating is UX, never the
 boundary.** Tier matrix:
 
-| tier     | who                    | surface                                                                                                                                                                                                                                                                        |
-| -------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| public   | anonymous              | `auth.config`, `auth.configLive`, `auth.session`, `meta.version`, better-auth `/auth/**`, `/health/*`                                                                                                                                                                          |
-| session  | any authenticated user | every read procedure (list/listPaged/live/detail/thread/runs/inbox/subtasks/assignments/proposals/reviews/activity/titles/apiKeys), `changes.live`                                                                                                                             |
-| employee | EMPLOYEE + ADMIN       | every `tasks.*` and `projects.*` write (create/update/setStatus/note/ask/forward/answer/submit/approve/requestChanges/reject/abandon/dispatch/remove/proposals confirm+reject) and `statuses.assign` (Jev auto-assign); verdict writes are additionally HUMAN-only (see below) |
-| admin    | ADMIN only             | vault (secrets + folders, all verbs), providers (all verbs incl. models), oidc.replace, settings.update, environments create/update/remove/probe, employees create/update/remove, access-key mint/update/revoke, statuses save/remove, mcp registry + bindings + probe (all verbs)                                                                                                                                 |
+| tier     | who                    | surface                                                                                                                                                                                                                                                                            |
+| -------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| public   | anonymous              | `auth.config`, `auth.configLive`, `auth.session`, `meta.version`, better-auth `/auth/**`, `/health/*`                                                                                                                                                                              |
+| session  | any authenticated user | every read procedure (list/listPaged/live/detail/thread/runs/inbox/subtasks/assignments/proposals/reviews/activity/titles/apiKeys), `changes.live`                                                                                                                                 |
+| employee | EMPLOYEE + ADMIN       | every `tasks.*` and `projects.*` write (create/update/setStatus/note/ask/forward/answer/submit/approve/requestChanges/reject/abandon/dispatch/remove/proposals confirm+reject) and `statuses.assign` (Jev auto-assign); verdict writes are additionally HUMAN-only (see below)     |
+| admin    | ADMIN only             | vault (secrets + folders, all verbs), providers (all verbs incl. models), oidc.replace, settings.update, environments create/update/remove/probe, employees create/update/remove, access-key mint/update/revoke, statuses save/remove, mcp registry + bindings + probe (all verbs) |
 
 Wrong role → `FORBIDDEN`; anonymous → `UNAUTHORIZED`. Reads never exceed the
 session tier; an admin-surface write is never wired below the admin tier. A

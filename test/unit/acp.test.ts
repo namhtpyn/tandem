@@ -290,6 +290,8 @@ type TurnOpts = {
   onLine?: (line: string) => void;
   /** #229: the hook hands over the mid-turn steer AND the user-issued stop */
   onSessionOpen?: (hooks: { steer: (text: string) => Promise<boolean>; stop: () => void }) => void;
+  /** #270 MCP dispatch injection */
+  mcpServers?: import('@agentclientprotocol/sdk').McpServer[];
 };
 const turn = (stream: AcpStream, extra: TurnOpts = {}) =>
   import('#server/domains/tasks/acp.client').then(({ runAcpTurn }) =>
@@ -309,6 +311,39 @@ describe('acp.client turns', () => {
     expect(lines).toContain('[context] 10/100 tokens');
     // stream torn down after the turn
     expect(stream.closed).toBe(true);
+  });
+
+  // #270 MCP DISPATCH INJECTION: the caller's mcpServers ride session/new AND
+  // session/resume verbatim; the default stays the spec-shape empty list.
+  it('mcpServers ride session/new and session/resume payloads verbatim; default = empty list', async () => {
+    const servers = [
+      {
+        type: 'http' as const,
+        name: 'ctx7',
+        url: 'https://mcp.example/v1',
+        headers: [{ name: 'Authorization', value: 'Bearer sk-cred' }],
+      },
+    ];
+    const fresh = happyAgent();
+    await turn(fresh, { mcpServers: servers });
+    const newMsg = JSON.parse(fresh.written.find((l) => l.includes('"session/new"'))!) as {
+      params: { mcpServers: unknown[] };
+    };
+    expect(newMsg.params.mcpServers).toEqual(servers);
+
+    const resumed = happyAgent();
+    await turn(resumed, { resumeSessionId: 'sess-old', mcpServers: servers });
+    const resumeMsg = JSON.parse(resumed.written.find((l) => l.includes('"session/resume"'))!) as {
+      params: { mcpServers: unknown[] };
+    };
+    expect(resumeMsg.params.mcpServers).toEqual(servers);
+
+    const bare = happyAgent();
+    await turn(bare);
+    const bareMsg = JSON.parse(bare.written.find((l) => l.includes('"session/new"'))!) as {
+      params: { mcpServers: unknown[] };
+    };
+    expect(bareMsg.params.mcpServers).toEqual([]);
   });
 
   it('onSessionOpen exposes a mid-turn steer (second session/prompt); agent error => false', async () => {
