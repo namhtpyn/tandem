@@ -288,7 +288,7 @@ describe('waiting-answer verdict hold (#288)', () => {
     h.aiEmployees = [{ userId: 'rev-1' }];
     await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
     expect(h.taskUpdates).toHaveLength(0); // no restore flip needed
-    expect(h.dispatched).toHaveLength(0); // never a second dispatch source: the flip's writer re-fires
+    expect(h.dispatched).toEqual(['task-1']); // always re-fires: its row read runs after our revert
     expect(h.spawned).toEqual([`${OBLIGATION_ROLE.APPROVAL}:rev-1`]); // the decision surface re-arms
     expect(h.notes.some((n) => n.payload.reviewParked)).toBe(false);
     expect(h.published).toBeGreaterThanOrEqual(1); // the rescue publishes for live clients

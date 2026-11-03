@@ -407,12 +407,18 @@ async function holdVerdictForWaitingAnswer(
           { reviewResumed: true, round },
         );
       }
-    }
-    // in_review / working / other non-terminal: the owner or the answer's own flip
-    // owns the task and its re-fire — no fight, no second dispatch source. Say what
-    // happened: while a run is live the RUN LOCK blocks the owner's unblock, so the
-    // note is the only signal until the run settles.
-    if (!readyIds.includes(after.status) && after.status !== IN_REVIEW_STATUS) {
+    } else if (after.status === IN_REVIEW_STATUS) {
+      // r5: the flip writer's own re-fire can predate OUR revert (its row read saw
+      // the verdict decided and minted nothing) — this call runs after the revert,
+      // so its row read always sees the held row PENDING again. The flip writer's
+      // own duplicate is absorbed: the live-turn check bounds it and the verdict
+      // CAS arbitrates the settle.
+      await dispatchAiReviewTurns(taskId);
+    } else {
+      // working / other non-terminal: the owner or the answer's own flip owns the
+      // task — no fight, no second dispatch source. Say what happened: while a run
+      // is live the RUN LOCK blocks the owner's unblock, so the note is the only
+      // signal until the run settles.
       await logActivity(
         taskId,
         ACTIVITY_KIND.STATUS,
