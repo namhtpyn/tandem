@@ -1,3 +1,10 @@
+## [2.65.11](https://github.com/namhtpyn/tandem/compare/v2.65.10...v2.65.11) (2026-11-03)
+
+
+### Bug Fixes
+
+* **acp:** catch session/cancel rejections + guard post-close writes on the ssh stream ([#262](https://github.com/namhtpyn/tandem/issues/262)) ([37ab80f](https://github.com/namhtpyn/tandem/commit/37ab80f011581561c45adab82fae556a2cdb6301))
+
 ## [2.65.10](https://github.com/namhtpyn/tandem/compare/v2.65.9...v2.65.10) (2026-11-03)
 
 
