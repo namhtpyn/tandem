@@ -1,3 +1,10 @@
+## [2.67.1](https://github.com/namhtpyn/tandem/compare/v2.67.0...v2.67.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* [#276](https://github.com/namhtpyn/tandem/issues/276) settle-path doc cleanup — drop dangling end-of-round comment above the status helper ([58c624a](https://github.com/namhtpyn/tandem/commit/58c624aeaaf8ee12311129c876fe8c814cd75c2a))
+
 # [2.67.0](https://github.com/namhtpyn/tandem/compare/v2.66.0...v2.67.0) (2026-11-03)
 
 
