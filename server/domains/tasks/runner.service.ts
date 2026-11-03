@@ -18,7 +18,7 @@ import type { RoutingProposal } from '#shared/run-verdict';
 import { nonNull } from '#shared/utils/non-null';
 
 import { asDb, db, type DbExecutor } from '../../db/index';
-import { environments, tasks, taskReviews, taskRuns, taskAttachments, taskMessages } from '../../db/schema';
+import { environments, tasks, taskRuns, taskAttachments, taskMessages } from '../../db/schema';
 import { env } from '../kernel/env';
 import { publishChange } from '../kernel/kernel';
 import { redisQueue } from '../kernel/queue';
@@ -461,7 +461,7 @@ import { buildBrief, loadBriefData } from './brief.service';
 import { promptImageSplit } from './prompt-images.util';
 import { recordProposals } from './proposals.service';
 import { resultImageTokens, type ResultFile } from './result-attachments.util';
-import { recordVerdict, parkRound, currentRound, dispatchedReviewRound } from './review.service';
+import { recordVerdict, parkRound, currentRound, dispatchedReviewRoundRow } from './review.service';
 import type { SshPlan } from './ssh-exec.util';
 import { collectRunOutputs, cleanupTaskFiles, pushTaskFiles, ensureOutDir } from './ssh-files.util';
 import { appendMessageAttachments, createRunMessage, updateRunMessageBody } from './thread.service';
@@ -1108,9 +1108,10 @@ export async function settleReviewVerdict(
     // machine. The bound counts the reviewer's COMPLETED turns in that round — a
     // reaped/failed turn is not a verdict-less attempt and never consumes the
     // corrected retry (blind-review r4).
-    const round = await dispatchedReviewRound(taskId, reviewerId, runStartedAt);
+    // one read resolves the dispatched round AND its row (no second lookup to race)
+    const binding = await dispatchedReviewRoundRow(taskId, reviewerId, runStartedAt);
     const current = await currentRound(taskId);
-    if (round === 0) {
+    if (!binding) {
       // anomaly: no review row existed when this run was dispatched — rows are
       // minted before any dispatch, so this is a data anomaly. Park decision-class;
       // no correction block may attach to a round the reviewer has no row in.
@@ -1118,22 +1119,7 @@ export async function settleReviewVerdict(
       await parkRound(taskId, 'review finished without a verdict — no round row for the reviewer (anomaly)');
       return;
     }
-    if (round < current) return; // stale settle: the live round owns progression
-    const roundRow = (
-      await db
-        .select({ createdAt: taskReviews.createdAt })
-        .from(taskReviews)
-        .where(
-          and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round), eq(taskReviews.reviewerId, reviewerId)),
-        )
-        .limit(1)
-    )[0];
-    if (!roundRow) {
-      // TOCTOU: the row vanished between the dispatched-round read and this read
-      const { parkRound } = await import('./review.service');
-      await parkRound(taskId, 'review finished without a verdict — no round row for the reviewer (anomaly)');
-      return;
-    }
+    if (binding.round < current) return; // stale settle: the live round owns progression
     const reviewRuns = await db.query.taskRuns.findMany({
       columns: { id: true, startedAt: true, status: true },
       where: { employeeId: { eq: reviewerId }, message: { taskId: { eq: taskId } } },
@@ -1144,7 +1130,7 @@ export async function settleReviewVerdict(
     const priorDone = reviewRuns.filter(
       (r) =>
         r.startedAt &&
-        r.startedAt.getTime() >= roundRow.createdAt.getTime() &&
+        r.startedAt.getTime() >= binding.createdAt.getTime() &&
         r.startedAt.getTime() < runStartedAt.getTime() &&
         r.status === RUN_STATUS.DONE,
     );

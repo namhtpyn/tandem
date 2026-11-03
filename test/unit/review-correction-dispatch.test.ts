@@ -85,15 +85,15 @@ describe('dispatchAiReviewTurns verdictCorrection threading (#276)', () => {
     expect(h.dispatchCalls[0]?.reviewBy).toBe('rev-1');
   });
 
-  it('a DIFFERENT pending reviewer picked by the loop gets a clean first-turn brief', async () => {
-    // blind-review r1: the block binds to the verdict-less reviewer, not to
-    // "whoever the sequential loop picks"
+  it('a correction dispatch NEVER mints for a different pending reviewer (target-scoped)', async () => {
+    // blind-review r5: the retry targets ONLY the verdict-less reviewer's row; if
+    // that row is no longer pending, nothing mints — the round moved on. Row-order
+    // ties must never hand the retry to another reviewer.
     await dispatchAiReviewTurns('task-1', 'submitted work', {
       verdictCorrection: true,
       verdictlessReviewerId: 'someone-else',
     });
-    expect(h.dispatchCalls).toHaveLength(1);
-    expect(h.dispatchCalls[0]?.verdictCorrection).toBe(false);
+    expect(h.dispatchCalls).toHaveLength(0);
   });
 
   it('first-turn / next-reviewer dispatches never carry the correction', async () => {

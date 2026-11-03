@@ -86,7 +86,11 @@ export function dedupeReviewers(reviewers: string[]): string[] {
  * bound (#276): the re-dispatch decision must bind to the SAME round as the verdict;
  * `at` pins the SETTLING run's start (a late-completing run must not bind to a
  * newer round via the latest-run lookup — #276 blind-review r4). */
-export async function dispatchedReviewRound(taskId: string, reviewerId: string, at?: Date) {
+export async function dispatchedReviewRoundRow(
+  taskId: string,
+  reviewerId: string,
+  at?: Date,
+): Promise<{ round: number; createdAt: Date } | null> {
   let startedAt = at ?? null;
   if (!startedAt) {
     const runRows = await db
@@ -98,14 +102,19 @@ export async function dispatchedReviewRound(taskId: string, reviewerId: string, 
       .limit(1);
     startedAt = runRows[0]?.startedAt ?? null;
   }
-  if (!startedAt) return 0;
+  if (!startedAt) return null;
   const rows = await db
     .select({ round: taskReviews.round, createdAt: taskReviews.createdAt })
     .from(taskReviews)
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.reviewerId, reviewerId)))
     .orderBy(desc(taskReviews.round));
   // rounds are minted in order; the dispatched round is the newest one open at run start
-  return rows.find((r) => r.createdAt.getTime() <= startedAt.getTime())?.round ?? 0;
+  return rows.find((r) => r.createdAt.getTime() <= startedAt.getTime()) ?? null;
+}
+
+/** the round NUMBER of the reviewer's dispatched round (0 = none) — see the row helper */
+export async function dispatchedReviewRound(taskId: string, reviewerId: string, at?: Date) {
+  return (await dispatchedReviewRoundRow(taskId, reviewerId, at))?.round ?? 0;
 }
 
 /** open a fresh review round: one pending row per reviewer + inbox obligations.
@@ -185,6 +194,12 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string,
   const body = resultBody ?? (await roundResultBody(taskId));
   for (const row of rows) {
     if (!row.reviewerId || !aiIds.has(row.reviewerId)) continue; // human reviewer: the card is enough
+    // VERDICT-LESS CORRECTION (#276, blind-review r5): a correction re-dispatch is
+    // TARGET-scoped — only the verdict-less reviewer's own row is retried (row order
+    // ties would otherwise hand the retry to a different first-turn reviewer and
+    // drop the verdict-less one's retry entirely). Target row not pending anymore
+    // (a human verdict landed mid-flight) -> nothing mints: the round moved on.
+    if (opts?.verdictlessReviewerId && row.reviewerId !== opts.verdictlessReviewerId) continue;
     // one LIVE review turn per reviewer: skip while theirs is still running
     const running =
       (
@@ -202,14 +217,12 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string,
       ).length > 0;
     if (running) continue;
     try {
-      // VERDICT-LESS CORRECTION (#276, blind-review r1): the block binds to the
-      // verdict-less reviewer — any OTHER pending reviewer picked by this loop
-      // gets a clean first-turn brief.
-      const correction = opts?.verdictCorrection === true && row.reviewerId === opts?.verdictlessReviewerId;
+      // target-scoped above: a correction dispatch can only ever reach the
+      // verdict-less reviewer's own turn
       await dispatchTask(taskId, 'http://tandem.internal', {
         reviewBy: row.reviewerId,
         resultBody: body,
-        verdictCorrection: correction,
+        verdictCorrection: opts?.verdictCorrection === true,
       });
       await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review turn dispatched to reviewer ${row.reviewerId}`, {
         reviewTurn: true,

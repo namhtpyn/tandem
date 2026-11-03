@@ -7,36 +7,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   round: 1 as number,
-  dispatchedRound: 1 as number,
-  roundRow: { createdAt: new Date('2026-11-03T00:00:00Z') } as Record<string, unknown> | null,
+  boundRow: { round: 1, createdAt: new Date('2026-11-03T00:00:00Z') } as { round: number; createdAt: Date } | null,
+  seenAt: null as Date | null,
   runs: [] as Array<{ id: string; startedAt: Date | null; status?: string }>,
   dispatched: [] as Array<Record<string, unknown>>,
   parks: [] as string[],
 }));
 
-vi.mock('../../server/db/index', async () => {
-  const { taskReviews } = await import('../../server/db/schema');
-  return {
-    asDb: (x: unknown) => x,
-    db: {
-      select: (cols: Record<string, unknown>) => ({
-        from: (table: unknown) => ({
-          where: () => ({
-            limit: async () =>
-              table === taskReviews && cols && 'createdAt' in cols ? (h.roundRow ? [h.roundRow] : []) : [],
-            then: <T>(onFulfilled?: (v: unknown[]) => T) =>
-              Promise.resolve([] as unknown[]).then((v) => onFulfilled?.(v)),
-          }),
-          orderBy: () => ({ limit: async () => [] }),
-        }),
-      }),
-      query: {
-        taskRuns: { findMany: async () => h.runs },
-      },
-      update: () => ({ set: () => ({ where: () => Promise.resolve() }) }),
+vi.mock('../../server/db/index', () => ({
+  asDb: (x: unknown) => x,
+  db: {
+    query: {
+      taskRuns: { findMany: async () => h.runs },
     },
-  };
-});
+    update: () => ({ set: () => ({ where: () => Promise.resolve() }) }),
+  },
+}));
 
 vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/kernel/kernel')>();
@@ -48,7 +34,10 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
   return {
     ...mod,
     currentRound: async () => h.round,
-    dispatchedReviewRound: async () => h.dispatchedRound,
+    dispatchedReviewRoundRow: async (_taskId: string, _reviewerId: string, at?: Date) => {
+      h.seenAt = at ?? null;
+      return h.boundRow;
+    },
     dispatchAiReviewTurns: async (_taskId: string, _body?: string, opts?: Record<string, unknown>) => {
       h.dispatched.push(opts ?? {});
     },
@@ -66,8 +55,8 @@ const self = new Date(roundOpen.getTime() + 5000); // the settling run's start
 
 beforeEach(() => {
   h.round = 1;
-  h.dispatchedRound = 1;
-  h.roundRow = { createdAt: roundOpen };
+  h.boundRow = { round: 1, createdAt: roundOpen };
+  h.seenAt = null;
   h.runs = [];
   h.dispatched = [];
   h.parks = [];
@@ -77,6 +66,8 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
   it('round 1, first completed turn -> corrected re-dispatch bound to the reviewer', async () => {
     h.runs = [run('self', self)];
     await settleReviewVerdict('task-1', 'rev-1', null, self);
+    // the settling run's start drives the round binding (never the latest-run lookup)
+    expect(h.seenAt?.getTime()).toBe(self.getTime());
     expect(h.parks).toHaveLength(0);
     expect(h.dispatched).toHaveLength(1);
     expect(h.dispatched[0]?.verdictCorrection).toBe(true);
@@ -86,7 +77,7 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
   it('a returning reviewer in round 2 with only a PREVIOUS-round turn still gets the corrected retry', async () => {
     // pre-fix defect: lifetime count (round 1 run + round 2 run = 2) parked here
     h.round = 2;
-    h.dispatchedRound = 2;
+    h.boundRow = { round: 2, createdAt: roundOpen };
     h.runs = [run('old-r1', new Date(roundOpen.getTime() - 86_400_000)), run('self', self)];
     await settleReviewVerdict('task-1', 'rev-1', null, self);
     expect(h.parks).toHaveLength(0);
@@ -111,24 +102,15 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
 
   it('a STALE settle (dispatched round behind current) is a quiet no-op — the live round owns progression', async () => {
     h.round = 2;
-    h.dispatchedRound = 1;
+    h.boundRow = { round: 1, createdAt: roundOpen };
     h.runs = [run('stale', self)];
     await settleReviewVerdict('task-1', 'rev-1', null, self);
     expect(h.dispatched).toHaveLength(0);
     expect(h.parks).toHaveLength(0);
   });
 
-  it('no dispatched round (0) is an anomaly -> decision park, never a correction dispatch', async () => {
-    h.dispatchedRound = 0;
-    h.runs = [run('self', self)];
-    await settleReviewVerdict('task-1', 'rev-1', null, self);
-    expect(h.dispatched).toHaveLength(0);
-    expect(h.parks).toHaveLength(1);
-    expect(h.parks[0]).toContain('no round row for the reviewer');
-  });
-
-  it('round row vanished between reads (TOCTOU) -> decision park', async () => {
-    h.roundRow = null;
+  it('no dispatched round row is an anomaly -> decision park, never a correction dispatch', async () => {
+    h.boundRow = null;
     h.runs = [run('self', self)];
     await settleReviewVerdict('task-1', 'rev-1', null, self);
     expect(h.dispatched).toHaveLength(0);
