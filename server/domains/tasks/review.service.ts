@@ -409,7 +409,18 @@ async function holdVerdictForWaitingAnswer(
       }
     }
     // in_review / working / other non-terminal: the owner or the answer's own flip
-    // owns the task and its re-fire — no fight, no second dispatch source
+    // owns the task and its re-fire — no fight, no second dispatch source. Say what
+    // happened: while a run is live the RUN LOCK blocks the owner's unblock, so the
+    // note is the only signal until the run settles.
+    if (!readyIds.includes(after.status) && after.status !== IN_REVIEW_STATUS) {
+      await logActivity(
+        taskId,
+        ACTIVITY_KIND.STATUS,
+        null,
+        'review round resumed — the answer landed while a verdict was held; the task moved again, owner unblock to in-review re-fires the held reviewer',
+        { reviewResumed: true, round },
+      );
+    }
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE); // re-opened round/obligation must reach live clients
     return true; // held mid-flight, then resumed — outcome stays 'parked'
   }

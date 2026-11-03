@@ -314,6 +314,17 @@ describe('waiting-answer verdict hold (#288)', () => {
     expect(h.published).toBeGreaterThanOrEqual(1); // the heal publishes
   });
 
+  it('a working-category landing inside the window notes the thread (no flip, no re-fire)', async () => {
+    h.taskRows = [{ status: WAIT_STATUS }, { status: WAIT_STATUS }, { status: 'st-doing' }, { status: 'st-doing' }];
+    h.statuses.push({ id: 'st-doing', category: CATEGORY.WORKING });
+    await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
+    expect(h.taskUpdates).toHaveLength(0);
+    expect(h.dispatched).toHaveLength(0);
+    // the strand is documented: owner unblock re-fires once the RUN LOCK lifts
+    expect(h.notes.some((n) => n.payload.reviewResumed)).toBe(true);
+    expect(h.published).toBeGreaterThanOrEqual(1);
+  });
+
   it('a flip lost to a plain concurrent settle still supersedes (hold arm only fires on waiting_answer)', async () => {
     h.taskRows = [{ status: 'st-review' }, { status: 'st-review' }, { status: 'st-review' }];
     h.flipWins = false;
