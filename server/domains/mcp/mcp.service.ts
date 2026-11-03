@@ -184,9 +184,20 @@ async function normalizeOauthFields(
   const kind = input.authKind ?? (existing.authKind as 'none' | 'oauth');
   if (!touched) return {};
   if (kind === 'none') return { ...oauthCleared };
-  const authorizeUrl = requireOauthField(input.oauthAuthorizeUrl ?? existing.oauthAuthorizeUrl, 'oauthAuthorizeUrl');
-  const tokenUrl = requireOauthField(input.oauthTokenUrl ?? existing.oauthTokenUrl, 'oauthTokenUrl');
-  const clientId = requireOauthField(input.oauthClientId ?? existing.oauthClientId, 'oauthClientId');
+  // the required trio: an explicit null is a CLEAR attempt on a required field —
+  // rejected 400, never silently kept from the existing row
+  const authorizeUrl = requireOauthField(
+    input.oauthAuthorizeUrl !== undefined ? input.oauthAuthorizeUrl : existing.oauthAuthorizeUrl,
+    'oauthAuthorizeUrl',
+  );
+  const tokenUrl = requireOauthField(
+    input.oauthTokenUrl !== undefined ? input.oauthTokenUrl : existing.oauthTokenUrl,
+    'oauthTokenUrl',
+  );
+  const clientId = requireOauthField(
+    input.oauthClientId !== undefined ? input.oauthClientId : existing.oauthClientId,
+    'oauthClientId',
+  );
   assertHttpUrl(authorizeUrl, 'oauthAuthorizeUrl');
   assertHttpUrl(tokenUrl, 'oauthTokenUrl');
   const revocationUrl = input.oauthRevocationUrl ?? existing.oauthRevocationUrl;

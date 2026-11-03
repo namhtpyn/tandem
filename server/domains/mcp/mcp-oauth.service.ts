@@ -6,8 +6,8 @@
 // state row IS the authorization proof for the provider's callback.
 import { createHash, randomBytes } from 'node:crypto';
 
-import { eq, lt } from 'drizzle-orm';
 import { consola } from 'consola';
+import { eq, lt } from 'drizzle-orm';
 
 import { db } from '../../db/index';
 import { mcpOauthStates, mcpOauthTokens } from '../../db/schema';
