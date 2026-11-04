@@ -146,6 +146,7 @@ vi.mock('../../server/domains/vault/secret/secret-crypto.service', () => ({
 
 import { ORPCError } from '../../server/domains/kernel/kernel';
 import {
+  bindingsListByServer,
   bindingsRemove,
   bindingsSet,
   buildMcpServersFor,
@@ -314,6 +315,29 @@ describe('bindings (upsert + unbind)', () => {
     await expect(bindingsRemove({ employeeId: 'ai-1', serverId: 'srv-1' })).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
+  });
+});
+
+describe('bindingsListByServer (per-server read, #274 registry-page surface)', () => {
+  it("lists one server's bindings across agents keyed by employee name; other servers' rows excluded", async () => {
+    h.bindingRows = [
+      binding({ employee: { id: 'ai-1', name: 'Ash' } }),
+      binding({
+        id: 'bnd-2',
+        employeeId: 'ai-2',
+        secretId: null,
+        secret: null,
+        employee: { id: 'ai-2', name: 'Zed' },
+      }),
+      binding({ id: 'bnd-3', serverId: 'srv-9', employee: { id: 'ai-1', name: 'Ash' } }),
+    ];
+    const res = await bindingsListByServer('srv-1');
+    expect(res.data.map((r) => [r.employeeName, r.secretName, r.lastFour])).toEqual([
+      ['Ash', 'cred', 'eken'],
+      ['Zed', null, null],
+    ]);
+    // write-only vault law: the masked read never carries the plaintext
+    expect(JSON.stringify(res)).not.toContain('cipher-1');
   });
 });
 
