@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   casWins: true,
   appends: 0,
   casWrites: 0,
+  tasksWrites: 0,
   // every WHERE the service passed to a task_runs update (streaming flush AND the
   // settle flip) — rendered through real drizzle in the predicate test below
   flipWheres: [] as unknown[],
@@ -20,15 +21,30 @@ const h = vi.hoisted(() => ({
   envelopeSettles: 0,
 }));
 
+/** fire-and-forget settles (`void settleDoneRun(...)`) escape a synchronous
+ * counter read — drain several macrotask turns so an unawaited continuation
+ * lands on the counter before any assertion reads it. */
+const drain = async () => {
+  for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
+};
+
 vi.mock('../../server/db/index', async () => {
-  const { taskRuns } = await import('../../server/db/schema');
+  const { taskRuns, tasks } = await import('../../server/db/schema');
+  const { STATUS } = await import('../../shared/status');
   return {
     asDb: (x: unknown) => x,
     db: {
       query: new Proxy(
         {},
         {
-          get: () => ({ findMany: async () => [], findFirst: async () => null }),
+          get: (_t, table: string) => ({
+            // bounceTaskAfterRun reads the task + the latest run before its guarded
+            // tasks.write: returning a doing task + the current run lets a rogue
+            // bounce REACH the write, so the tasksWrites counter actually catches
+            // it (a null read would no-op the bounce and hide the regression)
+            findMany: async () => (table === 'tasks' ? [{ status: STATUS.doing, failStreak: 0 }] : []),
+            findFirst: async () => (table === 'taskRuns' ? { id: 'run-1' } : null),
+          }),
         },
       ),
       update: (table: unknown) => ({
@@ -37,6 +53,7 @@ vi.mock('../../server/db/index', async () => {
             if (table === taskRuns) h.flipWheres.push(_where);
             const applied = () => {
               if (table === taskRuns && h.casWins) h.appends += 1;
+              if (table === tasks) h.tasksWrites += 1; // bounceTaskAfterRun writes here
               h.casWrites += 1;
               return h.casWins ? [{ id: 'run-1' }] : [];
             };
@@ -97,6 +114,8 @@ vi.mock('../../server/domains/tasks/workflow.service', async (importOriginal) =>
   };
 });
 
+import { and, eq } from 'drizzle-orm';
+
 import { setEnv } from '../../server/domains/kernel/env';
 import { createRunWriter } from '../../server/domains/tasks/runner.service';
 import { mockDb, taskRuns } from './helpers/mock-db';
@@ -105,6 +124,7 @@ beforeEach(() => {
   h.casWins = true;
   h.appends = 0;
   h.casWrites = 0;
+  h.tasksWrites = 0;
   h.flipWheres = [];
   h.bodyWrites = [];
   h.attachments = 0;
@@ -135,36 +155,43 @@ describe('writer.finish settle arbitration (#286)', () => {
       review: { resultBody: 'submitted work' },
       ai: { userId: 'agent-1' },
     });
+    await drain();
     expect(h.bodyWrites).toHaveLength(0);
     expect(h.attachments).toBe(0);
     expect(h.parks).toHaveLength(0);
     expect(h.published).toHaveLength(0);
+    expect(h.envelopeSettles).toBe(0);
+    expect(h.tasksWrites).toBe(0); // no bounce on a lost settle
   });
 
-  it('the CAS predicate pins run id + RUNNING status when rendered by real drizzle', async () => {
+  it('the settle CAS renders EXACTLY id + RUNNING-status equality (operator-bound pin)', async () => {
     const writer = createRunWriter('run-1', '', 'msg-1');
     writer.onLine('agent output');
     await writer.finish('task-1', RUN_STATUS.FAILED, 1, {
       review: { resultBody: 'submitted work' },
       ai: { userId: 'agent-1' },
     });
-    // re-render every WHERE the service handed to a task_runs update (the streaming
-    // flush + the settle flip) through the REAL drizzle builder: a regression that
-    // drops either the id or the status predicate from the flip fails HERE. A
-    // pg-backed unit test is off the table (test/setup.ts: the unit project runs
-    // without Postgres), so the builder render is the strongest available pin.
-    expect(h.flipWheres.length).toBeGreaterThan(0);
-    for (const where of h.flipWheres) {
-      const { sql, params } = mockDb()
-        .update(taskRuns)
-        .set({ status: RUN_STATUS.FAILED })
+    // Re-render every WHERE the service handed to a task_runs update (the streaming
+    // flush + the settle flip) through the REAL drizzle builder and require exact
+    // equality with the hand-built contract predicate. A pg-backed unit test is off
+    // the table (test/setup.ts: the unit project runs without Postgres), so the
+    // builder render is the strongest available pin. Equality (not containment)
+    // binds the comparison operators: ne/inArray widening or an impossible extra
+    // predicate on the CAS fails HERE — containment-only pins pass such mutants
+    // while production arbitration silently flips (blind-review r1, #293).
+    const renderWhere = (where: unknown) =>
+      mockDb()
+        .select()
+        .from(taskRuns)
         .where(where as never)
         .toSQL();
-      expect(sql).toContain('"task_runs"."id"');
-      expect(sql).toContain('"task_runs"."status"');
-      expect(sql).toMatch(/\sand\s/i);
-      expect(params).toContain('run-1');
-      expect(params).toContain(RUN_STATUS.RUNNING);
+    const expected = renderWhere(and(eq(taskRuns.id, 'run-1'), eq(taskRuns.status, RUN_STATUS.RUNNING)));
+    const whereClause = (rendered: { sql: string }) => rendered.sql.slice(rendered.sql.indexOf(' where ') + 7);
+    expect(h.flipWheres.length).toBeGreaterThan(0);
+    for (const where of h.flipWheres) {
+      const actual = renderWhere(where);
+      expect(whereClause(actual)).toBe(whereClause(expected));
+      expect(actual.params).toEqual(['run-1', RUN_STATUS.RUNNING]);
     }
   });
 
@@ -173,15 +200,18 @@ describe('writer.finish settle arbitration (#286)', () => {
     const writer = createRunWriter('run-1', '', 'msg-1');
     writer.onLine('all work complete');
     await writer.finish('task-1', RUN_STATUS.DONE, 0, { ai: { userId: 'agent-1' } });
+    await drain(); // a fire-and-forget settle must land on the counter before the read
     expect(h.envelopeSettles).toBe(0);
     expect(h.bodyWrites).toHaveLength(0);
     expect(h.published).toHaveLength(0);
+    expect(h.tasksWrites).toBe(0); // no bounce on a lost settle
   });
 
   it('a won CAS on the DONE branch settles the envelope exactly once', async () => {
     const writer = createRunWriter('run-1', '', 'msg-1');
     writer.onLine('all work complete');
     await writer.finish('task-1', RUN_STATUS.DONE, 0, { ai: { userId: 'agent-1' } });
+    await drain();
     expect(h.envelopeSettles).toBe(1);
     expect(h.bodyWrites).toHaveLength(1);
   });
