@@ -1,5 +1,8 @@
 // Shared app state (SSR-safe): session + auth config + version, initialized by
 // app.vue and consumed by the layout/pages (NuxtLayout/NuxtPage forward nothing).
+import { computed } from 'vue';
+
+import { ROLE } from '#shared/enums';
 import type { Role } from '#shared/enums';
 import type { AuthConfig } from '~/types/auth';
 
@@ -12,6 +15,16 @@ export type AppSessionPayload = {
 
 export function useAppSession() {
   return useState<AppSessionPayload | null>('tandem:session', () => null);
+}
+
+// UI tier visibility gate (SPEC "Roles & access" — UX, never the boundary):
+// true only for ADMIN. Every admin-surface verb renderer wires this into the
+// managers' `editable` prop / v-if gates; the server tier matrix stays the
+// real boundary. Anonymous (no session yet) reads as non-admin — the login
+// shell renders no verb chrome anyway.
+export function useIsAdmin() {
+  const session = useAppSession();
+  return computed(() => session.value?.user.role === ROLE.ADMIN);
 }
 
 export function useAuthConfigState() {

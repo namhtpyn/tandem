@@ -14,6 +14,11 @@ import { categoryColor, categoryLabel } from '~/utils/ui-labels';
 
 const open = defineModel<boolean>('open', { default: false });
 
+// editable=false renders a read-only viewer (SPEC "Roles & access" — UI tier
+// visibility): no New/Edit/Delete status UI. statuses save/remove are
+// admin-tier server-side; the tasks toolbar wires :editable="isAdmin".
+const { editable = true } = defineProps<{ editable?: boolean }>();
+
 const { $orpc } = useNuxtApp();
 const queryClient = useQueryClient();
 
@@ -191,7 +196,7 @@ const categoryOptions = CATEGORIES.map((value) => ({
                   <template v-else>No suggested next steps</template>
                 </p>
               </div>
-              <div class="flex shrink-0 gap-1">
+              <div v-if="editable" class="flex shrink-0 gap-1">
                 <UPopover mode="hover" enable-touch>
                   <UButton
                     icon="i-lucide-pencil"
@@ -239,9 +244,9 @@ const categoryOptions = CATEGORIES.map((value) => ({
           >
             <UIcon name="i-lucide-list-todo" class="text-toned size-10" aria-hidden="true" />
             <p class="text-muted text-sm">No statuses yet — define the steps your tasks move through.</p>
-            <UButton icon="i-lucide-plus" size="sm" label="New status" @click="openStatusEditor()" />
+            <UButton v-if="editable" icon="i-lucide-plus" size="sm" label="New status" @click="openStatusEditor()" />
           </div>
-          <div v-if="statuses.length" class="flex justify-end">
+          <div v-if="editable && statuses.length" class="flex justify-end">
             <UButton icon="i-lucide-plus" size="sm" label="New status" @click="openStatusEditor()" />
           </div>
         </div>

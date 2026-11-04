@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { z } from 'zod';
 
-import { ROLE } from '#shared/enums';
 import { SERVER_UNREACHABLE_COPY } from '~/utils/copy';
 // Dashboard shell (Nuxt UI UDashboardGroup): login screen when unauthenticated,
 // sidebar + content when signed in. Session/auth-config via useState (app.vue).
@@ -134,19 +133,27 @@ async function logout() {
 }
 
 const route = useRoute();
+// Admin-surface nav items (SPEC "Roles & access" — UI tier visibility): Vault,
+// MCP, Environments, Employees and Settings render for ADMIN only; deep links
+// stay reachable and re-gate read-only inside their pages. UX only — the
+// server tier matrix is the boundary. Spread groups sit in the SAME positions
+// as the old static list — the admin nav renders in the exact pre-gate order.
+const isAdmin = useIsAdmin();
 // exact to === path would leave detail pages (/tasks/<id>) with no active nav
 const nav = computed(() =>
   [
     { label: 'Overview', icon: 'i-lucide-layout-dashboard', to: '/' },
-    { label: 'Vault', icon: 'i-lucide-shield', to: '/vault' },
-    // MCP registry is an admin surface (SPEC registry + per-agent bindings):
-    // hidden for non-admins — UX, never the boundary (the /mcp page re-gates)
-    ...(session.value?.user.role === ROLE.ADMIN ? [{ label: 'MCP', icon: 'i-lucide-plug', to: '/mcp' }] : []),
-    { label: 'Environments', icon: 'i-lucide-server', to: '/environments' },
-    { label: 'Employees', icon: 'i-lucide-users', to: '/employees' },
+    ...(isAdmin.value ? [{ label: 'Vault', icon: 'i-lucide-shield', to: '/vault' }] : []),
+    ...(isAdmin.value ? [{ label: 'MCP', icon: 'i-lucide-plug', to: '/mcp' }] : []),
+    ...(isAdmin.value
+      ? [
+          { label: 'Environments', icon: 'i-lucide-server', to: '/environments' },
+          { label: 'Employees', icon: 'i-lucide-users', to: '/employees' },
+        ]
+      : []),
     { label: 'Tasks', icon: 'i-lucide-list-todo', to: '/tasks' },
     { label: 'Projects', icon: 'i-lucide-folder-kanban', to: '/projects' },
-    { label: 'Settings', icon: 'i-lucide-settings', to: '/settings' },
+    ...(isAdmin.value ? [{ label: 'Settings', icon: 'i-lucide-settings', to: '/settings' }] : []),
   ].map((item) => ({
     ...item,
     active: item.to === '/' ? route.path === '/' : route.path.startsWith(item.to),
