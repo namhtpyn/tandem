@@ -21,6 +21,10 @@ const props = defineProps<{ taskId: string; statusById: Map<string, TaskStatusRo
 
 const { $client, $orpc } = useNuxtApp();
 const queryClient = useQueryClient();
+// proposals confirm/reject and subtask creation are employee-tier writes
+// (SPEC "Roles & access", #300) — the decision buttons hide below the
+// employee tier; the panels themselves stay session-tier reads
+const canWork = useCanWork();
 
 const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES] }));
 const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRow[]);
@@ -170,7 +174,7 @@ function subtaskBadge(c: SubtaskRow): {
         <p v-else class="text-toned mb-2 truncate text-xs">
           Moves to: {{ proposalTarget(p) }}<span v-if="payloadOf(p).reason"> ({{ payloadOf(p).reason }})</span>
         </p>
-        <div class="flex gap-2">
+        <div v-if="canWork" class="flex gap-2">
           <UButton
             size="sm"
             color="primary"
@@ -223,6 +227,7 @@ function subtaskBadge(c: SubtaskRow): {
       </li>
     </ul>
     <UButton
+      v-if="canWork"
       class="mt-2"
       size="sm"
       color="neutral"

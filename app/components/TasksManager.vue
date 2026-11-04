@@ -1028,6 +1028,19 @@ onServerPrefetch(() =>
               <div class="px-3 py-1.5 text-xs">Auto-assign</div>
             </template>
           </UPopover>
+          <UPopover mode="hover" enable-touch>
+            <UButton
+              icon="i-lucide-message-circle-more"
+              variant="ghost"
+              color="neutral"
+              size="sm"
+              :aria-label="`Workflow for ${row.original.title}`"
+              @click="openWorkflow(row.original)"
+            />
+            <template #content>
+              <div class="px-3 py-1.5 text-xs">Workflow &amp; activity</div>
+            </template>
+          </UPopover>
           <UPopover v-if="canWork" mode="hover" enable-touch>
             <UButton
               icon="i-lucide-pencil"
@@ -1052,19 +1065,6 @@ onServerPrefetch(() =>
             />
             <template #content>
               <div class="px-3 py-1.5 text-xs">Delete task</div>
-            </template>
-          </UPopover>
-          <UPopover mode="hover" enable-touch>
-            <UButton
-              icon="i-lucide-message-circle-more"
-              variant="ghost"
-              color="neutral"
-              size="sm"
-              :aria-label="`Workflow for ${row.original.title}`"
-              @click="openWorkflow(row.original)"
-            />
-            <template #content>
-              <div class="px-3 py-1.5 text-xs">Workflow &amp; activity</div>
             </template>
           </UPopover>
         </div>
@@ -1160,18 +1160,19 @@ onServerPrefetch(() =>
                       </button>
                     </div>
                   </template>
-                  <div class="border-default my-1 border-t" aria-hidden="true" />
-                  <button v-if="canWork" type="button" :class="BOARD_MENU_ITEM" @click="openEditor(row)">
-                    <UIcon name="i-lucide-pencil" class="size-3.5 shrink-0" />Edit
-                  </button>
-                  <button
-                    v-if="canWork"
-                    type="button"
-                    :class="[BOARD_MENU_ITEM, 'text-error hover:bg-error/10 hover:text-error']"
-                    @click="openDelete(row)"
-                  >
-                    <UIcon name="i-lucide-trash-2" class="size-3.5 shrink-0" />Delete
-                  </button>
+                  <template v-if="canWork">
+                    <div class="border-default my-1 border-t" aria-hidden="true" />
+                    <button type="button" :class="BOARD_MENU_ITEM" @click="openEditor(row)">
+                      <UIcon name="i-lucide-pencil" class="size-3.5 shrink-0" />Edit
+                    </button>
+                    <button
+                      type="button"
+                      :class="[BOARD_MENU_ITEM, 'text-error hover:bg-error/10 hover:text-error']"
+                      @click="openDelete(row)"
+                    >
+                      <UIcon name="i-lucide-trash-2" class="size-3.5 shrink-0" />Delete
+                    </button>
+                  </template>
                 </div>
               </template>
             </UPopover>
@@ -1326,18 +1327,19 @@ onServerPrefetch(() =>
                             </button>
                           </div>
                         </template>
-                        <div class="border-default my-1 border-t" aria-hidden="true" />
-                        <button v-if="canWork" type="button" :class="BOARD_MENU_ITEM" @click="openEditor(row)">
-                          <UIcon name="i-lucide-pencil" class="size-3.5 shrink-0" />Edit
-                        </button>
-                        <button
-                          v-if="canWork"
-                          type="button"
-                          :class="[BOARD_MENU_ITEM, 'text-error hover:bg-error/10 hover:text-error']"
-                          @click="openDelete(row)"
-                        >
-                          <UIcon name="i-lucide-trash-2" class="size-3.5 shrink-0" />Delete
-                        </button>
+                        <template v-if="canWork">
+                          <div class="border-default my-1 border-t" aria-hidden="true" />
+                          <button type="button" :class="BOARD_MENU_ITEM" @click="openEditor(row)">
+                            <UIcon name="i-lucide-pencil" class="size-3.5 shrink-0" />Edit
+                          </button>
+                          <button
+                            type="button"
+                            :class="[BOARD_MENU_ITEM, 'text-error hover:bg-error/10 hover:text-error']"
+                            @click="openDelete(row)"
+                          >
+                            <UIcon name="i-lucide-trash-2" class="size-3.5 shrink-0" />Delete
+                          </button>
+                        </template>
                       </div>
                     </template>
                   </UPopover>

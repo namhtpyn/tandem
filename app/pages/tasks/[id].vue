@@ -18,6 +18,10 @@ import { categoryColor, composerPlaceholder } from '~/utils/ui-labels';
 const route = useRoute();
 const { $orpc } = useNuxtApp();
 const session = useAppSession();
+// tasks.*/projects.* writes are employee-tier (#300): the detail page's
+// composer, workflow verbs, review box and detail selects render read-only
+// below the employee tier
+const canWork = useCanWork();
 
 // BY-ID READ LAW (#220): the page renders ONE task — read it by id, never the
 // whole-list snapshot (a TASKS change event refetches one row, not the table).
@@ -270,8 +274,9 @@ onServerPrefetch(() => Promise.all([taskQuery.suspense(), statusesLive.suspense(
                    on-demand description body the list row no longer carries -->
               <TaskActivityThread :key="task.id" :task="taskFull!" />
 
-              <!-- composer: workflow note + primary actions -->
-              <div class="border-default border-t p-2.5">
+              <!-- composer: workflow note + primary actions (#300: hidden below
+                   the employee tier — a VIEWER reads the thread, never sends) -->
+              <div v-if="canWork" class="border-default border-t p-2.5">
                 <UTextarea
                   v-model="workflowNote"
                   :rows="1"
@@ -314,7 +319,7 @@ onServerPrefetch(() => Promise.all([taskQuery.suspense(), statusesLive.suspense(
 
             <!-- GitHub-style review verdicts: own card, reviewers only, in review only -->
             <TaskReviewBox
-              v-if="taskStatusCategory === CATEGORY.IN_REVIEW && isReviewer"
+              v-if="canWork && taskStatusCategory === CATEGORY.IN_REVIEW && isReviewer"
               :key="task.id"
               class="mt-3"
               :busy="workflowBusy"
@@ -335,6 +340,7 @@ onServerPrefetch(() => Promise.all([taskQuery.suspense(), statusesLive.suspense(
               <!-- contextual workflow verbs FIRST — the most actionable thing in the
                    sidebar (#177); the drawer is a second surface, never a round-trip -->
               <TaskWorkflowActions
+                v-if="canWork"
                 :key="task.id"
                 :task="task"
                 :status-category="taskStatusCategory"
@@ -346,7 +352,13 @@ onServerPrefetch(() => Promise.all([taskQuery.suspense(), statusesLive.suspense(
                 :message-ok="workflowOk"
                 @action="(action, extra) => wfAction(action, extra)"
               />
-              <TaskDetailsFields :key="task.id" :task="task" :run-locked="runLocked" :run-pending="!runsSettled" />
+              <TaskDetailsFields
+                :key="task.id"
+                :task="task"
+                :run-locked="runLocked"
+                :run-pending="!runsSettled"
+                :can-edit="canWork"
+              />
               <TaskReviewPanel v-if="task.reviewerNames.length" :key="task.id" :task-id="task.id" />
               <TaskRoutingPanels
                 :key="task.id"
@@ -367,6 +379,7 @@ onServerPrefetch(() => Promise.all([taskQuery.suspense(), statusesLive.suspense(
     <template #body>
       <div class="space-y-4">
         <TaskWorkflowActions
+          v-if="canWork"
           :key="task.id"
           :task="task"
           :status-category="taskStatusCategory"
@@ -378,7 +391,13 @@ onServerPrefetch(() => Promise.all([taskQuery.suspense(), statusesLive.suspense(
           :message-ok="workflowOk"
           @action="(action, extra) => wfAction(action, extra)"
         />
-        <TaskDetailsFields :key="task.id" :task="task" :run-locked="runLocked" :run-pending="!runsSettled" />
+        <TaskDetailsFields
+          :key="task.id"
+          :task="task"
+          :run-locked="runLocked"
+          :run-pending="!runsSettled"
+          :can-edit="canWork"
+        />
         <TaskReviewPanel v-if="task.reviewerNames.length" :key="task.id" :task-id="task.id" />
         <TaskRoutingPanels :task-id="task.id" :status-by-id="statusById" @add-subtask="subtaskEditorOpen = true" />
       </div>

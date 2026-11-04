@@ -11,7 +11,13 @@ import { NONE_ID, errorMessage } from '~/utils/forms';
 import type { EmployeeRow, TaskRow } from '~/utils/orpc-types';
 import { employeeOptions } from '~/utils/ui-labels';
 
-const props = defineProps<{ task: TaskRow; runLocked?: boolean; runPending?: boolean }>();
+const props = withDefaults(
+  defineProps<{ task: TaskRow; runLocked?: boolean; runPending?: boolean; canEdit?: boolean }>(),
+  { canEdit: true },
+);
+// #300: the three selects ARE the tasks.update/setStatus writes — below the
+// employee tier each field renders its value as plain text (owner chip style)
+const canEdit = computed(() => props.canEdit);
 
 const { $orpc } = useNuxtApp();
 const queryClient = useQueryClient();
@@ -59,6 +65,10 @@ const projectOptions = computed(() => [
 // script-setup helper for template comparisons — an imported binding used
 // directly inside a template arrow function trips vue-tsc's maybe-ref unwrap
 const isNoneId = (v: string | null | undefined) => v === NONE_ID;
+// plain-text fallback labels for the #300 read-only render
+const assigneeName = (id: string) =>
+  employees.value.find((e) => e.id === id)?.name ?? (isNoneId(id) ? 'Unassigned' : id);
+const projectName = (id: string) => projects.value.find((p) => p.id === id)?.name ?? (isNoneId(id) ? 'No project' : id);
 async function updateField(patch: { status?: string; assigneeId?: string | null; projectId?: string | null }) {
   if (fieldBusy.value) return;
   fieldBusy.value = true;
@@ -95,6 +105,7 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
         <dt class="text-muted text-xs">Status</dt>
         <dd class="min-w-0">
           <USelect
+            v-if="canEdit"
             :model-value="shownStatus"
             :items="statusOptions"
             value-key="value"
@@ -104,12 +115,19 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
             class="w-full"
             @update:model-value="(v: string) => v !== props.task.status && updateField({ status: v })"
           />
+          <span
+            v-else
+            class="bg-muted text-toned inline-flex max-w-full items-center gap-1.5 rounded-md px-2 py-1 text-xs"
+            data-testid="detail-status-plain"
+            >{{ statusById.get(shownStatus)?.name ?? shownStatus }}</span
+          >
         </dd>
       </div>
       <div class="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-x-2">
         <dt class="text-muted text-xs">Assignee</dt>
         <dd class="min-w-0">
           <USelect
+            v-if="canEdit"
             :model-value="shownAssignee"
             :items="assigneeOptions"
             value-key="value"
@@ -119,6 +137,12 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
             class="w-full"
             @update:model-value="(v: string) => updateField({ assigneeId: isNoneId(v) ? null : v })"
           />
+          <span
+            v-else
+            class="bg-muted text-toned inline-flex max-w-full items-center gap-1.5 rounded-md px-2 py-1 text-xs"
+            data-testid="detail-assignee-plain"
+            >{{ assigneeName(shownAssignee) }}</span
+          >
         </dd>
       </div>
       <p v-if="runLocked" class="text-dimmed text-[11px]">
@@ -144,6 +168,7 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
         <dt class="text-muted text-xs">Project</dt>
         <dd class="min-w-0">
           <USelect
+            v-if="canEdit"
             :model-value="shownProject"
             :items="projectOptions"
             value-key="value"
@@ -153,6 +178,12 @@ onServerPrefetch(() => Promise.all([statusesLive.suspense(), employeesLive.suspe
             class="w-full"
             @update:model-value="(v: string) => updateField({ projectId: isNoneId(v) ? null : v })"
           />
+          <span
+            v-else
+            class="bg-muted text-toned inline-flex max-w-full items-center gap-1.5 rounded-md px-2 py-1 text-xs"
+            data-testid="detail-project-plain"
+            >{{ projectName(shownProject) }}</span
+          >
         </dd>
       </div>
     </dl>
