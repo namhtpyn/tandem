@@ -214,8 +214,16 @@ onServerPrefetch(() => liveQuery.suspense());
       />
       <div class="ms-auto flex items-center gap-2 overflow-x-auto">
         <!-- nothing to filter or manage while the vault is empty — the empty
-             state below carries the one 'New secret' CTA -->
-        <VaultFolderSelect v-if="!emptyVault" v-model="folderId" clearable class="w-44" aria-label="Filter by folder" />
+             state below carries the one 'New secret' CTA. editable=false hides
+             the filter too: a non-admin deep link's folder read is admin-tier
+             FORBIDDEN, so the select would render dead above the error state. -->
+        <VaultFolderSelect
+          v-if="editable && !emptyVault"
+          v-model="folderId"
+          clearable
+          class="w-44"
+          aria-label="Filter by folder"
+        />
         <UButton
           v-if="editable && !emptyVault"
           icon="i-lucide-folder"

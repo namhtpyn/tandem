@@ -101,6 +101,9 @@ test.describe('role UI gating (#263)', () => {
       await emp.goto('/vault');
       await expect(emp.getByRole('button', { name: 'New secret' })).toHaveCount(0);
       await expect(emp.getByRole('button', { name: 'Folders' })).toHaveCount(0);
+      // the folder filter would render dead above the error state (its own
+      // read is admin-tier FORBIDDEN) — the editable gate hides it too
+      await expect(emp.getByLabel('Filter by folder')).toHaveCount(0);
 
       // ---- /environments: read-only browser ----
       await emp.goto('/environments');
