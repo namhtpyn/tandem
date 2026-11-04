@@ -247,6 +247,11 @@ const bindingsLive = useQuery(
 );
 const serverBindings = computed<ServerBindingRow[]>(() => unref(bindingsLive.data)?.data ?? []);
 
+// a failed/pending bindings read must not back a blind write: the bind form
+// only acts on visible rows (the upsert would otherwise mutate a binding the
+// admin cannot see)
+const bindFormDisabled = computed(() => bindBusy.value || unref(bindingsLive.isPending) || unref(bindingsLive.isError));
+
 // AI-employee picker — employees.list carries every row with kind; only AI
 // agents can bind (the server asserts it too), and bound agents drop out
 const EMPLOYEES_RESOURCE = 'EMPLOYEES';
@@ -299,12 +304,45 @@ async function setCredential(b: ServerBindingRow, secretId: string | null) {
   try {
     // explicit null CLEARS the credential (router: secretId is id|null)
     await bindSetMutation.mutateAsync({ employeeId: b.employeeId, serverId: row.id, secretId });
+    clearCandidate.value = null;
     await bindingsLive.refetch();
   } catch (e) {
     bindingsError.value = errorMessage(e, saveFailed(e, 'server'));
   } finally {
     bindBusy.value = false;
   }
+}
+
+// clearing a credential is destructive (bearer binding falls back to anonymous
+// requests + the probe verdict wipes) — the clear rides the same two-step
+// confirm as unbind; picking a DIFFERENT secret applies straight away (that
+// swap is this surface's whole point — minimal steps)
+const clearCandidate = ref<ServerBindingRow | null>(null);
+
+function askClearCredential(b: ServerBindingRow) {
+  bindingsError.value = null;
+  clearCandidate.value = b;
+}
+
+// oauth connect: the shared popup-mint composable — same flow as the editor
+const {
+  connectingServerId,
+  connectError,
+  connectOauth: startOauthConnect,
+} = useMcpOauthConnect(async () => {
+  await bindingsLive.refetch();
+});
+
+// the composable tracks the connect by SERVER id — this modal serves one row
+const connectingHere = computed(
+  () => connectingServerId.value !== null && connectingServerId.value === bindingsRow.value?.id,
+);
+
+function connectOauth(b: ServerBindingRow) {
+  const row = bindingsRow.value;
+  if (!row) return;
+  bindingsError.value = null;
+  startOauthConnect(b.employeeId, row.id);
 }
 
 async function unbind(b: ServerBindingRow) {
@@ -759,8 +797,22 @@ function askUnbind(b: ServerBindingRow) {
                 <UButton label="Keep" variant="ghost" color="neutral" size="sm" @click="unbindCandidate = null" />
               </template>
               <template v-else>
+                <template v-if="clearCandidate?.id === b.id">
+                  <span class="text-muted text-xs" data-testid="mcp-server-binding-clear-ask"
+                    >Clear credential for {{ b.employeeName }}?</span
+                  >
+                  <UButton
+                    label="Clear"
+                    color="error"
+                    size="sm"
+                    data-testid="mcp-server-binding-clear-confirm"
+                    :loading="bindBusy"
+                    @click="setCredential(b, null)"
+                  />
+                  <UButton label="Keep" variant="ghost" color="neutral" size="sm" @click="clearCandidate = null" />
+                </template>
                 <USelectMenu
-                  v-if="b.authKind !== 'oauth'"
+                  v-else-if="b.authKind !== 'oauth'"
                   :model-value="b.secretId"
                   :items="secretItems"
                   value-key="value"
@@ -770,7 +822,19 @@ function askUnbind(b: ServerBindingRow) {
                   class="w-44"
                   :disabled="bindBusy"
                   :aria-label="`Credential for ${b.employeeName}`"
-                  @update:model-value="(v: string | null) => setCredential(b, v)"
+                  @update:model-value="(v: string | null) => (v === null ? askClearCredential(b) : setCredential(b, v))"
+                />
+                <UButton
+                  v-if="b.authKind === 'oauth'"
+                  icon="i-lucide-key-round"
+                  :label="b.oauth?.connected ? 'Reconnect' : 'Connect'"
+                  variant="soft"
+                  color="primary"
+                  size="sm"
+                  data-testid="mcp-server-oauth-connect"
+                  :loading="connectingHere"
+                  :disabled="bindBusy || (connectingServerId !== null && !connectingHere)"
+                  @click="connectOauth(b)"
                 />
                 <UButton
                   icon="i-lucide-unlink"
@@ -819,7 +883,7 @@ function askUnbind(b: ServerBindingRow) {
               icon="i-lucide-bot"
               class="w-full"
               data-testid="mcp-bind-employee"
-              :disabled="bindBusy"
+              :disabled="bindFormDisabled"
             />
             <div class="flex items-center gap-2">
               <USelectMenu
@@ -832,7 +896,7 @@ function askUnbind(b: ServerBindingRow) {
                 icon="i-lucide-key-round"
                 class="w-full flex-1"
                 data-testid="mcp-bind-secret"
-                :disabled="bindBusy"
+                :disabled="bindFormDisabled"
               />
               <UButton
                 icon="i-lucide-link"
@@ -840,12 +904,22 @@ function askUnbind(b: ServerBindingRow) {
                 size="sm"
                 class="shrink-0"
                 data-testid="mcp-bind-submit"
-                :disabled="!newBindEmployeeId || bindBusy"
+                :disabled="!newBindEmployeeId || bindFormDisabled"
                 :loading="bindBusy"
                 @click="bindAgent"
               />
             </div>
           </div>
+          <UAlert
+            v-if="connectError"
+            role="alert"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            :title="connectError"
+            class="mt-3"
+            :ui="{ title: 'text-sm' }"
+          />
           <UAlert
             v-if="bindingsError"
             role="alert"

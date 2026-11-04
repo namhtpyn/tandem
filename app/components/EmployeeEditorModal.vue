@@ -332,7 +332,20 @@ const mcpRegistryItems = computed(() =>
   (mcpRegistryLive.data.value?.data ?? []).map((r: { id: string; name: string }) => ({ label: r.name, value: r.id })),
 );
 
-const mcpBindings = ref<McpBindingRow[]>([]);
+// bindings live in the QUERY CACHE keyed under the MCP change-bus prefix —
+// /mcp-side writes invalidate [resource] prefixes (useChangeEvents), so an
+// open editor tracks the registry surface live (SPEC "Binding surfaces":
+// both views stay in sync without a manual refresh)
+const mcpBindingsLive = useQuery(
+  computed(() => ({
+    ...$orpc.mcp.bindingsList.queryOptions({
+      input: { employeeId: editingId.value ?? '' },
+      queryKey: [MCP_RESOURCE, 'bindings-by-employee', editingId.value ?? ''],
+    }),
+    enabled: open.value && showAiFields.value && !!editingId.value,
+  })),
+);
+const mcpBindings = computed<McpBindingRow[]>(() => unref(mcpBindingsLive.data)?.data ?? []);
 const mcpLoading = ref(false);
 const mcpBusy = ref(false);
 const mcpError = ref<string | null>(null);
@@ -343,22 +356,24 @@ const unbindCandidate = ref<string | null>(null);
 /** ephemeral per-server probe feedback (the persisted verdict rides the row via the refetch) */
 const probeResults = ref<Record<string, string | undefined>>({});
 
-async function loadBindings() {
-  const employeeId = editingId.value;
-  if (!employeeId) {
-    mcpBindings.value = [];
-    return;
-  }
+const LOAD_BINDINGS_ERROR = "Couldn't load MCP bindings — try again";
+
+async function refetchBindings() {
   mcpLoading.value = true;
   try {
-    const res = await $client.mcp.bindingsList({ employeeId });
-    mcpBindings.value = res.data;
-  } catch (e) {
-    mcpError.value = errorMessage(e, "Couldn't load MCP bindings — try again");
+    await mcpBindingsLive.refetch();
   } finally {
     mcpLoading.value = false;
   }
 }
+
+// a failed bindings read must not sit silent — same message the imperative
+// loader surfaced; cleared when the read recovers (write errors keep their
+// own messages, never silently wiped by a recovery)
+watch(mcpBindingsLive.isError, (isErr) => {
+  if (isErr) mcpError.value = LOAD_BINDINGS_ERROR;
+  else if (mcpError.value === LOAD_BINDINGS_ERROR) mcpError.value = null;
+});
 
 async function addBinding() {
   const employeeId = editingId.value;
@@ -375,7 +390,7 @@ async function addBinding() {
     });
     newBindingServerId.value = null;
     newBindingSecretId.value = null;
-    await loadBindings();
+    await refetchBindings();
   } catch (e) {
     mcpError.value = errorMessage(e, "Couldn't bind the server — try again");
   } finally {
@@ -392,7 +407,7 @@ async function probeBinding(binding: McpBindingRow) {
     // surface the returned detail line directly — the persisted verdict badge
     // updates via the bindings refetch below
     probeResults.value[binding.serverId] = res.detail || (res.ok ? 'Handshake OK' : 'Probe failed');
-    await loadBindings();
+    await refetchBindings();
   } catch (e) {
     probeResults.value[binding.serverId] = errorMessage(e, "Couldn't probe the server — try again");
   } finally {
@@ -409,7 +424,7 @@ async function confirmUnbind() {
   try {
     await $client.mcp.bindingsRemove({ employeeId, serverId });
     unbindCandidate.value = null;
-    await loadBindings();
+    await refetchBindings();
   } catch (e) {
     mcpError.value = errorMessage(e, "Couldn't unbind the server — try again");
   } finally {
@@ -429,79 +444,21 @@ function probedWhen(iso: string | null | undefined) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-// ---- OAuth connect (#270 slice 2, #278) -------------------------------------
-// The mint rides the admin-only oRPC POST `mcp.oauthConnect` (the legacy
-// state-changing GET was the CSRF-intent vector: a SameSite=Lax admin session
-// rides a forged top-level navigation, a cross-site POST does not). The popup
-// opens SYNCHRONOUSLY in the click gesture (about:blank) and navigates to the
-// provider URL only after the mint round-trip — a post-await window.open is
-// popup-blocked. Provider authorize → Tandem callback stores the binding's
-// tokens → the callback page postMessages `mcp-oauth` to this opener and we
-// refetch the bindings (masked status only).
-const connectingServerId = ref<string | null>(null);
-let connectPopupWatcher: number | null = null;
-
-function stopConnectWatcher() {
-  if (connectPopupWatcher !== null) {
-    window.clearInterval(connectPopupWatcher);
-    connectPopupWatcher = null;
-  }
-}
-
-function onOauthMessage(event: MessageEvent) {
-  if (event.origin !== window.location.origin) return;
-  const data = event.data as { type?: string } | null;
-  if (data?.type !== 'mcp-oauth') return;
-  connectingServerId.value = null;
-  stopConnectWatcher();
-  void loadBindings();
-}
-
-onMounted(() => window.addEventListener('message', onOauthMessage));
-onBeforeUnmount(() => {
-  window.removeEventListener('message', onOauthMessage);
-  stopConnectWatcher();
-});
+// ---- OAuth connect (#270 slice 2, #274) -------------------------------------
+// The popup-mint flow is the shared useMcpOauthConnect composable (both admin
+// surfaces run the exact same flow). The connect error rides the composable's
+// own ref, surfaced next to the other MCP section errors below.
+const {
+  connectingServerId,
+  connectError: oauthConnectError,
+  connectOauth: startOauthConnect,
+} = useMcpOauthConnect(() => refetchBindings());
 
 function connectOauth(binding: McpBindingRow) {
   const employeeId = editingId.value;
-  if (!employeeId || connectingServerId.value) return;
-  // a retry must not sit under a stale attempt's error (bind/unbind pattern)
+  if (!employeeId) return;
   mcpError.value = null;
-  connectingServerId.value = binding.serverId;
-  // gesture-safe open first — about:blank is same-origin, the opener may
-  // navigate it to the provider URL once the mint resolves
-  const popup = window.open('', 'mcp-oauth-connect', 'popup,width=520,height=680');
-  if (!popup) {
-    // popup blocked — no window to navigate, no server-side mint to spend;
-    // a dead-looking Connect button reads as broken, so say why
-    mcpError.value = 'Popup blocked — allow popups for this site, then connect again';
-    connectingServerId.value = null;
-    return;
-  }
-  // a cancelled/closed popup never postMessages — stop the spinner so the
-  // Connect button stays usable (reopening was the only recovery before)
-  stopConnectWatcher();
-  connectPopupWatcher = window.setInterval(() => {
-    if (!popup || popup.closed) {
-      stopConnectWatcher();
-      connectingServerId.value = null;
-    }
-  }, 500);
-  void $client.mcp
-    .oauthConnect({ employeeId, serverId: binding.serverId })
-    .then((res) => {
-      if (!popup || popup.closed) return;
-      popup.location.href = res.connectUrl;
-    })
-    .catch((e) => {
-      popup?.close();
-      stopConnectWatcher();
-      connectingServerId.value = null;
-      // surface the mint rejection — the deleted REST route used to render
-      // the message inside the popup; a silent flash-close reads as a glitch
-      mcpError.value = errorMessage(e, "Couldn't start the OAuth connect — try again");
-    });
+  startOauthConnect(employeeId, binding.serverId);
 }
 
 /** 'connected · expires <when>' label for oauth bindings */
@@ -517,17 +474,9 @@ function oauthStatusLabel(b: McpBindingRow) {
   return `Connected · expires in ${Math.floor(h / 24)}d`;
 }
 
-// load when the modal opens with an AI employee in edit (create has no id to
-// bind against — the section says so instead); an AI-kind switch in create mode
-// re-fires with no id and stays a no-op
-watch(
-  [open, showAiFields, editingId] as const,
-  async ([o, ai, id]) => {
-    if (!o || !ai || !id) return;
-    await loadBindings();
-  },
-  { immediate: true },
-);
+// bindings load via mcpBindingsLive — `enabled` fires the query when the
+// modal opens on an AI employee in edit (create has no id to bind against —
+// the section says so instead); the open-watch loader is gone (r2 #274).
 </script>
 
 <template>
@@ -769,6 +718,16 @@ watch(
               color="error"
               variant="subtle"
               :title="mcpError"
+              class="mb-2"
+              :ui="{ title: 'text-sm' }"
+            />
+            <UAlert
+              v-if="oauthConnectError"
+              role="alert"
+              icon="i-lucide-circle-alert"
+              color="error"
+              variant="subtle"
+              :title="oauthConnectError"
               class="mb-2"
               :ui="{ title: 'text-sm' }"
             />

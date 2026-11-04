@@ -328,7 +328,7 @@ test.describe('mcp registry + bindings', () => {
     const tag = Date.now().toString(36).slice(-6);
     const serverName = `E2E BindPage ${tag}`;
     const serverId = await seedServer(page, serverName, `http://127.0.0.1:9/${tag}`);
-    const { employeeName } = await seedAiEmployee(page, tag);
+    const { employeeId, employeeName } = await seedAiEmployee(page, tag);
     const { employeeName: emp2Name } = await seedAiEmployee(page, `${tag}x`);
     await seedSecret(page, tag);
 
@@ -352,6 +352,18 @@ test.describe('mcp registry + bindings', () => {
     // the employee editor reflects the /mcp-side binding (one data model)
     const { editor, bindingRow } = await openMcpSection(page, employeeName);
     await expect(bindingRow).toContainText(serverName);
+
+    // LIVE sync: with the editor OPEN, a registry-side write publishes the
+    // change bus and the open modal picks it up with zero interaction (SPEC
+    // "Binding surfaces": both views stay in sync without a manual refresh)
+    const server2Name = `E2E BindPage2 ${tag}`;
+    const server2Id = await seedServer(page, server2Name, `http://127.0.0.1:9/${tag}b`);
+    const bind2 = await rpcPost(page, '/rpc/mcp/bindingsSet', { employeeId, serverId: server2Id });
+    expect(bind2.status).toBe(200);
+    await expect(editor.locator('[data-testid="mcp-binding-row"]').filter({ hasText: server2Name })).toBeVisible({
+      timeout: 15_000,
+    });
+
     await editor.getByRole('button', { name: 'Cancel' }).click();
     await expect(editor).toBeHidden({ timeout: 10_000 });
 
