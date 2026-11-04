@@ -4,8 +4,8 @@ import { mountSuspended } from '@nuxt/test-utils/runtime';
 // the same arms end-to-end — a bindingsList row renders the Connect button,
 // a blocked popup says why without spending the mint, and a rejected mint
 // closes the popup and rides the modal's own alert banner. The REAL oRPC
-// client runs; only the /rpc wire is stubbed (dispatch on URL content — the
-// exact path shape is an oRPC wire detail).
+// client runs; only the /rpc wire is stubbed — MCP arms pin the full wire
+// path exactly (see readCalls), non-rpc fetches pass through untouched.
 import { expect, it, vi } from 'vitest';
 
 import EmployeeEditorModal from '~/components/EmployeeEditorModal.vue';
