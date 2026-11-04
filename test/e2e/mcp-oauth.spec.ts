@@ -248,7 +248,9 @@ test.describe('mcp oauth per binding', () => {
       const anonMint = await anon.post('/rpc/mcp/oauthConnect', {
         data: { json: { employeeId: 'e2e-x', serverId: 'e2e-y' } },
       });
-      expect([401, 403]).toContain(anonMint.status());
+      // kernel order is deterministic: UNAUTHORIZED (no session) fires BEFORE
+      // the role check — pin the exact status, not the pair
+      expect(anonMint.status()).toBe(401);
     } finally {
       await anon.dispose();
     }
