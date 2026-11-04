@@ -38,6 +38,22 @@ export function oauthRedirectUri(origin?: string | null): string {
   return `${base}/api/mcp/oauth/callback`;
 }
 
+/** request-origin for the connect mint — proxy headers first, host fallback
+ * (the same derivation the legacy REST connect route performed before #278
+ * moved the mint behind the admin-only oRPC POST) */
+export function oauthConnectOrigin(headers: Headers | undefined | null): string {
+  const h = headers ?? new Headers();
+  const host =
+    String(h.get('x-forwarded-host') ?? h.get('host') ?? 'localhost:3000')
+      .split(',')[0]
+      ?.trim() || 'localhost:3000';
+  const proto =
+    String(h.get('x-forwarded-proto') ?? 'http')
+      .split(',')[0]
+      ?.trim() || 'http';
+  return `${proto}://${host}`;
+}
+
 /** single-use state consume: the row is the proof — deleted on FIRST use */
 async function consumeState(
   stateId: string,
