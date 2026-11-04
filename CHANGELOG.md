@@ -1,3 +1,12 @@
+## [2.67.7](https://github.com/namhtpyn/tandem/compare/v2.67.6...v2.67.7) (2026-11-04)
+
+
+### Bug Fixes
+
+* [#300](https://github.com/namhtpyn/tandem/issues/300) blind-review r1 — gate the task detail page, kebab order/divider, SPEC + test honesty ([96b7804](https://github.com/namhtpyn/tandem/commit/96b7804b59a9659b21efedcf0b00c7e040e803b6)), closes [#210](https://github.com/namhtpyn/tandem/issues/210)
+* [#300](https://github.com/namhtpyn/tandem/issues/300) blind-review r2 — restore Delete hover class, label-law fallbacks, Add-subtask pins ([4882cab](https://github.com/namhtpyn/tandem/commit/4882cab128e71a89bc6363724f398654d48f2f49))
+* [#300](https://github.com/namhtpyn/tandem/issues/300) viewer sees employee-tier write verbs — useCanWork hides tasks/projects write UI below the employee tier ([f98e7ca](https://github.com/namhtpyn/tandem/commit/f98e7ca55ea41e6c0826ba37c86c41b1ccb4584f))
+
 ## [2.67.6](https://github.com/namhtpyn/tandem/compare/v2.67.5...v2.67.6) (2026-11-04)
 
 
