@@ -84,9 +84,10 @@ export function composerHint(input: {
   backoffPending?: boolean;
 }): string {
   if (input.category === CATEGORY.WAITING_ANSWER) {
-    // the send IS the answer verb for the holder; other viewers get neutral
+    // the send IS the answer verb for the holder; any other viewer — including
+    // where holder-ship is uncomputable (no open obligation) — reads neutral
     // wording (the verb's server gate is chain membership — holder-lineage)
-    if (input.viewerCanAnswer === false) return 'Sends the note';
+    if (input.viewerCanAnswer !== true) return 'Sends the note';
     return input.assigneeKind === 'ai' ? 'Sends the answer — the agent picks the task back up' : 'Sends the answer';
   }
   if (input.running === null || input.running === undefined) return 'Sends the note';

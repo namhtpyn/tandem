@@ -276,8 +276,10 @@ export async function addNote(
   await db.update(tasks).set({ status: STATUS.todo, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   const { dispatchIfEligible } = await import('./dispatcher.service');
   const { env } = await import('#server/domains/kernel/env');
-  await dispatchIfEligible(taskId, env.TANDEM_PUBLIC_URL ?? 'http://localhost:3000');
-  return { steered: false as const, dispatched: true as const };
+  // the skip arms (stale state, pending backoff, agent at cap) must not claim
+  // 'agent dispatched' — the success copy reports what actually fired (r5)
+  const dispatched = await dispatchIfEligible(taskId, env.TANDEM_PUBLIC_URL ?? 'http://localhost:3000');
+  return dispatched ? { steered: false as const, dispatched: true as const } : { steered: false as const };
 }
 
 export async function submitResult(taskId: string, authorId: string, body: string) {

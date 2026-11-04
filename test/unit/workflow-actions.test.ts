@@ -73,11 +73,13 @@ describe('workflow copy helpers', () => {
     expect(m.composerHint({ category: CATEGORY.BACKLOG, assigneeKind: 'ai', running: false })).toContain('dispatches');
     // waiting-answer routes the send to the ANSWER verb — its own wording, the
     // agent's turn re-arms on an AI assignee (#265 r2: the note verb's dispatch
-    // promise can never ride a verb the send never reaches)
-    expect(m.composerHint({ category: CATEGORY.WAITING_ANSWER, assigneeKind: 'ai', running: false })).toContain(
-      'answer',
+    // promise can never ride a verb the send never reaches). Holder-scoped:
+    // holder-ship uncomputable (no open obligation) reads neutral (r5)
+    expect(m.composerHint({ category: CATEGORY.WAITING_ANSWER, assigneeKind: 'ai', running: false })).toBe(
+      'Sends the note',
     );
-    expect(m.composerHint({ category: CATEGORY.WAITING_ANSWER, assigneeKind: 'human', running: false })).toBe(
+    expect(m.composerHint({ category: CATEGORY.WAITING_ANSWER, assigneeKind: 'ai' })).toBe('Sends the note');
+    expect(m.composerHint({ category: CATEGORY.WAITING_ANSWER, assigneeKind: 'human', viewerCanAnswer: true })).toBe(
       'Sends the answer',
     );
     // the answer verb's actor is the question's current holder — other viewers

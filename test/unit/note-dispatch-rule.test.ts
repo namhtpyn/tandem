@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   steerState: 'stopped' as 'steered' | 'stopped' | 'refused',
   updates: [] as Array<{ table: string; set: Record<string, unknown> }>,
   dispatches: [] as string[],
+  dispatchOk: true,
   notes: [] as unknown[],
   published: 0,
 }));
@@ -87,7 +88,13 @@ vi.mock('../../server/domains/tasks/runner.service', async (importOriginal) => {
 
 vi.mock('../../server/domains/tasks/dispatcher.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/dispatcher.service')>();
-  return { ...mod, dispatchIfEligible: async (taskId: string) => void h.dispatches.push(taskId) };
+  return {
+    ...mod,
+    dispatchIfEligible: async (taskId: string) => {
+      h.dispatches.push(taskId);
+      return h.dispatchOk;
+    },
+  };
 });
 
 import { addNote } from '../../server/domains/tasks/workflow.service';
@@ -115,6 +122,16 @@ describe('tasks.note dispatch rule keys off the category (#265)', () => {
     expect(res).toEqual({ steered: false, dispatched: true });
     expect(h.updates.find((u) => u.table === 'tasks')?.set.status).toBe(STATUS.todo);
     expect(h.dispatches).toEqual(['task-1']);
+  });
+
+  it('a silently-skipped dispatch (pending backoff / agent at cap) never claims dispatched (r5)', async () => {
+    seedTask('st-custom-working', 'worker-1');
+    h.statuses = [{ id: 'st-custom-working', category: CATEGORY.WORKING }];
+    h.dispatchOk = false;
+    const res = await addNote('task-1', 'human-1', 'go');
+    expect(res).toEqual({ steered: false });
+    expect(h.dispatches).toEqual(['task-1']);
+    h.dispatchOk = true;
   });
 
   it('a blocked/paused-category AI task dispatches too — the rule is not ready-only', async () => {

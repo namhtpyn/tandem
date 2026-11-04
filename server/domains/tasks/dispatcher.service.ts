@@ -411,8 +411,9 @@ export function syncDispatchWorkers(
 }
 
 /** a stale dispatch call (task already running/done/waiting) must quietly no-op: no
- * re-run, no retry storm, no status flip. */
-export async function dispatchIfEligible(taskId: string, tandemUrl: string) {
+ * re-run, no retry storm, no status flip. Returns whether a run actually fired —
+ * the note verb reports it (a silent skip must not claim 'agent dispatched', r5). */
+export async function dispatchIfEligible(taskId: string, tandemUrl: string): Promise<boolean> {
   const statuses = await db.query.taskStatuses.findMany({
     columns: { id: true, category: true },
     orderBy: { position: 'asc' },
@@ -422,17 +423,18 @@ export async function dispatchIfEligible(taskId: string, tandemUrl: string) {
     columns: { status: true, dispatchAfter: true, assigneeId: true },
     where: { id: { eq: taskId } },
   });
-  if (!row || !readyIds.has(row.status)) return; // stale duplicate: skip
+  if (!row || !readyIds.has(row.status)) return false; // stale duplicate: skip
   // backoff law: a dispatch call must not bypass the failure backoff the runner set —
   // the scan loop respects dispatch_after; the direct path has to as well
-  if (row.dispatchAfter && row.dispatchAfter.getTime() > Date.now()) return;
+  if (row.dispatchAfter && row.dispatchAfter.getTime() > Date.now()) return false;
   // CAP LAW: the direct path obeys the same per-agent cap as the scan — a busy agent
   // gains no second claim because a human typed at the right moment. The scan picks
   // the task up as soon as a slot frees.
-  if (row.assigneeId && atCap(await liveRunCountFor(row.assigneeId), await tasksPerAgentCap())) return;
+  if (row.assigneeId && atCap(await liveRunCountFor(row.assigneeId), await tasksPerAgentCap())) return false;
   // returns after enqueue — the per-agent worker executes the run (composer law:
   // submitting dispatches the run; the RPC never rides the turn)
   await dispatchTask(taskId, tandemUrl);
+  return true;
 }
 
 /** the retry-delay ladder for run-level transport retries: same steps as the
