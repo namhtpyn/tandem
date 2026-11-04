@@ -141,7 +141,11 @@ export const statusesRouter = os.router({
     });
     const task = tRows[0];
     if (!task) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
-
+    // RUN LOCK (#264): a live run owns the assignee — the auto path obeys the
+    // same lock as tasks.update (SPEC: assignee edits are rejected server-side)
+    const { runningRunIdForTask } = await import('../tasks/runner.service');
+    if (await runningRunIdForTask(task.id))
+      throw new ORPCError('BAD_REQUEST', { message: 'task is running — assignee is locked until it settles' });
     // candidates: every employee, with open-task load (non-terminal statuses)
     const users = await db.query.user.findMany({
       columns: { id: true, name: true, title: true },
@@ -204,6 +208,10 @@ export const statusesRouter = os.router({
     }
     // route through the ledger writer — a raw assigneeId update would leave the
     // assignment history with no row for this move
+    // RUN LOCK re-check (#264 r4): the decision call above can take seconds —
+    // a run starting mid-decision must not get its assignee swapped on landing
+    if (await runningRunIdForTask(task.id))
+      throw new ORPCError('BAD_REQUEST', { message: 'task is running — assignee is locked until it settles' });
     const { assignTask } = await import('../tasks/assignments.service');
     const session = await (
       context as unknown as { getSession: () => Promise<{ user: { id: string } } | null> }

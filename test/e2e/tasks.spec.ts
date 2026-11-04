@@ -97,7 +97,9 @@ test('workflow drawer shows activity and lets the owner answer', async ({ page }
   await expect(drawer.getByText(/no activity yet/i)).toBeVisible();
   // the composer posts a plain note (no state change, no verb picker)
   await drawer.locator('textarea').fill('who owns the spec?');
-  await drawer.getByRole('button', { name: 'Send', exact: true }).click();
+  // the send's accessible name carries the hint wording (COMPOSER HINT LAW,
+  // #265) — the visible label ('Send') is the stable surface to drive
+  await drawer.locator('button', { hasText: 'Send' }).click();
   await expect(drawer.getByText('Note added', { exact: true })).toBeVisible({ timeout: 10_000 });
 });
 

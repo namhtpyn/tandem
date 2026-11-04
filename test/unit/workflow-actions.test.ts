@@ -62,13 +62,61 @@ describe('workflow copy helpers', () => {
     expect(m.noteSuccessCopy({ steered: false })).toBe(m.WF_COPY.note.ok);
   });
 
-  it('composerHint mirrors the note verb’s server rules', async () => {
+  it('composerHint mirrors the note verb’s server rules (#265: every non-terminal, non-in-review AI task dispatches)', async () => {
     const m = await import('../../app/composables/useWorkflowActions.ts');
     expect(m.composerHint({ category: CATEGORY.READY, assigneeKind: 'ai', running: true })).toContain('steering');
     expect(m.composerHint({ category: CATEGORY.READY, assigneeKind: 'ai', running: false })).toContain('dispatches');
-    expect(m.composerHint({ category: CATEGORY.READY, assigneeKind: 'human', running: false })).toContain('thread');
+    // #265: the dispatch branch is the SERVER's rule — ready was a lie for
+    // working/blocked/backlog/paused/waiting AI tasks (the send dispatches there)
+    expect(m.composerHint({ category: CATEGORY.WORKING, assigneeKind: 'ai', running: false })).toContain('dispatches');
+    expect(m.composerHint({ category: CATEGORY.PAUSED, assigneeKind: 'ai', running: false })).toContain('dispatches');
+    expect(m.composerHint({ category: CATEGORY.BACKLOG, assigneeKind: 'ai', running: false })).toContain('dispatches');
+    // waiting-answer routes the send to the ANSWER verb — its own wording, the
+    // agent's turn re-arms on an AI assignee (#265 r2: the note verb's dispatch
+    // promise can never ride a verb the send never reaches). Holder-scoped:
+    // holder-ship uncomputable (no open obligation) reads neutral (r5)
+    expect(m.composerHint({ category: CATEGORY.WAITING_ANSWER, assigneeKind: 'ai', running: false })).toBe(
+      'Sends the note',
+    );
+    expect(m.composerHint({ category: CATEGORY.WAITING_ANSWER, assigneeKind: 'ai' })).toBe('Sends the note');
+    expect(m.composerHint({ category: CATEGORY.WAITING_ANSWER, assigneeKind: 'human', viewerCanAnswer: true })).toBe(
+      'Sends the answer',
+    );
+    // the answer verb's actor is the question's current holder — other viewers
+    // read neutral wording (tasks.answer refuses non-chain senders, r4)
+    expect(m.composerHint({ category: CATEGORY.WAITING_ANSWER, assigneeKind: 'ai', viewerCanAnswer: false })).toBe(
+      'Sends the note',
+    );
+    expect(m.composerHint({ category: CATEGORY.WAITING_ANSWER, assigneeKind: 'ai', viewerCanAnswer: true })).toContain(
+      'answer',
+    );
+    // a pending dispatch backoff defers the run — never promise it (r4)
+    expect(m.composerHint({ category: CATEGORY.READY, assigneeKind: 'ai', backoffPending: true })).toBe(
+      'Sends the note',
+    );
+    // exclusions mirror the server: in-review and terminal categories, humans
+    expect(m.composerHint({ category: CATEGORY.IN_REVIEW, assigneeKind: 'ai', running: false })).toContain('thread');
     expect(m.composerHint({ category: CATEGORY.DONE, assigneeKind: 'ai', running: false })).toContain('thread');
+    expect(m.composerHint({ category: CATEGORY.CANCELLED, assigneeKind: 'ai', running: false })).toContain('thread');
+    expect(m.composerHint({ category: CATEGORY.READY, assigneeKind: 'human', running: false })).toContain('thread');
     expect(m.composerHint({ category: null, assigneeKind: null, running: false })).toContain('thread');
+    // an UNKNOWN run state (feed pending/failed) promises nothing — no dispatch,
+    // no steering, no thread-only claim it cannot back (#265 r1)
+    expect(m.composerHint({ category: CATEGORY.READY, assigneeKind: 'ai', running: null })).toBe('Sends the note');
+    expect(m.composerHint({ category: CATEGORY.READY, assigneeKind: 'ai', running: undefined })).toBe('Sends the note');
+    expect(m.composerHint({ category: CATEGORY.WORKING, assigneeKind: 'ai', running: null })).toBe('Sends the note');
+  });
+
+  it('noteWillDispatch is the shared dispatch predicate (#265)', async () => {
+    const m = await import('../../app/composables/useWorkflowActions.ts');
+    for (const category of [CATEGORY.READY, CATEGORY.WORKING, CATEGORY.PAUSED, CATEGORY.BACKLOG])
+      expect(m.noteWillDispatch({ category, assigneeKind: 'ai' }), category).toBe(true);
+    // waiting-answer excluded: the send is the ANSWER verb there (r2)
+    for (const category of [CATEGORY.IN_REVIEW, CATEGORY.DONE, CATEGORY.CANCELLED, CATEGORY.WAITING_ANSWER])
+      expect(m.noteWillDispatch({ category, assigneeKind: 'ai' }), category).toBe(false);
+    expect(m.noteWillDispatch({ category: CATEGORY.READY, assigneeKind: 'human' })).toBe(false);
+    expect(m.noteWillDispatch({ category: CATEGORY.READY, assigneeKind: null })).toBe(false);
+    expect(m.noteWillDispatch({ category: null, assigneeKind: 'ai' })).toBe(false);
   });
 
   it('WF_COPY names every verb', async () => {

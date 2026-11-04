@@ -137,7 +137,15 @@ export async function askQuestion(taskId: string, authorId: string, body: string
 /** current holder forwards to someone new; they become holder. Top of the org must answer. */
 export async function forwardQuestion(taskId: string, authorId: string, toEmployeeId: string, body: string) {
   const task = await getTask(taskId);
-  if (task.status !== WAITING_ANSWER_STATUS) throw new Error('task is not waiting for an answer');
+  // the gate reads the waiting_answer CATEGORY (status freedom) — the client
+  // renders Forward by category, so a custom waiting status forwards too
+  // (#265 r3, the answer gate's sibling)
+  const statusRows = await db.query.taskStatuses.findMany({
+    columns: { id: true, category: true },
+    where: { id: { eq: task.status } },
+  });
+  if (statusRows.find((r) => r.id === task.status)?.category !== CATEGORY.WAITING_ANSWER)
+    throw new Error('task is not waiting for an answer');
   const holder = await answerHolder(taskId);
   if (holder !== authorId) throw new Error('only the current holder can forward');
   const chain = task.questionChain;
@@ -162,7 +170,16 @@ export async function forwardQuestion(taskId: string, authorId: string, toEmploy
 /** anyone in the chain answers → back to the assignee, status → todo (dispatcher re-fires) */
 export async function answerQuestion(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId);
-  if (task.status !== WAITING_ANSWER_STATUS) throw new Error('task is not waiting for an answer');
+  // the gate reads the waiting_answer CATEGORY (status freedom): the composer
+  // routes the send here by category, so a custom waiting status answers too —
+  // the seeded-id gate 400'd them forever (#265 r2, same class as addNote's
+  // category exclusion)
+  const statusRows = await db.query.taskStatuses.findMany({
+    columns: { id: true, category: true },
+    where: { id: { eq: task.status } },
+  });
+  if (statusRows.find((r) => r.id === task.status)?.category !== CATEGORY.WAITING_ANSWER)
+    throw new Error('task is not waiting for an answer');
   const chain = task.questionChain;
   if (!chain.includes(authorId)) throw new Error('only someone in the question chain can answer');
   await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
@@ -238,9 +255,18 @@ export async function addNote(
   const { steerRun } = await import('./runner.service');
   const steerState = await steerRun(taskId, body);
   if (steerState === 'steered' || steerState === 'refused') return { steered: steerState === 'steered' };
-  const { STATUS } = await import('#shared/status');
-  if (([STATUS.done, STATUS.cancelled, STATUS.inReview] as string[]).includes(task.status))
-    return { steered: false as const };
+  // COMPOSER LAW: the send dispatches every non-terminal, non-in-review task with
+  // an AI assignee — the exclusion keys off the status CATEGORY (custom done/
+  // cancelled/in-review statuses included), never the seeded ids (#265).
+  const statusRows = await db.query.taskStatuses.findMany({
+    columns: { id: true, category: true },
+    where: { id: { eq: task.status } },
+  });
+  const excluded = [CATEGORY.DONE, CATEGORY.CANCELLED, CATEGORY.IN_REVIEW] as string[];
+  // an unresolved status id (dangling legacy row) is dead input like everywhere
+  // else the membership rule applies — thread-only, never a dispatch guess
+  const statusCat = statusRows.find((r) => r.id === task.status)?.category;
+  if (!statusCat || excluded.includes(statusCat)) return { steered: false as const };
   if (!task.assigneeId) return { steered: false as const };
   const ai = await db.query.aiEmployees.findFirst({
     columns: { userId: true },
@@ -250,8 +276,10 @@ export async function addNote(
   await db.update(tasks).set({ status: STATUS.todo, updatedAt: new Date() }).where(eq(tasks.id, taskId));
   const { dispatchIfEligible } = await import('./dispatcher.service');
   const { env } = await import('#server/domains/kernel/env');
-  await dispatchIfEligible(taskId, env.TANDEM_PUBLIC_URL ?? 'http://localhost:3000');
-  return { steered: false as const, dispatched: true as const };
+  // the skip arms (stale state, pending backoff, agent at cap) must not claim
+  // 'agent dispatched' — the success copy reports what actually fired (r5)
+  const dispatched = await dispatchIfEligible(taskId, env.TANDEM_PUBLIC_URL ?? 'http://localhost:3000');
+  return dispatched ? { steered: false as const, dispatched: true as const } : { steered: false as const };
 }
 
 export async function submitResult(taskId: string, authorId: string, body: string) {
