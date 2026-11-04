@@ -226,6 +226,15 @@ test.describe('mcp oauth per binding', () => {
   test('forged connect links find no mint route: GET 404, anonymous POST rejected', async ({ page, playwright }) => {
     const forged = await page.request.get('/api/mcp/oauth/connect?employeeId=e2e-x&serverId=e2e-y');
     expect(forged.status()).toBe(404);
+    // a signed-in top-level GET to the RPC surface must NOT mint either —
+    // oRPC's default allowMethods excludes GET (pin it: an allowMethods
+    // override would silently reopen the CSRF-intent class, #278)
+    const rpcGet = await page.request.get('/rpc/mcp/oauthConnect?employeeId=e2e-x&serverId=e2e-y');
+    expect(rpcGet.status()).toBe(404);
+    // a failing mint maps to BAD_REQUEST — the editor surfaces the message,
+    // so pin the mapping (a regression to a message-less 500 must go red)
+    const badMint = await rpcPost(page, '/rpc/mcp/oauthConnect', { employeeId: 'e2e-x', serverId: 'e2e-y' });
+    expect(badMint.status).toBe(400);
 
     // anonymous context (anon-context law: empty storageState — page.request
     // inherits the signed-in session)

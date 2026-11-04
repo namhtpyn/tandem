@@ -466,6 +466,8 @@ onBeforeUnmount(() => {
 function connectOauth(binding: McpBindingRow) {
   const employeeId = editingId.value;
   if (!employeeId || connectingServerId.value) return;
+  // a retry must not sit under a stale attempt's error (bind/unbind pattern)
+  mcpError.value = null;
   connectingServerId.value = binding.serverId;
   // gesture-safe open first — about:blank is same-origin, the opener may
   // navigate it to the provider URL once the mint resolves
