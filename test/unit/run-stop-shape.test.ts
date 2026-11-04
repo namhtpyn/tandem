@@ -19,6 +19,11 @@ const h = vi.hoisted(() => ({
   updates: [] as Array<{ table: string; set: Record<string, unknown>; where: unknown }>,
   published: [] as Array<[string, string]>,
   park: [] as Array<unknown[]>,
+  gatePlanLoad: false, // #291 r3: hold loadDispatchPlan's tasks.findMany (execution parks mid-window)
+  gatePlanWaiters: [] as Array<() => void>,
+  gateGuardRead: false, // #291 r4: hold executeRun's guard read (execution past ENTRY, pre-guards)
+  gateGuardWaiters: [] as Array<() => void>,
+  failGuardRead: false, // #291 r5: the guard read REJECTS after release (db failure mid-guard)
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -35,11 +40,25 @@ vi.mock('../../server/db/index', async () => {
             // live-run lookup pushes status = RUNNING into SQL, so candidates
             // whose status differs must never reach the service as "live"
             findMany: async (cfg?: { where?: { status?: { eq?: string } } }) => {
+              // gate hook (#291 r3 tests): hold the plan load so the execution
+              // parks INSIDE the in-flight registry while the verb is driven
+              if (table === 'tasks' && h.gatePlanLoad) {
+                await new Promise<void>((r) => h.gatePlanWaiters.push(r));
+              }
               if (table !== 'taskRuns') return [];
               const want = cfg?.where?.status?.eq;
               return want ? h.runCandidates.filter((r) => r.status === want) : h.runCandidates;
             },
-            findFirst: async () => (table === 'taskReviews' ? h.reviewRow : h.runRow),
+            findFirst: async () => {
+              // gate hook (#291 r4/r5 tests): hold the guard read so the verb can be
+              // driven while the execution is past ENTRY but before its guards, and
+              // optionally REJECT it on release (db failure mid-guard)
+              if (table === 'taskRuns' && h.gateGuardRead) {
+                await new Promise<void>((r) => h.gateGuardWaiters.push(r));
+              }
+              if (table === 'taskRuns' && h.failGuardRead) throw new Error('guard read db failure');
+              return table === 'taskReviews' ? h.reviewRow : h.runRow;
+            },
           }),
         },
       ),
@@ -95,7 +114,12 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
 
 import { REVIEW_STATUS, RUN_STATUS } from '#shared/enums';
 
-import { executeRun, stopRunForTask, stoppedRunMarkerIds } from '../../server/domains/tasks/runner.service';
+import {
+  executeRun,
+  executingRunIds,
+  stopRunForTask,
+  stoppedRunMarkerIds,
+} from '../../server/domains/tasks/runner.service';
 import { mockDb, taskRuns } from './helpers/mock-db';
 
 const liveCandidate = { id: 'run-1', status: RUN_STATUS.RUNNING, employeeId: 'ai-1', messageId: 'm-1' };
@@ -108,6 +132,11 @@ beforeEach(() => {
   h.updates = [];
   h.published = [];
   h.park = [];
+  h.gatePlanLoad = false;
+  h.gatePlanWaiters = [];
+  h.gateGuardRead = false;
+  h.gateGuardWaiters = [];
+  h.failGuardRead = false;
 });
 
 describe('stopRunForTask (#229) — the CAS shape', () => {
@@ -186,29 +215,109 @@ describe('stopRunForTask (#229) — the CAS shape', () => {
   });
 });
 
-describe('stop-marker lifecycle across executeRun (#291 F9)', () => {
-  it('a stop that settled a queued run leaves NO marker after the pre-try guard return', async () => {
-    // the stop lands while the run is still RUNNING (queued / between attempts):
-    // the verb adds the marker pre-CAS and the CAS wins
-    h.runCandidates = [liveCandidate];
-    h.casRows = [{ id: 'run-1' }];
-    await expect(stopRunForTask('task-1', 'user-1')).resolves.toEqual({ ok: true, stopped: true });
-    expect(stoppedRunMarkerIds()).toContain('run-1');
-    // the worker then picks the job — the guard sees the STOPPED row (settled
-    // elsewhere) and refuses pre-try: the marker's consumers live inside the try,
-    // so the marker must be deleted here, not leaked forever (unbounded Set)
-    h.runRow = { ...liveCandidate, status: RUN_STATUS.STOPPED };
-    await expect(executeRun('run-1', 'http://localhost:3000', { attempt: 1, maxAttempts: 3 })).resolves.toEqual({
+describe('stop-marker lifecycle across executeRun (#291 F9 + r3)', () => {
+  it('NO in-flight execution: a won stop CAS clears the marker at the verb itself', async () => {
+    // r3: the marker's consumers live inside an executeRun past its guards — with
+    // none running (queued/backoff/wedged job that never replays), a won CAS has
+    // NO future consumer and the verb deletes the entry immediately (the wedge-
+    // then-stop shape used to leak it forever)
+    const RUN_ID = 'run-f9a';
+    h.runCandidates = [{ id: RUN_ID, status: RUN_STATUS.RUNNING, employeeId: 'ai-1', messageId: 'm-1' }];
+    h.casRows = [{ id: RUN_ID }];
+    await expect(stopRunForTask('task-f9a', 'user-1')).resolves.toEqual({ ok: true, stopped: true });
+    expect(stoppedRunMarkerIds()).not.toContain(RUN_ID);
+    // the replayed job's stale-row guard would refuse the STOPPED row anyway —
+    // the marker stays gone (idempotent belt on the pre-try returns)
+    h.runRow = { id: RUN_ID, status: RUN_STATUS.STOPPED, employeeId: 'ai-1', messageId: 'm-1' };
+    await expect(executeRun(RUN_ID, 'http://localhost:3000', { attempt: 1, maxAttempts: 3 })).resolves.toEqual({
       status: RUN_STATUS.FAILED,
       exitCode: null,
     });
-    expect(stoppedRunMarkerIds()).not.toContain('run-1');
+    expect(stoppedRunMarkerIds()).not.toContain(RUN_ID);
   });
 
   it('a lost stop race unwinds the marker at the verb — executeRun sees none', async () => {
-    h.runCandidates = [liveCandidate];
+    const RUN_ID = 'run-f9b';
+    h.runCandidates = [{ id: RUN_ID, status: RUN_STATUS.RUNNING, employeeId: 'ai-1', messageId: 'm-1' }];
     h.casRows = []; // the turn settled first with its own verdict
-    await expect(stopRunForTask('task-1', 'user-1')).resolves.toEqual({ ok: true, stopped: false });
-    expect(stoppedRunMarkerIds()).not.toContain('run-1'); // the verb's own unwind (#229)
+    await expect(stopRunForTask('task-f9b', 'user-1')).resolves.toEqual({ ok: true, stopped: false });
+    expect(stoppedRunMarkerIds()).not.toContain(RUN_ID); // the verb's own unwind (#229)
+  });
+
+  it('a MID-FLIGHT execution keeps its marker through the stop; the window throw cleans both (#291 r3)', async () => {
+    const RUN_ID = 'run-f9e';
+    h.runCandidates = [{ id: RUN_ID, status: RUN_STATUS.RUNNING, employeeId: 'ai-1', messageId: 'm-1' }];
+    h.casRows = [{ id: RUN_ID }];
+    // the stale guard read must PASS: RUNNING row + message (the run is mid-flight)
+    h.runRow = {
+      id: RUN_ID,
+      status: RUN_STATUS.RUNNING,
+      employeeId: 'ai-1',
+      messageId: 'm-1',
+      message: { taskId: 'task-f9e' },
+    };
+    // hold the plan load: the execution registers itself, then PARKS mid-window
+    h.gatePlanLoad = true;
+    const exec = executeRun(RUN_ID, 'http://localhost:3000', { attempt: 1, maxAttempts: 3 });
+    for (let i = 0; i < 200 && !executingRunIds().includes(RUN_ID); i++) await new Promise((r) => setTimeout(r, 5));
+    expect(executingRunIds()).toContain(RUN_ID); // the execution registered itself
+    // the stop lands while the execution is past its guards: the verb adds the
+    // marker pre-CAS, wins the CAS — and must NOT clear it, the execution's
+    // settle path (finish-skip + in-try early return) still consults it
+    await expect(stopRunForTask('task-f9e', 'user-1')).resolves.toEqual({ ok: true, stopped: true });
+    expect(stoppedRunMarkerIds()).toContain(RUN_ID);
+    // release the plan load: it fails in this harness ('task not found') — the
+    // pre-try window throws and its catch cleans marker + registry before rethrow
+    h.gatePlanLoad = false;
+    for (const r of h.gatePlanWaiters.splice(0)) r();
+    await expect(exec).rejects.toThrow();
+    expect(stoppedRunMarkerIds()).not.toContain(RUN_ID);
+    expect(executingRunIds()).not.toContain(RUN_ID);
+  });
+
+  it('an execution parked at its GUARD read survives the verb — entry registration (#291 r4)', async () => {
+    const RUN_ID = 'run-f9g';
+    h.runCandidates = [{ id: RUN_ID, status: RUN_STATUS.RUNNING, employeeId: 'ai-1', messageId: 'm-1' }];
+    h.casRows = [{ id: RUN_ID }];
+    // hold the GUARD read: the execution is past ENTRY (registered) but has not
+    // passed its guards — the verb's post-CAS check must see it (zero blind window)
+    h.gateGuardRead = true;
+    const exec = executeRun(RUN_ID, 'http://localhost:3000', { attempt: 1, maxAttempts: 3 });
+    for (let i = 0; i < 200 && !executingRunIds().includes(RUN_ID); i++) await new Promise((r) => setTimeout(r, 5));
+    expect(executingRunIds()).toContain(RUN_ID);
+    // the verb runs while the execution sits BEFORE its guards: the marker it adds
+    // must survive — the execution will consume it on its post-turn settle path
+    await expect(stopRunForTask('task-f9g', 'user-1')).resolves.toEqual({ ok: true, stopped: true });
+    expect(stoppedRunMarkerIds()).toContain(RUN_ID);
+    // the stop won the CAS: the row is STOPPED — the guard refuses and cleans both
+    h.runRow = { id: RUN_ID, status: RUN_STATUS.STOPPED, employeeId: 'ai-1', messageId: 'm-1' };
+    h.gateGuardRead = false;
+    for (const r of h.gateGuardWaiters.splice(0)) r();
+    await expect(exec).resolves.toEqual({ status: RUN_STATUS.FAILED, exitCode: null });
+    expect(stoppedRunMarkerIds()).not.toContain(RUN_ID);
+    expect(executingRunIds()).not.toContain(RUN_ID);
+  });
+
+  it('a GUARD-READ THROW cleans both registries — no wedge resurrection (#291 r5)', async () => {
+    const RUN_ID = 'run-f9h';
+    h.runCandidates = [{ id: RUN_ID, status: RUN_STATUS.RUNNING, employeeId: 'ai-1', messageId: 'm-1' }];
+    h.casRows = [{ id: RUN_ID }];
+    // park the execution at its guard read, drive the verb (which keeps its marker
+    // because the execution is registered), then fail the guard read: the escape
+    // throw must clean marker AND registry — a DB failure at the guard must never
+    // resurrect the wedge-then-stop leak (both entries would otherwise outlive the
+    // execution: every later stop of this runId keeps its marker forever)
+    h.gateGuardRead = true;
+    const exec = executeRun(RUN_ID, 'http://localhost:3000', { attempt: 1, maxAttempts: 3 });
+    for (let i = 0; i < 200 && !executingRunIds().includes(RUN_ID); i++) await new Promise((r) => setTimeout(r, 5));
+    expect(executingRunIds()).toContain(RUN_ID);
+    await expect(stopRunForTask('task-f9h', 'user-1')).resolves.toEqual({ ok: true, stopped: true });
+    expect(stoppedRunMarkerIds()).toContain(RUN_ID); // live consumer — kept
+    h.failGuardRead = true;
+    h.gateGuardRead = false;
+    for (const r of h.gateGuardWaiters.splice(0)) r();
+    await expect(exec).rejects.toThrow('guard read db failure');
+    expect(stoppedRunMarkerIds()).not.toContain(RUN_ID); // the throw path cleaned it
+    expect(executingRunIds()).not.toContain(RUN_ID);
   });
 });

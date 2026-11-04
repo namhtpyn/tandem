@@ -304,6 +304,7 @@ export async function oauthStatusFor(
   if (!row) return { connected: false, expiresAt: null };
   if (row.configFingerprint !== oauthConfigFingerprint(server)) {
     await db.delete(mcpOauthTokens).where(eq(mcpOauthTokens.bindingId, bindingId));
+    refreshWarnedAt.delete(bindingId); // #291 r2 review: token rows gone — no warn state may outlive them
     return { connected: false, expiresAt: null };
   }
   return { connected: true, expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null };
@@ -320,12 +321,19 @@ const refreshInFlight = new Map<string, Promise<string | null>>();
 export async function getFreshAccessToken(bindingId: string, server: OauthServerConfig): Promise<string | null> {
   const rows = await db.query.mcpOauthTokens.findMany({ where: { bindingId: { eq: bindingId } } });
   const row = rows[0];
-  if (!row) return null;
+  if (!row) {
+    // #291 r4: a refresh that read rows before a concurrent delete can still fail
+    // AFTER that delete's eviction ran and re-arm the entry — the empty-table read
+    // is the self-healing sweep: no token rows, no warn state may survive
+    refreshWarnedAt.delete(bindingId);
+    return null;
+  }
   // READ-TIME CONTRACT GUARD: a token minted under a different config is inert —
   // delete it on sight and ship nothing (old-contract tokens can never ride a
   // dispatch, whatever write race the wipe path lost)
   if (row.configFingerprint !== oauthConfigFingerprint(server)) {
     await db.delete(mcpOauthTokens).where(eq(mcpOauthTokens.bindingId, bindingId));
+    refreshWarnedAt.delete(bindingId); // #291 r2 review: token rows gone — no warn state may outlive them
     return null;
   }
   try {
@@ -384,7 +392,7 @@ async function refreshBindingTokens(bindingId: string, server: OauthServerConfig
     // stale token ships — dispatch must never break on a refresh failure; the
     // failure still leaves a rate-limited trace (a permanently failing binding
     // must not 401 silently forever)
-    warnRefreshFailure(bindingId, e);
+    await warnRefreshFailure(bindingId, e);
     return stale;
   }
 }
@@ -393,8 +401,21 @@ const REFRESH_WARN_INTERVAL_MS = 5 * 60_000;
 const refreshWarnedAt = new Map<string, number>();
 const log = consola.withTag('tandem');
 
-/** rate-limited (once per binding per 5 min) trace of silent refresh failures */
-function warnRefreshFailure(bindingId: string, e: unknown) {
+/** rate-limited (once per binding per 5 min) trace of silent refresh failures.
+ * Arms ONLY for bindings that still exist (#291 r5): a refresh that read its rows
+ * before a concurrent unbind can fail AFTER the unbind's eviction ran — re-arming
+ * would leave a dead binding's entry in the map forever, because no future read
+ * ever sweeps it (the dispatch/probe paths only run for live bindings). */
+async function warnRefreshFailure(bindingId: string, e: unknown) {
+  try {
+    const bindingRows = await db.query.mcpServerBindings.findMany({
+      columns: { id: true },
+      where: { id: { eq: bindingId } },
+    });
+    if (bindingRows.length === 0) return; // unbound mid-flight: nothing left to warn for
+  } catch {
+    /* the liveness probe is best-effort — never let it silence the warn */
+  }
   const now = Date.now();
   const last = refreshWarnedAt.get(bindingId) ?? 0;
   if (now - last < REFRESH_WARN_INTERVAL_MS) return;

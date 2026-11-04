@@ -565,4 +565,101 @@ describe('refreshWarnedAt eviction (#291 F13)', () => {
     await getFreshAccessToken(BID, SERVER_CONFIG);
     expect(h.warns).toHaveLength(2); // pre-fix: silenced by the never-evicted entry
   });
+
+  it('the read-time inert-row delete evicts warn state too (#291 r2)', async () => {
+    const BID = 'b-f13-inert';
+    h.bindingRows.push({ id: BID, serverId: SERVER_ID });
+    seedOauthServer();
+    stubFailingRefresh();
+    // 1) a good-fingerprint row fails its refresh — warn + arm
+    seedStaleRow(BID);
+    await getFreshAccessToken(BID, SERVER_CONFIG);
+    expect(h.warns).toHaveLength(1);
+    // 2) the registry config changes under the binding: the row goes inert and is
+    //    deleted on sight (fingerprint mismatch, no fetch) — warn state goes with it
+    h.tokenRows.length = 0;
+    h.tokenRows.push({
+      bindingId: BID,
+      accessTokenEnc: encryptSecret('at-stale'),
+      expiresAt: new Date(Date.now() + 3_600_000),
+      configFingerprint: 'minted-under-the-old-contract',
+    });
+    expect(await getFreshAccessToken(BID, SERVER_CONFIG)).toBeNull();
+    // 3) the binding re-connects (fresh row, same id): the next failure warns anew
+    h.tokenRows.length = 0;
+    seedStaleRow(BID);
+    await getFreshAccessToken(BID, SERVER_CONFIG);
+    expect(h.warns).toHaveLength(2); // pre-r2: silenced by the surviving entry
+  });
+
+  it('an EMPTY-TABLE read sweeps a re-armed warn entry — the concurrent-delete race cannot stick (#291 r4)', async () => {
+    const BID = 'b-f13-empty';
+    h.bindingRows.push({ id: BID, serverId: SERVER_ID });
+    seedOauthServer();
+    seedStaleRow(BID);
+    // arm: a good-fingerprint row fails its refresh — warn + arm
+    stubFailingRefresh();
+    await getFreshAccessToken(BID, SERVER_CONFIG);
+    expect(h.warns).toHaveLength(1);
+    // THE RACE: a revoke (delete + eviction) lands while a refresh that already
+    // read its rows is still in flight — gate the fetch open, revoke through the
+    // real path mid-flight, then let the refresh fail
+    let releaseFetch: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      releaseFetch = r;
+    });
+    let gatedCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        h.fetchCalls.push({ url: String(url), body: '' });
+        // only the refresh POST gates — the concurrent revoke's own POSTs pass through
+        gatedCalls += 1;
+        if (gatedCalls === 1) {
+          // the concurrent wipe materializes while the refresh is in flight
+          // (the delete mock counts deletes, it does not remove rows)
+          h.tokenRows.length = 0;
+          await gate;
+        }
+        return new Response('server error line', { status: 500 });
+      }),
+    );
+    const inFlight = getFreshAccessToken(BID, SERVER_CONFIG); // single-flight starts, fetch gated
+    await new Promise((r) => setTimeout(r, 20));
+    await revokeOauthTokens(BID); // rows deleted + warn entry evicted
+    releaseFetch(); // the in-flight refresh now fails — rate limit was reset by the eviction, so it RE-ARMS
+    await expect(inFlight).resolves.toBe('at-stale'); // the stale token still ships (dispatch never breaks)
+    expect(h.tokenRows).toHaveLength(0);
+    // the next read finds the EMPTY table: it must sweep the re-armed stale entry
+    expect(await getFreshAccessToken(BID, SERVER_CONFIG)).toBeNull();
+    // re-connect: the next failure warns anew — never silenced by dead state
+    seedStaleRow(BID);
+    await getFreshAccessToken(BID, SERVER_CONFIG);
+    expect(h.warns).toHaveLength(3); // pre-r4: stuck at 2 — the stale entry silenced it
+  });
+
+  it('a refresh failing after an UNBIND never re-arms the dead binding (#291 r5)', async () => {
+    const BID = 'b-f13-unbound';
+    h.bindingRows.push({ id: BID, serverId: SERVER_ID });
+    seedOauthServer();
+    seedStaleRow(BID);
+    stubFailingRefresh();
+    await getFreshAccessToken(BID, SERVER_CONFIG); // warn + arm
+    expect(h.warns).toHaveLength(1);
+    // the unbind: revoke deletes the token rows AND evicts the armed entry — the
+    // binding row goes with it (removed by the unbind path outside this module)
+    await revokeOauthTokens(BID);
+    seedStaleRow(BID); // the binding is gone; a racing refresh still holds its row
+    // the refresh path runs on the racing row, its fetch fails, and the warn
+    // path's liveness probe finds NO binding — it arms NOTHING (no future read
+    // would ever sweep a dead binding's entry)
+    h.bindingRows.length = 0;
+    await getFreshAccessToken(BID, SERVER_CONFIG);
+    expect(h.warns).toHaveLength(1); // the dead binding's failure stays silent-armless
+    // re-bind (same id): the NEXT failure warns — proving the unbound failure
+    // left no armed entry behind (pre-r5 it armed and silenced this warn)
+    h.bindingRows.push({ id: BID, serverId: SERVER_ID });
+    await getFreshAccessToken(BID, SERVER_CONFIG);
+    expect(h.warns).toHaveLength(2);
+  });
 });
