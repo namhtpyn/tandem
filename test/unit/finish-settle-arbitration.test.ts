@@ -17,6 +17,15 @@ const h = vi.hoisted(() => ({
   // was finish() already resolved when submitResult fired? (await-discipline pin)
   finishResolved: false,
   settleResolvedAtCall: [] as boolean[],
+  // did the park land while finish() was still pending? (park-arm await pin)
+  parkResolvedFlags: [] as boolean[],
+  // every WHERE the service passed to a tasks update (bounce's atomic re-check)
+  tasksWheres: [] as unknown[],
+  // how many publishes had fired when each tasks write applied (0 = write precedes
+  // the lifecycle publishes, i.e. the bounce was awaited, not deferred)
+  tasksWritePublishCounts: [] as number[],
+  // the latest-run id the mock reports for latestRunIdForTask (overridable per test)
+  latestRunId: 'run-1',
   bodyWrites: [] as Array<[string, string, boolean]>,
   attachments: 0,
   parks: [] as Array<{ why: string; rearmable: boolean }>,
@@ -47,7 +56,7 @@ vi.mock('../../server/db/index', async () => {
             // bounce REACH the write, so the tasksWrites counter actually catches
             // it (a null read would no-op the bounce and hide the regression)
             findMany: async () => (table === 'tasks' ? [{ status: STATUS.doing, failStreak: 0 }] : []),
-            findFirst: async () => (table === 'taskRuns' ? { id: 'run-1' } : null),
+            findFirst: async () => (table === 'taskRuns' ? { id: h.latestRunId } : null),
           }),
         },
       ),
@@ -57,9 +66,13 @@ vi.mock('../../server/db/index', async () => {
           return {
             where: (_where: unknown) => {
               if (table === taskRuns) h.flipWheres.push(_where);
+              if (table === tasks) h.tasksWheres.push(_where);
               const applied = () => {
                 if (table === taskRuns && h.casWins) h.appends += 1;
-                if (table === tasks) h.tasksWrites += 1; // bounceTaskAfterRun writes here
+                if (table === tasks) {
+                  h.tasksWrites += 1; // bounceTaskAfterRun writes here
+                  h.tasksWritePublishCounts.push(h.published.length);
+                }
                 h.casWrites += 1;
                 return h.casWins ? [{ id: 'run-1' }] : [];
               };
@@ -92,6 +105,10 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
   return {
     ...mod,
     parkRound: async (_taskId: unknown, why: string, opts?: { rearmable?: boolean }) => {
+      // resolve a turn later: an AWAITED park lands while finish is still pending;
+      // a `void parkRound(...)` regression resolves it after finish -> flag flips
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      h.parkResolvedFlags.push(h.finishResolved);
       h.parks.push({ why, rearmable: opts?.rearmable === true });
       return true;
     },
@@ -125,10 +142,11 @@ vi.mock('../../server/domains/tasks/workflow.service', async (importOriginal) =>
 import { and, eq } from 'drizzle-orm';
 
 import { CHANGE_ACTION, CHANGE_RESOURCE, RUN_STATUS } from '#shared/enums';
+import { STATUS } from '#shared/status';
 
 import { setEnv } from '../../server/domains/kernel/env';
 import { createRunWriter } from '../../server/domains/tasks/runner.service';
-import { mockDb, taskRuns } from './helpers/mock-db';
+import { mockDb, taskRuns, tasks } from './helpers/mock-db';
 
 /** the exact lifecycle publish sequence every won settle must emit, in order:
  * RUNS re-emit, thread-feed TASK_ACTIVITY create, then the TASKS re-emit that
@@ -140,6 +158,10 @@ const LIFECYCLE_PUBLISHES = [
   [CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE],
 ];
 
+/** everything after the `where ` keyword of a rendered statement — comparing
+ * this substring (not the whole SQL) keeps SET shapes out of WHERE equality */
+const whereClauseOf = (rendered: { sql: string }) => rendered.sql.slice(rendered.sql.indexOf(' where ') + 7);
+
 beforeEach(() => {
   h.casWins = true;
   h.appends = 0;
@@ -149,6 +171,10 @@ beforeEach(() => {
   h.flipSets = [];
   h.finishResolved = false;
   h.settleResolvedAtCall = [];
+  h.parkResolvedFlags = [];
+  h.tasksWheres = [];
+  h.tasksWritePublishCounts = [];
+  h.latestRunId = 'run-1';
   h.bodyWrites = [];
   h.attachments = 0;
   h.parks = [];
@@ -169,6 +195,8 @@ describe('writer.finish settle arbitration (#286)', () => {
     expect(h.parks).toHaveLength(1);
     expect(h.parks[0]?.rearmable).toBe(true);
     expect(h.published).toEqual(LIFECYCLE_PUBLISHES);
+    // await-discipline on the park arm: the park lands while finish is pending
+    expect(h.parkResolvedFlags).toEqual([false]);
   });
 
   it('a lost CAS (reaper/stop already settled) performs ZERO side effects', async () => {
@@ -190,11 +218,16 @@ describe('writer.finish settle arbitration (#286)', () => {
 
   it('the settle CAS renders EXACTLY id + RUNNING-status equality (operator-bound pin)', async () => {
     const writer = createRunWriter('run-1', '', 'msg-1');
-    writer.onLine('agent output');
+    // a LONG buffer: any plausible truncation window (the codebase's own
+    // resultBody slice(-2000) included) must fail the full-tail equality below
+    const longLine = 'x'.repeat(2100);
+    writer.onLine(longLine);
+    const t0 = new Date();
+    // explicit stale runStartedAt: a mutant copying it into finishedAt must fail
     await writer.finish('task-1', RUN_STATUS.FAILED, 1, {
       review: { resultBody: 'submitted work' },
       ai: { userId: 'agent-1' },
-    });
+    }, [], new Date(t0.getTime() - 60_000));
     // Re-render every WHERE the service handed to a task_runs update (the streaming
     // flush + the settle flip) through the REAL drizzle builder and require exact
     // equality with the hand-built contract predicate. A pg-backed unit test is off
@@ -210,11 +243,10 @@ describe('writer.finish settle arbitration (#286)', () => {
         .where(where as never)
         .toSQL();
     const expected = renderWhere(and(eq(taskRuns.id, 'run-1'), eq(taskRuns.status, RUN_STATUS.RUNNING)));
-    const whereClause = (rendered: { sql: string }) => rendered.sql.slice(rendered.sql.indexOf(' where ') + 7);
     expect(h.flipWheres.length).toBeGreaterThan(0);
     for (const where of h.flipWheres) {
       const actual = renderWhere(where);
-      expect(whereClause(actual)).toBe(whereClause(expected));
+      expect(whereClauseOf(actual)).toBe(whereClauseOf(expected));
       expect(actual.params).toEqual(['run-1', RUN_STATUS.RUNNING]);
     }
     // the flip's SET payload is contract too: the settle writes the verdict it was
@@ -231,9 +263,11 @@ describe('writer.finish settle arbitration (#286)', () => {
       `no task_runs update wrote status=FAILED + the full output tail (sets: ${JSON.stringify(setsSummary)})`,
     ).toBe(true);
     // the settle verdict detail is contract too: exit N for a FAILED run, and a
-    // real finishedAt wall clock (thread duration rendering reads it)
+    // finishedAt wall clock AFTER the (stale) runStartedAt we passed — thread
+    // duration rendering reads the difference
     expect(flip?.exitCode).toBe(1);
     expect(flip?.finishedAt).toBeInstanceOf(Date);
+    expect((flip?.finishedAt as Date).getTime()).toBeGreaterThanOrEqual(t0.getTime());
   });
 
   it('a won CAS on a FAILED work run bounces the task (liveness control for the no-bounce pins)', async () => {
@@ -249,6 +283,34 @@ describe('writer.finish settle arbitration (#286)', () => {
     // lifecycle publishes come first and in order; the bounce adds its own
     // re-emits (tasks write + logRun) after them
     expect(h.published.slice(0, LIFECYCLE_PUBLISHES.length)).toEqual(LIFECYCLE_PUBLISHES);
+    // await-discipline on the bounce arm: the guarded tasks write applied BEFORE
+    // any lifecycle publish fired (0). A void/deferred bounce lands it later.
+    expect(h.tasksWritePublishCounts).toEqual([0]);
+    // bounce's atomic re-check is a contract predicate too: exactly
+    // id + still-doing equality on the tasks row
+    expect(h.tasksWheres.length).toBe(1);
+    const renderTasksWhere = (where: unknown) =>
+      mockDb()
+        .select()
+        .from(tasks)
+        .where(where as never)
+        .toSQL();
+    const bounceWhere = renderTasksWhere(h.tasksWheres[0]);
+    const expectedBounce = renderTasksWhere(and(eq(tasks.id, 'task-1'), eq(tasks.status, STATUS.doing)));
+    expect(whereClauseOf(bounceWhere)).toBe(whereClauseOf(expectedBounce));
+    expect(bounceWhere.params).toEqual(['task-1', STATUS.doing]);
+  });
+
+  it('a stale run never bounces the task (latest-run guard in bounceTaskAfterRun)', async () => {
+    // latestRunIdForTask != this run: a late FAILED settle over a superseded run
+    // must not re-arm backoff over the newer run's task (#163 shared guard)
+    h.latestRunId = 'run-newer';
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    writer.onLine('agent output');
+    await writer.finish('task-1', RUN_STATUS.FAILED, 1, { ai: { userId: 'agent-1' } });
+    await drain();
+    expect(h.tasksWrites).toBe(0);
+    expect(h.published).toEqual(LIFECYCLE_PUBLISHES);
   });
 
   it('a lost CAS on a FAILED WORK run never bounces the task (the reaper-race arm)', async () => {
@@ -296,5 +358,10 @@ describe('writer.finish settle arbitration (#286)', () => {
     // successful settle"; dropping it grows the backoff ladder across successes
     expect(h.tasksWrites).toBe(1);
     expect(h.published).toEqual(LIFECYCLE_PUBLISHES);
+    // the DONE arm's SET payload is bound too: the verdict it was given + the
+    // full output tail (a constant-FAILED mutant passes the FAILED-arm pin above)
+    const doneFlip = h.flipSets.find((s) => s.status === RUN_STATUS.DONE && s.output === writer.buffer);
+    expect(doneFlip, `no DONE settle SET with the full tail (sets: ${JSON.stringify(h.flipSets.map((s) => ({ keys: Object.keys(s), status: typeof s.status === 'string' ? s.status : '<non-string>', output: typeof s.output === 'string' ? s.output : '<sql>' })))})`).toBeDefined();
+    expect(doneFlip?.exitCode).toBe(0);
   });
 });
