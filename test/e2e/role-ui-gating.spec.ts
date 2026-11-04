@@ -203,6 +203,7 @@ test.describe('role UI gating (#263)', () => {
       await expect(emp.getByTestId('task-workflow-actions')).toBeVisible();
       await expect(emp.getByLabel('Task note')).toBeVisible();
       await expect(emp.getByRole('combobox', { name: 'Task status' }).first()).toBeVisible();
+      await expect(emp.getByRole('button', { name: 'Add subtask' }).first()).toBeVisible();
       await emp.goto('/tasks');
 
       // ---- statuses manager: list renders, toolbar verbs gone ----
@@ -297,6 +298,7 @@ test.describe('role UI gating (#263)', () => {
       await expect(viewer.getByRole('combobox', { name: 'Task assignee' })).toHaveCount(0);
       await expect(viewer.getByRole('combobox', { name: 'Task project' })).toHaveCount(0);
       await expect(viewer.getByTestId('detail-status-plain').first()).toBeVisible();
+      await expect(viewer.getByRole('button', { name: 'Add subtask' })).toHaveCount(0);
       await expect(viewer.getByText(`E2E View ${tag}`).first()).toBeVisible();
 
       // ---- /projects: tree reads, create/edit/delete verbs gone ----

@@ -1059,6 +1059,7 @@ onServerPrefetch(() =>
               icon="i-lucide-trash-2"
               variant="ghost"
               color="neutral"
+              class="text-muted hover:text-error"
               size="sm"
               :aria-label="`Delete ${row.original.title}`"
               @click="openDelete(row.original)"
