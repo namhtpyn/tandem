@@ -16,6 +16,11 @@ import { humanizeEnum } from '~/utils/ui-labels';
 
 const { $orpc, $client } = useNuxtApp();
 
+// projects writes are employee-tier (SPEC "Roles & access" — UI tier
+// visibility, #300): every create/edit/delete verb hides below the employee
+// tier — a VIEWER session reads the tree, never edits it
+const canWork = useCanWork();
+
 const liveQuery = useQuery($orpc.projects.list.queryOptions({ queryKey: [CHANGE_RESOURCE.PROJECTS] }));
 const allRows = computed(() => (unref(liveQuery.data) ?? []) as ProjectRow[]);
 const search = ref('');
@@ -242,7 +247,7 @@ onServerPrefetch(() => liveQuery.suspense());
       />
       <div class="ms-auto flex items-center gap-2 overflow-x-auto">
         <UButton
-          v-if="allRows.length > 0 || !!search"
+          v-if="canWork && (allRows.length > 0 || !!search)"
           icon="i-lucide-plus"
           label="New project"
           size="sm"
@@ -270,7 +275,7 @@ onServerPrefetch(() => liveQuery.suspense());
       empty-text="Create your first one."
     >
       <template #empty-cta>
-        <UButton v-if="!isFiltered" icon="i-lucide-plus" label="New project" @click="openEditor()" />
+        <UButton v-if="canWork && !isFiltered" icon="i-lucide-plus" label="New project" @click="openEditor()" />
       </template>
       <template #name-cell="{ row }">
         <div class="flex min-w-0 items-center gap-1.5" :style="{ paddingLeft: `${row.original.depth * 1.25}rem` }">
@@ -304,50 +309,54 @@ onServerPrefetch(() => liveQuery.suspense());
       </template>
       <template #actions-cell="{ row }">
         <div class="row-actions flex justify-end gap-1 transition-opacity">
-          <UPopover mode="hover" enable-touch>
-            <UButton
-              icon="i-lucide-plus"
-              variant="ghost"
-              color="neutral"
-              size="sm"
-              :aria-label="`Add subproject under ${row.original.name}`"
-              @click="
-                openEditor(undefined);
-                form.parentId = row.original.id;
-              "
-            />
-            <template #content>
-              <div class="px-3 py-1.5 text-xs">Add subproject</div>
-            </template>
-          </UPopover>
-          <UPopover mode="hover" enable-touch>
-            <UButton
-              icon="i-lucide-pencil"
-              variant="ghost"
-              color="neutral"
-              size="sm"
-              :aria-label="`Edit ${row.original.name}`"
-              @click="openEditor(row.original)"
-            />
-            <template #content>
-              <div class="px-3 py-1.5 text-xs">Edit project</div>
-            </template>
-          </UPopover>
-          <UPopover mode="hover" enable-touch>
-            <UButton
-              icon="i-lucide-trash-2"
-              variant="ghost"
-              color="neutral"
-              size="sm"
-              class="text-muted hover:text-error"
-              :aria-label="`Delete ${row.original.name}`"
-              :disabled="busy"
-              @click="askRemove(row.original)"
-            />
-            <template #content>
-              <div class="px-3 py-1.5 text-xs">Delete project</div>
-            </template>
-          </UPopover>
+          <!-- #300: subproject/edit/delete are employee-tier writes — the whole
+               actions cell hides below the employee tier -->
+          <template v-if="canWork">
+            <UPopover mode="hover" enable-touch>
+              <UButton
+                icon="i-lucide-plus"
+                variant="ghost"
+                color="neutral"
+                size="sm"
+                :aria-label="`Add subproject under ${row.original.name}`"
+                @click="
+                  openEditor(undefined);
+                  form.parentId = row.original.id;
+                "
+              />
+              <template #content>
+                <div class="px-3 py-1.5 text-xs">Add subproject</div>
+              </template>
+            </UPopover>
+            <UPopover mode="hover" enable-touch>
+              <UButton
+                icon="i-lucide-pencil"
+                variant="ghost"
+                color="neutral"
+                size="sm"
+                :aria-label="`Edit ${row.original.name}`"
+                @click="openEditor(row.original)"
+              />
+              <template #content>
+                <div class="px-3 py-1.5 text-xs">Edit project</div>
+              </template>
+            </UPopover>
+            <UPopover mode="hover" enable-touch>
+              <UButton
+                icon="i-lucide-trash-2"
+                variant="ghost"
+                color="neutral"
+                size="sm"
+                class="text-muted hover:text-error"
+                :aria-label="`Delete ${row.original.name}`"
+                :disabled="busy"
+                @click="askRemove(row.original)"
+              />
+              <template #content>
+                <div class="px-3 py-1.5 text-xs">Delete project</div>
+              </template>
+            </UPopover>
+          </template>
         </div>
       </template>
       <template #mobile-item="{ row }">
@@ -379,7 +388,9 @@ onServerPrefetch(() => liveQuery.suspense());
             </div>
             <UBadge :color="statusColor(row.status)" variant="subtle" size="sm">{{ statusLabel(row.status) }}</UBadge>
           </div>
-          <div class="mt-3 flex justify-end gap-1">
+          <!-- #300: the mobile actions row is the same employee-tier trio —
+               hidden below the employee tier -->
+          <div v-if="canWork" class="mt-3 flex justify-end gap-1">
             <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-plus"
