@@ -109,6 +109,12 @@ Slice 2 adds OAuth per binding (section below):
   `Authorization` header value to that MCP server. Write-only vault law: no
   API ever returns it; the binding carries the vault ref + last-four hint
   only. Bindings are written by admin verbs only.
+- **Binding surfaces (UI parity, #274)**: bindings are manageable from BOTH
+  admin surfaces — the AI employee editor (per agent, `mcp.bindingsList`) and
+  the registry page (per server, `mcp.bindingsListByServer`: bind/unbind
+  agents + set the binding credential directly on the entry's row). Same
+  write verbs, one data model; every write publishes the change bus so both
+  views stay in sync without a manual refresh.
 - **Dispatch injection (ACP contract)**: every ACP dispatch of an employee
   carries ALL of that employee's bindings in `session/new` and
   `session/resume` `mcpServers` as `{ type: 'http', name, url, headers:
@@ -200,17 +206,18 @@ Slice 2 adds OAuth per binding (section below):
 
 ### MCP procedures
 
-| procedure            | auth    | input                                     | result                                                                                                                                                              |
-| -------------------- | ------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mcp.registryList`   | session | —                                         | `{data:[{id,name,url,notes,authKind,oauth:{authorizeUrl,tokenUrl,revocationUrl,scopes,clientId,clientSecretId,hasClientSecret},createdAt,updatedAt,bindingCount}]}` |
-| `mcp.registryCreate` | admin   | `{name,url,notes,authKind?,oauth*}`       | created row                                                                                                                                                         |
-| `mcp.registryUpdate` | admin   | `{id,name?,url?,notes?,authKind?,oauth*}` | updated row (url change clears that server's binding verdicts; a CHANGED OAuth config additionally wipes its oauth tokens + pending connect state)                  |
-| `mcp.registryRemove` | admin   | `{id}`                                    | `{ok}` (400 while bindings exist)                                                                                                                                   |
-| `mcp.bindingsList`   | admin   | `{employeeId}`                            | `{data:[{id,serverId,serverName,url,authKind,secretId,secretName,lastFour,oauth:{connected,expiresAt},lastProbeOk,lastProbeDetail,lastProbeAt}]}`                   |
-| `mcp.bindingsSet`    | admin   | `{employeeId,serverId,secretId?}`         | binding row (upsert; verdict cleared on credential change)                                                                                                          |
-| `mcp.bindingsRemove` | admin   | `{employeeId,serverId}`                   | `{ok}`                                                                                                                                                              |
-| `mcp.probe`          | admin   | `{employeeId,serverId}`                   | `{ok,detail,durationMs,lastProbeAt}`                                                                                                                                |
-| `mcp.oauthConnect`   | admin   | `{employeeId,serverId}`                   | `{connectUrl,serverName}` (mint: single-use state row + provider authorizeUrl; no GET mint route — see the authorize-flow bullet below)                             |
+| procedure                  | auth    | input                                     | result                                                                                                                                                              |
+| -------------------------- | ------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mcp.registryList`         | session | —                                         | `{data:[{id,name,url,notes,authKind,oauth:{authorizeUrl,tokenUrl,revocationUrl,scopes,clientId,clientSecretId,hasClientSecret},createdAt,updatedAt,bindingCount}]}` |
+| `mcp.registryCreate`       | admin   | `{name,url,notes,authKind?,oauth*}`       | created row                                                                                                                                                         |
+| `mcp.registryUpdate`       | admin   | `{id,name?,url?,notes?,authKind?,oauth*}` | updated row (url change clears that server's binding verdicts; a CHANGED OAuth config additionally wipes its oauth tokens + pending connect state)                  |
+| `mcp.registryRemove`       | admin   | `{id}`                                    | `{ok}` (400 while bindings exist)                                                                                                                                   |
+| `mcp.bindingsList`         | admin   | `{employeeId}`                            | `{data:[{id,serverId,serverName,url,authKind,secretId,secretName,lastFour,oauth:{connected,expiresAt},lastProbeOk,lastProbeDetail,lastProbeAt}]}`                   |
+| `mcp.bindingsListByServer` | admin   | `{serverId}`                              | `{data:[{id,employeeId,employeeName,secretId,secretName,lastFour,authKind,oauth:{connected,expiresAt},lastProbeOk,lastProbeDetail,lastProbeAt}]}`                   |
+| `mcp.bindingsSet`          | admin   | `{employeeId,serverId,secretId?}`         | binding row (upsert; verdict cleared on credential change)                                                                                                          |
+| `mcp.bindingsRemove`       | admin   | `{employeeId,serverId}`                   | `{ok}`                                                                                                                                                              |
+| `mcp.probe`                | admin   | `{employeeId,serverId}`                   | `{ok,detail,durationMs,lastProbeAt}`                                                                                                                                |
+| `mcp.oauthConnect`         | admin   | `{employeeId,serverId}`                   | `{connectUrl,serverName}` (mint: single-use state row + provider authorizeUrl; no GET mint route — see the authorize-flow bullet below)                             |
 
 OAuth connect rides the admin oRPC POST `mcp.oauthConnect` (NOT a REST
 route — #278: a state-changing GET rode SameSite=Lax admin sessions on
