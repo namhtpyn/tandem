@@ -1,10 +1,13 @@
+import { hashPassword } from 'better-auth/crypto';
 // E2E: MCP OAuth per binding (SPEC "MCP (registry + per-agent bindings) —
 // OAuth per binding (#270 slice 2)"). Covers: registry OAuth validation (400
 // when the required endpoints are missing), the full authorize loop through
 // the UI (Connect popup → mock provider → Tandem callback → connected badge),
 // the probe riding the stored Bearer token, the fake-runner dispatch naming
 // the oauth-bound server, and unbind = revoke (the mock provider sees the
-// RFC 7009 revocation POST).
+// RFC 7009 revocation POST). #278 adds the forged-link pins: the deleted GET
+// mint route 404s for a signed-in session, the RPC surface refuses GET, a
+// failing mint maps to 400, and anonymous/wrong-role POSTs are rejected.
 //
 // The mock provider answers /authorize (302 back with code+state), /token
 // (records the grant; requires PKCE verifier + client credentials),
@@ -248,6 +251,36 @@ test.describe('mcp oauth per binding', () => {
       expect([401, 403]).toContain(anonMint.status());
     } finally {
       await anon.dispose();
+    }
+
+    // wrong-role leg of the admin gate: a seeded VIEWER session must be
+    // FORBIDDEN (a downgrade to protectedProcedure would pass every other pin)
+    const tag = Date.now().toString(36).slice(-6);
+    const viewerEmail = `e2e-viewer-oauth-${tag}@tandem.local`;
+    const userId = crypto.randomUUID();
+    const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+    try {
+      // SQL-seed law: explicit id + timestamps; credential mirrors the boot
+      // seed (account_id = the USER's id, provider 'credential')
+      await sql`insert into "user" (id, name, email, email_verified, created_at, updated_at, role, title, must_change_password)
+        values (${userId}, ${`E2E OAuth Viewer ${tag}`}, ${viewerEmail}, false, now(), now(), 'VIEWER', '', false)`;
+      await sql`insert into account (id, account_id, provider_id, user_id, password, created_at, updated_at)
+        values (${crypto.randomUUID()}, ${userId}, 'credential', ${userId}, ${await hashPassword('e2e-oauth-viewer-pw')}, now(), now())`;
+    } finally {
+      await sql.close();
+    }
+    const viewer = await playwright.request.newContext({ storageState: { cookies: [], origins: [] } });
+    try {
+      const signIn = await viewer.post('/auth/sign-in/email', {
+        data: { email: viewerEmail, password: 'e2e-oauth-viewer-pw' },
+      });
+      expect(signIn.status()).toBe(200);
+      const viewerMint = await viewer.post('/rpc/mcp/oauthConnect', {
+        data: { json: { employeeId: 'e2e-x', serverId: 'e2e-y' } },
+      });
+      expect(viewerMint.status()).toBe(403);
+    } finally {
+      await viewer.dispose();
     }
   });
 
