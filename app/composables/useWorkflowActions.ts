@@ -37,19 +37,63 @@ export function noteSuccessCopy(outcome: NoteOutcome): string {
   return WF_COPY.note.ok;
 }
 
+/** the note verb's dispatch rule (workflow.service addNote's exclusion, modeled
+ *  for the composer's routing): a send starts an agent turn for EVERY task in a
+ *  non-terminal, non-in-review category with an AI assignee — not just ready.
+ *  waiting-answer is excluded CLIENT-side because the composer routes that send
+ *  to the ANSWER verb (a different verb with its own server rule) — addNote
+ *  itself never sees it from these surfaces. */
+export function noteWillDispatch(input: {
+  category: Category | null | undefined;
+  assigneeKind: string | null | undefined;
+}): boolean {
+  if (input.assigneeKind !== 'ai') return false;
+  // null category = statuses loading/failed → no dispatch promise
+  if (!input.category) return false;
+  const excluded: readonly Category[] = [
+    CATEGORY.DONE,
+    CATEGORY.CANCELLED,
+    CATEGORY.IN_REVIEW,
+    CATEGORY.WAITING_ANSWER,
+  ];
+  return !excluded.includes(input.category);
+}
+
 /**
- * Composer hint that matches the note verb's server rules: only a READY task
- * with an AI assignee dispatches; a live run steers; everything else is a
- * thread-only note (done/cancelled/in-review and human assignees never dispatch).
+ * Composer hint that matches the send verb's server rules, per surface state:
+ * waiting-answer renders the ANSWER wording only for the question's current
+ * holder (the verb's actor — tasks.answer refuses non-chain viewers, r4);
+ * a live run steers; every non-terminal, non-in-review category with an AI
+ * assignee dispatches (the server flips the status to to-do and fires the run);
+ * everything else is a thread-only note (done/cancelled/in-review and human
+ * assignees never dispatch). `running: null` = the run state is UNKNOWN (feed
+ * pending/failed) — the hint promises nothing rather than a wrong claim
+ * (#265 r1). A pending dispatch backoff defers the run: neutral wording, the
+ * row's retry banner names the ladder (#265 r4). The send's success copy
+ * reports the real outcome — the wording promises the verb, not every queue
+ * state (steer refusals and the per-agent cap included).
  */
 export function composerHint(input: {
   category: Category | null | undefined;
   assigneeKind: string | null | undefined;
-  running: boolean;
+  /** omitted/null = the run state is UNKNOWN (feed pending/failed) */
+  running?: boolean | null | undefined;
+  /** viewer === the question's current holder (waiting-answer only; undefined = not computable) */
+  viewerCanAnswer?: boolean;
+  /** the row's dispatch backoff is pending — the run cannot start yet (#265 r4) */
+  backoffPending?: boolean;
 }): string {
+  if (input.category === CATEGORY.WAITING_ANSWER) {
+    // the send IS the answer verb for the holder; any other viewer — including
+    // where holder-ship is uncomputable (no open obligation) — reads neutral
+    // wording (the verb's server gate is chain membership — holder-lineage)
+    if (input.viewerCanAnswer !== true) return 'Sends the note';
+    return input.assigneeKind === 'ai' ? 'Sends the answer — the agent picks the task back up' : 'Sends the answer';
+  }
+  if (input.running === null || input.running === undefined) return 'Sends the note';
   if (input.running) return 'Sends a steering note to the running agent';
-  if (input.category === CATEGORY.READY && input.assigneeKind === 'ai')
-    return 'Sends the note and dispatches the agent';
+  if (input.backoffPending) return 'Sends the note';
+  if (noteWillDispatch(input)) return 'Sends the note and dispatches the agent';
   return 'Adds the note to the thread';
 }
 

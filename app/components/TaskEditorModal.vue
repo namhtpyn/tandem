@@ -24,6 +24,12 @@ const open = defineModel<boolean>('open', { default: false });
 const props = defineProps<{ task: TaskRow | null; parentTaskId?: string | null }>();
 const emit = defineEmits<{ saved: [] }>();
 
+/** RUN LOCK (#264): a live run owns the task's assignee/status — the modal
+ *  renders both read-only and echoes the stored values into the patch (the
+ *  server guard trips only on a CHANGED value), so a half-typed pick can never
+ *  end in the lock error (SPEC: rejected server-side AND disabled in the UI) */
+const runLocked = computed(() => !!props.task?.runLocked);
+
 const { $orpc, $client } = useNuxtApp();
 const queryClient = useQueryClient();
 
@@ -339,6 +345,13 @@ const reviewersLocked = computed(() => {
   return (statuses.value.find((s) => s.id === statusId)?.category ?? null) === CATEGORY.IN_REVIEW;
 });
 
+/** RUN LOCK: the patch's assignee value — a locked task echoes the row's stored
+ *  assignee (a half-typed pick must never ride into the server's lock guard) */
+function patchAssigneeId(): string | null {
+  if (runLocked.value) return props.task?.assigneeId ?? null;
+  return form.assigneeId === NONE_ID ? null : form.assigneeId;
+}
+
 async function save() {
   // one write at a time — a double-click or stray Enter must not double-create
   if (saving.value) return;
@@ -370,14 +383,14 @@ async function save() {
       // prefer the live doc's markdown; the string form.description is the
       // fallback (defensive against editor remounts)
       ...(descriptionKnown ? { description: md || form.description } : {}),
-      assigneeId: form.assigneeId === NONE_ID ? null : form.assigneeId,
+      assigneeId: patchAssigneeId(),
       projectId: form.projectId === NONE_ID ? null : form.projectId,
       reviewers: form.reviewers,
     };
     if (editingId.value) {
       // a draft created for an attachment kept the status chosen at create time;
       // the edit path never resends it, so a late change would silently vanish
-      if (createdInSession.value && draftStatus.value && form.status !== draftStatus.value) {
+      if (createdInSession.value && draftStatus.value && form.status !== draftStatus.value && !runLocked.value) {
         await $client.tasks.setStatus({ id: editingId.value, status: form.status });
         draftStatus.value = form.status;
       }
@@ -469,12 +482,15 @@ async function save() {
           />
         </UFormField>
         <UFormField label="Assignee" name="assigneeId">
-          <template #hint><FormHint text="Human or AI agent responsible" /></template>
+          <template #hint>
+            <FormHint :text="runLocked ? 'Locked while the agent runs.' : 'Human or AI agent responsible'" />
+          </template>
           <USelect
             v-model="form.assigneeId"
             :items="assigneeOptions"
             value-key="value"
             icon="i-lucide-user-check"
+            :disabled="runLocked"
             class="w-full"
           />
         </UFormField>
@@ -484,6 +500,7 @@ async function save() {
             :items="statusOptions"
             value-key="value"
             icon="i-lucide-circle-dot"
+            :disabled="runLocked"
             class="w-full"
           />
         </UFormField>

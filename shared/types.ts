@@ -92,6 +92,9 @@ export type TaskRow = {
   dispatchAfter: string | null;
   /** consecutive failed runs; resets on success */
   failStreak: number;
+  /** RUN LOCK bit: a live RUNNING run owns the task — list/board status moves
+   *  are disabled client-side (the server still rejects them) */
+  runLocked: boolean;
   createdBy: string | null;
   creatorName: string | null;
   createdAt: string;

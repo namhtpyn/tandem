@@ -131,6 +131,20 @@ export async function latestRunIdForTask(taskId: string): Promise<string | null>
   return latest?.id ?? null;
 }
 
+/** the tasks on this page holding a live RUNNING run — the RUN LOCK bit for
+ *  list/board rows (#264). ONE batched join over the page's task ids (runs reach
+ *  the task through their thread message — task_runs has no task_id), never a
+ *  serialized runningRunIdForTask per row. */
+export async function runningTaskIdsFor(taskIds: string[]): Promise<Set<string>> {
+  if (taskIds.length === 0) return new Set();
+  const rows = await db
+    .select({ taskId: taskMessages.taskId })
+    .from(taskRuns)
+    .innerJoin(taskMessages, eq(taskRuns.messageId, taskMessages.id))
+    .where(and(inArray(taskMessages.taskId, taskIds), eq(taskRuns.status, RUN_STATUS.RUNNING)));
+  return new Set(rows.map((r) => r.taskId));
+}
+
 /** the task's live run id, if any — status/assignee edits are locked while it runs.
  *  Queries the RUNS table (runs → its thread message → task), never "newest thread
  *  message": notes dual-write to the thread, so the newest message is usually a
@@ -205,6 +219,11 @@ export async function stopRunForTask(taskId: string, actorId: string): Promise<{
   }
   await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+  // the RUN LOCK's release must reach list/board viewers (#264, r1 finding):
+  // the stop leaves the task row untouched, but their rows' runLocked bit rides
+  // the TASKS resource — without this publish the board card stays locked until
+  // an unrelated TASKS event lands
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   // a stopped review turn: the round parks decision-class — owner unblock
   // re-dispatches the parked reviewer (never an auto re-fire against the stop)
   if (employeeId) {
@@ -1355,6 +1374,12 @@ export function createRunWriter(runId: string, initial: string, messageId: strin
     // pre-dispatch ping predates both, so a listener holding that snapshot would
     // keep a blank run bubble with a stale status
     await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+    // the settle arms flip/leave the task row and the RUN LOCK lifts here — the
+    // TASKS resource must re-emit so list/board rows drop their runLocked bit and
+    // catch the status move (#264 r2: the plain DONE arm published only
+    // RUNS/TASK_ACTIVITY, latching the lock bit on every viewer). Extra TASKS
+    // events on arms that already publish one are harmless snapshot re-emits.
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   };
 
   return {

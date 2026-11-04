@@ -152,11 +152,13 @@ describe('stopRunForTask (#229) — the CAS shape', () => {
     // the output append rides the SET (the sql`` chunk renders literally)
     expect(sql).toContain('coalesce("task_runs"."output"');
     expect(sql).toContain('[run] stopped');
-    // a landed row publishes the runs feed + the task surface, never parks without a review
-    expect(h.published).toHaveLength(2);
+    // a landed row publishes the runs feed + the task surface (the RUN LOCK's
+    // release reaches list/board viewers, #264) + activity, never parks without a review
+    expect(h.published).toHaveLength(3);
     expect(h.published).toEqual(
       expect.arrayContaining([
         ['RUNS', 'UPDATE'],
+        ['TASKS', 'UPDATE'],
         ['TASK_ACTIVITY', 'CREATE'],
       ]),
     );

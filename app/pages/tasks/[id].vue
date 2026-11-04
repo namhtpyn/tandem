@@ -91,17 +91,22 @@ const runsSettled = computed(() => runsLive.isSuccess.value || runsLive.isError.
 const runsKnown = computed(() => runsLive.isSuccess.value);
 const runLocked = computed(() => !runsSettled.value || agentRunning.value);
 
-/** dispatch is a SERVER rule: only a ready-category task with an AI assignee is
- *  picked up by a note send — the hint must not promise anything else */
-const willDispatch = computed(
-  () =>
-    !agentRunning.value && taskStatusCategory.value === CATEGORY.READY && (task.value?.assigneeKind ?? null) === 'ai',
-);
+/** dispatch is a SERVER rule: every non-terminal, non-in-review category with an
+ *  AI assignee is picked up by a note send (#265) — composerHintText (which
+ *  mirrors exactly this rule) drives both the visible hint and the aria label */
 const composerHintText = computed(() =>
   composerHint({
     category: taskStatusCategory.value,
     assigneeKind: task.value?.assigneeKind,
-    running: agentRunning.value,
+    // an unsettled run feed (pending OR failed) is UNKNOWN run state — the hint
+    // promises nothing rather than a dispatch claim that could steer (#265 r1;
+    // runsKnown, not runsSettled — a failed feed knows nothing, r3)
+    running: runsKnown.value ? agentRunning.value : null,
+    // the answer verb's actor is the question's current holder (tasks.answer
+    // refuses non-chain viewers, r4)
+    viewerCanAnswer: task.value?.questionHolderId ? task.value.questionHolderId === session.value?.user.id : undefined,
+    // a pending dispatch backoff defers the run — never promise it (r4)
+    backoffPending: retryInMin.value > 0,
   }),
 );
 
@@ -298,7 +303,7 @@ onServerPrefetch(() => Promise.all([taskQuery.suspense(), statusesLive.suspense(
                     size="lg"
                     color="primary"
                     :icon="agentRunning ? 'i-lucide-reply' : 'i-lucide-arrow-up'"
-                    :aria-label="agentRunning ? 'Steer agent' : willDispatch ? 'Send and dispatch' : 'Send note'"
+                    :aria-label="composerHintText"
                     class="size-10 shrink-0"
                     :disabled="workflowBusy || !composerSendReady"
                     @click="sendComposer()"

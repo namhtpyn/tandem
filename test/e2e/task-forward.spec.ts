@@ -81,7 +81,9 @@ test('forward renders holder+waiting-answer scoped and moves the obligation', as
   // answer round-trip: the asker (still in the chain) answers via the composer
   drawer = await tasks.openWorkflowDrawer(tasks.rowFor(taskTitle));
   await drawer.getByLabel('Task note').fill('postgres, port 55432');
-  await drawer.getByRole('button', { name: 'Send answer' }).click();
+  // the send's accessible name carries the hint wording (COMPOSER HINT LAW,
+  // #265) — assert the visible label, the answer verb's stable surface
+  await drawer.locator('button', { hasText: 'Send answer' }).click();
   await expect(drawer.getByText('Answer sent')).toBeVisible({ timeout: 10_000 });
   // waiting-answer ended: no holder line, task back to To do
   await expect(drawer.getByText(/Waiting on/)).toHaveCount(0, { timeout: 10_000 });
