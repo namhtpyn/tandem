@@ -182,6 +182,9 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
     throw new Error('task is not waiting for an answer');
   const chain = task.questionChain;
   if (!chain.includes(authorId)) throw new Error('only someone in the question chain can answer');
+  // capture the holder BEFORE the cancel — after it, answerHolder reads null and
+  // a CAS-miss heal would have nobody to restore to
+  const holder = await answerHolder(taskId);
   await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
   // a LIVE review round returns to in-review (the round is still open); the
   // assignee's own question returns to todo so the agent resumes with the answer
@@ -197,7 +200,22 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
     })
     .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
     .returning({ id: tasks.id });
-  if (flipped.length === 0) throw new Error('task state changed during answer — a settle owns the outcome');
+  if (flipped.length === 0) {
+    // CAS-MISS HEAL (#314): the cancel above already stands while the flip lost —
+    // without a repair the task stays waiting_answer with NO ANSWER obligation and
+    // the question drops off every needs-my-decision surface with no heal. If the
+    // task STILL reads the same waiting_answer status, re-spawn the obligation
+    // (PENDING-dedupe makes the restore idempotent; a null holder falls back to
+    // the chain tail). If the status MOVED, the rival writer owns the outcome
+    // (TERMINAL ARBITRATION #287/#292) — never resurrect a stale obligation off
+    // the flow.
+    const now = await db.query.tasks.findFirst({ columns: { status: true }, where: { id: { eq: taskId } } });
+    if (now?.status === task.status) {
+      const restoreTo = holder ?? chain[chain.length - 1];
+      if (restoreTo) await spawnObligation(taskId, restoreTo, OBLIGATION_ROLE.ANSWER);
+    }
+    throw new Error('task state changed during answer — a settle owns the outcome');
+  }
   if (backTo === IN_REVIEW_STATUS) {
     // a review-round question was answered — the AI reviewer's turn re-arms
     await dispatchAiReviewTurns(taskId);
@@ -262,7 +280,13 @@ export async function addNote(
     columns: { id: true, category: true },
     where: { id: { eq: task.status } },
   });
-  const excluded = [CATEGORY.DONE, CATEGORY.CANCELLED, CATEGORY.IN_REVIEW] as string[];
+  // waiting_answer is RESERVED for the question flow (#288/#314): while waiting,
+  // the send IS the answer verb — the composer routes it there and the hint says
+  // "Adds the note to the thread". A DIRECT tasks.note call must never flip the
+  // status or dispatch: the unguarded todo flip below would stomp the open
+  // question and orphan the live ANSWER obligation + questionChain (noteWillDispatch
+  // excludes the category too — client/server parity).
+  const excluded = [CATEGORY.DONE, CATEGORY.CANCELLED, CATEGORY.IN_REVIEW, CATEGORY.WAITING_ANSWER] as string[];
   // an unresolved status id (dangling legacy row) is dead input like everywhere
   // else the membership rule applies — thread-only, never a dispatch guess
   const statusCat = statusRows.find((r) => r.id === task.status)?.category;
