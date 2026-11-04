@@ -1,3 +1,11 @@
+## [2.67.5](https://github.com/namhtpyn/tandem/compare/v2.67.4...v2.67.5) (2026-11-04)
+
+
+### Bug Fixes
+
+* [#263](https://github.com/namhtpyn/tandem/issues/263) r2 review — the vault folder filter hides behind editable too (dead select on a FORBIDDEN read) ([2e647b2](https://github.com/namhtpyn/tandem/commit/2e647b2ee97a9bfd489e6f1cab4ccc7d2891a7bc))
+* [#263](https://github.com/namhtpyn/tandem/issues/263) wire the UI tier visibility gates — nav/settings/admin managers render no verb above the viewer's role ([03be5bd](https://github.com/namhtpyn/tandem/commit/03be5bd9939ca321570ce4490ffc425787d22b4e))
+
 ## [2.67.4](https://github.com/namhtpyn/tandem/compare/v2.67.3...v2.67.4) (2026-11-04)
 
 
