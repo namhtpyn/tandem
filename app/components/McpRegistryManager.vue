@@ -246,14 +246,16 @@ const bindingsLive = useQuery(
 );
 const serverBindings = computed<ServerBindingRow[]>(() => unref(bindingsLive.data)?.data ?? []);
 
-// a failed/pending bindings read must not back a blind write: the bind form
-// only acts on visible rows (the upsert would otherwise mutate a binding the
-// admin cannot see)
-const bindFormDisabled = computed(() => bindBusy.value || unref(bindingsLive.isPending) || unref(bindingsLive.isError));
-
 // AI-employee picker — employees.list carries every row with kind; only AI
 // agents can bind (the server asserts it too), and bound agents drop out
 const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES, 'list'] }));
+
+// a failed/pending bindings read must not back a blind write: the bind form
+// only acts on visible rows (the upsert would otherwise mutate a binding the
+// admin cannot see); a failed employees read empties the picker too
+const bindFormDisabled = computed(
+  () => bindBusy.value || unref(bindingsLive.isPending) || unref(bindingsLive.isError) || unref(employeesLive.isError),
+);
 const bindableEmployeeItems = computed(() =>
   ((unref(employeesLive.data) ?? []) as EmployeeRow[])
     .filter((e) => e.kind === 'ai' && !serverBindings.value.some((b) => b.employeeId === e.id))
@@ -330,16 +332,18 @@ function askClearCredential(b: ServerBindingRow) {
 // oauth connect: the shared popup-mint composable — same flow as the editor
 const {
   connectingServerId,
+  connectingKey,
   connectError,
   connectOauth: startOauthConnect,
 } = useMcpOauthConnect(async () => {
   await bindingsLive.refetch();
 });
 
-// the composable tracks the connect by SERVER id — this modal serves one row
-const connectingHere = computed(
-  () => connectingServerId.value !== null && connectingServerId.value === bindingsRow.value?.id,
-);
+// the composable keys the in-flight mint by `employeeId:serverId` — per-row
+// spinner (a server bound to two oauth agents must not spin both buttons)
+function connectingRow(b: ServerBindingRow) {
+  return connectingKey.value === `${b.employeeId}:${bindingsRow.value?.id}`;
+}
 
 function connectOauth(b: ServerBindingRow) {
   const row = bindingsRow.value;
@@ -835,8 +839,8 @@ function askUnbind(b: ServerBindingRow) {
                   color="primary"
                   size="sm"
                   data-testid="mcp-server-oauth-connect"
-                  :loading="connectingHere"
-                  :disabled="bindBusy || (connectingServerId !== null && !connectingHere)"
+                  :loading="connectingRow(b)"
+                  :disabled="bindBusy || (connectingServerId !== null && !connectingRow(b))"
                   @click="connectOauth(b)"
                 />
                 <UButton
@@ -925,6 +929,24 @@ function askUnbind(b: ServerBindingRow) {
             class="mt-3"
             :ui="{ title: 'text-sm' }"
           />
+          <UAlert
+            v-if="unref(employeesLive.isError)"
+            role="alert"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            title="Couldn't load agents"
+            :ui="{ title: 'text-sm' }"
+          >
+            <UButton
+              label="Retry"
+              size="sm"
+              variant="soft"
+              color="primary"
+              class="mt-2"
+              @click="employeesLive.refetch()"
+            />
+          </UAlert>
           <UAlert
             v-if="bindingsError"
             role="alert"

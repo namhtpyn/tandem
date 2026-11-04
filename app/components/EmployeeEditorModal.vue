@@ -222,8 +222,19 @@ watch(
     // close (including null->null create) must always re-seed
     if (wasOpen && seededId === id) return;
     seedFrom(props.employee ?? undefined);
+    // a closed modal must not carry armed destructive confirms or stale
+    // transient state into the next open (r4 #274 — parity with the registry
+    // surface's openBindings reset; unbind on an oauth binding revokes tokens)
+    unbindCandidate.value = null;
+    probeResults.value = {};
+    newBindingServerId.value = null;
+    newBindingSecretId.value = null;
+    mcpError.value = null;
+    oauthConnectError.value = null;
   },
-  { immediate: true },
+  // NO immediate: the callback touches MCP-section refs declared below this
+  // watch — an immediate fire during setup would TDZ-crash (setup-TDZ law);
+  // the open false->true transition triggers the seeding anyway
 );
 
 /** update call payload — avatar only when freshly picked, AI fields only when shown */

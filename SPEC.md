@@ -384,31 +384,32 @@ Rules:
 
 ### Procedures (complete list)
 
-| procedure             | auth    | input                                                     | result                                                                                              |
-| --------------------- | ------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `meta.version`        | none    | —                                                         | `{version}`                                                                                         |
-| `changes.live`        | session | —                                                         | SSE stream of `{resource, action}` change events (post-load invalidation only — never carries data) |
-| `auth.config`         | none    | —                                                         | plain GET `{passwordEnabled, oidcEnabled, providers:[{id,label}]}`                                  |
-| `auth.configLive`     | none    | —                                                         | live `{passwordEnabled, oidcEnabled, providers:[{id,label}]}`                                       |
-| `auth.session`        | none    | —                                                         | session payload or null                                                                             |
-| `settings.live`       | session | —                                                         | live `{disablePasswordLogin, flags}`                                                                |
-| `settings.update`     | admin   | `{disablePasswordLogin?, flags?}`                         | `{ok}` (400 when disabling with no OIDC provider; 400 on flag-name/flag-count violations)           |
-| `oidc.live`           | session | —                                                         | live provider list with `hasSecret`, never secrets                                                  |
-| `oidc.replace`        | admin   | `{providers:[{id?,label,issuer,clientId,clientSecret?}]}` | `{ok,count}` (secrets write-only; ids server-generated for new providers)                           |
-| `environments.live`   | session | —                                                         | live snapshot of all environments                                                                   |
-| `environments.create` | admin   | `{name,host,port?,username}`                              | created row                                                                                         |
-| `environments.update` | admin   | `{id,name,host,port?,username}`                           | updated row                                                                                         |
-| `environments.remove` | admin   | `{id}`                                                    | `{ok}`                                                                                              |
-| `environments.probe`  | admin   | `{id}`                                                    | `{ok,detail,durationMs,lastProbeAt}` (verdict persisted on the row)                                 |
-| `mcp.registryList`    | session | —                                                         | `{data:[…registry rows + bindingCount]}`                                                            |
-| `mcp.registryCreate`  | admin   | `{name,url,notes,authKind?,oauth*}`                       | created row (oauth validation per "OAuth per binding")                                              |
-| `mcp.registryUpdate`  | admin   | `{id,name?,url?,notes?,authKind?,oauth*}`                 | updated row (changed OAuth config wipes tokens + verdicts atomically)                               |
-| `mcp.registryRemove`  | admin   | `{id}`                                                    | `{ok}`                                                                                              |
-| `mcp.bindingsList`    | admin   | `{employeeId}`                                            | `{data:[…binding rows, masked secret + oauth status]}`                                              |
-| `mcp.bindingsSet`     | admin   | `{employeeId,serverId,secretId?}`                         | binding row (upsert)                                                                                |
-| `mcp.bindingsRemove`  | admin   | `{employeeId,serverId}`                                   | `{ok}` (unbind = revoke at next dispatch; oauth grants revoke best-effort)                          |
-| `mcp.probe`           | admin   | `{employeeId,serverId}`                                   | `{ok,detail,durationMs,lastProbeAt}` (verdict persisted on the binding)                             |
-| `mcp.oauthConnect`    | admin   | `{employeeId,serverId}`                                   | `{connectUrl,serverName}` (mint: single-use state row + provider authorizeUrl; no GET mint route)   |
+| procedure                  | auth    | input                                                     | result                                                                                              |
+| -------------------------- | ------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `meta.version`             | none    | —                                                         | `{version}`                                                                                         |
+| `changes.live`             | session | —                                                         | SSE stream of `{resource, action}` change events (post-load invalidation only — never carries data) |
+| `auth.config`              | none    | —                                                         | plain GET `{passwordEnabled, oidcEnabled, providers:[{id,label}]}`                                  |
+| `auth.configLive`          | none    | —                                                         | live `{passwordEnabled, oidcEnabled, providers:[{id,label}]}`                                       |
+| `auth.session`             | none    | —                                                         | session payload or null                                                                             |
+| `settings.live`            | session | —                                                         | live `{disablePasswordLogin, flags}`                                                                |
+| `settings.update`          | admin   | `{disablePasswordLogin?, flags?}`                         | `{ok}` (400 when disabling with no OIDC provider; 400 on flag-name/flag-count violations)           |
+| `oidc.live`                | session | —                                                         | live provider list with `hasSecret`, never secrets                                                  |
+| `oidc.replace`             | admin   | `{providers:[{id?,label,issuer,clientId,clientSecret?}]}` | `{ok,count}` (secrets write-only; ids server-generated for new providers)                           |
+| `environments.live`        | session | —                                                         | live snapshot of all environments                                                                   |
+| `environments.create`      | admin   | `{name,host,port?,username}`                              | created row                                                                                         |
+| `environments.update`      | admin   | `{id,name,host,port?,username}`                           | updated row                                                                                         |
+| `environments.remove`      | admin   | `{id}`                                                    | `{ok}`                                                                                              |
+| `environments.probe`       | admin   | `{id}`                                                    | `{ok,detail,durationMs,lastProbeAt}` (verdict persisted on the row)                                 |
+| `mcp.registryList`         | session | —                                                         | `{data:[…registry rows + bindingCount]}`                                                            |
+| `mcp.registryCreate`       | admin   | `{name,url,notes,authKind?,oauth*}`                       | created row (oauth validation per "OAuth per binding")                                              |
+| `mcp.registryUpdate`       | admin   | `{id,name?,url?,notes?,authKind?,oauth*}`                 | updated row (changed OAuth config wipes tokens + verdicts atomically)                               |
+| `mcp.registryRemove`       | admin   | `{id}`                                                    | `{ok}`                                                                                              |
+| `mcp.bindingsList`         | admin   | `{employeeId}`                                            | `{data:[…binding rows, masked secret + oauth status]}`                                              |
+| `mcp.bindingsListByServer` | admin   | `{serverId}`                                              | `{data:[…binding rows + employee name, masked secret + oauth status]}`                              |
+| `mcp.bindingsSet`          | admin   | `{employeeId,serverId,secretId?}`                         | binding row (upsert)                                                                                |
+| `mcp.bindingsRemove`       | admin   | `{employeeId,serverId}`                                   | `{ok}` (unbind = revoke at next dispatch; oauth grants revoke best-effort)                          |
+| `mcp.probe`                | admin   | `{employeeId,serverId}`                                   | `{ok,detail,durationMs,lastProbeAt}` (verdict persisted on the binding)                             |
+| `mcp.oauthConnect`         | admin   | `{employeeId,serverId}`                                   | `{connectUrl,serverName}` (mint: single-use state row + provider authorizeUrl; no GET mint route)   |
 
 Wiring follows the official oRPC docs: Nuxt adapter (`toWebRequest` +
 `RPCHandler` with `onError` interceptor), Better Auth lazy `getSession`

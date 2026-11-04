@@ -17,6 +17,10 @@ import { errorMessage } from '~/utils/forms';
 export function useMcpOauthConnect(onConnected: () => void | Promise<void>) {
   const { $client } = useNuxtApp();
   const connectingServerId = ref<string | null>(null);
+  // `employeeId:serverId` of the in-flight mint — surfaces that serve MANY
+  // bindings (the registry modal) key their per-row spinners by the pair;
+  // single-agent surfaces key on connectingServerId alone
+  const connectingKey = ref<string | null>(null);
   const connectError = ref<string | null>(null);
   let connectPopupWatcher: number | null = null;
 
@@ -27,14 +31,19 @@ export function useMcpOauthConnect(onConnected: () => void | Promise<void>) {
     }
   }
 
-  /* v8 ignore start -- executed by the postMessage + connect tests below;
-   * per-test module copies + last-copy-wins coverage merging hide the arms
+  function clearConnecting() {
+    connectingServerId.value = null;
+    connectingKey.value = null;
+  }
+
+  /* v8 ignore start -- executed by the postMessage tests below; per-test
+   * module copies + last-copy-wins coverage merging hide the arms
    * (same phantom as useChangeEvents, owner ruling 2026-10-27: (b)) */
   function onOauthMessage(event: MessageEvent) {
     if (event.origin !== window.location.origin) return;
     const data = event.data as { type?: string } | null;
     if (data?.type !== 'mcp-oauth') return;
-    connectingServerId.value = null;
+    clearConnecting();
     stopConnectWatcher();
     void onConnected();
   }
@@ -51,6 +60,7 @@ export function useMcpOauthConnect(onConnected: () => void | Promise<void>) {
     // a retry must not sit under a stale attempt's error (bind/unbind pattern)
     connectError.value = null;
     connectingServerId.value = serverId;
+    connectingKey.value = `${employeeId}:${serverId}`;
     // gesture-safe open first — about:blank is same-origin, the opener may
     // navigate it to the provider URL once the mint resolves
     const popup = window.open('', 'mcp-oauth-connect', 'popup,width=520,height=680');
@@ -58,7 +68,7 @@ export function useMcpOauthConnect(onConnected: () => void | Promise<void>) {
       // popup blocked — no window to navigate, no server-side mint to spend;
       // a dead-looking Connect button reads as broken, so say why
       connectError.value = 'Popup blocked — allow popups for this site, then connect again';
-      connectingServerId.value = null;
+      clearConnecting();
       return;
     }
     // a cancelled/closed popup never postMessages — stop the spinner so the
@@ -69,7 +79,7 @@ export function useMcpOauthConnect(onConnected: () => void | Promise<void>) {
     connectPopupWatcher = window.setInterval(() => {
       if (!popup || popup.closed) {
         stopConnectWatcher();
-        connectingServerId.value = null;
+        clearConnecting();
       }
     }, 500);
     void $client.mcp
@@ -82,12 +92,12 @@ export function useMcpOauthConnect(onConnected: () => void | Promise<void>) {
       .catch((e) => {
         popup?.close();
         stopConnectWatcher();
-        connectingServerId.value = null;
+        clearConnecting();
         // surface the mint rejection — the deleted REST route used to render
         // the message inside the popup; a silent flash-close reads as a glitch
         connectError.value = errorMessage(e, "Couldn't start the OAuth connect — try again");
       });
   }
 
-  return { connectingServerId, connectError, connectOauth };
+  return { connectingServerId, connectingKey, connectError, connectOauth };
 }
