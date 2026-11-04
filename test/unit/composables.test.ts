@@ -2,14 +2,17 @@
 // and the focus-refresh lifecycle. happy-dom environment; Nuxt auto-imports
 // (useState, onMounted…) are stubbed globally in this file's harness.
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+// ---- Nuxt runtime stubs ----
+// useState returns a REAL Vue ref (production shape) — a plain { value } box
+// is invisible to reactivity, so any computed over session state (useIsAdmin)
+// would never re-evaluate in tests.
+import { ref } from 'vue';
 
 import { ROLE } from '#shared/enums';
-
-// ---- Nuxt runtime stubs ----
 type Ref<T> = { value: T };
 const stateStore = new Map<string, Ref<unknown>>();
 function useStateStub<T>(key: string, init: () => T): Ref<T> {
-  if (!stateStore.has(key)) stateStore.set(key, { value: init() });
+  if (!stateStore.has(key)) stateStore.set(key, ref(init()) as unknown as Ref<T>);
   return stateStore.get(key) as Ref<T>;
 }
 
@@ -56,6 +59,36 @@ describe('useAppSession', () => {
       user: { id: 'x', name: 'X', email: 'x@x', role: ROLE.ADMIN },
     };
     expect(m.useAppSession().value?.user.id).toBe('x');
+  });
+});
+
+// UI tier visibility gate (SPEC "Roles & access" — #263): true ONLY for ADMIN;
+// anonymous (no session yet) reads as non-admin; the computed tracks role
+// changes (demotion mid-session flips every gate).
+describe('useIsAdmin', () => {
+  it.each([
+    [ROLE.ADMIN, true],
+    [ROLE.EMPLOYEE, false],
+    [ROLE.VIEWER, false],
+  ] as const)('role %s -> %s', async (role, expected) => {
+    const m = await import('../../app/composables/useAppSession.ts');
+    m.useAppSession().value = { user: { id: 'x', name: 'X', email: 'x@x', role } };
+    expect(m.useIsAdmin().value).toBe(expected);
+  });
+
+  it('anonymous (null session) reads as non-admin', async () => {
+    const m = await import('../../app/composables/useAppSession.ts');
+    expect(m.useIsAdmin().value).toBe(false);
+  });
+
+  it('tracks a role change reactively (demotion flips the gate)', async () => {
+    const m = await import('../../app/composables/useAppSession.ts');
+    const session = m.useAppSession();
+    session.value = { user: { id: 'x', name: 'X', email: 'x@x', role: ROLE.ADMIN } };
+    const isAdmin = m.useIsAdmin();
+    expect(isAdmin.value).toBe(true);
+    session.value = { user: { id: 'x', name: 'X', email: 'x@x', role: ROLE.VIEWER } };
+    expect(isAdmin.value).toBe(false);
   });
 });
 
