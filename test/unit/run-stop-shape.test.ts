@@ -95,7 +95,7 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
 
 import { REVIEW_STATUS, RUN_STATUS } from '#shared/enums';
 
-import { stopRunForTask } from '../../server/domains/tasks/runner.service';
+import { executeRun, stopRunForTask, stoppedRunMarkerIds } from '../../server/domains/tasks/runner.service';
 import { mockDb, taskRuns } from './helpers/mock-db';
 
 const liveCandidate = { id: 'run-1', status: RUN_STATUS.RUNNING, employeeId: 'ai-1', messageId: 'm-1' };
@@ -183,5 +183,32 @@ describe('stopRunForTask (#229) — the CAS shape', () => {
     await expect(stopRunForTask('task-1', 'user-1')).resolves.toEqual({ ok: true, stopped: true });
     expect(h.updates).toHaveLength(1); // still exactly one write
     expect(h.park).toEqual([['task-1', 'review turn stopped — needs a human', { rearmable: false }]]);
+  });
+});
+
+describe('stop-marker lifecycle across executeRun (#291 F9)', () => {
+  it('a stop that settled a queued run leaves NO marker after the pre-try guard return', async () => {
+    // the stop lands while the run is still RUNNING (queued / between attempts):
+    // the verb adds the marker pre-CAS and the CAS wins
+    h.runCandidates = [liveCandidate];
+    h.casRows = [{ id: 'run-1' }];
+    await expect(stopRunForTask('task-1', 'user-1')).resolves.toEqual({ ok: true, stopped: true });
+    expect(stoppedRunMarkerIds()).toContain('run-1');
+    // the worker then picks the job — the guard sees the STOPPED row (settled
+    // elsewhere) and refuses pre-try: the marker's consumers live inside the try,
+    // so the marker must be deleted here, not leaked forever (unbounded Set)
+    h.runRow = { ...liveCandidate, status: RUN_STATUS.STOPPED };
+    await expect(executeRun('run-1', 'http://localhost:3000', { attempt: 1, maxAttempts: 3 })).resolves.toEqual({
+      status: RUN_STATUS.FAILED,
+      exitCode: null,
+    });
+    expect(stoppedRunMarkerIds()).not.toContain('run-1');
+  });
+
+  it('a lost stop race unwinds the marker at the verb — executeRun sees none', async () => {
+    h.runCandidates = [liveCandidate];
+    h.casRows = []; // the turn settled first with its own verdict
+    await expect(stopRunForTask('task-1', 'user-1')).resolves.toEqual({ ok: true, stopped: false });
+    expect(stoppedRunMarkerIds()).not.toContain('run-1'); // the verb's own unwind (#229)
   });
 });

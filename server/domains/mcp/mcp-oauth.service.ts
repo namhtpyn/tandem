@@ -447,6 +447,9 @@ export async function revokeOauthTokens(bindingId: string): Promise<void> {
   } catch {
     /* revocation is best-effort by contract */
   }
+  // WARN-MAP EVICTION (#291 F13): a revoked/unbound binding can never refresh
+  // again — its rate-limit entry would otherwise sit in the map forever
+  refreshWarnedAt.delete(bindingId);
   await db.delete(mcpOauthTokens).where(eq(mcpOauthTokens.bindingId, bindingId));
 }
 
@@ -474,6 +477,7 @@ export async function wipeOauthTokensForServer(serverId: string, client: DbClien
     where: { serverId: { eq: serverId } },
   });
   for (const binding of rows) {
+    refreshWarnedAt.delete(binding.id); // #291 F13: the registry-config wipe must not leak warn state either
     await client.delete(mcpOauthTokens).where(eq(mcpOauthTokens.bindingId, binding.id));
     await client.delete(mcpOauthStates).where(eq(mcpOauthStates.bindingId, binding.id));
   }

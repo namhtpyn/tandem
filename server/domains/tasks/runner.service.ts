@@ -91,6 +91,12 @@ export function liveStopRunIds(): string[] {
   return [...liveStops.keys()];
 }
 
+/** test/probe visibility (#291 F9): runIds currently holding a stop-settled
+ * marker — nonempty only while a stop is mid-flight or its run is mid-turn */
+export function stoppedRunMarkerIds(): string[] {
+  return [...stoppedRuns.keys()];
+}
+
 /** test/probe visibility (#161): runIds currently holding a live steer hook —
  * must be empty whenever no run is mid-turn (a settled run retains nothing) */
 export function liveSteerRunIds(): string[] {
@@ -1496,10 +1502,21 @@ export async function executeRun(
   },
 ): Promise<{ status: FinishedStatus; exitCode: number | null }> {
   const row = await runnableRowOrSettled(runId);
-  if (!row) return { status: RUN_STATUS.FAILED, exitCode: null };
+  if (!row) {
+    // STOP-MARKER LIFECYCLE (#291 F9): this return sits BEFORE the try that owns
+    // the finally cleanup, and the stop verb adds its marker pre-CAS — a stop that
+    // settled a queued/just-started run (the guard refuses the STOPPED row) would
+    // otherwise leak the marker forever (unbounded Set growth). Its only consumers
+    // (the finish-path skip + the in-try early return) live inside that try.
+    stoppedRuns.delete(runId);
+    return { status: RUN_STATUS.FAILED, exitCode: null };
+  }
   // the helper's guard refused any message-less row — asserted here for the CFA
   const taskId = nonNull(row.message).taskId;
-  if (await supersededByNewerRun(runId, taskId, row.output)) return { status: RUN_STATUS.FAILED, exitCode: null };
+  if (await supersededByNewerRun(runId, taskId, row.output)) {
+    stoppedRuns.delete(runId); // same pre-try leak window (#291 F9)
+    return { status: RUN_STATUS.FAILED, exitCode: null };
+  }
 
   const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & {
     review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'];

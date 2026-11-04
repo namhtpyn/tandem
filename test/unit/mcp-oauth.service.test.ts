@@ -22,7 +22,23 @@ const h = vi.hoisted(() => ({
   insertedStates: [] as Array<Record<string, unknown>>,
   deletedTokenBindingIds: [] as string[],
   fetchCalls: [] as Array<{ url: string; body: string }>,
+  warns: [] as string[], // #291 F13: the refresh-warn path is the rate-limit map's observable surface
 }));
+
+// consola is mocked ONLY to record warn lines — warnRefreshFailure's rate-limit
+// state (refreshWarnedAt) is module-private, so the warn count is the observable
+vi.mock('consola', () => {
+  const tag = {
+    warn: (msg: unknown) => h.warns.push(String(msg)),
+    error: () => {},
+    success: () => {},
+    info: () => {},
+    start: () => {},
+    debug: () => {},
+    trace: () => {},
+  };
+  return { consola: { withTag: () => tag, ...tag } };
+});
 
 vi.mock('../../server/db/index', () => {
   return {
@@ -164,6 +180,7 @@ beforeEach(() => {
   h.insertedStates.length = 0;
   h.deletedTokenBindingIds.length = 0;
   h.fetchCalls.length = 0;
+  h.warns.length = 0;
   vi.unstubAllGlobals();
 });
 
@@ -490,5 +507,62 @@ describe('wipeOauthTokensForServer (registry OAuth-config edit)', () => {
     await wipeOauthTokensForServer(SERVER_ID);
     // 2 bindings × (tokens + states) = 4 deletes
     expect(h.deletedTokenBindingIds).toHaveLength(4);
+  });
+});
+
+describe('refreshWarnedAt eviction (#291 F13)', () => {
+  const stubFailingRefresh = () =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        h.fetchCalls.push({ url: String(url), body: '' });
+        return new Response('server error line', { status: 500 });
+      }),
+    );
+  const seedStaleRow = (bindingId = BINDING_ID) =>
+    h.tokenRows.push({
+      bindingId,
+      accessTokenEnc: encryptSecret('at-stale'),
+      refreshTokenEnc: encryptSecret('rt-old'),
+      expiresAt: new Date(Date.now() - 1000),
+      configFingerprint: CONFIG_FP,
+    });
+
+  it('revoke evicts the rate-limit state — a re-connected binding warns from scratch', async () => {
+    // a binding id NO earlier test ever warned for: the map is module state and
+    // entries live 5 min — a shared id would inherit an earlier test's arm
+    const BID = 'b-f13-revoke';
+    h.bindingRows.push({ id: BID, serverId: SERVER_ID });
+    seedOauthServer();
+    seedStaleRow(BID);
+    stubFailingRefresh();
+    // failure 1 warns + arms the 5-min rate limit; failure 2 inside the window is silenced
+    await getFreshAccessToken(BID, SERVER_CONFIG);
+    expect(h.warns).toHaveLength(1);
+    await getFreshAccessToken(BID, SERVER_CONFIG);
+    expect(h.warns).toHaveLength(1);
+    // unbind = revoke: the eviction frees the state — pre-fix the entry lived forever
+    await revokeOauthTokens(BID);
+    expect(h.deletedTokenBindingIds.length).toBeGreaterThan(0);
+    // the binding re-connects (fresh row, SAME binding id): a new failure warns anew
+    h.tokenRows.length = 0;
+    seedStaleRow(BID);
+    await getFreshAccessToken(BID, SERVER_CONFIG);
+    expect(h.warns).toHaveLength(2);
+  });
+
+  it('the registry-config wipe evicts warn state for the wiped bindings too', async () => {
+    const BID = 'b-f13-wipe';
+    h.bindingRows.push({ id: BID, serverId: SERVER_ID });
+    seedOauthServer();
+    seedStaleRow(BID);
+    stubFailingRefresh();
+    await getFreshAccessToken(BID, SERVER_CONFIG); // warn + arm
+    expect(h.warns).toHaveLength(1);
+    await wipeOauthTokensForServer(SERVER_ID);
+    h.tokenRows.length = 0;
+    seedStaleRow(BID);
+    await getFreshAccessToken(BID, SERVER_CONFIG);
+    expect(h.warns).toHaveLength(2); // pre-fix: silenced by the never-evicted entry
   });
 });

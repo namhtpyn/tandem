@@ -358,13 +358,39 @@ export async function scanOnce(tandemUrl: string) {
   }
 }
 
+/** WORKER-RESYNC RETRY (#291 F10): a swallowed resync failure — the per-hit
+ * detached sync's silent catch, the settings/roster-change resync's logged catch —
+ * left the roster stale forever whenever the scan never hits (a review-only queue
+ * has no ready task to fire the per-hit resync, so the heartbeat + redis-ok stay
+ * green while every dispatch wedges). A failed sync re-arms and re-fires on every
+ * tick regardless of scan hits until one lands (coalescing keeps it single-flight). */
+let needsWorkerResync = false;
+
+/** never throws — the tick-isolation contract holds even while retrying (#172) */
+async function retryPendingWorkerResync(): Promise<void> {
+  if (!needsWorkerResync) return;
+  const hub = await redisQueue().catch(() => null);
+  if (!hub) return; // no redis: nothing to sync into — stay armed for the next tick
+  const synced = await syncDispatchWorkers(hub)
+    .then(() => true)
+    .catch(() => false);
+  if (synced) needsWorkerResync = false;
+}
+
 async function scanOnceInner(tandemUrl: string) {
+  await retryPendingWorkerResync(); // every tick, hit or not (#291 F10)
   const hit = await findEligible();
   if (!hit) return false;
   try {
     const hub = await redisQueue();
     /* v8 ignore next -- lazy resync; the catch arrow only fires on a redis failure */
-    void syncDispatchWorkers(hub).catch(() => {}); // workers may not exist yet (first dispatch after boot)
+    void syncDispatchWorkers(hub)
+      .then(() => {
+        needsWorkerResync = false;
+      })
+      .catch(() => {
+        needsWorkerResync = true; // arm the per-tick retry — never silent forever (#291 F10)
+      }); // workers may not exist yet (first dispatch after boot)
     // a lost claim (#162) is a stale duplicate, not a dispatch — the scan keeps looking
     const dispatched = await dispatchTask(hit.taskId, tandemUrl);
     return dispatched.runId !== null;
@@ -491,6 +517,7 @@ export async function onDispatcherSettingsChanged() {
     // the follow-up execution guarantees the NEW cap applies now, not next trigger
     await syncDispatchWorkers(hub, { resyncAfter: true });
   } catch (e) {
+    needsWorkerResync = true; // arm the per-tick retry (#291 F10) — a swallowed hire-time resync must never strand a workerless queue
     log.warn('dispatch worker resync failed:', (e as Error).message);
   }
 }
