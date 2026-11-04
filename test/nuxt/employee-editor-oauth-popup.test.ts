@@ -37,11 +37,13 @@ function envelope(payload: unknown) {
   return new Response(JSON.stringify({ json: payload }), { headers: { 'content-type': 'application/json' } });
 }
 
-/** the one oauth binding the editor loads (unmapped rpc URLs fail loudly) */
+/** the one oauth binding the editor loads (unmapped rpc URLs fail loudly).
+ *  MCP arms pin the FULL wire path — includes() would also serve
+ *  bindingsListByServer and leave the procedure identity unpinned */
 function readCalls(url: string): Response | null {
-  if (url.includes('bindingsList')) return envelope({ data: [oauthBinding], total: 1 });
-  if (url.includes('oauthConnect')) return null; // the mint dispatch — each test owns it
-  if (url.includes('registryList')) return envelope({ data: [], total: 0 });
+  if (url.endsWith('/mcp/bindingsList')) return envelope({ data: [oauthBinding] });
+  if (url.endsWith('/mcp/oauthConnect')) return null; // the mint dispatch — each test owns it
+  if (url.endsWith('/mcp/registryList')) return envelope({ data: [] });
   if (url.includes('titles')) return envelope({ titles: [] });
   if (url.includes('vault')) return envelope({ data: [], total: 0 });
   if (url.includes('environments')) return envelope([]);
@@ -91,7 +93,7 @@ it('popup blocked: the modal says why, and no server-side mint is spent', async 
   await vi.waitFor(() => {
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('Popup blocked');
   });
-  const mintCalls = fetchStub.mock.calls.filter(([input]) => String(input).includes('oauthConnect'));
+  const mintCalls = fetchStub.mock.calls.filter(([input]) => String(input).endsWith('/mcp/oauthConnect'));
   expect(mintCalls).toHaveLength(0);
   await c.unmount();
 });
@@ -103,7 +105,7 @@ it('mint failure: the modal surfaces the rejection and closes the popup', async 
     vi.fn(() => popup),
   );
   await stubFetch((url) => {
-    if (url.includes('oauthConnect')) throw new Error('mint rejected by test');
+    if (url.endsWith('/mcp/oauthConnect')) throw new Error('mint rejected by test');
     return readCalls(url);
   });
   const c = await openEditor();
