@@ -17,7 +17,6 @@ const h = vi.hoisted(() => ({
   published: 0,
   cancelled: [] as string[],
   spawns: [] as Array<{ employeeId: string; role: string }>,
-  healStatus: 'done' as string,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -63,10 +62,6 @@ vi.mock('../../server/db/index', async () => {
       query: {
         tasks: {
           findMany: async () => h.taskRows,
-          // the answer's CAS-miss heal re-reads the task (#314): a settle that won
-          // the race has ALREADY moved the status off waiting_answer — the heal
-          // must see the moved status and spawn nothing
-          findFirst: async () => ({ status: h.healStatus }),
         },
         taskStatuses: { findMany: async () => h.statuses },
       },
@@ -130,7 +125,6 @@ beforeEach(() => {
   h.cancelWins = true;
   h.statuses = [{ id: STATUS.inReview, category: CATEGORY.IN_REVIEW }];
   h.spawns = [];
-  h.healStatus = STATUS.done;
   h.teardowns = [];
   h.updates = [];
   h.notes = [];
@@ -234,8 +228,9 @@ describe('submit/answer terminal arbitration (#292 r1 mirror of #287)', () => {
     await expect(answerQuestion('task-1', 'owner-1', 'here is the answer')).rejects.toThrow(
       /task state changed during answer/,
     );
-    // the settle owns the outcome (#314 heal): the status moved off waiting_answer,
-    // so the strand-heal must NOT resurrect an ANSWER obligation on a settled task
+    // the settle owns the outcome, OBLIGATIONS INCLUDED (#314 r1): a lost answer
+    // race cancels NOTHING — no ANSWER cancel, no heal spawn on the settled task
+    expect(h.cancelled).toHaveLength(0);
     expect(h.spawns).toHaveLength(0);
   });
 });

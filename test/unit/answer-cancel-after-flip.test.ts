@@ -1,24 +1,23 @@
-// CAS-MISS HEAL on the answer path (#314): answerQuestion cancels the ANSWER
-// obligation BEFORE the arbitration flip; a 0-row CAS miss (any concurrent task
-// write won) used to throw while the cancellation stood — the task stayed
+// OBLIGATION CANCEL-AFTER-FLIP on the answer path (#314): answerQuestion used to
+// cancel the ANSWER obligation BEFORE the arbitration flip; a 0-row CAS miss (any
+// concurrent task write won) threw while the cancellation stood — the task stayed
 // waiting_answer with NO obligation, so the question dropped off every
-// needs-my-decision surface with no heal (the retry gate checks chain
-// membership, not obligation presence). The heal re-spawns the obligation when
-// the task STILL reads the same waiting_answer status (PENDING-dedupe makes the
-// restore idempotent); when the status MOVED, the rival writer owns the outcome
-// (TERMINAL ARBITRATION #287/#292) — never a stale resurrection off the flow.
+// needs-my-decision surface with no heal. Reordered (r1 review): the cancel runs
+// only after a WON flip — a lost race touches NO obligation rows (the winning
+// writer owns status AND obligations; a miss-path heal was reviewed out: an
+// unguarded read→spawn re-opens the strand via settle write-then-cancel and
+// forward races — shared-state guard law).
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CATEGORY, OBLIGATION_ROLE } from '#shared/enums';
 
 const h = vi.hoisted(() => ({
   taskRows: [] as Array<Record<string, unknown>>,
-  healReadStatus: null as string | null,
   statuses: [] as Array<{ id: string; category: string }>,
   spawns: [] as Array<{ taskId: string; employeeId: string; role: string }>,
   cancelled: [] as string[],
+  seq: [] as string[],
   taskUpdateWins: false,
-  holder: 'holder-1' as string | null,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -32,14 +31,17 @@ vi.mock('../../server/db/index', async () => {
       update: (table: unknown) => ({
         set: () => ({
           where: () => ({
-            returning: async () => (table === tasks && h.taskUpdateWins ? [{ id: 'task-1' }] : []),
+            returning: async () => {
+              if (table !== tasks) return [];
+              h.seq.push('flip');
+              return h.taskUpdateWins ? [{ id: 'task-1' }] : [];
+            },
           }),
         }),
       }),
       query: {
         tasks: {
           findMany: async () => h.taskRows,
-          findFirst: async () => ({ status: h.healReadStatus }),
         },
         taskStatuses: { findMany: async () => h.statuses },
       },
@@ -53,8 +55,9 @@ vi.mock('../../server/domains/tasks/review.service', () => ({
 }));
 
 vi.mock('../../server/domains/tasks/obligations.service', () => ({
-  answerHolder: async () => h.holder,
+  answerHolder: async () => 'holder-1',
   cancelObligations: async (_taskId: unknown, role: string) => {
+    h.seq.push('cancel');
     h.cancelled.push(String(role));
   },
   spawnObligation: async (taskId: string, employeeId: string, role: string) => {
@@ -93,45 +96,27 @@ function seedWaitingTask(chain: string[]) {
 beforeEach(() => {
   h.spawns = [];
   h.cancelled = [];
+  h.seq = [];
   h.taskUpdateWins = false;
-  h.healReadStatus = null;
-  h.holder = 'holder-1';
   seedWaitingTask(['holder-1', 'answerer']);
 });
 
-describe('answerQuestion CAS-miss heal (#314)', () => {
-  it('a lost flip while the task still waits restores the obligation, then refuses', async () => {
-    h.healReadStatus = 'st-wait';
+describe('answerQuestion cancels the ANSWER obligation only after a won flip (#314)', () => {
+  it('a lost flip touches NO obligation rows — the winning writer owns status and obligations', async () => {
     await expect(answerQuestion('task-1', 'answerer', 'the answer')).rejects.toThrow(
       /task state changed during answer/,
     );
-    expect(h.cancelled).toEqual([String(OBLIGATION_ROLE.ANSWER)]);
-    expect(h.spawns).toEqual([{ taskId: 'task-1', employeeId: 'holder-1', role: String(OBLIGATION_ROLE.ANSWER) }]);
-  });
-
-  it('a lost flip after the status moved never resurrects a stale obligation', async () => {
-    h.healReadStatus = 'st-custom-done';
-    await expect(answerQuestion('task-1', 'answerer', 'the answer')).rejects.toThrow(
-      /task state changed during answer/,
-    );
+    expect(h.cancelled).toHaveLength(0);
     expect(h.spawns).toHaveLength(0);
+    expect(h.seq).toEqual(['flip']);
   });
 
-  it('a null holder falls back to the question-chain tail', async () => {
-    seedWaitingTask(['holder-1', 'tail-guy']);
-    // the author must be in the chain to pass the gate — 'tail-guy' is both
-    h.holder = null;
-    h.healReadStatus = 'st-wait';
-    await expect(answerQuestion('task-1', 'tail-guy', 'the answer')).rejects.toThrow(
-      /task state changed during answer/,
-    );
-    expect(h.spawns).toEqual([{ taskId: 'task-1', employeeId: 'tail-guy', role: String(OBLIGATION_ROLE.ANSWER) }]);
-  });
-
-  it('a WON flip (no race) takes the normal path — no heal spawn', async () => {
+  it('a WON flip cancels the obligation AFTER the flip — never before', async () => {
     h.taskUpdateWins = true;
     const res = await answerQuestion('task-1', 'answerer', 'the answer');
     expect(res).toEqual({ ok: true });
+    expect(h.cancelled).toEqual([String(OBLIGATION_ROLE.ANSWER)]);
+    expect(h.seq).toEqual(['flip', 'cancel']);
     expect(h.spawns).toHaveLength(0);
   });
 });

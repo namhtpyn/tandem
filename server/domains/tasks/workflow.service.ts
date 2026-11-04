@@ -182,10 +182,6 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
     throw new Error('task is not waiting for an answer');
   const chain = task.questionChain;
   if (!chain.includes(authorId)) throw new Error('only someone in the question chain can answer');
-  // capture the holder BEFORE the cancel — after it, answerHolder reads null and
-  // a CAS-miss heal would have nobody to restore to
-  const holder = await answerHolder(taskId);
-  await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
   // a LIVE review round returns to in-review (the round is still open); the
   // assignee's own question returns to todo so the agent resumes with the answer
   const backTo = (await openRoundLive(taskId)) ? IN_REVIEW_STATUS : TODO_STATUS;
@@ -200,22 +196,18 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
     })
     .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
     .returning({ id: tasks.id });
-  if (flipped.length === 0) {
-    // CAS-MISS HEAL (#314): the cancel above already stands while the flip lost —
-    // without a repair the task stays waiting_answer with NO ANSWER obligation and
-    // the question drops off every needs-my-decision surface with no heal. If the
-    // task STILL reads the same waiting_answer status, re-spawn the obligation
-    // (PENDING-dedupe makes the restore idempotent; a null holder falls back to
-    // the chain tail). If the status MOVED, the rival writer owns the outcome
-    // (TERMINAL ARBITRATION #287/#292) — never resurrect a stale obligation off
-    // the flow.
-    const now = await db.query.tasks.findFirst({ columns: { status: true }, where: { id: { eq: taskId } } });
-    if (now?.status === task.status) {
-      const restoreTo = holder ?? chain[chain.length - 1];
-      if (restoreTo) await spawnObligation(taskId, restoreTo, OBLIGATION_ROLE.ANSWER);
-    }
-    throw new Error('task state changed during answer — a settle owns the outcome');
-  }
+  if (flipped.length === 0) throw new Error('task state changed during answer — a settle owns the outcome');
+  // OBLIGATION CANCEL-AFTER-FLIP (#314, r1 review): the ANSWER obligation is
+  // cancelled only AFTER a WON flip. Cancel-before-flip stranded the classic lost
+  // race — the refusal threw while the cancellation had already landed: task still
+  // waiting_answer, no ANSWER obligation, the question invisible on every
+  // needs-my-decision surface with no heal. Reordered, a lost race touches NO
+  // obligation rows — the winning writer owns the status AND its obligations (its
+  // own teardown cancels/resolves them, #205/#288); a heal on the miss path was
+  // reviewed out (r1: an unguarded read→spawn re-opens the strand via settle
+  // write-then-cancel and forward races — shared-state guard law). The ms-wide
+  // won-flip→cancel window mirrors the settle path's write-then-cancel shape.
+  await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
   if (backTo === IN_REVIEW_STATUS) {
     // a review-round question was answered — the AI reviewer's turn re-arms
     await dispatchAiReviewTurns(taskId);
