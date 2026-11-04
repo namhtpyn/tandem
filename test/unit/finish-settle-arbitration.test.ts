@@ -67,7 +67,9 @@ vi.mock('../../server/db/index', async () => {
             // bounce REACH the write, so the tasksWrites counter actually catches
             // it (a null read would no-op the bounce and hide the regression)
             findMany: async () =>
-              table === 'tasks' ? [{ status: h.fixtureTaskStatus ?? STATUS.doing, failStreak: h.fixtureFailStreak }] : [],
+              table === 'tasks'
+                ? [{ status: h.fixtureTaskStatus ?? STATUS.doing, failStreak: h.fixtureFailStreak }]
+                : [],
             findFirst: async () => (table === 'taskRuns' ? { id: h.latestRunId } : null),
           }),
         },
