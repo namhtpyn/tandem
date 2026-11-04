@@ -392,8 +392,11 @@ test.describe('mcp registry + bindings', () => {
       dialog.getByTestId(`mcp-server-binding-${emp2Name}`).getByTestId('mcp-server-binding-cred'),
     ).toContainText(`MCP cred ${tag}`, { timeout: 15_000 });
 
-    // unbind emp2 from the /mcp modal → the editor loses the binding too
+    // unbind emp2 from the /mcp modal — two-step confirm (parity with the
+    // editor; the destructive click is not a single stray click)
     await dialog.getByTestId(`mcp-server-binding-${emp2Name}`).getByTestId('mcp-server-binding-unbind').click();
+    await expect(dialog.getByTestId('mcp-server-binding-unbind-ask')).toBeVisible();
+    await dialog.getByTestId('mcp-server-binding-unbind-confirm').click();
     await expect(dialog.getByTestId(`mcp-server-binding-${emp2Name}`)).toHaveCount(0, { timeout: 15_000 });
     await expect(dialog.getByTestId(`mcp-server-binding-${employeeName}`)).toBeVisible();
 

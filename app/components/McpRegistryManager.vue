@@ -314,12 +314,22 @@ async function unbind(b: ServerBindingRow) {
   bindBusy.value = true;
   try {
     await bindRemoveMutation.mutateAsync({ employeeId: b.employeeId, serverId: row.id });
+    unbindCandidate.value = null;
     await bindingsLive.refetch();
   } catch (e) {
     bindingsError.value = errorMessage(e, saveFailed(e, 'server'));
   } finally {
     bindBusy.value = false;
   }
+}
+
+// unbind rides a two-step confirm (parity with the editor's MCP section): on an
+// oauth binding it best-effort REVOKES the provider tokens — irreversible
+const unbindCandidate = ref<ServerBindingRow | null>(null);
+
+function askUnbind(b: ServerBindingRow) {
+  bindingsError.value = null;
+  unbindCandidate.value = b;
 }
 </script>
 
@@ -734,31 +744,70 @@ async function unbind(b: ServerBindingRow) {
               </p>
             </div>
             <div class="flex shrink-0 items-center gap-1">
-              <USelectMenu
-                :model-value="b.secretId"
-                :items="secretItems"
-                value-key="value"
-                clear
-                placeholder="Credential (optional)"
-                icon="i-lucide-key-round"
-                class="w-44"
-                :disabled="bindBusy"
-                :aria-label="`Credential for ${b.employeeName}`"
-                @update:model-value="(v: string | null) => setCredential(b, v)"
-              />
-              <UButton
-                icon="i-lucide-unlink"
-                color="error"
-                variant="ghost"
-                size="sm"
-                :aria-label="`Unbind ${b.employeeName}`"
-                data-testid="mcp-server-binding-unbind"
-                :disabled="bindBusy"
-                @click="unbind(b)"
-              />
+              <template v-if="unbindCandidate?.id === b.id">
+                <span class="text-muted text-xs" data-testid="mcp-server-binding-unbind-ask"
+                  >Unbind {{ b.employeeName }}?</span
+                >
+                <UButton
+                  label="Unbind"
+                  color="error"
+                  size="sm"
+                  data-testid="mcp-server-binding-unbind-confirm"
+                  :loading="bindBusy"
+                  @click="unbind(b)"
+                />
+                <UButton label="Keep" variant="ghost" color="neutral" size="sm" @click="unbindCandidate = null" />
+              </template>
+              <template v-else>
+                <USelectMenu
+                  v-if="b.authKind !== 'oauth'"
+                  :model-value="b.secretId"
+                  :items="secretItems"
+                  value-key="value"
+                  clear
+                  placeholder="Credential (optional)"
+                  icon="i-lucide-key-round"
+                  class="w-44"
+                  :disabled="bindBusy"
+                  :aria-label="`Credential for ${b.employeeName}`"
+                  @update:model-value="(v: string | null) => setCredential(b, v)"
+                />
+                <UButton
+                  icon="i-lucide-unlink"
+                  color="error"
+                  variant="ghost"
+                  size="sm"
+                  :aria-label="`Unbind ${b.employeeName}`"
+                  data-testid="mcp-server-binding-unbind"
+                  :disabled="bindBusy"
+                  @click="askUnbind(b)"
+                />
+              </template>
             </div>
           </div>
-          <p v-if="!serverBindings.length" class="text-muted text-sm">No agents bound — bind one below.</p>
+          <!-- a failed read must NOT read as an authoritative empty state: the
+               error banner + retry stand in, and the empty line hides -->
+          <UAlert
+            v-if="bindingsLive.isError.value"
+            role="alert"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            title="Couldn't load bindings"
+            :ui="{ title: 'text-sm' }"
+          >
+            <UButton
+              label="Retry"
+              size="sm"
+              variant="soft"
+              color="primary"
+              class="mt-2"
+              @click="bindingsLive.refetch()"
+            />
+          </UAlert>
+          <p v-if="!serverBindings.length && !bindingsLive.isError.value" class="text-muted text-sm">
+            No agents bound — bind one below.
+          </p>
 
           <div class="mt-3 space-y-2 border-t pt-3">
             <USelectMenu
