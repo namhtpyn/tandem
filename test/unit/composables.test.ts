@@ -9,6 +9,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { ref } from 'vue';
 
 import { ROLE } from '#shared/enums';
+import type { Role } from '#shared/enums';
 type Ref<T> = { value: T };
 const stateStore = new Map<string, Ref<unknown>>();
 function useStateStub<T>(key: string, init: () => T): Ref<T> {
@@ -89,6 +90,41 @@ describe('useIsAdmin', () => {
     expect(isAdmin.value).toBe(true);
     session.value = { user: { id: 'x', name: 'X', email: 'x@x', role: ROLE.VIEWER } };
     expect(isAdmin.value).toBe(false);
+  });
+});
+
+describe('useCanWork (#300 employee-tier render gate)', () => {
+  it.each([
+    [ROLE.ADMIN, true],
+    [ROLE.EMPLOYEE, true],
+    [ROLE.VIEWER, false],
+    // unknown roles read as VIEWER server-side — the UI gate mirrors that
+    ['SUPERUSER', false],
+  ] as const)('role %s -> %s', async (role, expected) => {
+    const m = await import('../../app/composables/useAppSession.ts');
+    m.useAppSession().value = {
+      user: { id: 'x', name: 'X', email: 'x@x', role: role as unknown as Role },
+    };
+    expect(m.useCanWork().value).toBe(expected);
+  });
+
+  it('anonymous (null session) reads as no-work', async () => {
+    const m = await import('../../app/composables/useAppSession.ts');
+    expect(m.useCanWork().value).toBe(false);
+  });
+
+  it('tracks a role change reactively (promotion/demotion flips the gate)', async () => {
+    const m = await import('../../app/composables/useAppSession.ts');
+    const session = m.useAppSession();
+    session.value = { user: { id: 'x', name: 'X', email: 'x@x', role: ROLE.VIEWER } };
+    const canWork = m.useCanWork();
+    expect(canWork.value).toBe(false);
+    session.value = { user: { id: 'x', name: 'X', email: 'x@x', role: ROLE.EMPLOYEE } };
+    expect(canWork.value).toBe(true);
+    session.value = { user: { id: 'x', name: 'X', email: 'x@x', role: ROLE.ADMIN } };
+    expect(canWork.value).toBe(true);
+    session.value = { user: { id: 'x', name: 'X', email: 'x@x', role: ROLE.VIEWER } };
+    expect(canWork.value).toBe(false);
   });
 });
 
