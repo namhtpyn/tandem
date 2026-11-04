@@ -18,6 +18,13 @@ const h = vi.hoisted(() => ({
   tasksSets: [] as Array<Record<string, unknown>>,
   // make the mocked submitResult throw (drives settleDoneRun's FAILURE arm)
   failSubmit: false,
+  // how many publishes had fired when submitResult ran (0 = settle precedes the
+  // lifecycle publishes — the r6 pin that binds ORDER, not just before-return)
+  settlePublishCounts: [] as number[],
+  // fixture knobs for bounceTaskAfterRun's guards (r6 blind review: the negative
+  // arms of the still-doing + ladder-tier checks need overridable fixtures)
+  fixtureTaskStatus: null as string | null,
+  fixtureFailStreak: 0,
   // was finish() already resolved when submitResult fired? (await-discipline pin)
   finishResolved: false,
   settleResolvedAtCall: [] as boolean[],
@@ -59,7 +66,8 @@ vi.mock('../../server/db/index', async () => {
             // tasks.write: returning a doing task + the current run lets a rogue
             // bounce REACH the write, so the tasksWrites counter actually catches
             // it (a null read would no-op the bounce and hide the regression)
-            findMany: async () => (table === 'tasks' ? [{ status: STATUS.doing, failStreak: 0 }] : []),
+            findMany: async () =>
+              table === 'tasks' ? [{ status: h.fixtureTaskStatus ?? STATUS.doing, failStreak: h.fixtureFailStreak }] : [],
             findFirst: async () => (table === 'taskRuns' ? { id: h.latestRunId } : null),
           }),
         },
@@ -138,6 +146,7 @@ vi.mock('../../server/domains/tasks/workflow.service', async (importOriginal) =>
     submitResult: async () => {
       h.envelopeSettles += 1;
       h.settleResolvedAtCall.push(h.finishResolved);
+      h.settlePublishCounts.push(h.published.length);
       if (h.failSubmit) throw new Error('submit failed (injected)');
       return { status: 'done' };
     },
@@ -177,6 +186,9 @@ beforeEach(() => {
   h.flipSets = [];
   h.tasksSets = [];
   h.failSubmit = false;
+  h.settlePublishCounts = [];
+  h.fixtureTaskStatus = null;
+  h.fixtureFailStreak = 0;
   h.finishResolved = false;
   h.settleResolvedAtCall = [];
   h.parkResolvedFlags = [];
@@ -196,14 +208,22 @@ describe('writer.finish settle arbitration (#286)', () => {
     const writer = createRunWriter('run-1', '', 'msg-1');
     writer.onLine('agent output');
     await writer
-      .finish('task-1', RUN_STATUS.FAILED, 1, {
-        review: { resultBody: 'submitted work' },
-        ai: { userId: 'agent-1' },
-      })
+      .finish(
+        'task-1',
+        RUN_STATUS.FAILED,
+        1,
+        {
+          review: { resultBody: 'submitted work' },
+          ai: { userId: 'agent-1' },
+        },
+        ['tok-1'],
+      )
       .then(() => {
         h.finishResolved = true;
       });
     expect(h.bodyWrites).toHaveLength(1);
+    expect(h.bodyWrites[0]?.[2]).toBe(true); // review turn: the bubble parses as a verdict
+    expect(h.attachments).toBe(1); // POSITIVE CONTROL for the lost-CAS attachments===0 pin
     expect(h.parks).toHaveLength(1);
     expect(h.parks[0]?.rearmable).toBe(true);
     expect(h.published).toEqual(LIFECYCLE_PUBLISHES);
@@ -300,6 +320,7 @@ describe('writer.finish settle arbitration (#286)', () => {
     await drain();
     expect(h.tasksWrites).toBeGreaterThanOrEqual(1);
     expect(h.parks).toHaveLength(0); // work runs bounce, review turns park
+    expect(h.bodyWrites[0]?.[2]).toBe(false); // work turn: the bubble parses as work output
     // lifecycle publishes come first and in order; the bounce adds its own
     // re-emits (tasks write + logRun) after them
     expect(h.published.slice(0, LIFECYCLE_PUBLISHES.length)).toEqual(LIFECYCLE_PUBLISHES);
@@ -410,10 +431,18 @@ describe('writer.finish settle arbitration (#286)', () => {
     expect(h.envelopeSettles).toBe(1);
     expect(h.settleResolvedAtCall).toEqual([false]);
     expect(h.bodyWrites).toHaveLength(1);
+    // settle-vs-publish ORDER (not just before-return): submitResult fired while
+    // ZERO lifecycle publishes had fired — moving the settle after the publishes
+    // (M42) still reads settleResolvedAtCall=[false] but flips this counter
+    expect(h.settlePublishCounts).toEqual([0]);
     // exactly ONE tasks.write on this arm: settleDoneRun's post-settle reset
     // (failStreak 0 + dispatchAfter null) — the SPEC's "streak reset only AFTER a
     // successful settle"; dropping it grows the backoff ladder across successes
     expect(h.tasksWrites).toBe(1);
+    // the reset's SET payload is contract too: a successful settle disarms the
+    // ladder completely (a stale failStreak=1 or kept dispatchAfter re-arms a
+    // phantom backoff tier on the next failure)
+    expect(h.tasksSets[0]).toMatchObject({ failStreak: 0, dispatchAfter: null });
     expect(h.published).toEqual(LIFECYCLE_PUBLISHES);
     // the DONE arm's SET payload is bound too: the verdict it was given + the
     // full output tail (a constant-FAILED mutant passes the FAILED-arm pin above)
@@ -423,5 +452,77 @@ describe('writer.finish settle arbitration (#286)', () => {
       `no DONE settle SET with the full tail (sets: ${JSON.stringify(h.flipSets.map((s) => ({ keys: Object.keys(s), status: typeof s.status === 'string' ? s.status : '<non-string>', output: typeof s.output === 'string' ? s.output : '<sql>' })))})`,
     ).toBeDefined();
     expect(doneFlip?.exitCode).toBe(0);
+  });
+
+  it('finish settles EXACTLY once (the settled-once memo)', async () => {
+    // attemptFailed rides on this: a second finish after a DONE settle must be a
+    // full no-op — dropping the memo re-runs the CAS + settle arms (FAILED over
+    // DONE, double envelope submit, double bounce)
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    writer.onLine('all work complete');
+    await writer.finish('task-1', RUN_STATUS.DONE, 0, { ai: { userId: 'agent-1' } });
+    await writer.finish('task-1', RUN_STATUS.FAILED, 1, { ai: { userId: 'agent-1' } });
+    await drain();
+    // the second finish touched NOTHING: no second envelope settle, no FAILED
+    // rewrite over the DONE verdict, no double reset
+    expect(h.envelopeSettles).toBe(1);
+    expect(h.bodyWrites).toHaveLength(1);
+    expect(h.tasksWrites).toBe(1);
+    expect(h.parks).toHaveLength(0);
+  });
+
+  it('a non-doing task is never resurrected (bounce still-doing guard, negative arm)', async () => {
+    // cancelled/done/in-review tasks must not re-arm backoff (SPEC bounce law).
+    // The fixture knob flips the read side: the mutant dropping the guard clause
+    // writes anyway and this catches it.
+    h.fixtureTaskStatus = STATUS.done;
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    writer.onLine('agent output');
+    await writer.finish('task-1', RUN_STATUS.FAILED, 1, { ai: { userId: 'agent-1' } });
+    await drain();
+    expect(h.tasksWrites).toBe(0);
+    expect(h.published).toEqual(LIFECYCLE_PUBLISHES);
+  });
+
+  it('a quota/limit failure jumps the ladder to the longest tier (15m)', async () => {
+    // SPEC resilience law: quota/limit signatures skip straight to the cap tier —
+    // dropping the output argument re-dispatches a rate-limited run in 1 minute
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    const t0 = new Date();
+    writer.onLine('429 rate limit exceeded — billing');
+    await writer.finish('task-1', RUN_STATUS.FAILED, 1, { ai: { userId: 'agent-1' } });
+    await drain();
+    expect(h.tasksWrites).toBe(1);
+    expect((h.tasksSets[0]?.dispatchAfter as Date).getTime()).toBeGreaterThanOrEqual(t0.getTime() + 14 * 60_000);
+  });
+
+  it('the ladder tier follows the streak (2 existing failures -> 5m wait)', async () => {
+    // off-by-one in the tier index is invisible at fixture streak 0 (both land in
+    // the 1m tier) — a pre-armed ladder must step UP a tier
+    h.fixtureFailStreak = 1;
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    const t0 = new Date();
+    writer.onLine('agent output');
+    await writer.finish('task-1', RUN_STATUS.FAILED, 1, { ai: { userId: 'agent-1' } });
+    await drain();
+    expect(h.tasksSets[0]?.failStreak).toBe(2);
+    expect((h.tasksSets[0]?.dispatchAfter as Date).getTime()).toBeGreaterThanOrEqual(t0.getTime() + 4 * 60_000);
+  });
+
+  it('a review verdict settle failure parks REARMABLE (infra-class, #211)', async () => {
+    // settleDoneRun's catch arm for review plans: an infra-class throw must park
+    // on the owner with the re-arm flag — dropping { rearmable: true } wedges the
+    // round as a decision park until a human
+    h.failSubmit = true;
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    writer.onLine('all work complete');
+    await writer.finish('task-1', RUN_STATUS.DONE, 0, {
+      review: { resultBody: 'submitted review' },
+      ai: { userId: 'agent-1' },
+    });
+    await drain();
+    expect(h.parks).toHaveLength(1);
+    expect(h.parks[0]?.rearmable).toBe(true);
+    expect(h.tasksWrites).toBe(0); // review plans bounce no-ops; only the reset would write
   });
 });
