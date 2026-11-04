@@ -1,3 +1,11 @@
+## [2.67.6](https://github.com/namhtpyn/tandem/compare/v2.67.5...v2.67.6) (2026-11-04)
+
+
+### Bug Fixes
+
+* [#291](https://github.com/namhtpyn/tandem/issues/291) lifecycle hygiene — stop-marker pre-try leak, per-tick worker-resync retry, refresh-warn eviction ([c6ba999](https://github.com/namhtpyn/tandem/commit/c6ba999bcac9edf47a0be378ff3fc84a650a8dc7))
+* [#291](https://github.com/namhtpyn/tandem/issues/291) review rounds — pre-try-window marker cleanup, unique-id marker tests, full refresh-warn eviction coverage ([e02c47e](https://github.com/namhtpyn/tandem/commit/e02c47eb34d652e84a9e4e83a3d8e16fabbdf116))
+
 ## [2.67.5](https://github.com/namhtpyn/tandem/compare/v2.67.4...v2.67.5) (2026-11-04)
 
 
