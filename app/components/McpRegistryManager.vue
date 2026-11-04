@@ -8,6 +8,7 @@ import { useMutation, useQuery } from '@tanstack/vue-query';
 import { computed, ref, unref } from 'vue';
 import { z } from 'zod';
 
+import { CHANGE_RESOURCE } from '#shared/enums';
 import { formatWhenShort } from '~/utils/format-when';
 import { errorMessage, saveFailed } from '~/utils/forms';
 import type { EmployeeRow } from '~/utils/orpc-types';
@@ -15,10 +16,8 @@ import type { SecretOption } from '~/utils/vault-options';
 import { groupedSecretOptions } from '~/utils/vault-options';
 
 // change-bus resource token the MCP domain publishes under — useChangeEvents
-// invalidates [resource] prefixes, so the key must start with it. (Swapped to
-// CHANGE_RESOURCE.MCP once the enum gains the entry; the SCREAMING_SNAKE_CASE
-// value is stable either way.)
-const MCP_RESOURCE = 'MCP';
+// invalidates [resource] prefixes, so the key must start with it
+const MCP_RESOURCE = CHANGE_RESOURCE.MCP;
 
 const { $orpc } = useNuxtApp();
 
@@ -254,8 +253,7 @@ const bindFormDisabled = computed(() => bindBusy.value || unref(bindingsLive.isP
 
 // AI-employee picker — employees.list carries every row with kind; only AI
 // agents can bind (the server asserts it too), and bound agents drop out
-const EMPLOYEES_RESOURCE = 'EMPLOYEES';
-const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [EMPLOYEES_RESOURCE, 'list'] }));
+const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [CHANGE_RESOURCE.EMPLOYEES, 'list'] }));
 const bindableEmployeeItems = computed(() =>
   ((unref(employeesLive.data) ?? []) as EmployeeRow[])
     .filter((e) => e.kind === 'ai' && !serverBindings.value.some((b) => b.employeeId === e.id))
@@ -265,6 +263,11 @@ const bindableEmployeeItems = computed(() =>
 function openBindings(row: RegistryRow) {
   bindingsRow.value = { id: row.id, name: row.name };
   bindingsError.value = null;
+  // a closed modal must not carry armed destructive confirms or a stale
+  // connect banner into the next open
+  unbindCandidate.value = null;
+  clearCandidate.value = null;
+  connectError.value = null;
   newBindEmployeeId.value = null;
   newBindSecretId.value = null;
   bindingsOpen.value = true;
@@ -849,10 +852,14 @@ function askUnbind(b: ServerBindingRow) {
               </template>
             </div>
           </div>
-          <!-- a failed read must NOT read as an authoritative empty state: the
-               error banner + retry stand in, and the empty line hides -->
+          <!-- a pending/failed read must NOT read as an authoritative empty
+               state: loading line while pending, error banner + retry on
+               failure, and the empty line only for a settled empty read -->
+          <p v-if="unref(bindingsLive.isPending) && !serverBindings.length" class="text-muted text-sm">
+            Loading bindings…
+          </p>
           <UAlert
-            v-if="bindingsLive.isError.value"
+            v-else-if="bindingsLive.isError.value"
             role="alert"
             icon="i-lucide-circle-alert"
             color="error"
@@ -869,9 +876,7 @@ function askUnbind(b: ServerBindingRow) {
               @click="bindingsLive.refetch()"
             />
           </UAlert>
-          <p v-if="!serverBindings.length && !bindingsLive.isError.value" class="text-muted text-sm">
-            No agents bound — bind one below.
-          </p>
+          <p v-else-if="!serverBindings.length" class="text-muted text-sm">No agents bound — bind one below.</p>
 
           <div class="mt-3 space-y-2 border-t pt-3">
             <USelectMenu

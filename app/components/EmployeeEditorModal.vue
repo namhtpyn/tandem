@@ -307,9 +307,8 @@ onServerPrefetch(() =>
 // /employees surface is admin-tier so this section only renders there.
 
 // change-bus resource token the MCP domain publishes under — same key prefix
-// as McpRegistryManager so both surfaces share one cache entry (swapped to
-// CHANGE_RESOURCE.MCP once the enum gains the entry).
-const MCP_RESOURCE = 'MCP';
+// as McpRegistryManager so both surfaces share one cache entry
+const MCP_RESOURCE = CHANGE_RESOURCE.MCP;
 
 /** binding row per the mcp.bindingsList result (SPEC procedure table) */
 type McpBindingRow = {
@@ -733,8 +732,15 @@ function oauthStatusLabel(b: McpBindingRow) {
             />
             <!-- edit mode: the live binding list — unbinding revokes on the agent's next dispatch -->
             <div v-if="editingId" class="space-y-2">
-              <p v-if="mcpLoading && !mcpBindings.length" class="text-muted text-sm">Loading bindings…</p>
-              <p v-else-if="!mcpBindings.length" class="text-muted text-sm">No MCP servers bound.</p>
+              <p
+                v-if="(mcpLoading || unref(mcpBindingsLive.isPending)) && !mcpBindings.length"
+                class="text-muted text-sm"
+              >
+                Loading bindings…
+              </p>
+              <p v-else-if="!mcpBindings.length && !unref(mcpBindingsLive.isError)" class="text-muted text-sm">
+                No MCP servers bound.
+              </p>
               <div
                 v-for="b in mcpBindings"
                 :key="b.id"
