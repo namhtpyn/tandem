@@ -118,6 +118,7 @@ import {
   getFreshAccessToken,
   handleOauthCallback,
   oauthConfigFingerprint,
+  oauthConnectOrigin,
   oauthRedirectUri,
   oauthStatusFor,
   revokeOauthTokens,
@@ -190,6 +191,23 @@ describe('oauthRedirectUri', () => {
     process.env.TANDEM_PUBLIC_URL = '';
     expect(oauthRedirectUri('http://local:4100')).toBe('http://local:4100/api/mcp/oauth/callback');
     process.env.TANDEM_PUBLIC_URL = 'https://tandem.example.com';
+  });
+});
+
+// #278: the mint rides the oRPC POST — its request-origin derivation must
+// match what the deleted REST route performed (proxy headers first, host
+// fallback) so the provider's redirect_uri registration stays stable
+describe('oauthConnectOrigin', () => {
+  it('prefers x-forwarded-host/proto, takes the first comma entry', () => {
+    const h = new Headers({ 'x-forwarded-host': 'a.example.com, b.example.com', 'x-forwarded-proto': 'https,http' });
+    expect(oauthConnectOrigin(h)).toBe('https://a.example.com');
+  });
+  it('falls back to host with http when no proxy headers ride', () => {
+    expect(oauthConnectOrigin(new Headers({ host: 'local:4100' }))).toBe('http://local:4100');
+  });
+  it('defaults to localhost:3000 on empty/absent headers', () => {
+    expect(oauthConnectOrigin(new Headers())).toBe('http://localhost:3000');
+    expect(oauthConnectOrigin(undefined)).toBe('http://localhost:3000');
   });
 });
 
