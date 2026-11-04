@@ -14,6 +14,10 @@ const h = vi.hoisted(() => ({
   flipWheres: [] as unknown[],
   // the SET payloads of those same updates — pins the verdict + full-output tail
   flipSets: [] as Array<Record<string, unknown>>,
+  // the SET payloads of tasks updates (bounce's backoff write)
+  tasksSets: [] as Array<Record<string, unknown>>,
+  // make the mocked submitResult throw (drives settleDoneRun's FAILURE arm)
+  failSubmit: false,
   // was finish() already resolved when submitResult fired? (await-discipline pin)
   finishResolved: false,
   settleResolvedAtCall: [] as boolean[],
@@ -63,6 +67,7 @@ vi.mock('../../server/db/index', async () => {
       update: (table: unknown) => ({
         set: (_set: Record<string, unknown>) => {
           if (table === taskRuns) h.flipSets.push(_set);
+          if (table === tasks) h.tasksSets.push(_set);
           return {
             where: (_where: unknown) => {
               if (table === taskRuns) h.flipWheres.push(_where);
@@ -133,6 +138,7 @@ vi.mock('../../server/domains/tasks/workflow.service', async (importOriginal) =>
     submitResult: async () => {
       h.envelopeSettles += 1;
       h.settleResolvedAtCall.push(h.finishResolved);
+      if (h.failSubmit) throw new Error('submit failed (injected)');
       return { status: 'done' };
     },
     askQuestion: async () => ({}),
@@ -169,6 +175,8 @@ beforeEach(() => {
   h.tasksWrites = 0;
   h.flipWheres = [];
   h.flipSets = [];
+  h.tasksSets = [];
+  h.failSubmit = false;
   h.finishResolved = false;
   h.settleResolvedAtCall = [];
   h.parkResolvedFlags = [];
@@ -187,10 +195,14 @@ describe('writer.finish settle arbitration (#286)', () => {
   it('a won CAS (row still RUNNING) runs the full settle: body rewrite + review park', async () => {
     const writer = createRunWriter('run-1', '', 'msg-1');
     writer.onLine('agent output');
-    await writer.finish('task-1', RUN_STATUS.FAILED, 1, {
-      review: { resultBody: 'submitted work' },
-      ai: { userId: 'agent-1' },
-    });
+    await writer
+      .finish('task-1', RUN_STATUS.FAILED, 1, {
+        review: { resultBody: 'submitted work' },
+        ai: { userId: 'agent-1' },
+      })
+      .then(() => {
+        h.finishResolved = true;
+      });
     expect(h.bodyWrites).toHaveLength(1);
     expect(h.parks).toHaveLength(1);
     expect(h.parks[0]?.rearmable).toBe(true);
@@ -283,6 +295,7 @@ describe('writer.finish settle arbitration (#286)', () => {
     // tasksWrites===0 pins above (a dead counter passes every "no bounce" test)
     const writer = createRunWriter('run-1', '', 'msg-1');
     writer.onLine('agent output');
+    const t0 = new Date();
     await writer.finish('task-1', RUN_STATUS.FAILED, 1, { ai: { userId: 'agent-1' } });
     await drain();
     expect(h.tasksWrites).toBeGreaterThanOrEqual(1);
@@ -306,6 +319,14 @@ describe('writer.finish settle arbitration (#286)', () => {
     const expectedBounce = renderTasksWhere(and(eq(tasks.id, 'task-1'), eq(tasks.status, STATUS.doing)));
     expect(whereClauseOf(bounceWhere)).toBe(whereClauseOf(expectedBounce));
     expect(bounceWhere.params).toEqual(['task-1', STATUS.doing]);
+    // the bounce's SET payload is contract: ladder climbs (0 -> 1), status moves to
+    // todo, and the computed backoff lands in the FUTURE (an immediate/now stamp
+    // would trigger a redispatch storm instead of a backoff wait)
+    expect(h.tasksSets).toHaveLength(1);
+    const bounceSet = h.tasksSets[0];
+    expect(bounceSet?.status).toBe(STATUS.todo);
+    expect(bounceSet?.failStreak).toBe(1);
+    expect((bounceSet?.dispatchAfter as Date).getTime()).toBeGreaterThanOrEqual(t0.getTime() + 30_000);
   });
 
   it('a stale run never bounces the task (latest-run guard in bounceTaskAfterRun)', async () => {
@@ -318,6 +339,35 @@ describe('writer.finish settle arbitration (#286)', () => {
     await drain();
     expect(h.tasksWrites).toBe(0);
     expect(h.published).toEqual(LIFECYCLE_PUBLISHES);
+  });
+
+  it('a FAILED DONE settle keeps the ladder armed (settleDoneRun failure arm)', async () => {
+    // submit throws -> settleDoneRun's catch: bounce the task for retry and
+    // return 'backoff' BEFORE the streak reset. Mutant class (r5 blind review):
+    // dropping the early return falls through to the reset — the exact documented
+    // wedge "swallowing it here then resetting failStreak wedged the task".
+    h.failSubmit = true;
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    writer.onLine('all work complete');
+    await writer.finish('task-1', RUN_STATUS.DONE, 0, { ai: { userId: 'agent-1' } });
+    await drain();
+    expect(h.envelopeSettles).toBe(1); // the settle was attempted
+    // the bounce fired (retry re-arm), not the success-path streak reset: every
+    // tasks write here must carry the bounce's guarded re-check predicate
+    expect(h.tasksWrites).toBeGreaterThanOrEqual(1);
+    const renderTasksWhere = (where: unknown) =>
+      mockDb()
+        .select()
+        .from(tasks)
+        .where(where as never)
+        .toSQL();
+    for (const where of h.tasksWheres) {
+      expect(whereClauseOf(renderTasksWhere(where))).toBe(
+        whereClauseOf(renderTasksWhere(and(eq(tasks.id, 'task-1'), eq(tasks.status, STATUS.doing)))),
+      );
+    }
+    expect(h.parks).toHaveLength(0); // work plan: bounce, not park
+    expect(h.published.slice(0, LIFECYCLE_PUBLISHES.length)).toEqual(LIFECYCLE_PUBLISHES);
   });
 
   it('a lost CAS on a FAILED WORK run never bounces the task (the reaper-race arm)', async () => {
