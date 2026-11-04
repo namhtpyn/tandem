@@ -27,6 +27,9 @@ export function useMcpOauthConnect(onConnected: () => void | Promise<void>) {
     }
   }
 
+  /* v8 ignore start -- executed by the postMessage + connect tests below;
+   * per-test module copies + last-copy-wins coverage merging hide the arms
+   * (same phantom as useChangeEvents, owner ruling 2026-10-27: (b)) */
   function onOauthMessage(event: MessageEvent) {
     if (event.origin !== window.location.origin) return;
     const data = event.data as { type?: string } | null;
@@ -41,6 +44,7 @@ export function useMcpOauthConnect(onConnected: () => void | Promise<void>) {
     window.removeEventListener('message', onOauthMessage);
     stopConnectWatcher();
   });
+  /* v8 ignore end */
 
   function connectOauth(employeeId: string, serverId: string) {
     if (connectingServerId.value) return;
@@ -60,6 +64,8 @@ export function useMcpOauthConnect(onConnected: () => void | Promise<void>) {
     // a cancelled/closed popup never postMessages — stop the spinner so the
     // Connect button stays usable (reopening was the only recovery before)
     stopConnectWatcher();
+    /* v8 ignore start -- interval body + navigate arm run in the dead-popup
+     * and mint-success tests; the merge hides them (useChangeEvents phantom) */
     connectPopupWatcher = window.setInterval(() => {
       if (!popup || popup.closed) {
         stopConnectWatcher();
@@ -72,6 +78,7 @@ export function useMcpOauthConnect(onConnected: () => void | Promise<void>) {
         if (!popup || popup.closed) return;
         popup.location.href = res.connectUrl;
       })
+      /* v8 ignore end */
       .catch((e) => {
         popup?.close();
         stopConnectWatcher();
