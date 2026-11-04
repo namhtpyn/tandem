@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   notes: [] as Array<{ kind: unknown; payload: Record<string, unknown> }>,
   published: 0,
   cancelled: [] as string[],
+  spawns: [] as Array<{ employeeId: string; role: string }>,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -79,7 +80,10 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
     ...mod,
     cancelObligations: async (_t: unknown, role: unknown) => void h.cancelled.push(String(role)),
     cancelAllObligations: async () => {},
-    spawnObligation: async () => {},
+    spawnObligation: async (_t: unknown, employeeId: string, role: string) => {
+      h.spawns.push({ employeeId, role: String(role) });
+      return 'obl-1';
+    },
     resolveObligation: async () => {},
     answerHolder: async () => null,
   };
@@ -120,6 +124,7 @@ beforeEach(() => {
   ];
   h.cancelWins = true;
   h.statuses = [{ id: STATUS.inReview, category: CATEGORY.IN_REVIEW }];
+  h.spawns = [];
   h.teardowns = [];
   h.updates = [];
   h.notes = [];
@@ -223,5 +228,9 @@ describe('submit/answer terminal arbitration (#292 r1 mirror of #287)', () => {
     await expect(answerQuestion('task-1', 'owner-1', 'here is the answer')).rejects.toThrow(
       /task state changed during answer/,
     );
+    // the settle owns the outcome, OBLIGATIONS INCLUDED (#314 r1): a lost answer
+    // race cancels NOTHING — no ANSWER cancel, no heal spawn on the settled task
+    expect(h.cancelled).toHaveLength(0);
+    expect(h.spawns).toHaveLength(0);
   });
 });

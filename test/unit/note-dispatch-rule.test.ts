@@ -151,6 +151,15 @@ describe('tasks.note dispatch rule keys off the category (#265)', () => {
     expect(h.dispatches).toHaveLength(0);
   });
 
+  it('a waiting_answer-category task is thread-only — no flip, no dispatch (#314, mirrors noteWillDispatch)', async () => {
+    seedTask('st-custom-wait', 'worker-1');
+    h.statuses = [{ id: 'st-custom-wait', category: CATEGORY.WAITING_ANSWER }];
+    const res = await addNote('task-1', 'human-1', 'a note while waiting');
+    expect(res).toEqual({ steered: false });
+    expect(h.updates).toHaveLength(0);
+    expect(h.dispatches).toHaveLength(0);
+  });
+
   it('custom cancelled- and in-review-category statuses refuse as well', async () => {
     for (const [id, category] of [
       ['st-custom-cancelled', CATEGORY.CANCELLED],
