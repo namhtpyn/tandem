@@ -1,3 +1,11 @@
+## [2.68.1](https://github.com/namhtpyn/tandem/compare/v2.68.0...v2.68.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* [#314](https://github.com/namhtpyn/tandem/issues/314) r1 review — obligation cancel moved AFTER the won flip; heal reviewed out (shared-state guard law) ([e91dac9](https://github.com/namhtpyn/tandem/commit/e91dac9e7a925e369df913aea7e708de6ff84a58))
+* [#314](https://github.com/namhtpyn/tandem/issues/314) tasks.note never flips/dispatches a waiting_answer task; answerQuestion heals a CAS-miss strand ([ada44fa](https://github.com/namhtpyn/tandem/commit/ada44fa2210d1d095f0d5c87b42f4af2e0113635))
+
 # [2.68.0](https://github.com/namhtpyn/tandem/compare/v2.67.8...v2.68.0) (2026-11-04)
 
 
