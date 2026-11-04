@@ -12,9 +12,23 @@ const h = vi.hoisted(() => ({
   gated: false,
   waiters: [] as Array<() => void>,
   cap: 1,
+  throwSync: false, // #291 F10: the roster read throws (redis blip during resync)
 }));
 
-vi.mock('#server/domains/kernel/queue', () => ({ redisQueue: async () => ({}) }));
+vi.mock('#server/domains/kernel/queue', () => ({
+  redisQueue: async () => ({
+    // a real-shaped hub: the per-tick resync retry (#291 F10) pulls its hub from
+    // redisQueue, so the mock must carry a working queue() for those flows
+    queue: async (name: string) => {
+      h.created.push(name);
+      return {
+        close: async () => {
+          h.closed.push(name);
+        },
+      };
+    },
+  }),
+}));
 
 vi.mock('#server/domains/settings/settings.service', () => ({
   getRunTimeoutMs: vi.fn(async () => 30 * 60_000),
@@ -26,7 +40,16 @@ vi.mock('../../server/db/index', () => ({
   db: {
     query: {
       aiEmployees: {
-        findMany: async () => h.roster,
+        findMany: async () => {
+          if (h.throwSync) throw new Error('redis blip during resync'); // #291 F10
+          return h.roster;
+        },
+      },
+      // no statuses → findEligible() = null → the scan NEVER hits, so the
+      // per-hit detached resync never fires — exactly the workerless-queue
+      // shape the per-tick retry must heal (#291 F10)
+      taskStatuses: {
+        findMany: async () => [],
       },
     },
   },
@@ -38,7 +61,7 @@ vi.mock('consola', () => ({
   },
 }));
 
-import { syncDispatchWorkers } from '#server/domains/tasks/dispatcher.service';
+import { onDispatcherSettingsChanged, scanOnce, syncDispatchWorkers } from '#server/domains/tasks/dispatcher.service';
 
 /** hub whose queue creation can be held open (the await window the old
  * check-then-act raced across) */
@@ -68,6 +91,7 @@ beforeEach(() => {
   h.gated = false;
   h.waiters = [];
   h.cap = 1;
+  h.throwSync = false;
 });
 
 describe('syncDispatchWorkers coalescing (#290)', () => {
@@ -128,5 +152,42 @@ describe('syncDispatchWorkers coalescing (#290)', () => {
     releaseAll();
     await Promise.all([p1, p2]);
     expect(h.created).toEqual(['tandem-dispatch-g-290']); // single execution
+  });
+});
+
+describe('worker-resync per-tick retry (#291 F10)', () => {
+  it('a failed settings resync re-fires on the next scan tick even when the scan never hits', async () => {
+    h.throwSync = true;
+    await expect(onDispatcherSettingsChanged()).resolves.toBeUndefined(); // best-effort by contract
+    h.throwSync = false;
+    h.roster = [{ userId: 'f-291' }];
+    // no taskStatuses rows → findEligible() = null → the per-hit resync never
+    // fires; the armed retry must land the worker anyway (pre-fix: queue stays
+    // workerless forever — heartbeat + redis-ok stay green)
+    await expect(scanOnce('http://localhost:3000')).resolves.toBe(false);
+    expect(h.created).toEqual(['tandem-dispatch-f-291']);
+  });
+
+  it('the armed retry survives a failing tick and heals on a later one', async () => {
+    h.throwSync = true;
+    await onDispatcherSettingsChanged(); // arm
+    h.roster = [{ userId: 'g-291' }];
+    await expect(scanOnce('http://localhost:3000')).resolves.toBe(false); // retry fires, fails again
+    expect(h.created).toEqual([]); // nothing minted while the roster read keeps failing
+    h.throwSync = false;
+    await expect(scanOnce('http://localhost:3000')).resolves.toBe(false); // still no scan hit
+    expect(h.created).toEqual(['tandem-dispatch-g-291']); // healed once the failure clears
+  });
+
+  it('a landed retry clears the arm — later no-hit ticks stop re-syncing', async () => {
+    h.throwSync = true;
+    await onDispatcherSettingsChanged(); // arm
+    h.throwSync = false;
+    h.roster = [{ userId: 'h-291' }];
+    await expect(scanOnce('http://localhost:3000')).resolves.toBe(false); // retry lands
+    expect(h.created).toEqual(['tandem-dispatch-h-291']);
+    h.created.length = 0;
+    await expect(scanOnce('http://localhost:3000')).resolves.toBe(false);
+    expect(h.created).toEqual([]); // arm cleared: a healthy roster syncs on triggers, not every tick
   });
 });

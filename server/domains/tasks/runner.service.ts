@@ -85,10 +85,28 @@ const liveStops = new Map<string, () => void>();
  * finally alongside the hooks. */
 const stoppedRuns = new Set<string>();
 
+/** runIds currently INSIDE executeRun's guarded region (guards passed, settle
+ * pending). The stop verb consults it to tell a LIVE execution — whose stop-
+ * settled marker must survive until the execution's own cleanup — from a dead
+ * queued/replayed job whose marker has no future consumer (#291 r3). */
+const executingRuns = new Set<string>();
+
+/** test/probe visibility (#291 r3): runIds currently between executeRun's guards
+ * and its settle — nonempty only while executions are genuinely mid-flight */
+export function executingRunIds(): string[] {
+  return [...executingRuns.keys()];
+}
+
 /** test/probe visibility (#161/#229): runIds currently holding a live stop hook —
  * must be empty whenever no run is mid-turn (a settled run retains nothing) */
 export function liveStopRunIds(): string[] {
   return [...liveStops.keys()];
+}
+
+/** test/probe visibility (#291 F9): runIds currently holding a stop-settled
+ * marker — nonempty only while a stop is mid-flight or its run is mid-turn */
+export function stoppedRunMarkerIds(): string[] {
+  return [...stoppedRuns.keys()];
 }
 
 /** test/probe visibility (#161): runIds currently holding a live steer hook —
@@ -196,27 +214,44 @@ export async function stopRunForTask(taskId: string, actorId: string): Promise<{
   // way the turn's settle path must already see the stop-settled marker and skip
   // every side effect (a STOPPED run must never bounce or park the task)
   stoppedRuns.add(runId);
-  // abort the open turn (no-op when none is registered: pre-turn or queued run —
-  // the row flip below is still the settle; the queued job's stale-row guard no-ops)
-  liveStops.get(runId)?.();
-  const settled = await db
-    .update(taskRuns)
-    .set({
-      status: RUN_STATUS.STOPPED,
-      exitCode: null,
-      output: sql`coalesce(${taskRuns.output}, '') || '\n[run] stopped'`,
-      finishedAt: new Date(),
-    })
-    // the CAS is the arbiter: the turn's own settle (writer.finish / the reaper)
-    // winning first keeps ITS verdict and this stop becomes a quiet no-op
-    .where(and(eq(taskRuns.id, runId), eq(taskRuns.status, RUN_STATUS.RUNNING)))
-    .returning({ id: taskRuns.id });
+  // EXCEPTION-SAFE MARKER WINDOW (#291 r6): a throw between the add and the CAS
+  // completion (db failure, stop-hook throw) must unwind exactly like the lost
+  // race — but only when no registered execution owns the marker
+  let settled: Array<{ id: string }>;
+  try {
+    // abort the open turn (no-op when none is registered: pre-turn or queued run —
+    // the row flip below is still the settle; the queued job's stale-row guard no-ops)
+    liveStops.get(runId)?.();
+    settled = await db
+      .update(taskRuns)
+      .set({
+        status: RUN_STATUS.STOPPED,
+        exitCode: null,
+        output: sql`coalesce(${taskRuns.output}, '') || '\n[run] stopped'`,
+        finishedAt: new Date(),
+      })
+      // the CAS is the arbiter: the turn's own settle (writer.finish / the reaper)
+      // winning first keeps ITS verdict and this stop becomes a quiet no-op
+      .where(and(eq(taskRuns.id, runId), eq(taskRuns.status, RUN_STATUS.RUNNING)))
+      .returning({ id: taskRuns.id });
+  } catch (e) {
+    if (!executingRuns.has(runId)) stoppedRuns.delete(runId);
+    throw e;
+  }
   if (settled.length === 0) {
     // the turn settled first with its own verdict — unwind the marker so a late
     // finish keeps its normal path (the winner owns the outcome)
     stoppedRuns.delete(runId);
     return { ok: true, stopped: false };
   }
+  // MARKER LIFECYCLE COMPLETION (#291 r3): the marker's only consumers live inside
+  // an executeRun that passed its guards BEFORE this CAS won. With no such
+  // execution (queued/backoff job, lost worker), a won CAS means NO future
+  // consumer can exist — the row is STOPPED, so a replayed job's stale-row guard
+  // refuses and cleans up after itself. Delete at the verb: the wedge-then-stop
+  // shape (a wedged run the user stops, whose job never replays) would otherwise
+  // leak the entry forever — the exact class this closure exists to end.
+  if (!executingRuns.has(runId)) stoppedRuns.delete(runId);
   await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   // the RUN LOCK's release must reach list/board viewers (#264, r1 finding):
@@ -1484,36 +1519,87 @@ async function supersededByNewerRun(runId: string, taskId: string, priorOutput: 
 /** execute ONE attempt of a created run on the per-agent queue worker (or inline in
  * tests). Retryable PRE-TURN failures throw so BullMQ backs off and replays the SAME
  * row with its frozen prompt; post-turn failures and the final attempt settle the run. */
+/** one execution attempt of a dispatch/review run (the queue job's payload slice) */
+type ExecAttempt = {
+  attempt: number;
+  maxAttempts: number;
+  reviewBy?: string;
+  resultBody?: string;
+  verdictCorrection?: boolean;
+};
+type PreTryRow = NonNullable<Awaited<ReturnType<typeof runnableRowOrSettled>>>;
+
+/** PRE-TRY WINDOW load (#291 r1 review): plan load, frozen brief, brief data, MCP
+ * servers and the run writer — the region between executeRun's row guards and the
+ * try that owns the finally cleanup. A rejection here has NO finally: the catch
+ * deletes the stop-settled marker (added pre-CAS by the stop verb) before
+ * rethrowing, or the entry would outlive the execution forever (#291 F9). */
+async function loadPreTryWindow(runId: string, taskId: string, row: PreTryRow, attempt: ExecAttempt) {
+  try {
+    const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & {
+      review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'];
+    } = attempt.reviewBy // eslint-disable-line @typescript-eslint/consistent-type-definitions -- union widening
+      ? await loadReviewPlan(taskId, attempt.reviewBy, attempt.resultBody ?? '', attempt.verdictCorrection === true)
+      : await loadDispatchPlan(taskId);
+    // THE drift fix: the prompt is the one frozen at createRun — never rebuilt here
+    const brief = nonNull(row.prompt, 'run prompt (frozen at createRun)');
+    const briefData = await loadBriefData(taskId, plan.ai.userId);
+    // MCP DISPATCH INJECTION (#270): the employee's bindings ride EVERY dispatch —
+    // decrypted server-side here, serialized onto session/new + session/resume by
+    // acp.client; the fake path prints the plan (server NAMES only, never credentials)
+    const mcpServers = await buildMcpServersFor(plan.ai.userId);
+    const writer = createRunWriter(runId, row.output ?? '', row.messageId);
+    return { plan, brief, briefData, mcpServers, writer };
+  } catch (e) {
+    executingRuns.delete(runId); // the registry rides the marker's lifecycle (#291 r3)
+    stoppedRuns.delete(runId); // no finally covers this window (#291 F9)
+    throw e;
+  }
+}
+
 export async function executeRun(
   runId: string,
   tandemUrl: string,
-  attempt: {
-    attempt: number;
-    maxAttempts: number;
-    reviewBy?: string;
-    resultBody?: string;
-    verdictCorrection?: boolean;
-  },
+  attempt: ExecAttempt,
 ): Promise<{ status: FinishedStatus; exitCode: number | null }> {
-  const row = await runnableRowOrSettled(runId);
-  if (!row) return { status: RUN_STATUS.FAILED, exitCode: null };
-  // the helper's guard refused any message-less row — asserted here for the CFA
-  const taskId = nonNull(row.message).taskId;
-  if (await supersededByNewerRun(runId, taskId, row.output)) return { status: RUN_STATUS.FAILED, exitCode: null };
-
-  const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & {
-    review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'];
-  } = attempt.reviewBy // eslint-disable-line @typescript-eslint/consistent-type-definitions -- union widening
-    ? await loadReviewPlan(taskId, attempt.reviewBy, attempt.resultBody ?? '', attempt.verdictCorrection === true)
-    : await loadDispatchPlan(taskId);
-  // THE drift fix: the prompt is the one frozen at createRun — never rebuilt here
-  const brief = nonNull(row.prompt, 'run prompt (frozen at createRun)');
-  const briefData = await loadBriefData(taskId, plan.ai.userId);
-  // MCP DISPATCH INJECTION (#270): the employee's bindings ride EVERY dispatch —
-  // decrypted server-side here, serialized onto session/new + session/resume by
-  // acp.client; the fake path prints the plan (server NAMES only, never credentials)
-  const mcpServers = await buildMcpServersFor(plan.ai.userId);
-  const writer = createRunWriter(runId, row.output ?? '', row.messageId);
+  // IN-FLIGHT REGISTRY (#291 r4): registered at ENTRY, before any await — the
+  // stop verb's post-CAS consumer check must have zero blind window. An execution
+  // parked at its guard reads is still a live consumer of the stop-settled marker
+  // the verb is about to add; registering only after the guards (r3) left a two-
+  // awaited gap where the verb stripped the marker from a run about to execute.
+  executingRuns.add(runId);
+  // GUARD-READ WINDOW (#291 r5): the two awaited reads below are pre-try too — a
+  // rejection there must clean both registries (a stop that won its CAS while this
+  // execution sat parked mid-read keeps marker + registry alive through them), or
+  // a DB failure at the guard resurrects the wedge-then-stop leak the verb-side
+  // delete exists to end
+  let guarded: PreTryRow;
+  try {
+    const r = await runnableRowOrSettled(runId);
+    if (!r) {
+      // STOP-MARKER LIFECYCLE (#291 F9): this return sits BEFORE the try that owns
+      // the finally cleanup, and the stop verb adds its marker pre-CAS — a stop that
+      // settled a queued/just-started run (the guard refuses the STOPPED row) would
+      // otherwise leak the marker forever (unbounded Set growth). Its only consumers
+      // (the finish-path skip + the in-try early return) live inside that try.
+      executingRuns.delete(runId);
+      stoppedRuns.delete(runId);
+      return { status: RUN_STATUS.FAILED, exitCode: null };
+    }
+    // the helper's guard refused any message-less row — asserted here for the CFA
+    if (await supersededByNewerRun(runId, nonNull(r.message).taskId, r.output)) {
+      executingRuns.delete(runId);
+      stoppedRuns.delete(runId); // same pre-try leak window (#291 F9)
+      return { status: RUN_STATUS.FAILED, exitCode: null };
+    }
+    guarded = r;
+  } catch (e) {
+    executingRuns.delete(runId);
+    stoppedRuns.delete(runId);
+    throw e;
+  }
+  const taskId = nonNull(guarded.message).taskId;
+  const { plan, brief, briefData, mcpServers, writer } = await loadPreTryWindow(runId, taskId, guarded, attempt);
   const { onLine } = writer;
 
   // turnStarted marks the point of no return for retries: once the ACP stream is
@@ -1545,7 +1631,7 @@ export async function executeRun(
         (stop) => liveStops.set(runId, stop),
       );
       const r = await fake.finished;
-      await writer.finish(taskId, r.status, r.exitCode, plan, [], row.startedAt);
+      await writer.finish(taskId, r.status, r.exitCode, plan, [], guarded.startedAt);
       return r;
     }
     const envBlob = buildEnvBlob(plan, tandemUrl);
@@ -1612,7 +1698,7 @@ export async function executeRun(
         (await Promise.race([collectP, new Promise<undefined>((r) => setTimeout(() => r(undefined), 20_000))]))
           ?.tokens ?? [];
     else void collectP;
-    await writer.finish(taskId, status, exitCode, plan, attachTokens, row.startedAt);
+    await writer.finish(taskId, status, exitCode, plan, attachTokens, guarded.startedAt);
     return { status, exitCode };
   } catch (e) {
     /* v8 ignore next -- service throws are Error by construction */
@@ -1630,6 +1716,7 @@ export async function executeRun(
     // same lifecycle — nothing survives a settled run
     liveStops.delete(runId);
     stoppedRuns.delete(runId);
+    executingRuns.delete(runId); // the in-flight registry ends with the settle (#291 r3)
   }
 }
 
