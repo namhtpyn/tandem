@@ -1,3 +1,16 @@
+## [2.67.8](https://github.com/namhtpyn/tandem/compare/v2.67.7...v2.67.8) (2026-11-04)
+
+
+### Bug Fixes
+
+* [#278](https://github.com/namhtpyn/tandem/issues/278) MCP OAuth connect mint behind admin oRPC POST — CSRF-intent binding (delete state-changing GET route) ([abe90f4](https://github.com/namhtpyn/tandem/commit/abe90f4b89dd592a7a7294b3c1aedf6316827bf5))
+* [#278](https://github.com/namhtpyn/tandem/issues/278) review r1 — complete SPEC diffs (3 stale GET-route sections), surface mint failures in the editor, skip the mint when the popup is blocked ([6fc4f15](https://github.com/namhtpyn/tandem/commit/6fc4f159f9d69829fcdb44c3514f6ecc3af55ff5))
+* [#278](https://github.com/namhtpyn/tandem/issues/278) review r2 — pin the {connectUrl,serverName} mint shape in e2e, surface popup-blocked feedback ([707bb88](https://github.com/namhtpyn/tandem/commit/707bb8826f2450319a1e61a85391bb3df981a11c))
+* [#278](https://github.com/namhtpyn/tandem/issues/278) review r3 — SPEC mint-exempt change-bus carve + admin enumeration, pin RPC-GET 404 + BAD_REQUEST mapping, clear stale connect error on retry ([0e556c2](https://github.com/namhtpyn/tandem/commit/0e556c22a3a1535ba4903008354d82a2f28cd662))
+* [#278](https://github.com/namhtpyn/tandem/issues/278) review r4 — enumerate mcp.oauthConnect in the SPEC MCP-procedures table ([65cbd2c](https://github.com/namhtpyn/tandem/commit/65cbd2c5cf76d52e28689e7f1a8699a3af08a856))
+* [#278](https://github.com/namhtpyn/tandem/issues/278) review r5 — pin the wrong-role leg of the mint gate (seeded VIEWER session -> 403) ([1947276](https://github.com/namhtpyn/tandem/commit/19472760205221ed011816fa660cd81719341384))
+* [#278](https://github.com/namhtpyn/tandem/issues/278) review r6 — pin the anon mint status exactly 401 (UNAUTHORIZED precedes the role check) ([ceea204](https://github.com/namhtpyn/tandem/commit/ceea204fbe0089eb7b989dcacc09501f99605fc9))
+
 ## [2.67.7](https://github.com/namhtpyn/tandem/compare/v2.67.6...v2.67.7) (2026-11-04)
 
 
