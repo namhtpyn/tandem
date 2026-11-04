@@ -1,3 +1,19 @@
+# [2.68.0](https://github.com/namhtpyn/tandem/compare/v2.67.8...v2.68.0) (2026-11-04)
+
+
+### Bug Fixes
+
+* [#274](https://github.com/namhtpyn/tandem/issues/274) coverage — component tests pin every useMcpOauthConnect arm (blocked popup, mint failure, callback, dead-popup watcher, mint success) + v8-ignore the merge-phantom spans ([2ca36b1](https://github.com/namhtpyn/tandem/commit/2ca36b181048d8c34777f276b4aac564eccac59a))
+* [#274](https://github.com/namhtpyn/tandem/issues/274) review r1 — surface failed bindings reads (banner+retry, empty state hidden), oauth rows drop the dead credential picker, unbind rides the editor-parity two-step confirm ([a2a4339](https://github.com/namhtpyn/tandem/commit/a2a43393a9b24c8370bb4c54ab653d1cda3bf380))
+* [#274](https://github.com/namhtpyn/tandem/issues/274) review r2 — editor bindings join the MCP query cache (SPEC sync lives both ways), shared useMcpOauthConnect + Connect/Reconnect on /mcp oauth rows, clear-credential confirm, bind form gated on failed reads + live-sync e2e pin ([fe2419e](https://github.com/namhtpyn/tandem/commit/fe2419e6cac1898d2263739cfe33f3a205c3d34e))
+* [#274](https://github.com/namhtpyn/tandem/issues/274) review r3 — oauth callback publishes the change bus (SPEC sync), editor/modal pending+failed reads never render authoritative empty states, modal reopen resets armed confirms + stale connect banner, CHANGE_RESOURCE enum replaces hand-copied literals, stale pages-table SPEC row fixed ([7e870ee](https://github.com/namhtpyn/tandem/commit/7e870eef7a6669d0533c193fb6a6bb66dbab5728))
+* [#274](https://github.com/namhtpyn/tandem/issues/274) review r4 — editor open-reset parity (armed confirm/stale banners cleared, no-immediate TDZ guard), per-row connect spinner via employee:server key, employees-picker failure surfaces + gates the bind form, SPEC complete-list table gains bindingsListByServer ([25fa31e](https://github.com/namhtpyn/tandem/commit/25fa31ee9c0916b4740028ebe8d54b56af1541ae))
+
+
+### Features
+
+* [#274](https://github.com/namhtpyn/tandem/issues/274) /mcp per-server binding manager — bind/unbind agents + credential from the registry row (mcp.bindingsListByServer) ([25ea11b](https://github.com/namhtpyn/tandem/commit/25ea11b990941f8c1cbf251d60a15b9d1d84d1f9))
+
 ## [2.67.8](https://github.com/namhtpyn/tandem/compare/v2.67.7...v2.67.8) (2026-11-04)
 
 
