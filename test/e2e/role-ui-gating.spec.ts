@@ -96,7 +96,8 @@ test.describe('role UI gating (#263)', () => {
       await expect(emp.getByRole('heading', { name: 'General' })).toHaveCount(0);
       await expect(emp.getByRole('heading', { name: 'Model providers' })).toHaveCount(0);
 
-      // ---- /vault: read-only browser (toolbar + empty CTA + folders) ----
+      // ---- /vault: no admin verbs render (vault reads are admin-tier, so the
+      // list itself errors — the gate is what keeps every verb hidden) ----
       await emp.goto('/vault');
       await expect(emp.getByRole('button', { name: 'New secret' })).toHaveCount(0);
       await expect(emp.getByRole('button', { name: 'Folders' })).toHaveCount(0);
@@ -116,7 +117,10 @@ test.describe('role UI gating (#263)', () => {
       await emp.getByRole('button', { name: 'Statuses', exact: true }).click();
       await expect(emp.getByText('Task statuses')).toBeVisible();
       await expect(emp.getByRole('button', { name: 'New status' })).toHaveCount(0);
-      await expect(emp.getByRole('button', { name: 'Delete To do' })).toHaveCount(0);
+      // the per-row edit verb rides the same editable gate ('Edit To do' is the
+      // popover's aria-label; 'Delete To do' would be vacuous — builtin rows
+      // carry a "built in and can't be deleted" label for EVERY role)
+      await expect(emp.getByRole('button', { name: 'Edit To do' })).toHaveCount(0);
       // the list itself (session tier read) still renders
       await expect(emp.getByText('To do').first()).toBeVisible();
     } finally {
