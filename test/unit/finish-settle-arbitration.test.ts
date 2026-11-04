@@ -224,10 +224,17 @@ describe('writer.finish settle arbitration (#286)', () => {
     writer.onLine(longLine);
     const t0 = new Date();
     // explicit stale runStartedAt: a mutant copying it into finishedAt must fail
-    await writer.finish('task-1', RUN_STATUS.FAILED, 1, {
-      review: { resultBody: 'submitted work' },
-      ai: { userId: 'agent-1' },
-    }, [], new Date(t0.getTime() - 60_000));
+    await writer.finish(
+      'task-1',
+      RUN_STATUS.FAILED,
+      1,
+      {
+        review: { resultBody: 'submitted work' },
+        ai: { userId: 'agent-1' },
+      },
+      [],
+      new Date(t0.getTime() - 60_000),
+    );
     // Re-render every WHERE the service handed to a task_runs update (the streaming
     // flush + the settle flip) through the REAL drizzle builder and require exact
     // equality with the hand-built contract predicate. A pg-backed unit test is off
@@ -361,7 +368,10 @@ describe('writer.finish settle arbitration (#286)', () => {
     // the DONE arm's SET payload is bound too: the verdict it was given + the
     // full output tail (a constant-FAILED mutant passes the FAILED-arm pin above)
     const doneFlip = h.flipSets.find((s) => s.status === RUN_STATUS.DONE && s.output === writer.buffer);
-    expect(doneFlip, `no DONE settle SET with the full tail (sets: ${JSON.stringify(h.flipSets.map((s) => ({ keys: Object.keys(s), status: typeof s.status === 'string' ? s.status : '<non-string>', output: typeof s.output === 'string' ? s.output : '<sql>' })))})`).toBeDefined();
+    expect(
+      doneFlip,
+      `no DONE settle SET with the full tail (sets: ${JSON.stringify(h.flipSets.map((s) => ({ keys: Object.keys(s), status: typeof s.status === 'string' ? s.status : '<non-string>', output: typeof s.output === 'string' ? s.output : '<sql>' })))})`,
+    ).toBeDefined();
     expect(doneFlip?.exitCode).toBe(0);
   });
 });
