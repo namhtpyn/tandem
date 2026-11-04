@@ -348,6 +348,9 @@ test.describe('mcp oauth per binding', () => {
       expect(mint.status).toBe(200);
       const authorizeUrl = (mint.json?.connectUrl as string) ?? '';
       expect(authorizeUrl).toContain(`127.0.0.1:${provider.port}/authorize`);
+      // SPEC table pins the {connectUrl, serverName} mint shape — assert the
+      // second field so dropping it cannot pass every gate silently
+      expect(mint.json?.serverName).toBe(serverName);
       const authRes = await page.request.get(authorizeUrl, { maxRedirects: 0 });
       expect(authRes.status()).toBe(302);
       const callbackUrl = authRes.headersArray().find((h) => h.name.toLowerCase() === 'location')?.value ?? '';

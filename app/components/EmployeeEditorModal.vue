@@ -471,7 +471,9 @@ function connectOauth(binding: McpBindingRow) {
   // navigate it to the provider URL once the mint resolves
   const popup = window.open('', 'mcp-oauth-connect', 'popup,width=520,height=680');
   if (!popup) {
-    // popup blocked — no window to navigate, no server-side mint to spend
+    // popup blocked — no window to navigate, no server-side mint to spend;
+    // a dead-looking Connect button reads as broken, so say why
+    mcpError.value = 'Popup blocked — allow popups for this site, then connect again';
     connectingServerId.value = null;
     return;
   }
