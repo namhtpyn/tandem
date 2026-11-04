@@ -27,6 +27,18 @@ export function useIsAdmin() {
   return computed(() => session.value?.user.role === ROLE.ADMIN);
 }
 
+// Employee-tier render gate (SPEC "Roles & access" — UI tier visibility, #300):
+// true for every role whose tier may write tasks.*/projects.* (EMPLOYEE +
+// ADMIN); false for VIEWER — the Tasks/Projects managers and the task drawer
+// render read-only (create CTAs, row verbs, status moves, composer and review
+// box hidden). Unknown roles read as VIEWER, mirroring the server. UX only —
+// the server tier matrix stays the boundary.
+export function useCanWork() {
+  const session = useAppSession();
+  const role = computed(() => session.value?.user.role);
+  return computed(() => role.value === ROLE.EMPLOYEE || role.value === ROLE.ADMIN);
+}
+
 export function useAuthConfigState() {
   return useState<AuthConfig | null>('tandem:auth-config', () => null);
 }

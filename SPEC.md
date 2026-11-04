@@ -297,6 +297,18 @@ create/edit/delete/keys verb UI hides behind the managers' `editable` prop
 wired to the session role (`useIsAdmin`). Admins see no change. The gate is
 UX only — the server tier matrix above stays the boundary.
 
+**Employee-tier render rule (#300):** no EMPLOYEE-TIER verb renders below the
+employee tier. The Tasks and Projects managers gate every tasks._/projects._
+write affordance behind `useCanWork` (role EMPLOYEE or ADMIN): the create CTAs
+(toolbars + empty-state), the row edit/delete/auto-assign menus, the board
+drag/move-to path and the project add-subproject/edit/delete actions — a
+VIEWER session gets the same lists with plain status text instead of the
+status select and a kebab reduced to the read-only Workflow entry. The task
+drawer renders its write surfaces (workflow verbs, composer + send, forward,
+review box, stop/dispatch) to EMPLOYEE + ADMIN only; runs, activity and the
+task body stay session-tier reads. Employees and admins see no change. The
+gate is UX only — the server tier matrix above stays the boundary.
+
 Review verdicts are HUMAN-only: `tasks.approve`, `tasks.requestChanges` and
 `tasks.reject` additionally verify the session's credential origin — a session
 backed by an API key (agent credential) is `FORBIDDEN` even with the right

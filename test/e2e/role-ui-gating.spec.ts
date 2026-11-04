@@ -57,6 +57,24 @@ async function seedEmployeeWithPassword(page: Page, tag: string) {
   return { email };
 }
 
+/** a VIEWER user + credential row — sign-up defaults to VIEWER, so this is the
+ *  shape any fresh self-serve account gets; seeded directly to skip the flow */
+async function seedViewerWithPassword(tag: string) {
+  const email = `e2e-viewer-${tag}@tandem.local`;
+  const userId = crypto.randomUUID();
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    // SQL-seed law: explicit id + timestamps + every $default column on both tables
+    await sql`insert into "user" (id, name, email, email_verified, created_at, updated_at, role, title, must_change_password)
+      values (${userId}, ${`E2E Viewer ${tag}`}, ${email}, false, now(), now(), 'VIEWER', '', false)`;
+    await sql`insert into account (id, account_id, provider_id, user_id, password, created_at, updated_at)
+      values (${crypto.randomUUID()}, ${userId}, 'credential', ${userId}, ${await hashPassword(EMPLOYEE_PASSWORD)}, now(), now())`;
+  } finally {
+    await sql.close();
+  }
+  return { email };
+}
+
 /** sign a FRESH browser context in through the real form (no storageState) */
 async function signInAs(browser: import('@playwright/test').Browser, email: string) {
   const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
@@ -115,6 +133,20 @@ test.describe('role UI gating (#263)', () => {
       await expect(emp.getByRole('button', { name: 'Titles' })).toHaveCount(0);
       await expect(emp.getByRole('button', { name: 'Access keys for E2E Emp' }).first()).toHaveCount(0);
 
+      // ---- #300 regression: employee-tier verbs STAY for an employee ----
+      // (a row task + a project seeded so the row verbs and CTAs render)
+      const seeded = await rpcPost(page, '/rpc/tasks/create', { title: `E2E Row ${tag}` });
+      expect(seeded.status).toBe(200);
+      const seededProject = await rpcPost(page, '/rpc/projects/create', { name: `E2E Proj ${tag}` });
+      expect(seededProject.status).toBe(200);
+      await emp.goto('/tasks');
+      await expect(emp.getByRole('button', { name: 'New task' }).first()).toBeVisible();
+      await expect(emp.getByRole('button', { name: `Edit E2E Row ${tag}` })).toBeVisible();
+      await expect(emp.getByRole('button', { name: `Auto-assign E2E Row ${tag}` })).toBeVisible();
+      await emp.goto('/projects');
+      await expect(emp.getByRole('button', { name: 'New project' }).first()).toBeVisible();
+      await expect(emp.getByRole('button', { name: `Edit E2E Proj ${tag}` })).toBeVisible();
+
       // ---- statuses manager: list renders, toolbar verbs gone ----
       await emp.goto('/tasks');
       await emp.getByRole('button', { name: 'Statuses', exact: true }).click();
@@ -128,6 +160,72 @@ test.describe('role UI gating (#263)', () => {
       await expect(emp.getByText('To do').first()).toBeVisible();
     } finally {
       await empContext.close();
+    }
+  });
+
+  test('viewer tier (#300): tasks/projects render read-only — no verb above the employee tier', async ({
+    page,
+    browser,
+  }) => {
+    const tag = Date.now().toString(36);
+    // rows for the viewer to READ (kebabs + status cells must exist to prove
+    // their verbs are gone rather than vacuously absent)
+    const seeded = await rpcPost(page, '/rpc/tasks/create', { title: `E2E View ${tag}` });
+    expect(seeded.status).toBe(200);
+    const seededProject = await rpcPost(page, '/rpc/projects/create', { name: `E2E ViewProj ${tag}` });
+    expect(seededProject.status).toBe(200);
+
+    const { email } = await seedViewerWithPassword(tag);
+    const { context: viewerContext, page: viewer } = await signInAs(browser, email);
+    test.info().annotations.push({ type: 'note', description: `viewer ${email}` });
+
+    try {
+      // ---- /tasks: create CTAs + row verbs gone, list itself stays ----
+      await viewer.goto('/tasks');
+      await expect(viewer.getByRole('button', { name: 'New task' })).toHaveCount(0);
+      // the seeded row renders — its read content is why the verbs are real holes
+      await expect(viewer.getByText(`E2E View ${tag}`).first()).toBeVisible();
+      await expect(viewer.getByRole('button', { name: `Auto-assign E2E View ${tag}` })).toHaveCount(0);
+      await expect(viewer.getByRole('button', { name: `Edit E2E View ${tag}` })).toHaveCount(0);
+      await expect(viewer.getByRole('button', { name: `Delete E2E View ${tag}` })).toHaveCount(0);
+      // the status cell is the setStatus verb — a viewer gets plain text
+      await expect(viewer.getByRole('combobox', { name: /^Status for/ })).toHaveCount(0);
+      await expect(viewer.getByText('To do').first()).toBeVisible();
+      // the kebab survives with its READ entry (Workflow) — the drawer opens
+      await expect(viewer.getByRole('button', { name: /^Workflow for / }).first()).toBeVisible();
+
+      // ---- task drawer: no workflow verbs, no composer, no review box ----
+      await viewer
+        .getByRole('button', { name: /^Workflow for / })
+        .first()
+        .click();
+      await expect(viewer.getByText('Task workflow').first()).toBeVisible();
+      await expect(viewer.getByRole('button', { name: 'Submit for review' })).toHaveCount(0);
+      await expect(viewer.getByRole('button', { name: 'Dispatch now' })).toHaveCount(0);
+      await expect(viewer.getByRole('button', { name: 'Cancel task' })).toHaveCount(0);
+      await expect(viewer.getByRole('button', { name: 'Forward' })).toHaveCount(0);
+      await expect(viewer.getByLabel('Task note')).toHaveCount(0);
+      await expect(viewer.getByTestId('drawer-composer-hint')).toHaveCount(0);
+      // the read surface stays: runs + activity still render
+      await expect(viewer.getByText('Agent runs')).toBeVisible();
+
+      // ---- /projects: tree reads, create/edit/delete verbs gone ----
+      await viewer.goto('/projects');
+      await expect(viewer.getByRole('button', { name: 'New project' })).toHaveCount(0);
+      await expect(viewer.getByText(`E2E ViewProj ${tag}`).first()).toBeVisible();
+      await expect(viewer.getByRole('button', { name: `Add subproject under E2E ViewProj ${tag}` })).toHaveCount(0);
+      await expect(viewer.getByRole('button', { name: `Edit E2E ViewProj ${tag}` })).toHaveCount(0);
+      await expect(viewer.getByRole('button', { name: `Delete E2E ViewProj ${tag}` })).toHaveCount(0);
+
+      // ---- statuses manager: opens (session-tier read), verbs stay gated ----
+      // LAST — the open modal owns the screen and this test has no teardown
+      await viewer.goto('/tasks');
+      await viewer.getByRole('button', { name: 'Statuses', exact: true }).click();
+      await expect(viewer.getByText('Task statuses')).toBeVisible();
+      await expect(viewer.getByRole('button', { name: 'New status' })).toHaveCount(0);
+      await expect(viewer.getByRole('button', { name: 'Edit To do' })).toHaveCount(0);
+    } finally {
+      await viewerContext.close();
     }
   });
 

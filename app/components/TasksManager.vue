@@ -378,13 +378,15 @@ const workflowStatusCategory = computed(() =>
 // in a working-category status; cancel = owner or assignee in a work state with
 // NO live run, fed below from the drawer's own run feed) — the drawer renders
 // no verb the server would refuse (#177, #223)
-const drawerCanSubmit = computed(() =>
-  submitReady({
-    category: workflowStatusCategory.value,
-    assigneeId: workflowTask.value?.assigneeId,
-    assigneeKind: workflowTask.value?.assigneeKind,
-    userId: session.value?.user.id,
-  }),
+const drawerCanSubmit = computed(
+  () =>
+    canWork.value &&
+    submitReady({
+      category: workflowStatusCategory.value,
+      assigneeId: workflowTask.value?.assigneeId,
+      assigneeKind: workflowTask.value?.assigneeKind,
+      userId: session.value?.user.id,
+    }),
 );
 
 /** drawer composer: send is the answer verb while the task waits for one; a null
@@ -435,6 +437,7 @@ const drawerAgentRunning = computed(() => runFeed.value.some((r) => r.status ===
 // never idle: an armed confirm must not promise a cancel the server refuses.
 const drawerCanCancel = computed(
   () =>
+    canWork.value &&
     !drawerRunsQuery.isPending.value &&
     !drawerRunsQuery.isError.value &&
     cancelReady({
@@ -447,6 +450,7 @@ const drawerCanCancel = computed(
 );
 const drawerCanDispatch = computed(
   () =>
+    canWork.value &&
     !drawerRunsQuery.isPending.value &&
     !drawerRunsQuery.isError.value &&
     dispatchReady({
@@ -460,6 +464,7 @@ const drawerCanDispatch = computed(
 // run state and renders nothing rather than a dead click
 const drawerCanStop = computed(
   () =>
+    canWork.value &&
     !drawerRunsQuery.isPending.value &&
     !drawerRunsQuery.isError.value &&
     stopReady({ running: drawerAgentRunning.value }),
@@ -625,18 +630,24 @@ const session = useAppSession();
 // statuses save/remove are admin-tier (SPEC "Roles & access" — UI tier
 // visibility): the Statuses manager renders its toolbar to admins only
 const isAdmin = useIsAdmin();
+// tasks/projects writes are employee-tier (#300): every write verb on the
+// list, board and drawer hides below the employee tier — a VIEWER session
+// reads the surfaces, never edits them
+const canWork = useCanWork();
 const drawerCanReview = computed(
-  () => !!session.value && !!workflowTask.value?.reviewers.includes(session.value.user.id),
+  () => canWork.value && !!session.value && !!workflowTask.value?.reviewers.includes(session.value.user.id),
 );
 /** forward renders ONLY where the server accepts it (SPEC): the task is
  *  waiting-answer AND the viewer is the pending answer obligation's holder —
  *  never while the task is merely working (the server rejects that, #92). */
-const canForward = computed(() =>
-  forwardReady({
-    category: workflowStatusCategory.value,
-    holderId: workflowTask.value?.questionHolderId,
-    userId: session.value?.user.id,
-  }),
+const canForward = computed(
+  () =>
+    canWork.value &&
+    forwardReady({
+      category: workflowStatusCategory.value,
+      holderId: workflowTask.value?.questionHolderId,
+      userId: session.value?.user.id,
+    }),
 );
 
 // ---- board (kanban) view ----
@@ -830,8 +841,16 @@ onServerPrefetch(() =>
           <!-- #210 CREATE-AFFORDANCE LAW: the create entry renders on EVERY
                view state — List and Board, empty, filtered or not — so
                deleting the last task never leaves the surface without a
-               one-step create entry (the List empty-state CTA coexists). -->
-          <UButton icon="i-lucide-plus" label="New task" size="sm" class="h-11 sm:h-8" @click="openEditor()" />
+               one-step create entry (the List empty-state CTA coexists).
+               #300: employee-tier write — hidden below the employee tier. -->
+          <UButton
+            v-if="canWork"
+            icon="i-lucide-plus"
+            label="New task"
+            size="sm"
+            class="h-11 sm:h-8"
+            @click="openEditor()"
+          />
         </div>
         <div
           class="from-default pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l to-transparent"
@@ -907,7 +926,7 @@ onServerPrefetch(() =>
       :empty-icon="listFiltered ? 'i-lucide-search-x' : 'i-lucide-list-todo'"
     >
       <template #empty-cta>
-        <UButton v-if="!listFiltered" icon="i-lucide-plus" label="New task" @click="openEditor()" />
+        <UButton v-if="canWork && !listFiltered" icon="i-lucide-plus" label="New task" @click="openEditor()" />
       </template>
       <template #error-cta>
         <UButton size="sm" variant="soft" icon="i-lucide-refresh-cw" label="Retry" @click="pagedQuery.refetch()" />
@@ -945,8 +964,11 @@ onServerPrefetch(() =>
         <!-- borderless select: the row already reads as a table — no OS chrome,
              just a category dot + name + chevron, hover reveals an elevated bg.
              RUN LOCK (#264): a live run disables it, the detail page's affordance
-             (disabled control + lock hint), never a post-facto error. -->
+             (disabled control + lock hint), never a post-facto error.
+             #300: the select IS the setStatus verb — a VIEWER session gets the
+             plain status dot + name instead (statuses.assign is employee-tier). -->
         <USelect
+          v-if="canWork"
           :model-value="rowStatus(row.original)"
           :items="statusOptions"
           value-key="value"
@@ -974,6 +996,15 @@ onServerPrefetch(() =>
             </span>
           </template>
         </USelect>
+        <!-- #300 viewer fallback: the same dot + name, no select chrome -->
+        <span v-else class="flex items-center gap-1.5 text-sm">
+          <span
+            class="inline-block size-2 shrink-0 rounded-full"
+            :class="statusDot(rowStatus(row.original))"
+            aria-hidden="true"
+          />
+          {{ statusLabel(rowStatus(row.original), statusById) }}
+        </span>
       </template>
       <template #updatedAt-cell="{ row }">
         <span data-allow-mismatch class="text-muted text-xs">{{ formatWhenShort(row.original.updatedAt) }}</span>
@@ -982,7 +1013,7 @@ onServerPrefetch(() =>
         <div
           class="flex justify-end gap-1 opacity-0 transition-opacity max-md:opacity-100 md:focus-within:opacity-100 md:[tr:hover_&]:opacity-100"
         >
-          <UPopover mode="hover" enable-touch>
+          <UPopover v-if="canWork" mode="hover" enable-touch>
             <UButton
               icon="i-lucide-wand-sparkles"
               variant="ghost"
@@ -997,20 +1028,7 @@ onServerPrefetch(() =>
               <div class="px-3 py-1.5 text-xs">Auto-assign</div>
             </template>
           </UPopover>
-          <UPopover mode="hover" enable-touch>
-            <UButton
-              icon="i-lucide-message-circle-more"
-              variant="ghost"
-              color="neutral"
-              size="sm"
-              :aria-label="`Workflow for ${row.original.title}`"
-              @click="openWorkflow(row.original)"
-            />
-            <template #content>
-              <div class="px-3 py-1.5 text-xs">Workflow &amp; activity</div>
-            </template>
-          </UPopover>
-          <UPopover mode="hover" enable-touch>
+          <UPopover v-if="canWork" mode="hover" enable-touch>
             <UButton
               icon="i-lucide-pencil"
               variant="ghost"
@@ -1023,18 +1041,30 @@ onServerPrefetch(() =>
               <div class="px-3 py-1.5 text-xs">Edit task</div>
             </template>
           </UPopover>
-          <UPopover mode="hover" enable-touch>
+          <UPopover v-if="canWork" mode="hover" enable-touch>
             <UButton
               icon="i-lucide-trash-2"
               variant="ghost"
               color="neutral"
-              class="text-muted hover:text-error"
               size="sm"
               :aria-label="`Delete ${row.original.title}`"
               @click="openDelete(row.original)"
             />
             <template #content>
               <div class="px-3 py-1.5 text-xs">Delete task</div>
+            </template>
+          </UPopover>
+          <UPopover mode="hover" enable-touch>
+            <UButton
+              icon="i-lucide-message-circle-more"
+              variant="ghost"
+              color="neutral"
+              size="sm"
+              :aria-label="`Workflow for ${row.original.title}`"
+              @click="openWorkflow(row.original)"
+            />
+            <template #content>
+              <div class="px-3 py-1.5 text-xs">Workflow &amp; activity</div>
             </template>
           </UPopover>
         </div>
@@ -1089,7 +1119,10 @@ onServerPrefetch(() =>
               />
               <template #content>
                 <div class="flex flex-col">
+                  <!-- #300: auto-assign/move/edit/delete are employee-tier
+                       writes — a VIEWER kebab carries Workflow only -->
                   <button
+                    v-if="canWork"
                     type="button"
                     :class="BOARD_MENU_ITEM"
                     :disabled="busy || rowLocked(row)"
@@ -1100,36 +1133,39 @@ onServerPrefetch(() =>
                   <button type="button" :class="BOARD_MENU_ITEM" @click="openWorkflow(row)">
                     <UIcon name="i-lucide-message-circle-more" class="size-3.5 shrink-0" />Workflow
                   </button>
-                  <p class="text-dimmed px-2 pt-1.5 pb-1 text-[10px] font-medium">Move to…</p>
-                  <!-- RUN LOCK (#264): a live run disables the move path too — the
-                       hint states why, mirroring the detail page's lock copy -->
-                  <p v-if="rowLocked(row)" class="text-dimmed px-2 pb-1 text-[10px]" data-testid="move-to-locked">
-                    <UIcon name="i-lucide-lock" class="mr-1 inline size-3 align-[-2px]" aria-hidden="true" />{{
-                      LOCK_HINT
-                    }}
-                  </p>
-                  <div class="max-h-40 overflow-y-auto">
-                    <button
-                      v-for="st in statuses"
-                      :key="st.id"
-                      type="button"
-                      :class="BOARD_MENU_ITEM"
-                      :disabled="busy || rowLocked(row) || rowStatus(row) === st.id"
-                      @click="setStatus(row, st.id)"
-                    >
-                      <span
-                        class="inline-block size-2 shrink-0 rounded-full"
-                        :class="statusDot(st.id)"
-                        aria-hidden="true"
-                      />
-                      {{ st.name }}
-                    </button>
-                  </div>
+                  <template v-if="canWork">
+                    <p class="text-dimmed px-2 pt-1.5 pb-1 text-[10px] font-medium">Move to…</p>
+                    <!-- RUN LOCK (#264): a live run disables the move path too — the
+                         hint states why, mirroring the detail page's lock copy -->
+                    <p v-if="rowLocked(row)" class="text-dimmed px-2 pb-1 text-[10px]" data-testid="move-to-locked">
+                      <UIcon name="i-lucide-lock" class="mr-1 inline size-3 align-[-2px]" aria-hidden="true" />{{
+                        LOCK_HINT
+                      }}
+                    </p>
+                    <div class="max-h-40 overflow-y-auto">
+                      <button
+                        v-for="st in statuses"
+                        :key="st.id"
+                        type="button"
+                        :class="BOARD_MENU_ITEM"
+                        :disabled="busy || rowLocked(row) || rowStatus(row) === st.id"
+                        @click="setStatus(row, st.id)"
+                      >
+                        <span
+                          class="inline-block size-2 shrink-0 rounded-full"
+                          :class="statusDot(st.id)"
+                          aria-hidden="true"
+                        />
+                        {{ st.name }}
+                      </button>
+                    </div>
+                  </template>
                   <div class="border-default my-1 border-t" aria-hidden="true" />
-                  <button type="button" :class="BOARD_MENU_ITEM" @click="openEditor(row)">
+                  <button v-if="canWork" type="button" :class="BOARD_MENU_ITEM" @click="openEditor(row)">
                     <UIcon name="i-lucide-pencil" class="size-3.5 shrink-0" />Edit
                   </button>
                   <button
+                    v-if="canWork"
                     type="button"
                     :class="[BOARD_MENU_ITEM, 'text-error hover:bg-error/10 hover:text-error']"
                     @click="openDelete(row)"
@@ -1210,7 +1246,7 @@ onServerPrefetch(() =>
               <article
                 v-for="row in tasksByStatus(col.id)"
                 :key="row.id"
-                :draggable="!rowLocked(row)"
+                :draggable="canWork && !rowLocked(row)"
                 class="border-default bg-default group/card relative rounded-lg border p-2.5 shadow-sm"
                 :class="[
                   draggingId === row.id ? 'opacity-40' : '',
@@ -1242,7 +1278,10 @@ onServerPrefetch(() =>
                     />
                     <template #content>
                       <div class="flex flex-col">
+                        <!-- #300: auto-assign/move/edit/delete are employee-tier
+                           writes — a VIEWER kebab carries Workflow only -->
                         <button
+                          v-if="canWork"
                           type="button"
                           :class="BOARD_MENU_ITEM"
                           :disabled="busy || rowLocked(row)"
@@ -1255,37 +1294,44 @@ onServerPrefetch(() =>
                         <button type="button" :class="BOARD_MENU_ITEM" @click="openWorkflow(row)">
                           <UIcon name="i-lucide-message-circle-more" class="size-3.5 shrink-0" />Workflow
                         </button>
-                        <!-- Move to…: the same setStatus the drag fires — the
-                           touch/keyboard path onto the drag-only board.
-                           RUN LOCK (#264): disabled while a run is live. -->
-                        <p class="text-dimmed px-2 pt-1.5 pb-1 text-[10px] font-medium">Move to…</p>
-                        <p v-if="rowLocked(row)" class="text-dimmed px-2 pb-1 text-[10px]" data-testid="move-to-locked">
-                          <UIcon name="i-lucide-lock" class="mr-1 inline size-3 align-[-2px]" aria-hidden="true" />{{
-                            LOCK_HINT
-                          }}
-                        </p>
-                        <div class="max-h-40 overflow-y-auto">
-                          <button
-                            v-for="st in statuses"
-                            :key="st.id"
-                            type="button"
-                            :class="BOARD_MENU_ITEM"
-                            :disabled="busy || rowLocked(row) || rowStatus(row) === st.id"
-                            @click="setStatus(row, st.id)"
+                        <template v-if="canWork">
+                          <!-- Move to…: the same setStatus the drag fires — the
+                             touch/keyboard path onto the drag-only board.
+                             RUN LOCK (#264): disabled while a run is live. -->
+                          <p class="text-dimmed px-2 pt-1.5 pb-1 text-[10px] font-medium">Move to…</p>
+                          <p
+                            v-if="rowLocked(row)"
+                            class="text-dimmed px-2 pb-1 text-[10px]"
+                            data-testid="move-to-locked"
                           >
-                            <span
-                              class="inline-block size-2 shrink-0 rounded-full"
-                              :class="statusDot(st.id)"
-                              aria-hidden="true"
-                            />
-                            {{ st.name }}
-                          </button>
-                        </div>
+                            <UIcon name="i-lucide-lock" class="mr-1 inline size-3 align-[-2px]" aria-hidden="true" />{{
+                              LOCK_HINT
+                            }}
+                          </p>
+                          <div class="max-h-40 overflow-y-auto">
+                            <button
+                              v-for="st in statuses"
+                              :key="st.id"
+                              type="button"
+                              :class="BOARD_MENU_ITEM"
+                              :disabled="busy || rowLocked(row) || rowStatus(row) === st.id"
+                              @click="setStatus(row, st.id)"
+                            >
+                              <span
+                                class="inline-block size-2 shrink-0 rounded-full"
+                                :class="statusDot(st.id)"
+                                aria-hidden="true"
+                              />
+                              {{ st.name }}
+                            </button>
+                          </div>
+                        </template>
                         <div class="border-default my-1 border-t" aria-hidden="true" />
-                        <button type="button" :class="BOARD_MENU_ITEM" @click="openEditor(row)">
+                        <button v-if="canWork" type="button" :class="BOARD_MENU_ITEM" @click="openEditor(row)">
                           <UIcon name="i-lucide-pencil" class="size-3.5 shrink-0" />Edit
                         </button>
                         <button
+                          v-if="canWork"
                           type="button"
                           :class="[BOARD_MENU_ITEM, 'text-error hover:bg-error/10 hover:text-error']"
                           @click="openDelete(row)"
@@ -1456,7 +1502,10 @@ onServerPrefetch(() =>
                 wfAction(action, { body: body || undefined })
             "
           />
+          <!-- #300: note/answer/dispatch rides the composer — employee-tier
+               writes, so the whole composer hides below the employee tier -->
           <UTextarea
+            v-if="canWork"
             v-model="workflowNote"
             :rows="3"
             :disabled="workflowBusy"
@@ -1466,8 +1515,9 @@ onServerPrefetch(() =>
           />
           <!-- COMPOSER HINT LAW (#265): the hint mirrors the server's dispatch rule
                and the send's accessible name carries the same wording -->
-          <p class="text-dimmed text-xs" data-testid="drawer-composer-hint">{{ drawerComposerHint }}</p>
+          <p v-if="canWork" class="text-dimmed text-xs" data-testid="drawer-composer-hint">{{ drawerComposerHint }}</p>
           <UButton
+            v-if="canWork"
             size="sm"
             color="primary"
             variant="soft"
