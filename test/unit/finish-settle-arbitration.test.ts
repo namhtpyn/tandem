@@ -10,10 +10,14 @@ const h = vi.hoisted(() => ({
   casWins: true,
   appends: 0,
   casWrites: 0,
+  // every WHERE the service passed to a task_runs update (streaming flush AND the
+  // settle flip) — rendered through real drizzle in the predicate test below
+  flipWheres: [] as unknown[],
   bodyWrites: [] as Array<[string, string, boolean]>,
   attachments: 0,
   parks: [] as Array<{ why: string; rearmable: boolean }>,
   published: [] as Array<[string, string]>,
+  envelopeSettles: 0,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -30,6 +34,7 @@ vi.mock('../../server/db/index', async () => {
       update: (table: unknown) => ({
         set: (_set: Record<string, unknown>) => ({
           where: (_where: unknown) => {
+            if (table === taskRuns) h.flipWheres.push(_where);
             const applied = () => {
               if (table === taskRuns && h.casWins) h.appends += 1;
               h.casWrites += 1;
@@ -82,20 +87,30 @@ vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {
 
 vi.mock('../../server/domains/tasks/workflow.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/workflow.service')>();
-  return { ...mod, submitResult: async () => ({ status: 'done' }), askQuestion: async () => ({}) };
+  return {
+    ...mod,
+    submitResult: async () => {
+      h.envelopeSettles += 1;
+      return { status: 'done' };
+    },
+    askQuestion: async () => ({}),
+  };
 });
 
 import { setEnv } from '../../server/domains/kernel/env';
 import { createRunWriter } from '../../server/domains/tasks/runner.service';
+import { mockDb, taskRuns } from './helpers/mock-db';
 
 beforeEach(() => {
   h.casWins = true;
   h.appends = 0;
   h.casWrites = 0;
+  h.flipWheres = [];
   h.bodyWrites = [];
   h.attachments = 0;
   h.parks = [];
   h.published = [];
+  h.envelopeSettles = 0;
   setEnv({ TANDEM_RUN_FLUSH_MS: undefined, TANDEM_RUN_PUBLISH_MS: undefined });
 });
 
@@ -124,5 +139,50 @@ describe('writer.finish settle arbitration (#286)', () => {
     expect(h.attachments).toBe(0);
     expect(h.parks).toHaveLength(0);
     expect(h.published).toHaveLength(0);
+  });
+
+  it('the CAS predicate pins run id + RUNNING status when rendered by real drizzle', async () => {
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    writer.onLine('agent output');
+    await writer.finish('task-1', RUN_STATUS.FAILED, 1, {
+      review: { resultBody: 'submitted work' },
+      ai: { userId: 'agent-1' },
+    });
+    // re-render every WHERE the service handed to a task_runs update (the streaming
+    // flush + the settle flip) through the REAL drizzle builder: a regression that
+    // drops either the id or the status predicate from the flip fails HERE. A
+    // pg-backed unit test is off the table (test/setup.ts: the unit project runs
+    // without Postgres), so the builder render is the strongest available pin.
+    expect(h.flipWheres.length).toBeGreaterThan(0);
+    for (const where of h.flipWheres) {
+      const { sql, params } = mockDb()
+        .update(taskRuns)
+        .set({ status: RUN_STATUS.FAILED })
+        .where(where as never)
+        .toSQL();
+      expect(sql).toContain('"task_runs"."id"');
+      expect(sql).toContain('"task_runs"."status"');
+      expect(sql).toMatch(/\sand\s/i);
+      expect(params).toContain('run-1');
+      expect(params).toContain(RUN_STATUS.RUNNING);
+    }
+  });
+
+  it('a lost CAS on the DONE branch skips the envelope settle (no submitResult)', async () => {
+    h.casWins = false;
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    writer.onLine('all work complete');
+    await writer.finish('task-1', RUN_STATUS.DONE, 0, { ai: { userId: 'agent-1' } });
+    expect(h.envelopeSettles).toBe(0);
+    expect(h.bodyWrites).toHaveLength(0);
+    expect(h.published).toHaveLength(0);
+  });
+
+  it('a won CAS on the DONE branch settles the envelope exactly once', async () => {
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    writer.onLine('all work complete');
+    await writer.finish('task-1', RUN_STATUS.DONE, 0, { ai: { userId: 'agent-1' } });
+    expect(h.envelopeSettles).toBe(1);
+    expect(h.bodyWrites).toHaveLength(1);
   });
 });
