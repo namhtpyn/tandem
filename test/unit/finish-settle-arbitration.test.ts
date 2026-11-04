@@ -14,6 +14,11 @@ const h = vi.hoisted(() => ({
   // every WHERE the service passed to a task_runs update (streaming flush AND the
   // settle flip) — rendered through real drizzle in the predicate test below
   flipWheres: [] as unknown[],
+  // the SET payloads of those same updates — pins the verdict + full-output tail
+  flipSets: [] as Array<Record<string, unknown>>,
+  // was finish() already resolved when submitResult fired? (await-discipline pin)
+  finishResolved: false,
+  settleResolvedAtCall: [] as boolean[],
   bodyWrites: [] as Array<[string, string, boolean]>,
   attachments: 0,
   parks: [] as Array<{ why: string; rearmable: boolean }>,
@@ -26,6 +31,7 @@ const h = vi.hoisted(() => ({
  * lands on the counter before any assertion reads it. */
 const drain = async () => {
   for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setTimeout(resolve, 0));
 };
 
 vi.mock('../../server/db/index', async () => {
@@ -48,23 +54,26 @@ vi.mock('../../server/db/index', async () => {
         },
       ),
       update: (table: unknown) => ({
-        set: (_set: Record<string, unknown>) => ({
-          where: (_where: unknown) => {
-            if (table === taskRuns) h.flipWheres.push(_where);
-            const applied = () => {
-              if (table === taskRuns && h.casWins) h.appends += 1;
-              if (table === tasks) h.tasksWrites += 1; // bounceTaskAfterRun writes here
-              h.casWrites += 1;
-              return h.casWins ? [{ id: 'run-1' }] : [];
-            };
-            return {
-              // a real thenable: the writer chains .then/.catch/.finally on flushes
-              then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => Promise.resolve(applied()).then(onF),
-              catch: (onR: (e: unknown) => unknown) => Promise.resolve(applied()).catch(onR),
-              returning: async () => applied(),
-            };
-          },
-        }),
+        set: (_set: Record<string, unknown>) => {
+          if (table === taskRuns) h.flipSets.push(_set);
+          return {
+            where: (_where: unknown) => {
+              if (table === taskRuns) h.flipWheres.push(_where);
+              const applied = () => {
+                if (table === taskRuns && h.casWins) h.appends += 1;
+                if (table === tasks) h.tasksWrites += 1; // bounceTaskAfterRun writes here
+                h.casWrites += 1;
+                return h.casWins ? [{ id: 'run-1' }] : [];
+              };
+              return {
+                // a real thenable: the writer chains .then/.catch/.finally on flushes
+                then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => Promise.resolve(applied()).then(onF),
+                catch: (onR: (e: unknown) => unknown) => Promise.resolve(applied()).catch(onR),
+                returning: async () => applied(),
+              };
+            },
+          };
+        },
       }),
     },
   };
@@ -108,6 +117,7 @@ vi.mock('../../server/domains/tasks/workflow.service', async (importOriginal) =>
     ...mod,
     submitResult: async () => {
       h.envelopeSettles += 1;
+      h.settleResolvedAtCall.push(h.finishResolved);
       return { status: 'done' };
     },
     askQuestion: async () => ({}),
@@ -126,6 +136,9 @@ beforeEach(() => {
   h.casWrites = 0;
   h.tasksWrites = 0;
   h.flipWheres = [];
+  h.flipSets = [];
+  h.finishResolved = false;
+  h.settleResolvedAtCall = [];
   h.bodyWrites = [];
   h.attachments = 0;
   h.parks = [];
@@ -193,6 +206,30 @@ describe('writer.finish settle arbitration (#286)', () => {
       expect(whereClause(actual)).toBe(whereClause(expected));
       expect(actual.params).toEqual(['run-1', RUN_STATUS.RUNNING]);
     }
+    // the flip's SET payload is contract too: the settle writes the verdict it was
+    // given + the FULL output tail (transcript-tail law) — not a constant status,
+    // not a truncated buffer
+    const setsSummary = h.flipSets.map((s) => ({
+      keys: Object.keys(s),
+      status: typeof s.status === 'string' ? s.status : '<non-string>',
+      output: typeof s.output === 'string' ? s.output : '<sql>',
+    }));
+    expect(
+      h.flipSets.some((s) => s.status === RUN_STATUS.FAILED && s.output === writer.buffer),
+      `no task_runs update wrote status=FAILED + the full output tail (sets: ${JSON.stringify(setsSummary)})`,
+    ).toBe(true);
+  });
+
+  it('a won CAS on a FAILED work run bounces the task (liveness control for the no-bounce pins)', async () => {
+    // POSITIVE CONTROL: proves the tasksWrites counter actually fires under this
+    // file's mock — without it, mock drift would silently vacate the two
+    // tasksWrites===0 pins above (a dead counter passes every "no bounce" test)
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    writer.onLine('agent output');
+    await writer.finish('task-1', RUN_STATUS.FAILED, 1, { ai: { userId: 'agent-1' } });
+    await drain();
+    expect(h.tasksWrites).toBeGreaterThanOrEqual(1);
+    expect(h.parks).toHaveLength(0); // work runs bounce, review turns park
   });
 
   it('a lost CAS on the DONE branch skips the envelope settle (no submitResult)', async () => {
@@ -207,12 +244,18 @@ describe('writer.finish settle arbitration (#286)', () => {
     expect(h.tasksWrites).toBe(0); // no bounce on a lost settle
   });
 
-  it('a won CAS on the DONE branch settles the envelope exactly once', async () => {
+  it('a won CAS on the DONE branch settles the envelope exactly once, INSIDE the awaited settle', async () => {
     const writer = createRunWriter('run-1', '', 'msg-1');
     writer.onLine('all work complete');
-    await writer.finish('task-1', RUN_STATUS.DONE, 0, { ai: { userId: 'agent-1' } });
+    // await-discipline pin: submitResult must fire while finish() is still pending
+    // (settle BEFORE the publishes/return). A `void settleDoneRun(...)` regression
+    // resolves finish first — settleResolvedAtCall would read true.
+    await writer.finish('task-1', RUN_STATUS.DONE, 0, { ai: { userId: 'agent-1' } }).then(() => {
+      h.finishResolved = true;
+    });
     await drain();
     expect(h.envelopeSettles).toBe(1);
+    expect(h.settleResolvedAtCall).toEqual([false]);
     expect(h.bodyWrites).toHaveLength(1);
   });
 });
