@@ -9,8 +9,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import { consola } from 'consola';
 import { eq, lt } from 'drizzle-orm';
 
+import { CHANGE_ACTION, CHANGE_RESOURCE } from '#shared/enums';
+
 import { db } from '../../db/index';
 import { mcpOauthStates, mcpOauthTokens } from '../../db/schema';
+import { publishChange } from '../kernel/kernel';
 import { decryptSecret, encryptSecret } from '../vault/secret/secret-crypto.service';
 
 /** a token expiring within this window refreshes BEFORE it rides a dispatch */
@@ -280,6 +283,10 @@ export async function handleOauthCallback(input: { code: string; state: string }
     throw new Error('registry entry changed during the exchange — start the connect again');
   }
   await persistTokens(state.bindingId, token, state.configFingerprint);
+  // the token store IS an MCP write (SPEC "Binding surfaces": every write
+  // publishes the change bus) — the connected badge on BOTH admin surfaces
+  // tracks it; the popup's own opener additionally gets the postMessage
+  await publishChange(CHANGE_RESOURCE.MCP, CHANGE_ACTION.UPDATE);
 }
 
 /** map a registry row (or a binding's joined server) onto the OauthServerConfig

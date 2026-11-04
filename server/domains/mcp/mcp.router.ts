@@ -9,6 +9,7 @@ import { adminProcedure, ORPCError, protectedProcedure } from '../kernel/kernel'
 import { oauthConnectOrigin, startOauthConnect } from './mcp-oauth.service';
 import {
   bindingsList,
+  bindingsListByServer,
   bindingsRemove,
   bindingsSet,
   listRegistry,
@@ -69,6 +70,11 @@ export const mcpRouter = os.router({
   bindingsList: adminProcedure
     .input(z.strictObject({ employeeId: idField }))
     .handler(({ input }) => bindingsList(input.employeeId)),
+
+  // per-server read for the registry page's binding manager (#274)
+  bindingsListByServer: adminProcedure
+    .input(z.strictObject({ serverId: idField }))
+    .handler(({ input }) => bindingsListByServer(input.serverId)),
 
   bindingsSet: adminProcedure
     .input(
