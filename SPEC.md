@@ -210,6 +210,7 @@ Slice 2 adds OAuth per binding (section below):
 | `mcp.bindingsSet`    | admin   | `{employeeId,serverId,secretId?}`         | binding row (upsert; verdict cleared on credential change)                                                                                                          |
 | `mcp.bindingsRemove` | admin   | `{employeeId,serverId}`                   | `{ok}`                                                                                                                                                              |
 | `mcp.probe`          | admin   | `{employeeId,serverId}`                   | `{ok,detail,durationMs,lastProbeAt}`                                                                                                                                |
+| `mcp.oauthConnect`   | admin   | `{employeeId,serverId}`                   | `{connectUrl,serverName}` (mint: single-use state row + provider authorizeUrl; no GET mint route — see the authorize-flow bullet below)                             |
 
 OAuth connect rides the admin oRPC POST `mcp.oauthConnect` (NOT a REST
 route — #278: a state-changing GET rode SameSite=Lax admin sessions on
