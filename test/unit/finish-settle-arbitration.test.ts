@@ -4,8 +4,6 @@
 // attachments, no DONE-envelope settle, no review park, no bounce, no publishes.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { RUN_STATUS } from '#shared/enums';
-
 const h = vi.hoisted(() => ({
   casWins: true,
   appends: 0,
@@ -126,9 +124,21 @@ vi.mock('../../server/domains/tasks/workflow.service', async (importOriginal) =>
 
 import { and, eq } from 'drizzle-orm';
 
+import { CHANGE_ACTION, CHANGE_RESOURCE, RUN_STATUS } from '#shared/enums';
+
 import { setEnv } from '../../server/domains/kernel/env';
 import { createRunWriter } from '../../server/domains/tasks/runner.service';
 import { mockDb, taskRuns } from './helpers/mock-db';
+
+/** the exact lifecycle publish sequence every won settle must emit, in order:
+ * RUNS re-emit, thread-feed TASK_ACTIVITY create, then the TASKS re-emit that
+ * drops viewers' runLocked bit (#264 r2) — dropping/reordering any of these is
+ * a viewer-staleness regression, not a cosmetic one. */
+const LIFECYCLE_PUBLISHES = [
+  [CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE],
+  [CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE],
+  [CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE],
+];
 
 beforeEach(() => {
   h.casWins = true;
@@ -158,6 +168,7 @@ describe('writer.finish settle arbitration (#286)', () => {
     expect(h.bodyWrites).toHaveLength(1);
     expect(h.parks).toHaveLength(1);
     expect(h.parks[0]?.rearmable).toBe(true);
+    expect(h.published).toEqual(LIFECYCLE_PUBLISHES);
   });
 
   it('a lost CAS (reaper/stop already settled) performs ZERO side effects', async () => {
@@ -209,15 +220,20 @@ describe('writer.finish settle arbitration (#286)', () => {
     // the flip's SET payload is contract too: the settle writes the verdict it was
     // given + the FULL output tail (transcript-tail law) — not a constant status,
     // not a truncated buffer
+    const flip = h.flipSets.find((s) => s.status === RUN_STATUS.FAILED && s.output === writer.buffer);
     const setsSummary = h.flipSets.map((s) => ({
       keys: Object.keys(s),
       status: typeof s.status === 'string' ? s.status : '<non-string>',
       output: typeof s.output === 'string' ? s.output : '<sql>',
     }));
     expect(
-      h.flipSets.some((s) => s.status === RUN_STATUS.FAILED && s.output === writer.buffer),
+      flip !== undefined,
       `no task_runs update wrote status=FAILED + the full output tail (sets: ${JSON.stringify(setsSummary)})`,
     ).toBe(true);
+    // the settle verdict detail is contract too: exit N for a FAILED run, and a
+    // real finishedAt wall clock (thread duration rendering reads it)
+    expect(flip?.exitCode).toBe(1);
+    expect(flip?.finishedAt).toBeInstanceOf(Date);
   });
 
   it('a won CAS on a FAILED work run bounces the task (liveness control for the no-bounce pins)', async () => {
@@ -230,6 +246,24 @@ describe('writer.finish settle arbitration (#286)', () => {
     await drain();
     expect(h.tasksWrites).toBeGreaterThanOrEqual(1);
     expect(h.parks).toHaveLength(0); // work runs bounce, review turns park
+    // lifecycle publishes come first and in order; the bounce adds its own
+    // re-emits (tasks write + logRun) after them
+    expect(h.published.slice(0, LIFECYCLE_PUBLISHES.length)).toEqual(LIFECYCLE_PUBLISHES);
+  });
+
+  it('a lost CAS on a FAILED WORK run never bounces the task (the reaper-race arm)', async () => {
+    // the arm production hits most: a reaper/stop racing a WORK run's finish. The
+    // mutant class (bounce re-armed on a lost settle) resurrects a task the winner
+    // owns — this test is what makes the two no-bounce pins above complete.
+    h.casWins = false;
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    writer.onLine('agent output');
+    await writer.finish('task-1', RUN_STATUS.FAILED, 1, { ai: { userId: 'agent-1' } });
+    await drain();
+    expect(h.tasksWrites).toBe(0); // no backoff re-arm on a lost settle
+    expect(h.parks).toHaveLength(0);
+    expect(h.envelopeSettles).toBe(0);
+    expect(h.published).toHaveLength(0);
   });
 
   it('a lost CAS on the DONE branch skips the envelope settle (no submitResult)', async () => {
@@ -257,5 +291,10 @@ describe('writer.finish settle arbitration (#286)', () => {
     expect(h.envelopeSettles).toBe(1);
     expect(h.settleResolvedAtCall).toEqual([false]);
     expect(h.bodyWrites).toHaveLength(1);
+    // exactly ONE tasks.write on this arm: settleDoneRun's post-settle reset
+    // (failStreak 0 + dispatchAfter null) — the SPEC's "streak reset only AFTER a
+    // successful settle"; dropping it grows the backoff ladder across successes
+    expect(h.tasksWrites).toBe(1);
+    expect(h.published).toEqual(LIFECYCLE_PUBLISHES);
   });
 });
