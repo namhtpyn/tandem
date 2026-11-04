@@ -429,10 +429,15 @@ function probedWhen(iso: string | null | undefined) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-// ---- OAuth connect (#270 slice 2) -------------------------------------------
-// The popup rides /api/mcp/oauth/connect (admin REST): provider authorize →
-// Tandem callback stores the binding's tokens → the callback page postMessages
-// `mcp-oauth` to this opener and we refetch the bindings (masked status only).
+// ---- OAuth connect (#270 slice 2, #278) -------------------------------------
+// The mint rides the admin-only oRPC POST `mcp.oauthConnect` (the legacy
+// state-changing GET was the CSRF-intent vector: a SameSite=Lax admin session
+// rides a forged top-level navigation, a cross-site POST does not). The popup
+// opens SYNCHRONOUSLY in the click gesture (about:blank) and navigates to the
+// provider URL only after the mint round-trip — a post-await window.open is
+// popup-blocked. Provider authorize → Tandem callback stores the binding's
+// tokens → the callback page postMessages `mcp-oauth` to this opener and we
+// refetch the bindings (masked status only).
 const connectingServerId = ref<string | null>(null);
 let connectPopupWatcher: number | null = null;
 
@@ -462,8 +467,9 @@ function connectOauth(binding: McpBindingRow) {
   const employeeId = editingId.value;
   if (!employeeId || connectingServerId.value) return;
   connectingServerId.value = binding.serverId;
-  const url = `/api/mcp/oauth/connect?employeeId=${encodeURIComponent(employeeId)}&serverId=${encodeURIComponent(binding.serverId)}`;
-  const popup = window.open(url, 'mcp-oauth-connect', 'popup,width=520,height=680');
+  // gesture-safe open first — about:blank is same-origin, the opener may
+  // navigate it to the provider URL once the mint resolves
+  const popup = window.open('', 'mcp-oauth-connect', 'popup,width=520,height=680');
   // a cancelled/closed popup never postMessages — stop the spinner so the
   // Connect button stays usable (reopening was the only recovery before)
   stopConnectWatcher();
@@ -473,6 +479,17 @@ function connectOauth(binding: McpBindingRow) {
       connectingServerId.value = null;
     }
   }, 500);
+  void $client.mcp
+    .oauthConnect({ employeeId, serverId: binding.serverId })
+    .then((res) => {
+      if (!popup || popup.closed) return;
+      popup.location.href = res.connectUrl;
+    })
+    .catch(() => {
+      popup?.close();
+      stopConnectWatcher();
+      connectingServerId.value = null;
+    });
 }
 
 /** 'connected · expires <when>' label for oauth bindings */

@@ -163,17 +163,23 @@ Slice 2 adds OAuth per binding (section below):
   the OAuth client secret joins the vault in-use guard, and ROTATING that
   secret is a contract change: it wipes the referencing servers' tokens +
   pending state and clears their binding verdicts.
-- **Authorize flow**: admin-only `GET /api/mcp/oauth/connect`
-  (`employeeId` + `serverId`) requires an existing binding and an `oauth`
-  registry entry, persists a single-use state row (PKCE S256 verifier,
-  redirect_uri, 10-minute TTL) and 302-redirects the admin browser to the
-  provider's authorizeUrl. The provider returns to
-  `GET /api/mcp/oauth/callback` (`code` + `state`): the state is consumed
-  on FIRST use (replay/expiry = 400), the code is exchanged server-side
-  (client secret + code_verifier when configured), and the resulting tokens
-  are stored on the binding. The callback renders a close-this-window
-  result page and notifies the opener — the single-use state row is the
-  authorization proof.
+- **Authorize flow**: the mint is an admin-only oRPC POST,
+  `mcp.oauthConnect` (`employeeId` + `serverId`): it requires an existing
+  binding and an `oauth` registry entry, persists a single-use state row
+  (PKCE S256 verifier, redirect_uri, 10-minute TTL) and returns the
+  provider's authorizeUrl for the admin browser to open. There is NO
+  same-site GET mint endpoint: a state-changing GET would ride the
+  SameSite=Lax admin session on a forged top-level navigation (the
+  CSRF-intent binding class, #278 — a crafted link could make an admin
+  initiate authorization for a binding they did not choose). The POST
+  cannot be CSRFed (Lax drops cookies on cross-site POSTs), so a forged
+  link finds nothing to hit and the provider loop never starts. The
+  provider returns to `GET /api/mcp/oauth/callback` (`code` + `state`):
+  the state is consumed on FIRST use (replay/expiry = 400), the code is
+  exchanged server-side (client secret + code_verifier when configured),
+  and the resulting tokens are stored on the binding. The callback renders
+  a close-this-window result page and notifies the opener — the
+  single-use state row is the authorization proof.
 - **Dispatch injection (OAuth)**: an `oauth` binding injects the
   `Authorization` header with scheme `Bearer` and the binding's decrypted
   access token as the value; when the token is missing, expired
@@ -388,6 +394,7 @@ Rules:
 | `mcp.bindingsSet`     | admin   | `{employeeId,serverId,secretId?}`                         | binding row (upsert)                                                                                |
 | `mcp.bindingsRemove`  | admin   | `{employeeId,serverId}`                                   | `{ok}` (unbind = revoke at next dispatch; oauth grants revoke best-effort)                          |
 | `mcp.probe`           | admin   | `{employeeId,serverId}`                                   | `{ok,detail,durationMs,lastProbeAt}` (verdict persisted on the binding)                             |
+| `mcp.oauthConnect`    | admin   | `{employeeId,serverId}`                                   | `{connectUrl,serverName}` (mint: single-use state row + provider authorizeUrl; no GET mint route)   |
 
 Wiring follows the official oRPC docs: Nuxt adapter (`toWebRequest` +
 `RPCHandler` with `onError` interceptor), Better Auth lazy `getSession`

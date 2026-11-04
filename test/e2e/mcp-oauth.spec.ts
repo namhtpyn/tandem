@@ -220,6 +220,28 @@ function startMockProvider() {
 }
 
 test.describe('mcp oauth per binding', () => {
+  // #278 acceptance pins: a forged connect LINK finds no same-site mint. The
+  // GET route is deleted (a top-level GET navigation rides a SameSite=Lax
+  // admin session), and an unauthenticated POST has no session to mint with.
+  test('forged connect links find no mint route: GET 404, anonymous POST rejected', async ({ page, playwright }) => {
+    const forged = await page.request.get('/api/mcp/oauth/connect?employeeId=e2e-x&serverId=e2e-y');
+    expect(forged.status()).toBe(404);
+
+    // anonymous context (anon-context law: empty storageState — page.request
+    // inherits the signed-in session)
+    const anon = await playwright.request.newContext({ storageState: { cookies: [], origins: [] } });
+    try {
+      const anonGet = await anon.get('/api/mcp/oauth/connect?employeeId=e2e-x&serverId=e2e-y');
+      expect(anonGet.status()).toBe(404);
+      const anonMint = await anon.post('/rpc/mcp/oauthConnect', {
+        data: { json: { employeeId: 'e2e-x', serverId: 'e2e-y' } },
+      });
+      expect([401, 403]).toContain(anonMint.status());
+    } finally {
+      await anon.dispose();
+    }
+  });
+
   test('registry OAuth validation: oauth requires authorize/token/clientId; none clears', async ({ page }) => {
     const tag = Date.now().toString(36).slice(-6);
     const missing = await rpcPost(page, '/rpc/mcp/registryCreate', {
@@ -320,13 +342,11 @@ test.describe('mcp oauth per binding', () => {
       const serverId = await seedOauthServer(page, serverName, provider);
       await bindServer(page, employeeId, serverId);
 
-      // connect via the REST legs (no UI): connect → authorize → callback
-      const connectRes = await page.request.get(
-        `/api/mcp/oauth/connect?employeeId=${encodeURIComponent(employeeId)}&serverId=${encodeURIComponent(serverId)}`,
-        { maxRedirects: 0 },
-      );
-      expect(connectRes.status()).toBe(302);
-      const authorizeUrl = connectRes.headersArray().find((h) => h.name.toLowerCase() === 'location')?.value ?? '';
+      // connect via the RPC legs (no UI): the #278 admin POST mint →
+      // authorize → callback
+      const mint = await rpcPost(page, '/rpc/mcp/oauthConnect', { employeeId, serverId });
+      expect(mint.status).toBe(200);
+      const authorizeUrl = (mint.json?.connectUrl as string) ?? '';
       expect(authorizeUrl).toContain(`127.0.0.1:${provider.port}/authorize`);
       const authRes = await page.request.get(authorizeUrl, { maxRedirects: 0 });
       expect(authRes.status()).toBe(302);

@@ -5,7 +5,8 @@
 import { os } from '@orpc/server';
 import { z } from 'zod';
 
-import { adminProcedure, protectedProcedure } from '../kernel/kernel';
+import { adminProcedure, ORPCError, protectedProcedure } from '../kernel/kernel';
+import { oauthConnectOrigin, startOauthConnect } from './mcp-oauth.service';
 import {
   bindingsList,
   bindingsRemove,
@@ -92,4 +93,25 @@ export const mcpRouter = os.router({
   probe: adminProcedure
     .input(z.strictObject({ employeeId: idField, serverId: idField }))
     .handler(({ input }) => probeMcpBinding(input)),
+
+  // #278: the connect mint rides an admin POST — the legacy state-changing
+  // GET /api/mcp/oauth/connect rode a SameSite=Lax admin session on any
+  // forged top-level navigation (CSRF-intent binding). Lax drops cookies on
+  // cross-site POSTs, so a forged link has no same-site mint to hit.
+  oauthConnect: adminProcedure
+    .input(z.strictObject({ employeeId: idField, serverId: idField }))
+    .handler(async ({ input, context }) => {
+      try {
+        const minted = await startOauthConnect({
+          employeeId: input.employeeId,
+          serverId: input.serverId,
+          origin: oauthConnectOrigin(context.reqHeaders),
+        });
+        return { connectUrl: minted.authorizeUrl, serverName: minted.serverName };
+      } catch (e) {
+        // the service throws plain Errors (they land on the callback result
+        // page in the flow) — surface them as RPC 400s for the editor
+        throw new ORPCError('BAD_REQUEST', { message: e instanceof Error ? e.message : 'connect failed' });
+      }
+    }),
 });
