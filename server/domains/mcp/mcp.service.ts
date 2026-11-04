@@ -362,6 +362,39 @@ export async function bindingsList(employeeId: string) {
   };
 }
 
+type ServerBindingWithRefs = BindingWithRefs & {
+  employee: { id: string; name: string };
+};
+
+/** admin read: one registry entry's bindings across agents — the per-server
+ * surface behind the registry page's binding manager (#274, SPEC "Binding
+ * surfaces"): same masked shape as bindingsList keyed by agent, never the
+ * credential plaintext */
+export async function bindingsListByServer(serverId: string) {
+  const rows = await db.query.mcpServerBindings.findMany({
+    where: { serverId: { eq: serverId } },
+    with: { employee: true, server: true, secret: true },
+    orderBy: { id: 'asc' },
+  });
+  return {
+    data: await Promise.all(
+      (rows as ServerBindingWithRefs[]).map(async (b) => ({
+        id: b.id,
+        employeeId: b.employee.id,
+        employeeName: b.employee.name,
+        secretId: b.secretId,
+        secretName: b.secret?.name ?? null,
+        lastFour: b.secret?.lastFour ?? null,
+        authKind: b.server.authKind,
+        oauth: await oauthStatusFor(b.id, oauthConfigFromServerRow(b.server)),
+        lastProbeOk: b.lastProbeOk,
+        lastProbeDetail: b.lastProbeDetail,
+        lastProbeAt: iso(b.lastProbeAt),
+      })),
+    ),
+  };
+}
+
 /** upsert by (employee, server); a credential CHANGE clears the binding's verdict */
 export async function bindingsSet(input: { employeeId: string; serverId: string; secretId?: string | null }) {
   await assertAiEmployee(input.employeeId);

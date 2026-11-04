@@ -320,4 +320,97 @@ test.describe('mcp registry + bindings', () => {
       );
     expect(foldsNamingServer).toBe(1);
   });
+
+  test('registry-page binding manager (#274): bind/unbind + credential set from /mcp; both surfaces stay in sync', async ({
+    page,
+  }) => {
+    const mcp = new McpPage(page);
+    const tag = Date.now().toString(36).slice(-6);
+    const serverName = `E2E BindPage ${tag}`;
+    const serverId = await seedServer(page, serverName, `http://127.0.0.1:9/${tag}`);
+    const { employeeName } = await seedAiEmployee(page, tag);
+    const { employeeName: emp2Name } = await seedAiEmployee(page, `${tag}x`);
+    await seedSecret(page, tag);
+
+    await mcp.open();
+    await mcp.rowFor(serverName).getByTestId('mcp-manage-bindings').click();
+    const dialog = page.getByRole('dialog', { name: `Bindings — ${serverName}` });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId('mcp-server-bindings')).toContainText('No agents bound');
+
+    // bind from the /mcp page: pick the agent + a vault credential, submit
+    await dialog.getByTestId('mcp-bind-employee').click();
+    await page.getByRole('option', { name: employeeName, exact: true }).click();
+    await dialog.getByTestId('mcp-bind-secret').click();
+    await page.getByRole('option', { name: new RegExp(`MCP cred ${tag}`) }).click();
+    await dialog.getByTestId('mcp-bind-submit').click();
+    const bound1 = dialog.getByTestId(`mcp-server-binding-${employeeName}`);
+    await expect(bound1).toBeVisible({ timeout: 15_000 });
+    await expect(bound1.getByTestId('mcp-server-binding-cred')).toContainText(`MCP cred ${tag}`);
+    await expect(bound1.getByTestId('mcp-server-binding-cred')).not.toContainText(`sk-e2e-mcp-${tag}`);
+
+    // the employee editor reflects the /mcp-side binding (one data model)
+    const { editor, bindingRow } = await openMcpSection(page, employeeName);
+    await expect(bindingRow).toContainText(serverName);
+    await editor.getByRole('button', { name: 'Cancel' }).click();
+    await expect(editor).toBeHidden({ timeout: 10_000 });
+
+    // bind a second agent from the EDITOR side → the /mcp modal reflects it
+    await page.goto('/employees');
+    await waitForHydration(page);
+    await page.getByPlaceholder('Search employees…').fill(emp2Name);
+    const emp2Row = page.locator('tr:visible', { hasText: emp2Name }).first();
+    await expect(emp2Row).toBeVisible({ timeout: 15_000 });
+    await emp2Row.getByRole('button', { name: /Edit / }).click();
+    const editor2 = page.getByRole('dialog', { name: 'Edit employee' });
+    await expect(editor2).toBeVisible();
+    // USelectMenu trigger renders as a button labelled by the form field
+    await editor2.getByRole('button', { name: 'MCP servers' }).click();
+    await page.getByRole('option', { name: serverName, exact: true }).click();
+    await editor2.getByRole('button', { name: 'Bind', exact: true }).click();
+    const editor2Row = editor2.getByTestId('mcp-binding-row').filter({ hasText: serverName });
+    await expect(editor2Row).toBeVisible({ timeout: 15_000 });
+    await editor2.getByRole('button', { name: 'Cancel' }).click();
+    await expect(editor2).toBeHidden({ timeout: 10_000 });
+
+    await page.goto('/mcp');
+    await waitForHydration(page);
+    await mcp.rowFor(serverName).getByTestId('mcp-manage-bindings').click();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId(`mcp-server-binding-${emp2Name}`)).toBeVisible({ timeout: 15_000 });
+    await expect(
+      dialog.getByTestId(`mcp-server-binding-${emp2Name}`).getByTestId('mcp-server-binding-cred'),
+    ).toContainText('No credential');
+
+    // set the credential straight from the /mcp modal (write-only masked read)
+    await dialog
+      .getByTestId(`mcp-server-binding-${emp2Name}`)
+      .getByRole('button', { name: new RegExp(`Credential for ${emp2Name}`) })
+      .click();
+    await page.getByRole('option', { name: new RegExp(`MCP cred ${tag}`) }).click();
+    await expect(
+      dialog.getByTestId(`mcp-server-binding-${emp2Name}`).getByTestId('mcp-server-binding-cred'),
+    ).toContainText(`MCP cred ${tag}`, { timeout: 15_000 });
+
+    // unbind emp2 from the /mcp modal → the editor loses the binding too
+    await dialog.getByTestId(`mcp-server-binding-${emp2Name}`).getByTestId('mcp-server-binding-unbind').click();
+    await expect(dialog.getByTestId(`mcp-server-binding-${emp2Name}`)).toHaveCount(0, { timeout: 15_000 });
+    await expect(dialog.getByTestId(`mcp-server-binding-${employeeName}`)).toBeVisible();
+
+    await page.goto('/employees');
+    await waitForHydration(page);
+    await page.getByPlaceholder('Search employees…').fill(emp2Name);
+    const emp2RowAfter = page.locator('tr:visible', { hasText: emp2Name }).first();
+    await emp2RowAfter.getByRole('button', { name: /Edit / }).click();
+    const editor2After = page.getByRole('dialog', { name: 'Edit employee' });
+    await expect(editor2After).toBeVisible();
+    await expect(editor2After.getByTestId('mcp-binding-row')).toHaveCount(0, { timeout: 15_000 });
+
+    // the registry entry carries the surviving binding (in-use guard stays armed)
+    const regList = await rpcPost(page, '/rpc/mcp/registryList', {});
+    const entry = (regList.json as { data: Array<{ id: string; bindingCount: number }> }).data.find(
+      (r) => r.id === serverId,
+    );
+    expect(entry?.bindingCount).toBe(1);
+  });
 });

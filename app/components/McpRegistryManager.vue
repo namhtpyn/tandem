@@ -5,11 +5,12 @@
 // that message is surfaced verbatim in the confirm. Mirrors the
 // VaultSecretsManager list + modal + confirm patterns.
 import { useMutation, useQuery } from '@tanstack/vue-query';
-import { computed, ref } from 'vue';
+import { computed, ref, unref } from 'vue';
 import { z } from 'zod';
 
 import { formatWhenShort } from '~/utils/format-when';
 import { errorMessage, saveFailed } from '~/utils/forms';
+import type { EmployeeRow } from '~/utils/orpc-types';
 import type { SecretOption } from '~/utils/vault-options';
 import { groupedSecretOptions } from '~/utils/vault-options';
 
@@ -210,6 +211,116 @@ async function reallyRemove() {
 }
 
 onServerPrefetch(() => liveQuery.suspense());
+
+// ---- per-server binding manager (#274, SPEC "Binding surfaces") -----------
+// UI parity with the employee editor's MCP section: bind/unbind AI employees
+// + set the binding credential straight from the registry row. Same write
+// verbs (mcp.bindingsSet / bindingsRemove), one data model — the change bus
+// keeps the editor and this surface in sync (writes publish CHANGE_RESOURCE
+// MCP; this list is keyed under the same prefix).
+type ServerBindingRow = {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  secretId: string | null;
+  secretName: string | null;
+  lastFour: string | null;
+  authKind: string;
+  oauth: { connected: boolean; expiresAt: string | null } | null;
+};
+
+const bindingsOpen = ref(false);
+const bindingsRow = ref<{ id: string; name: string } | null>(null);
+const bindingsError = ref<string | null>(null);
+const bindBusy = ref(false);
+const newBindEmployeeId = ref<string | null>(null);
+const newBindSecretId = ref<string | null>(null);
+
+const bindingsLive = useQuery(
+  computed(() => ({
+    ...$orpc.mcp.bindingsListByServer.queryOptions({
+      input: { serverId: bindingsRow.value?.id ?? '' },
+      queryKey: [MCP_RESOURCE, 'bindings', bindingsRow.value?.id ?? ''],
+    }),
+    enabled: bindingsOpen.value && bindingsRow.value !== null,
+  })),
+);
+const serverBindings = computed<ServerBindingRow[]>(() => unref(bindingsLive.data)?.data ?? []);
+
+// AI-employee picker — employees.list carries every row with kind; only AI
+// agents can bind (the server asserts it too), and bound agents drop out
+const EMPLOYEES_RESOURCE = 'EMPLOYEES';
+const employeesLive = useQuery($orpc.employees.list.queryOptions({ queryKey: [EMPLOYEES_RESOURCE, 'list'] }));
+const bindableEmployeeItems = computed(() =>
+  ((unref(employeesLive.data) ?? []) as EmployeeRow[])
+    .filter((e) => e.kind === 'ai' && !serverBindings.value.some((b) => b.employeeId === e.id))
+    .map((e) => ({ label: e.name, value: e.id })),
+);
+
+function openBindings(row: RegistryRow) {
+  bindingsRow.value = { id: row.id, name: row.name };
+  bindingsError.value = null;
+  newBindEmployeeId.value = null;
+  newBindSecretId.value = null;
+  bindingsOpen.value = true;
+}
+
+const bindSetMutation = useMutation({ ...$orpc.mcp.bindingsSet.mutationOptions() });
+const bindRemoveMutation = useMutation({ ...$orpc.mcp.bindingsRemove.mutationOptions() });
+
+async function bindAgent() {
+  const row = bindingsRow.value;
+  const employeeId = newBindEmployeeId.value;
+  if (!row || !employeeId || bindBusy.value) return;
+  bindingsError.value = null;
+  bindBusy.value = true;
+  try {
+    // upsert (SPEC): re-binding an entry swaps its credential and clears the verdict
+    await bindSetMutation.mutateAsync({
+      employeeId,
+      serverId: row.id,
+      ...(newBindSecretId.value ? { secretId: newBindSecretId.value } : {}),
+    });
+    newBindEmployeeId.value = null;
+    newBindSecretId.value = null;
+    await bindingsLive.refetch();
+  } catch (e) {
+    bindingsError.value = errorMessage(e, saveFailed(e, 'server'));
+  } finally {
+    bindBusy.value = false;
+  }
+}
+
+async function setCredential(b: ServerBindingRow, secretId: string | null) {
+  const row = bindingsRow.value;
+  if (!row || bindBusy.value) return;
+  bindingsError.value = null;
+  bindBusy.value = true;
+  try {
+    // explicit null CLEARS the credential (router: secretId is id|null)
+    await bindSetMutation.mutateAsync({ employeeId: b.employeeId, serverId: row.id, secretId });
+    await bindingsLive.refetch();
+  } catch (e) {
+    bindingsError.value = errorMessage(e, saveFailed(e, 'server'));
+  } finally {
+    bindBusy.value = false;
+  }
+}
+
+async function unbind(b: ServerBindingRow) {
+  const row = bindingsRow.value;
+  if (!row || bindBusy.value) return;
+  bindingsError.value = null;
+  bindBusy.value = true;
+  try {
+    await bindRemoveMutation.mutateAsync({ employeeId: b.employeeId, serverId: row.id });
+    await bindingsLive.refetch();
+  } catch (e) {
+    bindingsError.value = errorMessage(e, saveFailed(e, 'server'));
+  } finally {
+    bindBusy.value = false;
+  }
+}
 </script>
 
 <template>
@@ -284,6 +395,21 @@ onServerPrefetch(() => liveQuery.suspense());
         <div class="row-actions flex justify-end gap-1 transition-opacity">
           <UPopover mode="hover" enable-touch>
             <UButton
+              icon="i-lucide-link"
+              variant="ghost"
+              color="neutral"
+              size="sm"
+              :aria-label="`Manage bindings for ${row.original.name}`"
+              data-testid="mcp-manage-bindings"
+              :disabled="busy"
+              @click="openBindings(row.original)"
+            />
+            <template #content>
+              <div class="px-3 py-1.5 text-xs">Manage bindings</div>
+            </template>
+          </UPopover>
+          <UPopover mode="hover" enable-touch>
+            <UButton
               icon="i-lucide-pencil"
               variant="ghost"
               color="neutral"
@@ -338,6 +464,20 @@ onServerPrefetch(() => liveQuery.suspense());
           </div>
           <p v-if="row.notes" class="text-muted mt-1 text-xs">{{ row.notes }}</p>
           <div class="mt-3 flex justify-end gap-3">
+            <UPopover mode="hover" enable-touch>
+              <UButton
+                icon="i-lucide-link"
+                variant="ghost"
+                color="neutral"
+                size="sm"
+                :aria-label="`Manage bindings for ${row.name}`"
+                :disabled="busy"
+                @click="openBindings(row)"
+              />
+              <template #content>
+                <div class="px-3 py-1.5 text-xs">Manage bindings</div>
+              </template>
+            </UPopover>
             <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-pencil"
@@ -552,6 +692,121 @@ onServerPrefetch(() => liveQuery.suspense());
         <div class="flex w-full justify-end gap-2">
           <UButton variant="ghost" color="neutral" :disabled="busy" @click="confirmingRow = null">Cancel</UButton>
           <UButton color="error" icon="i-lucide-trash-2" :loading="busy" @click="reallyRemove()">Delete</UButton>
+        </div>
+      </template>
+    </UModal>
+
+    <!-- per-server binding manager (#274): bind/unbind AI employees + set the
+         binding credential — same verbs as the employee editor's MCP section -->
+    <UModal
+      v-model:open="bindingsOpen"
+      :title="bindingsRow ? `Bindings — ${bindingsRow.name}` : 'Bindings'"
+      :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
+    >
+      <template #body>
+        <div class="space-y-2" data-testid="mcp-server-bindings">
+          <div
+            v-for="b in serverBindings"
+            :key="b.id"
+            class="flex items-center justify-between gap-2 rounded-lg border p-2"
+            :data-testid="`mcp-server-binding-${b.employeeName}`"
+          >
+            <div class="min-w-0">
+              <p class="text-highlighted truncate text-sm font-medium">{{ b.employeeName }}</p>
+              <p class="text-muted mt-0.5 text-xs" data-testid="mcp-server-binding-cred">
+                <template v-if="b.authKind === 'oauth'">
+                  <UBadge
+                    :color="b.oauth?.connected ? 'success' : 'warning'"
+                    variant="subtle"
+                    size="sm"
+                    :icon="b.oauth?.connected ? 'i-lucide-circle-check' : 'i-lucide-circle-alert'"
+                    data-testid="mcp-server-binding-oauth"
+                  >
+                    {{ b.oauth?.connected ? 'OAuth connected' : 'OAuth not connected' }}
+                  </UBadge>
+                </template>
+                <template v-else-if="b.secretName">
+                  Credential
+                  <span class="text-highlighted">{{ b.secretName }}</span>
+                  <span class="text-dimmed font-mono"> •••• {{ b.lastFour }}</span>
+                </template>
+                <template v-else>No credential — anonymous requests</template>
+              </p>
+            </div>
+            <div class="flex shrink-0 items-center gap-1">
+              <USelectMenu
+                :model-value="b.secretId"
+                :items="secretItems"
+                value-key="value"
+                clear
+                placeholder="Credential (optional)"
+                icon="i-lucide-key-round"
+                class="w-44"
+                :disabled="bindBusy"
+                :aria-label="`Credential for ${b.employeeName}`"
+                @update:model-value="(v: string | null) => setCredential(b, v)"
+              />
+              <UButton
+                icon="i-lucide-unlink"
+                color="error"
+                variant="ghost"
+                size="sm"
+                :aria-label="`Unbind ${b.employeeName}`"
+                data-testid="mcp-server-binding-unbind"
+                :disabled="bindBusy"
+                @click="unbind(b)"
+              />
+            </div>
+          </div>
+          <p v-if="!serverBindings.length" class="text-muted text-sm">No agents bound — bind one below.</p>
+
+          <div class="mt-3 space-y-2 border-t pt-3">
+            <USelectMenu
+              v-model="newBindEmployeeId"
+              :items="bindableEmployeeItems"
+              value-key="value"
+              :search-input="{ placeholder: 'Search agents' }"
+              placeholder="AI agent…"
+              icon="i-lucide-bot"
+              class="w-full"
+              data-testid="mcp-bind-employee"
+              :disabled="bindBusy"
+            />
+            <div class="flex items-center gap-2">
+              <USelectMenu
+                v-model="newBindSecretId"
+                :items="secretItems"
+                value-key="value"
+                :search-input="{ placeholder: 'Search secrets' }"
+                clear
+                placeholder="Credential (optional)"
+                icon="i-lucide-key-round"
+                class="w-full flex-1"
+                data-testid="mcp-bind-secret"
+                :disabled="bindBusy"
+              />
+              <UButton
+                icon="i-lucide-link"
+                label="Bind"
+                size="sm"
+                class="shrink-0"
+                data-testid="mcp-bind-submit"
+                :disabled="!newBindEmployeeId || bindBusy"
+                :loading="bindBusy"
+                @click="bindAgent"
+              />
+            </div>
+          </div>
+          <UAlert
+            v-if="bindingsError"
+            role="alert"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            :title="bindingsError"
+            class="mt-3"
+            :ui="{ title: 'text-sm' }"
+          />
         </div>
       </template>
     </UModal>
