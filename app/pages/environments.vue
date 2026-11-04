@@ -2,6 +2,9 @@
 useHead({ title: 'Environments' });
 // Environments page shell — the table, search, probe and CRUD live in
 // EnvironmentsManager (server-paged via environments.listPaged).
+// Admin-only writes (SPEC "Roles & access" — UI tier visibility): the manager
+// renders read-only for non-admin deep links; environment verbs are admin-tier.
+const isAdmin = useIsAdmin();
 </script>
 
 <template>
@@ -15,7 +18,7 @@ useHead({ title: 'Environments' });
       <div class="space-y-6 p-4 sm:p-6 lg:p-8">
         <p class="text-muted hidden text-sm sm:block">SSH hosts the agents run on</p>
 
-        <EnvironmentsManager />
+        <EnvironmentsManager :editable="isAdmin" />
       </div>
     </template>
   </UDashboardPanel>

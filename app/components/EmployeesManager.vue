@@ -15,6 +15,12 @@ import { TABLE_PAGE_SIZE } from '~/utils/pagination';
 
 const { $orpc } = useNuxtApp();
 
+// editable=false renders a read-only browser (SPEC "Roles & access" — UI tier
+// visibility): no create/edit/delete UI, no titles manager, no access keys.
+// Employee/titles/key verbs are admin-tier server-side; the page wires
+// :editable="isAdmin".
+const { editable = true } = defineProps<{ editable?: boolean }>();
+
 const page = ref(1);
 const pageSize = ref(TABLE_PAGE_SIZE);
 const search = ref('');
@@ -175,6 +181,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
           </button>
         </div>
         <UButton
+          v-if="editable"
           icon="i-lucide-briefcase"
           label="Titles"
           color="neutral"
@@ -186,7 +193,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
              while a search is active the toolbar keeps it (zero matches must
              not read as a zero-employee workspace) -->
         <UButton
-          v-if="total > 0 || !!search"
+          v-if="editable && (total > 0 || !!search)"
           icon="i-lucide-plus"
           label="New employee"
           size="sm"
@@ -215,7 +222,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
       empty-text="Add the first human or AI teammate."
     >
       <template #empty-cta>
-        <UButton v-if="!isFiltered" icon="i-lucide-plus" label="New employee" @click="openEditor()" />
+        <UButton v-if="editable && !isFiltered" icon="i-lucide-plus" label="New employee" @click="openEditor()" />
       </template>
       <template #name-cell="{ row }">
         <div class="flex items-center gap-2">
@@ -267,7 +274,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
         }}</span>
         <span v-else class="text-dimmed text-xs">—</span>
       </template>
-      <template #actions-cell="{ row }">
+      <template v-if="editable" #actions-cell="{ row }">
         <div class="row-actions flex justify-end gap-1 transition-opacity">
           <UPopover mode="hover" enable-touch>
             <UButton
@@ -363,7 +370,7 @@ onServerPrefetch(() => Promise.all([listQuery.suspense(), envQuery.suspense(), a
               {{ envName(row.environmentId) }}
             </UBadge>
           </div>
-          <div class="mt-3 flex justify-end gap-1">
+          <div v-if="editable" class="mt-3 flex justify-end gap-1">
             <UPopover mode="hover" enable-touch>
               <UButton
                 icon="i-lucide-key-round"

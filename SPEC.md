@@ -285,6 +285,18 @@ tears down rather than yielding. Public streams (`auth.configLive`) skip the
 check by design; a live procedure whose generator never calls the gate is a
 review blocker.
 
+**UI tier visibility (UX, never the boundary, #263):** no ADMIN-SURFACE verb renders
+below the admin tier. The nav filters the admin-surface items (Vault, MCP,
+Environments, Employees, Settings) to ADMIN; the Settings page renders its
+admin cards (general, providers, auth) to ADMIN only — a non-admin deep link
+gets a read-only "Admin only" note. Vault sits wholly in the admin tier (its
+reads included), so a non-admin /vault deep link renders the load error, never
+a browser; Employees, Environments and the Statuses manager read at the
+session tier and render read-only for non-admin deep links — their
+create/edit/delete/keys verb UI hides behind the managers' `editable` prop
+wired to the session role (`useIsAdmin`). Admins see no change. The gate is
+UX only — the server tier matrix above stays the boundary.
+
 Review verdicts are HUMAN-only: `tasks.approve`, `tasks.requestChanges` and
 `tasks.reject` additionally verify the session's credential origin — a session
 backed by an API key (agent credential) is `FORBIDDEN` even with the right
