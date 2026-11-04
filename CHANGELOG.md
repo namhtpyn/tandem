@@ -1,3 +1,16 @@
+## [2.67.4](https://github.com/namhtpyn/tandem/compare/v2.67.3...v2.67.4) (2026-11-04)
+
+
+### Bug Fixes
+
+* [#264](https://github.com/namhtpyn/tandem/issues/264) [#265](https://github.com/namhtpyn/tandem/issues/265) — UI honors the specced server contract on every task surface ([4076afa](https://github.com/namhtpyn/tandem/commit/4076afa01795af2383585ffdc9e922595f50f290))
+* [#264](https://github.com/namhtpyn/tandem/issues/264) [#265](https://github.com/namhtpyn/tandem/issues/265) r2 blind-review round 2 — the lock releases on every settle; the hint never promises past the verb ([5f5db23](https://github.com/namhtpyn/tandem/commit/5f5db2391ac06f021b6014cb1fa25425ebb3c39d))
+* [#264](https://github.com/namhtpyn/tandem/issues/264) [#265](https://github.com/namhtpyn/tandem/issues/265) r3 blind-review round 3 — verb routing is category-only; the hold is race-free ([ade4da9](https://github.com/namhtpyn/tandem/commit/ade4da9d28f64ad3c09abb0d8208a495d6b7dc8e))
+* [#264](https://github.com/namhtpyn/tandem/issues/264) [#265](https://github.com/namhtpyn/tandem/issues/265) r4 blind-review round 4 — the hint never promises past the queue ([549cf2f](https://github.com/namhtpyn/tandem/commit/549cf2fd928c50f4e7fb9f7bc6f1c267f8531df6)), closes [#288](https://github.com/namhtpyn/tandem/issues/288)
+* [#264](https://github.com/namhtpyn/tandem/issues/264) [#265](https://github.com/namhtpyn/tandem/issues/265) r5 blind-review round 5 — the wording never claims an outcome the server withheld ([466bb39](https://github.com/namhtpyn/tandem/commit/466bb3990a73b4606c3b0adace8b3c4eaa701b80))
+* [#264](https://github.com/namhtpyn/tandem/issues/264) e2e — hold the dispatcher scan off manually-dispatched specs (run-stop CI failure was the 5s tick claiming the fresh ready task mid-test; manual verb ignores dispatch_after, only the scan respects it); tasks.spec send click rides the visible label (the accessible name now carries the hint wording) ([4b058eb](https://github.com/namhtpyn/tandem/commit/4b058eb9f42253681e526c5cdbc6e4ddce2628c3))
+* [#264](https://github.com/namhtpyn/tandem/issues/264) r1 blind-review round 1 — the lock reaches every assignee writer ([7f5bd44](https://github.com/namhtpyn/tandem/commit/7f5bd44a903e29ab9e8e434ce17a1afdc42cd381)), closes [#265](https://github.com/namhtpyn/tandem/issues/265)
+
 ## [2.67.3](https://github.com/namhtpyn/tandem/compare/v2.67.2...v2.67.3) (2026-11-03)
 
 
