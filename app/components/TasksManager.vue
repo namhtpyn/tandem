@@ -622,6 +622,9 @@ function openWorkflow(row: TaskRow) {
 // review verdicts are an explicit-reviewer surface — gate on ids, never names:
 // a name is display data and two employees can share one
 const session = useAppSession();
+// statuses save/remove are admin-tier (SPEC "Roles & access" — UI tier
+// visibility): the Statuses manager renders its toolbar to admins only
+const isAdmin = useIsAdmin();
 const drawerCanReview = computed(
   () => !!session.value && !!workflowTask.value?.reviewers.includes(session.value.user.id),
 );
@@ -1583,7 +1586,7 @@ onServerPrefetch(() =>
       </template>
     </UModal>
 
-    <TaskStatusesManager v-model:open="statusManagerOpen" />
+    <TaskStatusesManager v-model:open="statusManagerOpen" :editable="isAdmin" />
     <TaskEditorModal v-model:open="editorOpen" :task="editingTaskWithLock" @saved="onSaved" />
 
     <!-- delete confirm -->

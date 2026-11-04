@@ -4,6 +4,10 @@ useHead({ title: 'Vault' });
 // once and never displayed again — only a last-4 hint. Mobile-first cards.
 import { ref } from 'vue';
 
+// Admin-only writes (SPEC "Roles & access" — UI tier visibility): the managers
+// render read-only for non-admin deep links; vault verbs are admin-tier.
+const isAdmin = useIsAdmin();
+
 // ---- folder filter: self-loading VaultFolderSelect (v-model = folder id | null) ----
 const activeFolder = ref<string | null>(null);
 const folderManagerOpen = ref(false);
@@ -28,12 +32,13 @@ function onFolderDeleted(id: string) {
 
         <VaultSecretsManager
           v-model:folder-id="activeFolder"
+          :editable="isAdmin"
           @deleted="onFolderDeleted"
           @manage-folders="folderManagerOpen = true"
         />
       </div>
 
-      <VaultFoldersManager v-model:open="folderManagerOpen" @deleted="onFolderDeleted" />
+      <VaultFoldersManager v-model:open="folderManagerOpen" :editable="isAdmin" @deleted="onFolderDeleted" />
     </template>
   </UDashboardPanel>
 </template>

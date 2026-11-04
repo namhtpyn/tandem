@@ -3,6 +3,10 @@ useHead({ title: 'Employees' });
 // Employees page shell — the paged/searched table, org chart and all CRUD
 // live in EmployeesManager (server-paged via employees.listPaged). The flex
 // column lets the org-graph canvas fill the remaining viewport height.
+// Admin-only writes (SPEC "Roles & access" — UI tier visibility): the manager
+// renders read-only for non-admin deep links; employee/titles/key verbs are
+// admin-tier.
+const isAdmin = useIsAdmin();
 </script>
 
 <template>
@@ -18,7 +22,7 @@ useHead({ title: 'Employees' });
           Manage human and AI-agent accounts, titles, and reporting lines
         </p>
 
-        <EmployeesManager class="min-h-0 flex-1" />
+        <EmployeesManager class="min-h-0 flex-1" :editable="isAdmin" />
       </div>
     </template>
   </UDashboardPanel>
