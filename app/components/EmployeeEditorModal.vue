@@ -470,6 +470,11 @@ function connectOauth(binding: McpBindingRow) {
   // gesture-safe open first — about:blank is same-origin, the opener may
   // navigate it to the provider URL once the mint resolves
   const popup = window.open('', 'mcp-oauth-connect', 'popup,width=520,height=680');
+  if (!popup) {
+    // popup blocked — no window to navigate, no server-side mint to spend
+    connectingServerId.value = null;
+    return;
+  }
   // a cancelled/closed popup never postMessages — stop the spinner so the
   // Connect button stays usable (reopening was the only recovery before)
   stopConnectWatcher();
@@ -485,10 +490,13 @@ function connectOauth(binding: McpBindingRow) {
       if (!popup || popup.closed) return;
       popup.location.href = res.connectUrl;
     })
-    .catch(() => {
+    .catch((e) => {
       popup?.close();
       stopConnectWatcher();
       connectingServerId.value = null;
+      // surface the mint rejection — the deleted REST route used to render
+      // the message inside the popup; a silent flash-close reads as a glitch
+      mcpError.value = errorMessage(e, "Couldn't start the OAuth connect — try again");
     });
 }
 
