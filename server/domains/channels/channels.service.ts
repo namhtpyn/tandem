@@ -757,12 +757,13 @@ function healthEntryFor(cfg: ChannelConfig): Record<string, unknown> {
   // healthOk means "a health() read HAPPENED and succeeded" — a missing
   // adapter or a missing health() is NOT a successful read (no read exists),
   // so it stays false there, consistent with parse-dropped entries
-  const healthCap = typeof adapter?.health === 'function';
+  const healthFn = adapter?.health;
+  const healthCap = typeof healthFn === 'function';
   let lastSyncOkAt: number | null = null;
   let healthOk = false;
-  if (adapter && healthCap) {
+  if (healthFn) {
     try {
-      lastSyncOkAt = adapter.health().lastSyncOkAt ?? null;
+      lastSyncOkAt = healthFn().lastSyncOkAt ?? null;
       healthOk = true;
     } catch {
       // lastSyncOkAt stays null + healthOk:false — telemetry fault, not absence
