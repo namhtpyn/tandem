@@ -407,8 +407,10 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   every mapping's row raw for the boot sweep, never a half-set). The unique
   `(adapter, run_id, thread_ref)` index dedupes ROWS; enqueue idempotence
   comes from kicking only newly-inserted rows plus the queue's jobId dedupe —
-  together a re-driven sweep or a re-settled run can never ENQUEUE a reply
-  twice. Durability stays AT-LEAST-ONCE end-to-end (slice-1 law): a crash
+  a re-settled run can never enqueue a reply twice. A RESTART can run two
+  parallel cycle chains for one row (a surviving delayed job plus the sweep's
+  fresh kick): safe by the claim CAS — one send wins, the loser no-ops.
+  Durability stays AT-LEAST-ONCE end-to-end (slice-1 law): a crash
   between a successful send and the processed-at write — or any
   failed/ambiguous send retried per the deferral law — can deliver that one
   reply twice; no-loss wins, the same bound the inbound verbs carry.
@@ -422,9 +424,11 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   cannot edit. Streaming/edit is a later slice.
 - Trigger is BEST-EFFORT: the run-settle path never fails because relaying
   failed — a relay error is logged, never thrown into settle. The trigger
-  fires once, after the settle commits; a process death in that window loses
-  the relay (no re-driver exists pre-insert) — the at-least-once guarantee
-  starts at the outbox row, exactly like every other settle side effect.
+  fires once, after the settle commits; it runs LAST among the settle side
+  effects, so a failure of any preceding one (message rewrite, attachments,
+  settle, publishes) skips the relay exactly like a process death in that
+  window — no re-driver exists pre-insert; the at-least-once guarantee starts
+  at the outbox row, exactly like every other settle side effect.
 - Per-thread ordering: the outbound worker sends at most one row per
   `(adapter, thread_ref)` conversation at a time and always the OLDEST
   unprocessed one — replies land in settle order even when the queue runs
