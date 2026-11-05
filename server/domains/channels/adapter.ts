@@ -44,6 +44,10 @@ export type ChannelAdapter = {
   /** false once a fatal stop happened (dead token) — the core defers instead
    * of routing into a dead transport */
   isLive?(): boolean;
+  /** watchdog (slice 3): last successful TRANSPORT round-trip, epoch ms.
+   * Optional — an adapter without it reports null (the watchdog never
+   * invents a stale fault from a missing capability). */
+  health?(): { lastSyncOkAt: number | null };
   /** transport-level send, already truncated to capabilities.maxLen */
   send(target: string, text: string): Promise<void>;
 };

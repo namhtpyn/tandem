@@ -728,6 +728,50 @@ export async function processOutboundRow(data: {
   log.info(`channel reply ${row.id} sent via ${row.adapter} to thread ${row.threadRef}`);
 }
 
+// ---------- watchdog health (slice 3: per-channel liveness stamps) ----------
+
+/** watchdog stamp key (#271 slice 3): JSON {stampedAt, channels:[{key, kind,
+ * homeserverUrl, connected, lastSyncOkAt}]} — the external prod probe alerts
+ * stamp-stale (tick dead), connected:false (adapter down/dead-token) and
+ * transport-stale (sync loop alive, homeserver unreachable). ABSENT key
+ * (pre-slice image, or no boot start ever completed) stays silent. Queue
+ * depth is deliberately NOT stamped — DB-derivable (SPEC: Watchdog health). */
+export const CHANNELS_HEALTH_KEY = 'channels:health';
+const HEALTH_TICK_MS = 60_000;
+let healthTimer: ReturnType<typeof setInterval> | null = null;
+
+/** one stamp write (exported for tests): best-effort — its own catch, same
+ * law as the dispatcher heartbeat. An entry exists per ENABLED config whether
+ * or not its adapter started (a failed-to-start adapter reports
+ * connected:false — that IS the signal); zero configs stamp an empty array. */
+export async function writeChannelHealthStamp(): Promise<void> {
+  try {
+    const cfgs = parseChannelConfigs(await getSetting(CHANNELS_KEY));
+    const channels = [];
+    for (const cfg of cfgs) {
+      const key = adapterKey(cfg);
+      const adapter = activeAdapters.get(key);
+      let lastSyncOkAt: number | null = null;
+      try {
+        lastSyncOkAt = adapter?.health?.().lastSyncOkAt ?? null;
+      } catch {
+        // a throwing health() must not kill the whole stamp — it reads as
+        // null (never invented stale) for that one entry
+      }
+      channels.push({
+        key,
+        kind: cfg.kind,
+        homeserverUrl: cfg.homeserverUrl,
+        connected: !!adapter && (!adapter.isLive || adapter.isLive()),
+        lastSyncOkAt,
+      });
+    }
+    await setSetting(CHANNELS_HEALTH_KEY, JSON.stringify({ stampedAt: Date.now(), channels }));
+  } catch {
+    // health is best-effort: observability must never crash the tick
+  }
+}
+
 // ---------- lifecycle (boot: adapters + workers + sweep) ----------
 
 const activeAdapters = new Map<string, ChannelAdapter>();
@@ -843,6 +887,11 @@ export async function startChannels(): Promise<string[]> {
     if (stranded.length > 0 || strandedOutbox.length > 0)
       log.info(`swept ${stranded.length} event(s) + ${strandedOutbox.length} reply(ies) back into the queues`);
   }
+  // watchdog health tick (slice 3): arm once, stamp immediately so a boot
+  // that completed start is visible to the probe without waiting a minute —
+  // a partial start reports its dead entries connected:false (the signal).
+  healthTimer ??= setInterval(() => void writeChannelHealthStamp(), HEALTH_TICK_MS);
+  await writeChannelHealthStamp();
   return failed;
 }
 
@@ -884,6 +933,12 @@ export function ensureChannelsRunning(opts: { start: () => Promise<string[]>; in
 }
 
 export async function stopChannels(): Promise<void> {
+  // disarm the health tick first: a stopped channels module must stop
+  // stamping (the stale key is the probe's process-dead signal)
+  if (healthTimer) {
+    clearInterval(healthTimer);
+    healthTimer = null;
+  }
   for (const [key, adapter] of activeAdapters) {
     await adapter.stop();
     activeAdapters.delete(key);
