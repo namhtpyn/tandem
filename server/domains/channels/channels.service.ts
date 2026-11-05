@@ -159,9 +159,10 @@ export async function handleInbound(cfg: ChannelConfig, m: ChannelInboundMessage
       externalId: m.externalId,
       threadRef: m.threadRef,
       sender: m.senderPlatformId,
-      // postgres text/jsonb reject NUL bytes — one NUL must never wedge the
-      // whole channel forever (sanitize, don't skip: the message still routes)
-      body: m.text.replaceAll('\u0000', ''),
+      // postgres text/jsonb reject NUL bytes AND lone surrogate escapes — one
+      // crafted message must never wedge the whole channel forever (sanitize,
+      // don't skip: the message still routes)
+      body: sanitizeText(m.text),
       raw: sanitizeRawJson(m.raw),
     })
     .onConflictDoNothing({ target: [channelEvents.adapter, channelEvents.externalId] })
@@ -182,11 +183,25 @@ export async function handleInbound(cfg: ChannelConfig, m: ChannelInboundMessage
   if (existing && !existing.processedAt) await requeueEvent(hub, existing.id);
 }
 
-/** jsonb-safe raw payload: NUL escapes are illegal in postgres jsonb */
+/** postgres-safe text: strip NUL bytes and lone surrogates (both are insert
+ * errors that would otherwise wedge the channel on one crafted message) */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+export function sanitizeText(t: string): string {
+  return t.replaceAll('\u0000', '').replace(LONE_SURROGATE, '');
+}
+
+/** jsonb-safe raw payload: decode, sanitize every string, re-serialize */
 function sanitizeRawJson(raw: unknown): Record<string, unknown> {
+  const walk = (v: unknown): unknown => {
+    if (typeof v === 'string') return sanitizeText(v);
+    if (Array.isArray(v)) return v.map(walk);
+    if (v !== null && typeof v === 'object') {
+      return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, walk(x)]));
+    }
+    return v;
+  };
   try {
-    const json = JSON.stringify(raw ?? {});
-    return JSON.parse(json.replaceAll('\\u0000', '')) as Record<string, unknown>;
+    return walk(JSON.parse(JSON.stringify(raw ?? {}))) as Record<string, unknown>;
   } catch {
     return {}; // unserializable payload: keep the row, lose only the raw echo
   }
@@ -487,8 +502,11 @@ async function routeMapped(
         },
       });
       if (nowRows[0]?.category !== CATEGORY.WAITING_ANSWER) {
-        await ack('This question was already answered — noted in the thread.');
-        return 'answered';
+        // the question resolved while we routed (settle/CAS race) — the text
+        // is still preserved as a note (a note cannot stomp a resolved task)
+        await addNote(task.id, userId, text.slice(0, COMPOSER_BODY_CAP));
+        await ack('The question was already resolved — your message was added as a note.');
+        return 'noted';
       }
       await ack('Could not deliver the answer — answer in the web app.');
       return 'failed';
@@ -562,9 +580,15 @@ export async function startChannels(): Promise<string[]> {
     if (activeAdapters.has(key)) continue;
     try {
       const token = await resolveToken(cfg);
-      if (!token) continue;
+      if (!token) {
+        failed.push(key); // missing secret — the retry loop re-attempts
+        continue;
+      }
       const adapter = buildAdapter(cfg, token);
-      if (!adapter) continue;
+      if (!adapter) {
+        failed.push(key);
+        continue;
+      }
       await adapter.start({
         onMessage: (m) => handleInbound(cfg, m),
         checkpoint: {

@@ -314,6 +314,18 @@ describe('handleInbound (persist → queue)', () => {
     expect(enqueuedJobs[0]!.opts).toMatchObject({ jobId: strandedId, removeOnFail: true });
   });
 
+  it('NUL bytes and lone surrogates are sanitized, never wedging the channel', async () => {
+    await handleInbound(CFG, {
+      threadRef: '!room:example.org',
+      senderPlatformId: '@u:example.org',
+      text: 'a\u0000b\ud800c',
+      raw: { body: 'x\udfff', nested: { s: 'y\u0000' } },
+      externalId: '$nul1:example.org',
+    });
+    expect(eventInserts[0]).toMatchObject({ body: 'abc', raw: { body: 'x', nested: { s: 'y' } } });
+    expect(enqueuedJobs).toHaveLength(1);
+  });
+
   it('a replayed event already routed (or in flight) is a dedupe no-op', async () => {
     const id = seedEvent();
     events.get(id)!.processedAt = new Date();
