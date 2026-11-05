@@ -580,7 +580,8 @@ describe('stdio transport (slice 3, SPEC "stdio transport")', () => {
     ];
     const out = await buildMcpServersFor('ai-1');
     expect(out).toEqual([
-      { type: 'stdio', name: 's-stdio', command: '/bin/stub', args: ['--p'], env: [{ name: 'KEY', value: 'dec:zz' }] },
+      // the ACP v1 stdio member carries no discriminator (schema truth)
+      { name: 's-stdio', command: '/bin/stub', args: ['--p'], env: [{ name: 'KEY', value: 'dec:zz' }] },
     ]);
     // no credentialEnvVar (or no credential) = empty env
     h.bindingRows = [
@@ -596,7 +597,7 @@ describe('stdio transport (slice 3, SPEC "stdio transport")', () => {
         secret: { name: 'c', lastFour: '1', ciphertext: 'zz' },
       }),
     ];
-    expect((await buildMcpServersFor('ai-1'))[0]).toMatchObject({ type: 'stdio', env: [] });
+    expect((await buildMcpServersFor('ai-1'))[0]).toMatchObject({ command: '/bin/stub', env: [] });
     // mixed http + stdio stay one name-sorted deterministic plan
     h.bindingRows = [
       binding({ id: 'b-1', server: { name: 'zeta', url: 'https://z/v1' }, secret: null }),
@@ -627,7 +628,7 @@ describe('stdio transport (slice 3, SPEC "stdio transport")', () => {
     h.bindingRows = [binding({ server: corrupt })];
     const r = await probeMcpBinding({ employeeId: 'ai-1', serverId: 'srv-1' });
     expect(r.ok).toBe(false);
-    expect(r.detail).toContain('corrupt args column');
+    expect(r.detail).toContain('corrupt registry row');
     expect(h.updates.find((u) => u.table === 'mcpServerBindings')?.set).toMatchObject({ lastProbeOk: false });
   });
 
@@ -663,6 +664,15 @@ describe('stdio transport (slice 3, SPEC "stdio transport")', () => {
     expect(
       extractJsonRpc('mcp-stub v1.2 ready\n{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"s"}}}'),
     ).toMatchObject({ result: { serverInfo: { name: 's' } } });
+  });
+
+  it('extractJsonRpc requires a shape-valid handshake answer — a result-keyed log line can NEVER fake a verdict', () => {
+    expect(extractJsonRpc('{"level":"info","result":"listening"}')).toBeNull();
+    expect(extractJsonRpc('{"jsonrpc":"2.0","id":99,"result":{}}')).toBeNull(); // wrong id
+    expect(extractJsonRpc('{"id":1,"result":{}}')).toBeNull(); // no jsonrpc marker
+    expect(extractJsonRpc('{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"no"}}')).toMatchObject({
+      error: { code: -32600 },
+    });
   });
 
   it('bindingsListByServer rows carry transport (the per-server binding manager badge field)', async () => {

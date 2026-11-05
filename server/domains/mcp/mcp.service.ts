@@ -635,41 +635,59 @@ export async function buildMcpServersFor(employeeId: string): Promise<AcpMcpServ
     with: { server: true, secret: true },
   });
   const sorted = [...(rows as BindingWithRefs[])].sort((a, b) => (a.server.name < b.server.name ? -1 : 1));
-  return Promise.all(
-    sorted.map(async (b) => {
-      if (b.server.transport === 'stdio') {
-        // slice 3 stdio member: the binding credential rides as the env var
-        // NAMED by credentialEnvVar (decrypted at dispatch only, plaintext
-        // never outlives this call) — env carries ONLY that var
-        const env: Array<{ name: string; value: string }> = [];
-        if (b.server.credentialEnvVar && b.secret?.ciphertext) {
-          env.push({ name: b.server.credentialEnvVar, value: decryptSecret(b.secret.ciphertext) });
+  const members = await Promise.all(
+    sorted.map(async (b): Promise<AcpMcpServer | null> => {
+      try {
+        return await buildOneServer(b);
+      } catch (e) {
+        // one corrupt row (dead command/url/args column) must not fail the
+        // employee's WHOLE dispatch plan — skip + log-once
+        if (!warnedCorruptArgs.has(`row:${b.server.id}`)) {
+          warnedCorruptArgs.add(`row:${b.server.id}`);
+          consola.error(
+            `[mcp] skipping unparsable registry row ${b.server.id}: ${e instanceof Error ? e.message : String(e)}`,
+          );
         }
-        return {
-          type: 'stdio' as const,
-          name: b.server.name,
-          command: nonNull(b.server.command),
-          // one corrupt row must not fail the employee's WHOLE dispatch plan —
-          // skip + log-once (read-surface degradation, SPEC empty-args shape)
-          args: safeArgsJson(`server:${b.server.id}`, b.server.args),
-          env,
-        };
+        return null;
       }
-      // ACP v1 wire: headers is a REQUIRED array (empty = uncredentialed server);
-      // url is validation-required for http entries
-      let headers: Array<{ name: string; value: string }> = [];
-      if (b.server.authKind === 'oauth') {
-        // OAuth binding: silent refresh first, then Bearer. A failed refresh
-        // ships the stale token (empty headers when none) — dispatch NEVER
-        // breaks on a refresh failure (SPEC: dispatch injection, OAuth).
-        const token = await getFreshAccessToken(b.id, oauthConfigFromServerRow(b.server));
-        if (token) headers = [{ name: 'Authorization', value: `Bearer ${token}` }];
-      } else if (b.secret?.ciphertext) {
-        headers = [{ name: 'Authorization', value: decryptSecret(b.secret.ciphertext) }];
-      }
-      return { type: 'http' as const, name: b.server.name, url: nonNull(b.server.url), headers };
     }),
   );
+  return members.filter((s): s is AcpMcpServer => s !== null);
+}
+
+/** build ONE binding's ACP member — throws only on a corrupt row (the caller
+ * degrades per-row); the plaintext never outlives this call */
+async function buildOneServer(b: BindingWithRefs): Promise<AcpMcpServer> {
+  if (b.server.transport === 'stdio') {
+    // slice 3 stdio member: the binding credential rides as the env var
+    // NAMED by credentialEnvVar (decrypted at dispatch only, plaintext
+    // never outlives this call) — env carries ONLY that var
+    const env: Array<{ name: string; value: string }> = [];
+    if (b.server.credentialEnvVar && b.secret?.ciphertext) {
+      env.push({ name: b.server.credentialEnvVar, value: decryptSecret(b.secret.ciphertext) });
+    }
+    return {
+      // the ACP v1 stdio member carries NO discriminator — the `type` field
+      // exists only on the http/sse members (SDK 2.1.0 schema truth)
+      name: b.server.name,
+      command: nonNull(b.server.command),
+      args: safeArgsJson(`server:${b.server.id}`, b.server.args),
+      env,
+    };
+  }
+  // ACP v1 wire: headers is a REQUIRED array (empty = uncredentialed server);
+  // url is validation-required for http entries
+  let headers: Array<{ name: string; value: string }> = [];
+  if (b.server.authKind === 'oauth') {
+    // OAuth binding: silent refresh first, then Bearer. A failed refresh
+    // ships the stale token (empty headers when none) — dispatch NEVER
+    // breaks on a refresh failure (SPEC: dispatch injection, OAuth).
+    const token = await getFreshAccessToken(b.id, oauthConfigFromServerRow(b.server));
+    if (token) headers = [{ name: 'Authorization', value: `Bearer ${token}` }];
+  } else if (b.secret?.ciphertext) {
+    headers = [{ name: 'Authorization', value: decryptSecret(b.secret.ciphertext) }];
+  }
+  return { type: 'http' as const, name: b.server.name, url: nonNull(b.server.url), headers };
 }
 
 /** fake-runner parity (SPEC): name the bound servers in the run output — names only, never credentials */
@@ -681,8 +699,14 @@ export function mcpDispatchLine(servers: Array<{ name: string }>): string | null
     .join(', ')}`;
 }
 
-/** JSON-RPC payload from a probe response body — plain JSON or SSE `data:` frames */
-export function extractJsonRpc(text: string): { result?: unknown; error?: { code?: number; message?: string } } | null {
+/** JSON-RPC payload from a probe response body — plain JSON or SSE `data:`
+ * frames; ONLY a shape-valid response to OUR handshake qualifies (jsonrpc 2.0,
+ * echo of our request id) — a stdout log line that merely carries a `result`
+ * key must never fake a passing verdict */
+export function extractJsonRpc(
+  text: string,
+  expectedId: number = 1,
+): { result?: unknown; error?: { code?: number; message?: string } } | null {
   const candidates: string[] = [text.trim()];
   for (const line of text.split('\n')) {
     const m = /^\s*data:\s*(.+)$/.exec(line);
@@ -694,8 +718,17 @@ export function extractJsonRpc(text: string): { result?: unknown; error?: { code
   for (const c of candidates) {
     if (!c.startsWith('{')) continue;
     try {
-      const parsed = JSON.parse(c) as { result?: unknown; error?: { code?: number; message?: string } };
-      if (parsed && (parsed.result !== undefined || parsed.error !== undefined)) return parsed;
+      const parsed = JSON.parse(c) as {
+        jsonrpc?: string;
+        id?: unknown;
+        result?: unknown;
+        error?: { code?: number; message?: string };
+      };
+      if (parsed && (parsed.result !== undefined || parsed.error !== undefined)) {
+        // an initialize RESPONSE echoes the request's jsonrpc marker + id —
+        // anything else is a log line, not a handshake answer
+        if (parsed.jsonrpc === '2.0' && parsed.id === expectedId) return parsed;
+      }
     } catch {
       /* not JSON — try the next candidate */
     }
@@ -773,6 +806,12 @@ async function readInitializeResponse(
     clearTimeout(timer);
   }
 }
+
+/** a corrupt/dead row still gets its PROBE VERDICT LAW failure verdict */
+const probeFailureVerdict = (e: unknown): { ok: boolean; detail: string } => ({
+  ok: false,
+  detail: `corrupt registry row: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300),
+});
 
 /** map a probe exchange to its verdict — failure detail carries the FIRST
  * error line (stderr beats the bare exit code), never a bare "spawn failed" */
@@ -901,21 +940,23 @@ export async function probeMcpBinding(input: { employeeId: string; serverId: str
         seenSecrets.push(plaintext);
       }
     } catch (e) {
-      // a corrupt args column is dead input — the PROBE VERDICT LAW still gets
-      // its failure verdict instead of the throw escaping verdict persistence
-      result = {
-        ok: false,
-        detail: `corrupt args column: ${e instanceof Error ? e.message : String(e)}`,
-      };
+      result = probeFailureVerdict(e);
       const durationMs = Date.now() - started;
       await persistBindingVerdict(binding.id, result);
       await publishChange(CHANGE_RESOURCE.MCP, CHANGE_ACTION.UPDATE);
       return { ...result, durationMs, lastProbeAt: new Date().toISOString() };
     }
-    result = await probeMcpStdio(nonNull(binding.server.command), args, env);
+    // a corrupt/null command column is dead input the same way — the verdict
+    // persists instead of the probe 500ing (PROBE VERDICT LAW)
+    if (!binding.server.command) {
+      result = probeFailureVerdict(new Error('stdio entry has no command (corrupt row)'));
+      const durationMs = Date.now() - started;
+      await persistBindingVerdict(binding.id, result);
+      await publishChange(CHANGE_RESOURCE.MCP, CHANGE_ACTION.UPDATE);
+      return { ...result, durationMs, lastProbeAt: new Date().toISOString() };
+    }
+    result = await probeMcpStdio(binding.server.command, args, env);
   } else {
-    // http: url is validation-required; the binding credential rides the
-    // Authorization header (decrypt at probe only)
     let authorization: string | undefined;
     if (binding.server.authKind === 'oauth') {
       const token = await getFreshAccessToken(binding.id, oauthConfigFromServerRow(binding.server));
@@ -927,7 +968,12 @@ export async function probeMcpBinding(input: { employeeId: string; serverId: str
       authorization = decryptSecret(binding.secret.ciphertext);
       seenSecrets.push(authorization);
     }
-    result = await probeMcpHttp(nonNull(binding.server.url), authorization);
+    // a corrupt/null url column is dead input — verdict persists, no 500
+    if (!binding.server.url) {
+      result = probeFailureVerdict(new Error('http entry has no url (corrupt row)'));
+    } else {
+      result = await probeMcpHttp(binding.server.url, authorization);
+    }
   }
   for (const s of seenSecrets) {
     if (s) result = { ...result, detail: result.detail.split(s).join('[redacted]') };

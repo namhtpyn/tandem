@@ -109,15 +109,32 @@ const updateMutation = useMutation({ ...$orpc.mcp.registryUpdate.mutationOptions
 const removeMutation = useMutation({ ...$orpc.mcp.registryRemove.mutationOptions() });
 
 // switching transport to stdio resets the auth state — the select is locked to
-// the static credential for stdio (oauth ∩ stdio is refused server-side) and a
-// stale 'oauth' value would leave the OAuth fields visible with input that is
-// silently dropped on save
+// the static credential for stdio (oauth ∩ stdio is refused server-side). The
+// PRE-SWITCH auth block is snapshotted and RESTORED when the admin returns to
+// http — a transport round-trip + save must never silently strip a live OAuth
+// config (the save would echo authKind 'none' and wipe tokens server-side).
+const preStdioAuth = ref<{ authKind: 'none' | 'oauth'; oauth: ReturnType<typeof emptyOauth> } | null>(null);
 watch(
   () => form.value.transport,
-  (t) => {
-    if (t === 'stdio' && form.value.authKind !== 'none') {
+  (t, prev) => {
+    if (t === 'stdio' && prev !== 'stdio') {
+      preStdioAuth.value = {
+        authKind: form.value.authKind,
+        oauth: {
+          oauthAuthorizeUrl: form.value.oauthAuthorizeUrl,
+          oauthTokenUrl: form.value.oauthTokenUrl,
+          oauthRevocationUrl: form.value.oauthRevocationUrl,
+          oauthScopes: form.value.oauthScopes,
+          oauthClientId: form.value.oauthClientId,
+          oauthClientSecretId: form.value.oauthClientSecretId,
+        },
+      };
       form.value.authKind = 'none';
       Object.assign(form.value, emptyOauth());
+    } else if (t === 'http' && prev === 'stdio' && preStdioAuth.value) {
+      form.value.authKind = preStdioAuth.value.authKind;
+      Object.assign(form.value, preStdioAuth.value.oauth);
+      preStdioAuth.value = null;
     }
   },
 );

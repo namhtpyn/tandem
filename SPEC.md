@@ -174,9 +174,10 @@ binding (section below). Slice 3 adds the `stdio` transport (section below).
   occurrence of the plaintext in its stderr, JSON-RPC error or serverInfo
   strings is masked `[redacted]` before `last_probe_detail` lands).
 - **Dispatch injection**: `stdio` entries serialize as the ACP v1 stdio
-  member `{ type: 'stdio', name, command, args, env }` — one deterministic
+  member `{ name, command, args, env }` — one deterministic
   plan with the `http` entries, sorted by server name. `args` is the parsed
-  JSON array.
+  JSON array. (The stdio member carries NO discriminator — the `type` field
+  exists only on the http/sse members.)
 - **Probe (stdio)**: spawns `command args` (+ the credential env var),
   writes a JSON-RPC `initialize` handshake to the child's stdin and expects
   a JSON-RPC response on stdout within the 10s cap, then kills the child —
