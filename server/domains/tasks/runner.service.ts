@@ -1424,7 +1424,7 @@ export function createRunWriter(runId: string, initial: string, messageId: strin
         await relaySettledRun(taskId, runId, messageId);
       } catch (e) {
         consola.warn(
-          `[settle] channel relay skipped for run ${runId} (row stays raw; boot sweep re-drives): ${
+          `[settle] channel relay failed for run ${runId} (best-effort trigger — a failure BEFORE the outbox row loses this turn's relay; a failure AFTER it is re-driven by the boot sweep): ${
             e instanceof Error ? e.message : String(e)
           }`,
         );

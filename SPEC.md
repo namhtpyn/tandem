@@ -405,12 +405,13 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   `channel_outbox` row PER mapped thread, ALL rows persisted BEFORE any queue
   job (deploys drop nothing, same law as inbound: a mid-relay failure leaves
   every mapping's row raw for the boot sweep, never a half-set). The unique
-  `(adapter, run_id, thread_ref)` index makes relay enqueues idempotent: a
-  re-driven sweep or a re-settled run can never ENQUEUE a reply twice.
-  Durability stays AT-LEAST-ONCE end-to-end (slice-1 law): a crash between a
-  successful send and the processed-at write — or any failed/ambiguous send
-  retried per the deferral law — can deliver that one reply twice; no-loss
-  wins, the same bound the inbound verbs carry.
+  `(adapter, run_id, thread_ref)` index dedupes ROWS; enqueue idempotence
+  comes from kicking only newly-inserted rows plus the queue's jobId dedupe —
+  together a re-driven sweep or a re-settled run can never ENQUEUE a reply
+  twice. Durability stays AT-LEAST-ONCE end-to-end (slice-1 law): a crash
+  between a successful send and the processed-at write — or any
+  failed/ambiguous send retried per the deferral law — can deliver that one
+  reply twice; no-loss wins, the same bound the inbound verbs carry.
 - The relayed text is the thread turn's visible body — the run message body
   after the settle rewrite (envelope text, else the human tail; agent prose,
   never tool logs), with result-attachment tokens stripped (platform-external
@@ -431,12 +432,19 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
 - Deferral law (parity with inbound): a row whose adapter has no enabled
   config or no LIVE adapter is NOT consumed — claim released, re-driven every
   5 min, bounded (12 deferrals ≈ 1h) then it stays raw for the next boot
-  sweep. A failed SEND releases the claim for job retry with backoff; the row
-  survives terminal job failure (at-least-once). Send order only advances
-  when the oldest row leaves the queue — a stuck head (retry backoff or a
-  raw row awaiting the boot sweep) stalls its thread by design, never the
-  others; the cap applied at send time is pair-aware (the slice can never
-  re-create a lone surrogate the sanitizer stripped — postgres jsonb law).
+  sweep. The budget rides each re-drive chain: a restart starts a fresh
+  cycle, so a flapping deploy can extend the raw window — the row is still
+  never consumed. A failed SEND releases the claim for job retry with
+  backoff; the row survives terminal job failure (at-least-once). A worker
+  killed MID-send leaves a claimed row; its re-kick chain re-drives it after
+  the claim TTL (bounded re-kicks), and the boot sweep backstops at the next
+  restart — an unprocessed row is never left jobless by design. Send order
+  only advances when the oldest row leaves the queue — a stuck head (retry
+  backoff, a raw row awaiting the boot sweep, or a claim inside its TTL)
+  stalls ONLY its thread by design (younger rows poll at ≤60s cadence until
+  the head resolves), never the others; the cap applied at send time is
+  pair-aware (the slice can never re-create a lone surrogate the sanitizer
+  stripped — postgres jsonb law).
 - Boot sweep: unprocessed outbox rows are re-enqueued AFTER adapters and the
   worker are live (same ORDER LAW as the inbound sweep).
 - Only DONE runs relay. FAILED/STOPPED runs post nothing to the channel (the

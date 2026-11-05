@@ -547,11 +547,11 @@ export function relayBodyOf(rawBody: string | null | undefined): string {
 async function requeueOutbox(
   hub: QueueDomain,
   outboxId: string,
-  opts: { delayMs?: number; defer?: number; wait?: number } = {},
+  opts: { delayMs?: number; defer?: number; wait?: number; claims?: number } = {},
 ): Promise<void> {
   await hub.enqueue(
     OUTBOX_QUEUE,
-    { outboxId, deferred: opts.defer ?? 0, wait: opts.wait ?? 0 },
+    { outboxId, deferred: opts.defer ?? 0, wait: opts.wait ?? 0, claims: opts.claims ?? 0 },
     {
       delayMs: opts.delayMs,
       attempts: QUEUE_ATTEMPTS,
@@ -559,9 +559,15 @@ async function requeueOutbox(
       removeOnFail: true,
       // jobId dedupe (inbound parity): BullMQ refuses a second job with the
       // same id while one is queued/active — deploy overlap can never
-      // double-send. Distinct suffix per deferral/wait cycle; no ':' (BullMQ
-      // rejects 2-segment custom ids).
-      jobId: opts.defer ? `${outboxId}-d${opts.defer}` : opts.wait ? `${outboxId}-w${opts.wait}` : outboxId,
+      // double-send. Distinct suffix per cycle; no ':' (BullMQ rejects
+      // 2-segment custom ids).
+      jobId: opts.defer
+        ? `${outboxId}-d${opts.defer}`
+        : opts.wait
+          ? `${outboxId}-w${opts.wait}`
+          : opts.claims
+            ? `${outboxId}-c${opts.claims}`
+            : outboxId,
       backoff: { type: 'exponential', delay: 3_000 },
     },
   );
@@ -616,7 +622,12 @@ export async function relaySettledRun(taskId: string, runId: string, messageId: 
  * through the ORIGINATING adapter key, per-thread ordering (the OLDEST
  * unprocessed row of the conversation sends first), adapter-down deferral
  * (no-loss, inbound parity). Exported for tests. */
-export async function processOutboundRow(data: { outboxId: string; deferred?: number; wait?: number }): Promise<void> {
+export async function processOutboundRow(data: {
+  outboxId: string;
+  deferred?: number;
+  wait?: number;
+  claims?: number;
+}): Promise<void> {
   const row = await db.query.channelOutbox.findFirst({ where: { id: { eq: data.outboxId } } });
   if (!row || row.processedAt) return; // unknown or already sent
   // CLAIM CAS (inbound parity): sweep + deploy overlap + deferral cycles all
@@ -632,7 +643,18 @@ export async function processOutboundRow(data: { outboxId: string; deferred?: nu
       ),
     )
     .returning({ id: channelOutbox.id });
-  if (claimRows.length === 0) return; // another worker owns it
+  if (claimRows.length === 0) {
+    // CAS LOST — two cases: another LIVE worker owns it (racing), or a worker
+    // was KILLED mid-send leaving a fresh claim (the r3 root: a silent return
+    // here would remove the job and orphan a claimed-jobless row until the
+    // NEXT boot). Re-kick after the claim TTL (bounded) so an unprocessed row
+    // always has a pending job; the winner's processed write makes those
+    // re-kicks no-ops.
+    const claims = (data.claims ?? 0) + 1;
+    if (claims > 3) return; // give up loudly enough: the boot sweep re-drives
+    await requeueOutbox(await redisQueue(), row.id, { delayMs: CLAIM_TTL_MS, claims });
+    return;
+  }
   const deferred = data.deferred ?? 0;
   const releaseClaim = async (): Promise<void> => {
     await db

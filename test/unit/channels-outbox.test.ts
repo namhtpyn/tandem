@@ -301,13 +301,19 @@ describe('processOutboundRow', () => {
     expect(sent.startsWith('x'.repeat(3999))).toBe(true); // the pair was dropped whole (or kept)
   });
 
-  it('loses the claim CAS race → no send, no requeue', async () => {
+  it('loses the claim CAS race → no send; re-kicks after the claim TTL (never jobless)', async () => {
     const row = seedRow();
     claimConflict = true;
     await processOutboundRow({ outboxId: row.id });
     expect(sentMessages).toHaveLength(0);
-    expect(enqueuedJobs).toHaveLength(0);
     expect(row.processedAt).toBeNull();
+    expect(enqueuedJobs).toHaveLength(1);
+    expect(enqueuedJobs[0]!.opts?.jobId).toBe(`${row.id}-c1`);
+    expect(enqueuedJobs[0]!.opts?.delayMs).toBe(300_000); // the claim TTL
+    expect(enqueuedJobs[0]!.data).toEqual({ outboxId: row.id, deferred: 0, wait: 0, claims: 1 });
+    // the re-kick chain is bounded: past 3 the row waits for the boot sweep
+    await processOutboundRow({ outboxId: row.id, claims: 4 });
+    expect(enqueuedJobs).toHaveLength(1);
   });
 
   it('defers when no enabled config resolves (no-loss parity with inbound)', async () => {
@@ -317,6 +323,11 @@ describe('processOutboundRow', () => {
     expect(sentMessages).toHaveLength(0);
     expect(row.processedAt).toBeNull();
     expect(row.claimedAt).toBeNull(); // released for the next owner
+    // claim LIFECYCLE through the real code path: claimed, then released
+    expect(appliedWrites).toEqual([
+      { row: row.id, claimedAt: expect.any(Date) },
+      { row: row.id, claimedAt: null },
+    ]);
     expect(enqueuedJobs).toHaveLength(1);
     expect(enqueuedJobs[0]!.opts?.jobId).toBe(`${row.id}-d1`);
     expect(enqueuedJobs[0]!.opts?.delayMs).toBe(300_000);
@@ -348,7 +359,7 @@ describe('processOutboundRow', () => {
     attachAdapterForTests(ADAPTER_KEY, { ...adapter, isLive: () => false } as never);
     await processOutboundRow({ outboxId: row.id });
     expect(sentMessages).toHaveLength(0);
-    expect(enqueuedJobs[0]!.data).toEqual({ outboxId: row.id, deferred: 1, wait: 0 });
+    expect(enqueuedJobs[0]!.data).toEqual({ outboxId: row.id, deferred: 1, wait: 0, claims: 0 });
   });
 
   it('per-thread ordering: a younger row waits; the head sends first', async () => {
