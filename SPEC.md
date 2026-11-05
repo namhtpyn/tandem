@@ -412,11 +412,15 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   hand-edited values, never the UI path's behavior: the UI must never write a
   config the runtime will silently drop. Validation enforces the SAME rules the
   runtime parser enforces (schema shape, registered kind, uuid binding/assignee
-  ids, canonicalized homeserver URL, one adapter per `kind:homeserverUrl` —
-  duplicates refused) through the SAME per-entry inspection code path, so the
-  admin path and the runtime parser cannot drift. Beyond parser parity the
-  write checks existence: the token secret must exist in the vault, binding
-  user ids and the default assignee must be existing users.
+  ids, canonicalized homeserver URL) through the SAME per-entry inspection code
+  path, so the admin path and the runtime parser cannot drift — plus the
+  ADMIN-PATH-HYGIENE rule: duplicates of the same canonical adapter key are
+  refused regardless of the enabled flag (an enabled+disabled pair for one bot
+  is ambiguous config the UI cannot safely operate on — one bot per
+  homeserver), and unknown keys are refused at every nesting level (strict
+  admin input; the runtime's tolerant strip stays untouched). Beyond parser
+  parity the write checks existence: the token secret must exist in the vault,
+  binding user ids and the default assignee must be existing users.
 - A successful update re-arms the channel runtime IN-PROCESS against the
   committed value: added/enabled adapters start, removed/disabled ones stop, a
   config edit under an UNCHANGED adapter key restarts that adapter too (the
