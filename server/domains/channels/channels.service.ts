@@ -36,7 +36,7 @@ registerMatrixChannelAdapter();
 
 const log = consola.withTag('channels');
 
-const CHANNELS_KEY = 'channels';
+export const CHANNELS_KEY = 'channels';
 const CHANNEL_QUEUE = 'channels-inbound';
 const QUEUE_ATTEMPTS = 5;
 /** composer parity cap (tasks.create/answer: z.string().max(10_000)) */
@@ -57,34 +57,58 @@ export const channelConfigSchema = z.object({
 
 export type ChannelConfig = z.infer<typeof channelConfigSchema>;
 
-/** tolerant parse (SPEC: fail closed): a corrupt value reads as no channels;
- * invalid entries are skipped and logged, valid ones survive. */
-export function parseChannelConfigs(raw: string | null): ChannelConfig[] {
-  if (raw === null || raw.trim() === '') return [];
+export type ChannelEntryDiagnostic = {
+  /** the raw stored entry (unknown JSON — the UI shows what was stored) */
+  raw: unknown;
+  /** 'ok' = the runtime parser accepts this entry; 'dropped' = refused */
+  status: 'ok' | 'dropped';
+  /** drop reason (empty for ok entries) */
+  reason: string;
+  /** canonicalized config when parseable (schema-valid), else null */
+  cfg: ChannelConfig | null;
+};
+
+export type ChannelConfigInspection = {
+  entries: ChannelEntryDiagnostic[];
+  /** non-null when the raw value could not be an entry list at all */
+  corrupt: string | null;
+};
+
+/** per-entry inspection — the SINGLE source of truth shared by the runtime
+ * parser (tolerant skip) and the admin write path (strict refuse), so the two
+ * can never drift (SPEC: Channel settings UI). Validation pipeline mirrors
+ * parseChannelConfigs exactly: schema → registered kind → canonicalize →
+ * dedupe (enabled entries only join the seen-set — a disabled duplicate never
+ * shadows an enabled one, runtime parity). */
+export function inspectChannelConfigs(raw: string | null): ChannelConfigInspection {
+  if (raw === null || raw.trim() === '') return { entries: [], corrupt: null };
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    log.error('channels config is corrupt JSON — reading as no channels');
-    return [];
+    return { entries: [], corrupt: 'config is corrupt JSON — reading as no channels' };
   }
-  if (!Array.isArray(parsed)) {
-    log.error('channels config is not an array — reading as no channels');
-    return [];
-  }
-  const out: ChannelConfig[] = [];
+  if (!Array.isArray(parsed)) return { entries: [], corrupt: 'config is not an array — reading as no channels' };
+  const entries: ChannelEntryDiagnostic[] = [];
   const seen = new Set<string>();
   for (const entry of parsed) {
     const r = channelConfigSchema.safeParse(entry);
     if (!r.success) {
-      log.warn(
-        `channels config entry skipped: ${r.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
-      );
+      entries.push({
+        raw: entry,
+        status: 'dropped',
+        reason: r.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+        cfg: null,
+      });
       continue;
     }
-    if (!r.data.enabled) continue; // parse returns ENABLED configs only (SPEC)
     if (!registeredChannelKinds().includes(r.data.kind)) {
-      log.warn(`channels config entry skipped: kind ${r.data.kind} has no registered adapter`);
+      entries.push({
+        raw: entry,
+        status: 'dropped',
+        reason: `kind ${r.data.kind} has no registered adapter`,
+        cfg: null,
+      });
       continue;
     }
     // canonicalize BEFORE dedupe: trailing slash / case / default port are
@@ -93,14 +117,31 @@ export function parseChannelConfigs(raw: string | null): ChannelConfig[] {
     // duplicate adapter keys would share a checkpoint + event namespace and
     // silently shadow each other — keep the first, refuse the rest loudly
     const key = `${cfg.kind}:${cfg.homeserverUrl}`;
-    if (seen.has(key)) {
-      log.warn(`channels config entry skipped: duplicate adapter ${key} (one bot per homeserver in slice 1)`);
+    if (cfg.enabled && seen.has(key)) {
+      entries.push({
+        raw: entry,
+        status: 'dropped',
+        reason: `duplicate adapter ${key} (one bot per homeserver in slice 1)`,
+        cfg,
+      });
       continue;
     }
-    seen.add(key);
-    out.push(cfg);
+    entries.push({ raw: entry, status: 'ok', reason: '', cfg });
+    if (cfg.enabled) seen.add(key);
   }
-  return out;
+  return { entries, corrupt: null };
+}
+
+/** tolerant parse (SPEC: fail closed): a corrupt value reads as no channels;
+ * invalid entries are skipped and logged, valid ones survive. Derived from
+ * inspectChannelConfigs — the admin path refuses what this skips. */
+export function parseChannelConfigs(raw: string | null): ChannelConfig[] {
+  const insp = inspectChannelConfigs(raw);
+  if (insp.corrupt) log.error(`channels ${insp.corrupt}`);
+  for (const e of insp.entries) {
+    if (e.status === 'dropped') log.warn(`channels config entry skipped: ${e.reason}`);
+  }
+  return insp.entries.flatMap((e) => (e.status === 'ok' && e.cfg?.enabled && e.cfg ? [e.cfg] : []));
 }
 
 /** canonical homeserver URL: lowercase scheme/host, no default port, no
@@ -881,6 +922,17 @@ function buildAdapter(cfg: ChannelConfig, token: string): ChannelAdapter | null 
  * ORDER LAW: adapters start BEFORE the sweep — swept events route
  * immediately, and a missing adapter would silently swallow their acks. */
 export async function startChannels(): Promise<string[]> {
+  // serialized: the retry loop and the settings-change re-arm can both fire a
+  // start — two concurrent starts would double-start an adapter (two sync
+  // loops racing one checkpoint). The chain swallows rejections: one failed
+  // start must not poison the next caller's start.
+  const p = startChain.then(() => startChannelsInner());
+  startChain = p.catch(() => [] as string[]);
+  return p;
+}
+let startChain: Promise<string[]> = Promise.resolve([]);
+
+async function startChannelsInner(): Promise<string[]> {
   // shared test opt-out (TANDEM_NO_DISPATCHER=1): unit/e2e never open
   // adapters or queue workers
   if (env.TANDEM_NO_DISPATCHER) return [];
@@ -999,9 +1051,37 @@ export function ensureChannelsRunning(opts: { start: () => Promise<string[]>; in
   };
   timer = setInterval(attempt, retryMs);
   attempt();
+  // settings-change re-arm (slice 4): a config edit after a clean start must
+  // apply immediately AND keep the partial-start law — a re-arm start with
+  // failures re-arms this loop (done flips back, timer recreated)
+  retryControls = {
+    rearm: () => {
+      done = false;
+      if (!timer) timer = setInterval(attempt, retryMs);
+      attempt();
+    },
+  };
   return () => {
     if (timer) clearInterval(timer);
   };
+}
+
+let retryControls: { rearm: () => void } | null = null;
+
+/** settings-update hook (settings router pattern, mirror of
+ * onDispatcherSettingsChanged): start runs against the COMMITTED value —
+ * added/enabled adapters start, removed/disabled ones stop. A start that
+ * leaves failures re-arms the boot retry loop (PARTIAL-START law). Never
+ * throws: a failed re-arm must not fail the settings write (the committed
+ * value is durable; the retry loop converges). */
+export async function onChannelsSettingsChanged(start: () => Promise<string[]> = startChannels): Promise<void> {
+  try {
+    const failed = await start();
+    if (failed.length > 0) retryControls?.rearm();
+  } catch (e) {
+    retryControls?.rearm();
+    log.error('channels: re-arm after settings change failed — retry loop re-armed:', e);
+  }
 }
 
 export async function stopChannels(): Promise<void> {
