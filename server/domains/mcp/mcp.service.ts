@@ -158,7 +158,9 @@ const ENV_VAR_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * rewritten by the registry form — dead input, refused 400) */
 const validatedArgs = (args: string[]) => {
   for (const a of args) {
-    if (a === '' || a.includes('\n') || a.trim() !== a) {
+    // CR counts as a line terminator too (browsers normalize CR→LF; a lone CR
+    // would render as two lines in the editor and silently split on the next save)
+    if (a === '' || /[\r\n]/.test(a) || a.trim() !== a) {
       throw new ORPCError('BAD_REQUEST', {
         message: 'args entries must be non-empty single-line strings without padding whitespace',
       });

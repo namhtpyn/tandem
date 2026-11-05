@@ -628,6 +628,9 @@ describe('stdio transport (slice 3, SPEC "stdio transport")', () => {
     await expect(
       registryCreate({ name: 's', transport: 'stdio', command: '/bin/stub', args: [' padded '], notes: '' }),
     ).rejects.toThrow('non-empty single-line');
+    await expect(
+      registryCreate({ name: 's', transport: 'stdio', command: '/bin/stub', args: ['a\rb'], notes: '' }),
+    ).rejects.toThrow('non-empty single-line');
   });
 
   it('a stdio→http switch nulls the stdio columns (the row carries exactly its transport field set)', async () => {
