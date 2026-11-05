@@ -751,18 +751,26 @@ export async function writeChannelHealthStamp(): Promise<void> {
     for (const cfg of cfgs) {
       const key = adapterKey(cfg);
       const adapter = activeAdapters.get(key);
+      let connected = false;
       let lastSyncOkAt: number | null = null;
+      // per-entry isolation (both reads): one broken adapter must degrade to
+      // its OWN entry (connected:false / null), never kill the whole stamp —
+      // a dropped stamp reads as "tick dead" for every channel (false alarm)
       try {
+        connected = !!adapter && (!adapter.isLive || adapter.isLive());
         lastSyncOkAt = adapter?.health?.().lastSyncOkAt ?? null;
       } catch {
-        // a throwing health() must not kill the whole stamp — it reads as
-        // null (never invented stale) for that one entry
+        // connected stays false (the conservative signal); lastSyncOkAt null
       }
       channels.push({
         key,
         kind: cfg.kind,
         homeserverUrl: cfg.homeserverUrl,
-        connected: !!adapter && (!adapter.isLive || adapter.isLive()),
+        connected,
+        // healthCap separates "adapter has no health() (null = not alertable)"
+        // from "health() present but never synced in this process" (null =
+        // never-synced, alertable after a grace window by the probe)
+        healthCap: typeof adapter?.health === 'function',
         lastSyncOkAt,
       });
     }

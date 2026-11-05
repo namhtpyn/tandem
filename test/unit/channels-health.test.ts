@@ -16,14 +16,13 @@ vi.mock('../../server/db/index', () => ({
   },
 }));
 
-// deterministic transport: the lifecycle test never opens a real socket — a
-// start attempt fails fast and must stamp its entry connected:false
-vi.stubGlobal(
-  'fetch',
-  vi.fn(async () => {
-    throw new Error('no network in unit tests');
-  }),
-);
+// deterministic transport: stubbed PER TEST (vitest unstubGlobals:true clears
+// module-level stubs before every test — a top-level stub is inert and the
+// start attempt would hit real DNS). A start attempt fails fast and must
+// stamp its entry connected:false.
+const fetchStub = vi.fn(async () => {
+  throw new Error('no network in unit tests');
+});
 
 // hoisted so the vi.mock factories (which run before top-level consts) can
 // reach it — per-test TANDEM_NO_DISPATCHER flips
@@ -105,6 +104,7 @@ describe('channel health stamp', () => {
   beforeEach(async () => {
     settingsRows.clear();
     settingsWriteFail = false;
+    vi.stubGlobal('fetch', fetchStub); // per test: unstubGlobals clears top-level stubs
     // detach every test adapter + disarm any tick: activeAdapters is module
     // state and tests shuffle — a leaked live stub would flip connected
     await stopChannels();
@@ -122,16 +122,17 @@ describe('channel health stamp', () => {
       kind: 'matrix',
       homeserverUrl: 'https://matrix.example.org',
       connected: true,
+      healthCap: true,
       lastSyncOkAt: 1_700_000_000_000,
     });
   });
 
-  it('an enabled config whose adapter never started stamps connected:false (the signal)', async () => {
+  it('an enabled config whose adapter never started stamps connected:false + healthCap:false (the signal)', async () => {
     settingsRows.set('channels', JSON.stringify([VALID]));
     await writeChannelHealthStamp(); // no adapter attached: failed/pending start
     const ch = stampedChannels();
     expect(ch).toHaveLength(1);
-    expect(ch[0]).toMatchObject({ connected: false, lastSyncOkAt: null });
+    expect(ch[0]).toMatchObject({ connected: false, healthCap: false, lastSyncOkAt: null });
   });
 
   it('an adapter reporting isLive:false stamps connected:false but keeps its transport stamp', async () => {
@@ -145,16 +146,16 @@ describe('channel health stamp', () => {
     expect(ch[0]).toMatchObject({ connected: false, lastSyncOkAt: 1_700_000_000_000 });
   });
 
-  it('an adapter WITHOUT health() reports lastSyncOkAt:null (never invented stale)', async () => {
+  it('an adapter WITHOUT health() reports lastSyncOkAt:null + healthCap:false (never invented stale)', async () => {
     settingsRows.set('channels', JSON.stringify([VALID]));
     const { health: _omit, ...noHealth } = stubAdapter();
     attachAdapterForTests('matrix:https://matrix.example.org', noHealth as ChannelAdapter);
     await writeChannelHealthStamp();
     const ch = stampedChannels();
-    expect(ch[0]).toMatchObject({ connected: true, lastSyncOkAt: null });
+    expect(ch[0]).toMatchObject({ connected: true, healthCap: false, lastSyncOkAt: null });
   });
 
-  it('a throwing health() kills only its entry (null), never the whole stamp', async () => {
+  it('a throwing health() or isLive() degrades to its OWN entry, never kills the stamp', async () => {
     settingsRows.set('channels', JSON.stringify([VALID]));
     attachAdapterForTests(
       'matrix:https://matrix.example.org',
@@ -162,11 +163,14 @@ describe('channel health stamp', () => {
         health: () => {
           throw new Error('health exploded');
         },
+        isLive: () => {
+          throw new Error('isLive exploded');
+        },
       }),
     );
     await writeChannelHealthStamp();
-    const ch = stampedChannels();
-    expect(ch[0]).toMatchObject({ connected: true, lastSyncOkAt: null });
+    const ch = stampedChannels(); // the stamp still landed
+    expect(ch[0]).toMatchObject({ connected: false, healthCap: true, lastSyncOkAt: null });
   });
 
   it('zero enabled configs stamp an EMPTY channels array (disabled must not read stale)', async () => {
@@ -186,6 +190,7 @@ describe('channel health tick lifecycle', () => {
   beforeEach(async () => {
     settingsRows.clear();
     settingsWriteFail = false;
+    vi.stubGlobal('fetch', fetchStub);
     await stopChannels();
     envState.TANDEM_NO_DISPATCHER = '';
   });
@@ -199,13 +204,20 @@ describe('channel health tick lifecycle', () => {
       // connected:false for that entry immediately (own homeserver: earlier
       // tests' attached stubs must not leak a live adapter into this key)
       await startChannels();
+      expect(fetchStub).toHaveBeenCalled(); // the start failed on OUR stub, not on real DNS
       let ch = stampedChannels();
       expect(ch).toHaveLength(1);
-      expect(ch[0]).toMatchObject({ key: 'matrix:https://matrix2.example.org', connected: false });
+      expect(ch[0]).toMatchObject({
+        key: 'matrix:https://matrix2.example.org',
+        connected: false,
+        healthCap: false, // never registered: no adapter object at all
+      });
+      const bootStamp = (JSON.parse(settingsRows.get(CHANNELS_HEALTH_KEY)!) as { stampedAt: number }).stampedAt;
 
       await vi.advanceTimersByTimeAsync(61_000); // one tick fired
       const stampedAtAfterTick = (JSON.parse(settingsRows.get(CHANNELS_HEALTH_KEY)!) as { stampedAt: number })
         .stampedAt;
+      expect(stampedAtAfterTick, 'tick must REFRESH the stamp (armed ≠ inert)').toBeGreaterThan(bootStamp);
 
       await stopChannels();
       settingsRows.set(CHANNELS_HEALTH_KEY, JSON.stringify({ stampedAt: 0, channels: [] }));

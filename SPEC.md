@@ -404,7 +404,7 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   (best-effort: its own catch — observability never crashes the tick, same law
   as the dispatcher heartbeat), plus once at the end of every successful boot
   start: JSON `{"stampedAt": <epoch ms>, "channels": [{"key", "kind",
-  "homeserverUrl", "connected", "lastSyncOkAt"}]}`, one entry per ENABLED
+  "homeserverUrl", "connected", "healthCap", "lastSyncOkAt"}]}`, one entry per ENABLED
   config whether or not its adapter started — a config whose adapter failed to
   start reports `connected:false`, and that IS the signal. `connected` mirrors
   the adapter's live state in THIS process; `lastSyncOkAt` is the adapter's
@@ -418,15 +418,22 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   process liveness (`stampedAt` stale, or any `connected:false` — the tick
   itself is dead, or an adapter is down/dead-token) and transport health
   (`connected:true` with `lastSyncOkAt` stale — the sync loop is alive but the
-  homeserver is unreachable and backing off). Queue depth is deliberately NOT
-  stamped: it is DB-derivable, so the watchdog derives backlog (unprocessed
-  `channel_events` + `channel_outbox` rows, count + oldest age) from the
-  tables directly. Backlog with a healthy stamp = a pipeline wedge the stamps
-  cannot see; backlog with a stale stamp = the expected adapter-down shape
-  (deferral parity holds the rows — no-loss, nothing is consumed).
+  homeserver is unreachable and backing off). Each entry also carries
+  `healthCap` (whether the adapter implements `health()`): a NON-capable
+  adapter's `lastSyncOkAt: null` is not alertable; a CAPABLE adapter's
+  `lastSyncOkAt: null` means "no successful transport round-trip in this
+  process yet" — alertable after a grace window (a from-boot outage must not
+  be invisible: the restart-into-a-down-homeserver shape holds
+  `connected:true` + null for the whole outage). Queue depth is deliberately
+  NOT stamped: it is DB-derivable, so the watchdog derives backlog
+  (unprocessed `channel_events` + `channel_outbox` rows, count + oldest age)
+  from the tables directly. Backlog with a healthy stamp = a pipeline wedge
+  the stamps cannot see; backlog with a stale stamp = the expected
+  adapter-down shape (deferral parity holds the rows — no-loss, nothing is
+  consumed).
 - The adapter contract gains an OPTIONAL `health()` — an adapter without it
-  reports `lastSyncOkAt: null` (never "stale"; the watchdog does not invent a
-  fault from a missing capability).
+  reports `healthCap:false` + `lastSyncOkAt: null` (the watchdog does not
+  invent a fault from a missing capability).
 
 ### Reply relay (slice 2: final-only outbound)
 
