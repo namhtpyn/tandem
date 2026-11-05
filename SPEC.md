@@ -402,10 +402,14 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
 
 - A run that settles DONE on a task mapped to a channel thread (any
   `channel_threads` row for the task) relays its reply to that thread — one
-  `channel_outbox` row PER mapped thread, persisted BEFORE any queue job
-  (deploys drop nothing, same law as inbound). The unique
+  `channel_outbox` row PER mapped thread, ALL rows persisted BEFORE any queue
+  job (deploys drop nothing, same law as inbound: a mid-relay failure leaves
+  every mapping's row raw for the boot sweep, never a half-set). The unique
   `(adapter, run_id, thread_ref)` index makes relay enqueues idempotent: a
-  re-driven sweep or a re-settled run can never send a reply twice.
+  re-driven sweep or a re-settled run can never ENQUEUE a reply twice.
+  Durability stays AT-LEAST-ONCE end-to-end (slice-1 law): a crash between a
+  successful send and the processed-at write can deliver that one reply
+  twice — no-loss wins, the same bound the inbound verbs carry.
 - The relayed text is the thread turn's visible body — the run message body
   after the settle rewrite (envelope text, else the human tail; agent prose,
   never tool logs), with result-attachment tokens stripped (platform-external
@@ -425,7 +429,10 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   5 min, bounded (12 deferrals ≈ 1h) then it stays raw for the next boot
   sweep. A failed SEND releases the claim for job retry with backoff; the row
   survives terminal job failure (at-least-once). Send order only advances
-  when the oldest row leaves the queue.
+  when the oldest row leaves the queue — a stuck head (retry backoff or a
+  raw row awaiting the boot sweep) stalls its thread by design, never the
+  others; the cap applied at send time is pair-aware (the slice can never
+  re-create a lone surrogate the sanitizer stripped — postgres jsonb law).
 - Boot sweep: unprocessed outbox rows are re-enqueued AFTER adapters and the
   worker are live (same ORDER LAW as the inbound sweep).
 - Only DONE runs relay. FAILED/STOPPED runs post nothing to the channel (the

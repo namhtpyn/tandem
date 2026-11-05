@@ -586,18 +586,27 @@ export async function relaySettledRun(taskId: string, runId: string, messageId: 
   // tail) — the row already carries the exact text the web thread shows
   const body = relayBodyOf(msg?.body);
   if (!body) return 0; // nothing human-readable to relay (never send an empty reply)
-  const hub = await redisQueue();
+  // PERSIST-ALL-THEN-ENQUEUE (SPEC: never a half-set): every mapping's row is
+  // inserted BEFORE the first enqueue — a redis failure mid-relay leaves ALL
+  // rows raw for the boot sweep instead of silently dropping later threads
+  // (a DONE run settles exactly once, so nothing would ever recreate them)
+  const inserted = await db
+    .insert(channelOutbox)
+    .values(mappings.map((m) => ({ adapter: m.adapter, threadRef: m.threadRef, taskId, runId, body })))
+    .onConflictDoNothing({ target: [channelOutbox.adapter, channelOutbox.runId, channelOutbox.threadRef] })
+    .returning({ id: channelOutbox.id });
+  if (inserted.length === 0) return 0;
+  let hub: QueueDomain | null = null;
   let enqueued = 0;
-  for (const m of mappings) {
-    const inserted = await db
-      .insert(channelOutbox)
-      .values({ adapter: m.adapter, threadRef: m.threadRef, taskId, runId, body })
-      .onConflictDoNothing({ target: [channelOutbox.adapter, channelOutbox.runId, channelOutbox.threadRef] })
-      .returning({ id: channelOutbox.id });
-    // persist-first: an enqueue failure leaves the row raw for the boot sweep
-    if (inserted.length > 0) {
-      await requeueOutbox(hub, nonNull(inserted[0]).id);
+  for (const row of inserted) {
+    try {
+      // resolve the queue lazily and per-row: a redis blip must not abort the
+      // remaining kicks (the un-kicked rows stay raw for the boot sweep)
+      hub ??= await redisQueue();
+      await requeueOutbox(hub, nonNull(row).id);
       enqueued++;
+    } catch (e) {
+      log.warn(`channel reply ${row.id} persisted but not enqueued — boot sweep re-drives it:`, e);
     }
   }
   return enqueued;
@@ -634,6 +643,9 @@ export async function processOutboundRow(data: { outboxId: string; deferred?: nu
   const cfg = parseChannelConfigs(await getSetting(CHANNELS_KEY)).find((c) => adapterKey(c) === row.adapter);
   const defer = async (why: string): Promise<void> => {
     if (deferred >= OUTBOX_DEFER_MAX) {
+      // release the claim even on give-up: a held claim would stall the whole
+      // thread's head gate until the TTL expires (ghost-claim stall, r1 finding)
+      await releaseClaim();
       log.error(`channel reply ${row.id} gave up after ${OUTBOX_DEFER_MAX} deferrals (${why}) — raw row kept`);
       return; // never consumed: the next boot sweep starts a fresh cycle
     }
@@ -670,7 +682,10 @@ export async function processOutboundRow(data: { outboxId: string; deferred?: nu
     return;
   }
   try {
-    await adapter.send(row.threadRef, row.body.slice(0, adapter.capabilities.maxLen));
+    // pair-aware cap: a raw UTF-16 slice at the boundary can re-create a lone
+    // surrogate (invalid JSON escape → homeserver 400 → permanent send
+    // failure) — the sanitizer strips whatever the slice splits off
+    await adapter.send(row.threadRef, sanitizeText(row.body.slice(0, adapter.capabilities.maxLen)));
   } catch (e) {
     // release the claim so the job retry can re-claim immediately; the row
     // survives (at-least-once) — terminal job failure leaves it raw for sweep

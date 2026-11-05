@@ -30,6 +30,7 @@ const appliedWrites: Array<Record<string, unknown>> = [];
 let outboxConflict = false; // unique (adapter, runId, threadRef) already relayed
 let claimConflict = false; // claim CAS: another worker owns the row
 let sendError: Error | null = null;
+let enqueueFailures = 0; // redis blips: the first N enqueues reject
 // the worker always claims the row it just LOADED — the findFirst({id}) mock
 // records that id so the guarded writes apply to the right row
 let lastLoadedOutboxId: string | null = null;
@@ -128,23 +129,28 @@ vi.mock('../../server/db/index', () => ({
       }),
     }),
     insert: () => ({
-      values: (v: Record<string, unknown>) => ({
+      values: (v: Record<string, unknown> | Array<Record<string, unknown>>) => ({
         onConflictDoNothing: () => ({
           returning: async () => {
             if (outboxConflict) return [];
-            const row: OutboxRow = {
-              id: `ob-ins-${outbox.size + 1}`,
-              adapter: String(v.adapter),
-              threadRef: String(v.threadRef),
-              taskId: String(v.taskId),
-              runId: String(v.runId),
-              body: String(v.body),
-              createdAt: new Date(),
-              claimedAt: null,
-              processedAt: null,
-            };
-            outbox.set(row.id, row);
-            return [{ id: row.id }];
+            const items = Array.isArray(v) ? v : [v];
+            const out: Array<{ id: string }> = [];
+            for (const item of items) {
+              const row: OutboxRow = {
+                id: `ob-ins-${outbox.size + 1}`,
+                adapter: String(item.adapter),
+                threadRef: String(item.threadRef),
+                taskId: String(item.taskId),
+                runId: String(item.runId),
+                body: String(item.body),
+                createdAt: new Date(),
+                claimedAt: null,
+                processedAt: null,
+              };
+              outbox.set(row.id, row);
+              out.push({ id: row.id });
+            }
+            return out;
           },
         }),
       }),
@@ -155,6 +161,10 @@ vi.mock('../../server/db/index', () => ({
 vi.mock('../../server/domains/kernel/queue', () => ({
   redisQueue: async () => ({
     enqueue: async (queue: string, data: unknown, opts?: { jobId?: string; delayMs?: number }) => {
+      if (enqueueFailures > 0) {
+        enqueueFailures--;
+        throw new Error('redis blip');
+      }
       enqueuedJobs.push({ queue, data, opts });
       return 'job-1';
     },
@@ -214,6 +224,7 @@ beforeEach(() => {
   outboxConflict = false;
   claimConflict = false;
   sendError = null;
+  enqueueFailures = 0;
   lastLoadedOutboxId = null;
   settingsRows.clear();
   settingsRows.set('channels', JSON.stringify([CFG]));
@@ -265,13 +276,26 @@ describe('relaySettledRun', () => {
 });
 
 describe('processOutboundRow', () => {
-  it('sends the row and marks it processed (maxLen-capped)', async () => {
+  it('sends the row and marks it processed (maxLen-capped, pair-aware)', async () => {
     const row = seedRow({ body: 'x'.repeat(4500) });
     await processOutboundRow({ outboxId: row.id });
     expect(sentMessages).toEqual([{ target: '!room:example.org', text: 'x'.repeat(4000) }]);
     expect(row.processedAt).not.toBeNull();
     expect(row.claimedAt).not.toBeNull(); // claim holds until the processed write
     expect(enqueuedJobs).toHaveLength(0);
+  });
+
+  it('the maxLen slice never ships a lone surrogate (pair-aware cap)', async () => {
+    // an astral char straddles position 4000: a raw slice would split its
+    // surrogate pair into an invalid escape (homeserver 400 → permanent wedge)
+    const astral = '🎉'; // 2 UTF-16 units
+    const row = seedRow({ body: 'x'.repeat(3999) + astral + 'tail' });
+    await processOutboundRow({ outboxId: row.id });
+    const sent = sentMessages[0]!.text;
+    expect(sent.length).toBeLessThanOrEqual(4000);
+    expect(sent.endsWith('\uFFFD')).toBe(false); // no replacement char from a split pair
+    expect(/[\uD800-\uDBFF]$/.test(sent)).toBe(false); // no trailing lone high surrogate
+    expect(sent.startsWith('x'.repeat(3999))).toBe(true); // the pair was dropped whole (or kept)
   });
 
   it('loses the claim CAS race → no send, no requeue', async () => {
@@ -295,12 +319,25 @@ describe('processOutboundRow', () => {
     expect(enqueuedJobs[0]!.opts?.delayMs).toBe(300_000);
   });
 
-  it('stops re-driving after the deferral budget (raw row kept for the sweep)', async () => {
+  it('stops re-driving after the deferral budget and RELEASES the claim (raw row kept for the sweep)', async () => {
     settingsRows.clear();
     const row = seedRow();
     await processOutboundRow({ outboxId: row.id, deferred: 12 });
     expect(enqueuedJobs).toHaveLength(0);
     expect(row.processedAt).toBeNull();
+    expect(row.claimedAt).toBeNull(); // a held claim would ghost-stall the thread's head gate
+  });
+
+  it('persist-all-then-enqueue: a redis blip mid-relay loses NO mapping and never throws', async () => {
+    mappings.set('m1', { adapter: ADAPTER_KEY, threadRef: '!room:example.org', taskId: 'task-1' });
+    mappings.set('m2', { adapter: 'matrix:https://other.example.org', threadRef: '!room2:x', taskId: 'task-1' });
+    messages.set('msg-1', { body: 'done' });
+    enqueueFailures = 1; // the first kick rejects
+    const n = await relaySettledRun('task-1', 'run-7', 'msg-1');
+    expect(n).toBe(1); // one kick landed, the failed one stays raw for the sweep
+    expect([...outbox.values()].filter((r) => r.runId === 'run-7')).toHaveLength(2); // BOTH rows persisted
+    expect(enqueuedJobs).toHaveLength(1);
+    expect(enqueuedJobs[0]!.data).toMatchObject({ outboxId: expect.any(String) });
   });
 
   it('defers when the adapter is not live (dead token never consumes a reply)', async () => {
