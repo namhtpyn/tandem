@@ -428,4 +428,82 @@ test.describe('mcp registry + bindings', () => {
     );
     expect(entry?.bindingCount).toBe(1);
   });
+
+  test('stdio transport (slice 3): UI create, spawn-probe verdict, dispatch names the server', async ({ page }) => {
+    const mcp = new McpPage(page);
+    const tasks = new TasksPage(page);
+    const tag = Date.now().toString(36).slice(-6);
+    const { employeeId, employeeName } = await seedAiEmployee(page, tag);
+
+    // the probe/dispatch subject: an absolute command spawning the init-stub on
+    // the app-server host (the ACP stdio contract)
+    const command = process.execPath;
+    const stub = `${process.cwd()}/test/fixtures/mcp-stdio-ok.mjs`;
+    const serverName = `E2E Stdio ${tag}`;
+    await mcp.open();
+    await mcp.createStdioServer({
+      name: serverName,
+      command,
+      args: `${stub} --e2e ${tag}`,
+      credentialEnvVar: 'MCP_API_KEY',
+      notes: 'stdio slice',
+    });
+    const row = mcp.rowFor(serverName);
+    await expect(row).toBeVisible({ timeout: 15_000 });
+    await expect(row).toContainText('stdio');
+    await expect(row).toContainText(command);
+
+    // the auth select is LOCKED to the static credential for stdio (oauth ∩ stdio refused)
+    await row.getByRole('button', { name: /Edit / }).click();
+    await page.getByTestId('mcp-auth-kind').click();
+    await expect(page.getByRole('option', { name: /OAuth 2.0/ })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    // rpc read shape: transport/command/args round-trip on the registry row
+    const regList = await rpcPost(page, '/rpc/mcp/registryList', {});
+    const entry = (regList.json as { data: Array<Record<string, unknown>> }).data.find((r) => r.name === serverName);
+    expect(entry?.transport).toBe('stdio');
+    expect(entry?.command).toBe(command);
+    expect(entry?.args).toEqual([stub, '--e2e', tag]);
+    const serverId = entry?.id as string;
+
+    // bind + probe: the spawn handshake flips the verdict to OK
+    const secretId = await seedSecret(page, tag);
+    await bindServer(page, employeeId, serverId, secretId);
+    const { editor, bindingRow } = await openMcpSection(page, employeeName);
+    await expect(bindingRow.getByTestId('mcp-probe-never')).toBeVisible();
+    await bindingRow.getByRole('button', { name: `Probe ${serverName}` }).click();
+    await expect(bindingRow.getByTestId('mcp-probe-ok')).toBeVisible({ timeout: 15_000 });
+    await editor.getByRole('button', { name: 'Cancel' }).click();
+    await expect(editor).toBeHidden({ timeout: 10_000 });
+
+    // fake-runner dispatch names the stdio server in the run output (parity)
+    const taskTitle = `MCPS ${tag}`;
+    await tasks.navigate('/tasks');
+    await tasks.openCreateModal();
+    await tasks.fillTaskForm({ title: taskTitle, assignee: employeeName });
+    await tasks.saveTask();
+    const taskRow = tasks.rowFor(taskTitle);
+    await expect(taskRow).toBeVisible({ timeout: 15_000 });
+    const drawer = await tasks.openWorkflowDrawer(taskRow);
+    const dispatch = drawer.getByTestId('drawer-verb-dispatch');
+    await expect(dispatch).toBeVisible({ timeout: 20_000 });
+    await dispatch.click();
+    await expect(drawer.getByText('Agent dispatched')).toBeVisible({ timeout: 10_000 });
+    await expect(drawer.getByText(/Run completed/i)).toBeVisible({ timeout: 45_000 });
+
+    await page.goto('/tasks');
+    await waitForHydration(page);
+    const link = page.getByRole('link', { name: taskTitle }).first();
+    await expect(link).toBeVisible({ timeout: 15_000 });
+    await link.click();
+    await expect(page.getByText('Completed').first()).toBeVisible({ timeout: 15_000 });
+    const outFolds = page.locator('details').filter({ has: page.locator('summary', { hasText: 'Full output from' }) });
+    await expect(outFolds.first()).toBeVisible({ timeout: 15_000 });
+    for (let i = 0; i < (await outFolds.count()); i++) {
+      await outFolds.nth(i).locator('summary').click();
+      await expect(outFolds.nth(i).locator('pre').first()).not.toBeEmpty({ timeout: 15_000 });
+    }
+    await expect(page.getByText(`[mcp] servers: ${serverName}`)).toBeVisible({ timeout: 15_000 });
+  });
 });

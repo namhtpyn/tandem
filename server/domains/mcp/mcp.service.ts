@@ -171,6 +171,9 @@ function normalizeTransportFields(
   if (transport !== 'http' && transport !== 'stdio') {
     throw new ORPCError('BAD_REQUEST', { message: 'transport must be http or stdio' });
   }
+  // the transport column itself rides every create/update (a create WITHOUT it
+  // would land on the 'http' column default — never the caller's intent)
+  patch.transport = transport;
   if (transport === 'stdio') {
     const effectiveAuth = input.authKind ?? (existing?.authKind as string | undefined) ?? 'none';
     if (effectiveAuth === 'oauth' || (input.transport === 'stdio' && oauthTouched(input))) {
@@ -676,6 +679,7 @@ export async function probeMcpStdio(
   command: string,
   args: string[],
   env: Record<string, string> = {},
+  timeoutMs = 10_000,
 ): Promise<{ ok: boolean; detail: string }> {
   let child: ReturnType<typeof Bun.spawn> | null = null;
   try {
@@ -704,7 +708,11 @@ export async function probeMcpStdio(
     // line-wise read with the 10s cap — servers may banner to stdout first
     for (;;) {
       const deadline = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('timed out after 10s waiting for the initialize response')), 10_000);
+        setTimeout(
+          () =>
+            reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)}s waiting for the initialize response`)),
+          timeoutMs,
+        );
       });
       const chunk = await Promise.race([reader.read(), deadline]);
       if (chunk.done) break;

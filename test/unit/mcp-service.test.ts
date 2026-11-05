@@ -1,3 +1,6 @@
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 // MCP domain units (SPEC "MCP (registry + per-agent bindings)"): the dispatch
 // builder (decrypt-at-dispatch, name-sorted, empty-headers wire law), the
 // probe verdict persistence (BOTH outcomes, first-error-line detail), the
@@ -152,8 +155,10 @@ import {
   buildMcpServersFor,
   extractJsonRpc,
   mcpDispatchLine,
+  parseArgsJson,
   probeMcpBinding,
   probeMcpHttp,
+  probeMcpStdio,
   registryCreate,
   registryRemove,
   registryUpdate,
@@ -443,6 +448,225 @@ describe('extractJsonRpc', () => {
     });
     expect(extractJsonRpc('<html/>')).toBeNull();
     expect(extractJsonRpc('data: {broken')).toBeNull();
+  });
+});
+
+describe('stdio transport (slice 3, SPEC "stdio transport")', () => {
+  const stdioServer = (over: Partial<Record<string, unknown>> = {}) =>
+    server({
+      transport: 'stdio',
+      url: null,
+      command: '/bin/stub-mcp',
+      args: '[]',
+      credentialEnvVar: null,
+      authKind: 'none',
+      ...over,
+    });
+
+  it('create stdio: command + args serialize to JSON, url forced null; result carries the parsed args array', async () => {
+    const row = await registryCreate({
+      name: 'stub',
+      transport: 'stdio',
+      command: '/bin/stub-mcp',
+      args: ['--port', '9'],
+      credentialEnvVar: 'MCP_API_KEY',
+      notes: '',
+    });
+    const insert = h.inserts[0]!;
+    expect(insert.values).toMatchObject({
+      transport: 'stdio',
+      command: '/bin/stub-mcp',
+      args: '["--port","9"]',
+      credentialEnvVar: 'MCP_API_KEY',
+      url: null,
+    });
+    expect(row).toMatchObject({
+      transport: 'stdio',
+      command: '/bin/stub-mcp',
+      args: ['--port', '9'],
+      credentialEnvVar: 'MCP_API_KEY',
+      url: null,
+    });
+    // args omitted on create = the spec-shape empty array
+    h.serverRows = []; // the mock's registry findMany is unfiltered — reset rows
+    await registryCreate({ name: 'stub2', transport: 'stdio', command: '/bin/stub-mcp', notes: '' });
+    expect(h.inserts[1]!.values).toMatchObject({ args: '[]', url: null });
+  });
+
+  it('validation: stdio without command / relative command / http without url / stdio-only field on http — all 400', async () => {
+    await expect(registryCreate({ name: 's', transport: 'stdio', notes: '' })).rejects.toThrow(
+      'command is required for stdio servers',
+    );
+    await expect(
+      registryCreate({ name: 's', transport: 'stdio', command: 'relative/stub', notes: '' }),
+    ).rejects.toThrow('absolute path');
+    await expect(registryCreate({ name: 's', notes: '' })).rejects.toThrow('url is required for http servers');
+    await expect(registryCreate({ name: 's', url: 'https://x/v1', command: '/bin/stub', notes: '' })).rejects.toThrow(
+      'command belongs to stdio servers',
+    );
+    await expect(registryCreate({ name: 's', url: 'https://x/v1', args: [], notes: '' })).rejects.toThrow(
+      'args belongs to stdio servers',
+    );
+    await expect(
+      registryCreate({ name: 's', transport: 'stdio', command: '/bin/stub', credentialEnvVar: 'BAD-NAME!', notes: '' }),
+    ).rejects.toThrow('valid env var name');
+  });
+
+  it('oauth ∩ stdio refused on create AND on a transport switch (never silently stripped)', async () => {
+    await expect(
+      registryCreate({
+        name: 's',
+        transport: 'stdio',
+        command: '/bin/stub',
+        authKind: 'oauth',
+        notes: '',
+      }),
+    ).rejects.toThrow('oauth config belongs to http servers');
+    await expect(
+      registryCreate({
+        name: 's',
+        transport: 'stdio',
+        command: '/bin/stub',
+        oauthTokenUrl: 'https://p/token',
+        notes: '',
+      }),
+    ).rejects.toThrow('oauth config belongs to http servers');
+    h.serverRows = [server({ authKind: 'oauth', oauthTokenUrl: 'https://p/token' })];
+    await expect(registryUpdate({ id: 'srv-1', transport: 'stdio', command: '/bin/stub' })).rejects.toThrow(
+      'oauth config belongs to http servers',
+    );
+  });
+
+  it('verdict invalidation: command/args/credentialEnvVar change clears the server verdicts; a no-op save keeps them', async () => {
+    h.serverRows = [stdioServer()];
+    h.bindingRows = [binding({ lastProbeOk: true, lastProbeDetail: 'initialize ok' })];
+    await registryUpdate({ id: 'srv-1', command: '/bin/stub-mcp-2' });
+    expect(h.updates.find((u) => u.table === 'mcpServerBindings')).toBeTruthy();
+
+    h.updates = [];
+    await registryUpdate({ id: 'srv-1', command: '/bin/stub-mcp', args: [], credentialEnvVar: null, notes: 'x' });
+    expect(h.updates.find((u) => u.table === 'mcpServerBindings')).toBeUndefined();
+
+    // a stdio→http switch changes the whole target: the url write lands and clears
+    h.updates = [];
+    await registryUpdate({ id: 'srv-1', transport: 'http', url: 'https://back/v1' });
+    expect(h.updates.find((u) => u.table === 'mcpServerBindings')).toBeTruthy();
+  });
+
+  it('dispatch: stdio member wire shape — credential rides the named env var (decrypted at dispatch only)', async () => {
+    h.bindingRows = [
+      binding({
+        server: {
+          name: 's-stdio',
+          transport: 'stdio',
+          url: null,
+          command: '/bin/stub',
+          args: '["--p"]',
+          credentialEnvVar: 'KEY',
+        },
+        secret: { name: 'c', lastFour: '1', ciphertext: 'zz' },
+      }),
+    ];
+    const out = await buildMcpServersFor('ai-1');
+    expect(out).toEqual([
+      { type: 'stdio', name: 's-stdio', command: '/bin/stub', args: ['--p'], env: [{ name: 'KEY', value: 'dec:zz' }] },
+    ]);
+    // no credentialEnvVar (or no credential) = empty env
+    h.bindingRows = [
+      binding({
+        server: {
+          name: 's-stdio',
+          transport: 'stdio',
+          url: null,
+          command: '/bin/stub',
+          args: '[]',
+          credentialEnvVar: null,
+        },
+        secret: { name: 'c', lastFour: '1', ciphertext: 'zz' },
+      }),
+    ];
+    expect((await buildMcpServersFor('ai-1'))[0]).toMatchObject({ type: 'stdio', env: [] });
+    // mixed http + stdio stay one name-sorted deterministic plan
+    h.bindingRows = [
+      binding({ id: 'b-1', server: { name: 'zeta', url: 'https://z/v1' }, secret: null }),
+      binding({
+        id: 'b-2',
+        serverId: 'srv-2',
+        server: { name: 'alpha', transport: 'stdio', url: null, command: '/bin/a', args: '[]', credentialEnvVar: null },
+        secret: null,
+      }),
+    ];
+    expect((await buildMcpServersFor('ai-1')).map((s) => s.name)).toEqual(['alpha', 'zeta']);
+  });
+
+  it('parseArgsJson: null/empty → [], corrupt column = dead input (400, never dispatched)', () => {
+    expect(parseArgsJson(null)).toEqual([]);
+    expect(parseArgsJson('')).toEqual([]);
+    expect(parseArgsJson('["a","b"]')).toEqual(['a', 'b']);
+    expect(() => parseArgsJson('{broken')).toThrow('JSON array of strings');
+    expect(() => parseArgsJson('{"a":1}')).toThrow('JSON array of strings');
+    expect(() => parseArgsJson('[1,2]')).toThrow('JSON array of strings');
+  });
+
+  describe('probeMcpStdio (spawn probe)', () => {
+    const bun = process.execPath;
+    const testFile = fileURLToPath(import.meta.url);
+    const fixture = (n: string) => `${dirname(testFile)}/../fixtures/${n}`;
+
+    it('ok handshake: verdict carries serverInfo; args + credential env ride the child', async () => {
+      const r = await probeMcpStdio(bun, [fixture('mcp-stdio-ok.mjs'), '--x', '1'], { MCP_API_KEY: 'sekret' }, 4_000);
+      expect(r.ok).toBe(true);
+      expect(r.detail).toContain('initialize ok');
+      expect(r.detail).toContain('env-ok'); // credential arrived under its named env var
+      expect(r.detail).not.toContain('env-leak'); // and PATH did NOT leak into the child
+      expect(r.detail).toContain('--x,1'); // args rode argv
+    });
+
+    it('JSON-RPC error frame + crash stderr first line are honest failure details', async () => {
+      const crash = await probeMcpStdio(bun, [fixture('mcp-stdio-crash.mjs')], {}, 4_000);
+      expect(crash.ok).toBe(false);
+      expect(crash.detail).toContain('boom: bad config file');
+    });
+
+    it('KILL LAW: a probe never leaves the spawned process running', async () => {
+      const pidFile = `${dirname(testFile)}/.mcp-stdio-silent-pid-${process.pid}`;
+      const r = await probeMcpStdio(bun, [fixture('mcp-stdio-silent.mjs'), pidFile], {}, 500);
+      expect(r.ok).toBe(false);
+      expect(r.detail).toContain('timed out');
+      const pid = Number(await Bun.file(pidFile).text());
+      expect(Number.isFinite(pid)).toBe(true);
+      let alive = true;
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+      }
+      expect(alive).toBe(false);
+      await Bun.file(pidFile)
+        .delete()
+        .catch(() => {});
+    });
+
+    it('probeMcpBinding routes stdio bindings through the spawn probe (verdict persists)', async () => {
+      h.bindingRows = [
+        binding({
+          server: {
+            name: 's',
+            transport: 'stdio',
+            url: null,
+            command: '/bin/stub',
+            args: '[]',
+            credentialEnvVar: null,
+          },
+          secret: null,
+        }),
+      ];
+      // command does not exist → honest failure verdict persisted (PROBE VERDICT LAW)
+      const r = await probeMcpBinding({ employeeId: 'ai-1', serverId: 'srv-1' });
+      expect(r.ok).toBe(false);
+      expect(r.detail.length).toBeGreaterThan(0);
+      expect(h.updates.find((u) => u.table === 'mcpServerBindings')?.set).toMatchObject({ lastProbeOk: false });
+    });
   });
 });
 
