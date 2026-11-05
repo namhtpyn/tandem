@@ -155,7 +155,49 @@ describe('channel health stamp', () => {
     expect(ch[0]).toMatchObject({ connected: true, healthCap: false, lastSyncOkAt: null });
   });
 
-  it('a throwing health() or isLive() degrades to its OWN entry, never kills the stamp', async () => {
+  it('a throwing health() with a live isLive() must NOT fabricate never-synced (healthOk:false marks the read failed)', async () => {
+    settingsRows.set('channels', JSON.stringify([VALID]));
+    attachAdapterForTests(
+      'matrix:https://matrix.example.org',
+      stubAdapter({
+        health: () => {
+          throw new Error('health exploded');
+        },
+      }),
+    );
+    await writeChannelHealthStamp();
+    const ch = stampedChannels();
+    // connected stays TRUE (transport is fine), but the null is flagged as a
+    // FAILED READ — the probe must not raise the never-synced transport alert
+    expect(ch[0]).toMatchObject({
+      connected: true,
+      healthCap: true,
+      healthOk: false,
+      lastSyncOkAt: null,
+    });
+  });
+
+  it('a throwing isLive() degrades to connected:false without faking a health fault', async () => {
+    settingsRows.set('channels', JSON.stringify([VALID]));
+    attachAdapterForTests(
+      'matrix:https://matrix.example.org',
+      stubAdapter({
+        isLive: () => {
+          throw new Error('isLive exploded');
+        },
+      }),
+    );
+    await writeChannelHealthStamp();
+    const ch = stampedChannels();
+    expect(ch[0]).toMatchObject({
+      connected: false,
+      healthCap: true,
+      healthOk: true,
+      lastSyncOkAt: 1_700_000_000_000,
+    });
+  });
+
+  it('a throwing health() AND isLive() degrades to its OWN entry, never kills the stamp', async () => {
     settingsRows.set('channels', JSON.stringify([VALID]));
     attachAdapterForTests(
       'matrix:https://matrix.example.org',
@@ -170,7 +212,25 @@ describe('channel health stamp', () => {
     );
     await writeChannelHealthStamp();
     const ch = stampedChannels(); // the stamp still landed
-    expect(ch[0]).toMatchObject({ connected: false, healthCap: true, lastSyncOkAt: null });
+    expect(ch[0]).toMatchObject({ connected: false, healthCap: true, healthOk: false, lastSyncOkAt: null });
+  });
+
+  it('an ENABLED config the parser dropped (unregistered kind) stamps connected:false — never invisible', async () => {
+    settingsRows.set(
+      'channels',
+      JSON.stringify([VALID, { ...VALID, kind: 'discord' }]), // schema-valid, no adapter registered
+    );
+    await writeChannelHealthStamp();
+    const ch = stampedChannels();
+    expect(ch).toHaveLength(2);
+    expect(ch[1]).toMatchObject({
+      key: 'discord:https://matrix.example.org',
+      kind: 'discord',
+      connected: false,
+      healthCap: false,
+      healthOk: false,
+      lastSyncOkAt: null,
+    });
   });
 
   it('zero enabled configs stamp an EMPTY channels array (disabled must not read stale)', async () => {

@@ -404,9 +404,12 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   (best-effort: its own catch — observability never crashes the tick, same law
   as the dispatcher heartbeat), plus once at the end of every successful boot
   start: JSON `{"stampedAt": <epoch ms>, "channels": [{"key", "kind",
-  "homeserverUrl", "connected", "healthCap", "lastSyncOkAt"}]}`, one entry per ENABLED
+  "homeserverUrl", "connected", "healthCap", "healthOk", "lastSyncOkAt"}]}`, one entry per ENABLED
   config whether or not its adapter started — a config whose adapter failed to
-  start reports `connected:false`, and that IS the signal. `connected` mirrors
+  start reports `connected:false`, and that IS the signal; an enabled entry the
+  config parser DROPPED (unknown/unregistered kind, invalid shape) is stamped
+  too (`connected:false`, `healthCap:false`) — a dropped config must never be
+  invisible to the watchdog. `connected` mirrors
   the adapter's live state in THIS process; `lastSyncOkAt` is the adapter's
   last successful TRANSPORT round-trip (matrix: a sync poll that returned
   ok + next_batch, stamped independently of sink delivery — a sink outage
@@ -419,12 +422,16 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   itself is dead, or an adapter is down/dead-token) and transport health
   (`connected:true` with `lastSyncOkAt` stale — the sync loop is alive but the
   homeserver is unreachable and backing off). Each entry also carries
-  `healthCap` (whether the adapter implements `health()`): a NON-capable
-  adapter's `lastSyncOkAt: null` is not alertable; a CAPABLE adapter's
-  `lastSyncOkAt: null` means "no successful transport round-trip in this
-  process yet" — alertable after a grace window (a from-boot outage must not
-  be invisible: the restart-into-a-down-homeserver shape holds
-  `connected:true` + null for the whole outage). Queue depth is deliberately
+  `healthCap` (whether the adapter implements `health()`) and `healthOk`
+  (whether the health read itself succeeded): a NON-capable
+  adapter's `lastSyncOkAt: null` is not alertable; a CAPABLE adapter whose
+  read SUCCEEDED (`healthOk:true`) with `lastSyncOkAt: null` means "no
+  successful transport round-trip in this process yet" — alertable after a
+  grace window (a from-boot outage must not be invisible: the
+  restart-into-a-down-homeserver shape holds `connected:true` + null for the
+  whole outage); a FAILED health read (`healthOk:false`) downgrades its null
+  to a telemetry fault — never alertable, a broken health() must not
+  fabricate the never-synced shape. Queue depth is deliberately
   NOT stamped: it is DB-derivable, so the watchdog derives backlog
   (unprocessed `channel_events` + `channel_outbox` rows, count + oldest age)
   from the tables directly. Backlog with a healthy stamp = a pipeline wedge
@@ -433,7 +440,10 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   consumed).
 - The adapter contract gains an OPTIONAL `health()` — an adapter without it
   reports `healthCap:false` + `lastSyncOkAt: null` (the watchdog does not
-  invent a fault from a missing capability).
+  invent a fault from a missing capability). The liveness and health reads
+  are isolated PER READ: a throwing `isLive()` degrades to
+  `connected:false`, a throwing `health()` to `healthOk:false` — neither
+  kills the whole stamp nor fakes the other's fault shape.
 
 ### Reply relay (slice 2: final-only outbound)
 

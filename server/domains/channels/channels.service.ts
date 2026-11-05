@@ -733,9 +733,10 @@ export async function processOutboundRow(data: {
 /** watchdog stamp key (#271 slice 3): JSON {stampedAt, channels:[{key, kind,
  * homeserverUrl, connected, lastSyncOkAt}]} — the external prod probe alerts
  * stamp-stale (tick dead), connected:false (adapter down/dead-token) and
- * transport-stale (sync loop alive, homeserver unreachable). ABSENT key
- * (pre-slice image, or no boot start ever completed) stays silent. Queue
- * depth is deliberately NOT stamped — DB-derivable (SPEC: Watchdog health). */
+ * transport-stale (sync loop alive, homeserver unreachable; capable+null with
+ * healthOk:true = never-synced). ABSENT key (pre-slice image, or no boot
+ * start ever completed) stays silent. Queue depth is deliberately NOT
+ * stamped — DB-derivable (SPEC: Watchdog health). */
 export const CHANNELS_HEALTH_KEY = 'channels:health';
 const HEALTH_TICK_MS = 60_000;
 let healthTimer: ReturnType<typeof setInterval> | null = null;
@@ -746,21 +747,30 @@ let healthTimer: ReturnType<typeof setInterval> | null = null;
  * connected:false — that IS the signal); zero configs stamp an empty array. */
 export async function writeChannelHealthStamp(): Promise<void> {
   try {
-    const cfgs = parseChannelConfigs(await getSetting(CHANNELS_KEY));
+    const raw = await getSetting(CHANNELS_KEY);
+    const cfgs = parseChannelConfigs(raw);
     const channels = [];
     for (const cfg of cfgs) {
       const key = adapterKey(cfg);
       const adapter = activeAdapters.get(key);
+      // per-read isolation: a throwing isLive must not fake a health fault and
+      // a throwing health must not fake an adapter-down — each read degrades
+      // to its OWN conservative default, never kills the whole stamp
       let connected = false;
-      let lastSyncOkAt: number | null = null;
-      // per-entry isolation (both reads): one broken adapter must degrade to
-      // its OWN entry (connected:false / null), never kill the whole stamp —
-      // a dropped stamp reads as "tick dead" for every channel (false alarm)
       try {
         connected = !!adapter && (!adapter.isLive || adapter.isLive());
-        lastSyncOkAt = adapter?.health?.().lastSyncOkAt ?? null;
       } catch {
-        // connected stays false (the conservative signal); lastSyncOkAt null
+        // connected stays false (the conservative liveness signal)
+      }
+      let lastSyncOkAt: number | null = null;
+      let healthOk = false;
+      try {
+        lastSyncOkAt = adapter?.health?.().lastSyncOkAt ?? null;
+        healthOk = true;
+      } catch {
+        // lastSyncOkAt stays null + healthOk:false: a telemetry fault must not
+        // fabricate the never-synced shape (capable + null reads alertable) —
+        // healthOk:false marks the null as a FAILED READ, not a real absence
       }
       channels.push({
         key,
@@ -769,10 +779,42 @@ export async function writeChannelHealthStamp(): Promise<void> {
         connected,
         // healthCap separates "adapter has no health() (null = not alertable)"
         // from "health() present but never synced in this process" (null =
-        // never-synced, alertable after a grace window by the probe)
+        // never-synced, alertable after a grace window by the probe);
+        // healthOk:false downgrades a null to a telemetry fault (never alertable)
         healthCap: typeof adapter?.health === 'function',
+        healthOk,
         lastSyncOkAt,
       });
+    }
+    // PARSE-DROPPED COVERAGE (SPEC: one entry per ENABLED config): an enabled
+    // entry the parser dropped (unknown/unregistered kind, invalid shape) is
+    // otherwise invisible to every alarm channel — no adapter, no retry loop,
+    // integrity audit passes — so stamp it connected:false instead.
+    try {
+      const arr: unknown = JSON.parse(raw ?? '[]');
+      if (Array.isArray(arr)) {
+        const known = new Set(channels.map((c) => c.key));
+        for (const e of arr) {
+          if (!e || typeof e !== 'object' || (e as { enabled?: unknown }).enabled !== true) continue;
+          const cand = e as { kind?: unknown; homeserverUrl?: unknown };
+          const kind = typeof cand.kind === 'string' && cand.kind ? cand.kind : 'unknown';
+          const home = typeof cand.homeserverUrl === 'string' && cand.homeserverUrl ? cand.homeserverUrl : 'unknown';
+          const key = `${kind}:${home}`;
+          if (known.has(key)) continue;
+          known.add(key);
+          channels.push({
+            key,
+            kind,
+            homeserverUrl: home,
+            connected: false,
+            healthCap: false,
+            healthOk: false,
+            lastSyncOkAt: null,
+          });
+        }
+      }
+    } catch {
+      // raw corrupt → parseChannelConfigs already read it as no channels
     }
     await setSetting(CHANNELS_HEALTH_KEY, JSON.stringify({ stampedAt: Date.now(), channels }));
   } catch {
