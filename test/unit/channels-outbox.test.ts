@@ -31,6 +31,7 @@ let outboxConflict = false; // unique (adapter, runId, threadRef) already relaye
 let claimConflict = false; // claim CAS: another worker owns the row
 let sendError: Error | null = null;
 let enqueueFailures = 0; // redis blips: the first N enqueues reject
+let headQueryThrows: Error | null = null; // post-claim DB failure (F1 class)
 // the worker always claims the row it just LOADED — the findFirst({id}) mock
 // records that id so the guarded writes apply to the right row
 let lastLoadedOutboxId: string | null = null;
@@ -77,6 +78,7 @@ vi.mock('../../server/db/index', () => ({
           const threadRef = where?.threadRef?.eq;
           const openOnly = where?.processedAt?.isNull === true;
           if (adapterKey && threadRef && openOnly) {
+            if (headQueryThrows) throw headQueryThrows;
             const rows = [...outbox.values()].filter(
               (r) => r.adapter === adapterKey && r.threadRef === threadRef && r.processedAt === null,
             );
@@ -225,6 +227,7 @@ beforeEach(() => {
   claimConflict = false;
   sendError = null;
   enqueueFailures = 0;
+  headQueryThrows = null;
   lastLoadedOutboxId = null;
   settingsRows.clear();
   settingsRows.set('channels', JSON.stringify([CFG]));
@@ -387,6 +390,15 @@ describe('processOutboundRow', () => {
     await expect(processOutboundRow({ outboxId: row.id })).rejects.toThrow('homeserver 502');
     expect(row.processedAt).toBeNull();
     expect(row.claimedAt).toBeNull(); // released so the retry re-claims
+    expect(sentMessages).toHaveLength(0);
+  });
+
+  it('ANY post-claim DB failure releases the claim (job retry can never no-op on a fresh claim)', async () => {
+    const row = seedRow();
+    headQueryThrows = new Error('db failover');
+    await expect(processOutboundRow({ outboxId: row.id })).rejects.toThrow('db failover');
+    expect(row.claimedAt).toBeNull(); // the retry ladder (3-24s) sits INSIDE the 5-min claim TTL —
+    expect(row.processedAt).toBeNull(); // an unreleased claim would orphan the row jobless until boot
     expect(sentMessages).toHaveLength(0);
   });
 });

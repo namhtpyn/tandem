@@ -640,59 +640,64 @@ export async function processOutboundRow(data: { outboxId: string; deferred?: nu
       .set({ claimedAt: null })
       .where(and(eq(channelOutbox.id, row.id), isNull(channelOutbox.processedAt)));
   };
-  const cfg = parseChannelConfigs(await getSetting(CHANNELS_KEY)).find((c) => adapterKey(c) === row.adapter);
-  const defer = async (why: string): Promise<void> => {
-    if (deferred >= OUTBOX_DEFER_MAX) {
-      // release the claim even on give-up: a held claim would stall the whole
-      // thread's head gate until the TTL expires (ghost-claim stall, r1 finding)
-      await releaseClaim();
-      log.error(`channel reply ${row.id} gave up after ${OUTBOX_DEFER_MAX} deferrals (${why}) — raw row kept`);
-      return; // never consumed: the next boot sweep starts a fresh cycle
-    }
-    log.warn(`channel reply ${row.id} deferred (${why}) — retry in ${OUTBOX_DEFER_MS / 60_000} min`);
-    await releaseClaim();
-    await requeueOutbox(await redisQueue(), row.id, { delayMs: OUTBOX_DEFER_MS, defer: deferred + 1 });
-  };
-  if (!cfg) {
-    await defer(`no enabled config for adapter ${row.adapter}`);
-    return;
-  }
-  const adapter = activeAdapters.get(adapterKey(cfg));
-  if (!adapter || (adapter.isLive && !adapter.isLive())) {
-    await defer(`adapter ${row.adapter} is not live`);
-    return;
-  }
-  // per-thread ordering: send the OLDEST unprocessed row of this conversation
-  // first — a younger row polls (capped growth) until the older one leaves
-  const head = await db.query.channelOutbox.findFirst({
-    columns: { id: true },
-    where: {
-      adapter: { eq: row.adapter },
-      threadRef: { eq: row.threadRef },
-      processedAt: { isNull: true as const },
-    },
-    orderBy: { createdAt: 'asc', id: 'asc' },
-  });
-  if (!head || head.id !== row.id) {
-    const wait = (data.wait ?? 0) + 1;
-    const delay = Math.min(OUTBOX_WAIT_BASE_MS * 2 ** (wait - 1), OUTBOX_WAIT_MAX_MS);
-    await releaseClaim();
-    log.warn(`channel reply ${row.id} waits for an older reply in thread ${row.threadRef} — re-kick in ${delay}ms`);
-    await requeueOutbox(await redisQueue(), row.id, { delayMs: delay, wait });
-    return;
-  }
+  // POST-CLAIM GUARD (inbound parity): EVERY failure after the claim — the
+  // config read, the head query, the send, the processed write — must release
+  // the claim before rethrowing, or BullMQ's quick retries (all inside the
+  // 5-min claim TTL) would no-op on the CAS and orphan the row jobless until
+  // the next boot sweep, silently stalling the whole thread behind it.
   try {
+    const cfg = parseChannelConfigs(await getSetting(CHANNELS_KEY)).find((c) => adapterKey(c) === row.adapter);
+    const defer = async (why: string): Promise<void> => {
+      if (deferred >= OUTBOX_DEFER_MAX) {
+        // release the claim even on give-up: a held claim would stall the whole
+        // thread's head gate until the TTL expires (ghost-claim stall, r1 finding)
+        await releaseClaim();
+        log.error(`channel reply ${row.id} gave up after ${OUTBOX_DEFER_MAX} deferrals (${why}) — raw row kept`);
+        return; // never consumed: the next boot sweep starts a fresh cycle
+      }
+      log.warn(`channel reply ${row.id} deferred (${why}) — retry in ${OUTBOX_DEFER_MS / 60_000} min`);
+      await releaseClaim();
+      await requeueOutbox(await redisQueue(), row.id, { delayMs: OUTBOX_DEFER_MS, defer: deferred + 1 });
+    };
+    if (!cfg) {
+      await defer(`no enabled config for adapter ${row.adapter}`);
+      return;
+    }
+    const adapter = activeAdapters.get(adapterKey(cfg));
+    if (!adapter || (adapter.isLive && !adapter.isLive())) {
+      await defer(`adapter ${row.adapter} is not live`);
+      return;
+    }
+    // per-thread ordering: send the OLDEST unprocessed row of this conversation
+    // first — a younger row polls (capped growth) until the older one leaves
+    const head = await db.query.channelOutbox.findFirst({
+      columns: { id: true },
+      where: {
+        adapter: { eq: row.adapter },
+        threadRef: { eq: row.threadRef },
+        processedAt: { isNull: true as const },
+      },
+      orderBy: { createdAt: 'asc', id: 'asc' },
+    });
+    if (!head || head.id !== row.id) {
+      const wait = (data.wait ?? 0) + 1;
+      const delay = Math.min(OUTBOX_WAIT_BASE_MS * 2 ** (wait - 1), OUTBOX_WAIT_MAX_MS);
+      await releaseClaim();
+      log.warn(`channel reply ${row.id} waits for an older reply in thread ${row.threadRef} — re-kick in ${delay}ms`);
+      await requeueOutbox(await redisQueue(), row.id, { delayMs: delay, wait });
+      return;
+    }
     // pair-aware cap: a raw UTF-16 slice at the boundary can re-create a lone
     // surrogate (invalid JSON escape → homeserver 400 → permanent send
     // failure) — the sanitizer strips whatever the slice splits off
     await adapter.send(row.threadRef, sanitizeText(row.body.slice(0, adapter.capabilities.maxLen)));
+    await db.update(channelOutbox).set({ processedAt: new Date() }).where(eq(channelOutbox.id, row.id));
   } catch (e) {
     // release the claim so the job retry can re-claim immediately; the row
     // survives (at-least-once) — terminal job failure leaves it raw for sweep
     await releaseClaim().catch(() => {});
     throw e;
   }
-  await db.update(channelOutbox).set({ processedAt: new Date() }).where(eq(channelOutbox.id, row.id));
   log.info(`channel reply ${row.id} sent via ${row.adapter} to thread ${row.threadRef}`);
 }
 
