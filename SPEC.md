@@ -419,10 +419,14 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   user ids and the default assignee must be existing users.
 - A successful update re-arms the channel runtime IN-PROCESS against the
   committed value: added/enabled adapters start, removed/disabled ones stop, a
-  start that leaves failures re-arms the existing 30s partial-start retry loop
-  (PARTIAL-START law unchanged). No process restart is ever required for a
-  config change. The update publishes the SETTINGS change resource (settings
-  subscribers refresh).
+  config edit under an UNCHANGED adapter key restarts that adapter too (the
+  running adapter captured the old config at start — the runtime runs what is
+  stored, not what was started), and a start that leaves failures re-arms the
+  existing 30s partial-start retry loop (PARTIAL-START law unchanged). The
+  re-arm never blocks the admin write response (it rides the background; the
+  committed value is durable and the retry loop converges). No process restart
+  is ever required for a config change. The update publishes the SETTINGS
+  change resource (settings subscribers refresh).
 - UI: a Channels card on the Settings page (admin-only surface). One list of
   stored entries — kind, homeserver, enabled, binding count, health chip
   (connected / last sync age / dropped-with-reason) — with add, edit, delete
