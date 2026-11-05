@@ -1,3 +1,4 @@
+import { consola } from 'consola';
 // MCP domain (SPEC "MCP (registry + per-agent bindings)"): registry CRUD,
 // per-agent bindings, binding-level probe, and the dispatch-plan builder the
 // runner serializes onto ACP session/new + session/resume. The binding is the
@@ -33,7 +34,7 @@ export function toRegistryRow(r: typeof mcpServers.$inferSelect, bindingCount = 
     transport: r.transport,
     url: r.url,
     command: r.command,
-    args: parseArgsJson(r.args),
+    args: safeArgsJson(`server:${r.id}`, r.args),
     credentialEnvVar: r.credentialEnvVar,
     notes: r.notes,
     authKind: r.authKind,
@@ -87,6 +88,7 @@ type BindingWithRefs = {
   lastProbeDetail: string | null;
   lastProbeAt: Date | null;
   server: {
+    id: string;
     name: string;
     transport: string;
     url: string | null;
@@ -178,6 +180,22 @@ const oauthEndpointKeysTouched = (input: RegistryOauthInput) =>
   input.oauthScopes !== undefined ||
   input.oauthClientId !== undefined ||
   input.oauthClientSecretId !== undefined;
+
+/** corrupt args columns are unreachable via any product write path, but a read
+ * surface must never let one dead row take down the whole list/plan: degrade to
+ * the spec-shape empty array, log ONCE per row */
+const warnedCorruptArgs = new Set<string>();
+const safeArgsJson = (key: string, args: string | null | undefined): string[] => {
+  try {
+    return parseArgsJson(args);
+  } catch (e) {
+    if (!warnedCorruptArgs.has(key)) {
+      warnedCorruptArgs.add(key);
+      consola.error(`[mcp] corrupt args column on ${key}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return [];
+  }
+};
 
 /** stdio branch of the transport validation: oauth refusal + command (absolute)
  * + args + credential env var name. Returns the stdio columns to write. */
@@ -631,7 +649,9 @@ export async function buildMcpServersFor(employeeId: string): Promise<AcpMcpServ
           type: 'stdio' as const,
           name: b.server.name,
           command: nonNull(b.server.command),
-          args: parseArgsJson(b.server.args),
+          // one corrupt row must not fail the employee's WHOLE dispatch plan —
+          // skip + log-once (read-surface degradation, SPEC empty-args shape)
+          args: safeArgsJson(`server:${b.server.id}`, b.server.args),
           env,
         };
       }
@@ -743,7 +763,9 @@ async function readInitializeResponse(
     for (;;) {
       const chunk = await Promise.race([reader.read(), deadline]);
       if (chunk.done) return null;
-      buf += decoder.decode(chunk.value);
+      // streaming decode: a multibyte char split across chunk boundaries must
+      // not bake U+FFFD into the buffer
+      buf += decoder.decode(chunk.value, { stream: true });
       const parsed = extractJsonRpc(buf);
       if (parsed) return parsed;
     }
@@ -860,26 +882,43 @@ export async function persistBindingVerdict(bindingId: string, r: { ok: boolean;
 export async function probeMcpBinding(input: { employeeId: string; serverId: string }) {
   const binding = await findBinding(input.employeeId, input.serverId);
   if (!binding) throw new ORPCError('NOT_FOUND', { message: 'binding not found' });
-  // decrypt server-side at probe only — same law as dispatch. OAuth bindings
-  // ride the same silent-refresh path dispatch uses, then Bearer.
-  let authorization: string | undefined;
-  if (binding.server.authKind === 'oauth') {
-    const token = await getFreshAccessToken(binding.id, oauthConfigFromServerRow(binding.server));
-    if (token) authorization = `Bearer ${token}`;
-  } else if (binding.secret?.ciphertext) {
-    authorization = decryptSecret(binding.secret.ciphertext);
-  }
   const started = Date.now();
-  const result =
-    binding.server.transport === 'stdio'
-      ? await probeMcpStdio(
-          nonNull(binding.server.command),
-          parseArgsJson(binding.server.args),
-          binding.server.credentialEnvVar && binding.secret?.ciphertext
-            ? { [binding.server.credentialEnvVar]: decryptSecret(binding.secret.ciphertext) }
-            : {},
-        )
-      : await probeMcpHttp(nonNull(binding.server.url), authorization);
+  let result: { ok: boolean; detail: string };
+  if (binding.server.transport === 'stdio') {
+    // stdio bindings decrypt the credential ONLY as the named env var (no
+    // Authorization header is ever built for them)
+    let env: Record<string, string> = {};
+    let args: string[] = [];
+    try {
+      args = parseArgsJson(binding.server.args);
+      if (binding.server.credentialEnvVar && binding.secret?.ciphertext) {
+        env = { [binding.server.credentialEnvVar]: decryptSecret(binding.secret.ciphertext) };
+      }
+    } catch (e) {
+      // a corrupt args column is dead input — the PROBE VERDICT LAW still gets
+      // its failure verdict instead of the throw escaping verdict persistence
+      result = {
+        ok: false,
+        detail: `corrupt args column: ${e instanceof Error ? e.message : String(e)}`,
+      };
+      const durationMs = Date.now() - started;
+      await persistBindingVerdict(binding.id, result);
+      await publishChange(CHANGE_RESOURCE.MCP, CHANGE_ACTION.UPDATE);
+      return { ...result, durationMs, lastProbeAt: new Date().toISOString() };
+    }
+    result = await probeMcpStdio(nonNull(binding.server.command), args, env);
+  } else {
+    // http: url is validation-required; the binding credential rides the
+    // Authorization header (decrypt at probe only)
+    let authorization: string | undefined;
+    if (binding.server.authKind === 'oauth') {
+      const token = await getFreshAccessToken(binding.id, oauthConfigFromServerRow(binding.server));
+      if (token) authorization = `Bearer ${token}`;
+    } else if (binding.secret?.ciphertext) {
+      authorization = decryptSecret(binding.secret.ciphertext);
+    }
+    result = await probeMcpHttp(nonNull(binding.server.url), authorization);
+  }
   const durationMs = Date.now() - started;
   await persistBindingVerdict(binding.id, result);
   await publishChange(CHANGE_RESOURCE.MCP, CHANGE_ACTION.UPDATE);

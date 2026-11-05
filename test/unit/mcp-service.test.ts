@@ -162,6 +162,7 @@ import {
   registryCreate,
   registryRemove,
   registryUpdate,
+  toRegistryRow,
 } from '../../server/domains/mcp/mcp.service';
 
 const server = (over: Partial<Record<string, unknown>> = {}) => ({
@@ -609,13 +610,25 @@ describe('stdio transport (slice 3, SPEC "stdio transport")', () => {
     expect((await buildMcpServersFor('ai-1')).map((s) => s.name)).toEqual(['alpha', 'zeta']);
   });
 
-  it('parseArgsJson: null/empty → [], corrupt column = dead input (400, never dispatched)', () => {
+  it('parseArgsJson: null/empty → [], corrupt column = dead input (throws — write-path parse contract)', () => {
     expect(parseArgsJson(null)).toEqual([]);
     expect(parseArgsJson('')).toEqual([]);
     expect(parseArgsJson('["a","b"]')).toEqual(['a', 'b']);
     expect(() => parseArgsJson('{broken')).toThrow('JSON array of strings');
     expect(() => parseArgsJson('{"a":1}')).toThrow('JSON array of strings');
     expect(() => parseArgsJson('[1,2]')).toThrow('JSON array of strings');
+  });
+
+  it('a corrupt args column degrades per-row at READ surfaces — registryList row → [], probe persists a failure verdict, dispatch never throws', async () => {
+    const corrupt = stdioServer({ args: '{broken' }) as unknown as Parameters<typeof toRegistryRow>[0];
+    // registry read: the one dead row maps to the spec-shape empty array
+    expect(toRegistryRow(corrupt).args).toEqual([]);
+    // probe: the verdict persists instead of the throw escaping persistence
+    h.bindingRows = [binding({ server: corrupt })];
+    const r = await probeMcpBinding({ employeeId: 'ai-1', serverId: 'srv-1' });
+    expect(r.ok).toBe(false);
+    expect(r.detail).toContain('corrupt args column');
+    expect(h.updates.find((u) => u.table === 'mcpServerBindings')?.set).toMatchObject({ lastProbeOk: false });
   });
 
   it('args entries must survive the one-per-line editor round-trip: empty/newline/padded = 400', async () => {
