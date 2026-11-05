@@ -153,6 +153,20 @@ export function parseArgsJson(args: string | null | undefined): string[] {
 
 const ENV_VAR_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/** args entries must survive the one-per-line editor round-trip: non-empty,
+ * single-line, no leading/trailing whitespace (anything else would be silently
+ * rewritten by the registry form — dead input, refused 400) */
+const validatedArgs = (args: string[]) => {
+  for (const a of args) {
+    if (a === '' || a.includes('\n') || a.trim() !== a) {
+      throw new ORPCError('BAD_REQUEST', {
+        message: 'args entries must be non-empty single-line strings without padding whitespace',
+      });
+    }
+  }
+  return args;
+};
+
 /** any oauth ENDPOINT key present — authKind 'none' is NOT oauth config (it's
  * the explicit static-credential choice a full-form save always echoes) */
 const oauthEndpointKeysTouched = (input: RegistryOauthInput) =>
@@ -190,7 +204,7 @@ function normalizeStdioFields(
     throw new ORPCError('BAD_REQUEST', { message: 'command must be an absolute path (ACP stdio contract)' });
   }
   patch.command = command;
-  patch.args = input.args !== undefined ? JSON.stringify(input.args ?? []) : (existing?.args ?? '[]');
+  patch.args = input.args !== undefined ? JSON.stringify(validatedArgs(input.args ?? [])) : (existing?.args ?? '[]');
   if (input.credentialEnvVar !== undefined) {
     const v = input.credentialEnvVar;
     if (v && !ENV_VAR_RE.test(v)) {
@@ -205,7 +219,8 @@ function normalizeStdioFields(
 }
 
 /** http branch of the transport validation: url required + stdio-only field
- * refusal. Returns the http columns to write. */
+ * refusal + the OTHER side's columns nulled (a transport switch leaves the row
+ * carrying exactly its transport's field set — mirroring patch.url = null). */
 function normalizeHttpFields(
   existing: Pick<typeof mcpServers.$inferSelect, 'url'> | null,
   input: RegistryTransportInput,
@@ -215,6 +230,9 @@ function normalizeHttpFields(
   if (!url) throw new ORPCError('BAD_REQUEST', { message: 'url is required for http servers' });
   assertHttpUrl(url, 'url');
   patch.url = url;
+  patch.command = null;
+  patch.args = null;
+  patch.credentialEnvVar = null;
   for (const stdioOnly of ['command', 'args', 'credentialEnvVar'] as const) {
     const v = input[stdioOnly];
     if (v !== undefined && v !== null) {
@@ -535,17 +553,11 @@ export async function bindingsListByServer(serverId: string) {
   return {
     data: await Promise.all(
       (rows as ServerBindingWithRefs[]).map(async (b) => ({
-        id: b.id,
+        ...toBindingRow(b),
         employeeId: b.employee.id,
         employeeName: b.employee.name,
-        secretId: b.secretId,
-        secretName: b.secret?.name ?? null,
-        lastFour: b.secret?.lastFour ?? null,
         authKind: b.server.authKind,
         oauth: await oauthStatusFor(b.id, oauthConfigFromServerRow(b.server)),
-        lastProbeOk: b.lastProbeOk,
-        lastProbeDetail: b.lastProbeDetail,
-        lastProbeAt: iso(b.lastProbeAt),
       })),
     ),
   };
@@ -653,6 +665,9 @@ export function extractJsonRpc(text: string): { result?: unknown; error?: { code
   for (const line of text.split('\n')) {
     const m = /^\s*data:\s*(.+)$/.exec(line);
     if (m?.[1]) candidates.push(m[1].trim());
+    // a plain stdout banner line before the response must not blind the probe —
+    // every line is a candidate (whole-buffer first)
+    candidates.push(line.trim());
   }
   for (const c of candidates) {
     if (!c.startsWith('{')) continue;
@@ -744,7 +759,14 @@ async function verdictFromResponse(
 ): Promise<{ ok: boolean; detail: string }> {
   if (!parsed) {
     if (typeof exitCode === 'number' && exitCode !== 0) {
-      const errText = await new Response(stderr).text().catch(() => '');
+      // probe law: carry the FIRST error line (stderr beats the bare exit code);
+      // the drain is CAPPED — a descendant holding the pipe must not hang the probe
+      const errText = await Promise.race([
+        new Response(stderr).text().catch(() => ''),
+        new Promise<string>((resolve) => {
+          setTimeout(() => resolve(''), 1_000);
+        }),
+      ]);
       const firstErr = errText.split('\n').find((l) => l.trim());
       return { ok: false, detail: (firstErr ?? `server exited with code ${exitCode}`).trim().slice(0, 300) };
     }

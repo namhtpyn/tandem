@@ -167,7 +167,11 @@ import {
 const server = (over: Partial<Record<string, unknown>> = {}) => ({
   id: 'srv-1',
   name: 'zeta',
+  transport: 'http',
   url: 'https://mcp.example/v1',
+  command: null,
+  args: null,
+  credentialEnvVar: null,
   notes: '',
   createdAt: new Date(0),
   updatedAt: new Date(0),
@@ -612,6 +616,56 @@ describe('stdio transport (slice 3, SPEC "stdio transport")', () => {
     expect(() => parseArgsJson('{broken')).toThrow('JSON array of strings');
     expect(() => parseArgsJson('{"a":1}')).toThrow('JSON array of strings');
     expect(() => parseArgsJson('[1,2]')).toThrow('JSON array of strings');
+  });
+
+  it('args entries must survive the one-per-line editor round-trip: empty/newline/padded = 400', async () => {
+    await expect(
+      registryCreate({ name: 's', transport: 'stdio', command: '/bin/stub', args: [''], notes: '' }),
+    ).rejects.toThrow('non-empty single-line');
+    await expect(
+      registryCreate({ name: 's', transport: 'stdio', command: '/bin/stub', args: ['a\nb'], notes: '' }),
+    ).rejects.toThrow('non-empty single-line');
+    await expect(
+      registryCreate({ name: 's', transport: 'stdio', command: '/bin/stub', args: [' padded '], notes: '' }),
+    ).rejects.toThrow('non-empty single-line');
+  });
+
+  it('a stdio→http switch nulls the stdio columns (the row carries exactly its transport field set)', async () => {
+    h.serverRows = [stdioServer()];
+    await registryUpdate({ id: 'srv-1', transport: 'http', url: 'https://back/v1' });
+    const srvUpdate = h.updates.find((u) => u.table === 'mcpServers');
+    expect(srvUpdate!.set).toMatchObject({
+      transport: 'http',
+      url: 'https://back/v1',
+      command: null,
+      args: null,
+      credentialEnvVar: null,
+    });
+  });
+
+  it('extractJsonRpc recovers a response PRECEDED by a plain stdout banner line', () => {
+    expect(
+      extractJsonRpc('mcp-stub v1.2 ready\n{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"s"}}}'),
+    ).toMatchObject({ result: { serverInfo: { name: 's' } } });
+  });
+
+  it('bindingsListByServer rows carry transport (the per-server binding manager badge field)', async () => {
+    h.bindingRows = [
+      binding({
+        employee: { id: 'ai-1', name: 'Ash' },
+        server: {
+          name: 's-stdio',
+          transport: 'stdio',
+          url: null,
+          command: '/bin/stub',
+          args: '[]',
+          credentialEnvVar: null,
+        },
+        secret: null,
+      }),
+    ];
+    const res = await bindingsListByServer('srv-1');
+    expect(res.data[0]).toMatchObject({ employeeName: 'Ash', transport: 'stdio', lastProbeOk: null });
   });
 
   describe('probeMcpStdio (spawn probe)', () => {

@@ -147,13 +147,18 @@ binding (section below). Slice 3 adds the `stdio` transport (section below).
   (default `http` = exactly the slice-1/2 contract). `http` entries keep url
   (http/https). `stdio` entries carry `command` (ABSOLUTE path to the
   executable — the ACP v1 wire contract) and `args` (a JSON array of
-  strings, `[]` allowed), plus an optional `credentialEnvVar` (env var name
+  strings, `[]` allowed; entries are non-empty single-line strings without
+  padding whitespace — the registry form edits them one per line), plus an
+  optional `credentialEnvVar` (env var name
   matching `[A-Za-z_][A-Za-z0-9_]*`). Validation: create/update REJECTS a `stdio`
   entry without `command`, a `http` entry without `url`, and ANY oauth
   config on a `stdio` entry — OAuth authorization is an http contract
   (endpoints + Bearer headers have no stdio meaning), so a transport switch
   to `stdio` on an `authKind=oauth` entry is refused 400, never silently
-  stripped.
+  stripped (the refusal keys off the entry's PERSISTED authKind, not the
+  caller's echo). A transport switch nulls the other transport's columns —
+  a `stdio` entry carries no url; an `http` entry carries no
+  command/args/credentialEnvVar.
 - **Verdict invalidation (PROBE VERDICT LAW parity)**: a transport switch or
   a `command`/`args`/`credentialEnvVar` change clears every verdict of that
   server's bindings — same law as a url change (a stale OK on a changed
