@@ -2,7 +2,7 @@
   "type": "diff",
   "version": "9",
   "dialect": "postgres",
-  "id": "b51196f5-263e-42b9-b51a-e1f793926613",
+  "id": "10d01f1d-971a-45d9-bc35-f441e52e584d",
   "prevIds": [
     "038d65f2-008b-4748-953f-e4687519118a"
   ],
@@ -64,6 +64,26 @@
         "n|sch|public",
         "n|col|public.channel_events.adapter",
         "n|col|public.channel_events.external_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "channel_events",
+        "channel_events_unprocessed_idx"
+      ],
+      "writes": [
+        "s|idx|public.channel_events_unprocessed_idx",
+        "n|idx|public.channel_events_unprocessed_idx",
+        "e|idx|public.channel_events_unprocessed_idx",
+        "n|rel|public.channel_events_unprocessed_idx"
+      ],
+      "reads": [
+        "n|tbl|public.channel_events",
+        "n|sch|public",
+        "n|col|public.channel_events.processed_at"
       ]
     },
     {
@@ -279,6 +299,22 @@
       "row": {
         "schema": "public",
         "table": "channel_events",
+        "name": "claimed_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_events",
         "name": "processed_at",
         "type": "timestamp with time zone",
         "typeSchema": null,
@@ -427,6 +463,30 @@
         ],
         "isUnique": true,
         "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_events",
+        "name": "channel_events_unprocessed_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "processed_at",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": "\"processed_at\" is null",
         "with": "",
         "method": "btree",
         "concurrently": false,

@@ -330,8 +330,12 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   then a BullMQ job processes the row; workers re-run idempotently
   (`processed_at` guard + the event id AS the `jobId` so a job already
   queued/active is never duplicated; failed jobs drop their id immediately so
-  the sweep can re-drive them). Boot sweeps unprocessed rows back into the
-  queue AFTER adapters and the worker are live.
+  the sweep can re-drive them; a `claimed_at` CAS makes exactly ONE worker own
+  an event at a time — deferral cycles, sweep and deploy overlap carry
+  different job ids and could otherwise double-route — and a stale claim
+  becomes re-claimable after 5 min, keeping at-least-once). Boot sweeps
+  unprocessed rows (partial-indexed) back into the queue AFTER adapters and
+  the worker are live.
 - **Deferral law (no silent loss)**: an event whose adapter has no enabled
   config or no LIVE adapter (isLive false — e.g. token rejected) is NOT
   consumed; it re-enqueues itself every 5 min (bounded: 12 deferrals ≈ 1h,
@@ -374,8 +378,10 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   port, trailing slash) before dedupe — one bot per homeserver, duplicates
   refused. Binding user ids must be uuids (a non-uuid id could never route).
   Boot starts adapters for enabled configs unless `TANDEM_NO_DISPATCHER=1`
-  (shared test opt-out); a failed start retries on a 30s boot-retry loop
-  instead of staying dead until restart. The stored `channels` value is under
+  (shared test opt-out); PARTIAL-START LAW: a start that leaves any adapter
+  not live keeps retrying on a 30s loop (a resolved call with failures is not
+  success), and dead adapters (fatal token stop) are stopped + re-armed by the
+  same loop. The stored `channels` value is under
   the settings integrity audit (corrupt → readiness 503).
 - Matrix slice-1 capabilities: `{edit:false, threads:false, maxLen:4000,
   markdown:false}` — unencrypted rooms only (no crypto), plain-text send,

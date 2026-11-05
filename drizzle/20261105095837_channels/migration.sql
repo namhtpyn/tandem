@@ -8,6 +8,7 @@ CREATE TABLE "channel_events" (
 	"body" text NOT NULL,
 	"raw" jsonb DEFAULT '{}' NOT NULL,
 	"received_at" timestamp with time zone NOT NULL,
+	"claimed_at" timestamp with time zone,
 	"processed_at" timestamp with time zone
 );
 --> statement-breakpoint
@@ -22,5 +23,6 @@ CREATE TABLE "channel_threads" (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX "channel_events_adapter_external_uq" ON "channel_events" ("adapter","external_id");--> statement-breakpoint
+CREATE INDEX "channel_events_unprocessed_idx" ON "channel_events" ("processed_at") WHERE "processed_at" is null;--> statement-breakpoint
 CREATE UNIQUE INDEX "channel_threads_adapter_thread_uq" ON "channel_threads" ("adapter","thread_ref");--> statement-breakpoint
 ALTER TABLE "channel_threads" ADD CONSTRAINT "channel_threads_task_id_tasks_id_fkey" FOREIGN KEY ("task_id") REFERENCES "tasks"("id") ON DELETE CASCADE;

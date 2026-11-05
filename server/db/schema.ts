@@ -685,9 +685,19 @@ export const channelEvents = pgTable(
     receivedAt: timestamp('received_at', { withTimezone: true })
       .notNull()
       .$default(() => new Date()),
+    /** worker claim CAS (stale after a TTL): concurrent jobs (deferral cycles,
+     * sweep, deploy overlap) can never route the same event twice */
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
     processedAt: timestamp('processed_at', { withTimezone: true }),
   },
-  (t) => [uniqueIndex('channel_events_adapter_external_uq').on(t.adapter, t.externalId)],
+  (t) => [
+    uniqueIndex('channel_events_adapter_external_uq').on(t.adapter, t.externalId),
+    // boot sweep predicate — partial index keeps the scan proportional to the
+    // UNPROCESSED backlog, not to unbounded raw history
+    index('channel_events_unprocessed_idx')
+      .on(t.processedAt)
+      .where(sql`${t.processedAt} is null`),
+  ],
 );
 
 // ---------- relations ----------

@@ -5,7 +5,7 @@
 // through the SAME procs the web composer uses, and instant acks. Adapter
 // files never learn Tandem ids; this file never branches on transport.
 import { consola } from 'consola';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
@@ -227,9 +227,28 @@ type AckOutcome = 'created' | 'steered' | 'dispatched' | 'noted' | 'answered' | 
 const DEFER_RETRY_MS = 300_000; // 5 min between deferral re-drives
 const DEFER_MAX = 12; // ~1h of deferrals, then give up loudly (row stays raw)
 
+const CLAIM_TTL_MS = 5 * 60_000; // a claim older than this is stale (crashed worker)
+
 export async function processChannelEvent(data: { eventId: string; deferred?: number }): Promise<void> {
   const ev = await db.query.channelEvents.findFirst({ where: { id: { eq: data.eventId } } });
   if (!ev || ev.processedAt) return; // unknown or already routed
+  // CLAIM CAS (durability law, r5): exactly ONE worker owns an event at a
+  // time — deferral cycles, the boot sweep and deploy overlap all carry
+  // DIFFERENT job ids, so the processedAt check alone could double-route.
+  // A stale claim (crashed mid-route) becomes re-claimable after the TTL,
+  // which keeps the at-least-once, no-loss promise.
+  const claimRows = await db
+    .update(channelEvents)
+    .set({ claimedAt: new Date() })
+    .where(
+      and(
+        eq(channelEvents.id, ev.id),
+        isNull(channelEvents.processedAt),
+        or(isNull(channelEvents.claimedAt), lt(channelEvents.claimedAt, new Date(Date.now() - CLAIM_TTL_MS))),
+      ),
+    )
+    .returning({ id: channelEvents.id });
+  if (claimRows.length === 0) return; // another worker owns it (or a recent claim)
   // resolve through the ORIGINATING adapter key — bindings/acks never cross
   // same-kind configs (two matrix homeservers are two independent channels)
   const cfg = parseChannelConfigs(await getSetting(CHANNELS_KEY)).find((c) => adapterKey(c) === ev.adapter);
@@ -244,6 +263,7 @@ export async function processChannelEvent(data: { eventId: string; deferred?: nu
       return; // never consumed: the next boot sweep starts a fresh cycle
     }
     log.warn(`channel event ${ev.id} deferred (${why}) — retry in ${DEFER_RETRY_MS / 60_000} min`);
+    await db.update(channelEvents).set({ claimedAt: null }).where(eq(channelEvents.id, ev.id));
     await requeueEvent(await redisQueue(), ev.id, { delayMs: DEFER_RETRY_MS, defer: deferred + 1 });
   };
   if (!cfg) {
@@ -255,7 +275,18 @@ export async function processChannelEvent(data: { eventId: string; deferred?: nu
     await defer(`adapter ${ev.adapter} is not live`);
     return;
   }
-  const outcome = await routeEvent(cfg, ev, adapter);
+  let outcome: AckOutcome;
+  try {
+    outcome = await routeEvent(cfg, ev, adapter);
+  } catch (e) {
+    // release the claim so the job retry can re-claim immediately
+    await db
+      .update(channelEvents)
+      .set({ claimedAt: null })
+      .where(and(eq(channelEvents.id, ev.id), isNull(channelEvents.processedAt)))
+      .catch(() => {});
+    throw e;
+  }
   await db.update(channelEvents).set({ processedAt: new Date() }).where(eq(channelEvents.id, ev.id));
   log.info(`channel event ${ev.id} routed: ${outcome}`);
 }
@@ -314,17 +345,17 @@ async function routeEvent(
 
   // unmapped thread → NEW-TASK (the web composer's create path verbatim)
   if (!mapping) {
-    // composer parity: tasks.create requires a READY-category status — the
-    // first ready status by position, never a terminal category
+    // composer parity: tasks.create defaults to the FIRST status by position
+    // (resolveCreatedStatus(null)) — identical pick, never a guess
     const statusRows = await db.query.taskStatuses.findMany({
       columns: { id: true, category: true },
       orderBy: { position: 'asc' },
     });
-    const statusRow = statusRows.find((r) => r.category === CATEGORY.READY);
+    const statusRow = statusRows[0];
     const statusId = statusRow?.id;
     if (!statusId) {
-      log.error('no ready-category task status — channel new-task refused');
-      await ack('Could not create the task (no ready status configured).');
+      log.error('no task statuses defined — channel new-task refused');
+      await ack('Could not create the task (no statuses configured).');
       return 'failed';
     }
     // title = the first non-empty line of the (already non-blank) message
@@ -355,7 +386,8 @@ async function routeEvent(
     const willDispatch =
       assigneeId !== null &&
       statusRow?.category === CATEGORY.READY &&
-      (await db.query.aiEmployees.findFirst({ columns: { userId: true }, where: { userId: { eq: assigneeId } } })) !== null;
+      (await db.query.aiEmployees.findFirst({ columns: { userId: true }, where: { userId: { eq: assigneeId } } })) !==
+        null;
     // MAPPING ARBITER: two events from the same brand-new thread can process
     // concurrently (worker concurrency 2) — the unique (channel, thread_ref)
     // index decides; the loser removes its fresh unmapped task and routes as
@@ -367,7 +399,13 @@ async function routeEvent(
       .returning({ id: channelThreads.id });
     if (mappingRows.length === 0) {
       log.warn(`new-task race on thread ${ev.threadRef}: another task owns the mapping — routing as note`);
-      await db.delete(tasks).where(eq(tasks.id, id));
+      // delete only a task with NO messages (nothing can reference it yet);
+      // a task a worker already picked up stays visible instead of vanishing
+      const touched = await db.query.taskMessages.findFirst({
+        columns: { id: true },
+        where: { taskId: { eq: id } },
+      });
+      if (!touched) await db.delete(tasks).where(eq(tasks.id, id));
       const winner = await db.query.channelThreads.findFirst({
         columns: { taskId: true },
         where: { adapter: { eq: adapterKey(cfg) }, threadRef: { eq: ev.threadRef } },
@@ -436,6 +474,22 @@ async function routeMapped(
       // not in the question chain / CAS flip lost — never fall back to a note
       // (a note must never stomp an open question)
       log.warn(`channel answer failed on task ${task.id}:`, e);
+      // replay after a crash-mid-verb: the question is already resolved —
+      // report the truth instead of a false failure
+      const nowRows = await db.query.taskStatuses.findMany({
+        columns: { id: true, category: true },
+        where: {
+          id: {
+            eq:
+              (await db.query.tasks.findFirst({ columns: { status: true }, where: { id: { eq: task.id } } }))?.status ??
+              '',
+          },
+        },
+      });
+      if (nowRows[0]?.category !== CATEGORY.WAITING_ANSWER) {
+        await ack('This question was already answered — noted in the thread.');
+        return 'answered';
+      }
       await ack('Could not deliver the answer — answer in the web app.');
       return 'failed';
     }
@@ -484,21 +538,23 @@ function buildAdapter(cfg: ChannelConfig, token: string): ChannelAdapter | null 
  * persist and enqueue) sweep back into the queue. Safe to re-call.
  * ORDER LAW: adapters start BEFORE the sweep — swept events route
  * immediately, and a missing adapter would silently swallow their acks. */
-export async function startChannels(): Promise<void> {
+export async function startChannels(): Promise<string[]> {
   // shared test opt-out (TANDEM_NO_DISPATCHER=1): unit/e2e never open
   // adapters or queue workers
-  if (env.TANDEM_NO_DISPATCHER) return;
+  if (env.TANDEM_NO_DISPATCHER) return [];
   const cfgs = parseChannelConfigs(await getSetting(CHANNELS_KEY));
   const hub = await redisQueue();
 
-  // stop adapters whose config disappeared / was disabled
+  // stop adapters whose config disappeared / was disabled / went DEAD
+  // (fatal token stop): a dead entry left in the map would defer forever
   const wanted = new Set(cfgs.map(adapterKey));
   for (const [key, adapter] of activeAdapters) {
-    if (!wanted.has(key)) {
+    if (!wanted.has(key) || (adapter.isLive && !adapter.isLive())) {
       await adapter.stop();
       activeAdapters.delete(key);
     }
   }
+  const failed: string[] = [];
   // start (or keep) adapters for enabled configs — a per-adapter failure is
   // logged and skipped, never aborts the rest of the start
   for (const cfg of cfgs) {
@@ -519,7 +575,8 @@ export async function startChannels(): Promise<void> {
       activeAdapters.set(key, adapter);
       log.info(`channel started: ${cfg.kind} @ ${cfg.homeserverUrl} (${cfg.bindings.length} binding(s))`);
     } catch (e) {
-      log.error(`channel ${key} failed to start (not registered; retries next boot):`, e);
+      failed.push(key);
+      log.error(`channel ${key} failed to start (retry loop will re-attempt):`, e);
     }
   }
 
@@ -537,6 +594,7 @@ export async function startChannels(): Promise<void> {
   });
   for (const row of stranded) await requeueEvent(hub, row.id);
   if (stranded.length > 0) log.info(`swept ${stranded.length} stranded channel event(s) back into the queue`);
+  return failed;
 }
 
 /** test/ops hook: a manually-built adapter joins the registry (startChannels
@@ -549,7 +607,7 @@ export function attachAdapterForTests(key: string, adapter: ChannelAdapter): str
 /** boot retry wrapper (mirror of ensureDispatcherRunning): a failed start —
  * redis blip, db warm-up — retries on a fixed interval instead of staying dead
  * until the next restart. */
-export function ensureChannelsRunning(opts: { start: () => Promise<void>; intervalMs?: number }): () => void {
+export function ensureChannelsRunning(opts: { start: () => Promise<string[]>; intervalMs?: number }): () => void {
   const retryMs = opts.intervalMs ?? 30_000;
   let timer: ReturnType<typeof setInterval> | null = null;
   let done = false;
@@ -557,9 +615,15 @@ export function ensureChannelsRunning(opts: { start: () => Promise<void>; interv
     if (done) return;
     void opts
       .start()
-      .then(() => {
-        done = true;
-        if (timer) clearInterval(timer);
+      .then((failed) => {
+        // PARTIAL-START LAW: a resolved call with failed adapters is NOT
+        // success — those channels must keep retrying (r5 finding)
+        if (failed.length === 0) {
+          done = true;
+          if (timer) clearInterval(timer);
+        } else {
+          log.warn(`channels: ${failed.length} adapter(s) not live — retrying every ${retryMs / 1000}s`);
+        }
       })
       .catch((e) => log.error('channels: start attempt failed — retrying:', e));
   };

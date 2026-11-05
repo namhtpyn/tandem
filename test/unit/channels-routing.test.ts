@@ -34,6 +34,7 @@ const enqueuedJobs: Array<{ queue: string; data: unknown; opts?: unknown }> = []
 const ackSends: Array<{ target: string; text: string }> = [];
 let conflictMode: 'none' | 'dup' = 'none';
 let mappingConflict = false; // arbiter: channel_threads insert loses
+let claimConflict = false; // claim CAS: another worker owns the event
 
 const U1 = '00000000-0000-4000-8000-000000000001';
 const U2 = '00000000-0000-4000-8000-000000000002';
@@ -87,6 +88,9 @@ vi.mock('../../server/db/index', () => ({
       tasks: {
         findFirst: async () => ({ id: 'task-1', status: STATUS_ROW.id }),
       },
+      taskMessages: {
+        findFirst: async () => null, // no run touched the task → safe to delete
+      },
       aiEmployees: {
         // assignee-1 is the AI fixture; everyone else is human
         findFirst: async ({ where }: { where?: { userId?: { eq?: string } } }) =>
@@ -104,14 +108,22 @@ vi.mock('../../server/db/index', () => ({
     update: (table: unknown) => ({
       set: (set: Record<string, unknown>) => ({
         where: (cond: unknown) => {
-          // apply the row only through the event map (guarded-write test law:
-          // record attempted writes separately from applied ones)
-          if (table !== null && set.processedAt !== undefined && cond != null) {
-            processedWrites.push(set);
-            const idHit = [...events.values()].filter((e) => e.processedAt === null).map((e) => e.id);
-            if (idHit.length === 1) events.get(idHit[0]!)!.processedAt = set.processedAt as Date;
-          }
-          return Promise.resolve();
+          const apply = () => {
+            // apply the row only through the event map (guarded-write test law:
+            // record attempted writes separately from applied ones)
+            if (table !== null && set.processedAt !== undefined && cond != null) {
+              processedWrites.push(set);
+              const idHit = [...events.values()].filter((e) => e.processedAt === null).map((e) => e.id);
+              if (idHit.length === 1) events.get(idHit[0]!)!.processedAt = set.processedAt as Date;
+            }
+            return [];
+          };
+          return {
+            then: (onF?: (v: unknown) => unknown) => Promise.resolve(apply()).then(onF),
+            catch: (onR: (e: unknown) => unknown) => Promise.resolve(apply()).catch(onR),
+            // claim CAS returns the claimed row (empty when someone else owns it)
+            returning: async () => (claimConflict ? [] : [{ id: 'claimed' }]),
+          };
         },
       }),
     }),
@@ -248,6 +260,7 @@ beforeEach(() => {
   ackSends.length = 0;
   conflictMode = 'none';
   mappingConflict = false;
+  claimConflict = false;
   taskStatusCategory = 'ready';
   addNote.mockReset();
   answerQuestion.mockReset();
@@ -532,6 +545,36 @@ describe('processChannelEvent arms', () => {
     await processChannelEvent({ eventId: seedEvent({ body: '   ' }) });
     expect(addNote).not.toHaveBeenCalled();
     expect(ackSends[1]!.text).toContain('Empty message');
+  });
+
+  it('a concurrent claim (another worker owns the event) is a no-op', async () => {
+    claimConflict = true;
+    const id = seedEvent();
+    await processChannelEvent({ eventId: id });
+    expect(addNote).not.toHaveBeenCalled();
+    expect(insertedTasks).toHaveLength(0);
+    expect(ackSends).toHaveLength(0);
+    expect(processedWrites).toHaveLength(0);
+  });
+
+  it('a VIEWER-role binding is refused (employee-tier gate, composer parity)', async () => {
+    settingsRows.set(
+      'channels',
+      JSON.stringify([{ ...CFG, bindings: [{ platformUserId: '@v:example.org', userId: VIEWER }] }]),
+    );
+    const id = seedEvent({ sender: '@v:example.org' });
+    await processChannelEvent({ eventId: id });
+    expect(insertedTasks).toHaveLength(0);
+    expect(ackSends[0]!.text).toContain('view-only');
+    expect(processedWrites).toHaveLength(1); // refused = terminal, not deferred
+  });
+
+  it('a dead-adapter (isLive false) event defers instead of routing into the void', async () => {
+    attachAdapterForTests('matrix:https://matrix.example.org', { ...adapter, isLive: () => false });
+    const id = seedEvent();
+    await processChannelEvent({ eventId: id });
+    expect(processedWrites).toHaveLength(0);
+    expect(enqueuedJobs[0]!.opts).toMatchObject({ delayMs: 300_000 });
   });
 
   it('new-task race loser: arbiter hands the thread to the winner — duplicate task removed, routed as note', async () => {
