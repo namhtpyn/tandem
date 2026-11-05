@@ -1,0 +1,482 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "9a83f896-65d3-4488-aa08-5bd265c5787e",
+  "prevIds": [
+    "038d65f2-008b-4748-953f-e4687519118a"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "channel_events"
+      ],
+      "writes": [
+        "s|tbl|public.channel_events",
+        "n|tbl|public.channel_events",
+        "e|tbl|public.channel_events",
+        "n|rel|public.channel_events",
+        "n|type|public.channel_events",
+        "n|rel|public.channel_events_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "channel_threads"
+      ],
+      "writes": [
+        "s|tbl|public.channel_threads",
+        "n|tbl|public.channel_threads",
+        "e|tbl|public.channel_threads",
+        "n|rel|public.channel_threads",
+        "n|type|public.channel_threads",
+        "n|rel|public.channel_threads_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "channel_events",
+        "channel_events_channel_external_uq"
+      ],
+      "writes": [
+        "s|idx|public.channel_events_channel_external_uq",
+        "n|idx|public.channel_events_channel_external_uq",
+        "e|idx|public.channel_events_channel_external_uq",
+        "n|rel|public.channel_events_channel_external_uq"
+      ],
+      "reads": [
+        "n|tbl|public.channel_events",
+        "n|sch|public",
+        "n|col|public.channel_events.channel",
+        "n|col|public.channel_events.external_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "channel_threads",
+        "channel_threads_channel_thread_uq"
+      ],
+      "writes": [
+        "s|idx|public.channel_threads_channel_thread_uq",
+        "n|idx|public.channel_threads_channel_thread_uq",
+        "e|idx|public.channel_threads_channel_thread_uq",
+        "n|rel|public.channel_threads_channel_thread_uq"
+      ],
+      "reads": [
+        "n|tbl|public.channel_threads",
+        "n|sch|public",
+        "n|col|public.channel_threads.channel",
+        "n|col|public.channel_threads.thread_ref"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "channel_threads"
+      ],
+      "writes": [
+        "s|fk|public.channel_threads.channel_threads_task_id_tasks_id_fkey",
+        "n|fk|public.channel_threads.channel_threads_task_id_tasks_id_fkey",
+        "e|fk|public.channel_threads.channel_threads_task_id_tasks_id_fkey",
+        "n|con|public.channel_threads.channel_threads_task_id_tasks_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.channel_threads",
+        "n|sch|public",
+        "n|tbl|public.tasks",
+        "n|sch|public",
+        "n|col|public.channel_threads.task_id",
+        "n|col|public.tasks.id",
+        "e|uniqueness|public.tasks.id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "channel_events",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "channel_threads",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_events",
+        "name": "id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_events",
+        "name": "channel",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_events",
+        "name": "external_id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_events",
+        "name": "thread_ref",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_events",
+        "name": "sender",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_events",
+        "name": "body",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_events",
+        "name": "raw",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_events",
+        "name": "received_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_events",
+        "name": "processed_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_threads",
+        "name": "id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_threads",
+        "name": "channel",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_threads",
+        "name": "thread_ref",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_threads",
+        "name": "task_id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_threads",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_threads",
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_events",
+        "name": "channel_events_channel_external_uq",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "channel",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "external_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_threads",
+        "name": "channel_threads_channel_thread_uq",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "channel",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "thread_ref",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_threads",
+        "name": "channel_threads_task_id_tasks_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "task_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "tasks",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_events",
+        "name": "channel_events_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_threads",
+        "name": "channel_threads_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    }
+  ]
+}

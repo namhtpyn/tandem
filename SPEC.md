@@ -300,7 +300,7 @@ ChannelAdapter {
   start(ctx: {onMessage(m), checkpoint {get, set}}); stop()
   send(target, text)                                       // transport-level, no routing
 }
-ChannelInboundMessage { threadRef, senderPlatformId, text, raw }
+ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
 ```
 
 - One adapter per channel kind (`matrix` first, self-hosted; discord/slack
@@ -355,9 +355,13 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw }
   `TANDEM_NO_DISPATCHER=1` (shared test opt-out).
 - Matrix slice-1 capabilities: `{edit:false, threads:false, maxLen:4000,
   markdown:false}` — unencrypted rooms only (no crypto), plain-text send,
-  invites are NOT auto-accepted (admin invites the bot per room), replies relay
-  as plain acks; streaming bubble, per-thread outbound queue keying, edit,
-  watchdog per-channel health, and the settings UI are later slices of #271.
+  invites are NOT auto-accepted (admin invites the bot per room). The adapter
+  resolves the bot's own user id (whoami) on every start — first boot reads it
+  from the initial sync, resume calls `account/whoami`; without it the bot's
+  own acks would re-enter the sink as inbound notes (echo guard,
+  fatal-if-failed). Replies relay as plain acks; streaming bubble, per-thread
+  outbound queue keying, edit, watchdog per-channel health, and the settings
+  UI are later slices of #271.
 
 ## Vault key law
 
