@@ -28,6 +28,7 @@ type ChannelEntry = {
 type ListEntry = {
   status: 'ok' | 'dropped';
   reason: string;
+  key: string | null;
   entry: ChannelEntry | null;
   raw: unknown;
 };
@@ -50,13 +51,13 @@ const okEntries = computed(() => entries.value.flatMap((e) => (e.status === 'ok'
 const droppedEntries = computed(() => entries.value.filter((e) => e.status === 'dropped'));
 
 // ---------- health chip (per-entry, keyed like the runtime adapter key) ----------
-function healthFor(entry: ChannelEntry): HealthEntry | undefined {
+function healthFor(e: ListEntry): HealthEntry | undefined {
   const list = data.value?.health?.channels;
-  if (!list) return undefined;
-  return list.find((h) => h.key === `${entry.kind}:${entry.homeserverUrl}`);
+  if (!list || !e.key) return undefined;
+  return list.find((h) => h.key === e.key);
 }
-function healthLabel(entry: ChannelEntry): string {
-  const h = healthFor(entry);
+function healthLabel(e: ListEntry): string {
+  const h = healthFor(e);
   if (!h) return 'no stamp';
   if (!h.connected) return 'down';
   const last = h.lastSyncOkAt;
@@ -75,7 +76,10 @@ const bindingUserOptions = computed(() => employeeOptions(employeeRows.value));
 
 // ---------- editor ----------
 const editorOpen = ref(false);
-const editingIndex = ref<number | null>(null); // index into okEntries; null = new
+// edit identity = the ADAPTER KEY (kind:canonical homeserver), never a captured
+// object or array index: the [SETTINGS] query refetches on ANY settings write
+// (SSE), replacing row objects mid-edit — only the semantic key survives that
+const editingKey = ref<string | null>(null);
 const form = reactive<{
   kind: string;
   enabled: boolean;
@@ -101,8 +105,12 @@ const schema = z.object({
     .min(1, 'Pick a vault secret for the bot token'),
 });
 
+/** the client-side adapter key — mirrors the server's adapterKey (the list
+ * payload's `key`); entries carry canonicalized homeservers so this is stable */
+const keyOf = (e: ChannelEntry) => `${e.kind}:${e.homeserverUrl}`;
+
 function openEditor(entry?: ChannelEntry) {
-  editingIndex.value = entry ? okEntries.value.indexOf(entry) : null;
+  editingKey.value = entry ? keyOf(entry) : null;
   form.kind = entry?.kind ?? (data.value?.kinds.length === 1 ? (data.value?.kinds[0] as string) : '');
   form.enabled = entry?.enabled ?? true;
   form.homeserverUrl = entry?.homeserverUrl ?? '';
@@ -126,9 +134,9 @@ const messageOk = ref(false);
 const droppedRewriteHint = computed(() => droppedEntries.value.length > 0);
 
 function buildArray(editor: ChannelEntry | null): ChannelEntry[] {
-  const rest = editor
-    ? okEntries.value.filter((e) => e !== okEntries.value[editingIndex.value ?? -1])
-    : [...okEntries.value];
+  // the edited entry is located by KEY at save time — a mid-edit refetch that
+  // shifted/replaced rows can never clobber the wrong entry
+  const rest = editor ? okEntries.value.filter((e) => keyOf(e) !== editingKey.value) : [...okEntries.value];
   return editor ? [...rest, editor] : rest;
 }
 
@@ -160,17 +168,19 @@ async function saveEditor() {
       .filter((b) => b.platformUserId.length > 0 || b.userId.length > 0),
     defaultAssigneeId: form.defaultAssigneeId && form.defaultAssigneeId !== NONE_ID ? form.defaultAssigneeId : null,
   };
-  await saveChannels(buildArray(editor), editingIndex.value !== null ? 'Channel saved' : 'Channel created');
+  await saveChannels(buildArray(editor), editingKey.value !== null ? 'Channel saved' : 'Channel created');
   if (messageOk.value) editorOpen.value = false;
 }
 
-// ---------- quick toggles + delete (object-identity, never array indexes —
-// the list renders dropped rows too, so indexes shift between surfaces) ----------
-const pendingToggle = ref<ChannelEntry | null>(null);
-async function toggleEnabled(entry: ChannelEntry) {
-  if (busy.value || pendingToggle.value) return;
-  pendingToggle.value = entry;
-  const arr = okEntries.value.map((e) => (e === entry ? { ...e, enabled: !e.enabled } : e));
+// ---------- quick toggles + delete (KEY identity, never object refs or array
+// indexes — the [SETTINGS] query refetches on any settings write and replaces
+// row objects mid-flight; only the adapter key is stable across that) ----------
+const pendingToggle = ref<string | null>(null);
+async function toggleEnabled(e: ListEntry) {
+  const key = e.key;
+  if (!key || busy.value || pendingToggle.value) return;
+  pendingToggle.value = key;
+  const arr = okEntries.value.map((row) => (keyOf(row) === key ? { ...row, enabled: !row.enabled } : row));
   try {
     await saveChannels(arr, 'Channel updated');
   } finally {
@@ -178,7 +188,7 @@ async function toggleEnabled(entry: ChannelEntry) {
   }
 }
 
-const pendingRemove = ref<{ entry: ChannelEntry | null; label: string } | null>(null);
+const pendingRemove = ref<{ key: string | null; label: string } | null>(null);
 const removeOpen = computed({
   get: () => pendingRemove.value !== null,
   set: (v: boolean) => {
@@ -186,14 +196,15 @@ const removeOpen = computed({
   },
 });
 function askRemove(e: ListEntry) {
-  pendingRemove.value = { entry: e.entry, label: rowHomeserver(e) };
+  pendingRemove.value = { key: e.key, label: rowHomeserver(e) };
 }
 async function removeChannel() {
   if (!pendingRemove.value) return;
-  const target = pendingRemove.value.entry;
-  // an unreadable (dropped) row isn't in the ok list — the REPLACE write itself
-  // drops it (SPEC: replace semantics; the confirm warned about the rewrite)
-  const arr = target ? okEntries.value.filter((e) => e !== target) : okEntries.value;
+  const key = pendingRemove.value.key;
+  // located by KEY at confirm time: a refetch between confirm-open and confirm
+  // can never leave the write matching nothing (a null key = dropped row — the
+  // REPLACE write itself drops it; the confirm warned about the rewrite)
+  const arr = key ? okEntries.value.filter((e) => keyOf(e) !== key) : okEntries.value;
   await saveChannels(arr, 'Channel removed');
   if (messageOk.value) pendingRemove.value = null;
 }
@@ -268,28 +279,30 @@ onServerPrefetch(() => channelsLive.suspense());
             </template>
             <template #health-cell="{ row }">
               <UBadge
-                v-if="row.original.entry"
-                :color="healthFor(row.original.entry)?.connected ? 'success' : 'neutral'"
+                v-if="row.original.entry && row.original.status === 'ok'"
+                :color="healthFor(row.original)?.connected ? 'success' : 'neutral'"
                 variant="subtle"
                 size="sm"
                 class="max-w-56 truncate"
-                >{{ healthLabel(row.original.entry) }}</UBadge
+                >{{ healthLabel(row.original) }}</UBadge
               >
               <span v-else class="text-dimmed text-xs">—</span>
             </template>
             <template #enabled-cell="{ row }">
+              <!-- controls exist only on ok rows: a dropped entry with a
+               parseable cfg (enabled-duplicate) must offer no live actions -->
               <USwitch
-                v-if="row.original.entry"
+                v-if="row.original.entry && row.original.status === 'ok'"
                 :model-value="row.original.entry.enabled"
                 :disabled="busy"
                 :aria-label="`Enable ${row.original.entry.kind}`"
-                @update:model-value="toggleEnabled(row.original.entry!)"
+                @update:model-value="toggleEnabled(row.original)"
               />
               <span v-else class="text-dimmed text-xs">—</span>
             </template>
             <template #actions-cell="{ row }">
               <div class="row-actions flex justify-end gap-1 transition-opacity">
-                <UPopover v-if="row.original.entry" mode="hover" enable-touch>
+                <UPopover v-if="row.original.entry && row.original.status === 'ok'" mode="hover" enable-touch>
                   <UButton
                     icon="i-lucide-pencil"
                     variant="ghost"
@@ -325,7 +338,7 @@ onServerPrefetch(() => channelsLive.suspense());
 
         <!-- mobile: stacked cards -->
         <div v-if="entries.length" class="space-y-3 md:hidden">
-          <UCard v-for="(e, i) in entries" :key="i" :ui="{ root: 'shadow-sm' }">
+          <UCard v-for="(e, i) in entries" :key="e.key ?? i" :ui="{ root: 'shadow-sm' }">
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0">
                 <p class="text-highlighted truncate text-sm font-medium">
@@ -335,16 +348,16 @@ onServerPrefetch(() => channelsLive.suspense());
                 <p class="text-dimmed truncate font-mono text-xs">{{ rowHomeserver(e) }}</p>
               </div>
               <USwitch
-                v-if="e.entry"
+                v-if="e.entry && e.status === 'ok'"
                 :model-value="e.entry.enabled"
                 :disabled="busy"
                 :aria-label="`Enable ${e.entry.kind}`"
-                @update:model-value="toggleEnabled(e.entry!)"
+                @update:model-value="toggleEnabled(e)"
               />
             </div>
             <div class="row-actions mt-3 flex justify-end gap-1 transition-opacity">
               <UButton
-                v-if="e.entry"
+                v-if="e.entry && e.status === 'ok'"
                 icon="i-lucide-pencil"
                 variant="ghost"
                 color="neutral"
@@ -408,7 +421,7 @@ onServerPrefetch(() => channelsLive.suspense());
   <!-- channel editor -->
   <UModal
     v-model:open="editorOpen"
-    :title="editingIndex !== null ? 'Edit channel' : 'New channel'"
+    :title="editingKey !== null ? 'Edit channel' : 'New channel'"
     :dismissible="!busy"
     :close="!busy"
     :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
@@ -504,7 +517,7 @@ onServerPrefetch(() => channelsLive.suspense());
         <UButton
           type="submit"
           :loading="busy"
-          :label="editingIndex !== null ? 'Save changes' : 'Create channel'"
+          :label="editingKey !== null ? 'Save changes' : 'Create channel'"
           form="channel-editor-form"
         />
       </div>

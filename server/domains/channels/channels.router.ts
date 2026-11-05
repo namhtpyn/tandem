@@ -16,6 +16,7 @@ import { registeredChannelKinds } from './adapter';
 import {
   CHANNELS_HEALTH_KEY,
   CHANNELS_KEY,
+  adapterKey,
   channelConfigSchema,
   inspectChannelConfigs,
   onChannelsSettingsChanged,
@@ -40,7 +41,13 @@ export const channelsRouter = os.router({
     return {
       kinds: registeredChannelKinds(),
       corrupt: insp.corrupt,
-      entries: insp.entries.map((e) => ({ status: e.status, reason: e.reason, entry: e.cfg, raw: e.raw })),
+      entries: insp.entries.map((e) => ({
+        status: e.status,
+        reason: e.reason,
+        key: e.cfg ? adapterKey(e.cfg) : null,
+        entry: e.cfg,
+        raw: e.raw,
+      })),
       health,
     };
   }),
@@ -109,8 +116,10 @@ export const channelsRouter = os.router({
       await setSetting(CHANNELS_KEY, JSON.stringify(cfgs));
 
       // ---- side effects AFTER commit: adapters re-arm in-process against the
-      // committed value; a config change never needs a restart ----
-      await onChannelsSettingsChanged();
+      // committed value — fire-and-forget (the hook never throws; failures
+      // ride the retry loop) so the admin write response never blocks on
+      // per-adapter network starts; a config change never needs a restart ----
+      void onChannelsSettingsChanged();
       await publishChange(CHANGE_RESOURCE.SETTINGS, CHANGE_ACTION.UPDATE);
       return { ok: true, channels: cfgs };
     }),

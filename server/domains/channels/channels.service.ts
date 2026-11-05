@@ -179,10 +179,9 @@ export function resolveBinding(cfg: ChannelConfig, platformUserId: string): stri
   return cfg.bindings.find((b) => b.platformUserId === platformUserId)?.userId ?? null;
 }
 
-function adapterKey(cfg: ChannelConfig): string {
+export function adapterKey(cfg: ChannelConfig): string {
   return `${cfg.kind}:${cfg.homeserverUrl}`;
 }
-
 function checkpointKey(cfg: ChannelConfig): string {
   return `channels:checkpoint:${cfg.kind}:${encodeURIComponent(cfg.homeserverUrl)}`;
 }
@@ -888,6 +887,9 @@ export async function writeChannelHealthStamp(): Promise<void> {
 // ---------- lifecycle (boot: adapters + workers + sweep) ----------
 
 const activeAdapters = new Map<string, ChannelAdapter>();
+/** the config each running adapter was STARTED with (JSON) — a stored-config
+ * edit under the same key means the running adapter is stale and restarts */
+const activeConfigs = new Map<string, string>();
 let workerHandle: { close: () => Promise<void> } | null = null;
 let outboxWorkerHandle: { close: () => Promise<void> } | null = null;
 // the boot sweep runs ONCE per process (r4 finding): the 30s partial-start
@@ -932,6 +934,15 @@ export async function startChannels(): Promise<string[]> {
 }
 let startChain: Promise<string[]> = Promise.resolve([]);
 
+/** whether a running adapter must stop against the parsed configs: removed /
+ * disabled / CHANGED under its key (running adapters capture their start-time
+ * config — stale fingerprints restart) / dead (fatal token stop) */
+function adapterMustStop(key: string, cfgs: ChannelConfig[], adapter: ChannelAdapter): boolean {
+  const cfg = cfgs.find((c) => adapterKey(c) === key);
+  if (cfg === undefined || activeConfigs.get(key) !== JSON.stringify(cfg)) return true;
+  return !!(adapter.isLive && !adapter.isLive());
+}
+
 async function startChannelsInner(): Promise<string[]> {
   // shared test opt-out (TANDEM_NO_DISPATCHER=1): unit/e2e never open
   // adapters or queue workers
@@ -939,13 +950,16 @@ async function startChannelsInner(): Promise<string[]> {
   const cfgs = parseChannelConfigs(await getSetting(CHANNELS_KEY));
   const hub = await redisQueue();
 
-  // stop adapters whose config disappeared / was disabled / went DEAD
-  // (fatal token stop): a dead entry left in the map would defer forever
-  const wanted = new Set(cfgs.map(adapterKey));
+  // stop adapters whose config disappeared / was disabled / CHANGED / went
+  // DEAD: a dead entry left in the map would defer forever; a config edit
+  // under an unchanged key must restart the adapter too — the running adapter
+  // captured the OLD config (e.g. old token) in its start closure, and the
+  // runtime runs what is STORED, not what was started
   for (const [key, adapter] of activeAdapters) {
-    if (!wanted.has(key) || (adapter.isLive && !adapter.isLive())) {
+    if (adapterMustStop(key, cfgs, adapter)) {
       await adapter.stop();
       activeAdapters.delete(key);
+      activeConfigs.delete(key);
     }
   }
   const failed: string[] = [];
@@ -973,6 +987,7 @@ async function startChannelsInner(): Promise<string[]> {
         },
       });
       activeAdapters.set(key, adapter);
+      activeConfigs.set(key, JSON.stringify(cfg));
       log.info(`channel started: ${cfg.kind} @ ${cfg.homeserverUrl} (${cfg.bindings.length} binding(s))`);
     } catch (e) {
       failed.push(key);
@@ -1042,7 +1057,11 @@ export function ensureChannelsRunning(opts: { start: () => Promise<string[]>; in
         // success — those channels must keep retrying (r5 finding)
         if (failed.length === 0) {
           done = true;
+          // NULL the handle, not just clear it: rearm() checks `if (!timer)` —
+          // a stale truthy handle would skip recreating the interval and the
+          // next partial start would strand with zero retries (r1 review P1)
           if (timer) clearInterval(timer);
+          timer = null;
         } else {
           log.warn(`channels: ${failed.length} adapter(s) not live — retrying every ${retryMs / 1000}s`);
         }
@@ -1063,6 +1082,7 @@ export function ensureChannelsRunning(opts: { start: () => Promise<string[]>; in
   };
   return () => {
     if (timer) clearInterval(timer);
+    timer = null;
   };
 }
 
@@ -1091,9 +1111,14 @@ export async function stopChannels(): Promise<void> {
     clearInterval(healthTimer);
     healthTimer = null;
   }
+  // disarm the settings-change re-arm: after an explicit stop a later
+  // onChannelsSettingsChanged must not resurrect adapters/workers/timers
+  // (a stopped channels module stays stopped until the next boot)
+  retryControls = null;
   for (const [key, adapter] of activeAdapters) {
     await adapter.stop();
     activeAdapters.delete(key);
+    activeConfigs.delete(key);
   }
   await workerHandle?.close();
   workerHandle = null;

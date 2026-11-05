@@ -308,4 +308,46 @@ describe('onChannelsSettingsChanged re-arm', () => {
     expect(start).toHaveBeenCalledTimes(3);
     stop();
   });
+
+  it('re-arm keeps retrying through CONSECUTIVE failures (stale-timer regression pin)', async () => {
+    vi.useFakeTimers();
+    const start = vi
+      .fn()
+      .mockResolvedValueOnce([]) // boot start: clean -> done, timer cleared (handle MUST null)
+      .mockResolvedValueOnce(['x']) // hook start: partial
+      .mockResolvedValueOnce(['x']) // re-arm attempt: STILL failing — the case
+      // where a stale truthy timer handle would strand the loop with 0 retries
+      .mockResolvedValueOnce(['x']) // tick: still failing
+      .mockResolvedValue([]); // next tick recovers -> settles
+    const stop = ensureChannelsRunning({ start, intervalMs: 10 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(start).toHaveBeenCalledTimes(1);
+    await onChannelsSettingsChanged(start);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(start).toHaveBeenCalledTimes(3); // hook start + re-arm attempt (both failing)
+    await vi.advanceTimersByTimeAsync(10);
+    expect(start).toHaveBeenCalledTimes(4); // retry tick fired — the r1-P1 pin
+    await vi.advanceTimersByTimeAsync(30);
+    expect(start).toHaveBeenCalledTimes(5); // recovered
+    await vi.advanceTimersByTimeAsync(50);
+    expect(start).toHaveBeenCalledTimes(5); // settled: quiet
+    stop();
+  });
+});
+
+describe('startChannels serialization + empty-array write', () => {
+  it('overlapping startChannels calls resolve through the chain (no deadlock)', async () => {
+    const { startChannels } = await import('../../server/domains/channels/channels.service');
+    // TANDEM_NO_DISPATCHER=1 makes each inner a fast no-op, but both calls must
+    // ride the serialization chain — a broken chain (e.g. a poisoned rejection
+    // short-circuit) would strand the second caller
+    const [a, b] = await Promise.all([startChannels(), startChannels()]);
+    expect(a).toEqual([]);
+    expect(b).toEqual([]);
+  });
+
+  it('update with an empty array writes "[]" (replace-to-empty is legal)', async () => {
+    await expect(ADMIN_UPDATE({ channels: [] })).resolves.toMatchObject({ ok: true });
+    expect(mockedSet).toHaveBeenCalledWith(CHANNELS_KEY, '[]');
+  });
 });
