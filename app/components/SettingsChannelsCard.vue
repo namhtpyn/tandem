@@ -188,7 +188,7 @@ async function toggleEnabled(e: ListEntry) {
   }
 }
 
-const pendingRemove = ref<{ key: string | null; label: string } | null>(null);
+const pendingRemove = ref<{ okRow: boolean; key: string | null; label: string } | null>(null);
 const removeOpen = computed({
   get: () => pendingRemove.value !== null,
   set: (v: boolean) => {
@@ -196,15 +196,18 @@ const removeOpen = computed({
   },
 });
 function askRemove(e: ListEntry) {
-  pendingRemove.value = { key: e.key, label: rowHomeserver(e) };
+  // okRow, not key-presence: a dropped DUPLICATE row carries a non-null key —
+  // the SAME key as its valid twin — and must never route into the key filter
+  pendingRemove.value = { okRow: e.status === 'ok' && e.entry !== null, key: e.key, label: rowHomeserver(e) };
 }
 async function removeChannel() {
   if (!pendingRemove.value) return;
-  const key = pendingRemove.value.key;
-  // located by KEY at confirm time: a refetch between confirm-open and confirm
-  // can never leave the write matching nothing (a null key = dropped row — the
-  // REPLACE write itself drops it; the confirm warned about the rewrite)
-  const arr = key ? okEntries.value.filter((e) => keyOf(e) !== key) : okEntries.value;
+  const t = pendingRemove.value;
+  // an ok row is removed by key at confirm time (a refetch between confirm-open
+  // and confirm can never leave the write matching nothing); a dropped row
+  // isn't in the ok list — the REPLACE write itself drops it (the confirm
+  // warned about the rewrite)
+  const arr = t.okRow && t.key ? okEntries.value.filter((e) => keyOf(e) !== t.key) : okEntries.value;
   await saveChannels(arr, 'Channel removed');
   if (messageOk.value) pendingRemove.value = null;
 }

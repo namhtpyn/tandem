@@ -197,6 +197,51 @@ test.describe('channels settings card', () => {
     expect(JSON.parse((await getStored()) as string) as unknown[]).toHaveLength(0);
   });
 
+  test('deleting a dropped duplicate row leaves the valid channel intact', async ({ page }) => {
+    const ui = new BasePage(page);
+    const tag = Date.now().toString(36);
+    // a REAL secret: the replace-write re-validates the SURVIVING row (strict
+    // existence on every write), so a bogus id would refuse the whole write
+    const secretId = await seedSecret(page, tag);
+    // hand-edited enabled duplicate: the runtime drops the SECOND entry but
+    // keeps its parseable cfg — it renders with the SAME canonical key as the
+    // valid row. Deleting the INVALID row must not touch the valid channel.
+    const cfg = [
+      {
+        kind: 'matrix',
+        enabled: true,
+        homeserverUrl: 'https://matrix.example.org',
+        tokenSecretId: secretId,
+        bindings: [],
+        defaultAssigneeId: null,
+      },
+      {
+        kind: 'matrix',
+        enabled: true,
+        homeserverUrl: 'https://matrix.example.org',
+        tokenSecretId: secretId,
+        bindings: [{ platformUserId: '@extra:example.org', userId: '00000000-0000-4000-8000-000000000002' }],
+        defaultAssigneeId: null,
+      },
+    ];
+    try {
+      await setStored(JSON.stringify(cfg));
+      await ui.navigate('/settings');
+      const invalidRow = page.locator('tr:visible', { hasText: 'invalid' }).first();
+      await expect(invalidRow).toBeVisible();
+      await invalidRow.getByRole('button', { name: /Delete / }).click();
+      await ui.confirmDelete();
+      await expect(page.getByText('Channel removed')).toBeVisible();
+      // the valid channel SURVIVES (r4: the dropped duplicate shares its key)
+      const stored = await getStored();
+      const parsed = JSON.parse(stored as string) as Array<{ bindings: Array<{ platformUserId: string }> }>;
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0]?.bindings).toHaveLength(0);
+    } finally {
+      await removeSecret(page, secretId);
+    }
+  });
+
   test('a dropped entry is visible with its reason (never invisible)', async ({ page }) => {
     const ui = new BasePage(page);
     const cfg = [
