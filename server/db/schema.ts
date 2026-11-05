@@ -670,6 +670,9 @@ export const channelEvents = pgTable(
       .primaryKey()
       .$default(() => uuidv7()),
     channel: text('channel').notNull(),
+    /** originating adapter key (`kind:homeserver`) — routing/bindings/acks
+     * resolve through THIS, never through a kind-wide config match */
+    adapter: text('adapter').notNull(),
     externalId: text('external_id').notNull(), // platform event id (matrix event_id)
     threadRef: text('thread_ref').notNull(),
     sender: text('sender').notNull(), // platform user id

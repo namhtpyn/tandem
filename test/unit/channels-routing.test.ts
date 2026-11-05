@@ -12,17 +12,28 @@ vi.mock('../../server/domains/kernel/env', () => ({
 // ---- shared mutable fixture state ----
 const events = new Map<
   string,
-  { id: string; channel: string; threadRef: string; sender: string; body: string; processedAt: Date | null }
+  {
+    id: string;
+    channel: string;
+    adapter: string;
+    externalId: string;
+    threadRef: string;
+    sender: string;
+    body: string;
+    processedAt: Date | null;
+  }
 >();
 const mappings = new Map<string, { channel: string; threadRef: string; taskId: string }>();
 let taskStatusCategory = 'ready';
 const insertedTasks: Array<Record<string, unknown>> = [];
 const insertedThreadRows: Array<Record<string, unknown>> = [];
+const deletedTaskIds: string[] = [];
 const processedWrites: Array<Record<string, unknown>> = [];
 const eventInserts: Array<Record<string, unknown>> = [];
 const enqueuedJobs: Array<{ queue: string; data: unknown }> = [];
 const ackSends: Array<{ target: string; text: string }> = [];
 let conflictMode: 'none' | 'dup' = 'none';
+let mappingConflict = false; // arbiter: channel_threads insert loses
 
 const STATUS_ROW = { id: 'status-ready', category: 'ready' };
 
@@ -30,9 +41,18 @@ vi.mock('../../server/db/index', () => ({
   db: {
     query: {
       channelEvents: {
-        findFirst: async ({ where }: { where?: { id?: { eq?: string } } }) => {
+        findFirst: async ({
+          where,
+        }: {
+          where?: { id?: { eq?: string }; channel?: { eq?: string }; externalId?: { eq?: string } };
+        }) => {
           const id = where?.id?.eq;
-          return id ? (events.get(id) ?? null) : null;
+          if (id) return events.get(id) ?? null;
+          const channel = where?.channel?.eq;
+          const externalId = where?.externalId?.eq;
+          if (channel && externalId)
+            return [...events.values()].find((e) => e.channel === channel && e.externalId === externalId) ?? null;
+          return null;
         },
       },
       channelThreads: {
@@ -52,13 +72,22 @@ vi.mock('../../server/db/index', () => ({
       user: {
         findFirst: async ({ where }: { where?: { id?: { eq?: string } } }) => {
           const id = where?.id?.eq;
-          return id === 'assignee-1' ? { id } : null;
+          // every well-formed id exists EXCEPT the explicit ghost fixtures
+          return id && id !== 'deleted-user' && id !== 'ghost' ? { id } : null;
         },
       },
       tasks: {
         findFirst: async () => ({ id: 'task-1', status: STATUS_ROW.id }),
       },
     },
+    delete: (table: unknown) => ({
+      where: (cond: unknown) => {
+        void table;
+        void cond;
+        deletedTaskIds.push('last-inserted');
+        return Promise.resolve();
+      },
+    }),
     update: (table: unknown) => ({
       set: (set: Record<string, unknown>) => ({
         where: (cond: unknown) => {
@@ -77,12 +106,26 @@ vi.mock('../../server/db/index', () => ({
       values: (v: Record<string, unknown>) => ({
         onConflictDoNothing: () => ({
           returning: async () => {
-            if (conflictMode === 'dup') return [];
-            eventInserts.push(v);
-            return [{ id: `evrow-${eventInserts.length}` }];
+            if ('externalId' in v) {
+              if (conflictMode === 'dup') return [];
+              eventInserts.push(v);
+              return [{ id: `evrow-${eventInserts.length}` }];
+            }
+            // channel_threads mapping arbiter
+            if (mappingConflict) {
+              // the concurrent winner's mapping lands between our statements
+              mappings.set(`${v.channel}|${v.threadRef}`, {
+                channel: String(v.channel),
+                threadRef: String(v.threadRef),
+                taskId: 'task-1',
+              });
+              return [];
+            }
+            insertedThreadRows.push(v);
+            return [{ id: 'maprow-1' }];
           },
         }),
-        // plain insert (tasks / channel_threads) is a bare await
+        // plain insert (tasks) is a bare await
         then: (onF?: (v: unknown) => unknown) => {
           if ('externalId' in v) eventInserts.push(v);
           else if ('taskId' in v) insertedThreadRows.push(v);
@@ -156,11 +199,13 @@ const adapter = {
 };
 
 let seq = 0;
-function seedEvent(overrides: Partial<{ sender: string; body: string }> = {}) {
+function seedEvent(overrides: Partial<{ sender: string; body: string; adapter: string; threadRef: string }> = {}) {
   const id = `ev-${(seq += 1)}`;
   events.set(id, {
     id,
     channel: 'matrix',
+    adapter: 'matrix:https://matrix.example.org',
+    externalId: `$x${seq}:example.org`,
     threadRef: '!room:example.org',
     sender: '@u:example.org',
     body: 'Fix the login bug',
@@ -178,11 +223,13 @@ beforeEach(() => {
   for (const m of [events, mappings, settingsRows]) m.clear();
   insertedTasks.length = 0;
   insertedThreadRows.length = 0;
+  deletedTaskIds.length = 0;
   processedWrites.length = 0;
   eventInserts.length = 0;
   enqueuedJobs.length = 0;
   ackSends.length = 0;
   conflictMode = 'none';
+  mappingConflict = false;
   taskStatusCategory = 'ready';
   addNote.mockReset();
   answerQuestion.mockReset();
@@ -193,7 +240,7 @@ beforeEach(() => {
 });
 
 describe('handleInbound (persist → queue)', () => {
-  it('persists the raw event FIRST, then enqueues the processing job', async () => {
+  it('persists the raw event FIRST, then enqueues the processing job (originating adapter key)', async () => {
     await handleInbound(CFG, {
       threadRef: '!room:example.org',
       senderPlatformId: '@u:example.org',
@@ -204,6 +251,7 @@ describe('handleInbound (persist → queue)', () => {
     expect(eventInserts).toEqual([
       {
         channel: 'matrix',
+        adapter: 'matrix:https://matrix.example.org',
         externalId: '$a1:example.org',
         threadRef: '!room:example.org',
         sender: '@u:example.org',
@@ -216,16 +264,32 @@ describe('handleInbound (persist → queue)', () => {
     expect(enqueuedJobs[0]!.data).toEqual({ eventId: 'evrow-1' });
   });
 
-  it('a replayed (conflicting) event is a dedupe no-op: no second enqueue', async () => {
+  it('a replayed event with NO processed row behind it re-enqueues (conflict recovery)', async () => {
+    // persist succeeded earlier but the enqueue was lost (redis blip): the
+    // adapter re-polls the batch, the conflict hits, recovery must enqueue
+    const strandedId = seedEvent(); // processedAt null = never routed
     conflictMode = 'dup';
     await handleInbound(CFG, {
       threadRef: '!room:example.org',
       senderPlatformId: '@u:example.org',
-      text: 'hello',
+      text: 'Fix the login bug',
       raw: {},
-      externalId: '$a1:example.org',
+      externalId: events.get(strandedId)!.externalId,
     });
-    expect(eventInserts).toHaveLength(0);
+    expect(enqueuedJobs).toEqual([{ queue: 'channels-inbound', data: { eventId: strandedId } }]);
+  });
+
+  it('a replayed event already routed (or in flight) is a dedupe no-op', async () => {
+    const id = seedEvent();
+    events.get(id)!.processedAt = new Date();
+    conflictMode = 'dup';
+    await handleInbound(CFG, {
+      threadRef: '!room:example.org',
+      senderPlatformId: '@u:example.org',
+      text: 'Fix the login bug',
+      raw: {},
+      externalId: events.get(id)!.externalId,
+    });
     expect(enqueuedJobs).toHaveLength(0);
   });
 });
@@ -357,5 +421,77 @@ describe('processChannelEvent arms', () => {
     taskStatusCategory = 'cancelled';
     await processChannelEvent({ eventId: seedEvent() });
     expect(ackSends[0]!.text).toContain('closed');
+  });
+
+  it('events resolve through their ORIGINATING adapter — no cross-config wiring', async () => {
+    const CFG_B = {
+      ...CFG,
+      homeserverUrl: 'https://b.example.org',
+      bindings: [{ platformUserId: '@y:b.example.org', userId: 'user-2' }],
+    };
+    settingsRows.set('channels', JSON.stringify([CFG, CFG_B]));
+    const ackB: Array<{ target: string; text: string }> = [];
+    attachAdapterForTests('matrix:https://b.example.org', {
+      ...adapter,
+      send: vi.fn(async (target: string, text: string) => {
+        ackB.push({ target, text });
+      }),
+    });
+    // sender is bound ONLY on config B, event persisted under adapter B
+    const id = seedEvent({
+      sender: '@y:b.example.org',
+      adapter: 'matrix:https://b.example.org',
+      threadRef: '!room-b:b.example.org',
+    });
+    await processChannelEvent({ eventId: id });
+    // routed under B's bindings (created), ack went through B's adapter to B's thread
+    expect(insertedTasks).toHaveLength(1);
+    expect(ackB).toEqual([{ target: '!room-b:b.example.org', text: expect.stringContaining('Task') }]);
+    expect(ackSends).toHaveLength(0); // config A's adapter never fired
+  });
+
+  it('an event whose adapter has no enabled config is refused without routing', async () => {
+    const id = seedEvent({ adapter: 'matrix:https://gone.example.org' });
+    await processChannelEvent({ eventId: id });
+    expect(adapter.send).not.toHaveBeenCalled();
+    expect(insertedTasks).toHaveLength(0);
+    expect(processedWrites).toHaveLength(1);
+  });
+
+  it('a stale binding (bound user deleted) refuses politely — no FK poison retry loop', async () => {
+    const id = seedEvent({ sender: '@ghost:example.org' });
+    // CFG's binding maps only @u; a config whose binding points at a missing user:
+    settingsRows.set(
+      'channels',
+      JSON.stringify([{ ...CFG, bindings: [{ platformUserId: '@ghost:example.org', userId: 'deleted-user' }] }]),
+    );
+    await processChannelEvent({ eventId: id });
+    expect(insertedTasks).toHaveLength(0);
+    expect(addNote).not.toHaveBeenCalled();
+    expect(ackSends[0]!.text).toContain('not available');
+    expect(processedWrites).toHaveLength(1); // marked processed — no retry churn
+  });
+
+  it('composer parity: oversized bodies are capped at 10k (description + answer)', async () => {
+    const huge = 'x'.repeat(12_000);
+    await processChannelEvent({ eventId: seedEvent({ body: huge }) });
+    expect(String(insertedTasks[0]!.description)).toHaveLength(10_000);
+
+    mapThread('task-1');
+    taskStatusCategory = 'waiting_answer';
+    answerQuestion.mockResolvedValue({});
+    await processChannelEvent({ eventId: seedEvent({ body: huge }) });
+    expect(String(answerQuestion.mock.calls[0]![2])).toHaveLength(10_000);
+  });
+
+  it('new-task race loser: arbiter hands the thread to the winner — duplicate task removed, routed as note', async () => {
+    mappingConflict = true; // the winner's mapping lands between our statements
+    addNote.mockResolvedValue({ steered: false });
+    const id = seedEvent();
+    await processChannelEvent({ eventId: id });
+    expect(deletedTaskIds).toHaveLength(1); // the loser's fresh unmapped task is gone
+    expect(addNote).toHaveBeenCalledWith('task-1', 'user-1', 'Fix the login bug');
+    expect(ackSends[0]!.text).toContain('Noted');
+    expect(processedWrites).toHaveLength(1);
   });
 });

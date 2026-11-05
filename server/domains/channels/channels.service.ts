@@ -21,19 +21,27 @@ import { getSetting, setSetting } from '../settings/settings.service';
 import { recordAssignment } from '../tasks/assignments.service';
 import { addNote, answerQuestion } from '../tasks/workflow.service';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
-import type { ChannelAdapter, ChannelInboundMessage } from './adapter';
-import { createMatrixAdapter } from './matrix.adapter';
+import {
+  createChannelAdapter,
+  registeredChannelKinds,
+  type ChannelAdapter,
+  type ChannelInboundMessage,
+} from './adapter';
+// side-effect import: arms the 'matrix' factory in the adapter registry
+import './matrix.adapter';
 
 const log = consola.withTag('channels');
 
 const CHANNELS_KEY = 'channels';
 const CHANNEL_QUEUE = 'channels-inbound';
 const QUEUE_ATTEMPTS = 5;
+/** composer parity cap (tasks.create/answer: z.string().max(10_000)) */
+const COMPOSER_BODY_CAP = 10_000;
 
 // ---------- config (settings key `channels`, SPEC: Channel config) ----------
 
 export const channelConfigSchema = z.object({
-  kind: z.literal('matrix'),
+  kind: z.string().min(1), // validated against the adapter REGISTRY at parse
   enabled: z.boolean(),
   homeserverUrl: z.string().url(),
   tokenSecretId: z.string().min(1),
@@ -68,6 +76,10 @@ export function parseChannelConfigs(raw: string | null): ChannelConfig[] {
       continue;
     }
     if (!r.data.enabled) continue; // parse returns ENABLED configs only (SPEC)
+    if (!registeredChannelKinds().includes(r.data.kind)) {
+      log.warn(`channels config entry skipped: kind ${r.data.kind} has no registered adapter`);
+      continue;
+    }
     out.push(r.data);
   }
   return out;
@@ -89,14 +101,15 @@ function checkpointKey(cfg: ChannelConfig): string {
 
 // ---------- inbound durability (persist → checkpoint → queue) ----------
 
-/** the adapter sink: persist the raw event FIRST (replay-safe dedupe), then
- * enqueue the processing job. Throws on db/queue outage — the adapter retries
- * the batch from its unchanged checkpoint; the dedupe makes replays no-ops. */
+/** the adapter sink: persist the raw event FIRST (replay-safe dedupe, keyed
+ * to the ORIGINATING adapter), then enqueue the processing job. Throws on
+ * db outage — the adapter retries the batch from its unchanged checkpoint. */
 export async function handleInbound(cfg: ChannelConfig, m: ChannelInboundMessage): Promise<void> {
   const inserted = await db
     .insert(channelEvents)
     .values({
       channel: cfg.kind,
+      adapter: adapterKey(cfg),
       externalId: m.externalId,
       threadRef: m.threadRef,
       sender: m.senderPlatformId,
@@ -105,9 +118,20 @@ export async function handleInbound(cfg: ChannelConfig, m: ChannelInboundMessage
     })
     .onConflictDoNothing({ target: [channelEvents.channel, channelEvents.externalId] })
     .returning({ id: channelEvents.id });
-  if (inserted.length === 0) return; // replay of an already-persisted event
   const hub = await redisQueue();
-  await requeueEvent(hub, nonNull(inserted[0]).id);
+  if (inserted.length > 0) {
+    await requeueEvent(hub, nonNull(inserted[0]).id);
+    return;
+  }
+  // CONFLICT RECOVERY (batch-retry / lost-enqueue path): the row exists but
+  // has no job behind it (persisted, enqueue failed, checkpoint rewound) —
+  // re-enqueue; the processedAt guard makes the worker a no-op if a job is
+  // already in flight or done.
+  const existing = await db.query.channelEvents.findFirst({
+    columns: { id: true, processedAt: true },
+    where: { channel: { eq: cfg.kind }, externalId: { eq: m.externalId } },
+  });
+  if (existing && !existing.processedAt) await requeueEvent(hub, existing.id);
 }
 
 async function requeueEvent(hub: QueueDomain, eventId: string): Promise<void> {
@@ -127,10 +151,12 @@ type AckOutcome = 'created' | 'steered' | 'dispatched' | 'noted' | 'answered' | 
 export async function processChannelEvent(data: { eventId: string }): Promise<void> {
   const ev = await db.query.channelEvents.findFirst({ where: { id: { eq: data.eventId } } });
   if (!ev || ev.processedAt) return; // unknown or already routed
-  const cfg = parseChannelConfigs(await getSetting(CHANNELS_KEY)).find((c) => c.kind === ev.channel);
+  // resolve through the ORIGINATING adapter key — bindings/acks never cross
+  // same-kind configs (two matrix homeservers are two independent channels)
+  const cfg = parseChannelConfigs(await getSetting(CHANNELS_KEY)).find((c) => adapterKey(c) === ev.adapter);
   let outcome: AckOutcome;
   if (!cfg) {
-    log.warn(`channel event ${ev.id} dropped: no enabled config for kind ${ev.channel}`);
+    log.warn(`channel event ${ev.id} dropped: no enabled config for adapter ${ev.adapter}`);
     outcome = 'refused';
   } else {
     outcome = await routeEvent(cfg, ev);
@@ -157,6 +183,14 @@ async function routeEvent(
   const userId = resolveBinding(cfg, ev.sender);
   if (!userId) {
     await ack('You are not authorized to use this channel.');
+    return 'refused';
+  }
+  // a stale binding (user deleted) must refuse politely, NOT poison the queue
+  // with an FK-violating retry loop (composer parity: requireExistingRefs)
+  const boundUser = await db.query.user.findFirst({ columns: { id: true }, where: { id: { eq: userId } } });
+  if (!boundUser) {
+    log.warn(`channel binding ${ev.sender} → ${userId}: user does not exist — refused`);
+    await ack('Your account is not available — ask an admin to fix the channel binding.');
     return 'refused';
   }
 
@@ -188,14 +222,35 @@ async function routeEvent(
     await db.insert(tasks).values({
       id,
       title,
-      description: ev.body,
+      description: ev.body.slice(0, COMPOSER_BODY_CAP),
       status: statusId,
       assigneeId,
       ownerId: userId,
       createdBy: userId,
     });
     if (assigneeId) await recordAssignment(id, assigneeId, 'created', userId);
-    await db.insert(channelThreads).values({ channel: cfg.kind, threadRef: ev.threadRef, taskId: id });
+    // MAPPING ARBITER: two events from the same brand-new thread can process
+    // concurrently (worker concurrency 2) — the unique (channel, thread_ref)
+    // index decides; the loser removes its fresh unmapped task and routes as
+    // a note on the winner's task instead of leaving an orphan on the board.
+    const mappingRows = await db
+      .insert(channelThreads)
+      .values({ channel: cfg.kind, threadRef: ev.threadRef, taskId: id })
+      .onConflictDoNothing({ target: [channelThreads.channel, channelThreads.threadRef] })
+      .returning({ id: channelThreads.id });
+    if (mappingRows.length === 0) {
+      log.warn(`new-task race on thread ${ev.threadRef}: another task owns the mapping — routing as note`);
+      await db.delete(tasks).where(eq(tasks.id, id));
+      const winner = await db.query.channelThreads.findFirst({
+        columns: { taskId: true },
+        where: { channel: { eq: cfg.kind }, threadRef: { eq: ev.threadRef } },
+      });
+      if (!winner) {
+        await ack('Could not create the task — try again.');
+        return 'failed';
+      }
+      return routeMapped(cfg, ev, userId, ack, winner.taskId);
+    }
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.CREATE);
     await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
     await ack(
@@ -204,9 +259,21 @@ async function routeEvent(
     return 'created';
   }
 
+  return routeMapped(cfg, ev, userId, ack, mapping.taskId);
+}
+
+/** mapped-thread verbs: closed / answer / note (verb pick keys off status
+ * CATEGORY, never seeded ids — #265 law) */
+async function routeMapped(
+  cfg: ChannelConfig,
+  ev: { threadRef: string; body: string },
+  userId: string,
+  ack: (text: string) => Promise<void>,
+  taskId: string,
+): Promise<AckOutcome> {
   const task = await db.query.tasks.findFirst({
     columns: { id: true, status: true },
-    where: { id: { eq: mapping.taskId } },
+    where: { id: { eq: taskId } },
   });
   if (!task) {
     // FK cascade means this cannot happen (mapping dies with its task) — a
@@ -228,7 +295,7 @@ async function routeEvent(
   }
   if (category === CATEGORY.WAITING_ANSWER) {
     try {
-      await answerQuestion(task.id, userId, ev.body);
+      await answerQuestion(task.id, userId, ev.body.slice(0, COMPOSER_BODY_CAP));
       await ack('Answer delivered — the agent resumes.');
       return 'answered';
     } catch (e) {
@@ -242,7 +309,7 @@ async function routeEvent(
 
   // everything else → NOTE through the composer path (steer-live /
   // dispatch-stopped composer law verbatim inside addNote)
-  const outcome = await addNote(task.id, userId, ev.body);
+  const outcome = await addNote(task.id, userId, ev.body.slice(0, COMPOSER_BODY_CAP));
   await ack(
     outcome.steered
       ? 'Sent to the running agent.'
@@ -273,8 +340,9 @@ async function resolveToken(cfg: ChannelConfig): Promise<string | null> {
 }
 
 function buildAdapter(cfg: ChannelConfig, token: string): ChannelAdapter | null {
-  if (cfg.kind === 'matrix') return createMatrixAdapter({ homeserverUrl: cfg.homeserverUrl, token });
-  return null; // unknown kinds are unreachable past the config schema
+  // registry lookup — the core never branches on kind (SPEC: one adapter
+  // file per channel; the config parse already dropped unknown kinds)
+  return createChannelAdapter(cfg.kind, { homeserverUrl: cfg.homeserverUrl, token });
 }
 
 /** start channels: enabled configs get adapters, the worker registers, and

@@ -45,6 +45,29 @@ export type ChannelAdapter = {
   send(target: string, text: string): Promise<void>;
 };
 
+// ---------- adapter registry (SPEC: one adapter file per channel kind,
+// zero core changes per new channel) ----------
+
+export type AdapterFactory = (cfg: { homeserverUrl?: string; token: string }) => ChannelAdapter;
+
+const factories = new Map<string, AdapterFactory>();
+
+/** an adapter file self-registers at module load; the core never branches on kind */
+export function registerChannelAdapter(kind: string, factory: AdapterFactory): void {
+  factories.set(kind, factory);
+}
+
+export function registeredChannelKinds(): string[] {
+  return [...factories.keys()];
+}
+
+export function createChannelAdapter(
+  kind: string,
+  cfg: { homeserverUrl?: string; token: string },
+): ChannelAdapter | null {
+  return factories.get(kind)?.(cfg) ?? null;
+}
+
 /** cap outbound text to the adapter's maxLen */
 export function capToMaxLen(text: string, caps: ChannelCapabilities): string {
   return text.length > caps.maxLen ? `${text.slice(0, caps.maxLen - 1)}…` : text;

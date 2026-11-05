@@ -2,7 +2,7 @@
   "type": "diff",
   "version": "9",
   "dialect": "postgres",
-  "id": "9a83f896-65d3-4488-aa08-5bd265c5787e",
+  "id": "7eae5f5f-a7c6-4a85-93f4-ced0de25aa3b",
   "prevIds": [
     "038d65f2-008b-4748-953f-e4687519118a"
   ],
@@ -152,6 +152,22 @@
         "schema": "public",
         "table": "channel_events",
         "name": "channel",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_events",
+        "name": "adapter",
         "type": "text",
         "typeSchema": null,
         "notNull": true,

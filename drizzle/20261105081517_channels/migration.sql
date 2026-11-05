@@ -1,6 +1,7 @@
 CREATE TABLE "channel_events" (
 	"id" text PRIMARY KEY,
 	"channel" text NOT NULL,
+	"adapter" text NOT NULL,
 	"external_id" text NOT NULL,
 	"thread_ref" text NOT NULL,
 	"sender" text NOT NULL,

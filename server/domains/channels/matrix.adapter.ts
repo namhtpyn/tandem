@@ -6,7 +6,13 @@
 // sink accepted the batch (persist-before-checkpoint, replay-safe).
 import { consola } from 'consola';
 
-import { capToMaxLen, type AdapterStartContext, type ChannelAdapter, type ChannelCapabilities } from './adapter';
+import {
+  capToMaxLen,
+  registerChannelAdapter,
+  type AdapterStartContext,
+  type ChannelAdapter,
+  type ChannelCapabilities,
+} from './adapter';
 
 const log = consola.withTag('channels');
 
@@ -90,18 +96,21 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
    * would re-enter the sink as inbound notes — whoami is fatal-if-failed. */
   async function resolveStart(ctx: AdapterStartContext): Promise<string | null> {
     const since = await ctx.checkpoint.get();
-    if (since !== null) {
-      const who = await api('/_matrix/client/v3/account/whoami', { method: 'GET', timeoutMs: 15_000 });
-      const uid = who.json?.user_id;
-      if (!who.ok || typeof uid !== 'string' || uid.length === 0) {
-        log.error(`whoami failed (status ${who.status}) — adapter not started (echo guard)`);
-        running = false;
-        return null;
-      }
-      selfUserId = uid;
-      return since;
+    // ECHO GUARD (unconditional — the /sync response carries NO user_id, so
+    // whoami is the only source of the bot's own id; without it the bot's
+    // acks re-enter the sink and loop). Fatal-if-failed on every start.
+    const who = await api('/_matrix/client/v3/account/whoami', { method: 'GET', timeoutMs: 15_000 });
+    const uid = who.json?.user_id;
+    if (!who.ok || typeof uid !== 'string' || uid.length === 0) {
+      log.error(`whoami failed (status ${who.status}) — adapter not started (echo guard)`);
+      running = false;
+      return null;
     }
+    selfUserId = uid;
+    if (since !== null) return since;
     try {
+      // FIRST-BOOT LAW (SPEC): initial sync with timeout=0, record next_batch,
+      // deliver NOTHING — a channel attach never replays history.
       const init = await api(`/_matrix/client/v3/sync?timeout=0&set_presence=offline`, {
         method: 'GET',
         timeoutMs: SYNC_TIMEOUT_MS,
@@ -113,7 +122,6 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
         running = false;
         return null;
       }
-      selfUserId = init.json.user_id ?? null;
       await ctx.checkpoint.set(init.json.next_batch);
       return init.json.next_batch;
     } catch (e) {
@@ -228,3 +236,10 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
     },
   };
 }
+
+// self-registration: importing this file arms the 'matrix' kind in the core
+// registry — a new channel kind = a new adapter file that does the same
+registerChannelAdapter('matrix', (cfg) => {
+  if (!cfg.homeserverUrl) throw new Error('matrix adapter requires homeserverUrl');
+  return createMatrixAdapter({ homeserverUrl: cfg.homeserverUrl, token: cfg.token });
+});

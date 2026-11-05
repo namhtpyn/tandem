@@ -356,12 +356,18 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
 - Matrix slice-1 capabilities: `{edit:false, threads:false, maxLen:4000,
   markdown:false}` — unencrypted rooms only (no crypto), plain-text send,
   invites are NOT auto-accepted (admin invites the bot per room). The adapter
-  resolves the bot's own user id (whoami) on every start — first boot reads it
-  from the initial sync, resume calls `account/whoami`; without it the bot's
-  own acks would re-enter the sink as inbound notes (echo guard,
-  fatal-if-failed). Replies relay as plain acks; streaming bubble, per-thread
-  outbound queue keying, edit, watchdog per-channel health, and the settings
-  UI are later slices of #271.
+  resolves the bot's own user id via `account/whoami` on EVERY start
+  (fatal-if-failed) — the sync response carries no user id, and without the
+  self id the bot's own acks would re-enter the sink as inbound notes and loop
+  (echo guard). Events persist under their ORIGINATING adapter key
+  (`kind:homeserver`) — bindings, acks and routing never cross same-kind
+  configs; message bodies ride the composer's caps (title ≤200 chars,
+  body/answers ≤10k). Durability is AT-LEAST-ONCE: the processedAt guard
+  prevents retry storms, and a crash mid-verb can re-apply that verb's effect
+  once — no-loss wins. Replies relay as plain acks; streaming bubble,
+  per-thread outbound queue keying, edit, watchdog per-channel health, gappy
+  sync backfill (limited-timeline rooms), and the settings UI are later
+  slices of #271.
 
 ## Vault key law
 

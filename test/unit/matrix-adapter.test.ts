@@ -74,7 +74,8 @@ function whoOk() {
 }
 
 describe('matrix adapter', () => {
-  it('first boot: initial sync records the checkpoint and delivers NO history', async () => {
+  it('first boot: whoami echo guard → initial sync records the checkpoint, delivers NO history', async () => {
+    queue.push(whoOk());
     queue.push({ status: 200, json: syncJson('s1', [msg('$old1', '@u:example.org', 'historic message')]) });
     const a = makeAdapter();
     await a.start({
@@ -131,6 +132,22 @@ describe('matrix adapter', () => {
     const nextSync = calls.filter((c) => c.url.includes('/sync?')).at(-1);
     expect(nextSync?.url).toContain('since=s2');
     await a.stop();
+  });
+
+  it('a failed whoami on FIRST BOOT refuses to start (echo guard is fatal on every start)', async () => {
+    queue.push({ status: 401, json: { errcode: 'M_UNKNOWN_TOKEN' } });
+    const a = makeAdapter();
+    await a.start({
+      onMessage: async (m) => {
+        received.push(m);
+      },
+      checkpoint: { get: async () => null, set: async () => {} },
+    });
+    await until(() => calls.length >= 1, 'whoami call');
+    await new Promise((r) => setTimeout(r, 120));
+    expect(calls.length).toBe(1); // no initial sync after the failed whoami
+    expect(checkpoints).toHaveLength(0);
+    expect(received).toHaveLength(0);
   });
 
   it('a failed whoami on resume refuses to start (echo guard is fatal)', async () => {
