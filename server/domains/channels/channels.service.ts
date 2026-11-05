@@ -27,8 +27,11 @@ import {
   type ChannelAdapter,
   type ChannelInboundMessage,
 } from './adapter';
-// side-effect import: arms the 'matrix' factory in the adapter registry
-import './matrix.adapter';
+import { registerMatrixChannelAdapter } from './matrix.adapter';
+
+// EXPLICIT registry arming (never a bare side-effect import — the bundler
+// tree-shakes those out and prod would silently run zero adapters)
+registerMatrixChannelAdapter();
 
 const log = consola.withTag('channels');
 
@@ -83,17 +86,30 @@ export function parseChannelConfigs(raw: string | null): ChannelConfig[] {
       log.warn(`channels config entry skipped: kind ${r.data.kind} has no registered adapter`);
       continue;
     }
+    // canonicalize BEFORE dedupe: trailing slash / case / default port are
+    // the same homeserver and must collapse to one adapter
+    const cfg = { ...r.data, homeserverUrl: normalizeHomeserver(r.data.homeserverUrl) };
     // duplicate adapter keys would share a checkpoint + event namespace and
     // silently shadow each other — keep the first, refuse the rest loudly
-    const key = `${r.data.kind}:${r.data.homeserverUrl}`;
+    const key = `${cfg.kind}:${cfg.homeserverUrl}`;
     if (seen.has(key)) {
       log.warn(`channels config entry skipped: duplicate adapter ${key} (one bot per homeserver in slice 1)`);
       continue;
     }
     seen.add(key);
-    out.push(r.data);
+    out.push(cfg);
   }
   return out;
+}
+
+/** canonical homeserver URL: lowercase scheme/host, no default port, no
+ * trailing slash — so "https://M.example.org/" and "https://m.example.org"
+ * are ONE adapter (dedupe key, checkpoint key and event key all agree) */
+export function normalizeHomeserver(raw: string): string {
+  const u = new URL(raw);
+  const port = u.port === '80' || u.port === '443' ? '' : u.port;
+  const path = u.pathname.replace(/\/+$/, '');
+  return `${u.protocol.toLowerCase()}//${u.hostname.toLowerCase()}${port ? `:${port}` : ''}${path}`;
 }
 
 /** identity binding (SPEC: default deny) — a platform id acts AS a Tandem
@@ -152,10 +168,14 @@ async function requeueEvent(hub: QueueDomain, eventId: string): Promise<void> {
     {
       attempts: QUEUE_ATTEMPTS,
       removeOnComplete: true,
+      removeOnFail: true,
       // jobId dedupe: BullMQ refuses a second job with the same id while one
       // is queued/active — a deploy overlap (old instance's in-flight job +
-      // new instance's sweep) can never double-route the same event
-      jobId: `channel:${eventId}`,
+      // new instance's sweep) can never double-route the same event.
+      // removeOnFail:true frees the id after terminal failure so the boot
+      // sweep can re-drive a permanently failed event
+      // jobId = the event id itself (BullMQ rejects ':' in custom ids)
+      jobId: eventId,
       backoff: { type: 'exponential', delay: 3_000 },
     },
   );
@@ -173,13 +193,20 @@ export async function processChannelEvent(data: { eventId: string }): Promise<vo
   // resolve through the ORIGINATING adapter key — bindings/acks never cross
   // same-kind configs (two matrix homeservers are two independent channels)
   const cfg = parseChannelConfigs(await getSetting(CHANNELS_KEY)).find((c) => adapterKey(c) === ev.adapter);
-  let outcome: AckOutcome;
+  // DEFERRAL LAW (no-loss): without an enabled config or a LIVE adapter the
+  // event is NOT consumed — the row stays unprocessed and the next sweep (or
+  // job retry) re-drives it once the channel is back. Consuming here would
+  // destroy user messages on a config typo / failed token, with no ack.
   if (!cfg) {
-    log.warn(`channel event ${ev.id} dropped: no enabled config for adapter ${ev.adapter}`);
-    outcome = 'refused';
-  } else {
-    outcome = await routeEvent(cfg, ev);
+    log.warn(`channel event ${ev.id} deferred: no enabled config for adapter ${ev.adapter}`);
+    return;
   }
+  const adapter = activeAdapters.get(adapterKey(cfg));
+  if (!adapter) {
+    log.warn(`channel event ${ev.id} deferred: adapter ${ev.adapter} is not live`);
+    return;
+  }
+  const outcome = await routeEvent(cfg, ev, adapter);
   await db.update(channelEvents).set({ processedAt: new Date() }).where(eq(channelEvents.id, ev.id));
   log.info(`channel event ${ev.id} routed: ${outcome}`);
 }
@@ -187,10 +214,9 @@ export async function processChannelEvent(data: { eventId: string }): Promise<vo
 async function routeEvent(
   cfg: ChannelConfig,
   ev: { id: string; threadRef: string; sender: string; body: string },
+  adapter: ChannelAdapter,
 ): Promise<AckOutcome> {
-  const adapter = activeAdapters.get(adapterKey(cfg));
   const ack = async (text: string): Promise<void> => {
-    if (!adapter) return; // acks are best-effort; routing outcomes are logged
     try {
       await adapter.send(ev.threadRef, text);
     } catch (e) {
@@ -204,6 +230,15 @@ async function routeEvent(
     await ack('You are not authorized to use this channel.');
     return 'refused';
   }
+  // composer parity: a blank message is never a verb (tasks.create/norm require
+  // 1-char bodies; a whitespace-only platform message must not create an
+  // empty-title task or an empty note/answer)
+  const text = ev.body.trim();
+  if (!text) {
+    await ack('Empty message — nothing to do.');
+    return 'refused';
+  }
+
   // a stale binding (user deleted) must refuse politely, NOT poison the queue
   // with an FK-violating retry loop (composer parity: requireExistingRefs)
   const boundUser = await db.query.user.findFirst({ columns: { id: true }, where: { id: { eq: userId } } });
@@ -215,29 +250,26 @@ async function routeEvent(
 
   const mapping = await db.query.channelThreads.findFirst({
     columns: { taskId: true },
-    where: { channel: { eq: cfg.kind }, threadRef: { eq: ev.threadRef } },
+    where: { adapter: { eq: adapterKey(cfg) }, threadRef: { eq: ev.threadRef } },
   });
 
   // unmapped thread → NEW-TASK (the web composer's create path verbatim)
   if (!mapping) {
-    const statusRows = await db.query.taskStatuses.findMany({ columns: { id: true }, orderBy: { position: 'asc' } });
-    const statusId = statusRows[0]?.id;
+    const statusRows = await db.query.taskStatuses.findMany({
+      columns: { id: true, category: true },
+      orderBy: { position: 'asc' },
+    });
+    const statusRow = statusRows[0];
+    const statusId = statusRow?.id;
     if (!statusId) {
       log.error('no task statuses defined — channel new-task refused');
       await ack('Could not create the task (no statuses configured).');
       return 'failed';
     }
-    // title = the first NON-EMPTY trimmed line (composer needs a non-blank
-    // title; a blank-only message is refused instead of creating an empty task)
-    const titleLine = ev.body
-      .split('\n')
-      .map((l) => l.trim())
-      .find((l) => l.length > 0);
-    if (!titleLine) {
-      await ack('Could not create the task — the message has no title line.');
-      return 'failed';
-    }
-    const title = titleLine.slice(0, 200);
+    // title = the first non-empty line of the (already non-blank) message
+    const title = nonNull(text.split('\n').find((l) => l.trim().length > 0))
+      .trim()
+      .slice(0, 200);
     const id = uuidv7();
     let assigneeId: string | null = null;
     if (cfg.defaultAssigneeId) {
@@ -251,28 +283,33 @@ async function routeEvent(
     await db.insert(tasks).values({
       id,
       title,
-      description: ev.body.slice(0, COMPOSER_BODY_CAP),
+      description: text.slice(0, COMPOSER_BODY_CAP),
       status: statusId,
       assigneeId,
       ownerId: userId,
       createdBy: userId,
     });
     if (assigneeId) await recordAssignment(id, assigneeId, 'created', userId);
+    // ack honesty: only a ready-category AI assignee auto-dispatches
+    const willDispatch =
+      assigneeId !== null &&
+      statusRow?.category === CATEGORY.READY &&
+      (await db.query.aiEmployees.findFirst({ columns: { id: true }, where: { userId: { eq: assigneeId } } })) !== null;
     // MAPPING ARBITER: two events from the same brand-new thread can process
     // concurrently (worker concurrency 2) — the unique (channel, thread_ref)
     // index decides; the loser removes its fresh unmapped task and routes as
     // a note on the winner's task instead of leaving an orphan on the board.
     const mappingRows = await db
       .insert(channelThreads)
-      .values({ channel: cfg.kind, threadRef: ev.threadRef, taskId: id })
-      .onConflictDoNothing({ target: [channelThreads.channel, channelThreads.threadRef] })
+      .values({ channel: cfg.kind, adapter: adapterKey(cfg), threadRef: ev.threadRef, taskId: id })
+      .onConflictDoNothing({ target: [channelThreads.adapter, channelThreads.threadRef] })
       .returning({ id: channelThreads.id });
     if (mappingRows.length === 0) {
       log.warn(`new-task race on thread ${ev.threadRef}: another task owns the mapping — routing as note`);
       await db.delete(tasks).where(eq(tasks.id, id));
       const winner = await db.query.channelThreads.findFirst({
         columns: { taskId: true },
-        where: { channel: { eq: cfg.kind }, threadRef: { eq: ev.threadRef } },
+        where: { adapter: { eq: adapterKey(cfg) }, threadRef: { eq: ev.threadRef } },
       });
       if (!winner) {
         await ack('Could not create the task — try again.');
@@ -283,7 +320,13 @@ async function routeEvent(
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.CREATE);
     await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
     await ack(
-      `Task ${id} created: ${title}${assigneeId ? ' — dispatching to the assigned agent.' : ' — attach an assignee in Tandem to run it.'}`,
+      `Task ${id} created: ${title}${
+        willDispatch
+          ? ' — dispatching to the assigned agent.'
+          : assigneeId
+            ? ' — assigned; it runs once it reaches a ready status.'
+            : ' — attach an assignee in Tandem to run it.'
+      }`,
     );
     return 'created';
   }
@@ -300,6 +343,7 @@ async function routeMapped(
   ack: (text: string) => Promise<void>,
   taskId: string,
 ): Promise<AckOutcome> {
+  const text = ev.body.trim();
   const task = await db.query.tasks.findFirst({
     columns: { id: true, status: true },
     where: { id: { eq: taskId } },
@@ -324,7 +368,7 @@ async function routeMapped(
   }
   if (category === CATEGORY.WAITING_ANSWER) {
     try {
-      await answerQuestion(task.id, userId, ev.body.slice(0, COMPOSER_BODY_CAP));
+      await answerQuestion(task.id, userId, text.slice(0, COMPOSER_BODY_CAP));
       await ack('Answer delivered — the agent resumes.');
       return 'answered';
     } catch (e) {
@@ -338,7 +382,7 @@ async function routeMapped(
 
   // everything else → NOTE through the composer path (steer-live /
   // dispatch-stopped composer law verbatim inside addNote)
-  const outcome = await addNote(task.id, userId, ev.body.slice(0, COMPOSER_BODY_CAP));
+  const outcome = await addNote(task.id, userId, text.slice(0, COMPOSER_BODY_CAP));
   await ack(
     outcome.steered
       ? 'Sent to the running agent.'
@@ -385,10 +429,6 @@ export async function startChannels(): Promise<void> {
   if (env.TANDEM_NO_DISPATCHER) return;
   const cfgs = parseChannelConfigs(await getSetting(CHANNELS_KEY));
   const hub = await redisQueue();
-  workerHandle ??= await hub.queue(CHANNEL_QUEUE, processChannelEvent, {
-    concurrency: 2,
-    attempts: QUEUE_ATTEMPTS,
-  });
 
   // stop adapters whose config disappeared / was disabled
   const wanted = new Set(cfgs.map(adapterKey));
@@ -422,8 +462,14 @@ export async function startChannels(): Promise<void> {
     }
   }
 
-  // boot sweep AFTER adapters are live: every unprocessed event gets a fresh
-  // job (idempotent worker + jobId dedupe); its ack reaches a real adapter
+  // the worker registers AFTER adapters are live: a swept event must reach a
+  // running adapter (a worker-first order would defer every swept event)
+  workerHandle ??= await hub.queue(CHANNEL_QUEUE, processChannelEvent, {
+    concurrency: 2,
+    attempts: QUEUE_ATTEMPTS,
+  });
+  // boot sweep: every unprocessed event gets a fresh job (idempotent worker +
+  // jobId dedupe); its ack reaches a real adapter
   const stranded = await db.query.channelEvents.findMany({
     columns: { id: true },
     where: { processedAt: { isNull: true as const } },

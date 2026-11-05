@@ -321,10 +321,14 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
 - Every inbound message persists raw FIRST (`channel_events`, unique per
   `(channel, externalId)` — replay-safe), then the sync checkpoint advances,
   then a BullMQ job processes the row; workers re-run idempotently
-  (`processed_at` guard + a `jobId` per event so a job already queued/active
-  is never duplicated). Boot sweeps unprocessed rows back into the queue
-  AFTER adapters are live, so an event stranded between checkpoint and
-  enqueue still processes and its ack still lands.
+  (`processed_at` guard + the event id AS the `jobId` so a job already
+  queued/active is never duplicated; failed jobs drop their id immediately so
+  the sweep can re-drive them). Boot sweeps unprocessed rows back into the
+  queue AFTER adapters and the worker are live.
+- **Deferral law (no silent loss)**: an event whose adapter has no enabled
+  config or no LIVE adapter is NOT consumed — the row stays unprocessed and a
+  later sweep/job retry routes it once the channel is back. A config typo or a
+  dead token must never destroy user messages.
 - Matrix checkpoint: the sync `next_batch` token, stored per channel in
   settings (`channels:checkpoint:<kind>:<homeserver>`). First-ever boot skips
   history (new events only); every later boot resumes from the checkpoint.
@@ -341,6 +345,10 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   composer law verbatim), or **answer** when the status category is
   `waiting_answer` (the reserved answer verb; a note must never stomp an open
   question). Verb pick keys off status CATEGORY, never seeded ids (#265 law).
+  Thread mappings are keyed by the ORIGINATING adapter (`adapter, thread_ref`)
+  — the same room id on two homeservers stays two independent threads.
+- A blank (whitespace-only) message is refused on EVERY verb — it never
+  creates an empty-title task and never lands an empty note/answer.
 - Mapped thread whose task is terminal (done/cancelled category) → no note; the
   sender gets "closed — start a new task in this channel" (thread stays mapped
   for reference).
@@ -354,8 +362,11 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   homeserverUrl, tokenSecretId, bindings[], defaultAssigneeId?}` (admin-managed;
   the settings UI/form is a later slice — slice 1 reads the key only). Tolerant
   parse: invalid entries are skipped and logged; a corrupt value reads as no
-  channels (fail closed). Boot starts adapters for enabled configs unless
-  `TANDEM_NO_DISPATCHER=1` (shared test opt-out).
+  channels (fail closed). `homeserverUrl` is canonicalized (case, default
+  port, trailing slash) before dedupe — one bot per homeserver, duplicates
+  refused. Binding user ids must be uuids (a non-uuid id could never route).
+  Boot starts adapters for enabled configs unless `TANDEM_NO_DISPATCHER=1`
+  (shared test opt-out).
 - Matrix slice-1 capabilities: `{edit:false, threads:false, maxLen:4000,
   markdown:false}` — unencrypted rooms only (no crypto), plain-text send,
   invites are NOT auto-accepted (admin invites the bot per room). The adapter

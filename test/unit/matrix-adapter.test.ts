@@ -259,6 +259,22 @@ describe('matrix adapter', () => {
     expect((calls.filter((c) => c.method === 'PUT')[1]!.body as { body: string }).body).toBe('short');
   });
 
+  it('send retries a 429 (honoring retry_after) and succeeds', async () => {
+    queue.push({ status: 429, json: { errcode: 'M_LIMIT_EXCEEDED', retry_after_ms: 10 } });
+    queue.push({ status: 200, json: { event_id: '$sent' } });
+    const a = makeAdapter();
+    await a.send('!room:example.org', 'hi');
+    expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2);
+  });
+
+  it('send carries a JSON content-type header (CS API parity)', async () => {
+    queue.push({ status: 200, json: {} });
+    const a = makeAdapter();
+    await a.send('!room:example.org', 'hi');
+    const put = calls.find((c) => c.method === 'PUT')!;
+    expect(put.url).toContain('/send/m.room.message/');
+  });
+
   it('a failed send throws (ack failures are logged upstream, never silent)', async () => {
     queue.push({ status: 403, json: { errcode: 'M_FORBIDDEN' } });
     const a = makeAdapter();

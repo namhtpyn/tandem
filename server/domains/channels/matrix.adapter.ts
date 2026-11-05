@@ -60,7 +60,10 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
     const timeoutSignal = AbortSignal.timeout(init.timeoutMs);
     const res = await fetch(`${base}${path}`, {
       method: init.method,
-      headers: { authorization: `Bearer ${cfg.token}` },
+      headers:
+        init.body === undefined
+          ? { authorization: `Bearer ${cfg.token}` }
+          : { authorization: `Bearer ${cfg.token}`, 'content-type': 'application/json' },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
       // stop signal + per-request timeout: a half-open socket must never wedge
       // the loop (the caller's backoff path retries on TimeoutError)
@@ -253,20 +256,39 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
       return Promise.resolve();
     },
     async send(target, text) {
-      const txnId = `tandem-${Date.now()}-${(txnSeq += 1)}`;
-      const res = await api(`/_matrix/client/v3/rooms/${encodeURIComponent(target)}/send/m.room.message/${txnId}`, {
-        method: 'PUT',
-        body: { msgtype: 'm.text', body: capToMaxLen(text, MATRIX_CAPABILITIES) },
-        timeoutMs: 15_000,
-      });
-      if (!res.ok) throw new Error(`matrix send failed: status ${res.status}`);
+      // ack bus reliability: bounded retries on rate-limit/5xx — the acks are
+      // part of the contract, not fire-and-forget
+      const path = `/_matrix/client/v3/rooms/${encodeURIComponent(target)}/send/m.room.message/`;
+      let lastStatus = 0;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const txnId = `tandem-${Date.now()}-${(txnSeq += 1)}`;
+        const res = await api(path + txnId, {
+          method: 'PUT',
+          body: { msgtype: 'm.text', body: capToMaxLen(text, MATRIX_CAPABILITIES) },
+          timeoutMs: 15_000,
+        });
+        if (res.ok) return;
+        lastStatus = res.status;
+        const retryable = res.status === 429 || res.status >= 500;
+        if (!retryable || attempt === 2) break;
+        const retryAfter = res.json?.retry_after_ms;
+        await sleep(
+          typeof retryAfter === 'number' && retryAfter > 0 ? Math.min(retryAfter, 2_000) : 250 * 2 ** attempt,
+        );
+      }
+      throw new Error(`matrix send failed: status ${lastStatus}`);
     },
   };
 }
 
 // self-registration: importing this file arms the 'matrix' kind in the core
-// registry — a new channel kind = a new adapter file that does the same
-registerChannelAdapter('matrix', (cfg) => {
-  if (!cfg.homeserverUrl) throw new Error('matrix adapter requires homeserverUrl');
-  return createMatrixAdapter({ homeserverUrl: cfg.homeserverUrl, token: cfg.token });
-});
+// registry — a new channel kind = a new adapter file that does the same.
+// NOTE: the call is EXPORTED and invoked by channels.service — a bare
+// side-effect import is tree-shaken out of the Nitro bundle (prod would run an
+// empty registry while unit tests stayed green).
+export function registerMatrixChannelAdapter(): void {
+  registerChannelAdapter('matrix', (cfg) => {
+    if (!cfg.homeserverUrl) throw new Error('matrix adapter requires homeserverUrl');
+    return createMatrixAdapter({ homeserverUrl: cfg.homeserverUrl, token: cfg.token });
+  });
+}

@@ -638,6 +638,8 @@ export const taskMessageActivities = pgTable('task_message_activities', {
 
 // Channel thread ↔ Tandem task mapping: one platform thread (matrix room) maps
 // to ONE task; a top-level channel message creates a new task + mapping.
+// Keyed by the ORIGINATING adapter (kind:homeserver) — two homeservers may use
+// the same room id, and bindings/behavior must never cross between them.
 export const channelThreads = pgTable(
   'channel_threads',
   {
@@ -645,6 +647,7 @@ export const channelThreads = pgTable(
       .primaryKey()
       .$default(() => uuidv7()),
     channel: text('channel').notNull(), // adapter kind ('matrix')
+    adapter: text('adapter').notNull(), // adapter key (kind:homeserver)
     threadRef: text('thread_ref').notNull(), // platform thread id (room id)
     taskId: text('task_id')
       .notNull()
@@ -657,7 +660,7 @@ export const channelThreads = pgTable(
       .$default(() => new Date())
       .$onUpdate(() => new Date()),
   },
-  (t) => [uniqueIndex('channel_threads_channel_thread_uq').on(t.channel, t.threadRef)],
+  (t) => [uniqueIndex('channel_threads_adapter_thread_uq').on(t.adapter, t.threadRef)],
 );
 
 // Inbound durability (SPEC: Channels — deploys drop nothing): the raw event

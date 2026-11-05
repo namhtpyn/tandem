@@ -48,6 +48,14 @@ describe('parseChannelConfigs', () => {
     expect(out).toHaveLength(1);
   });
 
+  it('homeserver URLs normalize — trailing slash / case / default port are ONE adapter', () => {
+    const out = parseChannelConfigs(
+      JSON.stringify([VALID, { ...VALID, homeserverUrl: 'https://MATRIX.example.org:443/' }]),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]!.homeserverUrl).toBe('https://matrix.example.org');
+  });
+
   it('defaults: bindings empty, defaultAssigneeId null', () => {
     const out = parseChannelConfigs(
       JSON.stringify([{ kind: 'matrix', enabled: true, homeserverUrl: 'https://m.example.org', tokenSecretId: 's' }]),

@@ -23,7 +23,7 @@ const events = new Map<
     processedAt: Date | null;
   }
 >();
-const mappings = new Map<string, { channel: string; threadRef: string; taskId: string }>();
+const mappings = new Map<string, { adapter: string; threadRef: string; taskId: string }>();
 let taskStatusCategory = 'ready';
 const insertedTasks: Array<Record<string, unknown>> = [];
 const insertedThreadRows: Array<Record<string, unknown>> = [];
@@ -61,11 +61,11 @@ vi.mock('../../server/db/index', () => ({
         },
       },
       channelThreads: {
-        findFirst: async ({ where }: { where?: { channel?: { eq?: string }; threadRef?: { eq?: string } } }) => {
-          const channel = where?.channel?.eq;
+        findFirst: async ({ where }: { where?: { adapter?: { eq?: string }; threadRef?: { eq?: string } } }) => {
+          const adapterKey = where?.adapter?.eq;
           const threadRef = where?.threadRef?.eq;
-          if (!channel || !threadRef) return null;
-          return mappings.get(`${channel}|${threadRef}`) ?? null;
+          if (!adapterKey || !threadRef) return null;
+          return mappings.get(`${adapterKey}|${threadRef}`) ?? null;
         },
       },
       taskStatuses: {
@@ -83,6 +83,11 @@ vi.mock('../../server/db/index', () => ({
       },
       tasks: {
         findFirst: async () => ({ id: 'task-1', status: STATUS_ROW.id }),
+      },
+      aiEmployees: {
+        // assignee-1 is the AI fixture; everyone else is human
+        findFirst: async ({ where }: { where?: { userId?: { eq?: string } } }) =>
+          where?.userId?.eq === ASSIGNEE ? { id: 'ai-1' } : null,
       },
     },
     delete: (table: unknown) => ({
@@ -119,8 +124,8 @@ vi.mock('../../server/db/index', () => ({
             // channel_threads mapping arbiter
             if (mappingConflict) {
               // the concurrent winner's mapping lands between our statements
-              mappings.set(`${v.channel}|${v.threadRef}`, {
-                channel: String(v.channel),
+              mappings.set(`${v.adapter}|${v.threadRef}`, {
+                adapter: String(v.adapter),
                 threadRef: String(v.threadRef),
                 taskId: 'task-1',
               });
@@ -221,7 +226,11 @@ function seedEvent(overrides: Partial<{ sender: string; body: string; adapter: s
 }
 
 function mapThread(taskId: string) {
-  mappings.set('matrix|!room:example.org', { channel: 'matrix', threadRef: '!room:example.org', taskId });
+  mappings.set('matrix:https://matrix.example.org|!room:example.org', {
+    adapter: 'matrix:https://matrix.example.org',
+    threadRef: '!room:example.org',
+    taskId,
+  });
 }
 
 beforeEach(() => {
@@ -268,7 +277,7 @@ describe('handleInbound (persist → queue)', () => {
     expect(enqueuedJobs[0]!.queue).toBe('channels-inbound');
     expect(enqueuedJobs[0]!.data).toEqual({ eventId: 'evrow-1' });
     // jobId dedupe: a second job for the same event id is refused by BullMQ
-    expect(enqueuedJobs[0]!.opts).toMatchObject({ jobId: 'channel:evrow-1' });
+    expect(enqueuedJobs[0]!.opts).toMatchObject({ jobId: 'evrow-1', removeOnFail: true });
   });
 
   it('a replayed event with NO processed row behind it re-enqueues (conflict recovery)', async () => {
@@ -285,7 +294,7 @@ describe('handleInbound (persist → queue)', () => {
     });
     expect(enqueuedJobs).toHaveLength(1);
     expect(enqueuedJobs[0]!.data).toEqual({ eventId: strandedId });
-    expect(enqueuedJobs[0]!.opts).toMatchObject({ jobId: `channel:${strandedId}` });
+    expect(enqueuedJobs[0]!.opts).toMatchObject({ jobId: strandedId, removeOnFail: true });
   });
 
   it('a replayed event already routed (or in flight) is a dedupe no-op', async () => {
@@ -320,11 +329,11 @@ describe('processChannelEvent arms', () => {
     expect(processedWrites).toHaveLength(0);
   });
 
-  it('no enabled config for the channel kind: processed + refused, no routing', async () => {
+  it('no enabled config: the event is DEFERRED (never consumed), no routing', async () => {
     const id = seedEvent();
     settingsRows.set('channels', '[]');
     await processChannelEvent({ eventId: id });
-    expect(processedWrites).toHaveLength(1);
+    expect(processedWrites).toHaveLength(0); // stays queued for the next sweep
     expect(adapter.send).not.toHaveBeenCalled();
     expect(insertedTasks).toHaveLength(0);
   });
@@ -350,7 +359,9 @@ describe('processChannelEvent arms', () => {
     expect(t.createdBy).toBe(U1);
     expect(t.status).toBe(STATUS_ROW.id);
     expect(t.assigneeId).toBeNull();
-    expect(insertedThreadRows).toEqual([{ channel: 'matrix', threadRef: '!room:example.org', taskId: t.id }]);
+    expect(insertedThreadRows).toEqual([
+      { channel: 'matrix', adapter: 'matrix:https://matrix.example.org', threadRef: '!room:example.org', taskId: t.id },
+    ]);
     expect(ackSends[0]!.text).toContain(`Task ${String(t.id)} created`);
     expect(ackSends[0]!.text).toContain('attach an assignee');
     expect(events.get(id)!.processedAt).toBeInstanceOf(Date);
@@ -459,12 +470,13 @@ describe('processChannelEvent arms', () => {
     expect(ackSends).toHaveLength(0); // config A's adapter never fired
   });
 
-  it('an event whose adapter has no enabled config is refused without routing', async () => {
+  it('an event whose adapter has no LIVE adapter is deferred, not consumed', async () => {
     const id = seedEvent({ adapter: 'matrix:https://gone.example.org' });
+    settingsRows.set('channels', JSON.stringify([{ ...CFG, homeserverUrl: 'https://gone.example.org' }]));
     await processChannelEvent({ eventId: id });
     expect(adapter.send).not.toHaveBeenCalled();
     expect(insertedTasks).toHaveLength(0);
-    expect(processedWrites).toHaveLength(1);
+    expect(processedWrites).toHaveLength(0); // no silent drop
   });
 
   it('a stale binding (bound user deleted) refuses politely — no FK poison retry loop', async () => {
@@ -493,12 +505,17 @@ describe('processChannelEvent arms', () => {
     expect(String(answerQuestion.mock.calls[0]![2])).toHaveLength(10_000);
   });
 
-  it('a blank-only message is refused — never an empty-title task', async () => {
+  it('a blank-only message is refused on every verb — never an empty-title task or empty note', async () => {
     const id = seedEvent({ body: '\n\n   \n' });
     await processChannelEvent({ eventId: id });
     expect(insertedTasks).toHaveLength(0);
-    expect(ackSends[0]!.text).toContain('no title line');
+    expect(ackSends[0]!.text).toContain('Empty message');
     expect(processedWrites).toHaveLength(1);
+
+    mapThread('task-1');
+    await processChannelEvent({ eventId: seedEvent({ body: '   ' }) });
+    expect(addNote).not.toHaveBeenCalled();
+    expect(ackSends[1]!.text).toContain('Empty message');
   });
 
   it('new-task race loser: arbiter hands the thread to the winner — duplicate task removed, routed as note', async () => {

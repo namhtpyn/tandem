@@ -2,7 +2,7 @@
   "type": "diff",
   "version": "9",
   "dialect": "postgres",
-  "id": "7eae5f5f-a7c6-4a85-93f4-ced0de25aa3b",
+  "id": "43bab304-91df-40f1-858c-01ca40e1419c",
   "prevIds": [
     "038d65f2-008b-4748-953f-e4687519118a"
   ],
@@ -72,18 +72,18 @@
         "index",
         "public",
         "channel_threads",
-        "channel_threads_channel_thread_uq"
+        "channel_threads_adapter_thread_uq"
       ],
       "writes": [
-        "s|idx|public.channel_threads_channel_thread_uq",
-        "n|idx|public.channel_threads_channel_thread_uq",
-        "e|idx|public.channel_threads_channel_thread_uq",
-        "n|rel|public.channel_threads_channel_thread_uq"
+        "s|idx|public.channel_threads_adapter_thread_uq",
+        "n|idx|public.channel_threads_adapter_thread_uq",
+        "e|idx|public.channel_threads_adapter_thread_uq",
+        "n|rel|public.channel_threads_adapter_thread_uq"
       ],
       "reads": [
         "n|tbl|public.channel_threads",
         "n|sch|public",
-        "n|col|public.channel_threads.channel",
+        "n|col|public.channel_threads.adapter",
         "n|col|public.channel_threads.thread_ref"
       ]
     },
@@ -327,6 +327,22 @@
       "row": {
         "schema": "public",
         "table": "channel_threads",
+        "name": "adapter",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "channel_threads",
         "name": "thread_ref",
         "type": "text",
         "typeSchema": null,
@@ -422,11 +438,11 @@
       "row": {
         "schema": "public",
         "table": "channel_threads",
-        "name": "channel_threads_channel_thread_uq",
+        "name": "channel_threads_adapter_thread_uq",
         "nameExplicit": true,
         "columns": [
           {
-            "value": "channel",
+            "value": "adapter",
             "isExpression": false,
             "asc": true,
             "nullsFirst": false,
