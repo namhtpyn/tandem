@@ -741,6 +741,74 @@ export const CHANNELS_HEALTH_KEY = 'channels:health';
 const HEALTH_TICK_MS = 60_000;
 let healthTimer: ReturnType<typeof setInterval> | null = null;
 
+/** per-config stamp entry: liveness + health reads are isolated PER READ — a
+ * throwing isLive degrades to connected:false, a throwing health to
+ * healthOk:false (a failed read must not fabricate the never-synced shape:
+ * capable + healthOk:true + null is the alertable never-synced signature). */
+function healthEntryFor(cfg: ChannelConfig): Record<string, unknown> {
+  const key = adapterKey(cfg);
+  const adapter = activeAdapters.get(key);
+  let connected = false;
+  try {
+    connected = !!adapter && (!adapter.isLive || adapter.isLive());
+  } catch {
+    // connected stays false (the conservative liveness signal)
+  }
+  let lastSyncOkAt: number | null = null;
+  let healthOk = false;
+  try {
+    lastSyncOkAt = adapter?.health?.().lastSyncOkAt ?? null;
+    healthOk = true;
+  } catch {
+    // lastSyncOkAt stays null + healthOk:false — telemetry fault, not absence
+  }
+  return {
+    key,
+    kind: cfg.kind,
+    homeserverUrl: cfg.homeserverUrl,
+    connected,
+    // healthCap separates "adapter has no health() (null = not alertable)"
+    // from "health() present" — the null's alertability then rides healthOk
+    healthCap: typeof adapter?.health === 'function',
+    healthOk,
+    lastSyncOkAt,
+  };
+}
+
+/** PARSE-DROPPED COVERAGE (SPEC: one entry per ENABLED config): an enabled
+ * entry the parser dropped (unknown/unregistered kind, invalid shape) is
+ * otherwise invisible to every alarm channel — no adapter, no retry loop,
+ * integrity audit passes — so stamp it connected:false instead. */
+function parseDroppedEntries(raw: string | null, known: Set<string>): Array<Record<string, unknown>> {
+  const dropped: Array<Record<string, unknown>> = [];
+  let arr: unknown;
+  try {
+    arr = JSON.parse(raw ?? '[]');
+  } catch {
+    return dropped; // raw corrupt → the parser already read it as no channels
+  }
+  if (!Array.isArray(arr)) return dropped;
+  for (const e of arr) {
+    if (!e || typeof e !== 'object' || (e as { enabled?: unknown }).enabled !== true) continue;
+    const cand = e as { kind?: unknown; homeserverUrl?: unknown };
+    const kind = typeof cand.kind === 'string' && cand.kind ? cand.kind : 'unknown';
+    const home = typeof cand.homeserverUrl === 'string' && cand.homeserverUrl ? cand.homeserverUrl : 'unknown';
+    const key = `${kind}:${home}`;
+    if (known.has(key)) continue;
+    known.add(key);
+    dropped.push({
+      key,
+      kind,
+      homeserverUrl: home,
+      connected: false,
+      healthCap: false,
+      healthOk: false,
+      lastSyncOkAt: null,
+    });
+  }
+  return dropped;
+}
+
 /** one stamp write (exported for tests): best-effort — its own catch, same
  * law as the dispatcher heartbeat. An entry exists per ENABLED config whether
  * or not its adapter started (a failed-to-start adapter reports
@@ -748,74 +816,9 @@ let healthTimer: ReturnType<typeof setInterval> | null = null;
 export async function writeChannelHealthStamp(): Promise<void> {
   try {
     const raw = await getSetting(CHANNELS_KEY);
-    const cfgs = parseChannelConfigs(raw);
-    const channels = [];
-    for (const cfg of cfgs) {
-      const key = adapterKey(cfg);
-      const adapter = activeAdapters.get(key);
-      // per-read isolation: a throwing isLive must not fake a health fault and
-      // a throwing health must not fake an adapter-down — each read degrades
-      // to its OWN conservative default, never kills the whole stamp
-      let connected = false;
-      try {
-        connected = !!adapter && (!adapter.isLive || adapter.isLive());
-      } catch {
-        // connected stays false (the conservative liveness signal)
-      }
-      let lastSyncOkAt: number | null = null;
-      let healthOk = false;
-      try {
-        lastSyncOkAt = adapter?.health?.().lastSyncOkAt ?? null;
-        healthOk = true;
-      } catch {
-        // lastSyncOkAt stays null + healthOk:false: a telemetry fault must not
-        // fabricate the never-synced shape (capable + null reads alertable) —
-        // healthOk:false marks the null as a FAILED READ, not a real absence
-      }
-      channels.push({
-        key,
-        kind: cfg.kind,
-        homeserverUrl: cfg.homeserverUrl,
-        connected,
-        // healthCap separates "adapter has no health() (null = not alertable)"
-        // from "health() present but never synced in this process" (null =
-        // never-synced, alertable after a grace window by the probe);
-        // healthOk:false downgrades a null to a telemetry fault (never alertable)
-        healthCap: typeof adapter?.health === 'function',
-        healthOk,
-        lastSyncOkAt,
-      });
-    }
-    // PARSE-DROPPED COVERAGE (SPEC: one entry per ENABLED config): an enabled
-    // entry the parser dropped (unknown/unregistered kind, invalid shape) is
-    // otherwise invisible to every alarm channel — no adapter, no retry loop,
-    // integrity audit passes — so stamp it connected:false instead.
-    try {
-      const arr: unknown = JSON.parse(raw ?? '[]');
-      if (Array.isArray(arr)) {
-        const known = new Set(channels.map((c) => c.key));
-        for (const e of arr) {
-          if (!e || typeof e !== 'object' || (e as { enabled?: unknown }).enabled !== true) continue;
-          const cand = e as { kind?: unknown; homeserverUrl?: unknown };
-          const kind = typeof cand.kind === 'string' && cand.kind ? cand.kind : 'unknown';
-          const home = typeof cand.homeserverUrl === 'string' && cand.homeserverUrl ? cand.homeserverUrl : 'unknown';
-          const key = `${kind}:${home}`;
-          if (known.has(key)) continue;
-          known.add(key);
-          channels.push({
-            key,
-            kind,
-            homeserverUrl: home,
-            connected: false,
-            healthCap: false,
-            healthOk: false,
-            lastSyncOkAt: null,
-          });
-        }
-      }
-    } catch {
-      // raw corrupt → parseChannelConfigs already read it as no channels
-    }
+    const channels: Array<Record<string, unknown>> = parseChannelConfigs(raw).map(healthEntryFor);
+    const known = new Set<string>(channels.map((c) => c.key as string));
+    channels.push(...parseDroppedEntries(raw, known));
     await setSetting(CHANNELS_HEALTH_KEY, JSON.stringify({ stampedAt: Date.now(), channels }));
   } catch {
     // health is best-effort: observability must never crash the tick
