@@ -423,15 +423,19 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   (`connected:true` with `lastSyncOkAt` stale — the sync loop is alive but the
   homeserver is unreachable and backing off). Each entry also carries
   `healthCap` (whether the adapter implements `health()`) and `healthOk`
-  (whether the health read itself succeeded): a NON-capable
+  (whether a health read HAPPENED and succeeded — a missing adapter or a
+  missing health() is no read, so `healthOk:false` there too): a NON-capable
   adapter's `lastSyncOkAt: null` is not alertable; a CAPABLE adapter whose
   read SUCCEEDED (`healthOk:true`) with `lastSyncOkAt: null` means "no
   successful transport round-trip in this process yet" — alertable after a
-  grace window (a from-boot outage must not be invisible: the
-  restart-into-a-down-homeserver shape holds `connected:true` + null for the
-  whole outage); a FAILED health read (`healthOk:false`) downgrades its null
+  grace window; a FAILED health read (`healthOk:false`) downgrades its null
   to a telemetry fault — never alertable, a broken health() must not
-  fabricate the never-synced shape. Queue depth is deliberately
+  fabricate the never-synced shape. The never-synced shape arises when a
+  start SUCCEEDED (whoami ok) but the transport has never completed a
+  round-trip (e.g. the homeserver starts failing after start); a RESTART
+  into a dead homeserver instead shows `connected:false` — whoami fails, the
+  adapter never registers, and the outage is visible via the liveness class.
+  Queue depth is deliberately
   NOT stamped: it is DB-derivable, so the watchdog derives backlog
   (unprocessed `channel_events` + `channel_outbox` rows, count + oldest age)
   from the tables directly. Backlog with a healthy stamp = a pipeline wedge

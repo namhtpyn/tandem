@@ -123,6 +123,7 @@ describe('channel health stamp', () => {
       homeserverUrl: 'https://matrix.example.org',
       connected: true,
       healthCap: true,
+      healthOk: true,
       lastSyncOkAt: 1_700_000_000_000,
     });
   });
@@ -132,7 +133,16 @@ describe('channel health stamp', () => {
     await writeChannelHealthStamp(); // no adapter attached: failed/pending start
     const ch = stampedChannels();
     expect(ch).toHaveLength(1);
-    expect(ch[0]).toMatchObject({ connected: false, healthCap: false, lastSyncOkAt: null });
+    expect(ch[0]).toMatchObject({ connected: false, healthCap: false, healthOk: false, lastSyncOkAt: null });
+  });
+
+  it('a KEPT config stored under a NON-CANONICAL url never grows a phantom dropped entry', async () => {
+    settingsRows.set('channels', JSON.stringify([{ ...VALID, homeserverUrl: 'https://Matrix.example.org/' }]));
+    attachAdapterForTests('matrix:https://matrix.example.org', stubAdapter()); // canonical key
+    await writeChannelHealthStamp();
+    const ch = stampedChannels();
+    expect(ch, 'one config = ONE entry (canonical key law)').toHaveLength(1);
+    expect(ch[0]).toMatchObject({ key: 'matrix:https://matrix.example.org', connected: true });
   });
 
   it('an adapter reporting isLive:false stamps connected:false but keeps its transport stamp', async () => {
@@ -152,7 +162,7 @@ describe('channel health stamp', () => {
     attachAdapterForTests('matrix:https://matrix.example.org', noHealth as ChannelAdapter);
     await writeChannelHealthStamp();
     const ch = stampedChannels();
-    expect(ch[0]).toMatchObject({ connected: true, healthCap: false, lastSyncOkAt: null });
+    expect(ch[0]).toMatchObject({ connected: true, healthCap: false, healthOk: false, lastSyncOkAt: null });
   });
 
   it('a throwing health() with a live isLive() must NOT fabricate never-synced (healthOk:false marks the read failed)', async () => {

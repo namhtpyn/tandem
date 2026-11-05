@@ -754,13 +754,19 @@ function healthEntryFor(cfg: ChannelConfig): Record<string, unknown> {
   } catch {
     // connected stays false (the conservative liveness signal)
   }
+  // healthOk means "a health() read HAPPENED and succeeded" — a missing
+  // adapter or a missing health() is NOT a successful read (no read exists),
+  // so it stays false there, consistent with parse-dropped entries
+  const healthCap = typeof adapter?.health === 'function';
   let lastSyncOkAt: number | null = null;
   let healthOk = false;
-  try {
-    lastSyncOkAt = adapter?.health?.().lastSyncOkAt ?? null;
-    healthOk = true;
-  } catch {
-    // lastSyncOkAt stays null + healthOk:false — telemetry fault, not absence
+  if (adapter && healthCap) {
+    try {
+      lastSyncOkAt = adapter.health().lastSyncOkAt ?? null;
+      healthOk = true;
+    } catch {
+      // lastSyncOkAt stays null + healthOk:false — telemetry fault, not absence
+    }
   }
   return {
     key,
@@ -769,7 +775,7 @@ function healthEntryFor(cfg: ChannelConfig): Record<string, unknown> {
     connected,
     // healthCap separates "adapter has no health() (null = not alertable)"
     // from "health() present" — the null's alertability then rides healthOk
-    healthCap: typeof adapter?.health === 'function',
+    healthCap,
     healthOk,
     lastSyncOkAt,
   };
@@ -792,7 +798,19 @@ function parseDroppedEntries(raw: string | null, known: Set<string>): Array<Reco
     if (!e || typeof e !== 'object' || (e as { enabled?: unknown }).enabled !== true) continue;
     const cand = e as { kind?: unknown; homeserverUrl?: unknown };
     const kind = typeof cand.kind === 'string' && cand.kind ? cand.kind : 'unknown';
-    const home = typeof cand.homeserverUrl === 'string' && cand.homeserverUrl ? cand.homeserverUrl : 'unknown';
+    // CANONICAL-KEY LAW: `known` holds keys over the CANONICALIZED config
+    // (parseChannelConfigs normalizeHomeservers before dedupe) — a kept
+    // config stored under a non-canonical spelling (trailing slash, :443,
+    // uppercase host) must match its own canonical key here, or every stamp
+    // grows a phantom connected:false entry for a HEALTHY channel
+    let home = 'unknown';
+    if (typeof cand.homeserverUrl === 'string' && cand.homeserverUrl) {
+      try {
+        home = normalizeHomeserver(cand.homeserverUrl);
+      } catch {
+        home = cand.homeserverUrl; // not a parseable URL — the raw spelling
+      }
+    }
     const key = `${kind}:${home}`;
     if (known.has(key)) continue;
     known.add(key);
