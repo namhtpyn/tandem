@@ -394,10 +394,43 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   configs; message bodies ride the composer's caps (title ≤200 chars,
   body/answers ≤10k). Durability is AT-LEAST-ONCE: the processedAt guard
   prevents retry storms, and a crash mid-verb can re-apply that verb's effect
-  once — no-loss wins. Replies relay as plain acks; streaming bubble,
-  per-thread outbound queue keying, edit, watchdog per-channel health, gappy
-  sync backfill (limited-timeline rooms), and the settings UI are later
-  slices of #271.
+  once — no-loss wins. Replies relay as plain acks; streaming bubble, edit,
+  watchdog per-channel health, gappy sync backfill (limited-timeline rooms),
+  and the settings UI are later slices of #271.
+
+### Reply relay (slice 2: final-only outbound)
+
+- A run that settles DONE on a task mapped to a channel thread (any
+  `channel_threads` row for the task) relays its reply to that thread — one
+  `channel_outbox` row PER mapped thread, persisted BEFORE any queue job
+  (deploys drop nothing, same law as inbound). The unique
+  `(adapter, run_id, thread_ref)` index makes relay enqueues idempotent: a
+  re-driven sweep or a re-settled run can never send a reply twice.
+- The relayed text is the thread turn's visible body — the run message body
+  after the settle rewrite (envelope text, else the human tail; agent prose,
+  never tool logs), with result-attachment tokens stripped (platform-external
+  syntax) and the inbound sanitizer applied. The text is capped to the
+  adapter's `capabilities.maxLen` at send time.
+- FINAL-ONLY (contract v1: `capabilities.edit=false`): the relay sends the
+  finished reply once — no streaming bubble, no edit-in-place on channels that
+  cannot edit. Streaming/edit is a later slice.
+- Trigger is BEST-EFFORT: the run-settle path never fails because relaying
+  failed — a relay error is logged, never thrown into settle.
+- Per-thread ordering: the outbound worker sends at most one row per
+  `(adapter, thread_ref)` conversation at a time and always the OLDEST
+  unprocessed one — replies land in settle order even when the queue runs
+  concurrent workers.
+- Deferral law (parity with inbound): a row whose adapter has no enabled
+  config or no LIVE adapter is NOT consumed — claim released, re-driven every
+  5 min, bounded (12 deferrals ≈ 1h) then it stays raw for the next boot
+  sweep. A failed SEND releases the claim for job retry with backoff; the row
+  survives terminal job failure (at-least-once). Send order only advances
+  when the oldest row leaves the queue.
+- Boot sweep: unprocessed outbox rows are re-enqueued AFTER adapters and the
+  worker are live (same ORDER LAW as the inbound sweep).
+- Only DONE runs relay. FAILED/STOPPED runs post nothing to the channel (the
+  instant ack plus the web run pill carry that state); review turns relay the
+  verdict text exactly as the thread turn shows it — one response per turn.
 
 ## Vault key law
 
