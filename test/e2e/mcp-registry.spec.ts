@@ -504,6 +504,14 @@ test.describe('mcp registry + bindings', () => {
       await outFolds.nth(i).locator('summary').click();
       await expect(outFolds.nth(i).locator('pre').first()).not.toBeEmpty({ timeout: 15_000 });
     }
-    await expect(page.getByText(`[mcp] servers: ${serverName}`)).toBeVisible({ timeout: 15_000 });
+    // run output appears on MULTIPLE surfaces (turn body span + fold pre) — a
+    // whole-page getByText strict-violates; assert the fold pres (run-fold law)
+    const anyFoldNamesServer = await outFolds
+      .locator('pre')
+      .evaluateAll(
+        (pres, name: string) => pres.some((p) => (p.textContent ?? '').includes(`[mcp] servers: ${name}`)),
+        serverName,
+      );
+    expect(anyFoldNamesServer).toBe(true);
   });
 });

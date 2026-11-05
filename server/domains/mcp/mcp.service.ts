@@ -153,65 +153,97 @@ export function parseArgsJson(args: string | null | undefined): string[] {
 
 const ENV_VAR_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/** any oauth ENDPOINT key present — authKind 'none' is NOT oauth config (it's
+ * the explicit static-credential choice a full-form save always echoes) */
+const oauthEndpointKeysTouched = (input: RegistryOauthInput) =>
+  input.oauthAuthorizeUrl !== undefined ||
+  input.oauthTokenUrl !== undefined ||
+  input.oauthRevocationUrl !== undefined ||
+  input.oauthScopes !== undefined ||
+  input.oauthClientId !== undefined ||
+  input.oauthClientSecretId !== undefined;
+
+/** stdio branch of the transport validation: oauth refusal + command (absolute)
+ * + args + credential env var name. Returns the stdio columns to write. */
+function normalizeStdioFields(
+  existing: Pick<
+    typeof mcpServers.$inferSelect,
+    'transport' | 'url' | 'command' | 'args' | 'credentialEnvVar' | 'authKind'
+  > | null,
+  input: RegistryTransportInput & RegistryOauthInput,
+): Partial<typeof mcpServers.$inferInsert> {
+  const patch: Partial<typeof mcpServers.$inferInsert> = {};
+  const effectiveAuth = input.authKind ?? (existing?.authKind as string | undefined) ?? 'none';
+  // OAuth authorization is an http contract (endpoints + Bearer headers have no
+  // stdio meaning) — an oauth entry / stray oauth ENDPOINT keys on a stdio
+  // write are refused, never silently stripped.
+  if (effectiveAuth === 'oauth' || oauthEndpointKeysTouched(input)) {
+    throw new ORPCError('BAD_REQUEST', {
+      message: 'oauth config belongs to http servers — stdio entries cannot carry it',
+    });
+  }
+  const command = input.command !== undefined && input.command !== null ? input.command : (existing?.command ?? null);
+  if (!command) throw new ORPCError('BAD_REQUEST', { message: 'command is required for stdio servers' });
+  if (!command.startsWith('/')) {
+    throw new ORPCError('BAD_REQUEST', { message: 'command must be an absolute path (ACP stdio contract)' });
+  }
+  patch.command = command;
+  patch.args = input.args !== undefined ? JSON.stringify(input.args ?? []) : (existing?.args ?? '[]');
+  if (input.credentialEnvVar !== undefined) {
+    const v = input.credentialEnvVar;
+    if (v && !ENV_VAR_RE.test(v)) {
+      throw new ORPCError('BAD_REQUEST', { message: 'credentialEnvVar must be a valid env var name' });
+    }
+    patch.credentialEnvVar = v || null;
+  }
+  // a stdio entry carries no http target — the url column stays null (nullable
+  // for exactly this)
+  patch.url = null;
+  return patch;
+}
+
+/** http branch of the transport validation: url required + stdio-only field
+ * refusal. Returns the http columns to write. */
+function normalizeHttpFields(
+  existing: Pick<typeof mcpServers.$inferSelect, 'url'> | null,
+  input: RegistryTransportInput,
+): Partial<typeof mcpServers.$inferInsert> {
+  const patch: Partial<typeof mcpServers.$inferInsert> = {};
+  const url = input.url !== undefined && input.url !== null ? input.url : (existing?.url ?? null);
+  if (!url) throw new ORPCError('BAD_REQUEST', { message: 'url is required for http servers' });
+  assertHttpUrl(url, 'url');
+  patch.url = url;
+  for (const stdioOnly of ['command', 'args', 'credentialEnvVar'] as const) {
+    const v = input[stdioOnly];
+    if (v !== undefined && v !== null) {
+      throw new ORPCError('BAD_REQUEST', {
+        message: `${stdioOnly} belongs to stdio servers (transport http)`,
+      });
+    }
+  }
+  return patch;
+}
+
 /** transport-conditional validation (SPEC stdio section): resolve the
  * EFFECTIVE transport from input+existing, enforce http↔stdio field
- * requirements, refuse oauth ∩ stdio (OAuth is an http contract — endpoints +
- * Bearer headers have no stdio meaning). Returns the transport-conditional
+ * requirements, refuse oauth ∩ stdio. Returns the transport-conditional
  * columns to write; name/notes/oauth columns stay the caller's. */
 function normalizeTransportFields(
   existing: Pick<
     typeof mcpServers.$inferSelect,
     'transport' | 'url' | 'command' | 'args' | 'credentialEnvVar' | 'authKind'
   > | null,
-  input: RegistryTransportInput & { authKind?: 'none' | 'oauth' },
+  input: RegistryTransportInput & RegistryOauthInput,
 ): Partial<typeof mcpServers.$inferInsert> {
-  const patch: Partial<typeof mcpServers.$inferInsert> = {};
   const transport =
     input.transport !== undefined && input.transport !== null ? input.transport : (existing?.transport ?? 'http');
   if (transport !== 'http' && transport !== 'stdio') {
     throw new ORPCError('BAD_REQUEST', { message: 'transport must be http or stdio' });
   }
+  const patch = transport === 'stdio' ? normalizeStdioFields(existing, input) : normalizeHttpFields(existing, input);
   // the transport column itself rides every create/update (a create WITHOUT it
   // would land on the 'http' column default — never the caller's intent)
   patch.transport = transport;
-  if (transport === 'stdio') {
-    const effectiveAuth = input.authKind ?? (existing?.authKind as string | undefined) ?? 'none';
-    if (effectiveAuth === 'oauth' || (input.transport === 'stdio' && oauthTouched(input))) {
-      throw new ORPCError('BAD_REQUEST', {
-        message: 'oauth config belongs to http servers — stdio entries cannot carry it',
-      });
-    }
-    const command = input.command !== undefined && input.command !== null ? input.command : (existing?.command ?? null);
-    if (!command) throw new ORPCError('BAD_REQUEST', { message: 'command is required for stdio servers' });
-    if (!command.startsWith('/')) {
-      throw new ORPCError('BAD_REQUEST', { message: 'command must be an absolute path (ACP stdio contract)' });
-    }
-    patch.command = command;
-    patch.args = input.args !== undefined ? JSON.stringify(input.args ?? []) : (existing?.args ?? '[]');
-    if (input.credentialEnvVar !== undefined) {
-      const v = input.credentialEnvVar;
-      if (v && !ENV_VAR_RE.test(v)) {
-        throw new ORPCError('BAD_REQUEST', { message: 'credentialEnvVar must be a valid env var name' });
-      }
-      patch.credentialEnvVar = v || null;
-    }
-    // a stdio entry carries no http target — the url column stays null
-    // (nullable for exactly this)
-    patch.url = null;
-  } else {
-    const url = input.url !== undefined && input.url !== null ? input.url : (existing?.url ?? null);
-    if (!url) throw new ORPCError('BAD_REQUEST', { message: 'url is required for http servers' });
-    assertHttpUrl(url, 'url');
-    patch.url = url;
-    for (const stdioOnly of ['command', 'args', 'credentialEnvVar'] as const) {
-      const v = input[stdioOnly];
-      if (v !== undefined && v !== null) {
-        throw new ORPCError('BAD_REQUEST', {
-          message: `${stdioOnly} belongs to stdio servers (transport http)`,
-        });
-      }
-    }
-  }
   return patch;
 }
 
@@ -670,6 +702,55 @@ export async function probeMcpHttp(url: string, authorization?: string): Promise
   return { ok: true, detail: `initialize ok (${info?.name ?? 'server'}${info?.version ? ` v${info.version}` : ''})` };
 }
 
+/** read stdout until a JSON-RPC response lands or the cap expires — servers
+ * may banner to stdout first, so parse line-wise (extractJsonRpc) */
+async function readInitializeResponse(
+  stdout: ReadableStream<Uint8Array>,
+  timeoutMs: number,
+): Promise<ReturnType<typeof extractJsonRpc>> {
+  const reader = stdout.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const deadline = new Promise<never>((_, reject) => {
+      setTimeout(
+        () => reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)}s waiting for the initialize response`)),
+        timeoutMs,
+      );
+    });
+    const chunk = await Promise.race([reader.read(), deadline]);
+    if (chunk.done) return null;
+    buf += decoder.decode(chunk.value);
+    const parsed = extractJsonRpc(buf);
+    if (parsed) return parsed;
+  }
+}
+
+/** map a probe exchange to its verdict — failure detail carries the FIRST
+ * error line (stderr beats the bare exit code), never a bare "spawn failed" */
+async function verdictFromResponse(
+  parsed: ReturnType<typeof extractJsonRpc>,
+  exitCode: number | null,
+  stderr: ReadableStream<Uint8Array>,
+): Promise<{ ok: boolean; detail: string }> {
+  if (!parsed) {
+    if (typeof exitCode === 'number' && exitCode !== 0) {
+      const errText = await new Response(stderr).text().catch(() => '');
+      const firstErr = errText.split('\n').find((l) => l.trim());
+      return { ok: false, detail: (firstErr ?? `server exited with code ${exitCode}`).trim().slice(0, 300) };
+    }
+    if (typeof exitCode === 'number') return { ok: false, detail: 'server exited before responding' };
+    return { ok: false, detail: 'no JSON-RPC payload in server output' };
+  }
+  if (parsed.error)
+    return {
+      ok: false,
+      detail: `MCP error ${parsed.error.code ?? ''}: ${parsed.error.message ?? 'unknown'}`.trimEnd(),
+    };
+  const info = (parsed.result as { serverInfo?: { name?: string; version?: string } } | undefined)?.serverInfo;
+  return { ok: true, detail: `initialize ok (${info?.name ?? 'server'}${info?.version ? ` v${info.version}` : ''})` };
+}
+
 /** slice 3 stdio probe (SPEC "Probe (stdio)"): spawn `command args` (+ the
  * credential env var — the child inherits nothing else), MCP `initialize`
  * handshake over stdin, JSON-RPC response on stdout within the 10s cap, then
@@ -701,48 +782,14 @@ export async function probeMcpStdio(
       })}\n`,
     );
     await stdin.flush();
-    const reader = stdout.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-    let parsed: ReturnType<typeof extractJsonRpc> = null;
-    // line-wise read with the 10s cap — servers may banner to stdout first
-    for (;;) {
-      const deadline = new Promise<never>((_, reject) => {
-        setTimeout(
-          () =>
-            reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)}s waiting for the initialize response`)),
-          timeoutMs,
-        );
-      });
-      const chunk = await Promise.race([reader.read(), deadline]);
-      if (chunk.done) break;
-      buf += decoder.decode(chunk.value);
-      parsed = extractJsonRpc(buf);
-      if (parsed) break;
-    }
+    const parsed = await readInitializeResponse(stdout, timeoutMs);
     const exitCode = await Promise.race([
       child.exited,
       new Promise<null>((resolve) => {
         setTimeout(() => resolve(null), 1_000);
       }),
     ]);
-    if (!parsed) {
-      if (typeof exitCode === 'number' && exitCode !== 0) {
-        // probe law: carry the FIRST error line (stderr beats the bare exit code)
-        const errText = await new Response(stderr).text().catch(() => '');
-        const firstErr = errText.split('\n').find((l) => l.trim());
-        return { ok: false, detail: (firstErr ?? `server exited with code ${exitCode}`).trim().slice(0, 300) };
-      }
-      if (typeof exitCode === 'number') return { ok: false, detail: 'server exited before responding' };
-      return { ok: false, detail: 'no JSON-RPC payload in server output' };
-    }
-    if (parsed.error)
-      return {
-        ok: false,
-        detail: `MCP error ${parsed.error.code ?? ''}: ${parsed.error.message ?? 'unknown'}`.trimEnd(),
-      };
-    const info = (parsed.result as { serverInfo?: { name?: string; version?: string } } | undefined)?.serverInfo;
-    return { ok: true, detail: `initialize ok (${info?.name ?? 'server'}${info?.version ? ` v${info.version}` : ''})` };
+    return verdictFromResponse(parsed, exitCode, stderr);
   } catch (e) {
     const message = (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? String(e);
     return { ok: false, detail: message };

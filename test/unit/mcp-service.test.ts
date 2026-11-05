@@ -489,7 +489,8 @@ describe('stdio transport (slice 3, SPEC "stdio transport")', () => {
     });
     // args omitted on create = the spec-shape empty array
     h.serverRows = []; // the mock's registry findMany is unfiltered — reset rows
-    await registryCreate({ name: 'stub2', transport: 'stdio', command: '/bin/stub-mcp', notes: '' });
+    // the UI always echoes authKind 'none' — that is NOT oauth config (refusal fires only on real oauth keys)
+    await registryCreate({ name: 'stub2', transport: 'stdio', command: '/bin/stub-mcp', authKind: 'none', notes: '' });
     expect(h.inserts[1]!.values).toMatchObject({ args: '[]', url: null });
   });
 

@@ -4,7 +4,7 @@ import { createInterface } from 'node:readline';
 
 const rl = createInterface({ input: process.stdin });
 rl.once('line', () => {
-  const name = 'PATH' in process.env ? `env-leak` : (process.env.MCP_API_KEY ? 'env-ok' : 'env-none');
+  const name = 'PATH' in process.env ? `env-leak` : process.env.MCP_API_KEY ? 'env-ok' : 'env-none';
   process.stdout.write(
     `${JSON.stringify({
       jsonrpc: '2.0',
