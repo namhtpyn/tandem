@@ -283,6 +283,122 @@ browser redirect `GET /api/mcp/oauth/callback?code&state` (consumes the
 single-use state, exchanges + stores the binding's tokens, renders the
 close-this-window result page).
 
+## Channels (backend relay, contract v1 — #271 slice 1)
+
+Channels are transport owned by the backend: a channel message routes into the
+task thread through the SAME procs as the web composer (composer law — no
+parallel decision tree), the existing ACP pipeline runs the agent, and replies
+relay back. Agents never touch channel credentials (hermetic law). The adapter
+contract is versioned: adding a channel = one new adapter file, zero core
+changes.
+
+### Adapter contract (v1)
+
+```
+ChannelAdapter {
+  kind; capabilities {edit, threads, maxLen, markdown};   // edit=false → final-only outbound
+  start(ctx: {onMessage(m), checkpoint {get, set}}); stop(); isLive?()
+  send(target, text)                                       // transport-level, no routing
+}
+ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
+```
+
+- One adapter per channel kind (`matrix` first, self-hosted; discord/slack
+  follow). The core never branches on kind; a new kind = one adapter file plus
+  one explicit registry-arming line in the core (the explicit call is required
+  — a bare side-effect import is tree-shaken out of the Nitro bundle). Per-kind
+  config fields are slice-2 work; slice 1's config shape is matrix-shaped.
+- `capabilities.edit=false` adapters are final-only outbound (no edit-in-place).
+- Channel credentials live in the vault; config references the secret id. The
+  service resolves plaintext only in-process; plaintext never persists.
+
+### Identity binding (default deny)
+
+- A platform user id acts AS a Tandem user ONLY via an explicit admin-managed
+  binding (`{platformUserId, userId}`); unbound senders are refused with a
+  polite notice and their message is recorded (processed, refused) — never
+  routed, never dispatched.
+- The bound user must exist AND hold EMPLOYEE or ADMIN (SPEC: Roles & access —
+  every channel verb is a `tasks.*` write): a VIEWER/deleted binding is refused
+  exactly like the oRPC kernel refuses it. Binding user ids must be uuids.
+
+### Inbound durability (deploys drop nothing)
+
+- Every inbound message persists raw FIRST (`channel_events`, unique per
+  `(adapter, externalId)` — replay-safe across same-kind configs), then the
+  sync checkpoint advances,
+  then a BullMQ job processes the row; workers re-run idempotently
+  (`processed_at` guard + the event id AS the `jobId` so a job already
+  queued/active is never duplicated; failed jobs drop their id immediately so
+  the sweep can re-drive them; a `claimed_at` CAS makes exactly ONE worker own
+  an event at a time — deferral cycles, sweep and deploy overlap carry
+  different job ids and could otherwise double-route — and a stale claim
+  becomes re-claimable after 5 min, keeping at-least-once). Boot sweeps
+  unprocessed rows (partial-indexed) back into the queue AFTER adapters and
+  the worker are live.
+- **Deferral law (no silent loss)**: an event whose adapter has no enabled
+  config or no LIVE adapter (isLive false — e.g. token rejected) is NOT
+  consumed; it re-enqueues itself every 5 min (bounded: 12 deferrals ≈ 1h,
+  then it stays raw for the next boot sweep). A config typo or dead token must
+  never destroy user messages.
+- Matrix checkpoint: the sync `next_batch` token, stored per channel in
+  settings (`channels:checkpoint:<kind>:<homeserver>`). First-ever boot skips
+  history (new events only); every later boot resumes from the checkpoint.
+
+### Routing verbs (slice 1: note / answer / new-task only)
+
+- Unmapped thread + bound sender → **new-task**: task created exactly as the web
+  composer creates one (first NON-EMPTY trimmed line ≤200 chars = title, full
+  body = description capped at the composer's 10k, owner/creator = bound user;
+  a message with no non-empty line is refused, never an empty-title task;
+  optional channel default assignee attaches after existence check — an AI
+  assignee on a ready status auto-dispatches through the existing dispatcher).
+- Mapped thread → **note** through `addNote` (steer-live / dispatch-stopped
+  composer law verbatim), or **answer** when the status category is
+  `waiting_answer` (the reserved answer verb; a note must never stomp an open
+  question). Verb pick keys off status CATEGORY, never seeded ids (#265 law).
+  Thread mappings are keyed by the ORIGINATING adapter (`adapter, thread_ref`)
+  — the same room id on two homeservers stays two independent threads.
+- A blank (whitespace-only) message is refused on EVERY verb — it never
+  creates an empty-title task and never lands an empty note/answer.
+- Mapped thread whose task is terminal (done/cancelled category) → no note; the
+  sender gets "closed — start a new task in this channel" (thread stays mapped
+  for reference).
+- Ack culture: every accepted message gets an instant outbound ack (created /
+  steered / dispatched / noted / answered / closed / refused). Acks are adapter
+  `send` with the capabilities maxLen cap.
+
+### Channel config
+
+- Settings key `channels` holds the JSON array of `{kind, enabled,
+  homeserverUrl, tokenSecretId, bindings[], defaultAssigneeId?}` (admin-managed;
+  the settings UI/form is a later slice — slice 1 reads the key only). Tolerant
+  parse: invalid entries are skipped and logged; a corrupt value reads as no
+  channels (fail closed). `homeserverUrl` is canonicalized (case, default
+  port, trailing slash) before dedupe — one bot per homeserver, duplicates
+  refused. Binding user ids must be uuids (a non-uuid id could never route).
+  Boot starts adapters for enabled configs unless `TANDEM_NO_DISPATCHER=1`
+  (shared test opt-out); PARTIAL-START LAW: a start that leaves any adapter
+  not live keeps retrying on a 30s loop (a resolved call with failures is not
+  success), and dead adapters (fatal token stop) are stopped + re-armed by the
+  same loop. The stored `channels` value is under
+  the settings integrity audit (corrupt → readiness 503).
+- Matrix slice-1 capabilities: `{edit:false, threads:false, maxLen:4000,
+  markdown:false}` — unencrypted rooms only (no crypto), plain-text send,
+  invites are NOT auto-accepted (admin invites the bot per room). The adapter
+  resolves the bot's own user id via `account/whoami` on EVERY start
+  (fatal-if-failed) — the sync response carries no user id, and without the
+  self id the bot's own acks would re-enter the sink as inbound notes and loop
+  (echo guard). Events persist under their ORIGINATING adapter key
+  (`kind:homeserver`) — bindings, acks and routing never cross same-kind
+  configs; message bodies ride the composer's caps (title ≤200 chars,
+  body/answers ≤10k). Durability is AT-LEAST-ONCE: the processedAt guard
+  prevents retry storms, and a crash mid-verb can re-apply that verb's effect
+  once — no-loss wins. Replies relay as plain acks; streaming bubble,
+  per-thread outbound queue keying, edit, watchdog per-channel health, gappy
+  sync backfill (limited-timeline rooms), and the settings UI are later
+  slices of #271.
+
 ## Vault key law
 
 - `TANDEM_VAULT_KEY` is REQUIRED (32-byte base64, `openssl rand -base64 32`); there is NO hardcoded fallback — a key shipped in the repo is a key everyone has. Wrong size or missing key throws at first use with a clear message. Losing the key loses every stored secret.

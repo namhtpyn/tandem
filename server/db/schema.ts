@@ -634,6 +634,72 @@ export const taskMessageActivities = pgTable('task_message_activities', {
   payload: jsonb('payload').notNull().default({}),
 });
 
+// ---------- channels (backend relay, #271) ----------
+
+// Channel thread ↔ Tandem task mapping: one platform thread (matrix room) maps
+// to ONE task; a top-level channel message creates a new task + mapping.
+// Keyed by the ORIGINATING adapter (kind:homeserver) — two homeservers may use
+// the same room id, and bindings/behavior must never cross between them.
+export const channelThreads = pgTable(
+  'channel_threads',
+  {
+    id: text('id')
+      .primaryKey()
+      .$default(() => uuidv7()),
+    channel: text('channel').notNull(), // adapter kind ('matrix')
+    adapter: text('adapter').notNull(), // adapter key (kind:homeserver)
+    threadRef: text('thread_ref').notNull(), // platform thread id (room id)
+    taskId: text('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .$default(() => new Date()),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .$default(() => new Date())
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [uniqueIndex('channel_threads_adapter_thread_uq').on(t.adapter, t.threadRef)],
+);
+
+// Inbound durability (SPEC: Channels — deploys drop nothing): the raw event
+// lands FIRST; the BullMQ job processes it afterwards and is idempotent via
+// processedAt. Unique (adapter, externalId) makes adapter replays no-ops —
+// keyed by adapter so two homeservers' event ids can never collide.
+export const channelEvents = pgTable(
+  'channel_events',
+  {
+    id: text('id')
+      .primaryKey()
+      .$default(() => uuidv7()),
+    channel: text('channel').notNull(),
+    /** originating adapter key (`kind:homeserver`) — routing/bindings/acks
+     * resolve through THIS, never through a kind-wide config match */
+    adapter: text('adapter').notNull(),
+    externalId: text('external_id').notNull(), // platform event id (matrix event_id)
+    threadRef: text('thread_ref').notNull(),
+    sender: text('sender').notNull(), // platform user id
+    body: text('body').notNull(),
+    raw: jsonb('raw').notNull().default({}),
+    receivedAt: timestamp('received_at', { withTimezone: true })
+      .notNull()
+      .$default(() => new Date()),
+    /** worker claim CAS (stale after a TTL): concurrent jobs (deferral cycles,
+     * sweep, deploy overlap) can never route the same event twice */
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    processedAt: timestamp('processed_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('channel_events_adapter_external_uq').on(t.adapter, t.externalId),
+    // boot sweep predicate — partial index keeps the scan proportional to the
+    // UNPROCESSED backlog, not to unbounded raw history
+    index('channel_events_unprocessed_idx')
+      .on(t.processedAt)
+      .where(sql`${t.processedAt} is null`),
+  ],
+);
+
 // ---------- relations ----------
 
 export const relations = defineRelations(
@@ -660,6 +726,8 @@ export const relations = defineRelations(
     projects,
     taskProposals,
     taskAttachments,
+    channelThreads,
+    channelEvents,
     mcpServers,
     mcpServerBindings,
     mcpOauthTokens,

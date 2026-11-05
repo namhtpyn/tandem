@@ -32,6 +32,9 @@ export type QueueDomain = {
       attempts?: number;
       jobId?: string;
       removeOnComplete?: boolean;
+      /** drop the job immediately on terminal failure (frees the jobId so a
+       * sweep can re-drive the same id) */
+      removeOnFail?: boolean;
       backoff?: { type: 'fixed' | 'exponential' | 'custom'; delay?: number };
     },
   ) => Promise<string>;
@@ -154,7 +157,7 @@ async function createQueueDomain(): Promise<QueueDomain> {
         removeOnComplete: opts?.removeOnComplete ? true : 100,
         // same for FAILED jobs: a long-kept failed job PERMANENTLY dedupes the
         // same id — free the id quickly (50 kept max) so retries can re-enqueue
-        removeOnFail: { count: 50 },
+        removeOnFail: opts?.removeOnFail ? true : { count: 50 },
       });
       /* v8 ignore next -- bullmq always assigns an id */
       return job.id ?? '';
