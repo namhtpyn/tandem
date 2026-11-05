@@ -150,7 +150,7 @@ function openEditor(row?: RegistryRow) {
       transport: row.transport === 'stdio' ? 'stdio' : 'http',
       url: row.url ?? '',
       command: row.command ?? '',
-      args: (row.args ?? []).join(' '),
+      args: (row.args ?? []).join('\n'),
       credentialEnvVar: row.credentialEnvVar ?? '',
       notes: row.notes ?? '',
       authKind: row.authKind === 'oauth' ? 'oauth' : 'none',
@@ -206,7 +206,12 @@ async function save() {
     ? {
         transport: 'stdio' as const,
         command: form.value.command.trim(),
-        args: form.value.args.trim().split(/\s+/).filter(Boolean),
+        // one argument per line — args ride the wire as a JSON array of strings,
+        // so whitespace-splitting would corrupt entries containing spaces
+        args: form.value.args
+          .split('\n')
+          .map((a) => a.trim())
+          .filter(Boolean),
         credentialEnvVar: form.value.credentialEnvVar.trim() || null,
       }
     : {
@@ -275,6 +280,7 @@ type ServerBindingRow = {
   secretId: string | null;
   secretName: string | null;
   lastFour: string | null;
+  transport: string;
   authKind: string;
   oauth: { connected: boolean; expiresAt: string | null } | null;
 };
@@ -689,11 +695,12 @@ function askUnbind(b: ServerBindingRow) {
             <UFormField name="args">
               <template #label> Arguments </template>
               <template #hint>
-                <FormHint text="Whitespace-separated, optional" />
+                <FormHint text="One argument per line, optional" />
               </template>
-              <UInput
+              <UTextarea
                 v-model="form.args"
-                placeholder="--port 8080 (optional)"
+                placeholder="--port&#10;8080"
+                :rows="2"
                 class="w-full"
                 :disabled="busy"
                 spellcheck="false"
@@ -892,7 +899,12 @@ function askUnbind(b: ServerBindingRow) {
             :data-testid="`mcp-server-binding-${b.employeeName}`"
           >
             <div class="min-w-0">
-              <p class="text-highlighted truncate text-sm font-medium">{{ b.employeeName }}</p>
+              <p class="text-highlighted truncate text-sm font-medium">
+                <UBadge v-if="b.transport === 'stdio'" color="neutral" variant="subtle" size="sm" class="mr-1">
+                  stdio
+                </UBadge>
+                {{ b.employeeName }}
+              </p>
               <p class="text-muted mt-0.5 text-xs" data-testid="mcp-server-binding-cred">
                 <template v-if="b.authKind === 'oauth'">
                   <UBadge

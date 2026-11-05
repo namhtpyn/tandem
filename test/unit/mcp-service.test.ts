@@ -533,6 +533,11 @@ describe('stdio transport (slice 3, SPEC "stdio transport")', () => {
       }),
     ).rejects.toThrow('oauth config belongs to http servers');
     h.serverRows = [server({ authKind: 'oauth', oauthTokenUrl: 'https://p/token' })];
+    // the UI echoes authKind 'none' on a full-form save — the switch refusal
+    // keys off the PERSISTED row, never the echoed authKind (silent-strip trap)
+    await expect(
+      registryUpdate({ id: 'srv-1', transport: 'stdio', command: '/bin/stub', authKind: 'none' }),
+    ).rejects.toThrow('oauth config belongs to http servers');
     await expect(registryUpdate({ id: 'srv-1', transport: 'stdio', command: '/bin/stub' })).rejects.toThrow(
       'oauth config belongs to http servers',
     );

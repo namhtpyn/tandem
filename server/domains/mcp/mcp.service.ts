@@ -173,11 +173,13 @@ function normalizeStdioFields(
   input: RegistryTransportInput & RegistryOauthInput,
 ): Partial<typeof mcpServers.$inferInsert> {
   const patch: Partial<typeof mcpServers.$inferInsert> = {};
-  const effectiveAuth = input.authKind ?? (existing?.authKind as string | undefined) ?? 'none';
   // OAuth authorization is an http contract (endpoints + Bearer headers have no
   // stdio meaning) — an oauth entry / stray oauth ENDPOINT keys on a stdio
-  // write are refused, never silently stripped.
-  if (effectiveAuth === 'oauth' || oauthEndpointKeysTouched(input)) {
+  // write are refused, never silently stripped. The switch refusal keys off the
+  // PERSISTED row's authKind (a full-form save always echoes authKind 'none' —
+  // keying off the echo would let a transport switch silently strip a live
+  // OAuth config and wipe its tokens).
+  if (existing?.authKind === 'oauth' || input.authKind === 'oauth' || oauthEndpointKeysTouched(input)) {
     throw new ORPCError('BAD_REQUEST', {
       message: 'oauth config belongs to http servers — stdio entries cannot carry it',
     });
@@ -711,18 +713,25 @@ async function readInitializeResponse(
   const reader = stdout.getReader();
   const decoder = new TextDecoder();
   let buf = '';
-  for (;;) {
-    const deadline = new Promise<never>((_, reject) => {
-      setTimeout(
-        () => reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)}s waiting for the initialize response`)),
-        timeoutMs,
-      );
-    });
-    const chunk = await Promise.race([reader.read(), deadline]);
-    if (chunk.done) return null;
-    buf += decoder.decode(chunk.value);
-    const parsed = extractJsonRpc(buf);
-    if (parsed) return parsed;
+  // ONE deadline for the whole handshake — a chatty server that never answers
+  // must hit the cap, not re-arm it per chunk
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)}s waiting for the initialize response`)),
+      timeoutMs,
+    );
+  });
+  try {
+    for (;;) {
+      const chunk = await Promise.race([reader.read(), deadline]);
+      if (chunk.done) return null;
+      buf += decoder.decode(chunk.value);
+      const parsed = extractJsonRpc(buf);
+      if (parsed) return parsed;
+    }
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -797,7 +806,18 @@ export async function probeMcpStdio(
     if (child) {
       try {
         child.kill();
-        await child.exited;
+        const gone = await Promise.race([
+          child.exited,
+          new Promise<null>((resolve) => {
+            setTimeout(() => resolve(null), 1_000);
+          }),
+        ]);
+        if (gone === null) {
+          // SIGTERM alone is not a kill guarantee (a wrapper can trap it) —
+          // escalate so the kill law actually holds
+          child.kill('SIGKILL');
+          await child.exited;
+        }
       } catch {
         /* already dead */
       }

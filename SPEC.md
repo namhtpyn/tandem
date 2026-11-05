@@ -147,8 +147,8 @@ binding (section below). Slice 3 adds the `stdio` transport (section below).
   (default `http` = exactly the slice-1/2 contract). `http` entries keep url
   (http/https). `stdio` entries carry `command` (ABSOLUTE path to the
   executable — the ACP v1 wire contract) and `args` (a JSON array of
-  strings, `[]` allowed), plus an optional `credentialEnvVar` (env var name,
-  `[^A-Za-z0-9_]+` forbidden). Validation: create/update REJECTS a `stdio`
+  strings, `[]` allowed), plus an optional `credentialEnvVar` (env var name
+  matching `[A-Za-z_][A-Za-z0-9_]*`). Validation: create/update REJECTS a `stdio`
   entry without `command`, a `http` entry without `url`, and ANY oauth
   config on a `stdio` entry — OAuth authorization is an http contract
   (endpoints + Bearer headers have no stdio meaning), so a transport switch

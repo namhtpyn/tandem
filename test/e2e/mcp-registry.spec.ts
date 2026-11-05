@@ -444,7 +444,7 @@ test.describe('mcp registry + bindings', () => {
     await mcp.createStdioServer({
       name: serverName,
       command,
-      args: `${stub} --e2e ${tag}`,
+      args: `${stub}\n--e2e\n${tag}`,
       credentialEnvVar: 'MCP_API_KEY',
       notes: 'stdio slice',
     });
