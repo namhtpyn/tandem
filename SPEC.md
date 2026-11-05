@@ -435,10 +435,14 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   sweep. The budget rides each re-drive chain: a restart starts a fresh
   cycle, so a flapping deploy can extend the raw window — the row is still
   never consumed. A failed SEND releases the claim for job retry with
-  backoff; the row survives terminal job failure (at-least-once). A worker
-  killed MID-send leaves a claimed row; its re-kick chain re-drives it after
+  backoff; the row survives terminal job failure (at-least-once) — a
+  non-retryable send failure consumes its job deliberately, leaving the row
+  raw for the next boot sweep, so between that failure and the next restart
+  the row IS jobless (stated, not accidental). A worker killed MID-send
+  leaves a claimed row; its re-kick chain re-drives it after
   the claim TTL (bounded re-kicks), and the boot sweep backstops at the next
-  restart — an unprocessed row is never left jobless by design. Send order
+  restart. A turn body that reduces to empty relays nothing (never an empty
+  message — logged, not silent). Send order
   only advances when the oldest row leaves the queue — a stuck head (retry
   backoff, a raw row awaiting the boot sweep, or a claim inside its TTL)
   stalls ONLY its thread by design (younger rows poll at ≤60s cadence until
@@ -446,7 +450,10 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   pair-aware (the slice can never re-create a lone surrogate the sanitizer
   stripped — postgres jsonb law).
 - Boot sweep: unprocessed outbox rows are re-enqueued AFTER adapters and the
-  worker are live (same ORDER LAW as the inbound sweep).
+  workers are live (same ORDER LAW as the inbound sweep), ONCE PER PROCESS —
+  the 30s partial-start retry loop does not re-sweep (a fresh re-kick with a
+  reset budget every 30s would make the give-up bound unreachable); a
+  restart re-sweeps, which is the deploy-crash recovery path.
 - Only DONE runs relay. FAILED/STOPPED runs post nothing to the channel (the
   instant ack plus the web run pill carry that state); review turns relay the
   verdict text exactly as the thread turn shows it — one response per turn.

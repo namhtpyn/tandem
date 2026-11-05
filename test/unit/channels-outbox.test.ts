@@ -117,14 +117,20 @@ vi.mock('../../server/db/index', () => ({
           return {
             then: (onF?: (v: unknown) => unknown) => Promise.resolve(apply()).then(onF),
             catch: (onR: (e: unknown) => unknown) => Promise.resolve(apply()).catch(onR),
-            // claim CAS returns the claimed row (empty when someone else owns it)
+            // claim CAS models the REAL predicate: a fresh claim (< 5 min TTL)
+            // refuses; null or stale (> TTL) wins — plus the test override
             returning: async () => {
-              if (claimConflict) {
-                appliedWrites.push({ cas: 'lost' });
-                return [];
+              const row = lastLoadedOutboxId ? outbox.get(lastLoadedOutboxId) : null;
+              if (!row || row.processedAt !== null) return [];
+              if ('claimedAt' in set && set.claimedAt !== null) {
+                const fresh = row.claimedAt !== null && Date.now() - row.claimedAt.getTime() < 5 * 60_000;
+                if (claimConflict || fresh) {
+                  appliedWrites.push({ cas: 'lost', row: row.id });
+                  return [];
+                }
               }
               apply();
-              return [{ id: lastLoadedOutboxId ?? 'claimed' }];
+              return [{ id: row.id }];
             },
           };
         },
@@ -314,6 +320,20 @@ describe('processOutboundRow', () => {
     // the re-kick chain is bounded: past 3 the row waits for the boot sweep
     await processOutboundRow({ outboxId: row.id, claims: 4 });
     expect(enqueuedJobs).toHaveLength(1);
+  });
+
+  it('a FRESH foreign claim (crashed worker < TTL ago) refuses; a STALE one is stolen (recovery)', async () => {
+    // killed worker 1 min ago: the claim is fresh → CAS refuses → re-kick
+    const freshRow = seedRow({ claimedAt: new Date(Date.now() - 60_000) });
+    await processOutboundRow({ outboxId: freshRow.id });
+    expect(sentMessages).toHaveLength(0);
+    expect(enqueuedJobs[0]!.opts?.jobId).toBe(`${freshRow.id}-c1`);
+    // killed worker 6 min ago: the claim is stale → CAS WINS → the reply sends
+    // (own thread — the head gate must not see the fresh row as its head)
+    const staleRow = seedRow({ claimedAt: new Date(Date.now() - 6 * 60_000), threadRef: '!stale:example.org' });
+    await processOutboundRow({ outboxId: staleRow.id });
+    expect(sentMessages).toHaveLength(1);
+    expect(staleRow.processedAt).not.toBeNull();
   });
 
   it('defers when no enabled config resolves (no-loss parity with inbound)', async () => {

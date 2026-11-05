@@ -591,7 +591,12 @@ export async function relaySettledRun(taskId: string, runId: string, messageId: 
   // the writer calls this AFTER the body rewrite (envelope text else human
   // tail) — the row already carries the exact text the web thread shows
   const body = relayBodyOf(msg?.body);
-  if (!body) return 0; // nothing human-readable to relay (never send an empty reply)
+  if (!body) {
+    // honest skip (never an empty message): a turn whose body reduces to
+    // empty (e.g. only unlabeled attachment tokens) relays nothing
+    log.info(`channel reply for run ${runId} skipped: the turn body reduces to empty`);
+    return 0;
+  }
   // PERSIST-ALL-THEN-ENQUEUE (SPEC: never a half-set): every mapping's row is
   // inserted BEFORE the first enqueue — a redis failure mid-relay leaves ALL
   // rows raw for the boot sweep instead of silently dropping later threads
@@ -728,6 +733,11 @@ export async function processOutboundRow(data: {
 const activeAdapters = new Map<string, ChannelAdapter>();
 let workerHandle: { close: () => Promise<void> } | null = null;
 let outboxWorkerHandle: { close: () => Promise<void> } | null = null;
+// the boot sweep runs ONCE per process (r4 finding): the 30s partial-start
+// retry loop must not re-sweep — a fresh re-kick with a reset budget every
+// 30s would make the deferral give-up bound unreachable and churn the queue
+// forever while an adapter is down. A restart re-sweeps (that's the point).
+let sweptThisProcess = false;
 
 async function resolveToken(cfg: ChannelConfig): Promise<string | null> {
   const row = await db.query.vaultSecrets.findFirst({
@@ -813,21 +823,26 @@ export async function startChannels(): Promise<string[]> {
     attempts: QUEUE_ATTEMPTS,
   });
   // boot sweep: every unprocessed event gets a fresh job (idempotent worker +
-  // jobId dedupe); its ack reaches a real adapter
-  const stranded = await db.query.channelEvents.findMany({
-    columns: { id: true },
-    where: { processedAt: { isNull: true as const } },
-  });
-  for (const row of stranded) await requeueEvent(hub, row.id);
-  // boot sweep (outbound parity): unsent replies re-enqueue — a deploy crash
-  // between relaySettledRun persist and kick drops nothing
-  const strandedOutbox = await db.query.channelOutbox.findMany({
-    columns: { id: true },
-    where: { processedAt: { isNull: true as const } },
-  });
-  for (const row of strandedOutbox) await requeueOutbox(hub, row.id);
-  if (stranded.length > 0 || strandedOutbox.length > 0)
-    log.info(`swept ${stranded.length} event(s) + ${strandedOutbox.length} reply(ies) back into the queues`);
+  // jobId dedupe); its ack reaches a real adapter. ONCE PER PROCESS: the
+  // partial-start retry loop must not re-sweep (fresh budgets + churn), a
+  // restart re-sweeps.
+  if (!sweptThisProcess) {
+    const stranded = await db.query.channelEvents.findMany({
+      columns: { id: true },
+      where: { processedAt: { isNull: true as const } },
+    });
+    for (const row of stranded) await requeueEvent(hub, row.id);
+    // boot sweep (outbound parity): unsent replies re-enqueue — a deploy crash
+    // between relaySettledRun persist and kick drops nothing
+    const strandedOutbox = await db.query.channelOutbox.findMany({
+      columns: { id: true },
+      where: { processedAt: { isNull: true as const } },
+    });
+    for (const row of strandedOutbox) await requeueOutbox(hub, row.id);
+    sweptThisProcess = true;
+    if (stranded.length > 0 || strandedOutbox.length > 0)
+      log.info(`swept ${stranded.length} event(s) + ${strandedOutbox.length} reply(ies) back into the queues`);
+  }
   return failed;
 }
 
@@ -877,4 +892,7 @@ export async function stopChannels(): Promise<void> {
   workerHandle = null;
   await outboxWorkerHandle?.close();
   outboxWorkerHandle = null;
+  // an explicit stop/start cycle re-sweeps (a stopped channel's rows may have
+  // lost their jobs while the worker was down)
+  sweptThisProcess = false;
 }
