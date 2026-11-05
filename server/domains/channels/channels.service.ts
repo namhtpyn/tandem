@@ -13,12 +13,13 @@ import { CHANGE_ACTION, CHANGE_RESOURCE, CATEGORY, ROLE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
-import { channelEvents, channelThreads, tasks } from '../../db/schema';
+import { channelEvents, channelOutbox, channelThreads, tasks } from '../../db/schema';
 import { env } from '../kernel/env';
 import { publishChange } from '../kernel/kernel';
 import { redisQueue, type QueueDomain } from '../kernel/queue';
 import { getSetting, setSetting } from '../settings/settings.service';
 import { recordAssignment } from '../tasks/assignments.service';
+import { stripAttachments } from '../tasks/attachments.util';
 import { addNote, answerQuestion } from '../tasks/workflow.service';
 import { decryptSecret } from '../vault/secret/secret-crypto.service';
 import {
@@ -526,10 +527,165 @@ async function routeMapped(
   return outcome.steered ? 'steered' : outcome.dispatched ? 'dispatched' : 'noted';
 }
 
-// ---------- lifecycle (boot: adapters + worker + sweep) ----------
+// ---------- reply relay (SPEC: Reply relay, slice 2 — final-only outbound) ----------
+
+const OUTBOX_QUEUE = 'channels-outbound';
+const OUTBOX_DEFER_MS = 300_000; // 5 min between adapter-down re-drives (inbound parity)
+const OUTBOX_DEFER_MAX = 12; // ~1h, then the row stays raw for the boot sweep
+/** per-thread ordering poll: an older reply in the same thread still pending —
+ * re-kick with capped growth (NOT the deferral budget: a poll is not a fault) */
+const OUTBOX_WAIT_BASE_MS = 2_000;
+const OUTBOX_WAIT_MAX_MS = 60_000;
+
+/** channel-visible reply body: the thread turn's text with Tandem-internal
+ * attachment tokens reduced to their label (platform-external syntax must
+ * never reach the channel) and the inbound sanitizer applied. */
+export function relayBodyOf(rawBody: string | null | undefined): string {
+  return sanitizeText(stripAttachments((rawBody ?? '').trim()));
+}
+
+async function requeueOutbox(
+  hub: QueueDomain,
+  outboxId: string,
+  opts: { delayMs?: number; defer?: number; wait?: number } = {},
+): Promise<void> {
+  await hub.enqueue(
+    OUTBOX_QUEUE,
+    { outboxId, deferred: opts.defer ?? 0, wait: opts.wait ?? 0 },
+    {
+      delayMs: opts.delayMs,
+      attempts: QUEUE_ATTEMPTS,
+      removeOnComplete: true,
+      removeOnFail: true,
+      // jobId dedupe (inbound parity): BullMQ refuses a second job with the
+      // same id while one is queued/active — deploy overlap can never
+      // double-send. Distinct suffix per deferral/wait cycle; no ':' (BullMQ
+      // rejects 2-segment custom ids).
+      jobId: opts.defer ? `${outboxId}-d${opts.defer}` : opts.wait ? `${outboxId}-w${opts.wait}` : outboxId,
+      backoff: { type: 'exponential', delay: 3_000 },
+    },
+  );
+}
+
+/** settle-path hook (BEST-EFFORT — the caller never lets a relay failure fail
+ * the settle): persist one outbox row PER channel thread mapped to the task
+ * BEFORE any queue job (deploys drop nothing), then kick the outbound queue.
+ * The unique (adapter, runId, threadRef) index makes re-drives idempotent.
+ * Returns the number of rows enqueued. */
+export async function relaySettledRun(taskId: string, runId: string, messageId: string): Promise<number> {
+  const mappings = await db.query.channelThreads.findMany({
+    columns: { adapter: true, threadRef: true },
+    where: { taskId: { eq: taskId } },
+  });
+  if (mappings.length === 0) return 0;
+  const msg = await db.query.taskMessages.findFirst({
+    columns: { body: true },
+    where: { id: { eq: messageId } },
+  });
+  // the writer calls this AFTER the body rewrite (envelope text else human
+  // tail) — the row already carries the exact text the web thread shows
+  const body = relayBodyOf(msg?.body);
+  if (!body) return 0; // nothing human-readable to relay (never send an empty reply)
+  const hub = await redisQueue();
+  let enqueued = 0;
+  for (const m of mappings) {
+    const inserted = await db
+      .insert(channelOutbox)
+      .values({ adapter: m.adapter, threadRef: m.threadRef, taskId, runId, body })
+      .onConflictDoNothing({ target: [channelOutbox.adapter, channelOutbox.runId, channelOutbox.threadRef] })
+      .returning({ id: channelOutbox.id });
+    // persist-first: an enqueue failure leaves the row raw for the boot sweep
+    if (inserted.length > 0) {
+      await requeueOutbox(hub, nonNull(inserted[0]).id);
+      enqueued++;
+    }
+  }
+  return enqueued;
+}
+
+/** outbound worker body: ONE claim CAS per kick, config/adapter resolution
+ * through the ORIGINATING adapter key, per-thread ordering (the OLDEST
+ * unprocessed row of the conversation sends first), adapter-down deferral
+ * (no-loss, inbound parity). Exported for tests. */
+export async function processOutboundRow(data: { outboxId: string; deferred?: number; wait?: number }): Promise<void> {
+  const row = await db.query.channelOutbox.findFirst({ where: { id: { eq: data.outboxId } } });
+  if (!row || row.processedAt) return; // unknown or already sent
+  // CLAIM CAS (inbound parity): sweep + deploy overlap + deferral cycles all
+  // carry different job ids — the CAS makes exactly one worker own the row.
+  const claimRows = await db
+    .update(channelOutbox)
+    .set({ claimedAt: new Date() })
+    .where(
+      and(
+        eq(channelOutbox.id, row.id),
+        isNull(channelOutbox.processedAt),
+        or(isNull(channelOutbox.claimedAt), lt(channelOutbox.claimedAt, new Date(Date.now() - CLAIM_TTL_MS))),
+      ),
+    )
+    .returning({ id: channelOutbox.id });
+  if (claimRows.length === 0) return; // another worker owns it
+  const deferred = data.deferred ?? 0;
+  const releaseClaim = async (): Promise<void> => {
+    await db
+      .update(channelOutbox)
+      .set({ claimedAt: null })
+      .where(and(eq(channelOutbox.id, row.id), isNull(channelOutbox.processedAt)));
+  };
+  const cfg = parseChannelConfigs(await getSetting(CHANNELS_KEY)).find((c) => adapterKey(c) === row.adapter);
+  const defer = async (why: string): Promise<void> => {
+    if (deferred >= OUTBOX_DEFER_MAX) {
+      log.error(`channel reply ${row.id} gave up after ${OUTBOX_DEFER_MAX} deferrals (${why}) — raw row kept`);
+      return; // never consumed: the next boot sweep starts a fresh cycle
+    }
+    log.warn(`channel reply ${row.id} deferred (${why}) — retry in ${OUTBOX_DEFER_MS / 60_000} min`);
+    await releaseClaim();
+    await requeueOutbox(await redisQueue(), row.id, { delayMs: OUTBOX_DEFER_MS, defer: deferred + 1 });
+  };
+  if (!cfg) {
+    await defer(`no enabled config for adapter ${row.adapter}`);
+    return;
+  }
+  const adapter = activeAdapters.get(adapterKey(cfg));
+  if (!adapter || (adapter.isLive && !adapter.isLive())) {
+    await defer(`adapter ${row.adapter} is not live`);
+    return;
+  }
+  // per-thread ordering: send the OLDEST unprocessed row of this conversation
+  // first — a younger row polls (capped growth) until the older one leaves
+  const head = await db.query.channelOutbox.findFirst({
+    columns: { id: true },
+    where: {
+      adapter: { eq: row.adapter },
+      threadRef: { eq: row.threadRef },
+      processedAt: { isNull: true as const },
+    },
+    orderBy: { createdAt: 'asc', id: 'asc' },
+  });
+  if (!head || head.id !== row.id) {
+    const wait = (data.wait ?? 0) + 1;
+    const delay = Math.min(OUTBOX_WAIT_BASE_MS * 2 ** (wait - 1), OUTBOX_WAIT_MAX_MS);
+    await releaseClaim();
+    log.warn(`channel reply ${row.id} waits for an older reply in thread ${row.threadRef} — re-kick in ${delay}ms`);
+    await requeueOutbox(await redisQueue(), row.id, { delayMs: delay, wait });
+    return;
+  }
+  try {
+    await adapter.send(row.threadRef, row.body.slice(0, adapter.capabilities.maxLen));
+  } catch (e) {
+    // release the claim so the job retry can re-claim immediately; the row
+    // survives (at-least-once) — terminal job failure leaves it raw for sweep
+    await releaseClaim().catch(() => {});
+    throw e;
+  }
+  await db.update(channelOutbox).set({ processedAt: new Date() }).where(eq(channelOutbox.id, row.id));
+  log.info(`channel reply ${row.id} sent via ${row.adapter} to thread ${row.threadRef}`);
+}
+
+// ---------- lifecycle (boot: adapters + workers + sweep) ----------
 
 const activeAdapters = new Map<string, ChannelAdapter>();
 let workerHandle: { close: () => Promise<void> } | null = null;
+let outboxWorkerHandle: { close: () => Promise<void> } | null = null;
 
 async function resolveToken(cfg: ChannelConfig): Promise<string | null> {
   const row = await db.query.vaultSecrets.findFirst({
@@ -610,6 +766,10 @@ export async function startChannels(): Promise<string[]> {
     concurrency: 2,
     attempts: QUEUE_ATTEMPTS,
   });
+  outboxWorkerHandle ??= await hub.queue(OUTBOX_QUEUE, processOutboundRow, {
+    concurrency: 2,
+    attempts: QUEUE_ATTEMPTS,
+  });
   // boot sweep: every unprocessed event gets a fresh job (idempotent worker +
   // jobId dedupe); its ack reaches a real adapter
   const stranded = await db.query.channelEvents.findMany({
@@ -617,7 +777,15 @@ export async function startChannels(): Promise<string[]> {
     where: { processedAt: { isNull: true as const } },
   });
   for (const row of stranded) await requeueEvent(hub, row.id);
-  if (stranded.length > 0) log.info(`swept ${stranded.length} stranded channel event(s) back into the queue`);
+  // boot sweep (outbound parity): unsent replies re-enqueue — a deploy crash
+  // between relaySettledRun persist and kick drops nothing
+  const strandedOutbox = await db.query.channelOutbox.findMany({
+    columns: { id: true },
+    where: { processedAt: { isNull: true as const } },
+  });
+  for (const row of strandedOutbox) await requeueOutbox(hub, row.id);
+  if (stranded.length > 0 || strandedOutbox.length > 0)
+    log.info(`swept ${stranded.length} event(s) + ${strandedOutbox.length} reply(ies) back into the queues`);
   return failed;
 }
 
@@ -665,4 +833,6 @@ export async function stopChannels(): Promise<void> {
   }
   await workerHandle?.close();
   workerHandle = null;
+  await outboxWorkerHandle?.close();
+  outboxWorkerHandle = null;
 }
