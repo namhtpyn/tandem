@@ -372,7 +372,7 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
 
 - Settings key `channels` holds the JSON array of `{kind, enabled,
   homeserverUrl, tokenSecretId, bindings[], defaultAssigneeId?}` (admin-managed;
-  the settings UI/form is a later slice — slice 1 reads the key only). Tolerant
+  the settings-UI slice's admin verbs read and write this key). Tolerant
   parse: invalid entries are skipped and logged; a corrupt value reads as no
   channels (fail closed). `homeserverUrl` is canonicalized (case, default
   port, trailing slash) before dedupe — one bot per homeserver, duplicates
@@ -394,9 +394,42 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   configs; message bodies ride the composer's caps (title ≤200 chars,
   title/body/answers ≤10k). Durability is AT-LEAST-ONCE: the processedAt guard
   prevents retry storms, and a crash mid-verb can re-apply that verb's effect
-  once — no-loss wins. Replies relay as plain acks; streaming bubble, edit,
-  gappy sync backfill (limited-timeline rooms), and the settings UI are later
-  slices of #271.
+  once — no-loss wins. Replies relay as plain acks; streaming bubble, edit and
+  gappy sync backfill are later slices of #271.
+
+### Channel settings UI (slice 4: admin config surface)
+
+- Admin oRPC verbs on a `channels` router. `channels.list` returns, per STORED
+  entry (enabled and disabled alike — a disabled channel is a configured one,
+  not an invisible one): the entry fields, a `status` of `ok` or `dropped`, the
+  canonical adapter key (`kind:homeserverUrl`) when parseable, the drop reason
+  when not, plus the registered `kinds` and the latest `channels:health` stamp
+  — a dropped config is visible in the UI, not only in watchdog stamps.
+  Admin-only (channel config is admin-managed, "Channel config").
+- `channels.update` REPLACES the whole stored array. The admin write path
+  validates STRICTLY — an invalid entry is REFUSED with its reason and NOTHING
+  is written. The runtime parser's tolerant skip is the safety net for
+  hand-edited values, never the UI path's behavior: the UI must never write a
+  config the runtime will silently drop. Validation enforces the SAME rules the
+  runtime parser enforces (schema shape, registered kind, uuid binding/assignee
+  ids, canonicalized homeserver URL, one adapter per `kind:homeserverUrl` —
+  duplicates refused) through the SAME per-entry inspection code path, so the
+  admin path and the runtime parser cannot drift. Beyond parser parity the
+  write checks existence: the token secret must exist in the vault, binding
+  user ids and the default assignee must be existing users.
+- A successful update re-arms the channel runtime IN-PROCESS against the
+  committed value: added/enabled adapters start, removed/disabled ones stop, a
+  start that leaves failures re-arms the existing 30s partial-start retry loop
+  (PARTIAL-START law unchanged). No process restart is ever required for a
+  config change. The update publishes the SETTINGS change resource (settings
+  subscribers refresh).
+- UI: a Channels card on the Settings page (admin-only surface). One list of
+  stored entries — kind, homeserver, enabled, binding count, health chip
+  (connected / last sync age / dropped-with-reason) — with add, edit, delete
+  and an enabled toggle; the editor collects kind (registered kinds only),
+  homeserver URL, token secret (vault picker), optional default assignee and
+  platform→user bindings. Frontend validation is presence-only (repo law): the
+  server is the source of truth and its refusal reason is what the UI shows.
 
 ### Watchdog health (slice 3: per-channel liveness stamps)
 
