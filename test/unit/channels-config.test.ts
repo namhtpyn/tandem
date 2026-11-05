@@ -16,7 +16,7 @@ const VALID = {
   enabled: true,
   homeserverUrl: 'https://matrix.example.org',
   tokenSecretId: 'secret-1',
-  bindings: [{ platformUserId: '@u:example.org', userId: 'user-1' }],
+  bindings: [{ platformUserId: '@u:example.org', userId: '00000000-0000-4000-8000-000000000001' }],
   defaultAssigneeId: null,
 };
 
@@ -43,6 +43,11 @@ describe('parseChannelConfigs', () => {
     expect(out[0]!.bindings).toHaveLength(1);
   });
 
+  it('duplicate adapter keys are refused (first wins, one bot per homeserver)', () => {
+    const out = parseChannelConfigs(JSON.stringify([VALID, { ...VALID }]));
+    expect(out).toHaveLength(1);
+  });
+
   it('defaults: bindings empty, defaultAssigneeId null', () => {
     const out = parseChannelConfigs(
       JSON.stringify([{ kind: 'matrix', enabled: true, homeserverUrl: 'https://m.example.org', tokenSecretId: 's' }]),
@@ -61,7 +66,7 @@ describe('resolveBinding (default deny)', () => {
   }
 
   it('a bound platform id acts as its Tandem user', () => {
-    expect(resolveBinding(cfgFor(), '@u:example.org')).toBe('user-1');
+    expect(resolveBinding(cfgFor(), '@u:example.org')).toBe('00000000-0000-4000-8000-000000000001');
   });
 
   it('an unbound platform id is denied (null)', () => {

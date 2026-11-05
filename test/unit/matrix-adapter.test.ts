@@ -105,6 +105,16 @@ describe('matrix adapter', () => {
         msg('$m3', '@bot:example.org', 'self echo'), // own sender → echo guard
         { type: 'm.room.message', sender: '@u:example.org', event_id: '$m4', content: {} }, // no body
         { type: 'm.room.encrypted', sender: '@u:example.org', event_id: '$m5', content: {} }, // encrypted
+        {
+          type: 'm.room.message',
+          sender: '@u:example.org',
+          event_id: '$m6',
+          content: {
+            msgtype: 'm.text',
+            body: '* hello (edited)',
+            'm.relates_to': { rel_type: 'm.replace', event_id: '$m1' },
+          },
+        }, // edit → skip
       ]),
     });
     const a = makeAdapter();
@@ -137,14 +147,14 @@ describe('matrix adapter', () => {
   it('a failed whoami on FIRST BOOT refuses to start (echo guard is fatal on every start)', async () => {
     queue.push({ status: 401, json: { errcode: 'M_UNKNOWN_TOKEN' } });
     const a = makeAdapter();
-    await a.start({
-      onMessage: async (m) => {
-        received.push(m);
-      },
-      checkpoint: { get: async () => null, set: async () => {} },
-    });
-    await until(() => calls.length >= 1, 'whoami call');
-    await new Promise((r) => setTimeout(r, 120));
+    await expect(
+      a.start({
+        onMessage: async (m) => {
+          received.push(m);
+        },
+        checkpoint: { get: async () => null, set: async () => {} },
+      }),
+    ).rejects.toThrow('whoami failed');
     expect(calls.length).toBe(1); // no initial sync after the failed whoami
     expect(checkpoints).toHaveLength(0);
     expect(received).toHaveLength(0);
@@ -153,14 +163,14 @@ describe('matrix adapter', () => {
   it('a failed whoami on resume refuses to start (echo guard is fatal)', async () => {
     queue.push({ status: 401, json: { errcode: 'M_UNKNOWN_TOKEN' } });
     const a = makeAdapter();
-    await a.start({
-      onMessage: async (m) => {
-        received.push(m);
-      },
-      checkpoint: { get: async () => 's1', set: async () => {} },
-    });
-    await until(() => calls.length >= 1, 'whoami call');
-    await new Promise((r) => setTimeout(r, 120));
+    await expect(
+      a.start({
+        onMessage: async (m) => {
+          received.push(m);
+        },
+        checkpoint: { get: async () => 's1', set: async () => {} },
+      }),
+    ).rejects.toThrow('whoami failed');
     expect(calls.length).toBe(1); // no sync poll after the failed whoami
     expect(received).toHaveLength(0);
   });
@@ -206,6 +216,29 @@ describe('matrix adapter', () => {
     const after = calls.length; // no further polls once stopped
     await new Promise((r) => setTimeout(r, 150));
     expect(calls.length).toBe(after);
+    await a.stop();
+  });
+
+  it('M_UNKNOWN_POS resets the checkpoint to now and resumes', async () => {
+    queue.push(whoOk());
+    queue.push({ status: 400, json: { errcode: 'M_UNKNOWN_POS', error: 'Unrecognised position' } });
+    queue.push({ status: 200, json: syncJson('fresh1', []) }); // timeout=0 reset sync
+    const a = makeAdapter();
+    await a.start({
+      onMessage: async (m) => {
+        received.push(m);
+      },
+      checkpoint: {
+        get: async () => 'stale',
+        set: async (v) => {
+          checkpoints.push(v);
+        },
+      },
+    });
+    await until(() => checkpoints.includes('fresh1'), 'reset checkpoint');
+    await until(() => calls.filter((c) => c.url.includes('/sync?')).length >= 2, 'post-reset poll');
+    const lastSync = calls.filter((c) => c.url.includes('/sync?')).at(-1);
+    expect(lastSync?.url).toContain('since=fresh1');
     await a.stop();
   });
 

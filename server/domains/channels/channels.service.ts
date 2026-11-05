@@ -45,8 +45,10 @@ export const channelConfigSchema = z.object({
   enabled: z.boolean(),
   homeserverUrl: z.string().url(),
   tokenSecretId: z.string().min(1),
-  bindings: z.array(z.object({ platformUserId: z.string().min(1), userId: z.string().min(1) })).default([]),
-  defaultAssigneeId: z.string().min(1).nullable().default(null),
+  // user ids are uuid columns — a non-uuid binding would throw 22P02 on every
+  // event and poison the queue, so the parse itself refuses it
+  bindings: z.array(z.object({ platformUserId: z.string().min(1), userId: z.string().uuid() })).default([]),
+  defaultAssigneeId: z.string().uuid().nullable().default(null),
 });
 
 export type ChannelConfig = z.infer<typeof channelConfigSchema>;
@@ -67,6 +69,7 @@ export function parseChannelConfigs(raw: string | null): ChannelConfig[] {
     return [];
   }
   const out: ChannelConfig[] = [];
+  const seen = new Set<string>();
   for (const entry of parsed) {
     const r = channelConfigSchema.safeParse(entry);
     if (!r.success) {
@@ -80,6 +83,14 @@ export function parseChannelConfigs(raw: string | null): ChannelConfig[] {
       log.warn(`channels config entry skipped: kind ${r.data.kind} has no registered adapter`);
       continue;
     }
+    // duplicate adapter keys would share a checkpoint + event namespace and
+    // silently shadow each other — keep the first, refuse the rest loudly
+    const key = `${r.data.kind}:${r.data.homeserverUrl}`;
+    if (seen.has(key)) {
+      log.warn(`channels config entry skipped: duplicate adapter ${key} (one bot per homeserver in slice 1)`);
+      continue;
+    }
+    seen.add(key);
     out.push(r.data);
   }
   return out;
@@ -138,7 +149,15 @@ async function requeueEvent(hub: QueueDomain, eventId: string): Promise<void> {
   await hub.enqueue(
     CHANNEL_QUEUE,
     { eventId },
-    { attempts: QUEUE_ATTEMPTS, removeOnComplete: true, backoff: { type: 'exponential', delay: 3_000 } },
+    {
+      attempts: QUEUE_ATTEMPTS,
+      removeOnComplete: true,
+      // jobId dedupe: BullMQ refuses a second job with the same id while one
+      // is queued/active — a deploy overlap (old instance's in-flight job +
+      // new instance's sweep) can never double-route the same event
+      jobId: `channel:${eventId}`,
+      backoff: { type: 'exponential', delay: 3_000 },
+    },
   );
 }
 
@@ -208,7 +227,17 @@ async function routeEvent(
       await ack('Could not create the task (no statuses configured).');
       return 'failed';
     }
-    const title = nonNull(ev.body.split('\n', 1)[0]).slice(0, 200);
+    // title = the first NON-EMPTY trimmed line (composer needs a non-blank
+    // title; a blank-only message is refused instead of creating an empty task)
+    const titleLine = ev.body
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0);
+    if (!titleLine) {
+      await ack('Could not create the task — the message has no title line.');
+      return 'failed';
+    }
+    const title = titleLine.slice(0, 200);
     const id = uuidv7();
     let assigneeId: string | null = null;
     if (cfg.defaultAssigneeId) {
@@ -347,7 +376,9 @@ function buildAdapter(cfg: ChannelConfig, token: string): ChannelAdapter | null 
 
 /** start channels: enabled configs get adapters, the worker registers, and
  * stranded rows (persisted but never enqueued — e.g. a deploy crash between
- * persist and enqueue) sweep back into the queue. Safe to re-call. */
+ * persist and enqueue) sweep back into the queue. Safe to re-call.
+ * ORDER LAW: adapters start BEFORE the sweep — swept events route
+ * immediately, and a missing adapter would silently swallow their acks. */
 export async function startChannels(): Promise<void> {
   // shared test opt-out (TANDEM_NO_DISPATCHER=1): unit/e2e never open
   // adapters or queue workers
@@ -358,13 +389,6 @@ export async function startChannels(): Promise<void> {
     concurrency: 2,
     attempts: QUEUE_ATTEMPTS,
   });
-  // boot sweep: every unprocessed event gets a fresh job (idempotent worker)
-  const stranded = await db.query.channelEvents.findMany({
-    columns: { id: true },
-    where: { processedAt: { isNull: true as const } },
-  });
-  for (const row of stranded) await requeueEvent(hub, row.id);
-  if (stranded.length > 0) log.info(`swept ${stranded.length} stranded channel event(s) back into the queue`);
 
   // stop adapters whose config disappeared / was disabled
   const wanted = new Set(cfgs.map(adapterKey));
@@ -374,24 +398,38 @@ export async function startChannels(): Promise<void> {
       activeAdapters.delete(key);
     }
   }
-  // start (or keep) adapters for enabled configs
+  // start (or keep) adapters for enabled configs — a per-adapter failure is
+  // logged and skipped, never aborts the rest of the start
   for (const cfg of cfgs) {
     const key = adapterKey(cfg);
     if (activeAdapters.has(key)) continue;
-    const token = await resolveToken(cfg);
-    if (!token) continue;
-    const adapter = buildAdapter(cfg, token);
-    if (!adapter) continue;
-    await adapter.start({
-      onMessage: (m) => handleInbound(cfg, m),
-      checkpoint: {
-        get: () => getSetting(checkpointKey(cfg)),
-        set: (v: string) => setSetting(checkpointKey(cfg), v),
-      },
-    });
-    activeAdapters.set(key, adapter);
-    log.info(`channel started: ${cfg.kind} @ ${cfg.homeserverUrl} (${cfg.bindings.length} binding(s))`);
+    try {
+      const token = await resolveToken(cfg);
+      if (!token) continue;
+      const adapter = buildAdapter(cfg, token);
+      if (!adapter) continue;
+      await adapter.start({
+        onMessage: (m) => handleInbound(cfg, m),
+        checkpoint: {
+          get: () => getSetting(checkpointKey(cfg)),
+          set: (v: string) => setSetting(checkpointKey(cfg), v),
+        },
+      });
+      activeAdapters.set(key, adapter);
+      log.info(`channel started: ${cfg.kind} @ ${cfg.homeserverUrl} (${cfg.bindings.length} binding(s))`);
+    } catch (e) {
+      log.error(`channel ${key} failed to start (not registered; retries next boot):`, e);
+    }
   }
+
+  // boot sweep AFTER adapters are live: every unprocessed event gets a fresh
+  // job (idempotent worker + jobId dedupe); its ack reaches a real adapter
+  const stranded = await db.query.channelEvents.findMany({
+    columns: { id: true },
+    where: { processedAt: { isNull: true as const } },
+  });
+  for (const row of stranded) await requeueEvent(hub, row.id);
+  if (stranded.length > 0) log.info(`swept ${stranded.length} stranded channel event(s) back into the queue`);
 }
 
 /** test/ops hook: a manually-built adapter joins the registry (startChannels

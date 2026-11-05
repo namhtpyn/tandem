@@ -30,11 +30,16 @@ const insertedThreadRows: Array<Record<string, unknown>> = [];
 const deletedTaskIds: string[] = [];
 const processedWrites: Array<Record<string, unknown>> = [];
 const eventInserts: Array<Record<string, unknown>> = [];
-const enqueuedJobs: Array<{ queue: string; data: unknown }> = [];
+const enqueuedJobs: Array<{ queue: string; data: unknown; opts?: unknown }> = [];
 const ackSends: Array<{ target: string; text: string }> = [];
 let conflictMode: 'none' | 'dup' = 'none';
 let mappingConflict = false; // arbiter: channel_threads insert loses
 
+const U1 = '00000000-0000-4000-8000-000000000001';
+const U2 = '00000000-0000-4000-8000-000000000002';
+const ASSIGNEE = '00000000-0000-4000-8000-000000000003';
+const GHOST = '00000000-0000-4000-8000-000000000009';
+const DELETED = '00000000-0000-4000-8000-00000000000a';
 const STATUS_ROW = { id: 'status-ready', category: 'ready' };
 
 vi.mock('../../server/db/index', () => ({
@@ -73,7 +78,7 @@ vi.mock('../../server/db/index', () => ({
         findFirst: async ({ where }: { where?: { id?: { eq?: string } } }) => {
           const id = where?.id?.eq;
           // every well-formed id exists EXCEPT the explicit ghost fixtures
-          return id && id !== 'deleted-user' && id !== 'ghost' ? { id } : null;
+          return id && id !== DELETED && id !== GHOST ? { id } : null;
         },
       },
       tasks: {
@@ -140,8 +145,8 @@ vi.mock('../../server/db/index', () => ({
 
 vi.mock('../../server/domains/kernel/queue', () => ({
   redisQueue: async () => ({
-    enqueue: async (queue: string, data: unknown) => {
-      enqueuedJobs.push({ queue, data });
+    enqueue: async (queue: string, data: unknown, opts?: unknown) => {
+      enqueuedJobs.push({ queue, data, opts });
       return 'job-1';
     },
     queue: async () => ({ close: async () => {} }),
@@ -184,7 +189,7 @@ const CFG: ChannelConfig = {
   enabled: true,
   homeserverUrl: 'https://matrix.example.org',
   tokenSecretId: 'secret-1',
-  bindings: [{ platformUserId: '@u:example.org', userId: 'user-1' }],
+  bindings: [{ platformUserId: '@u:example.org', userId: U1 }],
   defaultAssigneeId: null,
 };
 
@@ -262,6 +267,8 @@ describe('handleInbound (persist → queue)', () => {
     expect(enqueuedJobs).toHaveLength(1);
     expect(enqueuedJobs[0]!.queue).toBe('channels-inbound');
     expect(enqueuedJobs[0]!.data).toEqual({ eventId: 'evrow-1' });
+    // jobId dedupe: a second job for the same event id is refused by BullMQ
+    expect(enqueuedJobs[0]!.opts).toMatchObject({ jobId: 'channel:evrow-1' });
   });
 
   it('a replayed event with NO processed row behind it re-enqueues (conflict recovery)', async () => {
@@ -276,7 +283,9 @@ describe('handleInbound (persist → queue)', () => {
       raw: {},
       externalId: events.get(strandedId)!.externalId,
     });
-    expect(enqueuedJobs).toEqual([{ queue: 'channels-inbound', data: { eventId: strandedId } }]);
+    expect(enqueuedJobs).toHaveLength(1);
+    expect(enqueuedJobs[0]!.data).toEqual({ eventId: strandedId });
+    expect(enqueuedJobs[0]!.opts).toMatchObject({ jobId: `channel:${strandedId}` });
   });
 
   it('a replayed event already routed (or in flight) is a dedupe no-op', async () => {
@@ -337,8 +346,8 @@ describe('processChannelEvent arms', () => {
     const t = insertedTasks[0]!;
     expect(t.title).toBe('Fix the login bug'); // first line only, ≤200 chars
     expect(t.description).toBe('Fix the login bug\n\nSteps: 1. open app'); // full body
-    expect(t.ownerId).toBe('user-1');
-    expect(t.createdBy).toBe('user-1');
+    expect(t.ownerId).toBe(U1);
+    expect(t.createdBy).toBe(U1);
     expect(t.status).toBe(STATUS_ROW.id);
     expect(t.assigneeId).toBeNull();
     expect(insertedThreadRows).toEqual([{ channel: 'matrix', threadRef: '!room:example.org', taskId: t.id }]);
@@ -348,15 +357,15 @@ describe('processChannelEvent arms', () => {
   });
 
   it('a valid defaultAssigneeId attaches + records the assignment', async () => {
-    settingsRows.set('channels', JSON.stringify([{ ...CFG, defaultAssigneeId: 'assignee-1' }]));
+    settingsRows.set('channels', JSON.stringify([{ ...CFG, defaultAssigneeId: ASSIGNEE }]));
     await processChannelEvent({ eventId: seedEvent() });
-    expect(insertedTasks[0]!.assigneeId).toBe('assignee-1');
-    expect(recordAssignment).toHaveBeenCalledWith(insertedTasks[0]!.id, 'assignee-1', 'created', 'user-1');
+    expect(insertedTasks[0]!.assigneeId).toBe(ASSIGNEE);
+    expect(recordAssignment).toHaveBeenCalledWith(insertedTasks[0]!.id, ASSIGNEE, 'created', U1);
     expect(ackSends[0]!.text).toContain('dispatching to the assigned agent');
   });
 
   it('a dangling defaultAssigneeId is skipped — the task still creates', async () => {
-    settingsRows.set('channels', JSON.stringify([{ ...CFG, defaultAssigneeId: 'ghost' }]));
+    settingsRows.set('channels', JSON.stringify([{ ...CFG, defaultAssigneeId: GHOST }]));
     await processChannelEvent({ eventId: seedEvent() });
     expect(insertedTasks[0]!.assigneeId).toBeNull();
     expect(recordAssignment).not.toHaveBeenCalled();
@@ -367,7 +376,7 @@ describe('processChannelEvent arms', () => {
     addNote.mockResolvedValue({ steered: false, dispatched: true });
     const id = seedEvent();
     await processChannelEvent({ eventId: id });
-    expect(addNote).toHaveBeenCalledWith('task-1', 'user-1', 'Fix the login bug');
+    expect(addNote).toHaveBeenCalledWith('task-1', U1, 'Fix the login bug');
     expect(answerQuestion).not.toHaveBeenCalled();
     expect(ackSends[0]!.text).toContain('Queued');
     expect(events.get(id)!.processedAt).toBeInstanceOf(Date);
@@ -390,7 +399,7 @@ describe('processChannelEvent arms', () => {
     answerQuestion.mockResolvedValue({});
     const id = seedEvent();
     await processChannelEvent({ eventId: id });
-    expect(answerQuestion).toHaveBeenCalledWith('task-1', 'user-1', 'Fix the login bug');
+    expect(answerQuestion).toHaveBeenCalledWith('task-1', U1, 'Fix the login bug');
     expect(addNote).not.toHaveBeenCalled();
     expect(ackSends[0]!.text).toContain('Answer delivered');
     expect(events.get(id)!.processedAt).toBeInstanceOf(Date);
@@ -427,7 +436,7 @@ describe('processChannelEvent arms', () => {
     const CFG_B = {
       ...CFG,
       homeserverUrl: 'https://b.example.org',
-      bindings: [{ platformUserId: '@y:b.example.org', userId: 'user-2' }],
+      bindings: [{ platformUserId: '@y:b.example.org', userId: U2 }],
     };
     settingsRows.set('channels', JSON.stringify([CFG, CFG_B]));
     const ackB: Array<{ target: string; text: string }> = [];
@@ -463,7 +472,7 @@ describe('processChannelEvent arms', () => {
     // CFG's binding maps only @u; a config whose binding points at a missing user:
     settingsRows.set(
       'channels',
-      JSON.stringify([{ ...CFG, bindings: [{ platformUserId: '@ghost:example.org', userId: 'deleted-user' }] }]),
+      JSON.stringify([{ ...CFG, bindings: [{ platformUserId: '@ghost:example.org', userId: DELETED }] }]),
     );
     await processChannelEvent({ eventId: id });
     expect(insertedTasks).toHaveLength(0);
@@ -484,13 +493,21 @@ describe('processChannelEvent arms', () => {
     expect(String(answerQuestion.mock.calls[0]![2])).toHaveLength(10_000);
   });
 
+  it('a blank-only message is refused — never an empty-title task', async () => {
+    const id = seedEvent({ body: '\n\n   \n' });
+    await processChannelEvent({ eventId: id });
+    expect(insertedTasks).toHaveLength(0);
+    expect(ackSends[0]!.text).toContain('no title line');
+    expect(processedWrites).toHaveLength(1);
+  });
+
   it('new-task race loser: arbiter hands the thread to the winner — duplicate task removed, routed as note', async () => {
     mappingConflict = true; // the winner's mapping lands between our statements
     addNote.mockResolvedValue({ steered: false });
     const id = seedEvent();
     await processChannelEvent({ eventId: id });
     expect(deletedTaskIds).toHaveLength(1); // the loser's fresh unmapped task is gone
-    expect(addNote).toHaveBeenCalledWith('task-1', 'user-1', 'Fix the login bug');
+    expect(addNote).toHaveBeenCalledWith('task-1', U1, 'Fix the login bug');
     expect(ackSends[0]!.text).toContain('Noted');
     expect(processedWrites).toHaveLength(1);
   });

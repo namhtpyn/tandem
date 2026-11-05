@@ -321,8 +321,10 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
 - Every inbound message persists raw FIRST (`channel_events`, unique per
   `(channel, externalId)` — replay-safe), then the sync checkpoint advances,
   then a BullMQ job processes the row; workers re-run idempotently
-  (`processed_at` guard). Boot sweeps unprocessed rows back into the queue, so
-  an event stranded between checkpoint and enqueue still processes.
+  (`processed_at` guard + a `jobId` per event so a job already queued/active
+  is never duplicated). Boot sweeps unprocessed rows back into the queue
+  AFTER adapters are live, so an event stranded between checkpoint and
+  enqueue still processes and its ack still lands.
 - Matrix checkpoint: the sync `next_batch` token, stored per channel in
   settings (`channels:checkpoint:<kind>:<homeserver>`). First-ever boot skips
   history (new events only); every later boot resumes from the checkpoint.
@@ -330,10 +332,11 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
 ### Routing verbs (slice 1: note / answer / new-task only)
 
 - Unmapped thread + bound sender → **new-task**: task created exactly as the web
-  composer creates one (first line ≤200 chars = title, full body = description,
-  owner/creator = bound user; optional channel default assignee attaches after
-  existence check — an AI assignee on a ready status auto-dispatches through the
-  existing dispatcher).
+  composer creates one (first NON-EMPTY trimmed line ≤200 chars = title, full
+  body = description capped at the composer's 10k, owner/creator = bound user;
+  a message with no non-empty line is refused, never an empty-title task;
+  optional channel default assignee attaches after existence check — an AI
+  assignee on a ready status auto-dispatches through the existing dispatcher).
 - Mapped thread → **note** through `addNote` (steer-live / dispatch-stopped
   composer law verbatim), or **answer** when the status category is
   `waiting_answer` (the reserved answer verb; a note must never stomp an open

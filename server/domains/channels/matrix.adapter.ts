@@ -57,11 +57,14 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
     status: number;
     json: (SyncResponse & { errcode?: string; retry_after_ms?: number }) | null;
   }> {
+    const timeoutSignal = AbortSignal.timeout(init.timeoutMs);
     const res = await fetch(`${base}${path}`, {
       method: init.method,
       headers: { authorization: `Bearer ${cfg.token}` },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
-      signal: controller?.signal,
+      // stop signal + per-request timeout: a half-open socket must never wedge
+      // the loop (the caller's backoff path retries on TimeoutError)
+      signal: controller ? AbortSignal.any([controller.signal, timeoutSignal]) : timeoutSignal,
     });
     const json = (await res.json().catch(() => null)) as
       | (SyncResponse & { errcode?: string; retry_after_ms?: number })
@@ -77,9 +80,14 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
       for (const ev of room.timeline?.events ?? []) {
         if (ev.type !== 'm.room.message' || !ev.event_id || !ev.sender) continue;
         if (selfUserId && ev.sender === selfUserId) continue; // never echo our own sends
-        const content = ev.content as { msgtype?: string; body?: unknown } | undefined;
+        const content = ev.content as
+          | { msgtype?: string; body?: unknown; 'm.relates_to'?: { rel_type?: string }; 'm.new_content'?: unknown }
+          | undefined;
         if (typeof content?.body !== 'string' || content.body.length === 0) continue;
         if (!content.msgtype || !DELIVERABLE_MSGTYPES.has(content.msgtype)) continue;
+        // edits (m.replace) and new_content payloads are not new messages —
+        // delivering them would re-route the same thought as a fresh note
+        if (content['m.relates_to']?.rel_type === 'm.replace' || content['m.new_content'] !== undefined) continue;
         out.push({ roomId, eventId: ev.event_id, sender: ev.sender, text: content.body, raw: ev });
       }
     }
@@ -90,43 +98,45 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
 
   const backoffMs = (attempts: number) => Math.min(BACKOFF_BASE_MS * 2 ** attempts, BACKOFF_MAX_MS);
 
-  /** the sync position the loop starts from; null = do not start the loop.
+  /** the sync position the loop starts from. Throws on any start failure so
+   * startChannels never registers a dead adapter as live.
    * FIRST-BOOT LAW (SPEC): initial sync with timeout=0, record next_batch,
-   * deliver NOTHING. RESUME ECHO GUARD: without the bot's own id its acks
-   * would re-enter the sink as inbound notes — whoami is fatal-if-failed. */
-  async function resolveStart(ctx: AdapterStartContext): Promise<string | null> {
+   * deliver NOTHING. ECHO GUARD: whoami on EVERY start — the /sync response
+   * carries no user id, and without it the bot's own acks re-enter the sink. */
+  async function resolveStart(ctx: AdapterStartContext): Promise<string> {
     const since = await ctx.checkpoint.get();
-    // ECHO GUARD (unconditional — the /sync response carries NO user_id, so
-    // whoami is the only source of the bot's own id; without it the bot's
-    // acks re-enter the sink and loop). Fatal-if-failed on every start.
     const who = await api('/_matrix/client/v3/account/whoami', { method: 'GET', timeoutMs: 15_000 });
     const uid = who.json?.user_id;
     if (!who.ok || typeof uid !== 'string' || uid.length === 0) {
-      log.error(`whoami failed (status ${who.status}) — adapter not started (echo guard)`);
-      running = false;
-      return null;
+      throw new Error(`whoami failed (status ${who.status}) — echo guard cannot arm`);
     }
     selfUserId = uid;
     if (since !== null) return since;
+    const init = await api(`/_matrix/client/v3/sync?timeout=0&set_presence=offline`, {
+      method: 'GET',
+      timeoutMs: SYNC_TIMEOUT_MS,
+    });
+    if (!init.ok || !init.json?.next_batch) {
+      throw new Error(
+        `initial sync failed (status ${init.status}${init.json?.errcode ? ` ${init.json.errcode}` : ''})`,
+      );
+    }
+    await ctx.checkpoint.set(init.json.next_batch);
+    return init.json.next_batch;
+  }
+
+  /** M_UNKNOWN_POS: the checkpoint is no longer valid on the server (purged
+   * timeline) — reset to "now" with a timeout=0 sync and resume from there. */
+  async function resetSyncPosition(ctx: AdapterStartContext): Promise<string | null> {
     try {
-      // FIRST-BOOT LAW (SPEC): initial sync with timeout=0, record next_batch,
-      // deliver NOTHING — a channel attach never replays history.
       const init = await api(`/_matrix/client/v3/sync?timeout=0&set_presence=offline`, {
         method: 'GET',
         timeoutMs: SYNC_TIMEOUT_MS,
       });
-      if (!init.ok || !init.json?.next_batch) {
-        log.error(
-          `initial sync failed (status ${init.status}${init.json?.errcode ? ` ${init.json.errcode}` : ''}) — adapter not started`,
-        );
-        running = false;
-        return null;
-      }
+      if (!init.ok || !init.json?.next_batch) return null;
       await ctx.checkpoint.set(init.json.next_batch);
       return init.json.next_batch;
-    } catch (e) {
-      log.error('initial sync crashed — adapter not started:', e);
-      running = false;
+    } catch {
       return null;
     }
   }
@@ -164,9 +174,8 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
     }
   }
 
-  async function syncLoop(ctx: AdapterStartContext): Promise<void> {
-    let since = await resolveStart(ctx);
-    if (since === null) return; // resolveStart logged + disarmed the loop
+  async function syncLoop(ctx: AdapterStartContext, startSince: string): Promise<void> {
+    let since = startSince;
     let backoffAttempts = 0;
     while (running) {
       let res;
@@ -186,6 +195,16 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
         log.error('matrix token rejected (M_UNKNOWN_TOKEN) — adapter stopped');
         running = false;
         return;
+      }
+      // stale checkpoint (purged timeline): skip to "now" once, then resume
+      if (res.status === 400 && res.json?.errcode === 'M_UNKNOWN_POS') {
+        log.warn('sync position rejected (M_UNKNOWN_POS) — resetting the checkpoint to now');
+        const fresh = await resetSyncPosition(ctx);
+        if (fresh !== null) {
+          since = fresh;
+          backoffAttempts = 0;
+          continue;
+        }
       }
       if (!res.ok || !res.json?.next_batch) {
         // the checkpoint did NOT advance — the next poll re-reads the same
@@ -211,13 +230,21 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
     capabilities: MATRIX_CAPABILITIES,
     async start(ctx) {
       if (running) return;
-      running = true;
       controller = new AbortController();
-      // background loop: start() returns once the loop is armed
-      void syncLoop(ctx).catch((e) => {
-        log.error('matrix sync loop crashed:', e);
+      running = true;
+      try {
+        // arm-don't-claim: resolveStart may throw (whoami/initial sync) —
+        // a failed start must surface, not register a dead adapter as live
+        const since = await resolveStart(ctx);
+        void syncLoop(ctx, since).catch((e) => {
+          log.error('matrix sync loop crashed:', e);
+          running = false;
+        });
+      } catch (e) {
         running = false;
-      });
+        controller = null;
+        throw e;
+      }
     },
     stop() {
       running = false;
