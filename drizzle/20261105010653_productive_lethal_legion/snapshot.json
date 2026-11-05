@@ -1,0 +1,174 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "038d65f2-008b-4748-953f-e4687519118a",
+  "prevIds": [
+    "9639edd7-ad5f-4ca1-b964-a1ac86d55967"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "mcp_servers",
+        "transport"
+      ],
+      "writes": [
+        "s|col|public.mcp_servers.transport",
+        "n|col|public.mcp_servers.transport",
+        "e|col|public.mcp_servers.transport"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_servers",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "mcp_servers",
+        "command"
+      ],
+      "writes": [
+        "s|col|public.mcp_servers.command",
+        "n|col|public.mcp_servers.command",
+        "e|col|public.mcp_servers.command"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_servers",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "mcp_servers",
+        "args"
+      ],
+      "writes": [
+        "s|col|public.mcp_servers.args",
+        "n|col|public.mcp_servers.args",
+        "e|col|public.mcp_servers.args"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_servers",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "mcp_servers",
+        "credential_env_var"
+      ],
+      "writes": [
+        "s|col|public.mcp_servers.credential_env_var",
+        "n|col|public.mcp_servers.credential_env_var",
+        "e|col|public.mcp_servers.credential_env_var"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_servers",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "alter_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "mcp_servers",
+        "url"
+      ],
+      "writes": [
+        "s|colprop|public.mcp_servers.url.notNull"
+      ],
+      "reads": [
+        "n|tbl|public.mcp_servers",
+        "n|sch|public",
+        "n|col|public.mcp_servers.url"
+      ],
+      "sqlHash": "45f9105a5b11cc07"
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "transport",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'http'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "command",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "args",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "mcp_servers",
+        "name": "credential_env_var",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "alter",
+      "key": "columns\u0000[\"public\",\"mcp_servers\",\"url\"]",
+      "set": {
+        "notNull": false
+      }
+    }
+  ]
+}
