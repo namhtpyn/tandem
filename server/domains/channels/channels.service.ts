@@ -956,6 +956,9 @@ async function startChannelsInner(): Promise<string[]> {
   // shared test opt-out (TANDEM_NO_DISPATCHER=1): unit/e2e never open
   // adapters or queue workers
   if (env.TANDEM_NO_DISPATCHER) return [];
+  // NOTE: a DIRECT startChannels() after an explicit stopChannels is a
+  // deliberate restart (stop/start cycle law — re-sweeps). The STOPPED
+  // invariant protects only against the settings hook resurrecting the module.
   const cfgs = parseChannelConfigs(await getSetting(CHANNELS_KEY));
   const hub = await redisQueue();
 
@@ -1126,12 +1129,6 @@ export async function onChannelsSettingsChanged(start: () => Promise<string[]> =
 }
 
 export async function stopChannels(): Promise<void> {
-  // disarm the health tick first: a stopped channels module must stop
-  // stamping (the stale key is the probe's process-dead signal)
-  if (healthTimer) {
-    clearInterval(healthTimer);
-    healthTimer = null;
-  }
   // enforce the stopped invariant: disarm the settings-change re-arm AND the
   // boot retry loop — after an explicit stopChannels nothing resurrects
   // adapters/workers/timers (a later onChannelsSettingsChanged is a no-op);
@@ -1139,6 +1136,17 @@ export async function stopChannels(): Promise<void> {
   channelsStopped = true;
   retryControls?.stopTimer();
   retryControls = null;
+  // JOIN the start serialization: an in-flight re-arm start completes its
+  // writes first, then the teardown below stops everything it started — the
+  // final state is stopped, never a resurrected module (r3: a stop racing a
+  // start could leave live adapters + health tick after the stop returned)
+  await startChain.catch(() => [] as string[]);
+  // disarm the health tick first: a stopped channels module must stop
+  // stamping (the stale key is the probe's process-dead signal)
+  if (healthTimer) {
+    clearInterval(healthTimer);
+    healthTimer = null;
+  }
   for (const [key, adapter] of activeAdapters) {
     await adapter.stop();
     activeAdapters.delete(key);

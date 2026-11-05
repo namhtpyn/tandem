@@ -549,6 +549,17 @@ onServerPrefetch(() => channelsLive.suspense());
           <span class="text-highlighted font-semibold">{{ pendingRemove?.label }}</span
           >? Messages from its rooms will no longer be relayed.
         </p>
+        <!-- the refusal renders INSIDE the open modal: behind the overlay the
+             card-level message would stay illegible until Cancel -->
+        <UAlert
+          v-if="message && !messageOk"
+          role="alert"
+          icon="i-lucide-circle-alert"
+          color="error"
+          variant="subtle"
+          :title="message"
+          :ui="{ title: 'text-sm' }"
+        />
       </div>
     </template>
     <template #footer>

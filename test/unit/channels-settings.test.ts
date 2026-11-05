@@ -285,6 +285,8 @@ describe('stopChannels disarms the settings-change re-arm', () => {
     const start = vi.fn().mockResolvedValue([]);
     await onChannelsSettingsChanged(start);
     expect(start).not.toHaveBeenCalled(); // the hook never even starts
+    // a DIRECT startChannels() after a stop is a deliberate restart (the
+    // stop/start cycle law) — the invariant guards only the settings hook
     // a boot (re)start lifts the invariant again
     const stop = ensureChannelsRunning({ start, intervalMs: 10_000 });
     await new Promise((r) => setTimeout(r, 5));
