@@ -48,6 +48,12 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
   let running = false;
   let selfUserId: string | null = null;
   let txnSeq = 0;
+  /** watchdog (slice 3): THIS adapter's last successful TRANSPORT round-trip
+   * (a sync poll that returned ok + next_batch — stamped independently of
+   * sink delivery; a sink outage surfaces as backlog, never as a stale
+   * transport stamp). Per-adapter on purpose: two same-kind homeservers are
+   * two independent channels and must never share a health stamp. */
+  let lastSyncOkAt: number | null = null;
 
   async function api(
     path: string,
@@ -125,6 +131,7 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
       );
     }
     await ctx.checkpoint.set(init.json.next_batch);
+    lastSyncOkAt = Date.now(); // first transport success stamps immediately
     return init.json.next_batch;
   }
 
@@ -138,6 +145,7 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
       });
       if (!init.ok || !init.json?.next_batch) return null;
       await ctx.checkpoint.set(init.json.next_batch);
+      lastSyncOkAt = Date.now(); // the reset round-trip is a transport success
       return init.json.next_batch;
     } catch {
       return null;
@@ -217,6 +225,10 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
         continue;
       }
       backoffAttempts = 0;
+      // TRANSPORT STAMP (watchdog slice 3): the poll succeeded — stamp BEFORE
+      // sink delivery so a sink outage reads as backlog, never as a stale
+      // transport stamp (SPEC: Watchdog health).
+      lastSyncOkAt = Date.now();
       const next = await deliverBatch(ctx, res.json as SyncResponse & { next_batch: string });
       if (next === null) {
         if (!running) return;
@@ -257,6 +269,9 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
     },
     isLive() {
       return running;
+    },
+    health() {
+      return { lastSyncOkAt };
     },
     async send(target, text) {
       // ack bus reliability: bounded retries on rate-limit/5xx — the acks are
