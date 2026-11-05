@@ -58,7 +58,7 @@ attachments flow: inputs upload via REST multipart (20MB cap, MIME allowlist png
 redis (REDIS_URL; REQUIRED — the boot env schema rejects boot when unset, every mode; no in-process fallback path exists): bullmq queue 'tandem-dispatch' (retries/backoff) + pub/sub change-bus fanout (the app's only in-memory model cache is a plain Map, no redis cache layer exists)
 
 REDIS RECONNECT-SELF-HEAL LAW (#238): redis unavailability of ANY duration self-heals without a process restart — the long-lived queue connection (worker + enqueue paths) reconnects FOREVER with capped backoff (never a retry count that terminally abandons the client), so workers resume and offline-queued enqueues flush when redis returns; only the BOOT connectivity ping keeps a fail-fast no-retry strategy (a dead redis at boot must reject loudly and let the boot retry loop re-fire, #147). Brick-detection contract: the dispatcher tick best-effort stamps settings key `dispatcher_redis_ok` (epoch ms, written ONLY when a redis ping succeeds, same 30s throttle + best-effort catch as the dispatcher heartbeat) so the prod watchdog can distinguish "app alive but dispatch path dead" (heartbeat fresh + redis stamp stale >120s → probe alerts `dispatch_redis_unreachable`) from "dispatcher dead" (heartbeat stale). An absent key is a pre-image shape and stays silent, same rule as the heartbeat.
-mcp_servers(id, name unique, url http/https, notes, auth_kind none|oauth, oauth_authorize_url, oauth_token_url, oauth_revocation_url, oauth_scopes, oauth_client_id, oauth_client_secret_id -> vault_secrets.id set null, created_at, updated_at) + mcp_server_bindings(id, employee_id -> user.id cascade, server_id -> mcp_servers.id cascade, secret_id -> vault_secrets.id set null, last_probe_ok, last_probe_detail, last_probe_at, unique(employee_id, server_id)) + mcp_oauth_tokens(id, binding_id -> mcp_server_bindings.id cascade UNIQUE, access_enc, refresh_enc, expires_at, scope, config_fingerprint, created_at, updated_at) + mcp_oauth_states(id=state pk, binding_id -> mcp_server_bindings.id cascade, code_verifier, redirect_uri, config_fingerprint, expires_at, created_at) — MCP registry + per-agent bindings: the BINDING is the permission unit (registry admin-written); the binding's optional vault credential rides dispatch as the server's Authorization header; auth_kind=oauth servers authorize per binding via the Tandem-hosted PKCE flow (see "MCP (registry + per-agent bindings) — OAuth per binding") and their binding-level PROBE VERDICT LAW persists last_probe_*
+mcp_servers(id, name unique, transport http|stdio default http, url http/https, command abs path, args json array, credential_env_var, notes, auth_kind none|oauth, oauth_authorize_url, oauth_token_url, oauth_revocation_url, oauth_scopes, oauth_client_id, oauth_client_secret_id -> vault_secrets.id set null, created_at, updated_at) + mcp_server_bindings(id, employee_id -> user.id cascade, server_id -> mcp_servers.id cascade, secret_id -> vault_secrets.id set null, last_probe_ok, last_probe_detail, last_probe_at, unique(employee_id, server_id)) + mcp_oauth_tokens(id, binding_id -> mcp_server_bindings.id cascade UNIQUE, access_enc, refresh_enc, expires_at, scope, config_fingerprint, created_at, updated_at) + mcp_oauth_states(id=state pk, binding_id -> mcp_server_bindings.id cascade, code_verifier, redirect_uri, config_fingerprint, expires_at, created_at) — MCP registry + per-agent bindings: the BINDING is the permission unit (registry admin-written); the binding's optional vault credential rides dispatch as the server's Authorization header; auth_kind=oauth servers authorize per binding via the Tandem-hosted PKCE flow (see "MCP (registry + per-agent bindings) — OAuth per binding") and their binding-level PROBE VERDICT LAW persists last_probe_*
 bun serve: NITRO_BUN_IDLE_TIMEOUT defaults to 255 (code, boot plugin — Bun's max; default 10s would kill idle SSE feeds); env can override
 resilience: tasks.dispatch_after + fail_streak (backoff ladder 1m/5m/15m, quota -> 15m); reaper fails stale running rows past the run-timeout setting + grace; sweep failures log rate-limited and boot's dispatcher start retries on a fixed interval until the queue is reachable (#147); boot's change-fanout pub/sub bridge retries a bounded 5 attempts / 2s and then logs loudly and CONTINUES serving with degraded cross-replica fanout (2026-11-03, #289) — a redis blip at restart never aborts boot, never crash-loops the process, never leaves a replica silently unseeded; ssh keepalive 15s
 ```
@@ -97,8 +97,8 @@ transport contract in one place:
 
 ## MCP (registry + per-agent bindings)
 
-Slice 1 — transport `http`, static credential only (stdio is a later slice, #270).
-Slice 2 adds OAuth per binding (section below):
+Slice 1 — transport `http`, static credential only. Slice 2 adds OAuth per
+binding (section below). Slice 3 adds the `stdio` transport (section below).
 
 - **Registry** = admin-managed catalog of MCP servers (`mcp_servers`): name
   (unique, 409 on clash incl. rename), url (http/https), notes. Reads are
@@ -122,7 +122,8 @@ Slice 2 adds OAuth per binding (section below):
   `headers` is a REQUIRED array — empty when the binding has no credential) —
   decrypted
   server-side at dispatch only, never logged, never written to run output
-  (the run output NAMES bound servers, never credentials). No bindings = the
+  (the run output NAMES bound servers, never credentials). `stdio` entries
+  serialize as the ACP v1 stdio member (below). No bindings = the
   spec-shape empty list. Unbinding revokes on the NEXT dispatch; a live
   session keeps its servers until it ends.
 - **Probe (binding-level)** — mirrors the environments PROBE VERDICT LAW:
@@ -139,6 +140,61 @@ Slice 2 adds OAuth per binding (section below):
   `[mcp] servers: <names asc, comma-space>` into the run output exactly when
   the dispatch plan carries bindings — the same plan the real runner
   serializes onto the wire.
+
+### stdio transport (#270 slice 3)
+
+- **Registry shape**: a registry entry carries `transport` `http | stdio`
+  (default `http` = exactly the slice-1/2 contract). `http` entries keep url
+  (http/https). `stdio` entries carry `command` (ABSOLUTE path to the
+  executable — the ACP v1 wire contract) and `args` (a JSON array of
+  strings, `[]` allowed; entries are non-empty single-line strings without
+  padding whitespace — the registry form edits them one per line), plus an
+  optional `credentialEnvVar` (env var name
+  matching `[A-Za-z_][A-Za-z0-9_]*`). Validation: create/update REJECTS a `stdio`
+  entry without `command`, a `http` entry without `url`, and ANY oauth
+  config on a `stdio` entry — OAuth authorization is an http contract
+  (endpoints + Bearer headers have no stdio meaning), so a transport switch
+  to `stdio` on an `authKind=oauth` entry is refused 400, never silently
+  stripped (the refusal keys off the entry's PERSISTED authKind, not the
+  caller's echo). A transport switch nulls the other transport's columns —
+  a `stdio` entry carries no url; an `http` entry carries no
+  command/args/credentialEnvVar.
+- **Verdict invalidation (PROBE VERDICT LAW parity)**: a transport switch or
+  a `command`/`args`/`credentialEnvVar` change clears every verdict of that
+  server's bindings — same law as a url change (a stale OK on a changed
+  target would lie). A no-op save keeps verdicts intact.
+- **Binding credential on stdio**: the bound secret's plaintext rides
+  dispatch AND probe as the env var NAMED by `credentialEnvVar` (when set
+  and the binding has a credential; `env` carries only that var — the child
+  inherits nothing else). No `credentialEnvVar` or no credential → empty
+  `env`. The write-only vault law is unchanged: plaintext decrypted
+  server-side at dispatch/probe only, never returned by any API surface,
+  never logged, never in run output — and a probe verdict is REDACTED
+  before persistence (the probed child SAW the credential, so any
+  occurrence of the plaintext in its stderr, JSON-RPC error or serverInfo
+  strings is masked `[redacted]` before `last_probe_detail` lands).
+- **Dispatch injection**: `stdio` entries serialize as the ACP v1 stdio
+  member `{ name, command, args, env }` — one deterministic
+  plan with the `http` entries, sorted by server name. `args` is the parsed
+  JSON array. (The stdio member carries NO discriminator — the `type` field
+  exists only on the http/sse members.)
+- **Probe (stdio)**: spawns `command args` (+ the credential env var),
+  writes a JSON-RPC `initialize` handshake to the child's stdin and expects
+  a JSON-RPC response on stdout within the 10s cap, then kills the child —
+  a probe never leaves a spawned process running. BOTH outcomes persist on
+  the binding row (PROBE VERDICT LAW); failure detail carries the first
+  error line — never a bare "spawn failed".
+- **Surfaces**: the registry page renders the transport switch + the
+  command/args/credentialEnvVar fields for `stdio` (url for `http`); the
+  agent-editor MCP section and the per-server binding manager show the
+  entry's transport.
+- **Per-binding tool allowlists — deferred, agent-side gap**: the ACP v1
+  wire has no per-server tool-filter field and the agent adapter's
+  `register_mcp_servers` accepts configs straight through (no allowlist
+  hook), so a binding-level allowlist would be dead UI today. The lane
+  tracks it for a later slice once the agent side grows per-server tool
+  filtering; building the Tandem half first would ship a control with no
+  effect.
 
 ### OAuth per binding (#270 slice 2)
 
@@ -206,18 +262,18 @@ Slice 2 adds OAuth per binding (section below):
 
 ### MCP procedures
 
-| procedure                  | auth    | input                                     | result                                                                                                                                                              |
-| -------------------------- | ------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mcp.registryList`         | session | —                                         | `{data:[{id,name,url,notes,authKind,oauth:{authorizeUrl,tokenUrl,revocationUrl,scopes,clientId,clientSecretId,hasClientSecret},createdAt,updatedAt,bindingCount}]}` |
-| `mcp.registryCreate`       | admin   | `{name,url,notes,authKind?,oauth*}`       | created row                                                                                                                                                         |
-| `mcp.registryUpdate`       | admin   | `{id,name?,url?,notes?,authKind?,oauth*}` | updated row (url change clears that server's binding verdicts; a CHANGED OAuth config additionally wipes its oauth tokens + pending connect state)                  |
-| `mcp.registryRemove`       | admin   | `{id}`                                    | `{ok}` (400 while bindings exist)                                                                                                                                   |
-| `mcp.bindingsList`         | admin   | `{employeeId}`                            | `{data:[{id,serverId,serverName,url,authKind,secretId,secretName,lastFour,oauth:{connected,expiresAt},lastProbeOk,lastProbeDetail,lastProbeAt}]}`                   |
-| `mcp.bindingsListByServer` | admin   | `{serverId}`                              | `{data:[{id,employeeId,employeeName,secretId,secretName,lastFour,authKind,oauth:{connected,expiresAt},lastProbeOk,lastProbeDetail,lastProbeAt}]}`                   |
-| `mcp.bindingsSet`          | admin   | `{employeeId,serverId,secretId?}`         | binding row (upsert; verdict cleared on credential change)                                                                                                          |
-| `mcp.bindingsRemove`       | admin   | `{employeeId,serverId}`                   | `{ok}`                                                                                                                                                              |
-| `mcp.probe`                | admin   | `{employeeId,serverId}`                   | `{ok,detail,durationMs,lastProbeAt}`                                                                                                                                |
-| `mcp.oauthConnect`         | admin   | `{employeeId,serverId}`                   | `{connectUrl,serverName}` (mint: single-use state row + provider authorizeUrl; no GET mint route — see the authorize-flow bullet below)                             |
+| procedure                  | auth    | input                                                                                 | result                                                                                                                                                                                                      |
+| -------------------------- | ------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mcp.registryList`         | session | —                                                                                     | `{data:[{id,name,transport,url,command,args,credentialEnvVar,notes,authKind,oauth:{authorizeUrl,tokenUrl,revocationUrl,scopes,clientId,clientSecretId,hasClientSecret},createdAt,updatedAt,bindingCount}]}` |
+| `mcp.registryCreate`       | admin   | `{name,transport?,url?,command?,args?,credentialEnvVar?,notes,authKind?,oauth*}`      | created row (transport-conditional validation: stdio needs command; http needs url; oauth ∩ stdio refused)                                                                                                  |
+| `mcp.registryUpdate`       | admin   | `{id,name?,transport?,url?,command?,args?,credentialEnvVar?,notes?,authKind?,oauth*}` | updated row (url OR transport/command/args/credentialEnvVar change clears that server's binding verdicts; a CHANGED OAuth config additionally wipes its oauth tokens + pending connect state)               |
+| `mcp.registryRemove`       | admin   | `{id}`                                                                                | `{ok}` (400 while bindings exist)                                                                                                                                                                           |
+| `mcp.bindingsList`         | admin   | `{employeeId}`                                                                        | `{data:[{id,serverId,serverName,transport,url,authKind,secretId,secretName,lastFour,oauth:{connected,expiresAt},lastProbeOk,lastProbeDetail,lastProbeAt}]}`                                                 |
+| `mcp.bindingsListByServer` | admin   | `{serverId}`                                                                          | `{data:[{id,serverId,serverName,employeeId,employeeName,transport,url,secretId,secretName,lastFour,authKind,oauth:{connected,expiresAt},lastProbeOk,lastProbeDetail,lastProbeAt}]}`                         |
+| `mcp.bindingsSet`          | admin   | `{employeeId,serverId,secretId?}`                                                     | binding row (upsert; verdict cleared on credential change)                                                                                                                                                  |
+| `mcp.bindingsRemove`       | admin   | `{employeeId,serverId}`                                                               | `{ok}`                                                                                                                                                                                                      |
+| `mcp.probe`                | admin   | `{employeeId,serverId}`                                                               | `{ok,detail,durationMs,lastProbeAt}`                                                                                                                                                                        |
+| `mcp.oauthConnect`         | admin   | `{employeeId,serverId}`                                                               | `{connectUrl,serverName}` (mint: single-use state row + provider authorizeUrl; no GET mint route — see the authorize-flow bullet below)                                                                     |
 
 OAuth connect rides the admin oRPC POST `mcp.oauthConnect` (NOT a REST
 route — #278: a state-changing GET rode SameSite=Lax admin sessions on

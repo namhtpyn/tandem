@@ -20,6 +20,8 @@ import {
 } from './mcp.service';
 
 const nameField = z.string().trim().min(1).max(200);
+// url/command are transport-conditional (http needs url; stdio needs an
+// absolute command) — the required-field validation lives in the service
 const urlField = z
   .string()
   .trim()
@@ -31,8 +33,25 @@ const urlField = z
       return false;
     }
   }, 'url must be an http/https URL');
+const commandField = z.string().trim().min(1);
+const argsField = z.array(z.string());
+const credentialEnvVarField = z
+  .string()
+  .trim()
+  .refine((v) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(v), 'credentialEnvVar must be a valid env var name');
 const notesField = z.string().trim().max(2000).default('');
 const idField = z.string().min(1);
+const transportField = z.enum(['http', 'stdio']);
+
+// slice 3 stdio transport fields (transport-conditional validation of the
+// required shape lives in the service: normalizeTransportFields)
+const transportInputShape = {
+  transport: transportField.optional(),
+  url: urlField.nullish(),
+  command: commandField.nullish(),
+  args: argsField.nullish(),
+  credentialEnvVar: credentialEnvVarField.nullish(),
+};
 
 // slice 2 OAuth registry fields — validation of the REQUIRED-for-oauth shape
 // lives in the service (normalizeOauthFields: authorize/token urls + clientId)
@@ -50,7 +69,7 @@ export const mcpRouter = os.router({
   registryList: protectedProcedure.handler(() => listRegistry()),
 
   registryCreate: adminProcedure
-    .input(z.strictObject({ name: nameField, url: urlField, notes: notesField, ...oauthInputShape }))
+    .input(z.strictObject({ name: nameField, notes: notesField, ...transportInputShape, ...oauthInputShape }))
     .handler(({ input }) => registryCreate(input)),
 
   registryUpdate: adminProcedure
@@ -58,8 +77,8 @@ export const mcpRouter = os.router({
       z.strictObject({
         id: idField,
         name: nameField.optional(),
-        url: urlField.optional(),
         notes: notesField.optional(),
+        ...transportInputShape,
         ...oauthInputShape,
       }),
     )
