@@ -57,6 +57,15 @@ export const channelConfigSchema = z.object({
 
 export type ChannelConfig = z.infer<typeof channelConfigSchema>;
 
+/** the ADMIN write schema: same shape, but unknown keys refused at EVERY
+ * nesting level (API law: strict admin input; the runtime parser stays
+ * tolerant-strip for hand-edited values). Derived from the runtime schema's
+ * own shape so the two cannot drift. */
+export const adminChannelConfigSchema = z.strictObject({
+  ...channelConfigSchema.shape,
+  bindings: z.array(z.strictObject(channelConfigSchema.shape.bindings.unwrap().element.shape)),
+});
+
 export type ChannelEntryDiagnostic = {
   /** the raw stored entry (unknown JSON — the UI shows what was stored) */
   raw: unknown;
@@ -1048,6 +1057,7 @@ export function ensureChannelsRunning(opts: { start: () => Promise<string[]>; in
   const retryMs = opts.intervalMs ?? 30_000;
   let timer: ReturnType<typeof setInterval> | null = null;
   let done = false;
+  channelsStopped = false; // a boot (re)start lifts the stopped invariant
   const attempt = () => {
     if (done) return;
     void opts
@@ -1079,6 +1089,11 @@ export function ensureChannelsRunning(opts: { start: () => Promise<string[]>; in
       if (!timer) timer = setInterval(attempt, retryMs);
       attempt();
     },
+    stopTimer: () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+      done = true;
+    },
   };
   return () => {
     if (timer) clearInterval(timer);
@@ -1086,15 +1101,21 @@ export function ensureChannelsRunning(opts: { start: () => Promise<string[]>; in
   };
 }
 
-let retryControls: { rearm: () => void } | null = null;
+let retryControls: { rearm: () => void; stopTimer: () => void } | null = null;
+/** the stopped invariant: stopChannels disarms the re-arm AND the retry loop —
+ * a stopped channels module stays stopped until the next boot */
+let channelsStopped = false;
 
 /** settings-update hook (settings router pattern, mirror of
  * onDispatcherSettingsChanged): start runs against the COMMITTED value —
- * added/enabled adapters start, removed/disabled ones stop. A start that
- * leaves failures re-arms the boot retry loop (PARTIAL-START law). Never
- * throws: a failed re-arm must not fail the settings write (the committed
- * value is durable; the retry loop converges). */
+ * added/enabled adapters start, removed/disabled ones stop, a config edit
+ * under an unchanged adapter key restarts that adapter. A start that leaves
+ * failures re-arms the boot retry loop (PARTIAL-START law). Never throws: a
+ * failed re-arm must not fail the settings write (the committed value is
+ * durable; the retry loop converges). A no-op after an explicit stopChannels
+ * — resurrection belongs to the boot hook alone. */
 export async function onChannelsSettingsChanged(start: () => Promise<string[]> = startChannels): Promise<void> {
+  if (channelsStopped) return;
   try {
     const failed = await start();
     if (failed.length > 0) retryControls?.rearm();
@@ -1111,9 +1132,12 @@ export async function stopChannels(): Promise<void> {
     clearInterval(healthTimer);
     healthTimer = null;
   }
-  // disarm the settings-change re-arm: after an explicit stop a later
-  // onChannelsSettingsChanged must not resurrect adapters/workers/timers
-  // (a stopped channels module stays stopped until the next boot)
+  // enforce the stopped invariant: disarm the settings-change re-arm AND the
+  // boot retry loop — after an explicit stopChannels nothing resurrects
+  // adapters/workers/timers (a later onChannelsSettingsChanged is a no-op);
+  // resurrection belongs to the boot hook alone
+  channelsStopped = true;
+  retryControls?.stopTimer();
   retryControls = null;
   for (const [key, adapter] of activeAdapters) {
     await adapter.stop();

@@ -17,9 +17,11 @@ vi.mock('../../server/domains/settings/settings.service', async (importOriginal)
   return { ...actual, getSetting: vi.fn(), setSetting: vi.fn(), deleteSetting: vi.fn() };
 });
 
-// existence checks ride drizzle select chains — fake the builder shape per
-// DB-MOCK law (chained calls need a thenable OBJECT carrying .from + .where);
-// the secret pool is {sec-1}, the user pool is {u-1, u-2}
+// existence checks ride drizzle select chains — the mock HONORS the caller's
+// where predicate (DB-MOCK PREDICATE LAW): the drizzle SQL condition exposes
+// its chunks ([Column, StringChunk, [Param,...]] for inArray), so the fake
+// where() filters the pool by the ACTUAL bound column + values — a test that
+// stops matching the router's real predicate goes red
 vi.mock('../../server/db/index', async () => {
   const { vaultSecrets, user } = await import('../../server/db/schema');
   const rowsFor = (t: unknown): Array<Record<string, unknown>> => {
@@ -28,12 +30,29 @@ vi.mock('../../server/db/index', async () => {
       return [{ id: '00000000-0000-4000-8000-000000000001' }, { id: '00000000-0000-4000-8000-000000000002' }];
     return [];
   };
+  function honorPredicate(table: unknown, cond: unknown): Array<Record<string, unknown>> {
+    const pool = rowsFor(table);
+    if (cond == null) return pool;
+    let column: string | null = null;
+    const values: string[] = [];
+    for (const chunk of (cond as { queryChunks?: unknown[] }).queryChunks ?? []) {
+      const c = chunk as { name?: unknown; columnType?: unknown };
+      if (typeof c.columnType === 'string' && typeof c.name === 'string') column = c.name;
+      if (Array.isArray(chunk)) {
+        for (const p of chunk as Array<{ value?: unknown }>) {
+          if (p && typeof p === 'object' && 'value' in p) values.push(String(p.value));
+        }
+      }
+    }
+    if (column !== 'id') return []; // a predicate on any other column matches nothing we seed
+    return pool.filter((r) => values.includes(String(r.id)));
+  }
   return {
     db: {
       query: {},
       select: () => ({
         from: (table: unknown) => ({
-          where: () => Promise.resolve(rowsFor(table)),
+          where: (cond: unknown) => Promise.resolve(honorPredicate(table, cond)),
         }),
       }),
     },
@@ -43,6 +62,15 @@ vi.mock('../../server/db/index', async () => {
 vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../server/domains/kernel/kernel')>();
   return { ...actual, publishChange: vi.fn() };
+});
+
+// onChannelsSettingsChanged is wrapped in a passthrough vi.fn: the re-arm tests
+// below still exercise the REAL hook, and the update-verb tests can pin that
+// the write path actually triggers the runtime re-arm (r2 review: deleting the
+// `void onChannelsSettingsChanged()` line must not ship green)
+vi.mock('../../server/domains/channels/channels.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../server/domains/channels/channels.service')>();
+  return { ...actual, onChannelsSettingsChanged: vi.fn(actual.onChannelsSettingsChanged) };
 });
 
 import { createProcedureClient } from '@orpc/server';
@@ -56,9 +84,12 @@ import {
   inspectChannelConfigs,
   onChannelsSettingsChanged,
   parseChannelConfigs,
+  stopChannels,
 } from '../../server/domains/channels/channels.service';
 import { publishChange } from '../../server/domains/kernel/kernel';
 import { getSetting, setSetting } from '../../server/domains/settings/settings.service';
+
+const rearmSpy = vi.mocked(onChannelsSettingsChanged);
 
 const VALID = {
   kind: 'matrix',
@@ -158,6 +189,7 @@ describe('channels.update (SPEC: strict refuse, nothing written on refusal)', ()
       JSON.stringify([{ ...VALID, homeserverUrl: 'https://matrix.example.org' }]),
     );
     expect(mockedPublish).toHaveBeenCalledWith(CHANGE_RESOURCE.SETTINGS, CHANGE_ACTION.UPDATE);
+    expect(rearmSpy).toHaveBeenCalledTimes(1); // the write path re-arms the runtime (SPEC)
   });
 
   it('unknown kind -> BAD_REQUEST, nothing written', async () => {
@@ -171,6 +203,33 @@ describe('channels.update (SPEC: strict refuse, nothing written on refusal)', ()
     await expect(
       ADMIN_UPDATE({ channels: [VALID, { ...VALID, homeserverUrl: 'https://matrix.example.org/' }] }),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockedSet).not.toHaveBeenCalled();
+  });
+
+  it('a same-key pair regardless of enabled flag -> BAD_REQUEST (admin-path hygiene)', async () => {
+    // the runtime parser only dedupes ENABLED entries — the ADMIN path refuses
+    // an enabled+disabled pair for one bot: ambiguous config the UI cannot
+    // safely operate on (SPEC: ADMIN-PATH-HYGIENE)
+    await expect(ADMIN_UPDATE({ channels: [VALID, { ...VALID, enabled: false }] })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(mockedSet).not.toHaveBeenCalled();
+    expect(rearmSpy).not.toHaveBeenCalled(); // a refused write never re-arms
+  });
+
+  it('unknown keys INSIDE a binding are refused, not stripped (nested strict input)', async () => {
+    await expect(
+      ADMIN_UPDATE({
+        channels: [
+          {
+            ...VALID,
+            bindings: [
+              { platformUserId: '@u:example.org', userId: '00000000-0000-4000-8000-000000000001', badge: 'x' },
+            ],
+          },
+        ],
+      }),
+    ).rejects.toThrow();
     expect(mockedSet).not.toHaveBeenCalled();
   });
 
@@ -215,6 +274,23 @@ describe('channels.update (SPEC: strict refuse, nothing written on refusal)', ()
     await expect(callFor(channelsRouter.update, ROLE.EMPLOYEE)({ channels: [VALID] })).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
+    expect(rearmSpy).not.toHaveBeenCalled(); // a gated-out write never re-arms
+  });
+});
+
+// ---------- (e) stopped invariant: a stopped module stays stopped ----------
+describe('stopChannels disarms the settings-change re-arm', () => {
+  it('after an explicit stop, onChannelsSettingsChanged is a no-op (no resurrection)', async () => {
+    await stopChannels();
+    const start = vi.fn().mockResolvedValue([]);
+    await onChannelsSettingsChanged(start);
+    expect(start).not.toHaveBeenCalled(); // the hook never even starts
+    // a boot (re)start lifts the invariant again
+    const stop = ensureChannelsRunning({ start, intervalMs: 10_000 });
+    await new Promise((r) => setTimeout(r, 5));
+    await onChannelsSettingsChanged(start);
+    expect(start.mock.calls.length).toBeGreaterThanOrEqual(2); // boot attempt + hook start
+    stop(); // ensureChannelsRunning already lifted the stopped invariant
   });
 });
 

@@ -16,8 +16,8 @@ import { registeredChannelKinds } from './adapter';
 import {
   CHANNELS_HEALTH_KEY,
   CHANNELS_KEY,
+  adminChannelConfigSchema,
   adapterKey,
-  channelConfigSchema,
   inspectChannelConfigs,
   onChannelsSettingsChanged,
 } from './channels.service';
@@ -57,7 +57,7 @@ export const channelsRouter = os.router({
    * parser's tolerant skip is the safety net for hand-edited values, never
    * the UI path's behavior). Same rules, same inspection code path. */
   update: adminProcedure
-    .input(z.strictObject({ channels: z.array(channelConfigSchema.strict()) }))
+    .input(z.strictObject({ channels: z.array(adminChannelConfigSchema) }))
     .handler(async ({ input }) => {
       // ---- validate FIRST: no row is written until every check has passed ----
       // strict refuse rides the SAME inspection the runtime parser uses
@@ -69,6 +69,18 @@ export const channelsRouter = os.router({
         });
       }
       const cfgs = insp.entries.flatMap((e) => (e.cfg ? [e.cfg] : []));
+      // ADMIN-PATH HYGIENE: duplicates of the same canonical adapter key are
+      // refused regardless of the enabled flag — an enabled+disabled pair for
+      // one bot is ambiguous config the UI cannot safely operate on (the
+      // runtime's enabled-only dedupe stays untouched for hand-edited values)
+      const seenKeys = new Set<string>();
+      for (const c of cfgs) {
+        const key = adapterKey(c);
+        if (seenKeys.has(key)) {
+          throw new ORPCError('BAD_REQUEST', { message: `duplicate adapter ${key} (one bot per homeserver)` });
+        }
+        seenKeys.add(key);
+      }
 
       // existence checks beyond parser parity: the token secret must exist in
       // the vault, binding user ids and the default assignee must be existing

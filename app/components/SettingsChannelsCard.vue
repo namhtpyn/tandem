@@ -338,7 +338,7 @@ onServerPrefetch(() => channelsLive.suspense());
 
         <!-- mobile: stacked cards -->
         <div v-if="entries.length" class="space-y-3 md:hidden">
-          <UCard v-for="(e, i) in entries" :key="e.key ?? i" :ui="{ root: 'shadow-sm' }">
+          <UCard v-for="(e, i) in entries" :key="`${e.key ?? 'raw'}-${i}`" :ui="{ root: 'shadow-sm' }">
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0">
                 <p class="text-highlighted truncate text-sm font-medium">
@@ -346,6 +346,9 @@ onServerPrefetch(() => channelsLive.suspense());
                   <UBadge v-if="e.status === 'dropped'" color="error" variant="subtle" size="sm">invalid</UBadge>
                 </p>
                 <p class="text-dimmed truncate font-mono text-xs">{{ rowHomeserver(e) }}</p>
+                <p v-if="e.status === 'dropped'" class="text-error mt-0.5 line-clamp-2 text-xs" :title="e.reason">
+                  {{ e.reason }}
+                </p>
               </div>
               <USwitch
                 v-if="e.entry && e.status === 'ok'"
@@ -354,6 +357,19 @@ onServerPrefetch(() => channelsLive.suspense());
                 :aria-label="`Enable ${e.entry.kind}`"
                 @update:model-value="toggleEnabled(e)"
               />
+            </div>
+            <div class="mt-2 flex flex-wrap items-center gap-2">
+              <UBadge class="text-muted" variant="subtle" size="sm"
+                >{{ e.entry?.bindings.length ?? 0 }} binding(s)</UBadge
+              >
+              <UBadge
+                v-if="e.entry && e.status === 'ok'"
+                :color="healthFor(e)?.connected ? 'success' : 'neutral'"
+                variant="subtle"
+                size="sm"
+                class="max-w-52 truncate"
+                >{{ healthLabel(e) }}</UBadge
+              >
             </div>
             <div class="row-actions mt-3 flex justify-end gap-1 transition-opacity">
               <UButton
