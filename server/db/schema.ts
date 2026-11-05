@@ -195,14 +195,24 @@ export const aiEmployees = pgTable('ai_employees', {
 });
 
 // MCP registry: admin-managed catalog of MCP servers agents bind to
-// (slice 1: transport http; slice 2 adds OAuth per binding — SPEC
-// "MCP (registry + per-agent bindings) — OAuth per binding (#270 slice 2)")
+// (slice 1: transport http; slice 2 adds OAuth per binding; slice 3 adds the
+// stdio transport — SPEC "MCP (registry + per-agent bindings) — stdio
+// transport (#270 slice 3)")
 export const mcpServers = pgTable('mcp_servers', {
   id: text('id')
     .primaryKey()
     .$default(() => uuidv7()),
   name: text('name').notNull().unique(),
-  url: text('url').notNull(),
+  // 'http' = slice-1/2 contract (url + Authorization header credential);
+  // 'stdio' = slice-3 contract (command + args, credential rides as an env var)
+  transport: text('transport').notNull().default('http'),
+  url: text('url'),
+  // stdio only — ABSOLUTE path to the executable (ACP v1 wire contract)
+  command: text('command'),
+  // stdio only — JSON array of strings, serialized
+  args: text('args'),
+  // stdio only — env var name the binding credential rides at dispatch/probe
+  credentialEnvVar: text('credential_env_var'),
   notes: text('notes').notNull().default(''),
   // authKind 'none' = slice-1 contract (static credential verbatim);
   // 'oauth' = per-binding authorization via the Tandem-hosted PKCE flow

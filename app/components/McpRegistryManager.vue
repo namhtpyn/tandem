@@ -31,7 +31,11 @@ const isEdit = ref(false);
 const editingId = ref<string | null>(null);
 const form = ref({
   name: '',
+  transport: 'http' as 'http' | 'stdio',
   url: '',
+  command: '',
+  args: '',
+  credentialEnvVar: '',
   notes: '',
   authKind: 'none' as 'none' | 'oauth',
   oauthAuthorizeUrl: '',
@@ -41,17 +45,19 @@ const form = ref({
   oauthClientId: '',
   oauthClientSecretId: null as string | null,
 });
-// loose frontend schema (repo law): presence + URL shape only — the server
-// re-validates strictly (unique name, http/https, oauth required fields).
-// UForm blocks submit and points at the offending field.
+// loose frontend schema (repo law): presence + shape only — the server
+// re-validates strictly (unique name, transport-conditional required fields,
+// oauth ∩ stdio refusal). UForm blocks submit and points at the offending field.
 const registrySchema = z
   .object({
     name: z.string().min(1, 'Name is required'),
-    url: z
-      .string()
-      .min(1, 'URL is required')
-      .url('Enter a valid URL')
-      .refine((v) => /^https?:\/\//i.test(v), { message: 'Only http/https URLs are supported' }),
+    transport: z.enum(['http', 'stdio']),
+    url: z.string(),
+    command: z.string(),
+    args: z.string(),
+    credentialEnvVar: z.string().refine((v) => v === '' || /^[A-Za-z_][A-Za-z0-9_]*$/.test(v), {
+      message: 'Must be a valid env var name',
+    }),
     notes: z.string(),
     authKind: z.enum(['none', 'oauth']),
     // '' allowed — these only carry content for oauth servers (superRefine
@@ -70,6 +76,19 @@ const registrySchema = z
     oauthClientSecretId: z.string().nullable(),
   })
   .superRefine((v, ctx) => {
+    if (v.transport === 'stdio') {
+      if (!v.command.trim()) ctx.addIssue({ code: 'custom', path: ['command'], message: 'Required for stdio servers' });
+      else if (!v.command.trim().startsWith('/'))
+        ctx.addIssue({
+          code: 'custom',
+          path: ['command'],
+          message: 'Must be an absolute path (ACP stdio contract)',
+        });
+      return;
+    }
+    if (!v.url.trim()) ctx.addIssue({ code: 'custom', path: ['url'], message: 'URL is required for http servers' });
+    else if (!/^https?:\/\//i.test(v.url.trim()))
+      ctx.addIssue({ code: 'custom', path: ['url'], message: 'Only http/https URLs are supported' });
     if (v.authKind !== 'oauth') return;
     for (const field of ['oauthAuthorizeUrl', 'oauthTokenUrl', 'oauthClientId'] as const) {
       if (!v[field]) ctx.addIssue({ code: 'custom', path: [field], message: 'Required for OAuth servers' });
@@ -89,10 +108,45 @@ const createMutation = useMutation({ ...$orpc.mcp.registryCreate.mutationOptions
 const updateMutation = useMutation({ ...$orpc.mcp.registryUpdate.mutationOptions() });
 const removeMutation = useMutation({ ...$orpc.mcp.registryRemove.mutationOptions() });
 
+// switching transport to stdio resets the auth state — the select is locked to
+// the static credential for stdio (oauth ∩ stdio is refused server-side). The
+// PRE-SWITCH auth block is snapshotted and RESTORED when the admin returns to
+// http — a transport round-trip + save must never silently strip a live OAuth
+// config (the save would echo authKind 'none' and wipe tokens server-side).
+const preStdioAuth = ref<{ authKind: 'none' | 'oauth'; oauth: ReturnType<typeof emptyOauth> } | null>(null);
+watch(
+  () => form.value.transport,
+  (t, prev) => {
+    if (t === 'stdio' && prev !== 'stdio') {
+      preStdioAuth.value = {
+        authKind: form.value.authKind,
+        oauth: {
+          oauthAuthorizeUrl: form.value.oauthAuthorizeUrl,
+          oauthTokenUrl: form.value.oauthTokenUrl,
+          oauthRevocationUrl: form.value.oauthRevocationUrl,
+          oauthScopes: form.value.oauthScopes,
+          oauthClientId: form.value.oauthClientId,
+          oauthClientSecretId: form.value.oauthClientSecretId,
+        },
+      };
+      form.value.authKind = 'none';
+      Object.assign(form.value, emptyOauth());
+    } else if (t === 'http' && prev === 'stdio' && preStdioAuth.value) {
+      form.value.authKind = preStdioAuth.value.authKind;
+      Object.assign(form.value, preStdioAuth.value.oauth);
+      preStdioAuth.value = null;
+    }
+  },
+);
+
 type RegistryRow = {
   id: string;
   name: string;
-  url: string;
+  transport: string;
+  url: string | null;
+  command: string | null;
+  args: string[];
+  credentialEnvVar: string | null;
   notes: string | null;
   authKind: string;
   oauth: {
@@ -124,7 +178,11 @@ function openEditor(row?: RegistryRow) {
     editingId.value = row.id;
     form.value = {
       name: row.name,
-      url: row.url,
+      transport: row.transport === 'stdio' ? 'stdio' : 'http',
+      url: row.url ?? '',
+      command: row.command ?? '',
+      args: (row.args ?? []).join('\n'),
+      credentialEnvVar: row.credentialEnvVar ?? '',
       notes: row.notes ?? '',
       authKind: row.authKind === 'oauth' ? 'oauth' : 'none',
       ...emptyOauth(),
@@ -138,7 +196,17 @@ function openEditor(row?: RegistryRow) {
   } else {
     isEdit.value = false;
     editingId.value = null;
-    form.value = { name: '', url: '', notes: '', authKind: 'none', ...emptyOauth() };
+    form.value = {
+      name: '',
+      transport: 'http',
+      url: '',
+      command: '',
+      args: '',
+      credentialEnvVar: '',
+      notes: '',
+      authKind: 'none',
+      ...emptyOauth(),
+    };
   }
   editorOpen.value = true;
 }
@@ -148,10 +216,11 @@ async function save() {
   if (busy.value) return;
   saveError.value = null;
   busy.value = true;
-  // OAuth block rides the write only for oauth servers — 'none' clears it
-  // server-side (SPEC: editing the OAuth config wipes that server's tokens)
+  const isStdio = form.value.transport === 'stdio';
+  // stdio entries carry NO oauth block (server refuses oauth ∩ stdio); the
+  // auth select is locked to the static-credential option for them
   const oauthBlock =
-    form.value.authKind === 'oauth'
+    !isStdio && form.value.authKind === 'oauth'
       ? {
           authKind: 'oauth' as const,
           oauthAuthorizeUrl: form.value.oauthAuthorizeUrl.trim() || null,
@@ -162,20 +231,38 @@ async function save() {
           oauthClientSecretId: form.value.oauthClientSecretId,
         }
       : { authKind: 'none' as const };
+  // transport-conditional fields: url for http; command + whitespace-separated
+  // args + optional credential env var for stdio (transport rides EVERY write)
+  const transportBlock = isStdio
+    ? {
+        transport: 'stdio' as const,
+        command: form.value.command.trim(),
+        // one argument per line — args ride the wire as a JSON array of strings,
+        // so whitespace-splitting would corrupt entries containing spaces
+        args: form.value.args
+          .split('\n')
+          .map((a) => a.trim())
+          .filter(Boolean),
+        credentialEnvVar: form.value.credentialEnvVar.trim() || null,
+      }
+    : {
+        transport: 'http' as const,
+        url: form.value.url.trim(),
+      };
   try {
     if (isEdit.value && editingId.value) {
       await updateMutation.mutateAsync({
         id: editingId.value,
         name: form.value.name.trim(),
-        url: form.value.url.trim(),
         notes: form.value.notes.trim(),
+        ...transportBlock,
         ...oauthBlock,
       });
     } else {
       await createMutation.mutateAsync({
         name: form.value.name.trim(),
-        url: form.value.url.trim(),
         notes: form.value.notes.trim(),
+        ...transportBlock,
         ...oauthBlock,
       });
     }
@@ -224,6 +311,7 @@ type ServerBindingRow = {
   secretId: string | null;
   secretName: string | null;
   lastFour: string | null;
+  transport: string;
   authKind: string;
   oauth: { connected: boolean; expiresAt: string | null } | null;
 };
@@ -395,7 +483,7 @@ function askUnbind(b: ServerBindingRow) {
       @retry="liveQuery.refetch()"
       :columns="[
         { accessorKey: 'name', header: 'Name' },
-        { accessorKey: 'url', header: 'URL' },
+        { accessorKey: 'url', header: 'Target' },
         { accessorKey: 'notes', header: 'Notes' },
         { accessorKey: 'bindingCount', header: 'Bindings' },
         { accessorKey: 'createdAt', header: 'Created' },
@@ -425,8 +513,14 @@ function askUnbind(b: ServerBindingRow) {
         </span>
       </template>
       <template #url-cell="{ row }">
-        <span class="text-dimmed block max-w-64 truncate font-mono text-xs" :title="row.original.url">
-          {{ row.original.url }}
+        <span
+          class="text-dimmed block max-w-64 truncate font-mono text-xs"
+          :title="row.original.transport === 'stdio' ? row.original.command : row.original.url"
+        >
+          <UBadge v-if="row.original.transport === 'stdio'" color="neutral" variant="subtle" size="sm" class="mr-1">
+            stdio
+          </UBadge>
+          {{ row.original.transport === 'stdio' ? row.original.command : row.original.url }}
         </span>
       </template>
       <template #notes-cell="{ row }">
@@ -584,7 +678,23 @@ function askUnbind(b: ServerBindingRow) {
             </template>
             <UInput v-model="form.name" placeholder="Server name" class="w-full" :disabled="busy" />
           </UFormField>
-          <UFormField name="url">
+          <UFormField name="transport">
+            <template #label> Transport </template>
+            <template #hint>
+              <FormHint text="http = URL endpoint; stdio = command spawned per session on the agent host" />
+            </template>
+            <USelect
+              v-model="form.transport"
+              data-testid="mcp-transport"
+              :items="[
+                { label: 'HTTP (url endpoint)', value: 'http' },
+                { label: 'stdio (command)', value: 'stdio' },
+              ]"
+              class="w-full"
+              :disabled="busy"
+            />
+          </UFormField>
+          <UFormField v-if="form.transport === 'http'" name="url">
             <template #label> URL </template>
             <template #hint>
               <FormHint text="http/https endpoint of the MCP server" />
@@ -598,6 +708,49 @@ function askUnbind(b: ServerBindingRow) {
               spellcheck="false"
             />
           </UFormField>
+          <template v-if="form.transport === 'stdio'">
+            <UFormField name="command">
+              <template #label> Command </template>
+              <template #hint>
+                <FormHint text="Absolute path to the executable — spawned per session on the agent host" />
+              </template>
+              <UInput
+                v-model="form.command"
+                icon="i-lucide-terminal"
+                placeholder="/usr/local/bin/mcp-server"
+                class="w-full"
+                :disabled="busy"
+                spellcheck="false"
+              />
+            </UFormField>
+            <UFormField name="args">
+              <template #label> Arguments </template>
+              <template #hint>
+                <FormHint text="One argument per line, optional" />
+              </template>
+              <UTextarea
+                v-model="form.args"
+                placeholder="--port&#10;8080"
+                :rows="2"
+                class="w-full"
+                :disabled="busy"
+                spellcheck="false"
+              />
+            </UFormField>
+            <UFormField name="credentialEnvVar">
+              <template #label> Credential env var </template>
+              <template #hint>
+                <FormHint text="Optional — the binding's vault secret rides dispatch/probe as this env var" />
+              </template>
+              <UInput
+                v-model="form.credentialEnvVar"
+                placeholder="MCP_API_KEY (optional)"
+                class="w-full"
+                :disabled="busy"
+                spellcheck="false"
+              />
+            </UFormField>
+          </template>
           <UFormField name="notes">
             <template #label> Notes </template>
             <template #hint>
@@ -608,15 +761,25 @@ function askUnbind(b: ServerBindingRow) {
           <UFormField name="authKind">
             <template #label> Authentication </template>
             <template #hint>
-              <FormHint text="Static credential rides the binding; OAuth authorizes per agent" />
+              <FormHint
+                :text="
+                  form.transport === 'stdio'
+                    ? 'stdio servers use the static binding credential only — OAuth is http-only'
+                    : 'Static credential rides the binding; OAuth authorizes per agent'
+                "
+              />
             </template>
             <USelect
               v-model="form.authKind"
               data-testid="mcp-auth-kind"
-              :items="[
-                { label: 'Static credential (per binding)', value: 'none' },
-                { label: 'OAuth 2.0 (authorize per agent)', value: 'oauth' },
-              ]"
+              :items="
+                form.transport === 'stdio'
+                  ? [{ label: 'Static credential (per binding)', value: 'none' }]
+                  : [
+                      { label: 'Static credential (per binding)', value: 'none' },
+                      { label: 'OAuth 2.0 (authorize per agent)', value: 'oauth' },
+                    ]
+              "
               class="w-full"
               :disabled="busy"
             />
@@ -767,7 +930,12 @@ function askUnbind(b: ServerBindingRow) {
             :data-testid="`mcp-server-binding-${b.employeeName}`"
           >
             <div class="min-w-0">
-              <p class="text-highlighted truncate text-sm font-medium">{{ b.employeeName }}</p>
+              <p class="text-highlighted truncate text-sm font-medium">
+                <UBadge v-if="b.transport === 'stdio'" color="neutral" variant="subtle" size="sm" class="mr-1">
+                  stdio
+                </UBadge>
+                {{ b.employeeName }}
+              </p>
               <p class="text-muted mt-0.5 text-xs" data-testid="mcp-server-binding-cred">
                 <template v-if="b.authKind === 'oauth'">
                   <UBadge

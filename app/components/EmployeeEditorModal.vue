@@ -326,7 +326,8 @@ type McpBindingRow = {
   id: string;
   serverId: string;
   serverName: string;
-  url: string;
+  transport: string;
+  url: string | null;
   authKind?: string;
   oauth?: { connected: boolean; expiresAt: string | null } | null;
   secretId: string | null;
@@ -761,7 +762,15 @@ function oauthStatusLabel(b: McpBindingRow) {
                 <div class="flex min-h-11 flex-wrap items-center justify-between gap-2">
                   <div class="min-w-0">
                     <p class="text-highlighted truncate text-sm font-medium">{{ b.serverName }}</p>
-                    <p class="text-dimmed truncate font-mono text-xs" :title="b.url">{{ b.url }}</p>
+                    <p
+                      class="text-dimmed truncate font-mono text-xs"
+                      :title="b.transport === 'stdio' ? 'stdio server' : (b.url ?? '')"
+                    >
+                      <UBadge v-if="b.transport === 'stdio'" color="neutral" variant="subtle" size="sm" class="mr-1">
+                        stdio
+                      </UBadge>
+                      {{ b.transport === 'stdio' ? 'stdio server' : b.url }}
+                    </p>
                   </div>
                   <div class="flex items-center gap-2">
                     <UBadge
