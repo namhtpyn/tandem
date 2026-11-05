@@ -392,11 +392,62 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   (echo guard). Events persist under their ORIGINATING adapter key
   (`kind:homeserver`) — bindings, acks and routing never cross same-kind
   configs; message bodies ride the composer's caps (title ≤200 chars,
-  body/answers ≤10k). Durability is AT-LEAST-ONCE: the processedAt guard
+  title/body/answers ≤10k). Durability is AT-LEAST-ONCE: the processedAt guard
   prevents retry storms, and a crash mid-verb can re-apply that verb's effect
   once — no-loss wins. Replies relay as plain acks; streaming bubble, edit,
-  watchdog per-channel health, gappy sync backfill (limited-timeline rooms),
-  and the settings UI are later slices of #271.
+  gappy sync backfill (limited-timeline rooms), and the settings UI are later
+  slices of #271.
+
+### Watchdog health (slice 3: per-channel liveness stamps)
+
+- The channels service stamps settings `channels:health` on a 60s tick
+  (best-effort: its own catch — observability never crashes the tick, same law
+  as the dispatcher heartbeat), plus once at the end of every successful boot
+  start: JSON `{"stampedAt": <epoch ms>, "channels": [{"key", "kind",
+  "homeserverUrl", "connected", "healthCap", "healthOk", "lastSyncOkAt"}]}`, one entry per ENABLED
+  config whether or not its adapter started — a config whose adapter failed to
+  start reports `connected:false`, and that IS the signal; an enabled entry the
+  config parser DROPPED (unknown/unregistered kind, invalid shape) is stamped
+  too (`connected:false`, `healthCap:false`) — a dropped config must never be
+  invisible to the watchdog. `connected` mirrors
+  the adapter's live state in THIS process; `lastSyncOkAt` is the adapter's
+  last successful TRANSPORT round-trip (matrix: a sync poll that returned
+  ok + next_batch, stamped independently of sink delivery — a sink outage
+  surfaces as backlog, never as a stale transport stamp). Zero enabled configs
+  stamp an empty `channels` array (a disabled channels setup must not read as
+  a stale fault). Absence of the key (pre-slice image, or the boot never
+  completed a start) stays silent — same semantics as `dispatcher_last_tick`.
+- The stamp separates two failure classes with distinct watchdog alerts:
+  process liveness (`stampedAt` stale, or any `connected:false` — the tick
+  itself is dead, or an adapter is down/dead-token) and transport health
+  (`connected:true` with `lastSyncOkAt` stale — the sync loop is alive but the
+  homeserver is unreachable and backing off). Each entry also carries
+  `healthCap` (whether the adapter implements `health()`) and `healthOk`
+  (whether a health read HAPPENED and succeeded — a missing adapter or a
+  missing health() is no read, so `healthOk:false` there too): a NON-capable
+  adapter's `lastSyncOkAt: null` is not alertable; a CAPABLE adapter whose
+  read SUCCEEDED (`healthOk:true`) with `lastSyncOkAt: null` means "no
+  successful transport round-trip in this process yet" — alertable after a
+  grace window; a FAILED health read (`healthOk:false`) downgrades its null
+  to a telemetry fault — never alertable, a broken health() must not
+  fabricate the never-synced shape. The never-synced shape arises when a
+  start SUCCEEDED (whoami ok) but the transport has never completed a
+  round-trip (e.g. the homeserver starts failing after start); a RESTART
+  into a dead homeserver instead shows `connected:false` — whoami fails, the
+  adapter never registers, and the outage is visible via the liveness class.
+  Queue depth is deliberately
+  NOT stamped: it is DB-derivable, so the watchdog derives backlog
+  (unprocessed `channel_events` + `channel_outbox` rows, count + oldest age)
+  from the tables directly. Backlog with a healthy stamp = a pipeline wedge
+  the stamps cannot see; backlog with a stale stamp = the expected
+  adapter-down shape (deferral parity holds the rows — no-loss, nothing is
+  consumed).
+- The adapter contract gains an OPTIONAL `health()` — an adapter without it
+  reports `healthCap:false` + `lastSyncOkAt: null` (the watchdog does not
+  invent a fault from a missing capability). The liveness and health reads
+  are isolated PER READ: a throwing `isLive()` degrades to
+  `connected:false`, a throwing `health()` to `healthOk:false` — neither
+  kills the whole stamp nor fakes the other's fault shape.
 
 ### Reply relay (slice 2: final-only outbound)
 

@@ -728,6 +728,122 @@ export async function processOutboundRow(data: {
   log.info(`channel reply ${row.id} sent via ${row.adapter} to thread ${row.threadRef}`);
 }
 
+// ---------- watchdog health (slice 3: per-channel liveness stamps) ----------
+
+/** watchdog stamp key (#271 slice 3): JSON {stampedAt, channels:[{key, kind,
+ * homeserverUrl, connected, lastSyncOkAt}]} — the external prod probe alerts
+ * stamp-stale (tick dead), connected:false (adapter down/dead-token) and
+ * transport-stale (sync loop alive, homeserver unreachable; capable+null with
+ * healthOk:true = never-synced). ABSENT key (pre-slice image, or no boot
+ * start ever completed) stays silent. Queue depth is deliberately NOT
+ * stamped — DB-derivable (SPEC: Watchdog health). */
+export const CHANNELS_HEALTH_KEY = 'channels:health';
+const HEALTH_TICK_MS = 60_000;
+let healthTimer: ReturnType<typeof setInterval> | null = null;
+
+/** per-config stamp entry: liveness + health reads are isolated PER READ — a
+ * throwing isLive degrades to connected:false, a throwing health to
+ * healthOk:false (a failed read must not fabricate the never-synced shape:
+ * capable + healthOk:true + null is the alertable never-synced signature). */
+function healthEntryFor(cfg: ChannelConfig): Record<string, unknown> {
+  const key = adapterKey(cfg);
+  const adapter = activeAdapters.get(key);
+  let connected = false;
+  try {
+    connected = !!adapter && (!adapter.isLive || adapter.isLive());
+  } catch {
+    // connected stays false (the conservative liveness signal)
+  }
+  // healthOk means "a health() read HAPPENED and succeeded" — a missing
+  // adapter or a missing health() is NOT a successful read (no read exists),
+  // so it stays false there, consistent with parse-dropped entries
+  const healthFn = adapter?.health;
+  const healthCap = typeof healthFn === 'function';
+  let lastSyncOkAt: number | null = null;
+  let healthOk = false;
+  if (healthFn) {
+    try {
+      lastSyncOkAt = healthFn().lastSyncOkAt ?? null;
+      healthOk = true;
+    } catch {
+      // lastSyncOkAt stays null + healthOk:false — telemetry fault, not absence
+    }
+  }
+  return {
+    key,
+    kind: cfg.kind,
+    homeserverUrl: cfg.homeserverUrl,
+    connected,
+    // healthCap separates "adapter has no health() (null = not alertable)"
+    // from "health() present" — the null's alertability then rides healthOk
+    healthCap,
+    healthOk,
+    lastSyncOkAt,
+  };
+}
+
+/** PARSE-DROPPED COVERAGE (SPEC: one entry per ENABLED config): an enabled
+ * entry the parser dropped (unknown/unregistered kind, invalid shape) is
+ * otherwise invisible to every alarm channel — no adapter, no retry loop,
+ * integrity audit passes — so stamp it connected:false instead. */
+function parseDroppedEntries(raw: string | null, known: Set<string>): Array<Record<string, unknown>> {
+  const dropped: Array<Record<string, unknown>> = [];
+  let arr: unknown;
+  try {
+    arr = JSON.parse(raw ?? '[]');
+  } catch {
+    return dropped; // raw corrupt → the parser already read it as no channels
+  }
+  if (!Array.isArray(arr)) return dropped;
+  for (const e of arr) {
+    if (!e || typeof e !== 'object' || (e as { enabled?: unknown }).enabled !== true) continue;
+    const cand = e as { kind?: unknown; homeserverUrl?: unknown };
+    const kind = typeof cand.kind === 'string' && cand.kind ? cand.kind : 'unknown';
+    // CANONICAL-KEY LAW: `known` holds keys over the CANONICALIZED config
+    // (parseChannelConfigs normalizeHomeservers before dedupe) — a kept
+    // config stored under a non-canonical spelling (trailing slash, :443,
+    // uppercase host) must match its own canonical key here, or every stamp
+    // grows a phantom connected:false entry for a HEALTHY channel
+    let home = 'unknown';
+    if (typeof cand.homeserverUrl === 'string' && cand.homeserverUrl) {
+      try {
+        home = normalizeHomeserver(cand.homeserverUrl);
+      } catch {
+        home = cand.homeserverUrl; // not a parseable URL — the raw spelling
+      }
+    }
+    const key = `${kind}:${home}`;
+    if (known.has(key)) continue;
+    known.add(key);
+    dropped.push({
+      key,
+      kind,
+      homeserverUrl: home,
+      connected: false,
+      healthCap: false,
+      healthOk: false,
+      lastSyncOkAt: null,
+    });
+  }
+  return dropped;
+}
+
+/** one stamp write (exported for tests): best-effort — its own catch, same
+ * law as the dispatcher heartbeat. An entry exists per ENABLED config whether
+ * or not its adapter started (a failed-to-start adapter reports
+ * connected:false — that IS the signal); zero configs stamp an empty array. */
+export async function writeChannelHealthStamp(): Promise<void> {
+  try {
+    const raw = await getSetting(CHANNELS_KEY);
+    const channels: Array<Record<string, unknown>> = parseChannelConfigs(raw).map(healthEntryFor);
+    const known = new Set<string>(channels.map((c) => c.key as string));
+    channels.push(...parseDroppedEntries(raw, known));
+    await setSetting(CHANNELS_HEALTH_KEY, JSON.stringify({ stampedAt: Date.now(), channels }));
+  } catch {
+    // health is best-effort: observability must never crash the tick
+  }
+}
+
 // ---------- lifecycle (boot: adapters + workers + sweep) ----------
 
 const activeAdapters = new Map<string, ChannelAdapter>();
@@ -843,6 +959,11 @@ export async function startChannels(): Promise<string[]> {
     if (stranded.length > 0 || strandedOutbox.length > 0)
       log.info(`swept ${stranded.length} event(s) + ${strandedOutbox.length} reply(ies) back into the queues`);
   }
+  // watchdog health tick (slice 3): arm once, stamp immediately so a boot
+  // that completed start is visible to the probe without waiting a minute —
+  // a partial start reports its dead entries connected:false (the signal).
+  healthTimer ??= setInterval(() => void writeChannelHealthStamp(), HEALTH_TICK_MS);
+  await writeChannelHealthStamp();
   return failed;
 }
 
@@ -884,6 +1005,12 @@ export function ensureChannelsRunning(opts: { start: () => Promise<string[]>; in
 }
 
 export async function stopChannels(): Promise<void> {
+  // disarm the health tick first: a stopped channels module must stop
+  // stamping (the stale key is the probe's process-dead signal)
+  if (healthTimer) {
+    clearInterval(healthTimer);
+    healthTimer = null;
+  }
   for (const [key, adapter] of activeAdapters) {
     await adapter.stop();
     activeAdapters.delete(key);

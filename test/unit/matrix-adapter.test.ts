@@ -308,4 +308,91 @@ describe('matrix adapter', () => {
     await new Promise((r) => setTimeout(r, 120));
     expect(calls.length).toBe(after);
   });
+
+  // ---- watchdog health (slice 3, SPEC: Watchdog health) ----
+
+  /** auto-advancing Date.now spy: +5ms per call keeps until() deadlines alive
+   * while making every stamp strictly larger than the previous one. */
+  function useAutoClock(start = 1_700_000_000_000) {
+    let now = start;
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => (now += 5));
+    return () => now;
+  }
+
+  /** start on the resume path and wait for a POST-STAMP signal (checkpoint
+   * advanced = the transport stamp already landed — until() on call counts
+   * races the stamp inside the fetch stub). */
+  async function startResumed() {
+    queue.push(whoOk());
+    queue.push({ status: 200, json: syncJson('s2', []) });
+    const a = makeAdapter();
+    await a.start({ onMessage: async () => {}, checkpoint: { get: async () => 's1', set: async () => {} } });
+    await until(() => a.health?.().lastSyncOkAt !== null, 'transport stamp');
+    return a;
+  }
+
+  it('health(): a never-started adapter reports null; the first successful poll stamps', async () => {
+    const fresh = makeAdapter();
+    expect(fresh.health?.().lastSyncOkAt).toBeNull();
+    useAutoClock();
+    const a = await startResumed();
+    try {
+      expect(a.health?.().lastSyncOkAt).not.toBeNull();
+    } finally {
+      await a.stop();
+    }
+  });
+
+  it('a failed poll leaves the stamp at its last value (stale = the detection signal)', async () => {
+    const clock = useAutoClock();
+    const a = await startResumed();
+    try {
+      const afterOk = a.health?.().lastSyncOkAt!;
+      queue.push({ status: 500, json: { errcode: 'M_UNKNOWN' } });
+      await until(() => calls.filter((c) => c.url.includes('/sync?')).length >= 2, 'failed poll');
+      // give a possible erroneous re-stamp a window to happen
+      await new Promise((r) => setTimeout(r, 80));
+      expect(a.health?.().lastSyncOkAt).toBe(afterOk);
+      expect(clock()).toBeGreaterThan(afterOk); // time moved; the stamp did not
+    } finally {
+      await a.stop();
+    }
+  });
+
+  it('a successful poll after a failure advances the stamp (recovery is visible)', async () => {
+    useAutoClock();
+    const a = await startResumed();
+    try {
+      const afterOk = a.health?.().lastSyncOkAt!;
+      queue.push({ status: 500, json: { errcode: 'M_UNKNOWN' } });
+      queue.push({ status: 200, json: syncJson('s3', []) });
+      await until(() => a.health?.().lastSyncOkAt! > afterOk, 'recovery stamp');
+    } finally {
+      await a.stop();
+    }
+  });
+
+  it('a sink failure does NOT stale the transport stamp (sink outage reads as backlog)', async () => {
+    useAutoClock();
+    queue.push(whoOk());
+    queue.push({ status: 200, json: syncJson('s2', [msg('$m1', '@u:example.org', 'hello')]) });
+    const a = makeAdapter();
+    let last = 0;
+    try {
+      await a.start({
+        onMessage: async () => {
+          throw new Error('sink down');
+        },
+        checkpoint: { get: async () => 's1', set: async () => {} },
+      });
+      await until(() => (a.health?.().lastSyncOkAt ?? 0) > 0, 'first transport stamp');
+      last = a.health?.().lastSyncOkAt!;
+      // the loop retries the SAME batch; every retried poll is a transport
+      // success and must keep the stamp fresh
+      queue.push({ status: 200, json: syncJson('s2', [msg('$m1', '@u:example.org', 'hello')]) });
+      await until(() => a.health?.().lastSyncOkAt! > last, 'retry transport stamp');
+    } finally {
+      await a.stop();
+    }
+  });
 });
