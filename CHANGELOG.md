@@ -1,3 +1,22 @@
+# [2.69.0](https://github.com/namhtpyn/tandem/compare/v2.68.1...v2.69.0) (2026-11-05)
+
+
+### Bug Fixes
+
+* [#270](https://github.com/namhtpyn/tandem/issues/270) slice 3 review pass — authKind 'none' echo is not oauth config (stdio refusal narrowed to endpoint keys); run-fold assert law ([cca1551](https://github.com/namhtpyn/tandem/commit/cca1551199c3894fb51da40b1bfb716059ba565c))
+* [#318](https://github.com/namhtpyn/tandem/issues/318) r1 review — oauth switch refusal keys off persisted row (echo-proof), total-cap probe deadline, SIGKILL escalation, args one-per-line round-trip, binding-manager transport badge, SPEC env-var charset ([abdc84f](https://github.com/namhtpyn/tandem/commit/abdc84f16de1f46003e820a1f7cb590d9c03605e))
+* [#318](https://github.com/namhtpyn/tandem/issues/318) r2 review — bindingsListByServer carries transport, banner-blind extractJsonRpc, capped stderr drain, args charset guard, stdio→http column nulling (SPEC contract updated) ([8a918d4](https://github.com/namhtpyn/tandem/commit/8a918d40d4756fb08455af0eabae61e81c353437))
+* [#318](https://github.com/namhtpyn/tandem/issues/318) r3 review — args charset guard rejects lone CR (single-line contract holds) ([1fe1159](https://github.com/namhtpyn/tandem/commit/1fe1159b2b55358798361d9333705c669449b23a))
+* [#318](https://github.com/namhtpyn/tandem/issues/318) r4 review — corrupt-args read surfaces degrade per-row (list → [], probe verdict persists, dispatch skips), streaming TextDecoder, stdio probe path skips the unused Authorization decrypt ([56f5df2](https://github.com/namhtpyn/tandem/commit/56f5df2712445487b83d13a70c57fdcda1230f62))
+* [#318](https://github.com/namhtpyn/tandem/issues/318) r5 review — probe verdicts REDACTED before persistence (credential echo can't reach last_probe_detail), bindingsListByServer table row documents the full shape, transport switch resets stale auth UI state (SPEC updated) ([16f3281](https://github.com/namhtpyn/tandem/commit/16f32813968617e98c44cea279f197a57cef372e))
+* [#318](https://github.com/namhtpyn/tandem/issues/318) r6 review — pre-stdio auth snapshot RESTORED on http return (no silent oauth strip), handshake answers require jsonrpc+id echo, corrupt command/url rows degrade per-row (probe verdict persists, dispatch skips), stdio member drops the extra discriminator (SDK 2.1.0 schema truth, SPEC updated) ([511e44f](https://github.com/namhtpyn/tandem/commit/511e44f7f01e21d794d13425552fd1fa9982a795))
+
+
+### Features
+
+* [#270](https://github.com/namhtpyn/tandem/issues/270) slice 3 migration — mcp_servers transport/command/args/credential_env_var, url nullable (drizzle-kit generated) ([f25620f](https://github.com/namhtpyn/tandem/commit/f25620f3a6f3e25cf6a510acacc9d60bff8ba27c))
+* [#270](https://github.com/namhtpyn/tandem/issues/270) slice 3 stdio transport — dispatch member, spawn probe, registry UI (transport/command/args/credentialEnvVar, oauth∩stdio refused) ([ec928ec](https://github.com/namhtpyn/tandem/commit/ec928ec0075d387b416b3f6087189bca72b0233d))
+
 ## [2.68.1](https://github.com/namhtpyn/tandem/compare/v2.68.0...v2.68.1) (2026-11-04)
 
 
