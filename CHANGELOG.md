@@ -1,3 +1,19 @@
+# [2.72.0](https://github.com/namhtpyn/tandem/compare/v2.71.0...v2.72.0) (2026-11-05)
+
+
+### Bug Fixes
+
+* [#325](https://github.com/namhtpyn/tandem/issues/325) r1 review — healthCap disambiguates null (never-synced vs capability-absent: a from-boot outage held connected:true+null with no alertable signal), per-entry try covers isLive too (a throwing isLive killed the whole stamp), fetch stub moved per-test (unstubGlobals:true made the module-level stub inert = real DNS in unit tests), lifecycle test pins tick REFRESH + asserts the stub fired ([d492b16](https://github.com/namhtpyn/tandem/commit/d492b16bf70e716de7c2ebc44535808508188e29))
+* [#325](https://github.com/namhtpyn/tandem/issues/325) r2 review — healthOk flags a FAILED health read (a throwing health() on a live adapter must not fabricate the never-synced alert shape), parse-dropped enabled configs stamp connected:false (unknown kind was invisible to every alarm channel), per-read isolation (throwing isLive degrades to connected:false without faking a health fault) ([33ec40e](https://github.com/namhtpyn/tandem/commit/33ec40e1291b7612b5fd33cb62f0810ceeb68892))
+* [#325](https://github.com/namhtpyn/tandem/issues/325) r2 review — healthOk flags a FAILED health read (a throwing health() on a live adapter must not fabricate the never-synced alert shape), parse-dropped enabled configs stamp connected:false (unknown kind was invisible to every alarm channel), per-read isolation; complexity gate: extract healthEntryFor + parseDroppedEntries helpers ([39dffef](https://github.com/namhtpyn/tandem/commit/39dffeff9cb152913727d1418e06cc1422956143))
+* [#325](https://github.com/namhtpyn/tandem/issues/325) r3 followup — healthFn narrowing (no non-null assertion, typecheck-clean) ([e8653e6](https://github.com/namhtpyn/tandem/commit/e8653e6eff5ec95df09fe83720c61a5d2d63cab1))
+* [#325](https://github.com/namhtpyn/tandem/issues/325) r3 review — canonical-key law in parseDroppedEntries (raw-vs-canonical key mismatch grew a phantom connected:false entry for every kept config stored under a non-canonical URL = permanent false adapter-down alert), healthOk means a read HAPPENED (missing adapter/health = false, consistent with dropped entries), SPEC honesty: restart-into-dead-homeserver shows connected:false (whoami fails, adapter never registers), never-synced shape is start-ok-then-transport-fails ([5844d6c](https://github.com/namhtpyn/tandem/commit/5844d6cbc9ede1db85c31179939accddf9bb2be6))
+
+
+### Features
+
+* [#271](https://github.com/namhtpyn/tandem/issues/271) slice 3 — channel watchdog health (SPEC first: channels:health stamp contract) ([181a44a](https://github.com/namhtpyn/tandem/commit/181a44a27f148de91f8f1f2d5a0b0a07fabc5e33))
+
 # [2.71.0](https://github.com/namhtpyn/tandem/compare/v2.70.0...v2.71.0) (2026-11-05)
 
 
