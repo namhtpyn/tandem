@@ -743,6 +743,29 @@ describe('stdio transport (slice 3, SPEC "stdio transport")', () => {
       expect(r.detail.length).toBeGreaterThan(0);
       expect(h.updates.find((u) => u.table === 'mcpServerBindings')?.set).toMatchObject({ lastProbeOk: false });
     });
+
+    it('REDACT-BEFORE-PERSIST: a child echoing its credential env never leaks the plaintext into the verdict', async () => {
+      h.bindingRows = [
+        binding({
+          server: {
+            name: 's',
+            transport: 'stdio',
+            url: null,
+            command: bun,
+            args: JSON.stringify([fixture('mcp-stdio-echo.mjs')]),
+            credentialEnvVar: 'MCP_ECHO_SECRET',
+          },
+          secret: { name: 'c', lastFour: 'zzzz', ciphertext: 'sekret-value' },
+        }),
+      ];
+      const r = await probeMcpBinding({ employeeId: 'ai-1', serverId: 'srv-1' });
+      expect(r.ok).toBe(false); // the stub exits non-zero with a stderr dump
+      expect(r.detail).toContain('MCP_ECHO_SECRET=[redacted]');
+      expect(r.detail).not.toContain('dec:sekret-value');
+      expect(JSON.stringify(h.updates.find((u) => u.table === 'mcpServerBindings')?.set)).not.toContain(
+        'dec:sekret-value',
+      );
+    });
   });
 });
 

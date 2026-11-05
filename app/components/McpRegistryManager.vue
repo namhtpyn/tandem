@@ -108,6 +108,20 @@ const createMutation = useMutation({ ...$orpc.mcp.registryCreate.mutationOptions
 const updateMutation = useMutation({ ...$orpc.mcp.registryUpdate.mutationOptions() });
 const removeMutation = useMutation({ ...$orpc.mcp.registryRemove.mutationOptions() });
 
+// switching transport to stdio resets the auth state — the select is locked to
+// the static credential for stdio (oauth ∩ stdio is refused server-side) and a
+// stale 'oauth' value would leave the OAuth fields visible with input that is
+// silently dropped on save
+watch(
+  () => form.value.transport,
+  (t) => {
+    if (t === 'stdio' && form.value.authKind !== 'none') {
+      form.value.authKind = 'none';
+      Object.assign(form.value, emptyOauth());
+    }
+  },
+);
+
 type RegistryRow = {
   id: string;
   name: string;

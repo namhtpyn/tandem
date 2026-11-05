@@ -883,6 +883,10 @@ export async function probeMcpBinding(input: { employeeId: string; serverId: str
   const binding = await findBinding(input.employeeId, input.serverId);
   if (!binding) throw new ORPCError('NOT_FOUND', { message: 'binding not found' });
   const started = Date.now();
+  // redact-before-persist: the probed child SAW the credential plaintext (env
+  // var or Authorization header) — a crash dump or env echo in its stderr /
+  // JSON-RPC error / serverInfo must never land in the persisted verdict
+  const seenSecrets: string[] = [];
   let result: { ok: boolean; detail: string };
   if (binding.server.transport === 'stdio') {
     // stdio bindings decrypt the credential ONLY as the named env var (no
@@ -892,7 +896,9 @@ export async function probeMcpBinding(input: { employeeId: string; serverId: str
     try {
       args = parseArgsJson(binding.server.args);
       if (binding.server.credentialEnvVar && binding.secret?.ciphertext) {
-        env = { [binding.server.credentialEnvVar]: decryptSecret(binding.secret.ciphertext) };
+        const plaintext = decryptSecret(binding.secret.ciphertext);
+        env = { [binding.server.credentialEnvVar]: plaintext };
+        seenSecrets.push(plaintext);
       }
     } catch (e) {
       // a corrupt args column is dead input — the PROBE VERDICT LAW still gets
@@ -913,11 +919,18 @@ export async function probeMcpBinding(input: { employeeId: string; serverId: str
     let authorization: string | undefined;
     if (binding.server.authKind === 'oauth') {
       const token = await getFreshAccessToken(binding.id, oauthConfigFromServerRow(binding.server));
-      if (token) authorization = `Bearer ${token}`;
+      if (token) {
+        authorization = `Bearer ${token}`;
+        seenSecrets.push(token);
+      }
     } else if (binding.secret?.ciphertext) {
       authorization = decryptSecret(binding.secret.ciphertext);
+      seenSecrets.push(authorization);
     }
     result = await probeMcpHttp(nonNull(binding.server.url), authorization);
+  }
+  for (const s of seenSecrets) {
+    if (s) result = { ...result, detail: result.detail.split(s).join('[redacted]') };
   }
   const durationMs = Date.now() - started;
   await persistBindingVerdict(binding.id, result);

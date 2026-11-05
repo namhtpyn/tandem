@@ -169,7 +169,10 @@ binding (section below). Slice 3 adds the `stdio` transport (section below).
   inherits nothing else). No `credentialEnvVar` or no credential → empty
   `env`. The write-only vault law is unchanged: plaintext decrypted
   server-side at dispatch/probe only, never returned by any API surface,
-  never logged, never in run output.
+  never logged, never in run output — and a probe verdict is REDACTED
+  before persistence (the probed child SAW the credential, so any
+  occurrence of the plaintext in its stderr, JSON-RPC error or serverInfo
+  strings is masked `[redacted]` before `last_probe_detail` lands).
 - **Dispatch injection**: `stdio` entries serialize as the ACP v1 stdio
   member `{ type: 'stdio', name, command, args, env }` — one deterministic
   plan with the `http` entries, sorted by server name. `args` is the parsed
@@ -265,7 +268,7 @@ binding (section below). Slice 3 adds the `stdio` transport (section below).
 | `mcp.registryUpdate`       | admin   | `{id,name?,transport?,url?,command?,args?,credentialEnvVar?,notes?,authKind?,oauth*}` | updated row (url OR transport/command/args/credentialEnvVar change clears that server's binding verdicts; a CHANGED OAuth config additionally wipes its oauth tokens + pending connect state)               |
 | `mcp.registryRemove`       | admin   | `{id}`                                                                                | `{ok}` (400 while bindings exist)                                                                                                                                                                           |
 | `mcp.bindingsList`         | admin   | `{employeeId}`                                                                        | `{data:[{id,serverId,serverName,transport,url,authKind,secretId,secretName,lastFour,oauth:{connected,expiresAt},lastProbeOk,lastProbeDetail,lastProbeAt}]}`                                                 |
-| `mcp.bindingsListByServer` | admin   | `{serverId}`                                                                          | `{data:[{id,employeeId,employeeName,secretId,secretName,lastFour,transport,authKind,oauth:{connected,expiresAt},lastProbeOk,lastProbeDetail,lastProbeAt}]}`                                                 |
+| `mcp.bindingsListByServer` | admin   | `{serverId}`                                                                          | `{data:[{id,serverId,serverName,employeeId,employeeName,transport,url,secretId,secretName,lastFour,authKind,oauth:{connected,expiresAt},lastProbeOk,lastProbeDetail,lastProbeAt}]}`                         |
 | `mcp.bindingsSet`          | admin   | `{employeeId,serverId,secretId?}`                                                     | binding row (upsert; verdict cleared on credential change)                                                                                                                                                  |
 | `mcp.bindingsRemove`       | admin   | `{employeeId,serverId}`                                                               | `{ok}`                                                                                                                                                                                                      |
 | `mcp.probe`                | admin   | `{employeeId,serverId}`                                                               | `{ok,detail,durationMs,lastProbeAt}`                                                                                                                                                                        |
