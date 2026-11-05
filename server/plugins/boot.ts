@@ -44,8 +44,8 @@ export default defineNitroPlugin(async () => {
   // adapters, the inbound worker registers, stranded events sweep back into
   // the queue. The TANDEM_NO_DISPATCHER test opt-out lives inside the domain;
   // a failed start never aborts boot (channels are additive surface).
-  const { startChannels } = await import('../domains/channels/channels.service');
-  startChannels().catch((e) => log.error('channels: start failed (retries on next boot):', e));
+  const { startChannels, ensureChannelsRunning } = await import('../domains/channels/channels.service');
+  ensureChannelsRunning({ start: startChannels });
   const { bridgeRedisChangesWithRetry } = await import('../domains/kernel/change-bus');
   // REDIS-BLIP BOOT LAW (#289): bounded retry then CONTINUE with degraded fanout
   // (logged loudly by the helper) — a late redis never aborts boot (the admin seed

@@ -9,7 +9,7 @@ import { eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
-import { CHANGE_ACTION, CHANGE_RESOURCE, CATEGORY } from '#shared/enums';
+import { CHANGE_ACTION, CHANGE_RESOURCE, CATEGORY, ROLE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
@@ -112,6 +112,25 @@ export function normalizeHomeserver(raw: string): string {
   return `${u.protocol.toLowerCase()}//${u.hostname.toLowerCase()}${port ? `:${port}` : ''}${path}`;
 }
 
+/** settings integrity validator for the stored `channels` value: the raw
+ * settings row must be a JSON array whose every entry matches the config
+ * schema — anything else is corruption by definition (the write path could
+ * not have produced it). Consumed by the settings integrity audit. */
+export function channelsIntegrityReason(raw: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return 'invalid JSON';
+  }
+  if (!Array.isArray(parsed)) return 'expected a JSON array';
+  for (const [i, entry] of parsed.entries()) {
+    const r = channelConfigSchema.safeParse(entry);
+    if (!r.success) return `entry ${i}: ${r.error.issues.map((x) => `${x.path.join('.')}: ${x.message}`).join('; ')}`;
+  }
+  return null;
+}
+
 /** identity binding (SPEC: default deny) — a platform id acts AS a Tandem
  * user ONLY via an explicit binding; everyone else is refused. */
 export function resolveBinding(cfg: ChannelConfig, platformUserId: string): string | null {
@@ -140,10 +159,12 @@ export async function handleInbound(cfg: ChannelConfig, m: ChannelInboundMessage
       externalId: m.externalId,
       threadRef: m.threadRef,
       sender: m.senderPlatformId,
-      body: m.text,
-      raw: (m.raw ?? {}) as Record<string, unknown>,
+      // postgres text/jsonb reject NUL bytes — one NUL must never wedge the
+      // whole channel forever (sanitize, don't skip: the message still routes)
+      body: m.text.replaceAll('\u0000', ''),
+      raw: sanitizeRawJson(m.raw),
     })
-    .onConflictDoNothing({ target: [channelEvents.channel, channelEvents.externalId] })
+    .onConflictDoNothing({ target: [channelEvents.adapter, channelEvents.externalId] })
     .returning({ id: channelEvents.id });
   const hub = await redisQueue();
   if (inserted.length > 0) {
@@ -156,16 +177,31 @@ export async function handleInbound(cfg: ChannelConfig, m: ChannelInboundMessage
   // already in flight or done.
   const existing = await db.query.channelEvents.findFirst({
     columns: { id: true, processedAt: true },
-    where: { channel: { eq: cfg.kind }, externalId: { eq: m.externalId } },
+    where: { adapter: { eq: adapterKey(cfg) }, externalId: { eq: m.externalId } },
   });
   if (existing && !existing.processedAt) await requeueEvent(hub, existing.id);
 }
 
-async function requeueEvent(hub: QueueDomain, eventId: string): Promise<void> {
+/** jsonb-safe raw payload: NUL escapes are illegal in postgres jsonb */
+function sanitizeRawJson(raw: unknown): Record<string, unknown> {
+  try {
+    const json = JSON.stringify(raw ?? {});
+    return JSON.parse(json.replaceAll('\\u0000', '')) as Record<string, unknown>;
+  } catch {
+    return {}; // unserializable payload: keep the row, lose only the raw echo
+  }
+}
+
+async function requeueEvent(
+  hub: QueueDomain,
+  eventId: string,
+  opts: { delayMs?: number; defer?: number } = {},
+): Promise<void> {
   await hub.enqueue(
     CHANNEL_QUEUE,
-    { eventId },
+    { eventId, deferred: opts.defer ?? 0 },
     {
+      delayMs: opts.delayMs,
       attempts: QUEUE_ATTEMPTS,
       removeOnComplete: true,
       removeOnFail: true,
@@ -173,9 +209,10 @@ async function requeueEvent(hub: QueueDomain, eventId: string): Promise<void> {
       // is queued/active — a deploy overlap (old instance's in-flight job +
       // new instance's sweep) can never double-route the same event.
       // removeOnFail:true frees the id after terminal failure so the boot
-      // sweep can re-drive a permanently failed event
-      // jobId = the event id itself (BullMQ rejects ':' in custom ids)
-      jobId: eventId,
+      // sweep can re-drive a permanently failed event. Deferral cycles get a
+      // distinct id per attempt (the original may still be active); no ':'
+      // (BullMQ rejects 2-segment custom ids).
+      jobId: opts.defer ? `${eventId}-d${opts.defer}` : eventId,
       backoff: { type: 'exponential', delay: 3_000 },
     },
   );
@@ -187,7 +224,10 @@ type AckOutcome = 'created' | 'steered' | 'dispatched' | 'noted' | 'answered' | 
 
 /** one platform event → one Tandem verb. Idempotent by processedAt: a retried
  * job (or the boot sweep) never routes twice. Exported for tests. */
-export async function processChannelEvent(data: { eventId: string }): Promise<void> {
+const DEFER_RETRY_MS = 300_000; // 5 min between deferral re-drives
+const DEFER_MAX = 12; // ~1h of deferrals, then give up loudly (row stays raw)
+
+export async function processChannelEvent(data: { eventId: string; deferred?: number }): Promise<void> {
   const ev = await db.query.channelEvents.findFirst({ where: { id: { eq: data.eventId } } });
   if (!ev || ev.processedAt) return; // unknown or already routed
   // resolve through the ORIGINATING adapter key — bindings/acks never cross
@@ -197,13 +237,22 @@ export async function processChannelEvent(data: { eventId: string }): Promise<vo
   // event is NOT consumed — the row stays unprocessed and the next sweep (or
   // job retry) re-drives it once the channel is back. Consuming here would
   // destroy user messages on a config typo / failed token, with no ack.
+  const deferred = data.deferred ?? 0;
+  const defer = async (why: string): Promise<void> => {
+    if (deferred >= DEFER_MAX) {
+      log.error(`channel event ${ev.id} gave up after ${DEFER_MAX} deferrals (${why}) — raw row kept`);
+      return; // never consumed: the next boot sweep starts a fresh cycle
+    }
+    log.warn(`channel event ${ev.id} deferred (${why}) — retry in ${DEFER_RETRY_MS / 60_000} min`);
+    await requeueEvent(await redisQueue(), ev.id, { delayMs: DEFER_RETRY_MS, defer: deferred + 1 });
+  };
   if (!cfg) {
-    log.warn(`channel event ${ev.id} deferred: no enabled config for adapter ${ev.adapter}`);
+    await defer(`no enabled config for adapter ${ev.adapter}`);
     return;
   }
   const adapter = activeAdapters.get(adapterKey(cfg));
-  if (!adapter) {
-    log.warn(`channel event ${ev.id} deferred: adapter ${ev.adapter} is not live`);
+  if (!adapter || (adapter.isLive && !adapter.isLive())) {
+    await defer(`adapter ${ev.adapter} is not live`);
     return;
   }
   const outcome = await routeEvent(cfg, ev, adapter);
@@ -241,10 +290,20 @@ async function routeEvent(
 
   // a stale binding (user deleted) must refuse politely, NOT poison the queue
   // with an FK-violating retry loop (composer parity: requireExistingRefs)
-  const boundUser = await db.query.user.findFirst({ columns: { id: true }, where: { id: { eq: userId } } });
+  const boundUser = await db.query.user.findFirst({
+    columns: { id: true, role: true },
+    where: { id: { eq: userId } },
+  });
   if (!boundUser) {
     log.warn(`channel binding ${ev.sender} → ${userId}: user does not exist — refused`);
     await ack('Your account is not available — ask an admin to fix the channel binding.');
+    return 'refused';
+  }
+  // EMPLOYEE-TIER GATE (SPEC: Roles & access): every channel verb is a tasks.*
+  // write, so a VIEWER binding must be refused exactly like the oRPC kernel
+  // refuses it — the web composer's role gate does not evaporate over chat.
+  if (boundUser.role !== ROLE.EMPLOYEE && boundUser.role !== ROLE.ADMIN) {
+    await ack('Your account has view-only access — ask an admin to upgrade it.');
     return 'refused';
   }
 
@@ -255,15 +314,17 @@ async function routeEvent(
 
   // unmapped thread → NEW-TASK (the web composer's create path verbatim)
   if (!mapping) {
+    // composer parity: tasks.create requires a READY-category status — the
+    // first ready status by position, never a terminal category
     const statusRows = await db.query.taskStatuses.findMany({
       columns: { id: true, category: true },
       orderBy: { position: 'asc' },
     });
-    const statusRow = statusRows[0];
+    const statusRow = statusRows.find((r) => r.category === CATEGORY.READY);
     const statusId = statusRow?.id;
     if (!statusId) {
-      log.error('no task statuses defined — channel new-task refused');
-      await ack('Could not create the task (no statuses configured).');
+      log.error('no ready-category task status — channel new-task refused');
+      await ack('Could not create the task (no ready status configured).');
       return 'failed';
     }
     // title = the first non-empty line of the (already non-blank) message
@@ -294,7 +355,7 @@ async function routeEvent(
     const willDispatch =
       assigneeId !== null &&
       statusRow?.category === CATEGORY.READY &&
-      (await db.query.aiEmployees.findFirst({ columns: { id: true }, where: { userId: { eq: assigneeId } } })) !== null;
+      (await db.query.aiEmployees.findFirst({ columns: { userId: true }, where: { userId: { eq: assigneeId } } })) !== null;
     // MAPPING ARBITER: two events from the same brand-new thread can process
     // concurrently (worker concurrency 2) — the unique (channel, thread_ref)
     // index decides; the loser removes its fresh unmapped task and routes as
@@ -483,6 +544,30 @@ export async function startChannels(): Promise<void> {
 export function attachAdapterForTests(key: string, adapter: ChannelAdapter): string {
   activeAdapters.set(key, adapter);
   return key;
+}
+
+/** boot retry wrapper (mirror of ensureDispatcherRunning): a failed start —
+ * redis blip, db warm-up — retries on a fixed interval instead of staying dead
+ * until the next restart. */
+export function ensureChannelsRunning(opts: { start: () => Promise<void>; intervalMs?: number }): () => void {
+  const retryMs = opts.intervalMs ?? 30_000;
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let done = false;
+  const attempt = () => {
+    if (done) return;
+    void opts
+      .start()
+      .then(() => {
+        done = true;
+        if (timer) clearInterval(timer);
+      })
+      .catch((e) => log.error('channels: start attempt failed — retrying:', e));
+  };
+  timer = setInterval(attempt, retryMs);
+  attempt();
+  return () => {
+    if (timer) clearInterval(timer);
+  };
 }
 
 export async function stopChannels(): Promise<void> {

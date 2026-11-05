@@ -9,6 +9,7 @@ import { isValidFlagsPayload } from '#shared/flags';
 
 import { db } from '../../db/index';
 import { isValidStoredRegistry } from '../auth/oidc.service';
+import { channelsIntegrityReason } from '../channels/channels.service';
 import { parseAssignment } from './settings.service';
 
 export type CorruptSetting = { key: string; reason: string };
@@ -28,6 +29,7 @@ function intInRange(min: number, max: number): (raw: string) => string | null {
  * (settings.router) for the key's stored form — a value the update proc could
  * not have written is corruption by definition. */
 const VALIDATORS: Record<string, (raw: string) => string | null> = {
+  channels: channelsIntegrityReason,
   disablePasswordLogin: (raw) => (raw === 'true' || raw === 'false' ? null : "expected 'true' or 'false'"),
   run_timeout_ms: intInRange(60_000, 21_600_000),
   tasks_per_agent: intInRange(1, 32),

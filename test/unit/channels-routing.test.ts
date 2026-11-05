@@ -40,6 +40,7 @@ const U2 = '00000000-0000-4000-8000-000000000002';
 const ASSIGNEE = '00000000-0000-4000-8000-000000000003';
 const GHOST = '00000000-0000-4000-8000-000000000009';
 const DELETED = '00000000-0000-4000-8000-00000000000a';
+const VIEWER = '00000000-0000-4000-8000-00000000000b';
 const STATUS_ROW = { id: 'status-ready', category: 'ready' };
 
 vi.mock('../../server/db/index', () => ({
@@ -49,14 +50,14 @@ vi.mock('../../server/db/index', () => ({
         findFirst: async ({
           where,
         }: {
-          where?: { id?: { eq?: string }; channel?: { eq?: string }; externalId?: { eq?: string } };
+          where?: { id?: { eq?: string }; adapter?: { eq?: string }; externalId?: { eq?: string } };
         }) => {
           const id = where?.id?.eq;
           if (id) return events.get(id) ?? null;
-          const channel = where?.channel?.eq;
+          const adapterKey = where?.adapter?.eq;
           const externalId = where?.externalId?.eq;
-          if (channel && externalId)
-            return [...events.values()].find((e) => e.channel === channel && e.externalId === externalId) ?? null;
+          if (adapterKey && externalId)
+            return [...events.values()].find((e) => e.adapter === adapterKey && e.externalId === externalId) ?? null;
           return null;
         },
       },
@@ -77,8 +78,10 @@ vi.mock('../../server/db/index', () => ({
       user: {
         findFirst: async ({ where }: { where?: { id?: { eq?: string } } }) => {
           const id = where?.id?.eq;
-          // every well-formed id exists EXCEPT the explicit ghost fixtures
-          return id && id !== DELETED && id !== GHOST ? { id } : null;
+          // every well-formed id exists EXCEPT the explicit ghost fixtures;
+          // VIEWER is the view-only fixture for the employee-tier gate
+          if (!id || id === DELETED || id === GHOST) return null;
+          return { id, role: id === VIEWER ? 'VIEWER' : 'EMPLOYEE' };
         },
       },
       tasks: {
@@ -203,6 +206,7 @@ const adapter = {
   capabilities: { edit: false, threads: false, maxLen: 4000, markdown: false },
   start: vi.fn(async () => {}),
   stop: vi.fn(async () => {}),
+  isLive: () => true,
   send: vi.fn(async (target: string, text: string) => {
     ackSends.push({ target, text });
   }),
@@ -275,7 +279,7 @@ describe('handleInbound (persist → queue)', () => {
     ]);
     expect(enqueuedJobs).toHaveLength(1);
     expect(enqueuedJobs[0]!.queue).toBe('channels-inbound');
-    expect(enqueuedJobs[0]!.data).toEqual({ eventId: 'evrow-1' });
+    expect(enqueuedJobs[0]!.data).toEqual({ eventId: 'evrow-1', deferred: 0 });
     // jobId dedupe: a second job for the same event id is refused by BullMQ
     expect(enqueuedJobs[0]!.opts).toMatchObject({ jobId: 'evrow-1', removeOnFail: true });
   });
@@ -293,7 +297,7 @@ describe('handleInbound (persist → queue)', () => {
       externalId: events.get(strandedId)!.externalId,
     });
     expect(enqueuedJobs).toHaveLength(1);
-    expect(enqueuedJobs[0]!.data).toEqual({ eventId: strandedId });
+    expect(enqueuedJobs[0]!.data).toEqual({ eventId: strandedId, deferred: 0 });
     expect(enqueuedJobs[0]!.opts).toMatchObject({ jobId: strandedId, removeOnFail: true });
   });
 
@@ -329,13 +333,25 @@ describe('processChannelEvent arms', () => {
     expect(processedWrites).toHaveLength(0);
   });
 
-  it('no enabled config: the event is DEFERRED (never consumed), no routing', async () => {
+  it('no enabled config: the event is DEFERRED (never consumed) and re-driven in 5 min', async () => {
     const id = seedEvent();
     settingsRows.set('channels', '[]');
     await processChannelEvent({ eventId: id });
-    expect(processedWrites).toHaveLength(0); // stays queued for the next sweep
+    expect(processedWrites).toHaveLength(0); // stays queued
     expect(adapter.send).not.toHaveBeenCalled();
     expect(insertedTasks).toHaveLength(0);
+    expect(enqueuedJobs).toHaveLength(1);
+    expect(enqueuedJobs[0]!.data).toEqual({ eventId: id, deferred: 1 });
+    expect(enqueuedJobs[0]!.opts).toMatchObject({ delayMs: 300_000 });
+    expect((enqueuedJobs[0]!.opts as { jobId?: string }).jobId).toBe(`${id}-d1`);
+  });
+
+  it('deferral gives up after the cap without consuming the row', async () => {
+    const id = seedEvent();
+    settingsRows.set('channels', '[]');
+    await processChannelEvent({ eventId: id, deferred: 12 });
+    expect(processedWrites).toHaveLength(0); // raw row kept for the next boot sweep
+    expect(enqueuedJobs).toHaveLength(0);
   });
 
   it('unbound sender is refused (default deny), never routed', async () => {

@@ -255,13 +255,18 @@ export function createMatrixAdapter(cfg: { homeserverUrl: string; token: string 
       controller = null;
       return Promise.resolve();
     },
+    isLive() {
+      return running;
+    },
     async send(target, text) {
       // ack bus reliability: bounded retries on rate-limit/5xx — the acks are
       // part of the contract, not fire-and-forget
       const path = `/_matrix/client/v3/rooms/${encodeURIComponent(target)}/send/m.room.message/`;
+      // one txn id per logical send: a retry of the SAME message must reuse it
+      // so the homeserver dedupes an ambiguous first attempt
+      const txnId = `tandem-${Date.now()}-${(txnSeq += 1)}`;
       let lastStatus = 0;
       for (let attempt = 0; attempt < 3; attempt += 1) {
-        const txnId = `tandem-${Date.now()}-${(txnSeq += 1)}`;
         const res = await api(path + txnId, {
           method: 'PUT',
           body: { msgtype: 'm.text', body: capToMaxLen(text, MATRIX_CAPABILITIES) },

@@ -41,6 +41,9 @@ export type ChannelAdapter = {
   readonly capabilities: ChannelCapabilities;
   start(ctx: AdapterStartContext): Promise<void>;
   stop(): Promise<void>;
+  /** false once a fatal stop happened (dead token) — the core defers instead
+   * of routing into a dead transport */
+  isLive?(): boolean;
   /** transport-level send, already truncated to capabilities.maxLen */
   send(target: string, text: string): Promise<void>;
 };

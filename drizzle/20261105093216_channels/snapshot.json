@@ -2,7 +2,7 @@
   "type": "diff",
   "version": "9",
   "dialect": "postgres",
-  "id": "43bab304-91df-40f1-858c-01ca40e1419c",
+  "id": "b51196f5-263e-42b9-b51a-e1f793926613",
   "prevIds": [
     "038d65f2-008b-4748-953f-e4687519118a"
   ],
@@ -51,18 +51,18 @@
         "index",
         "public",
         "channel_events",
-        "channel_events_channel_external_uq"
+        "channel_events_adapter_external_uq"
       ],
       "writes": [
-        "s|idx|public.channel_events_channel_external_uq",
-        "n|idx|public.channel_events_channel_external_uq",
-        "e|idx|public.channel_events_channel_external_uq",
-        "n|rel|public.channel_events_channel_external_uq"
+        "s|idx|public.channel_events_adapter_external_uq",
+        "n|idx|public.channel_events_adapter_external_uq",
+        "e|idx|public.channel_events_adapter_external_uq",
+        "n|rel|public.channel_events_adapter_external_uq"
       ],
       "reads": [
         "n|tbl|public.channel_events",
         "n|sch|public",
-        "n|col|public.channel_events.channel",
+        "n|col|public.channel_events.adapter",
         "n|col|public.channel_events.external_id"
       ]
     },
@@ -407,11 +407,11 @@
       "row": {
         "schema": "public",
         "table": "channel_events",
-        "name": "channel_events_channel_external_uq",
+        "name": "channel_events_adapter_external_uq",
         "nameExplicit": true,
         "columns": [
           {
-            "value": "channel",
+            "value": "adapter",
             "isExpression": false,
             "asc": true,
             "nullsFirst": false,

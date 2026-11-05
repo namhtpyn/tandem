@@ -264,7 +264,10 @@ describe('matrix adapter', () => {
     queue.push({ status: 200, json: { event_id: '$sent' } });
     const a = makeAdapter();
     await a.send('!room:example.org', 'hi');
-    expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2);
+    const puts = calls.filter((c) => c.method === 'PUT');
+    expect(puts).toHaveLength(2);
+    // the retry reuses the txn id (same logical send → server-side dedupe)
+    expect(puts[0]!.url).toBe(puts[1]!.url);
   });
 
   it('send carries a JSON content-type header (CS API parity)', async () => {
@@ -279,6 +282,16 @@ describe('matrix adapter', () => {
     queue.push({ status: 403, json: { errcode: 'M_FORBIDDEN' } });
     const a = makeAdapter();
     await expect(a.send('!room:example.org', 'hi')).rejects.toThrow('matrix send failed: status 403');
+  });
+
+  it('isLive() reflects the running flag across fatal stops', async () => {
+    queue.push(whoOk());
+    queue.push({ status: 401, json: { errcode: 'M_UNKNOWN_TOKEN' } });
+    const a = makeAdapter();
+    await a.start({ onMessage: async () => {}, checkpoint: { get: async () => 's1', set: async () => {} } });
+    await until(() => calls.length >= 2, 'fatal poll');
+    await new Promise((r) => setTimeout(r, 80));
+    expect(a.isLive?.()).toBe(false);
   });
 
   it('stop() aborts the loop cleanly', async () => {

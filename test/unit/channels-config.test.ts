@@ -9,7 +9,11 @@ vi.mock('../../server/domains/kernel/env', () => ({
 
 vi.mock('../../server/db/index', () => ({ db: { query: {} } }));
 
-import { parseChannelConfigs, resolveBinding } from '../../server/domains/channels/channels.service';
+import {
+  channelsIntegrityReason,
+  parseChannelConfigs,
+  resolveBinding,
+} from '../../server/domains/channels/channels.service';
 
 const VALID = {
   kind: 'matrix',
@@ -63,6 +67,18 @@ describe('parseChannelConfigs', () => {
     expect(out).toHaveLength(1);
     expect(out[0]!.bindings).toEqual([]);
     expect(out[0]!.defaultAssigneeId).toBeNull();
+  });
+});
+
+describe('channelsIntegrityReason (settings integrity audit)', () => {
+  it('a valid stored array passes', () => {
+    expect(channelsIntegrityReason(JSON.stringify([VALID]))).toBeNull();
+  });
+
+  it('corrupt JSON / non-array / bad entry shapes are corruption', () => {
+    expect(channelsIntegrityReason('{oops')).toContain('invalid JSON');
+    expect(channelsIntegrityReason('{"kind":"matrix"}')).toContain('expected a JSON array');
+    expect(channelsIntegrityReason(JSON.stringify([{ ...VALID, tokenSecretId: '' }]))).toContain('entry 0');
   });
 });
 

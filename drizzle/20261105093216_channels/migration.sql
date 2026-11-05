@@ -21,6 +21,6 @@ CREATE TABLE "channel_threads" (
 	"updated_at" timestamp with time zone NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX "channel_events_channel_external_uq" ON "channel_events" ("channel","external_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "channel_events_adapter_external_uq" ON "channel_events" ("adapter","external_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "channel_threads_adapter_thread_uq" ON "channel_threads" ("adapter","thread_ref");--> statement-breakpoint
 ALTER TABLE "channel_threads" ADD CONSTRAINT "channel_threads_task_id_tasks_id_fkey" FOREIGN KEY ("task_id") REFERENCES "tasks"("id") ON DELETE CASCADE;

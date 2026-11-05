@@ -297,14 +297,17 @@ changes.
 ```
 ChannelAdapter {
   kind; capabilities {edit, threads, maxLen, markdown};   // edit=false → final-only outbound
-  start(ctx: {onMessage(m), checkpoint {get, set}}); stop()
+  start(ctx: {onMessage(m), checkpoint {get, set}}); stop(); isLive?()
   send(target, text)                                       // transport-level, no routing
 }
 ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
 ```
 
 - One adapter per channel kind (`matrix` first, self-hosted; discord/slack
-  follow). The core never branches on kind outside the adapter file.
+  follow). The core never branches on kind; a new kind = one adapter file plus
+  one explicit registry-arming line in the core (the explicit call is required
+  — a bare side-effect import is tree-shaken out of the Nitro bundle). Per-kind
+  config fields are slice-2 work; slice 1's config shape is matrix-shaped.
 - `capabilities.edit=false` adapters are final-only outbound (no edit-in-place).
 - Channel credentials live in the vault; config references the secret id. The
   service resolves plaintext only in-process; plaintext never persists.
@@ -315,20 +318,25 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   binding (`{platformUserId, userId}`); unbound senders are refused with a
   polite notice and their message is recorded (processed, refused) — never
   routed, never dispatched.
+- The bound user must exist AND hold EMPLOYEE or ADMIN (SPEC: Roles & access —
+  every channel verb is a `tasks.*` write): a VIEWER/deleted binding is refused
+  exactly like the oRPC kernel refuses it. Binding user ids must be uuids.
 
 ### Inbound durability (deploys drop nothing)
 
 - Every inbound message persists raw FIRST (`channel_events`, unique per
-  `(channel, externalId)` — replay-safe), then the sync checkpoint advances,
+  `(adapter, externalId)` — replay-safe across same-kind configs), then the
+  sync checkpoint advances,
   then a BullMQ job processes the row; workers re-run idempotently
   (`processed_at` guard + the event id AS the `jobId` so a job already
   queued/active is never duplicated; failed jobs drop their id immediately so
   the sweep can re-drive them). Boot sweeps unprocessed rows back into the
   queue AFTER adapters and the worker are live.
 - **Deferral law (no silent loss)**: an event whose adapter has no enabled
-  config or no LIVE adapter is NOT consumed — the row stays unprocessed and a
-  later sweep/job retry routes it once the channel is back. A config typo or a
-  dead token must never destroy user messages.
+  config or no LIVE adapter (isLive false — e.g. token rejected) is NOT
+  consumed; it re-enqueues itself every 5 min (bounded: 12 deferrals ≈ 1h,
+  then it stays raw for the next boot sweep). A config typo or dead token must
+  never destroy user messages.
 - Matrix checkpoint: the sync `next_batch` token, stored per channel in
   settings (`channels:checkpoint:<kind>:<homeserver>`). First-ever boot skips
   history (new events only); every later boot resumes from the checkpoint.
@@ -366,7 +374,9 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   port, trailing slash) before dedupe — one bot per homeserver, duplicates
   refused. Binding user ids must be uuids (a non-uuid id could never route).
   Boot starts adapters for enabled configs unless `TANDEM_NO_DISPATCHER=1`
-  (shared test opt-out).
+  (shared test opt-out); a failed start retries on a 30s boot-retry loop
+  instead of staying dead until restart. The stored `channels` value is under
+  the settings integrity audit (corrupt → readiness 503).
 - Matrix slice-1 capabilities: `{edit:false, threads:false, maxLen:4000,
   markdown:false}` — unencrypted rooms only (no crypto), plain-text send,
   invites are NOT auto-accepted (admin invites the bot per room). The adapter

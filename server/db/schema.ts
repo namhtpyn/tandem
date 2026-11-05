@@ -665,7 +665,8 @@ export const channelThreads = pgTable(
 
 // Inbound durability (SPEC: Channels — deploys drop nothing): the raw event
 // lands FIRST; the BullMQ job processes it afterwards and is idempotent via
-// processedAt. Unique (channel, externalId) makes adapter replays no-ops.
+// processedAt. Unique (adapter, externalId) makes adapter replays no-ops —
+// keyed by adapter so two homeservers' event ids can never collide.
 export const channelEvents = pgTable(
   'channel_events',
   {
@@ -686,7 +687,7 @@ export const channelEvents = pgTable(
       .$default(() => new Date()),
     processedAt: timestamp('processed_at', { withTimezone: true }),
   },
-  (t) => [uniqueIndex('channel_events_channel_external_uq').on(t.channel, t.externalId)],
+  (t) => [uniqueIndex('channel_events_adapter_external_uq').on(t.adapter, t.externalId)],
 );
 
 // ---------- relations ----------
