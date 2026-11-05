@@ -1415,6 +1415,21 @@ export function createRunWriter(runId: string, initial: string, messageId: strin
     // RUNS/TASK_ACTIVITY, latching the lock bit on every viewer). Extra TASKS
     // events on arms that already publish one are harmless snapshot re-emits.
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+    // CHANNEL REPLY RELAY (#271 slice 2, SPEC: Reply relay): a DONE run on a
+    // channel-mapped task relays its reply — best-effort, persist-first (the
+    // outbox row survives; the boot sweep re-drives), NEVER fails the settle.
+    if (status === RUN_STATUS.DONE) {
+      try {
+        const { relaySettledRun } = await import('../channels/channels.service');
+        await relaySettledRun(taskId, runId, messageId);
+      } catch (e) {
+        consola.warn(
+          `[settle] channel relay failed for run ${runId} (best-effort trigger — a failure BEFORE the outbox row loses this turn's relay; a failure AFTER it is re-driven by the boot sweep): ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+    }
   };
 
   return {

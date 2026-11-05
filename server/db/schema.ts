@@ -700,6 +700,42 @@ export const channelEvents = pgTable(
   ],
 );
 
+// Outbound durability (SPEC: Reply relay, slice 2 — deploys drop nothing): a
+// settled DONE run on a channel-mapped task persists one outbox row PER
+// mapped thread BEFORE the queue job carries it. Unique
+// (adapter, runId, threadRef) makes re-driven sweeps/re-settles idempotent.
+export const channelOutbox = pgTable(
+  'channel_outbox',
+  {
+    id: text('id')
+      .primaryKey()
+      .$default(() => uuidv7()),
+    /** originating adapter key (`kind:homeserver`) — sends resolve through
+     * THIS adapter only, never a kind-wide match */
+    adapter: text('adapter').notNull(),
+    threadRef: text('thread_ref').notNull(),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    runId: text('run_id').notNull(),
+    body: text('body').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .$default(() => new Date()),
+    /** worker claim CAS — concurrent jobs (sweep, deploy overlap) can never
+     * send the same reply twice */
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    processedAt: timestamp('processed_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('channel_outbox_relay_uq').on(t.adapter, t.runId, t.threadRef),
+    // boot sweep predicate — partial index over the UNSENT backlog
+    index('channel_outbox_unprocessed_idx')
+      .on(t.processedAt)
+      .where(sql`${t.processedAt} is null`),
+  ],
+);
+
 // ---------- relations ----------
 
 export const relations = defineRelations(
@@ -728,6 +764,7 @@ export const relations = defineRelations(
     taskAttachments,
     channelThreads,
     channelEvents,
+    channelOutbox,
     mcpServers,
     mcpServerBindings,
     mcpOauthTokens,

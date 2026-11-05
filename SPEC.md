@@ -394,10 +394,73 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   configs; message bodies ride the composer's caps (title ≤200 chars,
   body/answers ≤10k). Durability is AT-LEAST-ONCE: the processedAt guard
   prevents retry storms, and a crash mid-verb can re-apply that verb's effect
-  once — no-loss wins. Replies relay as plain acks; streaming bubble,
-  per-thread outbound queue keying, edit, watchdog per-channel health, gappy
-  sync backfill (limited-timeline rooms), and the settings UI are later
-  slices of #271.
+  once — no-loss wins. Replies relay as plain acks; streaming bubble, edit,
+  watchdog per-channel health, gappy sync backfill (limited-timeline rooms),
+  and the settings UI are later slices of #271.
+
+### Reply relay (slice 2: final-only outbound)
+
+- A run that settles DONE on a task mapped to a channel thread (any
+  `channel_threads` row for the task) relays its reply to that thread — one
+  `channel_outbox` row PER mapped thread, ALL rows persisted BEFORE any queue
+  job (deploys drop nothing, same law as inbound: a mid-relay failure leaves
+  every mapping's row raw for the boot sweep, never a half-set). The unique
+  `(adapter, run_id, thread_ref)` index dedupes ROWS; enqueue idempotence
+  comes from kicking only newly-inserted rows plus the queue's jobId dedupe —
+  a re-settled run can never enqueue a reply twice. A RESTART can run two
+  parallel cycle chains for one row (a surviving delayed job plus the sweep's
+  fresh kick): safe by the claim CAS — one send wins, the loser no-ops.
+  Durability stays AT-LEAST-ONCE end-to-end (slice-1 law): a crash
+  between a successful send and the processed-at write — or any
+  failed/ambiguous send retried per the deferral law — can deliver that one
+  reply twice; no-loss wins, the same bound the inbound verbs carry.
+- The relayed text is the thread turn's visible body — the run message body
+  after the settle rewrite (envelope text, else the human tail; agent prose,
+  never tool logs), with result-attachment tokens stripped (platform-external
+  syntax) and the inbound sanitizer applied. The text is capped to the
+  adapter's `capabilities.maxLen` at send time.
+- FINAL-ONLY (contract v1: `capabilities.edit=false`): the relay sends the
+  finished reply once — no streaming bubble, no edit-in-place on channels that
+  cannot edit. Streaming/edit is a later slice.
+- Trigger is BEST-EFFORT: the run-settle path never fails because relaying
+  failed — a relay error is logged, never thrown into settle. The trigger
+  fires once, after the settle commits; it runs LAST among the settle side
+  effects, so a failure of any preceding one (message rewrite, attachments,
+  settle, publishes) skips the relay exactly like a process death in that
+  window — no re-driver exists pre-insert; the at-least-once guarantee starts
+  at the outbox row, exactly like every other settle side effect.
+- Per-thread ordering: the outbound worker sends at most one row per
+  `(adapter, thread_ref)` conversation at a time and always the OLDEST
+  unprocessed one — replies land in settle order even when the queue runs
+  concurrent workers.
+- Deferral law (parity with inbound): a row whose adapter has no enabled
+  config or no LIVE adapter is NOT consumed — claim released, re-driven every
+  5 min, bounded (12 deferrals ≈ 1h) then it stays raw for the next boot
+  sweep. The budget rides each re-drive chain: a restart starts a fresh
+  cycle, so a flapping deploy can extend the raw window — the row is still
+  never consumed. A failed SEND releases the claim for job retry with
+  backoff; the row survives terminal job failure (at-least-once) — a
+  non-retryable send failure consumes its job deliberately, leaving the row
+  raw for the next boot sweep, so between that failure and the next restart
+  the row IS jobless (stated, not accidental). A worker killed MID-send
+  leaves a claimed row; its re-kick chain re-drives it after
+  the claim TTL (bounded re-kicks), and the boot sweep backstops at the next
+  restart. A turn body that reduces to empty relays nothing (never an empty
+  message — logged, not silent). Send order
+  only advances when the oldest row leaves the queue — a stuck head (retry
+  backoff, a raw row awaiting the boot sweep, or a claim inside its TTL)
+  stalls ONLY its thread by design (younger rows poll at ≤60s cadence until
+  the head resolves), never the others; the cap applied at send time is
+  pair-aware (the slice can never re-create a lone surrogate the sanitizer
+  stripped — postgres jsonb law).
+- Boot sweep: unprocessed outbox rows are re-enqueued AFTER adapters and the
+  workers are live (same ORDER LAW as the inbound sweep), ONCE PER PROCESS —
+  the 30s partial-start retry loop does not re-sweep (a fresh re-kick with a
+  reset budget every 30s would make the give-up bound unreachable); a
+  restart re-sweeps, which is the deploy-crash recovery path.
+- Only DONE runs relay. FAILED/STOPPED runs post nothing to the channel (the
+  instant ack plus the web run pill carry that state); review turns relay the
+  verdict text exactly as the thread turn shows it — one response per turn.
 
 ## Vault key law
 
