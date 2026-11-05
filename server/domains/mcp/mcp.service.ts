@@ -30,7 +30,11 @@ export function toRegistryRow(r: typeof mcpServers.$inferSelect, bindingCount = 
   return {
     id: r.id,
     name: r.name,
+    transport: r.transport,
     url: r.url,
+    command: r.command,
+    args: parseArgsJson(r.args),
+    credentialEnvVar: r.credentialEnvVar,
     notes: r.notes,
     authKind: r.authKind,
     oauth: {
@@ -57,13 +61,14 @@ function toBindingRow(b: {
   lastProbeOk: boolean | null;
   lastProbeDetail: string | null;
   lastProbeAt: Date | null;
-  server: { name: string; url: string };
+  server: { name: string; transport: string; url: string | null };
   secret: { name: string; lastFour: string } | null;
 }) {
   return {
     id: b.id,
     serverId: b.serverId,
     serverName: b.server.name,
+    transport: b.server.transport,
     url: b.server.url,
     secretId: b.secretId,
     secretName: b.secret?.name ?? null,
@@ -83,7 +88,11 @@ type BindingWithRefs = {
   lastProbeAt: Date | null;
   server: {
     name: string;
-    url: string;
+    transport: string;
+    url: string | null;
+    command: string | null;
+    args: string | null;
+    credentialEnvVar: string | null;
     authKind: string;
     oauthAuthorizeUrl: string | null;
     oauthTokenUrl: string | null;
@@ -116,6 +125,105 @@ export const assertRegistryEntry = async (serverId: string) => {
   const rows = await db.query.mcpServers.findMany({ where: { id: { eq: serverId } } });
   if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'MCP registry entry not found' });
 };
+
+// slice 3 stdio transport — shared types + validation (SPEC "stdio transport")
+export type RegistryTransportInput = {
+  transport?: 'http' | 'stdio';
+  url?: string | null;
+  command?: string | null;
+  args?: string[] | null;
+  credentialEnvVar?: string | null;
+};
+
+/** parse the serialized args column — null/empty → []; invalid JSON or a
+ * non-string-array → 400 (a corrupt column is dead input, never dispatched) */
+export function parseArgsJson(args: string | null | undefined): string[] {
+  if (!args) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(args);
+  } catch {
+    throw new ORPCError('BAD_REQUEST', { message: 'args must be a JSON array of strings' });
+  }
+  if (!Array.isArray(parsed) || parsed.some((a) => typeof a !== 'string')) {
+    throw new ORPCError('BAD_REQUEST', { message: 'args must be a JSON array of strings' });
+  }
+  return parsed;
+}
+
+const ENV_VAR_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** transport-conditional validation (SPEC stdio section): resolve the
+ * EFFECTIVE transport from input+existing, enforce http↔stdio field
+ * requirements, refuse oauth ∩ stdio (OAuth is an http contract — endpoints +
+ * Bearer headers have no stdio meaning). Returns the transport-conditional
+ * columns to write; name/notes/oauth columns stay the caller's. */
+function normalizeTransportFields(
+  existing: Pick<
+    typeof mcpServers.$inferSelect,
+    'transport' | 'url' | 'command' | 'args' | 'credentialEnvVar' | 'authKind'
+  > | null,
+  input: RegistryTransportInput & { authKind?: 'none' | 'oauth' },
+): Partial<typeof mcpServers.$inferInsert> {
+  const patch: Partial<typeof mcpServers.$inferInsert> = {};
+  const transport =
+    input.transport !== undefined && input.transport !== null ? input.transport : (existing?.transport ?? 'http');
+  if (transport !== 'http' && transport !== 'stdio') {
+    throw new ORPCError('BAD_REQUEST', { message: 'transport must be http or stdio' });
+  }
+  if (transport === 'stdio') {
+    const effectiveAuth = input.authKind ?? (existing?.authKind as string | undefined) ?? 'none';
+    if (effectiveAuth === 'oauth' || (input.transport === 'stdio' && oauthTouched(input))) {
+      throw new ORPCError('BAD_REQUEST', {
+        message: 'oauth config belongs to http servers — stdio entries cannot carry it',
+      });
+    }
+    const command = input.command !== undefined && input.command !== null ? input.command : (existing?.command ?? null);
+    if (!command) throw new ORPCError('BAD_REQUEST', { message: 'command is required for stdio servers' });
+    if (!command.startsWith('/')) {
+      throw new ORPCError('BAD_REQUEST', { message: 'command must be an absolute path (ACP stdio contract)' });
+    }
+    patch.command = command;
+    patch.args = input.args !== undefined ? JSON.stringify(input.args ?? []) : (existing?.args ?? '[]');
+    if (input.credentialEnvVar !== undefined) {
+      const v = input.credentialEnvVar;
+      if (v && !ENV_VAR_RE.test(v)) {
+        throw new ORPCError('BAD_REQUEST', { message: 'credentialEnvVar must be a valid env var name' });
+      }
+      patch.credentialEnvVar = v || null;
+    }
+    // a stdio entry carries no http target — the url column stays null
+    // (nullable for exactly this)
+    patch.url = null;
+  } else {
+    const url = input.url !== undefined && input.url !== null ? input.url : (existing?.url ?? null);
+    if (!url) throw new ORPCError('BAD_REQUEST', { message: 'url is required for http servers' });
+    assertHttpUrl(url, 'url');
+    patch.url = url;
+    for (const stdioOnly of ['command', 'args', 'credentialEnvVar'] as const) {
+      const v = input[stdioOnly];
+      if (v !== undefined && v !== null) {
+        throw new ORPCError('BAD_REQUEST', {
+          message: `${stdioOnly} belongs to stdio servers (transport http)`,
+        });
+      }
+    }
+  }
+  return patch;
+}
+
+/** whether the stdio target contract changed (SPEC verdict-invalidation law:
+ * a transport switch or command/args/credentialEnvVar change clears verdicts) */
+function stdioTargetChanged(
+  existing: typeof mcpServers.$inferSelect,
+  patch: Partial<typeof mcpServers.$inferInsert>,
+): boolean {
+  return (
+    (patch.command !== undefined && patch.command !== existing.command) ||
+    (patch.args !== undefined && patch.args !== existing.args) ||
+    (patch.credentialEnvVar !== undefined && patch.credentialEnvVar !== existing.credentialEnvVar)
+  );
+}
 
 const assertSecret = async (secretId: string) => {
   const rows = await db.select({ id: vaultSecrets.id }).from(vaultSecrets).where(eq(vaultSecrets.id, secretId));
@@ -236,11 +344,16 @@ export async function listRegistry() {
   return { data: rows.map((r) => toRegistryRow(r, counts.get(r.id) ?? 0)) };
 }
 
-export async function registryCreate(input: { name: string; url: string; notes: string } & RegistryOauthInput) {
+export async function registryCreate(
+  input: { name: string; notes: string } & RegistryTransportInput & RegistryOauthInput,
+) {
   const clash = await db.query.mcpServers.findMany({ where: { name: { eq: input.name } } });
   if (clash.length > 0) {
     throw new ORPCError('CONFLICT', { message: `MCP server "${input.name}" already exists` });
   }
+  // transport-conditional fields first (an oauth ∩ stdio refusal fires here,
+  // before any oauth normalization runs)
+  const transport = normalizeTransportFields(null, input);
   // an empty existing row: untouched input falls back to the column defaults
   const oauth = await normalizeOauthFields(
     {
@@ -256,14 +369,14 @@ export async function registryCreate(input: { name: string; url: string; notes: 
   );
   const inserted = await db
     .insert(mcpServers)
-    .values({ name: input.name, url: input.url, notes: input.notes, ...oauth })
+    .values({ name: input.name, notes: input.notes, ...transport, ...oauth })
     .returning();
   await publishChange(CHANGE_RESOURCE.MCP, CHANGE_ACTION.CREATE);
   return toRegistryRow(nonNull(inserted[0]));
 }
 
 export async function registryUpdate(
-  input: { id: string; name?: string; url?: string; notes?: string } & RegistryOauthInput,
+  input: { id: string; name?: string; notes?: string } & RegistryTransportInput & RegistryOauthInput,
 ) {
   const existing = (await db.query.mcpServers.findMany({ where: { id: { eq: input.id } } }))[0];
   if (!existing) throw new ORPCError('NOT_FOUND', { message: 'MCP registry entry not found' });
@@ -273,13 +386,19 @@ export async function registryUpdate(
       throw new ORPCError('CONFLICT', { message: `MCP server "${input.name}" already exists` });
     }
   }
-  // PROBE VERDICT LAW: a url change invalidates every binding verdict of this
-  // server — a stale OK on a changed target would lie. Name/notes edits keep it.
-  const urlChanged = input.url !== undefined && input.url !== existing.url;
+  // transport-conditional fields first (oauth ∩ stdio refusal fires before any
+  // oauth normalization runs)
+  const transportPatch = normalizeTransportFields(existing, input);
+  // PROBE VERDICT LAW: a target change (url for http; transport switch or
+  // command/args/credentialEnvVar for stdio) invalidates every binding verdict
+  // of this server — a stale OK on a changed target would lie. Name/notes
+  // edits keep it.
+  const urlChanged = transportPatch.url !== undefined && transportPatch.url !== existing.url;
+  const stdioChanged = stdioTargetChanged(existing, transportPatch);
   const patch: Partial<typeof mcpServers.$inferInsert> = {
     ...(input.name !== undefined ? { name: input.name } : {}),
-    ...(input.url !== undefined ? { url: input.url } : {}),
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
+    ...transportPatch,
     updatedAt: new Date(),
   };
   // OAuth config edit = ANY authKind/oauth* key present; the wipe fires only
@@ -309,7 +428,7 @@ export async function registryUpdate(
   await db.transaction(async (tx) => {
     const rows = await tx.update(mcpServers).set(patch).where(eq(mcpServers.id, input.id)).returning();
     updatedRow = rows[0];
-    if (urlChanged || oauthChanged) {
+    if (urlChanged || stdioChanged || oauthChanged) {
       await tx
         .update(mcpServerBindings)
         .set({ lastProbeOk: null, lastProbeDetail: null, lastProbeAt: null })
@@ -449,7 +568,24 @@ export async function buildMcpServersFor(employeeId: string): Promise<AcpMcpServ
   const sorted = [...(rows as BindingWithRefs[])].sort((a, b) => (a.server.name < b.server.name ? -1 : 1));
   return Promise.all(
     sorted.map(async (b) => {
-      // ACP v1 wire: headers is a REQUIRED array (empty = uncredentialed server)
+      if (b.server.transport === 'stdio') {
+        // slice 3 stdio member: the binding credential rides as the env var
+        // NAMED by credentialEnvVar (decrypted at dispatch only, plaintext
+        // never outlives this call) — env carries ONLY that var
+        const env: Array<{ name: string; value: string }> = [];
+        if (b.server.credentialEnvVar && b.secret?.ciphertext) {
+          env.push({ name: b.server.credentialEnvVar, value: decryptSecret(b.secret.ciphertext) });
+        }
+        return {
+          type: 'stdio' as const,
+          name: b.server.name,
+          command: nonNull(b.server.command),
+          args: parseArgsJson(b.server.args),
+          env,
+        };
+      }
+      // ACP v1 wire: headers is a REQUIRED array (empty = uncredentialed server);
+      // url is validation-required for http entries
       let headers: Array<{ name: string; value: string }> = [];
       if (b.server.authKind === 'oauth') {
         // OAuth binding: silent refresh first, then Bearer. A failed refresh
@@ -460,7 +596,7 @@ export async function buildMcpServersFor(employeeId: string): Promise<AcpMcpServ
       } else if (b.secret?.ciphertext) {
         headers = [{ name: 'Authorization', value: decryptSecret(b.secret.ciphertext) }];
       }
-      return { type: 'http' as const, name: b.server.name, url: b.server.url, headers };
+      return { type: 'http' as const, name: b.server.name, url: nonNull(b.server.url), headers };
     }),
   );
 }
@@ -531,6 +667,89 @@ export async function probeMcpHttp(url: string, authorization?: string): Promise
   return { ok: true, detail: `initialize ok (${info?.name ?? 'server'}${info?.version ? ` v${info.version}` : ''})` };
 }
 
+/** slice 3 stdio probe (SPEC "Probe (stdio)"): spawn `command args` (+ the
+ * credential env var — the child inherits nothing else), MCP `initialize`
+ * handshake over stdin, JSON-RPC response on stdout within the 10s cap, then
+ * the child is KILLED — a probe never leaves a spawned process running.
+ * Failure detail carries the first error line — never a bare "spawn failed". */
+export async function probeMcpStdio(
+  command: string,
+  args: string[],
+  env: Record<string, string> = {},
+): Promise<{ ok: boolean; detail: string }> {
+  let child: ReturnType<typeof Bun.spawn> | null = null;
+  try {
+    child = Bun.spawn([command, ...args], { env, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+    // the spawn options pin 'pipe' — narrow past Bun's `number | stream` union
+    const stdin = child.stdin as Bun.FileSink;
+    const stdout = child.stdout as ReadableStream<Uint8Array>;
+    const stderr = child.stderr as ReadableStream<Uint8Array>;
+    stdin.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-06-18',
+          capabilities: {},
+          clientInfo: { name: 'tandem-probe', version: '1' },
+        },
+      })}\n`,
+    );
+    await stdin.flush();
+    const reader = stdout.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let parsed: ReturnType<typeof extractJsonRpc> = null;
+    // line-wise read with the 10s cap — servers may banner to stdout first
+    for (;;) {
+      const deadline = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('timed out after 10s waiting for the initialize response')), 10_000);
+      });
+      const chunk = await Promise.race([reader.read(), deadline]);
+      if (chunk.done) break;
+      buf += decoder.decode(chunk.value);
+      parsed = extractJsonRpc(buf);
+      if (parsed) break;
+    }
+    const exitCode = await Promise.race([
+      child.exited,
+      new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), 1_000);
+      }),
+    ]);
+    if (!parsed) {
+      if (typeof exitCode === 'number' && exitCode !== 0) {
+        // probe law: carry the FIRST error line (stderr beats the bare exit code)
+        const errText = await new Response(stderr).text().catch(() => '');
+        const firstErr = errText.split('\n').find((l) => l.trim());
+        return { ok: false, detail: (firstErr ?? `server exited with code ${exitCode}`).trim().slice(0, 300) };
+      }
+      if (typeof exitCode === 'number') return { ok: false, detail: 'server exited before responding' };
+      return { ok: false, detail: 'no JSON-RPC payload in server output' };
+    }
+    if (parsed.error)
+      return {
+        ok: false,
+        detail: `MCP error ${parsed.error.code ?? ''}: ${parsed.error.message ?? 'unknown'}`.trimEnd(),
+      };
+    const info = (parsed.result as { serverInfo?: { name?: string; version?: string } } | undefined)?.serverInfo;
+    return { ok: true, detail: `initialize ok (${info?.name ?? 'server'}${info?.version ? ` v${info.version}` : ''})` };
+  } catch (e) {
+    const message = (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? String(e);
+    return { ok: false, detail: message };
+  } finally {
+    if (child) {
+      try {
+        child.kill();
+        await child.exited;
+      } catch {
+        /* already dead */
+      }
+    }
+  }
+}
+
 /** PROBE VERDICT LAW on the binding row: persist BOTH outcomes */
 export async function persistBindingVerdict(bindingId: string, r: { ok: boolean; detail: string }) {
   await db
@@ -552,7 +771,16 @@ export async function probeMcpBinding(input: { employeeId: string; serverId: str
     authorization = decryptSecret(binding.secret.ciphertext);
   }
   const started = Date.now();
-  const result = await probeMcpHttp(binding.server.url, authorization);
+  const result =
+    binding.server.transport === 'stdio'
+      ? await probeMcpStdio(
+          nonNull(binding.server.command),
+          parseArgsJson(binding.server.args),
+          binding.server.credentialEnvVar && binding.secret?.ciphertext
+            ? { [binding.server.credentialEnvVar]: decryptSecret(binding.secret.ciphertext) }
+            : {},
+        )
+      : await probeMcpHttp(nonNull(binding.server.url), authorization);
   const durationMs = Date.now() - started;
   await persistBindingVerdict(binding.id, result);
   await publishChange(CHANGE_RESOURCE.MCP, CHANGE_ACTION.UPDATE);
