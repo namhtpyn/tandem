@@ -283,6 +283,82 @@ browser redirect `GET /api/mcp/oauth/callback?code&state` (consumes the
 single-use state, exchanges + stores the binding's tokens, renders the
 close-this-window result page).
 
+## Channels (backend relay, contract v1 — #271 slice 1)
+
+Channels are transport owned by the backend: a channel message routes into the
+task thread through the SAME procs as the web composer (composer law — no
+parallel decision tree), the existing ACP pipeline runs the agent, and replies
+relay back. Agents never touch channel credentials (hermetic law). The adapter
+contract is versioned: adding a channel = one new adapter file, zero core
+changes.
+
+### Adapter contract (v1)
+
+```
+ChannelAdapter {
+  kind; capabilities {edit, threads, maxLen, markdown};   // edit=false → final-only outbound
+  start(ctx: {onMessage(m), checkpoint {get, set}}); stop()
+  send(target, text)                                       // transport-level, no routing
+}
+ChannelInboundMessage { threadRef, senderPlatformId, text, raw }
+```
+
+- One adapter per channel kind (`matrix` first, self-hosted; discord/slack
+  follow). The core never branches on kind outside the adapter file.
+- `capabilities.edit=false` adapters are final-only outbound (no edit-in-place).
+- Channel credentials live in the vault; config references the secret id. The
+  service resolves plaintext only in-process; plaintext never persists.
+
+### Identity binding (default deny)
+
+- A platform user id acts AS a Tandem user ONLY via an explicit admin-managed
+  binding (`{platformUserId, userId}`); unbound senders are refused with a
+  polite notice and their message is recorded (processed, refused) — never
+  routed, never dispatched.
+
+### Inbound durability (deploys drop nothing)
+
+- Every inbound message persists raw FIRST (`channel_events`, unique per
+  `(channel, externalId)` — replay-safe), then the sync checkpoint advances,
+  then a BullMQ job processes the row; workers re-run idempotently
+  (`processed_at` guard). Boot sweeps unprocessed rows back into the queue, so
+  an event stranded between checkpoint and enqueue still processes.
+- Matrix checkpoint: the sync `next_batch` token, stored per channel in
+  settings (`channels:checkpoint:<kind>:<homeserver>`). First-ever boot skips
+  history (new events only); every later boot resumes from the checkpoint.
+
+### Routing verbs (slice 1: note / answer / new-task only)
+
+- Unmapped thread + bound sender → **new-task**: task created exactly as the web
+  composer creates one (first line ≤200 chars = title, full body = description,
+  owner/creator = bound user; optional channel default assignee attaches after
+  existence check — an AI assignee on a ready status auto-dispatches through the
+  existing dispatcher).
+- Mapped thread → **note** through `addNote` (steer-live / dispatch-stopped
+  composer law verbatim), or **answer** when the status category is
+  `waiting_answer` (the reserved answer verb; a note must never stomp an open
+  question). Verb pick keys off status CATEGORY, never seeded ids (#265 law).
+- Mapped thread whose task is terminal (done/cancelled category) → no note; the
+  sender gets "closed — start a new task in this channel" (thread stays mapped
+  for reference).
+- Ack culture: every accepted message gets an instant outbound ack (created /
+  steered / dispatched / noted / answered / closed / refused). Acks are adapter
+  `send` with the capabilities maxLen cap.
+
+### Channel config
+
+- Settings key `channels` holds the JSON array of `{kind, enabled,
+  homeserverUrl, tokenSecretId, bindings[], defaultAssigneeId?}` (admin-managed;
+  the settings UI/form is a later slice — slice 1 reads the key only). Tolerant
+  parse: invalid entries are skipped and logged; a corrupt value reads as no
+  channels (fail closed). Boot starts adapters for enabled configs unless
+  `TANDEM_NO_DISPATCHER=1` (shared test opt-out).
+- Matrix slice-1 capabilities: `{edit:false, threads:false, maxLen:4000,
+  markdown:false}` — unencrypted rooms only (no crypto), plain-text send,
+  invites are NOT auto-accepted (admin invites the bot per room), replies relay
+  as plain acks; streaming bubble, per-thread outbound queue keying, edit,
+  watchdog per-channel health, and the settings UI are later slices of #271.
+
 ## Vault key law
 
 - `TANDEM_VAULT_KEY` is REQUIRED (32-byte base64, `openssl rand -base64 32`); there is NO hardcoded fallback — a key shipped in the repo is a key everyone has. Wrong size or missing key throws at first use with a clear message. Losing the key loses every stored secret.
