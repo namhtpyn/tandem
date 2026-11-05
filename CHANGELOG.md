@@ -1,3 +1,20 @@
+# [2.71.0](https://github.com/namhtpyn/tandem/compare/v2.70.0...v2.71.0) (2026-11-05)
+
+
+### Bug Fixes
+
+* [#322](https://github.com/namhtpyn/tandem/issues/322) r1 review — persist-ALL-then-enqueue (mid-relay redis failure can never drop a mapping; rows stay raw for the sweep), pair-aware maxLen cap (a split surrogate is an invalid JSON escape a homeserver rejects forever), deferral give-up releases the claim (ghost-claim head-gate stall), SPEC honesty: at-least-once delivery worded as the slice-1 law ([c11b631](https://github.com/namhtpyn/tandem/commit/c11b6314861663af5ec0e69f3ee14b0c236c0a3c))
+* [#322](https://github.com/namhtpyn/tandem/issues/322) r2 review — post-claim guard (config read/head query/processed write release the claim on throw; quick job retries can never no-op on a fresh claim and orphan the row), SPEC honesty: ambiguous-send retry clause + best-effort trigger window made explicit ([a9c9b6e](https://github.com/namhtpyn/tandem/commit/a9c9b6e41c440e519f4134a2ea718f106be7d136))
+* [#322](https://github.com/namhtpyn/tandem/issues/322) r3 review — CAS-loss re-kick (a killed worker can never orphan a claimed-jobless row: the loser re-kicks after the claim TTL, bounded), honest settle-failure log (pre-insert vs post-insert recovery), SPEC: row-vs-enqueue idempotence mechanism, restart-fresh deferral budget, mid-send kill recovery + poll churn stated ([8de57b7](https://github.com/namhtpyn/tandem/commit/8de57b7d3946af37a41ddc40bfd259413effb135))
+* [#322](https://github.com/namhtpyn/tandem/issues/322) r4 review — boot sweep ONCE PER PROCESS (the 30s partial-start retry loop re-sweeping reset the deferral budget forever and churned the queue while an adapter was down; stop/start re-sweeps), honest jobless + empty-body SPEC clauses, stale-claim CAS predicate modeled in tests (fresh refuses / stale steals = the mid-send-kill recovery path) ([5c6b303](https://github.com/namhtpyn/tandem/commit/5c6b3037e0910823677b9415cb94bfeb0d093d4c))
+* [#322](https://github.com/namhtpyn/tandem/issues/322) r5 review — SPEC honesty: restart parallel cycle chains stated (claim CAS arbitrates), pre-insert relay-loss window covers any preceding settle side-effect failure ([f698e16](https://github.com/namhtpyn/tandem/commit/f698e164bfe5b398021b1dcbc46d8704e447dcf6))
+
+
+### Features
+
+* [#271](https://github.com/namhtpyn/tandem/issues/271) slice 2 — reply relay: channel_outbox persist-first per mapped thread, unique (adapter,runId,threadRef) idempotence, per-thread ordering (oldest-first head gate, capped wait polls), adapter-down deferral parity (no-loss), maxLen cap, boot sweep + outbound worker, best-effort DONE-run trigger in the settle path ([0d3eea2](https://github.com/namhtpyn/tandem/commit/0d3eea2440b7de64338d79da583e3a43f84b2848))
+* [#271](https://github.com/namhtpyn/tandem/issues/271) slice 2 spec — reply relay contract (final-only outbound, outbox-first durability, per-thread ordering, deferral parity) ([2fa68f8](https://github.com/namhtpyn/tandem/commit/2fa68f8d37a45f73dcb95d14827f00971ca5248d))
+
 # [2.70.0](https://github.com/namhtpyn/tandem/compare/v2.69.0...v2.70.0) (2026-11-05)
 
 
