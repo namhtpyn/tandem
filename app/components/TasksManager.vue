@@ -89,6 +89,14 @@ watch(
     if (next !== projectScopeId.value) projectScopeId.value = next;
   },
 );
+// a project param that normalizes to NO scope (blank / the NONE_ID sentinel) is
+// dead URL state: the ref watcher can never clear it (null === null bails), so
+// strip it once on mount. Client-only — SSR must never navigate during setup.
+onMounted(() => {
+  if ('project' in route.query && projectScopeId.value === null) {
+    void router.replace({ query: { ...route.query, project: undefined } });
+  }
+});
 watch([statusId, needsDecision, awaitingDecision, projectScopeId], () => {
   page.value = 1;
 });

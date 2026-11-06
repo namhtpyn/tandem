@@ -59,6 +59,19 @@ test('project scope: project row opens its tasks, select sets/clears, URL-synced
   await expect(tasks.rowFor(inTitle)).toBeVisible({ timeout: 15_000 });
   await expect(tasks.rowFor(outTitle)).toHaveCount(0);
 
+  // composed with the obligation toggles: their empty copy stays scoped to the
+  // project (a bare company-wide sentence would be false inside a scope)
+  await page.getByRole('button', { name: 'Needs my decision' }).click();
+  await expect(page.getByText(`Nothing in ${project} is waiting on your decision right now.`)).toBeVisible({
+    timeout: 15_000,
+  });
+  await page.getByRole('button', { name: 'Needs my decision' }).click();
+  await page.getByRole('button', { name: 'Awaiting decision' }).click();
+  await expect(page.getByText(`Nothing in ${project} is waiting on a decision right now.`)).toBeVisible({
+    timeout: 15_000,
+  });
+  await page.getByRole('button', { name: 'Awaiting decision' }).click();
+
   // composed with a status chip: the empty copy keeps naming the project
   await page
     .getByRole('group', { name: 'Filter by status' })
@@ -80,10 +93,33 @@ test('project scope: unresolvable scope degrades honestly (unknown id, sentinel)
   await expect(page.getByTestId('project-scope-select')).toContainText('Unknown project');
   await expect(page.getByText('No tasks in this project', { exact: false })).toBeVisible({ timeout: 15_000 });
 
-  // the internal NONE_ID sentinel is a display value, never a scope
+  // the internal NONE_ID sentinel is a display value, never a scope — and the
+  // dead param is stripped from the URL on mount (no scope claim in the address)
   await tasks.navigate('/tasks?project=__none__');
   await expect(page.getByTestId('project-scope-select')).toContainText('All projects');
   await expect(page.getByTestId('project-scope-hint')).toHaveCount(0);
+  await expect.poll(() => page.url()).not.toContain('project=');
+});
+
+test('project scope: the mobile project card carries the drill-down', async ({ page }) => {
+  const tasks = new TasksPage(page);
+  const suffix = Date.now().toString(36).slice(-6);
+  const project = `Mobile ${suffix}`;
+  const inTitle = `MIN ${suffix}`;
+  const created = await rpc(page, '/rpc/projects/create', { name: project });
+  await rpc(page, '/rpc/tasks/create', { title: inTitle, projectId: created.id });
+
+  // phone width: DataTable swaps the table for mobile cards — the drill-down must
+  // ride the card too (SPEC: desktop actions + mobile card)
+  await page.setViewportSize({ width: 390, height: 844 });
+  await tasks.navigate('/projects');
+  const drill = page.locator(`[aria-label="View tasks in ${project}"]:visible`);
+  await expect(drill).toBeVisible({ timeout: 15_000 });
+  await drill.click();
+  await expect.poll(() => page.url()).toContain(`project=${created.id}`);
+  await expect(page.getByTestId('project-scope-select')).toContainText(project);
+  // mobile cards render the row anchor; the hidden desktop row is the first match
+  await expect(page.locator('a:visible').filter({ hasText: inTitle }).first()).toBeVisible({ timeout: 15_000 });
 });
 
 test('project scope: an empty project names itself in the empty state', async ({ page }) => {
