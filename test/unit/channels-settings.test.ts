@@ -14,7 +14,14 @@ vi.mock('../../server/domains/kernel/env', () => ({
 
 vi.mock('../../server/domains/settings/settings.service', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../server/domains/settings/settings.service')>();
-  return { ...actual, getSetting: vi.fn(), getSettingUpdatedAt: vi.fn(), setSetting: vi.fn(), deleteSetting: vi.fn() };
+  return {
+    ...actual,
+    getSetting: vi.fn(),
+    getSettingSnapshot: vi.fn(),
+    setSettingIfUnchanged: vi.fn(),
+    setSetting: vi.fn(),
+    deleteSetting: vi.fn(),
+  };
 });
 
 // existence checks ride drizzle select chains — the mock HONORS the caller's
@@ -109,7 +116,12 @@ import {
   stopChannels,
 } from '../../server/domains/channels/channels.service';
 import { publishChange } from '../../server/domains/kernel/kernel';
-import { getSetting, getSettingUpdatedAt, setSetting } from '../../server/domains/settings/settings.service';
+import {
+  getSetting,
+  getSettingSnapshot,
+  setSetting,
+  setSettingIfUnchanged,
+} from '../../server/domains/settings/settings.service';
 
 const rearmSpy = vi.mocked(onChannelsSettingsChanged);
 
@@ -124,7 +136,8 @@ const VALID = {
 
 // ---- helpers ----
 const mockedGet = vi.mocked(getSetting);
-const mockedGetUpd = vi.mocked(getSettingUpdatedAt);
+const mockedSnapshot = vi.mocked(getSettingSnapshot);
+const mockedCas = vi.mocked(setSettingIfUnchanged);
 const mockedSet = vi.mocked(setSetting);
 const mockedPublish = vi.mocked(publishChange);
 
@@ -145,7 +158,8 @@ const ADMIN_LIST = callFor(channelsRouter.list, ROLE.ADMIN);
 beforeEach(() => {
   vi.clearAllMocks();
   mockedGet.mockResolvedValue(null);
-  mockedGetUpd.mockResolvedValue(null);
+  mockedSnapshot.mockResolvedValue({ value: null, updatedAt: null });
+  mockedCas.mockResolvedValue(true);
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -225,9 +239,10 @@ describe('channels.update (SPEC: strict refuse, nothing written on refusal)', ()
     await expect(
       ADMIN_UPDATE({ channels: [{ ...VALID, homeserverUrl: 'https://Matrix.Example.org:443/' }] }),
     ).resolves.toMatchObject({ ok: true });
-    expect(mockedSet).toHaveBeenCalledWith(
+    expect(mockedCas).toHaveBeenCalledWith(
       CHANNELS_KEY,
       JSON.stringify([{ ...VALID, homeserverUrl: 'https://matrix.example.org' }]),
+      null,
     );
     expect(mockedPublish).toHaveBeenCalledWith(CHANGE_RESOURCE.SETTINGS, CHANGE_ACTION.UPDATE);
     expect(rearmSpy).toHaveBeenCalledTimes(1); // the write path re-arms the runtime (SPEC)
@@ -252,33 +267,41 @@ describe('channels.update (SPEC: strict refuse, nothing written on refusal)', ()
     expect(mockedSet).not.toHaveBeenCalled();
   });
 
-  it('a write whose base updatedAt drifted -> refused, nothing written (lost-update guard)', async () => {
-    // the stored row moved since the admin's snapshot — a REPLACE write from
-    // the stale snapshot would silently delete rows added since: refuse
-    mockedGetUpd.mockResolvedValue(new Date('2026-01-02T00:00:00.000Z'));
+  it('a drifted base refuses WITHOUT writing (atomic CAS: false from the writer)', async () => {
+    // the CAS writer itself reports the drift — the router refuses on its false
+    mockedCas.mockResolvedValue(false);
     await expect(ADMIN_UPDATE({ channels: [VALID] })).rejects.toThrow(/changed since you loaded/);
-    expect(mockedSet).not.toHaveBeenCalled();
+    expect(mockedCas).toHaveBeenCalledWith(CHANNELS_KEY, JSON.stringify([VALID]), null);
     await expect(ADMIN_UPDATE({ channels: [VALID], baseUpdatedAt: '2026-01-01T00:00:00.000Z' })).rejects.toThrow(
       /changed since you loaded/,
     );
-    expect(mockedSet).not.toHaveBeenCalled();
+    expect(mockedCas).toHaveBeenLastCalledWith(CHANNELS_KEY, JSON.stringify([VALID]), '2026-01-01T00:00:00.000Z');
   });
 
-  it('a write whose base updatedAt matches commits, and list exposes the base', async () => {
-    mockedGetUpd.mockResolvedValue(new Date('2026-01-02T00:00:00.000Z'));
+  it('a matching base commits through the CAS writer, and list exposes the base', async () => {
     await expect(ADMIN_UPDATE({ channels: [VALID], baseUpdatedAt: '2026-01-02T00:00:00.000Z' })).resolves.toMatchObject(
       { ok: true },
     );
-    expect(mockedSet).toHaveBeenCalledWith(CHANNELS_KEY, JSON.stringify([VALID]));
-    await expect(ADMIN_LIST()).resolves.toMatchObject({ updatedAt: '2026-01-02T00:00:00.000Z' });
+    expect(mockedCas).toHaveBeenCalledWith(CHANNELS_KEY, JSON.stringify([VALID]), '2026-01-02T00:00:00.000Z');
+    mockedSnapshot.mockResolvedValue({
+      value: JSON.stringify([VALID]),
+      updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+    });
+    await expect(ADMIN_LIST()).resolves.toMatchObject({
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      corrupt: null,
+    });
   });
 
   it('a wrong-shape health stamp degrades to absent health (render-crash guard)', async () => {
-    mockedGet.mockImplementation(async (key: string) =>
-      key === 'channels:health' ? '{"channels":"not-an-array"}' : JSON.stringify([VALID]),
-    );
-    const list = (await ADMIN_LIST()) as { health: unknown };
-    expect(list.health).toBeNull(); // valid JSON, wrong shape — never reaches the UI
+    // non-array channels AND a null ELEMENT both pass a bare Array.isArray —
+    // each would throw mid-render in the card's list.find (r6: [null] crashed)
+    mockedSnapshot.mockResolvedValue({ value: JSON.stringify([VALID]), updatedAt: null });
+    for (const stamp of ['{"channels":"not-an-array"}', '{"channels":[null]}']) {
+      mockedGet.mockResolvedValueOnce(stamp);
+      const list = (await ADMIN_LIST()) as { health: unknown };
+      expect(list.health).toBeNull(); // valid JSON, wrong shape — never reaches the UI
+    }
   });
 
   it('a same-key pair regardless of enabled flag -> BAD_REQUEST (admin-path hygiene)', async () => {
@@ -374,8 +397,11 @@ describe('stopChannels disarms the settings-change re-arm', () => {
 // ---------- (c) channels.list ----------
 describe('channels.list (SPEC: dropped configs visible, admin-only)', () => {
   it('returns stored entries with status/reason, kinds and the health stamp', async () => {
+    mockedSnapshot.mockResolvedValue({
+      value: JSON.stringify([VALID, { ...VALID, kind: 'discord' }]),
+      updatedAt: null,
+    });
     mockedGet.mockImplementation(async (key: string) => {
-      if (key === CHANNELS_KEY) return JSON.stringify([VALID, { ...VALID, kind: 'discord' }]);
       if (key === 'channels:health')
         return JSON.stringify({
           stampedAt: 1,
@@ -402,7 +428,7 @@ describe('channels.list (SPEC: dropped configs visible, admin-only)', () => {
   });
 
   it('a corrupt stored value surfaces corrupt + no entries (never throws)', async () => {
-    mockedGet.mockResolvedValue('{oops');
+    mockedSnapshot.mockResolvedValue({ value: '{oops', updatedAt: null });
     const res = (await ADMIN_LIST(undefined)) as { corrupt: string | null; entries: unknown[] };
     expect(res.corrupt).toBeTruthy();
     expect(res.entries).toEqual([]);
@@ -551,8 +577,8 @@ describe('startChannels serialization + empty-array write', () => {
     }
   });
 
-  it('update with an empty array writes "[]" (replace-to-empty is legal)', async () => {
+  it('update with an empty array writes "[]" through the CAS writer (replace-to-empty is legal)', async () => {
     await expect(ADMIN_UPDATE({ channels: [] })).resolves.toMatchObject({ ok: true });
-    expect(mockedSet).toHaveBeenCalledWith(CHANNELS_KEY, '[]');
+    expect(mockedCas).toHaveBeenCalledWith(CHANNELS_KEY, '[]', null);
   });
 });

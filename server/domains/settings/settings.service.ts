@@ -1,6 +1,6 @@
 // Runtime key/value settings in Postgres (settings). Typed getters with
 // defaults; OIDC providers live under key 'oidc_providers' as JSON.
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 import { parseFlags } from '#shared/flags';
 
@@ -12,11 +12,49 @@ export async function getSetting(key: string) {
   return row?.value ?? null;
 }
 
-/** the settings row's updatedAt — the optimistic-concurrency base for
- * replace-style writers (null when the key is unset) */
-export async function getSettingUpdatedAt(key: string): Promise<Date | null> {
-  const row = await db.query.settings.findFirst({ columns: { updatedAt: true }, where: { key: { eq: key } } });
-  return row?.updatedAt ?? null;
+/** value + updatedAt in ONE row read — the snapshot a replace-style writer
+ * renders from must not tear (a base minted from a different row version than
+ * the entries it accompanies silently defeats the base check) */
+export async function getSettingSnapshot(key: string): Promise<{ value: string | null; updatedAt: Date | null }> {
+  const row = await db.query.settings.findFirst({
+    columns: { value: true, updatedAt: true },
+    where: { key: { eq: key } },
+  });
+  return { value: row?.value ?? null, updatedAt: row?.updatedAt ?? null };
+}
+
+/** CAS writer: commit only if the stored row's updatedAt still equals `base`
+ * (ISO string; null = expect the key unset). One conditional statement — no
+ * read-then-write window. Returns false when the base drifted or the row
+ * appeared under a null base: the caller refuses instead of clobbering. */
+export async function setSettingIfUnchanged(
+  key: string,
+  value: string,
+  base: string | null,
+  ex: DbExecutor = db,
+): Promise<boolean> {
+  const now = new Date();
+  if (base === null) {
+    // legal only if the key is STILL unset: insert-or-nothing is atomic
+    const inserted = await asDb(ex)
+      .insert(settings)
+      .values({ key, value, updatedAt: now })
+      .onConflictDoNothing({ target: settings.key })
+      .returning({ key: settings.key });
+    return inserted.length > 0;
+  }
+  const baseDate = new Date(base);
+  if (Number.isNaN(baseDate.getTime())) return false;
+  // compare at the precision the ISO base can express: the stored timestamptz
+  // carries microseconds (postgres now() seeds) while the round-tripped ISO
+  // string is ms-only — a bare equality matched nothing and refused EVERY
+  // write on such rows (r6 e2e). date_trunc aligns both sides at ms.
+  const rows = await asDb(ex)
+    .update(settings)
+    .set({ value, updatedAt: now })
+    .where(and(eq(settings.key, key), sql`date_trunc('milliseconds', ${settings.updatedAt}) = ${baseDate}`))
+    .returning({ key: settings.key });
+  return rows.length > 0;
 }
 
 /** upsert one key; pass a tx to join the caller's transaction */

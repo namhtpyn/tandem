@@ -404,8 +404,9 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   not an invisible one): the entry fields, a `status` of `ok` or `dropped`, the
   canonical adapter key (`kind:homeserverUrl`) when parseable, the drop reason
   when not, plus the registered `kinds`, the latest `channels:health` stamp
-  (shape-guarded: a valid-JSON but wrong-shape stamp reads as absent — it must
-  never crash the reading UI), and the settings row's `updatedAt` as the
+  (shape-guarded including its elements: a valid-JSON but wrong-shape stamp —
+  non-array channels or garbage entries — reads as absent; it must never crash
+  the reading UI), and the settings row's `updatedAt` as the
   concurrency base for the card's writes — a dropped config is visible in the
   UI, not only in watchdog stamps.
   Admin-only (channel config is admin-managed, "Channel config").
@@ -425,10 +426,13 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   duplicates (byte-identical after canonicalization) collapse to ONE channel
   everywhere: the runtime keeps the first and drops the rest, and the admin
   path refuses them. Every write carries the `updatedAt` base the admin
-  rendered from (optimistic concurrency): a write whose base has drifted is
-  REFUSED, never merged — a stale snapshot can never silently delete or revert
-  rows another admin added between its load and its write (the admin reloads
-  and retries). Beyond parser
+  rendered from (optimistic concurrency): the gate is the WRITE ITSELF — a
+  conditional commit keyed on the stored row's `updatedAt` (atomic; a drifted
+  or interleaved base refuses, never merges, and the list snapshot reads
+  value + base in one row read so the rendered base can never be newer than
+  the entries it accompanies) — a stale snapshot can never silently delete or
+  revert rows another admin added between its load and its write (the admin
+  reloads and retries). Beyond parser
   parity the write checks existence: the token secret must exist in the vault,
   binding user ids and the default assignee must be existing users.
 - A successful update re-arms the channel runtime IN-PROCESS against the

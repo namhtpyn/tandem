@@ -11,7 +11,7 @@ import { CHANGE_ACTION, CHANGE_RESOURCE } from '#shared/enums';
 import { db } from '../../db/index';
 import { user as userTable, vaultSecrets as vaultSecretsTable } from '../../db/schema';
 import { ORPCError, adminProcedure, publishChange } from '../kernel/kernel';
-import { getSetting, getSettingUpdatedAt, setSetting } from '../settings/settings.service';
+import { getSetting, getSettingSnapshot, setSettingIfUnchanged } from '../settings/settings.service';
 import { registeredChannelKinds } from './adapter';
 import {
   CHANNELS_HEALTH_KEY,
@@ -27,11 +27,13 @@ export const channelsRouter = os.router({
    * kinds and the latest health stamp — dropped configs are visible in the
    * UI, not only in watchdog stamps. Admin-only (config is admin-managed). */
   list: adminProcedure.handler(async () => {
-    const [raw, healthRaw, updatedAt] = await Promise.all([
-      getSetting(CHANNELS_KEY),
+    // value + updatedAt in ONE row read (snapshot must not tear: a base from
+    // a different row version than the entries defeats the base check)
+    const [snapshot, healthRaw] = await Promise.all([
+      getSettingSnapshot(CHANNELS_KEY),
       getSetting(CHANNELS_HEALTH_KEY),
-      getSettingUpdatedAt(CHANNELS_KEY),
     ]);
+    const raw = snapshot.value;
     const insp = inspectChannelConfigs(raw);
     let health: unknown = null;
     if (healthRaw) {
@@ -40,10 +42,15 @@ export const channelsRouter = os.router({
         // SHAPE guard, not just a JSON guard: a valid-JSON wrong-shape stamp
         // (hand-edited settings are an anticipated input class) must not
         // reach the card's render — the UI calls .find on health.channels
-        // and a non-array throws mid-render, taking the whole settings page
-        // down. Degrade to absent health exactly like a corrupt stamp.
+        // and a non-array OR a null/object-garbage ELEMENT throws mid-render,
+        // taking the whole settings page down. Degrade to absent health
+        // exactly like a corrupt stamp.
+        const stamp = parsed as { channels?: unknown } | null;
         health =
-          parsed !== null && typeof parsed === 'object' && Array.isArray((parsed as { channels?: unknown }).channels)
+          stamp !== null &&
+          typeof stamp === 'object' &&
+          Array.isArray(stamp.channels) &&
+          stamp.channels.every((c) => c !== null && typeof c === 'object')
             ? parsed
             : null;
       } catch {
@@ -62,7 +69,7 @@ export const channelsRouter = os.router({
       })),
       health,
       // optimistic-concurrency base for the card's replace-array writes
-      updatedAt: updatedAt?.toISOString() ?? null,
+      updatedAt: snapshot.updatedAt?.toISOString() ?? null,
     };
   }),
 
@@ -144,21 +151,23 @@ export const channelsRouter = os.router({
         }
       }
 
-      // ---- optimistic concurrency: the write REPLACES the stored array from
-      // the admin's snapshot — without a base-version check, a second admin
-      // writing from a stale snapshot silently deletes rows added or changed
-      // since (lost update with a success ack). The card sends the updatedAt
-      // it rendered from; any drift refuses instead of clobbering. ----
-      const currentUpdatedAt = await getSettingUpdatedAt(CHANNELS_KEY);
-      if ((currentUpdatedAt?.toISOString() ?? null) !== (input.baseUpdatedAt ?? null)) {
+      // ---- optimistic concurrency, ATOMIC (r6 review: a SELECT-then-write
+      // gate had a window — two concurrent updates both passed and the second
+      // silently replaced the first). The CAS write itself gates: commit only
+      // if the stored row's updatedAt still equals the base the admin's
+      // snapshot was rendered from (null base = key must STILL be unset).
+      // Drift or interleave refuses; a stale snapshot can never silently
+      // delete or revert rows another admin wrote. ----
+      const committed = await setSettingIfUnchanged(CHANNELS_KEY, JSON.stringify(cfgs), input.baseUpdatedAt ?? null);
+      if (!committed) {
         throw new ORPCError('BAD_REQUEST', {
           message: 'channels changed since you loaded them — reload the settings page and retry',
         });
       }
 
-      // ---- commit: the canonicalized array is what runs, so it is what is
-      // stored (integrity validator: every entry still matches the schema) ----
-      await setSetting(CHANNELS_KEY, JSON.stringify(cfgs));
+      // (the CAS write above IS the commit: the canonicalized array is what
+      // runs, so it is what is stored — integrity validator: every entry
+      // still matches the schema)
 
       // ---- side effects AFTER commit: adapters re-arm in-process against the
       // committed value — fire-and-forget (the hook never throws; failures
