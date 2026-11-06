@@ -1,3 +1,20 @@
+# [2.74.0](https://github.com/namhtpyn/tandem/compare/v2.73.0...v2.74.0) (2026-11-06)
+
+
+### Bug Fixes
+
+* [#266](https://github.com/namhtpyn/tandem/issues/266) r1 review — leg-1 drain advances (blanked rows excluded from the scan: without the output<>''/prompt-null arm the same oldest 500 re-qualified forever), SPEC audit-row scope made explicit (leg 1 keeps every row; legs 2/3 delete only non-actionable state), regression pin for the exclusion arm ([1e98b96](https://github.com/namhtpyn/tandem/commit/1e98b96fa00bfae624f40f540bd2f894bbf18f86))
+* [#266](https://github.com/namhtpyn/tandem/issues/266) r2 review — re-entry guard (one retention pass at a time; a pass slower than the 5s tick can no longer stack duplicates), SPEC watchdog sentence margin-keyed (stable-or-growing count across 2 passes = dead leg — a draining leg is silent; matches reaper-watchdog form + the shipped probe), tests pin the warn rate-limit window, both stamp-cache arms, executor pass-through and the re-entry guard ([635cf0e](https://github.com/namhtpyn/tandem/commit/635cf0e981d7360fd6928fd0627d06531403f248))
+* [#266](https://github.com/namhtpyn/tandem/issues/266) r3 review — re-entry flag set synchronously before the first await (TOCTOU: a stalled settings read can no longer re-admit the next tick; single finally clears on every path), SPEC watchdog contract rewritten margin-keyed (stamp-age >25h arm + day-over-day drain-shrink arm; a shrinking multi-day drain is legal and silent — count-stability at probe cadence was stable-by-construction), write-shape pins wired to the service's real calls via a recording executor (table identity, exact blank set, id-scoped where) replacing hand-built replicas ([8ab8ca4](https://github.com/namhtpyn/tandem/commit/8ab8ca4453c9d843f480d091d8fbae4de90b6322))
+* [#266](https://github.com/namhtpyn/tandem/issues/266) r4 review — watchdog reduced to the sound mechanism arm (stamp-age >25h, heartbeat-shaped; absent key silent): the count-fails-to-shrink arm was state-keyed and false-alerts at equilibrium (steady inflow < batch/day leaves the backlog flat on a healthy leg) — the retained count is operational data, never an alarm; over-batch inflow is a capacity decision, not a page ([b76aefc](https://github.com/namhtpyn/tandem/commit/b76aefcbbc2de3e5ed8ddf61d93c7880f8379437))
+* [#266](https://github.com/namhtpyn/tandem/issues/266) r5 review — cache arm anchors retentionState.lastAt to the persisted STAMP value, not boot time (both lenses converged: lastAt=now() re-armed the 24h skip from every restart, sliding cadence to ~48h under restart-heavy ops and breaking the watchdog's 25h margin); fake-timer pin proves fire-on-stamp-24h ([990037f](https://github.com/namhtpyn/tandem/commit/990037fca8350df3d53518464edab097c3ee868b))
+* [#266](https://github.com/namhtpyn/tandem/issues/266) r6 review (cap round) — (1) failure path backs off 15m instead of next-tick re-entry (a persistent leg-2/3 failure could blank another batch every 5s), (2) retention_last_attempt stamp at pass start + two-arm watchdog (not-running / runs-but-never-completes; absent-run alone could not distinguish them), (3) leg 2 keeps resolved rows on tasks that still carry a PENDING obligation (a live approval round displays its approved tally; deleting them regressed 2/3 to 0/3), (4) SPEC schema-line carve-out for the blanking law, (5) dispatcher wiring source-pin test; live-PG probes prove drain advance + open-round survival ([5b91a81](https://github.com/namhtpyn/tandem/commit/5b91a81a7df3c6b6e248afdaab862ed078c44e2b))
+
+
+### Features
+
+* [#266](https://github.com/namhtpyn/tandem/issues/266) daily retention leg — transcripts blanked on settled terminal runs past horizon (rows kept), resolved obligations + expired sessions deleted, settings-stamp throttled tick leg; SPEC RETENTION LAW; shape+behavior tests ([8bfa4be](https://github.com/namhtpyn/tandem/commit/8bfa4be64c503b89e8d3e529671a26eb30094367))
+
 # [2.73.0](https://github.com/namhtpyn/tandem/compare/v2.72.0...v2.73.0) (2026-11-06)
 
 
