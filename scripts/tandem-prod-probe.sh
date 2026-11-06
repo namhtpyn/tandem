@@ -7,7 +7,7 @@ PROFILE_DIR="${TANDEM_PROFILE_DIR:-/root/.hermes/profiles/nampa}"
 PROBE_STATE="${TANDEM_PROBE_STATE:-$PROFILE_DIR/cron/output/tandem}"
 CT_KEY="${TANDEM_CT_KEY:-/root/.ssh/tandem_ct102}"
 CT_ADDR="${TANDEM_CT_ADDR:-root@100.64.0.3}"
-TAG_REPO="${TANDEM_TAG_REPO:-/tmp/t-revrounds}"
+GH_BIN=$(command -v gh 2>/dev/null || echo /usr/sbin/gh)
 mkdir -p "$PROBE_STATE" 2>/dev/null || true
 CT=(ssh -i "$CT_KEY" -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new "$CT_ADDR")
 # Epoch stamps: settings retention stamps are epoch **ms**; probe math is seconds.
@@ -23,9 +23,14 @@ fi
 # overlap window = since the last overlap fix; update by: date -u '+%F %H:%M+00' > <marker>
 OVS=$(cat "$PROBE_STATE/overlap-since" 2>/dev/null || echo '2026-10-30 02:55+00')
 anom=()
+if ! { : > "$PROBE_STATE/.probe-write-test"; } 2>/dev/null; then
+  anom+=("probe_state: unwritable ($PROBE_STATE — state-confirmed detectors + deploy window degraded)")
+else
+  rm -f "$PROBE_STATE/.probe-write-test"
+fi
 
 # 1. container health + image
-IMG=$("${CT[@]}" 'docker inspect work-ultranomic-net-tandem-1 --format "{{.Config.Image}} {{.State.Health.Status}}" 2>/dev/null' 2>/dev/null) || IMG="P0: CT102 unreachable"
+IMG=$("${CT[@]}" 'docker inspect work-ultranomic-net-tandem-1 --format "{{.Config.Image}} {{.State.Health.Status}}" 2>/dev/null' 2>/dev/null) || IMG="container_inspect: failed (CT102 ssh or docker inspect — container missing?)"
 echo "$IMG" | grep -qw healthy || anom+=("container: $IMG")
 
 # 2. public + version
@@ -33,18 +38,19 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://work.ultrano
 [ "$CODE" = "200" ] || anom+=("public=$CODE")
 V=$(curl -s --max-time 10 -X POST https://work.ultranomic.net/rpc/meta/version | grep -o '[0-9]*\.[0-9]*\.[0-9]*' | head -1)
 [ -z "$V" ] && anom+=("version_rpc: unreadable (no semver from POST /rpc/meta/version — version/retention/stranded arms degraded)")
-TAG=$(cd "$TAG_REPO" 2>/dev/null && git fetch origin --tags -q && git tag --sort=-creatordate | head -1 | sed 's/^v//')
+TAG=$("$GH_BIN" release view --repo namhtpyn/tandem --json tagName --jq .tagName 2>/dev/null | sed 's/^v//')
 # Deploy-window guard (2026-10-31): the release train tags BEFORE the CT102 bump,
 # so prod!=latest for the bump's duration is EXPECTED. The window is measured from
 # the FIRST sighting of this mismatch (state file), never the tag's commit date —
 # every tag in this repo is lightweight (creatordate == commit date, already old
 # when tagged). Alert only when the mismatch persists >20 min (= stalled bump).
-[ -n "$V" ] && [ -z "$TAG" ] && anom+=("tag_oracle: unavailable (newest release tag unreadable under $TAG_REPO — version-drift check blind)")
+[ -n "$V" ] && [ -z "$TAG" ] && anom+=("tag_oracle: unavailable (gh release view failed — version-drift check blind)")
 DEPLOYWIN=""
 if [ -n "$V" ] && [ -n "$TAG" ] && [ "$V" != "$TAG" ]; then
   MISM="$PROBE_STATE/version-mismatch-since"
-  [ -f "$MISM" ] || date -u +%s > "$MISM"
-  MISINCE=$(cat "$MISM" 2>/dev/null || date -u +%s)
+  [ -f "$MISM" ] || date -u +%s > "$MISM" 2>/dev/null
+  MISINCE=$(cat "$MISM" 2>/dev/null)
+  [ -z "$MISINCE" ] && MISINCE=$(( $(date -u +%s) - 1201 ))
   MAGE=$(( $(date -u +%s) - MISINCE ))
   if [ "$MAGE" -gt 1200 ]; then
     anom+=("version: prod=$V latest=$TAG (mismatch ${MAGE}s)")
@@ -183,7 +189,7 @@ if [ -n "$V" ] && [ "$(printf '%s\n%s\n' "$RETFLOOR" "$V" | sort -V | tail -1)" 
   # first sight of a post-retention image: start the deploy grace now, silent
   if [ ! -f "$PROBE_STATE/retention-since-version" ]; then printf '%s\n' "$V" > "$PROBE_STATE/retention-since-version"; fi
   RTSINCE=$(stat -c %Y "$PROBE_STATE/retention-since-version" 2>/dev/null || echo 0)
-  RTSQL="select (select coalesce(regexp_replace(value, '[^0-9]', '', 'g'), '0')::bigint from settings where key='retention_last_run' limit 1), (select coalesce(regexp_replace(value, '[^0-9]', '', 'g'), '0')::bigint from settings where key='retention_last_attempt' limit 1), (select count(*) from task_runs r join task_messages m on m.id = r.message_id join tasks t on t.id = m.task_id join task_statuses s on s.id = t.status where r.status <> 'RUNNING' and r.finished_at < now() - interval '30 days' and s.category in ('done','cancelled') and (r.output <> '' or r.prompt is not null))"
+  RTSQL="select (select coalesce(nullif(regexp_replace(value, '[^0-9]', '', 'g'), ''), '0')::bigint from settings where key='retention_last_run' limit 1), (select coalesce(nullif(regexp_replace(value, '[^0-9]', '', 'g'), ''), '0')::bigint from settings where key='retention_last_attempt' limit 1), (select count(*) from task_runs r join task_messages m on m.id = r.message_id join tasks t on t.id = m.task_id join task_statuses s on s.id = t.status where r.status <> 'RUNNING' and r.finished_at < now() - interval '30 days' and s.category in ('done','cancelled') and (r.output <> '' or r.prompt is not null))"
   RTERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$RTSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
   RTOUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$RTSQL\"" 2>/dev/null) || RTOUT="db-unreachable"
   if [ "$RTOUT" = "db-unreachable" ]; then
@@ -259,7 +265,7 @@ elif [ "$STRCOL" = "1" ]; then
     WEDGE=$(echo "$STROUT" | awk -F'|' '/^wedge/{print $2}')
     STRAND=$(echo "$STROUT" | awk -F'|' '/^strand/{print $2}')
     # (a) dead-round wedge: two-pass confirm + id-set dedupe
-    if [ -n "${WEDGE:-}" ] && [ "$WEDGE" != "none" ] && [ "$(cat "$PROBE_STATE/wedge.prev" 2>/dev/null || echo none)" = "$WEDGE" ]; then
+    if [ -n "${WEDGE:-}" ] && [ "$WEDGE" != "none" ] && [ "$(cat "$PROBE_STATE/wedge.prev" 2>/dev/null || echo none)" != "none" ]; then
       if [ "$(cat "$PROBE_STATE/wedge.alerted" 2>/dev/null || echo none)" != "$WEDGE" ]; then
         anom+=("wedge_round: in_review with no PENDING review row [$WEDGE] — dead round, #292 class")
         echo "$WEDGE" > "$PROBE_STATE/wedge.alerted"
@@ -269,7 +275,7 @@ elif [ "$STRCOL" = "1" ]; then
     fi
     printf '%s\n' "${WEDGE:-none}" > "$PROBE_STATE/wedge.prev"
     # (b) waiting-answer strand: two-pass confirm + id-set dedupe
-    if [ -n "${STRAND:-}" ] && [ "$STRAND" != "none" ] && [ "$(cat "$PROBE_STATE/strand.prev" 2>/dev/null || echo none)" = "$STRAND" ]; then
+    if [ -n "${STRAND:-}" ] && [ "$STRAND" != "none" ] && [ "$(cat "$PROBE_STATE/strand.prev" 2>/dev/null || echo none)" != "none" ]; then
       if [ "$(cat "$PROBE_STATE/strand.alerted" 2>/dev/null || echo none)" != "$STRAND" ]; then
         anom+=("wa_strand: waiting_answer with no PENDING ANSWER obligation [$STRAND] — stranded question, #314 class")
         echo "$STRAND" > "$PROBE_STATE/strand.alerted"
@@ -321,7 +327,7 @@ esac
 
 # 4. queue depth
 # sentinel first line: empty output = ssh/CT failure; UNREACHABLE = redis down/container missing
-QOUT=$("${CT[@]}" 'R=ai-ultranomic-net-redis-1; docker exec $R redis-cli ping 2>/dev/null | grep -q PONG || { echo UNREACHABLE; exit 0; }; echo PONG; for k in $(docker exec $R redis-cli --scan --pattern "bull:tandem-dispatch-*:wait" | head -8); do docker exec $R redis-cli llen "$k"; done' 2>/dev/null)
+QOUT=$("${CT[@]}" 'R=work-ultranomic-net-redis-1; docker exec $R redis-cli ping 2>/dev/null | grep -q PONG || { echo UNREACHABLE; exit 0; }; echo PONG; for k in $(docker exec $R redis-cli --scan --pattern "bull:tandem-dispatch-*:wait" | head -8); do docker exec $R redis-cli llen "$k"; done' 2>/dev/null)
 case "$QOUT" in
   *UNREACHABLE*|'') anom+=("queue_probe: unreadable (ssh/redis/container down — backlog detector blind)") ;;
   *)
@@ -397,4 +403,5 @@ if [ -f "$PROBE_STATE/last-anomaly" ] && [ "$(cat "$PROBE_STATE/last-anomaly" 2>
 fi
 echo "$KEY" > "$PROBE_STATE/last-anomaly"
 LVL=1; [ ${#anom[@]} -ge 3 ] && LVL=0
+case "$LINE" in *P0*|*unreachable*|*public=*|*version_rpc*|*container_inspect*) LVL=0 ;; esac
 printf 'P%d: %s\n' "$LVL" "$LINE"

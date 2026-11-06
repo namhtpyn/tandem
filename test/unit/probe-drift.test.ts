@@ -43,11 +43,12 @@ afterAll(() => {
 });
 
 describe('check-probe-drift', () => {
-  it('exits 0 on a byte-identical deploy', async () => {
+  it('exits 3 (test-mode identity, never 0) on a byte-identical deploy', async () => {
     const { repo, live } = await fixture('#!/usr/bin/env bash\necho probe\n');
     const proc = run(repo, live);
-    const { exitCode, stderr } = await proc;
-    expect(exitCode, stderr.toString()).toBe(0);
+    const { exitCode, stdout } = await proc;
+    expect(exitCode).toBe(3);
+    expect(stdout.toString()).toContain('TEST-MODE identical');
   });
 
   it('exits 1 and names the drift when the live copy differs', async () => {
