@@ -47,7 +47,7 @@ import { listReviews, logActivity } from './review.service';
 import { fetchRunTranscript } from './run-transcript';
 import { dispatchTask, listRuns, runningTaskIdsFor, stopRunForTask } from './runner.service';
 import { fetchTaskDescription, taskGetScan, taskListColumns } from './task-description';
-import { taskListSearchFilters } from './task-list-filters';
+import { buildTaskListWhere } from './task-list-filters';
 import { listTaskThread, threadOlderPage } from './thread.service';
 import {
   addNote,
@@ -187,8 +187,7 @@ async function listTasksPaged(
   selfId: string,
 ) {
   // user-facing filters (search / status / project scope) in ONE pure builder
-  // (#339); the obligation filters below need the db and AND-compose with it
-  const { searchFilter, statusFilter, projectFilter } = taskListSearchFilters(input);
+  // (#339); the obligation filters below need the db and AND-compose with them
   // inboxOfMe = tasks with a PENDING obligation on the caller — the same taskId
   // set `inbox` items come from (pendingForUser); empty set short-circuits
   let inboxFilter: { id: { inArray: string[] } } | undefined;
@@ -206,10 +205,11 @@ async function listTasksPaged(
     if (ids.length === 0) return { data: [] as TaskRow[], total: 0 };
     awaitingFilter = { id: { inArray: ids } };
   }
-  const filters = [searchFilter, statusFilter, projectFilter, inboxFilter, awaitingFilter].filter(
-    (f) => f !== undefined,
-  );
-  const where = filters.length === 0 ? EmptyFilter : filters.length === 1 ? nonNull(filters[0]) : { AND: filters };
+  const where =
+    buildTaskListWhere(
+      input,
+      [inboxFilter, awaitingFilter].filter((f) => f !== undefined),
+    ) ?? EmptyFilter;
   const { data, total } = await db.query.tasks.findManyAndCount({
     columns: taskListColumns(),
     where: where as never,

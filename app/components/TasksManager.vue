@@ -70,10 +70,12 @@ watch(awaitingDecision, (v) => {
 // PROJECT SCOPE (#339, TASK SCOPE LAW): ONE optional project filter, URL-synced
 // like the awaiting toggle so a scoped view survives share/reload. The URL is
 // the source of truth on load and on back/forward; the ref change writes it back.
+/** the internal 'no selection' sentinel is a display value, never a scope —
+ *  `?project=__none__` must read as no scope (mirrors the API-boundary rule) */
 function scopeFromQuery(v: unknown): string | null {
   const raw = Array.isArray(v) ? v[0] : v;
   const id = typeof raw === 'string' ? raw.trim() : '';
-  return id || null;
+  return id && id !== NONE_ID ? id : null;
 }
 const projectScopeId = ref<string | null>(scopeFromQuery(route.query.project));
 watch(projectScopeId, (v) => {
@@ -108,12 +110,18 @@ const emptyCopy = computed(() => {
   // the built-in empty state renders its own headline ('No tasks yet' / 'No
   // matches yet') — repeating a 'No …' sentence here printed it twice
   if (!listFiltered.value) return 'Create the first one for your humans or agents.';
-  if (needsDecision.value) return 'Nothing is waiting on your decision right now.';
-  if (awaitingDecision.value) return 'Nothing is waiting on a decision right now.';
   if (projectScopeId.value !== null) {
+    // the project scope names itself in EVERY composed state (#339 r1): the
+    // obligation toggles narrow the same scoped list, so their copy must stay
+    // scoped too — a bare 'Nothing is waiting…' would assert a company-wide
+    // fact the scope just falsified
     const name = projectNameById.value.get(projectScopeId.value) ?? 'this project';
+    if (needsDecision.value) return `Nothing in ${name} is waiting on your decision right now.`;
+    if (awaitingDecision.value) return `Nothing in ${name} is waiting on a decision right now.`;
     return `No tasks in ${name}${statusId.value !== null ? ` with this status` : ''} — try another filter.`;
   }
+  if (needsDecision.value) return 'Nothing is waiting on your decision right now.';
+  if (awaitingDecision.value) return 'Nothing is waiting on a decision right now.';
   if (statusId.value !== null)
     return `Nothing in ${statusLabel(statusId.value, statusById.value)} — try another filter.`;
   return 'Try a different search.';

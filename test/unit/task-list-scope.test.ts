@@ -1,10 +1,10 @@
 // TASK SCOPE LAW (#339): project scope is ONE exact filter on the paged task
-// list, built beside the search/status filters so the router AND-composes all
-// three with its obligation filters. An unknown project id is an empty page —
-// a filter is not a lookup, so the builder never validates existence.
+// list, AND-composed with the search/status fragments and the obligation
+// filters the router resolves against the db. An unknown project id is an empty
+// page — a filter is not a lookup, so the builder never validates existence.
 import { describe, expect, it } from 'vitest';
 
-import { taskListSearchFilters } from '../../server/domains/tasks/task-list-filters';
+import { buildTaskListWhere, taskListSearchFilters } from '../../server/domains/tasks/task-list-filters';
 
 describe('task list search filters (#339)', () => {
   it('no input renders no filter at all (empty where)', () => {
@@ -13,6 +13,7 @@ describe('task list search filters (#339)', () => {
       statusFilter: undefined,
       projectFilter: undefined,
     });
+    expect(buildTaskListWhere({})).toBeUndefined();
   });
 
   it('project scope is an exact match on tasks.projectId', () => {
@@ -22,16 +23,25 @@ describe('task list search filters (#339)', () => {
     expect(statusFilter).toBeUndefined();
   });
 
-  it('composes with search and status (the router ANDs every present fragment)', () => {
-    const { searchFilter, statusFilter, projectFilter } = taskListSearchFilters({
-      q: '  deploy ',
-      statusId: 's-1',
-      projectId: 'p-1',
-    });
-    // q is trimmed before it reaches the ilike
+  it('q is trimmed before it reaches the ilike', () => {
+    const { searchFilter } = taskListSearchFilters({ q: '  deploy ' });
     expect(searchFilter).toEqual({ OR: [{ title: { ilike: '%deploy%' } }, { description: { ilike: '%deploy%' } }] });
-    expect(statusFilter).toEqual({ status: { eq: 's-1' } });
-    expect(projectFilter).toEqual({ projectId: { eq: 'p-1' } });
+  });
+
+  it('the composed where ANDs every present fragment, project scope included', () => {
+    const where = buildTaskListWhere({ q: 'deploy', statusId: 's-1', projectId: 'p-1' }, [
+      { id: { inArray: ['t-1'] } },
+    ]);
+    expect(where).toBeDefined();
+    const parts = (where as { AND: Array<Record<string, unknown>> }).AND;
+    expect(parts).toHaveLength(4);
+    expect(parts).toContainEqual({ projectId: { eq: 'p-1' } });
+    expect(parts).toContainEqual({ status: { eq: 's-1' } });
+    expect(parts).toContainEqual({ id: { inArray: ['t-1'] } });
+  });
+
+  it('a single fragment stays unwrapped (no needless AND)', () => {
+    expect(buildTaskListWhere({ projectId: 'p-1' })).toEqual({ projectId: { eq: 'p-1' } });
   });
 
   it('an unknown project id stays a filter — no lookup, no throw', () => {
