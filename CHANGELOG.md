@@ -1,3 +1,11 @@
+## [2.75.1](https://github.com/namhtpyn/tandem/compare/v2.75.0...v2.75.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* **tasks:** [#336](https://github.com/namhtpyn/tandem/issues/336) category-gate sweep — lifecycle gates resolve task_statuses categories, never seeded status ids ([fcc4f21](https://github.com/namhtpyn/tandem/commit/fcc4f216ddb2ccfdcf7a7b5f2ffd9baef558fba4))
+* **tasks:** [#336](https://github.com/namhtpyn/tandem/issues/336) r1 blind review — abandon named in the law + re-categorization caveat, unblock-resume leaf helper unit-pinned, mocks honor the where predicate ([d27af48](https://github.com/namhtpyn/tandem/commit/d27af48019c487a965d746bdda531c648256d54d))
+
 # [2.75.0](https://github.com/namhtpyn/tandem/compare/v2.74.0...v2.75.0) (2026-11-06)
 
 
