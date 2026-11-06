@@ -165,6 +165,17 @@ const statusOptions = computed(() => statuses.value.map((x) => ({ label: x.name,
 // inline assignee options (#333): same label contract as the task editor —
 // "Name (AI)" marks agent employees, a leading Unassigned clears the field
 const assigneeOptions = computed(() => employeeOptions(employees.value, { noneLabel: 'Unassigned' }));
+/** per-row options: the employees query can trail (or fail behind) the paged row —
+ *  splice the row's own assignee in by name so the control never prints a raw id */
+function assigneeOptionsFor(row: TaskRow) {
+  if (row.assigneeId && row.assigneeName && !assigneeOptions.value.some((o) => o.value === row.assigneeId)) {
+    return [
+      ...assigneeOptions.value,
+      { label: aiOptionLabel(row.assigneeName, row.assigneeKind), value: row.assigneeId },
+    ];
+  }
+  return assigneeOptions.value;
+}
 
 // one shared category→color mapping (ui-labels) — statuses agree with the detail page
 
@@ -249,7 +260,9 @@ async function setStatus(row: TaskRow, status: string) {
 /** assign from the list surface (#333): the desktop cell and every card kebab
  *  share this ONE action. Same rails as setStatus — busy gate (no racing picks),
  *  run lock refused before the call, optimistic value, SSE-down refetch backstop. */
-async function assignTo(row: TaskRow, employeeId: string | null) {
+async function assignTo(row: TaskRow, employeeId: string | null | undefined) {
+  // a control without a bound value can emit undefined — never store it as null
+  if (employeeId === undefined) return;
   const next = employeeId === NONE_ID ? null : employeeId;
   if ((rowAssigneeId(row) ?? null) === next || busy.value) return;
   if (rowLocked(row)) {
@@ -265,8 +278,11 @@ async function assignTo(row: TaskRow, employeeId: string | null) {
     await updateMutation.mutateAsync({ id: row.id, assigneeId: next });
     message.value = next ? `Assigned to ${assigneeNameById.value.get(next) ?? 'employee'}` : 'Assignee cleared';
     messageOk.value = true;
-    // SSE-down backstop: the list must refetch even without the change bus
+    // SSE-down backstop: the list must refetch even without the change bus.
+    // The await lands the authoritative row in cache, so the optimistic entry
+    // can retire here — including when another user's write wins the race.
     await queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
+    pendingAssignee.value.delete(row.id);
   } catch (e) {
     // drop the optimistic pick so the control snaps back to the stored row
     pendingAssignee.value.delete(row.id);
@@ -998,7 +1014,7 @@ onServerPrefetch(() =>
         <USelect
           v-if="canWork"
           :model-value="rowAssigneeId(row.original) ?? NONE_ID"
-          :items="assigneeOptions"
+          :items="assigneeOptionsFor(row.original)"
           value-key="value"
           size="sm"
           variant="none"
@@ -1007,7 +1023,16 @@ onServerPrefetch(() =>
           :title="rowLocked(row.original) ? ASSIGN_LOCK_HINT : undefined"
           :aria-label="`Assignee for ${row.original.title}${rowLocked(row.original) ? ` (${ASSIGN_LOCK_HINT})` : ''}`"
           @update:model-value="(v: string) => assignTo(row.original, v)"
-        />
+        >
+          <template #leading>
+            <UIcon
+              v-if="rowLocked(row.original)"
+              name="i-lucide-lock"
+              class="text-dimmed size-3 shrink-0"
+              aria-hidden="true"
+            />
+          </template>
+        </USelect>
         <span
           v-else
           class="flex items-center gap-1.5 text-sm"
@@ -1155,7 +1180,7 @@ onServerPrefetch(() =>
                 <USelect
                   v-if="canWork"
                   :model-value="rowAssigneeId(row) ?? NONE_ID"
-                  :items="assigneeOptions"
+                  :items="assigneeOptionsFor(row)"
                   value-key="value"
                   size="sm"
                   variant="none"
@@ -1164,7 +1189,16 @@ onServerPrefetch(() =>
                   :title="rowLocked(row) ? ASSIGN_LOCK_HINT : undefined"
                   :aria-label="`Assignee for ${row.title}${rowLocked(row) ? ` (${ASSIGN_LOCK_HINT})` : ''}`"
                   @update:model-value="(v: string) => assignTo(row, v)"
-                />
+                >
+                  <template #leading>
+                    <UIcon
+                      v-if="rowLocked(row)"
+                      name="i-lucide-lock"
+                      class="text-dimmed size-3 shrink-0"
+                      aria-hidden="true"
+                    />
+                  </template>
+                </USelect>
                 <span
                   v-else
                   class="inline-flex items-center gap-1"
@@ -1448,7 +1482,7 @@ onServerPrefetch(() =>
                 <USelect
                   v-if="canWork"
                   :model-value="rowAssigneeId(row) ?? NONE_ID"
-                  :items="assigneeOptions"
+                  :items="assigneeOptionsFor(row)"
                   value-key="value"
                   size="sm"
                   variant="none"
@@ -1457,7 +1491,16 @@ onServerPrefetch(() =>
                   :title="rowLocked(row) ? ASSIGN_LOCK_HINT : undefined"
                   :aria-label="`Assignee for ${row.title}${rowLocked(row) ? ` (${ASSIGN_LOCK_HINT})` : ''}`"
                   @update:model-value="(v: string) => assignTo(row, v)"
-                />
+                >
+                  <template #leading>
+                    <UIcon
+                      v-if="rowLocked(row)"
+                      name="i-lucide-lock"
+                      class="text-dimmed size-3 shrink-0"
+                      aria-hidden="true"
+                    />
+                  </template>
+                </USelect>
                 <p v-else class="text-dimmed mt-1 flex items-center gap-1 text-xs">
                   <UIcon v-if="row.assigneeKind === 'ai'" name="i-lucide-bot" class="text-primary size-3 shrink-0" />
                   <UIcon v-else name="i-lucide-user-round" class="size-3 shrink-0" />

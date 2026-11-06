@@ -4,9 +4,13 @@ import { expect, test } from './helpers/cleanup';
 import { TasksPage } from './pages/tasks.page.ts';
 
 // #333: assignment is ONE pick on the list surface — the desktop row's Assignee
-// select and the board card kebab's Assign-to… block both run tasks.update with
+// select and the assignee line on mobile/board cards both run tasks.update with
 // the same optimistic display and run-lock gates as the status select.
-test('inline assignee: list select and board kebab reassign without the editor', async ({ page }) => {
+//
+// Every optimistic assertion is followed by a post-mutation signal (the success
+// line is set only AFTER the mutation resolves) and a reload: the label alone
+// proves the overlay, never the write.
+test('inline assignee: list select and board card reassign without the editor', async ({ page }) => {
   const tasks = new TasksPage(page);
   const suffix = Date.now().toString(36);
   const title = `E2E Assignee ${suffix}`;
@@ -17,9 +21,9 @@ test('inline assignee: list select and board kebab reassign without the editor',
   await expect(row).toBeVisible({ timeout: 15_000 });
 
   // the row's Assignee cell is a select whose current value is Unassigned
-  const cell = page.locator('tbody').getByLabel(`Assignee for ${title}`);
-  await cell.click();
+  await page.locator('tbody').getByLabel(`Assignee for ${title}`).click();
   await page.getByRole('option', { name: 'Admin', exact: true }).click();
+  await expect(page.getByText('Assigned to Admin', { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(row).toContainText('Admin', { timeout: 10_000 });
 
   // the write is server-side: a reload keeps it
@@ -33,9 +37,11 @@ test('inline assignee: list select and board kebab reassign without the editor',
   await expect(card).toBeVisible({ timeout: 15_000 });
   await card.getByLabel(`Assignee for ${title}`).click();
   await page.getByRole('option', { name: 'Unassigned', exact: true }).click();
+  await expect(page.getByText('Assignee cleared', { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(card).toContainText('Unassigned', { timeout: 10_000 });
 
-  // and it stuck: back to the list, the row reads Unassigned again
+  // and the clear stuck server-side too — the reload mounts the persisted board
+  await page.reload();
   await page.getByRole('button', { name: 'List view' }).click();
   await expect(tasks.rowFor(title)).toContainText('Unassigned', { timeout: 15_000 });
 
