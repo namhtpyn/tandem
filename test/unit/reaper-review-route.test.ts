@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   latestRun: null as Record<string, unknown> | null,
   runUpdates: [] as Array<Record<string, unknown>>,
   taskUpdates: [] as Array<Record<string, unknown>>,
+  taskWheres: [] as unknown[],
   parkCalls: [] as Array<[string, string]>,
 }));
 
@@ -30,19 +31,36 @@ vi.mock('../../server/db/index', async () => {
         tasks: {
           findMany: async () => [h.taskRow],
         },
+        taskStatuses: {
+          findMany: async (args: { where?: { id?: { eq?: string } } }) => {
+            const id = args?.where?.id?.eq;
+            const category =
+              id === STATUS.inReview || id === 'st-custom-review'
+                ? 'in_review'
+                : id === STATUS.doing || id === 'st-custom-working'
+                  ? 'working'
+                  : id === STATUS.done || id === 'st-custom-done'
+                    ? 'done'
+                    : null;
+            return category ? [{ id, category }] : [];
+          },
+        },
       },
       update: (table: unknown) => ({
         set: (set: Record<string, unknown>) => ({
-          where: () => ({
-            returning: async () => {
-              if (table === taskRuns) h.runUpdates.push(set);
-              return [{ id: 'run-1' }];
-            },
-            then: <R>(onFulfilled?: (v: undefined) => R) => {
-              if (table === tasks) h.taskUpdates.push(set);
-              return Promise.resolve(undefined).then(() => onFulfilled?.(undefined));
-            },
-          }),
+          where: (cond: unknown) => {
+            if (table === tasks) h.taskWheres.push(cond);
+            return {
+              returning: async () => {
+                if (table === taskRuns) h.runUpdates.push(set);
+                return [{ id: 'run-1' }];
+              },
+              then: <R>(onFulfilled?: (v: undefined) => R) => {
+                if (table === tasks) h.taskUpdates.push(set);
+                return Promise.resolve(undefined).then(() => onFulfilled?.(undefined));
+              },
+            };
+          },
         }),
       }),
     },
@@ -71,6 +89,7 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
 });
 
 import { reapStaleRuns } from '../../server/domains/tasks/dispatcher.service';
+import { mockDb, tasks as mockTasks } from './helpers/mock-db';
 
 const staleRun = () => ({
   id: 'run-1',
@@ -85,6 +104,7 @@ beforeEach(() => {
   h.latestRun = { id: 'run-1' };
   h.runUpdates = [];
   h.taskUpdates = [];
+  h.taskWheres = [];
   h.parkCalls = [];
 });
 
@@ -113,6 +133,38 @@ describe('reaper routes the follow-up by task status (#199)', () => {
     h.latestRun = { id: 'run-newer' };
     const reaped = await reapStaleRuns();
     expect(reaped).toBe(1); // the row still settles
+    expect(h.parkCalls).toHaveLength(0);
+    expect(h.taskUpdates).toHaveLength(0);
+  });
+
+  it('a custom in-review-CATEGORY status parks the round (#336)', async () => {
+    h.taskRow = { failStreak: 0, status: 'st-custom-review' };
+    const reaped = await reapStaleRuns();
+    expect(reaped).toBe(1);
+    expect(h.parkCalls).toEqual([['task-1', expect.stringContaining('review turn timed out')]]);
+    expect(h.taskUpdates).toHaveLength(0);
+  });
+
+  it('a custom WORKING-CATEGORY status bounces with the read-status predicate (#336)', async () => {
+    h.taskRow = { failStreak: 1, status: 'st-custom-working' };
+    const reaped = await reapStaleRuns();
+    expect(reaped).toBe(1);
+    expect(h.parkCalls).toHaveLength(0);
+    expect(h.taskUpdates).toHaveLength(1);
+    expect(h.taskUpdates[0]?.status).toBe(STATUS.todo);
+    // the guarded bounce pins the status id it READ, never the seeded doing constant
+    const rendered = mockDb()
+      .select()
+      .from(mockTasks)
+      .where(h.taskWheres[0] as never)
+      .toSQL();
+    expect(rendered.params).toContain('st-custom-working');
+  });
+
+  it('a custom TERMINAL-category status takes neither arm — never resurrect a settled task (#336)', async () => {
+    h.taskRow = { failStreak: 0, status: 'st-custom-done' };
+    const reaped = await reapStaleRuns();
+    expect(reaped).toBe(1); // the run row itself still settles
     expect(h.parkCalls).toHaveLength(0);
     expect(h.taskUpdates).toHaveLength(0);
   });

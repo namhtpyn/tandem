@@ -39,7 +39,6 @@ import { normalizeActivityPayload } from './thread.service';
 export const WAITING_ANSWER_STATUS = STATUS.waitingAnswer;
 export const IN_REVIEW_STATUS = STATUS.inReview;
 export const TODO_STATUS = STATUS.todo;
-export const DOING_STATUS = STATUS.doing;
 export const DONE_STATUS = STATUS.done;
 export const CANCELLED_STATUS = STATUS.cancelled;
 
@@ -87,15 +86,31 @@ async function hasSupervisors(employeeId: string) {
   return rows.length > 0;
 }
 
+/** The status row's CATEGORY — lifecycle gates read the category, never the
+ * seeded uuid (STATUS FREEDOM + CATEGORY-GATE LAW, SPEC #336): a custom status
+ * in a category behaves exactly like its seeded sibling. A dangling status id
+ * (no row) resolves to null and is refused by every gate here (dead input). */
+async function statusCategoryOf(statusId: string): Promise<string | null> {
+  const rows = await db.query.taskStatuses.findMany({
+    columns: { id: true, category: true },
+    where: { id: { eq: statusId } },
+    orderBy: { position: 'asc' },
+  });
+  return rows.find((r) => r.id === statusId)?.category ?? null;
+}
+
 /** assignee asks; holder starts as the owner. status → waiting-answer */
 export async function askQuestion(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId);
   if (!task.assigneeId) throw new Error('task has no assignee');
   const holder = task.ownerId ?? task.createdBy;
   if (!holder) throw new Error('task has no owner to answer');
-  // REVIEW LAW: the assignee asks from doing; a REVIEWER may ask from in-review
-  // (the round stays open — answering flips back to in-review, the review continues)
-  if (task.status !== DOING_STATUS && task.status !== IN_REVIEW_STATUS)
+  // REVIEW LAW: the assignee asks from a working status; a REVIEWER may ask from
+  // in-review (the round stays open — answering flips back to in-review, the review
+  // continues). CATEGORY-GATE LAW (#336): both gates read the status CATEGORY, so a
+  // custom working/in-review status asks exactly like its seeded sibling.
+  const askCategory = await statusCategoryOf(task.status);
+  if (askCategory !== CATEGORY.WORKING && askCategory !== CATEGORY.IN_REVIEW)
     throw new Error('only a task in progress or review can ask');
   // identity gate: only the assignee, the owner, or a reviewer with a PENDING verdict
   // this round (an AI review turn asks instead of approving — REVIEW LAW) may stall
@@ -359,7 +374,7 @@ export async function submitResult(taskId: string, authorId: string, body: strin
 /** reviewer approves — writes the task_reviews row via recordVerdict */
 export async function approveReview(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId);
-  if (task.status !== IN_REVIEW_STATUS) throw new Error('task is not in review');
+  if ((await statusCategoryOf(task.status)) !== CATEGORY.IN_REVIEW) throw new Error('task is not in review');
   await recordVerdict(taskId, authorId, REVIEW_STATUS.APPROVED, body, 'human');
   await refreshParentGating(taskId);
   return { ok: true };
@@ -368,7 +383,7 @@ export async function approveReview(taskId: string, authorId: string, body: stri
 /** reviewer rejects — HUMAN-only terminal verdict: task cancelled */
 export async function rejectReview(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId);
-  if (task.status !== IN_REVIEW_STATUS) throw new Error('task is not in review');
+  if ((await statusCategoryOf(task.status)) !== CATEGORY.IN_REVIEW) throw new Error('task is not in review');
   await recordVerdict(taskId, authorId, REVIEW_STATUS.REJECTED, body, 'human');
   await refreshParentGating(taskId);
   return { ok: true };
@@ -377,7 +392,7 @@ export async function rejectReview(taskId: string, authorId: string, body: strin
 /** reviewer requests changes — task back to the assignee (ready), note rides the next brief */
 export async function requestChanges(taskId: string, authorId: string, body: string) {
   const task = await getTask(taskId);
-  if (task.status !== IN_REVIEW_STATUS) throw new Error('task is not in review');
+  if ((await statusCategoryOf(task.status)) !== CATEGORY.IN_REVIEW) throw new Error('task is not in review');
   await recordVerdict(taskId, authorId, REVIEW_STATUS.CHANGE_REQUESTED, body, 'human');
   await refreshParentGating(taskId);
   return { ok: true };
@@ -391,7 +406,11 @@ export async function abandonTask(taskId: string, authorId: string, body: string
   const task = await getTask(taskId);
   const isOwner = task.ownerId === authorId || task.createdBy === authorId;
   const isReviewer = task.reviewers.includes(authorId);
-  if (task.status === IN_REVIEW_STATUS) {
+  // CATEGORY-GATE LAW (#336): the review-abandon path and the work-cancel path
+  // branch on the status CATEGORY — a custom in-review status abandons exactly
+  // like the seeded one instead of falling into the work branch and refusing.
+  const abandonCategory = await statusCategoryOf(task.status);
+  if (abandonCategory === CATEGORY.IN_REVIEW) {
     if (!isReviewer && !isOwner) throw new Error('only a reviewer or the owner can abandon');
     await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
     await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
@@ -399,17 +418,11 @@ export async function abandonTask(taskId: string, authorId: string, body: string
     // status carries the real outcome (cancelled)
     await teardownOpenRound(taskId, 'cancelled');
   } else {
-    const statusRows = await db.query.taskStatuses.findMany({
-      columns: { id: true, category: true },
-      where: { id: { eq: task.status } },
-      orderBy: { position: 'asc' },
-    });
-    const category = statusRows[0]?.category;
     if (
-      category !== CATEGORY.READY &&
-      category !== CATEGORY.WORKING &&
-      category !== CATEGORY.PAUSED &&
-      category !== CATEGORY.BACKLOG
+      abandonCategory !== CATEGORY.READY &&
+      abandonCategory !== CATEGORY.WORKING &&
+      abandonCategory !== CATEGORY.PAUSED &&
+      abandonCategory !== CATEGORY.BACKLOG
     ) {
       throw new Error('task is not in a cancellable state');
     }

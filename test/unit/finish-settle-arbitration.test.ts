@@ -69,7 +69,18 @@ vi.mock('../../server/db/index', async () => {
             findMany: async () =>
               table === 'tasks'
                 ? [{ status: h.fixtureTaskStatus ?? STATUS.doing, failStreak: h.fixtureFailStreak }]
-                : [],
+                : table === 'taskStatuses'
+                  ? [
+                      { id: STATUS.todo, category: 'ready' },
+                      { id: STATUS.doing, category: 'working' },
+                      { id: STATUS.done, category: 'done' },
+                      { id: STATUS.waitingAnswer, category: 'waiting_answer' },
+                      { id: STATUS.inReview, category: 'in_review' },
+                      { id: STATUS.blocked, category: 'paused' },
+                      { id: STATUS.cancelled, category: 'cancelled' },
+                      { id: 'st-custom-working', category: 'working' },
+                    ]
+                  : [],
             findFirst: async () => (table === 'taskRuns' ? { id: h.latestRunId } : null),
           }),
         },
@@ -362,6 +373,23 @@ describe('writer.finish settle arbitration (#286)', () => {
     await drain();
     expect(h.tasksWrites).toBe(0);
     expect(h.published).toEqual(LIFECYCLE_PUBLISHES);
+  });
+
+  it('a custom WORKING-category status bounces too — the predicate pins the status READ (#336)', async () => {
+    h.fixtureTaskStatus = 'st-custom-working';
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    writer.onLine('agent output');
+    await writer.finish('task-1', RUN_STATUS.FAILED, 1, { ai: { userId: 'agent-1' } });
+    await drain();
+    expect(h.tasksWrites).toBe(1);
+    const renderTasksWhere = (where: unknown) =>
+      mockDb()
+        .select()
+        .from(tasks)
+        .where(where as never)
+        .toSQL();
+    // never the seeded doing constant: the guard pins the status id read
+    expect(renderTasksWhere(h.tasksWheres[0]).params).toEqual(['task-1', 'st-custom-working']);
   });
 
   it('a FAILED DONE settle keeps the ladder armed (settleDoneRun failure arm)', async () => {

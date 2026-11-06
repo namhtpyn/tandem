@@ -1,7 +1,7 @@
 import { consola } from 'consola';
 import { and, count, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 
-import { ACTIVITY_KIND, CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS } from '#shared/enums';
+import { ACTIVITY_KIND, CATEGORY, CHANGE_RESOURCE, CHANGE_ACTION, RUN_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 // Dispatcher: scans for eligible tasks (ready-category status + AI assignee)
 // and dispatches them to the runner. One task at a time per agent (serial);
@@ -108,14 +108,23 @@ async function reapStaleRunsInner() {
           })
         )[0],
       );
-      if (current.status === STATUS.inReview) {
+      // CATEGORY-GATE LAW (#336): classify by the status CATEGORY, never the seeded
+      // uuid — a custom in-review status parks exactly like the seeded one, and only
+      // a WORKING-category task rides the work ladder (a terminal/paused/waiting row
+      // is never resurrected by a late reap).
+      const categoryRows = await db.query.taskStatuses.findMany({
+        columns: { id: true, category: true },
+        where: { id: { eq: current.status } },
+      });
+      const category = categoryRows.find((r) => r.id === current.status)?.category;
+      if (category === CATEGORY.IN_REVIEW) {
         // a review turn that timed out never rides the work ladder (#199): the todo-flip
         // yanks an in-review task out of its open round (rows stay PENDING, nothing
         // re-fires them). Park on the owner; unblock re-dispatches the reviewer.
         const { parkRound } = await import('./review.service');
         // REARMABLE (#211): a timed-out review turn is infra-class (env/runner outage).
         await parkRound(taskId, `review turn timed out — reaped after ${minutes} min`, { rearmable: true });
-      } else {
+      } else if (category === CATEGORY.WORKING) {
         const streak = current.failStreak + 1;
         const waitMs = 15 * 60_000; // timeout = worst tier; something is wrong with the agent
         await db
@@ -127,8 +136,8 @@ async function reapStaleRunsInner() {
             updatedAt: new Date(),
           })
           // atomic re-check (#162 pattern): a settle/status change between read and
-          // write wins — a work reap only bounces a task still in doing
-          .where(and(eq(tasks.id, taskId), eq(tasks.status, STATUS.doing)));
+          // write wins — the bounce only lands on the status this sweep READ
+          .where(and(eq(tasks.id, taskId), eq(tasks.status, current.status)));
       }
     }
     await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
