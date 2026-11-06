@@ -70,12 +70,15 @@ watch(awaitingDecision, (v) => {
 // PROJECT SCOPE (#339, TASK SCOPE LAW): ONE optional project filter, URL-synced
 // like the awaiting toggle so a scoped view survives share/reload. The URL is
 // the source of truth on load and on back/forward; the ref change writes it back.
-/** the internal 'no selection' sentinel is a display value, never a scope —
- *  `?project=__none__` must read as no scope (mirrors the API-boundary rule) */
+/** the first VALID project value in a query param (arrays can carry several);
+ *  the internal 'no selection' sentinel and blanks are display values, never a
+ *  scope — `?project=__none__` must read as no scope (mirrors the API boundary) */
 function scopeFromQuery(v: unknown): string | null {
-  const raw = Array.isArray(v) ? v[0] : v;
-  const id = typeof raw === 'string' ? raw.trim() : '';
-  return id && id !== NONE_ID ? id : null;
+  for (const raw of Array.isArray(v) ? v : [v]) {
+    const id = typeof raw === 'string' ? raw.trim() : '';
+    if (id && id !== NONE_ID) return id;
+  }
+  return null;
 }
 const projectScopeId = ref<string | null>(scopeFromQuery(route.query.project));
 watch(projectScopeId, (v) => {
@@ -89,12 +92,17 @@ watch(
     if (next !== projectScopeId.value) projectScopeId.value = next;
   },
 );
-// a project param that normalizes to NO scope (blank / the NONE_ID sentinel) is
-// dead URL state: the ref watcher can never clear it (null === null bails), so
-// strip it once on mount. Client-only — SSR must never navigate during setup.
+// the URL must describe the scope the page applies: a param that normalizes to
+// no scope, or to several values, is rewritten once on mount to the resolved
+// single scope (or dropped). Client-only — SSR must never navigate during setup.
 onMounted(() => {
-  if ('project' in route.query && projectScopeId.value === null) {
-    void router.replace({ query: { ...route.query, project: undefined } });
+  const raw = route.query.project;
+  if (raw === undefined) return;
+  const values = (Array.isArray(raw) ? raw : [raw]).filter((v) => typeof v !== 'string' || v.trim() !== '');
+  const normalized =
+    projectScopeId.value !== null && values.length === 1 && scopeFromQuery(values[0]) === projectScopeId.value;
+  if (!normalized) {
+    void router.replace({ query: { ...route.query, project: projectScopeId.value ?? undefined } });
   }
 });
 watch([statusId, needsDecision, awaitingDecision, projectScopeId], () => {
@@ -119,14 +127,17 @@ const emptyCopy = computed(() => {
   // matches yet') — repeating a 'No …' sentence here printed it twice
   if (!listFiltered.value) return 'Create the first one for your humans or agents.';
   if (projectScopeId.value !== null) {
-    // the project scope names itself in EVERY composed state (#339 r1): the
-    // obligation toggles narrow the same scoped list, so their copy must stay
-    // scoped too — a bare 'Nothing is waiting…' would assert a company-wide
-    // fact the scope just falsified
+    // the project scope names itself in EVERY composed state (#339 r1/r3) and
+    // never asserts more than the filters prove: a status chip or search term
+    // narrows the same scoped list, so the sentence stays filter-relative
+    // instead of claiming the project holds nothing
     const name = projectNameById.value.get(projectScopeId.value) ?? 'this project';
-    if (needsDecision.value) return `Nothing in ${name} is waiting on your decision right now.`;
-    if (awaitingDecision.value) return `Nothing in ${name} is waiting on a decision right now.`;
-    return `No tasks in ${name}${statusId.value !== null ? ` with this status` : ''} — try another filter.`;
+    if (needsDecision.value) return `Nothing in ${name} matches your decision filter right now.`;
+    if (awaitingDecision.value) return `Nothing in ${name} matches your awaiting-decision filter right now.`;
+    if (searchDebounced.value)
+      return `No tasks in ${name} match this search${statusId.value !== null ? ' with this status' : ''}.`;
+    if (statusId.value !== null) return `No tasks in ${name} with this status — try another filter.`;
+    return `No tasks in ${name} yet.`;
   }
   if (needsDecision.value) return 'Nothing is waiting on your decision right now.';
   if (awaitingDecision.value) return 'Nothing is waiting on a decision right now.';

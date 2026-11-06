@@ -62,12 +62,12 @@ test('project scope: project row opens its tasks, select sets/clears, URL-synced
   // composed with the obligation toggles: their empty copy stays scoped to the
   // project (a bare company-wide sentence would be false inside a scope)
   await page.getByRole('button', { name: 'Needs my decision' }).click();
-  await expect(page.getByText(`Nothing in ${project} is waiting on your decision right now.`)).toBeVisible({
+  await expect(page.getByText(`Nothing in ${project} matches your decision filter right now.`)).toBeVisible({
     timeout: 15_000,
   });
   await page.getByRole('button', { name: 'Needs my decision' }).click();
   await page.getByRole('button', { name: 'Awaiting decision' }).click();
-  await expect(page.getByText(`Nothing in ${project} is waiting on a decision right now.`)).toBeVisible({
+  await expect(page.getByText(`Nothing in ${project} matches your awaiting-decision filter right now.`)).toBeVisible({
     timeout: 15_000,
   });
   await page.getByRole('button', { name: 'Awaiting decision' }).click();
@@ -80,13 +80,20 @@ test('project scope: project row opens its tasks, select sets/clears, URL-synced
   await expect(page.getByText(`No tasks in ${project} with this status`, { exact: false })).toBeVisible({
     timeout: 15_000,
   });
+  // …and a search term reads as a search miss, not as 'the project is empty'
+  await page.getByRole('group', { name: 'Filter by status' }).getByRole('button', { name: 'All', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Search tasks' }).fill('zzz-no-match');
+  await expect(page.getByText(`No tasks in ${project} match this search.`, { exact: false })).toBeVisible({
+    timeout: 15_000,
+  });
 });
 
 test('project scope: unresolvable scope degrades honestly (unknown id, sentinel)', async ({ page }) => {
   const tasks = new TasksPage(page);
   // a project must exist for the select to render at all (no-projects surfaces
   // hide it) — created so the unresolvable-id cases are not vacuous
-  await rpc(page, '/rpc/projects/create', { name: `Probe ${Date.now().toString(36).slice(-6)}` });
+  const probe = `Probe ${Date.now().toString(36).slice(-6)}`;
+  const created = await rpc(page, '/rpc/projects/create', { name: probe });
 
   // an id no project owns: filter, never an error — the label says Unknown project
   await tasks.navigate('/tasks?project=00000000-0000-7000-8000-000000000000');
@@ -99,6 +106,12 @@ test('project scope: unresolvable scope degrades honestly (unknown id, sentinel)
   await expect(page.getByTestId('project-scope-select')).toContainText('All projects');
   await expect(page.getByTestId('project-scope-hint')).toHaveCount(0);
   await expect.poll(() => page.url()).not.toContain('project=');
+
+  // multi-valued param: the URL normalizes to the ONE real scope (sentinel first
+  // must not swallow the valid second value)
+  await tasks.navigate(`/tasks?project=__none__&project=${created.id}`);
+  await expect(page.getByTestId('project-scope-select')).toContainText(probe);
+  await expect.poll(() => page.url()).not.toContain('__none__');
 });
 
 test('project scope: the mobile project card carries the drill-down', async ({ page }) => {
@@ -128,5 +141,5 @@ test('project scope: an empty project names itself in the empty state', async ({
   const project = `Empty ${suffix}`;
   const created = await rpc(page, '/rpc/projects/create', { name: project });
   await tasks.navigate(`/tasks?project=${created.id}`);
-  await expect(page.getByText(`No tasks in ${project}`, { exact: false })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(`No tasks in ${project} yet.`, { exact: false })).toBeVisible({ timeout: 15_000 });
 });
