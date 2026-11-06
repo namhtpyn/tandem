@@ -1,3 +1,24 @@
+# [2.75.0](https://github.com/namhtpyn/tandem/compare/v2.74.0...v2.75.0) (2026-11-06)
+
+
+### Bug Fixes
+
+* **ops:** arm probe detectors caught by blind review ([#332](https://github.com/namhtpyn/tandem/issues/332)) — health word match (unhealthy), retention epoch-ms->s, JSON creep scan, version-floor bootstrap, tag-oracle/profile guards, age-normalized dedupe, quoted CT array; add check-probe-drift + selfcheck tests ([db7ed53](https://github.com/namhtpyn/tandem/commit/db7ed5397007a7722dd12338ed9f38481fbb0f01))
+* **ops:** r2 review — ghostset settings-absent fallback (P1), loud version-RPC + column-guard failures, fetch-first drift check with stale-ref test, deploy window from first sighting (lightweight tags), context-aware creep scan ([15d735f](https://github.com/namhtpyn/tandem/commit/15d735fd542c254ce5578a51a1740b40a516cccc))
+* **ops:** r3 review — age-normalized dedupe for space-formatted ages, explicit-refspec drift fetch, feature-floor constants (fresh state dir cannot arm old image), connected-only channel sync, queue probe sentinel + real redis container ([0c47508](https://github.com/namhtpyn/tandem/commit/0c47508dc571f9add59c5faabbbbce69b2905436))
+* **ops:** r4 review — queue leg back on the TANDEM work redis (verified keys), wedge/strand 2-consecutive presence confirm, loud unwritable-state and unreadable-mismatch paths, retention nullif cast, P0 label from anomaly class, tag oracle via gh releases, test-mode drift exit 3 ([02e5b86](https://github.com/namhtpyn/tandem/commit/02e5b86b4e128128a68f4cb2d7079142abc2f8a8))
+* **ops:** r5 review — chan_stamp absent arm (scalar subselect), overlap-marker validation, loud creep scan failures, drift checker hardcoded live path + origin assert + limited-refspec test, inspection-run trail guard ([8882bc6](https://github.com/namhtpyn/tandem/commit/8882bc6a056772b1e92fec109dfdd0b753854622))
+* **ops:** r6 cap review — canonicalize overlap marker via date (no raw interpolation), clamp future mismatch stamps + clear only on catch-up, sum all wait queues, exact upstream URL check, atomic --deploy with size verification ([013d2a5](https://github.com/namhtpyn/tandem/commit/013d2a52affde1a64d77b220b6e3ac9d8aff99ef))
+* **ops:** validate the mismatch-since stamp (non-numeric state cannot crash the version arm) ([d9e8223](https://github.com/namhtpyn/tandem/commit/d9e8223f857636d6095431b5bb09df38db5a879c))
+* **tasks:** r1 blind review — retire the optimistic pick after the authoritative refetch, splice the row's own assignee into options (no raw id while the employees query trails), lock-icon affordance on the inline selects, e2e waits for the post-mutation line + reloads before asserting ([ea49c8e](https://github.com/namhtpyn/tandem/commit/ea49c8e668831175f6c62c147936348026c3f887))
+* **tasks:** r2 blind review — keep the optimistic pick when the refetch failed (no success banner over a reverted control), e2e holds the update to prove the optimistic flip, board covers forward assign + clear, viewer gate asserts no assignee control ([6c19d70](https://github.com/namhtpyn/tandem/commit/6c19d706cb83defb0ad8b349f64a9347033ca33d))
+* **tasks:** r3 blind review — retire the assign overlay on the first post-write fetch (differing values included), 44px card tap targets, dialog-scope the editor assignee combobox (row comboboxes made the old locator ambiguous), e2e covers card optimism, mobile card and run lock ([1b63729](https://github.com/namhtpyn/tandem/commit/1b637293cba8940d5c30000f0a13eb0e243a6e9a))
+
+
+### Features
+
+* **tasks:** inline assignee edit on list rows and cards ([#333](https://github.com/namhtpyn/tandem/issues/333)) ([e5e6f1a](https://github.com/namhtpyn/tandem/commit/e5e6f1a60be3b09dc46727f469ead765c4dcd071))
+
 # [2.74.0](https://github.com/namhtpyn/tandem/compare/v2.73.0...v2.74.0) (2026-11-06)
 
 
