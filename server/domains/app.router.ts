@@ -2,6 +2,7 @@ import { os } from '@orpc/server';
 
 import { authRouter } from './auth/auth.router';
 import { changesRouter } from './changes/changes.router';
+import { channelsRouter } from './channels/channels.router';
 import { employeesRouter } from './employees/employees.router';
 import { environmentsRouter } from './environments/environments.router';
 import { mcpRouter } from './mcp/mcp.router';
@@ -23,6 +24,7 @@ export const appRouter = os.router({
   changes: changesRouter,
   auth: authRouter,
   settings: settingsRouter,
+  channels: channelsRouter,
   oidc: oidcRouter,
   providers: providersRouter,
   projects: projectsRouter,

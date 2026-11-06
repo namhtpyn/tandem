@@ -22,6 +22,7 @@ const isAdmin = useIsAdmin();
 
         <SettingsGeneralCard />
         <SettingsProvidersCard />
+        <SettingsChannelsCard />
         <SettingsAuthCard />
       </div>
 
