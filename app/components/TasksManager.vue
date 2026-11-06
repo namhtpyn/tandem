@@ -207,12 +207,16 @@ const pendingStatus = ref(new Map<string, string>());
 function rowStatus(row: TaskRow): string {
   return pendingStatus.value.get(row.id) ?? row.status;
 }
-/** optimistic row assignee (#333), same contract as pendingStatus: the pick shows
- *  at once and drops the moment the live row carries it. `has` (not `??`) —
- *  a pending null (Unassigned) is a real value, not a missing entry */
-const pendingAssignee = ref(new Map<string, string | null>());
+/** optimistic row assignee (#333): the pick shows at once and retires on the
+ *  first list fetch that lands AFTER the write settles — never on value
+ *  equality alone, or another writer's reassignment would stay hidden behind
+ *  this overlay until reload. settledAt is null while the mutation is in flight
+ *  (an SSE refetch in that window must not drop the pick). */
+type PendingAssign = { value: string | null; settledAt: number | null };
+const pendingAssignee = ref(new Map<string, PendingAssign>());
 function rowAssigneeId(row: TaskRow): string | null {
-  return pendingAssignee.value.has(row.id) ? (pendingAssignee.value.get(row.id) ?? null) : row.assigneeId;
+  const pending = pendingAssignee.value.get(row.id);
+  return pending ? pending.value : row.assigneeId;
 }
 /** RUN LOCK on the list/board (#264): the paged row carries the server's live-run
  *  bit — the same lock the detail page honors, so no move can end in the error */
@@ -224,9 +228,8 @@ const ASSIGN_LOCK_HINT = 'Assignee is locked while the agent runs.';
 watch(rows, (list) => {
   for (const r of list) {
     if (pendingStatus.value.get(r.id) === r.status) pendingStatus.value.delete(r.id);
-    if (pendingAssignee.value.has(r.id) && pendingAssignee.value.get(r.id) === r.assigneeId) {
-      pendingAssignee.value.delete(r.id);
-    }
+    const assign = pendingAssignee.value.get(r.id);
+    if (assign && assign.settledAt !== null) pendingAssignee.value.delete(r.id);
   }
 });
 
@@ -273,9 +276,11 @@ async function assignTo(row: TaskRow, employeeId: string | null | undefined) {
   message.value = '';
   messageOk.value = false;
   busy.value = true;
-  pendingAssignee.value.set(row.id, next);
+  pendingAssignee.value.set(row.id, { value: next, settledAt: null });
   try {
     await updateMutation.mutateAsync({ id: row.id, assigneeId: next });
+    const settled = pendingAssignee.value.get(row.id);
+    if (settled) settled.settledAt = Date.now();
     message.value = next ? `Assigned to ${assigneeNameById.value.get(next) ?? 'employee'}` : 'Assignee cleared';
     messageOk.value = true;
     // SSE-down backstop: the list must refetch even without the change bus.
@@ -1186,7 +1191,7 @@ onServerPrefetch(() =>
                   value-key="value"
                   size="sm"
                   variant="none"
-                  class="hover:bg-elevated -my-1 max-w-44 rounded-md"
+                  class="hover:bg-elevated -my-1 h-11 max-w-44 rounded-md sm:h-8"
                   :disabled="busy || rowLocked(row)"
                   :title="rowLocked(row) ? ASSIGN_LOCK_HINT : undefined"
                   :aria-label="`Assignee for ${row.title}${rowLocked(row) ? ` (${ASSIGN_LOCK_HINT})` : ''}`"
@@ -1488,7 +1493,7 @@ onServerPrefetch(() =>
                   value-key="value"
                   size="sm"
                   variant="none"
-                  class="hover:bg-elevated -my-1 max-w-44 rounded-md"
+                  class="hover:bg-elevated -my-1 h-11 max-w-44 rounded-md sm:h-8"
                   :disabled="busy || rowLocked(row)"
                   :title="rowLocked(row) ? ASSIGN_LOCK_HINT : undefined"
                   :aria-label="`Assignee for ${row.title}${rowLocked(row) ? ` (${ASSIGN_LOCK_HINT})` : ''}`"

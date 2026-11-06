@@ -73,7 +73,7 @@ test('task assignee picker lists AI employees with (AI)', async ({ page }) => {
   await tasks.navigate('/tasks');
   await tasks.openCreateModal();
   await tasks.fillTaskForm({ title: `AI task ${suffix}` });
-  await page.getByRole('combobox', { name: 'Assignee' }).click();
+  await page.getByRole('dialog').getByRole('combobox', { name: 'Assignee', exact: true }).click();
   await expect(page.getByRole('option', { name: new RegExp(botName) }).first()).toContainText('(AI)');
   await page
     .getByRole('option', { name: new RegExp(botName) })
@@ -131,7 +131,7 @@ test('workflow drawer streams an agent run to completion', async ({ page }) => {
   // create a task assigned to the AI employee
   await tasks.openCreateModal();
   await tasks.fillTaskForm({ title: `Run ${suffix}` });
-  await page.getByRole('combobox', { name: 'Assignee' }).click();
+  await page.getByRole('dialog').getByRole('combobox', { name: 'Assignee', exact: true }).click();
   await page
     .getByRole('option', { name: new RegExp(botName) })
     .first()

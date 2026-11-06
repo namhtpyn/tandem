@@ -23,7 +23,7 @@ test('inbox toggle filters to tasks pending on me and shows a badge', async ({ p
   // the question to the owner (= admin) -> inbox obligation on the same user
   await page.getByRole('button', { name: 'New task' }).first().click();
   await page.getByPlaceholder('Task title').fill(name);
-  await page.getByRole('combobox', { name: 'Assignee' }).click();
+  await page.getByRole('dialog').getByRole('combobox', { name: 'Assignee', exact: true }).click();
   await page.getByRole('option', { name: 'Admin', exact: true }).click();
   await page.getByRole('button', { name: /Save|Create task/ }).click();
   await expect(page.getByRole('link', { name })).toBeVisible();
