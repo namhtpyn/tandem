@@ -77,7 +77,14 @@ vi.mock('../../server/db/index', async () => {
       query: {
         user: { findMany: async () => h.users },
         employeeSupervisors: { findMany: async () => h.edges },
-        taskStatuses: { findMany: async () => h.statuses },
+        taskStatuses: {
+          // honor the caller's predicate (DB-mock predicate law): a mis-wired where
+          // must FAIL the test, never be masked by an unfiltered mock
+          findMany: async (args?: { where?: { id?: { eq?: string } } }) => {
+            const id = args?.where?.id?.eq;
+            return id ? h.statuses.filter((s) => s.id === id) : h.statuses;
+          },
+        },
       },
     },
   };

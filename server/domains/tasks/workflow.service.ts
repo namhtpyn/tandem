@@ -89,7 +89,7 @@ async function hasSupervisors(employeeId: string) {
 /** The status row's CATEGORY — lifecycle gates read the category, never the
  * seeded uuid (STATUS FREEDOM + CATEGORY-GATE LAW, SPEC #336): a custom status
  * in a category behaves exactly like its seeded sibling. A dangling status id
- * (no row) resolves to null and is refused by every gate — dead input. */
+ * (no row) resolves to null and is refused by every gate here (dead input). */
 async function statusCategoryOf(statusId: string): Promise<string | null> {
   const rows = await db.query.taskStatuses.findMany({
     columns: { id: true, category: true },

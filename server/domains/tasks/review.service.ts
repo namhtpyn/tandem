@@ -47,7 +47,9 @@ const IN_REVIEW_STATUS = STATUS.inReview;
 /** The status row's CATEGORY — lifecycle gates read the category, never the
  * seeded uuid (STATUS FREEDOM + CATEGORY-GATE LAW, SPEC #336): a custom status in
  * a category behaves exactly like its seeded sibling. A dangling status id (no
- * row) resolves to null and every gate refuses it — dead input. */
+ * row) resolves to null: every allow-list gate refuses it (dead input); the
+ * verdict path's terminal DENY-list lets it through so a legitimate settle can
+ * heal the row instead of stranding the round. */
 async function categoryOf(statusId: string): Promise<string | null> {
   const statuses = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
   return statuses.find((s) => s.id === statusId)?.category ?? null;

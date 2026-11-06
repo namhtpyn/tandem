@@ -74,7 +74,12 @@ vi.mock('../../server/db/index', async () => {
         },
       }),
       query: {
-        taskStatuses: { findMany: async () => h.statusRows },
+        taskStatuses: {
+          findMany: async (args?: { where?: { id?: { eq?: string } } }) => {
+            const id = args?.where?.id?.eq;
+            return id ? h.statusRows.filter((s: { id: string }) => s.id === id) : h.statusRows;
+          },
+        },
         tasks: {
           findFirst: async (args: { where: { id: { eq: string } } }) => h.taskRows.get(args.where.id.eq) ?? null,
           findMany: async (args: { where: { parentTaskId: { eq: string } } }) =>

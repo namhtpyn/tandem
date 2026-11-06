@@ -6,7 +6,6 @@ import { z } from 'zod';
 
 import {
   ACTIVITY_KIND,
-  CATEGORY,
   CHANGE_RESOURCE,
   CHANGE_ACTION,
   RUN_STATUS,
@@ -564,17 +563,12 @@ export const tasksRouter = os.router({
       const { teardownOnManualMove } = await import('./review.service');
       await teardownOnManualMove(input.id, cur, input.status);
       // unblock-resume: back to an IN-REVIEW-CATEGORY status with a live round → the
-      // sequence continues. CATEGORY-GATE LAW (#336): the target's CATEGORY decides, so
-      // an owner unblock to a custom in-review status re-fires the parked turn exactly
-      // like the seeded one (the seeded-id check silently skipped it and wedged the round).
-      const targetStatuses = await db.query.taskStatuses.findMany({
-        columns: { id: true, category: true },
-        where: { id: { eq: input.status } },
-      });
-      if (targetStatuses.find((s) => s.id === input.status)?.category === CATEGORY.IN_REVIEW) {
-        const { openRoundLive, dispatchAiReviewTurns } = await import('./review.service');
-        if (await openRoundLive(input.id)) await dispatchAiReviewTurns(input.id);
-      }
+      // sequence continues. CATEGORY-GATE LAW (#336): the target's CATEGORY decides
+      // (leaf helper — unit-pinned), so an owner unblock to a custom in-review status
+      // re-fires the parked turn exactly like the seeded one (the seeded-id check
+      // silently skipped it and wedged the round).
+      const { resumeRoundAfterManualMove } = await import('./review-resume');
+      await resumeRoundAfterManualMove(input.id, input.status);
       await logActivity(input.id, ACTIVITY_KIND.STATUS, actorId, `status: ${cur} → ${input.status}`, {});
       const parentId = rows.at(0)?.parentTaskId;
       if (parentId) await refreshParentGating(parentId);
