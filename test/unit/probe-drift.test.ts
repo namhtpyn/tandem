@@ -24,6 +24,8 @@ async function fixture(body: string) {
   await $`git -C ${repo} add -A`.quiet();
   await $`git -C ${repo} -c user.name=t -c user.email=t@t commit -q -m init`.quiet();
   await $`git -C ${repo} push -q origin HEAD:dev`.quiet();
+  // Seed a LOCAL origin/dev at v1: the drift check must refetch, not trust this.
+  await $`git -C ${repo} fetch -q origin dev`.quiet();
   const live = join(root, 'live-probe.sh');
   writeFileSync(live, body);
   return { root, origin, repo, live };

@@ -131,7 +131,7 @@ fi
 # config dropped), transport stale (connected+capable+read-ok, lastSyncOkAt
 # >300s old), capable never-synced (null, 2-consecutive rule = grace), backlog
 # (unprocessed events+outbox rows, DB-derived, oldest >30 min).
-CHSQL="with h as (select value from settings where key='channels:health' limit 1), nm as (select (extract(epoch from now())::bigint * 1000) as ts from (select 1) x) select 'chan_stamp', case when h.value is null then 'absent' when (h.value::jsonb->>'stampedAt')::bigint < (select ts - 600000 from nm) then 'stale' else 'ok' end from h union all select 'chan_down', coalesce((select count(*)::text from h, jsonb_array_elements(h.value::jsonb->'channels') c where (c->>'connected')::boolean is false), '0') union all select 'chan_sync_stale', coalesce((select count(*)::text from h, jsonb_array_elements(h.value::jsonb->'channels') c where (c->>'healthCap')::boolean is true and (c->>'healthOk')::boolean is true and (c->>'lastSyncOkAt') is not null and (c->>'lastSyncOkAt')::bigint < (select ts - 300000 from nm)), '0') union all select 'chan_neversync', coalesce((select count(*)::text from h, jsonb_array_elements(h.value::jsonb->'channels') c where (c->>'healthCap')::boolean is true and (c->>'healthOk')::boolean is true and (c->>'lastSyncOkAt') is null), '0') union all select 'chan_backlog', (select count(*) from channel_events where processed_at is null)::text || '+' || (select count(*) from channel_outbox where processed_at is null)::text || '+' || coalesce((select max(extract(epoch from (now()-oldest)))::int from (select received_at as oldest from channel_events where processed_at is null union all select created_at as oldest from channel_outbox where processed_at is null) u), 0)::text"
+CHSQL="with h as (select value from settings where key='channels:health' limit 1), nm as (select (extract(epoch from now())::bigint * 1000) as ts from (select 1) x) select 'chan_stamp', case when h.value is null then 'absent' when (h.value::jsonb->>'stampedAt')::bigint < (select ts - 600000 from nm) then 'stale' else 'ok' end from h union all select 'chan_down', coalesce((select count(*)::text from h, jsonb_array_elements(h.value::jsonb->'channels') c where (c->>'connected')::boolean is false), '0') union all select 'chan_sync_stale', coalesce((select count(*)::text from h, jsonb_array_elements(h.value::jsonb->'channels') c where (c->>'connected')::boolean is true and (c->>'healthCap')::boolean is true and (c->>'healthOk')::boolean is true and (c->>'lastSyncOkAt') is not null and (c->>'lastSyncOkAt')::bigint < (select ts - 300000 from nm)), '0') union all select 'chan_neversync', coalesce((select count(*)::text from h, jsonb_array_elements(h.value::jsonb->'channels') c where (c->>'connected')::boolean is true and (c->>'healthCap')::boolean is true and (c->>'healthOk')::boolean is true and (c->>'lastSyncOkAt') is null), '0') union all select 'chan_backlog', (select count(*) from channel_events where processed_at is null)::text || '+' || (select count(*) from channel_outbox where processed_at is null)::text || '+' || coalesce((select max(extract(epoch from (now()-oldest)))::int from (select received_at as oldest from channel_events where processed_at is null union all select created_at as oldest from channel_outbox where processed_at is null) u), 0)::text"
 CHERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$CHSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
 CHOUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$CHSQL\"" 2>/dev/null) || CHOUT="db-unreachable"
 if [ "$CHOUT" = "db-unreachable" ]; then
@@ -178,7 +178,7 @@ fi
 # Separate psql pass (probe law #4); SCHEMA-SYMMETRY: columns verified against
 # the live schema (task_runs.status/finished_at/output/prompt, task_messages.
 # task_id, tasks.status, task_statuses.category, settings.value).
-RETFLOOR=$(cat "$PROBE_STATE/retention-since-version" 2>/dev/null || echo 0.0.0)
+RETFLOOR=2.74.0
 if [ -n "$V" ] && [ "$(printf '%s\n%s\n' "$RETFLOOR" "$V" | sort -V | tail -1)" = "$V" ]; then
   # first sight of a post-retention image: start the deploy grace now, silent
   if [ ! -f "$PROBE_STATE/retention-since-version" ]; then printf '%s\n' "$V" > "$PROBE_STATE/retention-since-version"; fi
@@ -295,9 +295,7 @@ STR=$(echo "$OUT" | awk -F'|' '/^stranded/{print $2}')
 PHO=$(echo "$OUT" | awk -F'|' '/^phantomob/{print $2}')
 [ "${PHO:-0}" -gt 0 ] && anom+=("phantom_obligations=$PHO (PENDING obligation on settled task, #205)")
 
-SWEEP_FLOOR=$(cat "$PROBE_STATE/sweep-since-version" 2>/dev/null || echo "")
-if [ -z "$SWEEP_FLOOR" ] && [ -n "$V" ]; then SWEEP_FLOOR="$V"; printf '%s\n' "$V" > "$PROBE_STATE/sweep-since-version"; fi
-[ -z "$SWEEP_FLOOR" ] && SWEEP_FLOOR=0.0.0
+SWEEP_FLOOR=2.55.2
 if [ "${STR:-0}" -gt 0 ] 2>/dev/null && [ -n "$V" ] && [ "$(printf '%s\n%s\n' "$SWEEP_FLOOR" "$V" | sort -V | tail -1)" = "$V" ]; then
   anom+=("stranded_working=$STR (liveness sweep not bouncing — check dispatcher logs)")
 fi
@@ -322,8 +320,14 @@ case "$RH" in
 esac
 
 # 4. queue depth
-Q=$("${CT[@]}" 'R=work-ultranomic-net-redis-1; for k in $(docker exec $R redis-cli --scan --pattern "bull:tandem-dispatch-*:wait" | head -8); do docker exec $R redis-cli llen "$k"; done' 2>/dev/null | awk '{s+=$1} END {print s+0}')
-[ "${Q:-0}" -gt 0 ] && anom+=("queue_wait_depth=$Q")
+# sentinel first line: empty output = ssh/CT failure; UNREACHABLE = redis down/container missing
+QOUT=$("${CT[@]}" 'R=ai-ultranomic-net-redis-1; docker exec $R redis-cli ping 2>/dev/null | grep -q PONG || { echo UNREACHABLE; exit 0; }; echo PONG; for k in $(docker exec $R redis-cli --scan --pattern "bull:tandem-dispatch-*:wait" | head -8); do docker exec $R redis-cli llen "$k"; done' 2>/dev/null)
+case "$QOUT" in
+  *UNREACHABLE*|'') anom+=("queue_probe: unreadable (ssh/redis/container down — backlog detector blind)") ;;
+  *)
+    Q=$(printf '%s\n' "$QOUT" | awk 'NR>1 {s+=$1} END {print s+0}')
+    [ "${Q:-0}" -gt 0 ] && anom+=("queue_wait_depth=$Q") ;;
+esac
 
 # 5. RBAC gate alive (2026-10-31, #82): unauthenticated admin-surface writes must
 # be UNAUTHORIZED (middleware runs before input validation, so a minimal body
@@ -386,7 +390,7 @@ if [ ${#anom[@]} -eq 0 ]; then
 fi
 LINE="$(IFS='; '; echo "${anom[*]}")"
 # Dedupe key blanks ticking ages: a standing fault's age growing is not a NEW set.
-KEY=$(printf '%s' "$LINE" | sed -E 's/=[0-9]+h/=<age>h/g; s/=[0-9]+s([^a-z0-9]|$)/=<age>s\1/g')
+KEY=$(printf '%s' "$LINE" | sed -E 's/=[0-9]+h/=<age>h/g; s/=[0-9]+s([^a-z0-9]|$)/=<age>s\1/g; s/ [0-9]+s([^a-z0-9]|$)/ <age>s\1/g')
 if [ -f "$PROBE_STATE/last-anomaly" ] && [ "$(cat "$PROBE_STATE/last-anomaly" 2>/dev/null)" = "$KEY" ]; then
   echo "$(date -u +%FT%TZ) probe repeat-suppressed: $LINE" >> "$M"
   exit 0
