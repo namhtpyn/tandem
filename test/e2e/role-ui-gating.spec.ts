@@ -310,6 +310,11 @@ test.describe('role UI gating (#263)', () => {
       await expect(viewer.getByRole('button', { name: `Add subproject under E2E ViewProj ${tag}` })).toHaveCount(0);
       await expect(viewer.getByRole('button', { name: `Edit E2E ViewProj ${tag}` })).toHaveCount(0);
       await expect(viewer.getByRole('button', { name: `Delete E2E ViewProj ${tag}` })).toHaveCount(0);
+      // TASK SCOPE LAW (#339): reading a project's tasks is session-tier, so the
+      // drill-down renders for a viewer while the write trio above stays gone
+      await expect(
+        viewer.locator('tr:visible', { hasText: `E2E ViewProj ${tag}` }).getByTestId('project-view-tasks'),
+      ).toBeVisible();
 
       // ---- statuses manager: opens (session-tier read), verbs stay gated ----
       // LAST — the open modal owns the screen and this test has no teardown

@@ -308,7 +308,20 @@ onServerPrefetch(() => liveQuery.suspense());
         }}</UBadge>
       </template>
       <template #actions-cell="{ row }">
-        <div class="row-actions flex justify-end gap-1 transition-opacity">
+        <div class="row-actions flex items-center justify-end gap-1 transition-opacity">
+          <!-- TASK SCOPE LAW (#339): reading a project's tasks is session-tier —
+               this entry renders for every tier; the write trio below stays
+               employee-tier (#300) -->
+          <UButton
+            icon="i-lucide-list-todo"
+            label="View tasks"
+            variant="ghost"
+            color="neutral"
+            size="sm"
+            :to="`/tasks?project=${row.original.id}`"
+            :aria-label="`View tasks in ${row.original.name}`"
+            data-testid="project-view-tasks"
+          />
           <!-- #300: subproject/edit/delete are employee-tier writes — the whole
                actions cell hides below the employee tier -->
           <template v-if="canWork">
@@ -389,52 +402,66 @@ onServerPrefetch(() => liveQuery.suspense());
             <UBadge :color="statusColor(row.status)" variant="subtle" size="sm">{{ statusLabel(row.status) }}</UBadge>
           </div>
           <!-- #300: the mobile actions row is the same employee-tier trio —
-               hidden below the employee tier -->
-          <div v-if="canWork" class="mt-3 flex justify-end gap-1">
-            <UPopover mode="hover" enable-touch>
-              <UButton
-                icon="i-lucide-plus"
-                variant="ghost"
-                color="neutral"
-                size="sm"
-                :aria-label="`Add subproject under ${row.name}`"
-                @click="
-                  openEditor(undefined);
-                  form.parentId = row.id;
-                "
-              />
-              <template #content>
-                <div class="px-3 py-1.5 text-xs">Add subproject</div>
-              </template>
-            </UPopover>
-            <UPopover mode="hover" enable-touch>
-              <UButton
-                icon="i-lucide-pencil"
-                variant="ghost"
-                color="neutral"
-                size="sm"
-                :aria-label="`Edit ${row.name}`"
-                @click="openEditor(row)"
-              />
-              <template #content>
-                <div class="px-3 py-1.5 text-xs">Edit project</div>
-              </template>
-            </UPopover>
-            <UPopover mode="hover" enable-touch>
-              <UButton
-                icon="i-lucide-trash-2"
-                variant="ghost"
-                color="neutral"
-                size="sm"
-                class="text-muted hover:text-error"
-                :aria-label="`Delete ${row.name}`"
-                :disabled="busy"
-                @click="askRemove(row)"
-              />
-              <template #content>
-                <div class="px-3 py-1.5 text-xs">Delete project</div>
-              </template>
-            </UPopover>
+               hidden below the employee tier. TASK SCOPE LAW (#339): View tasks
+               is a read (session-tier) and renders for every tier. -->
+          <div class="mt-3 flex items-center justify-between gap-1">
+            <UButton
+              icon="i-lucide-list-todo"
+              label="View tasks"
+              variant="soft"
+              color="neutral"
+              size="sm"
+              class="h-11 sm:h-8"
+              :to="`/tasks?project=${row.id}`"
+              :aria-label="`View tasks in ${row.name}`"
+              data-testid="project-view-tasks"
+            />
+            <div v-if="canWork" class="flex gap-1">
+              <UPopover mode="hover" enable-touch>
+                <UButton
+                  icon="i-lucide-plus"
+                  variant="ghost"
+                  color="neutral"
+                  size="sm"
+                  :aria-label="`Add subproject under ${row.name}`"
+                  @click="
+                    openEditor(undefined);
+                    form.parentId = row.id;
+                  "
+                />
+                <template #content>
+                  <div class="px-3 py-1.5 text-xs">Add subproject</div>
+                </template>
+              </UPopover>
+              <UPopover mode="hover" enable-touch>
+                <UButton
+                  icon="i-lucide-pencil"
+                  variant="ghost"
+                  color="neutral"
+                  size="sm"
+                  :aria-label="`Edit ${row.name}`"
+                  @click="openEditor(row)"
+                />
+                <template #content>
+                  <div class="px-3 py-1.5 text-xs">Edit project</div>
+                </template>
+              </UPopover>
+              <UPopover mode="hover" enable-touch>
+                <UButton
+                  icon="i-lucide-trash-2"
+                  variant="ghost"
+                  color="neutral"
+                  size="sm"
+                  class="text-muted hover:text-error"
+                  :aria-label="`Delete ${row.name}`"
+                  :disabled="busy"
+                  @click="askRemove(row)"
+                />
+                <template #content>
+                  <div class="px-3 py-1.5 text-xs">Delete project</div>
+                </template>
+              </UPopover>
+            </div>
           </div>
         </UCard>
       </template>
