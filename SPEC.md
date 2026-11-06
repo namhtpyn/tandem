@@ -403,8 +403,11 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   entry (enabled and disabled alike — a disabled channel is a configured one,
   not an invisible one): the entry fields, a `status` of `ok` or `dropped`, the
   canonical adapter key (`kind:homeserverUrl`) when parseable, the drop reason
-  when not, plus the registered `kinds` and the latest `channels:health` stamp
-  — a dropped config is visible in the UI, not only in watchdog stamps.
+  when not, plus the registered `kinds`, the latest `channels:health` stamp
+  (shape-guarded: a valid-JSON but wrong-shape stamp reads as absent — it must
+  never crash the reading UI), and the settings row's `updatedAt` as the
+  concurrency base for the card's writes — a dropped config is visible in the
+  UI, not only in watchdog stamps.
   Admin-only (channel config is admin-managed, "Channel config").
 - `channels.update` REPLACES the whole stored array. The admin write path
   validates STRICTLY — an invalid entry is REFUSED with its reason and NOTHING
@@ -418,7 +421,14 @@ ChannelInboundMessage { threadRef, senderPlatformId, text, raw, externalId }
   refused regardless of the enabled flag (an enabled+disabled pair for one bot
   is ambiguous config the UI cannot safely operate on — one bot per
   homeserver), and unknown keys are refused at every nesting level (strict
-  admin input; the runtime's tolerant strip stays untouched). Beyond parser
+  admin input; the runtime's tolerant strip stays untouched). Exact-content
+  duplicates (byte-identical after canonicalization) collapse to ONE channel
+  everywhere: the runtime keeps the first and drops the rest, and the admin
+  path refuses them. Every write carries the `updatedAt` base the admin
+  rendered from (optimistic concurrency): a write whose base has drifted is
+  REFUSED, never merged — a stale snapshot can never silently delete or revert
+  rows another admin added between its load and its write (the admin reloads
+  and retries). Beyond parser
   parity the write checks existence: the token secret must exist in the vault,
   binding user ids and the default assignee must be existing users.
 - A successful update re-arms the channel runtime IN-PROCESS against the
