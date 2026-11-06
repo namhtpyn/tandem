@@ -15,7 +15,7 @@
 // Fault isolation (#172): this leg never rejects — its own catch turns errors
 // into a quiet no-op so a retention fault can never crash the tick.
 import { consola } from 'consola';
-import { and, asc, eq, inArray, lt, ne } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, lt, ne, or, sql } from 'drizzle-orm';
 
 import { asDb, db, type DbExecutor } from '../../db/index';
 import { taskMessages, taskObligations, taskRuns, tasks, taskStatuses } from '../../db/schema';
@@ -34,7 +34,7 @@ const RETENTION_WARN_INTERVAL_MS = 5 * 60_000;
 export const retentionState = { lastAt: 0, lastWarnAt: 0 };
 
 /** terminal-category status ids — the category join (seeded categories are
- * lowercase 'done'|'cancelled'; VERB-GATE CATEGORY LAW: never status-id literals) */
+ * lowercase 'done'|'cancelled'; resolve by CATEGORY, never status-id literals) */
 export function terminalCategoryScan(ex: DbExecutor = db) {
   return asDb(ex)
     .select({ id: taskStatuses.id })
@@ -42,10 +42,13 @@ export function terminalCategoryScan(ex: DbExecutor = db) {
     .where(inArray(taskStatuses.category, ['done', 'cancelled']));
 }
 
-/** leg 1 scan: settled runs of terminal-category tasks past the horizon,
- * oldest-finished first — the transcript-blanking target set, LIMIT-bounded.
- * The task is reached via the run's message (task_runs has NO task_id — user
- * design 2026-10-26); the category predicate rides the SQL WHERE. */
+/** leg 1 scan: settled runs of terminal-category tasks past the horizon that
+ * still CARRY transcript bytes (already-blanked rows are excluded — otherwise
+ * the oldest 500 re-qualify forever and the drain never advances past batch
+ * one; the exclusion arm is what makes "relics drain on following days" true),
+ * oldest-finished first, LIMIT-bounded. The task is reached via the run's
+ * message (task_runs has NO task_id — user design 2026-10-26); the category
+ * predicate rides the SQL WHERE. */
 export function blankableTranscriptsScan(cutoff: Date, ex: DbExecutor = db) {
   return asDb(ex)
     .select({ id: taskRuns.id })
@@ -56,6 +59,7 @@ export function blankableTranscriptsScan(cutoff: Date, ex: DbExecutor = db) {
       and(
         ne(taskRuns.status, 'RUNNING'),
         lt(taskRuns.finishedAt, cutoff),
+        or(sql`${taskRuns.output} <> ''`, isNotNull(taskRuns.prompt)),
         inArray(tasks.status, terminalCategoryScan(ex)),
       ),
     )

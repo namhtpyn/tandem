@@ -87,13 +87,23 @@ describe('retention scan shapes (#266 — category join + LIMIT, never a fetch-a
     const { sql, params } = blankableTranscriptsScan(CUTOFF, mockDb()).toSQL();
     expect(sql).toContain('"task_runs"."status" <> $1');
     expect(sql).toContain('"task_runs"."finished_at" < $2');
+    // already-blanked rows leave the target set — the exclusion arm is what
+    // advances the drain past batch one (a blanked row matches NO arm)
+    expect(sql).toContain(`(("task_runs"."output" <> '') or (("task_runs"."prompt" is not null)))`);
     expect(sql).toContain('inner join "task_messages" on "task_runs"."message_id" = "task_messages"."id"');
     expect(sql).toContain('inner join "tasks" on "task_messages"."task_id" = "tasks"."id"');
     // the terminal filter rides a task_statuses SUBQUERY on the CATEGORY column
     expect(sql).toContain(
       '"tasks"."status" in (select "id" from "task_statuses" where "task_statuses"."category" in ($3, $4))',
     );
+    expect(sql).toContain('limit $5');
     expect(params).toEqual(['RUNNING', CUTOFF.toISOString(), 'done', 'cancelled', RETENTION_BATCH]);
+  });
+
+  it('leg 1 scan: a blanked row matches NO arm — drain advances past batch one (r1 P1 regression pin)', () => {
+    const { sql } = blankableTranscriptsScan(CUTOFF, mockDb()).toSQL();
+    expect(sql).toContain(`("task_runs"."output" <> '') or (("task_runs"."prompt" is not null)`);
+    expect(sql).not.toContain('delete from');
   });
 
   it('leg 1 scan: LIMIT-bounded oldest-first — relics beyond the batch drain tomorrow', () => {
