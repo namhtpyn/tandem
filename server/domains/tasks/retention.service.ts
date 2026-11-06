@@ -133,7 +133,10 @@ export async function runRetentionLeg(ex: DbExecutor = db): Promise<RetentionRes
     const stamp = await getSetting(RETENTION_STAMP_KEY);
     const stampMs = stamp ? Number(stamp) : 0;
     if (Number.isFinite(stampMs) && Date.now() - stampMs < RETENTION_INTERVAL_MS) {
-      retentionState.lastAt = Date.now(); // in-memory cache of the persisted stamp
+      // cache the STAMP value, not the restart time (r5: lastAt=now() would
+      // re-arm the skip 24h from every boot, sliding the cadence under
+      // restart-heavy operation to ~48h and breaking the watchdog's 25h margin)
+      retentionState.lastAt = stampMs;
       return null;
     }
     const cutoff = new Date(Date.now() - RETENTION_HORIZON_MS);

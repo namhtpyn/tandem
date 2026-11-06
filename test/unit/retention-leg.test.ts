@@ -285,6 +285,28 @@ describe('retention leg behavior (#266 — throttle + stamp + fault isolation)',
     expect(h.settingWrites).toHaveLength(0);
   });
 
+  it('the cache arm anchors to the STAMP value, not the restart time (r5 pin: restarts cannot slide the 24h cadence)', async () => {
+    vi.useFakeTimers();
+    try {
+      const boot = Date.now();
+      const stampMs = boot - 60 * 60_000; // 1h-old stamp survives the restart
+      h.storedStamp = String(stampMs);
+      await runRetentionLeg(fakeExec());
+      expect(retentionState.lastAt).toBe(stampMs); // anchored to the stamp, NOT boot time
+      vi.setSystemTime(boot + 22 * 60 * 60_000); // 22h after boot: stamp is 23h old — must stay silent
+      await runRetentionLeg(fakeExec());
+      expect(h.getSettingCalls).toBe(1); // skipped in-memory, no fresh settings read
+      expect(h.settingWrites).toHaveLength(0);
+      vi.setSystemTime(boot + 23 * 60 * 60_000); // stamp is now exactly 24h old — the leg fires on the STAMP's cadence
+      h.legRows = 1;
+      const result = await runRetentionLeg(fakeExec());
+      expect(result).toEqual({ blanked: 1, obligations: 1, sessions: 1 });
+      expect(h.settingWrites).toHaveLength(1); // stamped again after the full pass
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('the stamp write shares the legs\u2019 executor (single transaction surface, not the global db)', async () => {
     const ex = fakeExec();
     await runRetentionLeg(ex);
