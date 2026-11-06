@@ -921,3 +921,13 @@ non-positive deltas render no duration.
   `scripts/restore-drill.sh --selfcheck` validates the guards with zero side
   effects and is asserted by a unit test; drill reports land with the ops
   evidence.
+
+### Probe versioning (10-min watchdog)
+
+- The 10-min production probe is versioned at `scripts/tandem-prod-probe.sh`
+  and is the source of truth for every prod check. The agent-profile copy is a
+  deploy of that file (copied, never edited in place); `origin/dev` vs live
+  drift is an ops defect the critic alerts on.
+- Prod targets are env-overridable with today's production values as defaults:
+  `TANDEM_CT_KEY` / `TANDEM_CT_ADDR` (CT SSH target), `TANDEM_PROFILE_DIR`
+  and `TANDEM_PROBE_STATE` (profile root + probe state dir).
