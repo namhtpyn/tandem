@@ -67,15 +67,40 @@ const awaitingDecision = ref(route.query.awaiting === '1');
 watch(awaitingDecision, (v) => {
   void router.replace({ query: { ...route.query, awaiting: v ? '1' : undefined } });
 });
-watch([statusId, needsDecision, awaitingDecision], () => {
+// PROJECT SCOPE (#339, TASK SCOPE LAW): ONE optional project filter, URL-synced
+// like the awaiting toggle so a scoped view survives share/reload. The URL is
+// the source of truth on load and on back/forward; the ref change writes it back.
+function scopeFromQuery(v: unknown): string | null {
+  const raw = Array.isArray(v) ? v[0] : v;
+  const id = typeof raw === 'string' ? raw.trim() : '';
+  return id || null;
+}
+const projectScopeId = ref<string | null>(scopeFromQuery(route.query.project));
+watch(projectScopeId, (v) => {
+  if (scopeFromQuery(route.query.project) === v) return;
+  void router.replace({ query: { ...route.query, project: v ?? undefined } });
+});
+watch(
+  () => route.query.project,
+  (v) => {
+    const next = scopeFromQuery(v);
+    if (next !== projectScopeId.value) projectScopeId.value = next;
+  },
+);
+watch([statusId, needsDecision, awaitingDecision, projectScopeId], () => {
   page.value = 1;
 });
 function toggleStatusFilter(id: string) {
   statusId.value = statusId.value === id ? null : id;
 }
-/** any active server-side filter (search / status chip / inbox / awaiting) — drives the empty-state copy */
+/** any active server-side filter (search / status chip / inbox / awaiting / project) — drives the empty-state copy */
 const listFiltered = computed(
-  () => !!searchDebounced.value || statusId.value !== null || needsDecision.value || awaitingDecision.value,
+  () =>
+    !!searchDebounced.value ||
+    statusId.value !== null ||
+    needsDecision.value ||
+    awaitingDecision.value ||
+    projectScopeId.value !== null,
 );
 
 /** empty-state copy names WHICH filter came up empty — 'no results' under the inbox toggle reads as a bug */
@@ -85,6 +110,10 @@ const emptyCopy = computed(() => {
   if (!listFiltered.value) return 'Create the first one for your humans or agents.';
   if (needsDecision.value) return 'Nothing is waiting on your decision right now.';
   if (awaitingDecision.value) return 'Nothing is waiting on a decision right now.';
+  if (projectScopeId.value !== null) {
+    const name = projectNameById.value.get(projectScopeId.value) ?? 'this project';
+    return `No tasks in ${name}${statusId.value !== null ? ` with this status` : ''} — try another filter.`;
+  }
   if (statusId.value !== null)
     return `Nothing in ${statusLabel(statusId.value, statusById.value)} — try another filter.`;
   return 'Try a different search.';
@@ -99,6 +128,7 @@ const pagedQuery = useQuery(
         pageSize: pageSize.value,
         q: searchDebounced.value || undefined,
         statusId: statusId.value ?? undefined,
+        projectId: projectScopeId.value ?? undefined,
         inboxOfMe: needsDecision.value,
         awaitingDecision: awaitingDecision.value,
       },
@@ -109,6 +139,7 @@ const pagedQuery = useQuery(
         pageSize.value,
         searchDebounced.value,
         statusId.value ?? 'all',
+        projectScopeId.value ?? 'all-projects',
         needsDecision.value,
         awaitingDecision.value,
       ],
@@ -138,6 +169,25 @@ const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRo
 const assigneeNameById = computed(() => new Map(employees.value.map((e) => [e.id, e.name])));
 const projectRows = computed(() => (unref(projectsLive.data) ?? []) as Array<{ id: string; name: string }>);
 const projectNameById = computed(() => new Map(projectRows.value.map((p) => [p.id, p.name])));
+// project-scope select (#339): 'All projects' clears the scope; a scope id the
+// project list no longer knows (deleted project, stale URL) keeps an honest label
+// instead of blanking the control
+const projectScopeItems = computed(() => {
+  const items = [
+    { label: 'All projects', value: NONE_ID },
+    ...projectRows.value.map((p) => ({ label: p.name, value: p.id })),
+  ];
+  if (projectScopeId.value !== null && !projectRows.value.some((p) => p.id === projectScopeId.value)) {
+    items.splice(1, 0, { label: 'Unknown project', value: projectScopeId.value });
+  }
+  return items;
+});
+const projectScopeValue = computed<string>({
+  get: () => projectScopeId.value ?? NONE_ID,
+  set: (v) => {
+    projectScopeId.value = !v || v === NONE_ID ? null : v;
+  },
+});
 
 // ---- "needs my decision" inbox: this query drives the COUNT/badge only; the
 // list itself is filtered server-side via the inboxOfMe input ----
@@ -935,6 +985,26 @@ onServerPrefetch(() =>
     >
       {{ message }}
     </p>
+
+    <!-- project scope (#339, TASK SCOPE LAW): the list's one container filter —
+         set from here or from a project row's "View tasks"; All projects clears.
+         Rendered whenever a scope is active even if the project list is empty
+         (a stale URL must stay clearable). -->
+    <div v-if="projectRows.length || projectScopeId !== null" class="mt-3 flex items-center gap-2">
+      <USelect
+        v-model="projectScopeValue"
+        :items="projectScopeItems"
+        value-key="value"
+        icon="i-lucide-folder-kanban"
+        size="sm"
+        class="h-11 w-full sm:h-8 sm:w-64"
+        aria-label="Filter by project"
+        data-testid="project-scope-select"
+      />
+      <span v-if="projectScopeId !== null" class="text-muted hidden text-xs sm:inline" data-testid="project-scope-hint">
+        Viewing one project — pick All projects to widen.
+      </span>
+    </div>
 
     <!-- status filter chips (server-side statusId filter) — one scrollable row on
          mobile; active = neutral fill + highlighted text (no per-chip dots — the
