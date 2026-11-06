@@ -30,7 +30,7 @@ vi.mock('../../server/db/index', async () => {
           findMany: async (args?: { where?: { id?: { eq?: string } } }) => {
             const rows = [
               { id: STATUS.inReview, category: 'in_review' },
-            { id: STATUS.done, category: 'done' },
+              { id: STATUS.done, category: 'done' },
               { id: STATUS.cancelled, category: 'cancelled' },
               { id: 'st-custom-review', category: 'in_review' },
             ];
