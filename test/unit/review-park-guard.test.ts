@@ -6,9 +6,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { STATUS } from '#shared/status';
 
+import { mockDb, tasks as dbTasks } from './helpers/mock-db';
+
 const h = vi.hoisted(() => ({
   taskRows: [] as Array<Record<string, unknown>>,
-  updates: [] as Array<{ table: string; set: Record<string, unknown>; hasPredicate: boolean }>,
+  updates: [] as Array<{ table: string; set: Record<string, unknown>; hasPredicate: boolean; cond: unknown }>,
   activities: [] as Array<{ body: string; payload: Record<string, unknown> }>,
 }));
 
@@ -22,11 +24,26 @@ vi.mock('../../server/db/index', async () => {
           where: async () => h.taskRows,
         }),
       }),
+      query: {
+        // CATEGORY-GATE LAW (#336): parkRound resolves the read status's category
+        taskStatuses: {
+          findMany: async (args?: { where?: { id?: { eq?: string } } }) => {
+            const rows = [
+              { id: STATUS.inReview, category: 'in_review' },
+              { id: STATUS.done, category: 'done' },
+              { id: STATUS.cancelled, category: 'cancelled' },
+              { id: 'st-custom-review', category: 'in_review' },
+            ];
+            const id = args?.where?.id?.eq;
+            return id ? rows.filter((r) => r.id === id) : rows;
+          },
+        },
+      },
       update: (table: unknown) => ({
         set: (set: Record<string, unknown>) => ({
           where: (cond: unknown) => {
             const applied = () => {
-              h.updates.push({ table: table === tasks ? 'tasks' : 'other', set, hasPredicate: cond != null });
+              h.updates.push({ table: table === tasks ? 'tasks' : 'other', set, hasPredicate: cond != null, cond });
               // parkRound's guarded write now .returning()s the flipped rows (#282):
               // the atomic predicate decides the flip — here the guard always wins
               return cond != null ? [{ id: 'task-1' }] : [];
@@ -96,5 +113,23 @@ describe('parkRound in-review guard (#199)', () => {
     await parkRound('task-1', 'verdict-less review — re-dispatch exhausted');
     expect(h.activities[0]?.payload.fromStatus).toBe(STATUS.inReview);
     expect(h.activities[0]?.payload.reviewParked).toBe(true);
+  });
+
+  it('a custom IN-REVIEW-category status parks too (#336) — park origin + predicate pin the status read', async () => {
+    h.taskRows = [{ status: 'st-custom-review', ownerId: 'u1' }];
+    await parkRound('task-1', 'review turn timed out — reaped after 45 min');
+    expect(h.updates).toHaveLength(1);
+    expect(h.updates[0]?.set.status).toBe(STATUS.blocked);
+    expect(h.updates[0]?.set.parkFromStatus).toBe('st-custom-review');
+    expect(h.updates[0]?.hasPredicate).toBe(true);
+    // the predicate PINS the status this call read — rendering it is the whole
+    // point: reverting to the seeded constant must fail here, not only in prod
+    const rendered = mockDb()
+      .select()
+      .from(dbTasks)
+      .where(h.updates[0]?.cond as never)
+      .toSQL();
+    expect(rendered.params).toEqual(['task-1', 'st-custom-review']);
+    expect(h.activities[0]?.payload.fromStatus).toBe('st-custom-review');
   });
 });

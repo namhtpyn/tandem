@@ -2,7 +2,7 @@ import { consola } from 'consola';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
-import { CHANGE_RESOURCE, CHANGE_ACTION, PROPOSAL_STATUS, PROPOSAL_KIND, ACTIVITY_KIND } from '#shared/enums';
+import { CATEGORY, CHANGE_RESOURCE, CHANGE_ACTION, PROPOSAL_STATUS, PROPOSAL_KIND, ACTIVITY_KIND } from '#shared/enums';
 import { STATUS } from '#shared/status';
 // Proposal executor — confirms agent [SUBTASKS] / [REASSIGN] proposals and acts on them.
 // The confirm side is the single writer for structural changes (user law, 2026-10-15):
@@ -324,8 +324,15 @@ export async function recordProposals(
   const taskRow = (
     await db.select({ status: tasks.status, assigneeId: tasks.assigneeId }).from(tasks).where(eq(tasks.id, taskId))
   )[0];
-  // a terminal or vanished task takes nothing from a run that settled late
-  if (!taskRow || taskRow.status === STATUS.done || taskRow.status === STATUS.cancelled) return;
+  // a terminal or vanished task takes nothing from a run that settled late —
+  // CATEGORY-GATE LAW (#336): a custom terminal status is settled too
+  if (!taskRow) return;
+  const statusRows = await db.query.taskStatuses.findMany({
+    columns: { id: true, category: true },
+    where: { id: { eq: taskRow.status } },
+  });
+  const statusCategory = statusRows.find((r) => r.id === taskRow.status)?.category;
+  if (statusCategory === CATEGORY.DONE || statusCategory === CATEGORY.CANCELLED) return;
   // stale author = the task moved to someone else while the run flew: no auto-execution
   const staleAuthor = taskRow.assigneeId !== null && taskRow.assigneeId !== authorId;
   const chain = await supervisionChain(authorId);

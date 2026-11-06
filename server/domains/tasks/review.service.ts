@@ -44,6 +44,17 @@ const CANCELLED_STATUS = STATUS.cancelled;
 const BLOCKED_STATUS = STATUS.blocked;
 const IN_REVIEW_STATUS = STATUS.inReview;
 
+/** The status row's CATEGORY — lifecycle gates read the category, never the
+ * seeded uuid (STATUS FREEDOM + CATEGORY-GATE LAW, SPEC #336): a custom status in
+ * a category behaves exactly like its seeded sibling. A dangling status id (no
+ * row) resolves to null: every allow-list gate refuses it (dead input); the
+ * verdict path's terminal DENY-list lets it through so a legitimate settle can
+ * heal the row instead of stranding the round. */
+async function categoryOf(statusId: string): Promise<string | null> {
+  const statuses = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
+  return statuses.find((s) => s.id === statusId)?.category ?? null;
+}
+
 export async function logActivity(
   taskId: string,
   kind: ActivityKind,
@@ -407,7 +418,7 @@ async function holdVerdictForWaitingAnswer(
           { reviewResumed: true, round },
         );
       }
-    } else if (after.status === IN_REVIEW_STATUS) {
+    } else if (afterCat === CATEGORY.IN_REVIEW) {
       // r5: the flip writer's own re-fire can predate OUR revert (its row read saw
       // the verdict decided and minted nothing) — this call runs after the revert,
       // so its row read always sees the held row PENDING again. The flip writer's
@@ -457,8 +468,11 @@ export async function recordVerdict(
   const taskRow = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
   if (!taskRow) throw new Error('task not found');
   // terminal gate: a settled (done/cancelled) task must never be moved by a verdict
-  // that arrives late — stale AI runs and post-abandon clicks land here
-  if (taskRow.status === DONE_STATUS || taskRow.status === CANCELLED_STATUS)
+  // that arrives late — stale AI runs and post-abandon clicks land here.
+  // CATEGORY-GATE LAW (#336): the gate resolves the CATEGORY, so a custom terminal
+  // status refuses exactly like the seeded one.
+  const verdictCategory = await categoryOf(taskRow.status);
+  if (verdictCategory === CATEGORY.DONE || verdictCategory === CATEGORY.CANCELLED)
     throw new Error('task already settled — late verdict refused');
   // round binding: a human click decides the CURRENT round; an AI verdict belongs to
   // the round its review run was DISPATCHED for (a stale run must not settle a newer
@@ -649,7 +663,9 @@ export async function escalateReview(
       .where(eq(tasks.id, taskId))
   )[0];
   if (!task) throw new Error('task not found');
-  if (task.status !== IN_REVIEW_STATUS) throw new Error('task is not in review');
+  // CATEGORY-GATE LAW (#336): escalation gates on the in-review CATEGORY, so a
+  // custom in-review status escalates exactly like the seeded one.
+  if ((await categoryOf(task.status)) !== CATEGORY.IN_REVIEW) throw new Error('task is not in review');
   const round = await currentRound(taskId);
   if (round === 0) throw new Error('task has no open review round');
   const row = (
@@ -759,8 +775,12 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
   )[0];
   if (!task) throw new Error('task not found');
   // park only from in-review (#199): a manual settle that won the race owns the
-  // outcome — parking over a terminal/owner-moved status would resurrect a dead round
-  if (task.status !== IN_REVIEW_STATUS) return false;
+  // outcome — parking over a terminal/owner-moved status would resurrect a dead round.
+  // CATEGORY-GATE LAW (#336): the gate reads the in-review CATEGORY (a custom
+  // in-review status parks too — the seeded-id gate silently missed and wedged the
+  // round), and the guarded write pins the status id it READ so any concurrent move
+  // still wins.
+  if ((await categoryOf(task.status)) !== CATEGORY.IN_REVIEW) return false;
   const rearmable = opts.rearmable === true;
   // attempts = parks burned in the current cycle; ladder[attempts-1] schedules the
   // next re-fire; past the ladder the round parks FINAL (after = null) and the
@@ -781,8 +801,10 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
       parkRearmAttempts: attempts,
       parkRearmAfter: rearmAfter,
     })
-    // atomic re-check: a settle/status change between read and write wins
-    .where(and(eq(tasks.id, taskId), eq(tasks.status, IN_REVIEW_STATUS)))
+    // atomic re-check: a settle/status change between read and write wins — the
+    // predicate pins the status id this call READ (CATEGORY-GATE LAW #336), so a
+    // custom in-review status parks and a concurrent move still beats the park
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status)))
     .returning({ id: tasks.id });
   if (parkedRows.length === 0) return false;
   await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review parked — ${why}`, {
