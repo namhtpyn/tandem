@@ -157,6 +157,15 @@ describe('escalateReview verdict-row CAS (#283)', () => {
     expect(h.resolved).toEqual(['rev-1']);
   });
 
+  it('a custom IN-REVIEW-CATEGORY status escalates exactly like the seeded one (#336)', async () => {
+    h.taskReads[0] = [{ status: 'st-custom-review', reviewers: ['rev-1'], assigneeId: 'assignee-1' }];
+    h.taskReads[1] = [{ status: 'st-custom-review' }];
+    h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
+    const outcome = await escalateReview('task-1', 'rev-1', 'escalate to Sup for reviewing — need eyes');
+    expect(outcome).toEqual({ outcome: 'escalated' });
+    expect(h.inserts).toHaveLength(1);
+  });
+
   it('a CAS miss (verdict won / teardown superseded) refuses and mints NOTHING', async () => {
     h.casMiss = true;
     await expect(escalateReview('task-1', 'rev-1', 'escalate to Sup for reviewing — need eyes')).rejects.toThrow(
@@ -175,8 +184,12 @@ describe('escalateReview verdict-row CAS (#283)', () => {
       [{ status: STATUS.inReview, reviewers: ['rev-1'], assigneeId: 'assignee-1' }],
       [{ status: STATUS.cancelled }],
     ];
-    // the heal fires only for a settled (done/cancelled-category) task
-    h.statuses = [{ id: STATUS.cancelled, category: CATEGORY.CANCELLED }];
+    // the heal fires only for a settled (done/cancelled-category) task; the row gate
+    // reads the task's own in-review category before the mint (CATEGORY-GATE LAW #336)
+    h.statuses = [
+      { id: STATUS.inReview, category: CATEGORY.IN_REVIEW },
+      { id: STATUS.cancelled, category: CATEGORY.CANCELLED },
+    ];
     // review FIFO: [currentRound, ownRow, onRound, heal-round-read, heal-rows-read]
     h.reviewReads = [
       [{ round: 2 }],

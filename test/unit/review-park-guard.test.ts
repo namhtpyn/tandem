@@ -22,6 +22,17 @@ vi.mock('../../server/db/index', async () => {
           where: async () => h.taskRows,
         }),
       }),
+      query: {
+        // CATEGORY-GATE LAW (#336): parkRound resolves the read status's category
+        taskStatuses: {
+          findMany: async () => [
+            { id: STATUS.inReview, category: 'in_review' },
+            { id: STATUS.done, category: 'done' },
+            { id: STATUS.cancelled, category: 'cancelled' },
+            { id: 'st-custom-review', category: 'in_review' },
+          ],
+        },
+      },
       update: (table: unknown) => ({
         set: (set: Record<string, unknown>) => ({
           where: (cond: unknown) => {
@@ -96,5 +107,15 @@ describe('parkRound in-review guard (#199)', () => {
     await parkRound('task-1', 'verdict-less review — re-dispatch exhausted');
     expect(h.activities[0]?.payload.fromStatus).toBe(STATUS.inReview);
     expect(h.activities[0]?.payload.reviewParked).toBe(true);
+  });
+
+  it('a custom IN-REVIEW-category status parks too (#336) — park origin + predicate pin the status read', async () => {
+    h.taskRows = [{ status: 'st-custom-review', ownerId: 'u1' }];
+    await parkRound('task-1', 'review turn timed out — reaped after 45 min');
+    expect(h.updates).toHaveLength(1);
+    expect(h.updates[0]?.set.status).toBe(STATUS.blocked);
+    expect(h.updates[0]?.set.parkFromStatus).toBe('st-custom-review');
+    expect(h.updates[0]?.hasPredicate).toBe(true);
+    expect(h.activities[0]?.payload.fromStatus).toBe('st-custom-review');
   });
 });

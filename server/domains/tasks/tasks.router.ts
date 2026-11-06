@@ -6,6 +6,7 @@ import { z } from 'zod';
 
 import {
   ACTIVITY_KIND,
+  CATEGORY,
   CHANGE_RESOURCE,
   CHANGE_ACTION,
   RUN_STATUS,
@@ -562,9 +563,15 @@ export const tasksRouter = os.router({
       // the ANSWER obligation
       const { teardownOnManualMove } = await import('./review.service');
       await teardownOnManualMove(input.id, cur, input.status);
-      // unblock-resume: back to in-review with a live round → the sequence continues
-      const { STATUS } = await import('#shared/status');
-      if (input.status === STATUS.inReview) {
+      // unblock-resume: back to an IN-REVIEW-CATEGORY status with a live round → the
+      // sequence continues. CATEGORY-GATE LAW (#336): the target's CATEGORY decides, so
+      // an owner unblock to a custom in-review status re-fires the parked turn exactly
+      // like the seeded one (the seeded-id check silently skipped it and wedged the round).
+      const targetStatuses = await db.query.taskStatuses.findMany({
+        columns: { id: true, category: true },
+        where: { id: { eq: input.status } },
+      });
+      if (targetStatuses.find((s) => s.id === input.status)?.category === CATEGORY.IN_REVIEW) {
         const { openRoundLive, dispatchAiReviewTurns } = await import('./review.service');
         if (await openRoundLive(input.id)) await dispatchAiReviewTurns(input.id);
       }

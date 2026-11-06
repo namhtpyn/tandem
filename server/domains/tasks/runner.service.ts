@@ -493,7 +493,7 @@ import path from 'node:path';
 import { v7 as uuidv7 } from 'uuid';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION, SECRET_USAGE } from '#shared/enums';
-import { RUN_STATUS, REVIEW_STATUS, type FinishedStatus } from '#shared/enums';
+import { CATEGORY, RUN_STATUS, REVIEW_STATUS, type FinishedStatus } from '#shared/enums';
 import type { ReviewEnvelope, RunEnvelope } from '#shared/run-verdict';
 import { STATUS } from '#shared/status';
 // One shared verdict contract: the review brief renders the SAME JSON envelope as the
@@ -1042,7 +1042,15 @@ async function bounceTaskAfterRun(taskId: string, runId: string, output: string)
   )[0];
   // only bounce the task if this was its latest run (shared findFirst, #163)
   const latestRunId = await latestRunIdForTask(taskId);
-  if (latestRunId !== runId || current?.status !== STATUS.doing) return;
+  if (latestRunId !== runId || !current) return;
+  // CATEGORY-GATE LAW (#336): any WORKING-category status rides the fail ladder (a
+  // custom working status bounces exactly like seeded doing); terminal/paused/waiting
+  // rows are never resurrected.
+  const catRows = await db.query.taskStatuses.findMany({
+    columns: { id: true, category: true },
+    where: { id: { eq: current.status } },
+  });
+  if (catRows.find((r) => r.id === current.status)?.category !== CATEGORY.WORKING) return;
   const streak = current.failStreak + 1;
   const waitMs = backoffFor(streak, output);
   const bounced = await db
@@ -1053,8 +1061,9 @@ async function bounceTaskAfterRun(taskId: string, runId: string, output: string)
       dispatchAfter: new Date(Date.now() + waitMs),
       updatedAt: new Date(),
     })
-    // atomic re-check of the guard: a settle/cancel between read and write wins
-    .where(and(eq(tasks.id, taskId), eq(tasks.status, STATUS.doing)))
+    // atomic re-check of the guard: a settle/cancel between read and write wins —
+    // the bounce only lands on the status this call READ (#336)
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, current.status)))
     .returning({ id: tasks.id });
   if (!bounced.length) return; // raced with a status change — nothing to retry
   /* v8 ignore next -- the catch only guards a task deleted between the update and the log */

@@ -127,7 +127,12 @@ beforeEach(() => {
   h.cancelledAll = [];
   h.notes = [];
   h.aiEmployees = [{ userId: 'rev-1' }];
-  h.statuses = [{ id: STATUS.doing, category: CATEGORY.WORKING }];
+  h.statuses = [
+    { id: STATUS.doing, category: CATEGORY.WORKING },
+    { id: STATUS.inReview, category: CATEGORY.IN_REVIEW },
+    { id: STATUS.done, category: CATEGORY.DONE },
+    { id: STATUS.cancelled, category: CATEGORY.CANCELLED },
+  ];
 });
 
 describe('round-open dispatch failure (#282)', () => {
