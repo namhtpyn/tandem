@@ -58,7 +58,7 @@ if [ -n "$V" ] && [ -n "$TAG" ] && [ "$V" != "$TAG" ]; then
   MISM="$PROBE_STATE/version-mismatch-since"
   [ -f "$MISM" ] || date -u +%s > "$MISM" 2>/dev/null
   MISINCE=$(cat "$MISM" 2>/dev/null)
-  [ -z "$MISINCE" ] && MISINCE=$(( $(date -u +%s) - 1201 ))
+  case "$MISINCE" in ''|*[!0-9]*) MISINCE=$(( $(date -u +%s) - 1201 )) ;; esac
   MAGE=$(( $(date -u +%s) - MISINCE ))
   if [ "$MAGE" -gt 1200 ]; then
     anom+=("version: prod=$V latest=$TAG (mismatch ${MAGE}s)")
