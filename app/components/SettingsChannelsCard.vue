@@ -43,7 +43,13 @@ const channelsLive = useQuery($orpc.channels.list.queryOptions({ queryKey: [CHAN
 const data = computed(
   () =>
     unref(channelsLive.data) as
-      | { kinds: string[]; corrupt: string | null; entries: ListEntry[]; health: { channels?: HealthEntry[] } | null }
+      | {
+          kinds: string[];
+          corrupt: string | null;
+          entries: ListEntry[];
+          health: { channels?: HealthEntry[] } | null;
+          updatedAt?: string | null;
+        }
       | undefined,
 );
 const entries = computed(() => data.value?.entries ?? []);
@@ -162,7 +168,14 @@ async function saveChannels(arr: ChannelEntry[], successMsg: string) {
   message.value = '';
   messageOk.value = false;
   try {
-    await $client.channels.update({ channels: arr });
+    // baseUpdatedAt = the list snapshot's updatedAt (optimistic concurrency):
+    // a write from a stale snapshot (another admin wrote since our fetch)
+    // refuses server-side instead of silently dropping their rows
+    await $client.channels.update({ channels: arr, baseUpdatedAt: data.value?.updatedAt ?? undefined });
+    // refetch BEFORE the next op can read a stale base — the SSE-driven
+    // invalidation is async, and a second write racing it would carry the
+    // pre-write updatedAt and refuse
+    await channelsLive.refetch();
     message.value = successMsg;
     messageOk.value = true;
   } catch (e) {

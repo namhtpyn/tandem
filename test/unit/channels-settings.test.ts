@@ -14,7 +14,7 @@ vi.mock('../../server/domains/kernel/env', () => ({
 
 vi.mock('../../server/domains/settings/settings.service', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../server/domains/settings/settings.service')>();
-  return { ...actual, getSetting: vi.fn(), setSetting: vi.fn(), deleteSetting: vi.fn() };
+  return { ...actual, getSetting: vi.fn(), getSettingUpdatedAt: vi.fn(), setSetting: vi.fn(), deleteSetting: vi.fn() };
 });
 
 // existence checks ride drizzle select chains — the mock HONORS the caller's
@@ -49,7 +49,14 @@ vi.mock('../../server/db/index', async () => {
   }
   return {
     db: {
-      query: {},
+      query: {
+        // resolveToken reads the vault secret relationally; the boot sweep
+        // reads the event/outbox relations (serialization test drives the
+        // REAL inner start, so these surfaces must answer, not throw)
+        vaultSecrets: { findFirst: async () => ({ ciphertext: 'unit-ct' }) },
+        channelEvents: { findMany: async () => [] },
+        channelOutbox: { findMany: async () => [] },
+      },
       select: () => ({
         from: (table: unknown) => ({
           where: (cond: unknown) => Promise.resolve(honorPredicate(table, cond)),
@@ -62,6 +69,20 @@ vi.mock('../../server/db/index', async () => {
 vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../server/domains/kernel/kernel')>();
   return { ...actual, publishChange: vi.fn() };
+});
+
+// the serialization test drives the REAL inner start (no-dispatcher opt-out
+// disabled in that test alone): the queue domain and token decryption must be
+// mockable, or the inner start would touch real redis/vault crypto
+vi.mock('../../server/domains/kernel/queue', () => ({
+  // the handle must carry close(): stopChannels tears workers down via
+  // workerHandle?.close() — a close-less handle explodes any later stop in
+  // this file's SHUFFLED order (vitest sequence.shuffle)
+  redisQueue: vi.fn(async () => ({ queue: vi.fn(async () => ({ close: async () => {} })) })),
+}));
+vi.mock('../../server/domains/vault/secret/secret-crypto.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../server/domains/vault/secret/secret-crypto.service')>();
+  return { ...actual, decryptSecret: vi.fn(() => 'unit-token') };
 });
 
 // onChannelsSettingsChanged is wrapped in a passthrough vi.fn: the re-arm tests
@@ -77,6 +98,7 @@ import { createProcedureClient } from '@orpc/server';
 
 import { CHANGE_ACTION, CHANGE_RESOURCE, ROLE } from '#shared/enums';
 
+import type { ChannelAdapter } from '../../server/domains/channels/adapter';
 import { channelsRouter } from '../../server/domains/channels/channels.router';
 import {
   CHANNELS_KEY,
@@ -87,7 +109,7 @@ import {
   stopChannels,
 } from '../../server/domains/channels/channels.service';
 import { publishChange } from '../../server/domains/kernel/kernel';
-import { getSetting, setSetting } from '../../server/domains/settings/settings.service';
+import { getSetting, getSettingUpdatedAt, setSetting } from '../../server/domains/settings/settings.service';
 
 const rearmSpy = vi.mocked(onChannelsSettingsChanged);
 
@@ -102,6 +124,7 @@ const VALID = {
 
 // ---- helpers ----
 const mockedGet = vi.mocked(getSetting);
+const mockedGetUpd = vi.mocked(getSettingUpdatedAt);
 const mockedSet = vi.mocked(setSetting);
 const mockedPublish = vi.mocked(publishChange);
 
@@ -122,6 +145,7 @@ const ADMIN_LIST = callFor(channelsRouter.list, ROLE.ADMIN);
 beforeEach(() => {
   vi.clearAllMocks();
   mockedGet.mockResolvedValue(null);
+  mockedGetUpd.mockResolvedValue(null);
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -171,6 +195,23 @@ describe('inspectChannelConfigs: single source of truth (SPEC slice 4)', () => {
     expect(insp.entries[1]?.reason).toContain('no registered adapter');
   });
 
+  it('exact-content duplicates collapse to one channel (identical twins)', () => {
+    // r5 review: byte-identical same-key twins both inspected "ok" and their
+    // identical fingerprints collided row identity in the card (delete-one
+    // removed both) — inspection now collapses them: first ok, rest dropped
+    const insp = inspectChannelConfigs(JSON.stringify([VALID, { ...VALID }]));
+    expect(insp.entries.map((e) => e.status)).toEqual(['ok', 'dropped']);
+    expect(insp.entries[1]?.reason).toContain('exact duplicate');
+    // identical DISABLED twins: one ok row survives, parse still sees none
+    const disabled = JSON.stringify([
+      { ...VALID, enabled: false },
+      { ...VALID, enabled: false },
+    ]);
+    expect(inspectChannelConfigs(disabled).entries.map((e) => e.status)).toEqual(['ok', 'dropped']);
+    expect(parseChannelConfigs(disabled)).toEqual([]);
+    expect(parseChannelConfigs(JSON.stringify([VALID, { ...VALID }]))).toHaveLength(1);
+  });
+
   it('canonicalization is visible in the inspection cfg (UI shows what runs)', () => {
     const insp = inspectChannelConfigs(JSON.stringify([{ ...VALID, homeserverUrl: 'https://MATRIX.example.org//' }]));
     expect(insp.entries[0]?.status).toBe('ok');
@@ -204,6 +245,40 @@ describe('channels.update (SPEC: strict refuse, nothing written on refusal)', ()
       ADMIN_UPDATE({ channels: [VALID, { ...VALID, homeserverUrl: 'https://matrix.example.org/' }] }),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mockedSet).not.toHaveBeenCalled();
+  });
+
+  it('an exact-duplicate array is refused, nothing written (admin hygiene)', async () => {
+    await expect(ADMIN_UPDATE({ channels: [VALID, { ...VALID }] })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockedSet).not.toHaveBeenCalled();
+  });
+
+  it('a write whose base updatedAt drifted -> refused, nothing written (lost-update guard)', async () => {
+    // the stored row moved since the admin's snapshot — a REPLACE write from
+    // the stale snapshot would silently delete rows added since: refuse
+    mockedGetUpd.mockResolvedValue(new Date('2026-01-02T00:00:00.000Z'));
+    await expect(ADMIN_UPDATE({ channels: [VALID] })).rejects.toThrow(/changed since you loaded/);
+    expect(mockedSet).not.toHaveBeenCalled();
+    await expect(ADMIN_UPDATE({ channels: [VALID], baseUpdatedAt: '2026-01-01T00:00:00.000Z' })).rejects.toThrow(
+      /changed since you loaded/,
+    );
+    expect(mockedSet).not.toHaveBeenCalled();
+  });
+
+  it('a write whose base updatedAt matches commits, and list exposes the base', async () => {
+    mockedGetUpd.mockResolvedValue(new Date('2026-01-02T00:00:00.000Z'));
+    await expect(ADMIN_UPDATE({ channels: [VALID], baseUpdatedAt: '2026-01-02T00:00:00.000Z' })).resolves.toMatchObject(
+      { ok: true },
+    );
+    expect(mockedSet).toHaveBeenCalledWith(CHANNELS_KEY, JSON.stringify([VALID]));
+    await expect(ADMIN_LIST()).resolves.toMatchObject({ updatedAt: '2026-01-02T00:00:00.000Z' });
+  });
+
+  it('a wrong-shape health stamp degrades to absent health (render-crash guard)', async () => {
+    mockedGet.mockImplementation(async (key: string) =>
+      key === 'channels:health' ? '{"channels":"not-an-array"}' : JSON.stringify([VALID]),
+    );
+    const list = (await ADMIN_LIST()) as { health: unknown };
+    expect(list.health).toBeNull(); // valid JSON, wrong shape — never reaches the UI
   });
 
   it('a same-key pair regardless of enabled flag -> BAD_REQUEST (admin-path hygiene)', async () => {
@@ -422,6 +497,58 @@ describe('startChannels serialization + empty-array write', () => {
     const [a, b] = await Promise.all([startChannels(), startChannels()]);
     expect(a).toEqual([]);
     expect(b).toEqual([]);
+  });
+
+  it('concurrent starts never overlap the adapter start loop (observable serialization)', async () => {
+    // r5 review: the chain test above passes even with the chain deleted (the
+    // no-dispatcher inner is a no-op) — this pin observes the REAL inner:
+    // three concurrent starts, each with its OWN adapter key, must serialize
+    // (max 1 adapter start in flight); deleting the chain lets all three
+    // interleave and this goes red
+    const adapterMod = await import('../../server/domains/channels/adapter');
+    const { startChannels, stopChannels } = await import('../../server/domains/channels/channels.service');
+    const { env } = await import('../../server/domains/kernel/env');
+    let active = 0;
+    let maxActive = 0;
+    const fakeAdapter = (): ChannelAdapter => ({
+      kind: 'testkind',
+      capabilities: { edit: false, threads: false, maxLen: 100, markdown: false },
+      start: async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((r) => setTimeout(r, 25));
+        active -= 1;
+      },
+      stop: async () => {},
+      send: async () => {},
+    });
+    adapterMod.registerChannelAdapter('testkind', () => fakeAdapter());
+    // each inner start reads its OWN config (distinct keys), so the
+    // already-active skip cannot mask overlap
+    let call = 0;
+    mockedGet.mockImplementation(async () => {
+      call += 1;
+      return JSON.stringify([
+        {
+          kind: 'testkind',
+          enabled: true,
+          homeserverUrl: `https://t${call}.example.org`,
+          tokenSecretId: 'sec-1',
+          bindings: [],
+          defaultAssigneeId: null,
+        },
+      ]);
+    });
+    const priorDispatcher = env.TANDEM_NO_DISPATCHER;
+    env.TANDEM_NO_DISPATCHER = ''; // drive the REAL inner start
+    try {
+      expect(await Promise.all([startChannels(), startChannels(), startChannels()])).toEqual([[], [], []]);
+      expect(maxActive).toBe(1); // the serialization contract, observed
+    } finally {
+      env.TANDEM_NO_DISPATCHER = priorDispatcher;
+      mockedGet.mockResolvedValue(null);
+      await stopChannels(); // disarms the armed health tick + drops adapters
+    }
   });
 
   it('update with an empty array writes "[]" (replace-to-empty is legal)', async () => {

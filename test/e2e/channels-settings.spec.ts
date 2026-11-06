@@ -127,14 +127,18 @@ test.describe('channels settings card', () => {
       await page.getByRole('button', { name: 'Create channel' }).click();
       await expect(page.getByText('Channel created')).toBeVisible();
 
-      // second channel on the SAME canonical homeserver -> strict server refusal
+      // second channel on the SAME canonical homeserver -> strict server refusal.
+      // The second entry is byte-identical after canonicalization, so the
+      // EXACT-DUPLICATE rule fires (r6: identical twins collapse to one
+      // channel; a different-content same-key pair still refuses as
+      // 'duplicate adapter' — pinned in the unit suite)
       await openEditorWith(page, 'https://matrix.example.org/');
       await pickSecret(page, tag);
       await page.getByRole('button', { name: 'Create channel' }).click();
       // the refusal renders in the modal AND under the list — same reason text
       await expect(
         page
-          .getByText(/duplicate adapter/)
+          .getByText(/exact duplicate/)
           .filter({ visible: true })
           .first(),
       ).toBeVisible();
@@ -247,6 +251,50 @@ test.describe('channels settings card', () => {
       expect(parsed).toHaveLength(1);
       expect(parsed[0]).toMatchObject({ enabled: true });
       expect(parsed[0]?.bindings[0]?.platformUserId).toBe('@main:example.org');
+    } finally {
+      await removeSecret(page, secretId);
+    }
+  });
+
+  test('byte-identical twins collapse: one ok row + a dropped exact-duplicate row', async ({ page }) => {
+    const ui = new BasePage(page);
+    const tag = Date.now().toString(36);
+    const secretId = await seedSecret(page, tag);
+    // hand-edited EXACT duplicates (r5 review): inspection collapses them —
+    // the card must render ONE ok row (fingerprints can no longer collide on
+    // identical content, so row ops stay unambiguous) plus the dropped row
+    // with its reason visible
+    const cfg = [
+      {
+        kind: 'matrix',
+        enabled: false,
+        homeserverUrl: 'https://matrix.example.org',
+        tokenSecretId: secretId,
+        bindings: [],
+        defaultAssigneeId: null,
+      },
+      {
+        kind: 'matrix',
+        enabled: false,
+        homeserverUrl: 'https://matrix.example.org',
+        tokenSecretId: secretId,
+        bindings: [],
+        defaultAssigneeId: null,
+      },
+    ];
+    try {
+      await setStored(JSON.stringify(cfg));
+      await ui.navigate('/settings');
+      // the ok row + the dropped row BOTH display the homeserver (the dropped
+      // row shows its raw value) — count OK rows by the absence of the
+      // invalid badge, mirroring the dropped-row selector below
+      const okRows = page.locator('tr:visible', { hasText: 'matrix.example.org' }).filter({ hasNotText: 'invalid' });
+      await expect(okRows).toHaveCount(1); // ONE ok row — the twin collapsed
+      await expect(page.locator('tr:visible', { hasText: 'invalid' }).first()).toBeVisible();
+      await expect(page.getByText(/exact duplicate/).first()).toBeVisible();
+      // read-only check: no write happened, the stored array still has both
+      const stored = await getStored();
+      expect((JSON.parse(stored as string) as unknown[]).length).toBe(2);
     } finally {
       await removeSecret(page, secretId);
     }

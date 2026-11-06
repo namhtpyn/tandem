@@ -100,6 +100,7 @@ export function inspectChannelConfigs(raw: string | null): ChannelConfigInspecti
   if (!Array.isArray(parsed)) return { entries: [], corrupt: 'config is not an array — reading as no channels' };
   const entries: ChannelEntryDiagnostic[] = [];
   const seen = new Set<string>();
+  const seenContent = new Set<string>();
   for (const entry of parsed) {
     const r = channelConfigSchema.safeParse(entry);
     if (!r.success) {
@@ -123,6 +124,17 @@ export function inspectChannelConfigs(raw: string | null): ChannelConfigInspecti
     // canonicalize BEFORE dedupe: trailing slash / case / default port are
     // the same homeserver and must collapse to one adapter
     const cfg = { ...r.data, homeserverUrl: normalizeHomeserver(r.data.homeserverUrl) };
+    // EXACT-content duplicates: byte-identical after canonicalization = ONE
+    // channel — keep the first, drop the rest. Row ops that target "the row
+    // with this exact content" (the settings card's fingerprint identity)
+    // must stay unambiguous: two identical rows collided fingerprints and
+    // delete-one removed both (r5 review)
+    const contentKey = JSON.stringify(cfg);
+    if (seenContent.has(contentKey)) {
+      entries.push({ raw: entry, status: 'dropped', reason: 'exact duplicate of a previous entry', cfg });
+      continue;
+    }
+    seenContent.add(contentKey);
     // duplicate adapter keys would share a checkpoint + event namespace and
     // silently shadow each other — keep the first, refuse the rest loudly
     const key = `${cfg.kind}:${cfg.homeserverUrl}`;

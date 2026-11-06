@@ -12,6 +12,13 @@ export async function getSetting(key: string) {
   return row?.value ?? null;
 }
 
+/** the settings row's updatedAt — the optimistic-concurrency base for
+ * replace-style writers (null when the key is unset) */
+export async function getSettingUpdatedAt(key: string): Promise<Date | null> {
+  const row = await db.query.settings.findFirst({ columns: { updatedAt: true }, where: { key: { eq: key } } });
+  return row?.updatedAt ?? null;
+}
+
 /** upsert one key; pass a tx to join the caller's transaction */
 export async function setSetting(key: string, value: string, ex: DbExecutor = db) {
   const now = new Date();

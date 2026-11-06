@@ -11,7 +11,7 @@ import { CHANGE_ACTION, CHANGE_RESOURCE } from '#shared/enums';
 import { db } from '../../db/index';
 import { user as userTable, vaultSecrets as vaultSecretsTable } from '../../db/schema';
 import { ORPCError, adminProcedure, publishChange } from '../kernel/kernel';
-import { getSetting, setSetting } from '../settings/settings.service';
+import { getSetting, getSettingUpdatedAt, setSetting } from '../settings/settings.service';
 import { registeredChannelKinds } from './adapter';
 import {
   CHANNELS_HEALTH_KEY,
@@ -27,13 +27,25 @@ export const channelsRouter = os.router({
    * kinds and the latest health stamp — dropped configs are visible in the
    * UI, not only in watchdog stamps. Admin-only (config is admin-managed). */
   list: adminProcedure.handler(async () => {
-    const raw = await getSetting(CHANNELS_KEY);
+    const [raw, healthRaw, updatedAt] = await Promise.all([
+      getSetting(CHANNELS_KEY),
+      getSetting(CHANNELS_HEALTH_KEY),
+      getSettingUpdatedAt(CHANNELS_KEY),
+    ]);
     const insp = inspectChannelConfigs(raw);
-    const healthRaw = await getSetting(CHANNELS_HEALTH_KEY);
     let health: unknown = null;
     if (healthRaw) {
       try {
-        health = JSON.parse(healthRaw);
+        const parsed: unknown = JSON.parse(healthRaw);
+        // SHAPE guard, not just a JSON guard: a valid-JSON wrong-shape stamp
+        // (hand-edited settings are an anticipated input class) must not
+        // reach the card's render — the UI calls .find on health.channels
+        // and a non-array throws mid-render, taking the whole settings page
+        // down. Degrade to absent health exactly like a corrupt stamp.
+        health =
+          parsed !== null && typeof parsed === 'object' && Array.isArray((parsed as { channels?: unknown }).channels)
+            ? parsed
+            : null;
       } catch {
         health = null; // a corrupt stamp is the watchdog's problem, not the UI's
       }
@@ -49,6 +61,8 @@ export const channelsRouter = os.router({
         raw: e.raw,
       })),
       health,
+      // optimistic-concurrency base for the card's replace-array writes
+      updatedAt: updatedAt?.toISOString() ?? null,
     };
   }),
 
@@ -57,7 +71,14 @@ export const channelsRouter = os.router({
    * parser's tolerant skip is the safety net for hand-edited values, never
    * the UI path's behavior). Same rules, same inspection code path. */
   update: adminProcedure
-    .input(z.strictObject({ channels: z.array(adminChannelConfigSchema) }))
+    .input(
+      z.strictObject({
+        channels: z.array(adminChannelConfigSchema),
+        // optimistic-concurrency base: the updatedAt the admin's snapshot was
+        // rendered from (optional — absent behaves as "expect unset key")
+        baseUpdatedAt: z.string().optional(),
+      }),
+    )
     .handler(async ({ input }) => {
       // ---- validate FIRST: no row is written until every check has passed ----
       // strict refuse rides the SAME inspection the runtime parser uses
@@ -121,6 +142,18 @@ export const channelsRouter = os.router({
             message: `channel ${i + 1} (${c.kind} @ ${c.homeserverUrl}): default assignee not found`,
           });
         }
+      }
+
+      // ---- optimistic concurrency: the write REPLACES the stored array from
+      // the admin's snapshot — without a base-version check, a second admin
+      // writing from a stale snapshot silently deletes rows added or changed
+      // since (lost update with a success ack). The card sends the updatedAt
+      // it rendered from; any drift refuses instead of clobbering. ----
+      const currentUpdatedAt = await getSettingUpdatedAt(CHANNELS_KEY);
+      if ((currentUpdatedAt?.toISOString() ?? null) !== (input.baseUpdatedAt ?? null)) {
+        throw new ORPCError('BAD_REQUEST', {
+          message: 'channels changed since you loaded them — reload the settings page and retry',
+        });
       }
 
       // ---- commit: the canonicalized array is what runs, so it is what is
