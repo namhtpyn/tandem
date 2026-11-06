@@ -15,7 +15,8 @@
 // Fault isolation (#172): this leg never rejects — its own catch turns errors
 // into a quiet no-op so a retention fault can never crash the tick.
 import { consola } from 'consola';
-import { and, asc, eq, inArray, isNotNull, lt, ne, or, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, lt, ne, notExists, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 
 import { asDb, db, type DbExecutor } from '../../db/index';
 import { taskMessages, taskObligations, taskRuns, tasks, taskStatuses } from '../../db/schema';
@@ -26,7 +27,14 @@ export const RETENTION_HORIZON_MS = 30 * 24 * 60 * 60_000;
 /** per-leg batch cap — a day-tick drains the oldest batch; relics follow tomorrow */
 export const RETENTION_BATCH = 500;
 export const RETENTION_STAMP_KEY = 'retention_last_run';
+/** stamped at every pass start (best-effort) — proves the leg RUNS even when a
+ * pass never completes, so the watchdog can tell 'not running' from 'never
+ * completing' (r6: an absent run stamp alone cannot distinguish them) */
+export const RETENTION_ATTEMPT_KEY = 'retention_last_attempt';
 const RETENTION_INTERVAL_MS = 24 * 60 * 60_000;
+/** failure backoff: a failing pass re-enters after 15 min, never on the next
+ * 5s tick — blast radius is one batch per backoff (r6) */
+const RETENTION_RETRY_MS = 15 * 60_000;
 /** rate-limited warn window (same as the reaper, #147) */
 const RETENTION_WARN_INTERVAL_MS = 5 * 60_000;
 
@@ -70,12 +78,29 @@ export function blankableTranscriptsScan(cutoff: Date, ex: DbExecutor = db) {
 }
 
 /** leg 2 scan: non-PENDING obligations resolved past the horizon,
- * oldest-resolved first, LIMIT-bounded. PENDING rows never match. */
+ * oldest-resolved first, LIMIT-bounded. PENDING rows never match, and neither
+ * do resolved rows on a task that still carries a PENDING obligation: a live
+ * approval round displays its already-resolved rows (approved tally), so
+ * deleting them would regress the display (r6 finding). */
 export function resolvedObligationsScan(cutoff: Date, ex: DbExecutor = db) {
+  const pendingTwins = alias(taskObligations, 'pending_twins');
   return asDb(ex)
     .select({ id: taskObligations.id })
     .from(taskObligations)
-    .where(and(ne(taskObligations.status, 'PENDING'), lt(taskObligations.resolvedAt, cutoff)))
+    .where(
+      and(
+        ne(taskObligations.status, 'PENDING'),
+        lt(taskObligations.resolvedAt, cutoff),
+        // NOT EXISTS (... pending row on the SAME task) — aliased twin, never a
+        // bare self-reference (same-table correlation would degrade to TRUE)
+        notExists(
+          asDb(ex)
+            .select({ one: sql<number>`1` })
+            .from(pendingTwins)
+            .where(and(eq(pendingTwins.taskId, taskObligations.taskId), eq(pendingTwins.status, 'PENDING'))),
+        ),
+      ),
+    )
     .orderBy(asc(taskObligations.resolvedAt))
     .limit(RETENTION_BATCH);
 }
@@ -140,6 +165,13 @@ export async function runRetentionLeg(ex: DbExecutor = db): Promise<RetentionRes
       return null;
     }
     const cutoff = new Date(Date.now() - RETENTION_HORIZON_MS);
+    // attempt stamp: best-effort, written BEFORE the legs so a pass that never
+    // completes is still observable (r6 arm (b)); a failed write must not block
+    try {
+      await setSetting(RETENTION_ATTEMPT_KEY, String(Date.now()), ex);
+    } catch {
+      // observability only — never block the pass
+    }
     const result: RetentionResult = {
       blanked: await blankRunTranscripts(cutoff, ex),
       obligations: await deleteResolvedObligations(cutoff, ex),
@@ -150,11 +182,14 @@ export async function runRetentionLeg(ex: DbExecutor = db): Promise<RetentionRes
     return result;
   } catch (e) {
     const now = Date.now();
+    // 15-min backoff instead of a next-tick retry: a persistent leg failure must
+    // not re-enter every 5s (each retry would blank ANOTHER batch — r6)
+    retentionState.lastAt = now - RETENTION_INTERVAL_MS + RETENTION_RETRY_MS;
     if (now - retentionState.lastWarnAt >= RETENTION_WARN_INTERVAL_MS) {
       retentionState.lastWarnAt = now;
       consola
         .withTag('dispatcher')
-        .warn('retention leg failed (retrying next tick):', e instanceof Error ? e.message : e);
+        .warn('retention leg failed (retrying after 15m):', e instanceof Error ? e.message : e);
     }
     return null;
   } finally {

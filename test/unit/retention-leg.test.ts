@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 // RETENTION LAW (#266): the daily retention leg bounds unbounded storage
 // without deleting audit rows. These tests pin (a) the SHAPES the legs issue —
 // every scan pushes its age/category predicate into the SQL WHERE and carries
@@ -31,7 +34,9 @@ vi.mock('../../server/domains/settings/settings.service', () => ({
   }),
   setSetting: vi.fn(async (key: string, value: string, ex?: unknown) => {
     h.settingWrites.push([key, value, ex]);
-    h.storedStamp = value;
+    // key-faithful like the real settings table: only the RUN stamp backs
+    // getSetting(RETENTION_STAMP_KEY); the attempt stamp is a different row
+    if (key === 'retention_last_run') h.storedStamp = value;
   }),
   getRunTimeoutMs: vi.fn(async () => 30 * 60_000),
   getTasksPerAgent: vi.fn(async () => 1),
@@ -57,6 +62,7 @@ import {
   deleteExpiredSessions,
   deleteResolvedObligations,
   expiredSessionsScan,
+  RETENTION_ATTEMPT_KEY,
   RETENTION_BATCH,
   RETENTION_STAMP_KEY,
   resolvedObligationsScan,
@@ -161,9 +167,14 @@ describe('retention scan shapes (#266 — category join + LIMIT, never a fetch-a
     const { sql, params } = resolvedObligationsScan(CUTOFF, mockDb()).toSQL();
     expect(sql).toContain('"task_obligations"."status" <> $1');
     expect(sql).toContain('"task_obligations"."resolved_at" < $2');
+    // resolved rows on a task that still carries a PENDING obligation are KEPT
+    // (a live approval round displays them — r6 finding)
+    expect(sql).toContain('not exists (select 1 from "task_obligations" "pending_twins"');
+    expect(sql).toContain('"pending_twins"."task_id" = "task_obligations"."task_id"');
+    expect(sql).toContain('"pending_twins"."status" = $3');
     expect(sql).toContain('order by "task_obligations"."resolved_at" asc');
-    expect(sql).toContain('limit $3');
-    expect(params).toEqual(['PENDING', CUTOFF.toISOString(), RETENTION_BATCH]);
+    expect(sql).toContain('limit $4');
+    expect(params).toEqual(['PENDING', CUTOFF.toISOString(), 'PENDING', RETENTION_BATCH]);
   });
 
   it('leg 3 scan: expired sessions only (expires_at in the past), LIMIT-bounded', () => {
@@ -220,7 +231,9 @@ describe('retention leg behavior (#266 — throttle + stamp + fault isolation)',
   it('a stale run executes all three legs and stamps ONLY after a full pass', async () => {
     const result = await runRetentionLeg(fakeExec());
     expect(result).toEqual({ blanked: 0, obligations: 0, sessions: 0 });
-    expect(h.settingWrites).toEqual([[RETENTION_STAMP_KEY, expect.stringMatching(/^\d+$/), expect.anything()]]);
+    // attempt stamped BEFORE the legs, run stamped only after the full pass (r6)
+    expect(h.settingWrites.map(([k]) => k)).toEqual([RETENTION_ATTEMPT_KEY, RETENTION_STAMP_KEY]);
+    expect(h.settingWrites[1]?.[1]).toMatch(/^\d+$/);
     expect(retentionState.running).toBe(false); // guard cleared even on success
   });
 
@@ -235,14 +248,19 @@ describe('retention leg behavior (#266 — throttle + stamp + fault isolation)',
     h.storedStamp = 'not-a-number';
     const result = await runRetentionLeg(fakeExec());
     expect(result).toEqual({ blanked: 0, obligations: 0, sessions: 0 });
-    expect(h.settingWrites).toHaveLength(1);
+    expect(h.settingWrites.map(([k]) => k)).toEqual([RETENTION_ATTEMPT_KEY, RETENTION_STAMP_KEY]);
   });
 
-  it('a failed leg leaves the stamp untouched — the next tick retries', async () => {
+  it('a failed leg leaves the RUN stamp untouched (attempt stamp proves the pass ran) — retry is a 15m backoff, never the next tick', async () => {
     h.failLegs = true;
     const result = await runRetentionLeg(fakeExec());
     expect(result).toBeNull();
-    expect(h.settingWrites).toHaveLength(0);
+    expect(h.settingWrites.map(([k]) => k)).toEqual([RETENTION_ATTEMPT_KEY]); // attempt stamped, run NOT
+    // backoff: the immediate next tick is skipped, no re-entry storm
+    const readsAfterFail = h.getSettingCalls;
+    await runRetentionLeg(fakeExec());
+    expect(h.getSettingCalls).toBe(readsAfterFail);
+    expect(h.settingWrites).toHaveLength(1);
   });
 
   it('a failed settings read never rejects the tick (#172) and writes no stamp', async () => {
@@ -269,7 +287,8 @@ describe('retention leg behavior (#266 — throttle + stamp + fault isolation)',
     await runRetentionLeg(fakeExec()); // fresh window → warn 1
     await runRetentionLeg(fakeExec()); // inside the window → suppressed
     expect(h.warnCalls).toBe(1);
-    retentionState.lastWarnAt = 0; // simulate the window elapsing
+    retentionState.lastWarnAt = 0; // simulate the warn window elapsing
+    retentionState.lastAt = 0; // simulate the 15m backoff elapsing
     await runRetentionLeg(fakeExec()); // warn 2
     expect(h.warnCalls).toBe(2);
     expect(retentionState.running).toBe(false); // guard cleared on the failure path too
@@ -301,16 +320,19 @@ describe('retention leg behavior (#266 — throttle + stamp + fault isolation)',
       h.legRows = 1;
       const result = await runRetentionLeg(fakeExec());
       expect(result).toEqual({ blanked: 1, obligations: 1, sessions: 1 });
-      expect(h.settingWrites).toHaveLength(1); // stamped again after the full pass
+      expect(h.settingWrites.map(([k]) => k)).toEqual([RETENTION_ATTEMPT_KEY, RETENTION_STAMP_KEY]); // re-stamped after the full pass
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('the stamp write shares the legs\u2019 executor (single transaction surface, not the global db)', async () => {
+  it('the run stamp write shares the legs\u2019 executor (single transaction surface, not the global db)', async () => {
     const ex = fakeExec();
     await runRetentionLeg(ex);
-    expect(h.settingWrites[0]?.[2]).toBe(ex);
+    const runWrite = h.settingWrites.find(([k]) => k === RETENTION_STAMP_KEY);
+    expect(runWrite?.[2]).toBe(ex);
+    const attemptWrite = h.settingWrites.find(([k]) => k === RETENTION_ATTEMPT_KEY);
+    expect(attemptWrite?.[2]).toBe(ex);
   });
 
   it('a pass in flight blocks re-entry — ticks cannot stack duplicate concurrent passes', async () => {
@@ -325,5 +347,15 @@ describe('retention leg behavior (#266 — throttle + stamp + fault isolation)',
     await runRetentionLeg(fakeExec());
     expect(h.runningDuringSettingRead).toBe(true); // a stalled settings read cannot re-admit the next tick
     expect(retentionState.running).toBe(false); // and cleared on completion
+  });
+});
+
+describe('dispatcher wiring (#266 — the tick actually runs the leg; r6 pin)', () => {
+  it('startDispatcher calls runRetentionLeg inside the tick, imported from the service', () => {
+    const src = readFileSync(join(import.meta.dirname, '../../server/domains/tasks/dispatcher.service.ts'), 'utf8');
+    expect(src).toContain("import { runRetentionLeg } from './retention.service';");
+    const start = src.indexOf('export function startDispatcher');
+    expect(start).toBeGreaterThan(-1);
+    expect(src.slice(start)).toContain('void runRetentionLeg();'); // the ONE call site the probe's stamp arm depends on
   });
 });
