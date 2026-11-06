@@ -1,3 +1,21 @@
+# [2.76.0](https://github.com/namhtpyn/tandem/compare/v2.75.1...v2.76.0) (2026-11-06)
+
+
+### Bug Fixes
+
+* **tasks:** [#339](https://github.com/namhtpyn/tandem/issues/339) r1 blind review — scope-aware empty copy in every composed state, NONE_ID sentinel is never a scope, composed-where unit pin, e2e covers select-set / unknown id / sentinel ([a37af1f](https://github.com/namhtpyn/tandem/commit/a37af1f3f264f942c1f927516be2c3cf9f05385c))
+* **tasks:** [#339](https://github.com/namhtpyn/tandem/issues/339) r2 blind review — strip the dead project param on mount, pin the scoped obligation copy + mobile drill-down in e2e, README user-impact update ([8802b74](https://github.com/namhtpyn/tandem/commit/8802b74c07513dd0d7051470bfec6e0f0dbb2323))
+* **tasks:** [#339](https://github.com/namhtpyn/tandem/issues/339) r3 blind review — filter-relative scoped empty copy + URL normalization for multi-valued project params ([f7de64c](https://github.com/namhtpyn/tandem/commit/f7de64c64bb55f37fe044d5d1d4969137490c265))
+* **tasks:** [#339](https://github.com/namhtpyn/tandem/issues/339) r4 blind review — scoped create inherits the project (P2 dead end), empty-project CTA under scope, URL normalization covers blank/untrimmed shapes ([5156063](https://github.com/namhtpyn/tandem/commit/5156063f80236866955d1d0a9d40dceb43a14e78))
+* **tasks:** [#339](https://github.com/namhtpyn/tandem/issues/339) r5 blind review — create default only for a RESOLVABLE scope, obligation copy composes with an active search, empty-state CTA e2e pin ([f96823b](https://github.com/namhtpyn/tandem/commit/f96823bee1291bdd28552f311021ba95f9bd8e1f))
+* **tasks:** [#339](https://github.com/namhtpyn/tandem/issues/339) r6 blind review — create default is CREATE-ONLY (P2: an edit never inherits the scope), obligation copy names a live status chip, scoped empty CTA hides on an unresolvable scope ([bdcbedf](https://github.com/namhtpyn/tandem/commit/bdcbedf9397a81f2b5fc144385e6568a72ca4ed4))
+* **tasks:** [#339](https://github.com/namhtpyn/tandem/issues/339) r7 final review — empty-state create only on a bare scope (no duplicate-create loop), obligation copy names both toggles ([398de5f](https://github.com/namhtpyn/tandem/commit/398de5f9fe987df9557ac71979ae25f2bdb8b591))
+
+
+### Features
+
+* **tasks:** project scope on the paged task list — project rows drill down, ?project= URL-synced ([#339](https://github.com/namhtpyn/tandem/issues/339)) ([fcccc18](https://github.com/namhtpyn/tandem/commit/fcccc1897ee3fa443304a1f0ba156ed9aa5abb5b))
+
 ## [2.75.1](https://github.com/namhtpyn/tandem/compare/v2.75.0...v2.75.1) (2026-11-06)
 
 
