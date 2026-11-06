@@ -93,15 +93,21 @@ watch(
   },
 );
 // the URL must describe the scope the page applies: a param that normalizes to
-// no scope, or to several values, is rewritten once on mount to the resolved
-// single scope (or dropped). Client-only — SSR must never navigate during setup.
+// no scope, or to several values (blank siblings and untrimmed forms included),
+// is rewritten once on mount to the resolved single scope (or dropped).
+// Client-only — SSR must never navigate during setup.
 onMounted(() => {
   const raw = route.query.project;
   if (raw === undefined) return;
-  const values = (Array.isArray(raw) ? raw : [raw]).filter((v) => typeof v !== 'string' || v.trim() !== '');
-  const normalized =
-    projectScopeId.value !== null && values.length === 1 && scopeFromQuery(values[0]) === projectScopeId.value;
-  if (!normalized) {
+  const values = Array.isArray(raw) ? raw : [raw];
+  const first = values[0];
+  const canonical =
+    projectScopeId.value !== null &&
+    values.length === 1 &&
+    typeof first === 'string' &&
+    first === first.trim() &&
+    scopeFromQuery(first) === projectScopeId.value;
+  if (!canonical) {
     void router.replace({ query: { ...route.query, project: projectScopeId.value ?? undefined } });
   }
 });
@@ -1091,7 +1097,14 @@ onServerPrefetch(() =>
       :empty-icon="listFiltered ? 'i-lucide-search-x' : 'i-lucide-list-todo'"
     >
       <template #empty-cta>
-        <UButton v-if="canWork && !listFiltered" icon="i-lucide-plus" label="New task" @click="openEditor()" />
+        <!-- #339: a scoped list's create entry stays (the editor inherits the scope), so
+             an empty project is not a dead end; other filters keep #210's toolbar entry only -->
+        <UButton
+          v-if="canWork && (!listFiltered || projectScopeId !== null)"
+          icon="i-lucide-plus"
+          label="New task"
+          @click="openEditor()"
+        />
       </template>
       <template #error-cta>
         <UButton size="sm" variant="soft" icon="i-lucide-refresh-cw" label="Retry" @click="pagedQuery.refetch()" />
@@ -1882,7 +1895,12 @@ onServerPrefetch(() =>
     </UModal>
 
     <TaskStatusesManager v-model:open="statusManagerOpen" :editable="isAdmin" />
-    <TaskEditorModal v-model:open="editorOpen" :task="editingTaskWithLock" @saved="onSaved" />
+    <TaskEditorModal
+      v-model:open="editorOpen"
+      :task="editingTaskWithLock"
+      :default-project-id="projectScopeId"
+      @saved="onSaved"
+    />
 
     <!-- delete confirm -->
     <UModal v-model:open="deleteOpen" title="Delete task" :ui="{ content: 'max-w-sm' }">

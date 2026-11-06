@@ -21,7 +21,13 @@ import { attachmentRef, attachmentToken } from '~/utils/task-tokens';
 import { employeeOptions, kindLabel } from '~/utils/ui-labels';
 
 const open = defineModel<boolean>('open', { default: false });
-const props = defineProps<{ task: TaskRow | null; parentTaskId?: string | null }>();
+const props = defineProps<{
+  task: TaskRow | null;
+  parentTaskId?: string | null;
+  /** create-only (#339): the active task-list project scope pre-fills the picker
+   *  so a task created from a scoped list lands in that scope; the user clears it */
+  defaultProjectId?: string | null;
+}>();
 const emit = defineEmits<{ saved: [] }>();
 
 /** RUN LOCK (#264): a live run owns the task's assignee/status — the modal
@@ -136,7 +142,7 @@ watch(open, (v) => {
   // #145: a create has no stored body to protect; an edit starts UNKNOWN
   descriptionState.value = row ? 'loading' : 'loaded';
   form.assigneeId = row?.assigneeId ?? NONE_ID;
-  form.projectId = row?.projectId ?? NONE_ID;
+  form.projectId = row?.projectId ?? props.defaultProjectId ?? NONE_ID;
   form.reviewers = row?.reviewers ? [...row.reviewers] : [];
   form.status = row?.status ?? defaultStatusId.value;
   message.value = '';

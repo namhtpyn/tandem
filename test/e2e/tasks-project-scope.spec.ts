@@ -135,11 +135,18 @@ test('project scope: the mobile project card carries the drill-down', async ({ p
   await expect(page.locator('a:visible').filter({ hasText: inTitle }).first()).toBeVisible({ timeout: 15_000 });
 });
 
-test('project scope: an empty project names itself in the empty state', async ({ page }) => {
+test('project scope: an empty project names itself and creates inside the scope', async ({ page }) => {
   const tasks = new TasksPage(page);
   const suffix = Date.now().toString(36).slice(-6);
   const project = `Empty ${suffix}`;
+  const title = `NEW ${suffix}`;
   const created = await rpc(page, '/rpc/projects/create', { name: project });
   await tasks.navigate(`/tasks?project=${created.id}`);
   await expect(page.getByText(`No tasks in ${project} yet.`, { exact: false })).toBeVisible({ timeout: 15_000 });
+
+  // creating from the scoped list inherits the scope — the new row appears here
+  // (the editor's Project pre-fills from the active scope), no dead end
+  await tasks.createTask({ title });
+  await expect(tasks.rowFor(title)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(`No tasks in ${project}`, { exact: false })).toHaveCount(0);
 });
