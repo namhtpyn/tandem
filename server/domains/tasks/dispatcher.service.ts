@@ -18,6 +18,7 @@ import { publishChange } from '../kernel/change-bus';
 import { env } from '../kernel/env';
 import { redisQueue } from '../kernel/queue';
 import { rearmParkedRounds } from './gating.service';
+import { runRetentionLeg } from './retention.service';
 import {
   DISPATCH_ATTEMPTS,
   dispatchQueueName,
@@ -646,6 +647,7 @@ export function startDispatcher(tandemUrl: string, intervalMs = 5000): () => voi
     void rearmParkedRounds(); // never rejects: its own catch turns errors into 0 rearmed
     void touchDispatcherHeartbeat(); // best-effort watchdog stamp (its own catch)
     void touchDispatcherRedisOk(); // best-effort watchdog stamp (#238, its own catch)
+    void runRetentionLeg(); // daily retention leg (#266) — never rejects (its own catch)
   }, intervalMs);
   return () => clearInterval(timer);
 }
