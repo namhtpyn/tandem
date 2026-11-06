@@ -162,6 +162,9 @@ const inboxItems = computed<InboxItem[]>(
 const inboxCount = computed(() => inboxItems.value.length);
 
 const statusOptions = computed(() => statuses.value.map((x) => ({ label: x.name, value: x.id })));
+// inline assignee options (#333): same label contract as the task editor —
+// "Name (AI)" marks agent employees, a leading Unassigned clears the field
+const assigneeOptions = computed(() => employeeOptions(employees.value, { noneLabel: 'Unassigned' }));
 
 // one shared category→color mapping (ui-labels) — statuses agree with the detail page
 
@@ -179,6 +182,7 @@ function waitingForRow(row: TaskRow) {
 // ---- mutations (list rows) ----
 const queryClient = useQueryClient();
 const setStatusMutation = useMutation($orpc.tasks.setStatus.mutationOptions());
+const updateMutation = useMutation($orpc.tasks.update.mutationOptions());
 const removeMutation = useMutation($orpc.tasks.remove.mutationOptions());
 const assignMutation = useMutation($orpc.statuses.assign.mutationOptions());
 
@@ -192,15 +196,26 @@ const pendingStatus = ref(new Map<string, string>());
 function rowStatus(row: TaskRow): string {
   return pendingStatus.value.get(row.id) ?? row.status;
 }
+/** optimistic row assignee (#333), same contract as pendingStatus: the pick shows
+ *  at once and drops the moment the live row carries it. `has` (not `??`) —
+ *  a pending null (Unassigned) is a real value, not a missing entry */
+const pendingAssignee = ref(new Map<string, string | null>());
+function rowAssigneeId(row: TaskRow): string | null {
+  return pendingAssignee.value.has(row.id) ? (pendingAssignee.value.get(row.id) ?? null) : row.assigneeId;
+}
 /** RUN LOCK on the list/board (#264): the paged row carries the server's live-run
  *  bit — the same lock the detail page honors, so no move can end in the error */
 function rowLocked(row: TaskRow): boolean {
   return !!row.runLocked;
 }
 const LOCK_HINT = 'Status is locked while the agent runs.';
+const ASSIGN_LOCK_HINT = 'Assignee is locked while the agent runs.';
 watch(rows, (list) => {
   for (const r of list) {
     if (pendingStatus.value.get(r.id) === r.status) pendingStatus.value.delete(r.id);
+    if (pendingAssignee.value.has(r.id) && pendingAssignee.value.get(r.id) === r.assigneeId) {
+      pendingAssignee.value.delete(r.id);
+    }
   }
 });
 
@@ -226,6 +241,36 @@ async function setStatus(row: TaskRow, status: string) {
   } catch (e) {
     pendingStatus.value.delete(row.id);
     message.value = saveFailed(e, 'status', 'save');
+  } finally {
+    busy.value = false;
+  }
+}
+
+/** assign from the list surface (#333): the desktop cell and every card kebab
+ *  share this ONE action. Same rails as setStatus — busy gate (no racing picks),
+ *  run lock refused before the call, optimistic value, SSE-down refetch backstop. */
+async function assignTo(row: TaskRow, employeeId: string | null) {
+  const next = employeeId === NONE_ID ? null : employeeId;
+  if ((rowAssigneeId(row) ?? null) === next || busy.value) return;
+  if (rowLocked(row)) {
+    message.value = ASSIGN_LOCK_HINT;
+    messageOk.value = false;
+    return;
+  }
+  message.value = '';
+  messageOk.value = false;
+  busy.value = true;
+  pendingAssignee.value.set(row.id, next);
+  try {
+    await updateMutation.mutateAsync({ id: row.id, assigneeId: next });
+    message.value = next ? `Assigned to ${assigneeNameById.value.get(next) ?? 'employee'}` : 'Assignee cleared';
+    messageOk.value = true;
+    // SSE-down backstop: the list must refetch even without the change bus
+    await queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
+  } catch (e) {
+    // drop the optimistic pick so the control snaps back to the stored row
+    pendingAssignee.value.delete(row.id);
+    message.value = saveFailed(e, 'assignee', 'save');
   } finally {
     busy.value = false;
   }
@@ -947,7 +992,24 @@ onServerPrefetch(() =>
         </div>
       </template>
       <template #assigneeName-cell="{ row }">
+        <!-- #333: for employees the cell IS the assignment verb (one pick, no
+             modal). VIEWER sessions read the name as text. RUN LOCK: a live run
+             disables the select with the same lock affordance as status. -->
+        <USelect
+          v-if="canWork"
+          :model-value="rowAssigneeId(row.original) ?? NONE_ID"
+          :items="assigneeOptions"
+          value-key="value"
+          size="sm"
+          variant="none"
+          :disabled="busy || rowLocked(row.original)"
+          class="hover:bg-elevated max-w-48 rounded-md"
+          :title="rowLocked(row.original) ? ASSIGN_LOCK_HINT : undefined"
+          :aria-label="`Assignee for ${row.original.title}${rowLocked(row.original) ? ` (${ASSIGN_LOCK_HINT})` : ''}`"
+          @update:model-value="(v: string) => assignTo(row.original, v)"
+        />
         <span
+          v-else
           class="flex items-center gap-1.5 text-sm"
           :class="row.original.assigneeName ? 'text-toned' : 'text-muted'"
         >
@@ -1080,7 +1142,7 @@ onServerPrefetch(() =>
               <p v-if="row.projectName" class="text-primary mt-0.5 flex items-center gap-1 text-xs">
                 <UIcon name="i-lucide-folder-kanban" class="size-3" />{{ row.projectName }}
               </p>
-              <p class="text-dimmed mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+              <div class="text-dimmed mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
                 <!-- category dot + name: the status reads without a second badge -->
                 <span class="inline-flex items-center gap-1">
                   <span
@@ -1090,11 +1152,28 @@ onServerPrefetch(() =>
                   />
                   {{ statusLabel(rowStatus(row), statusById) }}
                 </span>
-                <span class="inline-flex items-center gap-1" :class="row.assigneeKind === 'ai' ? 'text-primary' : ''">
+                <USelect
+                  v-if="canWork"
+                  :model-value="rowAssigneeId(row) ?? NONE_ID"
+                  :items="assigneeOptions"
+                  value-key="value"
+                  size="sm"
+                  variant="none"
+                  class="hover:bg-elevated -my-1 max-w-44 rounded-md"
+                  :disabled="busy || rowLocked(row)"
+                  :title="rowLocked(row) ? ASSIGN_LOCK_HINT : undefined"
+                  :aria-label="`Assignee for ${row.title}${rowLocked(row) ? ` (${ASSIGN_LOCK_HINT})` : ''}`"
+                  @update:model-value="(v: string) => assignTo(row, v)"
+                />
+                <span
+                  v-else
+                  class="inline-flex items-center gap-1"
+                  :class="row.assigneeKind === 'ai' ? 'text-primary' : ''"
+                >
                   <UIcon v-if="row.assigneeKind === 'ai'" name="i-lucide-bot" class="size-3 shrink-0" />
                   {{ aiOptionLabel(row.assigneeName || 'Unassigned', row.assigneeKind) }}
                 </span>
-              </p>
+              </div>
               <p class="text-dimmed mt-0.5 flex items-center gap-1 text-xs">
                 <UIcon name="i-lucide-clock" class="size-3 shrink-0" />
                 <span data-allow-mismatch>{{ formatWhenShort(row.updatedAt) }}</span>
@@ -1363,7 +1442,23 @@ onServerPrefetch(() =>
                   <UIcon name="i-lucide-lock" class="size-3 shrink-0" aria-hidden="true" />
                   {{ LOCK_HINT }}
                 </p>
-                <p class="text-dimmed mt-1 flex items-center gap-1 text-xs">
+                <!-- #333: the assignee line IS the assignment control for an
+                     employee-tier session (one tap, no kebab trip); a VIEWER
+                     reads the name as text. RUN LOCK disables it like status. -->
+                <USelect
+                  v-if="canWork"
+                  :model-value="rowAssigneeId(row) ?? NONE_ID"
+                  :items="assigneeOptions"
+                  value-key="value"
+                  size="sm"
+                  variant="none"
+                  class="hover:bg-elevated -my-1 max-w-44 rounded-md"
+                  :disabled="busy || rowLocked(row)"
+                  :title="rowLocked(row) ? ASSIGN_LOCK_HINT : undefined"
+                  :aria-label="`Assignee for ${row.title}${rowLocked(row) ? ` (${ASSIGN_LOCK_HINT})` : ''}`"
+                  @update:model-value="(v: string) => assignTo(row, v)"
+                />
+                <p v-else class="text-dimmed mt-1 flex items-center gap-1 text-xs">
                   <UIcon v-if="row.assigneeKind === 'ai'" name="i-lucide-bot" class="text-primary size-3 shrink-0" />
                   <UIcon v-else name="i-lucide-user-round" class="size-3 shrink-0" />
                   {{ row.assigneeName || 'Unassigned' }}

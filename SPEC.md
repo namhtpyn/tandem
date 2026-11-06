@@ -858,6 +858,10 @@ non-positive deltas render no duration.
 
 ## UI laws
 
+- Task list inline assignee (#333): the Assignee cell in the desktop list and the
+  assignee line on mobile/board cards are one control — an employee-tier select
+  running `tasks.update` with the same optimistic display, busy gate and live-run
+  lock as the status select; a VIEWER session reads the name as text.
 - Modals (UModal) size app-wide via `app/app.config.ts` — mobile keeps the library
   default `w-[calc(100vw-2rem)]` card; desktop grows with the viewport
   (`sm:max-w-xl md:max-w-2xl lg:max-w-3xl`) instead of the stock 512px `max-w-lg`.
