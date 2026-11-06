@@ -928,6 +928,9 @@ non-positive deltas render no duration.
   and is the source of truth for every prod check. The agent-profile copy is a
   deploy of that file (copied, never edited in place); `origin/dev` vs live
   drift is an ops defect the critic alerts on.
-- Prod targets are env-overridable with today's production values as defaults:
-  `TANDEM_CT_KEY` / `TANDEM_CT_ADDR` (CT SSH target), `TANDEM_PROFILE_DIR`
-  and `TANDEM_PROBE_STATE` (profile root + probe state dir).
+- The probe's CT SSH target and local profile/state paths are env-overridable
+  with today's production values as defaults (`TANDEM_CT_KEY` / `TANDEM_CT_ADDR`,
+  `TANDEM_PROFILE_DIR`, `TANDEM_PROBE_STATE`, `TANDEM_TAG_REPO`); the public URL
+  and container names remain fixed production constants — the overrides relocate
+  legs for inspection, they are not a test mode. `scripts/check-probe-drift.sh`
+  is the drift check the critic runs (exit 0 = live copy == `origin/dev`).

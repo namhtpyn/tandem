@@ -7,21 +7,32 @@ PROFILE_DIR="${TANDEM_PROFILE_DIR:-/root/.hermes/profiles/nampa}"
 PROBE_STATE="${TANDEM_PROBE_STATE:-$PROFILE_DIR/cron/output/tandem}"
 CT_KEY="${TANDEM_CT_KEY:-/root/.ssh/tandem_ct102}"
 CT_ADDR="${TANDEM_CT_ADDR:-root@100.64.0.3}"
+TAG_REPO="${TANDEM_TAG_REPO:-/tmp/t-revrounds}"
 mkdir -p "$PROBE_STATE" 2>/dev/null || true
-CT="ssh -i $CT_KEY -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new $CT_ADDR"
+CT=(ssh -i "$CT_KEY" -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new "$CT_ADDR")
+# Epoch stamps: settings retention stamps are epoch **ms**; probe math is seconds.
+to_epoch_s() { case "${1:-}" in ''|*[!0-9]*) echo 0 ;; *) if [ "$1" -gt 100000000000 ]; then echo $(( $1 / 1000 )); else echo "$1"; fi ;; esac; }
+if [ "${1:-}" = "--selfcheck" ]; then
+  [ "$(to_epoch_s 1793957516932)" = "1793957516" ] || { echo "selfcheck fail: epoch ms"; exit 1; }
+  [ "$(to_epoch_s 1793957516)" = "1793957516" ] || { echo "selfcheck fail: epoch s"; exit 1; }
+  printf 'img unhealthy\n' | grep -qw healthy && { echo "selfcheck fail: unhealthy matched healthy"; exit 1; }
+  printf 'img healthy\n' | grep -qw healthy || { echo "selfcheck fail: healthy missed"; exit 1; }
+  echo "ok probe selfcheck"
+  exit 0
+fi
 # overlap window = since the last overlap fix; update by: date -u '+%F %H:%M+00' > <marker>
 OVS=$(cat "$PROBE_STATE/overlap-since" 2>/dev/null || echo '2026-10-30 02:55+00')
 anom=()
 
 # 1. container health + image
-IMG=$($CT 'docker inspect work-ultranomic-net-tandem-1 --format "{{.Config.Image}} {{.State.Health.Status}}" 2>/dev/null' 2>/dev/null) || IMG="P0: CT102 unreachable"
-echo "$IMG" | grep -q healthy || anom+=("container: $IMG")
+IMG=$("${CT[@]}" 'docker inspect work-ultranomic-net-tandem-1 --format "{{.Config.Image}} {{.State.Health.Status}}" 2>/dev/null' 2>/dev/null) || IMG="P0: CT102 unreachable"
+echo "$IMG" | grep -qw healthy || anom+=("container: $IMG")
 
 # 2. public + version
 CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://work.ultranomic.net/)
 [ "$CODE" = "200" ] || anom+=("public=$CODE")
 V=$(curl -s --max-time 10 -X POST https://work.ultranomic.net/rpc/meta/version | grep -o '[0-9]*\.[0-9]*\.[0-9]*' | head -1)
-TAG=$(cd /tmp/t-revrounds 2>/dev/null && git fetch origin --tags -q && git tag --sort=-creatordate | head -1 | sed 's/^v//')
+TAG=$(cd "$TAG_REPO" 2>/dev/null && git fetch origin --tags -q && git tag --sort=-creatordate | head -1 | sed 's/^v//')
 # Deploy-window guard (2026-10-31): the release train tags BEFORE the CT102 bump,
 # so prod!=latest for the bump's duration is EXPECTED — 4 false anomalies on
 # 10-31 (01:35/02:30/04:41/07:49 UTC), each inside a tag->bump window. Alert only
@@ -29,9 +40,10 @@ TAG=$(cd /tmp/t-revrounds 2>/dev/null && git fetch origin --tags -q && git tag -
 # mismatches go to the metrics trail file only, never stdout.
 TAG_AGE=999999
 if [ -n "$TAG" ]; then
-  TAG_TS=$(cd /tmp/t-revrounds 2>/dev/null && git for-each-ref "refs/tags/v$TAG" --format='%(creatordate:unix)')
+  TAG_TS=$(cd "$TAG_REPO" 2>/dev/null && git for-each-ref "refs/tags/v$TAG" --format='%(creatordate:unix)')
   [ -n "$TAG_TS" ] && TAG_AGE=$(( $(date -u +%s) - TAG_TS ))
 fi
+[ -n "$V" ] && [ -z "$TAG" ] && anom+=("tag_oracle: unavailable (newest release tag unreadable under $TAG_REPO — version-drift check blind)")
 DEPLOYWIN=""
 if [ -n "$V" ] && [ -n "$TAG" ] && [ "$V" != "$TAG" ]; then
   if [ "$TAG_AGE" -gt 1200 ]; then
@@ -47,8 +59,8 @@ fi
 # fallback when the setting is absent/unparseable). Replaced the old fixed-40min
 # 'stale' count: that shape false-alarmed a legitimately long configured run.
 SQL="with t as (select coalesce(nullif(regexp_replace(value, '[^0-9]', '', 'g'), '')::bigint, 1800000) as ms from settings where key='run_timeout_ms' limit 1) select 'ghostset', coalesce(string_agg(r.id::text, ',' order by r.id), 'none') from task_runs r, t where r.status='RUNNING' and r.started_at < now() - make_interval(secs => (t.ms + 300000) / 1000.0) union all select 'overlap', count(*)::text from task_runs a join task_runs b on a.employee_id=b.employee_id and a.id<b.id where a.started_at > now() - interval '3 hours' and b.started_at > now() - interval '3 hours' and a.started_at < coalesce(b.finished_at, now()) and b.started_at < coalesce(a.finished_at, now()) and a.started_at > '$OVS' union all select 'dangling', count(*)::text from tasks t where not exists (select 1 from task_statuses s where s.id = t.status) union all select 'fails6h', count(*)::text from task_runs where status='FAILED' and started_at > now() - interval '6 hours' union all select 'oidc_plain', count(*)::text from settings where key='oidc_providers' and value not like 'v1:%' union all select 'stranded', count(*)::text from tasks t join task_statuses s on s.id = t.status and s.category = 'working' join ai_employees ae on ae.user_id = t.assignee_id where not exists (select 1 from task_runs r join task_messages m on m.id = r.message_id where m.task_id = t.id and (r.status = 'RUNNING' or coalesce(r.finished_at, t.updated_at) > now() - interval '25 minutes')) and t.updated_at < now() - interval '25 minutes' union all select 'disp_hb', case when v.ts is null then 'absent' when v.ts < (extract(epoch from now())::bigint - 120) * 1000 then 'stale ' || (((extract(epoch from now())::bigint * 1000 - v.ts) / 1000)::int)::text else 'ok' end from (select nullif(regexp_replace(value, '[^0-9]', '', 'g'), '')::bigint as ts from settings where key='dispatcher_last_tick' limit 1) v union all select 'phantomob', count(*)::text from task_obligations o join tasks t on t.id = o.task_id join task_statuses s on s.id = t.status where o.status = 'PENDING' and s.category in ('done','cancelled') union all select 'redis_hb', case when v.ts is null then 'absent' when v.ts < (extract(epoch from now())::bigint - 120) * 1000 then 'stale ' || (((extract(epoch from now())::bigint * 1000 - v.ts) / 1000)::int)::text else 'ok' end from (select nullif(regexp_replace(value, '[^0-9]', '', 'g'), '')::bigint as ts from settings where key='dispatcher_redis_ok' limit 1) v;"
-PSQLERR=$($CT "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$SQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
-OUT=$($CT "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$SQL\"" 2>/dev/null) || OUT="db-unreachable"
+PSQLERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$SQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
+OUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$SQL\"" 2>/dev/null) || OUT="db-unreachable"
 if echo "$OUT" | grep -q db-unreachable; then anom+=("db: unreachable ${PSQLERR:-psql failed}"); fi
 # ghost RUNNING rows (#147): 2-consecutive rule (a legitimately mid-cycle long run
 # never pings on one pass), deduped by run-id fingerprint set (an unchanged ghost
@@ -82,10 +94,10 @@ OIDCP=$(echo "$OUT" | awk -F'|' '/^oidc_plain/{print $2}')
 # pre-2.62.6 image has no park_rearm columns and one bad arm would kill every check
 # (the UNION-type law). Column-absent guard skips silently on the old image.
 PRSQL="select coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and t.park_from_status is not null and t.park_rearm_attempts >= 5"
-PRCOL=$($CT "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"select count(*) from information_schema.columns where table_name='tasks' and column_name='park_rearm_attempts'\"" 2>/dev/null)
+PRCOL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"select count(*) from information_schema.columns where table_name='tasks' and column_name='park_rearm_attempts'\"" 2>/dev/null)
 if [ "$PRCOL" = "1" ]; then
-  PRERR=$($CT "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$PRSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
-  PRVAL=$($CT "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$PRSQL\"" 2>/dev/null) || PRVAL="db-unreachable"
+  PRERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$PRSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
+  PRVAL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$PRSQL\"" 2>/dev/null) || PRVAL="db-unreachable"
   if [ "$PRVAL" = "db-unreachable" ]; then
     anom+=("parkrearm: unreachable ${PRERR:-psql failed}")
   elif [ -n "$PRVAL" ] && [ "$PRVAL" != "none" ] && [ "$PRVAL" != "0" ]; then
@@ -99,8 +111,8 @@ fi
 # re-dispatch brief). Separate psql pass — one bad arm must never kill the main
 # UNION (probe law #4).
 VLSQL="select count(*) from task_messages where body like '%finished without a verdict after a re-dispatch%' and created_at > now() - interval '24 hours'"
-VLERR=$($CT "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$VLSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
-VL=$($CT "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$VLSQL\"" 2>/dev/null) || VL="db-unreachable"
+VLERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$VLSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
+VL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$VLSQL\"" 2>/dev/null) || VL="db-unreachable"
 if [ "$VL" = "db-unreachable" ]; then
   anom+=("vless_parks: unreachable ${VLERR:-psql failed}")
 elif [ "${VL:-0}" -ge 2 ] 2>/dev/null; then
@@ -116,8 +128,8 @@ fi
 # >300s old), capable never-synced (null, 2-consecutive rule = grace), backlog
 # (unprocessed events+outbox rows, DB-derived, oldest >30 min).
 CHSQL="with h as (select value from settings where key='channels:health' limit 1), nm as (select (extract(epoch from now())::bigint * 1000) as ts from (select 1) x) select 'chan_stamp', case when h.value is null then 'absent' when (h.value::jsonb->>'stampedAt')::bigint < (select ts - 600000 from nm) then 'stale' else 'ok' end from h union all select 'chan_down', coalesce((select count(*)::text from h, jsonb_array_elements(h.value::jsonb->'channels') c where (c->>'connected')::boolean is false), '0') union all select 'chan_sync_stale', coalesce((select count(*)::text from h, jsonb_array_elements(h.value::jsonb->'channels') c where (c->>'healthCap')::boolean is true and (c->>'healthOk')::boolean is true and (c->>'lastSyncOkAt') is not null and (c->>'lastSyncOkAt')::bigint < (select ts - 300000 from nm)), '0') union all select 'chan_neversync', coalesce((select count(*)::text from h, jsonb_array_elements(h.value::jsonb->'channels') c where (c->>'healthCap')::boolean is true and (c->>'healthOk')::boolean is true and (c->>'lastSyncOkAt') is null), '0') union all select 'chan_backlog', (select count(*) from channel_events where processed_at is null)::text || '+' || (select count(*) from channel_outbox where processed_at is null)::text || '+' || coalesce((select max(extract(epoch from (now()-oldest)))::int from (select received_at as oldest from channel_events where processed_at is null union all select created_at as oldest from channel_outbox where processed_at is null) u), 0)::text"
-CHERR=$($CT "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$CHSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
-CHOUT=$($CT "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$CHSQL\"" 2>/dev/null) || CHOUT="db-unreachable"
+CHERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$CHSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
+CHOUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$CHSQL\"" 2>/dev/null) || CHOUT="db-unreachable"
 if [ "$CHOUT" = "db-unreachable" ]; then
   anom+=("chanhealth: unreachable ${CHERR:-psql failed}")
 else
@@ -162,19 +174,19 @@ fi
 # Separate psql pass (probe law #4); SCHEMA-SYMMETRY: columns verified against
 # the live schema (task_runs.status/finished_at/output/prompt, task_messages.
 # task_id, tasks.status, task_statuses.category, settings.value).
-RETFLOOR=$(cat "$PROBE_STATE/retention-since-version" 2>/dev/null || echo 9.9.9)
+RETFLOOR=$(cat "$PROBE_STATE/retention-since-version" 2>/dev/null || echo 0.0.0)
 if [ -n "$V" ] && [ "$(printf '%s\n%s\n' "$RETFLOOR" "$V" | sort -V | tail -1)" = "$V" ]; then
   # first sight of a post-retention image: start the deploy grace now, silent
   if [ ! -f "$PROBE_STATE/retention-since-version" ]; then printf '%s\n' "$V" > "$PROBE_STATE/retention-since-version"; fi
   RTSINCE=$(stat -c %Y "$PROBE_STATE/retention-since-version" 2>/dev/null || echo 0)
   RTSQL="select (select coalesce(regexp_replace(value, '[^0-9]', '', 'g'), '0')::bigint from settings where key='retention_last_run' limit 1), (select coalesce(regexp_replace(value, '[^0-9]', '', 'g'), '0')::bigint from settings where key='retention_last_attempt' limit 1), (select count(*) from task_runs r join task_messages m on m.id = r.message_id join tasks t on t.id = m.task_id join task_statuses s on s.id = t.status where r.status <> 'RUNNING' and r.finished_at < now() - interval '30 days' and s.category in ('done','cancelled') and (r.output <> '' or r.prompt is not null))"
-  RTERR=$($CT "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$RTSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
-  RTOUT=$($CT "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$RTSQL\"" 2>/dev/null) || RTOUT="db-unreachable"
+  RTERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$RTSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
+  RTOUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$RTSQL\"" 2>/dev/null) || RTOUT="db-unreachable"
   if [ "$RTOUT" = "db-unreachable" ]; then
     anom+=("retention: unreachable ${RTERR:-psql failed}")
   else
-    RTSTAMP=$(echo "$RTOUT" | awk -F'|' '{print $1}')
-    RTATT=$(echo "$RTOUT" | awk -F'|' '{print $2}')
+    RTSTAMP=$(to_epoch_s "$(echo "$RTOUT" | awk -F'|' '{print $1}')")
+    RTATT=$(to_epoch_s "$(echo "$RTOUT" | awk -F'|' '{print $2}')")
     RT=$(echo "$RTOUT" | awk -F'|' '{print $3}')
     NOWS=$(date +%s)
     # arm (a): not running — absent past the deploy grace, or stale past 25h
@@ -230,11 +242,11 @@ fi
 # SCHEMA-SYMMETRY (probe law #5): task_statuses.category, task_reviews.task_id/
 # status/decided_at/created_at, task_obligations.task_id/role/status/resolved_at/
 # created_at, tasks.status/updated_at — all verified against the live schema.
-STRCOL=$($CT "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"select (to_regclass('task_reviews') is not null and to_regclass('task_obligations') is not null)::int\"" 2>/dev/null)
+STRCOL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"select (to_regclass('task_reviews') is not null and to_regclass('task_obligations') is not null)::int\"" 2>/dev/null)
 if [ "$STRCOL" = "1" ]; then
   STRSQL="select 'wedge', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING') and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id) > t.updated_at union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at"
-  STRERR=$($CT "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$STRSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
-  STROUT=$($CT "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$STRSQL\"" 2>/dev/null) || STROUT="db-unreachable"
+  STRERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$STRSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
+  STROUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$STRSQL\"" 2>/dev/null) || STROUT="db-unreachable"
   if [ "$STROUT" = "db-unreachable" ]; then
     anom+=("strand: unreachable ${STRERR:-psql failed}")
   else
@@ -277,7 +289,9 @@ STR=$(echo "$OUT" | awk -F'|' '/^stranded/{print $2}')
 PHO=$(echo "$OUT" | awk -F'|' '/^phantomob/{print $2}')
 [ "${PHO:-0}" -gt 0 ] && anom+=("phantom_obligations=$PHO (PENDING obligation on settled task, #205)")
 
-SWEEP_FLOOR=$(cat "$PROBE_STATE/sweep-since-version" 2>/dev/null || echo 9.9.9)
+SWEEP_FLOOR=$(cat "$PROBE_STATE/sweep-since-version" 2>/dev/null || echo "")
+if [ -z "$SWEEP_FLOOR" ] && [ -n "$V" ]; then SWEEP_FLOOR="$V"; printf '%s\n' "$V" > "$PROBE_STATE/sweep-since-version"; fi
+[ -z "$SWEEP_FLOOR" ] && SWEEP_FLOOR=0.0.0
 if [ "${STR:-0}" -gt 0 ] 2>/dev/null && [ -n "$V" ] && [ "$(printf '%s\n%s\n' "$SWEEP_FLOOR" "$V" | sort -V | tail -1)" = "$V" ]; then
   anom+=("stranded_working=$STR (liveness sweep not bouncing — check dispatcher logs)")
 fi
@@ -302,7 +316,7 @@ case "$RH" in
 esac
 
 # 4. queue depth
-Q=$($CT 'R=work-ultranomic-net-redis-1; for k in $(docker exec $R redis-cli --scan --pattern "bull:tandem-dispatch-*:wait" | head -8); do docker exec $R redis-cli llen "$k"; done' 2>/dev/null | awk '{s+=$1} END {print s+0}')
+Q=$("${CT[@]}" 'R=work-ultranomic-net-redis-1; for k in $(docker exec $R redis-cli --scan --pattern "bull:tandem-dispatch-*:wait" | head -8); do docker exec $R redis-cli llen "$k"; done' 2>/dev/null | awk '{s+=$1} END {print s+0}')
 [ "${Q:-0}" -gt 0 ] && anom+=("queue_wait_depth=$Q")
 
 # 5. RBAC gate alive (2026-10-31, #82): unauthenticated admin-surface writes must
@@ -316,8 +330,21 @@ RBAC2=$(curl -s --max-time 10 -X POST https://work.ultranomic.net/rpc/settings/u
 # reappear (self-heal edits can regress it back). Flags: cron schedules with
 # weekday/weekend day-of-week fields (the monthly drill, dom-based, is allowed),
 # or the ops skill carrying human-cycle language outside a law/exception line.
-CREEP=$(grep -E '"schedule"[^,]*' "$PROFILE_DIR/cron/jobs.json" 2>/dev/null \
-  | grep -vE '"([0-9*,/-]+ ){4}(1-5|0-4|[1-5])"|\* \* 1 |MONTHLY|monthly' | grep -cE '[0-9*] [0-9*] [0-9*,/-]+ [0-9*,/-]+ (1-5|0-4|[1-6])( |")' || true)
+[ ! -f "$PROFILE_DIR/cron/jobs.json" ] && anom+=("probe_config: jobs.json missing under $PROFILE_DIR — creep/dead-man inputs blind")
+CREEP=$(python3 - "$PROFILE_DIR/cron/jobs.json" 2>/dev/null <<'PY'
+import json, sys
+try:
+    jobs = json.load(open(sys.argv[1])).get("jobs", [])
+except Exception:
+    print(0); raise SystemExit
+n = 0
+for j in jobs:
+    f = str((j.get("schedule") or {}).get("expr") or "").split()
+    if len(f) == 5 and f[4] not in ("*", "?"):
+        n += 1
+print(n)
+PY
+)
 CREEP2=$(grep -iE 'weekly|peak|off-peak|business hour|rest hour|morning pass|nightly' \
   "$PROFILE_DIR/skills/infra/tandem-ops/SKILL.md" 2>/dev/null \
   | grep -vicE 'never|LAW|law|no.?weekly|no.?peak|banned|except|reverted' || true)
@@ -342,10 +369,12 @@ if [ ${#anom[@]} -eq 0 ]; then
   exit 0
 fi
 LINE="$(IFS='; '; echo "${anom[*]}")"
-if [ -f "$PROBE_STATE/last-anomaly" ] && [ "$(cat "$PROBE_STATE/last-anomaly" 2>/dev/null)" = "$LINE" ]; then
+# Dedupe key blanks ticking ages: a standing fault's age growing is not a NEW set.
+KEY=$(printf '%s' "$LINE" | sed -E 's/=[0-9]+h/=<age>h/g; s/=[0-9]+s([^a-z0-9]|$)/=<age>s\1/g')
+if [ -f "$PROBE_STATE/last-anomaly" ] && [ "$(cat "$PROBE_STATE/last-anomaly" 2>/dev/null)" = "$KEY" ]; then
   echo "$(date -u +%FT%TZ) probe repeat-suppressed: $LINE" >> "$M"
   exit 0
 fi
-echo "$LINE" > "$PROBE_STATE/last-anomaly"
+echo "$KEY" > "$PROBE_STATE/last-anomaly"
 LVL=1; [ ${#anom[@]} -ge 3 ] && LVL=0
 printf 'P%d: %s\n' "$LVL" "$LINE"
