@@ -67,15 +67,64 @@ const awaitingDecision = ref(route.query.awaiting === '1');
 watch(awaitingDecision, (v) => {
   void router.replace({ query: { ...route.query, awaiting: v ? '1' : undefined } });
 });
-watch([statusId, needsDecision, awaitingDecision], () => {
+// PROJECT SCOPE (#339, TASK SCOPE LAW): ONE optional project filter, URL-synced
+// like the awaiting toggle so a scoped view survives share/reload. The URL is
+// the source of truth on load and on back/forward; the ref change writes it back.
+/** the first VALID project value in a query param (arrays can carry several);
+ *  the internal 'no selection' sentinel and blanks are display values, never a
+ *  scope — `?project=__none__` must read as no scope (mirrors the API boundary) */
+function scopeFromQuery(v: unknown): string | null {
+  for (const raw of Array.isArray(v) ? v : [v]) {
+    const id = typeof raw === 'string' ? raw.trim() : '';
+    if (id && id !== NONE_ID) return id;
+  }
+  return null;
+}
+const projectScopeId = ref<string | null>(scopeFromQuery(route.query.project));
+watch(projectScopeId, (v) => {
+  if (scopeFromQuery(route.query.project) === v) return;
+  void router.replace({ query: { ...route.query, project: v ?? undefined } });
+});
+watch(
+  () => route.query.project,
+  (v) => {
+    const next = scopeFromQuery(v);
+    if (next !== projectScopeId.value) projectScopeId.value = next;
+  },
+);
+// the URL must describe the scope the page applies: a param that normalizes to
+// no scope, or to several values (blank siblings and untrimmed forms included),
+// is rewritten once on mount to the resolved single scope (or dropped).
+// Client-only — SSR must never navigate during setup.
+onMounted(() => {
+  const raw = route.query.project;
+  if (raw === undefined) return;
+  const values = Array.isArray(raw) ? raw : [raw];
+  const first = values[0];
+  const canonical =
+    projectScopeId.value !== null &&
+    values.length === 1 &&
+    typeof first === 'string' &&
+    first === first.trim() &&
+    scopeFromQuery(first) === projectScopeId.value;
+  if (!canonical) {
+    void router.replace({ query: { ...route.query, project: projectScopeId.value ?? undefined } });
+  }
+});
+watch([statusId, needsDecision, awaitingDecision, projectScopeId], () => {
   page.value = 1;
 });
 function toggleStatusFilter(id: string) {
   statusId.value = statusId.value === id ? null : id;
 }
-/** any active server-side filter (search / status chip / inbox / awaiting) — drives the empty-state copy */
+/** any active server-side filter (search / status chip / inbox / awaiting / project) — drives the empty-state copy */
 const listFiltered = computed(
-  () => !!searchDebounced.value || statusId.value !== null || needsDecision.value || awaitingDecision.value,
+  () =>
+    !!searchDebounced.value ||
+    statusId.value !== null ||
+    needsDecision.value ||
+    awaitingDecision.value ||
+    projectScopeId.value !== null,
 );
 
 /** empty-state copy names WHICH filter came up empty — 'no results' under the inbox toggle reads as a bug */
@@ -83,6 +132,30 @@ const emptyCopy = computed(() => {
   // the built-in empty state renders its own headline ('No tasks yet' / 'No
   // matches yet') — repeating a 'No …' sentence here printed it twice
   if (!listFiltered.value) return 'Create the first one for your humans or agents.';
+  if (projectScopeId.value !== null) {
+    // the project scope names itself in EVERY composed state (#339 r1/r3) and
+    // never asserts more than the filters prove: a status chip or search term
+    // narrows the same scoped list, so the sentence stays filter-relative
+    // instead of claiming the project holds nothing
+    const name = projectNameById.value.get(projectScopeId.value) ?? 'this project';
+    // a live search narrows the same list — the obligation sentence must name it
+    // too, or it claims the project owes nothing while the search hides the task
+    // a live search or status chip narrows the same list — the obligation
+    // sentence names every active narrowing filter, so it never claims the
+    // project owes nothing while another filter is what hid the task
+    const narrowing = `${searchDebounced.value ? ' and this search' : ''}${statusId.value !== null ? ' with this status' : ''}`;
+    const obligations = [
+      needsDecision.value ? 'decision' : null,
+      awaitingDecision.value ? 'awaiting-decision' : null,
+    ].filter((x): x is string => x !== null);
+    if (obligations.length > 0) {
+      return `Nothing in ${name} matches your ${obligations.join(' + ')} filter${obligations.length > 1 ? 's' : ''}${narrowing} right now.`;
+    }
+    if (searchDebounced.value)
+      return `No tasks in ${name} match this search${statusId.value !== null ? ' with this status' : ''}.`;
+    if (statusId.value !== null) return `No tasks in ${name} with this status — try another filter.`;
+    return `No tasks in ${name} yet.`;
+  }
   if (needsDecision.value) return 'Nothing is waiting on your decision right now.';
   if (awaitingDecision.value) return 'Nothing is waiting on a decision right now.';
   if (statusId.value !== null)
@@ -99,6 +172,7 @@ const pagedQuery = useQuery(
         pageSize: pageSize.value,
         q: searchDebounced.value || undefined,
         statusId: statusId.value ?? undefined,
+        projectId: projectScopeId.value ?? undefined,
         inboxOfMe: needsDecision.value,
         awaitingDecision: awaitingDecision.value,
       },
@@ -109,6 +183,7 @@ const pagedQuery = useQuery(
         pageSize.value,
         searchDebounced.value,
         statusId.value ?? 'all',
+        projectScopeId.value ?? 'all-projects',
         needsDecision.value,
         awaitingDecision.value,
       ],
@@ -138,6 +213,41 @@ const employees = computed(() => (unref(employeesLive.data) ?? []) as EmployeeRo
 const assigneeNameById = computed(() => new Map(employees.value.map((e) => [e.id, e.name])));
 const projectRows = computed(() => (unref(projectsLive.data) ?? []) as Array<{ id: string; name: string }>);
 const projectNameById = computed(() => new Map(projectRows.value.map((p) => [p.id, p.name])));
+// project-scope select (#339): 'All projects' clears the scope; a scope id the
+// project list no longer knows (deleted project, stale URL) keeps an honest label
+// instead of blanking the control
+const projectScopeItems = computed(() => {
+  const items = [
+    { label: 'All projects', value: NONE_ID },
+    ...projectRows.value.map((p) => ({ label: p.name, value: p.id })),
+  ];
+  if (projectScopeId.value !== null && !projectRows.value.some((p) => p.id === projectScopeId.value)) {
+    items.splice(1, 0, { label: 'Unknown project', value: projectScopeId.value });
+  }
+  return items;
+});
+/** create-default (#339): only a scope the project list resolves can seed the
+ *  editor — an unknown/deleted id would be submitted and rejected server-side */
+const projectScopeDefault = computed<string | null>(() =>
+  projectScopeId.value !== null && projectNameById.value.has(projectScopeId.value) ? projectScopeId.value : null,
+);
+/** the empty-state create entry makes sense only when the scope is the ONLY
+ *  active filter (a create lands in the scope, never in a search/status/
+ *  obligation filter) — otherwise #210's toolbar entry is the create surface */
+const scopeOnlyFilter = computed(
+  () =>
+    projectScopeId.value !== null &&
+    !searchDebounced.value &&
+    statusId.value === null &&
+    !needsDecision.value &&
+    !awaitingDecision.value,
+);
+const projectScopeValue = computed<string>({
+  get: () => projectScopeId.value ?? NONE_ID,
+  set: (v) => {
+    projectScopeId.value = !v || v === NONE_ID ? null : v;
+  },
+});
 
 // ---- "needs my decision" inbox: this query drives the COUNT/badge only; the
 // list itself is filtered server-side via the inboxOfMe input ----
@@ -936,6 +1046,26 @@ onServerPrefetch(() =>
       {{ message }}
     </p>
 
+    <!-- project scope (#339, TASK SCOPE LAW): the list's one container filter —
+         set from here or from a project row's "View tasks"; All projects clears.
+         Rendered whenever a scope is active even if the project list is empty
+         (a stale URL must stay clearable). -->
+    <div v-if="projectRows.length || projectScopeId !== null" class="mt-3 flex items-center gap-2">
+      <USelect
+        v-model="projectScopeValue"
+        :items="projectScopeItems"
+        value-key="value"
+        icon="i-lucide-folder-kanban"
+        size="sm"
+        class="h-11 w-full sm:h-8 sm:w-64"
+        aria-label="Filter by project"
+        data-testid="project-scope-select"
+      />
+      <span v-if="projectScopeId !== null" class="text-muted hidden text-xs sm:inline" data-testid="project-scope-hint">
+        Viewing one project — pick All projects to widen.
+      </span>
+    </div>
+
     <!-- status filter chips (server-side statusId filter) — one scrollable row on
          mobile; active = neutral fill + highlighted text (no per-chip dots — the
          active indicator is the text color alone). The right-edge fade telegraphs
@@ -994,7 +1124,15 @@ onServerPrefetch(() =>
       :empty-icon="listFiltered ? 'i-lucide-search-x' : 'i-lucide-list-todo'"
     >
       <template #empty-cta>
-        <UButton v-if="canWork && !listFiltered" icon="i-lucide-plus" label="New task" @click="openEditor()" />
+        <!-- #339: a scoped list's create entry stays (the editor inherits the scope), so
+             an empty project is not a dead end; other filters keep #210's toolbar entry only -->
+        <UButton
+          v-if="canWork && (!listFiltered || (scopeOnlyFilter && projectScopeDefault !== null))"
+          icon="i-lucide-plus"
+          label="New task"
+          data-testid="empty-new-task"
+          @click="openEditor()"
+        />
       </template>
       <template #error-cta>
         <UButton size="sm" variant="soft" icon="i-lucide-refresh-cw" label="Retry" @click="pagedQuery.refetch()" />
@@ -1785,7 +1923,12 @@ onServerPrefetch(() =>
     </UModal>
 
     <TaskStatusesManager v-model:open="statusManagerOpen" :editable="isAdmin" />
-    <TaskEditorModal v-model:open="editorOpen" :task="editingTaskWithLock" @saved="onSaved" />
+    <TaskEditorModal
+      v-model:open="editorOpen"
+      :task="editingTaskWithLock"
+      :default-project-id="projectScopeDefault"
+      @saved="onSaved"
+    />
 
     <!-- delete confirm -->
     <UModal v-model:open="deleteOpen" title="Delete task" :ui="{ content: 'max-w-sm' }">

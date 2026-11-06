@@ -13,7 +13,6 @@ import {
   type ActivityKind,
 } from '#shared/enums';
 import type { TaskRow, TaskRowFull } from '#shared/types';
-import { escapeIlike } from '#shared/utils/escape-ilike';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
@@ -48,6 +47,7 @@ import { listReviews, logActivity } from './review.service';
 import { fetchRunTranscript } from './run-transcript';
 import { dispatchTask, listRuns, runningTaskIdsFor, stopRunForTask } from './runner.service';
 import { fetchTaskDescription, taskGetScan, taskListColumns } from './task-description';
+import { buildTaskListWhere } from './task-list-filters';
 import { listTaskThread, threadOlderPage } from './thread.service';
 import {
   addNote,
@@ -180,16 +180,14 @@ async function listTasksPaged(
     pageSize: number;
     q?: string;
     statusId?: string;
+    projectId?: string;
     inboxOfMe?: boolean;
     awaitingDecision?: boolean;
   },
   selfId: string,
 ) {
-  const q = input.q?.trim();
-  const searchFilter = q
-    ? { OR: [{ title: { ilike: `%${escapeIlike(q)}%` } }, { description: { ilike: `%${escapeIlike(q)}%` } }] }
-    : undefined;
-  const statusFilter = input.statusId ? { status: { eq: input.statusId } } : undefined;
+  // user-facing filters (search / status / project scope) in ONE pure builder
+  // (#339); the obligation filters below need the db and AND-compose with them
   // inboxOfMe = tasks with a PENDING obligation on the caller — the same taskId
   // set `inbox` items come from (pendingForUser); empty set short-circuits
   let inboxFilter: { id: { inArray: string[] } } | undefined;
@@ -207,8 +205,11 @@ async function listTasksPaged(
     if (ids.length === 0) return { data: [] as TaskRow[], total: 0 };
     awaitingFilter = { id: { inArray: ids } };
   }
-  const filters = [searchFilter, statusFilter, inboxFilter, awaitingFilter].filter((f) => f !== undefined);
-  const where = filters.length === 0 ? EmptyFilter : filters.length === 1 ? nonNull(filters[0]) : { AND: filters };
+  const where =
+    buildTaskListWhere(
+      input,
+      [inboxFilter, awaitingFilter].filter((f) => f !== undefined),
+    ) ?? EmptyFilter;
   const { data, total } = await db.query.tasks.findManyAndCount({
     columns: taskListColumns(),
     where: where as never,
@@ -416,6 +417,7 @@ export const tasksRouter = os.router({
         pageSize: z.number().int().min(1).max(100).default(20),
         q: z.string().trim().optional(),
         statusId: z.string().min(1).optional(),
+        projectId: z.string().min(1).optional(),
         inboxOfMe: z.boolean().optional(),
         awaitingDecision: z.boolean().optional(),
       }),
