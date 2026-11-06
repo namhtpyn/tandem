@@ -5,7 +5,16 @@ import { drizzle } from 'drizzle-orm/bun-sql';
 import { installRqbExtensions } from '#server/db/rqb-extensions';
 // schema tables are pure defs; re-exported here because the purity guard bans
 // the '#server/db' literal inside test files themselves
-import { environments, relations, taskMessages, taskReviews, taskRuns, tasks } from '#server/db/schema';
+import {
+  environments,
+  relations,
+  session,
+  taskMessages,
+  taskObligations,
+  taskReviews,
+  taskRuns,
+  tasks,
+} from '#server/db/schema';
 
 export function mockDb() {
   const db = drizzle.mock({ relations });
@@ -14,4 +23,4 @@ export function mockDb() {
   return db;
 }
 
-export { environments, taskMessages, taskReviews, taskRuns, tasks };
+export { environments, relations, session, taskMessages, taskObligations, taskReviews, taskRuns, tasks };
