@@ -8,6 +8,10 @@ PROBE_STATE="${TANDEM_PROBE_STATE:-$PROFILE_DIR/cron/output/tandem}"
 CT_KEY="${TANDEM_CT_KEY:-/root/.ssh/tandem_ct102}"
 CT_ADDR="${TANDEM_CT_ADDR:-root@100.64.0.3}"
 GH_BIN=$(command -v gh 2>/dev/null || echo /usr/sbin/gh)
+if [ -n "${TANDEM_CT_ADDR:-}" ] && [ "${TANDEM_CT_ADDR}" != "root@100.64.0.3" ] && [ -z "${TANDEM_PROBE_STATE:-}" ]; then
+  echo "probe: non-default TANDEM_CT_ADDR requires TANDEM_PROBE_STATE (inspection run must not write the prod trail)" >&2
+  exit 2
+fi
 mkdir -p "$PROBE_STATE" 2>/dev/null || true
 CT=(ssh -i "$CT_KEY" -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new "$CT_ADDR")
 # Epoch stamps: settings retention stamps are epoch **ms**; probe math is seconds.
@@ -21,7 +25,11 @@ if [ "${1:-}" = "--selfcheck" ]; then
   exit 0
 fi
 # overlap window = since the last overlap fix; update by: date -u '+%F %H:%M+00' > <marker>
-OVS=$(cat "$PROBE_STATE/overlap-since" 2>/dev/null || echo '2026-10-30 02:55+00')
+OVS=$(cat "$PROBE_STATE/overlap-since" 2>/dev/null)
+case "$OVS" in
+  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\ [0-9][0-9]:[0-9][0-9]*) ;;
+  *) OVS='2026-10-30 02:55+00' ;;
+esac
 anom=()
 if ! { : > "$PROBE_STATE/.probe-write-test"; } 2>/dev/null; then
   anom+=("probe_state: unwritable ($PROBE_STATE — state-confirmed detectors + deploy window degraded)")
@@ -137,7 +145,7 @@ fi
 # config dropped), transport stale (connected+capable+read-ok, lastSyncOkAt
 # >300s old), capable never-synced (null, 2-consecutive rule = grace), backlog
 # (unprocessed events+outbox rows, DB-derived, oldest >30 min).
-CHSQL="with h as (select value from settings where key='channels:health' limit 1), nm as (select (extract(epoch from now())::bigint * 1000) as ts from (select 1) x) select 'chan_stamp', case when h.value is null then 'absent' when (h.value::jsonb->>'stampedAt')::bigint < (select ts - 600000 from nm) then 'stale' else 'ok' end from h union all select 'chan_down', coalesce((select count(*)::text from h, jsonb_array_elements(h.value::jsonb->'channels') c where (c->>'connected')::boolean is false), '0') union all select 'chan_sync_stale', coalesce((select count(*)::text from h, jsonb_array_elements(h.value::jsonb->'channels') c where (c->>'connected')::boolean is true and (c->>'healthCap')::boolean is true and (c->>'healthOk')::boolean is true and (c->>'lastSyncOkAt') is not null and (c->>'lastSyncOkAt')::bigint < (select ts - 300000 from nm)), '0') union all select 'chan_neversync', coalesce((select count(*)::text from h, jsonb_array_elements(h.value::jsonb->'channels') c where (c->>'connected')::boolean is true and (c->>'healthCap')::boolean is true and (c->>'healthOk')::boolean is true and (c->>'lastSyncOkAt') is null), '0') union all select 'chan_backlog', (select count(*) from channel_events where processed_at is null)::text || '+' || (select count(*) from channel_outbox where processed_at is null)::text || '+' || coalesce((select max(extract(epoch from (now()-oldest)))::int from (select received_at as oldest from channel_events where processed_at is null union all select created_at as oldest from channel_outbox where processed_at is null) u), 0)::text"
+CHSQL="with h as (select value from settings where key='channels:health' limit 1), nm as (select (extract(epoch from now())::bigint * 1000) as ts from (select 1) x) select 'chan_stamp', case when (select value from h) is null then 'absent' when ((select value from h)::jsonb->>'stampedAt')::bigint < (select ts - 600000 from nm) then 'stale' else 'ok' end from (select 1) z union all select 'chan_down', coalesce((select count(*)::text from h, jsonb_array_elements(h.value::jsonb->'channels') c where (c->>'connected')::boolean is false), '0') union all select 'chan_sync_stale', coalesce((select count(*)::text from h, jsonb_array_elements(h.value::jsonb->'channels') c where (c->>'connected')::boolean is true and (c->>'healthCap')::boolean is true and (c->>'healthOk')::boolean is true and (c->>'lastSyncOkAt') is not null and (c->>'lastSyncOkAt')::bigint < (select ts - 300000 from nm)), '0') union all select 'chan_neversync', coalesce((select count(*)::text from h, jsonb_array_elements(h.value::jsonb->'channels') c where (c->>'connected')::boolean is true and (c->>'healthCap')::boolean is true and (c->>'healthOk')::boolean is true and (c->>'lastSyncOkAt') is null), '0') union all select 'chan_backlog', (select count(*) from channel_events where processed_at is null)::text || '+' || (select count(*) from channel_outbox where processed_at is null)::text || '+' || coalesce((select max(extract(epoch from (now()-oldest)))::int from (select received_at as oldest from channel_events where processed_at is null union all select created_at as oldest from channel_outbox where processed_at is null) u), 0)::text"
 CHERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$CHSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
 CHOUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$CHSQL\"" 2>/dev/null) || CHOUT="db-unreachable"
 if [ "$CHOUT" = "db-unreachable" ]; then
@@ -264,7 +272,7 @@ elif [ "$STRCOL" = "1" ]; then
   else
     WEDGE=$(echo "$STROUT" | awk -F'|' '/^wedge/{print $2}')
     STRAND=$(echo "$STROUT" | awk -F'|' '/^strand/{print $2}')
-    # (a) dead-round wedge: two-pass confirm + id-set dedupe
+    # (a) dead-round wedge: previous-pass presence confirm + id-set dedupe (mirrors ghostset)
     if [ -n "${WEDGE:-}" ] && [ "$WEDGE" != "none" ] && [ "$(cat "$PROBE_STATE/wedge.prev" 2>/dev/null || echo none)" != "none" ]; then
       if [ "$(cat "$PROBE_STATE/wedge.alerted" 2>/dev/null || echo none)" != "$WEDGE" ]; then
         anom+=("wedge_round: in_review with no PENDING review row [$WEDGE] — dead round, #292 class")
@@ -274,7 +282,7 @@ elif [ "$STRCOL" = "1" ]; then
       rm -f "$PROBE_STATE/wedge.alerted"
     fi
     printf '%s\n' "${WEDGE:-none}" > "$PROBE_STATE/wedge.prev"
-    # (b) waiting-answer strand: two-pass confirm + id-set dedupe
+    # (b) waiting-answer strand: previous-pass presence confirm + id-set dedupe (mirrors ghostset)
     if [ -n "${STRAND:-}" ] && [ "$STRAND" != "none" ] && [ "$(cat "$PROBE_STATE/strand.prev" 2>/dev/null || echo none)" != "none" ]; then
       if [ "$(cat "$PROBE_STATE/strand.alerted" 2>/dev/null || echo none)" != "$STRAND" ]; then
         anom+=("wa_strand: waiting_answer with no PENDING ANSWER obligation [$STRAND] — stranded question, #314 class")
@@ -351,30 +359,36 @@ CREEP=$(python3 - "$PROFILE_DIR/cron/jobs.json" 2>/dev/null <<'PY'
 import json, sys
 try:
     jobs = json.load(open(sys.argv[1])).get("jobs", [])
+    if isinstance(jobs, dict):
+        jobs = list(jobs.values())
+    n = 0
+    for j in jobs:
+        f = str((j.get("schedule") or {}).get("expr") or "").split()
+        if len(f) == 5 and f[4] not in ("*", "?"):
+            n += 1
 except Exception:
-    print(0); raise SystemExit
-n = 0
-for j in jobs:
-    f = str((j.get("schedule") or {}).get("expr") or "").split()
-    if len(f) == 5 and f[4] not in ("*", "?"):
-        n += 1
+    print("ERR"); raise SystemExit
 print(n)
 PY
 )
+case "$CREEP" in ''|*[!0-9]*) anom+=("creep_unreadable: jobs.json scan failed"); CREEP=0 ;; esac
 CREEP2=$(python3 - "$PROFILE_DIR/skills/infra/tandem-ops/SKILL.md" 2>/dev/null <<'PY'
 import re, sys
-try: t = open(sys.argv[1]).read().lower()
-except Exception: print(0); raise SystemExit
-n = 0
-for m in re.finditer(r'weekly|peak|off-peak|business hour|rest hour|morning pass|nightly', t):
-    ctx = t[max(0, m.start() - 48):m.end() + 24]
-    if re.search(r'never|no |not |law|banned|except|revert|forbid', ctx):
-        continue
-    n += 1
+try:
+    t = open(sys.argv[1]).read().lower()
+    n = 0
+    for m in re.finditer(r'weekly|peak|off-peak|business hour|rest hour|morning pass|nightly', t):
+        ctx = t[max(0, m.start() - 48):m.end() + 24]
+        if re.search(r'never|no |not |law|banned|except|revert|forbid', ctx):
+            continue
+        n += 1
+except Exception:
+    print("ERR"); raise SystemExit
 print(n)
 PY
 )
 [ "${CREEP:-0}" -gt 0 ] && anom+=("human-cycle-creep: $CREEP cron schedule(s) encode weekday/weekend cycles")
+case "$CREEP2" in ''|*[!0-9]*) anom+=("creep_unreadable: skill scan failed"); CREEP2=0 ;; esac
 [ "${CREEP2:-0}" -gt 0 ] && anom+=("human-cycle-creep: $CREEP2 hit(s) in tandem-ops skill — critic purges (law/negation text excepted)")
 
 
@@ -385,7 +399,7 @@ PM=$(ls "$PROFILE_DIR"/pending/memory/*.json 2>/dev/null | wc -l)
 # metrics trail (file-only; stdout stays empty on green)
 M="$PROBE_STATE/passes.jsonl"
 mkdir -p "$(dirname "$M")"
-echo "$(date -u +%FT%TZ) probe green=$([ ${#anom[@]} -eq 0 ] && echo 1 || echo 0) anomalies=${#anom[@]}" >> "$M"
+echo "$(date -u +%FT%TZ) probe green=$([ ${#anom[@]} -eq 0 ] && echo 1 || echo 0) anomalies=${#anom[@]} target=$CT_ADDR" >> "$M"
 [ -n "$DEPLOYWIN" ] && echo "$(date -u +%FT%TZ) deploy-window suppressed: $DEPLOYWIN" >> "$PROBE_STATE/deploy-window.log"
 
 # silent on green + repeat-suppression: an IDENTICAL anomaly line set to the last

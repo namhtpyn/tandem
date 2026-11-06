@@ -24,8 +24,10 @@ async function fixture(body: string) {
   await $`git -C ${repo} add -A`.quiet();
   await $`git -C ${repo} -c user.name=t -c user.email=t@t commit -q -m init`.quiet();
   await $`git -C ${repo} push -q origin HEAD:dev`.quiet();
-  // Seed a LOCAL origin/dev at v1: the drift check must refetch, not trust this.
-  await $`git -C ${repo} fetch -q origin dev`.quiet();
+  // Mimic the production clone's LIMITED refspec: a plain `fetch origin dev`
+  // must NOT create refs/remotes/origin/dev (only the checker's explicit refspec does).
+  await $`git -C ${repo} config remote.origin.fetch +refs/heads/main:refs/remotes/origin/main`.quiet();
+  await $`git -C ${repo} fetch -q origin +refs/heads/dev:refs/remotes/origin/dev`.quiet();
   const live = join(root, 'live-probe.sh');
   writeFileSync(live, body);
   return { root, origin, repo, live };

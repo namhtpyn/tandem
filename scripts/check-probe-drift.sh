@@ -3,17 +3,29 @@
 # file. Fetches the branch with an EXPLICIT refspec first (this clone's default
 # refspec is limited, so a plain fetch can leave origin/dev stale → false green).
 # Exit 0 = identical; 1 = drift (diff printed); 2 = cannot fetch/read either side.
-# Test mode (TANDEM_PROBE_TEST=1) retargets the live path and exits 3 on identity,
-# so a leaked TEST flag can never look like a clean production check.
+# The live path is a production constant; only TEST mode (TANDEM_PROBE_TEST=1)
+# may retarget it, and test-mode identity exits 3 — never 0.
 set -u
-PROFILE_DIR="${TANDEM_PROFILE_DIR:-/root/.hermes/profiles/nampa}"
-LIVE="$PROFILE_DIR/scripts/tandem-prod-probe.sh"
-REPO="${TANDEM_PROBE_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+LIVE="/root/.hermes/profiles/nampa/scripts/tandem-prod-probe.sh"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REF="refs/remotes/origin/dev"
 TESTMODE=0
 if [ "${TANDEM_PROBE_TEST:-0}" = "1" ]; then
   LIVE="${TANDEM_PROBE_LIVE:-$LIVE}"
+  REPO="${TANDEM_PROBE_REPO:-$REPO}"
   TESTMODE=1
+elif [ -n "${TANDEM_PROBE_REPO:-}" ]; then
+  REPO="$TANDEM_PROBE_REPO"
+fi
+if [ "$TESTMODE" = "0" ]; then
+  URL=$(git -C "$REPO" remote get-url origin 2>/dev/null)
+  case "$URL" in
+    *namhtpyn/tandem*) ;;
+    *)
+      echo "probe-drift: origin is not namhtpyn/tandem ($URL)" >&2
+      exit 2
+      ;;
+  esac
 fi
 TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
