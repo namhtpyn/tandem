@@ -11,20 +11,23 @@ import { inArray } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
-  settingWrites: [] as Array<[string, string]>,
+  settingWrites: [] as Array<[string, string, unknown]>,
   storedStamp: null as string | null,
   failGetSetting: false,
+  getSettingCalls: 0,
   legRows: 0,
   failLegs: false,
+  warnCalls: 0,
 }));
 
 vi.mock('../../server/domains/settings/settings.service', () => ({
   getSetting: vi.fn(async () => {
+    h.getSettingCalls += 1;
     if (h.failGetSetting) throw new Error('db down (setting read)');
     return h.storedStamp;
   }),
-  setSetting: vi.fn(async (key: string, value: string) => {
-    h.settingWrites.push([key, value]);
+  setSetting: vi.fn(async (key: string, value: string, ex?: unknown) => {
+    h.settingWrites.push([key, value, ex]);
     h.storedStamp = value;
   }),
   getRunTimeoutMs: vi.fn(async () => 30 * 60_000),
@@ -34,7 +37,9 @@ vi.mock('../../server/domains/settings/settings.service', () => ({
 vi.mock('consola', () => ({
   consola: {
     withTag: () => ({
-      warn: vi.fn(),
+      warn: () => {
+        h.warnCalls += 1;
+      },
       error: () => {},
       success: () => {},
       info: () => {},
@@ -164,16 +169,20 @@ describe('retention leg behavior (#266 — throttle + stamp + fault isolation)',
     h.settingWrites.length = 0;
     h.storedStamp = null;
     h.failGetSetting = false;
+    h.getSettingCalls = 0;
     h.legRows = 0;
     h.failLegs = false;
+    h.warnCalls = 0;
     retentionState.lastAt = 0;
     retentionState.lastWarnAt = 0;
+    retentionState.running = false;
   });
 
   it('a stale run executes all three legs and stamps ONLY after a full pass', async () => {
     const result = await runRetentionLeg(fakeExec());
     expect(result).toEqual({ blanked: 0, obligations: 0, sessions: 0 });
-    expect(h.settingWrites).toEqual([[RETENTION_STAMP_KEY, expect.stringMatching(/^\d+$/)]]);
+    expect(h.settingWrites).toEqual([[RETENTION_STAMP_KEY, expect.stringMatching(/^\d+$/), expect.anything()]]);
+    expect(retentionState.running).toBe(false); // guard cleared even on success
   });
 
   it('the persisted stamp throttles: a fresh stamp runs nothing and writes nothing', async () => {
@@ -214,5 +223,40 @@ describe('retention leg behavior (#266 — throttle + stamp + fault isolation)',
     const obl = await deleteResolvedObligations(CUTOFF, fakeExec());
     const ses = await deleteExpiredSessions(CUTOFF, fakeExec());
     expect([rows, obl, ses]).toEqual([0, 0, 0]);
+  });
+
+  it('warns RATE-LIMITED on repeated failures: one warn per window, not per tick', async () => {
+    h.failLegs = true;
+    await runRetentionLeg(fakeExec()); // fresh window → warn 1
+    await runRetentionLeg(fakeExec()); // inside the window → suppressed
+    expect(h.warnCalls).toBe(1);
+    retentionState.lastWarnAt = 0; // simulate the window elapsing
+    await runRetentionLeg(fakeExec()); // warn 2
+    expect(h.warnCalls).toBe(2);
+    expect(retentionState.running).toBe(false); // guard cleared on the failure path too
+  });
+
+  it('cache arms: a fresh persisted stamp is read once and cached — later ticks skip the settings read entirely', async () => {
+    h.storedStamp = String(Date.now());
+    await runRetentionLeg(fakeExec()); // persisted-stamp arm: one settings read, no legs, no writes
+    expect(h.getSettingCalls).toBe(1);
+    expect(h.settingWrites).toHaveLength(0);
+    await runRetentionLeg(fakeExec()); // in-memory arm: returns BEFORE any settings read
+    expect(h.getSettingCalls).toBe(1);
+    expect(h.settingWrites).toHaveLength(0);
+  });
+
+  it('the stamp write shares the legs\u2019 executor (single transaction surface, not the global db)', async () => {
+    const ex = fakeExec();
+    await runRetentionLeg(ex);
+    expect(h.settingWrites[0]?.[2]).toBe(ex);
+  });
+
+  it('a pass in flight blocks re-entry — ticks cannot stack duplicate concurrent passes', async () => {
+    retentionState.running = true; // simulate a slow first-ever drain still running
+    const result = await runRetentionLeg(fakeExec());
+    expect(result).toBeNull();
+    expect(h.getSettingCalls).toBe(0); // re-entry returns before ANY work
+    expect(h.settingWrites).toHaveLength(0);
   });
 });

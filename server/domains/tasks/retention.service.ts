@@ -30,8 +30,10 @@ const RETENTION_INTERVAL_MS = 24 * 60 * 60_000;
 /** rate-limited warn window (same as the reaper, #147) */
 const RETENTION_WARN_INTERVAL_MS = 5 * 60_000;
 
-/** throttle state exposed for tests (same pattern as heartbeatState) */
-export const retentionState = { lastAt: 0, lastWarnAt: 0 };
+/** throttle state exposed for tests (same pattern as heartbeatState); `running`
+ * is the re-entry guard — a pass slower than the 5s tick (first-ever drain on a
+ * large backlog) must not stack duplicate concurrent passes every tick */
+export const retentionState = { lastAt: 0, lastWarnAt: 0, running: false };
 
 /** terminal-category status ids — the category join (seeded categories are
  * lowercase 'done'|'cancelled'; resolve by CATEGORY, never status-id literals) */
@@ -122,6 +124,7 @@ export async function deleteExpiredSessions(now: Date, ex: DbExecutor = db): Pro
  * rate-limited and leaves the stamp (retry next tick). Never rejects (#172). */
 export async function runRetentionLeg(ex: DbExecutor = db): Promise<RetentionResult | null> {
   try {
+    if (retentionState.running) return null; // re-entry guard: one pass at a time
     if (Date.now() - retentionState.lastAt < RETENTION_INTERVAL_MS) return null;
     const { getSetting, setSetting } = await import('../settings/settings.service');
     const stamp = await getSetting(RETENTION_STAMP_KEY);
@@ -130,15 +133,20 @@ export async function runRetentionLeg(ex: DbExecutor = db): Promise<RetentionRes
       retentionState.lastAt = Date.now(); // in-memory cache of the persisted stamp
       return null;
     }
-    const cutoff = new Date(Date.now() - RETENTION_HORIZON_MS);
-    const result: RetentionResult = {
-      blanked: await blankRunTranscripts(cutoff, ex),
-      obligations: await deleteResolvedObligations(cutoff, ex),
-      sessions: await deleteExpiredSessions(new Date(), ex),
-    };
-    await setSetting(RETENTION_STAMP_KEY, String(Date.now()), ex);
-    retentionState.lastAt = Date.now();
-    return result;
+    retentionState.running = true;
+    try {
+      const cutoff = new Date(Date.now() - RETENTION_HORIZON_MS);
+      const result: RetentionResult = {
+        blanked: await blankRunTranscripts(cutoff, ex),
+        obligations: await deleteResolvedObligations(cutoff, ex),
+        sessions: await deleteExpiredSessions(new Date(), ex),
+      };
+      await setSetting(RETENTION_STAMP_KEY, String(Date.now()), ex);
+      retentionState.lastAt = Date.now();
+      return result;
+    } finally {
+      retentionState.running = false;
+    }
   } catch (e) {
     const now = Date.now();
     if (now - retentionState.lastWarnAt >= RETENTION_WARN_INTERVAL_MS) {
