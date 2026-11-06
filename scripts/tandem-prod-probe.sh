@@ -32,25 +32,27 @@ echo "$IMG" | grep -qw healthy || anom+=("container: $IMG")
 CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://work.ultranomic.net/)
 [ "$CODE" = "200" ] || anom+=("public=$CODE")
 V=$(curl -s --max-time 10 -X POST https://work.ultranomic.net/rpc/meta/version | grep -o '[0-9]*\.[0-9]*\.[0-9]*' | head -1)
+[ -z "$V" ] && anom+=("version_rpc: unreadable (no semver from POST /rpc/meta/version — version/retention/stranded arms degraded)")
 TAG=$(cd "$TAG_REPO" 2>/dev/null && git fetch origin --tags -q && git tag --sort=-creatordate | head -1 | sed 's/^v//')
 # Deploy-window guard (2026-10-31): the release train tags BEFORE the CT102 bump,
-# so prod!=latest for the bump's duration is EXPECTED — 4 false anomalies on
-# 10-31 (01:35/02:30/04:41/07:49 UTC), each inside a tag->bump window. Alert only
-# when the newest tag is >20 min old (= genuinely stalled bump); in-window
-# mismatches go to the metrics trail file only, never stdout.
-TAG_AGE=999999
-if [ -n "$TAG" ]; then
-  TAG_TS=$(cd "$TAG_REPO" 2>/dev/null && git for-each-ref "refs/tags/v$TAG" --format='%(creatordate:unix)')
-  [ -n "$TAG_TS" ] && TAG_AGE=$(( $(date -u +%s) - TAG_TS ))
-fi
+# so prod!=latest for the bump's duration is EXPECTED. The window is measured from
+# the FIRST sighting of this mismatch (state file), never the tag's commit date —
+# every tag in this repo is lightweight (creatordate == commit date, already old
+# when tagged). Alert only when the mismatch persists >20 min (= stalled bump).
 [ -n "$V" ] && [ -z "$TAG" ] && anom+=("tag_oracle: unavailable (newest release tag unreadable under $TAG_REPO — version-drift check blind)")
 DEPLOYWIN=""
 if [ -n "$V" ] && [ -n "$TAG" ] && [ "$V" != "$TAG" ]; then
-  if [ "$TAG_AGE" -gt 1200 ]; then
-    anom+=("version: prod=$V latest=$TAG")
+  MISM="$PROBE_STATE/version-mismatch-since"
+  [ -f "$MISM" ] || date -u +%s > "$MISM"
+  MISINCE=$(cat "$MISM" 2>/dev/null || date -u +%s)
+  MAGE=$(( $(date -u +%s) - MISINCE ))
+  if [ "$MAGE" -gt 1200 ]; then
+    anom+=("version: prod=$V latest=$TAG (mismatch ${MAGE}s)")
   else
-    DEPLOYWIN="version: prod=$V latest=$TAG (tag ${TAG_AGE}s old — deploy window, suppressed)"
+    DEPLOYWIN="version: prod=$V latest=$TAG (mismatch ${MAGE}s — deploy window, suppressed)"
   fi
+else
+  rm -f "$PROBE_STATE/version-mismatch-since"
 fi
 
 # 3. run hygiene (one psql pass)
@@ -58,7 +60,7 @@ fi
 # mirrors the reaper's WHERE (settings-aware, never a fixed interval; 30 min default
 # fallback when the setting is absent/unparseable). Replaced the old fixed-40min
 # 'stale' count: that shape false-alarmed a legitimately long configured run.
-SQL="with t as (select coalesce(nullif(regexp_replace(value, '[^0-9]', '', 'g'), '')::bigint, 1800000) as ms from settings where key='run_timeout_ms' limit 1) select 'ghostset', coalesce(string_agg(r.id::text, ',' order by r.id), 'none') from task_runs r, t where r.status='RUNNING' and r.started_at < now() - make_interval(secs => (t.ms + 300000) / 1000.0) union all select 'overlap', count(*)::text from task_runs a join task_runs b on a.employee_id=b.employee_id and a.id<b.id where a.started_at > now() - interval '3 hours' and b.started_at > now() - interval '3 hours' and a.started_at < coalesce(b.finished_at, now()) and b.started_at < coalesce(a.finished_at, now()) and a.started_at > '$OVS' union all select 'dangling', count(*)::text from tasks t where not exists (select 1 from task_statuses s where s.id = t.status) union all select 'fails6h', count(*)::text from task_runs where status='FAILED' and started_at > now() - interval '6 hours' union all select 'oidc_plain', count(*)::text from settings where key='oidc_providers' and value not like 'v1:%' union all select 'stranded', count(*)::text from tasks t join task_statuses s on s.id = t.status and s.category = 'working' join ai_employees ae on ae.user_id = t.assignee_id where not exists (select 1 from task_runs r join task_messages m on m.id = r.message_id where m.task_id = t.id and (r.status = 'RUNNING' or coalesce(r.finished_at, t.updated_at) > now() - interval '25 minutes')) and t.updated_at < now() - interval '25 minutes' union all select 'disp_hb', case when v.ts is null then 'absent' when v.ts < (extract(epoch from now())::bigint - 120) * 1000 then 'stale ' || (((extract(epoch from now())::bigint * 1000 - v.ts) / 1000)::int)::text else 'ok' end from (select nullif(regexp_replace(value, '[^0-9]', '', 'g'), '')::bigint as ts from settings where key='dispatcher_last_tick' limit 1) v union all select 'phantomob', count(*)::text from task_obligations o join tasks t on t.id = o.task_id join task_statuses s on s.id = t.status where o.status = 'PENDING' and s.category in ('done','cancelled') union all select 'redis_hb', case when v.ts is null then 'absent' when v.ts < (extract(epoch from now())::bigint - 120) * 1000 then 'stale ' || (((extract(epoch from now())::bigint * 1000 - v.ts) / 1000)::int)::text else 'ok' end from (select nullif(regexp_replace(value, '[^0-9]', '', 'g'), '')::bigint as ts from settings where key='dispatcher_redis_ok' limit 1) v;"
+SQL="with t as (select coalesce((select nullif(regexp_replace(value, '[^0-9]', '', 'g'), '')::bigint from settings where key='run_timeout_ms' limit 1), 1800000) as ms) select 'ghostset', coalesce(string_agg(r.id::text, ',' order by r.id), 'none') from task_runs r, t where r.status='RUNNING' and r.started_at < now() - make_interval(secs => (t.ms + 300000) / 1000.0) union all select 'overlap', count(*)::text from task_runs a join task_runs b on a.employee_id=b.employee_id and a.id<b.id where a.started_at > now() - interval '3 hours' and b.started_at > now() - interval '3 hours' and a.started_at < coalesce(b.finished_at, now()) and b.started_at < coalesce(a.finished_at, now()) and a.started_at > '$OVS' union all select 'dangling', count(*)::text from tasks t where not exists (select 1 from task_statuses s where s.id = t.status) union all select 'fails6h', count(*)::text from task_runs where status='FAILED' and started_at > now() - interval '6 hours' union all select 'oidc_plain', count(*)::text from settings where key='oidc_providers' and value not like 'v1:%' union all select 'stranded', count(*)::text from tasks t join task_statuses s on s.id = t.status and s.category = 'working' join ai_employees ae on ae.user_id = t.assignee_id where not exists (select 1 from task_runs r join task_messages m on m.id = r.message_id where m.task_id = t.id and (r.status = 'RUNNING' or coalesce(r.finished_at, t.updated_at) > now() - interval '25 minutes')) and t.updated_at < now() - interval '25 minutes' union all select 'disp_hb', case when v.ts is null then 'absent' when v.ts < (extract(epoch from now())::bigint - 120) * 1000 then 'stale ' || (((extract(epoch from now())::bigint * 1000 - v.ts) / 1000)::int)::text else 'ok' end from (select nullif(regexp_replace(value, '[^0-9]', '', 'g'), '')::bigint as ts from settings where key='dispatcher_last_tick' limit 1) v union all select 'phantomob', count(*)::text from task_obligations o join tasks t on t.id = o.task_id join task_statuses s on s.id = t.status where o.status = 'PENDING' and s.category in ('done','cancelled') union all select 'redis_hb', case when v.ts is null then 'absent' when v.ts < (extract(epoch from now())::bigint - 120) * 1000 then 'stale ' || (((extract(epoch from now())::bigint * 1000 - v.ts) / 1000)::int)::text else 'ok' end from (select nullif(regexp_replace(value, '[^0-9]', '', 'g'), '')::bigint as ts from settings where key='dispatcher_redis_ok' limit 1) v;"
 PSQLERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$SQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
 OUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$SQL\"" 2>/dev/null) || OUT="db-unreachable"
 if echo "$OUT" | grep -q db-unreachable; then anom+=("db: unreachable ${PSQLERR:-psql failed}"); fi
@@ -94,8 +96,10 @@ OIDCP=$(echo "$OUT" | awk -F'|' '/^oidc_plain/{print $2}')
 # pre-2.62.6 image has no park_rearm columns and one bad arm would kill every check
 # (the UNION-type law). Column-absent guard skips silently on the old image.
 PRSQL="select coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'paused' and t.park_from_status is not null and t.park_rearm_attempts >= 5"
-PRCOL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"select count(*) from information_schema.columns where table_name='tasks' and column_name='park_rearm_attempts'\"" 2>/dev/null)
-if [ "$PRCOL" = "1" ]; then
+PRCOL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"select count(*) from information_schema.columns where table_name='tasks' and column_name='park_rearm_attempts'\"" 2>/dev/null) || PRCOL="guard-error"
+if [ "$PRCOL" = "guard-error" ]; then
+  anom+=("parkrearm_guard: column probe failed — detector blind")
+elif [ "$PRCOL" = "1" ]; then
   PRERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$PRSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
   PRVAL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$PRSQL\"" 2>/dev/null) || PRVAL="db-unreachable"
   if [ "$PRVAL" = "db-unreachable" ]; then
@@ -242,8 +246,10 @@ fi
 # SCHEMA-SYMMETRY (probe law #5): task_statuses.category, task_reviews.task_id/
 # status/decided_at/created_at, task_obligations.task_id/role/status/resolved_at/
 # created_at, tasks.status/updated_at — all verified against the live schema.
-STRCOL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"select (to_regclass('task_reviews') is not null and to_regclass('task_obligations') is not null)::int\"" 2>/dev/null)
-if [ "$STRCOL" = "1" ]; then
+STRCOL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"select (to_regclass('task_reviews') is not null and to_regclass('task_obligations') is not null)::int\"" 2>/dev/null) || STRCOL="guard-error"
+if [ "$STRCOL" = "guard-error" ]; then
+  anom+=("strand_guard: column probe failed — detector blind")
+elif [ "$STRCOL" = "1" ]; then
   STRSQL="select 'wedge', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING') and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id) > t.updated_at union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at"
   STRERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$STRSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
   STROUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$STRSQL\"" 2>/dev/null) || STROUT="db-unreachable"
@@ -345,9 +351,19 @@ for j in jobs:
 print(n)
 PY
 )
-CREEP2=$(grep -iE 'weekly|peak|off-peak|business hour|rest hour|morning pass|nightly' \
-  "$PROFILE_DIR/skills/infra/tandem-ops/SKILL.md" 2>/dev/null \
-  | grep -vicE 'never|LAW|law|no.?weekly|no.?peak|banned|except|reverted' || true)
+CREEP2=$(python3 - "$PROFILE_DIR/skills/infra/tandem-ops/SKILL.md" 2>/dev/null <<'PY'
+import re, sys
+try: t = open(sys.argv[1]).read().lower()
+except Exception: print(0); raise SystemExit
+n = 0
+for m in re.finditer(r'weekly|peak|off-peak|business hour|rest hour|morning pass|nightly', t):
+    ctx = t[max(0, m.start() - 48):m.end() + 24]
+    if re.search(r'never|no |not |law|banned|except|revert|forbid', ctx):
+        continue
+    n += 1
+print(n)
+PY
+)
 [ "${CREEP:-0}" -gt 0 ] && anom+=("human-cycle-creep: $CREEP cron schedule(s) encode weekday/weekend cycles")
 [ "${CREEP2:-0}" -gt 0 ] && anom+=("human-cycle-creep: $CREEP2 hit(s) in tandem-ops skill — critic purges (law/negation text excepted)")
 

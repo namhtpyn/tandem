@@ -933,4 +933,6 @@ non-positive deltas render no duration.
   `TANDEM_PROFILE_DIR`, `TANDEM_PROBE_STATE`, `TANDEM_TAG_REPO`); the public URL
   and container names remain fixed production constants — the overrides relocate
   legs for inspection, they are not a test mode. `scripts/check-probe-drift.sh`
-  is the drift check the critic runs (exit 0 = live copy == `origin/dev`).
+  fetches `origin/dev` before comparing (a stale ref cannot green-light drift)
+  and is the drift check the critic runs (exit 0 = live copy == `origin/dev`;
+  its own tests retarget paths with `TANDEM_PROBE_TEST=1`).
