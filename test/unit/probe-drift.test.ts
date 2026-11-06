@@ -84,4 +84,16 @@ describe('check-probe-drift', () => {
     expect(exitCode).toBe(2);
     expect(stderr.toString()).toContain('missing');
   });
+
+  it('--deploy replaces the live copy atomically from the fetched blob', async () => {
+    const { repo, live } = await fixture('#!/usr/bin/env bash\necho v1\n');
+    writeFileSync(live, '#!/usr/bin/env bash\necho stale\n');
+    const dep = await $`bash ${script} --deploy`
+      .env({ TANDEM_PROBE_TEST: '1', TANDEM_PROBE_REPO: repo, TANDEM_PROBE_LIVE: live })
+      .nothrow()
+      .quiet();
+    expect(dep.exitCode).toBe(0);
+    const check = await run(repo, live);
+    expect(check.exitCode).toBe(3);
+  });
 });

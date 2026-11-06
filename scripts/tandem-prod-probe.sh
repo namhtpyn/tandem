@@ -25,11 +25,12 @@ if [ "${1:-}" = "--selfcheck" ]; then
   exit 0
 fi
 # overlap window = since the last overlap fix; update by: date -u '+%F %H:%M+00' > <marker>
-OVS=$(cat "$PROBE_STATE/overlap-since" 2>/dev/null)
-case "$OVS" in
-  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\ [0-9][0-9]:[0-9][0-9]*) ;;
-  *) OVS='2026-10-30 02:55+00' ;;
-esac
+OVS_RAW=$(cat "$PROBE_STATE/overlap-since" 2>/dev/null)
+if OVS_TS=$(date -u -d "$OVS_RAW" +%s 2>/dev/null) && [ -n "$OVS_TS" ]; then
+  OVS=$(date -u -d "@$OVS_TS" '+%F %H:%M+00')
+else
+  OVS='2026-10-30 02:55+00'
+fi
 anom=()
 if ! { : > "$PROBE_STATE/.probe-write-test"; } 2>/dev/null; then
   anom+=("probe_state: unwritable ($PROBE_STATE — state-confirmed detectors + deploy window degraded)")
@@ -54,19 +55,23 @@ TAG=$("$GH_BIN" release view --repo namhtpyn/tandem --json tagName --jq .tagName
 # when tagged). Alert only when the mismatch persists >20 min (= stalled bump).
 [ -n "$V" ] && [ -z "$TAG" ] && anom+=("tag_oracle: unavailable (gh release view failed — version-drift check blind)")
 DEPLOYWIN=""
-if [ -n "$V" ] && [ -n "$TAG" ] && [ "$V" != "$TAG" ]; then
-  MISM="$PROBE_STATE/version-mismatch-since"
-  [ -f "$MISM" ] || date -u +%s > "$MISM" 2>/dev/null
-  MISINCE=$(cat "$MISM" 2>/dev/null)
-  case "$MISINCE" in ''|*[!0-9]*) MISINCE=$(( $(date -u +%s) - 1201 )) ;; esac
-  MAGE=$(( $(date -u +%s) - MISINCE ))
-  if [ "$MAGE" -gt 1200 ]; then
-    anom+=("version: prod=$V latest=$TAG (mismatch ${MAGE}s)")
+if [ -n "$V" ] && [ -n "$TAG" ]; then
+  if [ "$V" = "$TAG" ]; then
+    rm -f "$PROBE_STATE/version-mismatch-since"
   else
-    DEPLOYWIN="version: prod=$V latest=$TAG (mismatch ${MAGE}s — deploy window, suppressed)"
+    MISM="$PROBE_STATE/version-mismatch-since"
+    [ -f "$MISM" ] || date -u +%s > "$MISM" 2>/dev/null
+    MISINCE=$(cat "$MISM" 2>/dev/null)
+    case "$MISINCE" in ''|*[!0-9]*) MISINCE=0 ;; esac
+    NOWS=$(date -u +%s)
+    [ "$MISINCE" -gt "$NOWS" ] && MISINCE=$NOWS
+    MAGE=$(( NOWS - MISINCE ))
+    if [ "$MAGE" -gt 1200 ]; then
+      anom+=("version: prod=$V latest=$TAG (mismatch ${MAGE}s)")
+    else
+      DEPLOYWIN="version: prod=$V latest=$TAG (mismatch ${MAGE}s — deploy window, suppressed)"
+    fi
   fi
-else
-  rm -f "$PROBE_STATE/version-mismatch-since"
 fi
 
 # 3. run hygiene (one psql pass)
@@ -335,7 +340,7 @@ esac
 
 # 4. queue depth
 # sentinel first line: empty output = ssh/CT failure; UNREACHABLE = redis down/container missing
-QOUT=$("${CT[@]}" 'R=work-ultranomic-net-redis-1; docker exec $R redis-cli ping 2>/dev/null | grep -q PONG || { echo UNREACHABLE; exit 0; }; echo PONG; for k in $(docker exec $R redis-cli --scan --pattern "bull:tandem-dispatch-*:wait" | head -8); do docker exec $R redis-cli llen "$k"; done' 2>/dev/null)
+QOUT=$("${CT[@]}" 'R=work-ultranomic-net-redis-1; docker exec $R redis-cli ping 2>/dev/null | grep -q PONG || { echo UNREACHABLE; exit 0; }; echo PONG; for k in $(docker exec $R redis-cli --scan --pattern "bull:tandem-dispatch-*:wait"); do docker exec $R redis-cli llen "$k"; done' 2>/dev/null)
 case "$QOUT" in
   *UNREACHABLE*|'') anom+=("queue_probe: unreadable (ssh/redis/container down — backlog detector blind)") ;;
   *)
