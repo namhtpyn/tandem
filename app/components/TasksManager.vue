@@ -141,12 +141,16 @@ const emptyCopy = computed(() => {
     // a live search narrows the same list — the obligation sentence must name it
     // too, or it claims the project owes nothing while the search hides the task
     // a live search or status chip narrows the same list — the obligation
-    // sentence must name them too, or it claims the project owes nothing while
-    // another filter is what hid the task
+    // sentence names every active narrowing filter, so it never claims the
+    // project owes nothing while another filter is what hid the task
     const narrowing = `${searchDebounced.value ? ' and this search' : ''}${statusId.value !== null ? ' with this status' : ''}`;
-    if (needsDecision.value) return `Nothing in ${name} matches your decision filter${narrowing} right now.`;
-    if (awaitingDecision.value)
-      return `Nothing in ${name} matches your awaiting-decision filter${narrowing} right now.`;
+    const obligations = [
+      needsDecision.value ? 'decision' : null,
+      awaitingDecision.value ? 'awaiting-decision' : null,
+    ].filter((x): x is string => x !== null);
+    if (obligations.length > 0) {
+      return `Nothing in ${name} matches your ${obligations.join(' + ')} filter${obligations.length > 1 ? 's' : ''}${narrowing} right now.`;
+    }
     if (searchDebounced.value)
       return `No tasks in ${name} match this search${statusId.value !== null ? ' with this status' : ''}.`;
     if (statusId.value !== null) return `No tasks in ${name} with this status — try another filter.`;
@@ -226,6 +230,17 @@ const projectScopeItems = computed(() => {
  *  editor — an unknown/deleted id would be submitted and rejected server-side */
 const projectScopeDefault = computed<string | null>(() =>
   projectScopeId.value !== null && projectNameById.value.has(projectScopeId.value) ? projectScopeId.value : null,
+);
+/** the empty-state create entry makes sense only when the scope is the ONLY
+ *  active filter (a create lands in the scope, never in a search/status/
+ *  obligation filter) — otherwise #210's toolbar entry is the create surface */
+const scopeOnlyFilter = computed(
+  () =>
+    projectScopeId.value !== null &&
+    !searchDebounced.value &&
+    statusId.value === null &&
+    !needsDecision.value &&
+    !awaitingDecision.value,
 );
 const projectScopeValue = computed<string>({
   get: () => projectScopeId.value ?? NONE_ID,
@@ -1112,7 +1127,7 @@ onServerPrefetch(() =>
         <!-- #339: a scoped list's create entry stays (the editor inherits the scope), so
              an empty project is not a dead end; other filters keep #210's toolbar entry only -->
         <UButton
-          v-if="canWork && (!listFiltered || projectScopeDefault !== null)"
+          v-if="canWork && (!listFiltered || (scopeOnlyFilter && projectScopeDefault !== null))"
           icon="i-lucide-plus"
           label="New task"
           data-testid="empty-new-task"

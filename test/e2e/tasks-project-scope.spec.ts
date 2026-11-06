@@ -70,6 +70,12 @@ test('project scope: project row opens its tasks, select sets/clears, URL-synced
   await expect(page.getByText(`Nothing in ${project} matches your awaiting-decision filter right now.`)).toBeVisible({
     timeout: 15_000,
   });
+  // both toggles compose: the copy names both filters
+  await page.getByRole('button', { name: 'Needs my decision' }).click();
+  await expect(
+    page.getByText(`Nothing in ${project} matches your decision + awaiting-decision filters right now.`),
+  ).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('button', { name: 'Needs my decision' }).click();
   await page.getByRole('button', { name: 'Awaiting decision' }).click();
 
   // composed with a status chip: the empty copy keeps naming the project
