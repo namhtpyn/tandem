@@ -249,6 +249,8 @@ test.describe('role UI gating (#263)', () => {
       await expect(viewer.getByRole('button', { name: `Delete E2E View ${tag}` })).toHaveCount(0);
       // the status cell is the setStatus verb — a viewer gets plain text
       await expect(viewer.getByRole('combobox', { name: /^Status for/ })).toHaveCount(0);
+      // …and the assignee cell is the tasks.update verb (#333) — never a control
+      await expect(viewer.getByRole('combobox', { name: /^Assignee for/ })).toHaveCount(0);
       await expect(viewer.getByText('To do').first()).toBeVisible();
       // the kebab survives with its READ entry (Workflow) — the drawer opens
       await expect(viewer.getByRole('button', { name: /^Workflow for / }).first()).toBeVisible();

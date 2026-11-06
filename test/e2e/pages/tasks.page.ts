@@ -15,7 +15,8 @@ export class TasksPage extends BasePage {
       await this.page.locator('[contenteditable]').first().fill(task.description);
     }
     if (task.assignee !== undefined) {
-      await this.page.getByRole('combobox', { name: 'Assignee' }).click();
+      // scope to the modal: list rows now carry `Assignee for <title>` comboboxes
+      await this.page.getByRole('dialog').getByRole('combobox', { name: 'Assignee', exact: true }).click();
       await this.page.getByRole('option', { name: task.assignee }).click();
     }
   }

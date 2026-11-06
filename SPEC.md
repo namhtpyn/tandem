@@ -858,6 +858,10 @@ non-positive deltas render no duration.
 
 ## UI laws
 
+- Task list inline assignee (#333): the Assignee cell in the desktop list and the
+  assignee line on mobile/board cards are one control — an employee-tier select
+  running `tasks.update` with the same optimistic display, busy gate and live-run
+  lock as the status select; a VIEWER session reads the name as text.
 - Modals (UModal) size app-wide via `app/app.config.ts` — mobile keeps the library
   default `w-[calc(100vw-2rem)]` card; desktop grows with the viewport
   (`sm:max-w-xl md:max-w-2xl lg:max-w-3xl`) instead of the stock 512px `max-w-lg`.
@@ -921,3 +925,19 @@ non-positive deltas render no duration.
   `scripts/restore-drill.sh --selfcheck` validates the guards with zero side
   effects and is asserted by a unit test; drill reports land with the ops
   evidence.
+
+### Probe versioning (10-min watchdog)
+
+- The 10-min production probe is versioned at `scripts/tandem-prod-probe.sh`
+  and is the source of truth for every prod check. The agent-profile copy is a
+  deploy of that file (copied, never edited in place); `origin/dev` vs live
+  drift is an ops defect the critic alerts on.
+- The probe's CT SSH target and local profile/state paths are env-overridable
+  with today's production values as defaults (`TANDEM_CT_KEY` / `TANDEM_CT_ADDR`,
+  `TANDEM_PROFILE_DIR`, `TANDEM_PROBE_STATE`); the public URL and container names
+  remain fixed production constants — the overrides relocate legs for inspection,
+  they are not a test mode. `scripts/check-probe-drift.sh` fetches `origin/dev`
+  with an explicit refspec before comparing (a stale ref cannot green-light
+  drift) and is the drift check the critic runs (exit 0 = live copy ==
+  `origin/dev`; its tests retarget the live path with `TANDEM_PROBE_TEST=1`,
+  where a successful comparison exits 3 — never 0).
