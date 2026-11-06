@@ -140,10 +140,13 @@ const emptyCopy = computed(() => {
     const name = projectNameById.value.get(projectScopeId.value) ?? 'this project';
     // a live search narrows the same list — the obligation sentence must name it
     // too, or it claims the project owes nothing while the search hides the task
-    const searchSuffix = searchDebounced.value ? ' and this search' : '';
-    if (needsDecision.value) return `Nothing in ${name} matches your decision filter${searchSuffix} right now.`;
+    // a live search or status chip narrows the same list — the obligation
+    // sentence must name them too, or it claims the project owes nothing while
+    // another filter is what hid the task
+    const narrowing = `${searchDebounced.value ? ' and this search' : ''}${statusId.value !== null ? ' with this status' : ''}`;
+    if (needsDecision.value) return `Nothing in ${name} matches your decision filter${narrowing} right now.`;
     if (awaitingDecision.value)
-      return `Nothing in ${name} matches your awaiting-decision filter${searchSuffix} right now.`;
+      return `Nothing in ${name} matches your awaiting-decision filter${narrowing} right now.`;
     if (searchDebounced.value)
       return `No tasks in ${name} match this search${statusId.value !== null ? ' with this status' : ''}.`;
     if (statusId.value !== null) return `No tasks in ${name} with this status — try another filter.`;
@@ -1109,7 +1112,7 @@ onServerPrefetch(() =>
         <!-- #339: a scoped list's create entry stays (the editor inherits the scope), so
              an empty project is not a dead end; other filters keep #210's toolbar entry only -->
         <UButton
-          v-if="canWork && (!listFiltered || projectScopeId !== null)"
+          v-if="canWork && (!listFiltered || projectScopeDefault !== null)"
           icon="i-lucide-plus"
           label="New task"
           data-testid="empty-new-task"

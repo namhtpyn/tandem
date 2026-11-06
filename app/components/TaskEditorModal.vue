@@ -142,7 +142,10 @@ watch(open, (v) => {
   // #145: a create has no stored body to protect; an edit starts UNKNOWN
   descriptionState.value = row ? 'loading' : 'loaded';
   form.assigneeId = row?.assigneeId ?? NONE_ID;
-  form.projectId = row?.projectId ?? props.defaultProjectId ?? NONE_ID;
+  // #339 r6: defaultProjectId is CREATE-ONLY — an edit must never inherit the
+  // active list scope (a no-project task edited while scoped would be silently
+  // moved into that project by the update payload)
+  form.projectId = row ? (row.projectId ?? NONE_ID) : (props.defaultProjectId ?? NONE_ID);
   form.reviewers = row?.reviewers ? [...row.reviewers] : [];
   form.status = row?.status ?? defaultStatusId.value;
   message.value = '';

@@ -80,6 +80,12 @@ test('project scope: project row opens its tasks, select sets/clears, URL-synced
   await expect(page.getByText(`No tasks in ${project} with this status`, { exact: false })).toBeVisible({
     timeout: 15_000,
   });
+  // an obligation toggle composes with the chip too — copy names both
+  await page.getByRole('button', { name: 'Needs my decision' }).click();
+  await expect(
+    page.getByText(`Nothing in ${project} matches your decision filter with this status right now.`),
+  ).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('button', { name: 'Needs my decision' }).click();
   // …and a search term reads as a search miss, not as 'the project is empty'
   await page.getByRole('group', { name: 'Filter by status' }).getByRole('button', { name: 'All', exact: true }).click();
   await page.getByRole('textbox', { name: 'Search tasks' }).fill('zzz-no-match');
@@ -95,10 +101,13 @@ test('project scope: unresolvable scope degrades honestly (unknown id, sentinel)
   const probe = `Probe ${Date.now().toString(36).slice(-6)}`;
   const created = await rpc(page, '/rpc/projects/create', { name: probe });
 
-  // an id no project owns: filter, never an error — the label says Unknown project
+  // an id no project owns: filter, never an error — the label says Unknown project,
+  // and the scoped-looking empty CTA hides (a create there cannot land in scope;
+  // the toolbar entry stays, and never sends the dead id)
   await tasks.navigate('/tasks?project=00000000-0000-7000-8000-000000000000');
   await expect(page.getByTestId('project-scope-select')).toContainText('Unknown project');
   await expect(page.getByText('No tasks in this project', { exact: false })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('empty-new-task')).toHaveCount(0);
 
   // the internal NONE_ID sentinel is a display value, never a scope — and the
   // dead param is stripped from the URL on mount (no scope claim in the address)
