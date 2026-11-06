@@ -76,10 +76,6 @@ const bindingUserOptions = computed(() => employeeOptions(employeeRows.value));
 
 // ---------- editor ----------
 const editorOpen = ref(false);
-// edit identity = the ADAPTER KEY (kind:canonical homeserver), never a captured
-// object or array index: the [SETTINGS] query refetches on ANY settings write
-// (SSE), replacing row objects mid-edit — only the semantic key survives that
-const editingKey = ref<string | null>(null);
 const form = reactive<{
   kind: string;
   enabled: boolean;
@@ -105,12 +101,16 @@ const schema = z.object({
     .min(1, 'Pick a vault secret for the bot token'),
 });
 
-/** the client-side adapter key — mirrors the server's adapterKey (the list
- * payload's `key`); entries carry canonicalized homeservers so this is stable */
-const keyOf = (e: ChannelEntry) => `${e.kind}:${e.homeserverUrl}`;
+/** exact-content identity: adapter KEYS are not unique across stored entries
+ * (the runtime tolerates an enabled+disabled pair under one key), so row
+ * operations target the row whose FULL content matches the snapshot taken
+ * when the flow opened — a refetch preserves content, so this survives it,
+ * and twins can never swallow each other's writes */
+const fingerprint = (e: ChannelEntry) => JSON.stringify(e);
+const editingFingerprint = ref<string | null>(null);
 
 function openEditor(entry?: ChannelEntry) {
-  editingKey.value = entry ? keyOf(entry) : null;
+  editingFingerprint.value = entry ? fingerprint(entry) : null;
   form.kind = entry?.kind ?? (data.value?.kinds.length === 1 ? (data.value?.kinds[0] as string) : '');
   form.enabled = entry?.enabled ?? true;
   form.homeserverUrl = entry?.homeserverUrl ?? '';
@@ -134,10 +134,26 @@ const messageOk = ref(false);
 const droppedRewriteHint = computed(() => droppedEntries.value.length > 0);
 
 function buildArray(editor: ChannelEntry | null): ChannelEntry[] {
-  // the edited entry is located by KEY at save time — a mid-edit refetch that
-  // shifted/replaced rows can never clobber the wrong entry
-  const rest = editor ? okEntries.value.filter((e) => keyOf(e) !== editingKey.value) : [...okEntries.value];
+  // the edited entry is located by CONTENT at save time — a mid-edit refetch
+  // that replaced row objects can never clobber the wrong entry, and two
+  // same-key rows (hand-edited twins) each keep their own content
+  const rest = editor
+    ? okEntries.value.filter((e) => fingerprint(e) !== editingFingerprint.value)
+    : [...okEntries.value];
   return editor ? [...rest, editor] : rest;
+}
+
+/** schema-level (.input) refusals wrap the zod issues in error.data — surface
+ * the first field reason instead of oRPC's generic 'Input validation failed' */
+function refusalDetail(e: unknown, base: string): string {
+  const issues = (e as { data?: { issues?: Array<{ path?: Array<string | number>; message?: string }> } })?.data
+    ?.issues;
+  const first = Array.isArray(issues)
+    ? issues.find((i) => i && typeof i.message === 'string' && i.message.length > 0)
+    : undefined;
+  if (!first?.message) return base;
+  const path = Array.isArray(first.path) && first.path.length > 0 ? `${first.path.join('.')}: ` : '';
+  return `${base}: ${path}${first.message}`;
 }
 
 async function saveChannels(arr: ChannelEntry[], successMsg: string) {
@@ -150,7 +166,7 @@ async function saveChannels(arr: ChannelEntry[], successMsg: string) {
     message.value = successMsg;
     messageOk.value = true;
   } catch (e) {
-    message.value = saveFailed(e, 'channels');
+    message.value = refusalDetail(e, saveFailed(e, 'channels'));
     messageOk.value = false;
   } finally {
     busy.value = false;
@@ -158,6 +174,14 @@ async function saveChannels(arr: ChannelEntry[], successMsg: string) {
 }
 
 async function saveEditor() {
+  // an edit must still find the row it opened for: if the entry changed under
+  // the editor (another admin's write), refusing beats guessing which row to
+  // replace — the admin reopens and sees the current state
+  if (editingFingerprint.value !== null && !okEntries.value.some((e) => fingerprint(e) === editingFingerprint.value)) {
+    message.value = 'This channel changed since the editor opened — reopen it and try again';
+    messageOk.value = false;
+    return;
+  }
   const editor: ChannelEntry = {
     kind: form.kind.trim(),
     enabled: form.enabled,
@@ -168,19 +192,21 @@ async function saveEditor() {
       .filter((b) => b.platformUserId.length > 0 || b.userId.length > 0),
     defaultAssigneeId: form.defaultAssigneeId && form.defaultAssigneeId !== NONE_ID ? form.defaultAssigneeId : null,
   };
-  await saveChannels(buildArray(editor), editingKey.value !== null ? 'Channel saved' : 'Channel created');
+  await saveChannels(buildArray(editor), editingFingerprint.value !== null ? 'Channel saved' : 'Channel created');
   if (messageOk.value) editorOpen.value = false;
 }
 
-// ---------- quick toggles + delete (KEY identity, never object refs or array
-// indexes — the [SETTINGS] query refetches on any settings write and replaces
-// row objects mid-flight; only the adapter key is stable across that) ----------
+// ---------- quick toggles + delete (CONTENT identity, never object refs or
+// array indexes — the [SETTINGS] query refetches on any settings write and
+// replaces row objects mid-flight; exact content survives that AND keeps
+// same-key twins distinct) ----------
 const pendingToggle = ref<string | null>(null);
 async function toggleEnabled(e: ListEntry) {
-  const key = e.key;
-  if (!key || busy.value || pendingToggle.value) return;
-  pendingToggle.value = key;
-  const arr = okEntries.value.map((row) => (keyOf(row) === key ? { ...row, enabled: !row.enabled } : row));
+  const row = e.entry;
+  if (!row || e.status !== 'ok' || busy.value || pendingToggle.value) return;
+  const fp = fingerprint(row);
+  pendingToggle.value = fp;
+  const arr = okEntries.value.map((r) => (fingerprint(r) === fp ? { ...r, enabled: !r.enabled } : r));
   try {
     await saveChannels(arr, 'Channel updated');
   } finally {
@@ -188,7 +214,7 @@ async function toggleEnabled(e: ListEntry) {
   }
 }
 
-const pendingRemove = ref<{ okRow: boolean; key: string | null; label: string } | null>(null);
+const pendingRemove = ref<{ fp: string | null; label: string } | null>(null);
 const removeOpen = computed({
   get: () => pendingRemove.value !== null,
   set: (v: boolean) => {
@@ -196,18 +222,23 @@ const removeOpen = computed({
   },
 });
 function askRemove(e: ListEntry) {
-  // okRow, not key-presence: a dropped DUPLICATE row carries a non-null key —
-  // the SAME key as its valid twin — and must never route into the key filter
-  pendingRemove.value = { okRow: e.status === 'ok' && e.entry !== null, key: e.key, label: rowHomeserver(e) };
+  // fp only for OK rows: a dropped row (incl. a dropped DUPLICATE that carries
+  // a parseable cfg and a shared key) is removed by the REPLACE write itself
+  pendingRemove.value = {
+    fp: e.status === 'ok' && e.entry ? fingerprint(e.entry) : null,
+    label: rowHomeserver(e),
+  };
 }
 async function removeChannel() {
   if (!pendingRemove.value) return;
-  const t = pendingRemove.value;
-  // an ok row is removed by key at confirm time (a refetch between confirm-open
-  // and confirm can never leave the write matching nothing); a dropped row
-  // isn't in the ok list — the REPLACE write itself drops it (the confirm
-  // warned about the rewrite)
-  const arr = t.okRow && t.key ? okEntries.value.filter((e) => keyOf(e) !== t.key) : okEntries.value;
+  const fp = pendingRemove.value.fp;
+  // an ok row is removed by content at confirm time (a refetch between
+  // confirm-open and confirm can never leave the write matching nothing, and
+  // same-key twins keep their own content); a dropped row isn't in the ok
+  // list — the REPLACE write itself drops it (the confirm warned about the
+  // rewrite); a vanished row (removed by another admin mid-confirm) writes
+  // the unchanged ok list — the intent (row gone) already holds
+  const arr = fp ? okEntries.value.filter((e) => fingerprint(e) !== fp) : okEntries.value;
   await saveChannels(arr, 'Channel removed');
   if (messageOk.value) pendingRemove.value = null;
 }
@@ -440,7 +471,7 @@ onServerPrefetch(() => channelsLive.suspense());
   <!-- channel editor -->
   <UModal
     v-model:open="editorOpen"
-    :title="editingKey !== null ? 'Edit channel' : 'New channel'"
+    :title="editingFingerprint !== null ? 'Edit channel' : 'New channel'"
     :dismissible="!busy"
     :close="!busy"
     :ui="{ content: 'max-h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-4rem)]', body: 'overflow-y-auto' }"
@@ -536,7 +567,7 @@ onServerPrefetch(() => channelsLive.suspense());
         <UButton
           type="submit"
           :loading="busy"
-          :label="editingKey !== null ? 'Save changes' : 'Create channel'"
+          :label="editingFingerprint !== null ? 'Save changes' : 'Create channel'"
           form="channel-editor-form"
         />
       </div>

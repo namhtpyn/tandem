@@ -197,6 +197,61 @@ test.describe('channels settings card', () => {
     expect(JSON.parse((await getStored()) as string) as unknown[]).toHaveLength(0);
   });
 
+  test('deleting an ok/ok same-key twin removes only that row (content identity)', async ({ page }) => {
+    const ui = new BasePage(page);
+    const tag = Date.now().toString(36);
+    const secretId = await seedSecret(page, tag);
+    // bindings must reference REAL users (strict existence on every write) —
+    // use the first seeded user; the disabled twin has no bindings (content
+    // still differs from its twin via the enabled flag)
+    const userRows = await sql`select id from "user" order by created_at asc limit 1`;
+    const uid = userRows[0]!.id as string;
+    // hand-edited enabled+disabled pair under ONE canonical key: the runtime
+    // tolerates it (two ok rows), and the rows differ only in content. Each
+    // row's own config must survive a delete of the other.
+    const cfg = [
+      {
+        kind: 'matrix',
+        enabled: true,
+        homeserverUrl: 'https://matrix.example.org',
+        tokenSecretId: secretId,
+        bindings: [{ platformUserId: '@main:example.org', userId: uid }],
+        defaultAssigneeId: null,
+      },
+      {
+        kind: 'matrix',
+        enabled: false,
+        homeserverUrl: 'https://matrix.example.org',
+        tokenSecretId: secretId,
+        bindings: [],
+        defaultAssigneeId: null,
+      },
+    ];
+    try {
+      await setStored(JSON.stringify(cfg));
+      await ui.navigate('/settings');
+      // delete the DISABLED twin's row (second ok row)
+      const rows = page.locator('tr:visible', { hasText: 'matrix.example.org' });
+      await expect(rows).toHaveCount(2);
+      await rows
+        .nth(1)
+        .getByRole('button', { name: /Delete / })
+        .click();
+      await ui.confirmDelete();
+      await expect(page.getByText('Channel removed')).toBeVisible();
+      const stored = await getStored();
+      const parsed = JSON.parse(stored as string) as Array<{
+        enabled: boolean;
+        bindings: Array<{ platformUserId: string }>;
+      }>;
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0]).toMatchObject({ enabled: true });
+      expect(parsed[0]?.bindings[0]?.platformUserId).toBe('@main:example.org');
+    } finally {
+      await removeSecret(page, secretId);
+    }
+  });
+
   test('deleting a dropped duplicate row leaves the valid channel intact', async ({ page }) => {
     const ui = new BasePage(page);
     const tag = Date.now().toString(36);
