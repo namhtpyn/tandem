@@ -36,7 +36,7 @@ registerMatrixChannelAdapter();
 
 const log = consola.withTag('channels');
 
-const CHANNELS_KEY = 'channels';
+export const CHANNELS_KEY = 'channels';
 const CHANNEL_QUEUE = 'channels-inbound';
 const QUEUE_ATTEMPTS = 5;
 /** composer parity cap (tasks.create/answer: z.string().max(10_000)) */
@@ -57,50 +57,112 @@ export const channelConfigSchema = z.object({
 
 export type ChannelConfig = z.infer<typeof channelConfigSchema>;
 
-/** tolerant parse (SPEC: fail closed): a corrupt value reads as no channels;
- * invalid entries are skipped and logged, valid ones survive. */
-export function parseChannelConfigs(raw: string | null): ChannelConfig[] {
-  if (raw === null || raw.trim() === '') return [];
+/** the ADMIN write schema: same shape, but unknown keys refused at EVERY
+ * nesting level (API law: strict admin input; the runtime parser stays
+ * tolerant-strip for hand-edited values). Derived from the runtime schema's
+ * own shape so the two cannot drift. */
+export const adminChannelConfigSchema = z.strictObject({
+  ...channelConfigSchema.shape,
+  bindings: z.array(z.strictObject(channelConfigSchema.shape.bindings.unwrap().element.shape)),
+});
+
+export type ChannelEntryDiagnostic = {
+  /** the raw stored entry (unknown JSON — the UI shows what was stored) */
+  raw: unknown;
+  /** 'ok' = the runtime parser accepts this entry; 'dropped' = refused */
+  status: 'ok' | 'dropped';
+  /** drop reason (empty for ok entries) */
+  reason: string;
+  /** canonicalized config when parseable (schema-valid), else null */
+  cfg: ChannelConfig | null;
+};
+
+export type ChannelConfigInspection = {
+  entries: ChannelEntryDiagnostic[];
+  /** non-null when the raw value could not be an entry list at all */
+  corrupt: string | null;
+};
+
+/** per-entry inspection — the SINGLE source of truth shared by the runtime
+ * parser (tolerant skip) and the admin write path (strict refuse), so the two
+ * can never drift (SPEC: Channel settings UI). Validation pipeline mirrors
+ * parseChannelConfigs exactly: schema → registered kind → canonicalize →
+ * dedupe (enabled entries only join the seen-set — a disabled duplicate never
+ * shadows an enabled one, runtime parity). */
+export function inspectChannelConfigs(raw: string | null): ChannelConfigInspection {
+  if (raw === null || raw.trim() === '') return { entries: [], corrupt: null };
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    log.error('channels config is corrupt JSON — reading as no channels');
-    return [];
+    return { entries: [], corrupt: 'config is corrupt JSON — reading as no channels' };
   }
-  if (!Array.isArray(parsed)) {
-    log.error('channels config is not an array — reading as no channels');
-    return [];
-  }
-  const out: ChannelConfig[] = [];
+  if (!Array.isArray(parsed)) return { entries: [], corrupt: 'config is not an array — reading as no channels' };
+  const entries: ChannelEntryDiagnostic[] = [];
   const seen = new Set<string>();
+  const seenContent = new Set<string>();
   for (const entry of parsed) {
     const r = channelConfigSchema.safeParse(entry);
     if (!r.success) {
-      log.warn(
-        `channels config entry skipped: ${r.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
-      );
+      entries.push({
+        raw: entry,
+        status: 'dropped',
+        reason: r.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+        cfg: null,
+      });
       continue;
     }
-    if (!r.data.enabled) continue; // parse returns ENABLED configs only (SPEC)
     if (!registeredChannelKinds().includes(r.data.kind)) {
-      log.warn(`channels config entry skipped: kind ${r.data.kind} has no registered adapter`);
+      entries.push({
+        raw: entry,
+        status: 'dropped',
+        reason: `kind ${r.data.kind} has no registered adapter`,
+        cfg: null,
+      });
       continue;
     }
     // canonicalize BEFORE dedupe: trailing slash / case / default port are
     // the same homeserver and must collapse to one adapter
     const cfg = { ...r.data, homeserverUrl: normalizeHomeserver(r.data.homeserverUrl) };
+    // EXACT-content duplicates: byte-identical after canonicalization = ONE
+    // channel — keep the first, drop the rest. Row ops that target "the row
+    // with this exact content" (the settings card's fingerprint identity)
+    // must stay unambiguous: two identical rows collided fingerprints and
+    // delete-one removed both (r5 review)
+    const contentKey = JSON.stringify(cfg);
+    if (seenContent.has(contentKey)) {
+      entries.push({ raw: entry, status: 'dropped', reason: 'exact duplicate of a previous entry', cfg });
+      continue;
+    }
+    seenContent.add(contentKey);
     // duplicate adapter keys would share a checkpoint + event namespace and
     // silently shadow each other — keep the first, refuse the rest loudly
     const key = `${cfg.kind}:${cfg.homeserverUrl}`;
-    if (seen.has(key)) {
-      log.warn(`channels config entry skipped: duplicate adapter ${key} (one bot per homeserver in slice 1)`);
+    if (cfg.enabled && seen.has(key)) {
+      entries.push({
+        raw: entry,
+        status: 'dropped',
+        reason: `duplicate adapter ${key} (one bot per homeserver in slice 1)`,
+        cfg,
+      });
       continue;
     }
-    seen.add(key);
-    out.push(cfg);
+    entries.push({ raw: entry, status: 'ok', reason: '', cfg });
+    if (cfg.enabled) seen.add(key);
   }
-  return out;
+  return { entries, corrupt: null };
+}
+
+/** tolerant parse (SPEC: fail closed): a corrupt value reads as no channels;
+ * invalid entries are skipped and logged, valid ones survive. Derived from
+ * inspectChannelConfigs — the admin path refuses what this skips. */
+export function parseChannelConfigs(raw: string | null): ChannelConfig[] {
+  const insp = inspectChannelConfigs(raw);
+  if (insp.corrupt) log.error(`channels ${insp.corrupt}`);
+  for (const e of insp.entries) {
+    if (e.status === 'dropped') log.warn(`channels config entry skipped: ${e.reason}`);
+  }
+  return insp.entries.flatMap((e) => (e.status === 'ok' && e.cfg?.enabled && e.cfg ? [e.cfg] : []));
 }
 
 /** canonical homeserver URL: lowercase scheme/host, no default port, no
@@ -138,10 +200,9 @@ export function resolveBinding(cfg: ChannelConfig, platformUserId: string): stri
   return cfg.bindings.find((b) => b.platformUserId === platformUserId)?.userId ?? null;
 }
 
-function adapterKey(cfg: ChannelConfig): string {
+export function adapterKey(cfg: ChannelConfig): string {
   return `${cfg.kind}:${cfg.homeserverUrl}`;
 }
-
 function checkpointKey(cfg: ChannelConfig): string {
   return `channels:checkpoint:${cfg.kind}:${encodeURIComponent(cfg.homeserverUrl)}`;
 }
@@ -847,6 +908,9 @@ export async function writeChannelHealthStamp(): Promise<void> {
 // ---------- lifecycle (boot: adapters + workers + sweep) ----------
 
 const activeAdapters = new Map<string, ChannelAdapter>();
+/** the config each running adapter was STARTED with (JSON) — a stored-config
+ * edit under the same key means the running adapter is stale and restarts */
+const activeConfigs = new Map<string, string>();
 let workerHandle: { close: () => Promise<void> } | null = null;
 let outboxWorkerHandle: { close: () => Promise<void> } | null = null;
 // the boot sweep runs ONCE per process (r4 finding): the 30s partial-start
@@ -881,19 +945,45 @@ function buildAdapter(cfg: ChannelConfig, token: string): ChannelAdapter | null 
  * ORDER LAW: adapters start BEFORE the sweep — swept events route
  * immediately, and a missing adapter would silently swallow their acks. */
 export async function startChannels(): Promise<string[]> {
+  // serialized: the retry loop and the settings-change re-arm can both fire a
+  // start — two concurrent starts would double-start an adapter (two sync
+  // loops racing one checkpoint). The chain swallows rejections: one failed
+  // start must not poison the next caller's start.
+  const p = startChain.then(() => startChannelsInner());
+  startChain = p.catch(() => [] as string[]);
+  return p;
+}
+let startChain: Promise<string[]> = Promise.resolve([]);
+
+/** whether a running adapter must stop against the parsed configs: removed /
+ * disabled / CHANGED under its key (running adapters capture their start-time
+ * config — stale fingerprints restart) / dead (fatal token stop) */
+function adapterMustStop(key: string, cfgs: ChannelConfig[], adapter: ChannelAdapter): boolean {
+  const cfg = cfgs.find((c) => adapterKey(c) === key);
+  if (cfg === undefined || activeConfigs.get(key) !== JSON.stringify(cfg)) return true;
+  return !!(adapter.isLive && !adapter.isLive());
+}
+
+async function startChannelsInner(): Promise<string[]> {
   // shared test opt-out (TANDEM_NO_DISPATCHER=1): unit/e2e never open
   // adapters or queue workers
   if (env.TANDEM_NO_DISPATCHER) return [];
+  // NOTE: a DIRECT startChannels() after an explicit stopChannels is a
+  // deliberate restart (stop/start cycle law — re-sweeps). The STOPPED
+  // invariant protects only against the settings hook resurrecting the module.
   const cfgs = parseChannelConfigs(await getSetting(CHANNELS_KEY));
   const hub = await redisQueue();
 
-  // stop adapters whose config disappeared / was disabled / went DEAD
-  // (fatal token stop): a dead entry left in the map would defer forever
-  const wanted = new Set(cfgs.map(adapterKey));
+  // stop adapters whose config disappeared / was disabled / CHANGED / went
+  // DEAD: a dead entry left in the map would defer forever; a config edit
+  // under an unchanged key must restart the adapter too — the running adapter
+  // captured the OLD config (e.g. old token) in its start closure, and the
+  // runtime runs what is STORED, not what was started
   for (const [key, adapter] of activeAdapters) {
-    if (!wanted.has(key) || (adapter.isLive && !adapter.isLive())) {
+    if (adapterMustStop(key, cfgs, adapter)) {
       await adapter.stop();
       activeAdapters.delete(key);
+      activeConfigs.delete(key);
     }
   }
   const failed: string[] = [];
@@ -921,6 +1011,7 @@ export async function startChannels(): Promise<string[]> {
         },
       });
       activeAdapters.set(key, adapter);
+      activeConfigs.set(key, JSON.stringify(cfg));
       log.info(`channel started: ${cfg.kind} @ ${cfg.homeserverUrl} (${cfg.bindings.length} binding(s))`);
     } catch (e) {
       failed.push(key);
@@ -981,6 +1072,7 @@ export function ensureChannelsRunning(opts: { start: () => Promise<string[]>; in
   const retryMs = opts.intervalMs ?? 30_000;
   let timer: ReturnType<typeof setInterval> | null = null;
   let done = false;
+  channelsStopped = false; // a boot (re)start lifts the stopped invariant
   const attempt = () => {
     if (done) return;
     void opts
@@ -990,7 +1082,11 @@ export function ensureChannelsRunning(opts: { start: () => Promise<string[]>; in
         // success — those channels must keep retrying (r5 finding)
         if (failed.length === 0) {
           done = true;
+          // NULL the handle, not just clear it: rearm() checks `if (!timer)` —
+          // a stale truthy handle would skip recreating the interval and the
+          // next partial start would strand with zero retries (r1 review P1)
           if (timer) clearInterval(timer);
+          timer = null;
         } else {
           log.warn(`channels: ${failed.length} adapter(s) not live — retrying every ${retryMs / 1000}s`);
         }
@@ -999,12 +1095,64 @@ export function ensureChannelsRunning(opts: { start: () => Promise<string[]>; in
   };
   timer = setInterval(attempt, retryMs);
   attempt();
+  // settings-change re-arm (slice 4): a config edit after a clean start must
+  // apply immediately AND keep the partial-start law — a re-arm start with
+  // failures re-arms this loop (done flips back, timer recreated)
+  retryControls = {
+    rearm: () => {
+      done = false;
+      if (!timer) timer = setInterval(attempt, retryMs);
+      attempt();
+    },
+    stopTimer: () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+      done = true;
+    },
+  };
   return () => {
     if (timer) clearInterval(timer);
+    timer = null;
   };
 }
 
+let retryControls: { rearm: () => void; stopTimer: () => void } | null = null;
+/** the stopped invariant: stopChannels disarms the re-arm AND the retry loop —
+ * a stopped channels module stays stopped until the next boot */
+let channelsStopped = false;
+
+/** settings-update hook (settings router pattern, mirror of
+ * onDispatcherSettingsChanged): start runs against the COMMITTED value —
+ * added/enabled adapters start, removed/disabled ones stop, a config edit
+ * under an unchanged adapter key restarts that adapter. A start that leaves
+ * failures re-arms the boot retry loop (PARTIAL-START law). Never throws: a
+ * failed re-arm must not fail the settings write (the committed value is
+ * durable; the retry loop converges). A no-op after an explicit stopChannels
+ * — resurrection belongs to the boot hook alone. */
+export async function onChannelsSettingsChanged(start: () => Promise<string[]> = startChannels): Promise<void> {
+  if (channelsStopped) return;
+  try {
+    const failed = await start();
+    if (failed.length > 0) retryControls?.rearm();
+  } catch (e) {
+    retryControls?.rearm();
+    log.error('channels: re-arm after settings change failed — retry loop re-armed:', e);
+  }
+}
+
 export async function stopChannels(): Promise<void> {
+  // enforce the stopped invariant: disarm the settings-change re-arm AND the
+  // boot retry loop — after an explicit stopChannels nothing resurrects
+  // adapters/workers/timers (a later onChannelsSettingsChanged is a no-op);
+  // resurrection belongs to the boot hook alone
+  channelsStopped = true;
+  retryControls?.stopTimer();
+  retryControls = null;
+  // JOIN the start serialization: an in-flight re-arm start completes its
+  // writes first, then the teardown below stops everything it started — the
+  // final state is stopped, never a resurrected module (r3: a stop racing a
+  // start could leave live adapters + health tick after the stop returned)
+  await startChain.catch(() => [] as string[]);
   // disarm the health tick first: a stopped channels module must stop
   // stamping (the stale key is the probe's process-dead signal)
   if (healthTimer) {
@@ -1014,6 +1162,7 @@ export async function stopChannels(): Promise<void> {
   for (const [key, adapter] of activeAdapters) {
     await adapter.stop();
     activeAdapters.delete(key);
+    activeConfigs.delete(key);
   }
   await workerHandle?.close();
   workerHandle = null;
