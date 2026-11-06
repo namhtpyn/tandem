@@ -138,8 +138,12 @@ const emptyCopy = computed(() => {
     // narrows the same scoped list, so the sentence stays filter-relative
     // instead of claiming the project holds nothing
     const name = projectNameById.value.get(projectScopeId.value) ?? 'this project';
-    if (needsDecision.value) return `Nothing in ${name} matches your decision filter right now.`;
-    if (awaitingDecision.value) return `Nothing in ${name} matches your awaiting-decision filter right now.`;
+    // a live search narrows the same list — the obligation sentence must name it
+    // too, or it claims the project owes nothing while the search hides the task
+    const searchSuffix = searchDebounced.value ? ' and this search' : '';
+    if (needsDecision.value) return `Nothing in ${name} matches your decision filter${searchSuffix} right now.`;
+    if (awaitingDecision.value)
+      return `Nothing in ${name} matches your awaiting-decision filter${searchSuffix} right now.`;
     if (searchDebounced.value)
       return `No tasks in ${name} match this search${statusId.value !== null ? ' with this status' : ''}.`;
     if (statusId.value !== null) return `No tasks in ${name} with this status — try another filter.`;
@@ -215,6 +219,11 @@ const projectScopeItems = computed(() => {
   }
   return items;
 });
+/** create-default (#339): only a scope the project list resolves can seed the
+ *  editor — an unknown/deleted id would be submitted and rejected server-side */
+const projectScopeDefault = computed<string | null>(() =>
+  projectScopeId.value !== null && projectNameById.value.has(projectScopeId.value) ? projectScopeId.value : null,
+);
 const projectScopeValue = computed<string>({
   get: () => projectScopeId.value ?? NONE_ID,
   set: (v) => {
@@ -1103,6 +1112,7 @@ onServerPrefetch(() =>
           v-if="canWork && (!listFiltered || projectScopeId !== null)"
           icon="i-lucide-plus"
           label="New task"
+          data-testid="empty-new-task"
           @click="openEditor()"
         />
       </template>
@@ -1898,7 +1908,7 @@ onServerPrefetch(() =>
     <TaskEditorModal
       v-model:open="editorOpen"
       :task="editingTaskWithLock"
-      :default-project-id="projectScopeId"
+      :default-project-id="projectScopeDefault"
       @saved="onSaved"
     />
 

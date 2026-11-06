@@ -145,8 +145,12 @@ test('project scope: an empty project names itself and creates inside the scope'
   await expect(page.getByText(`No tasks in ${project} yet.`, { exact: false })).toBeVisible({ timeout: 15_000 });
 
   // creating from the scoped list inherits the scope — the new row appears here
-  // (the editor's Project pre-fills from the active scope), no dead end
-  await tasks.createTask({ title });
+  // (the editor's Project pre-fills from the active scope), no dead end. Uses the
+  // EMPTY-STATE CTA (not the toolbar entry) so that affordance is pinned too.
+  await page.getByTestId('empty-new-task').click();
+  await expect(page.getByRole('dialog').getByText(project, { exact: true }).first()).toBeVisible();
+  await tasks.fillTaskForm({ title });
+  await tasks.saveTask();
   await expect(tasks.rowFor(title)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(`No tasks in ${project}`, { exact: false })).toHaveCount(0);
 });
