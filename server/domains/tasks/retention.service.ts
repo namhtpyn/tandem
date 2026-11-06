@@ -123,9 +123,12 @@ export async function deleteExpiredSessions(now: Date, ex: DbExecutor = db): Pro
 /** the daily retention leg — runs the three legs then stamps, or warns
  * rate-limited and leaves the stamp (retry next tick). Never rejects (#172). */
 export async function runRetentionLeg(ex: DbExecutor = db): Promise<RetentionResult | null> {
+  // sync re-entry guard BEFORE any await: a settings read stalled past one tick
+  // (5s) must not let the next tick pass the guard too (r3 TOCTOU)
+  if (retentionState.running) return null;
+  if (Date.now() - retentionState.lastAt < RETENTION_INTERVAL_MS) return null;
+  retentionState.running = true;
   try {
-    if (retentionState.running) return null; // re-entry guard: one pass at a time
-    if (Date.now() - retentionState.lastAt < RETENTION_INTERVAL_MS) return null;
     const { getSetting, setSetting } = await import('../settings/settings.service');
     const stamp = await getSetting(RETENTION_STAMP_KEY);
     const stampMs = stamp ? Number(stamp) : 0;
@@ -133,20 +136,15 @@ export async function runRetentionLeg(ex: DbExecutor = db): Promise<RetentionRes
       retentionState.lastAt = Date.now(); // in-memory cache of the persisted stamp
       return null;
     }
-    retentionState.running = true;
-    try {
-      const cutoff = new Date(Date.now() - RETENTION_HORIZON_MS);
-      const result: RetentionResult = {
-        blanked: await blankRunTranscripts(cutoff, ex),
-        obligations: await deleteResolvedObligations(cutoff, ex),
-        sessions: await deleteExpiredSessions(new Date(), ex),
-      };
-      await setSetting(RETENTION_STAMP_KEY, String(Date.now()), ex);
-      retentionState.lastAt = Date.now();
-      return result;
-    } finally {
-      retentionState.running = false;
-    }
+    const cutoff = new Date(Date.now() - RETENTION_HORIZON_MS);
+    const result: RetentionResult = {
+      blanked: await blankRunTranscripts(cutoff, ex),
+      obligations: await deleteResolvedObligations(cutoff, ex),
+      sessions: await deleteExpiredSessions(new Date(), ex),
+    };
+    await setSetting(RETENTION_STAMP_KEY, String(Date.now()), ex);
+    retentionState.lastAt = Date.now();
+    return result;
   } catch (e) {
     const now = Date.now();
     if (now - retentionState.lastWarnAt >= RETENTION_WARN_INTERVAL_MS) {
@@ -156,5 +154,7 @@ export async function runRetentionLeg(ex: DbExecutor = db): Promise<RetentionRes
         .warn('retention leg failed (retrying next tick):', e instanceof Error ? e.message : e);
     }
     return null;
+  } finally {
+    retentionState.running = false; // cleared on EVERY path (success, throw, early cache return)
   }
 }

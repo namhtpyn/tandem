@@ -7,7 +7,8 @@
 // throttle + fault-isolation contract: one run per 24h keyed on the persisted
 // `retention_last_run` stamp (stamped ONLY on a full pass), a failed leg
 // leaves the stamp and retries next tick, and runRetentionLeg never rejects.
-import { inArray } from 'drizzle-orm';
+import { type SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
@@ -15,6 +16,7 @@ const h = vi.hoisted(() => ({
   storedStamp: null as string | null,
   failGetSetting: false,
   getSettingCalls: 0,
+  runningDuringSettingRead: false,
   legRows: 0,
   failLegs: false,
   warnCalls: 0,
@@ -23,6 +25,7 @@ const h = vi.hoisted(() => ({
 vi.mock('../../server/domains/settings/settings.service', () => ({
   getSetting: vi.fn(async () => {
     h.getSettingCalls += 1;
+    h.runningDuringSettingRead = retentionState.running;
     if (h.failGetSetting) throw new Error('db down (setting read)');
     return h.storedStamp;
   }),
@@ -66,25 +69,56 @@ import { mockDb, session, taskObligations, taskRuns } from './helpers/mock-db';
 
 const CUTOFF = new Date('2026-11-06T00:00:00Z');
 
-/** chainable fake executor for the behavior tests: scans chain, writes return
- * controlled rows (drizzle.mock can't execute — by design it throws). */
-function fakeExec() {
+/** recording fake executor: captures each write's table + set values + where
+ * clause (drizzle calls update(table).set(v).where(sql).returning() on the
+ * executor) so the tests pin the WRITE PATH the service actually issues —
+ * not hand-built replicas of it (r3 finding). Scans chain untracked. */
+function recordingExec() {
+  const calls: Array<{ kind: string; table: unknown; set?: Record<string, unknown>; where?: unknown }> = [];
+  let mode = 'select';
+  let cur: { kind: string; table: unknown; set?: Record<string, unknown>; where?: unknown } | null = null;
   const p: Record<string, unknown> = {
-    select: () => p,
+    select: () => {
+      mode = 'select';
+      return p;
+    },
     from: () => p,
     innerJoin: () => p,
-    where: () => p,
+    where: (w?: unknown) => {
+      // always record onto the current write: the bounded scan rides INSIDE the
+      // .where() argument and its select-chain runs mid-expression, AFTER
+      // update()/delete() — the write's own .where() call lands last and wins
+      if (cur) cur.where = w;
+      return p;
+    },
     orderBy: () => p,
     limit: () => p,
-    update: () => p,
-    set: () => p,
-    delete: () => p,
+    update: (t: unknown) => {
+      mode = 'update';
+      cur = { kind: 'update', table: t };
+      calls.push(cur);
+      return p;
+    },
+    set: (v: Record<string, unknown>) => {
+      if (cur && mode === 'update') cur.set = v;
+      return p;
+    },
+    delete: (t: unknown) => {
+      mode = 'delete';
+      cur = { kind: 'delete', table: t };
+      calls.push(cur);
+      return p;
+    },
     returning: async () => {
       if (h.failLegs) throw new Error('db down (leg write)');
       return Array.from({ length: h.legRows }, (_, i) => ({ id: `row-${i}` }));
     },
   };
-  return p;
+  return { exec: p, calls };
+}
+
+function fakeExec() {
+  return recordingExec().exec;
 }
 
 describe('retention scan shapes (#266 — category join + LIMIT, never a fetch-all)', () => {
@@ -140,27 +174,32 @@ describe('retention scan shapes (#266 — category join + LIMIT, never a fetch-a
     expect(params).toEqual([CUTOFF.toISOString(), RETENTION_BATCH]);
   });
 
-  it('leg 1 UPDATE blanks output + prompt in place (rows KEPT, never deleted)', () => {
-    const { sql } = mockDb().update(taskRuns).set({ output: '', prompt: null }).where(inArray(taskRuns.id, [])).toSQL();
-    expect(sql).toContain('update "task_runs" set');
-    expect(sql).toContain('"output" = $1');
-    expect(sql).toContain('"prompt" = $2');
+  it('leg 1 write path: the service\u2019s own UPDATE blanks EXACTLY output+prompt, id-scoped by the bounded drain scan (r3: pinned on the real path)', async () => {
+    const { exec, calls } = recordingExec();
+    await blankRunTranscripts(CUTOFF, exec);
+    const upd = calls.find((c) => c.kind === 'update');
+    expect(upd, 'leg 1 must issue an UPDATE').toBeTruthy();
+    expect(upd?.set).toEqual({ output: '', prompt: null }); // rows KEPT — only transcript text cleared
+    const { sql } = new PgDialect().sqlToQuery(upd?.where as SQL);
+    expect(upd?.where, 'the UPDATE must be id-scoped by the drain scan subquery').toBeTruthy();
+    expect(sql).toContain('"task_runs"."id" in'); // id-scoped write, never an unbounded UPDATE
     expect(sql.toLowerCase()).not.toContain('delete from');
   });
 
-  it('legs 2+3 issue real DELETEs on their tables, id-scoped by the bounded scan', () => {
-    const delOb = mockDb()
-      .delete(taskObligations)
-      .where(inArray(taskObligations.id, ['o-1']))
-      .toSQL();
-    const delSes = mockDb()
-      .delete(session)
-      .where(inArray(session.id, ['s-1']))
-      .toSQL();
-    expect(delOb.sql).toContain('delete from "task_obligations"');
-    expect(delOb.sql).toContain('"task_obligations"."id" in');
-    expect(delSes.sql).toContain('delete from "session"');
-    expect(delSes.sql).toContain('"session"."id" in');
+  it('legs 2+3 write paths: the service\u2019s own DELETEs, id-scoped by their bounded scans (r3: pinned on the real path)', async () => {
+    const { exec, calls } = recordingExec();
+    await deleteResolvedObligations(CUTOFF, exec);
+    const delOb = calls.find((c) => c.kind === 'delete' && c.table === taskObligations);
+    expect(delOb, 'obligation delete recorded').toBeTruthy();
+    expect(delOb?.where, 'obligation delete must be id-scoped by its scan').toBeTruthy();
+    const obSql = new PgDialect().sqlToQuery(delOb?.where as SQL).sql;
+    expect(obSql).toContain('"task_obligations"."id" in');
+    await deleteExpiredSessions(CUTOFF, exec);
+    const delSes = calls.find((c) => c.kind === 'delete' && c.table === session);
+    expect(delSes, 'session delete recorded').toBeTruthy();
+    expect(delSes?.where, 'session delete must be id-scoped by its scan').toBeTruthy();
+    const sesSql = new PgDialect().sqlToQuery(delSes?.where as SQL).sql;
+    expect(sesSql).toContain('"session"."id" in');
   });
 });
 
@@ -258,5 +297,11 @@ describe('retention leg behavior (#266 — throttle + stamp + fault isolation)',
     expect(result).toBeNull();
     expect(h.getSettingCalls).toBe(0); // re-entry returns before ANY work
     expect(h.settingWrites).toHaveLength(0);
+  });
+
+  it('the re-entry flag is set SYNCHRONOUSLY before the first await (r3 TOCTOU pin): already true during the settings read', async () => {
+    await runRetentionLeg(fakeExec());
+    expect(h.runningDuringSettingRead).toBe(true); // a stalled settings read cannot re-admit the next tick
+    expect(retentionState.running).toBe(false); // and cleared on completion
   });
 });
