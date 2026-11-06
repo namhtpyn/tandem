@@ -279,10 +279,12 @@ async function assignTo(row: TaskRow, employeeId: string | null | undefined) {
     message.value = next ? `Assigned to ${assigneeNameById.value.get(next) ?? 'employee'}` : 'Assignee cleared';
     messageOk.value = true;
     // SSE-down backstop: the list must refetch even without the change bus.
-    // The await lands the authoritative row in cache, so the optimistic entry
-    // can retire here — including when another user's write wins the race.
+    // Retire the overlay ONLY when a refetch actually landed — a failed refetch
+    // keeps the stale row, and dropping the overlay then would show a success
+    // banner over a reverted control; the rows watch retires it on the next
+    // good fetch instead.
     await queryClient.invalidateQueries({ queryKey: [CHANGE_RESOURCE.TASKS] });
-    pendingAssignee.value.delete(row.id);
+    if (!pagedQuery.isError.value) pendingAssignee.value.delete(row.id);
   } catch (e) {
     // drop the optimistic pick so the control snaps back to the stored row
     pendingAssignee.value.delete(row.id);
