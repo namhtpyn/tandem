@@ -8,6 +8,7 @@
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/vue-query';
 import { watchDebounced } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
+import type { LocationQueryRaw } from 'vue-router';
 
 import { CATEGORY, CHANGE_RESOURCE, RUN_STATUS } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
@@ -111,25 +112,6 @@ watch(
     if (next !== projectScopeId.value) projectScopeId.value = next;
   },
 );
-// the URL must describe the scope the page applies: a param that normalizes to
-// no scope, or to several values (blank siblings and untrimmed forms included),
-// is rewritten once on mount to the resolved single scope (or dropped).
-// Client-only — SSR must never navigate during setup.
-onMounted(() => {
-  const raw = route.query.project;
-  if (raw === undefined) return;
-  const values = Array.isArray(raw) ? raw : [raw];
-  const first = values[0];
-  const canonical =
-    projectScopeId.value !== null &&
-    values.length === 1 &&
-    typeof first === 'string' &&
-    first === first.trim() &&
-    scopeFromQuery(first) === projectScopeId.value;
-  if (!canonical) {
-    void router.replace({ query: { ...route.query, project: projectScopeId.value ?? undefined } });
-  }
-});
 // ASSIGNEE SCOPE (#353, ASSIGNEE SCOPE LAW): ONE optional assignee filter,
 // URL-synced by the exact project-scope contract — the URL is the source of
 // truth on load and on back/forward, the select writes it back, and a param
@@ -147,20 +129,36 @@ watch(
     if (next !== assigneeScopeId.value) assigneeScopeId.value = next;
   },
 );
+// the URL must describe the scopes the page applies: a param that normalizes to
+// no scope, or to several values (blank siblings and untrimmed forms included),
+// is rewritten once on mount to the resolved single scope (or dropped). ONE
+// replace covers BOTH scopes — two independent normalizers spread the same
+// stale route.query and the second clobbers the first's fix (#353 review r1).
+// Client-only — SSR must never navigate during setup.
 onMounted(() => {
-  const raw = route.query.assignee;
-  if (raw === undefined) return;
-  const values = Array.isArray(raw) ? raw : [raw];
-  const first = values[0];
-  const canonical =
-    assigneeScopeId.value !== null &&
-    values.length === 1 &&
-    typeof first === 'string' &&
-    first === first.trim() &&
-    scopeFromQuery(first) === assigneeScopeId.value;
-  if (!canonical) {
-    void router.replace({ query: { ...route.query, assignee: assigneeScopeId.value ?? undefined } });
+  const canonicalScope = (raw: unknown, resolved: string | null): boolean => {
+    if (raw === undefined) return true;
+    const values = Array.isArray(raw) ? raw : [raw];
+    const first = values[0];
+    return (
+      resolved !== null &&
+      values.length === 1 &&
+      typeof first === 'string' &&
+      first === first.trim() &&
+      scopeFromQuery(first) === resolved
+    );
+  };
+  const next: LocationQueryRaw = { ...route.query };
+  let changed = false;
+  if (!canonicalScope(route.query.project, projectScopeId.value)) {
+    next.project = projectScopeId.value ?? undefined;
+    changed = true;
   }
+  if (!canonicalScope(route.query.assignee, assigneeScopeId.value)) {
+    next.assignee = assigneeScopeId.value ?? undefined;
+    changed = true;
+  }
+  if (changed) void router.replace({ query: next });
 });
 // the list state a task detail must carry: its back link rebuilds this exact
 // list, so opening a task inside a scope never drops the scope (#341/#353)
@@ -302,12 +300,15 @@ const projectScopeItems = computed(() => {
 const projectScopeDefault = computed<string | null>(() =>
   projectScopeId.value !== null && projectNameById.value.has(projectScopeId.value) ? projectScopeId.value : null,
 );
-/** the empty-state create entry makes sense only when the scope is the ONLY
- *  active filter (a create lands in the scope, never in a search/status/
- *  obligation filter) — otherwise #210's toolbar entry is the create surface */
+/** the empty-state create entry makes sense only when the project scope is the
+ *  ONLY active filter (a create lands in the scope, never in a search/status/
+ *  obligation/assignee filter — the editor seeds the project only, so a create
+ *  under an assignee scope would be filtered out of the very list it came from) —
+ *  otherwise #210's toolbar entry is the create surface */
 const scopeOnlyFilter = computed(
   () =>
     projectScopeId.value !== null &&
+    assigneeScopeId.value === null &&
     !searchDebounced.value &&
     statusId.value === null &&
     !needsDecision.value &&
