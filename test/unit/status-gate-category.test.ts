@@ -143,6 +143,8 @@ function seedTask(statusId: string) {
 }
 
 beforeEach(() => {
+  h.taskRows.length = 0;
+  h.statuses.length = 0;
   h.flips = [];
   h.inserts = [];
   h.verdicts = [];

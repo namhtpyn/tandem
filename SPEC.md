@@ -892,6 +892,7 @@ non-positive deltas render no duration.
 - vitest unit suite: one disposable Postgres database per test file, created/dropped in `afterAll`; real migrations, real better-auth, real h3 events (real `createEvent` + a fake node req with body chunks)
 - coverage gates: 100% statements/branches/functions/lines; barrel/re-export files type-only modules and test-only modules are excluded
 - Playwright e2e: a built server against a dedicated `tandem_e2e` database; covers login, bad password, OIDC settings round-trip, health, gates
+- unit tests are order-independent: `sequence.shuffle` stays on, and every `vi.hoisted` holder is snapshotted when a test starts and restored when it ends, so a test's writes never reach the next one — writes made in `beforeAll` (or at module scope) are file state and persist for the rest of the file (test/hoisted-isolation.ts, installed by test/setup.ts); restoration is identity-preserving (containers and fixtures are put back in place; getters, readonly fields and class-instance internals are left alone) so mocks that captured a holder's references keep working; state the harness cannot reach — `WeakMap`/`WeakSet` contents, frozen objects, writes that land after the test ends (timers, unawaited promises), and tests running concurrently over one holder — is file state, and a residue assertion must live in the same test that produced it (#346)
 - `bun run typecheck` + `bun run build` clean in CI
 
 ## Deployment
