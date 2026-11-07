@@ -714,6 +714,169 @@ describe('stdio transport (slice 3, SPEC "stdio transport")', () => {
       expect(crash.detail).toContain('boom: bad config file');
     });
 
+    it('a refused handshake (stdin closed) with a STILL-RUNNING child reports its buffered stderr fast', async () => {
+      // deterministic EPIPE: a fake child whose handshake write always fails.
+      // Nothing can answer a request that never landed, so the probe must skip
+      // the read cap — and the child keeps stderr OPEN (no EOF), so bytes it
+      // already wrote must still be read (a drain-to-EOF would discard them).
+      const fakeChild = {
+        stdin: {
+          write: () => {
+            throw new Error('EPIPE: broken pipe, write');
+          },
+          flush: async () => {
+            throw new Error('EPIPE: broken pipe, write');
+          },
+        },
+        // never closes: a read here would stall until the 2s cap
+        stdout: new ReadableStream<Uint8Array>({
+          start() {},
+        }),
+        // the line is buffered, but the child (or a grandchild) holds the pipe
+        stderr: new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new TextEncoder().encode('fatal: token rejected by vault\n'));
+          },
+        }),
+        exited: new Promise<number>((resolve) => {
+          setTimeout(() => resolve(2), 1_200);
+        }),
+        kill: () => {},
+      };
+      const spawnSpy = vi.spyOn(Bun, 'spawn').mockReturnValue(fakeChild as never);
+      try {
+        const t0 = Date.now();
+        const r = await probeMcpStdio('/bin/stub', [], {}, 2_000);
+        expect(r.ok).toBe(false);
+        expect(r.detail).toContain('fatal: token rejected by vault');
+        expect(Date.now() - t0).toBeLessThan(1_800);
+      } finally {
+        spawnSpy.mockRestore();
+      }
+    });
+
+    it('a refused handshake with a fast exit reports the child stderr, never a bare write error', async () => {
+      const fakeChild = {
+        stdin: {
+          write: () => {
+            throw new Error('EPIPE: broken pipe, write');
+          },
+          flush: async () => {
+            throw new Error('EPIPE: broken pipe, write');
+          },
+        },
+        stdout: new ReadableStream<Uint8Array>({
+          start() {},
+        }),
+        stderr: new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new TextEncoder().encode('fatal: token rejected by vault\n'));
+            c.close();
+          },
+        }),
+        exited: Promise.resolve(2),
+        kill: () => {},
+      };
+      const spawnSpy = vi.spyOn(Bun, 'spawn').mockReturnValue(fakeChild as never);
+      try {
+        const r = await probeMcpStdio('/bin/stub', [], {}, 2_000);
+        expect(r.ok).toBe(false);
+        expect(r.detail).toContain('fatal: token rejected by vault');
+      } finally {
+        spawnSpy.mockRestore();
+      }
+    });
+
+    it('a clean exit that explained itself on stderr reports the stderr line, not a generic message', async () => {
+      const fakeChild = {
+        stdin: { write: () => 0, flush: async () => {} },
+        stdout: new ReadableStream<Uint8Array>({
+          start(c) {
+            c.close();
+          },
+        }),
+        stderr: new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new TextEncoder().encode('fatal: refused boot\n'));
+            c.close();
+          },
+        }),
+        exited: Promise.resolve(0),
+        kill: () => {},
+      };
+      const spawnSpy = vi.spyOn(Bun, 'spawn').mockReturnValue(fakeChild as never);
+      try {
+        const r = await probeMcpStdio('/bin/stub', [], {}, 2_000);
+        expect(r.ok).toBe(false);
+        expect(r.detail).toContain('fatal: refused boot');
+      } finally {
+        spawnSpy.mockRestore();
+      }
+    });
+
+    it('a stderr line split across chunks is reported complete, never truncated', async () => {
+      let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+      const fakeChild = {
+        stdin: {
+          write: () => {
+            throw new Error('EPIPE: broken pipe, write');
+          },
+          flush: async () => {
+            throw new Error('EPIPE: broken pipe, write');
+          },
+        },
+        stdout: new ReadableStream<Uint8Array>({
+          start() {},
+        }),
+        stderr: new ReadableStream<Uint8Array>({
+          start(c) {
+            controller = c;
+            c.enqueue(new TextEncoder().encode('fatal: token '));
+            setTimeout(() => controller?.enqueue(new TextEncoder().encode('rejected by vault\n')), 30);
+          },
+        }),
+        exited: new Promise<number>((resolve) => {
+          setTimeout(() => resolve(2), 1_200);
+        }),
+        kill: () => {},
+      };
+      const spawnSpy = vi.spyOn(Bun, 'spawn').mockReturnValue(fakeChild as never);
+      try {
+        const r = await probeMcpStdio('/bin/stub', [], {}, 2_000);
+        expect(r.ok).toBe(false);
+        expect(r.detail).toContain('fatal: token rejected by vault');
+      } finally {
+        spawnSpy.mockRestore();
+      }
+    });
+
+    it('a read timeout still reports the child stderr reason alongside the timeout', async () => {
+      const fakeChild = {
+        stdin: { write: () => 0, flush: async () => {} },
+        // silent forever: the initialize read hits its cap
+        stdout: new ReadableStream<Uint8Array>({
+          start() {},
+        }),
+        stderr: new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new TextEncoder().encode('fatal: no handshake because config missing\n'));
+            c.close();
+          },
+        }),
+        exited: Promise.resolve(2),
+        kill: () => {},
+      };
+      const spawnSpy = vi.spyOn(Bun, 'spawn').mockReturnValue(fakeChild as never);
+      try {
+        const r = await probeMcpStdio('/bin/stub', [], {}, 1_000);
+        expect(r.ok).toBe(false);
+        expect(r.detail).toContain('fatal: no handshake because config missing');
+        expect(r.detail).toContain('timed out');
+      } finally {
+        spawnSpy.mockRestore();
+      }
+    });
+
     it('KILL LAW: a probe never leaves the spawned process running', async () => {
       const pidFile = `${dirname(testFile)}/.mcp-stdio-silent-pid-${process.pid}`;
       const r = await probeMcpStdio(bun, [fixture('mcp-stdio-silent.mjs'), pidFile], {}, 500);
