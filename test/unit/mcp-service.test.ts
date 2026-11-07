@@ -714,10 +714,48 @@ describe('stdio transport (slice 3, SPEC "stdio transport")', () => {
       expect(crash.detail).toContain('boom: bad config file');
     });
 
-    it('a refused handshake (stdin closed) reports the child stderr — never a bare write error or the read cap', async () => {
+    it('a refused handshake (stdin closed) with a STILL-RUNNING child reports its buffered stderr fast', async () => {
       // deterministic EPIPE: a fake child whose handshake write always fails.
-      // The probe must not wait out the read cap (nothing can answer a request
-      // that never landed) and must surface the child's own error line.
+      // Nothing can answer a request that never landed, so the probe must skip
+      // the read cap — and the child keeps stderr OPEN (no EOF), so bytes it
+      // already wrote must still be read (a drain-to-EOF would discard them).
+      const fakeChild = {
+        stdin: {
+          write: () => {
+            throw new Error('EPIPE: broken pipe, write');
+          },
+          flush: async () => {
+            throw new Error('EPIPE: broken pipe, write');
+          },
+        },
+        // never closes: a read here would stall until the 2s cap
+        stdout: new ReadableStream<Uint8Array>({
+          start() {},
+        }),
+        // the line is buffered, but the child (or a grandchild) holds the pipe
+        stderr: new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new TextEncoder().encode('fatal: token rejected by vault\n'));
+          },
+        }),
+        exited: new Promise<number>((resolve) => {
+          setTimeout(() => resolve(2), 1_200);
+        }),
+        kill: () => {},
+      };
+      const spawnSpy = vi.spyOn(Bun, 'spawn').mockReturnValue(fakeChild as never);
+      try {
+        const t0 = Date.now();
+        const r = await probeMcpStdio('/bin/stub', [], {}, 2_000);
+        expect(r.ok).toBe(false);
+        expect(r.detail).toContain('fatal: token rejected by vault');
+        expect(Date.now() - t0).toBeLessThan(1_800);
+      } finally {
+        spawnSpy.mockRestore();
+      }
+    });
+
+    it('a refused handshake with a fast exit reports the child stderr, never a bare write error', async () => {
       const fakeChild = {
         stdin: {
           write: () => {
@@ -728,9 +766,7 @@ describe('stdio transport (slice 3, SPEC "stdio transport")', () => {
           },
         },
         stdout: new ReadableStream<Uint8Array>({
-          start(c) {
-            c.close();
-          },
+          start() {},
         }),
         stderr: new ReadableStream<Uint8Array>({
           start(c) {
@@ -743,11 +779,36 @@ describe('stdio transport (slice 3, SPEC "stdio transport")', () => {
       };
       const spawnSpy = vi.spyOn(Bun, 'spawn').mockReturnValue(fakeChild as never);
       try {
-        const t0 = Date.now();
         const r = await probeMcpStdio('/bin/stub', [], {}, 2_000);
         expect(r.ok).toBe(false);
         expect(r.detail).toContain('fatal: token rejected by vault');
-        expect(Date.now() - t0).toBeLessThan(1_800);
+      } finally {
+        spawnSpy.mockRestore();
+      }
+    });
+
+    it('a clean exit that explained itself on stderr reports the stderr line, not a generic message', async () => {
+      const fakeChild = {
+        stdin: { write: () => 0, flush: async () => {} },
+        stdout: new ReadableStream<Uint8Array>({
+          start(c) {
+            c.close();
+          },
+        }),
+        stderr: new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new TextEncoder().encode('fatal: refused boot\n'));
+            c.close();
+          },
+        }),
+        exited: Promise.resolve(0),
+        kill: () => {},
+      };
+      const spawnSpy = vi.spyOn(Bun, 'spawn').mockReturnValue(fakeChild as never);
+      try {
+        const r = await probeMcpStdio('/bin/stub', [], {}, 2_000);
+        expect(r.ok).toBe(false);
+        expect(r.detail).toContain('fatal: refused boot');
       } finally {
         spawnSpy.mockRestore();
       }

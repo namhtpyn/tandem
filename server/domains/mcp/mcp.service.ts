@@ -813,17 +813,32 @@ const probeFailureVerdict = (e: unknown): { ok: boolean; detail: string } => ({
   detail: `corrupt registry row: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300),
 });
 
-/** the child's first non-empty stderr line, read within a cap — a descendant
- *  holding the pipe open must never hang the probe */
+/** the child's first non-empty stderr text, read within a cap — a child (or a
+ *  descendant) that keeps the pipe open must never hang the probe, AND bytes it
+ *  already wrote must not be thrown away when the cap fires */
 async function firstStderrLine(stderr: ReadableStream<Uint8Array>, capMs = 1_000): Promise<string | null> {
-  const errText = await Promise.race([
-    new Response(stderr).text().catch(() => ''),
-    new Promise<string>((resolve) => {
-      setTimeout(() => resolve(''), capMs);
-    }),
-  ]);
+  const reader = stderr.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cap = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), capMs);
+  });
+  try {
+    for (;;) {
+      const chunk = await Promise.race([reader.read(), cap]);
+      if (!chunk || chunk.done) break; // cap fired, or the child closed stderr
+      buf += decoder.decode(chunk.value, { stream: true });
+      // the first non-empty text is the honest reason — no need to wait for a
+      // newline (or for EOF, which a grandchild holding the pipe never sends)
+      if (buf.trim()) break;
+    }
+  } finally {
+    clearTimeout(timer);
+    await reader.cancel().catch(() => {});
+  }
   return (
-    errText
+    buf
       .split('\n')
       .find((l) => l.trim())
       ?.trim() ?? null
@@ -838,17 +853,17 @@ async function verdictFromResponse(
   stderr: ReadableStream<Uint8Array>,
 ): Promise<{ ok: boolean; detail: string }> {
   if (!parsed) {
+    // probe law: the child's OWN first error line beats every generic message,
+    // whatever its exit code — an exit-0 server that explained itself on stderr
+    // must not degrade to "exited before responding". CAPPED, so a silent child
+    // or a descendant holding the pipe cannot hang the probe.
+    const firstErr = await firstStderrLine(stderr);
+    if (firstErr) return { ok: false, detail: firstErr.slice(0, 300) };
     if (typeof exitCode === 'number' && exitCode !== 0) {
-      // probe law: carry the FIRST error line (stderr beats the bare exit code);
-      // the drain is CAPPED — a descendant holding the pipe must not hang the probe
-      const firstErr = await firstStderrLine(stderr);
-      return { ok: false, detail: (firstErr ?? `server exited with code ${exitCode}`).trim().slice(0, 300) };
+      return { ok: false, detail: `server exited with code ${exitCode}` };
     }
     if (typeof exitCode === 'number') return { ok: false, detail: 'server exited before responding' };
-    // still-running child that closed its streams without answering (it refused
-    // the handshake): its stderr is the only honest reason — CAPPED like above
-    const firstErr = await firstStderrLine(stderr);
-    return { ok: false, detail: (firstErr ?? 'no JSON-RPC payload in server output').trim().slice(0, 300) };
+    return { ok: false, detail: 'no JSON-RPC payload in server output' };
   }
   if (parsed.error)
     return {
