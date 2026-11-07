@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { useQuery } from '@tanstack/vue-query';
 import { z } from 'zod';
 
+import { CHANGE_RESOURCE } from '#shared/enums';
 import { SERVER_UNREACHABLE_COPY } from '~/utils/copy';
 // Dashboard shell (Nuxt UI UDashboardGroup): login screen when unauthenticated,
 // sidebar + content when signed in. Session/auth-config via useState (app.vue).
@@ -21,8 +23,23 @@ const showRoleSuffix = computed(() => {
   return !!user && user.role.toLowerCase() !== user.name.trim().toLowerCase();
 });
 const { refreshSession } = useSessionRefreshing();
-const { $authClient } = useNuxtApp();
+const { $authClient, $orpc } = useNuxtApp();
 const toast = useToast();
+
+// DECISION-VISIBILITY LAW (SPEC): the Tasks nav item carries a live count of
+// the signed-in user's pending obligations — the personal decision queue is
+// visible from every surface without opening /tasks first. Disabled while
+// signed out: the login shell must never fire an auth-guarded query. Same query
+// key as TasksManager, so both surfaces share one cache entry and the TASKS
+// change resource refetches the badge with the list.
+const inboxLive = useQuery({
+  ...$orpc.tasks.inbox.queryOptions({ queryKey: [CHANGE_RESOURCE.TASKS, 'inbox'] }),
+  enabled: computed(() => !!session.value?.user),
+});
+const pendingDecisionCount = computed(() => {
+  const data = unref(inboxLive.data) as { items?: unknown[] } | undefined;
+  return data?.items?.length ?? 0;
+});
 
 const loginEmail = ref('');
 const loginPassword = ref('');
@@ -151,7 +168,14 @@ const nav = computed(() =>
           { label: 'Employees', icon: 'i-lucide-users', to: '/employees' },
         ]
       : []),
-    { label: 'Tasks', icon: 'i-lucide-list-todo', to: '/tasks' },
+    {
+      label: 'Tasks',
+      icon: 'i-lucide-list-todo',
+      to: '/tasks',
+      // DECISION-VISIBILITY LAW: my pending decisions, visible from every page.
+      // undefined at zero — the nav renders no badge (a 0 badge would read '0')
+      badge: pendingDecisionCount.value > 0 ? pendingDecisionCount.value : undefined,
+    },
     { label: 'Projects', icon: 'i-lucide-folder-kanban', to: '/projects' },
     ...(isAdmin.value ? [{ label: 'Settings', icon: 'i-lucide-settings', to: '/settings' }] : []),
   ].map((item) => ({

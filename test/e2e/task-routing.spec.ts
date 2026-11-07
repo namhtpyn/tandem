@@ -61,8 +61,22 @@ test('inbox toggle filters to tasks pending on me and shows a badge', async ({ p
   await expect(page.getByRole('link', { name })).toBeVisible();
   await expect(page.getByRole('link', { name: bystander })).toHaveCount(0);
 
-  // toggle off: back to the full list label
+  // DECISION-VISIBILITY LAW (#350): the toggle is URL-backed, and the shell
+  // nav's Tasks item carries the same pending count from every surface
+  await expect.poll(() => page.url()).toContain('inbox=1');
+  const navTasks = page.getByRole('link', { name: /^Tasks/ }).first();
+  await expect(navTasks).toContainText(String(inboxBefore + 1));
+
+  // deep link: a fresh load restores the personal queue (not just the badge)
+  await page.goto('/tasks?inbox=1');
+  await waitForHydration(page);
+  await expect(page.getByTestId('needs-decision-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('link', { name })).toBeVisible();
+  await expect(page.getByRole('link', { name: bystander })).toHaveCount(0);
+
+  // toggle off: the param clears and the full list returns
   await toggle.click();
+  await expect.poll(() => page.url()).not.toContain('inbox=1');
   await expect(toggle).toContainText('Needs my decision');
 });
 

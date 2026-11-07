@@ -58,13 +58,19 @@ watchDebounced(
 
 // server-side filters: status chips + needs-my-decision (inbox) + the
 // company-wide awaiting-decision queue — rows come pre-filtered from the API
-const statusId = ref<string | null>(null);
-const needsDecision = ref(false);
-// deep link: /tasks?awaiting=1 opens the company queue (#91); the toggle keeps
-// the URL in sync so a filtered view survives a share/reload
 const route = useRoute();
 const router = useRouter();
+const statusId = ref<string | null>(null);
+// DECISION-VISIBILITY LAW (#350): the personal inbox filter is URL-backed —
+// ?inbox=1 restores it on mount, every toggle writes/clears the param, and the
+// task-detail back link carries it (taskListQueryFrom), same as the awaiting chip
+const needsDecision = ref(route.query.inbox === '1');
+// deep link: /tasks?awaiting=1 opens the company queue (#91); the toggle keeps
+// the URL in sync so a filtered view survives a share/reload
 const awaitingDecision = ref(route.query.awaiting === '1');
+watch(needsDecision, (v) => {
+  void router.replace({ query: { ...route.query, inbox: v ? '1' : undefined } });
+});
 watch(awaitingDecision, (v) => {
   void router.replace({ query: { ...route.query, awaiting: v ? '1' : undefined } });
 });
@@ -77,7 +83,11 @@ const projectScopeId = ref<string | null>(scopeFromQuery(route.query.project));
 // the list state a task detail must carry: its back link rebuilds this exact
 // list, so opening a task inside a scope never drops the scope (#341)
 const detailQuery = computed(() =>
-  taskListQueryFrom({ project: projectScopeId.value, awaiting: awaitingDecision.value ? '1' : undefined }),
+  taskListQueryFrom({
+    project: projectScopeId.value,
+    awaiting: awaitingDecision.value ? '1' : undefined,
+    inbox: needsDecision.value ? '1' : undefined,
+  }),
 );
 watch(projectScopeId, (v) => {
   if (scopeFromQuery(route.query.project) === v) return;
