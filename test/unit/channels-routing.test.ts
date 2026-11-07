@@ -262,6 +262,7 @@ beforeEach(() => {
   mappingConflict = false;
   claimConflict = false;
   taskStatusCategory = 'ready';
+  seq = 0;
   addNote.mockReset();
   answerQuestion.mockReset();
   recordAssignment.mockReset();

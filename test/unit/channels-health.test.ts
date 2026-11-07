@@ -104,6 +104,7 @@ describe('channel health stamp', () => {
   beforeEach(async () => {
     settingsRows.clear();
     settingsWriteFail = false;
+    fetchStub.mockClear();
     vi.stubGlobal('fetch', fetchStub); // per test: unstubGlobals clears top-level stubs
     // detach every test adapter + disarm any tick: activeAdapters is module
     // state and tests shuffle — a leaked live stub would flip connected
