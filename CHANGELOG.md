@@ -1,3 +1,23 @@
+# [2.77.0](https://github.com/namhtpyn/tandem/compare/v2.76.1...v2.77.0) (2026-11-07)
+
+
+### Bug Fixes
+
+* **test:** r2 — top-level fetch mock reset + acp fake statics reset ([#346](https://github.com/namhtpyn/tandem/issues/346)) ([ba87066](https://github.com/namhtpyn/tandem/commit/ba87066d0bb6f352177951008db0c6337920707e))
+* **test:** r2 blind review — parse with a real AST, per-holder opt-out ([#346](https://github.com/namhtpyn/tandem/issues/346)) ([d4c9247](https://github.com/namhtpyn/tandem/commit/d4c9247b0702f0f9fe354e01d1fc7d212bbbdd12))
+* **test:** r3 — enforce hoisted isolation at runtime, not by static analysis ([#346](https://github.com/namhtpyn/tandem/issues/346)) ([1918b7d](https://github.com/namhtpyn/tandem/commit/1918b7d59ab0c9ccd09f26943dcdff74e40faa36))
+* **test:** r4 — harden the isolation harness (cycles, getters, Date, symbols) ([#346](https://github.com/namhtpyn/tandem/issues/346)) ([3748dd6](https://github.com/namhtpyn/tandem/commit/3748dd6969cec45d64cbb83886cd78fd16c89a39))
+* **test:** r5 — close the harness blind spots round 4 proved ([#346](https://github.com/namhtpyn/tandem/issues/346)) ([62ed0cb](https://github.com/namhtpyn/tandem/commit/62ed0cb3e03bad50e9e37a8fbfe0ec45cf56af74))
+* **test:** r6 — register function holders, per-view byte restore, container expandos ([#346](https://github.com/namhtpyn/tandem/issues/346)) ([4b5bd3f](https://github.com/namhtpyn/tandem/commit/4b5bd3ffbd8b509a429cdebc09a9d98d89e88a39))
+* **test:** r7 — frozen-safe restore, deleted-key restore, expandos pinned ([#346](https://github.com/namhtpyn/tandem/issues/346)) ([2e25fde](https://github.com/namhtpyn/tandem/commit/2e25fdec5494d68798e417c702fc1b430216daa0))
+* **test:** reset every mutated vi.hoisted holder + guard the rule ([#346](https://github.com/namhtpyn/tandem/issues/346)) ([3ed17a0](https://github.com/namhtpyn/tandem/commit/3ed17a0fedd019b535d59ce6193915395ab72fb8))
+* **test:** reset module-level fixture state per test ([#346](https://github.com/namhtpyn/tandem/issues/346)) ([efc725f](https://github.com/namhtpyn/tandem/commit/efc725fcfd7fefd34a6821d3a13c1c4ee1ee5924))
+
+
+### Features
+
+* **shell:** decision queue visibility — Tasks nav badge, ?inbox=1 deep link, mobile navbar pill ([#350](https://github.com/namhtpyn/tandem/issues/350)) ([0462ee6](https://github.com/namhtpyn/tandem/commit/0462ee6d477623a21a0b8583e59401d3dcf7013b))
+
 ## [2.76.1](https://github.com/namhtpyn/tandem/compare/v2.76.0...v2.76.1) (2026-11-07)
 
 
