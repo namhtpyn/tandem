@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { useQuery } from '@tanstack/vue-query';
 import { z } from 'zod';
 
+import { CHANGE_RESOURCE } from '#shared/enums';
 import { SERVER_UNREACHABLE_COPY } from '~/utils/copy';
 // Dashboard shell (Nuxt UI UDashboardGroup): login screen when unauthenticated,
 // sidebar + content when signed in. Session/auth-config via useState (app.vue).
@@ -21,8 +23,32 @@ const showRoleSuffix = computed(() => {
   return !!user && user.role.toLowerCase() !== user.name.trim().toLowerCase();
 });
 const { refreshSession } = useSessionRefreshing();
-const { $authClient } = useNuxtApp();
+const { $authClient, $orpc } = useNuxtApp();
 const toast = useToast();
+
+// DECISION-VISIBILITY LAW (SPEC): the Tasks nav item carries a live count of
+// the signed-in user's pending obligations — the personal decision queue is
+// visible from every surface without opening /tasks first. Disabled while
+// signed out AND on the forced-rotation screen (ROTATION LOCK: a locked session
+// may reach exactly one procedure — a shell query would 403 on every mount).
+// Same query key as TasksManager, so both surfaces share one cache entry and the
+// TASKS change resource refetches the badge with the list.
+const inboxLive = useQuery({
+  ...$orpc.tasks.inbox.queryOptions({ queryKey: [CHANGE_RESOURCE.TASKS, 'inbox'] }),
+  enabled: computed(() => !!session.value?.user && !session.value.user.mustChangePassword),
+});
+const pendingDecisionCount = computed(() => {
+  const data = unref(inboxLive.data) as { items?: unknown[] } | undefined;
+  return data?.items?.length ?? 0;
+});
+// Client-only paint: on /tasks this cache entry is dehydrated from the page's
+// suspense, so a server-rendered pill would hydrate against data the shell did
+// not have at render time (mismatch). The shell renders the pill after mount;
+// the count query itself still starts immediately, so the delay is one frame.
+const navBadgeReady = ref(false);
+onMounted(() => {
+  navBadgeReady.value = true;
+});
 
 const loginEmail = ref('');
 const loginPassword = ref('');
@@ -151,7 +177,15 @@ const nav = computed(() =>
           { label: 'Employees', icon: 'i-lucide-users', to: '/employees' },
         ]
       : []),
-    { label: 'Tasks', icon: 'i-lucide-list-todo', to: '/tasks' },
+    {
+      label: 'Tasks',
+      icon: 'i-lucide-list-todo',
+      to: '/tasks',
+      // DECISION-VISIBILITY LAW: custom trailing badge (rendered below) keeps
+      // the link's accessible name exactly 'Tasks' — a `badge` prop would fold
+      // the count into the link name and break exact-name nav selectors
+      slot: 'tasksNav',
+    },
     { label: 'Projects', icon: 'i-lucide-folder-kanban', to: '/projects' },
     ...(isAdmin.value ? [{ label: 'Settings', icon: 'i-lucide-settings', to: '/settings' }] : []),
   ].map((item) => ({
@@ -319,7 +353,31 @@ const nav = computed(() =>
           </NuxtLink>
         </template>
 
-        <UNavigationMenu :items="nav" orientation="vertical" class="px-2" />
+        <UNavigationMenu :items="nav" orientation="vertical" class="px-2">
+          <!-- DECISION-VISIBILITY LAW: the personal pending-decision count rides
+               the Tasks item as a trailing pill. aria-hidden keeps it OUT of the
+               link's accessible name (screen readers get the count on the Tasks
+               page's labelled toggle; e2e exact-name nav selectors stay valid). -->
+          <template #tasksNav-trailing>
+            <!-- error first: a failed count must not read as 'nothing pending'
+                 (same rule as the Tasks-page toggle's inbox-count-error) -->
+            <span
+              v-if="navBadgeReady && inboxLive.isError.value"
+              data-testid="nav-inbox-badge-error"
+              aria-hidden="true"
+              title="Couldn't load the decision count — reopen the page to retry"
+              class="bg-error/15 text-error inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
+              >!</span
+            >
+            <span
+              v-else-if="navBadgeReady && pendingDecisionCount > 0"
+              data-testid="nav-inbox-badge"
+              aria-hidden="true"
+              class="bg-accented text-default inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
+              >{{ pendingDecisionCount }}</span
+            >
+          </template>
+        </UNavigationMenu>
 
         <template #footer="{ collapsed }">
           <div class="flex w-full items-center gap-2" :class="collapsed ? 'flex-col' : ''">
