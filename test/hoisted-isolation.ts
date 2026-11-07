@@ -24,21 +24,52 @@ import { afterEach, beforeEach, vi } from 'vitest';
 
 type Holder = Record<PropertyKey, unknown>;
 
+type Extra = { keys: PropertyKey[]; data: Array<[PropertyKey, Snap]> };
+
 type Snap =
-  | { kind: 'array'; ref: unknown[]; items: Array<{ present: boolean; snap: Snap }> }
-  | { kind: 'map'; ref: Map<unknown, unknown>; entries: Array<[Snap, Snap]> }
-  | { kind: 'set'; ref: Set<unknown>; items: Snap[] }
+  | { kind: 'array'; ref: unknown[]; items: Array<{ present: boolean; snap: Snap }>; extra: Extra }
+  | { kind: 'map'; ref: Map<unknown, unknown>; entries: Array<[Snap, Snap]>; extra: Extra }
+  | { kind: 'set'; ref: Set<unknown>; items: Snap[]; extra: Extra }
   | { kind: 'object'; ref: Holder; allKeys: PropertyKey[]; data: Array<[PropertyKey, Snap]> }
-  | { kind: 'date'; ref: Date; time: number }
-  | { kind: 'bytes'; ref: ArrayBufferView; bytes: Uint8Array }
-  | { kind: 'buffer'; ref: ArrayBuffer; bytes: Uint8Array }
-  | { kind: 'params'; ref: URLSearchParams; query: string }
+  | { kind: 'date'; ref: Date; time: number; extra: Extra }
+  | { kind: 'bytes'; ref: ArrayBufferView; bytes: Uint8Array; extra: Extra }
+  | { kind: 'buffer'; ref: ArrayBuffer; bytes: Uint8Array; extra: Extra }
+  | { kind: 'params'; ref: URLSearchParams; query: string; extra: Extra }
   | { kind: 'value'; value: unknown };
 
 const holders: object[] = [];
 // keyed by the running test: `describe.concurrent` runs tests in parallel, so a
 // single pending slot would let one test's restore wipe another's state
 const pending = new Map<string, Snap[]>();
+
+/** own writable data props that are not container slots (expandos a test may hang) */
+function extrasOf(ref: object, skip: (key: PropertyKey) => boolean, seen: Map<object, Snap>): Extra {
+  const keys = Reflect.ownKeys(ref);
+  const data: Array<[PropertyKey, Snap]> = [];
+  for (const key of keys) {
+    if (skip(key)) continue;
+    const desc = Object.getOwnPropertyDescriptor(ref, key);
+    if (!desc || !('value' in desc) || desc.writable !== true) continue;
+    data.push([key, snapshot(desc.value, seen)]);
+  }
+  return { keys, data };
+}
+
+function restoreExtras(ref: object, extra: Extra, seen: Set<Snap>): void {
+  for (const key of Reflect.ownKeys(ref)) {
+    if (extra.keys.includes(key)) continue;
+    const desc = Object.getOwnPropertyDescriptor(ref, key);
+    if (!desc || desc.configurable === false) continue;
+    delete (ref as Record<PropertyKey, unknown>)[key];
+  }
+  for (const [key, item] of extra.data) {
+    const desc = Object.getOwnPropertyDescriptor(ref, key);
+    if (desc && (!('value' in desc) || desc.writable !== true)) continue;
+    (ref as Record<PropertyKey, unknown>)[key] = restoreSnap(item, seen);
+  }
+}
+
+const NOT_INDEX = (key: PropertyKey): boolean => typeof key === 'string' && /^\d+$/.test(key);
 
 function isPlain(value: unknown): value is Holder {
   if (value === null || typeof value !== 'object') return false;
@@ -47,12 +78,26 @@ function isPlain(value: unknown): value is Holder {
 }
 
 function snapshot(value: unknown, seen = new Map<object, Snap>()): Snap {
+  if (typeof value === 'function') {
+    // a hoisted function holder (`vi.hoisted(() => vi.fn())`): own writable props
+    // (custom fields tests hang on the mock) are restored; vitest's mock internals
+    // are non-writable, so they are left to `restoreMocks`
+    const fnSnap: Snap = { kind: 'object', ref: value as unknown as Holder, allKeys: Reflect.ownKeys(value), data: [] };
+    seen.set(value, fnSnap);
+    for (const key of fnSnap.allKeys) {
+      const desc = Object.getOwnPropertyDescriptor(value, key);
+      if (!desc || !('value' in desc) || desc.writable !== true) continue;
+      fnSnap.data.push([key, snapshot(desc.value, seen)]);
+    }
+    return fnSnap;
+  }
   if (typeof value !== 'object' || value === null) return { kind: 'value', value };
   const known = seen.get(value);
   if (known) return known;
   if (Array.isArray(value)) {
-    const snap: Snap = { kind: 'array', ref: value, items: [] };
+    const snap: Snap = { kind: 'array', ref: value, items: [], extra: { keys: [], data: [] } };
     seen.set(value, snap);
+    snap.extra = extrasOf(value, (key) => key === 'length' || NOT_INDEX(key), seen);
     snap.items = Array.from({ length: value.length }, (_, index) =>
       index in value
         ? { present: true, snap: snapshot(value[index], seen) }
@@ -61,32 +106,34 @@ function snapshot(value: unknown, seen = new Map<object, Snap>()): Snap {
     return snap;
   }
   if (value instanceof Map) {
-    const snap: Snap = { kind: 'map', ref: value, entries: [] };
+    const snap: Snap = { kind: 'map', ref: value, entries: [], extra: { keys: [], data: [] } };
     seen.set(value, snap);
+    snap.extra = extrasOf(value, () => false, seen);
     snap.entries = [...value.entries()].map(([key, item]) => [snapshot(key, seen), snapshot(item, seen)]);
     return snap;
   }
   if (value instanceof Set) {
-    const snap: Snap = { kind: 'set', ref: value, items: [] };
+    const snap: Snap = { kind: 'set', ref: value, items: [], extra: { keys: [], data: [] } };
     seen.set(value, snap);
+    snap.extra = extrasOf(value, () => false, seen);
     snap.items = [...value].map((item) => snapshot(item, seen));
     return snap;
   }
-  if (value instanceof Date) return { kind: 'date', ref: value, time: value.getTime() };
-  if (ArrayBuffer.isView(value)) return { kind: 'bytes', ref: value, bytes: new Uint8Array(value.buffer.slice(0)) };
-  if (value instanceof ArrayBuffer) return { kind: 'buffer', ref: value, bytes: value.slice(0) };
-  if (value instanceof URLSearchParams) return { kind: 'params', ref: value, query: value.toString() };
-  if (typeof value === 'function') {
-    // function holders (vi.fn(...) hoisted handles): own writable props only
-    const snap: Snap = { kind: 'object', ref: value as unknown as Holder, allKeys: Reflect.ownKeys(value), data: [] };
-    seen.set(value, snap);
-    for (const key of snap.allKeys) {
-      const desc = Object.getOwnPropertyDescriptor(value, key);
-      if (!desc || !('value' in desc) || desc.writable !== true) continue;
-      snap.data.push([key, snapshot(desc.value, seen)]);
-    }
-    return snap;
+  if (value instanceof Date)
+    return { kind: 'date', ref: value, time: value.getTime(), extra: extrasOf(value, () => false, seen) };
+  if (ArrayBuffer.isView(value)) {
+    const view = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    return { kind: 'bytes', ref: value, bytes: view.slice(), extra: extrasOf(value, () => false, seen) };
   }
+  if (value instanceof ArrayBuffer)
+    return {
+      kind: 'buffer',
+      ref: value,
+      bytes: new Uint8Array(value.slice(0)),
+      extra: extrasOf(value, () => false, seen),
+    };
+  if (value instanceof URLSearchParams)
+    return { kind: 'params', ref: value, query: value.toString(), extra: extrasOf(value, () => false, seen) };
   if (isPlain(value)) {
     const snap: Snap = { kind: 'object', ref: value, allKeys: Reflect.ownKeys(value), data: [] };
     seen.set(value, snap);
@@ -120,35 +167,42 @@ function restoreSnap(snap: Snap, seen = new Set<Snap>()): unknown {
       if (!item?.present) delete snap.ref[index];
       else snap.ref[index] = item.value;
     }
+    restoreExtras(snap.ref, snap.extra, seen);
     return snap.ref;
   }
   if (snap.kind === 'map') {
     const entries = snap.entries.map(([key, item]) => [restoreSnap(key, seen), restoreSnap(item, seen)] as const);
     snap.ref.clear();
     for (const [key, item] of entries) snap.ref.set(key, item);
+    restoreExtras(snap.ref, snap.extra, seen);
     return snap.ref;
   }
   if (snap.kind === 'set') {
     const items = snap.items.map((item) => restoreSnap(item, seen));
     snap.ref.clear();
     for (const item of items) snap.ref.add(item);
+    restoreExtras(snap.ref, snap.extra, seen);
     return snap.ref;
   }
   if (snap.kind === 'date') {
     snap.ref.setTime(snap.time);
+    restoreExtras(snap.ref, snap.extra, seen);
     return snap.ref;
   }
   if (snap.kind === 'bytes') {
-    new Uint8Array(snap.ref.buffer).set(snap.bytes);
+    new Uint8Array(snap.ref.buffer, snap.ref.byteOffset, snap.ref.byteLength).set(snap.bytes);
+    restoreExtras(snap.ref, snap.extra, seen);
     return snap.ref;
   }
   if (snap.kind === 'buffer') {
     new Uint8Array(snap.ref).set(snap.bytes);
+    restoreExtras(snap.ref, snap.extra, seen);
     return snap.ref;
   }
   if (snap.kind === 'params') {
     for (const key of [...snap.ref.keys()]) snap.ref.delete(key);
     for (const [key, value] of new URLSearchParams(snap.query)) snap.ref.append(key, value);
+    restoreExtras(snap.ref, snap.extra, seen);
     return snap.ref;
   }
   for (const key of Reflect.ownKeys(snap.ref)) {
@@ -171,7 +225,7 @@ export function installHoistedIsolation(): void {
   const original = api.hoisted.bind(vi);
   api.hoisted = (<T>(factory: () => T): T => {
     const value = original(factory);
-    if (typeof value === 'object' && value !== null) holders.push(value);
+    if (value !== null && (typeof value === 'object' || typeof value === 'function')) holders.push(value);
     return value;
   }) as typeof api.hoisted;
 

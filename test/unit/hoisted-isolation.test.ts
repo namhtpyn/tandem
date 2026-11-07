@@ -29,6 +29,22 @@ const h = vi.hoisted(() => {
   };
 });
 
+// a function-valued holder: own props tests hang on the mock must be restored
+const fnHolder = vi.hoisted(() => {
+  const fn = vi.fn(() => 'ok') as ReturnType<typeof vi.fn> & { tag?: string };
+  fn.tag = 'base';
+  return fn;
+});
+
+// an ArrayBuffer plus a subarray view over it: the view's restore must write only
+// its own byte range, and the buffer's restore covers the rest
+const bytes = vi.hoisted(() => {
+  const raw = new ArrayBuffer(8);
+  const view = new Uint8Array(raw, 2, 4);
+  view.set([7, 8, 9, 10]);
+  return { raw, view };
+});
+
 // a cyclic fixture: restore must walk it without recursing forever
 const cyclic = vi.hoisted(() => {
   type Node = { name: string; child?: Node };
@@ -59,6 +75,11 @@ function assertClean(): void {
   expect(cyclic.graph.child?.name).toBe('child');
   expect(cyclic.graph.child?.child).toBe(cyclic.graph);
   expect(capturedRows).toEqual([]);
+  expect(fnHolder.tag).toBe('base');
+  expect([...bytes.view]).toEqual([7, 8, 9, 10]);
+  expect([...new Uint8Array(bytes.raw)]).toEqual([0, 0, 7, 8, 9, 10, 0, 0]);
+  expect((h.rows as unknown as Record<string, unknown>).note).toBeUndefined();
+  expect('extra' in h.nested).toBe(false);
 }
 
 describe('hoisted holder isolation', () => {
@@ -115,6 +136,27 @@ describe('hoisted holder isolation', () => {
     h.rows = [marker('replaced')];
     h.nested = { open: true, deep: { count: 9 } };
     expect(h.rows).toEqual([marker('replaced')]);
+  });
+
+  it('a function holder keeps its own props across tests', () => {
+    assertClean();
+    fnHolder.tag = 'dirty';
+    fnHolder('call');
+    expect(fnHolder.tag).toBe('dirty');
+  });
+
+  it('an ArrayBuffer and a subarray over it restore only their own bytes', () => {
+    assertClean();
+    new Uint8Array(bytes.raw)[0] = 42;
+    bytes.view[3] = 99;
+  });
+
+  it('container expandos and added keys are removed, deleted keys come back', () => {
+    assertClean();
+    (h.rows as unknown as Record<string, unknown>).note = 'sticky';
+    (h.nested as Record<string, unknown>).extra = 1;
+    delete (h.nested as Record<string, unknown>).deep;
+    expect('deep' in h.nested).toBe(false);
   });
 
   it('resetting in place keeps a captured reference pointing at the array', () => {
@@ -178,7 +220,6 @@ describe.concurrent('concurrent tests over a shared holder', () => {
 
 afterAll(() => {
   // afterAll runs after the last restore: a file's trailing state must be clean
-  expect(h.rows).toEqual([]);
-  expect(h.seen.size).toBe(0);
-  expect([...h.bytes]).toEqual([1, 2, 3]);
+  assertClean();
+  expect(h.seedRows).toEqual(['seeded-once']);
 });
