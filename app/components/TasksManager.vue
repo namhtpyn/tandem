@@ -69,11 +69,31 @@ const needsDecision = ref(route.query.inbox === '1');
 // the URL in sync so a filtered view survives a share/reload
 const awaitingDecision = ref(route.query.awaiting === '1');
 watch(needsDecision, (v) => {
+  if ((route.query.inbox === '1') === v) return;
   void router.replace({ query: { ...route.query, inbox: v ? '1' : undefined } });
 });
 watch(awaitingDecision, (v) => {
+  if ((route.query.awaiting === '1') === v) return;
   void router.replace({ query: { ...route.query, awaiting: v ? '1' : undefined } });
 });
+// URL → state, the other half of both toggles: a query-only navigation (e.g.
+// clicking the Tasks sidebar link while already on /tasks) does NOT remount the
+// page, so without this the ref would keep filtering while the URL says
+// unfiltered — the URL is the source of truth for list state (TASK SCOPE LAW)
+watch(
+  () => route.query.inbox,
+  (v) => {
+    const on = v === '1';
+    if (on !== needsDecision.value) needsDecision.value = on;
+  },
+);
+watch(
+  () => route.query.awaiting,
+  (v) => {
+    const on = v === '1';
+    if (on !== awaitingDecision.value) awaitingDecision.value = on;
+  },
+);
 // PROJECT SCOPE (#339, TASK SCOPE LAW): ONE optional project filter, URL-synced
 // like the awaiting toggle so a scoped view survives share/reload. The URL is
 // the source of truth on load and on back/forward; the ref change writes it back.

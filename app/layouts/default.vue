@@ -172,9 +172,10 @@ const nav = computed(() =>
       label: 'Tasks',
       icon: 'i-lucide-list-todo',
       to: '/tasks',
-      // DECISION-VISIBILITY LAW: my pending decisions, visible from every page.
-      // undefined at zero — the nav renders no badge (a 0 badge would read '0')
-      badge: pendingDecisionCount.value > 0 ? pendingDecisionCount.value : undefined,
+      // DECISION-VISIBILITY LAW: custom trailing badge (rendered below) keeps
+      // the link's accessible name exactly 'Tasks' — a `badge` prop would fold
+      // the count into the link name and break exact-name nav selectors
+      slot: 'tasksNav',
     },
     { label: 'Projects', icon: 'i-lucide-folder-kanban', to: '/projects' },
     ...(isAdmin.value ? [{ label: 'Settings', icon: 'i-lucide-settings', to: '/settings' }] : []),
@@ -343,7 +344,21 @@ const nav = computed(() =>
           </NuxtLink>
         </template>
 
-        <UNavigationMenu :items="nav" orientation="vertical" class="px-2" />
+        <UNavigationMenu :items="nav" orientation="vertical" class="px-2">
+          <!-- DECISION-VISIBILITY LAW: the personal pending-decision count rides
+               the Tasks item as a trailing pill. aria-hidden keeps it OUT of the
+               link's accessible name (screen readers get the count on the Tasks
+               page's labelled toggle; e2e exact-name nav selectors stay valid). -->
+          <template #tasksNav-trailing>
+            <span
+              v-if="pendingDecisionCount > 0"
+              data-testid="nav-inbox-badge"
+              aria-hidden="true"
+              class="bg-accented text-default inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
+              >{{ pendingDecisionCount }}</span
+            >
+          </template>
+        </UNavigationMenu>
 
         <template #footer="{ collapsed }">
           <div class="flex w-full items-center gap-2" :class="collapsed ? 'flex-col' : ''">
