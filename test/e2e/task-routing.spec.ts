@@ -18,6 +18,9 @@ test('inbox toggle filters to tasks pending on me and shows a badge', async ({ p
   await expect(page.getByTestId('inbox-count-pending')).toHaveCount(0, { timeout: 10_000 });
   const inboxBadge = page.getByTestId('inbox-count');
   const inboxBefore = (await inboxBadge.count()) ? Number(await inboxBadge.textContent()) || 0 : 0;
+  // absent at zero — a 0 badge would read as a count
+  if (inboxBefore > 0) await expect(page.getByTestId('nav-inbox-badge')).toHaveText(String(inboxBefore));
+  else await expect(page.getByTestId('nav-inbox-badge')).toHaveCount(0);
 
   // task assigned to admin (the logged-in user) and in progress, so Ask routes
   // the question to the owner (= admin) -> inbox obligation on the same user
@@ -61,8 +64,62 @@ test('inbox toggle filters to tasks pending on me and shows a badge', async ({ p
   await expect(page.getByRole('link', { name })).toBeVisible();
   await expect(page.getByRole('link', { name: bystander })).toHaveCount(0);
 
-  // toggle off: back to the full list label
+  // DECISION-VISIBILITY LAW (#350): the toggle is URL-backed, and the shell
+  // nav's Tasks item carries the same pending count from every surface
+  await expect.poll(() => page.url()).toContain('inbox=1');
+  await expect(page.getByTestId('nav-inbox-badge')).toHaveText(String(inboxBefore + 1));
+
+  // the shell badge is NOT the /tasks page's own prefetch: a page with no inbox
+  // query of its own still shows the count (the layout is the source)
+  await page.goto('/employees');
+  await waitForHydration(page);
+  await expect(page.getByTestId('nav-inbox-badge')).toHaveText(String(inboxBefore + 1));
+
+  // mobile: the sidebar is a closed drawer below lg — the navbar pill is the
+  // one-tap entry to the same queue, on every page
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await waitForHydration(page);
+  const mobileBadge = page.getByTestId('nav-inbox-badge-mobile');
+  await expect(mobileBadge).toHaveText(String(inboxBefore + 1));
+  await mobileBadge.click();
+  await expect.poll(() => page.url()).toContain('/tasks?inbox=1');
+  await expect(page.getByTestId('needs-decision-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await page.setViewportSize({ width: 1280, height: 720 });
+
+  // deep link: a fresh load restores the personal queue (not just the badge)
+  await page.goto('/tasks?inbox=1');
+  await waitForHydration(page);
+  await expect(page.getByTestId('needs-decision-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('link', { name })).toBeVisible();
+  await expect(page.getByRole('link', { name: bystander })).toHaveCount(0);
+
+  // drill-down round-trip: the detail URL carries the queue, Back rebuilds it
+  await page.getByRole('link', { name }).first().click();
+  await expect.poll(() => page.url()).toContain('inbox=1');
+  await page.getByRole('link', { name: 'Back to tasks' }).first().click();
+  await expect.poll(() => page.url()).toContain('/tasks?');
+  await expect(page.getByTestId('needs-decision-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('link', { name })).toBeVisible();
+
+  // AT parity: the digits are decorative; the count rides the link name as
+  // words — Chrome joins element contributions with a single space
+  const navTasksLink = page
+    .getByRole('link', { name: new RegExp(`^Tasks( ${inboxBefore + 1} decisions? waiting on you)?$`) })
+    .first();
+  await expect(navTasksLink).toHaveCount(1);
+
+  // URL is the source of truth: a query-only nav click clears the filter
+  await navTasksLink.click();
+  await expect.poll(() => page.url()).not.toContain('inbox=1');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('link', { name: bystander })).toBeVisible();
+
+  // state → URL: toggling on writes the param, toggling off clears it
   await toggle.click();
+  await expect.poll(() => page.url()).toContain('inbox=1');
+  await toggle.click();
+  await expect.poll(() => page.url()).not.toContain('inbox=1');
   await expect(toggle).toContainText('Needs my decision');
 });
 

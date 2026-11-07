@@ -84,6 +84,7 @@ const cards = computed(() => [
       <UDashboardNavbar title="Overview" :ui="{ root: 'lg:px-8' }">
         <template #leading>
           <UDashboardSidebarCollapse />
+          <MobileDecisionBadge />
         </template>
       </UDashboardNavbar>
       <!-- top-aligned: content sits under the navbar and the empty space falls

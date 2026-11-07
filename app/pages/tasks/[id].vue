@@ -177,6 +177,12 @@ onServerPrefetch(() => Promise.all([taskQuery.suspense(), statusesLive.suspense(
   <UDashboardPanel :ui="{ body: 'p-0 sm:p-0' }">
     <template #body>
       <div class="task-gutter p-4 sm:p-6 lg:p-8">
+        <!-- DECISION-VISIBILITY LAW: this page has no dashboard navbar, so the
+             mobile decision pill renders here on EVERY branch (pending/error/
+             not-found/task) — top-right, one tap into the personal queue -->
+        <div class="flex justify-end lg:hidden">
+          <MobileDecisionBadge />
+        </div>
         <!-- pending: client nav never warms this key — hold a skeleton, never the
              not-found copy, until the query settles -->
         <div v-if="tasksPending" class="space-y-4" aria-busy="true">

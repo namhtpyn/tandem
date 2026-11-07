@@ -10,6 +10,7 @@ useHead({ title: 'Projects' });
       <UDashboardNavbar title="Projects" :ui="{ root: 'lg:px-8' }">
         <template #leading>
           <UDashboardSidebarCollapse />
+          <MobileDecisionBadge />
         </template>
       </UDashboardNavbar>
       <div class="space-y-6 p-4 sm:p-6 lg:p-8">

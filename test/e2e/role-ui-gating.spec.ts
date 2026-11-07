@@ -6,6 +6,13 @@ import { test } from './helpers/cleanup';
 import { E2E_DATABASE_URL } from './helpers/env';
 import { waitForHydration } from './helpers/login';
 
+/** nav-link locator: the Tasks item appends the personal decision count as
+ *  words when one is pending (DECISION-VISIBILITY LAW), so exact 'Tasks' only
+ *  holds at zero — pin the optional suffix instead of the bare label. */
+function navLink(page: Page, label: string) {
+  return page.getByRole('link', { name: new RegExp(`^${label}( \\d+ decisions? waiting on you)?$`) });
+}
+
 // SPEC "Roles & access — UI tier visibility" (#263): the UI renders no verb
 // above the viewer's tier. The nav filters admin-surface items to ADMIN, the
 // Settings page renders its cards to ADMIN only, and the admin managers
@@ -146,7 +153,7 @@ test.describe('role UI gating (#263)', () => {
         await expect(emp.getByRole('link', { name: label, exact: true })).toHaveCount(0);
       }
       for (const label of ['Overview', 'Tasks', 'Projects']) {
-        await expect(emp.getByRole('link', { name: label, exact: true })).toHaveCount(1);
+        await expect(navLink(emp, label)).toHaveCount(1);
       }
 
       // ---- /settings: cards gone, read-only note ----
@@ -332,7 +339,7 @@ test.describe('role UI gating (#263)', () => {
     // the page fixture starts at about:blank — navigate explicitly
     await page.goto('/');
     for (const label of ['Overview', 'Vault', 'MCP', 'Environments', 'Employees', 'Tasks', 'Projects', 'Settings']) {
-      await expect(page.getByRole('link', { name: label, exact: true })).toHaveCount(1);
+      await expect(navLink(page, label)).toHaveCount(1);
     }
     await page.goto('/settings');
     await expect(page.getByRole('heading', { name: 'General' })).toBeVisible();

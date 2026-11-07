@@ -10,6 +10,7 @@ useHead({ title: 'Tasks' });
       <UDashboardNavbar :ui="{ root: 'lg:px-8' }">
         <template #leading>
           <UDashboardSidebarCollapse />
+          <MobileDecisionBadge />
         </template>
         <!-- title + subtitle are ONE unit in the navbar — a subtitle floating
              under the bar reads as an orphan; hidden on mobile -->
