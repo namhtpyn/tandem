@@ -30,6 +30,11 @@ test('board view renders columns from statuses and moves a task by drag & drop',
   // drag the card onto the Doing column — the drop IS the status move
   // (cards carry no in-card status select; the column owns the status)
   const doingCol = columns.filter({ hasText: 'Doing' }).first();
+  // the board sits below the list toolbar/filter row, so at 720p the columns
+  // are taller than the viewport: scroll the drop column fully into view first —
+  // locator.dragTo computes its source point before its own target scroll, and
+  // a mid-drag page scroll lands the press off the card (no dragstart)
+  await doingCol.scrollIntoViewIfNeeded();
   await todoCol.getByRole('link', { name: title }).dragTo(doingCol);
   await expect(doingCol.getByRole('link', { name: title })).toBeVisible({ timeout: 10_000 });
   await expect(todoCol.getByRole('link', { name: title })).toHaveCount(0, { timeout: 10_000 });
