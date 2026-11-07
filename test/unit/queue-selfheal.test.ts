@@ -6,6 +6,8 @@
 // never-throwing ping() for the watchdog stamp.
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { exemptHoistedIsolation } from '../hoisted-isolation';
+
 type Strategy = (retries: number) => number | Error;
 type SocketOpts = { connectTimeout?: number; reconnectStrategy?: Strategy };
 type ClientOpts = { url: string; socket?: SocketOpts };
@@ -15,9 +17,10 @@ type FakeClient = {
   ping: () => Promise<string>;
 };
 
-// `created` is written only by the mock factory (module scope, once per file) and by
-// the file's beforeAll — the domain module caches its promise by design — so no test
-// can leak into another; the guard exempts once-per-file writes by construction.
+// The queue domain caches ONE connection + domain promise per boot by design, so the
+// fixture's shared state is the booted domain (not the holder): holder restoration
+// would desync the client's `ready` from the domain's belief that it is connected.
+exemptHoistedIsolation('the queue domain caches one booted domain by design; tests share it read-mostly');
 const h = vi.hoisted(() => ({
   created: [] as FakeClient[],
 }));
