@@ -826,12 +826,13 @@ async function firstStderrLine(stderr: ReadableStream<Uint8Array>, capMs = 1_000
   });
   try {
     for (;;) {
-      const chunk = await Promise.race([reader.read(), cap]);
-      if (!chunk || chunk.done) break; // cap fired, or the child closed stderr
+      const chunk = await Promise.race([reader.read(), cap]).catch(() => null);
+      if (!chunk || chunk.done) break; // cap fired, stderr errored, or child closed it
       buf += decoder.decode(chunk.value, { stream: true });
-      // the first non-empty text is the honest reason — no need to wait for a
-      // newline (or for EOF, which a grandchild holding the pipe never sends)
-      if (buf.trim()) break;
+      // a COMPLETE line is the honest reason; a fragment may be one write split
+      // across chunks, so keep reading until the newline (or EOF/the cap) rather
+      // than reporting a truncated verdict
+      if (buf.includes('\n')) break;
     }
   } finally {
     clearTimeout(timer);
@@ -934,7 +935,16 @@ export async function probeMcpStdio(
     return verdictFromResponse(parsed, exitCode, stderr);
   } catch (e) {
     const message = (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? String(e);
-    return { ok: false, detail: message };
+    // a timeout or a read failure still owes the operator the child's OWN
+    // reason — the stderr read is short-capped, so this adds at most ~1s
+    if (!child) return { ok: false, detail: message };
+    let firstErr: string | null = null;
+    try {
+      firstErr = await firstStderrLine(child.stderr as ReadableStream<Uint8Array>);
+    } catch {
+      /* stderr unreadable (locked/errored) — the original message stands */
+    }
+    return { ok: false, detail: (firstErr ? `${firstErr} (${message})` : message).slice(0, 300) };
   } finally {
     if (child) {
       try {
