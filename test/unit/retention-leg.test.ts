@@ -75,6 +75,25 @@ import { mockDb, session, taskObligations, taskRuns } from './helpers/mock-db';
 
 const CUTOFF = new Date('2026-11-06T00:00:00Z');
 
+// The fault harness is ONE object shared by every test in this file, and vitest
+// runs with sequence.shuffle: a fault-injection test that leaves `failLegs`
+// true must never leak into a write-path test that happens to run after it
+// (that ordering made CI red on a green tree, #344). Every test — in every
+// describe — starts from the pristine harness + throttle state.
+beforeEach(() => {
+  h.settingWrites.length = 0;
+  h.storedStamp = null;
+  h.failGetSetting = false;
+  h.getSettingCalls = 0;
+  h.runningDuringSettingRead = false;
+  h.legRows = 0;
+  h.failLegs = false;
+  h.warnCalls = 0;
+  retentionState.lastAt = 0;
+  retentionState.lastWarnAt = 0;
+  retentionState.running = false;
+});
+
 /** recording fake executor: captures each write's table + set values + where
  * clause (drizzle calls update(table).set(v).where(sql).returning() on the
  * executor) so the tests pin the WRITE PATH the service actually issues —
@@ -215,19 +234,6 @@ describe('retention scan shapes (#266 — category join + LIMIT, never a fetch-a
 });
 
 describe('retention leg behavior (#266 — throttle + stamp + fault isolation)', () => {
-  beforeEach(() => {
-    h.settingWrites.length = 0;
-    h.storedStamp = null;
-    h.failGetSetting = false;
-    h.getSettingCalls = 0;
-    h.legRows = 0;
-    h.failLegs = false;
-    h.warnCalls = 0;
-    retentionState.lastAt = 0;
-    retentionState.lastWarnAt = 0;
-    retentionState.running = false;
-  });
-
   it('a stale run executes all three legs and stamps ONLY after a full pass', async () => {
     const result = await runRetentionLeg(fakeExec());
     expect(result).toEqual({ blanked: 0, obligations: 0, sessions: 0 });
