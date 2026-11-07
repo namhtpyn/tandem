@@ -813,6 +813,23 @@ const probeFailureVerdict = (e: unknown): { ok: boolean; detail: string } => ({
   detail: `corrupt registry row: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300),
 });
 
+/** the child's first non-empty stderr line, read within a cap — a descendant
+ *  holding the pipe open must never hang the probe */
+async function firstStderrLine(stderr: ReadableStream<Uint8Array>, capMs = 1_000): Promise<string | null> {
+  const errText = await Promise.race([
+    new Response(stderr).text().catch(() => ''),
+    new Promise<string>((resolve) => {
+      setTimeout(() => resolve(''), capMs);
+    }),
+  ]);
+  return (
+    errText
+      .split('\n')
+      .find((l) => l.trim())
+      ?.trim() ?? null
+  );
+}
+
 /** map a probe exchange to its verdict — failure detail carries the FIRST
  * error line (stderr beats the bare exit code), never a bare "spawn failed" */
 async function verdictFromResponse(
@@ -824,17 +841,14 @@ async function verdictFromResponse(
     if (typeof exitCode === 'number' && exitCode !== 0) {
       // probe law: carry the FIRST error line (stderr beats the bare exit code);
       // the drain is CAPPED — a descendant holding the pipe must not hang the probe
-      const errText = await Promise.race([
-        new Response(stderr).text().catch(() => ''),
-        new Promise<string>((resolve) => {
-          setTimeout(() => resolve(''), 1_000);
-        }),
-      ]);
-      const firstErr = errText.split('\n').find((l) => l.trim());
+      const firstErr = await firstStderrLine(stderr);
       return { ok: false, detail: (firstErr ?? `server exited with code ${exitCode}`).trim().slice(0, 300) };
     }
     if (typeof exitCode === 'number') return { ok: false, detail: 'server exited before responding' };
-    return { ok: false, detail: 'no JSON-RPC payload in server output' };
+    // still-running child that closed its streams without answering (it refused
+    // the handshake): its stderr is the only honest reason — CAPPED like above
+    const firstErr = await firstStderrLine(stderr);
+    return { ok: false, detail: (firstErr ?? 'no JSON-RPC payload in server output').trim().slice(0, 300) };
   }
   if (parsed.error)
     return {
@@ -864,9 +878,11 @@ export async function probeMcpStdio(
     const stdout = child.stdout as ReadableStream<Uint8Array>;
     const stderr = child.stderr as ReadableStream<Uint8Array>;
     // BEST-EFFORT handshake write: an honest stub may exit (or close stdin)
-    // before it ever reads, and the write then throws EPIPE — that race must
-    // not mask the child's own stderr, which is the failure detail the caller
-    // needs (the child's output is the source of truth, never the write race)
+    // before it ever reads, and the write then throws EPIPE. A write that never
+    // landed cannot be answered — waiting out the full read cap would burn the
+    // probe and still hide the child's own stderr, so the refused-handshake path
+    // goes straight to the child's exit/stderr verdict.
+    let handshakeDelivered = true;
     try {
       stdin.write(
         `${JSON.stringify({
@@ -882,7 +898,16 @@ export async function probeMcpStdio(
       );
       await stdin.flush();
     } catch {
-      /* child closed stdin (exited early) — read what it produced instead */
+      handshakeDelivered = false;
+    }
+    if (!handshakeDelivered) {
+      const exitCode = await Promise.race([
+        child.exited,
+        new Promise<null>((resolve) => {
+          setTimeout(() => resolve(null), 1_000);
+        }),
+      ]);
+      return verdictFromResponse(null, exitCode, stderr);
     }
     const parsed = await readInitializeResponse(stdout, timeoutMs);
     const exitCode = await Promise.race([

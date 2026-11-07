@@ -714,6 +714,45 @@ describe('stdio transport (slice 3, SPEC "stdio transport")', () => {
       expect(crash.detail).toContain('boom: bad config file');
     });
 
+    it('a refused handshake (stdin closed) reports the child stderr — never a bare write error or the read cap', async () => {
+      // deterministic EPIPE: a fake child whose handshake write always fails.
+      // The probe must not wait out the read cap (nothing can answer a request
+      // that never landed) and must surface the child's own error line.
+      const fakeChild = {
+        stdin: {
+          write: () => {
+            throw new Error('EPIPE: broken pipe, write');
+          },
+          flush: async () => {
+            throw new Error('EPIPE: broken pipe, write');
+          },
+        },
+        stdout: new ReadableStream<Uint8Array>({
+          start(c) {
+            c.close();
+          },
+        }),
+        stderr: new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new TextEncoder().encode('fatal: token rejected by vault\n'));
+            c.close();
+          },
+        }),
+        exited: Promise.resolve(2),
+        kill: () => {},
+      };
+      const spawnSpy = vi.spyOn(Bun, 'spawn').mockReturnValue(fakeChild as never);
+      try {
+        const t0 = Date.now();
+        const r = await probeMcpStdio('/bin/stub', [], {}, 2_000);
+        expect(r.ok).toBe(false);
+        expect(r.detail).toContain('fatal: token rejected by vault');
+        expect(Date.now() - t0).toBeLessThan(1_800);
+      } finally {
+        spawnSpy.mockRestore();
+      }
+    });
+
     it('KILL LAW: a probe never leaves the spawned process running', async () => {
       const pidFile = `${dirname(testFile)}/.mcp-stdio-silent-pid-${process.pid}`;
       const r = await probeMcpStdio(bun, [fixture('mcp-stdio-silent.mjs'), pidFile], {}, 500);
