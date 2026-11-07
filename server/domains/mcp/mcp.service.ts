@@ -863,19 +863,27 @@ export async function probeMcpStdio(
     const stdin = child.stdin as Bun.FileSink;
     const stdout = child.stdout as ReadableStream<Uint8Array>;
     const stderr = child.stderr as ReadableStream<Uint8Array>;
-    stdin.write(
-      `${JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {
-          protocolVersion: '2025-06-18',
-          capabilities: {},
-          clientInfo: { name: 'tandem-probe', version: '1' },
-        },
-      })}\n`,
-    );
-    await stdin.flush();
+    // BEST-EFFORT handshake write: an honest stub may exit (or close stdin)
+    // before it ever reads, and the write then throws EPIPE — that race must
+    // not mask the child's own stderr, which is the failure detail the caller
+    // needs (the child's output is the source of truth, never the write race)
+    try {
+      stdin.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-06-18',
+            capabilities: {},
+            clientInfo: { name: 'tandem-probe', version: '1' },
+          },
+        })}\n`,
+      );
+      await stdin.flush();
+    } catch {
+      /* child closed stdin (exited early) — read what it produced instead */
+    }
     const parsed = await readInitializeResponse(stdout, timeoutMs);
     const exitCode = await Promise.race([
       child.exited,
