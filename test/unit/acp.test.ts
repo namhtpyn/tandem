@@ -280,8 +280,22 @@ function happyAgent(final: Record<string, unknown> = { stopReason: 'end_turn' })
   });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
+  lastReturnedClient = null;
+  // statics survive between tests — a stale constructed count / last client
+  // makes lastClient() hand out (or wait forever for) another test's client
+  const { default: FakeClientModule } = await import('ssh2');
+  const statics = FakeClientModule.Client as unknown as {
+    constructed: number;
+    waiters: Array<() => void>;
+    last?: FakeSshClient;
+    blobLen: number | null;
+  };
+  statics.constructed = 0;
+  statics.waiters = [];
+  statics.last = undefined;
+  statics.blobLen = null;
 });
 
 type TurnOpts = {

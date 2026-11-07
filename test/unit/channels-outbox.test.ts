@@ -235,6 +235,7 @@ beforeEach(() => {
   enqueueFailures = 0;
   headQueryThrows = null;
   lastLoadedOutboxId = null;
+  seq = 0;
   settingsRows.clear();
   settingsRows.set('channels', JSON.stringify([CFG]));
   adapter.send.mockClear();

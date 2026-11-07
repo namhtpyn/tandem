@@ -42,6 +42,7 @@ beforeEach(() => {
   nextResult = { ok: true };
   nextError = null;
   currentId = 'task-1';
+  workflowNoteValue = '';
 });
 
 async function fresh() {
