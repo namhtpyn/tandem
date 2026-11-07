@@ -100,15 +100,6 @@ watch(
 // The query parser lives in utils/task-scope so the task detail's back link
 // normalizes the scope by the exact same rules (#341).
 const projectScopeId = ref<string | null>(scopeFromQuery(route.query.project));
-// the list state a task detail must carry: its back link rebuilds this exact
-// list, so opening a task inside a scope never drops the scope (#341)
-const detailQuery = computed(() =>
-  taskListQueryFrom({
-    project: projectScopeId.value,
-    awaiting: awaitingDecision.value ? '1' : undefined,
-    inbox: needsDecision.value ? '1' : undefined,
-  }),
-);
 watch(projectScopeId, (v) => {
   if (scopeFromQuery(route.query.project) === v) return;
   void router.replace({ query: { ...route.query, project: v ?? undefined } });
@@ -139,50 +130,100 @@ onMounted(() => {
     void router.replace({ query: { ...route.query, project: projectScopeId.value ?? undefined } });
   }
 });
-watch([statusId, needsDecision, awaitingDecision, projectScopeId], () => {
+// ASSIGNEE SCOPE (#353, ASSIGNEE SCOPE LAW): ONE optional assignee filter,
+// URL-synced by the exact project-scope contract — the URL is the source of
+// truth on load and on back/forward, the select writes it back, and a param
+// that normalizes to no scope (or to several values) is rewritten once on
+// mount. An unknown id stays a scope: the server returns an empty page.
+const assigneeScopeId = ref<string | null>(scopeFromQuery(route.query.assignee));
+watch(assigneeScopeId, (v) => {
+  if (scopeFromQuery(route.query.assignee) === v) return;
+  void router.replace({ query: { ...route.query, assignee: v ?? undefined } });
+});
+watch(
+  () => route.query.assignee,
+  (v) => {
+    const next = scopeFromQuery(v);
+    if (next !== assigneeScopeId.value) assigneeScopeId.value = next;
+  },
+);
+onMounted(() => {
+  const raw = route.query.assignee;
+  if (raw === undefined) return;
+  const values = Array.isArray(raw) ? raw : [raw];
+  const first = values[0];
+  const canonical =
+    assigneeScopeId.value !== null &&
+    values.length === 1 &&
+    typeof first === 'string' &&
+    first === first.trim() &&
+    scopeFromQuery(first) === assigneeScopeId.value;
+  if (!canonical) {
+    void router.replace({ query: { ...route.query, assignee: assigneeScopeId.value ?? undefined } });
+  }
+});
+// the list state a task detail must carry: its back link rebuilds this exact
+// list, so opening a task inside a scope never drops the scope (#341/#353)
+const detailQuery = computed(() =>
+  taskListQueryFrom({
+    project: projectScopeId.value,
+    assignee: assigneeScopeId.value,
+    awaiting: awaitingDecision.value ? '1' : undefined,
+    inbox: needsDecision.value ? '1' : undefined,
+  }),
+);
+watch([statusId, needsDecision, awaitingDecision, projectScopeId, assigneeScopeId], () => {
   page.value = 1;
 });
 function toggleStatusFilter(id: string) {
   statusId.value = statusId.value === id ? null : id;
 }
-/** any active server-side filter (search / status chip / inbox / awaiting / project) — drives the empty-state copy */
+/** any active server-side filter (search / status chip / inbox / awaiting / project / assignee) — drives the empty-state copy */
 const listFiltered = computed(
   () =>
     !!searchDebounced.value ||
     statusId.value !== null ||
     needsDecision.value ||
     awaitingDecision.value ||
-    projectScopeId.value !== null,
+    projectScopeId.value !== null ||
+    assigneeScopeId.value !== null,
 );
+
+/** one filter-relative empty-state sentence for a named scope: the project
+ *  scope (#339) and the assignee scope (#353) share this ladder, so neither can
+ *  claim more than the active filters prove — a search/status chip narrows the
+ *  same scoped list, and the obligation sentence names it too. `who` carries the
+ *  assignee clause (" for Ash" / " for you") and stays empty without a scope. */
+function scopedEmptyCopy(projectName: string | null, who: string, narrowing: string, obligations: string[]): string {
+  const scope = projectName !== null ? ` in ${projectName}${who}` : who;
+  if (obligations.length > 0) {
+    return `Nothing${scope} matches your ${obligations.join(' + ')} filter${obligations.length > 1 ? 's' : ''}${narrowing} right now.`;
+  }
+  if (searchDebounced.value)
+    return `No tasks${scope} match this search${statusId.value !== null ? ' with this status' : ''}.`;
+  if (statusId.value !== null) return `No tasks${scope} with this status — try another filter.`;
+  return `No tasks${scope} yet.`;
+}
 
 /** empty-state copy names WHICH filter came up empty — 'no results' under the inbox toggle reads as a bug */
 const emptyCopy = computed(() => {
   // the built-in empty state renders its own headline ('No tasks yet' / 'No
   // matches yet') — repeating a 'No …' sentence here printed it twice
   if (!listFiltered.value) return 'Create the first one for your humans or agents.';
-  if (projectScopeId.value !== null) {
-    // the project scope names itself in EVERY composed state (#339 r1/r3) and
-    // never asserts more than the filters prove: a status chip or search term
-    // narrows the same scoped list, so the sentence stays filter-relative
-    // instead of claiming the project holds nothing
-    const name = projectNameById.value.get(projectScopeId.value) ?? 'this project';
-    // a live search narrows the same list — the obligation sentence must name it
-    // too, or it claims the project owes nothing while the search hides the task
-    // a live search or status chip narrows the same list — the obligation
-    // sentence names every active narrowing filter, so it never claims the
-    // project owes nothing while another filter is what hid the task
-    const narrowing = `${searchDebounced.value ? ' and this search' : ''}${statusId.value !== null ? ' with this status' : ''}`;
-    const obligations = [
-      needsDecision.value ? 'decision' : null,
-      awaitingDecision.value ? 'awaiting-decision' : null,
-    ].filter((x): x is string => x !== null);
-    if (obligations.length > 0) {
-      return `Nothing in ${name} matches your ${obligations.join(' + ')} filter${obligations.length > 1 ? 's' : ''}${narrowing} right now.`;
-    }
-    if (searchDebounced.value)
-      return `No tasks in ${name} match this search${statusId.value !== null ? ' with this status' : ''}.`;
-    if (statusId.value !== null) return `No tasks in ${name} with this status — try another filter.`;
-    return `No tasks in ${name} yet.`;
+  // ASSIGNEE SCOPE (#353): the empty sentence names the assignee in every
+  // composed state; the viewer's own scope reads as 'you'
+  const who = assigneeScopeName.value !== null ? ` for ${assigneeScopeName.value}` : '';
+  const narrowing = `${searchDebounced.value ? ' and this search' : ''}${statusId.value !== null ? ' with this status' : ''}`;
+  const obligations = [
+    needsDecision.value ? 'decision' : null,
+    awaitingDecision.value ? 'awaiting-decision' : null,
+  ].filter((x): x is string => x !== null);
+  if (projectScopeId.value !== null || assigneeScopeId.value !== null) {
+    // the project scope names itself in EVERY composed state (#339 r1/r3); an
+    // unresolvable id falls back to a neutral name, never a raw uuid
+    const projectName =
+      projectScopeId.value !== null ? (projectNameById.value.get(projectScopeId.value) ?? 'this project') : null;
+    return scopedEmptyCopy(projectName, who, narrowing, obligations);
   }
   if (needsDecision.value) return 'Nothing is waiting on your decision right now.';
   if (awaitingDecision.value) return 'Nothing is waiting on a decision right now.';
@@ -201,6 +242,7 @@ const pagedQuery = useQuery(
         q: searchDebounced.value || undefined,
         statusId: statusId.value ?? undefined,
         projectId: projectScopeId.value ?? undefined,
+        assigneeId: assigneeScopeId.value ?? undefined,
         inboxOfMe: needsDecision.value,
         awaitingDecision: awaitingDecision.value,
       },
@@ -212,6 +254,7 @@ const pagedQuery = useQuery(
         searchDebounced.value,
         statusId.value ?? 'all',
         projectScopeId.value ?? 'all-projects',
+        assigneeScopeId.value ?? 'all-assignees',
         needsDecision.value,
         awaitingDecision.value,
       ],
@@ -274,6 +317,35 @@ const projectScopeValue = computed<string>({
   get: () => projectScopeId.value ?? NONE_ID,
   set: (v) => {
     projectScopeId.value = !v || v === NONE_ID ? null : v;
+  },
+});
+
+// ASSIGNEE SCOPE (#353): the filter bar's assignee select — "Anyone" clears the
+// scope, "My tasks" is the session's own id (no special URL token), the roster
+// renders through the shared label contract, and an id the roster cannot
+// resolve (stale URL / removed employee) keeps an honest label so it stays
+// clearable. The viewer's own scope names itself 'you' in the empty-state copy.
+const assigneeScopeName = computed<string | null>(() => {
+  if (assigneeScopeId.value === null) return null;
+  if (assigneeScopeId.value === session.value?.user.id) return 'you';
+  return assigneeNameById.value.get(assigneeScopeId.value) ?? 'this assignee';
+});
+const assigneeScopeItems = computed(() => {
+  const self = session.value?.user.id ?? null;
+  const items: Array<{ label: string; value: string }> = [{ label: 'Anyone', value: NONE_ID }];
+  if (self) items.push({ label: 'My tasks', value: self });
+  for (const e of employees.value) {
+    if (e.id !== self) items.push({ label: aiOptionLabel(e.name, e.kind), value: e.id });
+  }
+  if (assigneeScopeId.value !== null && !items.some((i) => i.value === assigneeScopeId.value)) {
+    items.splice(self ? 2 : 1, 0, { label: 'Unknown employee', value: assigneeScopeId.value });
+  }
+  return items;
+});
+const assigneeScopeValue = computed<string>({
+  get: () => assigneeScopeId.value ?? NONE_ID,
+  set: (v) => {
+    assigneeScopeId.value = !v || v === NONE_ID ? null : v;
   },
 });
 
@@ -1074,12 +1146,15 @@ onServerPrefetch(() =>
       {{ message }}
     </p>
 
-    <!-- project scope (#339, TASK SCOPE LAW): the list's one container filter —
-         set from here or from a project row's "View tasks"; All projects clears.
-         Rendered whenever a scope is active even if the project list is empty
-         (a stale URL must stay clearable). -->
-    <div v-if="projectRows.length || projectScopeId !== null" class="mt-3 flex items-center gap-2">
+    <!-- scope filters (#339/#353, TASK SCOPE LAW + ASSIGNEE SCOPE LAW): one row —
+         project scope (set from here or from a project row's "View tasks"; All
+         projects clears; rendered whenever a scope is active even if the project
+         list is empty, so a stale URL stays clearable) and the assignee scope
+         (Anyone clears; My tasks = the session's own id; unknown ids keep an
+         honest label). Stacked on mobile, side by side from sm. -->
+    <div class="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
       <USelect
+        v-if="projectRows.length || projectScopeId !== null"
         v-model="projectScopeValue"
         :items="projectScopeItems"
         value-key="value"
@@ -1088,6 +1163,16 @@ onServerPrefetch(() =>
         class="h-11 w-full sm:h-8 sm:w-64"
         aria-label="Filter by project"
         data-testid="project-scope-select"
+      />
+      <USelect
+        v-model="assigneeScopeValue"
+        :items="assigneeScopeItems"
+        value-key="value"
+        icon="i-lucide-user-round"
+        size="sm"
+        class="h-11 w-full sm:h-8 sm:w-56"
+        aria-label="Filter by assignee"
+        data-testid="assignee-scope-select"
       />
       <span v-if="projectScopeId !== null" class="text-muted hidden text-xs sm:inline" data-testid="project-scope-hint">
         Viewing one project — pick All projects to widen.

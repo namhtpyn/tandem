@@ -32,6 +32,20 @@ describe('taskListQueryFrom', () => {
     expect(taskListQueryFrom({ awaiting: '1' })).toEqual({ awaiting: '1' });
   });
 
+  it('carries the assignee scope (#353) and drops dead values', () => {
+    expect(taskListQueryFrom({ assignee: 'u1' })).toEqual({ assignee: 'u1' });
+    expect(taskListQueryFrom({ assignee: ' u1 ' })).toEqual({ assignee: 'u1' });
+    expect(taskListQueryFrom({ assignee: '__none__' })).toEqual({});
+    expect(taskListQueryFrom({ assignee: '' })).toEqual({});
+    expect(taskListQueryFrom({ assignee: ['', 'u1'] })).toEqual({ assignee: 'u1' });
+    expect(taskListQueryFrom({ project: 'p1', assignee: 'u1', awaiting: '1', inbox: '1' })).toEqual({
+      project: 'p1',
+      assignee: 'u1',
+      awaiting: '1',
+      inbox: '1',
+    });
+  });
+
   it('carries the personal inbox deep link (#350)', () => {
     expect(taskListQueryFrom({ inbox: '1' })).toEqual({ inbox: '1' });
     expect(taskListQueryFrom({ project: 'p1', awaiting: '1', inbox: '1' })).toEqual({

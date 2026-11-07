@@ -181,13 +181,15 @@ async function listTasksPaged(
     q?: string;
     statusId?: string;
     projectId?: string;
+    assigneeId?: string;
     inboxOfMe?: boolean;
     awaitingDecision?: boolean;
   },
   selfId: string,
 ) {
-  // user-facing filters (search / status / project scope) in ONE pure builder
-  // (#339); the obligation filters below need the db and AND-compose with them
+  // user-facing filters (search / status / project / assignee scope) in ONE
+  // pure builder (#339, #353); the obligation filters below need the db and
+  // AND-compose with them
   // inboxOfMe = tasks with a PENDING obligation on the caller — the same taskId
   // set `inbox` items come from (pendingForUser); empty set short-circuits
   let inboxFilter: { id: { inArray: string[] } } | undefined;
@@ -418,6 +420,7 @@ export const tasksRouter = os.router({
         q: z.string().trim().optional(),
         statusId: z.string().min(1).optional(),
         projectId: z.string().min(1).optional(),
+        assigneeId: z.string().min(1).optional(),
         inboxOfMe: z.boolean().optional(),
         awaitingDecision: z.boolean().optional(),
       }),

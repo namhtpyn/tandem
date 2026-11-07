@@ -1,15 +1,15 @@
 import { escapeIlike } from '#shared/utils/escape-ilike';
 
-/** the user-facing filters of the paged task list (search / status / project) */
-export type TaskListSearchInput = { q?: string; statusId?: string; projectId?: string };
+/** the user-facing filters of the paged task list (search / status / project / assignee) */
+export type TaskListSearchInput = { q?: string; statusId?: string; projectId?: string; assigneeId?: string };
 
 /** one drizzle RQB where fragment (kept structural — the router casts at the query) */
 type ListFilter = Record<string, unknown>;
 
 /**
- * TASK SCOPE LAW (#339): the list's user-facing filters as drizzle RQB where
- * fragments. An unknown project id yields an empty page — a filter is not a
- * lookup, never an error.
+ * TASK SCOPE LAW (#339) + ASSIGNEE SCOPE LAW (#353): the list's user-facing
+ * filters as drizzle RQB where fragments. An unknown project/assignee id yields
+ * an empty page — a filter is not a lookup, never an error.
  */
 export function taskListSearchFilters(input: TaskListSearchInput) {
   const q = input.q?.trim();
@@ -18,18 +18,20 @@ export function taskListSearchFilters(input: TaskListSearchInput) {
     : undefined;
   const statusFilter = input.statusId ? { status: { eq: input.statusId } } : undefined;
   const projectFilter = input.projectId ? { projectId: { eq: input.projectId } } : undefined;
-  return { searchFilter, statusFilter, projectFilter };
+  const assigneeFilter = input.assigneeId ? { assigneeId: { eq: input.assigneeId } } : undefined;
+  return { searchFilter, statusFilter, projectFilter, assigneeFilter };
 }
 
 /**
- * AND-compose the search/status/project fragments with the obligation filters
- * `listTasksPaged` resolves against the db first (inbox / awaiting). `undefined`
- * means no filter at all — the caller supplies the match-all sentinel.
- * Exported with the builder so the composed predicate is unit-pinned (#339 r1).
+ * AND-compose the search/status/project/assignee fragments with the obligation
+ * filters `listTasksPaged` resolves against the db first (inbox / awaiting).
+ * `undefined` means no filter at all — the caller supplies the match-all
+ * sentinel. Exported with the builder so the composed predicate is unit-pinned
+ * (#339 r1).
  */
 export function buildTaskListWhere(input: TaskListSearchInput, obligations: ListFilter[] = []): ListFilter | undefined {
-  const { searchFilter, statusFilter, projectFilter } = taskListSearchFilters(input);
-  const filters = [searchFilter, statusFilter, projectFilter, ...obligations].filter(
+  const { searchFilter, statusFilter, projectFilter, assigneeFilter } = taskListSearchFilters(input);
+  const filters = [searchFilter, statusFilter, projectFilter, assigneeFilter, ...obligations].filter(
     (f): f is ListFilter => f !== undefined,
   );
   if (filters.length === 0) return undefined;

@@ -1,11 +1,11 @@
 import { NONE_ID } from './forms';
 
 /** The tasks-list state that must survive a drill-down into a task detail (#341,
- *  TASK SCOPE LAW): the project scope (#339), the company awaiting toggle (#91)
- *  and the personal needs-my-decision inbox (#350) — all are URL-synced list
- *  state, so the detail URL carries them and the detail page's back link
- *  rebuilds the exact list the user came from. */
-export type TaskListQuery = { project?: string; awaiting?: '1'; inbox?: '1' };
+ *  TASK SCOPE LAW): the project scope (#339), the assignee scope (#353), the
+ *  company awaiting toggle (#91) and the personal needs-my-decision inbox
+ *  (#350) — all are URL-synced list state, so the detail URL carries them and
+ *  the detail page's back link rebuilds the exact list the user came from. */
+export type TaskListQuery = { project?: string; assignee?: string; awaiting?: '1'; inbox?: '1' };
 
 /** the first VALID project value in a query param (arrays can carry several);
  *  the internal 'no selection' sentinel and blanks are display values, never a
@@ -21,10 +21,17 @@ export function scopeFromQuery(v: unknown): string | null {
 /** the list-state query a task-detail URL carries, normalized through the same
  *  scope rules as the list itself (NONE_ID / blanks / non-strings are dropped,
  *  unknown values never leak into a link) */
-export function taskListQueryFrom(q: { project?: unknown; awaiting?: unknown; inbox?: unknown }): TaskListQuery {
+export function taskListQueryFrom(q: {
+  project?: unknown;
+  assignee?: unknown;
+  awaiting?: unknown;
+  inbox?: unknown;
+}): TaskListQuery {
   const project = scopeFromQuery(q.project);
+  const assignee = scopeFromQuery(q.assignee);
   const out: TaskListQuery = {};
   if (project) out.project = project;
+  if (assignee) out.assignee = assignee;
   if (q.awaiting === '1') out.awaiting = '1';
   if (q.inbox === '1') out.inbox = '1';
   return out;
