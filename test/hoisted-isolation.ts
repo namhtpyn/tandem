@@ -139,8 +139,10 @@ function snapshot(value: unknown, seen = new Map<object, Snap>()): Snap {
     seen.set(value, snap);
     for (const key of snap.allKeys) {
       const desc = Object.getOwnPropertyDescriptor(value, key);
-      // only writable data properties can be both mutated and restored
-      if (!desc || !('value' in desc) || desc.writable !== true) continue;
+      if (!desc || !('value' in desc)) continue;
+      // writable props are restored by reassignment; non-writable ones (behind
+      // Object.freeze) cannot be reassigned, but their MUTABLE children can still
+      // be restored in place — so snapshot them too
       snap.data.push([key, snapshot(desc.value, seen)]);
     }
     return snap;
@@ -158,15 +160,17 @@ function restoreSnap(snap: Snap, seen = new Set<Snap>()): unknown {
   if (seen.has(snap)) return refOf(snap);
   seen.add(snap);
   if (snap.kind === 'array') {
+    // a frozen (or sealed/readonly-slot) array is file state: leave it untouched
+    if (Object.isFrozen(snap.ref)) return snap.ref;
     const items = snap.items.map((item) =>
       item.present ? { present: true, value: restoreSnap(item.snap, seen) } : { present: false, value: undefined },
     );
     snap.ref.length = items.length;
     for (let index = 0; index < items.length; index += 1) {
       const item = items[index];
-      if (!item?.present) delete snap.ref[index];
-      else snap.ref[index] = item.value;
+      if (item?.present) snap.ref[index] = item.value;
     }
+    // also removes indices a test added (e.g. it filled a hole in a seeded array)
     restoreExtras(snap.ref, snap.extra, seen);
     return snap.ref;
   }
@@ -213,8 +217,15 @@ function restoreSnap(snap: Snap, seen = new Set<Snap>()): unknown {
   }
   for (const [key, item] of snap.data) {
     const desc = Object.getOwnPropertyDescriptor(snap.ref, key);
-    if (desc && (!('value' in desc) || desc.writable !== true)) continue;
-    snap.ref[key] = restoreSnap(item, seen);
+    const value = restoreSnap(item, seen);
+    if (!desc) {
+      // a test deleted this key: put it back
+      snap.ref[key] = value;
+      continue;
+    }
+    if (!('value' in desc)) continue;
+    if (desc.writable === true) snap.ref[key] = value;
+    // non-writable (frozen): the prop stays, its object contents were restored in place
   }
   return snap.ref;
 }

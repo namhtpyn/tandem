@@ -45,6 +45,26 @@ const bytes = vi.hoisted(() => {
   return { raw, view };
 });
 
+// a NON-empty seeded array: element restore is load-bearing for every test below
+// (an always-empty array cannot catch a dropped element write)
+const fixed = vi.hoisted(() => ({
+  list: ['a', 'b'] as string[],
+}));
+
+// a seeded array with a HOLE: restoring must put the hole back, not just the values
+const holes = vi.hoisted(() => {
+  const list = ['x', 'y', 'z'];
+  delete (list as unknown as Record<string, unknown>)[1];
+  return { list };
+});
+
+// frozen file state: restore must leave frozen containers untouched (no crash, no wipe)
+const frozen = vi.hoisted(() => {
+  const list = Object.freeze(['keep-1', 'keep-2']);
+  const config = Object.freeze({ limits: { max: 10 } });
+  return { list, config };
+});
+
 // a cyclic fixture: restore must walk it without recursing forever
 const cyclic = vi.hoisted(() => {
   type Node = { name: string; child?: Node };
@@ -80,6 +100,17 @@ function assertClean(): void {
   expect([...new Uint8Array(bytes.raw)]).toEqual([0, 0, 7, 8, 9, 10, 0, 0]);
   expect((h.rows as unknown as Record<string, unknown>).note).toBeUndefined();
   expect('extra' in h.nested).toBe(false);
+  expect((h.seen as unknown as Record<string, unknown>).note).toBeUndefined();
+  expect((h.tags as unknown as Record<string, unknown>).note).toBeUndefined();
+  expect((h.when as unknown as Record<string, unknown>).note).toBeUndefined();
+  expect((h.query as unknown as Record<string, unknown>).note).toBeUndefined();
+  expect((h.bytes as unknown as Record<string, unknown>).note).toBeUndefined();
+  expect(fixed.list).toEqual(['a', 'b']);
+  expect(frozen.list).toEqual(['keep-1', 'keep-2']);
+  expect(frozen.config.limits.max).toBe(10);
+  expect(1 in holes.list).toBe(false);
+  expect(holes.list).toEqual(['x', undefined, 'z']);
+  expect((bytes.raw as unknown as Record<string, unknown>).note).toBeUndefined();
 }
 
 describe('hoisted holder isolation', () => {
@@ -151,12 +182,48 @@ describe('hoisted holder isolation', () => {
     bytes.view[3] = 99;
   });
 
-  it('container expandos and added keys are removed, deleted keys come back', () => {
+  it('added keys are removed and deleted keys come back', () => {
     assertClean();
     (h.rows as unknown as Record<string, unknown>).note = 'sticky';
     (h.nested as Record<string, unknown>).extra = 1;
-    delete (h.nested as Record<string, unknown>).deep;
+    delete (h.nested as unknown as Record<string, unknown>).deep;
+    expect('extra' in h.nested).toBe(true);
     expect('deep' in h.nested).toBe(false);
+  });
+
+  it('element writes into a seeded array are undone (array restore is load-bearing)', () => {
+    assertClean();
+    fixed.list[0] = 'dirty';
+    expect(fixed.list).toEqual(['dirty', 'b']);
+  });
+
+  it('container expandos on every collection kind are removed', () => {
+    assertClean();
+    (h.seen as unknown as Record<string, unknown>).note = 'x';
+    (h.tags as unknown as Record<string, unknown>).note = 'x';
+    (h.when as unknown as Record<string, unknown>).note = 'x';
+    (h.query as unknown as Record<string, unknown>).note = 'x';
+    (h.bytes as unknown as Record<string, unknown>).note = 'x';
+    (bytes.raw as unknown as Record<string, unknown>).note = 'x';
+  });
+
+  it('a hole in a seeded array is a hole after the restore', () => {
+    assertClean();
+    holes.list[1] = 'filled';
+    expect(holes.list).toEqual(['x', 'filled', 'z']);
+  });
+
+  it('a frozen array stays untouched and never crashes the restore', () => {
+    assertClean();
+    // push would throw on a frozen array (strict mode) — the harness must not try
+    expect(() => (frozen.list as unknown as string[]).push('x')).toThrow();
+    expect(frozen.list).toEqual(['keep-1', 'keep-2']);
+  });
+
+  it('a frozen object is left alone, but its mutable child restores in place', () => {
+    assertClean();
+    frozen.config.limits.max = 99;
+    expect(frozen.config.limits.max).toBe(99);
   });
 
   it('resetting in place keeps a captured reference pointing at the array', () => {
@@ -222,4 +289,9 @@ afterAll(() => {
   // afterAll runs after the last restore: a file's trailing state must be clean
   assertClean();
   expect(h.seedRows).toEqual(['seeded-once']);
+  expect(fixed.list).toEqual(['a', 'b']);
+  expect(frozen.config.limits.max).toBe(10);
+  expect(1 in holes.list).toBe(false);
+  expect(holes.list).toEqual(['x', undefined, 'z']);
+  expect((bytes.raw as unknown as Record<string, unknown>).note).toBeUndefined();
 });
