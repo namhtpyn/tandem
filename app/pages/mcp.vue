@@ -17,6 +17,7 @@ const isAdmin = computed(() => session.value?.user.role === ROLE.ADMIN);
       <UDashboardNavbar title="MCP registry" :ui="{ root: 'lg:px-8' }">
         <template #leading>
           <UDashboardSidebarCollapse />
+          <MobileDecisionBadge />
         </template>
       </UDashboardNavbar>
 

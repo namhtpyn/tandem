@@ -68,6 +68,8 @@ export default defineConfig({
           name: 'nuxt',
           include: ['test/nuxt/**/*.test.ts'],
           environment: 'nuxt',
+          // same worker setup as the unit project: env defaults + hoisted-holder isolation
+          setupFiles: ['./test/setup.ts'],
           // explicit coverage opt-out: only 3 components mount here, and without
           // this block the project INHERITS the root collector — the nuxt module
           // graph then re-records app/composables+utils as uncovered (0-24%) and

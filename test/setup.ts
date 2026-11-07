@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { installHoistedIsolation } from './hoisted-isolation';
+
 // vitest worker setup (ALL projects): test-only env defaults that pure code
 // requires. The DB URL is intentionally NOT asserted here — the unit project
 // must run without Postgres (no DB contract; server behavior is verified by
@@ -20,3 +22,8 @@ if (!process.env.TANDEM_ATTACHMENTS_DIR) {
     rmSync(dir, { recursive: true, force: true });
   });
 }
+
+// hoisted-holder isolation (#346): a `vi.hoisted` holder is module state shared by
+// the file's tests; this restores it to the file's starting state before every test
+// so `sequence.shuffle` order can never carry one test's writes into another.
+installHoistedIsolation();

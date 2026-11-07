@@ -32,10 +32,21 @@ describe('taskListQueryFrom', () => {
     expect(taskListQueryFrom({ awaiting: '1' })).toEqual({ awaiting: '1' });
   });
 
+  it('carries the personal inbox deep link (#350)', () => {
+    expect(taskListQueryFrom({ inbox: '1' })).toEqual({ inbox: '1' });
+    expect(taskListQueryFrom({ project: 'p1', awaiting: '1', inbox: '1' })).toEqual({
+      project: 'p1',
+      awaiting: '1',
+      inbox: '1',
+    });
+  });
+
   it('drops display values, dead params and unknown awaiting shapes', () => {
     expect(taskListQueryFrom({ project: '__none__', awaiting: '0' })).toEqual({});
     expect(taskListQueryFrom({ project: '', awaiting: true })).toEqual({});
     expect(taskListQueryFrom({})).toEqual({});
+    expect(taskListQueryFrom({ inbox: '0' })).toEqual({});
+    expect(taskListQueryFrom({ inbox: true })).toEqual({});
   });
 });
 

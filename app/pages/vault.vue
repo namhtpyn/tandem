@@ -22,6 +22,7 @@ function onFolderDeleted(id: string) {
       <UDashboardNavbar title="Vault" :ui="{ root: 'lg:px-8' }">
         <template #leading>
           <UDashboardSidebarCollapse />
+          <MobileDecisionBadge />
         </template>
       </UDashboardNavbar>
 

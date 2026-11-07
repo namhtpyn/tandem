@@ -2,7 +2,7 @@
 // round from the SETTLING run's start (`at`), never from the reviewer's latest run —
 // a late-completing (stale) turn must bind to the round it was minted for. This
 // pins the real helper (settle-verdict-correction.test.ts mocks it away).
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   latestRunStartedAt: null as Date | null,
@@ -36,6 +36,11 @@ import { dispatchedReviewRound, dispatchedReviewRoundRow } from '../../server/do
 
 const r1 = new Date('2026-11-01T00:00:00Z');
 const r2 = new Date('2026-11-02T00:00:00Z');
+
+beforeEach(() => {
+  h.latestRunStartedAt = null;
+  h.reviewRows.length = 0;
+});
 
 describe('dispatchedReviewRoundRow (#276)', () => {
   it('binds to the newest round open at the GIVEN start (the settling run), not the latest run', async () => {

@@ -126,6 +126,8 @@ vi.mock('../../server/domains/tasks/runner.service', () => ({
 import { dispatchAiReviewTurns, openReviewRound } from '../../server/domains/tasks/review.service';
 
 beforeEach(() => {
+  h.taskReads.length = 0;
+  h.reviewReads.length = 0;
   h.dispatchError = new Error('redis down');
   h.parkWins = false;
   h.updates = [];

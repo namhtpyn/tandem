@@ -15,6 +15,7 @@ const isAdmin = useIsAdmin();
       <UDashboardNavbar title="Employees" :ui="{ root: 'lg:px-8' }">
         <template #leading>
           <UDashboardSidebarCollapse />
+          <MobileDecisionBadge />
         </template>
       </UDashboardNavbar>
       <div class="flex min-h-full flex-col space-y-6 p-4 sm:p-6 lg:p-8">
