@@ -14,10 +14,17 @@ import { CHANGE_RESOURCE, PROPOSAL_KIND, PROPOSAL_STATUS } from '#shared/enums';
 import { formatWhenShort } from '~/utils/format-when';
 import { errorMessage } from '~/utils/forms';
 import type { AssignmentRow, EmployeeRow, ProposalRow, SubtaskRow, TaskStatusRow } from '~/utils/orpc-types';
+import { taskDetailLocation, taskListQueryFrom } from '~/utils/task-scope';
 import { categoryColor } from '~/utils/ui-labels';
 
 const emit = defineEmits<{ 'add-subtask': [] }>();
 const props = defineProps<{ taskId: string; statusById: Map<string, TaskStatusRow> }>();
+
+// TASK SCOPE LAW (#341): drilling into a subtask keeps the surrounding list
+// scope on the URL, so that subtask's back link returns to the scoped list
+const route = useRoute();
+const listQuery = computed(() => taskListQueryFrom(route.query));
+const taskLink = (id: string) => taskDetailLocation(id, listQuery.value);
 
 const { $client, $orpc } = useNuxtApp();
 const queryClient = useQueryClient();
@@ -218,7 +225,7 @@ function subtaskBadge(c: SubtaskRow): {
     <ul v-else class="space-y-1 text-sm">
       <li v-for="c in subtaskRows" :key="c.id">
         <NuxtLink
-          :to="`/tasks/${c.id}`"
+          :to="taskLink(c.id)"
           class="hover:bg-elevated flex items-center justify-between gap-2 rounded px-1.5 py-1"
         >
           <span class="text-default truncate">{{ c.title }}</span>

@@ -813,6 +813,39 @@ const probeFailureVerdict = (e: unknown): { ok: boolean; detail: string } => ({
   detail: `corrupt registry row: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300),
 });
 
+/** the child's first non-empty stderr text, read within a cap — a child (or a
+ *  descendant) that keeps the pipe open must never hang the probe, AND bytes it
+ *  already wrote must not be thrown away when the cap fires */
+async function firstStderrLine(stderr: ReadableStream<Uint8Array>, capMs = 1_000): Promise<string | null> {
+  const reader = stderr.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cap = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), capMs);
+  });
+  try {
+    for (;;) {
+      const chunk = await Promise.race([reader.read(), cap]).catch(() => null);
+      if (!chunk || chunk.done) break; // cap fired, stderr errored, or child closed it
+      buf += decoder.decode(chunk.value, { stream: true });
+      // a COMPLETE line is the honest reason; a fragment may be one write split
+      // across chunks, so keep reading until the newline (or EOF/the cap) rather
+      // than reporting a truncated verdict
+      if (buf.includes('\n')) break;
+    }
+  } finally {
+    clearTimeout(timer);
+    await reader.cancel().catch(() => {});
+  }
+  return (
+    buf
+      .split('\n')
+      .find((l) => l.trim())
+      ?.trim() ?? null
+  );
+}
+
 /** map a probe exchange to its verdict — failure detail carries the FIRST
  * error line (stderr beats the bare exit code), never a bare "spawn failed" */
 async function verdictFromResponse(
@@ -821,17 +854,14 @@ async function verdictFromResponse(
   stderr: ReadableStream<Uint8Array>,
 ): Promise<{ ok: boolean; detail: string }> {
   if (!parsed) {
+    // probe law: the child's OWN first error line beats every generic message,
+    // whatever its exit code — an exit-0 server that explained itself on stderr
+    // must not degrade to "exited before responding". CAPPED, so a silent child
+    // or a descendant holding the pipe cannot hang the probe.
+    const firstErr = await firstStderrLine(stderr);
+    if (firstErr) return { ok: false, detail: firstErr.slice(0, 300) };
     if (typeof exitCode === 'number' && exitCode !== 0) {
-      // probe law: carry the FIRST error line (stderr beats the bare exit code);
-      // the drain is CAPPED — a descendant holding the pipe must not hang the probe
-      const errText = await Promise.race([
-        new Response(stderr).text().catch(() => ''),
-        new Promise<string>((resolve) => {
-          setTimeout(() => resolve(''), 1_000);
-        }),
-      ]);
-      const firstErr = errText.split('\n').find((l) => l.trim());
-      return { ok: false, detail: (firstErr ?? `server exited with code ${exitCode}`).trim().slice(0, 300) };
+      return { ok: false, detail: `server exited with code ${exitCode}` };
     }
     if (typeof exitCode === 'number') return { ok: false, detail: 'server exited before responding' };
     return { ok: false, detail: 'no JSON-RPC payload in server output' };
@@ -863,19 +893,38 @@ export async function probeMcpStdio(
     const stdin = child.stdin as Bun.FileSink;
     const stdout = child.stdout as ReadableStream<Uint8Array>;
     const stderr = child.stderr as ReadableStream<Uint8Array>;
-    stdin.write(
-      `${JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {
-          protocolVersion: '2025-06-18',
-          capabilities: {},
-          clientInfo: { name: 'tandem-probe', version: '1' },
-        },
-      })}\n`,
-    );
-    await stdin.flush();
+    // BEST-EFFORT handshake write: an honest stub may exit (or close stdin)
+    // before it ever reads, and the write then throws EPIPE. A write that never
+    // landed cannot be answered — waiting out the full read cap would burn the
+    // probe and still hide the child's own stderr, so the refused-handshake path
+    // goes straight to the child's exit/stderr verdict.
+    let handshakeDelivered = true;
+    try {
+      stdin.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-06-18',
+            capabilities: {},
+            clientInfo: { name: 'tandem-probe', version: '1' },
+          },
+        })}\n`,
+      );
+      await stdin.flush();
+    } catch {
+      handshakeDelivered = false;
+    }
+    if (!handshakeDelivered) {
+      const exitCode = await Promise.race([
+        child.exited,
+        new Promise<null>((resolve) => {
+          setTimeout(() => resolve(null), 1_000);
+        }),
+      ]);
+      return verdictFromResponse(null, exitCode, stderr);
+    }
     const parsed = await readInitializeResponse(stdout, timeoutMs);
     const exitCode = await Promise.race([
       child.exited,
@@ -886,7 +935,16 @@ export async function probeMcpStdio(
     return verdictFromResponse(parsed, exitCode, stderr);
   } catch (e) {
     const message = (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? String(e);
-    return { ok: false, detail: message };
+    // a timeout or a read failure still owes the operator the child's OWN
+    // reason — the stderr read is short-capped, so this adds at most ~1s
+    if (!child) return { ok: false, detail: message };
+    let firstErr: string | null = null;
+    try {
+      firstErr = await firstStderrLine(child.stderr as ReadableStream<Uint8Array>);
+    } catch {
+      /* stderr unreadable (locked/errored) — the original message stands */
+    }
+    return { ok: false, detail: (firstErr ? `${firstErr} (${message})` : message).slice(0, 300) };
   } finally {
     if (child) {
       try {

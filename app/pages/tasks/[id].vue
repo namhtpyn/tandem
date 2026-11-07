@@ -13,6 +13,7 @@ import type { Category } from '#shared/enums';
 // query keys with the app-wide SSE subscription.
 import { composerHint, composerReady, useWorkflowActions } from '~/composables/useWorkflowActions';
 import type { TaskRowFull, TaskRunRow, TaskStatusRow } from '~/utils/orpc-types';
+import { taskDetailLocation, taskListQueryFrom } from '~/utils/task-scope';
 import { categoryColor, composerPlaceholder } from '~/utils/ui-labels';
 
 const route = useRoute();
@@ -29,6 +30,13 @@ const canWork = useCanWork();
 // second query. Key rides the TASKS resource so app-wide change events keep
 // it fresh.
 const taskId = String(route.params.id);
+// TASK SCOPE LAW (#341): the list's row links carry their scope/awaiting state
+// on the detail URL, so the back link returns to the SAME list — bare /tasks
+// when the detail was opened from an unscoped list. Read reactively off the
+// route: a query-only navigation reuses the page, and the link must track it.
+const listQuery = computed(() => taskListQueryFrom(route.query));
+const backTo = computed(() => ({ path: '/tasks', query: listQuery.value }));
+const taskLink = (id: string) => taskDetailLocation(id, listQuery.value);
 const taskQuery = useQuery(
   $orpc.tasks.get.queryOptions({ input: { taskId }, queryKey: [CHANGE_RESOURCE.TASKS, taskId] }),
 );
@@ -193,7 +201,7 @@ onServerPrefetch(() => Promise.all([taskQuery.suspense(), statusesLive.suspense(
 
         <div v-else-if="!task" class="text-dimmed py-16 text-center text-sm">
           Task not found — it may have been deleted.
-          <ULink to="/tasks" class="underline">Back to tasks</ULink>
+          <ULink :to="backTo" class="underline">Back to tasks</ULink>
         </div>
 
         <div v-else class="flex flex-col lg:h-(--task-h) lg:flex-row lg:gap-6">
@@ -202,7 +210,7 @@ onServerPrefetch(() => Promise.all([taskQuery.suspense(), statusesLive.suspense(
             <!-- thread header (mobile shows the info trigger here) -->
             <div class="mb-3 flex items-start gap-2">
               <NuxtLink
-                to="/tasks"
+                :to="backTo"
                 aria-label="Back to tasks"
                 class="text-dimmed hover:bg-elevated hover:text-highlighted focus-visible:bg-elevated focus-visible:text-highlighted focus-visible:ring-primary mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md focus-visible:ring-2 focus-visible:outline-none"
               >
@@ -221,7 +229,7 @@ onServerPrefetch(() => Promise.all([taskQuery.suspense(), statusesLive.suspense(
                   >
                   <NuxtLink
                     v-if="parentTask"
-                    :to="`/tasks/${parentTask.id}`"
+                    :to="taskLink(parentTask.id)"
                     class="text-primary inline-flex items-center gap-1 hover:underline"
                     data-testid="parent-task-link"
                   >

@@ -169,3 +169,34 @@ test('project scope: an empty project names itself and creates inside the scope'
   await expect(tasks.rowFor(title)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(`No tasks in ${project}`, { exact: false })).toHaveCount(0);
 });
+
+test('project scope: task detail keeps the list state — back returns to the scoped list', async ({ page }) => {
+  const tasks = new TasksPage(page);
+  const suffix = Date.now().toString(36).slice(-6);
+  const project = `Nav ${suffix}`;
+  const inTitle = `NAVIN ${suffix}`;
+  const bareTitle = `NAVBARE ${suffix}`;
+
+  const projectRow = await rpc(page, '/rpc/projects/create', { name: project });
+  const projectId = projectRow.id;
+  const scoped = await rpc(page, '/rpc/tasks/create', { title: inTitle, projectId });
+  const bare = await rpc(page, '/rpc/tasks/create', { title: bareTitle });
+
+  // a task opened from the scoped list carries the scope on its own URL (#341)
+  await tasks.navigate(`/tasks?project=${projectId}`);
+  await tasks.rowFor(inTitle).getByRole('link', { name: inTitle }).click();
+  await expect(page).toHaveURL(new RegExp(`/tasks/${scoped.id}\\?project=${projectId}$`));
+  await expect(page.getByRole('heading', { name: inTitle })).toBeVisible({ timeout: 15_000 });
+
+  // …and the back link rebuilds THAT list: same scope, same single row
+  await page.getByRole('link', { name: 'Back to tasks' }).first().click();
+  await expect(page).toHaveURL(new RegExp(`/tasks\\?project=${projectId}$`), { timeout: 15_000 });
+  await expect(page.getByTestId('project-scope-select')).toContainText(project);
+  await expect(tasks.rowFor(inTitle)).toBeVisible({ timeout: 15_000 });
+
+  // an unscoped detail keeps the old contract: back to the bare list, no param
+  await tasks.navigate(`/tasks/${bare.id}`);
+  await expect(page.getByRole('heading', { name: bareTitle })).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('link', { name: 'Back to tasks' }).first().click();
+  await page.waitForURL((url) => url.pathname === '/tasks' && !url.searchParams.has('project'));
+});

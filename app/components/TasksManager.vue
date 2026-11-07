@@ -24,6 +24,7 @@ import {
 import { formatWhenShort } from '~/utils/format-when';
 import { NONE_ID, errorMessage, saveFailed } from '~/utils/forms';
 import type { EmployeeRow, TaskRow, TaskRunRow, ThreadPage, ThreadRow } from '~/utils/orpc-types';
+import { scopeFromQuery, taskDetailLocation, taskListQueryFrom } from '~/utils/task-scope';
 import { activityNotes, buildThread, parseRunEnvelope, threadTime, type ThreadNoteItem } from '~/utils/task-thread';
 import {
   activityView,
@@ -70,17 +71,14 @@ watch(awaitingDecision, (v) => {
 // PROJECT SCOPE (#339, TASK SCOPE LAW): ONE optional project filter, URL-synced
 // like the awaiting toggle so a scoped view survives share/reload. The URL is
 // the source of truth on load and on back/forward; the ref change writes it back.
-/** the first VALID project value in a query param (arrays can carry several);
- *  the internal 'no selection' sentinel and blanks are display values, never a
- *  scope — `?project=__none__` must read as no scope (mirrors the API boundary) */
-function scopeFromQuery(v: unknown): string | null {
-  for (const raw of Array.isArray(v) ? v : [v]) {
-    const id = typeof raw === 'string' ? raw.trim() : '';
-    if (id && id !== NONE_ID) return id;
-  }
-  return null;
-}
+// The query parser lives in utils/task-scope so the task detail's back link
+// normalizes the scope by the exact same rules (#341).
 const projectScopeId = ref<string | null>(scopeFromQuery(route.query.project));
+// the list state a task detail must carry: its back link rebuilds this exact
+// list, so opening a task inside a scope never drops the scope (#341)
+const detailQuery = computed(() =>
+  taskListQueryFrom({ project: projectScopeId.value, awaiting: awaitingDecision.value ? '1' : undefined }),
+);
 watch(projectScopeId, (v) => {
   if (scopeFromQuery(route.query.project) === v) return;
   void router.replace({ query: { ...route.query, project: v ?? undefined } });
@@ -1139,9 +1137,11 @@ onServerPrefetch(() =>
       </template>
       <template #title-cell="{ row }">
         <div class="min-w-0">
-          <NuxtLink :to="`/tasks/${row.original.id}`" class="text-highlighted truncate font-medium hover:underline">{{
-            row.original.title
-          }}</NuxtLink>
+          <NuxtLink
+            :to="taskDetailLocation(row.original.id, detailQuery)"
+            class="text-highlighted truncate font-medium hover:underline"
+            >{{ row.original.title }}</NuxtLink
+          >
           <p v-if="row.original.projectName" class="text-primary flex items-center gap-1 text-xs">
             <UIcon name="i-lucide-folder-kanban" class="size-3" />{{ row.original.projectName }}
           </p>
@@ -1306,9 +1306,11 @@ onServerPrefetch(() =>
         <UCard :ui="{ root: 'shadow-sm' }">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
-              <NuxtLink :to="`/tasks/${row.id}`" class="text-highlighted line-clamp-2 font-medium hover:underline">{{
-                row.title
-              }}</NuxtLink>
+              <NuxtLink
+                :to="taskDetailLocation(row.id, detailQuery)"
+                class="text-highlighted line-clamp-2 font-medium hover:underline"
+                >{{ row.title }}</NuxtLink
+              >
               <p v-if="row.projectName" class="text-primary mt-0.5 flex items-center gap-1 text-xs">
                 <UIcon name="i-lucide-folder-kanban" class="size-3" />{{ row.projectName }}
               </p>
@@ -1522,7 +1524,7 @@ onServerPrefetch(() =>
               >
                 <div class="flex items-start justify-between gap-1">
                   <NuxtLink
-                    :to="`/tasks/${row.id}`"
+                    :to="taskDetailLocation(row.id, detailQuery)"
                     draggable="false"
                     class="text-highlighted line-clamp-2 min-w-0 flex-1 text-sm font-medium hover:underline"
                     >{{ row.title }}</NuxtLink
