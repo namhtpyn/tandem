@@ -100,11 +100,15 @@ function stampedChannels(): Array<Record<string, unknown>> {
   return parsed.channels;
 }
 
+// top-level: mock call history survives between tests in BOTH describes
+beforeEach(() => {
+  fetchStub.mockClear();
+});
+
 describe('channel health stamp', () => {
   beforeEach(async () => {
     settingsRows.clear();
     settingsWriteFail = false;
-    fetchStub.mockClear();
     vi.stubGlobal('fetch', fetchStub); // per test: unstubGlobals clears top-level stubs
     // detach every test adapter + disarm any tick: activeAdapters is module
     // state and tests shuffle — a leaked live stub would flip connected
