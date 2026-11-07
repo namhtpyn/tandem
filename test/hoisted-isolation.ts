@@ -3,54 +3,56 @@
 // such state without putting it back seeds the next test — the flaky-suite class
 // (retention-leg's fault flag, an accumulating read log, a sticky switch).
 //
-// Instead of statically guessing which writes leak (regex and AST both have blind
-// spots: aliasing, closures, imported helpers, dynamic keys), this harness snapshots
-// every hoisted holder at the start of each test and puts it back when that test
-// ends. Every test therefore starts from the same state — module and beforeAll
-// seeds included — and no write form can escape it.
+// Static analysis (regex or AST) cannot decide this: writes reach holder state
+// through aliases, closures, imported helpers and dynamic keys, so a checker either
+// misses leaks or red-builds honest code. This harness enforces the invariant by
+// construction instead: every holder is snapshotted when a test starts and put back
+// when that test ends, so a test's writes never survive into the next one.
 //
-// Restoration is identity-preserving: containers and fixture objects are put back
-// IN PLACE (never swapped for copies) because mocks capture those references at
-// module load and tests assert through them.
+// Semantics (exact):
+//   - writes made by a test body, its beforeEach/afterEach hooks, or anything they
+//     call are undone when the test ends;
+//   - writes made by `beforeAll` (module scope included) are file state and persist
+//     for the rest of the file — a suite seed is not a leak;
+//   - restoration is identity-preserving: containers and fixture objects are put
+//     back IN PLACE, never swapped for copies, because mocks capture those
+//     references at module load and tests assert through them;
+//   - accessors (fixture getters) and readonly fields are never deleted or written;
+//   - a throwing file-level afterEach can skip the restore (vitest aborts the
+//     remaining afterEach hooks) — keep afterEach hooks non-throwing.
 import { afterEach, beforeEach, vi } from 'vitest';
 
-type Holder = Record<string, unknown>;
+type Holder = Record<PropertyKey, unknown>;
 
 type Snap =
-  | { kind: 'array'; ref: unknown[]; items: Snap[] }
+  | { kind: 'array'; ref: unknown[]; items: Array<{ present: boolean; snap: Snap }> }
   | { kind: 'map'; ref: Map<unknown, unknown>; entries: Array<[Snap, Snap]> }
   | { kind: 'set'; ref: Set<unknown>; items: Snap[] }
-  | { kind: 'object'; ref: Record<string, unknown>; props: Record<string, Snap> }
+  | { kind: 'object'; ref: Holder; allKeys: PropertyKey[]; data: Array<[PropertyKey, Snap]> }
+  | { kind: 'date'; ref: Date; time: number }
   | { kind: 'value'; value: unknown };
 
-const holders: Holder[] = [];
-let pending: Map<Holder, Record<string, Snap>> | null = null;
-let exemption: string | null = null;
+const holders: object[] = [];
+let pending: Snap[] | null = null;
 
-function snapshotHolders(): Map<Holder, Record<string, Snap>> {
-  return new Map(
-    holders.map((holder) => [
-      holder,
-      Object.fromEntries(Object.entries(holder).map(([key, value]) => [key, snapshot(value)])),
-    ]),
-  );
-}
-
-function isPlain(value: unknown): value is Record<string, unknown> {
+function isPlain(value: unknown): value is Holder {
   if (value === null || typeof value !== 'object') return false;
   const proto = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
 }
 
 function snapshot(value: unknown, seen = new Map<object, Snap>()): Snap {
-  if (typeof value === 'object' && value !== null) {
-    const known = seen.get(value);
-    if (known) return known;
-  }
+  if (typeof value !== 'object' || value === null) return { kind: 'value', value };
+  const known = seen.get(value);
+  if (known) return known;
   if (Array.isArray(value)) {
     const snap: Snap = { kind: 'array', ref: value, items: [] };
     seen.set(value, snap);
-    snap.items = value.map((item) => snapshot(item, seen));
+    snap.items = Array.from({ length: value.length }, (_, index) =>
+      index in value
+        ? { present: true, snap: snapshot(value[index], seen) }
+        : { present: false, snap: { kind: 'value', value: undefined } },
+    );
     return snap;
   }
   if (value instanceof Map) {
@@ -65,89 +67,91 @@ function snapshot(value: unknown, seen = new Map<object, Snap>()): Snap {
     snap.items = [...value].map((item) => snapshot(item, seen));
     return snap;
   }
+  if (value instanceof Date) return { kind: 'date', ref: value, time: value.getTime() };
   if (isPlain(value)) {
-    const snap: Snap = { kind: 'object', ref: value, props: {} };
+    const snap: Snap = { kind: 'object', ref: value, allKeys: Reflect.ownKeys(value), data: [] };
     seen.set(value, snap);
-    for (const key of Object.keys(value)) {
+    for (const key of snap.allKeys) {
       const desc = Object.getOwnPropertyDescriptor(value, key);
-      // accessors (fixture getters) and readonly props are state, not writable fields
-      if (!desc || !('value' in desc) || desc.writable === false) continue;
-      snap.props[key] = snapshot(desc.value, seen);
+      // only writable data properties can be both mutated and restored
+      if (!desc || !('value' in desc) || desc.writable !== true) continue;
+      snap.data.push([key, snapshot(desc.value, seen)]);
     }
     return snap;
   }
-  // primitives, functions, class instances, streams, spies — restored by value/reference
+  // class instances, streams, spies — restored by reference; their internals are theirs
   return { kind: 'value', value };
 }
 
-/** write the snapshot's contents back into its own containers; returns the original value */
-function restoreSnap(snap: Snap): unknown {
+function refOf(snap: Snap): unknown {
+  return snap.kind === 'value' ? snap.value : snap.ref;
+}
+
+function restoreSnap(snap: Snap, seen = new Set<Snap>()): unknown {
   if (snap.kind === 'value') return snap.value;
+  if (seen.has(snap)) return refOf(snap);
+  seen.add(snap);
   if (snap.kind === 'array') {
-    const items = snap.items.map((item) => restoreSnap(item));
-    snap.ref.length = 0;
-    snap.ref.push(...items);
+    const items = snap.items.map((item) =>
+      item.present ? { present: true, value: restoreSnap(item.snap, seen) } : { present: false, value: undefined },
+    );
+    snap.ref.length = items.length;
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (!item?.present) delete snap.ref[index];
+      else snap.ref[index] = item.value;
+    }
     return snap.ref;
   }
   if (snap.kind === 'map') {
-    const entries = snap.entries.map(([key, item]) => [restoreSnap(key), restoreSnap(item)] as const);
+    const entries = snap.entries.map(([key, item]) => [restoreSnap(key, seen), restoreSnap(item, seen)] as const);
     snap.ref.clear();
     for (const [key, item] of entries) snap.ref.set(key, item);
     return snap.ref;
   }
   if (snap.kind === 'set') {
-    const items = snap.items.map((item) => restoreSnap(item));
+    const items = snap.items.map((item) => restoreSnap(item, seen));
     snap.ref.clear();
     for (const item of items) snap.ref.add(item);
     return snap.ref;
   }
-  for (const key of Object.keys(snap.ref)) {
-    if (key in snap.props) continue;
+  if (snap.kind === 'date') {
+    snap.ref.setTime(snap.time);
+    return snap.ref;
+  }
+  for (const key of Reflect.ownKeys(snap.ref)) {
+    if (snap.allKeys.includes(key)) continue;
     const desc = Object.getOwnPropertyDescriptor(snap.ref, key);
-    if (desc && 'value' in desc && desc.writable === false) continue;
+    if (!desc || desc.configurable === false) continue;
     delete snap.ref[key];
   }
-  for (const [key, item] of Object.entries(snap.props)) {
+  for (const [key, item] of snap.data) {
     const desc = Object.getOwnPropertyDescriptor(snap.ref, key);
-    if (desc && (!('value' in desc) || desc.writable === false)) continue;
-    snap.ref[key] = restoreSnap(item);
+    if (desc && (!('value' in desc) || desc.writable !== true)) continue;
+    snap.ref[key] = restoreSnap(item, seen);
   }
   return snap.ref;
 }
 
-/** wrap `vi.hoisted` so every holder object it returns is registered for restoration */
+/** wrap `vi.hoisted` so every holder it returns is registered for restoration */
 export function installHoistedIsolation(): void {
   const api = vi as unknown as { hoisted: <T>(factory: () => T) => T };
   const original = api.hoisted.bind(vi);
   api.hoisted = (<T>(factory: () => T): T => {
     const value = original(factory);
-    if (isPlain(value)) holders.push(value);
+    if (typeof value === 'object' && value !== null) holders.push(value);
     return value;
   }) as typeof api.hoisted;
 
   beforeEach(() => {
-    if (exemption) return;
-    pending = snapshotHolders();
+    pending = holders.map((holder) => snapshot(holder));
   });
 
   afterEach(() => {
-    if (exemption || pending === null) return;
-    for (const [holder, props] of pending) {
-      for (const key of Object.keys(holder)) if (!(key in props)) delete holder[key];
-      for (const [key, snap] of Object.entries(props)) holder[key] = restoreSnap(snap);
-    }
+    if (pending === null) return;
+    for (const snap of pending) restoreSnap(snap);
     pending = null;
   });
-}
-
-/**
- * Opt a whole file out of holder restoration. Only for fixtures whose shared state
- * is NOT a `vi.hoisted` holder (e.g. a module that caches a live domain by design);
- * the reason is required and shows up in review.
- */
-export function exemptHoistedIsolation(reason: string): void {
-  if (!reason.trim()) throw new Error('exemptHoistedIsolation needs a reason');
-  exemption = reason;
 }
 
 /** test-only introspection: how many holders this file registered */
