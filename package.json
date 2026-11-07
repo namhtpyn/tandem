@@ -29,7 +29,8 @@
     "lint:check": "bun --bun oxlint",
     "format": "bun --bun oxfmt",
     "format:check": "bun --bun oxfmt --check",
-    "test:unit": "bun --bun vitest run --project unit"
+    "test:unit": "bun --bun vitest run --project unit",
+    "check:test-isolation": "bun --bun scripts/check-test-isolation.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^2.1.0",

@@ -51,6 +51,7 @@ jobs:
       - run: bun run format:check
       - run: bun run typecheck
       - run: bun run build
+      - run: bun run check:test-isolation
       - run: bun run test:coverage
       - name: Create e2e database
         run: docker exec ${{ job.services.postgres.id }} psql -U tandem -d tandem_test -c 'create database tandem_e2e owner tandem'

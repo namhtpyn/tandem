@@ -106,6 +106,9 @@ function seedTask(statusId: string, assigneeId: string | null) {
 }
 
 beforeEach(() => {
+  h.taskRows = [];
+  h.statuses = [];
+  h.dispatchOk = true;
   h.updates = [];
   h.dispatches = [];
   h.notes = [];

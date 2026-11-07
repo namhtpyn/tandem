@@ -102,6 +102,9 @@ function seedTask(statusId: string) {
 }
 
 beforeEach(() => {
+  h.taskRows = [];
+  h.statuses = [];
+  h.holder = 'human-1';
   h.flips = [];
   h.cancelled = [];
 });

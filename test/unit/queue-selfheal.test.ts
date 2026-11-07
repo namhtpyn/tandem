@@ -15,6 +15,8 @@ type FakeClient = {
   ping: () => Promise<string>;
 };
 
+// isolation-ok: `created` is seeded ONCE by the file's beforeAll (the domain module
+// caches its promise by design) and only read afterwards — no per-test writes.
 const h = vi.hoisted(() => ({
   created: [] as FakeClient[],
 }));

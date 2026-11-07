@@ -4,7 +4,7 @@
 // their thread message; task_runs has no task_id), never a per-row lookup — and
 // (b) the Set mapping with the empty-page short-circuit.
 import { and, eq, inArray } from 'drizzle-orm';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RUN_STATUS } from '#shared/enums';
 
@@ -34,6 +34,10 @@ vi.mock('../../server/db/index', () => ({
 }));
 
 import { runningTaskIdsFor } from '../../server/domains/tasks/runner.service';
+
+beforeEach(() => {
+  h.selectCalls = 0;
+});
 
 describe('runningTaskIdsFor — the RUN LOCK bit query (#264)', () => {
   it('SQL shape: task_runs ⋈ task_messages on message_id, RUNNING filter, page ids in one inArray', () => {
