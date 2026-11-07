@@ -29,16 +29,25 @@ const toast = useToast();
 // DECISION-VISIBILITY LAW (SPEC): the Tasks nav item carries a live count of
 // the signed-in user's pending obligations — the personal decision queue is
 // visible from every surface without opening /tasks first. Disabled while
-// signed out: the login shell must never fire an auth-guarded query. Same query
-// key as TasksManager, so both surfaces share one cache entry and the TASKS
-// change resource refetches the badge with the list.
+// signed out AND on the forced-rotation screen (ROTATION LOCK: a locked session
+// may reach exactly one procedure — a shell query would 403 on every mount).
+// Same query key as TasksManager, so both surfaces share one cache entry and the
+// TASKS change resource refetches the badge with the list.
 const inboxLive = useQuery({
   ...$orpc.tasks.inbox.queryOptions({ queryKey: [CHANGE_RESOURCE.TASKS, 'inbox'] }),
-  enabled: computed(() => !!session.value?.user),
+  enabled: computed(() => !!session.value?.user && !session.value.user.mustChangePassword),
 });
 const pendingDecisionCount = computed(() => {
   const data = unref(inboxLive.data) as { items?: unknown[] } | undefined;
   return data?.items?.length ?? 0;
+});
+// Client-only paint: on /tasks this cache entry is dehydrated from the page's
+// suspense, so a server-rendered pill would hydrate against data the shell did
+// not have at render time (mismatch). The shell renders the pill after mount;
+// the count query itself still starts immediately, so the delay is one frame.
+const navBadgeReady = ref(false);
+onMounted(() => {
+  navBadgeReady.value = true;
 });
 
 const loginEmail = ref('');
@@ -350,8 +359,18 @@ const nav = computed(() =>
                link's accessible name (screen readers get the count on the Tasks
                page's labelled toggle; e2e exact-name nav selectors stay valid). -->
           <template #tasksNav-trailing>
+            <!-- error first: a failed count must not read as 'nothing pending'
+                 (same rule as the Tasks-page toggle's inbox-count-error) -->
             <span
-              v-if="pendingDecisionCount > 0"
+              v-if="navBadgeReady && inboxLive.isError.value"
+              data-testid="nav-inbox-badge-error"
+              aria-hidden="true"
+              title="Couldn't load the decision count — reopen the page to retry"
+              class="bg-error/15 text-error inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
+              >!</span
+            >
+            <span
+              v-else-if="navBadgeReady && pendingDecisionCount > 0"
               data-testid="nav-inbox-badge"
               aria-hidden="true"
               class="bg-accented text-default inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-4 font-semibold"
