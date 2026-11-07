@@ -1,3 +1,14 @@
+## [2.76.1](https://github.com/namhtpyn/tandem/compare/v2.76.0...v2.76.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **mcp:** r1 blind review — a refused handshake takes the child's exit/stderr verdict immediately (P2) ([c1e7674](https://github.com/namhtpyn/tandem/commit/c1e7674d7358c6c797c46fa513dbf38f14eb16cd))
+* **mcp:** r2 blind review — first-line stderr reader (no drain-to-EOF), stderr wins on every null-parsed exit (P2) ([56c10ba](https://github.com/namhtpyn/tandem/commit/56c10ba3174f7ce3020318a9e4770d84aa2969dc))
+* **mcp:** r3 blind review — complete stderr lines, timeout keeps the child's reason (P3/P2) ([516613f](https://github.com/namhtpyn/tandem/commit/516613f50420037a00983e04234c5ac8efd70698))
+* **mcp:** stdio probe never reports a bare EPIPE in place of the child's stderr ([#346](https://github.com/namhtpyn/tandem/issues/346)) ([1458f5c](https://github.com/namhtpyn/tandem/commit/1458f5ca99c596e4bfe253cbd25b55638f48746a))
+* **tasks:** task detail carries the list scope so back returns to it ([#341](https://github.com/namhtpyn/tandem/issues/341)) ([c56189d](https://github.com/namhtpyn/tandem/commit/c56189db3dd621201e8ccb641c293e204035a417))
+
 # [2.76.0](https://github.com/namhtpyn/tandem/compare/v2.75.1...v2.76.0) (2026-11-06)
 
 
