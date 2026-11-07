@@ -79,6 +79,9 @@ async function runWorkflow(fn: () => Promise<unknown>) {
   }
 }
 
+/** canonical uuid shape (any version) — the assignee scope filters a uuid column */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** group output attachments by their run id (inputs are not part of run payloads) */
 export function groupOutputsByRun(
   atts: Array<{ id: string; runId: string | null; kind: string; filename: string; mime: string; size: number }>,
@@ -181,13 +184,22 @@ async function listTasksPaged(
     q?: string;
     statusId?: string;
     projectId?: string;
+    assigneeId?: string;
     inboxOfMe?: boolean;
     awaitingDecision?: boolean;
   },
   selfId: string,
 ) {
-  // user-facing filters (search / status / project scope) in ONE pure builder
-  // (#339); the obligation filters below need the db and AND-compose with them
+  // ASSIGNEE SCOPE LAW (#353): tasks.assignee_id is a uuid column, so a
+  // non-uuid filter value can never match AND passing it into the comparison
+  // throws a Postgres uuid parse error (a 500 instead of the specced empty
+  // page). A filter is not a lookup: short-circuit the miss before the query.
+  if (input.assigneeId !== undefined && !UUID_RE.test(input.assigneeId)) {
+    return { data: [] as TaskRow[], total: 0 };
+  }
+  // user-facing filters (search / status / project / assignee scope) in ONE
+  // pure builder (#339, #353); the obligation filters below need the db and
+  // AND-compose with them
   // inboxOfMe = tasks with a PENDING obligation on the caller — the same taskId
   // set `inbox` items come from (pendingForUser); empty set short-circuits
   let inboxFilter: { id: { inArray: string[] } } | undefined;
@@ -418,6 +430,9 @@ export const tasksRouter = os.router({
         q: z.string().trim().optional(),
         statusId: z.string().min(1).optional(),
         projectId: z.string().min(1).optional(),
+        // blank/non-uuid values are a miss, not an error (ASSIGNEE SCOPE LAW):
+        // listTasksPaged short-circuits them to an empty page before the uuid query
+        assigneeId: z.string().optional(),
         inboxOfMe: z.boolean().optional(),
         awaitingDecision: z.boolean().optional(),
       }),
