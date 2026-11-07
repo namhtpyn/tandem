@@ -1,12 +1,13 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { registeredHolderCount } from '../hoisted-isolation';
 
 // Contract: SPEC.md "Test isolation" — a `vi.hoisted` holder is module state shared
 // by every test in its file; the harness restores it when a test ends, so shuffle
-// order can never carry one test's writes into another. Every test below fouls the
-// holder on purpose and asserts a clean slate FIRST: whichever test runs second
-// catches a broken restore, so the proof does not depend on declaration order.
+// order can never carry one test's writes into another. Every test below asserts a
+// CLEAN SLATE FIRST (every field, not just the one it is about to foul): whichever
+// test runs second catches a broken restore of any field, so the proof never depends
+// on declaration order and no restore branch can be dropped without a red test.
 const marker = (name: string) => `leak:${name}`;
 
 const h = vi.hoisted(() => {
@@ -21,6 +22,8 @@ const h = vi.hoisted(() => {
     tags: new Set<string>(),
     seedRows: [] as string[],
     when: new Date('2026-01-01T00:00:00Z'),
+    bytes: new Uint8Array([1, 2, 3]),
+    query: new URLSearchParams('a=1'),
     symbolKey,
     [symbolKey]: 0,
   };
@@ -36,76 +39,93 @@ const cyclic = vi.hoisted(() => {
   return { graph: parent };
 });
 
+// a reference captured at module scope: no static checker can prove what reaches it
+const capturedRows = h.rows;
+
+const BASE_TIME = '2026-01-01T00:00:00.000Z';
+
+/** every field the harness promises to restore, checked in one place */
+function assertClean(): void {
+  expect(h.rows).toEqual([]);
+  expect(h.flag).toBe(false);
+  expect(h.nested).toEqual({ open: false, deep: { count: 0 } });
+  expect(h.seen.size).toBe(0);
+  expect(h.tags.size).toBe(0);
+  expect(h.when.toISOString()).toBe(BASE_TIME);
+  expect([...h.bytes]).toEqual([1, 2, 3]);
+  expect(h.query.toString()).toBe('a=1');
+  expect(h[h.symbolKey]).toBe(0);
+  expect(cyclic.graph.name).toBe('parent');
+  expect(cyclic.graph.child?.name).toBe('child');
+  expect(cyclic.graph.child?.child).toBe(cyclic.graph);
+  expect(capturedRows).toEqual([]);
+}
+
 describe('hoisted holder isolation', () => {
   it('the harness registered this holder (a silent no-op would fake every pass below)', () => {
     expect(registeredHolderCount()).toBeGreaterThan(0);
   });
 
-  it('arrays: every test starts empty, whatever ran before it', () => {
-    expect(h.rows).toEqual([]);
+  it('arrays: a test starts empty and its push does not survive', () => {
+    assertClean();
     h.rows.push(marker('arrays'));
+    expect(h.rows).toEqual([marker('arrays')]);
   });
 
   it('scalars and nested objects: no sticky flag, no sticky count', () => {
-    expect(h.flag).toBe(false);
-    expect(h.nested).toEqual({ open: false, deep: { count: 0 } });
+    assertClean();
     h.flag = true;
     h.nested.open = true;
     h.nested.deep.count += 1;
   });
 
   it('collections: a Map and a Set start empty', () => {
-    expect(h.seen.size).toBe(0);
-    expect(h.tags.size).toBe(0);
+    assertClean();
     h.seen.set('k', 1);
     h.tags.add('t');
   });
 
   it('a Date is restored in place, keeping its identity', () => {
+    assertClean();
     const original = h.when;
-    expect(h.when.toISOString()).toBe('2026-01-01T00:00:00.000Z');
     h.when.setTime(Date.parse('2026-06-01T00:00:00Z'));
     expect(original).toBe(h.when);
   });
 
+  it('typed arrays and URLSearchParams are restored in place', () => {
+    assertClean();
+    h.bytes.fill(9);
+    h.query.set('a', '2');
+    h.query.append('b', '3');
+  });
+
   it('symbol-keyed fields are restored too', () => {
-    expect(h[h.symbolKey]).toBe(0);
+    assertClean();
     h[h.symbolKey] = 5;
   });
 
   it('a cyclic fixture is restored without blowing the stack', () => {
-    expect(cyclic.graph.child?.name).toBe('child');
-    expect(cyclic.graph.child?.child).toBe(cyclic.graph);
+    assertClean();
     (cyclic.graph.child as { name: string }).name = 'renamed';
     (cyclic.graph.child as { child?: unknown }).child = null;
   });
 
   it('whole-field replacement is undone as well', () => {
-    expect(h.rows).toEqual([]);
+    assertClean();
     h.rows = [marker('replaced')];
     h.nested = { open: true, deep: { count: 9 } };
     expect(h.rows).toEqual([marker('replaced')]);
   });
 
-  it('and the replacement did not stick', () => {
-    expect(h.rows).toEqual([]);
-    expect(h.nested).toEqual({ open: false, deep: { count: 0 } });
-  });
-});
-
-// a reference captured at module scope: no static checker can prove what reaches it,
-// restoration does not need to — it puts the state back regardless of the path
-const capturedRows = h.rows;
-
-describe('writes through a captured reference', () => {
-  it('land in the holder and are undone', () => {
-    expect(capturedRows).toEqual([]);
-    capturedRows.push(marker('alias'));
-    expect(h.rows).toEqual([marker('alias')]);
-  });
-
-  it('never survive into the next test', () => {
-    expect(capturedRows).toEqual([]);
+  it('resetting in place keeps a captured reference pointing at the array', () => {
+    assertClean();
+    // the convention: reset containers in place (`rows.length = 0`), never by
+    // reassigning (`rows = []`) — a mock that captured the array keeps writing
+    // into the object the test reads
+    h.rows.push('before');
+    h.rows.length = 0;
+    capturedRows.push(marker('in-place'));
+    expect(h.rows).toEqual([marker('in-place')]);
   });
 });
 
@@ -115,10 +135,12 @@ describe('a nested beforeAll seed', () => {
   });
 
   it('is visible to its own tests', () => {
+    assertClean();
     expect(h.seedRows).toEqual(['seeded-once']);
   });
 
   it('is file state, not a leak: the seed persists and test writes do not', () => {
+    assertClean();
     expect(h.seedRows).toEqual(['seeded-once']);
     h.seedRows.push(marker('seed'));
     expect(h.seedRows).toEqual(['seeded-once', marker('seed')]);
@@ -127,4 +149,36 @@ describe('a nested beforeAll seed', () => {
   it('leaving the seed exactly as beforeAll made it', () => {
     expect(h.seedRows).toEqual(['seeded-once']);
   });
+});
+
+// LIMIT: restore is per test, so tests that run concurrently over the SAME holder
+// interleave their writes — the harness can only promise it never throws and never
+// wipes a *finished* test's own snapshot. Keep `describe.concurrent` suites off
+// shared holders, or hold per-test state in locals.
+describe.concurrent('concurrent tests over a shared holder', () => {
+  it('one', async () => {
+    const local = marker('one');
+    h.rows.push(local);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(local).toBe('leak:one');
+  });
+
+  it('two', async () => {
+    const local = marker('two');
+    h.rows.push(local);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(local).toBe('leak:two');
+  });
+
+  it('the restore never throws while siblings are in flight', async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    expect(Array.isArray(h.rows)).toBe(true);
+  });
+});
+
+afterAll(() => {
+  // afterAll runs after the last restore: a file's trailing state must be clean
+  expect(h.rows).toEqual([]);
+  expect(h.seen.size).toBe(0);
+  expect([...h.bytes]).toEqual([1, 2, 3]);
 });

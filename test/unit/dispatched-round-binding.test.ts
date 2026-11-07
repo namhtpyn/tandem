@@ -39,7 +39,7 @@ const r2 = new Date('2026-11-02T00:00:00Z');
 
 beforeEach(() => {
   h.latestRunStartedAt = null;
-  h.reviewRows = [];
+  h.reviewRows.length = 0;
 });
 
 describe('dispatchedReviewRoundRow (#276)', () => {

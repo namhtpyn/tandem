@@ -30,10 +30,15 @@ type Snap =
   | { kind: 'set'; ref: Set<unknown>; items: Snap[] }
   | { kind: 'object'; ref: Holder; allKeys: PropertyKey[]; data: Array<[PropertyKey, Snap]> }
   | { kind: 'date'; ref: Date; time: number }
+  | { kind: 'bytes'; ref: ArrayBufferView; bytes: Uint8Array }
+  | { kind: 'buffer'; ref: ArrayBuffer; bytes: Uint8Array }
+  | { kind: 'params'; ref: URLSearchParams; query: string }
   | { kind: 'value'; value: unknown };
 
 const holders: object[] = [];
-let pending: Snap[] | null = null;
+// keyed by the running test: `describe.concurrent` runs tests in parallel, so a
+// single pending slot would let one test's restore wipe another's state
+const pending = new Map<string, Snap[]>();
 
 function isPlain(value: unknown): value is Holder {
   if (value === null || typeof value !== 'object') return false;
@@ -68,6 +73,20 @@ function snapshot(value: unknown, seen = new Map<object, Snap>()): Snap {
     return snap;
   }
   if (value instanceof Date) return { kind: 'date', ref: value, time: value.getTime() };
+  if (ArrayBuffer.isView(value)) return { kind: 'bytes', ref: value, bytes: new Uint8Array(value.buffer.slice(0)) };
+  if (value instanceof ArrayBuffer) return { kind: 'buffer', ref: value, bytes: value.slice(0) };
+  if (value instanceof URLSearchParams) return { kind: 'params', ref: value, query: value.toString() };
+  if (typeof value === 'function') {
+    // function holders (vi.fn(...) hoisted handles): own writable props only
+    const snap: Snap = { kind: 'object', ref: value as unknown as Holder, allKeys: Reflect.ownKeys(value), data: [] };
+    seen.set(value, snap);
+    for (const key of snap.allKeys) {
+      const desc = Object.getOwnPropertyDescriptor(value, key);
+      if (!desc || !('value' in desc) || desc.writable !== true) continue;
+      snap.data.push([key, snapshot(desc.value, seen)]);
+    }
+    return snap;
+  }
   if (isPlain(value)) {
     const snap: Snap = { kind: 'object', ref: value, allKeys: Reflect.ownKeys(value), data: [] };
     seen.set(value, snap);
@@ -119,6 +138,19 @@ function restoreSnap(snap: Snap, seen = new Set<Snap>()): unknown {
     snap.ref.setTime(snap.time);
     return snap.ref;
   }
+  if (snap.kind === 'bytes') {
+    new Uint8Array(snap.ref.buffer).set(snap.bytes);
+    return snap.ref;
+  }
+  if (snap.kind === 'buffer') {
+    new Uint8Array(snap.ref).set(snap.bytes);
+    return snap.ref;
+  }
+  if (snap.kind === 'params') {
+    for (const key of [...snap.ref.keys()]) snap.ref.delete(key);
+    for (const [key, value] of new URLSearchParams(snap.query)) snap.ref.append(key, value);
+    return snap.ref;
+  }
   for (const key of Reflect.ownKeys(snap.ref)) {
     if (snap.allKeys.includes(key)) continue;
     const desc = Object.getOwnPropertyDescriptor(snap.ref, key);
@@ -143,14 +175,18 @@ export function installHoistedIsolation(): void {
     return value;
   }) as typeof api.hoisted;
 
-  beforeEach(() => {
-    pending = holders.map((holder) => snapshot(holder));
+  beforeEach((context) => {
+    pending.set(
+      context.task.id,
+      holders.map((holder) => snapshot(holder)),
+    );
   });
 
-  afterEach(() => {
-    if (pending === null) return;
-    for (const snap of pending) restoreSnap(snap);
-    pending = null;
+  afterEach((context) => {
+    const snaps = pending.get(context.task.id);
+    if (!snaps) return;
+    for (const snap of snaps) restoreSnap(snap);
+    pending.delete(context.task.id);
   });
 }
 
