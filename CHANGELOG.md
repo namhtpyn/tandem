@@ -1,3 +1,15 @@
+# [2.78.0](https://github.com/namhtpyn/tandem/compare/v2.77.0...v2.78.0) (2026-11-08)
+
+
+### Bug Fixes
+
+* **tasks:** r1 review — non-uuid assignee ids are a miss, not a 500; create CTA gated; one URL normalizer ([#353](https://github.com/namhtpyn/tandem/issues/353)) ([b7d17de](https://github.com/namhtpyn/tandem/commit/b7d17def20b2585d71aa54667aadeca068236f0a))
+
+
+### Features
+
+* **tasks:** assignee scope — server filter, ?assignee= URL state, My tasks ([#353](https://github.com/namhtpyn/tandem/issues/353)) ([a565909](https://github.com/namhtpyn/tandem/commit/a565909122599c60091c4e0028dadf56a009b128))
+
 # [2.77.0](https://github.com/namhtpyn/tandem/compare/v2.76.1...v2.77.0) (2026-11-07)
 
 
