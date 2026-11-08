@@ -11,11 +11,12 @@
 // that swaps the reviewer up-chain on the TASK roster and never settles.
 // Parks (round cannot progress without a human) flip the task to BLOCKED; owner
 // resolution unblocks and the round resumes. Manual done/cancel supersedes the round.
-import { and, desc, eq, inArray, notInArray } from 'drizzle-orm';
+import { consola } from 'consola';
+import { and, desc, eq, inArray, isNull, lt, notInArray } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { db, type DbExecutor } from '../../db/index';
-import { tasks, taskReviews, taskRuns, taskMessages } from '../../db/schema';
+import { tasks, taskReviews, taskRuns, taskMessages, taskObligations } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import {
   spawnObligation,
@@ -23,6 +24,7 @@ import {
   cancelObligations,
   cancelAllObligations,
   cancelObligationById,
+  deleteObligationById,
   resolveObligation,
 } from './obligations.service';
 import { dispatchTask, type DispatchOpts } from './runner.service';
@@ -34,8 +36,9 @@ import {
   CATEGORY,
   CHANGE_RESOURCE,
   CHANGE_ACTION,
-  REVIEW_STATUS,
   OBLIGATION_ROLE,
+  OBLIGATION_STATUS,
+  REVIEW_STATUS,
   ACTIVITY_KIND,
   type ActivityKind,
   type ReviewStatus,
@@ -43,6 +46,8 @@ import {
 } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
+
+const log = consola.withTag('tandem');
 
 const TODO_STATUS = STATUS.todo;
 
@@ -259,7 +264,8 @@ export async function teardownAllPendingRounds(taskId: string, settledTo: string
 /** is the current round still LIVE (pending reviewers)? Rounds never close early —
  * a request_change keeps the round open until the last verdict lands — so LIVE means
  * pending rows exist. Drives where an answered question returns: a live review round
- * goes back to in-review, everything else back to todo. */
+ * goes back to in-review, everything else back to todo. A PENDING row whose reviewer
+ * no longer exists (employee deleted mid-round) is a non-vote — never live (#365). */
 export async function openRoundLive(taskId: string) {
   const round = await currentRound(taskId);
   if (round === 0) return false;
@@ -267,7 +273,311 @@ export async function openRoundLive(taskId: string) {
     .select()
     .from(taskReviews)
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
-  return rows.some((r) => r.status === REVIEW_STATUS.PENDING);
+  return rows.some((r) => r.status === REVIEW_STATUS.PENDING && r.reviewerId !== null);
+}
+
+/** a PENDING row whose reviewer was deleted after the round minted it (the FK nulls
+ * reviewer_id) can never carry a verdict — a NON-VOTE by construction (#365). The
+ * machine signature of a removed reviewer: no legal write path produces it. */
+function voidPending(r: { status: string; reviewerId: string | null }) {
+  return r.status === REVIEW_STATUS.PENDING && r.reviewerId === null;
+}
+
+/** supersede a round's void pending rows (reviewers deleted mid-round) — audit
+ * non-votes. Guarded on reviewer_id IS NULL so a live reviewer's pending row can
+ * never be touched, and scoped to the round the caller read. */
+async function extinguishVoidPendingRows(taskId: string, round: number) {
+  await db
+    .update(taskReviews)
+    .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
+    .where(
+      and(
+        eq(taskReviews.taskId, taskId),
+        eq(taskReviews.round, round),
+        eq(taskReviews.status, REVIEW_STATUS.PENDING),
+        isNull(taskReviews.reviewerId),
+      ),
+    );
+}
+
+/** supersede EVERY pending row in EVERY round — a terminal settle closes the whole
+ *  task (#361 r6): a done/cancelled task must never keep a pending review row. */
+async function supersedeAllPendingRows(taskId: string) {
+  await db
+    .update(taskReviews)
+    .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
+    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
+}
+
+const TERMINAL_CATEGORIES = new Set<string>([CATEGORY.DONE, CATEGORY.CANCELLED]);
+
+/** TERMINAL RESIDUE (#365 r5): the settle's flip is its FIRST write, so a crash or a
+ *  throwing teardown after the flip leaves a settled task still carrying the void row
+ *  (and its siblings' pending approvals) — and nothing else would ever clear a
+ *  CURRENT-round row. A settled task must never keep a pending review row or a
+ *  pending approval obligation (#361 r6). Idempotent: on a clean task both writes are
+ *  no-ops. Returns true when the task is terminal (the caller must not settle it). */
+async function healTerminalResidue(taskId: string, statusId: string): Promise<boolean> {
+  if (!TERMINAL_CATEGORIES.has((await categoryOf(statusId)) ?? '')) return false;
+  // same trigger-last ordering as the settle: the row sweep erases the signature the
+  // scans key on, so a failure before it must leave the row for the next trigger
+  await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+  await supersedeAllPendingRows(taskId);
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+  return true;
+}
+
+/** an owner REOPEN (done/cancelled -> in-review) voids the machine signature: a void
+ *  row left by a settle that flipped then died would otherwise let a later boot or
+ *  unrelated-removal heal auto-settle the reopen the owner just made. Supersede every
+ *  void pending row so the heals find nothing to settle (#365 r5). */
+export async function discardVoidRows(taskId: string) {
+  await db
+    .update(taskReviews)
+    .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
+    .where(
+      and(
+        eq(taskReviews.taskId, taskId),
+        eq(taskReviews.status, REVIEW_STATUS.PENDING),
+        isNull(taskReviews.reviewerId),
+      ),
+    );
+}
+
+/** settle a round left with NO live voter because its reviewer was deleted (#365):
+ *  the normal matrix runs without the verdict that can never arrive — every decided
+ *  row approved -> done, every decided row rejected -> cancelled, otherwise back to
+ *  the assignee. The discriminator is the void pending row itself: only an employee
+ *  delete can produce reviewer_id NULL on a pending row, so a legal manual re-queue
+ *  to in-review over an already-decided round (no pending rows at all) is never
+ *  stomped. The flip pins the status this call read, so any concurrent settle/move
+ *  wins and this call reports false. */
+export async function settleExtinguishedRound(taskId: string): Promise<boolean> {
+  const taskRow = (
+    await db.select({ status: tasks.status, updatedAt: tasks.updatedAt }).from(tasks).where(eq(tasks.id, taskId))
+  )[0];
+  if (!taskRow) return false;
+  if (await healTerminalResidue(taskId, taskRow.status)) return false;
+  if ((await categoryOf(taskRow.status)) !== CATEGORY.IN_REVIEW) return false;
+  const round = await currentRound(taskId);
+  if (round === 0) return false;
+  const rows = await db
+    .select()
+    .from(taskReviews)
+    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
+  if (!rows.some(voidPending)) return false; // machine signature only — never a manual state
+  if (rows.some((r) => r.status === REVIEW_STATUS.PENDING && r.reviewerId !== null)) return false; // a live voter owns the round
+  const live = rows.filter(
+    (r) => r.status !== REVIEW_STATUS.ESCALATED && r.status !== REVIEW_STATUS.SUPERSEDED && !voidPending(r),
+  );
+  const allApproved = live.length > 0 && live.every((r) => r.status === REVIEW_STATUS.APPROVED);
+  const allRejected = live.length > 0 && live.every((r) => r.status === REVIEW_STATUS.REJECTED);
+  const target = allApproved ? DONE_STATUS : allRejected ? CANCELLED_STATUS : TODO_STATUS;
+  // FLIP FIRST (#365 r3): the void pending row is the trigger every later heal keys on,
+  // so it is extinguished only AFTER the flip wins — a lost CAS must leave the machine
+  // signature intact for the next trigger, never strand an in-review round nothing can
+  // ever settle again.
+  const flipped = await db
+    .update(tasks)
+    // PARK-REARM LAW (#365 r6): the flip leaves BLOCKED, so the ladder is inert —
+    // a settled round must never hand a spent ladder to the task's next park
+    .set({ status: target, updatedAt: new Date(), parkRearmAttempts: 0, parkRearmAfter: null })
+    // TERMINAL ARBITRATION (#292 r2): pin the status AND the updatedAt stamp this
+    // call read — a manual round-trip back into the same in-review status (or a
+    // submit re-flip) must beat a stale settle, never be stomped by it
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, taskRow.status), eq(tasks.updatedAt, taskRow.updatedAt)))
+    .returning({ id: tasks.id });
+  if (flipped.length === 0) return false; // a concurrent settle/move owns the outcome
+  // TRIGGER LAST (#365 r6): the void row is the ONLY thing the boot/removal scans key
+  // on, so every write that can fail runs BEFORE it is erased — a crash mid-teardown
+  // leaves the signature intact and the next trigger retries the whole settle.
+  // matrix parity: an approved round keeps its FULFILLED approvals (audit + approver
+  // tally), a cancelled/returned round is dead for approval purposes
+  if (allApproved) await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+  else await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+  if (allApproved || allRejected) await supersedeAllPendingRows(taskId); // #361 r6: no pending row outlives a terminal task
+  await extinguishVoidPendingRows(taskId, round);
+  await logActivity(
+    taskId,
+    ACTIVITY_KIND.STATUS,
+    null,
+    allApproved
+      ? 'review round closed — every remaining reviewer approved'
+      : allRejected
+        ? 'review round closed — every remaining reviewer rejected'
+        : 'review round closed — no reviewers remain; task returned to the assignee',
+    { roundClosed: true, round, reviewersRemoved: true },
+  );
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+  if (target !== TODO_STATUS) {
+    // a TERMINAL settle flips the task's status: re-gate its parents (every other
+    // lifecycle flip does — an auto-blocked parent must unblock when its last child
+    // lands terminal). Dynamic import keeps the module graph acyclic at load time.
+    try {
+      const { refreshParentGating } = await import('./gating.service');
+      await refreshParentGating(taskId);
+    } catch (e) {
+      log.warn(`settle: parent re-gate failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+  return true;
+}
+
+/** REVIEWER REMOVAL, prepare half (#365): a READ-ONLY capture taken BEFORE the
+ * employee's user row is deleted — the pending review rows they hold and their
+ * pending APPROVAL obligations. Nothing is mutated here: a failed delete must change
+ * nothing, so every write happens in settleReviewerRemovalRounds after it lands. */
+export type ReviewerRemovalPlan = {
+  taskIds: string[];
+  reviewRowIds: string[];
+  obligationIds: string[];
+};
+
+export async function prepareReviewerRemoval(employeeId: string): Promise<ReviewerRemovalPlan> {
+  const pending = await db
+    .select({ id: taskReviews.id, taskId: taskReviews.taskId })
+    .from(taskReviews)
+    .where(and(eq(taskReviews.reviewerId, employeeId), eq(taskReviews.status, REVIEW_STATUS.PENDING)))
+    .limit(100);
+  const obligations = await db
+    .select({ id: taskObligations.id })
+    .from(taskObligations)
+    .where(
+      and(
+        eq(taskObligations.employeeId, employeeId),
+        eq(taskObligations.role, OBLIGATION_ROLE.APPROVAL),
+        eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
+      ),
+    );
+  return {
+    taskIds: [...new Set(pending.map((p) => p.taskId))],
+    reviewRowIds: pending.map((p) => p.id),
+    obligationIds: obligations.map((o) => o.id),
+  };
+}
+
+/** REVIEWER REMOVAL, settle half (#365): runs AFTER the user delete. Mutates only
+ *  what the delete made stale: cancels the captured approval obligations by id,
+ *  notes the captured rows (still PENDING and now void — a verdict that landed in
+ *  the capture→delete window keeps its own note), then settles every affected round
+ *  plus any leftover void row (the machine signature — catches a round minted inside
+ *  the prepare→delete window and any removal that crashed mid-way). Every step is
+ *  fault-isolated: the delete already committed, so a heal failure must never 500
+ *  the caller or skip the employee-delete bookkeeping; the boot heal retries. */
+export async function settleReviewerRemovalRounds(plan: ReviewerRemovalPlan, name?: string): Promise<string[]> {
+  for (const obligationId of plan.obligationIds) {
+    try {
+      await deleteObligationById(obligationId);
+    } catch (e) {
+      log.warn(`reviewer removal: could not drop obligation ${obligationId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+  if (plan.reviewRowIds.length > 0) {
+    try {
+      await db
+        .update(taskReviews)
+        .set({ note: `reviewer removed — ${name ?? 'employee deleted'}` })
+        .where(
+          and(
+            inArray(taskReviews.id, plan.reviewRowIds),
+            eq(taskReviews.status, REVIEW_STATUS.PENDING),
+            isNull(taskReviews.reviewerId),
+          ),
+        );
+    } catch (e) {
+      log.warn('reviewer removal: could not note the removed reviewer rows:', e instanceof Error ? e.message : e);
+    }
+  }
+  let leftover: Array<{ taskId: string }> = [];
+  try {
+    // bounded: a delete heals at most this many tasks synchronously; the rest drain
+    // through the next boot heal (never an unbounded job inside one RPC)
+    leftover = await db
+      .select({ taskId: taskReviews.taskId })
+      .from(taskReviews)
+      .where(and(eq(taskReviews.status, REVIEW_STATUS.PENDING), isNull(taskReviews.reviewerId)))
+      .limit(50);
+  } catch (e) {
+    log.warn('reviewer removal: void review row scan failed:', e instanceof Error ? e.message : e);
+  }
+  const taskIds = [...new Set([...plan.taskIds, ...leftover.map((r) => r.taskId)])];
+  const settledTaskIds: string[] = [];
+  for (const taskId of taskIds) {
+    try {
+      if (await settleExtinguishedRound(taskId)) settledTaskIds.push(taskId);
+      await cleanVoidReviewDebris(taskId);
+    } catch (e) {
+      log.warn(`reviewer removal: could not settle round for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+  return settledTaskIds;
+}
+
+/** void rows in NON-current rounds are audit debris (a round the matrix has moved
+ *  past can never settle) — cleared for tasks the removal/heal touched. A CURRENT
+ *  round's void row is NEVER cleared here, whatever the task's status: it is the
+ *  machine signature every restore path keys on (a blocked/parked task must keep it
+ *  or its unblock can never settle). A PENDING approval obligation whose holder is
+ *  NULL belongs to a deleted employee — `pendingTaskIds()` still counts it and
+ *  retention leg 2 refuses to delete the task's resolved rows while it lives — so
+ *  the orphan row is dropped whole (marking it CANCELLED would read as "round dead"
+ *  to approvalsInRoundBatch and blank the surviving approvers). */
+async function cleanVoidReviewDebris(taskId: string) {
+  const round = await currentRound(taskId);
+  if (round > 0) {
+    await db
+      .update(taskReviews)
+      .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
+      .where(
+        and(
+          eq(taskReviews.taskId, taskId),
+          eq(taskReviews.status, REVIEW_STATUS.PENDING),
+          isNull(taskReviews.reviewerId),
+          lt(taskReviews.round, round),
+        ),
+      );
+  }
+  await db
+    .delete(taskObligations)
+    .where(
+      and(
+        eq(taskObligations.taskId, taskId),
+        eq(taskObligations.role, OBLIGATION_ROLE.APPROVAL),
+        eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
+        isNull(taskObligations.employeeId),
+      ),
+    );
+}
+
+/** BOOT HEAL (#365): settle every in-review round left with a void pending row and
+ *  no live voter — the shape a removal that crashed between the user delete and the
+ *  settle leaves behind — and clear the void debris (stale-round rows, orphaned
+ *  approval obligations) left by any earlier removal. Idempotent; the scan reads
+ *  PENDING rows only (bounded — the rest drain on the next boot). Never throws (boot
+ *  must not fail on a heal). Returns the settled task ids. */
+export async function settleAllExtinguishedRounds(): Promise<string[]> {
+  let taskIds: string[];
+  try {
+    const rows = await db
+      .select({ taskId: taskReviews.taskId })
+      .from(taskReviews)
+      .where(and(eq(taskReviews.status, REVIEW_STATUS.PENDING), isNull(taskReviews.reviewerId)))
+      .limit(200);
+    taskIds = [...new Set(rows.map((r) => r.taskId))];
+  } catch (e) {
+    log.warn('void review row scan failed:', e instanceof Error ? e.message : e);
+    return [];
+  }
+  const settledTaskIds: string[] = [];
+  for (const taskId of taskIds) {
+    try {
+      if (await settleExtinguishedRound(taskId)) settledTaskIds.push(taskId);
+      await cleanVoidReviewDebris(taskId);
+    } catch (e) {
+      log.warn(`void review round heal failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+  return settledTaskIds;
 }
 
 /** the submitted result the current round is judging — the round rows carry it
@@ -611,7 +921,7 @@ async function settleRound(
     .select()
     .from(taskReviews)
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
-  const pending = roundRows.filter((r) => r.status === REVIEW_STATUS.PENDING);
+  const pending = roundRows.filter((r) => r.status === REVIEW_STATUS.PENDING && r.reviewerId !== null);
   if (pending.length > 0) {
     // round still waiting — advance the sequence (lazy mint: the settle path fires
     // the next reviewer's turn; humans just keep their card)
@@ -633,9 +943,16 @@ async function settleRound(
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'waiting' };
   }
-  // every live row decided — unanimity over the LIVE set (escalated/superseded are
-  // non-votes and can be the reason `decided` is empty for a torn-down round)
-  const live = roundRows.filter((r) => r.status !== REVIEW_STATUS.ESCALATED && r.status !== REVIEW_STATUS.SUPERSEDED);
+  // no live voter left — void pending rows (a reviewer deleted mid-round, #365) are
+  // non-votes: extinguish them so the round reads closed and the matrix judges the
+  // decided rows only. A manual move or settle can never mint this shape.
+  if (roundRows.some(voidPending)) await extinguishVoidPendingRows(taskId, round);
+  // every live row decided — unanimity over the LIVE set (escalated/superseded and
+  // void pending rows are non-votes and can be the reason `decided` is empty for a
+  // torn-down round)
+  const live = roundRows.filter(
+    (r) => r.status !== REVIEW_STATUS.ESCALATED && r.status !== REVIEW_STATUS.SUPERSEDED && !voidPending(r),
+  );
   const allApproved = live.length > 0 && live.every((r) => r.status === REVIEW_STATUS.APPROVED);
   const allRejected = live.length > 0 && live.every((r) => r.status === REVIEW_STATUS.REJECTED);
 
@@ -650,6 +967,7 @@ async function settleRound(
         ? { outcome: 'parked' }
         : { outcome: 'superseded' };
     await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+    await supersedeAllPendingRows(taskId); // #361 r6: no pending row outlives a terminal task
     await logVerdict(taskId, reviewerId, note || 'rejected — task cancelled', { rejected: true, round }, source);
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'cancelled' };
@@ -660,6 +978,7 @@ async function settleRound(
         ? { outcome: 'parked' }
         : { outcome: 'superseded' };
     await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+    await supersedeAllPendingRows(taskId); // #361 r6: no pending row outlives a terminal task
     await logVerdict(
       taskId,
       reviewerId,

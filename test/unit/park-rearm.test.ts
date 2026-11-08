@@ -128,6 +128,9 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
   return {
     ...mod,
     logActivity: async () => {},
+    // the restored round is LIVE in these specs (a real pending reviewer): dispatch
+    openRoundLive: async () => true,
+    settleExtinguishedRound: async () => false,
     dispatchAiReviewTurns: async (taskId: string) => {
       h.replayed.push(taskId);
     },

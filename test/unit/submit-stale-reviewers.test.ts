@@ -22,6 +22,7 @@ const h = vi.hoisted(() => ({
   casWins: true,
   teardowns: [] as string[],
   allClosed: [] as string[],
+  settled: [] as string[],
   events: [] as string[],
   updates: [] as Array<Record<string, unknown>>,
   inserts: [] as Array<{ vals: Record<string, unknown> }>,
@@ -125,6 +126,11 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
       h.allClosed.push(settledTo);
       h.events.push(`closed-all:${settledTo}`);
     },
+    // #365: the in-review flip offers the just-opened round to the extinguished settle
+    settleExtinguishedRound: async (taskId: string) => {
+      h.settled.push(taskId);
+      return false;
+    },
   };
 });
 
@@ -167,6 +173,7 @@ beforeEach(() => {
   h.casWins = true;
   h.teardowns = [];
   h.allClosed = [];
+  h.settled = [];
   h.events = [];
   h.updates = [];
   h.inserts = [];
@@ -196,6 +203,9 @@ describe('submit drops reviewers that no longer name a user (#361)', () => {
     expect(res).toEqual({ status: STATUS.inReview });
     expect(h.rounds[0]?.reviewers).toEqual([LIVE, LIVE2]);
     expect(threadBodies().join('\n')).not.toContain('skipped');
+    // #365: the in-review flip hands the fresh round to the extinguished settle (no-op
+    // while live voters exist; it heals a reviewer deleted inside the round-open window)
+    expect(h.settled).toEqual(['task-1']);
   });
 
   it('the existence read is case-insensitive both ways (UUID-CASE LAW) — an uppercase stored id survives', async () => {

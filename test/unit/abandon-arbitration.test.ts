@@ -105,6 +105,7 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
   return {
     ...mod,
     openRoundLive: async () => false,
+    settleExtinguishedRound: async () => false,
     dispatchAiReviewTurns: async () => {},
     openReviewRound: async () => 1,
     recordVerdict: async () => ({ outcome: 'superseded' }),

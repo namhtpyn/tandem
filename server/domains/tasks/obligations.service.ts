@@ -98,6 +98,15 @@ export async function cancelObligationById(obligationId: string) {
     .where(and(eq(taskObligations.id, obligationId), eq(taskObligations.status, OBLIGATION_STATUS.PENDING)));
 }
 
+/** delete ONE holder's pending obligation (employee removal, #365): the departing
+ *  reviewer's row must vanish from the round tally — marking it CANCELLED would read
+ *  as "round dead" to approvalsInRoundBatch and blank the surviving approvers. */
+export async function deleteObligationById(obligationId: string) {
+  await db
+    .delete(taskObligations)
+    .where(and(eq(taskObligations.id, obligationId), eq(taskObligations.status, OBLIGATION_STATUS.PENDING)));
+}
+
 /** cancel EVERY obligation of a role on a task — including ones already resolved this
  * round (REVIEW LAW: a change_requested/rejected round must not read as approvals) */
 export async function cancelAllObligations(taskId: string, role: ObligationRole) {
@@ -153,6 +162,17 @@ export function approvalsRoundScan(ex: DbExecutor, taskIds: string[]) {
     .where(and(inArray(taskObligations.taskId, taskIds), eq(taskObligations.role, OBLIGATION_ROLE.APPROVAL)));
 }
 
+/** the approver ids a latest-round row set renders: a round whose rows include a
+ *  CANCELLED row (request-changes / abandon) is dead -> []; a FULFILLED row whose
+ *  holder was deleted (employee_id nulled by the FK) is dropped — it can neither be
+ *  displayed nor act, and must never throw the whole list payload. */
+export function approverIdsFromRound(rows: Array<{ status: string; employeeId: string | null }>): string[] {
+  if (rows.some((r) => r.status === OBLIGATION_STATUS.CANCELLED)) return [];
+  return rows
+    .filter((r) => r.status === OBLIGATION_STATUS.FULFILLED && r.employeeId !== null)
+    .map((r) => r.employeeId as string);
+}
+
 /** fulfilled approvals per task for the LATEST round each (batch, for list payloads).
  *  A round whose rows are all cancelled (request-changes / abandon) is dead → []. */
 export async function approvalsInRoundBatch(taskIds: string[]) {
@@ -161,16 +181,7 @@ export async function approvalsInRoundBatch(taskIds: string[]) {
   const byTask = new Map<string, typeof rows>();
   for (const r of rows) byTask.set(r.taskId, [...(byTask.get(r.taskId) ?? []), r]);
   const out = new Map<string, string[]>();
-  for (const [tid, list] of byTask) {
-    if (list.some((r) => r.status === OBLIGATION_STATUS.CANCELLED)) {
-      out.set(tid, []);
-      continue;
-    }
-    out.set(
-      tid,
-      list.filter((r) => r.status === OBLIGATION_STATUS.FULFILLED).map((r) => nonNull(r.employeeId)),
-    );
-  }
+  for (const [tid, list] of byTask) out.set(tid, approverIdsFromRound(list));
   return out;
 }
 

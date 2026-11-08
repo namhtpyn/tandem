@@ -11,6 +11,8 @@ const h = vi.hoisted(() => ({
   statuses: [] as Array<{ id: string; category: string }>,
   live: false,
   dispatched: [] as string[],
+  settled: [] as string[],
+  discarded: [] as string[],
 }));
 
 vi.mock('../../server/db/index', () => ({
@@ -32,6 +34,15 @@ vi.mock('../../server/db/index', () => ({
 vi.mock('../../server/domains/tasks/review.service', () => ({
   openRoundLive: async () => h.live,
   dispatchAiReviewTurns: async (taskId: string) => void h.dispatched.push(taskId),
+  // #365: a not-live landing is offered to the extinguished-round settle (it no-ops
+  // on round-0 / decided rounds — the void-row discriminator lives in the service)
+  settleExtinguishedRound: async (taskId: string) => {
+    h.settled.push(taskId);
+    return false;
+  },
+  // #365 r5: an owner reopen discards the stale void rows so later heals never
+  // auto-settle the reopen
+  discardVoidRows: async (taskId: string) => void h.discarded.push(taskId),
 }));
 
 import { resumeRoundAfterManualMove } from '../../server/domains/tasks/review-resume';
@@ -40,6 +51,8 @@ beforeEach(() => {
   h.statuses = [];
   h.live = false;
   h.dispatched = [];
+  h.settled = [];
+  h.discarded = [];
 });
 
 describe('unblock-resume keys off the target status CATEGORY (#336)', () => {
@@ -64,11 +77,23 @@ describe('unblock-resume keys off the target status CATEGORY (#336)', () => {
     expect(h.dispatched).toHaveLength(0);
   });
 
-  it('an in-review target with NO live round dispatches nothing', async () => {
+  it('an in-review target with NO live round dispatches nothing — the extinguished-round settle gets the call', async () => {
     h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
     h.live = false;
     expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(false);
     expect(h.dispatched).toHaveLength(0);
+    expect(h.settled).toEqual(['task-1']);
+  });
+
+  it('reopening a SETTLED task (done -> in-review) is never auto-settled (#365 r4)', async () => {
+    h.statuses = [
+      { id: 'st-done', category: CATEGORY.DONE },
+      { id: 'st-custom-review', category: CATEGORY.IN_REVIEW },
+    ];
+    h.live = false;
+    expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review', 'st-done')).toBe(false);
+    expect(h.settled).toEqual([]);
+    expect(h.discarded).toEqual(['task-1']); // the stale signature is voided too
   });
 
   it('a dangling target status id is dead input — no dispatch, no guess', async () => {
