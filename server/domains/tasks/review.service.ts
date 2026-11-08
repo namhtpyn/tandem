@@ -11,7 +11,7 @@
 // that swaps the reviewer up-chain on the TASK roster and never settles.
 // Parks (round cannot progress without a human) flip the task to BLOCKED; owner
 // resolution unblocks and the round resumes. Manual done/cancel supersedes the round.
-import { and, desc, eq, inArray, notInArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, notInArray } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { db, type DbExecutor } from '../../db/index';
@@ -22,6 +22,7 @@ import {
   spawnObligationTracked,
   cancelObligations,
   cancelAllObligations,
+  cancelEmployeeObligations,
   cancelObligationById,
   resolveObligation,
 } from './obligations.service';
@@ -259,7 +260,8 @@ export async function teardownAllPendingRounds(taskId: string, settledTo: string
 /** is the current round still LIVE (pending reviewers)? Rounds never close early —
  * a request_change keeps the round open until the last verdict lands — so LIVE means
  * pending rows exist. Drives where an answered question returns: a live review round
- * goes back to in-review, everything else back to todo. */
+ * goes back to in-review, everything else back to todo. A PENDING row whose reviewer
+ * no longer exists (employee deleted mid-round) is a non-vote — never live (#365). */
 export async function openRoundLive(taskId: string) {
   const round = await currentRound(taskId);
   if (round === 0) return false;
@@ -267,7 +269,115 @@ export async function openRoundLive(taskId: string) {
     .select()
     .from(taskReviews)
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
-  return rows.some((r) => r.status === REVIEW_STATUS.PENDING);
+  return rows.some((r) => r.status === REVIEW_STATUS.PENDING && r.reviewerId !== null);
+}
+
+/** a PENDING row whose reviewer was deleted after the round minted it (the FK nulls
+ * reviewer_id) can never carry a verdict — a NON-VOTE by construction (#365). The
+ * machine signature of a removed reviewer: no legal write path produces it. */
+function voidPending(r: { status: string; reviewerId: string | null }) {
+  return r.status === REVIEW_STATUS.PENDING && r.reviewerId === null;
+}
+
+/** supersede a round's void pending rows (reviewers deleted mid-round) — audit
+ * non-votes. Guarded on reviewer_id IS NULL so a live reviewer's pending row can
+ * never be touched, and scoped to the round the caller read. */
+async function extinguishVoidPendingRows(taskId: string, round: number) {
+  await db
+    .update(taskReviews)
+    .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
+    .where(
+      and(
+        eq(taskReviews.taskId, taskId),
+        eq(taskReviews.round, round),
+        eq(taskReviews.status, REVIEW_STATUS.PENDING),
+        isNull(taskReviews.reviewerId),
+      ),
+    );
+}
+
+/** settle a round left with NO live voter because its reviewer was deleted (#365):
+ *  the normal matrix runs without the verdict that can never arrive — every decided
+ *  row approved -> done, every decided row rejected -> cancelled, otherwise back to
+ *  the assignee. The discriminator is the void pending row itself: only an employee
+ *  delete can produce reviewer_id NULL on a pending row, so a legal manual re-queue
+ *  to in-review over an already-decided round (no pending rows at all) is never
+ *  stomped. The flip pins the status this call read, so any concurrent settle/move
+ *  wins and this call reports false. */
+export async function settleExtinguishedRound(taskId: string): Promise<boolean> {
+  const taskRow = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  if (!taskRow) return false;
+  if ((await categoryOf(taskRow.status)) !== CATEGORY.IN_REVIEW) return false;
+  const round = await currentRound(taskId);
+  if (round === 0) return false;
+  const rows = await db
+    .select()
+    .from(taskReviews)
+    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
+  if (!rows.some(voidPending)) return false; // machine signature only — never a manual state
+  if (rows.some((r) => r.status === REVIEW_STATUS.PENDING && r.reviewerId !== null)) return false; // a live voter owns the round
+  await extinguishVoidPendingRows(taskId, round);
+  const live = rows.filter(
+    (r) => r.status !== REVIEW_STATUS.ESCALATED && r.status !== REVIEW_STATUS.SUPERSEDED && !voidPending(r),
+  );
+  const allApproved = live.length > 0 && live.every((r) => r.status === REVIEW_STATUS.APPROVED);
+  const allRejected = live.length > 0 && live.every((r) => r.status === REVIEW_STATUS.REJECTED);
+  const target = allApproved ? DONE_STATUS : allRejected ? CANCELLED_STATUS : TODO_STATUS;
+  const flipped = await db
+    .update(tasks)
+    .set({ status: target, updatedAt: new Date() })
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, taskRow.status)))
+    .returning({ id: tasks.id });
+  if (flipped.length === 0) return false; // a concurrent settle/move owns the outcome
+  if (allApproved) await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+  else await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+  await logActivity(
+    taskId,
+    ACTIVITY_KIND.STATUS,
+    null,
+    allApproved
+      ? 'review round closed — every remaining reviewer approved'
+      : allRejected
+        ? 'review round closed — every remaining reviewer rejected'
+        : 'review round closed — no reviewers remain; task returned to the assignee',
+    { roundClosed: true, round, reviewersRemoved: true },
+  );
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+  return true;
+}
+
+/** REVIEWER REMOVAL, prepare half (#365): called BEFORE the employee's user row is
+ * deleted. Notes every PENDING review row they hold and cancels their pending
+ * APPROVAL obligations (a concurrent reviewer's rows on the same task are untouched).
+ * Returns the affected task ids — the caller deletes the user (the FK nulls
+ * reviewer_id, leaving the void pending rows that settleExtinguishedRound keys on)
+ * and then calls settleReviewerRemovalRounds. */
+export async function prepareReviewerRemoval(employeeId: string, name?: string): Promise<string[]> {
+  const pending = await db
+    .select({ taskId: taskReviews.taskId })
+    .from(taskReviews)
+    .where(and(eq(taskReviews.reviewerId, employeeId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
+  if (pending.length === 0) return [];
+  const taskIds = [...new Set(pending.map((p) => p.taskId))];
+  await db
+    .update(taskReviews)
+    .set({ note: `reviewer removed — ${name ?? 'employee deleted'}` })
+    .where(and(eq(taskReviews.reviewerId, employeeId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
+  for (const taskId of taskIds) {
+    await cancelEmployeeObligations(taskId, employeeId, OBLIGATION_ROLE.APPROVAL);
+  }
+  return taskIds;
+}
+
+/** REVIEWER REMOVAL, settle half (#365): runs AFTER the user delete. Each affected
+ *  round that no longer has a live reviewer settles by the normal matrix instead of
+ *  waiting on a verdict that can never arrive. */
+export async function settleReviewerRemovalRounds(taskIds: string[]): Promise<number> {
+  let settled = 0;
+  for (const taskId of taskIds) {
+    if (await settleExtinguishedRound(taskId)) settled += 1;
+  }
+  return settled;
 }
 
 /** the submitted result the current round is judging — the round rows carry it
@@ -611,7 +721,7 @@ async function settleRound(
     .select()
     .from(taskReviews)
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
-  const pending = roundRows.filter((r) => r.status === REVIEW_STATUS.PENDING);
+  const pending = roundRows.filter((r) => r.status === REVIEW_STATUS.PENDING && r.reviewerId !== null);
   if (pending.length > 0) {
     // round still waiting — advance the sequence (lazy mint: the settle path fires
     // the next reviewer's turn; humans just keep their card)
@@ -633,9 +743,16 @@ async function settleRound(
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'waiting' };
   }
-  // every live row decided — unanimity over the LIVE set (escalated/superseded are
-  // non-votes and can be the reason `decided` is empty for a torn-down round)
-  const live = roundRows.filter((r) => r.status !== REVIEW_STATUS.ESCALATED && r.status !== REVIEW_STATUS.SUPERSEDED);
+  // no live voter left — void pending rows (a reviewer deleted mid-round, #365) are
+  // non-votes: extinguish them so the round reads closed and the matrix judges the
+  // decided rows only. A manual move or settle can never mint this shape.
+  if (roundRows.some(voidPending)) await extinguishVoidPendingRows(taskId, round);
+  // every live row decided — unanimity over the LIVE set (escalated/superseded and
+  // void pending rows are non-votes and can be the reason `decided` is empty for a
+  // torn-down round)
+  const live = roundRows.filter(
+    (r) => r.status !== REVIEW_STATUS.ESCALATED && r.status !== REVIEW_STATUS.SUPERSEDED && !voidPending(r),
+  );
   const allApproved = live.length > 0 && live.every((r) => r.status === REVIEW_STATUS.APPROVED);
   const allRejected = live.length > 0 && live.every((r) => r.status === REVIEW_STATUS.REJECTED);
 

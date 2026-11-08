@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   statuses: [] as Array<{ id: string; category: string }>,
   live: false,
   dispatched: [] as string[],
+  settled: [] as string[],
 }));
 
 vi.mock('../../server/db/index', () => ({
@@ -32,6 +33,12 @@ vi.mock('../../server/db/index', () => ({
 vi.mock('../../server/domains/tasks/review.service', () => ({
   openRoundLive: async () => h.live,
   dispatchAiReviewTurns: async (taskId: string) => void h.dispatched.push(taskId),
+  // #365: a not-live landing is offered to the extinguished-round settle (it no-ops
+  // on round-0 / decided rounds — the void-row discriminator lives in the service)
+  settleExtinguishedRound: async (taskId: string) => {
+    h.settled.push(taskId);
+    return false;
+  },
 }));
 
 import { resumeRoundAfterManualMove } from '../../server/domains/tasks/review-resume';
@@ -40,6 +47,7 @@ beforeEach(() => {
   h.statuses = [];
   h.live = false;
   h.dispatched = [];
+  h.settled = [];
 });
 
 describe('unblock-resume keys off the target status CATEGORY (#336)', () => {
@@ -64,11 +72,12 @@ describe('unblock-resume keys off the target status CATEGORY (#336)', () => {
     expect(h.dispatched).toHaveLength(0);
   });
 
-  it('an in-review target with NO live round dispatches nothing', async () => {
+  it('an in-review target with NO live round dispatches nothing — the extinguished-round settle gets the call', async () => {
     h.statuses = [{ id: 'st-custom-review', category: CATEGORY.IN_REVIEW }];
     h.live = false;
     expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review')).toBe(false);
     expect(h.dispatched).toHaveLength(0);
+    expect(h.settled).toEqual(['task-1']);
   });
 
   it('a dangling target status id is dead input — no dispatch, no guess', async () => {

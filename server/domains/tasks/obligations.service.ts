@@ -89,6 +89,23 @@ export async function cancelObligations(taskId: string, role: ObligationRole) {
     );
 }
 
+/** cancel ONE holder's pending obligations of a role — employee removal (#365): the
+ * departing reviewer's own inbox row must not outlive them, while a concurrent
+ * reviewer's pending row on the same task stays live. */
+export async function cancelEmployeeObligations(taskId: string, employeeId: string, role: ObligationRole) {
+  await db
+    .update(taskObligations)
+    .set({ status: OBLIGATION_STATUS.CANCELLED, resolvedAt: new Date() })
+    .where(
+      and(
+        eq(taskObligations.taskId, taskId),
+        eq(taskObligations.employeeId, employeeId),
+        eq(taskObligations.role, role),
+        eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
+      ),
+    );
+}
+
 /** cancel ONE obligation row by id — a round-open rollback must cancel only rows it
  *  created, never an older live round's obligation (#361 r5) */
 export async function cancelObligationById(obligationId: string) {
