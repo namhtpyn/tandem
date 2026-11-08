@@ -19,6 +19,19 @@ function id() {
 
 /** spawn a pending obligation; no-op if an identical pending row already exists */
 export async function spawnObligation(taskId: string, employeeId: string, role: ObligationRole, at?: Date) {
+  return (await spawnObligationTracked(taskId, employeeId, role, at)).id;
+}
+
+/** spawn, but tell the caller whether THIS call created the row — a round-open
+ *  rollback may only cancel a row it created, never one an older live round owns
+ *  (spawnObligation is idempotent per task+employee+role and obligations carry no
+ *  round column, so the distinction is only knowable here — #361 r5) */
+export async function spawnObligationTracked(
+  taskId: string,
+  employeeId: string,
+  role: ObligationRole,
+  at?: Date,
+): Promise<{ id: string; created: boolean }> {
   const existing = await db
     .select({ id: taskObligations.id })
     .from(taskObligations)
@@ -30,7 +43,7 @@ export async function spawnObligation(taskId: string, employeeId: string, role: 
         eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
       ),
     );
-  if (existing.length > 0) return nonNull(existing[0]).id;
+  if (existing.length > 0) return { id: nonNull(existing[0]).id, created: false };
   const rowId = id();
   await db
     .insert(taskObligations)
@@ -39,7 +52,7 @@ export async function spawnObligation(taskId: string, employeeId: string, role: 
         ? { id: rowId, taskId, employeeId, role, status: OBLIGATION_STATUS.PENDING, createdAt: at }
         : { id: rowId, taskId, employeeId, role, status: OBLIGATION_STATUS.PENDING },
     );
-  return rowId;
+  return { id: rowId, created: true };
 }
 
 /** mark the pending obligation fulfilled (resolved_by records who acted) */
@@ -74,6 +87,15 @@ export async function cancelObligations(taskId: string, role: ObligationRole) {
         eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
       ),
     );
+}
+
+/** cancel ONE obligation row by id — a round-open rollback must cancel only rows it
+ *  created, never an older live round's obligation (#361 r5) */
+export async function cancelObligationById(obligationId: string) {
+  await db
+    .update(taskObligations)
+    .set({ status: OBLIGATION_STATUS.CANCELLED, resolvedAt: new Date() })
+    .where(and(eq(taskObligations.id, obligationId), eq(taskObligations.status, OBLIGATION_STATUS.PENDING)));
 }
 
 /** cancel EVERY obligation of a role on a task — including ones already resolved this

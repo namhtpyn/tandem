@@ -299,8 +299,9 @@ function canonicalUuid(id: string, message: string): string {
  *  round diff, assignment ledger, reviewer display) must all use the lowercase
  *  form — an uppercase echo of an unchanged id must not read as a change, and
  *  mixed-case duplicates of one reviewer must not reach task_reviews' unique
- *  index. Reviewers are existence-checked elsewhere by design: tasks.reviewers is
- *  a text[] that can retain a former employee's id. */
+ *  index. Reviewer EXISTENCE is checked by requireExistingRefs — stored ids are
+ *  grandfathered because tasks.reviewers is a text[] that can retain a former
+ *  employee's id (REVIEWER EXISTENCE, SPEC: Review law). */
 function normalizeTaskRefs(input: {
   assigneeId?: string | null;
   ownerId?: string | null;
@@ -327,6 +328,10 @@ async function requireExistingRefs(input: {
   assigneeId?: string | null;
   ownerId?: string | null;
   projectId?: string | null;
+  reviewers?: string[] | null;
+  /** ids already on the task (lowercased) — a former employee's id stays
+   *  grandfathered so a legacy task remains editable (SPEC: Review law) */
+  storedReviewers?: string[];
 }) {
   if (input.assigneeId) {
     const u = await db.query.user.findFirst({ columns: { id: true }, where: { id: { eq: input.assigneeId } } });
@@ -342,6 +347,22 @@ async function requireExistingRefs(input: {
       .from(projectsTable)
       .where(eq(projectsTable.id, input.projectId));
     if (p.length === 0) throw new ORPCError('BAD_REQUEST', { message: 'project does not exist' });
+  }
+  if (input.reviewers && input.reviewers.length > 0) {
+    // only ids NOT already stored are new writes — keep/edit of a stale id must pass
+    const grandfathered = new Set(input.storedReviewers ?? []);
+    const candidates = input.reviewers.filter((id) => !grandfathered.has(id));
+    if (candidates.length > 0) {
+      const rows = await db.query.user.findMany({
+        columns: { id: true },
+        where: { id: { in: candidates } },
+        orderBy: { id: 'asc' },
+      });
+      const present = new Set(rows.map((r) => r.id));
+      if (candidates.some((id) => !present.has(id))) {
+        throw new ORPCError('BAD_REQUEST', { message: 'reviewer does not exist' });
+      }
+    }
   }
 }
 
@@ -541,7 +562,7 @@ export const tasksRouter = os.router({
     // task-state locks, and a case-variant echo of an unchanged id is not a change
     const refs = normalizeTaskRefs(input);
     const rows = await db.query.tasks.findMany({
-      columns: { status: true, assigneeId: true },
+      columns: { status: true, assigneeId: true, reviewers: true },
       where: { id: { eq: input.id } },
       orderBy: { createdAt: 'asc' },
     });
@@ -555,14 +576,16 @@ export const tasksRouter = os.router({
     }
     // the review round already handed out verdict slots: adding/removing reviewers
     // mid-round would leave live checklists that never sum to a decision
+    const storedReviewers = nonNull(rows[0]).reviewers;
+    // one equivalence for stored ids on BOTH sides: legacy braced/hyphenless
+    // spellings canonicalize, junk falls back to its trimmed lowercase form (#361 r3)
+    const { canonicalStoredUuid } = await import('./review.service');
+    const storedCanonical = [
+      ...new Set(storedReviewers.map((id) => canonicalStoredUuid(id) ?? id.trim().toLowerCase())),
+    ];
     if (input.reviewers !== undefined && input.reviewers !== null) {
-      const current = await db.query.tasks.findMany({
-        columns: { reviewers: true },
-        where: { id: { eq: input.id } },
-        orderBy: { createdAt: 'asc' },
-      });
       const next = [...(refs.reviewers ?? [])].sort();
-      const prev = [...nonNull(current[0]).reviewers].sort();
+      const prev = [...storedCanonical].sort();
       const changed = next.length !== prev.length || next.some((v, i) => v !== prev[i]);
       if (changed) {
         const { openRoundLive } = await import('./review.service');
@@ -573,7 +596,11 @@ export const tasksRouter = os.router({
         }
       }
     }
-    await requireExistingRefs({ ...refs, projectId: input.projectId });
+    await requireExistingRefs({
+      ...refs,
+      projectId: input.projectId,
+      storedReviewers: storedCanonical,
+    });
     const actorId = await selfIdOf(context);
     await db
       .update(tasksTable)
