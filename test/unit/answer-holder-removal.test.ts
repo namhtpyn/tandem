@@ -81,6 +81,9 @@ vi.mock('../../server/db/index', async () => {
             rowsThenable(() => {
               const keys = arg ? Object.keys(arg) : [];
               if (table === tasks) {
+                h.taskReadCount += 1;
+                if (h.taskReadThrowOn > 0 && h.taskReadCount === h.taskReadThrowOn)
+                  throw new Error('task read exploded');
                 const next = h.taskReads.length
                   ? h.taskReads.shift()!
                   : { status: h.taskStatus, updatedAt: h.taskUpdatedAt };
