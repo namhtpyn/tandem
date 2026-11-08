@@ -68,7 +68,13 @@ describe('approver ids from a latest round (#365 r4)', () => {
   });
 
   it('a cancelled row still marks the round dead (request-changes / abandon)', () => {
-    expect(approverIdsFromRound([{ status: 'CANCELLED', employeeId: 'u1' }])).toEqual([]);
+    // the fulfilled row is the point: without the CANCELLED guard this renders u2
+    expect(
+      approverIdsFromRound([
+        { status: 'FULFILLED', employeeId: 'u2' },
+        { status: 'CANCELLED', employeeId: 'u1' },
+      ]),
+    ).toEqual([]);
   });
 });
 

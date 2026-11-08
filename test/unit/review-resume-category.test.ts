@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   live: false,
   dispatched: [] as string[],
   settled: [] as string[],
+  discarded: [] as string[],
 }));
 
 vi.mock('../../server/db/index', () => ({
@@ -39,6 +40,9 @@ vi.mock('../../server/domains/tasks/review.service', () => ({
     h.settled.push(taskId);
     return false;
   },
+  // #365 r5: an owner reopen discards the stale void rows so later heals never
+  // auto-settle the reopen
+  discardVoidRows: async (taskId: string) => void h.discarded.push(taskId),
 }));
 
 import { resumeRoundAfterManualMove } from '../../server/domains/tasks/review-resume';
@@ -48,6 +52,7 @@ beforeEach(() => {
   h.live = false;
   h.dispatched = [];
   h.settled = [];
+  h.discarded = [];
 });
 
 describe('unblock-resume keys off the target status CATEGORY (#336)', () => {
@@ -88,6 +93,7 @@ describe('unblock-resume keys off the target status CATEGORY (#336)', () => {
     h.live = false;
     expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review', 'st-done')).toBe(false);
     expect(h.settled).toEqual([]);
+    expect(h.discarded).toEqual(['task-1']); // the stale signature is voided too
   });
 
   it('a dangling target status id is dead input — no dispatch, no guess', async () => {

@@ -630,7 +630,8 @@ export const employeesRouter = os.router({
     // REVIEW LAW (#365): an employee removed mid-round must never wedge a review.
     // Capture first (read-only): their pending review rows and their own pending
     // approval obligations. After the delete lands (the FK nulls reviewer_id, leaving
-    // the void pending rows the settle keys on) the captured obligations cancel, the
+    // the void pending rows the settle keys on) the captured obligations are DROPPED
+    // (not cancelled — a cancelled row reads as a dead round to the approver tally),
     // rows are noted, and every affected round left with no live reviewer settles by
     // the normal matrix instead of waiting on a verdict that can never arrive.
     const { prepareReviewerRemoval, settleReviewerRemovalRounds } = await import('../tasks/review.service');

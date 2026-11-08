@@ -424,4 +424,16 @@ describe('employee removal halves (#365)', () => {
     // must survive every status (a blocked/parked round settles on unblock)
     expect(renderCond(debris?.cond)).toContain('"round" <');
   });
+
+  it('a settled task left with a void row by a crashed settle is healed on the next trigger (#365 r5)', async () => {
+    // the flip is the FIRST write: a crash before the teardown leaves a done task
+    // still carrying the void row + its siblings' pending approvals, and the debris
+    // sweep deliberately never clears a current-round row — the terminal arm heals it
+    h.statuses = [{ id: 'st-done', category: CATEGORY.DONE }];
+    h.taskStatus = 'st-done';
+    expect(await settleExtinguishedRound('task-1')).toBe(false);
+    expect(h.updates.some((u) => u.table === 'taskReviews' && u.set.status === REVIEW_STATUS.SUPERSEDED)).toBe(true);
+    expect(h.cancelled).toEqual(['task-1']); // pending approvals cancelled with the residue
+    expect(h.updates.some((u) => u.table === 'tasks')).toBe(false); // never a second flip
+  });
 });

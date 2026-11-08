@@ -6,7 +6,7 @@
 import { CATEGORY } from '#shared/enums';
 
 import { db } from '../../db/index';
-import { dispatchAiReviewTurns, openRoundLive, settleExtinguishedRound } from './review.service';
+import { discardVoidRows, dispatchAiReviewTurns, openRoundLive, settleExtinguishedRound } from './review.service';
 
 export async function resumeRoundAfterManualMove(
   taskId: string,
@@ -22,14 +22,18 @@ export async function resumeRoundAfterManualMove(
   if (statuses.find((s) => s.id === targetStatusId)?.category !== CATEGORY.IN_REVIEW) return false;
   // REOPENING A SETTLED TASK IS THE OWNER'S CALL: a done/cancelled -> in-review move
   // must never be auto-settled back by the matrix (a stale void row can survive a
-  // crash window; the owner's explicit reopen outranks it)
+  // crash window; the owner's explicit reopen outranks it). The reopen also DISCARDS
+  // those void rows, so later boot/removal heals find no machine signature to settle.
   if (fromStatusId) {
     const fromRows = await db.query.taskStatuses.findMany({
       columns: { id: true, category: true },
       where: { id: { eq: fromStatusId } },
     });
     const fromCategory = fromRows.find((s) => s.id === fromStatusId)?.category;
-    if (fromCategory === CATEGORY.DONE || fromCategory === CATEGORY.CANCELLED) return false;
+    if (fromCategory === CATEGORY.DONE || fromCategory === CATEGORY.CANCELLED) {
+      await discardVoidRows(taskId);
+      return false;
+    }
   }
   if (!(await openRoundLive(taskId))) {
     // a round whose only remaining voter was deleted (void pending row) cannot

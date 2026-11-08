@@ -309,6 +309,38 @@ async function supersedeAllPendingRows(taskId: string) {
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
 }
 
+const TERMINAL_CATEGORIES = new Set<string>([CATEGORY.DONE, CATEGORY.CANCELLED]);
+
+/** TERMINAL RESIDUE (#365 r5): the settle's flip is its FIRST write, so a crash or a
+ *  throwing teardown after the flip leaves a settled task still carrying the void row
+ *  (and its siblings' pending approvals) — and nothing else would ever clear a
+ *  CURRENT-round row. A settled task must never keep a pending review row or a
+ *  pending approval obligation (#361 r6). Idempotent: on a clean task both writes are
+ *  no-ops. Returns true when the task is terminal (the caller must not settle it). */
+async function healTerminalResidue(taskId: string, statusId: string): Promise<boolean> {
+  if (!TERMINAL_CATEGORIES.has((await categoryOf(statusId)) ?? '')) return false;
+  await supersedeAllPendingRows(taskId);
+  await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+  return true;
+}
+
+/** an owner REOPEN (done/cancelled -> in-review) voids the machine signature: a void
+ *  row left by a settle that flipped then died would otherwise let a later boot or
+ *  unrelated-removal heal auto-settle the reopen the owner just made. Supersede every
+ *  void pending row so the heals find nothing to settle (#365 r5). */
+export async function discardVoidRows(taskId: string) {
+  await db
+    .update(taskReviews)
+    .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
+    .where(
+      and(
+        eq(taskReviews.taskId, taskId),
+        eq(taskReviews.status, REVIEW_STATUS.PENDING),
+        isNull(taskReviews.reviewerId),
+      ),
+    );
+}
+
 /** settle a round left with NO live voter because its reviewer was deleted (#365):
  *  the normal matrix runs without the verdict that can never arrive — every decided
  *  row approved -> done, every decided row rejected -> cancelled, otherwise back to
@@ -322,6 +354,7 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
     await db.select({ status: tasks.status, updatedAt: tasks.updatedAt }).from(tasks).where(eq(tasks.id, taskId))
   )[0];
   if (!taskRow) return false;
+  if (await healTerminalResidue(taskId, taskRow.status)) return false;
   if ((await categoryOf(taskRow.status)) !== CATEGORY.IN_REVIEW) return false;
   const round = await currentRound(taskId);
   if (round === 0) return false;
