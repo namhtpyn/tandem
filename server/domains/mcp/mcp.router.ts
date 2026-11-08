@@ -89,8 +89,9 @@ export const mcpRouter = os.router({
 
   registryRemove: adminProcedure.input(z.strictObject({ id: idField })).handler(({ input }) => registryRemove(input)),
 
-  bindingsList: adminProcedure.input(z.strictObject({ employeeId: idField })).handler(({ input }) =>
-    // a malformed employee id is an empty binding list, never a 500 (a filter is not a lookup)
+  bindingsList: adminProcedure.input(z.strictObject({ employeeId: z.string() })).handler(({ input }) =>
+    // a filter is not a lookup: blank / non-uuid values are the empty page
+    // (UUID-FILTER LAW), never a schema error, never a uuid-column query
     isUuid(input.employeeId) ? bindingsList(input.employeeId) : { data: [] },
   ),
 
@@ -124,7 +125,9 @@ export const mcpRouter = os.router({
     }),
 
   probe: adminProcedure.input(z.strictObject({ employeeId: idField, serverId: idField })).handler(({ input }) => {
-    requireUuid(input.employeeId, 'BAD_REQUEST', 'invalid employee id');
+    // probe is a read of one binding: a malformed employee id is the same miss
+    // a well-formed id with no binding behind it answers
+    requireUuid(input.employeeId, 'NOT_FOUND', 'binding not found');
     return probeMcpBinding(input);
   }),
 

@@ -724,6 +724,9 @@ export const tasksRouter = os.router({
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
+      // the forward target becomes a task_obligations.employee_id (uuid) and is
+      // looked up in "user" — a malformed id is malformed input, never a 22P02 500
+      requireUuid(input.toEmployeeId, 'BAD_REQUEST', 'employee does not exist');
       return await runWorkflow(() => forwardQuestion(input.taskId, selfId, input.toEmployeeId, input.body ?? ''));
     }),
 

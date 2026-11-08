@@ -92,7 +92,8 @@ test('mcp binding surfaces: writes reject a malformed employee id, the list filt
     400,
     'invalid employee id',
   );
-  await expectRpcError(page, 'mcp/probe', { employeeId: MALFORMED, serverId: 'srv-x' }, 400, 'invalid employee id');
+  // probe reads one binding: a malformed id is the same miss a missing binding is
+  await expectRpcError(page, 'mcp/probe', { employeeId: MALFORMED, serverId: 'srv-x' }, 404, 'binding not found');
   await expectRpcError(
     page,
     'mcp/oauthConnect',
@@ -101,10 +102,12 @@ test('mcp binding surfaces: writes reject a malformed employee id, the list filt
     'invalid employee id',
   );
 
-  // the read is a filter, not a lookup: no bindings, no query, never a 500
-  const listed = await post(page, 'mcp/bindingsList', { employeeId: MALFORMED });
-  expect(listed.status()).toBe(200);
-  expect(((await listed.json()).json as { data: unknown[] }).data).toEqual([]);
+  // the read is a filter, not a lookup: blank and non-uuid values are the empty page
+  for (const employeeId of [MALFORMED, '']) {
+    const listed = await post(page, 'mcp/bindingsList', { employeeId });
+    expect(listed.status()).toBe(200);
+    expect(((await listed.json()).json as { data: unknown[] }).data).toEqual([]);
+  }
 });
 
 test('task writes shape-check assignee, owner and reviewer ids', async ({ page }) => {
@@ -185,4 +188,29 @@ test('positive control: employee writes with a real id still land', async ({ pag
     supervisorIds: [],
   });
   expect(res.status()).toBe(200);
+});
+
+test('task forward shape-checks the target employee id at the handler edge', async ({ page }) => {
+  const employee = await createEmployee(page, 'fwd');
+  const taskRes = await post(page, 'tasks/create', {
+    title: `Id shape fwd ${Date.now().toString(36)}`,
+    assigneeId: employee.id,
+  });
+  expect(taskRes.status()).toBe(200);
+  const taskId = (await taskRes.json()).json.id as string;
+
+  // the forward gate reads the status category and the current holder BEFORE it
+  // resolves the target id — drive the task to waiting-answer so the malformed
+  // value reaches the same lookup a real forward would (otherwise a state error
+  // would mask the shape guard and the pin would be vacuous)
+  const statusesRes = await post(page, 'statuses/list', null);
+  const statuses = ((await statusesRes.json()).json ?? []) as { id: string; category: string }[];
+  const working = statuses.find((s) => s.category === 'working');
+  expect(working).toBeTruthy();
+  const moved = await post(page, 'tasks/setStatus', { id: taskId, status: working!.id });
+  expect(moved.status()).toBe(200);
+  const asked = await post(page, 'tasks/ask', { taskId, body: 'id-shape forward probe' });
+  expect(asked.status()).toBe(200);
+
+  await expectRpcError(page, 'tasks/forward', { taskId, toEmployeeId: MALFORMED }, 400, 'employee does not exist');
 });
