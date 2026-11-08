@@ -564,6 +564,14 @@ async function healLeftWaitingAnswer(taskId: string, category: string | null, ta
         `answer holder removal: could not re-fire the review turn for ${taskId}:`,
         e instanceof Error ? e.message : e,
       );
+      // a live round with a pending reviewer and no run must not wedge silently —
+      // park (rearmable) and KEEP the NULL-holder signature for the next sweep
+      try {
+        await parkRound(taskId, 'reviewer re-fire failed while healing an answer-holder removal', { rearmable: true });
+      } catch (e2) {
+        log.warn(`answer holder removal: could not park ${taskId}:`, e2 instanceof Error ? e2.message : e2);
+      }
+      return;
     }
     // an extinguished round (a void pending row with no live voter) settles by the
     // normal matrix — the same crash state finishRemovedHolderReturn closes
@@ -574,6 +582,26 @@ async function healLeftWaitingAnswer(taskId: string, category: string | null, ta
     }
   }
   await cancelOrphanAnswerObligations(taskId, taskUpdatedAt);
+}
+
+/** does the task carry the #369 machine signature — a PENDING ANSWER row whose holder
+ *  no longer exists (FK set-null)? The ONLY state any return arm may act on: a legal
+ *  manual move into a waiting-answer status carries no pending row and is never
+ *  stomped (the same discriminator the boot/removal sweeps key on). */
+export async function hasOrphanAnswerSignature(taskId: string) {
+  const rows = await db
+    .select({ id: taskObligations.id })
+    .from(taskObligations)
+    .where(
+      and(
+        eq(taskObligations.taskId, taskId),
+        eq(taskObligations.role, OBLIGATION_ROLE.ANSWER),
+        eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
+        isNull(taskObligations.employeeId),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
 }
 
 /** the answer arm's post-flip half (#369): one thread note, then the re-fire /

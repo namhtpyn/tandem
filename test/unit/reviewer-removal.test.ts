@@ -59,8 +59,9 @@ vi.mock('../../server/db/index', async () => {
     asDb: (x: unknown) => x,
     db: {
       select: (arg?: Record<string, unknown>) => ({
-        from: (table: unknown) => ({
-          where: (cond: unknown) =>
+        from: (table: unknown) => {
+          const node: Record<string, unknown> = {};
+          node.where = (cond: unknown) =>
             rowsThenable(() => {
               const keys = arg ? Object.keys(arg) : [];
               if (table === tasks) return Promise.resolve([{ status: h.taskStatus, updatedAt: h.taskUpdatedAt }]);
@@ -74,9 +75,10 @@ vi.mock('../../server/db/index', async () => {
               if (keys.includes('id') && keys.includes('taskId')) return Promise.resolve(h.pendingSelect);
               if (keys.includes('taskId')) return Promise.resolve(h.leftoverSelect);
               return Promise.resolve(h.reviewReads.shift() ?? []);
-            }),
-          innerJoin: () => rowsThenable(async () => []),
-        }),
+            });
+          node.innerJoin = () => node;
+          return node;
+        },
       }),
       delete: (table: unknown) => ({
         where: (cond: unknown) => {

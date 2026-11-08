@@ -34,8 +34,10 @@ async function resumeRestoredRound(taskId: string, parked: boolean, restoreCateg
   // arm never cancels it on a blocked task), and no other path would return it.
   if (restoreCategory === CATEGORY.WAITING_ANSWER) {
     try {
-      const { returnRemovedAnswerHolderTask } = await import('./review.service');
-      await returnRemovedAnswerHolderTask(taskId);
+      const { hasOrphanAnswerSignature, returnRemovedAnswerHolderTask } = await import('./review.service');
+      // ONLY the machine signature: a legal manual move into a waiting-answer status
+      // carries no pending row and must never be flipped out of its flow (#369)
+      if (await hasOrphanAnswerSignature(taskId)) await returnRemovedAnswerHolderTask(taskId);
     } catch (e) {
       log.warn(`gating: answer-holder restore heal failed for task ${taskId}:`, e instanceof Error ? e.message : e);
     }

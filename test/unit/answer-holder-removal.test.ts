@@ -337,6 +337,10 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     expect(flipSql).toContain('"status" =');
     expect(flipSql).toContain(STATUS.waitingAnswer);
     expect(flipSql).toContain('"updated_at" =');
+    // the READ write, not a fresh Date — the CAS only wins against the snapshot it read
+    expect(flipSql).toContain('2026-11-08T00:00:00');
+    // trigger last: the row teardown runs AFTER the flip, never before it
+    expect(h.seq).toEqual(['flip', 'cancelOrphan']);
     // the won flip's teardown clears the NULL-holder row (scoped — never a task-wide cancel)
     const orphan = h.updates.find((u) => u.table === 'taskObligations');
     const orphanSql = renderCond(orphan?.cond);
@@ -350,6 +354,19 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     expect(h.notes.at(-1)?.payload).toMatchObject({ answerHolderRemoved: true, returnedTo: STATUS.todo });
     expect(h.regated).toEqual(['task-1']);
     expect(res).toContain('task-1');
+  });
+
+  it('a CUSTOM waiting-answer status returns too — the gate is the category, never a seeded id (#369)', async () => {
+    h.taskStatus = 'st-custom-waiting';
+    h.statuses = [
+      { id: STATUS.todo, category: CATEGORY.READY },
+      { id: 'st-custom-waiting', category: CATEGORY.WAITING_ANSWER },
+    ];
+    const healed = await returnRemovedAnswerHolderTask('task-1');
+    expect(healed).toBe(true);
+    const flip = h.updates.find((u) => u.table === 'tasks');
+    expect(flip?.set.status).toBe(STATUS.todo);
+    expect(renderCond(flip?.cond, 'tasks')).toContain('st-custom-waiting');
   });
 
   it('a BLOCKED task keeps its signature — the unblock may restore a waiting-answer status', async () => {
@@ -440,6 +457,9 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     expect(roundSql).toContain('"status" =');
     expect(roundSql).toContain('PENDING');
     expect(roundSql).toContain('task-1');
+    // the ROUND VALUE is pinned — 'any row exists' would let a stale earlier round
+    // mask the current round's extinguished state
+    expect(roundSql).toContain('2');
     expect(h.notes.some((n) => n.body.includes('review round resumes'))).toBe(true);
   });
 

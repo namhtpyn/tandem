@@ -175,6 +175,11 @@ describe('forward verb gate keys off the waiting_answer category (#265 r3 siblin
     const sql = `${q.sql} ${JSON.stringify(q.params)}`;
     expect(sql).toContain('"status" =');
     expect(sql).toContain('"updated_at" =');
+    // the VALUES, not just the columns: a regression to the seeded waiting-answer id
+    // (the CATEGORY-GATE LAW dead end) or to a fresh Date instead of the read write
+    // would pass a column-name check and 400 every forward on a custom status
+    expect(sql).toContain('st-custom-waiting');
+    expect(sql).toContain('2026-11-08T00:00:00');
   });
 
   it('a task that moved during the spawn window refuses and undoes ITS row (#369 r4)', async () => {
