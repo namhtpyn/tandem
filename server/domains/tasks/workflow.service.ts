@@ -176,14 +176,21 @@ export async function forwardQuestion(taskId: string, authorId: string, toEmploy
   if (!target) throw new Error('employee does not exist');
   if (!(await hasSupervisors(toEmployeeId)))
     throw new Error('that person is the top of the hierarchy — they should answer');
-  await resolveObligation(taskId, nonNull(holder), OBLIGATION_ROLE.ANSWER, authorId);
-  await db
+  // TERMINAL ARBITRATION (#292) binds this lifecycle write too (#369 r3): the chain
+  // move arbitrates on the status + updatedAt it read — a concurrent answer-holder
+  // return may flip the task out of waiting-answer between the gate and this write,
+  // and an unguarded update would then leave a fresh holder row on a task no verb can
+  // act on. Nothing has been mutated before this CAS, so a loss is a clean refusal.
+  const moved = await db
     .update(tasks)
     .set({
       questionChain: [...chain, toEmployeeId],
       updatedAt: new Date(),
     })
-    .where(eq(tasks.id, taskId));
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
+    .returning({ id: tasks.id });
+  if (moved.length === 0) throw new Error('task state changed during forward — retry');
+  await resolveObligation(taskId, nonNull(holder), OBLIGATION_ROLE.ANSWER, authorId);
   await spawnObligation(taskId, toEmployeeId, OBLIGATION_ROLE.ANSWER);
   await logActivity(taskId, ACTIVITY_KIND.FORWARD, authorId, body, { toId: toEmployeeId, toName: target.name });
   return { holderId: toEmployeeId };

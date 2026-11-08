@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { OBLIGATION_ROLE, OBLIGATION_STATUS, type ObligationRole } from '#shared/enums';
@@ -157,8 +157,12 @@ export async function hasPendingAnswerHolder(taskId: string) {
  *  ask/forward spawn always names a holder, so it can never be touched. Used to
  *  clear the stale row when the task already left the waiting-answer flow (a lost
  *  return flip or a crash after a won flip) — the obligation lifecycle forbids a
- *  PENDING obligation outliving the state that makes it actionable. */
-export async function cancelOrphanAnswerObligations(taskId: string) {
+ *  PENDING obligation outliving the state that makes it actionable.
+ *  `before` (the task write the caller read): only rows older than that write are
+ *  cancelled — an ask or forward that spawns-then-flips creates its row AFTER the
+ *  task's last write, so a mid-flight ask for a now-deleted holder is left alone and
+ *  its own flip lands (then the waiting-answer arm heals it). */
+export async function cancelOrphanAnswerObligations(taskId: string, before?: Date) {
   await db
     .update(taskObligations)
     .set({ status: OBLIGATION_STATUS.CANCELLED, resolvedAt: new Date() })
@@ -168,6 +172,7 @@ export async function cancelOrphanAnswerObligations(taskId: string) {
         eq(taskObligations.role, OBLIGATION_ROLE.ANSWER),
         eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
         isNull(taskObligations.employeeId),
+        before ? lt(taskObligations.createdAt, before) : undefined,
       ),
     );
 }

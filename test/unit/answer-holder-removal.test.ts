@@ -20,6 +20,10 @@ const h = vi.hoisted(() => ({
   taskUpdatedAt: new Date('2026-11-08T00:00:00Z'),
   /** optional queue of task-row reads (status/updatedAt), consumed in order */
   taskReads: [] as Array<{ status: string; updatedAt: Date }>,
+  /** throw on the Nth task-row read (1-based; 0 = never) */
+  taskReadThrowOn: 0,
+  /** how many task-row reads have happened */
+  taskReadCount: 0,
   statuses: [] as Array<{ id: string; category: string }>,
   /** rows for the existential holder read: [{ employeeId }] */
   holderRows: [] as Array<{ employeeId: string | null }>,
@@ -188,11 +192,17 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
       h.seq.push('cancelById');
       h.cancelledById.push(id);
     },
+    cancelOrphanAnswerObligations: async (...args: unknown[]) => {
+      h.seq.push('cancelOrphan');
+      const real = mod as unknown as { cancelOrphanAnswerObligations: (...a: unknown[]) => Promise<void> };
+      return real.cancelOrphanAnswerObligations(...args);
+    },
   };
 });
 
 vi.mock('../../server/domains/tasks/runner.service', () => ({
   dispatchTask: async (taskId: string) => {
+    h.seq.push('dispatch');
     h.dispatched.push(taskId);
   },
 }));
@@ -231,6 +241,8 @@ beforeEach(() => {
   h.taskStatus = STATUS.waitingAnswer;
   h.taskUpdatedAt = new Date('2026-11-08T00:00:00Z');
   h.taskReads = [];
+  h.taskReadThrowOn = 0;
+  h.taskReadCount = 0;
   h.statuses = [
     { id: STATUS.todo, category: CATEGORY.READY },
     { id: STATUS.waitingAnswer, category: CATEGORY.WAITING_ANSWER },
@@ -299,6 +311,7 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     expect(flip?.set.questionChain).toEqual([]);
     const flipSql = renderCond(flip?.cond, 'tasks');
     expect(flipSql).toContain('"status" =');
+    expect(flipSql).toContain(STATUS.waitingAnswer);
     expect(flipSql).toContain('"updated_at" =');
     // the won flip's teardown clears the NULL-holder row (scoped — never a task-wide cancel)
     const orphan = h.updates.find((u) => u.table === 'taskObligations');
@@ -330,6 +343,9 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     expect(guardSql).toContain('"task_obligations"."role" =');
     expect(guardSql).toContain('"task_obligations"."status" =');
     expect(guardSql).toContain('"task_obligations"."task_id" =');
+    expect(guardSql).toContain('ANSWER');
+    expect(guardSql).toContain('PENDING');
+    expect(guardSql).toContain('task-1');
   });
 
   it('a live review round lands back IN-REVIEW and re-fires the AI reviewer', async () => {
@@ -423,6 +439,8 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     expect(sql).toContain('"employee_id" is null');
     expect(sql).toContain('"role" =');
     expect(sql).toContain('ANSWER');
+    // the age cut: only rows older than the task write the caller read are cleared
+    expect(sql).toContain('"created_at" <');
   });
 });
 
@@ -448,5 +466,45 @@ describe('ANSWER-ROLE REMOVAL boot/removal sweep (#369)', () => {
     h.answerLeftoverSelect = [{ taskId: 'task-9' }];
     const healed = await settleAllExtinguishedRounds();
     expect(healed).toEqual(['task-9']);
+  });
+});
+
+describe('ANSWER-ROLE REMOVAL crash repairs (#369 r3)', () => {
+  it('the removal sweep heals a leftover orphan ANSWER row from an earlier crash', async () => {
+    h.statuses = [
+      { id: STATUS.todo, category: CATEGORY.READY },
+      { id: STATUS.waitingAnswer, category: CATEGORY.WAITING_ANSWER },
+    ];
+    h.answerLeftoverSelect = [{ taskId: 'task-9' }];
+    const healed = await settleReviewerRemovalRounds(plan());
+    expect(healed).toContain('task-9');
+    expect(h.updates.some((u) => u.table === 'tasks' && u.set.status === STATUS.todo)).toBe(true);
+  });
+
+  it('a FAILED post-arm re-read keeps the machine signature — no by-id cancel', async () => {
+    // the return arm loses its flip, then the post-arm status read fails: the caller
+    // must keep the departing row PENDING (a read error is never 'the task moved on')
+    h.flipWins = false;
+    h.taskReadThrowOn = 2; // 1 = the return arm's read, 2 = taskStillWaitsOnOrphan's
+    const res = await settleReviewerRemovalRounds(
+      plan({ answerObligations: [{ id: 'ans-1', taskId: 'task-1' }] }),
+      'Ada',
+    );
+    expect(res).toEqual([]);
+    expect(h.cancelledById).toEqual([]);
+  });
+
+  it('an IN-REVIEW task that left waiting-answer re-fires its reviewer (crash repair)', async () => {
+    h.taskStatus = STATUS.inReview;
+    h.round = 2;
+    h.aiEmployees = [{ userId: 'rev-1' }];
+    h.reviewReads = [
+      [{ id: 'row-1', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1', createdAt: new Date() }],
+    ];
+    const healed = await returnRemovedAnswerHolderTask('task-1');
+    expect(healed).toBe(false);
+    expect(h.dispatched).toEqual(['task-1']);
+    // the re-fire precedes the scoped cleanup (trigger-last)
+    expect(h.seq).toEqual(['dispatch', 'cancelOrphan']);
   });
 });

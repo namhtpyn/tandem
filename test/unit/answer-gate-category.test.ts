@@ -14,6 +14,9 @@ const h = vi.hoisted(() => ({
   cancelled: [] as string[],
   holder: 'human-1' as string | null,
   roundLive: false,
+  updateWins: true,
+  spawns: [] as string[],
+  resolves: [] as string[],
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -37,7 +40,7 @@ vi.mock('../../server/db/index', async () => {
           where: (_cond: unknown) => {
             const applied = () => {
               h.flips.push({ set, pred: table === tasks });
-              return [{ id: 'task-1' }];
+              return h.updateWins ? [{ id: 'task-1' }] : [];
             };
             return {
               returning: async () => applied(),
@@ -66,8 +69,8 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
   return {
     ...mod,
     cancelObligations: async (_t: unknown, role: unknown) => void h.cancelled.push(String(role)),
-    spawnObligation: async () => {},
-    resolveObligation: async () => {},
+    spawnObligation: async (_t: unknown, employeeId: unknown) => void h.spawns.push(String(employeeId)),
+    resolveObligation: async (_t: unknown, employeeId: unknown) => void h.resolves.push(String(employeeId)),
     answerHolder: async () => h.holder,
   };
 });
@@ -153,5 +156,16 @@ describe('forward verb gate keys off the waiting_answer category (#265 r3 siblin
     seedTask('st-custom-doing');
     h.statuses = [{ id: 'st-custom-doing', category: CATEGORY.WORKING }];
     await expect(forwardQuestion('task-1', 'human-1', 'target-1', 'nope')).rejects.toThrow(/not waiting for an answer/);
+  });
+
+  it('a lost chain-move CAS refuses BEFORE any obligation write (#369 r3)', async () => {
+    seedTask('st-custom-waiting');
+    h.statuses = [{ id: 'st-custom-waiting', category: CATEGORY.WAITING_ANSWER }];
+    h.updateWins = false; // a concurrent answer-holder return moved the task
+    await expect(forwardQuestion('task-1', 'human-1', 'target-1', 'take this one')).rejects.toThrow(
+      /task state changed during forward/,
+    );
+    expect(h.resolves).toEqual([]);
+    expect(h.spawns).toEqual([]);
   });
 });

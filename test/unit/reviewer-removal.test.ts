@@ -404,6 +404,25 @@ describe('employee removal halves (#365)', () => {
     expect(sql).toContain('"reviewer_id" is null');
   });
 
+  it('notes the removed reviewer rows BEFORE the answer arm can settle them away (#369)', async () => {
+    h.taskStatus = STATUS.waitingAnswer;
+    h.statuses = [
+      { id: STATUS.todo, category: CATEGORY.READY },
+      { id: STATUS.waitingAnswer, category: CATEGORY.WAITING_ANSWER },
+    ];
+    h.pendingSelect = [{ id: 'row-1', taskId: 'task-1' }];
+    await settleReviewerRemovalRounds({
+      taskIds: [],
+      reviewRowIds: ['row-1'],
+      obligationIds: [],
+      answerObligations: [{ id: 'ans-1', taskId: 'task-1' }],
+    });
+    const noteIdx = h.updates.findIndex((u) => u.table === 'taskReviews' && typeof u.set.note === 'string');
+    const flipIdx = h.updates.findIndex((u) => u.table === 'tasks');
+    expect(noteIdx).toBeGreaterThanOrEqual(0);
+    expect(flipIdx).toBeGreaterThan(noteIdx);
+  });
+
   it('settle half also picks up a leftover void row from an earlier removal/race', async () => {
     h.leftoverSelect = [{ taskId: 'task-9' }];
     h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]];

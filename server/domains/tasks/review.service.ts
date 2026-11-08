@@ -509,7 +509,7 @@ export async function returnRemovedAnswerHolderTask(taskId: string, name?: strin
   // any other status is cleared by the NULL-holder sweep (never a task-wide cancel:
   // the ask/forward paths spawn-then-flip and a cancel inside that window bags the spawn)
   if (category !== CATEGORY.WAITING_ANSWER) {
-    await healLeftWaitingAnswer(taskId, category);
+    await healLeftWaitingAnswer(taskId, category, taskRow.updatedAt);
     return false;
   }
   // ANY pending row still naming a live holder keeps the question alive — the
@@ -534,20 +534,25 @@ export async function returnRemovedAnswerHolderTask(taskId: string, name?: strin
   return true;
 }
 
-/** the answer arm's non-waiting half (#369): clear the dead NULL-holder row on a task
- *  that already left the flow; an IN-REVIEW landing may also owe the reviewer mint a
- *  crash between the return flip and its re-fire (the broader lazy-mint gap is #371). */
-async function healLeftWaitingAnswer(taskId: string, category: string | null) {
-  await cancelOrphanAnswerObligations(taskId);
-  if (category !== CATEGORY.IN_REVIEW) return;
-  try {
-    await dispatchAiReviewTurns(taskId);
-  } catch (e) {
-    log.warn(
-      `answer holder removal: could not re-fire the review turn for ${taskId}:`,
-      e instanceof Error ? e.message : e,
-    );
+/** the answer arm's non-waiting half (#369): an IN-REVIEW landing may owe the reviewer
+ *  mint a crash between the return flip and its re-fire (the broader lazy-mint gap is
+ *  #371) — re-fire FIRST, then clear only the dead rows older than the task write the
+ *  caller read. Trigger-last: a crash between the two leaves the NULL-holder row for
+ *  the next sweep, and the `before` cut leaves a mid-flight ask/forward spawn (its row
+ *  is newer than the task write) untouched — its own flip lands and the waiting-answer
+ *  arm heals it. */
+async function healLeftWaitingAnswer(taskId: string, category: string | null, taskUpdatedAt: Date) {
+  if (category === CATEGORY.IN_REVIEW) {
+    try {
+      await dispatchAiReviewTurns(taskId);
+    } catch (e) {
+      log.warn(
+        `answer holder removal: could not re-fire the review turn for ${taskId}:`,
+        e instanceof Error ? e.message : e,
+      );
+    }
   }
+  await cancelOrphanAnswerObligations(taskId, taskUpdatedAt);
 }
 
 /** the answer arm's post-flip half (#369): one thread note, then the re-fire /
@@ -638,7 +643,9 @@ export async function settleReviewerRemovalRounds(plan: ReviewerRemovalPlan, nam
   // ANSWER obligation whose FK nulls employee_id — nothing can answer, forward or
   // abandon the task. Cancel exactly the captured rows by id, then return every
   // affected task that lost its only holder to its flow.
-  await settleAnswerHolderRemoval(plan.answerObligations, name, settledTaskIds);
+  // NOTE BEFORE THE ANSWER ARM (#369 r3): the answer arm may settle an extinguished
+  // round and supersede the very void rows this note pins — write the note first so a
+  // dual-role departing employee (answer holder + last pending reviewer) is named.
   if (plan.reviewRowIds.length > 0) {
     try {
       await db
@@ -655,6 +662,7 @@ export async function settleReviewerRemovalRounds(plan: ReviewerRemovalPlan, nam
       log.warn('reviewer removal: could not note the removed reviewer rows:', e instanceof Error ? e.message : e);
     }
   }
+  await settleAnswerHolderRemoval(plan.answerObligations, name, settledTaskIds);
   let leftover: Array<{ taskId: string }> = [];
   try {
     // bounded: a delete heals at most this many tasks synchronously; the rest drain
@@ -706,22 +714,19 @@ async function settleAnswerHolderRemoval(
     } catch (e) {
       log.warn(`answer holder removal: could not return task ${taskId}:`, e instanceof Error ? e.message : e);
     }
-    if (healed) {
-      settledTaskIds.push(taskId);
-      continue;
-    }
-    // The return arm did not land (lost CAS, throw, or another live holder). The
-    // departing rows are dead either way — but when the task still WAITS on an orphan
-    // (no live holder), keep them PENDING as the machine signature: the boot heal and
-    // the next removal sweep re-run the return arm. Cancel only when the task moved on
-    // or a live holder owns the question now.
-    let stillOrphaned = false;
+    if (healed) settledTaskIds.push(taskId);
+    // The departing rows are dead either way — but when the task still WAITS on an
+    // orphan (no live holder), keep them PENDING as the machine signature: the boot
+    // heal and the next removal sweep re-run the return arm. Cancel only when the task
+    // moved on or a live holder owns the question now — a FAILED re-read keeps the
+    // signature (never erase it on an error).
+    let keepSignature = true;
     try {
-      stillOrphaned = await taskStillWaitsOnOrphan(taskId);
+      keepSignature = await taskStillWaitsOnOrphan(taskId);
     } catch (e) {
       log.warn(`answer holder removal: could not re-read task ${taskId}:`, e instanceof Error ? e.message : e);
     }
-    if (stillOrphaned) continue;
+    if (keepSignature) continue;
     for (const obligationId of obligationIds) {
       try {
         await cancelObligationById(obligationId);
