@@ -739,9 +739,13 @@ Rules:
   empty page (a filter is not a lookup). A raw non-uuid string must never
   reach a uuid column: Postgres raises 22P02 ('invalid input syntax for type
   uuid') and the client would see a 500. Writes also answer `BAD_REQUEST` when
-  a referenced assignee/owner does not exist. Text-typed ids (task, project,
-  status, registry, environment, vault ids) are outside this law — they cannot
-  raise 22P02, so a malformed value is an ordinary miss.
+  a referenced assignee/owner does not exist. `mcp.probe` is a LOOKUP surface:
+  its `{employeeId, serverId}` names an existing binding and a malformed id is
+  the same `NOT_FOUND` a well-formed id with no binding answers (the persisted
+  verdict writes no caller-supplied id); `mcp.bindingsRemove` deletes the
+  binding, so it is a write and answers `BAD_REQUEST`. Text-typed ids (task,
+  project, status, registry, environment, vault ids) are outside this law —
+  they cannot raise 22P02, so a malformed value is an ordinary miss.
 - input validation: zod `strictObject` everywhere (unknown keys rejected)
 - wire format: POST `/rpc/<path>`, body `{ "json": <input> }`,
   `content-type: application/json`; responses `{ "json": <result> }`
