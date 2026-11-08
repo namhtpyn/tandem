@@ -1,3 +1,17 @@
+## [2.78.5](https://github.com/namhtpyn/tandem/compare/v2.78.4...v2.78.5) (2026-11-08)
+
+
+### Bug Fixes
+
+* [#369](https://github.com/namhtpyn/tandem/issues/369) answer-holder removal — a departed holder's pending answer never strands the task ([ecacba7](https://github.com/namhtpyn/tandem/commit/ecacba777f04d187854519c76110994268d92a3c))
+* [#369](https://github.com/namhtpyn/tandem/issues/369) r1 review — trigger last, existential holder guard, orphan sweep ([5dafee7](https://github.com/namhtpyn/tandem/commit/5dafee7994d6c56f0ae989d052fbb7b57fec92c0))
+* [#369](https://github.com/namhtpyn/tandem/issues/369) r2 review — extinguished-round matrix, scoped teardown, signature-preserving lost flip ([ba4b100](https://github.com/namhtpyn/tandem/commit/ba4b10087fa0d24cbfd40269f852cf70b73e009f))
+* [#369](https://github.com/namhtpyn/tandem/issues/369) r3 review — re-fire before teardown, signature-preserving errors, forward CAS ([ce9d32e](https://github.com/namhtpyn/tandem/commit/ce9d32e36685f00626e85433530d32aa5c57b8fd))
+* [#369](https://github.com/namhtpyn/tandem/issues/369) r4 review — blocked-task signature, crash-repair matrix, post-spawn forward arbitration ([a134bce](https://github.com/namhtpyn/tandem/commit/a134bce44b3dc40070a694f443c264ed9bb00680)), closes [#365](https://github.com/namhtpyn/tandem/issues/365)
+* [#369](https://github.com/namhtpyn/tandem/issues/369) r5 review — blocked take keeps its rows, queue ignores NULL holders, restore heal ([8906d25](https://github.com/namhtpyn/tandem/commit/8906d25d77368ed6bc5f23be173119e238029436))
+* [#369](https://github.com/namhtpyn/tandem/issues/369) r6 review — restore heal keys on the machine signature, failed re-fire parks ([63dc452](https://github.com/namhtpyn/tandem/commit/63dc452bbef333558abcd9ec25fd8280fc0c049b))
+* [#369](https://github.com/namhtpyn/tandem/issues/369) watchdog — orphaned ANSWER holder arm (NULL-holder PENDING answer, [#369](https://github.com/namhtpyn/tandem/issues/369) class) ([c479e7e](https://github.com/namhtpyn/tandem/commit/c479e7ead75ae79d4870d72aba7e000f38de246e))
+
 ## [2.78.4](https://github.com/namhtpyn/tandem/compare/v2.78.3...v2.78.4) (2026-11-08)
 
 
