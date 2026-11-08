@@ -259,6 +259,12 @@ fi
 #       the status moving (the answerQuestion cancel-before-CAS race #314 closed).
 #       The same invariant excludes manual parks (the park write is newest) and
 #       live questions (PENDING row).
+#   (c) ANSWER-HOLDER ORPHAN (#369 class): a waiting_answer-category task whose only
+#       PENDING ANSWER obligation has a NULL holder — the FK set-null signature of
+#       an employee delete whose return arm never ran. No legal write path produces
+#       it (ask/forward always name a holder), so it needs no manual-freedom
+#       discriminator. The removal/boot heal returns the task; a surviving count
+#       means the heal itself is broken.
 # Two-pass confirm then id-set dedupe, mirroring ghostset: both shapes are illegal
 # states, not slow ones, so 10 min apart is already persistence. Separate psql pass
 # (probe law #4) + to_regclass guard for pre-review images (column-absent law).
@@ -269,7 +275,7 @@ STRCOL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tand
 if [ "$STRCOL" = "guard-error" ]; then
   anom+=("strand_guard: column probe failed — detector blind")
 elif [ "$STRCOL" = "1" ]; then
-  STRSQL="select 'wedge', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING') and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id) > t.updated_at union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at"
+  STRSQL="select 'wedge', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING') and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id) > t.updated_at union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at union all select 'orphanans', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_obligations o on o.task_id = t.id where s.category = 'waiting_answer' and o.role = 'ANSWER' and o.status = 'PENDING' and o.employee_id is null) x), 'none')"
   STRERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$STRSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
   STROUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$STRSQL\"" 2>/dev/null) || STROUT="db-unreachable"
   if [ "$STROUT" = "db-unreachable" ]; then
@@ -297,6 +303,17 @@ elif [ "$STRCOL" = "1" ]; then
       rm -f "$PROBE_STATE/strand.alerted"
     fi
     printf '%s\n' "${STRAND:-none}" > "$PROBE_STATE/strand.prev"
+    # (c) answer-holder orphan: previous-pass presence confirm + id-set dedupe
+    ORPHANANS=$(echo "$STROUT" | awk -F'|' '/^orphanans/{print $2}')
+    if [ -n "${ORPHANANS:-}" ] && [ "$ORPHANANS" != "none" ] && [ "$(cat "$PROBE_STATE/orphanans.prev" 2>/dev/null || echo none)" != "none" ]; then
+      if [ "$(cat "$PROBE_STATE/orphanans.alerted" 2>/dev/null || echo none)" != "$ORPHANANS" ]; then
+        anom+=("answer_orphan: waiting_answer with a NULL-holder PENDING ANSWER obligation [$ORPHANANS] — removal heal did not run, #369 class")
+        echo "$ORPHANANS" > "$PROBE_STATE/orphanans.alerted"
+      fi
+    else
+      rm -f "$PROBE_STATE/orphanans.alerted"
+    fi
+    printf '%s\n' "${ORPHANANS:-none}" > "$PROBE_STATE/orphanans.prev"
   fi
 fi
 
