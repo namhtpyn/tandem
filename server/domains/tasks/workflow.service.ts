@@ -34,6 +34,8 @@ import {
   currentRound,
   teardownOpenRound,
   teardownAllPendingRounds,
+  roundCarriesVoidPending,
+  settleExtinguishedRound,
   liveReviewers,
   canonicalStoredUuid,
 } from './review.service';
@@ -201,8 +203,13 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
   const chain = task.questionChain;
   if (!chain.includes(authorId)) throw new Error('only someone in the question chain can answer');
   // a LIVE review round returns to in-review (the round is still open); the
-  // assignee's own question returns to todo so the agent resumes with the answer
-  const backTo = (await openRoundLive(taskId)) ? IN_REVIEW_STATUS : TODO_STATUS;
+  // assignee's own question returns to todo so the agent resumes with the answer.
+  // #365: a round whose reviewers were all deleted has no vote to wait for — land it
+  // in-review so the extinguished settle applies the matrix (done/cancelled/todo)
+  // instead of leaving a dead round behind a todo flip.
+  const roundLive = await openRoundLive(taskId);
+  const extinguished = !roundLive && (await roundCarriesVoidPending(taskId));
+  const backTo = roundLive || extinguished ? IN_REVIEW_STATUS : TODO_STATUS;
   // TERMINAL ARBITRATION mirror (#287, #292 r1): the return flip arbitrates on the
   // status this call read — a won settle keeps its outcome, the late answer refuses.
   const flipped = await db
@@ -227,8 +234,14 @@ export async function answerQuestion(taskId: string, authorId: string, body: str
   // won-flip→cancel window mirrors the settle path's write-then-cancel shape.
   await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
   if (backTo === IN_REVIEW_STATUS) {
-    // a review-round question was answered — the AI reviewer's turn re-arms
-    await dispatchAiReviewTurns(taskId);
+    // a review-round question was answered — the AI reviewer's turn re-arms. #365: an
+    // extinguished round has no reviewer to re-arm — the matrix settles it instead.
+    if (roundLive) {
+      await dispatchAiReviewTurns(taskId);
+      if (!(await openRoundLive(taskId))) await settleExtinguishedRound(taskId);
+    } else {
+      await settleExtinguishedRound(taskId);
+    }
   } else if (await openRoundLive(taskId)) {
     // HOLD-WINDOW REPAIR (#288 r5): the verdict hold's revert can land between our
     // openRoundLive read and this flip — the round is LIVE again while we returned

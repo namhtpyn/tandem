@@ -32,6 +32,17 @@ export default defineNitroPlugin(async () => {
     log.error('settings integrity audit failed:', e);
   }
 
+  // REVIEW LAW (#365): heal review rounds left voiceless by an employee removal that
+  // crashed between the user delete and the settle. Idempotent, bounded by the void
+  // rows themselves; never aborts boot.
+  try {
+    const { settleAllExtinguishedRounds } = await import('../domains/tasks/review.service');
+    const healed = await settleAllExtinguishedRounds();
+    if (healed > 0) log.info(`review rounds settled without a live reviewer: ${healed}`);
+  } catch (e) {
+    log.warn('void review round heal failed:', e);
+  }
+
   // agent dispatcher: eligible tasks (ready + AI assignee) fire automatically.
   // Opt out with TANDEM_NO_DISPATCHER=1 (tests); fake runner with TANDEM_FAKE_RUNNER=1.
   // REAPER LIVENESS (#147): a bare await here meant a redis blip at restart left

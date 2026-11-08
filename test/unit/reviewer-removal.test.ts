@@ -10,18 +10,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CATEGORY, REVIEW_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
+import { mockDb, taskReviews as dbTaskReviews } from './helpers/mock-db';
+
 const h = vi.hoisted(() => ({
   taskStatus: '' as string,
   statuses: [] as Array<{ id: string; category: string }>,
   round: 2,
   /** queue of rows served to bare `select().from(taskReviews)` reads, in order */
   reviewReads: [] as Array<Array<Record<string, unknown>>>,
-  /** rows served to `select({taskId}).from(taskReviews)` (prepareReviewerRemoval) */
-  pendingSelect: [] as Array<{ taskId: string }>,
-  updates: [] as Array<{ table: string; set: Record<string, unknown> }>,
+  /** pending rows for prepareReviewerRemoval: select({id, taskId}) */
+  pendingSelect: [] as Array<{ id: string; taskId: string }>,
+  /** leftover void-row task ids: select({taskId}) */
+  leftoverSelect: [] as Array<{ taskId: string }>,
+  /** the departing reviewer's pending APPROVAL obligations: select({id}) from taskObligations */
+  obligationSelect: [] as Array<{ id: string }>,
+  updates: [] as Array<{ table: string; set: Record<string, unknown>; cond: unknown }>,
   cancelled: [] as string[],
   cancelledAll: [] as string[],
-  cancelledEmployee: [] as string[],
+  cancelledById: [] as string[],
   resolved: [] as string[],
   notes: [] as Array<{ body: string; payload: Record<string, unknown> }>,
   published: 0,
@@ -30,46 +36,45 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('../../server/db/index', async () => {
-  const { tasks, taskReviews } = await import('../../server/db/schema');
+  const { tasks, taskReviews, taskObligations } = await import('../../server/db/schema');
+  const rowsThenable = (rows: () => Promise<Array<Record<string, unknown>>>) => {
+    const mk = () => ({
+      then: (ok?: (v: Array<Record<string, unknown>>) => unknown, err?: (e: unknown) => unknown) =>
+        rows().then(ok, err),
+      catch: (err: (e: unknown) => unknown) => rows().catch(err),
+      orderBy: () => ({ limit: async () => rows() }),
+      limit: async () => rows(),
+      innerJoin: () => mk(),
+    });
+    return mk();
+  };
   return {
     asDb: (x: unknown) => x,
     db: {
       select: (arg?: Record<string, unknown>) => ({
-        from: (table: unknown) => {
-          const shape = arg
-            ? 'round' in arg
-              ? 'round'
-              : 'taskId' in arg
-                ? 'taskId'
-                : 'resultBody' in arg
-                  ? 'body'
-                  : 'bare'
-            : 'bare';
-          const rows = () => {
-            if (table === tasks) return Promise.resolve([{ status: h.taskStatus }]);
-            if (shape === 'round') return Promise.resolve([{ round: h.round }]);
-            if (shape === 'taskId') return Promise.resolve(h.pendingSelect);
-            if (shape === 'body') return Promise.resolve([{ resultBody: undefined }]);
-            return Promise.resolve(h.reviewReads.shift() ?? []);
-          };
-          const mk = () => ({
-            then: (ok?: (v: Array<Record<string, unknown>>) => unknown, err?: (e: unknown) => unknown) =>
-              rows().then(ok, err),
-            catch: (err: (e: unknown) => unknown) => rows().catch(err),
-            orderBy: () => ({ limit: async () => rows() }),
-            limit: async () => rows(),
-            innerJoin: () => mk(),
-          });
-          return { where: () => mk(), innerJoin: () => mk() };
-        },
+        from: (table: unknown) => ({
+          where: (cond: unknown) =>
+            rowsThenable(() => {
+              const keys = arg ? Object.keys(arg) : [];
+              if (table === tasks) return Promise.resolve([{ status: h.taskStatus }]);
+              if (table === taskObligations) return Promise.resolve(h.obligationSelect);
+              if (keys.includes('round')) return Promise.resolve([{ round: h.round }]);
+              if (keys.includes('resultBody')) return Promise.resolve([{ resultBody: undefined }]);
+              if (keys.includes('id') && keys.includes('taskId')) return Promise.resolve(h.pendingSelect);
+              if (keys.includes('taskId')) return Promise.resolve(h.leftoverSelect);
+              return Promise.resolve(h.reviewReads.shift() ?? []);
+            }),
+          innerJoin: () => rowsThenable(async () => []),
+        }),
       }),
       update: (table: unknown) => ({
         set: (set: Record<string, unknown>) => ({
-          where: () => {
+          where: (cond: unknown) => {
             const applied = () => {
               h.updates.push({
                 table: table === tasks ? 'tasks' : table === taskReviews ? 'taskReviews' : 'other',
                 set,
+                cond,
               });
               if (table === tasks) return h.flipWins ? [{ id: 'task-1' }] : [];
               // the VERDICT CAS (.returning on a status write) is the only review
@@ -130,8 +135,8 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
     cancelAllObligations: async (...args: unknown[]) => {
       h.cancelledAll.push(String(args[0]));
     },
-    cancelEmployeeObligations: async (...args: unknown[]) => {
-      h.cancelledEmployee.push(`${String(args[0])}:${String(args[1])}`);
+    cancelObligationById: async (id: string) => {
+      h.cancelledById.push(id);
     },
   };
 });
@@ -144,9 +149,21 @@ import {
   openRoundLive,
   prepareReviewerRemoval,
   recordVerdict,
+  settleAllExtinguishedRounds,
   settleExtinguishedRound,
   settleReviewerRemovalRounds,
 } from '../../server/domains/tasks/review.service';
+
+/** render a captured drizzle condition to SQL + params (DB-mock predicate law: pin the
+ * predicate by RENDERING it, never by a presence check) */
+function renderCond(cond: unknown): string {
+  const q = mockDb()
+    .select()
+    .from(dbTaskReviews)
+    .where(cond as never)
+    .toSQL();
+  return `${q.sql} ${JSON.stringify(q.params)}`;
+}
 
 beforeEach(() => {
   h.taskStatus = STATUS.inReview;
@@ -159,10 +176,12 @@ beforeEach(() => {
   h.round = 2;
   h.reviewReads = [];
   h.pendingSelect = [];
+  h.leftoverSelect = [];
+  h.obligationSelect = [];
   h.updates = [];
   h.cancelled = [];
   h.cancelledAll = [];
-  h.cancelledEmployee = [];
+  h.cancelledById = [];
   h.resolved = [];
   h.notes = [];
   h.published = 0;
@@ -207,7 +226,7 @@ describe('settleExtinguishedRound (#365)', () => {
     expect(h.notes.at(-1)?.body).toContain('no reviewers remain');
   });
 
-  it('a deleted reviewer plus decided approvals still completes the task', async () => {
+  it('a deleted reviewer plus decided approvals still completes the task — and closes every pending row', async () => {
     h.reviewReads = [
       [
         { status: REVIEW_STATUS.APPROVED, reviewerId: 'rev-1' },
@@ -216,7 +235,10 @@ describe('settleExtinguishedRound (#365)', () => {
     ];
     expect(await settleExtinguishedRound('task-1')).toBe(true);
     expect(h.updates.find((u) => u.table === 'tasks')?.set.status).toBe(STATUS.done);
-    expect(h.cancelled).toEqual(['task-1']);
+    // terminal arm: task-wide supersede of every pending row (all rounds) + all approvals cancel
+    const sweeps = h.updates.filter((u) => u.table === 'taskReviews' && u.set.status === REVIEW_STATUS.SUPERSEDED);
+    expect(sweeps.length).toBeGreaterThanOrEqual(2);
+    expect(h.cancelledAll).toEqual(['task-1']);
   });
 
   it('a deleted reviewer plus a decided rejection cancels the task', async () => {
@@ -228,6 +250,22 @@ describe('settleExtinguishedRound (#365)', () => {
     ];
     expect(await settleExtinguishedRound('task-1')).toBe(true);
     expect(h.updates.find((u) => u.table === 'tasks')?.set.status).toBe(STATUS.cancelled);
+  });
+
+  it('the void-row sweep is SCOPED: reviewer_id IS NULL, this task, this round, pending only', async () => {
+    h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]];
+    await settleExtinguishedRound('task-1');
+    const sweep = h.updates.find(
+      (u) =>
+        u.table === 'taskReviews' &&
+        u.set.status === REVIEW_STATUS.SUPERSEDED &&
+        renderCond(u.cond).includes('reviewer_id'),
+    );
+    const sql = renderCond(sweep?.cond);
+    expect(sql).toContain('"reviewer_id" is null');
+    expect(sql).toContain('"task_id" =');
+    expect(sql).toContain('"round" =');
+    expect(sql).toContain('"status" =');
   });
 
   it('a live reviewer still owns the round — nothing settles under them', async () => {
@@ -262,29 +300,59 @@ describe('settleExtinguishedRound (#365)', () => {
   });
 });
 
-describe('employee removal prepare half (#365)', () => {
-  it('notes the departing reviewer’s pending rows and cancels only THEIR obligations', async () => {
-    h.pendingSelect = [{ taskId: 'task-1' }, { taskId: 'task-1' }, { taskId: 'task-2' }];
-    const taskIds = await prepareReviewerRemoval('emp-1', 'Ada');
-    expect(taskIds).toEqual(['task-1', 'task-2']);
-    const note = h.updates.find((u) => u.table === 'taskReviews' && typeof u.set.note === 'string');
-    expect(note?.set.note).toContain('Ada');
-    expect(h.cancelledEmployee).toEqual(['task-1:emp-1', 'task-2:emp-1']);
-  });
-
-  it('no pending rows = no work at all', async () => {
-    h.pendingSelect = [];
-    expect(await prepareReviewerRemoval('emp-1', 'Ada')).toEqual([]);
+describe('employee removal halves (#365)', () => {
+  it('prepare is READ-ONLY and captures rows + obligations', async () => {
+    h.pendingSelect = [
+      { id: 'row-1', taskId: 'task-1' },
+      { id: 'row-2', taskId: 'task-1' },
+      { id: 'row-3', taskId: 'task-2' },
+    ];
+    h.obligationSelect = [{ id: 'ob-1' }, { id: 'ob-2' }];
+    const plan = await prepareReviewerRemoval('emp-1');
+    expect(plan).toEqual({
+      taskIds: ['task-1', 'task-2'],
+      reviewRowIds: ['row-1', 'row-2', 'row-3'],
+      obligationIds: ['ob-1', 'ob-2'],
+    });
+    // a failed delete must change nothing: no writes in the capture half
     expect(h.updates).toHaveLength(0);
-    expect(h.cancelledEmployee).toHaveLength(0);
   });
 
-  it('settleReviewerRemovalRounds settles every affected round', async () => {
+  it('settle half cancels the captured obligations, notes the captured rows, and settles every round', async () => {
+    h.leftoverSelect = [];
     h.reviewReads = [
       [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
       [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
     ];
-    expect(await settleReviewerRemovalRounds(['task-1', 'task-2'])).toBe(2);
-    expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(2);
+    const settled = await settleReviewerRemovalRounds(
+      { taskIds: ['task-1', 'task-2'], reviewRowIds: ['row-1', 'row-3'], obligationIds: ['ob-1', 'ob-2'] },
+      'Ada',
+    );
+    expect(settled).toBe(2);
+    expect(h.cancelledById).toEqual(['ob-1', 'ob-2']);
+    const note = h.updates.find((u) => u.table === 'taskReviews' && typeof u.set.note === 'string');
+    expect(note?.set.note).toContain('Ada');
+    // the note is scoped to the captured row ids, never a reviewer-wide sweep
+    const sql = renderCond(note?.cond);
+    expect(sql).toContain('"id" in');
+    expect(sql).toContain('row-1');
+    expect(sql).toContain('row-3');
+  });
+
+  it('settle half also picks up a leftover void row from an earlier removal/race', async () => {
+    h.leftoverSelect = [{ taskId: 'task-9' }];
+    h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]];
+    const settled = await settleReviewerRemovalRounds({ taskIds: [], reviewRowIds: [], obligationIds: [] });
+    expect(settled).toBe(1);
+    expect(h.updates.find((u) => u.table === 'tasks' && u.set.status === STATUS.todo)).toBeTruthy();
+  });
+
+  it('the boot heal settles every leftover void round', async () => {
+    h.leftoverSelect = [{ taskId: 'task-1' }, { taskId: 'task-1' }, { taskId: 'task-2' }];
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
+    ];
+    expect(await settleAllExtinguishedRounds()).toBe(2);
   });
 });

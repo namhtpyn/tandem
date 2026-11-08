@@ -627,13 +627,14 @@ export const employeesRouter = os.router({
         message: `employee is in use by ${blockers.join(', ')} — reassign or delete those first`,
       });
     }
-    // REVIEW LAW (#365): an employee removed mid-round must never wedge a review —
-    // their PENDING rows are noted now (the FK then nulls reviewer_id, leaving the
-    // void pending rows the settle keys on) and their own approval obligations cancel;
-    // after the delete every affected round left with no live reviewer settles by the
-    // normal matrix instead of waiting on a verdict that can never arrive.
+    // REVIEW LAW (#365): an employee removed mid-round must never wedge a review.
+    // Capture first (read-only): their pending review rows and their own pending
+    // approval obligations. After the delete lands (the FK nulls reviewer_id, leaving
+    // the void pending rows the settle keys on) the captured obligations cancel, the
+    // rows are noted, and every affected round left with no live reviewer settles by
+    // the normal matrix instead of waiting on a verdict that can never arrive.
     const { prepareReviewerRemoval, settleReviewerRemovalRounds } = await import('../tasks/review.service');
-    const reviewTasks = await prepareReviewerRemoval(input.id, target.name);
+    const reviewRemoval = await prepareReviewerRemoval(input.id);
     // deleting the user cascades supervisors, ai extension, api keys
     // (existence already verified above — no race window worth a second check)
     // UNBIND = REVOKE (SPEC MCP): the cascade removes the employee's bindings
@@ -641,7 +642,7 @@ export const employeesRouter = os.router({
     const { revokeOauthTokensForEmployee } = await import('../mcp/mcp-oauth.service');
     await revokeOauthTokensForEmployee(input.id);
     await db.delete(userTable).where(eq(userTable.id, input.id));
-    await settleReviewerRemovalRounds(reviewTasks);
+    await settleReviewerRemovalRounds(reviewRemoval, target.name);
     await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.DELETE);
     // the per-agent worker roster follows the AI roster — a removed agent's
     // worker closes on the same resync (cheap no-op for human deletes, #177)

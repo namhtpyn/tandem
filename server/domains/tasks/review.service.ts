@@ -11,18 +11,18 @@
 // that swaps the reviewer up-chain on the TASK roster and never settles.
 // Parks (round cannot progress without a human) flip the task to BLOCKED; owner
 // resolution unblocks and the round resumes. Manual done/cancel supersedes the round.
+import { consola } from 'consola';
 import { and, desc, eq, inArray, isNull, notInArray } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { db, type DbExecutor } from '../../db/index';
-import { tasks, taskReviews, taskRuns, taskMessages } from '../../db/schema';
+import { tasks, taskReviews, taskRuns, taskMessages, taskObligations } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import {
   spawnObligation,
   spawnObligationTracked,
   cancelObligations,
   cancelAllObligations,
-  cancelEmployeeObligations,
   cancelObligationById,
   resolveObligation,
 } from './obligations.service';
@@ -35,8 +35,9 @@ import {
   CATEGORY,
   CHANGE_RESOURCE,
   CHANGE_ACTION,
-  REVIEW_STATUS,
   OBLIGATION_ROLE,
+  OBLIGATION_STATUS,
+  REVIEW_STATUS,
   ACTIVITY_KIND,
   type ActivityKind,
   type ReviewStatus,
@@ -44,6 +45,8 @@ import {
 } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
+
+const log = consola.withTag('tandem');
 
 const TODO_STATUS = STATUS.todo;
 
@@ -329,8 +332,16 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
     .where(and(eq(tasks.id, taskId), eq(tasks.status, taskRow.status)))
     .returning({ id: tasks.id });
   if (flipped.length === 0) return false; // a concurrent settle/move owns the outcome
-  if (allApproved) await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
-  else await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+  if (allApproved || allRejected) {
+    // a TERMINAL settle closes EVERY pending row in EVERY round (#361 r6) — a
+    // torn-down older round can still carry a pending row, and a done task must
+    // never keep one
+    await db
+      .update(taskReviews)
+      .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
+      .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
+  }
+  await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
   await logActivity(
     taskId,
     ACTIVITY_KIND.STATUS,
@@ -346,36 +357,103 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
   return true;
 }
 
-/** REVIEWER REMOVAL, prepare half (#365): called BEFORE the employee's user row is
- * deleted. Notes every PENDING review row they hold and cancels their pending
- * APPROVAL obligations (a concurrent reviewer's rows on the same task are untouched).
- * Returns the affected task ids — the caller deletes the user (the FK nulls
- * reviewer_id, leaving the void pending rows that settleExtinguishedRound keys on)
- * and then calls settleReviewerRemovalRounds. */
-export async function prepareReviewerRemoval(employeeId: string, name?: string): Promise<string[]> {
-  const pending = await db
-    .select({ taskId: taskReviews.taskId })
+/** does the current round carry a void pending row (its reviewer was deleted)? The
+ *  machine signature callers use to choose between resuming and settling (#365). */
+export async function roundCarriesVoidPending(taskId: string): Promise<boolean> {
+  const round = await currentRound(taskId);
+  if (round === 0) return false;
+  const rows = await db
+    .select({ status: taskReviews.status, reviewerId: taskReviews.reviewerId })
     .from(taskReviews)
-    .where(and(eq(taskReviews.reviewerId, employeeId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
-  if (pending.length === 0) return [];
-  const taskIds = [...new Set(pending.map((p) => p.taskId))];
-  await db
-    .update(taskReviews)
-    .set({ note: `reviewer removed — ${name ?? 'employee deleted'}` })
-    .where(and(eq(taskReviews.reviewerId, employeeId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
-  for (const taskId of taskIds) {
-    await cancelEmployeeObligations(taskId, employeeId, OBLIGATION_ROLE.APPROVAL);
-  }
-  return taskIds;
+    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
+  return rows.some(voidPending);
 }
 
-/** REVIEWER REMOVAL, settle half (#365): runs AFTER the user delete. Each affected
- *  round that no longer has a live reviewer settles by the normal matrix instead of
- *  waiting on a verdict that can never arrive. */
-export async function settleReviewerRemovalRounds(taskIds: string[]): Promise<number> {
+/** REVIEWER REMOVAL, prepare half (#365): a READ-ONLY capture taken BEFORE the
+ * employee's user row is deleted — the pending review rows they hold and their
+ * pending APPROVAL obligations. Nothing is mutated here: a failed delete must change
+ * nothing, so every write happens in settleReviewerRemovalRounds after it lands. */
+export type ReviewerRemovalPlan = {
+  taskIds: string[];
+  reviewRowIds: string[];
+  obligationIds: string[];
+};
+
+export async function prepareReviewerRemoval(employeeId: string): Promise<ReviewerRemovalPlan> {
+  const pending = await db
+    .select({ id: taskReviews.id, taskId: taskReviews.taskId })
+    .from(taskReviews)
+    .where(and(eq(taskReviews.reviewerId, employeeId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
+  const obligations = await db
+    .select({ id: taskObligations.id })
+    .from(taskObligations)
+    .where(
+      and(
+        eq(taskObligations.employeeId, employeeId),
+        eq(taskObligations.role, OBLIGATION_ROLE.APPROVAL),
+        eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
+      ),
+    );
+  return {
+    taskIds: [...new Set(pending.map((p) => p.taskId))],
+    reviewRowIds: pending.map((p) => p.id),
+    obligationIds: obligations.map((o) => o.id),
+  };
+}
+
+/** REVIEWER REMOVAL, settle half (#365): runs AFTER the user delete. Mutates only
+ *  what the delete made stale: cancels the captured approval obligations by id,
+ *  notes the captured rows, then settles every affected round plus any leftover void
+ *  row (the machine signature — catches a round minted inside the prepare→delete
+ *  window and any removal that crashed mid-way). Per-task try/catch: one failure
+ *  never strands the rest; the boot heal retries leftovers. */
+export async function settleReviewerRemovalRounds(plan: ReviewerRemovalPlan, name?: string): Promise<number> {
+  for (const obligationId of plan.obligationIds) await cancelObligationById(obligationId);
+  if (plan.reviewRowIds.length > 0) {
+    await db
+      .update(taskReviews)
+      .set({ note: `reviewer removed — ${name ?? 'employee deleted'}` })
+      .where(inArray(taskReviews.id, plan.reviewRowIds));
+  }
+  const leftover = await db
+    .select({ taskId: taskReviews.taskId })
+    .from(taskReviews)
+    .where(and(eq(taskReviews.status, REVIEW_STATUS.PENDING), isNull(taskReviews.reviewerId)));
+  const taskIds = [...new Set([...plan.taskIds, ...leftover.map((r) => r.taskId)])];
   let settled = 0;
   for (const taskId of taskIds) {
-    if (await settleExtinguishedRound(taskId)) settled += 1;
+    try {
+      if (await settleExtinguishedRound(taskId)) settled += 1;
+    } catch (e) {
+      log.warn(`reviewer removal: could not settle round for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+  return settled;
+}
+
+/** BOOT HEAL (#365): settle every in-review round left with a void pending row and no
+ *  live voter — the shape a removal that crashed between the user delete and the
+ *  settle leaves behind. Idempotent; bounded by the void rows themselves. Never
+ *  throws (boot must not fail on a heal). */
+export async function settleAllExtinguishedRounds(): Promise<number> {
+  let taskIds: string[];
+  try {
+    const rows = await db
+      .select({ taskId: taskReviews.taskId })
+      .from(taskReviews)
+      .where(and(eq(taskReviews.status, REVIEW_STATUS.PENDING), isNull(taskReviews.reviewerId)));
+    taskIds = [...new Set(rows.map((r) => r.taskId))];
+  } catch (e) {
+    log.warn('void review row scan failed:', e instanceof Error ? e.message : e);
+    return 0;
+  }
+  let settled = 0;
+  for (const taskId of taskIds) {
+    try {
+      if (await settleExtinguishedRound(taskId)) settled += 1;
+    } catch (e) {
+      log.warn(`void review round heal failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
   }
   return settled;
 }

@@ -14,7 +14,13 @@ import { nonNull } from '#shared/utils/non-null';
 
 import { db, asDb, type DbExecutor } from '../../db/index';
 import { tasks, taskStatuses } from '../../db/schema';
-import { logActivity as publishActivity, dispatchAiReviewTurns, PARK_REARM_LADDER_MS } from './review.service';
+import {
+  logActivity as publishActivity,
+  dispatchAiReviewTurns,
+  openRoundLive,
+  settleExtinguishedRound,
+  PARK_REARM_LADDER_MS,
+} from './review.service';
 
 export const BLOCKED_STATUS = STATUS.blocked;
 
@@ -129,8 +135,13 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
         ...(parked ? { parkResumed: true } : {}),
       });
       // unblock-resume parity (#202): a restored parked round replays its reviewer turn —
-      // a park is no job + rows, so the restore must re-mint the parked turn
-      if (parked) await dispatchAiReviewTurns(cur.id);
+      // a park is no job + rows, so the restore must re-mint the parked turn. #365: a
+      // round whose reviewer was deleted while parked has no live voter — settle it by
+      // the matrix instead of restoring a round nothing can ever decide.
+      if (parked) {
+        if (await openRoundLive(cur.id)) await dispatchAiReviewTurns(cur.id);
+        else await settleExtinguishedRound(cur.id);
+      }
     }
     if (!cur.parentTaskId) break;
     cur = await d.query.tasks.findFirst({
