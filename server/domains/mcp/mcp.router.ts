@@ -5,6 +5,9 @@
 import { os } from '@orpc/server';
 import { z } from 'zod';
 
+import { isUuid } from '#shared/utils/is-uuid';
+
+import { requireUuid } from '../kernel/id-shape';
 import { adminProcedure, ORPCError, protectedProcedure } from '../kernel/kernel';
 import { oauthConnectOrigin, startOauthConnect } from './mcp-oauth.service';
 import {
@@ -86,9 +89,11 @@ export const mcpRouter = os.router({
 
   registryRemove: adminProcedure.input(z.strictObject({ id: idField })).handler(({ input }) => registryRemove(input)),
 
-  bindingsList: adminProcedure
-    .input(z.strictObject({ employeeId: idField }))
-    .handler(({ input }) => bindingsList(input.employeeId)),
+  bindingsList: adminProcedure.input(z.strictObject({ employeeId: z.string() })).handler(({ input }) =>
+    // a filter is not a lookup: blank / non-uuid values are the empty page
+    // (UUID-FILTER LAW), never a schema error, never a uuid-column query
+    isUuid(input.employeeId) ? bindingsList(input.employeeId) : { data: [] },
+  ),
 
   // per-server read for the registry page's binding manager (#274)
   bindingsListByServer: adminProcedure
@@ -103,21 +108,29 @@ export const mcpRouter = os.router({
         secretId: z.union([idField, z.null()]).optional(),
       }),
     )
-    .handler(({ input }) =>
-      bindingsSet({
+    .handler(async ({ input }) => {
+      requireUuid(input.employeeId, 'BAD_REQUEST', 'invalid employee id');
+      return bindingsSet({
         employeeId: input.employeeId,
         serverId: input.serverId,
         ...(input.secretId !== undefined ? { secretId: input.secretId } : {}),
-      }),
-    ),
+      });
+    }),
 
   bindingsRemove: adminProcedure
     .input(z.strictObject({ employeeId: idField, serverId: idField }))
-    .handler(({ input }) => bindingsRemove(input)),
+    .handler(({ input }) => {
+      requireUuid(input.employeeId, 'BAD_REQUEST', 'invalid employee id');
+      return bindingsRemove(input);
+    }),
 
-  probe: adminProcedure
-    .input(z.strictObject({ employeeId: idField, serverId: idField }))
-    .handler(({ input }) => probeMcpBinding(input)),
+  probe: adminProcedure.input(z.strictObject({ employeeId: z.string(), serverId: idField })).handler(({ input }) => {
+    // probe is a read of one binding: blank / malformed employee ids are the same
+    // miss a well-formed id with no binding behind it answers (blank is accepted at
+    // the schema edge and owned by this miss path)
+    requireUuid(input.employeeId, 'NOT_FOUND', 'binding not found');
+    return probeMcpBinding(input);
+  }),
 
   // #278: the connect mint rides an admin POST — the legacy state-changing
   // GET /api/mcp/oauth/connect rode a SameSite=Lax admin session on any
@@ -126,6 +139,7 @@ export const mcpRouter = os.router({
   oauthConnect: adminProcedure
     .input(z.strictObject({ employeeId: idField, serverId: idField }))
     .handler(async ({ input, context }) => {
+      requireUuid(input.employeeId, 'BAD_REQUEST', 'invalid employee id');
       try {
         const minted = await startOauthConnect({
           employeeId: input.employeeId,
