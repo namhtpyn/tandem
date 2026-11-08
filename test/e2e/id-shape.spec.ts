@@ -92,8 +92,10 @@ test('mcp binding surfaces: writes reject a malformed employee id, the list filt
     400,
     'invalid employee id',
   );
-  // probe reads one binding: a malformed id is the same miss a missing binding is
-  await expectRpcError(page, 'mcp/probe', { employeeId: MALFORMED, serverId: 'srv-x' }, 404, 'binding not found');
+  // probe reads one binding: blank and malformed ids are the same miss
+  for (const employeeId of [MALFORMED, '']) {
+    await expectRpcError(page, 'mcp/probe', { employeeId, serverId: 'srv-x' }, 404, 'binding not found');
+  }
   await expectRpcError(
     page,
     'mcp/oauthConnect',
@@ -157,8 +159,11 @@ test('task writes shape-check assignee, owner and reviewer ids', async ({ page }
 test('lookups keep their specced miss; the assignee filter keeps its empty page', async ({ page }) => {
   // a well-formed id with no row behind it: the lookup miss, not a shape error
   await expectRpcError(page, 'employees/createApiKey', { employeeId: ABSENT }, 404, 'employee not found');
+  // blank is accepted at the schema edge and answered by the miss path
+  await expectRpcError(page, 'employees/listApiKeys', { employeeId: '' }, 404, 'employee not found');
 
-  // supervisor ids are roster membership (never a uuid column): malformed = BAD_REQUEST
+  // supervisor ids land in employee_supervisors.supervisor_id (uuid): shape-checked
+  // at the edge, then roster membership — malformed = BAD_REQUEST, never 22P02
   await expectRpcError(
     page,
     'employees/create',
@@ -173,10 +178,40 @@ test('lookups keep their specced miss; the assignee filter keeps its empty page'
     'does not exist',
   );
 
+  // a canonical UPPERCASE id names the same employee (uuid columns compare
+  // case-insensitively) — accepted, not reported as missing
+  const boss = await createEmployee(page, 'boss');
+  const upperSup = await post(page, 'employees/create', {
+    name: 'Upper Sup',
+    email: `upper-sup-${Date.now().toString(36)}@tandem.local`,
+    kind: 'human',
+    title: 'Tester',
+    supervisorIds: [boss.id.toUpperCase()],
+  });
+  expect(upperSup.status()).toBe(200);
+
   // a filter is not a lookup — an unmatchable id answers the empty page
   const filtered = await post(page, 'tasks/listPaged', { assigneeId: MALFORMED });
   expect(filtered.status()).toBe(200);
   expect((await filtered.json()).json).toEqual({ data: [], total: 0 });
+});
+
+test('uuid case cannot bypass the self-supervision and self-delete guards', async ({ page }) => {
+  const employee = await createEmployee(page, 'case');
+  // uppercase target + lowercase supervisor is the SAME employee: the guard must
+  // decide it in JS (400), not let Postgres' CHECK constraint raise a 500
+  await expectRpcError(
+    page,
+    'employees/update',
+    { id: employee.id.toUpperCase(), name: 'Case Probe', title: 'Tester', supervisorIds: [employee.id] },
+    400,
+    'cannot supervise themselves',
+  );
+
+  // the same case-insensitivity applies to the self-delete guard
+  const sessionRes = await post(page, 'auth/session', null);
+  const adminId = (await sessionRes.json()).json.user.id as string;
+  await expectRpcError(page, 'employees/remove', { id: adminId.toUpperCase() }, 400, 'cannot delete your own account');
 });
 
 test('positive control: employee writes with a real id still land', async ({ page }) => {

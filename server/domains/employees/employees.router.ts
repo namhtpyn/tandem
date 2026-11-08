@@ -42,16 +42,25 @@ const avatarImageSchema = z
   .optional();
 
 const assertNoDuplicateSupervisors = (supervisorIds: string[]) => {
-  if (new Set(supervisorIds).size !== supervisorIds.length)
+  // uuid ids compare case-insensitively in Postgres — the duplicate check must too
+  if (new Set(supervisorIds.map((s) => s.toLowerCase())).size !== supervisorIds.length)
     throw new ORPCError('BAD_REQUEST', { message: 'duplicate supervisor ids' });
+};
+
+/** supervisor ids land in employee_supervisors.supervisor_id (uuid): shape-check
+ *  them at the edge (ID-SHAPE LAW) and canonicalize to the lowercase wire form so
+ *  the JS comparisons (duplicate / self / cycle) agree with what Postgres stores */
+const normalizeSupervisorIds = (supervisorIds: string[]): string[] => {
+  for (const s of supervisorIds) requireUuid(s, 'BAD_REQUEST', `supervisor ${s} does not exist`);
+  return supervisorIds.map((s) => s.toLowerCase());
 };
 
 const assertSupervisorsExist = async (supervisorIds: string[]) => {
   if (supervisorIds.length === 0) return;
   const found = await db.query.user.findMany({ columns: { id: true }, orderBy: { id: 'asc' } });
-  const ids = new Set(found.map((f) => f.id));
+  const ids = new Set(found.map((f) => f.id.toLowerCase()));
   for (const s of supervisorIds) {
-    if (!ids.has(s)) throw new ORPCError('BAD_REQUEST', { message: `supervisor ${s} does not exist` });
+    if (!ids.has(s.toLowerCase())) throw new ORPCError('BAD_REQUEST', { message: `supervisor ${s} does not exist` });
   }
 };
 
@@ -340,7 +349,7 @@ export const employeesRouter = os.router({
         });
       }
       // supervisors must exist and not include a duplicate (default fills [])
-      const supervisorIds = input.supervisorIds ?? [];
+      const supervisorIds = normalizeSupervisorIds(input.supervisorIds ?? []);
       assertNoDuplicateSupervisors(supervisorIds);
       await assertSupervisorsExist(supervisorIds);
       // environment must exist for AI
@@ -430,13 +439,14 @@ export const employeesRouter = os.router({
           orderBy: { userId: 'asc' },
         })
       )[0];
-      assertNoDuplicateSupervisors(input.supervisorIds);
-      if (input.supervisorIds.includes(input.id)) {
+      const supervisorIds = normalizeSupervisorIds(input.supervisorIds);
+      assertNoDuplicateSupervisors(supervisorIds);
+      if (supervisorIds.includes(input.id.toLowerCase())) {
         throw new ORPCError('BAD_REQUEST', { message: 'an employee cannot supervise themselves' });
       }
       // supervisors must exist; cycle check over the supervision graph
-      await assertSupervisorsExist(input.supervisorIds);
-      await assertAcyclicSupervision(input.id, input.supervisorIds);
+      await assertSupervisorsExist(supervisorIds);
+      await assertAcyclicSupervision(input.id.toLowerCase(), supervisorIds);
       // ---- validate everything else BEFORE the first write ----
       if (input.email !== undefined && input.email !== emp.email) {
         await assertEmailAvailable(input.email);
@@ -459,10 +469,10 @@ export const employeesRouter = os.router({
           })
           .where(eq(userTable.id, input.id));
         await tx.delete(supervisorsTable).where(eq(supervisorsTable.employeeId, input.id));
-        if (input.supervisorIds.length > 0) {
+        if (supervisorIds.length > 0) {
           await tx
             .insert(supervisorsTable)
-            .values(input.supervisorIds.map((s) => ({ employeeId: input.id, supervisorId: s })));
+            .values(supervisorIds.map((s) => ({ employeeId: input.id, supervisorId: s })));
         }
       });
       await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.UPDATE);
@@ -567,7 +577,7 @@ export const employeesRouter = os.router({
     requireUuid(input.id, 'BAD_REQUEST', 'invalid employee id');
     // guard: cannot delete yourself (session may be absent in raw handler tests)
     const selfId = (context as { session?: { user?: { id?: string } } }).session?.user?.id;
-    if (selfId && selfId === input.id) {
+    if (selfId && selfId.toLowerCase() === input.id.toLowerCase()) {
       throw new ORPCError('BAD_REQUEST', { message: 'you cannot delete your own account' });
     }
     // guard: cannot delete the last admin (workspace lockout)
@@ -684,7 +694,8 @@ export const employeesRouter = os.router({
    *  other employee id — like a malformed uuid, which a uuid column cannot even
    *  compare — is the same NOT_FOUND miss, never a 500 and never a peek. */
   listApiKeys: protectedProcedure
-    .input(z.strictObject({ employeeId: z.string().min(1) }))
+    // blank is accepted at the schema edge and owned by the miss path (UUID-FILTER LAW)
+    .input(z.strictObject({ employeeId: z.string() }))
     .handler(async ({ input, context }): Promise<ApiKeyRow[]> => {
       const selfId = context.session.user.id;
       const isAdmin = context.session.user.role === ROLE.ADMIN;

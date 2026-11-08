@@ -124,9 +124,10 @@ export const mcpRouter = os.router({
       return bindingsRemove(input);
     }),
 
-  probe: adminProcedure.input(z.strictObject({ employeeId: idField, serverId: idField })).handler(({ input }) => {
-    // probe is a read of one binding: a malformed employee id is the same miss
-    // a well-formed id with no binding behind it answers
+  probe: adminProcedure.input(z.strictObject({ employeeId: z.string(), serverId: idField })).handler(({ input }) => {
+    // probe is a read of one binding: blank / malformed employee ids are the same
+    // miss a well-formed id with no binding behind it answers (blank is accepted at
+    // the schema edge and owned by this miss path)
     requireUuid(input.employeeId, 'NOT_FOUND', 'binding not found');
     return probeMcpBinding(input);
   }),
