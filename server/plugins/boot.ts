@@ -32,13 +32,14 @@ export default defineNitroPlugin(async () => {
     log.error('settings integrity audit failed:', e);
   }
 
-  // REVIEW LAW (#365): heal review rounds left voiceless by an employee removal that
-  // crashed between the user delete and the settle. Idempotent, bounded by the void
+  // REVIEW LAW (#365) + ANSWER-ROLE REMOVAL (#369): heal review rounds left
+  // voiceless by an employee removal and waiting-answer tasks whose answer holder
+  // vanished in the delete→settle window. Idempotent, bounded by the void/orphan
   // rows themselves; never aborts boot.
   try {
     const { settleAllExtinguishedRounds } = await import('../domains/tasks/review.service');
     const healed = await settleAllExtinguishedRounds();
-    if (healed.length > 0) log.info(`review rounds settled without a live reviewer: ${healed.length}`);
+    if (healed.length > 0) log.info(`task strands healed (removed reviewers/answer holders): ${healed.length}`);
   } catch (e) {
     log.warn('void review round heal failed:', e);
   }

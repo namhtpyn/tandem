@@ -14,6 +14,15 @@ const h = vi.hoisted(() => ({
   cancelled: [] as string[],
   holder: 'human-1' as string | null,
   roundLive: false,
+  updateWins: true,
+  spawns: [] as string[],
+  resolves: [] as string[],
+  /** conditions captured from task updates (CAS predicate pin) */
+  taskUpdateConds: [] as unknown[],
+  /** optional queue of task reads (post-spawn arbitration) */
+  taskRowQueue: [] as Array<Record<string, unknown>>,
+  spawnedId: 'ob-1',
+  cancelledById: [] as string[],
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -37,7 +46,8 @@ vi.mock('../../server/db/index', async () => {
           where: (_cond: unknown) => {
             const applied = () => {
               h.flips.push({ set, pred: table === tasks });
-              return [{ id: 'task-1' }];
+              if (table === tasks) h.taskUpdateConds.push(_cond);
+              return h.updateWins ? [{ id: 'task-1' }] : [];
             };
             return {
               returning: async () => applied(),
@@ -48,7 +58,9 @@ vi.mock('../../server/db/index', async () => {
         }),
       }),
       query: {
-        tasks: { findMany: async () => h.taskRows },
+        tasks: {
+          findMany: async () => (h.taskRowQueue.length ? [h.taskRowQueue.shift()!] : h.taskRows),
+        },
         taskStatuses: { findMany: async () => h.statuses },
         user: { findFirst: async () => ({ id: 'target-1', name: 'Target One' }) },
       },
@@ -66,8 +78,13 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
   return {
     ...mod,
     cancelObligations: async (_t: unknown, role: unknown) => void h.cancelled.push(String(role)),
-    spawnObligation: async () => {},
-    resolveObligation: async () => {},
+    spawnObligation: async (_t: unknown, employeeId: unknown) => void h.spawns.push(String(employeeId)),
+    spawnObligationTracked: async (_t: unknown, employeeId: unknown) => {
+      h.spawns.push(String(employeeId));
+      return { id: h.spawnedId, created: true };
+    },
+    resolveObligation: async (_t: unknown, employeeId: unknown) => void h.resolves.push(String(employeeId)),
+    cancelObligationById: async (id: string) => void h.cancelledById.push(id),
     answerHolder: async () => h.holder,
   };
 });
@@ -92,6 +109,7 @@ vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {
 });
 
 import { answerQuestion, forwardQuestion } from '../../server/domains/tasks/workflow.service';
+import { mockDb, tasks as dbTasks } from './helpers/mock-db';
 
 function seedTask(statusId: string) {
   h.taskRows = [
@@ -102,6 +120,7 @@ function seedTask(statusId: string) {
       createdBy: 'owner-1',
       questionChain: ['human-1'],
       reviewers: [],
+      updatedAt: new Date('2026-11-08T00:00:00Z'),
     },
   ];
 }
@@ -147,11 +166,51 @@ describe('forward verb gate keys off the waiting_answer category (#265 r3 siblin
     h.statuses = [{ id: 'st-custom-waiting', category: CATEGORY.WAITING_ANSWER }];
     const res = await forwardQuestion('task-1', 'human-1', 'target-1', 'take this one');
     expect(res.holderId).toBe('target-1');
+    // the chain-move CAS pins status + updatedAt (never a bare id update)
+    const q = mockDb()
+      .select()
+      .from(dbTasks)
+      .where(h.taskUpdateConds[0] as never)
+      .toSQL();
+    const sql = `${q.sql} ${JSON.stringify(q.params)}`;
+    expect(sql).toContain('"status" =');
+    expect(sql).toContain('"updated_at" =');
+    // the VALUES, not just the columns: a regression to the seeded waiting-answer id
+    // (the CATEGORY-GATE LAW dead end) or to a fresh Date instead of the read write
+    // would pass a column-name check and 400 every forward on a custom status
+    expect(sql).toContain('st-custom-waiting');
+    expect(sql).toContain('2026-11-08T00:00:00');
+  });
+
+  it('a task that moved during the spawn window refuses and undoes ITS row (#369 r4)', async () => {
+    seedTask('st-custom-waiting');
+    h.statuses = [{ id: 'st-custom-waiting', category: CATEGORY.WAITING_ANSWER }];
+    // first read: the gate; second read: the post-spawn arbitration
+    h.taskRowQueue = [
+      { ...h.taskRows[0], status: 'st-custom-waiting' },
+      { ...h.taskRows[0], status: 'st-custom-todo' },
+    ];
+    h.statuses.push({ id: 'st-custom-todo', category: CATEGORY.READY });
+    await expect(forwardQuestion('task-1', 'human-1', 'target-1', 'take this one')).rejects.toThrow(
+      /task state changed during forward/,
+    );
+    expect(h.cancelledById).toEqual(['ob-1']);
   });
 
   it('a non-waiting category refuses — Forward never fires there', async () => {
     seedTask('st-custom-doing');
     h.statuses = [{ id: 'st-custom-doing', category: CATEGORY.WORKING }];
     await expect(forwardQuestion('task-1', 'human-1', 'target-1', 'nope')).rejects.toThrow(/not waiting for an answer/);
+  });
+
+  it('a lost chain-move CAS refuses BEFORE any obligation write (#369 r3)', async () => {
+    seedTask('st-custom-waiting');
+    h.statuses = [{ id: 'st-custom-waiting', category: CATEGORY.WAITING_ANSWER }];
+    h.updateWins = false; // a concurrent answer-holder return moved the task
+    await expect(forwardQuestion('task-1', 'human-1', 'target-1', 'take this one')).rejects.toThrow(
+      /task state changed during forward/,
+    );
+    expect(h.resolves).toEqual([]);
+    expect(h.spawns).toEqual([]);
   });
 });

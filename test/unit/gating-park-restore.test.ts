@@ -23,6 +23,8 @@ const h = vi.hoisted(() => ({
   writeLog: [] as Array<{ set: Record<string, unknown>; hasPredicate: boolean; applied: boolean }>,
   replayed: [] as string[],
   settled: [] as string[],
+  answerHealed: [] as string[],
+  answerSignature: true,
   roundLive: true,
   lossPlan: [] as boolean[],
   onStatusMapQuery: null as null | (() => void),
@@ -102,6 +104,13 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     dispatchAiReviewTurns: async (taskId: string) => {
       h.replayed.push(taskId);
     },
+    // #369: a restore into the question flow re-runs the answer arm — ONLY on the
+    // machine signature (a NULL-holder PENDING ANSWER row); a legal manual move never
+    hasOrphanAnswerSignature: async () => h.answerSignature,
+    returnRemovedAnswerHolderTask: async (taskId: string) => {
+      h.answerHealed.push(taskId);
+      return false;
+    },
   };
 });
 
@@ -136,6 +145,7 @@ beforeEach(() => {
   h.writeLog = [];
   h.replayed = [];
   h.settled = [];
+  h.answerHealed = [];
   h.roundLive = true;
   h.lossPlan = [];
   h.onStatusMapQuery = null;
@@ -208,6 +218,25 @@ describe('refreshParentGating park-origin unblock (#202)', () => {
     await refreshParentGating('p');
     expect(h.updates[0]?.set.status).toBe(STATUS.inReview);
     expect(h.settled).toEqual(['p']);
+  });
+
+  it('a restore into the QUESTION flow re-runs the answer arm (#369)', async () => {
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.waitingAnswer });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('p');
+    expect(h.updates[0]?.set.status).toBe(STATUS.waitingAnswer);
+    expect(h.answerHealed).toEqual(['p']);
+  });
+
+  it('a restore WITHOUT the orphan signature never runs the answer arm (#369)', async () => {
+    // a legal manual move into a waiting-answer status carries no NULL-holder row —
+    // running the arm there would flip the task back out of the flow its owner chose
+    h.answerSignature = false;
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.waitingAnswer });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('p');
+    expect(h.updates[0]?.set.status).toBe(STATUS.waitingAnswer);
+    expect(h.answerHealed).toEqual([]);
   });
 
   it('a parked task with children still open is left alone (no unblock, no block-arm rewrite)', async () => {

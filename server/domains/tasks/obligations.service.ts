@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { OBLIGATION_ROLE, OBLIGATION_STATUS, type ObligationRole } from '#shared/enums';
@@ -132,6 +132,51 @@ export async function answerHolder(taskId: string) {
   return rows[0]?.employeeId ?? null;
 }
 
+/** AN EXISTENTIAL answer-holder check (#369): is ANY PENDING ANSWER row on the task
+ *  held by a live employee? answerHolder()'s newest-row projection can mask an older
+ *  live holder behind a newer NULL-holder orphan (a delete only nulls the departing
+ *  row), so a guard that must mean "no holder left" asks this instead. */
+export async function hasPendingAnswerHolder(taskId: string) {
+  const rows = await db
+    .select({ employeeId: taskObligations.employeeId })
+    .from(taskObligations)
+    .where(
+      and(
+        eq(taskObligations.taskId, taskId),
+        eq(taskObligations.role, OBLIGATION_ROLE.ANSWER),
+        eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
+        isNotNull(taskObligations.employeeId),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
+/** cancel PENDING ANSWER rows whose holder no longer exists (#369) — the FK
+ *  set-null signature of an employee delete. Scoped to NULL holders: a concurrent
+ *  ask/forward spawn always names a holder, so it can never be touched. Used to
+ *  clear the stale row when the task already left the waiting-answer flow (a lost
+ *  return flip or a crash after a won flip) — the obligation lifecycle forbids a
+ *  PENDING obligation outliving the state that makes it actionable.
+ *  `before` (the task write the caller read): only rows older than that write are
+ *  cancelled — an ask or forward that spawns-then-flips creates its row AFTER the
+ *  task's last write, so a mid-flight ask for a now-deleted holder is left alone and
+ *  its own flip lands (then the waiting-answer arm heals it). */
+export async function cancelOrphanAnswerObligations(taskId: string, before?: Date) {
+  await db
+    .update(taskObligations)
+    .set({ status: OBLIGATION_STATUS.CANCELLED, resolvedAt: new Date() })
+    .where(
+      and(
+        eq(taskObligations.taskId, taskId),
+        eq(taskObligations.role, OBLIGATION_ROLE.ANSWER),
+        eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
+        isNull(taskObligations.employeeId),
+        before ? lt(taskObligations.createdAt, before) : undefined,
+      ),
+    );
+}
+
 /** SNAPSHOT-SLIMMING LAW (#130 slice 3): per-snapshot batch reads never load
  * full obligation rows or earlier rounds. Approvals resolve each task's LATEST
  * round in SQL — max(created_at) per task over role='APPROVAL', joined back for
@@ -191,7 +236,10 @@ export async function pendingTaskIds() {
   const rows = await db
     .selectDistinct({ taskId: taskObligations.taskId })
     .from(taskObligations)
-    .where(eq(taskObligations.status, OBLIGATION_STATUS.PENDING));
+    // a NULL holder owes nothing: the row is a removed-employee machine signature
+    // (#369), never a decision a human can act on — the awaiting-decision queue must
+    // not count it
+    .where(and(eq(taskObligations.status, OBLIGATION_STATUS.PENDING), isNotNull(taskObligations.employeeId)));
   return rows.map((r) => r.taskId);
 }
 

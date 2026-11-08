@@ -29,6 +29,19 @@ export const BLOCKED_STATUS = STATUS.blocked;
  *  leave a round nothing can ever decide. A non-parked restore to in-review replays
  *  nothing (#202 parity: only a park carries a parked turn). */
 async function resumeRestoredRound(taskId: string, parked: boolean, restoreCategory: string | undefined) {
+  // #369: a restore into the QUESTION flow re-runs the answer arm — a holder removed
+  // while the task was BLOCKED left its NULL-holder row as the machine signature (the
+  // arm never cancels it on a blocked task), and no other path would return it.
+  if (restoreCategory === CATEGORY.WAITING_ANSWER) {
+    try {
+      const { hasOrphanAnswerSignature, returnRemovedAnswerHolderTask } = await import('./review.service');
+      // ONLY the machine signature: a legal manual move into a waiting-answer status
+      // carries no pending row and must never be flipped out of its flow (#369)
+      if (await hasOrphanAnswerSignature(taskId)) await returnRemovedAnswerHolderTask(taskId);
+    } catch (e) {
+      log.warn(`gating: answer-holder restore heal failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+  }
   if (!parked && restoreCategory !== CATEGORY.IN_REVIEW) return;
   try {
     const roundLive = await openRoundLive(taskId);
