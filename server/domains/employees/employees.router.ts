@@ -8,6 +8,7 @@ import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { ROLE } from '#shared/enums';
 import type { ApiKeyRow, EmployeeRow } from '#shared/types';
 import { escapeIlike } from '#shared/utils/escape-ilike';
+import { isUuid } from '#shared/utils/is-uuid';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
@@ -671,10 +672,20 @@ export const employeesRouter = os.router({
       return { ok: true };
     }),
 
-  /** list an employee's API keys (never the key value) */
+  /** list an employee's API keys (never the key value) — SELF-OR-ADMIN read
+   *  (SPEC "Roles & access", CREDENTIAL-METADATA SCOPE): key metadata is not
+   *  roster data, so an EMPLOYEE/VIEWER session reads only its OWN keys. Any
+   *  other employee id — like a malformed uuid, which a uuid column cannot even
+   *  compare — is the same NOT_FOUND miss, never a 500 and never a peek. */
   listApiKeys: protectedProcedure
     .input(z.strictObject({ employeeId: z.string().min(1) }))
-    .handler(async ({ input }): Promise<ApiKeyRow[]> => {
+    .handler(async ({ input, context }): Promise<ApiKeyRow[]> => {
+      const selfId = context.session.user.id;
+      const isAdmin = context.session.user.role === ROLE.ADMIN;
+      // uuid comparison is case-insensitive in Postgres — the scope check must be too
+      if (!isUuid(input.employeeId) || (!isAdmin && input.employeeId.toLowerCase() !== selfId.toLowerCase())) {
+        throw new ORPCError('NOT_FOUND', { message: 'employee not found' });
+      }
       const rows = await db.query.user.findMany({
         columns: { id: true },
         where: { id: { eq: input.employeeId } },
