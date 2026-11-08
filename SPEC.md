@@ -623,18 +623,25 @@ VIEWER; new users default VIEWER; the first boot user claims ADMIN).
 **Enforcement is server-side at the oRPC kernel; UI gating is UX, never the
 boundary.** Tier matrix:
 
-| tier     | who                    | surface                                                                                                                                                                                                                                                                                                |
-| -------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| public   | anonymous              | `auth.config`, `auth.configLive`, `auth.session`, `meta.version`, better-auth `/auth/**`, `/health/*`                                                                                                                                                                                                  |
-| session  | any authenticated user | every read procedure (list/listPaged/live/detail/thread/runs/inbox/subtasks/assignments/proposals/reviews/activity/titles/apiKeys), `changes.live`                                                                                                                                                     |
-| employee | EMPLOYEE + ADMIN       | every `tasks.*` and `projects.*` write (create/update/setStatus/note/ask/forward/answer/submit/approve/requestChanges/reject/abandon/dispatch/remove/proposals confirm+reject) and `statuses.assign` (Jev auto-assign); verdict writes are additionally HUMAN-only (see below)                         |
-| admin    | ADMIN only             | vault (secrets + folders, all verbs), providers (all verbs incl. models), oidc.replace, settings.update, environments create/update/remove/probe, employees create/update/remove, access-key mint/update/revoke, statuses save/remove, mcp registry + bindings + probe + oauthConnect mint (all verbs) |
+| tier     | who                    | surface                                                                                                                                                                                                                                                                                                                                                  |
+| -------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| public   | anonymous              | `auth.config`, `auth.configLive`, `auth.session`, `meta.version`, better-auth `/auth/**`, `/health/*`                                                                                                                                                                                                                                                    |
+| session  | any authenticated user | every read procedure (list/listPaged/live/detail/thread/runs/inbox/subtasks/assignments/proposals/reviews/activity/titles/apiKeys [own employee only — see CREDENTIAL-METADATA SCOPE]), `changes.live`                                                                                                                                                   |
+| employee | EMPLOYEE + ADMIN       | every `tasks.*` and `projects.*` write (create/update/setStatus/note/ask/forward/answer/submit/approve/requestChanges/reject/abandon/dispatch/remove/proposals confirm+reject) and `statuses.assign` (Jev auto-assign); verdict writes are additionally HUMAN-only (see below)                                                                           |
+| admin    | ADMIN only             | vault (secrets + folders, all verbs), providers (all verbs incl. models), oidc.replace, settings.update, environments create/update/remove/probe, employees create/update/remove, access-key mint/update/revoke, statuses save/remove, mcp registry writes + bindings + probe + oauthConnect mint (registry reads are session-tier, see the MCP section) |
 
 Wrong role → `FORBIDDEN`; anonymous → `UNAUTHORIZED`. Reads never exceed the
 session tier; an admin-surface write is never wired below the admin tier. A
 role gate is part of the procedure definition itself (kernel middleware), so a
 router file wired with bare `protectedProcedure` on an admin-tier write is a
 defect even if a client never calls it.
+**CREDENTIAL-METADATA SCOPE:** credential metadata is not roster data. The
+access-key read (`employees.listApiKeys`) is SELF-OR-ADMIN: a session reads its
+OWN employee's keys; an EMPLOYEE/VIEWER asking for any other employee id — like
+a malformed (non-uuid-shaped) id — gets `NOT_FOUND` (the id is a miss, never a
+500). ADMIN reads any employee's keys. The read never returns key material; a
+plaintext key appears in exactly one response class, the one-time mint
+(`employees.create`, `employees.createApiKey`), by design.
 **LIVE-STREAM RE-AUTH (#224):** a `live` stream outlives its open-time check, so
 every live generator re-asserts the procedure's own tier against a FRESH
 session (never the per-request latch) before emitting a snapshot — at most once
