@@ -12,7 +12,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CATEGORY, REVIEW_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
-import { mockDb, taskObligations as dbTaskObligations, tasks as dbTasks } from './helpers/mock-db';
+import {
+  mockDb,
+  taskObligations as dbTaskObligations,
+  taskReviews as dbTaskReviews,
+  tasks as dbTasks,
+} from './helpers/mock-db';
 
 const h = vi.hoisted(() => ({
   /** the task row the return arm reads */
@@ -29,6 +34,10 @@ const h = vi.hoisted(() => ({
   holderRows: [] as Array<{ employeeId: string | null }>,
   /** conditions captured from the existential holder read (predicate pin) */
   holderConds: [] as unknown[],
+  /** conditions captured from the current-round pending-row read (round/status pin) */
+  roundPendingConds: [] as unknown[],
+  /** cancelOrphanAnswerObligations call args: [taskId, before] */
+  orphanCalls: [] as Array<[string, Date | undefined]>,
   /** the departing holder's PENDING ANSWER obligations: select({id, taskId}) */
   answerObligationSelect: [] as Array<{ id: string; taskId: string }>,
   /** conditions captured from the ANSWER capture read (predicate pin) */
@@ -45,6 +54,8 @@ const h = vi.hoisted(() => ({
   leftoverSelect: [] as Array<{ taskId: string }>,
   /** bare select().from(taskReviews) reads, in order */
   reviewReads: [] as Array<Array<Record<string, unknown>>>,
+  /** currentRoundHasPendingRow rows (select({id}) from taskReviews) */
+  roundPending: [] as Array<Record<string, unknown>>,
   round: 0,
   aiEmployees: [] as Array<{ userId: string }>,
   updates: [] as Array<{ table: string; set: Record<string, unknown>; cond: unknown }>,
@@ -102,6 +113,10 @@ vi.mock('../../server/db/index', async () => {
                 return Promise.resolve([]);
               }
               if (table === taskReviews) {
+                if (keys.length === 1 && keys[0] === 'id') {
+                  h.roundPendingConds.push(cond);
+                  return Promise.resolve(h.roundPending);
+                }
                 if (keys.includes('round')) return Promise.resolve([{ round: h.round }]);
                 if (keys.includes('resultBody')) return Promise.resolve([{ resultBody: 'submitted result' }]);
                 if (keys.includes('id') && keys.includes('taskId')) return Promise.resolve(h.pendingSelect);
@@ -197,6 +212,7 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
     },
     cancelOrphanAnswerObligations: async (...args: unknown[]) => {
       h.seq.push('cancelOrphan');
+      h.orphanCalls.push([String(args[0]), args[1] as Date | undefined]);
       const real = mod as unknown as { cancelOrphanAnswerObligations: (...a: unknown[]) => Promise<void> };
       return real.cancelOrphanAnswerObligations(...args);
     },
@@ -226,8 +242,8 @@ import {
 
 /** render a captured drizzle condition to SQL + params (DB-mock predicate law: pin
  * the predicate by RENDERING it, never by a presence check) */
-function renderCond(cond: unknown, table: 'obligations' | 'tasks' = 'obligations'): string {
-  const tableDef = table === 'tasks' ? dbTasks : dbTaskObligations;
+function renderCond(cond: unknown, table: 'obligations' | 'tasks' | 'reviews' = 'obligations'): string {
+  const tableDef = table === 'tasks' ? dbTasks : table === 'reviews' ? dbTaskReviews : dbTaskObligations;
   const q = mockDb()
     .select()
     .from(tableDef)
@@ -254,6 +270,9 @@ beforeEach(() => {
   ];
   h.holderRows = [];
   h.holderConds = [];
+  h.roundPendingConds = [];
+  h.roundPending = [];
+  h.orphanCalls = [];
   h.answerObligationSelect = [];
   h.answerLeftoverSelect = [];
   h.pendingSelect = [];
@@ -331,6 +350,16 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     expect(res).toContain('task-1');
   });
 
+  it('a BLOCKED task keeps its signature — the unblock may restore a waiting-answer status', async () => {
+    h.taskStatus = STATUS.blocked;
+    const healed = await returnRemovedAnswerHolderTask('task-1');
+    expect(healed).toBe(false);
+    // no write at all: the row is the signature its gating restore needs
+    expect(h.updates).toEqual([]);
+    expect(h.notes).toEqual([]);
+    expect(h.seq).toEqual([]);
+  });
+
   it('a waiting task with ANOTHER live holder keeps waiting — only the orphan row is cleared', async () => {
     h.holderRows = [{ employeeId: 'someone-else' }];
     const healed = await returnRemovedAnswerHolderTask('task-1');
@@ -355,9 +384,9 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     h.taskStatus = STATUS.waitingAnswer;
     h.round = 2;
     h.aiEmployees = [{ userId: 'rev-1' }];
-    // currentRoundHasPendingRow read, dispatchAiReviewTurns' pending rows, settle's rows
+    h.roundPending = [{ id: 'row-1' }];
+    // dispatchAiReviewTurns' pending rows, then the settle's rows
     h.reviewReads = [
-      [{ id: 'row-1' }],
       [{ id: 'row-1', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1', createdAt: new Date() }],
       [{ status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }],
     ];
@@ -376,8 +405,8 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     h.aiEmployees = [];
     // the return arm reads waiting-answer, the settle then reads the flipped in-review row
     h.taskReads = [{ status: STATUS.waitingAnswer, updatedAt: h.taskUpdatedAt }];
+    h.roundPending = [{ id: 'row-2' }]; // the void row keeps the round alive
     h.reviewReads = [
-      [{ id: 'row-2' }], // currentRoundHasPendingRow: the void row keeps the round alive
       [], // dispatchAiReviewTurns: no AI rows to mint
       [
         { status: REVIEW_STATUS.APPROVED, reviewerId: 'rev-1' },
@@ -390,6 +419,12 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     expect(healed).toBe(true);
     const statuses = h.updates.filter((u) => u.table === 'tasks').map((u) => u.set.status);
     expect(statuses).toEqual([STATUS.inReview, STATUS.done]);
+    // the round-pending discriminator pins round + status (never 'any row exists')
+    const roundSql = renderCond(h.roundPendingConds[0], 'reviews');
+    expect(roundSql).toContain('"round" =');
+    expect(roundSql).toContain('"status" =');
+    expect(roundSql).toContain('PENDING');
+    expect(roundSql).toContain('task-1');
     expect(h.notes.some((n) => n.body.includes('review round resumes'))).toBe(true);
   });
 
@@ -444,6 +479,7 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     expect(sql).toContain('ANSWER');
     // the age cut: only rows older than the task write the caller read are cleared
     expect(sql).toContain('"created_at" <');
+    expect(h.orphanCalls.at(-1)?.[1]).toBe(h.taskUpdatedAt);
   });
 });
 
@@ -495,6 +531,22 @@ describe('ANSWER-ROLE REMOVAL crash repairs (#369 r3)', () => {
     );
     expect(res).toEqual([]);
     expect(h.cancelledById).toEqual([]);
+  });
+
+  it('an IN-REVIEW crash repair also settles an extinguished round (matrix applies)', async () => {
+    h.taskStatus = STATUS.inReview;
+    h.round = 2;
+    h.aiEmployees = [];
+    h.reviewReads = [
+      [], // dispatchAiReviewTurns: no AI rows to mint
+      [
+        { status: REVIEW_STATUS.APPROVED, reviewerId: 'rev-1' },
+        { status: REVIEW_STATUS.PENDING, reviewerId: null },
+      ], // settle matrix: all approved -> done
+    ];
+    const healed = await returnRemovedAnswerHolderTask('task-1');
+    expect(healed).toBe(false);
+    expect(h.updates.some((u) => u.table === 'tasks' && u.set.status === STATUS.done)).toBe(true);
   });
 
   it('an IN-REVIEW task that left waiting-answer re-fires its reviewer (crash repair)', async () => {

@@ -26,7 +26,14 @@ import { db } from '../../db/index';
 import { tasks, employeeSupervisors, taskReviews, taskRuns, taskMessages } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { refreshParentGating, hasOpenChildren } from './gating.service';
-import { spawnObligation, resolveObligation, cancelObligations, answerHolder } from './obligations.service';
+import {
+  spawnObligation,
+  spawnObligationTracked,
+  resolveObligation,
+  cancelObligations,
+  cancelObligationById,
+  answerHolder,
+} from './obligations.service';
 import {
   openRoundLive,
   dispatchAiReviewTurns,
@@ -191,7 +198,22 @@ export async function forwardQuestion(taskId: string, authorId: string, toEmploy
     .returning({ id: tasks.id });
   if (moved.length === 0) throw new Error('task state changed during forward — retry');
   await resolveObligation(taskId, nonNull(holder), OBLIGATION_ROLE.ANSWER, authorId);
-  await spawnObligation(taskId, toEmployeeId, OBLIGATION_ROLE.ANSWER);
+  const spawned = await spawnObligationTracked(taskId, toEmployeeId, OBLIGATION_ROLE.ANSWER);
+  // POST-SPAWN ARBITRATION (#369 r4): the CAS guards the chain move, but a concurrent
+  // answer-holder return that reads AFTER it can flip the task before this spawn
+  // lands — a fresh live-holder obligation would then sit on a task no verb can act
+  // on. Undo only OUR row (created this call) when the task left the flow, and refuse.
+  const after = await getTask(taskId);
+  if ((await statusCategoryOf(after.status)) !== CATEGORY.WAITING_ANSWER) {
+    if (spawned.created) {
+      try {
+        await cancelObligationById(spawned.id);
+      } catch {
+        // best-effort: the row is ours, and a leftover live row is still visible
+      }
+    }
+    throw new Error('task state changed during forward — retry');
+  }
   await logActivity(taskId, ACTIVITY_KIND.FORWARD, authorId, body, { toId: toEmployeeId, toName: target.name });
   return { holderId: toEmployeeId };
 }

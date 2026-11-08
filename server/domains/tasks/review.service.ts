@@ -501,10 +501,24 @@ export async function prepareReviewerRemoval(employeeId: string): Promise<Review
  *  a second pass finds no waiting task. */
 export async function returnRemovedAnswerHolderTask(taskId: string, name?: string): Promise<boolean> {
   const taskRow = (
-    await db.select({ status: tasks.status, updatedAt: tasks.updatedAt }).from(tasks).where(eq(tasks.id, taskId))
+    await db
+      .select({
+        status: tasks.status,
+        updatedAt: tasks.updatedAt,
+        preBlockStatus: tasks.preBlockStatus,
+        parkFromStatus: tasks.parkFromStatus,
+      })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
   )[0];
   if (!taskRow) return false;
   const category = await categoryOf(taskRow.status);
+  // A BLOCKED task is SUSPENDED, not settled: its pre-block/park origin may be a
+  // waiting-answer status and the gating restore resumes the question — the #365 rule
+  // (a blocked/parked task must keep its machine signature or its unblock can never
+  // settle) applies to the ANSWER row too. Never cancel it here; the unblocked task's
+  // next sweep returns it (the probe's orphan arm covers the gap).
+  if (taskRow.status === BLOCKED_STATUS) return false;
   // only a waiting-answer task owns the flow this arm repairs — a stale obligation on
   // any other status is cleared by the NULL-holder sweep (never a task-wide cancel:
   // the ask/forward paths spawn-then-flip and a cancel inside that window bags the spawn)
@@ -550,6 +564,13 @@ async function healLeftWaitingAnswer(taskId: string, category: string | null, ta
         `answer holder removal: could not re-fire the review turn for ${taskId}:`,
         e instanceof Error ? e.message : e,
       );
+    }
+    // an extinguished round (a void pending row with no live voter) settles by the
+    // normal matrix — the same crash state finishRemovedHolderReturn closes
+    try {
+      await settleExtinguishedRound(taskId);
+    } catch (e) {
+      log.warn(`answer holder removal: could not settle the round for ${taskId}:`, e instanceof Error ? e.message : e);
     }
   }
   await cancelOrphanAnswerObligations(taskId, taskUpdatedAt);
