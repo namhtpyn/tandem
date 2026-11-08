@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   inserts: [] as Array<{ table: string; values: Record<string, unknown> }>,
   spawned: [] as string[],
   cancelledAll: [] as string[],
+  cancelledFor: [] as string[],
   notes: [] as Array<{ body: string; payload: Record<string, unknown> }>,
   aiEmployees: [] as Array<Record<string, unknown>>,
   statuses: [] as Array<{ id: string; category: string }>,
@@ -114,6 +115,11 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
     resolveObligation: async () => {},
     cancelObligations: async () => {},
     cancelAllObligations: async (_t: unknown, role: unknown) => void h.cancelledAll.push(String(role)),
+    spawnObligationTracked: async (_t: unknown, employeeId: string, role: unknown) => ({
+      id: `obl-${String(employeeId)}-${String(role)}`,
+      created: true,
+    }),
+    cancelObligationById: async (obligationId: string) => void h.cancelledFor.push(obligationId),
   };
 });
 
@@ -134,6 +140,7 @@ beforeEach(() => {
   h.inserts = [];
   h.spawned = [];
   h.cancelledAll = [];
+  h.cancelledFor = [];
   h.notes = [];
   h.aiEmployees = [{ userId: 'rev-1' }];
   h.statuses = [
@@ -186,7 +193,10 @@ describe('round-open dispatch failure (#282)', () => {
     expect(h.inserts[0]?.values).toMatchObject({ round: 2, status: REVIEW_STATUS.PENDING });
     const supersede = h.updates.find((u) => u.table === 'taskReviews');
     expect(supersede?.set.status).toBe(REVIEW_STATUS.SUPERSEDED);
-    expect(h.cancelledAll).toContain('APPROVAL');
+    // rollback scope (#361 r4/r5): only THIS call's created obligation cancels (by id) —
+    // a task-wide approval wipe would tear down a concurrent round's obligations
+    expect(h.cancelledFor).toEqual(['obl-rev-1-APPROVAL']);
+    expect(h.cancelledAll).toEqual([]);
     // never flipped: no BLOCKED park, no in-review submit flip
     expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(0);
   });

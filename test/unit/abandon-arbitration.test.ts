@@ -19,6 +19,9 @@ const h = vi.hoisted(() => ({
   spawns: [] as Array<{ employeeId: string; role: string }>,
 }));
 
+/** canonical uuid — the round-open existence read shape-checks before binding (#361) */
+const REV = '00000000-0000-7000-8000-00000000a001';
+
 vi.mock('../../server/db/index', async () => {
   const { tasks } = await import('../../server/db/schema');
   return {
@@ -64,6 +67,9 @@ vi.mock('../../server/db/index', async () => {
           findMany: async () => h.taskRows,
         },
         taskStatuses: { findMany: async () => h.statuses },
+        // REVIEWER EXISTENCE (#361): submit re-checks the roster against the
+        // user table before opening a round — the fixture reviewer is live
+        user: { findMany: async () => [{ id: REV }] },
       },
     },
   };
@@ -103,8 +109,8 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     openReviewRound: async () => 1,
     recordVerdict: async () => ({ outcome: 'superseded' }),
     currentRound: async () => 1,
-    teardownOpenRound: async (_t: unknown, settledTo: string) => {
-      h.teardowns.push(settledTo);
+    teardownOpenRound: async (_t: unknown, settledTo: string, round?: number) => {
+      h.teardowns.push(round === undefined ? settledTo : `${settledTo}:${round}`);
     },
   };
 });
@@ -119,7 +125,7 @@ beforeEach(() => {
       ownerId: 'owner-1',
       createdBy: 'owner-1',
       questionChain: [],
-      reviewers: ['rev-1'],
+      reviewers: [REV],
     },
   ];
   h.cancelWins = true;
@@ -159,7 +165,7 @@ describe('submit/answer terminal arbitration (#292 r1 mirror of #287)', () => {
         ownerId: 'owner-1',
         createdBy: 'owner-1',
         questionChain: [],
-        reviewers: ['rev-1'],
+        reviewers: [REV],
       },
     ];
     h.statuses = [{ id: 'st-doing', category: CATEGORY.WORKING }];
@@ -179,7 +185,7 @@ describe('submit/answer terminal arbitration (#292 r1 mirror of #287)', () => {
         ownerId: 'owner-1',
         createdBy: 'owner-1',
         questionChain: [],
-        reviewers: ['rev-1'],
+        reviewers: [REV],
       },
     ];
     h.statuses = [{ id: 'st-doing', category: CATEGORY.WORKING }];
@@ -187,7 +193,8 @@ describe('submit/answer terminal arbitration (#292 r1 mirror of #287)', () => {
     await expect(submitResult('task-1', 'worker-1', 'the work is done')).rejects.toThrow(
       /task state changed during submit/,
     );
-    expect(h.teardowns).toContain('submit lost the race');
+    // scoped to the round THIS submit opened (#361 r5) — never the task's max round
+    expect(h.teardowns).toContain('submit lost the race:1');
     // the losing flip was the only tasks write (no park-disarm: it could only ever
     // strip a concurrent round's legitimate park recovery state, #292 r3)
     expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(1);
