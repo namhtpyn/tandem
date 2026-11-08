@@ -278,6 +278,23 @@ export async function openRoundLive(taskId: string) {
   return rows.some((r) => r.status === REVIEW_STATUS.PENDING && r.reviewerId !== null);
 }
 
+/** ANY pending row in the CURRENT round — a live reviewer's or a deleted reviewer's
+ * void row. A waiting-answer task that still owns such a round belongs back in
+ * in-review: the live one resumes on its reviewer turn, the extinguished one settles
+ * by the normal matrix (#369). */
+async function currentRoundHasPendingRow(taskId: string) {
+  const round = await currentRound(taskId);
+  if (round === 0) return false;
+  const rows = await db
+    .select({ id: taskReviews.id })
+    .from(taskReviews)
+    .where(
+      and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round), eq(taskReviews.status, REVIEW_STATUS.PENDING)),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
 /** a PENDING row whose reviewer was deleted after the round minted it (the FK nulls
  * reviewer_id) can never carry a verdict — a NON-VOTE by construction (#365). The
  * machine signature of a removed reviewer: no legal write path produces it. */
@@ -476,47 +493,68 @@ export async function prepareReviewerRemoval(employeeId: string): Promise<Review
  *  obligations are already cancelled by id (the delete nulls employee_id, so the id
  *  captured before it is the only stable handle). A task left in a waiting_answer
  *  category with NO pending holder can never move again — nothing can answer, forward
- *  or abandon it — so it returns to its flow instead of stranding: a live review round
- *  lands back in-review (its reviewer turn re-fires, mirroring the answer verb),
- *  anything else returns to todo with a cleared question chain and re-gates its
- *  parents (a gated parent auto-blocks — todo/blocked per the gating law). The flip
- *  pins the status AND updatedAt it read: a concurrent settle/move owns the outcome
- *  and this call touches nothing. Idempotent — a second pass finds no waiting task. */
+ *  or abandon it — so it returns to its flow instead of stranding: a round with any
+ *  pending row lands back in-review (a live reviewer re-fires, an extinguished one
+ *  settles by the matrix), anything else returns to todo with a cleared question chain
+ *  and re-gates its parents. The flip pins the status AND updatedAt it read: a
+ *  concurrent settle/move owns the outcome and this call touches nothing. Idempotent —
+ *  a second pass finds no waiting task. */
 export async function returnRemovedAnswerHolderTask(taskId: string, name?: string): Promise<boolean> {
   const taskRow = (
     await db.select({ status: tasks.status, updatedAt: tasks.updatedAt }).from(tasks).where(eq(tasks.id, taskId))
   )[0];
   if (!taskRow) return false;
+  const category = await categoryOf(taskRow.status);
   // only a waiting-answer task owns the flow this arm repairs — a stale obligation on
-  // any other status is cancelled by the NULL-holder sweep below (never a task-wide
-  // cancel here: the ask/forward paths spawn-then-flip, and a flip read inside that
-  // window would bag the spawn)
-  if ((await categoryOf(taskRow.status)) !== CATEGORY.WAITING_ANSWER) {
-    await cancelOrphanAnswerObligations(taskId);
+  // any other status is cleared by the NULL-holder sweep (never a task-wide cancel:
+  // the ask/forward paths spawn-then-flip and a cancel inside that window bags the spawn)
+  if (category !== CATEGORY.WAITING_ANSWER) {
+    await healLeftWaitingAnswer(taskId, category);
     return false;
   }
   // ANY pending row still naming a live holder keeps the question alive — the
   // newest-row projection would let a newer NULL-holder orphan mask an older holder
-  if (await hasPendingAnswerHolder(taskId)) return false;
-  const backTo = (await openRoundLive(taskId)) ? IN_REVIEW_STATUS : TODO_STATUS;
+  if (await hasPendingAnswerHolder(taskId)) {
+    // the dead row must not keep masking the live holder in answerHolder()
+    await cancelOrphanAnswerObligations(taskId);
+    return false;
+  }
+  // A round with ANY pending row (live or extinguished) belongs back in in-review: a
+  // live round resumes on its reviewer turn, an extinguished one (a deleted reviewer's
+  // void row) settles by the normal matrix — never straight to todo, or the matrix
+  // (all-approved -> done) would be unreachable forever.
+  const backTo = (await currentRoundHasPendingRow(taskId)) ? IN_REVIEW_STATUS : TODO_STATUS;
   const flipped = await db
     .update(tasks)
     .set({ status: backTo, questionChain: [], updatedAt: new Date() })
     .where(and(eq(tasks.id, taskId), eq(tasks.status, taskRow.status), eq(tasks.updatedAt, taskRow.updatedAt)))
     .returning({ id: tasks.id });
   if (flipped.length === 0) return false; // a concurrent answer/settle/move owns the outcome
-  // OBLIGATION CANCEL-AFTER-FLIP (#314): only a WON flip cancels — a lost race
-  // touches no obligation rows (the winner owns the status AND its obligations).
-  // FAULT ISOLATION: the flip already landed, so a failing teardown/note must never
-  // skip the reviewer re-fire below; the boot/removal sweep clears a leftover row.
+  await finishRemovedHolderReturn(taskId, backTo, name);
+  return true;
+}
+
+/** the answer arm's non-waiting half (#369): clear the dead NULL-holder row on a task
+ *  that already left the flow; an IN-REVIEW landing may also owe the reviewer mint a
+ *  crash between the return flip and its re-fire (the broader lazy-mint gap is #371). */
+async function healLeftWaitingAnswer(taskId: string, category: string | null) {
+  await cancelOrphanAnswerObligations(taskId);
+  if (category !== CATEGORY.IN_REVIEW) return;
   try {
-    await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
+    await dispatchAiReviewTurns(taskId);
   } catch (e) {
     log.warn(
-      `answer holder removal: could not cancel the task's ANSWER rows ${taskId}:`,
+      `answer holder removal: could not re-fire the review turn for ${taskId}:`,
       e instanceof Error ? e.message : e,
     );
   }
+}
+
+/** the answer arm's post-flip half (#369): one thread note, then the re-fire /
+ *  matrix / parent re-gate, and the scoped teardown LAST. Every step is fault-isolated
+ *  — the flip already landed, so a failure here must never skip the remaining ones or
+ *  500 the caller. */
+async function finishRemovedHolderReturn(taskId: string, backTo: string, name?: string) {
   try {
     await logActivity(
       taskId,
@@ -530,8 +568,6 @@ export async function returnRemovedAnswerHolderTask(taskId: string, name?: strin
   } catch (e) {
     log.warn(`answer holder removal: could not note the return for ${taskId}:`, e instanceof Error ? e.message : e);
   }
-  // FAULT ISOLATION: the flip already landed — a re-fire/re-gate failure must never
-  // 500 the removal caller; the task is out of waiting-answer either way.
   if (backTo === IN_REVIEW_STATUS) {
     try {
       await dispatchAiReviewTurns(taskId);
@@ -540,6 +576,20 @@ export async function returnRemovedAnswerHolderTask(taskId: string, name?: strin
         `answer holder removal: could not re-fire the review turn for ${taskId}:`,
         e instanceof Error ? e.message : e,
       );
+      // a live round with a pending reviewer and no run must not wedge silently —
+      // park (rearmable) so the existing ladder owns the recovery
+      try {
+        await parkRound(taskId, 'reviewer re-fire failed after answer-holder removal', { rearmable: true });
+      } catch (e2) {
+        log.warn(`answer holder removal: could not park ${taskId}:`, e2 instanceof Error ? e2.message : e2);
+      }
+    }
+    // an EXTINGUISHED round (a deleted reviewer's void row) settles by the normal
+    // matrix now that the task is back in in-review; a live round is a no-op here
+    try {
+      await settleExtinguishedRound(taskId);
+    } catch (e) {
+      log.warn(`answer holder removal: could not settle the round for ${taskId}:`, e instanceof Error ? e.message : e);
     }
   } else {
     try {
@@ -549,7 +599,22 @@ export async function returnRemovedAnswerHolderTask(taskId: string, name?: strin
       log.warn(`answer holder removal: could not re-gate parents of ${taskId}:`, e instanceof Error ? e.message : e);
     }
   }
-  return true;
+  // TEARDOWN LAST (#369 r3): the NULL-holder row is the machine signature every
+  // heal keys on — cancelling it before the re-fire/matrix/re-gate landed would let a
+  // process death in that window strand the task with nothing left to find. Only a
+  // WON flip reaches here (#314), and the sweep clears it on a later pass if this last
+  // write dies. SCOPED (#369 r2): never a task-wide cancel — a concurrent ask/forward
+  // spawns a live-holder row (spawn-then-flip) and a task-wide cancel would erase it,
+  // stranding the ask with no obligation. The departing holder's rows are cancelled by
+  // id by the caller.
+  try {
+    await cancelOrphanAnswerObligations(taskId);
+  } catch (e) {
+    log.warn(
+      `answer holder removal: could not cancel the orphan ANSWER rows ${taskId}:`,
+      e instanceof Error ? e.message : e,
+    );
+  }
 }
 
 /** REVIEWER REMOVAL, settle half (#365): runs AFTER the user delete. Mutates only
@@ -627,28 +692,56 @@ async function settleAnswerHolderRemoval(
   name: string | undefined,
   settledTaskIds: string[],
 ) {
-  // TRIGGER-LAST (#365 r6 / #314): the return arm runs FIRST — the departing row is
-  // already NULL-holder by FK, and cancelling it before the flip would erase the only
-  // machine signature a crash between the two writes leaves for the boot heal. Only
-  // after every return attempt does the by-id cancel run; a task that won its flip
-  // already cancelled the row in its own post-flip teardown (idempotent no-op).
-  for (const taskId of new Set(answerObligations.map((o) => o.taskId))) {
+  const byTask = new Map<string, string[]>();
+  for (const obligation of answerObligations) {
+    byTask.set(obligation.taskId, [...(byTask.get(obligation.taskId) ?? []), obligation.id]);
+  }
+  for (const [taskId, obligationIds] of byTask) {
+    // TRIGGER-LAST (#365 r6 / #314): the return arm runs FIRST — the departing row is
+    // already NULL-holder by FK, and cancelling it before the flip would erase the only
+    // machine signature a crash between the two writes leaves for the boot heal.
+    let healed = false;
     try {
-      if (await returnRemovedAnswerHolderTask(taskId, name)) settledTaskIds.push(taskId);
+      healed = await returnRemovedAnswerHolderTask(taskId, name);
     } catch (e) {
       log.warn(`answer holder removal: could not return task ${taskId}:`, e instanceof Error ? e.message : e);
     }
-  }
-  for (const obligation of answerObligations) {
+    if (healed) {
+      settledTaskIds.push(taskId);
+      continue;
+    }
+    // The return arm did not land (lost CAS, throw, or another live holder). The
+    // departing rows are dead either way — but when the task still WAITS on an orphan
+    // (no live holder), keep them PENDING as the machine signature: the boot heal and
+    // the next removal sweep re-run the return arm. Cancel only when the task moved on
+    // or a live holder owns the question now.
+    let stillOrphaned = false;
     try {
-      await cancelObligationById(obligation.id);
+      stillOrphaned = await taskStillWaitsOnOrphan(taskId);
     } catch (e) {
-      log.warn(
-        `answer holder removal: could not cancel obligation ${obligation.id}:`,
-        e instanceof Error ? e.message : e,
-      );
+      log.warn(`answer holder removal: could not re-read task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+    if (stillOrphaned) continue;
+    for (const obligationId of obligationIds) {
+      try {
+        await cancelObligationById(obligationId);
+      } catch (e) {
+        log.warn(
+          `answer holder removal: could not cancel obligation ${obligationId}:`,
+          e instanceof Error ? e.message : e,
+        );
+      }
     }
   }
+}
+
+/** the task still sits in a waiting-answer category with NO live holder — the state
+ *  whose only machine signature is the departed holder's NULL-holder PENDING row. */
+async function taskStillWaitsOnOrphan(taskId: string): Promise<boolean> {
+  const row = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  if (!row) return false;
+  if ((await categoryOf(row.status)) !== CATEGORY.WAITING_ANSWER) return false;
+  return !(await hasPendingAnswerHolder(taskId));
 }
 
 /** crash-window sweep for ANSWER orphans (#369): a PENDING ANSWER obligation with a

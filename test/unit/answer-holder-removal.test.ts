@@ -18,9 +18,13 @@ const h = vi.hoisted(() => ({
   /** the task row the return arm reads */
   taskStatus: '' as string,
   taskUpdatedAt: new Date('2026-11-08T00:00:00Z'),
+  /** optional queue of task-row reads (status/updatedAt), consumed in order */
+  taskReads: [] as Array<{ status: string; updatedAt: Date }>,
   statuses: [] as Array<{ id: string; category: string }>,
-  /** rows for answerHolder(): [{ employeeId }] */
+  /** rows for the existential holder read: [{ employeeId }] */
   holderRows: [] as Array<{ employeeId: string | null }>,
+  /** conditions captured from the existential holder read (predicate pin) */
+  holderConds: [] as unknown[],
   /** the departing holder's PENDING ANSWER obligations: select({id, taskId}) */
   answerObligationSelect: [] as Array<{ id: string; taskId: string }>,
   /** conditions captured from the ANSWER capture read (predicate pin) */
@@ -72,9 +76,17 @@ vi.mock('../../server/db/index', async () => {
           where: (cond: unknown) =>
             rowsThenable(() => {
               const keys = arg ? Object.keys(arg) : [];
-              if (table === tasks) return Promise.resolve([{ status: h.taskStatus, updatedAt: h.taskUpdatedAt }]);
+              if (table === tasks) {
+                const next = h.taskReads.length
+                  ? h.taskReads.shift()!
+                  : { status: h.taskStatus, updatedAt: h.taskUpdatedAt };
+                return Promise.resolve([next]);
+              }
               if (table === taskObligations) {
-                if (keys.includes('employeeId')) return Promise.resolve(h.holderRows);
+                if (keys.includes('employeeId')) {
+                  h.holderConds.push(cond);
+                  return Promise.resolve(h.holderRows);
+                }
                 if (keys.includes('id') && keys.includes('taskId')) {
                   h.answerConds.push(cond);
                   return Promise.resolve(h.answerObligationSelect);
@@ -218,6 +230,7 @@ function plan(over: Partial<ReviewerRemovalPlan> = {}): ReviewerRemovalPlan {
 beforeEach(() => {
   h.taskStatus = STATUS.waitingAnswer;
   h.taskUpdatedAt = new Date('2026-11-08T00:00:00Z');
+  h.taskReads = [];
   h.statuses = [
     { id: STATUS.todo, category: CATEGORY.READY },
     { id: STATUS.waitingAnswer, category: CATEGORY.WAITING_ANSWER },
@@ -225,6 +238,7 @@ beforeEach(() => {
     { id: STATUS.done, category: CATEGORY.DONE },
   ];
   h.holderRows = [];
+  h.holderConds = [];
   h.answerObligationSelect = [];
   h.answerLeftoverSelect = [];
   h.pendingSelect = [];
@@ -271,7 +285,7 @@ describe('ANSWER-ROLE REMOVAL prepare (#369)', () => {
 });
 
 describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
-  it('cancels the captured ANSWER obligation by id and returns the waiting task to todo', async () => {
+  it('returns the waiting task to todo after a won flip and clears the orphan row', async () => {
     h.statuses = [
       { id: STATUS.todo, category: CATEGORY.READY },
       { id: STATUS.waitingAnswer, category: CATEGORY.WAITING_ANSWER },
@@ -280,14 +294,20 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
       plan({ answerObligations: [{ id: 'ans-1', taskId: 'task-1' }] }),
       'Departed Person',
     );
-    expect(h.cancelledById).toEqual(['ans-1']);
     const flip = h.updates.find((u) => u.table === 'tasks');
     expect(flip?.set.status).toBe(STATUS.todo);
     expect(flip?.set.questionChain).toEqual([]);
     const flipSql = renderCond(flip?.cond, 'tasks');
     expect(flipSql).toContain('"status" =');
     expect(flipSql).toContain('"updated_at" =');
-    expect(h.cancelled).toContain('task-1');
+    // the won flip's teardown clears the NULL-holder row (scoped — never a task-wide cancel)
+    const orphan = h.updates.find((u) => u.table === 'taskObligations');
+    const orphanSql = renderCond(orphan?.cond);
+    expect(orphanSql).toContain('"employee_id" is null');
+    expect(orphanSql).toContain('"role" =');
+    expect(orphanSql).toContain('ANSWER');
+    // the won flip already cleared it — the by-id fallback is not needed
+    expect(h.cancelledById).toEqual([]);
     expect(h.notes.at(-1)?.body).toContain('answer holder removed');
     expect(h.notes.at(-1)?.body).toContain('Departed Person');
     expect(h.notes.at(-1)?.payload).toMatchObject({ answerHolderRemoved: true, returnedTo: STATUS.todo });
@@ -295,23 +315,32 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     expect(res).toContain('task-1');
   });
 
-  it('a waiting task with ANOTHER live holder is left untouched', async () => {
+  it('a waiting task with ANOTHER live holder keeps waiting — only the orphan row is cleared', async () => {
     h.holderRows = [{ employeeId: 'someone-else' }];
     const healed = await returnRemovedAnswerHolderTask('task-1');
     expect(healed).toBe(false);
-    expect(h.updates).toEqual([]);
+    expect(h.updates.filter((u) => u.table === 'tasks')).toEqual([]);
     expect(h.cancelled).toEqual([]);
     expect(h.notes).toEqual([]);
+    // the dead row must not keep masking the live holder in answerHolder()
+    expect(h.updates.some((u) => u.table === 'taskObligations')).toBe(true);
+    // the guard means 'ANY pending row names a live employee' — pin its predicate
+    const guardSql = renderCond(h.holderConds[0]);
+    expect(guardSql).toContain('"task_obligations"."employee_id" is not null');
+    expect(guardSql).toContain('"task_obligations"."role" =');
+    expect(guardSql).toContain('"task_obligations"."status" =');
+    expect(guardSql).toContain('"task_obligations"."task_id" =');
   });
 
   it('a live review round lands back IN-REVIEW and re-fires the AI reviewer', async () => {
     h.taskStatus = STATUS.waitingAnswer;
     h.round = 2;
     h.aiEmployees = [{ userId: 'rev-1' }];
-    // openRoundLive read, then dispatchAiReviewTurns' pending-row read
+    // currentRoundHasPendingRow read, dispatchAiReviewTurns' pending rows, settle's rows
     h.reviewReads = [
-      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }],
+      [{ id: 'row-1' }],
       [{ id: 'row-1', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1', createdAt: new Date() }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }],
     ];
     const healed = await returnRemovedAnswerHolderTask('task-1', 'Departed Person');
     expect(healed).toBe(true);
@@ -322,13 +351,62 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     expect(h.notes.some((n) => n.body.includes('review round resumes'))).toBe(true);
   });
 
-  it('a LOST return flip touches nothing — the winning writer owns status and obligations', async () => {
-    h.flipWins = false;
-    const healed = await returnRemovedAnswerHolderTask('task-1');
-    expect(healed).toBe(false);
+  it('a round whose only reviewer was removed lands IN-REVIEW and settles by the matrix (all approved -> done)', async () => {
+    h.taskStatus = STATUS.waitingAnswer;
+    h.round = 2;
+    h.aiEmployees = [];
+    // the return arm reads waiting-answer, the settle then reads the flipped in-review row
+    h.taskReads = [{ status: STATUS.waitingAnswer, updatedAt: h.taskUpdatedAt }];
+    h.reviewReads = [
+      [{ id: 'row-2' }], // currentRoundHasPendingRow: the void row keeps the round alive
+      [], // dispatchAiReviewTurns: no AI rows to mint
+      [
+        { status: REVIEW_STATUS.APPROVED, reviewerId: 'rev-1' },
+        { status: REVIEW_STATUS.PENDING, reviewerId: null }, // deleted reviewer's void row
+      ], // settle matrix read
+    ];
+    // after the return flip the task IS in-review for the settle's read
+    h.taskReads.push({ status: STATUS.inReview, updatedAt: h.taskUpdatedAt });
+    const healed = await returnRemovedAnswerHolderTask('task-1', 'Departed Person');
+    expect(healed).toBe(true);
+    const statuses = h.updates.filter((u) => u.table === 'tasks').map((u) => u.set.status);
+    expect(statuses).toEqual([STATUS.inReview, STATUS.done]);
+    expect(h.notes.some((n) => n.body.includes('review round resumes'))).toBe(true);
+  });
+
+  it('a LOST return flip keeps the machine signature — no by-id cancel while the task still waits on the orphan', async () => {
+    h.statuses = [
+      { id: STATUS.todo, category: CATEGORY.READY },
+      { id: STATUS.waitingAnswer, category: CATEGORY.WAITING_ANSWER },
+    ];
+    h.flipWins = false; // a concurrent write won the stamp
+    const res = await settleReviewerRemovalRounds(
+      plan({ answerObligations: [{ id: 'ans-1', taskId: 'task-1' }] }),
+      'Ada',
+    );
+    // the flip is ATTEMPTED, and the NULL-holder row SURVIVES for the boot/next pass
+    expect(h.seq).toEqual(['flip']);
+    expect(h.cancelledById).toEqual([]);
+    expect(res).toEqual([]);
+    // a lost flip cancels nothing task-wide and leaves no note (the winner owns it)
     expect(h.cancelled).toEqual([]);
     expect(h.notes).toEqual([]);
-    expect(h.regated).toEqual([]);
+  });
+
+  it('a lost flip on a task that moved on still cancels the departed row by id', async () => {
+    h.flipWins = false;
+    // return arm read: still waiting; the post-arm re-read: the task moved to todo
+    h.taskReads = [
+      { status: STATUS.waitingAnswer, updatedAt: h.taskUpdatedAt },
+      { status: STATUS.todo, updatedAt: h.taskUpdatedAt },
+    ];
+    const res = await settleReviewerRemovalRounds(
+      plan({ answerObligations: [{ id: 'ans-1', taskId: 'task-1' }] }),
+      'Ada',
+    );
+    expect(h.seq).toEqual(['flip', 'cancelById']);
+    expect(h.cancelledById).toEqual(['ans-1']);
+    expect(res).toEqual([]);
   });
 
   it('never flips a task that is not in a waiting_answer status — it clears the NULL-holder orphan instead', async () => {
@@ -345,25 +423,6 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     expect(sql).toContain('"employee_id" is null');
     expect(sql).toContain('"role" =');
     expect(sql).toContain('ANSWER');
-  });
-
-  it('the return arm runs BEFORE the captured obligation is cancelled by id (crash-window signature survives)', async () => {
-    h.statuses = [
-      { id: STATUS.todo, category: CATEGORY.READY },
-      { id: STATUS.waitingAnswer, category: CATEGORY.WAITING_ANSWER },
-    ];
-    h.flipWins = false; // a concurrent settle/move owns the task
-    const res = await settleReviewerRemovalRounds(
-      plan({ answerObligations: [{ id: 'ans-1', taskId: 'task-1' }] }),
-      'Ada',
-    );
-    // the flip is ATTEMPTED before the by-id cancel — a crash between the two leaves
-    // the NULL-holder signature for the boot heal (trigger-last, #314/#365 r6)
-    expect(h.seq).toEqual(['flip', 'cancelById']);
-    expect(res).toEqual([]);
-    // a lost flip cancels nothing task-wide and leaves no note (the winner owns it)
-    expect(h.cancelled).toEqual([]);
-    expect(h.notes).toEqual([]);
   });
 });
 
