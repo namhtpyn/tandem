@@ -1,3 +1,15 @@
+## [2.78.2](https://github.com/namhtpyn/tandem/compare/v2.78.1...v2.78.2) (2026-11-08)
+
+
+### Bug Fixes
+
+* **api:** ID-SHAPE LAW — malformed uuid ids answer the specced miss, never a 22P02 500 ([#358](https://github.com/namhtpyn/tandem/issues/358)) ([87e8a1e](https://github.com/namhtpyn/tandem/commit/87e8a1e0f7c6c8e8a72a6d7915da56b455b2c206))
+* **api:** r1 review — forward target guarded, probe answers the lookup miss, blank binding filter, law scoped to uuid columns ([5c99aaf](https://github.com/namhtpyn/tandem/commit/5c99aaf54c72c685ca9e63207661e965f7a02012))
+* **api:** r2 review — supervisor ids canonicalized, blank read inputs, shape-first task writes ([49b1a70](https://github.com/namhtpyn/tandem/commit/49b1a708d8364603123179d2a4e74d664e52fe06))
+* **api:** r3 review — malformed supervisor ids get their own message, mirror case pinned ([02b6a30](https://github.com/namhtpyn/tandem/commit/02b6a30c6ab443dcde0c84cf3ecefb3b9c8968c9))
+* **api:** r4 review — task refs canonicalized, supervisor shape before the lookup, per-field malformed messages ([c845d18](https://github.com/namhtpyn/tandem/commit/c845d18a99ab70d05f3038f60a81a21235618ecc))
+* **api:** r5 review — keep the projectId existence check, canonicalize the forward target ([c3e02ce](https://github.com/namhtpyn/tandem/commit/c3e02ce78656e7d5d65651a80fcf9ee0a4e85c84))
+
 ## [2.78.1](https://github.com/namhtpyn/tandem/compare/v2.78.0...v2.78.1) (2026-11-08)
 
 
