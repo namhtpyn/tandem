@@ -30,9 +30,16 @@ export const BLOCKED_STATUS = STATUS.blocked;
  *  nothing (#202 parity: only a park carries a parked turn). */
 async function resumeRestoredRound(taskId: string, parked: boolean, restoreCategory: string | undefined) {
   if (!parked && restoreCategory !== CATEGORY.IN_REVIEW) return;
-  const roundLive = await openRoundLive(taskId);
-  if (parked && roundLive) await dispatchAiReviewTurns(taskId);
-  else if (!roundLive && restoreCategory === CATEGORY.IN_REVIEW) await settleExtinguishedRound(taskId);
+  try {
+    const roundLive = await openRoundLive(taskId);
+    if (parked && roundLive) await dispatchAiReviewTurns(taskId);
+    else if (!roundLive && restoreCategory === CATEGORY.IN_REVIEW) await settleExtinguishedRound(taskId);
+  } catch (e) {
+    // FAULT ISOLATION (#365 r6): this runs inside refreshParentGating, which every task
+    // write awaits — a heal failure must never 500 a write that already landed. The
+    // next boot/removal trigger retries the settle (the void row is still there).
+    log.warn(`gating: restore-resume failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+  }
 }
 
 const log = consola.withTag('tandem');

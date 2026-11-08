@@ -319,8 +319,11 @@ const TERMINAL_CATEGORIES = new Set<string>([CATEGORY.DONE, CATEGORY.CANCELLED])
  *  no-ops. Returns true when the task is terminal (the caller must not settle it). */
 async function healTerminalResidue(taskId: string, statusId: string): Promise<boolean> {
   if (!TERMINAL_CATEGORIES.has((await categoryOf(statusId)) ?? '')) return false;
-  await supersedeAllPendingRows(taskId);
+  // same trigger-last ordering as the settle: the row sweep erases the signature the
+  // scans key on, so a failure before it must leave the row for the next trigger
   await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+  await supersedeAllPendingRows(taskId);
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   return true;
 }
 
@@ -376,19 +379,24 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
   // ever settle again.
   const flipped = await db
     .update(tasks)
-    .set({ status: target, updatedAt: new Date() })
+    // PARK-REARM LAW (#365 r6): the flip leaves BLOCKED, so the ladder is inert —
+    // a settled round must never hand a spent ladder to the task's next park
+    .set({ status: target, updatedAt: new Date(), parkRearmAttempts: 0, parkRearmAfter: null })
     // TERMINAL ARBITRATION (#292 r2): pin the status AND the updatedAt stamp this
     // call read — a manual round-trip back into the same in-review status (or a
     // submit re-flip) must beat a stale settle, never be stomped by it
     .where(and(eq(tasks.id, taskId), eq(tasks.status, taskRow.status), eq(tasks.updatedAt, taskRow.updatedAt)))
     .returning({ id: tasks.id });
   if (flipped.length === 0) return false; // a concurrent settle/move owns the outcome
-  await extinguishVoidPendingRows(taskId, round);
-  if (allApproved || allRejected) await supersedeAllPendingRows(taskId); // #361 r6: no pending row outlives a terminal task
+  // TRIGGER LAST (#365 r6): the void row is the ONLY thing the boot/removal scans key
+  // on, so every write that can fail runs BEFORE it is erased — a crash mid-teardown
+  // leaves the signature intact and the next trigger retries the whole settle.
   // matrix parity: an approved round keeps its FULFILLED approvals (audit + approver
   // tally), a cancelled/returned round is dead for approval purposes
   if (allApproved) await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
   else await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+  if (allApproved || allRejected) await supersedeAllPendingRows(taskId); // #361 r6: no pending row outlives a terminal task
+  await extinguishVoidPendingRows(taskId, round);
   await logActivity(
     taskId,
     ACTIVITY_KIND.STATUS,

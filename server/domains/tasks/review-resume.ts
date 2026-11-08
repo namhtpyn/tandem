@@ -3,10 +3,14 @@
 // reviewer's turn. Kept as its own leaf module so the router branch is
 // unit-pinned: the seeded-id version silently skipped a custom in-review target
 // and wedged the round with a PENDING row and no run.
+import { consola } from 'consola';
+
 import { CATEGORY } from '#shared/enums';
 
 import { db } from '../../db/index';
 import { discardVoidRows, dispatchAiReviewTurns, openRoundLive, settleExtinguishedRound } from './review.service';
+
+const log = consola.withTag('tandem');
 
 export async function resumeRoundAfterManualMove(
   taskId: string,
@@ -32,6 +36,9 @@ export async function resumeRoundAfterManualMove(
     const fromCategory = fromRows.find((s) => s.id === fromStatusId)?.category;
     if (fromCategory === CATEGORY.DONE || fromCategory === CATEGORY.CANCELLED) {
       await discardVoidRows(taskId);
+      // a residual LIVE row (a terminal settle that crashed before its teardown still
+      // owns a turn) keeps its re-fire; the reopen only suppresses the auto-SETTLE
+      if (await openRoundLive(taskId)) await dispatchAiReviewTurns(taskId);
       return false;
     }
   }
@@ -39,7 +46,13 @@ export async function resumeRoundAfterManualMove(
     // a round whose only remaining voter was deleted (void pending row) cannot
     // resume: settle it by the normal matrix instead of stranding the task
     // in-review with nothing to decide (#365). No-op on round-0 / decided rounds.
-    await settleExtinguishedRound(taskId);
+    try {
+      await settleExtinguishedRound(taskId);
+    } catch (e) {
+      // FAULT ISOLATION (#365 r6): the owner's move already landed — a heal failure
+      // must never 500 it; the boot/removal trigger retries (the void row survives)
+      log.warn(`resume: extinguished-round settle failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
     return false;
   }
   await dispatchAiReviewTurns(taskId);

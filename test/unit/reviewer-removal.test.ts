@@ -266,6 +266,9 @@ describe('settleExtinguishedRound (#365)', () => {
     ];
     expect(await settleExtinguishedRound('task-1')).toBe(true);
     expect(h.updates.find((u) => u.table === 'tasks')?.set.status).toBe(STATUS.done);
+    // the flip leaves BLOCKED, so the park ladder is inert — a settled round must not
+    // hand a spent ladder to the task's next park (#365 r6)
+    expect(h.updates.find((u) => u.table === 'tasks')?.set.parkRearmAfter).toBeNull();
     // terminal arm: task-wide supersede of every pending row (all rounds); the approved
     // round keeps its FULFILLED approvals (matrix parity with settleRound)
     const sweeps = h.updates.filter((u) => u.table === 'taskReviews' && u.set.status === REVIEW_STATUS.SUPERSEDED);
