@@ -8,7 +8,7 @@
 import { consola } from 'consola';
 import { and, asc, eq, inArray, isNotNull, lte, ne } from 'drizzle-orm';
 
-import { ACTIVITY_KIND } from '#shared/enums';
+import { ACTIVITY_KIND, CATEGORY } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
 
@@ -23,6 +23,17 @@ import {
 } from './review.service';
 
 export const BLOCKED_STATUS = STATUS.blocked;
+
+/** #365: a restore that lands in-review replays a LIVE round's parked turn or settles
+ *  an extinguished one (its reviewer was deleted while the task was blocked) — never
+ *  leave a round nothing can ever decide. A non-parked restore to in-review replays
+ *  nothing (#202 parity: only a park carries a parked turn). */
+async function resumeRestoredRound(taskId: string, parked: boolean, restoreCategory: string | undefined) {
+  if (!parked && restoreCategory !== CATEGORY.IN_REVIEW) return;
+  const roundLive = await openRoundLive(taskId);
+  if (parked && roundLive) await dispatchAiReviewTurns(taskId);
+  else if (!roundLive && restoreCategory === CATEGORY.IN_REVIEW) await settleExtinguishedRound(taskId);
+}
 
 const log = consola.withTag('tandem');
 
@@ -134,14 +145,9 @@ export async function refreshParentGating(taskId: string, ex: DbExecutor = db) {
         restored: restore,
         ...(parked ? { parkResumed: true } : {}),
       });
-      // unblock-resume parity (#202): a restored parked round replays its reviewer turn —
-      // a park is no job + rows, so the restore must re-mint the parked turn. #365: a
-      // round whose reviewer was deleted while parked has no live voter — settle it by
-      // the matrix instead of restoring a round nothing can ever decide.
-      if (parked) {
-        if (await openRoundLive(cur.id)) await dispatchAiReviewTurns(cur.id);
-        else await settleExtinguishedRound(cur.id);
-      }
+      // unblock-resume parity (#202) + #365: replay a restored parked round's turn,
+      // settle a restore that lands in-review with no live voter (leaf helper)
+      await resumeRestoredRound(cur.id, parked, known.get(restore));
     }
     if (!cur.parentTaskId) break;
     cur = await d.query.tasks.findFirst({

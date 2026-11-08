@@ -201,6 +201,15 @@ describe('refreshParentGating park-origin unblock (#202)', () => {
     expect(h.replayed).toEqual([]); // never a re-fire of a reviewer who does not exist
   });
 
+  it('a GATING-ONLY restore (pre_block_status, no park) to in-review with no live round settles too (#365)', async () => {
+    h.roundLive = false;
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('p');
+    expect(h.updates[0]?.set.status).toBe(STATUS.inReview);
+    expect(h.settled).toEqual(['p']);
+  });
+
   it('a parked task with children still open is left alone (no unblock, no block-arm rewrite)', async () => {
     row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview });
     h.childrenByParent.set('p', [{ status: STATUS.doing }]);

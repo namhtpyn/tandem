@@ -397,6 +397,10 @@ export async function submitResult(taskId: string, authorId: string, body: strin
     }
     await noteSkipped();
     await refreshParentGating(taskId);
+    // #365: a reviewer deleted inside the round-open window leaves a void row on the
+    // round this submit just flipped in-review — settle it now (the settle is a no-op
+    // while a live voter exists, so a normal submit pays only a few reads)
+    await settleExtinguishedRound(taskId);
     return { status: IN_REVIEW_STATUS };
   }
   const done = await db

@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   taskStatus: '' as string,
   statuses: [] as Array<{ id: string; category: string }>,
   round: 2,
+  taskUpdatedAt: new Date('2026-11-08T00:00:00Z'),
   /** queue of rows served to bare `select().from(taskReviews)` reads, in order */
   reviewReads: [] as Array<Array<Record<string, unknown>>>,
   /** pending rows for prepareReviewerRemoval: select({id, taskId}) */
@@ -56,7 +57,7 @@ vi.mock('../../server/db/index', async () => {
           where: (cond: unknown) =>
             rowsThenable(() => {
               const keys = arg ? Object.keys(arg) : [];
-              if (table === tasks) return Promise.resolve([{ status: h.taskStatus }]);
+              if (table === tasks) return Promise.resolve([{ status: h.taskStatus, updatedAt: h.taskUpdatedAt }]);
               if (table === taskObligations) return Promise.resolve(h.obligationSelect);
               if (keys.includes('round')) return Promise.resolve([{ round: h.round }]);
               if (keys.includes('resultBody')) return Promise.resolve([{ resultBody: undefined }]);
@@ -72,7 +73,14 @@ vi.mock('../../server/db/index', async () => {
           where: (cond: unknown) => {
             const applied = () => {
               h.updates.push({
-                table: table === tasks ? 'tasks' : table === taskReviews ? 'taskReviews' : 'other',
+                table:
+                  table === tasks
+                    ? 'tasks'
+                    : table === taskReviews
+                      ? 'taskReviews'
+                      : table === taskObligations
+                        ? 'taskObligations'
+                        : 'other',
                 set,
                 cond,
               });
@@ -221,7 +229,12 @@ describe('settleExtinguishedRound (#365)', () => {
   it('a round with only a deleted reviewer bounces back to the assignee instead of wedging', async () => {
     h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]];
     expect(await settleExtinguishedRound('task-1')).toBe(true);
-    expect(h.updates.find((u) => u.table === 'tasks')?.set.status).toBe(STATUS.todo);
+    const flip = h.updates.find((u) => u.table === 'tasks');
+    expect(flip?.set.status).toBe(STATUS.todo);
+    // the flip pins the status AND updatedAt it read (TERMINAL ARBITRATION, #292 r2)
+    const flipSql = renderCond(flip?.cond);
+    expect(flipSql).toContain('"status" =');
+    expect(flipSql).toContain('"updated_at" =');
     expect(h.cancelledAll).toEqual(['task-1']);
     expect(h.notes.at(-1)?.body).toContain('no reviewers remain');
   });
@@ -316,6 +329,7 @@ describe('employee removal halves (#365)', () => {
     });
     // a failed delete must change nothing: no writes in the capture half
     expect(h.updates).toHaveLength(0);
+    expect(h.cancelledById).toHaveLength(0);
   });
 
   it('settle half cancels the captured obligations, notes the captured rows, and settles every round', async () => {
@@ -337,6 +351,10 @@ describe('employee removal halves (#365)', () => {
     expect(sql).toContain('"id" in');
     expect(sql).toContain('row-1');
     expect(sql).toContain('row-3');
+    // …and only to rows still PENDING and now void — a verdict that landed in the
+    // capture→delete window keeps its own note (never overwritten)
+    expect(sql).toContain('"status" =');
+    expect(sql).toContain('"reviewer_id" is null');
   });
 
   it('settle half also picks up a leftover void row from an earlier removal/race', async () => {
@@ -354,5 +372,16 @@ describe('employee removal halves (#365)', () => {
       [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
     ];
     expect(await settleAllExtinguishedRounds()).toBe(2);
+  });
+
+  it('the removal sweep clears an orphaned null-holder approval obligation (round minted in the window)', async () => {
+    h.leftoverSelect = [{ taskId: 'task-9' }];
+    // a live voter still owns the round: the settle no-ops, but the orphaned
+    // obligation (holder nulled by the delete) must not keep counting forever
+    h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: 'rev-live' }]];
+    expect(await settleReviewerRemovalRounds({ taskIds: [], reviewRowIds: [], obligationIds: [] })).toBe(0);
+    const cancel = h.updates.find((u) => u.table === 'taskObligations' && u.set.status === 'CANCELLED');
+    expect(cancel).toBeTruthy();
+    expect(renderCond(cancel?.cond)).toContain('"employee_id" is null');
   });
 });

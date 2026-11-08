@@ -69,11 +69,15 @@ test('reviewer deleted mid-round: the round settles instead of wedging (#365)', 
     expect(reviews).toHaveLength(1);
     expect(reviews[0]!.status).toBe('SUPERSEDED');
     expect(reviews[0]!.reviewer_id).toBeNull();
-    const obligations = await sql2`
-      select count(*)::int as n from task_obligations
-      where task_id = ${taskId} and role = 'approval' and status = 'PENDING'
-    `;
-    expect(Number(obligations[0]!.n)).toBe(0);
+    const obligations = (await sql2`
+      select status, count(*)::int as n from task_obligations
+      where task_id = ${taskId} and role = 'APPROVAL'
+      group by status
+    `) as Array<{ status: string; n: number }>;
+    const pending = Number(obligations.find((r) => r.status === 'PENDING')?.n ?? 0);
+    const cancelled = Number(obligations.find((r) => r.status === 'CANCELLED')?.n ?? 0);
+    expect(pending).toBe(0);
+    expect(cancelled).toBe(1); // the removal cancelled exactly the departing reviewer's row
   } finally {
     await sql2.close();
   }
