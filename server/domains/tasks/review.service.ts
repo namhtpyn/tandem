@@ -26,7 +26,8 @@ import {
   cancelObligationById,
   deleteObligationById,
   resolveObligation,
-  answerHolder,
+  hasPendingAnswerHolder,
+  cancelOrphanAnswerObligations,
 } from './obligations.service';
 import { dispatchTask, type DispatchOpts } from './runner.service';
 import { insertActivityMessage } from './thread.service';
@@ -487,11 +488,16 @@ export async function returnRemovedAnswerHolderTask(taskId: string, name?: strin
   )[0];
   if (!taskRow) return false;
   // only a waiting-answer task owns the flow this arm repairs — a stale obligation on
-  // any other status is cancelled by id alone (never cancel here: the ask/forward
-  // paths spawn-then-flip, and a flip read inside that window would bag the spawn)
-  if ((await categoryOf(taskRow.status)) !== CATEGORY.WAITING_ANSWER) return false;
-  // another PENDING answer row still names a real holder: the question is not orphaned
-  if ((await answerHolder(taskId)) !== null) return false;
+  // any other status is cancelled by the NULL-holder sweep below (never a task-wide
+  // cancel here: the ask/forward paths spawn-then-flip, and a flip read inside that
+  // window would bag the spawn)
+  if ((await categoryOf(taskRow.status)) !== CATEGORY.WAITING_ANSWER) {
+    await cancelOrphanAnswerObligations(taskId);
+    return false;
+  }
+  // ANY pending row still naming a live holder keeps the question alive — the
+  // newest-row projection would let a newer NULL-holder orphan mask an older holder
+  if (await hasPendingAnswerHolder(taskId)) return false;
   const backTo = (await openRoundLive(taskId)) ? IN_REVIEW_STATUS : TODO_STATUS;
   const flipped = await db
     .update(tasks)
@@ -500,17 +506,30 @@ export async function returnRemovedAnswerHolderTask(taskId: string, name?: strin
     .returning({ id: tasks.id });
   if (flipped.length === 0) return false; // a concurrent answer/settle/move owns the outcome
   // OBLIGATION CANCEL-AFTER-FLIP (#314): only a WON flip cancels — a lost race
-  // touches no obligation rows (the winner owns the status AND its obligations)
-  await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
-  await logActivity(
-    taskId,
-    ACTIVITY_KIND.NOTE,
-    null,
-    backTo === IN_REVIEW_STATUS
-      ? `answer holder removed${name ? ` (${name})` : ''} — the review round resumes`
-      : `answer holder removed${name ? ` (${name})` : ''} — the task returned to the assignee`,
-    { answerHolderRemoved: true, returnedTo: backTo },
-  );
+  // touches no obligation rows (the winner owns the status AND its obligations).
+  // FAULT ISOLATION: the flip already landed, so a failing teardown/note must never
+  // skip the reviewer re-fire below; the boot/removal sweep clears a leftover row.
+  try {
+    await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
+  } catch (e) {
+    log.warn(
+      `answer holder removal: could not cancel the task's ANSWER rows ${taskId}:`,
+      e instanceof Error ? e.message : e,
+    );
+  }
+  try {
+    await logActivity(
+      taskId,
+      ACTIVITY_KIND.NOTE,
+      null,
+      backTo === IN_REVIEW_STATUS
+        ? `answer holder removed${name ? ` (${name})` : ''} — the review round resumes`
+        : `answer holder removed${name ? ` (${name})` : ''} — the task returned to the assignee`,
+      { answerHolderRemoved: true, returnedTo: backTo },
+    );
+  } catch (e) {
+    log.warn(`answer holder removal: could not note the return for ${taskId}:`, e instanceof Error ? e.message : e);
+  }
   // FAULT ISOLATION: the flip already landed — a re-fire/re-gate failure must never
   // 500 the removal caller; the task is out of waiting-answer either way.
   if (backTo === IN_REVIEW_STATUS) {
@@ -608,6 +627,18 @@ async function settleAnswerHolderRemoval(
   name: string | undefined,
   settledTaskIds: string[],
 ) {
+  // TRIGGER-LAST (#365 r6 / #314): the return arm runs FIRST — the departing row is
+  // already NULL-holder by FK, and cancelling it before the flip would erase the only
+  // machine signature a crash between the two writes leaves for the boot heal. Only
+  // after every return attempt does the by-id cancel run; a task that won its flip
+  // already cancelled the row in its own post-flip teardown (idempotent no-op).
+  for (const taskId of new Set(answerObligations.map((o) => o.taskId))) {
+    try {
+      if (await returnRemovedAnswerHolderTask(taskId, name)) settledTaskIds.push(taskId);
+    } catch (e) {
+      log.warn(`answer holder removal: could not return task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+  }
   for (const obligation of answerObligations) {
     try {
       await cancelObligationById(obligation.id);
@@ -616,13 +647,6 @@ async function settleAnswerHolderRemoval(
         `answer holder removal: could not cancel obligation ${obligation.id}:`,
         e instanceof Error ? e.message : e,
       );
-    }
-  }
-  for (const taskId of new Set(answerObligations.map((o) => o.taskId))) {
-    try {
-      if (await returnRemovedAnswerHolderTask(taskId, name)) settledTaskIds.push(taskId);
-    } catch (e) {
-      log.warn(`answer holder removal: could not return task ${taskId}:`, e instanceof Error ? e.message : e);
     }
   }
 }
@@ -700,7 +724,9 @@ async function cleanVoidReviewDebris(taskId: string) {
  *  PENDING rows only (bounded — the rest drain on the next boot). Never throws (boot
  *  must not fail on a heal). Returns the settled task ids. */
 export async function settleAllExtinguishedRounds(): Promise<string[]> {
-  let taskIds: string[];
+  // FAULT ISOLATION (#369): the two heals are independent scans — a failing
+  // task_reviews read must never disable the ANSWER-holder heal (or vice versa).
+  let taskIds: string[] = [];
   try {
     const rows = await db
       .select({ taskId: taskReviews.taskId })
@@ -710,7 +736,6 @@ export async function settleAllExtinguishedRounds(): Promise<string[]> {
     taskIds = [...new Set(rows.map((r) => r.taskId))];
   } catch (e) {
     log.warn('void review row scan failed:', e instanceof Error ? e.message : e);
-    return [];
   }
   const settledTaskIds: string[] = [];
   for (const taskId of taskIds) {

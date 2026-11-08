@@ -29,6 +29,10 @@ const h = vi.hoisted(() => ({
   answerLeftoverSelect: [] as Array<{ taskId: string }>,
   /** pending review rows for prepareReviewerRemoval */
   pendingSelect: [] as Array<{ id: string; taskId: string }>,
+  /** make the void-review boot scan throw (fault-isolation pin) */
+  voidScanThrows: false,
+  /** mutation order log: 'flip' | 'cancelAll' | 'cancelById' */
+  seq: [] as string[],
   /** leftover void review rows */
   leftoverSelect: [] as Array<{ taskId: string }>,
   /** bare select().from(taskReviews) reads, in order */
@@ -82,7 +86,10 @@ vi.mock('../../server/db/index', async () => {
                 if (keys.includes('round')) return Promise.resolve([{ round: h.round }]);
                 if (keys.includes('resultBody')) return Promise.resolve([{ resultBody: 'submitted result' }]);
                 if (keys.includes('id') && keys.includes('taskId')) return Promise.resolve(h.pendingSelect);
-                if (keys.includes('taskId')) return Promise.resolve(h.leftoverSelect);
+                if (keys.includes('taskId')) {
+                  if (h.voidScanThrows) throw new Error('void scan exploded');
+                  return Promise.resolve(h.leftoverSelect);
+                }
                 return Promise.resolve(h.reviewReads.shift() ?? []);
               }
               if (table === taskRuns) return Promise.resolve([]);
@@ -113,7 +120,10 @@ vi.mock('../../server/db/index', async () => {
                 set,
                 cond,
               });
-              if (table === tasks) return h.flipWins ? [{ id: 'task-1' }] : [];
+              if (table === tasks) {
+                h.seq.push('flip');
+                return h.flipWins ? [{ id: 'task-1' }] : [];
+              }
               return [{ id: 'row-1' }];
             };
             return {
@@ -159,9 +169,11 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
   return {
     ...mod,
     cancelObligations: async (...args: unknown[]) => {
+      h.seq.push('cancelAll');
       h.cancelled.push(String(args[0]));
     },
     cancelObligationById: async (id: string) => {
+      h.seq.push('cancelById');
       h.cancelledById.push(id);
     },
   };
@@ -217,6 +229,8 @@ beforeEach(() => {
   h.answerLeftoverSelect = [];
   h.pendingSelect = [];
   h.leftoverSelect = [];
+  h.voidScanThrows = false;
+  h.seq = [];
   h.reviewReads = [];
   h.round = 0;
   h.aiEmployees = [];
@@ -317,11 +331,38 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     expect(h.regated).toEqual([]);
   });
 
-  it('never flips a task that is not in a waiting_answer status', async () => {
+  it('never flips a task that is not in a waiting_answer status — it clears the NULL-holder orphan instead', async () => {
     h.taskStatus = STATUS.done;
     const healed = await returnRemovedAnswerHolderTask('task-1');
     expect(healed).toBe(false);
-    expect(h.updates).toEqual([]);
+    expect(h.updates.filter((u) => u.table === 'tasks')).toEqual([]);
+    expect(h.notes).toEqual([]);
+    // the stale row is cancelled, scoped to NULL holders (a concurrent ask/forward
+    // spawn always names a holder and must never be touched)
+    const orphan = h.updates.find((u) => u.table === 'taskObligations');
+    expect(orphan?.set.status).toBe('CANCELLED');
+    const sql = renderCond(orphan?.cond);
+    expect(sql).toContain('"employee_id" is null');
+    expect(sql).toContain('"role" =');
+    expect(sql).toContain('ANSWER');
+  });
+
+  it('the return arm runs BEFORE the captured obligation is cancelled by id (crash-window signature survives)', async () => {
+    h.statuses = [
+      { id: STATUS.todo, category: CATEGORY.READY },
+      { id: STATUS.waitingAnswer, category: CATEGORY.WAITING_ANSWER },
+    ];
+    h.flipWins = false; // a concurrent settle/move owns the task
+    const res = await settleReviewerRemovalRounds(
+      plan({ answerObligations: [{ id: 'ans-1', taskId: 'task-1' }] }),
+      'Ada',
+    );
+    // the flip is ATTEMPTED before the by-id cancel — a crash between the two leaves
+    // the NULL-holder signature for the boot heal (trigger-last, #314/#365 r6)
+    expect(h.seq).toEqual(['flip', 'cancelById']);
+    expect(res).toEqual([]);
+    // a lost flip cancels nothing task-wide and leaves no note (the winner owns it)
+    expect(h.cancelled).toEqual([]);
     expect(h.notes).toEqual([]);
   });
 });
@@ -337,5 +378,16 @@ describe('ANSWER-ROLE REMOVAL boot/removal sweep (#369)', () => {
     expect(healed).toEqual(['task-9']);
     const flip = h.updates.find((u) => u.table === 'tasks');
     expect(flip?.set.status).toBe(STATUS.todo);
+  });
+
+  it('boot heal still runs the ANSWER scan when the void-review scan throws (fault isolation)', async () => {
+    h.voidScanThrows = true;
+    h.statuses = [
+      { id: STATUS.todo, category: CATEGORY.READY },
+      { id: STATUS.waitingAnswer, category: CATEGORY.WAITING_ANSWER },
+    ];
+    h.answerLeftoverSelect = [{ taskId: 'task-9' }];
+    const healed = await settleAllExtinguishedRounds();
+    expect(healed).toEqual(['task-9']);
   });
 });
