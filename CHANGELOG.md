@@ -1,3 +1,16 @@
+## [2.78.4](https://github.com/namhtpyn/tandem/compare/v2.78.3...v2.78.4) (2026-11-08)
+
+
+### Bug Fixes
+
+* [#365](https://github.com/namhtpyn/tandem/issues/365) r1 review — settle every restore/answer path, act only after the delete, pin the scopes ([dc36a69](https://github.com/namhtpyn/tandem/commit/dc36a69ddf1e09ecf0bd61f543baae0fcb5b827d)), closes [#361](https://github.com/namhtpyn/tandem/issues/361)
+* [#365](https://github.com/namhtpyn/tandem/issues/365) r2 review — gating-only restores, the round-open race, fault-isolated removal, pinned scopes ([ab8fc82](https://github.com/namhtpyn/tandem/commit/ab8fc82840caad81745de0ca039cd298b371dfb1)), closes [#292](https://github.com/namhtpyn/tandem/issues/292) [#369](https://github.com/namhtpyn/tandem/issues/369)
+* [#365](https://github.com/namhtpyn/tandem/issues/365) r3 review — flip first, re-gate parents, drop the answer hook, bound the sweeps ([a97845c](https://github.com/namhtpyn/tandem/commit/a97845c7166b856f875fb1f5486f0a72804e81e3)), closes [#361](https://github.com/namhtpyn/tandem/issues/361) [#370](https://github.com/namhtpyn/tandem/issues/370)
+* [#365](https://github.com/namhtpyn/tandem/issues/365) r4 review — keep the void row while a task is blocked, owner reopen wins, drop rather than cancel ([d1741ed](https://github.com/namhtpyn/tandem/commit/d1741ed8a165fa5202a76d2faca6db5bfe1fe87b)), closes [#370](https://github.com/namhtpyn/tandem/issues/370) [#369](https://github.com/namhtpyn/tandem/issues/369)
+* [#365](https://github.com/namhtpyn/tandem/issues/365) r5 review — heal the terminal residue, discard on reopen, drop the holder's rows ([84bf1e2](https://github.com/namhtpyn/tandem/commit/84bf1e21ec4a1c0566107069ba74d1fbb626ae5f)), closes [#371](https://github.com/namhtpyn/tandem/issues/371) [#370](https://github.com/namhtpyn/tandem/issues/370) [#369](https://github.com/namhtpyn/tandem/issues/369)
+* [#365](https://github.com/namhtpyn/tandem/issues/365) r6 review — trigger last, disarm the ladder, isolate the restore heals ([4482f62](https://github.com/namhtpyn/tandem/commit/4482f62f6151df690d591001da1fa5271a1c1c69)), closes [#369](https://github.com/namhtpyn/tandem/issues/369)
+* [#365](https://github.com/namhtpyn/tandem/issues/365) reviewer removal — a deleted reviewer's pending row is a non-vote, never a wedge ([7bcd76b](https://github.com/namhtpyn/tandem/commit/7bcd76b1c84b8ca9c1dcc459ca5e9421da8a27af))
+
 ## [2.78.3](https://github.com/namhtpyn/tandem/compare/v2.78.2...v2.78.3) (2026-11-08)
 
 
