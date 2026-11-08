@@ -55,8 +55,8 @@ test('access-key reads are self-or-admin; a malformed employee id is a miss, not
     expect(peek.status()).toBe(404);
     expect(JSON.stringify(await peek.json())).toContain('employee not found');
 
-    // a malformed uuid can never name a row — the guard answers before Postgres
-    // (without it the uuid comparison raises 22P02 and the caller sees a 500)
+    // a malformed id is the same miss for an employee session (answered by the
+    // self-scope clause — the shape guard's own subject is the ADMIN leg below)
     const malformed = await asEmployee.post('/rpc/employees/listApiKeys', {
       data: { json: { employeeId: 'not-a-uuid' } },
     });
@@ -72,4 +72,13 @@ test('access-key reads are self-or-admin; a malformed employee id is a miss, not
   });
   expect(admin.status()).toBe(200);
   expect(((await admin.json()).json as KeyRow[]).length).toBe(1);
+
+  // …and a malformed id must not reach the uuid column on the admin path either:
+  // this is the only caller the self-scope clause lets through, so without the
+  // shape guard this leg answers 500 (22P02), not the specced miss
+  const adminMalformed = await page.request.post('/rpc/employees/listApiKeys', {
+    data: { json: { employeeId: 'not-a-uuid' } },
+  });
+  expect(adminMalformed.status()).toBe(404);
+  expect(JSON.stringify(await adminMalformed.json())).toContain('employee not found');
 });

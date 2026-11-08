@@ -638,8 +638,10 @@ defect even if a client never calls it.
 **CREDENTIAL-METADATA SCOPE:** credential metadata is not roster data. The
 access-key read (`employees.listApiKeys`) is SELF-OR-ADMIN: a session reads its
 OWN employee's keys; an EMPLOYEE/VIEWER asking for any other employee id — like
-a malformed (non-uuid) id — gets `NOT_FOUND` (the id is a miss, never a 500).
-ADMIN reads any employee's keys. No tier ever returns key material.
+a malformed (non-uuid-shaped) id — gets `NOT_FOUND` (the id is a miss, never a
+500). ADMIN reads any employee's keys. The read never returns key material; a
+plaintext key appears in exactly one response class, the one-time mint
+(`employees.create`, `employees.createApiKey`), by design.
 **LIVE-STREAM RE-AUTH (#224):** a `live` stream outlives its open-time check, so
 every live generator re-asserts the procedure's own tier against a FRESH
 session (never the per-request latch) before emitting a snapshot — at most once
