@@ -287,20 +287,39 @@ async function activitySnapshot(taskId: string) {
   }));
 }
 
-/** ID-SHAPE (writes): every uuid-typed task ref answers BAD_REQUEST when
- *  malformed, checked BEFORE the task-state gates so the shape answer never
- *  depends on a running/review lock. Reviewer ids are shape-only:
- *  tasks.reviewers is a text[] that can retain a former employee's id, and the
- *  round-open insert into task_reviews.reviewer_id (uuid) is what the canonical
- *  shape protects. */
-function assertRefShapes(input: { assigneeId?: string | null; ownerId?: string | null; reviewers?: string[] | null }) {
-  if (input.assigneeId) requireUuid(input.assigneeId, 'BAD_REQUEST', 'assignee does not exist');
-  if (input.ownerId) requireUuid(input.ownerId, 'BAD_REQUEST', 'owner does not exist');
-  if (input.reviewers) {
-    for (const reviewerId of input.reviewers) {
-      requireUuid(reviewerId, 'BAD_REQUEST', 'reviewer does not exist');
-    }
+/** canonical wire form for a uuid id, or the handler's own BAD_REQUEST */
+function canonicalUuid(id: string, message: string): string {
+  requireUuid(id, 'BAD_REQUEST', message);
+  return id.toLowerCase();
+}
+
+/** ID-SHAPE (writes): shape-check AND canonicalize every uuid-typed task ref.
+ *  Postgres compares uuid columns case-insensitively and stores lowercase, so the
+ *  ids written and the JS comparisons that follow (assignee lock diff, reviewer
+ *  round diff, assignment ledger, reviewer display) must all use the lowercase
+ *  form — an uppercase echo of an unchanged id must not read as a change, and
+ *  mixed-case duplicates of one reviewer must not reach task_reviews' unique
+ *  index. Reviewers are existence-checked elsewhere by design: tasks.reviewers is
+ *  a text[] that can retain a former employee's id. */
+function normalizeTaskRefs(input: {
+  assigneeId?: string | null;
+  ownerId?: string | null;
+  reviewers?: string[] | null;
+}): { assigneeId?: string | null; ownerId?: string | null; reviewers?: string[] | null } {
+  const out: { assigneeId?: string | null; ownerId?: string | null; reviewers?: string[] | null } = {};
+  if (input.assigneeId !== undefined) {
+    out.assigneeId = input.assigneeId === null ? null : canonicalUuid(input.assigneeId, 'invalid assignee id');
   }
+  if (input.ownerId !== undefined) {
+    out.ownerId = input.ownerId === null ? null : canonicalUuid(input.ownerId, 'invalid owner id');
+  }
+  if (input.reviewers !== undefined) {
+    out.reviewers =
+      input.reviewers === null
+        ? null
+        : [...new Set(input.reviewers.map((reviewerId) => canonicalUuid(reviewerId, 'invalid reviewer id')))];
+  }
+  return out;
 }
 
 /** the referenced assignee/owner/project must exist before a task write points at them */
@@ -482,8 +501,8 @@ export const tasksRouter = os.router({
       }),
     )
     .handler(async ({ input, context }) => {
-      assertRefShapes(input);
-      await requireExistingRefs(input);
+      const refs = normalizeTaskRefs(input);
+      await requireExistingRefs(refs);
       const status = await resolveCreatedStatus(input.status);
       const session = await (
         context as unknown as { getSession: () => Promise<{ user: { id: string } } | null> }
@@ -500,13 +519,13 @@ export const tasksRouter = os.router({
         description: input.description ?? '',
         status,
         projectId: input.projectId ?? null,
-        assigneeId: input.assigneeId ?? null,
-        ownerId: input.ownerId ?? selfId,
-        reviewers: uniqueReviewers(input.reviewers ?? []),
+        assigneeId: refs.assigneeId ?? null,
+        ownerId: refs.ownerId ?? selfId,
+        reviewers: refs.reviewers ?? [],
         parentTaskId: input.parentId ?? null,
         createdBy: selfId,
       });
-      if (input.assigneeId) await recordAssignment(id, input.assigneeId, 'created', selfId);
+      if (refs.assigneeId) await recordAssignment(id, refs.assigneeId, 'created', selfId);
       if (input.parentId) {
         await logSubtaskCreation(input.parentId, selfId, id, input.title);
         await refreshParentGating(id);
@@ -518,8 +537,9 @@ export const tasksRouter = os.router({
 
   /** update a task (title/description/assignee) — status moves live in the workflow */
   update: employeeProcedure.input(updateInput).handler(async ({ input, context }) => {
-    // shape first: a malformed ref is decided before the task-state locks
-    assertRefShapes(input);
+    // shape + canonical form first: a malformed ref is decided before the
+    // task-state locks, and a case-variant echo of an unchanged id is not a change
+    const refs = normalizeTaskRefs(input);
     const rows = await db.query.tasks.findMany({
       columns: { status: true, assigneeId: true },
       where: { id: { eq: input.id } },
@@ -527,7 +547,7 @@ export const tasksRouter = os.router({
     });
     if (rows.length === 0) throw new ORPCError('NOT_FOUND', { message: 'task not found' });
     // owner ruling 2026-10-27: the assignee is locked while the agent is mid-run
-    if (input.assigneeId !== undefined && input.assigneeId !== nonNull(rows[0]).assigneeId) {
+    if (refs.assigneeId !== undefined && refs.assigneeId !== nonNull(rows[0]).assigneeId) {
       const { runningRunIdForTask } = await import('./runner.service');
       if (await runningRunIdForTask(input.id)) {
         throw new ORPCError('BAD_REQUEST', { message: 'task is running — assignee is locked until it settles' });
@@ -541,7 +561,7 @@ export const tasksRouter = os.router({
         where: { id: { eq: input.id } },
         orderBy: { createdAt: 'asc' },
       });
-      const next = [...new Set(input.reviewers)].sort();
+      const next = [...(refs.reviewers ?? [])].sort();
       const prev = [...nonNull(current[0]).reviewers].sort();
       const changed = next.length !== prev.length || next.some((v, i) => v !== prev[i]);
       if (changed) {
@@ -553,11 +573,14 @@ export const tasksRouter = os.router({
         }
       }
     }
-    await requireExistingRefs(input);
+    await requireExistingRefs(refs);
     const actorId = await selfIdOf(context);
-    await db.update(tasksTable).set(buildUpdatePatch(input)).where(eq(tasksTable.id, input.id));
-    if (input.assigneeId !== undefined && input.assigneeId !== nonNull(rows[0]).assigneeId) {
-      await recordAssignment(input.id, input.assigneeId, 'manual', actorId);
+    await db
+      .update(tasksTable)
+      .set(buildUpdatePatch({ ...input, ...refs }))
+      .where(eq(tasksTable.id, input.id));
+    if (refs.assigneeId !== undefined && refs.assigneeId !== nonNull(rows[0]).assigneeId) {
+      await recordAssignment(input.id, refs.assigneeId, 'manual', actorId);
     }
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
@@ -732,7 +755,7 @@ export const tasksRouter = os.router({
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
       // the forward target becomes a task_obligations.employee_id (uuid) and is
       // looked up in "user" — a malformed id is malformed input, never a 22P02 500
-      requireUuid(input.toEmployeeId, 'BAD_REQUEST', 'employee does not exist');
+      requireUuid(input.toEmployeeId, 'BAD_REQUEST', 'invalid employee id');
       return await runWorkflow(() => forwardQuestion(input.taskId, selfId, input.toEmployeeId, input.body ?? ''));
     }),
 

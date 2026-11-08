@@ -123,19 +123,19 @@ test('task writes shape-check assignee, owner and reviewer ids', async ({ page }
     'tasks/create',
     { title: 'bad assignee', assigneeId: MALFORMED },
     400,
-    'assignee does not exist',
+    'invalid assignee id',
   );
-  await expectRpcError(page, 'tasks/create', { title: 'bad owner', ownerId: MALFORMED }, 400, 'owner does not exist');
+  await expectRpcError(page, 'tasks/create', { title: 'bad owner', ownerId: MALFORMED }, 400, 'invalid owner id');
   await expectRpcError(
     page,
     'tasks/create',
     { title: 'bad reviewer', reviewers: [MALFORMED] },
     400,
-    'reviewer does not exist',
+    'invalid reviewer id',
   );
-  await expectRpcError(page, 'tasks/update', { id: taskId, assigneeId: MALFORMED }, 400, 'assignee does not exist');
-  await expectRpcError(page, 'tasks/update', { id: taskId, ownerId: MALFORMED }, 400, 'owner does not exist');
-  await expectRpcError(page, 'tasks/update', { id: taskId, reviewers: [MALFORMED] }, 400, 'reviewer does not exist');
+  await expectRpcError(page, 'tasks/update', { id: taskId, assigneeId: MALFORMED }, 400, 'invalid assignee id');
+  await expectRpcError(page, 'tasks/update', { id: taskId, ownerId: MALFORMED }, 400, 'invalid owner id');
+  await expectRpcError(page, 'tasks/update', { id: taskId, reviewers: [MALFORMED] }, 400, 'invalid reviewer id');
 
   // a valid-but-absent reference is the same BAD_REQUEST (an FK 500 is not the contract)
   await expectRpcError(
@@ -154,6 +154,18 @@ test('task writes shape-check assignee, owner and reviewer ids', async ({ page }
   expect(okTask.status()).toBe(200);
   const okUpdate = await post(page, 'tasks/update', { id: taskId, title: 'renamed by id-shape' });
   expect(okUpdate.status()).toBe(200);
+
+  // refs are canonicalized: a case-variant duplicate of one reviewer is stored
+  // once, lowercase — otherwise the round open trips task_reviews' unique index
+  const mixedTask = await post(page, 'tasks/create', {
+    title: `Id shape mixed ${Date.now().toString(36)}`,
+    reviewers: [employee.id, employee.id.toUpperCase()],
+  });
+  expect(mixedTask.status()).toBe(200);
+  const mixedId = (await mixedTask.json()).json.id as string;
+  const fetched = await post(page, 'tasks/get', { taskId: mixedId });
+  expect(fetched.status()).toBe(200);
+  expect((await fetched.json()).json.reviewers).toEqual([employee.id]);
 });
 
 test('lookups keep their specced miss; the assignee filter keeps its empty page', async ({ page }) => {
@@ -161,6 +173,15 @@ test('lookups keep their specced miss; the assignee filter keeps its empty page'
   await expectRpcError(page, 'employees/createApiKey', { employeeId: ABSENT }, 404, 'employee not found');
   // blank is accepted at the schema edge and answered by the miss path
   await expectRpcError(page, 'employees/listApiKeys', { employeeId: '' }, 404, 'employee not found');
+  // supervisor shape is decided before the target lookup: a malformed supervisor
+  // on an absent target is the shape BAD_REQUEST, not the target's 404
+  await expectRpcError(
+    page,
+    'employees/update',
+    { id: ABSENT, name: 'x', title: 'T', supervisorIds: [MALFORMED] },
+    400,
+    'invalid supervisor id',
+  );
 
   // supervisor ids land in employee_supervisors.supervisor_id (uuid): a malformed
   // value is malformed input (its own message, so the pin cannot pass on the
@@ -258,5 +279,5 @@ test('task forward shape-checks the target employee id at the handler edge', asy
   const asked = await post(page, 'tasks/ask', { taskId, body: 'id-shape forward probe' });
   expect(asked.status()).toBe(200);
 
-  await expectRpcError(page, 'tasks/forward', { taskId, toEmployeeId: MALFORMED }, 400, 'employee does not exist');
+  await expectRpcError(page, 'tasks/forward', { taskId, toEmployeeId: MALFORMED }, 400, 'invalid employee id');
 });

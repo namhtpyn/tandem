@@ -336,6 +336,9 @@ export const employeesRouter = os.router({
       }),
     )
     .handler(async ({ input }) => {
+      // supervisor ids are uuid refs: shape + canonical form before ANY gate or
+      // lookup, so a malformed id is decided here (default fills [])
+      const supervisorIds = normalizeSupervisorIds(input.supervisorIds ?? []);
       // AI employees REQUIRE an environment
       if (input.kind === 'ai' && !input.environmentId) {
         throw new ORPCError('BAD_REQUEST', { message: 'AI employees need an environment' });
@@ -348,8 +351,7 @@ export const employeesRouter = os.router({
           message: 'environment/instructions/acp executable apply to AI employees only',
         });
       }
-      // supervisors must exist and not include a duplicate (default fills [])
-      const supervisorIds = normalizeSupervisorIds(input.supervisorIds ?? []);
+      // supervisors must exist and not include a duplicate
       assertNoDuplicateSupervisors(supervisorIds);
       await assertSupervisorsExist(supervisorIds);
       // environment must exist for AI
@@ -423,6 +425,9 @@ export const employeesRouter = os.router({
     )
     .handler(async ({ input }) => {
       requireUuid(input.id, 'BAD_REQUEST', 'invalid employee id');
+      // supervisor ids are uuid refs: shape + canonical form before ANY lookup,
+      // so a malformed id is decided here, never after the target query
+      const supervisorIds = normalizeSupervisorIds(input.supervisorIds);
       const rows = await db.query.user.findMany({
         columns: { email: true },
         where: { id: { eq: input.id } },
@@ -439,7 +444,6 @@ export const employeesRouter = os.router({
           orderBy: { userId: 'asc' },
         })
       )[0];
-      const supervisorIds = normalizeSupervisorIds(input.supervisorIds);
       assertNoDuplicateSupervisors(supervisorIds);
       if (supervisorIds.includes(input.id.toLowerCase())) {
         throw new ORPCError('BAD_REQUEST', { message: 'an employee cannot supervise themselves' });
