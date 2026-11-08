@@ -17,7 +17,14 @@ import { v7 as uuidv7 } from 'uuid';
 import { db, type DbExecutor } from '../../db/index';
 import { tasks, taskReviews, taskRuns, taskMessages } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
-import { spawnObligation, cancelObligations, cancelAllObligations, resolveObligation } from './obligations.service';
+import {
+  spawnObligation,
+  spawnObligationTracked,
+  cancelObligations,
+  cancelAllObligations,
+  cancelObligationById,
+  resolveObligation,
+} from './obligations.service';
 import { dispatchTask, type DispatchOpts } from './runner.service';
 import { insertActivityMessage } from './thread.service';
 
@@ -90,6 +97,41 @@ export function dedupeReviewers(reviewers: string[]): string[] {
   return [...new Set(reviewers)];
 }
 
+/** a STORED roster value cannot be shape-rejected like wire input: Postgres accepts
+ * braced and hyphenless uuid spellings, so a value that names a real employee must
+ * survive whatever spelling a pre-canonical row carries (ID-SHAPE applies to the
+ * wire, not the store). Returns the canonical 8-4-4-4-12 lowercase form, or null
+ * when the value cannot name a uuid at all. */
+export function canonicalStoredUuid(value: string): string | null {
+  const hex = value
+    .trim()
+    .replace(/^\{|\}$/g, '')
+    .replace(/-/g, '');
+  if (!/^[0-9a-f]{32}$/i.test(hex)) return null;
+  const l = hex.toLowerCase();
+  return `${l.slice(0, 8)}-${l.slice(8, 12)}-${l.slice(12, 16)}-${l.slice(16, 20)}-${l.slice(20)}`;
+}
+
+/** the reviewers that still name an existing user — tasks.reviewers is a text[]
+ * with NO FK, so a deleted employee's id can sit on the task and would hit
+ * task_reviews.reviewer_id's FK (23503) at round open, wedging the submit with a
+ * driver 500. Also ID-SHAPE + UUID-CASE (both laws): a legacy roster can carry a
+ * value that never was a uuid (binding it to the uuid column raises 22P02 — the
+ * same wedge one step earlier) and case variants of ONE id must collapse before
+ * the round's unique index sees them. Returns canonical distinct survivors in
+ * roster order (#361). */
+export async function liveReviewers(reviewers: string[]): Promise<string[]> {
+  const shaped = [...new Set(reviewers.map((id) => canonicalStoredUuid(id)).filter((id): id is string => id !== null))];
+  if (shaped.length === 0) return [];
+  const rows = await db.query.user.findMany({
+    columns: { id: true },
+    where: { id: { in: shaped } },
+    orderBy: { id: 'asc' },
+  });
+  const present = new Set(rows.map((r) => r.id));
+  return shaped.filter((id) => present.has(id));
+}
+
 /** the round an AI reviewer's LATEST run on the task was dispatched for: the newest
  * round whose review row already existed when that run started. Reading the
  * dispatched round at settle — instead of currentRound — is what keeps a stale run
@@ -134,35 +176,84 @@ export async function openReviewRound(taskId: string, reviewers: string[], resul
   const uniqueReviewers = dedupeReviewers(reviewers);
   const round = (await currentRound(taskId)) + 1;
   const now = new Date();
-  for (const reviewerId of uniqueReviewers) {
-    await db.insert(taskReviews).values({
-      id: uuidv7(),
-      taskId,
-      reviewerId,
-      round,
-      status: REVIEW_STATUS.PENDING,
-      resultBody,
-      createdAt: now,
-    });
-    await spawnObligation(taskId, reviewerId, OBLIGATION_ROLE.APPROVAL, now);
-  }
-  await logActivity(
-    taskId,
-    ACTIVITY_KIND.STATUS,
-    null,
-    `review round ${round} opened — waiting on ${uniqueReviewers.length} reviewer(s)`,
-    { reviewRound: round },
-  );
+  // ROUND-OPEN FAILURE (#282): a failed round-open leaves the task working with the
+  // error surfaced — the rows THIS CALL minted supersede and their approval
+  // obligations cancel, so no round is left behind for a settle to wedge on.
+  // ROLLBACK SCOPE (#361 r4): never `teardownOpenRound` here — it resolves the task's
+  // MAX round, and a duplicate submit that lost the (task, round, reviewer) unique
+  // index would then SUPERSEDE THE WINNER's freshly opened round, leaving an
+  // in-review task with no pending row that nothing can settle. Supersede exactly the
+  // row ids this call inserted and cancel exactly their reviewers' obligations.
+  const minted: Array<{ rowId: string; obligationId: string | null }> = [];
   try {
+    for (const reviewerId of uniqueReviewers) {
+      const rowId = uuidv7();
+      await db.insert(taskReviews).values({
+        id: rowId,
+        taskId,
+        reviewerId,
+        round,
+        status: REVIEW_STATUS.PENDING,
+        resultBody,
+        createdAt: now,
+      });
+      // record the row BEFORE spawning: an obligation-insert failure must still roll
+      // this row back (#361 r6)
+      minted.push({ rowId, obligationId: null });
+      // only a row THIS call created may be cancelled on rollback — spawnObligation is
+      // idempotent per (task, employee, role) with no round column, so an older live
+      // round's pending obligation would otherwise be cancelled by mistake (#361 r5)
+      const obligation = await spawnObligationTracked(taskId, reviewerId, OBLIGATION_ROLE.APPROVAL, now);
+      if (obligation.created) minted[minted.length - 1] = { rowId, obligationId: obligation.id };
+    }
+    await logActivity(
+      taskId,
+      ACTIVITY_KIND.STATUS,
+      null,
+      `review round ${round} opened — waiting on ${uniqueReviewers.length} reviewer(s)`,
+      { reviewRound: round },
+    );
     await dispatchAiReviewTurns(taskId, resultBody);
   } catch (e) {
-    // ROUND-OPEN FAILURE (#282): the contract is a failed round-open leaves the task
-    // working with the error surfaced — the just-minted rows supersede and their
-    // approval obligations cancel, so no round is left behind for a settle to wedge on.
-    await teardownOpenRound(taskId, 'round-open failed');
+    if (minted.length > 0) {
+      await db
+        .update(taskReviews)
+        .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
+        .where(
+          inArray(
+            taskReviews.id,
+            minted.map((m) => m.rowId),
+          ),
+        );
+      for (const { obligationId } of minted) {
+        if (obligationId) await cancelObligationById(obligationId);
+      }
+    }
     throw e;
   }
   return round;
+}
+
+/** close EVERY round that still shows a pending row — the zero-survivor completion
+ *  path must not trust the MAX round: a superseded max round (failed round-open, lost
+ *  duplicate submit) can hide an older round that is still live, and a done task must
+ *  never keep a pending row or approval obligation (#361 r6). Task-wide cancel is
+ *  correct here — the task is settling to done. */
+export async function teardownAllPendingRounds(taskId: string, settledTo: string) {
+  const pending = await db
+    .select({ round: taskReviews.round })
+    .from(taskReviews)
+    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
+  if (pending.length === 0) return;
+  await db
+    .update(taskReviews)
+    .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
+    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
+  await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+  await logActivity(taskId, ACTIVITY_KIND.STATUS, null, 'review rounds closed — task settled', {
+    roundClosed: true,
+    settledTo,
+  });
 }
 
 /** is the current round still LIVE (pending reviewers)? Rounds never close early —
@@ -852,8 +943,10 @@ export async function teardownOnManualMove(taskId: string, fromStatus: string, t
  * round dies with it. PENDING rows become `superseded` (audit, non-vote), approval
  * obligations cancel, and the note lands on the thread. Decided/escalated rows stay
  * untouched as history. */
-export async function teardownOpenRound(taskId: string, settledTo: string) {
-  const round = await currentRound(taskId);
+export async function teardownOpenRound(taskId: string, settledTo: string, openedRound?: number) {
+  // openedRound pins the round THIS caller opened — resolving the task's MAX round
+  // would let a duplicate submit tear down a concurrent winner's newer round (#361 r5)
+  const round = openedRound ?? (await currentRound(taskId));
   if (round === 0) return;
   const rows = await db
     .select()
