@@ -1,3 +1,11 @@
+## [2.78.1](https://github.com/namhtpyn/tandem/compare/v2.78.0...v2.78.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **authz:** access-key reads are self-or-admin; malformed ids are a miss ([#356](https://github.com/namhtpyn/tandem/issues/356)) ([aa186bf](https://github.com/namhtpyn/tandem/commit/aa186bf448e067ddf6e7ac8b5815c1e141e8de45))
+* **authz:** r1 review — pin the shape guard on the ADMIN leg, scope the key-material sentence, state the canonical-id contract ([00c90d6](https://github.com/namhtpyn/tandem/commit/00c90d6cad00ac4a4518821f63a0d71bee00371d))
+
 # [2.78.0](https://github.com/namhtpyn/tandem/compare/v2.77.0...v2.78.0) (2026-11-08)
 
 
