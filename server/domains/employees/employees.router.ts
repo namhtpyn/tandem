@@ -627,13 +627,16 @@ export const employeesRouter = os.router({
         message: `employee is in use by ${blockers.join(', ')} — reassign or delete those first`,
       });
     }
-    // REVIEW LAW (#365): an employee removed mid-round must never wedge a review.
-    // Capture first (read-only): their pending review rows and their own pending
-    // approval obligations. After the delete lands (the FK nulls reviewer_id, leaving
-    // the void pending rows the settle keys on) the captured obligations are DROPPED
-    // (not cancelled — a cancelled row reads as a dead round to the approver tally),
-    // rows are noted, and every affected round left with no live reviewer settles by
-    // the normal matrix instead of waiting on a verdict that can never arrive.
+    // REVIEW LAW (#365) + ANSWER-ROLE REMOVAL (#369): an employee removed mid-round
+    // or mid-question must never wedge a task. Capture first (read-only): their
+    // pending review rows, their own pending approval obligations and their pending
+    // ANSWER obligations. After the delete lands (the FK nulls reviewer_id /
+    // employee_id, leaving the void rows the settle keys on) the captured approval
+    // obligations are DROPPED (not cancelled — a cancelled row reads as a dead round
+    // to the approver tally), the ANSWER obligations are cancelled by id, rows are
+    // noted, every affected round left with no live reviewer settles by the normal
+    // matrix, and every waiting-answer task left with no holder returns to its flow
+    // instead of waiting on an answer that can never arrive.
     const { prepareReviewerRemoval, settleReviewerRemovalRounds } = await import('../tasks/review.service');
     const reviewRemoval = await prepareReviewerRemoval(input.id);
     // deleting the user cascades supervisors, ai extension, api keys

@@ -26,6 +26,7 @@ import {
   cancelObligationById,
   deleteObligationById,
   resolveObligation,
+  answerHolder,
 } from './obligations.service';
 import { dispatchTask, type DispatchOpts } from './runner.service';
 import { insertActivityMessage } from './thread.service';
@@ -424,13 +425,16 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
 }
 
 /** REVIEWER REMOVAL, prepare half (#365): a READ-ONLY capture taken BEFORE the
- * employee's user row is deleted — the pending review rows they hold and their
- * pending APPROVAL obligations. Nothing is mutated here: a failed delete must change
- * nothing, so every write happens in settleReviewerRemovalRounds after it lands. */
+ * employee's user row is deleted — the pending review rows they hold, their pending
+ * APPROVAL obligations, and (ANSWER-ROLE REMOVAL, #369) their pending ANSWER
+ * obligations. Nothing is mutated here: a failed delete must change nothing, so every
+ * write happens in settleReviewerRemovalRounds after it lands. */
 export type ReviewerRemovalPlan = {
   taskIds: string[];
   reviewRowIds: string[];
   obligationIds: string[];
+  /** PENDING ANSWER obligations held by the departing employee (#369) */
+  answerObligations: Array<{ id: string; taskId: string }>;
 };
 
 export async function prepareReviewerRemoval(employeeId: string): Promise<ReviewerRemovalPlan> {
@@ -449,11 +453,84 @@ export async function prepareReviewerRemoval(employeeId: string): Promise<Review
         eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
       ),
     );
+  const answerObligations = await db
+    .select({ id: taskObligations.id, taskId: taskObligations.taskId })
+    .from(taskObligations)
+    .where(
+      and(
+        eq(taskObligations.employeeId, employeeId),
+        eq(taskObligations.role, OBLIGATION_ROLE.ANSWER),
+        eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
+      ),
+    );
   return {
     taskIds: [...new Set(pending.map((p) => p.taskId))],
     reviewRowIds: pending.map((p) => p.id),
     obligationIds: obligations.map((o) => o.id),
+    answerObligations,
   };
+}
+
+/** ANSWER-ROLE REMOVAL, return half (#369): the departing holder's PENDING ANSWER
+ *  obligations are already cancelled by id (the delete nulls employee_id, so the id
+ *  captured before it is the only stable handle). A task left in a waiting_answer
+ *  category with NO pending holder can never move again — nothing can answer, forward
+ *  or abandon it — so it returns to its flow instead of stranding: a live review round
+ *  lands back in-review (its reviewer turn re-fires, mirroring the answer verb),
+ *  anything else returns to todo with a cleared question chain and re-gates its
+ *  parents (a gated parent auto-blocks — todo/blocked per the gating law). The flip
+ *  pins the status AND updatedAt it read: a concurrent settle/move owns the outcome
+ *  and this call touches nothing. Idempotent — a second pass finds no waiting task. */
+export async function returnRemovedAnswerHolderTask(taskId: string, name?: string): Promise<boolean> {
+  const taskRow = (
+    await db.select({ status: tasks.status, updatedAt: tasks.updatedAt }).from(tasks).where(eq(tasks.id, taskId))
+  )[0];
+  if (!taskRow) return false;
+  // only a waiting-answer task owns the flow this arm repairs — a stale obligation on
+  // any other status is cancelled by id alone (never cancel here: the ask/forward
+  // paths spawn-then-flip, and a flip read inside that window would bag the spawn)
+  if ((await categoryOf(taskRow.status)) !== CATEGORY.WAITING_ANSWER) return false;
+  // another PENDING answer row still names a real holder: the question is not orphaned
+  if ((await answerHolder(taskId)) !== null) return false;
+  const backTo = (await openRoundLive(taskId)) ? IN_REVIEW_STATUS : TODO_STATUS;
+  const flipped = await db
+    .update(tasks)
+    .set({ status: backTo, questionChain: [], updatedAt: new Date() })
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, taskRow.status), eq(tasks.updatedAt, taskRow.updatedAt)))
+    .returning({ id: tasks.id });
+  if (flipped.length === 0) return false; // a concurrent answer/settle/move owns the outcome
+  // OBLIGATION CANCEL-AFTER-FLIP (#314): only a WON flip cancels — a lost race
+  // touches no obligation rows (the winner owns the status AND its obligations)
+  await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
+  await logActivity(
+    taskId,
+    ACTIVITY_KIND.NOTE,
+    null,
+    backTo === IN_REVIEW_STATUS
+      ? `answer holder removed${name ? ` (${name})` : ''} — the review round resumes`
+      : `answer holder removed${name ? ` (${name})` : ''} — the task returned to the assignee`,
+    { answerHolderRemoved: true, returnedTo: backTo },
+  );
+  // FAULT ISOLATION: the flip already landed — a re-fire/re-gate failure must never
+  // 500 the removal caller; the task is out of waiting-answer either way.
+  if (backTo === IN_REVIEW_STATUS) {
+    try {
+      await dispatchAiReviewTurns(taskId);
+    } catch (e) {
+      log.warn(
+        `answer holder removal: could not re-fire the review turn for ${taskId}:`,
+        e instanceof Error ? e.message : e,
+      );
+    }
+  } else {
+    try {
+      const { refreshParentGating } = await import('./gating.service');
+      await refreshParentGating(taskId);
+    } catch (e) {
+      log.warn(`answer holder removal: could not re-gate parents of ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+  return true;
 }
 
 /** REVIEWER REMOVAL, settle half (#365): runs AFTER the user delete. Mutates only
@@ -465,6 +542,7 @@ export async function prepareReviewerRemoval(employeeId: string): Promise<Review
  *  fault-isolated: the delete already committed, so a heal failure must never 500
  *  the caller or skip the employee-delete bookkeeping; the boot heal retries. */
 export async function settleReviewerRemovalRounds(plan: ReviewerRemovalPlan, name?: string): Promise<string[]> {
+  const settledTaskIds: string[] = [];
   for (const obligationId of plan.obligationIds) {
     try {
       await deleteObligationById(obligationId);
@@ -472,6 +550,11 @@ export async function settleReviewerRemovalRounds(plan: ReviewerRemovalPlan, nam
       log.warn(`reviewer removal: could not drop obligation ${obligationId}:`, e instanceof Error ? e.message : e);
     }
   }
+  // ANSWER-ROLE REMOVAL (#369): a holder removed mid-question leaves a PENDING
+  // ANSWER obligation whose FK nulls employee_id — nothing can answer, forward or
+  // abandon the task. Cancel exactly the captured rows by id, then return every
+  // affected task that lost its only holder to its flow.
+  await settleAnswerHolderRemoval(plan.answerObligations, name, settledTaskIds);
   if (plan.reviewRowIds.length > 0) {
     try {
       await db
@@ -501,7 +584,6 @@ export async function settleReviewerRemovalRounds(plan: ReviewerRemovalPlan, nam
     log.warn('reviewer removal: void review row scan failed:', e instanceof Error ? e.message : e);
   }
   const taskIds = [...new Set([...plan.taskIds, ...leftover.map((r) => r.taskId)])];
-  const settledTaskIds: string[] = [];
   for (const taskId of taskIds) {
     try {
       if (await settleExtinguishedRound(taskId)) settledTaskIds.push(taskId);
@@ -510,7 +592,69 @@ export async function settleReviewerRemovalRounds(plan: ReviewerRemovalPlan, nam
       log.warn(`reviewer removal: could not settle round for task ${taskId}:`, e instanceof Error ? e.message : e);
     }
   }
+  // ANSWER-ROLE REMOVAL leftover (#369): the same crash-window sweep — an orphan
+  // PENDING ANSWER obligation (NULL holder = only an employee delete produces it)
+  // left by an earlier removal that died before its return arm.
+  await sweepOrphanAnswerHolders(settledTaskIds);
   return settledTaskIds;
+}
+
+/** ANSWER-ROLE REMOVAL, mutation half (#369): cancel the departing holder's
+ *  captured PENDING ANSWER obligations by id (their FK has already nulled, so the id
+ *  is the only handle) and return every affected task that lost its only holder.
+ *  Each step is fault-isolated — the delete already committed. */
+async function settleAnswerHolderRemoval(
+  answerObligations: ReviewerRemovalPlan['answerObligations'],
+  name: string | undefined,
+  settledTaskIds: string[],
+) {
+  for (const obligation of answerObligations) {
+    try {
+      await cancelObligationById(obligation.id);
+    } catch (e) {
+      log.warn(
+        `answer holder removal: could not cancel obligation ${obligation.id}:`,
+        e instanceof Error ? e.message : e,
+      );
+    }
+  }
+  for (const taskId of new Set(answerObligations.map((o) => o.taskId))) {
+    try {
+      if (await returnRemovedAnswerHolderTask(taskId, name)) settledTaskIds.push(taskId);
+    } catch (e) {
+      log.warn(`answer holder removal: could not return task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+}
+
+/** crash-window sweep for ANSWER orphans (#369): a PENDING ANSWER obligation with a
+ *  NULL holder can only come from an employee delete — return its task to the flow
+ *  (the removal that produced it either crashed before its return arm or predated it).
+ *  Bounded; the rest drain on the next boot/removal. */
+async function sweepOrphanAnswerHolders(settledTaskIds: string[]) {
+  let leftoverAnswers: Array<{ taskId: string }> = [];
+  try {
+    leftoverAnswers = await db
+      .select({ taskId: taskObligations.taskId })
+      .from(taskObligations)
+      .where(
+        and(
+          eq(taskObligations.role, OBLIGATION_ROLE.ANSWER),
+          eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
+          isNull(taskObligations.employeeId),
+        ),
+      )
+      .limit(50);
+  } catch (e) {
+    log.warn('answer holder removal: orphan answer scan failed:', e instanceof Error ? e.message : e);
+  }
+  for (const taskId of new Set(leftoverAnswers.map((r) => r.taskId))) {
+    try {
+      if (await returnRemovedAnswerHolderTask(taskId)) settledTaskIds.push(taskId);
+    } catch (e) {
+      log.warn(`answer holder removal: could not return task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+  }
 }
 
 /** void rows in NON-current rounds are audit debris (a round the matrix has moved
@@ -575,6 +719,34 @@ export async function settleAllExtinguishedRounds(): Promise<string[]> {
       await cleanVoidReviewDebris(taskId);
     } catch (e) {
       log.warn(`void review round heal failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+  // ANSWER-ROLE REMOVAL (#369): the same crash-window heal for a waiting-answer
+  // task whose only ANSWER obligation lost its holder (NULL employee_id is the
+  // machine signature — no legal write path produces it). Bounded like the void-row
+  // scan; the rest drain on the next boot.
+  let answerTaskIds: string[] = [];
+  try {
+    const rows = await db
+      .select({ taskId: taskObligations.taskId })
+      .from(taskObligations)
+      .where(
+        and(
+          eq(taskObligations.role, OBLIGATION_ROLE.ANSWER),
+          eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
+          isNull(taskObligations.employeeId),
+        ),
+      )
+      .limit(200);
+    answerTaskIds = [...new Set(rows.map((r) => r.taskId))];
+  } catch (e) {
+    log.warn('orphan answer obligation scan failed:', e instanceof Error ? e.message : e);
+  }
+  for (const taskId of answerTaskIds) {
+    try {
+      if (await returnRemovedAnswerHolderTask(taskId)) settledTaskIds.push(taskId);
+    } catch (e) {
+      log.warn(`answer holder heal failed for task ${taskId}:`, e instanceof Error ? e.message : e);
     }
   }
   return settledTaskIds;

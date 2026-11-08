@@ -25,6 +25,10 @@ const h = vi.hoisted(() => ({
   leftoverSelect: [] as Array<{ taskId: string }>,
   /** the departing reviewer's pending APPROVAL obligations: select({id}) from taskObligations */
   obligationSelect: [] as Array<{ id: string }>,
+  /** the departing holder's pending ANSWER obligations (#369): select({id, taskId}) */
+  answerObligationSelect: [] as Array<{ id: string; taskId: string }>,
+  /** orphan ANSWER obligations seen by the sweeping scans (#369): select({taskId}) */
+  answerLeftoverSelect: [] as Array<{ taskId: string }>,
   updates: [] as Array<{ table: string; set: Record<string, unknown>; cond: unknown }>,
   deletes: [] as Array<{ table: string; cond: unknown }>,
   cancelled: [] as string[],
@@ -60,7 +64,11 @@ vi.mock('../../server/db/index', async () => {
             rowsThenable(() => {
               const keys = arg ? Object.keys(arg) : [];
               if (table === tasks) return Promise.resolve([{ status: h.taskStatus, updatedAt: h.taskUpdatedAt }]);
-              if (table === taskObligations) return Promise.resolve(h.obligationSelect);
+              if (table === taskObligations) {
+                if (keys.includes('id') && keys.includes('taskId')) return Promise.resolve(h.answerObligationSelect);
+                if (keys.includes('taskId')) return Promise.resolve(h.answerLeftoverSelect);
+                return Promise.resolve(h.obligationSelect);
+              }
               if (keys.includes('round')) return Promise.resolve([{ round: h.round }]);
               if (keys.includes('resultBody')) return Promise.resolve([{ resultBody: undefined }]);
               if (keys.includes('id') && keys.includes('taskId')) return Promise.resolve(h.pendingSelect);
@@ -200,6 +208,8 @@ beforeEach(() => {
   h.pendingSelect = [];
   h.leftoverSelect = [];
   h.obligationSelect = [];
+  h.answerObligationSelect = [];
+  h.answerLeftoverSelect = [];
   h.updates = [];
   h.deletes = [];
   h.cancelled = [];
@@ -357,6 +367,7 @@ describe('employee removal halves (#365)', () => {
       taskIds: ['task-1', 'task-2'],
       reviewRowIds: ['row-1', 'row-2', 'row-3'],
       obligationIds: ['ob-1', 'ob-2'],
+      answerObligations: [],
     });
     // a failed delete must change nothing: no writes in the capture half
     expect(h.updates).toHaveLength(0);
@@ -370,7 +381,12 @@ describe('employee removal halves (#365)', () => {
       [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
     ];
     const settled = await settleReviewerRemovalRounds(
-      { taskIds: ['task-1', 'task-2'], reviewRowIds: ['row-1', 'row-3'], obligationIds: ['ob-1', 'ob-2'] },
+      {
+        taskIds: ['task-1', 'task-2'],
+        reviewRowIds: ['row-1', 'row-3'],
+        obligationIds: ['ob-1', 'ob-2'],
+        answerObligations: [],
+      },
       'Ada',
     );
     expect(settled).toEqual(['task-1', 'task-2']);
@@ -391,7 +407,12 @@ describe('employee removal halves (#365)', () => {
   it('settle half also picks up a leftover void row from an earlier removal/race', async () => {
     h.leftoverSelect = [{ taskId: 'task-9' }];
     h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]];
-    const settled = await settleReviewerRemovalRounds({ taskIds: [], reviewRowIds: [], obligationIds: [] });
+    const settled = await settleReviewerRemovalRounds({
+      taskIds: [],
+      reviewRowIds: [],
+      obligationIds: [],
+      answerObligations: [],
+    });
     expect(settled).toEqual(['task-9']);
     expect(h.updates.find((u) => u.table === 'tasks' && u.set.status === STATUS.todo)).toBeTruthy();
   });
@@ -411,7 +432,9 @@ describe('employee removal halves (#365)', () => {
     // obligation (holder nulled by the delete) must not keep counting forever —
     // DELETED, not cancelled (a cancelled row reads as a dead round to the tally)
     h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: 'rev-live' }]];
-    expect(await settleReviewerRemovalRounds({ taskIds: [], reviewRowIds: [], obligationIds: [] })).toEqual([]);
+    expect(
+      await settleReviewerRemovalRounds({ taskIds: [], reviewRowIds: [], obligationIds: [], answerObligations: [] }),
+    ).toEqual([]);
     const drop = h.deletes.find((d) => d.table === 'taskObligations');
     expect(drop).toBeTruthy();
     expect(renderCond(drop?.cond)).toContain('"employee_id" is null');
@@ -421,7 +444,7 @@ describe('employee removal halves (#365)', () => {
     h.taskStatus = STATUS.todo;
     h.leftoverSelect = [{ taskId: 'task-9' }];
     h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]]; // settle no-ops: not in review
-    await settleReviewerRemovalRounds({ taskIds: [], reviewRowIds: [], obligationIds: [] });
+    await settleReviewerRemovalRounds({ taskIds: [], reviewRowIds: [], obligationIds: [], answerObligations: [] });
     const debris = h.updates.find((u) => u.table === 'taskReviews' && u.set.status === REVIEW_STATUS.SUPERSEDED);
     // stale-round only: the current round's void row is the machine signature and
     // must survive every status (a blocked/parked round settles on unblock)
