@@ -1,3 +1,10 @@
+## [2.78.3](https://github.com/namhtpyn/tandem/compare/v2.78.2...v2.78.3) (2026-11-08)
+
+
+### Bug Fixes
+
+* **tasks:** reviewer existence at both ends ([#361](https://github.com/namhtpyn/tandem/issues/361)) ([cceabe9](https://github.com/namhtpyn/tandem/commit/cceabe9f870f398d56d1529f88af512a5fe98aec)), closes [#364](https://github.com/namhtpyn/tandem/issues/364) [#365](https://github.com/namhtpyn/tandem/issues/365)
+
 ## [2.78.2](https://github.com/namhtpyn/tandem/compare/v2.78.1...v2.78.2) (2026-11-08)
 
 
