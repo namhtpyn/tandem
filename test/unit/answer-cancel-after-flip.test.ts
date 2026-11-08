@@ -52,7 +52,6 @@ vi.mock('../../server/db/index', async () => {
 vi.mock('../../server/domains/tasks/review.service', () => ({
   openRoundLive: async () => false,
   // #365: the round here carries no void pending row — the settle is a no-op
-  roundCarriesVoidPending: async () => false,
   settleExtinguishedRound: async () => false,
   dispatchAiReviewTurns: async () => {},
 }));

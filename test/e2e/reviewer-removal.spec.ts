@@ -74,10 +74,9 @@ test('reviewer deleted mid-round: the round settles instead of wedging (#365)', 
       where task_id = ${taskId} and role = 'APPROVAL'
       group by status
     `) as Array<{ status: string; n: number }>;
-    const pending = Number(obligations.find((r) => r.status === 'PENDING')?.n ?? 0);
-    const cancelled = Number(obligations.find((r) => r.status === 'CANCELLED')?.n ?? 0);
-    expect(pending).toBe(0);
-    expect(cancelled).toBe(1); // the removal cancelled exactly the departing reviewer's row
+    // the departing reviewer's row is DROPPED whole (a cancelled row would read as
+    // a dead round to the approver tally) — no obligation outlives its holder
+    expect(obligations).toHaveLength(0);
   } finally {
     await sql2.close();
   }

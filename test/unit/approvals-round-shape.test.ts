@@ -6,7 +6,11 @@
 // not exported, so nothing here executes a query (mockDb throws on execute).
 import { describe, expect, it } from 'vitest';
 
-import { approvalsRoundScan, openObligationsScan } from '#server/domains/tasks/obligations.service';
+import {
+  approvalsRoundScan,
+  approverIdsFromRound,
+  openObligationsScan,
+} from '#server/domains/tasks/obligations.service';
 
 import { mockDb } from './helpers/mock-db';
 
@@ -49,6 +53,22 @@ describe('approvals latest-round scan shape (#130 slice 3)', () => {
     expect(sql).toContain('"task_obligations"."role" =');
     expect(sql).toContain('"task_obligations"."task_id" in');
     expect(params).toEqual(['t-1', 't-2', 'APPROVAL', 't-1', 't-2', 'APPROVAL']);
+  });
+});
+
+describe('approver ids from a latest round (#365 r4)', () => {
+  it('a deleted approver (null employee_id) is dropped, never thrown', () => {
+    expect(
+      approverIdsFromRound([
+        { status: 'FULFILLED', employeeId: 'u1' },
+        { status: 'FULFILLED', employeeId: null },
+        { status: 'PENDING', employeeId: 'u2' },
+      ]),
+    ).toEqual(['u1']);
+  });
+
+  it('a cancelled row still marks the round dead (request-changes / abandon)', () => {
+    expect(approverIdsFromRound([{ status: 'CANCELLED', employeeId: 'u1' }])).toEqual([]);
   });
 });
 

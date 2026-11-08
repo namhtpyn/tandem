@@ -80,6 +80,16 @@ describe('unblock-resume keys off the target status CATEGORY (#336)', () => {
     expect(h.settled).toEqual(['task-1']);
   });
 
+  it('reopening a SETTLED task (done -> in-review) is never auto-settled (#365 r4)', async () => {
+    h.statuses = [
+      { id: 'st-done', category: CATEGORY.DONE },
+      { id: 'st-custom-review', category: CATEGORY.IN_REVIEW },
+    ];
+    h.live = false;
+    expect(await resumeRoundAfterManualMove('task-1', 'st-custom-review', 'st-done')).toBe(false);
+    expect(h.settled).toEqual([]);
+  });
+
   it('a dangling target status id is dead input — no dispatch, no guess', async () => {
     h.statuses = [];
     h.live = true;

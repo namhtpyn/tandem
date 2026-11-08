@@ -661,7 +661,7 @@ export const tasksRouter = os.router({
       // re-fires the parked turn exactly like the seeded one (the seeded-id check
       // silently skipped it and wedged the round).
       const { resumeRoundAfterManualMove } = await import('./review-resume');
-      await resumeRoundAfterManualMove(input.id, input.status);
+      await resumeRoundAfterManualMove(input.id, input.status, cur);
       await logActivity(input.id, ACTIVITY_KIND.STATUS, actorId, `status: ${cur} → ${input.status}`, {});
       const parentId = rows.at(0)?.parentTaskId;
       if (parentId) await refreshParentGating(parentId);

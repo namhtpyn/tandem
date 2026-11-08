@@ -24,6 +24,7 @@ import {
   cancelObligations,
   cancelAllObligations,
   cancelObligationById,
+  deleteObligationById,
   resolveObligation,
 } from './obligations.service';
 import { dispatchTask, type DispatchOpts } from './runner.service';
@@ -395,7 +396,8 @@ export async function prepareReviewerRemoval(employeeId: string): Promise<Review
   const pending = await db
     .select({ id: taskReviews.id, taskId: taskReviews.taskId })
     .from(taskReviews)
-    .where(and(eq(taskReviews.reviewerId, employeeId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
+    .where(and(eq(taskReviews.reviewerId, employeeId), eq(taskReviews.status, REVIEW_STATUS.PENDING)))
+    .limit(100);
   const obligations = await db
     .select({ id: taskObligations.id })
     .from(taskObligations)
@@ -424,9 +426,9 @@ export async function prepareReviewerRemoval(employeeId: string): Promise<Review
 export async function settleReviewerRemovalRounds(plan: ReviewerRemovalPlan, name?: string): Promise<string[]> {
   for (const obligationId of plan.obligationIds) {
     try {
-      await cancelObligationById(obligationId);
+      await deleteObligationById(obligationId);
     } catch (e) {
-      log.warn(`reviewer removal: could not cancel obligation ${obligationId}:`, e instanceof Error ? e.message : e);
+      log.warn(`reviewer removal: could not drop obligation ${obligationId}:`, e instanceof Error ? e.message : e);
     }
   }
   if (plan.reviewRowIds.length > 0) {
@@ -471,35 +473,31 @@ export async function settleReviewerRemovalRounds(plan: ReviewerRemovalPlan, nam
 }
 
 /** void rows in NON-current rounds are audit debris (a round the matrix has moved
- *  past can never settle), and so is a void row in the CURRENT round while the task
- *  is NOT in a review state (nothing there can consume it). A PENDING approval
- *  obligation whose holder is NULL belongs to a deleted employee — `pendingTaskIds()`
- *  still counts it and retention leg 2 refuses to delete the task's resolved rows
- *  while it lives. All are cleared for tasks the removal/heal touched; a CURRENT
- *  round's void row is kept while the task IS in review — it is the machine
- *  signature settleExtinguishedRound consumes. */
+ *  past can never settle) — cleared for tasks the removal/heal touched. A CURRENT
+ *  round's void row is NEVER cleared here, whatever the task's status: it is the
+ *  machine signature every restore path keys on (a blocked/parked task must keep it
+ *  or its unblock can never settle). A PENDING approval obligation whose holder is
+ *  NULL belongs to a deleted employee — `pendingTaskIds()` still counts it and
+ *  retention leg 2 refuses to delete the task's resolved rows while it lives — so
+ *  the orphan row is dropped whole (marking it CANCELLED would read as "round dead"
+ *  to approvalsInRoundBatch and blank the surviving approvers). */
 async function cleanVoidReviewDebris(taskId: string) {
-  const taskRow = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
   const round = await currentRound(taskId);
-  const inReview = taskRow ? (await categoryOf(taskRow.status)) === CATEGORY.IN_REVIEW : false;
   if (round > 0) {
-    const debrisCond = inReview
-      ? and(
+    await db
+      .update(taskReviews)
+      .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
+      .where(
+        and(
           eq(taskReviews.taskId, taskId),
           eq(taskReviews.status, REVIEW_STATUS.PENDING),
           isNull(taskReviews.reviewerId),
           lt(taskReviews.round, round),
-        )
-      : and(
-          eq(taskReviews.taskId, taskId),
-          eq(taskReviews.status, REVIEW_STATUS.PENDING),
-          isNull(taskReviews.reviewerId),
-        );
-    await db.update(taskReviews).set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() }).where(debrisCond);
+        ),
+      );
   }
   await db
-    .update(taskObligations)
-    .set({ status: OBLIGATION_STATUS.CANCELLED, resolvedAt: new Date() })
+    .delete(taskObligations)
     .where(
       and(
         eq(taskObligations.taskId, taskId),

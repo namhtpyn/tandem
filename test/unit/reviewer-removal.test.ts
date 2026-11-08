@@ -26,9 +26,10 @@ const h = vi.hoisted(() => ({
   /** the departing reviewer's pending APPROVAL obligations: select({id}) from taskObligations */
   obligationSelect: [] as Array<{ id: string }>,
   updates: [] as Array<{ table: string; set: Record<string, unknown>; cond: unknown }>,
+  deletes: [] as Array<{ table: string; cond: unknown }>,
   cancelled: [] as string[],
   cancelledAll: [] as string[],
-  cancelledById: [] as string[],
+  deletedById: [] as string[],
   resolved: [] as string[],
   notes: [] as Array<{ body: string; payload: Record<string, unknown> }>,
   regated: [] as string[],
@@ -68,6 +69,12 @@ vi.mock('../../server/db/index', async () => {
             }),
           innerJoin: () => rowsThenable(async () => []),
         }),
+      }),
+      delete: (table: unknown) => ({
+        where: (cond: unknown) => {
+          h.deletes.push({ table: table === taskObligations ? 'taskObligations' : 'other', cond });
+          return Promise.resolve([]);
+        },
       }),
       update: (table: unknown) => ({
         set: (set: Record<string, unknown>) => ({
@@ -144,8 +151,8 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
     cancelAllObligations: async (...args: unknown[]) => {
       h.cancelledAll.push(String(args[0]));
     },
-    cancelObligationById: async (id: string) => {
-      h.cancelledById.push(id);
+    deleteObligationById: async (id: string) => {
+      h.deletedById.push(id);
     },
   };
 });
@@ -194,9 +201,10 @@ beforeEach(() => {
   h.leftoverSelect = [];
   h.obligationSelect = [];
   h.updates = [];
+  h.deletes = [];
   h.cancelled = [];
   h.cancelledAll = [];
-  h.cancelledById = [];
+  h.deletedById = [];
   h.resolved = [];
   h.notes = [];
   h.regated = [];
@@ -349,7 +357,7 @@ describe('employee removal halves (#365)', () => {
     });
     // a failed delete must change nothing: no writes in the capture half
     expect(h.updates).toHaveLength(0);
-    expect(h.cancelledById).toHaveLength(0);
+    expect(h.deletedById).toHaveLength(0);
   });
 
   it('settle half cancels the captured obligations, notes the captured rows, and settles every round', async () => {
@@ -363,7 +371,7 @@ describe('employee removal halves (#365)', () => {
       'Ada',
     );
     expect(settled).toEqual(['task-1', 'task-2']);
-    expect(h.cancelledById).toEqual(['ob-1', 'ob-2']);
+    expect(h.deletedById).toEqual(['ob-1', 'ob-2']);
     const note = h.updates.find((u) => u.table === 'taskReviews' && typeof u.set.note === 'string');
     expect(note?.set.note).toContain('Ada');
     // the note is scoped to the captured row ids, never a reviewer-wide sweep
@@ -394,14 +402,26 @@ describe('employee removal halves (#365)', () => {
     expect(await settleAllExtinguishedRounds()).toEqual(['task-1', 'task-2']);
   });
 
-  it('the removal sweep clears an orphaned null-holder approval obligation (round minted in the window)', async () => {
+  it('the removal sweep drops an orphaned null-holder approval obligation (round minted in the window)', async () => {
     h.leftoverSelect = [{ taskId: 'task-9' }];
     // a live voter still owns the round: the settle no-ops, but the orphaned
-    // obligation (holder nulled by the delete) must not keep counting forever
+    // obligation (holder nulled by the delete) must not keep counting forever —
+    // DELETED, not cancelled (a cancelled row reads as a dead round to the tally)
     h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: 'rev-live' }]];
     expect(await settleReviewerRemovalRounds({ taskIds: [], reviewRowIds: [], obligationIds: [] })).toEqual([]);
-    const cancel = h.updates.find((u) => u.table === 'taskObligations' && u.set.status === 'CANCELLED');
-    expect(cancel).toBeTruthy();
-    expect(renderCond(cancel?.cond)).toContain('"employee_id" is null');
+    const drop = h.deletes.find((d) => d.table === 'taskObligations');
+    expect(drop).toBeTruthy();
+    expect(renderCond(drop?.cond)).toContain('"employee_id" is null');
+  });
+
+  it('a BLOCKED task keeps its current-round void row — the unblock needs the signature (#365 r4)', async () => {
+    h.taskStatus = STATUS.todo;
+    h.leftoverSelect = [{ taskId: 'task-9' }];
+    h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]]; // settle no-ops: not in review
+    await settleReviewerRemovalRounds({ taskIds: [], reviewRowIds: [], obligationIds: [] });
+    const debris = h.updates.find((u) => u.table === 'taskReviews' && u.set.status === REVIEW_STATUS.SUPERSEDED);
+    // stale-round only: the current round's void row is the machine signature and
+    // must survive every status (a blocked/parked round settles on unblock)
+    expect(renderCond(debris?.cond)).toContain('"round" <');
   });
 });
