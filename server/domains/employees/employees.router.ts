@@ -22,6 +22,7 @@ import {
   user as userTable,
   vaultSecrets as vaultSecretsTable,
 } from '../../db/schema';
+import { requireUuid } from '../kernel/id-shape';
 import { ORPCError, adminProcedure, liveGenerator, protectedProcedure, publishChange } from '../kernel/kernel';
 
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/;
@@ -412,6 +413,7 @@ export const employeesRouter = os.router({
       }),
     )
     .handler(async ({ input }) => {
+      requireUuid(input.id, 'BAD_REQUEST', 'invalid employee id');
       const rows = await db.query.user.findMany({
         columns: { email: true },
         where: { id: { eq: input.id } },
@@ -562,6 +564,7 @@ export const employeesRouter = os.router({
   },
 
   remove: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input, context }) => {
+    requireUuid(input.id, 'BAD_REQUEST', 'invalid employee id');
     // guard: cannot delete yourself (session may be absent in raw handler tests)
     const selfId = (context as { session?: { user?: { id?: string } } }).session?.user?.id;
     if (selfId && selfId === input.id) {
@@ -634,6 +637,7 @@ export const employeesRouter = os.router({
       }),
     )
     .handler(async ({ input }) => {
+      requireUuid(input.employeeId, 'BAD_REQUEST', 'invalid employee id');
       const rows = await db.query.user.findMany({
         columns: { id: true, name: true },
         where: { id: { eq: input.employeeId } },
@@ -656,6 +660,8 @@ export const employeesRouter = os.router({
       }),
     )
     .handler(async ({ input }) => {
+      requireUuid(input.keyId, 'BAD_REQUEST', 'invalid api key id');
+      if (input.employeeId !== undefined) requireUuid(input.employeeId, 'BAD_REQUEST', 'invalid employee id');
       const name = input.name.trim();
       if (!name) throw new ORPCError('BAD_REQUEST', { message: 'name is required' });
       const updated = await db
@@ -718,6 +724,8 @@ export const employeesRouter = os.router({
       }),
     )
     .handler(async ({ input }) => {
+      requireUuid(input.keyId, 'BAD_REQUEST', 'invalid api key id');
+      if (input.employeeId !== undefined) requireUuid(input.employeeId, 'BAD_REQUEST', 'invalid employee id');
       const deleted = await db
         .delete(apikeyTable)
         .where(

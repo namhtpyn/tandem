@@ -25,6 +25,7 @@ import {
   taskMessages,
 } from '../../db/schema';
 import { env } from '../kernel/env';
+import { requireUuid } from '../kernel/id-shape';
 import {
   ORPCError,
   employeeProcedure,
@@ -286,11 +287,32 @@ async function activitySnapshot(taskId: string) {
   }));
 }
 
-/** the referenced assignee/project must exist before a task write points at them */
-async function requireExistingRefs(input: { assigneeId?: string | null; projectId?: string | null }) {
+/** the referenced assignee/owner/reviewer/project must exist before a task write
+ *  points at them — and every uuid-typed ref is shape-checked first (ID-SHAPE LAW:
+ *  a malformed id is malformed input, never a 500 from Postgres 22P02) */
+async function requireExistingRefs(input: {
+  assigneeId?: string | null;
+  ownerId?: string | null;
+  reviewers?: string[] | null;
+  projectId?: string | null;
+}) {
   if (input.assigneeId) {
+    requireUuid(input.assigneeId, 'BAD_REQUEST', 'assignee does not exist');
     const u = await db.query.user.findFirst({ columns: { id: true }, where: { id: { eq: input.assigneeId } } });
     if (!u) throw new ORPCError('BAD_REQUEST', { message: 'assignee does not exist' });
+  }
+  if (input.ownerId) {
+    requireUuid(input.ownerId, 'BAD_REQUEST', 'owner does not exist');
+    const u = await db.query.user.findFirst({ columns: { id: true }, where: { id: { eq: input.ownerId } } });
+    if (!u) throw new ORPCError('BAD_REQUEST', { message: 'owner does not exist' });
+  }
+  if (input.reviewers) {
+    // stored as text[] (no uuid column at write time), but every reviewer id later
+    // lands in task_reviews.reviewer_id (uuid) when the round opens — keep the
+    // stored ids canonical so a malformed one can never wedge the submit path
+    for (const reviewerId of input.reviewers) {
+      requireUuid(reviewerId, 'BAD_REQUEST', 'reviewer does not exist');
+    }
   }
   if (input.projectId) {
     const p = await db

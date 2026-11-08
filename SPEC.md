@@ -728,6 +728,17 @@ Rules:
 - procedure errors map to oRPC codes: `CONFLICT` 409 duplicate name,
   `NOT_FOUND` 404, `BAD_REQUEST` 400 schema violations, `FORBIDDEN` 403 role gate
   (see Roles & access)
+- **ID-SHAPE LAW (#358):** every uuid-typed id input is shape-checked against
+  the canonical wire form (`shared/utils/is-uuid.ts`) at the handler edge,
+  before any query builder sees it. Outcome by surface, never per call site:
+  a READ / lookup answers `NOT_FOUND` (a malformed id is a miss, never a 500);
+  a WRITE answers `BAD_REQUEST` for every id it stores or scopes by (target,
+  assignee, owner, reviewer, employee) — a malformed id is malformed input,
+  never a claim that a row is missing; a LIST FILTER short-circuits to the
+  specced empty page (a filter is not a lookup). A raw non-uuid string must
+  never reach a uuid column: Postgres raises 22P02 ('invalid input syntax for
+  type uuid') and the client would see a 500. Writes also answer `BAD_REQUEST`
+  when a referenced assignee/owner does not exist.
 - input validation: zod `strictObject` everywhere (unknown keys rejected)
 - wire format: POST `/rpc/<path>`, body `{ "json": <input> }`,
   `content-type: application/json`; responses `{ "json": <result> }`
