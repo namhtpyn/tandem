@@ -13,6 +13,7 @@ import {
   type ActivityKind,
 } from '#shared/enums';
 import type { TaskRow, TaskRowFull } from '#shared/types';
+import { isUuid } from '#shared/utils/is-uuid';
 import { nonNull } from '#shared/utils/non-null';
 
 import { db } from '../../db/index';
@@ -78,9 +79,6 @@ async function runWorkflow(fn: () => Promise<unknown>) {
     throw new ORPCError('BAD_REQUEST', { message: (e as Error).message });
   }
 }
-
-/** canonical uuid shape (any version) — the assignee scope filters a uuid column */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** group output attachments by their run id (inputs are not part of run payloads) */
 export function groupOutputsByRun(
@@ -194,7 +192,7 @@ async function listTasksPaged(
   // non-uuid filter value can never match AND passing it into the comparison
   // throws a Postgres uuid parse error (a 500 instead of the specced empty
   // page). A filter is not a lookup: short-circuit the miss before the query.
-  if (input.assigneeId !== undefined && !UUID_RE.test(input.assigneeId)) {
+  if (input.assigneeId !== undefined && !isUuid(input.assigneeId)) {
     return { data: [] as TaskRow[], total: 0 };
   }
   // user-facing filters (search / status / project / assignee scope) in ONE
