@@ -502,7 +502,7 @@ export const tasksRouter = os.router({
     )
     .handler(async ({ input, context }) => {
       const refs = normalizeTaskRefs(input);
-      await requireExistingRefs(refs);
+      await requireExistingRefs({ ...refs, projectId: input.projectId });
       const status = await resolveCreatedStatus(input.status);
       const session = await (
         context as unknown as { getSession: () => Promise<{ user: { id: string } } | null> }
@@ -573,7 +573,7 @@ export const tasksRouter = os.router({
         }
       }
     }
-    await requireExistingRefs(refs);
+    await requireExistingRefs({ ...refs, projectId: input.projectId });
     const actorId = await selfIdOf(context);
     await db
       .update(tasksTable)
@@ -754,9 +754,10 @@ export const tasksRouter = os.router({
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
       // the forward target becomes a task_obligations.employee_id (uuid) and is
-      // looked up in "user" — a malformed id is malformed input, never a 22P02 500
-      requireUuid(input.toEmployeeId, 'BAD_REQUEST', 'invalid employee id');
-      return await runWorkflow(() => forwardQuestion(input.taskId, selfId, input.toEmployeeId, input.body ?? ''));
+      // stored in the question_chain text[] — canonicalize so the chain's JS
+      // comparisons and the uuid columns agree with Postgres
+      const toEmployeeId = canonicalUuid(input.toEmployeeId, 'invalid employee id');
+      return await runWorkflow(() => forwardQuestion(input.taskId, selfId, toEmployeeId, input.body ?? ''));
     }),
 
   /** anyone in the chain answers → assignee resumes */

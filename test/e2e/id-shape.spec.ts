@@ -145,6 +145,22 @@ test('task writes shape-check assignee, owner and reviewer ids', async ({ page }
     400,
     'assignee does not exist',
   );
+  // project ids are text-typed (outside the shape law) but their existence is a
+  // write contract: an unknown project is BAD_REQUEST, never an FK 500
+  await expectRpcError(
+    page,
+    'tasks/create',
+    { title: 'bogus project', projectId: 'no-such-project' },
+    400,
+    'project does not exist',
+  );
+  await expectRpcError(
+    page,
+    'tasks/update',
+    { id: taskId, projectId: 'no-such-project' },
+    400,
+    'project does not exist',
+  );
 
   // positive control: the very same writes with real ids still land
   const okTask = await post(page, 'tasks/create', {
@@ -280,4 +296,45 @@ test('task forward shape-checks the target employee id at the handler edge', asy
   expect(asked.status()).toBe(200);
 
   await expectRpcError(page, 'tasks/forward', { taskId, toEmployeeId: MALFORMED }, 400, 'invalid employee id');
+});
+
+test('task forward canonicalizes the target id so the chain answer gate matches', async ({ page }) => {
+  // a forward target must sit below someone in the hierarchy
+  const boss = await createEmployee(page, 'fwd-boss');
+  const targetRes = await post(page, 'employees/create', {
+    name: 'Fwd Target',
+    email: `fwd-target-${Date.now().toString(36)}@tandem.local`,
+    kind: 'human',
+    title: 'Tester',
+    supervisorIds: [boss.id],
+  });
+  expect(targetRes.status()).toBe(200);
+  const target = (await targetRes.json()).json as { id: string };
+  const keyRes = await post(page, 'employees/createApiKey', { employeeId: target.id });
+  expect(keyRes.status()).toBe(200);
+  const apiKey = (await keyRes.json()).json.key as string;
+
+  const taskRes = await post(page, 'tasks/create', {
+    title: `Id shape fwd case ${Date.now().toString(36)}`,
+    assigneeId: target.id,
+  });
+  expect(taskRes.status()).toBe(200);
+  const taskId = (await taskRes.json()).json.id as string;
+  const statusesRes = await post(page, 'statuses/list', null);
+  const statuses = ((await statusesRes.json()).json ?? []) as { id: string; category: string }[];
+  const working = statuses.find((s) => s.category === 'working');
+  expect(working).toBeTruthy();
+  expect((await post(page, 'tasks/setStatus', { id: taskId, status: working!.id })).status()).toBe(200);
+  expect((await post(page, 'tasks/ask', { taskId, body: 'id-shape forward case probe' })).status()).toBe(200);
+
+  // forward with the UPPERCASE form: the chain must store the lowercase id, or the
+  // target's own (lowercase) session id cannot match the answer gate
+  const forwarded = await post(page, 'tasks/forward', { taskId, toEmployeeId: target.id.toUpperCase() });
+  expect(forwarded.status()).toBe(200);
+
+  const answer = await page.request.post('/rpc/tasks/answer', {
+    data: { json: { taskId, body: 'answered as the lowercase session' } },
+    headers: { 'x-api-key': apiKey },
+  });
+  expect(answer.status()).toBe(200);
 });
