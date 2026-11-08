@@ -236,7 +236,10 @@ export async function pendingTaskIds() {
   const rows = await db
     .selectDistinct({ taskId: taskObligations.taskId })
     .from(taskObligations)
-    .where(eq(taskObligations.status, OBLIGATION_STATUS.PENDING));
+    // a NULL holder owes nothing: the row is a removed-employee machine signature
+    // (#369), never a decision a human can act on — the awaiting-decision queue must
+    // not count it
+    .where(and(eq(taskObligations.status, OBLIGATION_STATUS.PENDING), isNotNull(taskObligations.employeeId)));
   return rows.map((r) => r.taskId);
 }
 

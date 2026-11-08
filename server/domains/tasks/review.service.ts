@@ -12,7 +12,7 @@
 // Parks (round cannot progress without a human) flip the task to BLOCKED; owner
 // resolution unblocks and the round resumes. Manual done/cancel supersedes the round.
 import { consola } from 'consola';
-import { and, desc, eq, inArray, isNull, lt, notInArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, ne, notInArray } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { db, type DbExecutor } from '../../db/index';
@@ -762,10 +762,13 @@ async function settleAnswerHolderRemoval(
 }
 
 /** the task still sits in a waiting-answer category with NO live holder — the state
- *  whose only machine signature is the departed holder's NULL-holder PENDING row. */
+ *  whose only machine signature is the departed holder's NULL-holder PENDING row.
+ *  A BLOCKED task counts as still-waiting: its pre_block/park origin may be the
+ *  waiting-answer status the unblock restores (the #365 rule), so its rows are kept. */
 async function taskStillWaitsOnOrphan(taskId: string): Promise<boolean> {
   const row = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
   if (!row) return false;
+  if (row.status === BLOCKED_STATUS) return true;
   if ((await categoryOf(row.status)) !== CATEGORY.WAITING_ANSWER) return false;
   return !(await hasPendingAnswerHolder(taskId));
 }
@@ -780,13 +783,18 @@ async function sweepOrphanAnswerHolders(settledTaskIds: string[]) {
     leftoverAnswers = await db
       .select({ taskId: taskObligations.taskId })
       .from(taskObligations)
+      .innerJoin(tasks, eq(tasks.id, taskObligations.taskId))
       .where(
         and(
           eq(taskObligations.role, OBLIGATION_ROLE.ANSWER),
           eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
           isNull(taskObligations.employeeId),
+          // a BLOCKED task keeps its signature by contract (#369): never let those rows
+          // occupy the scan window — oldest first so a real orphan is never starved
+          ne(tasks.status, BLOCKED_STATUS),
         ),
       )
+      .orderBy(taskObligations.createdAt)
       .limit(50);
   } catch (e) {
     log.warn('answer holder removal: orphan answer scan failed:', e instanceof Error ? e.message : e);
@@ -874,13 +882,17 @@ export async function settleAllExtinguishedRounds(): Promise<string[]> {
     const rows = await db
       .select({ taskId: taskObligations.taskId })
       .from(taskObligations)
+      .innerJoin(tasks, eq(tasks.id, taskObligations.taskId))
       .where(
         and(
           eq(taskObligations.role, OBLIGATION_ROLE.ANSWER),
           eq(taskObligations.status, OBLIGATION_STATUS.PENDING),
           isNull(taskObligations.employeeId),
+          // BLOCKED tasks keep their signature by contract (#369) — never scan them
+          ne(tasks.status, BLOCKED_STATUS),
         ),
       )
+      .orderBy(taskObligations.createdAt)
       .limit(200);
     answerTaskIds = [...new Set(rows.map((r) => r.taskId))];
   } catch (e) {

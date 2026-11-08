@@ -87,8 +87,9 @@ vi.mock('../../server/db/index', async () => {
     asDb: (x: unknown) => x,
     db: {
       select: (arg?: Record<string, unknown>) => ({
-        from: (table: unknown) => ({
-          where: (cond: unknown) =>
+        from: (table: unknown) => {
+          const node: Record<string, unknown> = {};
+          node.where = (cond: unknown) =>
             rowsThenable(() => {
               const keys = arg ? Object.keys(arg) : [];
               if (table === tasks) {
@@ -128,9 +129,10 @@ vi.mock('../../server/db/index', async () => {
               }
               if (table === taskRuns) return Promise.resolve([]);
               return Promise.resolve([]);
-            }),
-          innerJoin: () => rowsThenable(async () => []),
-        }),
+            });
+          node.innerJoin = () => node;
+          return node;
+        },
       }),
       delete: (table: unknown) => ({
         where: (cond: unknown) => {
@@ -358,6 +360,19 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     expect(h.updates).toEqual([]);
     expect(h.notes).toEqual([]);
     expect(h.seq).toEqual([]);
+  });
+
+  it('the REMOVAL half never cancels a BLOCKED task’s captured rows (#369 r5)', async () => {
+    h.taskStatus = STATUS.blocked;
+    h.statuses = [{ id: STATUS.blocked, category: 'paused' }];
+    const res = await settleReviewerRemovalRounds(
+      plan({ answerObligations: [{ id: 'ans-1', taskId: 'task-1' }] }),
+      'Ada',
+    );
+    // the departing row is the signature its pre-block waiting-answer restore needs
+    expect(h.cancelledById).toEqual([]);
+    expect(h.updates.filter((u) => u.table === 'taskObligations')).toEqual([]);
+    expect(res).toEqual([]);
   });
 
   it('a waiting task with ANOTHER live holder keeps waiting — only the orphan row is cleared', async () => {
