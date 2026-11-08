@@ -31,6 +31,7 @@ const h = vi.hoisted(() => ({
   cancelledById: [] as string[],
   resolved: [] as string[],
   notes: [] as Array<{ body: string; payload: Record<string, unknown> }>,
+  regated: [] as string[],
   published: 0,
   flipWins: true,
   casMiss: false,
@@ -153,6 +154,12 @@ vi.mock('../../server/domains/tasks/runner.service', () => ({
   dispatchTask: async () => {},
 }));
 
+vi.mock('../../server/domains/tasks/gating.service', () => ({
+  refreshParentGating: async (taskId: string) => {
+    h.regated.push(taskId);
+  },
+}));
+
 import {
   openRoundLive,
   prepareReviewerRemoval,
@@ -192,6 +199,7 @@ beforeEach(() => {
   h.cancelledById = [];
   h.resolved = [];
   h.notes = [];
+  h.regated = [];
   h.published = 0;
   h.flipWins = true;
   h.casMiss = false;
@@ -237,6 +245,8 @@ describe('settleExtinguishedRound (#365)', () => {
     expect(flipSql).toContain('"updated_at" =');
     expect(h.cancelledAll).toEqual(['task-1']);
     expect(h.notes.at(-1)?.body).toContain('no reviewers remain');
+    // a bounce is NOT terminal: no parent re-gate (the task stays open)
+    expect(h.regated).toEqual([]);
   });
 
   it('a deleted reviewer plus decided approvals still completes the task — and closes every pending row', async () => {
@@ -248,10 +258,14 @@ describe('settleExtinguishedRound (#365)', () => {
     ];
     expect(await settleExtinguishedRound('task-1')).toBe(true);
     expect(h.updates.find((u) => u.table === 'tasks')?.set.status).toBe(STATUS.done);
-    // terminal arm: task-wide supersede of every pending row (all rounds) + all approvals cancel
+    // terminal arm: task-wide supersede of every pending row (all rounds); the approved
+    // round keeps its FULFILLED approvals (matrix parity with settleRound)
     const sweeps = h.updates.filter((u) => u.table === 'taskReviews' && u.set.status === REVIEW_STATUS.SUPERSEDED);
     expect(sweeps.length).toBeGreaterThanOrEqual(2);
-    expect(h.cancelledAll).toEqual(['task-1']);
+    expect(h.cancelled).toEqual(['task-1']);
+    expect(h.cancelledAll).toEqual([]);
+    // a TERMINAL settle re-gates the task's parents (an auto-blocked parent unblocks)
+    expect(h.regated).toEqual(['task-1']);
   });
 
   it('a deleted reviewer plus a decided rejection cancels the task', async () => {
@@ -305,11 +319,17 @@ describe('settleExtinguishedRound (#365)', () => {
     expect(h.updates).toHaveLength(0);
   });
 
-  it('a lost flip (concurrent settle/move) writes no note and reports false', async () => {
+  it('a lost flip (concurrent settle/move) leaves the void row intact — the next trigger can still heal', async () => {
     h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]];
     h.flipWins = false;
     expect(await settleExtinguishedRound('task-1')).toBe(false);
     expect(h.notes).toHaveLength(0);
+    // FLIP-FIRST: the machine signature (the void pending row) is only extinguished
+    // after a WON flip, so a lost CAS never strands an unhealable in-review round
+    expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(1);
+    expect(
+      h.updates.filter((u) => u.table === 'taskReviews' && u.set.status === REVIEW_STATUS.SUPERSEDED),
+    ).toHaveLength(0);
   });
 });
 
@@ -342,7 +362,7 @@ describe('employee removal halves (#365)', () => {
       { taskIds: ['task-1', 'task-2'], reviewRowIds: ['row-1', 'row-3'], obligationIds: ['ob-1', 'ob-2'] },
       'Ada',
     );
-    expect(settled).toBe(2);
+    expect(settled).toEqual(['task-1', 'task-2']);
     expect(h.cancelledById).toEqual(['ob-1', 'ob-2']);
     const note = h.updates.find((u) => u.table === 'taskReviews' && typeof u.set.note === 'string');
     expect(note?.set.note).toContain('Ada');
@@ -361,7 +381,7 @@ describe('employee removal halves (#365)', () => {
     h.leftoverSelect = [{ taskId: 'task-9' }];
     h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: null }]];
     const settled = await settleReviewerRemovalRounds({ taskIds: [], reviewRowIds: [], obligationIds: [] });
-    expect(settled).toBe(1);
+    expect(settled).toEqual(['task-9']);
     expect(h.updates.find((u) => u.table === 'tasks' && u.set.status === STATUS.todo)).toBeTruthy();
   });
 
@@ -371,7 +391,7 @@ describe('employee removal halves (#365)', () => {
       [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
       [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
     ];
-    expect(await settleAllExtinguishedRounds()).toBe(2);
+    expect(await settleAllExtinguishedRounds()).toEqual(['task-1', 'task-2']);
   });
 
   it('the removal sweep clears an orphaned null-holder approval obligation (round minted in the window)', async () => {
@@ -379,7 +399,7 @@ describe('employee removal halves (#365)', () => {
     // a live voter still owns the round: the settle no-ops, but the orphaned
     // obligation (holder nulled by the delete) must not keep counting forever
     h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: 'rev-live' }]];
-    expect(await settleReviewerRemovalRounds({ taskIds: [], reviewRowIds: [], obligationIds: [] })).toBe(0);
+    expect(await settleReviewerRemovalRounds({ taskIds: [], reviewRowIds: [], obligationIds: [] })).toEqual([]);
     const cancel = h.updates.find((u) => u.table === 'taskObligations' && u.set.status === 'CANCELLED');
     expect(cancel).toBeTruthy();
     expect(renderCond(cancel?.cond)).toContain('"employee_id" is null');

@@ -299,6 +299,15 @@ async function extinguishVoidPendingRows(taskId: string, round: number) {
     );
 }
 
+/** supersede EVERY pending row in EVERY round — a terminal settle closes the whole
+ *  task (#361 r6): a done/cancelled task must never keep a pending review row. */
+async function supersedeAllPendingRows(taskId: string) {
+  await db
+    .update(taskReviews)
+    .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
+    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
+}
+
 /** settle a round left with NO live voter because its reviewer was deleted (#365):
  *  the normal matrix runs without the verdict that can never arrive — every decided
  *  row approved -> done, every decided row rejected -> cancelled, otherwise back to
@@ -321,13 +330,16 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
   if (!rows.some(voidPending)) return false; // machine signature only — never a manual state
   if (rows.some((r) => r.status === REVIEW_STATUS.PENDING && r.reviewerId !== null)) return false; // a live voter owns the round
-  await extinguishVoidPendingRows(taskId, round);
   const live = rows.filter(
     (r) => r.status !== REVIEW_STATUS.ESCALATED && r.status !== REVIEW_STATUS.SUPERSEDED && !voidPending(r),
   );
   const allApproved = live.length > 0 && live.every((r) => r.status === REVIEW_STATUS.APPROVED);
   const allRejected = live.length > 0 && live.every((r) => r.status === REVIEW_STATUS.REJECTED);
   const target = allApproved ? DONE_STATUS : allRejected ? CANCELLED_STATUS : TODO_STATUS;
+  // FLIP FIRST (#365 r3): the void pending row is the trigger every later heal keys on,
+  // so it is extinguished only AFTER the flip wins — a lost CAS must leave the machine
+  // signature intact for the next trigger, never strand an in-review round nothing can
+  // ever settle again.
   const flipped = await db
     .update(tasks)
     .set({ status: target, updatedAt: new Date() })
@@ -337,16 +349,12 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
     .where(and(eq(tasks.id, taskId), eq(tasks.status, taskRow.status), eq(tasks.updatedAt, taskRow.updatedAt)))
     .returning({ id: tasks.id });
   if (flipped.length === 0) return false; // a concurrent settle/move owns the outcome
-  if (allApproved || allRejected) {
-    // a TERMINAL settle closes EVERY pending row in EVERY round (#361 r6) — a
-    // torn-down older round can still carry a pending row, and a done task must
-    // never keep one
-    await db
-      .update(taskReviews)
-      .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
-      .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
-  }
-  await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+  await extinguishVoidPendingRows(taskId, round);
+  if (allApproved || allRejected) await supersedeAllPendingRows(taskId); // #361 r6: no pending row outlives a terminal task
+  // matrix parity: an approved round keeps its FULFILLED approvals (audit + approver
+  // tally), a cancelled/returned round is dead for approval purposes
+  if (allApproved) await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+  else await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
   await logActivity(
     taskId,
     ACTIVITY_KIND.STATUS,
@@ -359,19 +367,18 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
     { roundClosed: true, round, reviewersRemoved: true },
   );
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+  if (target !== TODO_STATUS) {
+    // a TERMINAL settle flips the task's status: re-gate its parents (every other
+    // lifecycle flip does — an auto-blocked parent must unblock when its last child
+    // lands terminal). Dynamic import keeps the module graph acyclic at load time.
+    try {
+      const { refreshParentGating } = await import('./gating.service');
+      await refreshParentGating(taskId);
+    } catch (e) {
+      log.warn(`settle: parent re-gate failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+  }
   return true;
-}
-
-/** does the current round carry a void pending row (its reviewer was deleted)? The
- *  machine signature callers use to choose between resuming and settling (#365). */
-export async function roundCarriesVoidPending(taskId: string): Promise<boolean> {
-  const round = await currentRound(taskId);
-  if (round === 0) return false;
-  const rows = await db
-    .select({ status: taskReviews.status, reviewerId: taskReviews.reviewerId })
-    .from(taskReviews)
-    .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.round, round)));
-  return rows.some(voidPending);
 }
 
 /** REVIEWER REMOVAL, prepare half (#365): a READ-ONLY capture taken BEFORE the
@@ -414,7 +421,7 @@ export async function prepareReviewerRemoval(employeeId: string): Promise<Review
  *  the prepare→delete window and any removal that crashed mid-way). Every step is
  *  fault-isolated: the delete already committed, so a heal failure must never 500
  *  the caller or skip the employee-delete bookkeeping; the boot heal retries. */
-export async function settleReviewerRemovalRounds(plan: ReviewerRemovalPlan, name?: string): Promise<number> {
+export async function settleReviewerRemovalRounds(plan: ReviewerRemovalPlan, name?: string): Promise<string[]> {
   for (const obligationId of plan.obligationIds) {
     try {
       await cancelObligationById(obligationId);
@@ -440,46 +447,55 @@ export async function settleReviewerRemovalRounds(plan: ReviewerRemovalPlan, nam
   }
   let leftover: Array<{ taskId: string }> = [];
   try {
+    // bounded: a delete heals at most this many tasks synchronously; the rest drain
+    // through the next boot heal (never an unbounded job inside one RPC)
     leftover = await db
       .select({ taskId: taskReviews.taskId })
       .from(taskReviews)
-      .where(and(eq(taskReviews.status, REVIEW_STATUS.PENDING), isNull(taskReviews.reviewerId)));
+      .where(and(eq(taskReviews.status, REVIEW_STATUS.PENDING), isNull(taskReviews.reviewerId)))
+      .limit(50);
   } catch (e) {
     log.warn('reviewer removal: void review row scan failed:', e instanceof Error ? e.message : e);
   }
   const taskIds = [...new Set([...plan.taskIds, ...leftover.map((r) => r.taskId)])];
-  let settled = 0;
+  const settledTaskIds: string[] = [];
   for (const taskId of taskIds) {
     try {
-      if (await settleExtinguishedRound(taskId)) settled += 1;
+      if (await settleExtinguishedRound(taskId)) settledTaskIds.push(taskId);
       await cleanVoidReviewDebris(taskId);
     } catch (e) {
       log.warn(`reviewer removal: could not settle round for task ${taskId}:`, e instanceof Error ? e.message : e);
     }
   }
-  return settled;
+  return settledTaskIds;
 }
 
 /** void rows in NON-current rounds are audit debris (a round the matrix has moved
- *  past can never settle), and a PENDING approval obligation whose holder is NULL
- *  belongs to a deleted employee — `pendingTaskIds()` still counts it and retention
- *  leg 2 refuses to delete the task's resolved rows while it lives. Both are cleared
- *  for tasks the removal/heal touched; the CURRENT round's void row is kept until
- *  settleExtinguishedRound consumes it (it is the machine signature). */
+ *  past can never settle), and so is a void row in the CURRENT round while the task
+ *  is NOT in a review state (nothing there can consume it). A PENDING approval
+ *  obligation whose holder is NULL belongs to a deleted employee — `pendingTaskIds()`
+ *  still counts it and retention leg 2 refuses to delete the task's resolved rows
+ *  while it lives. All are cleared for tasks the removal/heal touched; a CURRENT
+ *  round's void row is kept while the task IS in review — it is the machine
+ *  signature settleExtinguishedRound consumes. */
 async function cleanVoidReviewDebris(taskId: string) {
+  const taskRow = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
   const round = await currentRound(taskId);
+  const inReview = taskRow ? (await categoryOf(taskRow.status)) === CATEGORY.IN_REVIEW : false;
   if (round > 0) {
-    await db
-      .update(taskReviews)
-      .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
-      .where(
-        and(
+    const debrisCond = inReview
+      ? and(
           eq(taskReviews.taskId, taskId),
           eq(taskReviews.status, REVIEW_STATUS.PENDING),
           isNull(taskReviews.reviewerId),
           lt(taskReviews.round, round),
-        ),
-      );
+        )
+      : and(
+          eq(taskReviews.taskId, taskId),
+          eq(taskReviews.status, REVIEW_STATUS.PENDING),
+          isNull(taskReviews.reviewerId),
+        );
+    await db.update(taskReviews).set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() }).where(debrisCond);
   }
   await db
     .update(taskObligations)
@@ -498,29 +514,31 @@ async function cleanVoidReviewDebris(taskId: string) {
  *  no live voter — the shape a removal that crashed between the user delete and the
  *  settle leaves behind — and clear the void debris (stale-round rows, orphaned
  *  approval obligations) left by any earlier removal. Idempotent; the scan reads
- *  PENDING rows only. Never throws (boot must not fail on a heal). */
-export async function settleAllExtinguishedRounds(): Promise<number> {
+ *  PENDING rows only (bounded — the rest drain on the next boot). Never throws (boot
+ *  must not fail on a heal). Returns the settled task ids. */
+export async function settleAllExtinguishedRounds(): Promise<string[]> {
   let taskIds: string[];
   try {
     const rows = await db
       .select({ taskId: taskReviews.taskId })
       .from(taskReviews)
-      .where(and(eq(taskReviews.status, REVIEW_STATUS.PENDING), isNull(taskReviews.reviewerId)));
+      .where(and(eq(taskReviews.status, REVIEW_STATUS.PENDING), isNull(taskReviews.reviewerId)))
+      .limit(200);
     taskIds = [...new Set(rows.map((r) => r.taskId))];
   } catch (e) {
     log.warn('void review row scan failed:', e instanceof Error ? e.message : e);
-    return 0;
+    return [];
   }
-  let settled = 0;
+  const settledTaskIds: string[] = [];
   for (const taskId of taskIds) {
     try {
-      if (await settleExtinguishedRound(taskId)) settled += 1;
+      if (await settleExtinguishedRound(taskId)) settledTaskIds.push(taskId);
       await cleanVoidReviewDebris(taskId);
     } catch (e) {
       log.warn(`void review round heal failed for task ${taskId}:`, e instanceof Error ? e.message : e);
     }
   }
-  return settled;
+  return settledTaskIds;
 }
 
 /** the submitted result the current round is judging — the round rows carry it
@@ -910,6 +928,7 @@ async function settleRound(
         ? { outcome: 'parked' }
         : { outcome: 'superseded' };
     await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+    await supersedeAllPendingRows(taskId); // #361 r6: no pending row outlives a terminal task
     await logVerdict(taskId, reviewerId, note || 'rejected — task cancelled', { rejected: true, round }, source);
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'cancelled' };
@@ -920,6 +939,7 @@ async function settleRound(
         ? { outcome: 'parked' }
         : { outcome: 'superseded' };
     await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
+    await supersedeAllPendingRows(taskId); // #361 r6: no pending row outlives a terminal task
     await logVerdict(
       taskId,
       reviewerId,

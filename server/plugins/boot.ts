@@ -38,7 +38,7 @@ export default defineNitroPlugin(async () => {
   try {
     const { settleAllExtinguishedRounds } = await import('../domains/tasks/review.service');
     const healed = await settleAllExtinguishedRounds();
-    if (healed > 0) log.info(`review rounds settled without a live reviewer: ${healed}`);
+    if (healed.length > 0) log.info(`review rounds settled without a live reviewer: ${healed.length}`);
   } catch (e) {
     log.warn('void review round heal failed:', e);
   }

@@ -360,7 +360,10 @@ describe('waiting-answer verdict hold (#288)', () => {
     h.taskRows = [{ status: 'st-review' }];
     const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
     expect(outcome).toEqual({ outcome: 'done' });
-    expect(h.reviewUpdates).toHaveLength(1); // only the verdict CAS — no revert
+    // the verdict CAS + the terminal task-wide supersede (#365 r3 / #361 r6: no pending
+    // row outlives a terminal task) — no hold revert
+    expect(h.reviewUpdates).toHaveLength(2);
+    expect(h.reviewUpdates[1]!.set.status).toBe(REVIEW_STATUS.SUPERSEDED);
     expect(h.taskUpdates[0]!.set.status).toBe(STATUS.done);
   });
 });

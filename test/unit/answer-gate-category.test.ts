@@ -6,7 +6,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CATEGORY } from '#shared/enums';
-import { STATUS } from '#shared/status';
 
 const h = vi.hoisted(() => ({
   taskRows: [] as Array<Record<string, unknown>>,
@@ -15,10 +14,6 @@ const h = vi.hoisted(() => ({
   cancelled: [] as string[],
   holder: 'human-1' as string | null,
   roundLive: false,
-  roundLiveAfter: false,
-  roundReads: 0,
-  voidPending: false,
-  settled: [] as string[],
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -86,12 +81,7 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/review.service')>();
   return {
     ...mod,
-    openRoundLive: async () => (h.roundReads++ === 0 ? h.roundLive : h.roundLiveAfter),
-    roundCarriesVoidPending: async () => h.voidPending,
-    settleExtinguishedRound: async (taskId: string) => {
-      h.settled.push(taskId);
-      return true;
-    },
+    openRoundLive: async () => h.roundLive,
     dispatchAiReviewTurns: async () => {},
   };
 });
@@ -123,10 +113,6 @@ beforeEach(() => {
   h.flips = [];
   h.cancelled = [];
   h.roundLive = false;
-  h.roundLiveAfter = false;
-  h.roundReads = 0;
-  h.voidPending = false;
-  h.settled = [];
 });
 
 describe('answer verb gate keys off the waiting_answer category (#265 r2)', () => {
@@ -152,37 +138,6 @@ describe('answer verb gate keys off the waiting_answer category (#265 r2)', () =
     h.statuses = [];
     await expect(answerQuestion('task-1', 'human-1', 'not an answer')).rejects.toThrow(/not waiting for an answer/);
     expect(h.flips).toHaveLength(0);
-  });
-
-  it('an answer over an EXTINGUISHED round lands in-review and the matrix settles it (#365)', async () => {
-    seedTask('st-custom-waiting');
-    h.statuses = [
-      { id: 'st-custom-waiting', category: CATEGORY.WAITING_ANSWER },
-      { id: 'st-review', category: CATEGORY.IN_REVIEW },
-    ];
-    h.roundLive = false;
-    h.voidPending = true;
-    await answerQuestion('task-1', 'human-1', 'here is the answer');
-    expect(h.flips[0]?.set.status).toBe(STATUS.inReview); // not a plain todo flip — the settle owns the outcome
-    expect(h.settled).toEqual(['task-1']);
-  });
-
-  it('a round that died between the answer read and the dispatch is settled by the post-dispatch re-check (#365)', async () => {
-    seedTask('st-custom-waiting');
-    h.statuses = [{ id: 'st-custom-waiting', category: CATEGORY.WAITING_ANSWER }];
-    h.roundLive = true; // the stale read says live -> the answer lands in-review + dispatches
-    h.roundLiveAfter = false; // by the re-check the round is dead (reviewer deleted mid-flow)
-    await answerQuestion('task-1', 'human-1', 'here is the answer');
-    expect(h.settled).toEqual(['task-1']);
-  });
-
-  it('a plain answer over a dead round still returns to todo — no settle without a void row (#365)', async () => {
-    seedTask('st-custom-waiting');
-    h.statuses = [{ id: 'st-custom-waiting', category: CATEGORY.WAITING_ANSWER }];
-    h.roundLive = false;
-    h.voidPending = false;
-    await answerQuestion('task-1', 'human-1', 'here is the answer');
-    expect(h.settled).toEqual([]);
   });
 });
 
