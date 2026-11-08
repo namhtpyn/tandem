@@ -162,8 +162,9 @@ test('lookups keep their specced miss; the assignee filter keeps its empty page'
   // blank is accepted at the schema edge and answered by the miss path
   await expectRpcError(page, 'employees/listApiKeys', { employeeId: '' }, 404, 'employee not found');
 
-  // supervisor ids land in employee_supervisors.supervisor_id (uuid): shape-checked
-  // at the edge, then roster membership — malformed = BAD_REQUEST, never 22P02
+  // supervisor ids land in employee_supervisors.supervisor_id (uuid): a malformed
+  // value is malformed input (its own message, so the pin cannot pass on the
+  // roster-miss path), never a 22P02 500
   await expectRpcError(
     page,
     'employees/create',
@@ -175,7 +176,7 @@ test('lookups keep their specced miss; the assignee filter keeps its empty page'
       supervisorIds: [MALFORMED],
     },
     400,
-    'does not exist',
+    'invalid supervisor id',
   );
 
   // a canonical UPPERCASE id names the same employee (uuid columns compare
@@ -204,6 +205,16 @@ test('uuid case cannot bypass the self-supervision and self-delete guards', asyn
     page,
     'employees/update',
     { id: employee.id.toUpperCase(), name: 'Case Probe', title: 'Tester', supervisorIds: [employee.id] },
+    400,
+    'cannot supervise themselves',
+  );
+  // the mirror case pins the supervisor-id canonicalization itself: lowercase
+  // target + uppercase supervisor would slip past a case-sensitive self-check
+  // and hit the no_self_supervision CHECK (23514 → 500)
+  await expectRpcError(
+    page,
+    'employees/update',
+    { id: employee.id, name: 'Case Probe', title: 'Tester', supervisorIds: [employee.id.toUpperCase()] },
     400,
     'cannot supervise themselves',
   );

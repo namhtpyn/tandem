@@ -51,7 +51,7 @@ const assertNoDuplicateSupervisors = (supervisorIds: string[]) => {
  *  them at the edge (ID-SHAPE LAW) and canonicalize to the lowercase wire form so
  *  the JS comparisons (duplicate / self / cycle) agree with what Postgres stores */
 const normalizeSupervisorIds = (supervisorIds: string[]): string[] => {
-  for (const s of supervisorIds) requireUuid(s, 'BAD_REQUEST', `supervisor ${s} does not exist`);
+  for (const s of supervisorIds) requireUuid(s, 'BAD_REQUEST', 'invalid supervisor id');
   return supervisorIds.map((s) => s.toLowerCase());
 };
 
