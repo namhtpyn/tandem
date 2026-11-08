@@ -65,6 +65,8 @@ vi.mock('../../server/db/index', async () => {
 vi.mock('../../server/domains/tasks/review.service', () => ({
   // call-sequenced: [0] = answerQuestion's backTo read, [1] = the post-flip re-check
   openRoundLive: async () => (h.roundReads++ === 0 ? h.roundLiveFirst : h.roundLiveSecond),
+  // #365: no void pending row in these specs
+  settleExtinguishedRound: async () => false,
   dispatchAiReviewTurns: async (taskId: string) => {
     h.dispatched.push(taskId);
   },

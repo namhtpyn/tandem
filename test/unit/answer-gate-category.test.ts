@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   flips: [] as Array<{ set: Record<string, unknown>; pred: boolean }>,
   cancelled: [] as string[],
   holder: 'human-1' as string | null,
+  roundLive: false,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -78,7 +79,11 @@ vi.mock('../../server/domains/tasks/gating.service', async (importOriginal) => {
 
 vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/review.service')>();
-  return { ...mod, openRoundLive: async () => false, dispatchAiReviewTurns: async () => {} };
+  return {
+    ...mod,
+    openRoundLive: async () => h.roundLive,
+    dispatchAiReviewTurns: async () => {},
+  };
 });
 
 vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {
@@ -107,6 +112,7 @@ beforeEach(() => {
   h.holder = 'human-1';
   h.flips = [];
   h.cancelled = [];
+  h.roundLive = false;
 });
 
 describe('answer verb gate keys off the waiting_answer category (#265 r2)', () => {

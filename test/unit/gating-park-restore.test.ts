@@ -22,6 +22,8 @@ const h = vi.hoisted(() => ({
   updates: [] as Array<{ set: Record<string, unknown>; hasPredicate: boolean }>,
   writeLog: [] as Array<{ set: Record<string, unknown>; hasPredicate: boolean; applied: boolean }>,
   replayed: [] as string[],
+  settled: [] as string[],
+  roundLive: true,
   lossPlan: [] as boolean[],
   onStatusMapQuery: null as null | (() => void),
   onChildrenQuery: null as null | (() => void),
@@ -91,6 +93,12 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
   return {
     ...mod,
     logActivity: async () => {},
+    // #365: a restored round replays only when it is LIVE; an extinguished one settles
+    openRoundLive: async () => h.roundLive,
+    settleExtinguishedRound: async (taskId: string) => {
+      h.settled.push(taskId);
+      return true;
+    },
     dispatchAiReviewTurns: async (taskId: string) => {
       h.replayed.push(taskId);
     },
@@ -127,6 +135,8 @@ beforeEach(() => {
   h.updates = [];
   h.writeLog = [];
   h.replayed = [];
+  h.settled = [];
+  h.roundLive = true;
   h.lossPlan = [];
   h.onStatusMapQuery = null;
   h.onChildrenQuery = null;
@@ -179,6 +189,25 @@ describe('refreshParentGating park-origin unblock (#202)', () => {
     expect(h.updates[0]?.set.preBlockStatus).toBeNull();
     expect(h.updates[0]?.set.parkFromStatus).toBeNull();
     expect(h.replayed).toEqual([]);
+  });
+
+  it('a restored parked round whose reviewer was deleted settles instead of replaying (#365)', async () => {
+    h.roundLive = false;
+    row('p', { status: STATUS.blocked, parkFromStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('p');
+    expect(h.updates[0]?.set.status).toBe(STATUS.inReview); // the restore itself is unchanged
+    expect(h.settled).toEqual(['p']); // the extinguished round is handed to the matrix
+    expect(h.replayed).toEqual([]); // never a re-fire of a reviewer who does not exist
+  });
+
+  it('a GATING-ONLY restore (pre_block_status, no park) to in-review with no live round settles too (#365)', async () => {
+    h.roundLive = false;
+    row('p', { status: STATUS.blocked, preBlockStatus: STATUS.inReview });
+    h.childrenByParent.set('p', [{ status: STATUS.done }]);
+    await refreshParentGating('p');
+    expect(h.updates[0]?.set.status).toBe(STATUS.inReview);
+    expect(h.settled).toEqual(['p']);
   });
 
   it('a parked task with children still open is left alone (no unblock, no block-arm rewrite)', async () => {

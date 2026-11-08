@@ -1,3 +1,4 @@
+import { consola } from 'consola';
 import { eq, and, inArray } from 'drizzle-orm';
 
 import {
@@ -34,6 +35,7 @@ import {
   currentRound,
   teardownOpenRound,
   teardownAllPendingRounds,
+  settleExtinguishedRound,
   liveReviewers,
   canonicalStoredUuid,
 } from './review.service';
@@ -44,6 +46,8 @@ export const IN_REVIEW_STATUS = STATUS.inReview;
 export const TODO_STATUS = STATUS.todo;
 export const DONE_STATUS = STATUS.done;
 export const CANCELLED_STATUS = STATUS.cancelled;
+
+const log = consola.withTag('tandem');
 
 async function logActivity(
   taskId: string,
@@ -384,6 +388,16 @@ export async function submitResult(taskId: string, authorId: string, body: strin
     }
     await noteSkipped();
     await refreshParentGating(taskId);
+    // #365: a reviewer deleted inside the round-open window leaves a void row on the
+    // round this submit just flipped in-review — settle it now (the settle is a no-op
+    // while a live voter exists, so a normal submit pays only a few reads). The submit
+    // already WON its flip: a heal failure must never 500 a submit that landed — the
+    // boot heal is the backstop.
+    try {
+      await settleExtinguishedRound(taskId);
+    } catch (e) {
+      log.warn(`submit: extinguished-round settle failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
     return { status: IN_REVIEW_STATUS };
   }
   const done = await db
