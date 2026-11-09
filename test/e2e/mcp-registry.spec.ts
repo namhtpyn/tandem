@@ -86,6 +86,20 @@ async function seedAiEmployee(
   return { employeeId: emp.json?.id as string, employeeName };
 }
 
+/** write+prove the dispatch_after hold (15 min) on one task. A silent 0-row
+ *  UPDATE would let the 5s scan claim the task mid-test (#387); `returning id`
+ *  makes the hold observable instead of trusting the SQL key. */
+async function holdDispatchScan(taskId: string): Promise<void> {
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    const held =
+      await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId} returning id`;
+    expect(held.length, 'dispatch_after hold landed on the task').toBe(1);
+  } finally {
+    await sql.close();
+  }
+}
+
 /** BORN-INELIGIBLE SEEDING (#297, #387): a task created WITH the AI assignee is
  *  scanner-eligible at insert, so the 5s dispatch tick can claim it while the
  *  drawer settles — the dispatch verb unmounts mid-click and Playwright waits
@@ -113,14 +127,7 @@ async function createTaskWithHeldScan(
   // SQL key below silently misses and the hold never lands
   const taskId = (href as string).split('?')[0]!.split('/').pop() as string;
   expect(taskId, 'task id from the row link').toBeTruthy();
-  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
-  try {
-    const held =
-      await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId} returning id`;
-    expect(held.length, 'dispatch_after hold landed on the created task').toBe(1);
-  } finally {
-    await sql.close();
-  }
+  await holdDispatchScan(taskId);
   const attach = await rpcPost(page, '/rpc/tasks/update', { id: taskId, assigneeId: employeeId });
   expect(attach.status).toBe(200);
   return row;
@@ -314,7 +321,7 @@ test.describe('mcp registry + bindings', () => {
     await expect(link).toBeVisible({ timeout: 15_000 });
     await link.click();
     await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
-    const taskId = page.url().split('/').pop() as string;
+    const taskId = page.url().split('?')[0]!.split('/').pop() as string;
     await expect(page.getByText('Completed').first()).toBeVisible({ timeout: 15_000 });
     const folds = page.getByText(/Full output from/);
     await expect(folds.first()).toBeVisible({ timeout: 15_000 });
@@ -329,7 +336,11 @@ test.describe('mcp registry + bindings', () => {
     await tasks.dismissOverlay('New employee');
 
     // the RESULT settle left the task terminal — manual status is free (owner
-    // law 2026-10-27), flip it back to the ready category and re-dispatch
+    // law 2026-10-27), flip it back to the ready category and re-dispatch.
+    // Re-hold BEFORE the flip: the settle cleared dispatch_after and a terminal
+    // task is scan-ineligible, so the write has no window; after the flip the
+    // 5s tick must not race this manual dispatch (#387 class).
+    await holdDispatchScan(taskId);
     const setStatus = await rpcPost(page, '/rpc/tasks/setStatus', { id: taskId, status: await readyStatusId() });
     expect(setStatus.status).toBe(200);
     const run2 = await rpcPost(page, '/rpc/tasks/dispatch', { taskId });
