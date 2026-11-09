@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
   published: 0,
   users: [] as Array<Record<string, unknown>>,
   edges: [] as Array<Record<string, unknown>>,
+  reviewerExists: true,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -75,7 +76,10 @@ vi.mock('../../server/db/index', async () => {
         },
       }),
       query: {
-        user: { findMany: async () => h.users },
+        user: {
+          findMany: async () => h.users,
+          findFirst: async () => (h.reviewerExists ? { id: 'rev-1' } : null),
+        },
         employeeSupervisors: { findMany: async () => h.edges },
         taskStatuses: {
           // honor the caller's predicate (DB-mock predicate law): a mis-wired where
@@ -145,6 +149,7 @@ beforeEach(() => {
   h.users = [{ id: 'sup-1', name: 'Sup' }];
   h.edges = [{ employeeId: 'rev-1', supervisorId: 'sup-1' }];
   h.statuses = [{ id: STATUS.inReview, category: CATEGORY.IN_REVIEW }];
+  h.reviewerExists = true;
 });
 
 describe('escalateReview verdict-row CAS (#283)', () => {
@@ -171,6 +176,32 @@ describe('escalateReview verdict-row CAS (#283)', () => {
     const outcome = await escalateReview('task-1', 'rev-1', 'escalate to Sup for reviewing — need eyes');
     expect(outcome).toEqual({ outcome: 'escalated' });
     expect(h.inserts).toHaveLength(1);
+  });
+
+  it('an escalation stalled by a DELETED escalator resumes instead of parking (#370)', async () => {
+    h.edges = []; // no eligible up-chain target -> the stalled branch
+    h.reviewerExists = false;
+    h.taskReads = [
+      [{ status: STATUS.inReview, reviewers: ['rev-1'], assigneeId: 'assignee-1' }],
+      [{ status: STATUS.inReview }],
+      [{ status: STATUS.inReview }], // resume's status read
+    ];
+    const outcome = await escalateReview('task-1', 'rev-1', 'escalate to Sup for reviewing — need eyes');
+    expect(outcome).toEqual({ outcome: 'parked' });
+    // no park write (a park flips the task row); the resume path owns the round
+    expect(h.updates.some((u) => u.table === 'tasks')).toBe(false);
+  });
+
+  it('an escalation stalled with a LIVE escalator still parks (#370 regression guard)', async () => {
+    h.edges = [];
+    h.reviewerExists = true;
+    h.taskReads = [
+      [{ status: STATUS.inReview, reviewers: ['rev-1'], assigneeId: 'assignee-1' }],
+      [{ status: STATUS.inReview }],
+    ];
+    const outcome = await escalateReview('task-1', 'rev-1', 'escalate to Sup for reviewing — need eyes');
+    expect(outcome).toEqual({ outcome: 'parked' });
+    expect(h.updates.some((u) => u.table === 'tasks')).toBe(true);
   });
 
   it('a CAS miss (verdict won / teardown superseded) refuses and mints NOTHING', async () => {

@@ -12,6 +12,8 @@ const h = vi.hoisted(() => ({
   updates: [] as Array<{ table: string; set: Record<string, unknown>; where: unknown }>,
   published: [] as Array<[string, string]>,
   failFirst: false,
+  holdCas: false,
+  releaseCas: null as null | (() => void),
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -29,6 +31,7 @@ vi.mock('../../server/db/index', async () => {
                 h.failFirst = false;
                 throw new Error('db down');
               }
+              if (h.holdCas) await new Promise<void>((resolve) => (h.releaseCas = resolve));
               h.updates.push({ table: 'taskRuns', set, where });
               return h.casRows;
             },
@@ -70,6 +73,8 @@ beforeEach(() => {
   h.updates = [];
   h.published = [];
   h.failFirst = false;
+  h.holdCas = false;
+  h.releaseCas = null;
 });
 
 describe('stopRunsForRemoval (#370)', () => {
@@ -124,6 +129,19 @@ describe('removal stop hardening (#370 r2)', () => {
     h.casRows = [{ id: 'run-1' }];
     expect(await stopRunsForRemoval(['run-1', 'run-1'])).toBe(1);
     expect(h.updates).toHaveLength(1); // deduped before the loop
+  });
+
+  it('the marker is down BEFORE the awaited CAS — an in-flight turn never misses it', async () => {
+    h.holdCas = true;
+    h.casRows = [{ id: 'run-1' }];
+    const pending = stopRunsForRemoval(['run-1']);
+    await vi.waitFor(() => {
+      if (!h.releaseCas) throw new Error('CAS not reached yet');
+    });
+    expect(stoppedRunMarkerIds()).toContain('run-1');
+    h.releaseCas!();
+    await pending;
+    expect(stoppedRunMarkerIds()).toEqual([]);
   });
 
   it('appends the audit marker to the run output', async () => {

@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   runs: [] as Array<{ id: string; startedAt: Date | null; status?: string }>,
   dispatched: [] as Array<Record<string, unknown>>,
   parks: [] as string[],
+  parkOpts: [] as Array<Record<string, unknown>>,
   verdictAt: [] as Array<Date | undefined>,
   escalated: 0,
   reviewerExists: true,
@@ -67,8 +68,9 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
       h.escalated += 1;
       return { outcome: 'escalated' as const };
     },
-    parkRound: async (_taskId: string, why: string) => {
+    parkRound: async (_taskId: string, why: string, opts?: Record<string, unknown>) => {
       h.parks.push(why);
+      h.parkOpts.push(opts ?? {});
     },
     resumeReviewQueueAfterRemoval: async (taskId: string) => {
       h.resumes.push(taskId);
@@ -89,6 +91,7 @@ beforeEach(() => {
   h.runs = [];
   h.dispatched = [];
   h.parks = [];
+  h.parkOpts = [];
   h.verdictAt = [];
   h.escalated = 0;
   h.reviewerExists = true;
@@ -124,6 +127,17 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
     expect(h.dispatched).toHaveLength(0);
     expect(h.parks).toHaveLength(1);
     expect(h.parks[0]).toContain('finished without a verdict after a re-dispatch');
+    // a decision park: no re-arm ladder (a dropped opts arg would silently re-arm it)
+    expect(h.parkOpts[0]?.rearmable).toBe(false);
+  });
+
+  it('a DELETED reviewer after its bounded re-dispatch resumes instead of parking (#370)', async () => {
+    h.boundRow = { round: 1, createdAt: roundOpen };
+    h.reviewerExists = false;
+    h.runs = [run('r1', new Date(roundOpen.getTime() + 1000)), run('self', self)];
+    await settleReviewVerdict('task-1', 'rev-1', null, self);
+    expect(h.parks).toHaveLength(0);
+    expect(h.resumes).toEqual(['task-1']);
   });
 
   it('a REAPED (failed) turn never consumes the corrected retry', async () => {

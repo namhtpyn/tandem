@@ -978,19 +978,26 @@ export async function settleAllExtinguishedRounds(): Promise<string[]> {
   }
   const settledTaskIds: string[] = [];
   for (const taskId of taskIds) {
+    // NEXT-TURN CRASH BACKSTOP (#371), STOP FIRST: a removal that died between the
+    // user delete and its stop arm leaves the departing reviewer's run RUNNING with the
+    // FK-nulled employee_id. Settle it BEFORE the round matrix — once a sole-void round
+    // settles, the task leaves the in_review category and the review-scoped orphan scan
+    // could never match it again. Order mirrors the removal RPC (stop, then settle).
+    try {
+      await stopOrphanRemovalRuns(taskId);
+    } catch (e) {
+      log.warn(`void review round orphan stop failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
     try {
       if (await settleExtinguishedRound(taskId)) settledTaskIds.push(taskId);
       await cleanVoidReviewDebris(taskId);
     } catch (e) {
       log.warn(`void review round heal failed for task ${taskId}:`, e instanceof Error ? e.message : e);
     }
-    // NEXT-TURN CRASH BACKSTOP (#371): a removal that died between the user delete and
-    // its resume arm leaves the departing reviewer's run RUNNING (employee_id NULL) or
-    // the current round's void row beside a live PENDING reviewer — settle the orphan
-    // row first, then re-mint. A live-voter round with a running turn is a no-op
-    // (dispatchAiReviewTurns' task-wide in-flight guard); a settled task is gated out.
+    // …then re-mint a round still holding a live PENDING reviewer (a live-voter round
+    // with a running turn is a no-op via dispatchAiReviewTurns' task-wide guard; a
+    // settled task is gated out by category).
     try {
-      await stopOrphanRemovalRuns(taskId);
       await resumeReviewQueueAfterRemoval(taskId);
     } catch (e) {
       log.warn(`void review round resume failed for task ${taskId}:`, e instanceof Error ? e.message : e);

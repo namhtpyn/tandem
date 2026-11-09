@@ -43,6 +43,7 @@ const h = vi.hoisted(() => ({
   bodyWrites: [] as Array<[string, string, boolean]>,
   attachments: 0,
   parks: [] as Array<{ why: string; rearmable: boolean }>,
+  resumes: [] as string[],
   published: [] as Array<[string, string]>,
   envelopeSettles: 0,
 }));
@@ -147,6 +148,9 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
       h.parks.push({ why, rearmable: opts?.rearmable === true });
       return true;
     },
+    resumeReviewQueueAfterRemoval: async (taskId: string) => {
+      h.resumes.push(taskId);
+    },
   };
 });
 
@@ -221,6 +225,7 @@ beforeEach(() => {
   h.bodyWrites = [];
   h.attachments = 0;
   h.parks = [];
+  h.resumes = [];
   h.published = [];
   h.envelopeSettles = 0;
   setEnv({ TANDEM_RUN_FLUSH_MS: undefined, TANDEM_RUN_PUBLISH_MS: undefined });
@@ -576,6 +581,7 @@ describe('writer.finish settle arbitration (#286)', () => {
     });
     await drain();
     expect(h.parks).toHaveLength(0);
+    expect(h.resumes).toEqual(['task-1']);
     // the existence lookup names THIS reviewer — a wrong id silently disables the skip
     expect(h.reviewerLookups.at(-1)?.where?.id?.eq).toBe('agent-1');
   });
@@ -591,6 +597,7 @@ describe('writer.finish settle arbitration (#286)', () => {
     });
     await drain();
     expect(h.parks).toHaveLength(0);
+    expect(h.resumes).toEqual(['task-1']);
     // the existence lookup names THIS reviewer — a wrong id silently disables the skip
     expect(h.reviewerLookups.at(-1)?.where?.id?.eq).toBe('agent-1');
   });
