@@ -34,7 +34,20 @@ test('employee create with a 100-char name mints a key that fits the 32-char cap
   const keys = (await keysRes.json()).json as KeyRow[];
   const minted = keys.find((k) => k.name.endsWith(' access key'));
   expect(minted, `derived key row missing — got ${JSON.stringify(keys.map((k) => k.name))}`).toBeTruthy();
-  expect(minted!.name.length).toBeLessThanOrEqual(32);
+  // exact derived name: the employee-name prefix (21 units) + the fixed suffix
+  expect(minted!.name).toBe(`${name.slice(0, 21)} access key`);
+  expect(minted!.name.length).toBe(32);
+
+  // the ` key` branch (nameless createApiKey) truncates the SAME employee name at 28 units
+  const derivedMint = await post(page, 'employees/createApiKey', { employeeId: created.id });
+  expect(derivedMint.status()).toBe(200);
+  const derivedKey = (await derivedMint.json()).json as { id: string };
+  const afterRes = await post(page, 'employees/listApiKeys', { employeeId: created.id });
+  expect(afterRes.status()).toBe(200);
+  const derivedRow = ((await afterRes.json()).json as KeyRow[]).find((k) => k.id === derivedKey.id);
+  expect(derivedRow, 'nameless mint row missing from key list').toBeTruthy();
+  expect(derivedRow!.name).toBe(`${name.slice(0, 28)} key`);
+  expect(derivedRow!.name.length).toBe(32);
 });
 
 test('caller-supplied key names over 32 chars answer BAD_REQUEST on mint and rename', async ({ page }) => {

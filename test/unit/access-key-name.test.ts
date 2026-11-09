@@ -37,6 +37,25 @@ describe('derivedAccessKeyName — the minted default always fits the plugin cap
     expect(derivedAccessKeyName(base, SUFFIX)).toBe(`${base}${SUFFIX}`);
     expect(derivedAccessKeyName(base, SUFFIX).length).toBe(ACCESS_KEY_NAME_MAX);
   });
+
+  it('never cuts through a surrogate pair — an astral char at the cut is dropped whole, the name stays well-formed', () => {
+    // 20 ASCII units + 2-unit emoji: the emoji straddles the 21-unit room of ` access key`
+    const name = derivedAccessKeyName(`${'A'.repeat(20)}🚀${'B'.repeat(10)}`, SUFFIX);
+    expect(name.isWellFormed()).toBe(true);
+    expect(name).toBe(`${'A'.repeat(20)}${SUFFIX}`);
+    expect(name.length).toBeLessThanOrEqual(ACCESS_KEY_NAME_MAX);
+    // every room boundary around an astral char stays well-formed and within the cap
+    for (let ascii = 0; ascii <= 21; ascii += 1) {
+      const derived = derivedAccessKeyName(`${'A'.repeat(ascii)}🚀${'B'.repeat(10)}`, SUFFIX);
+      expect(derived.isWellFormed()).toBe(true);
+      expect(derived.length).toBeLessThanOrEqual(ACCESS_KEY_NAME_MAX);
+      expect(derived.endsWith(SUFFIX)).toBe(true);
+    }
+  });
+
+  it('fails closed on a suffix that leaves no room for the base', () => {
+    expect(() => derivedAccessKeyName('x', 'y'.repeat(ACCESS_KEY_NAME_MAX))).toThrowError(/leaves no room/);
+  });
 });
 
 describe('assertAccessKeyName — caller-supplied names over the cap are the specced BAD_REQUEST', () => {
@@ -53,6 +72,20 @@ describe('assertAccessKeyName — caller-supplied names over the cap are the spe
     expect(() => assertAccessKeyName('K'.repeat(ACCESS_KEY_NAME_MAX + 1))).toThrowError(
       expect.objectContaining({ code: 'BAD_REQUEST', message: expect.stringContaining('name too long') }),
     );
+  });
+
+  it('measures the backend’s `name.length` — 32 astral chars are 64 units and are rejected', () => {
+    // the plugin would 500 on this input, so the guard must answer BAD_REQUEST first
+    expect(() => assertAccessKeyName('😀'.repeat(ACCESS_KEY_NAME_MAX))).toThrowError(
+      expect.objectContaining({ code: 'BAD_REQUEST' }),
+    );
+    // ...and 16 astral chars (32 units) are exactly at the cap
+    expect(assertAccessKeyName('😀'.repeat(16))).toBe('😀'.repeat(16));
+  });
+
+  it('trims before measuring — padding over the cap is not a rejection', () => {
+    const padded = `${'K'.repeat(30)}     `; // 35 raw chars, 30 after trim
+    expect(assertAccessKeyName(padded)).toBe('K'.repeat(30));
   });
 
   it('whitespace-only is empty after trim — the handlers own the blank path', () => {

@@ -642,11 +642,14 @@ a malformed (non-uuid-shaped) id — gets `NOT_FOUND` (the id is a miss, never a
 500). ADMIN reads any employee's keys. The read never returns key material; a
 plaintext key appears in exactly one response class, the one-time mint
 (`employees.create`, `employees.createApiKey`), by design.
-**ACCESS-KEY NAME CAP:** the credential backend caps key names at 32 characters.
-Every minted name therefore fits that cap: a DERIVED default truncates the
-employee-name prefix, never the fixed suffix (` access key` / ` key`), and a
-caller-supplied name over 32 characters — mint (`employees.createApiKey`) or
-rename (`employees.updateApiKey`) — answers `BAD_REQUEST`, never an opaque 500.
+**ACCESS-KEY NAME CAP:** the credential backend caps key names at 32 — its
+measure is `name.length` (UTF-16 code units) — and its own rejection surfaces
+as an opaque 500. Every access-key name the app writes is held to that cap: a
+DERIVED default truncates the employee-name prefix on a code-point boundary
+(never the fixed suffix, never through a surrogate pair), so it always fits;
+a caller-supplied name is trimmed and, if still over the cap, answers
+`BAD_REQUEST` (`name too long`) — at mint (`employees.createApiKey`) and at
+rename (`employees.updateApiKey`), the same app-wide cap — never an opaque 500.
 **LIVE-STREAM RE-AUTH (#224):** a `live` stream outlives its open-time check, so
 every live generator re-asserts the procedure's own tier against a FRESH
 session (never the per-request latch) before emitting a snapshot — at most once
