@@ -69,11 +69,25 @@ test('caller-supplied key names over 32 chars answer BAD_REQUEST on mint and ren
   expect(mintRes.status()).toBe(400);
   expect(JSON.stringify(await mintRes.json())).toContain('name too long');
 
-  // a fitting name mints, and renaming it over the cap answers the same 400
+  // a fitting name mints; a 32-unit rename succeeds and STORES the name
   const okRes = await post(page, 'employees/createApiKey', { employeeId: employee.id, name: 'primary key' });
   expect(okRes.status()).toBe(200);
   const key = (await okRes.json()).json as KeyRow;
+  const atCap = 'R'.repeat(32);
+  const renameOk = await post(page, 'employees/updateApiKey', { keyId: key.id, name: atCap });
+  expect(renameOk.status()).toBe(200);
+  const afterRename = await post(page, 'employees/listApiKeys', { employeeId: employee.id });
+  expect(afterRename.status()).toBe(200);
+  const renamed = ((await afterRename.json()).json as KeyRow[]).find((k) => k.id === key.id);
+  expect(renamed?.name).toBe(atCap);
+
+  // renaming it over the cap answers the same 400
   const renameRes = await post(page, 'employees/updateApiKey', { keyId: key.id, name: tooLong });
   expect(renameRes.status()).toBe(400);
   expect(JSON.stringify(await renameRes.json())).toContain('name too long');
+
+  // NUL cannot be stored — the guard answers 400, not a Postgres 500
+  const nulRes = await post(page, 'employees/updateApiKey', { keyId: key.id, name: 'A\u0000B' });
+  expect(nulRes.status()).toBe(400);
+  expect(JSON.stringify(await nulRes.json())).toContain('invalid characters');
 });

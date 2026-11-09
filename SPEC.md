@@ -648,10 +648,12 @@ server-side mint call surfaces as an opaque 500. Every access-key name these
 procedures write (`employees.create`'s initial key, `employees.createApiKey`,
 `employees.updateApiKey`) is held to that cap: a DERIVED default truncates the
 employee-name prefix on a code-point boundary (never the fixed suffix, never
-through a surrogate pair, lone surrogates dropped), so it always fits; a
-caller-supplied name is trimmed and, if still over the cap, answers
-`BAD_REQUEST` (`name too long`; input beyond the schema's 100-character edge is
-rejected at the edge) — never an opaque 500.
+through a surrogate pair; NUL and lone surrogates dropped), so it always fits;
+a caller-supplied name is trimmed, refused (`BAD_REQUEST`) when it carries NUL
+or a lone surrogate, and measured against the cap — over it answers
+`BAD_REQUEST` (`name too long`), never an opaque 500. A blank supplied name
+mints the derived default at `employees.createApiKey`; rename requires a
+non-blank name.
 **LIVE-STREAM RE-AUTH (#224):** a `live` stream outlives its open-time check, so
 every live generator re-asserts the procedure's own tier against a FRESH
 session (never the per-request latch) before emitting a snapshot — at most once
