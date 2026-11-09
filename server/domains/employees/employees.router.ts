@@ -10,6 +10,7 @@ import type { ApiKeyRow, EmployeeRow } from '#shared/types';
 import { escapeIlike } from '#shared/utils/escape-ilike';
 import { isUuid } from '#shared/utils/is-uuid';
 import { nonNull } from '#shared/utils/non-null';
+import { hasUnstorableText } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import {
@@ -40,6 +41,9 @@ const avatarImageSchema = z
   .string()
   .max(300_000)
   .refine((v) => !v || AVATAR_DATA_URL_RE.test(v), 'Avatar must be a base64 data URL image (png, jpeg, webp, or gif)')
+  // the data URL lands in user.image (text): a NUL would 500 and a lone surrogate
+  // would be silently stored as U+FFFD — both are refused at the edge (#377)
+  .refine((v) => !v || !hasUnstorableText(v), 'image contains invalid characters (NUL or a lone surrogate)')
   .nullable()
   .optional();
 
@@ -333,7 +337,7 @@ export const employeesRouter = os.router({
           .regex(ACP_EXECUTABLE_RE, 'ACP executable must be shell-safe command words, e.g. "hermes acp"')
           .optional(),
         providerId: z.string().min(1).nullable().optional(),
-        model: storableOptionalText('model', 200).nullable().optional(),
+        model: storableText('model', 200).nullable().optional(),
         apiKeySecretId: z.string().min(1).nullable().optional(),
       }),
     )
@@ -419,7 +423,7 @@ export const employeesRouter = os.router({
           .nullable()
           .optional(),
         providerId: z.string().min(1).nullable().optional(),
-        model: storableOptionalText('model', 200).nullable().optional(),
+        model: storableText('model', 200).nullable().optional(),
         apiKeySecretId: z.string().min(1).nullable().optional(),
         /** avatar: data URL (resized client-side); null clears */
         image: avatarImageSchema,
@@ -524,7 +528,7 @@ export const employeesRouter = os.router({
       .input(
         z.strictObject({
           id: z.string().min(1).optional(),
-          name: storableText('title', EMPLOYEE_TITLE_MAX),
+          name: storableText('name', EMPLOYEE_TITLE_MAX),
         }),
       )
       .handler(async ({ input }) => {

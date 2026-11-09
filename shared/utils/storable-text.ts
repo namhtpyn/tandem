@@ -1,8 +1,8 @@
 // TEXT-STORABILITY LAW (SPEC "API law", #377): Postgres text columns cannot
-// store a NUL byte or an unpaired surrogate — the driver throws (invalid byte
-// sequence / unsupported unicode escape) and oRPC surfaces that as an opaque
-// 500 on input the schema had already accepted. Callers refuse such text at
-// their schema edge; this predicate is the ONE implementation of "unstorable".
+// store a NUL byte or an unpaired surrogate. A NUL throws at the driver
+// (invalid byte sequence -> an opaque 500); an unpaired surrogate is silently
+// rewritten to U+FFFD (stored corruption). Callers refuse such text at their
+// schema edge; this predicate is the ONE implementation of "unstorable".
 
 /** true when `value` carries text a Postgres text column cannot store: NUL or an unpaired surrogate */
 export function hasUnstorableText(value: string): boolean {

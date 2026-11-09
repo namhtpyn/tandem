@@ -1,9 +1,11 @@
 // Employee write-surface text (#377, SPEC "API law" TEXT-STORABILITY LAW):
-// Postgres text cannot store NUL or an unpaired surrogate, and the driver error
-// would land as an opaque 500 on schema-legal input — every free-text employee
-// field refuses such input at the schema edge instead. `title` and the AI
-// extension fields share the exposure with `name`: they all land in text
-// columns of the `user` / `ai_employees` / `employee_titles` inserts.
+// Postgres text cannot store NUL or an unpaired surrogate. A NUL makes the
+// driver throw (invalid byte sequence -> an opaque 500 on schema-legal input);
+// an unpaired surrogate is rewritten to U+FFFD, so the stored value is
+// silently corrupted. Every text field the employee writes store refuses both
+// classes at the schema edge instead. `title`, the AI extension fields and the
+// avatar data URL share the exposure with `name`: they all land in text
+// columns of the `user` / `ai_employees` / `employee_titles` rows.
 
 import { z } from 'zod';
 

@@ -1,9 +1,10 @@
 // TEXT-STORABILITY LAW (#377, SPEC "API law"): Postgres text cannot store NUL
-// or an unpaired surrogate — a name carrying either 500'd at the `"user"`
-// insert before any access key was minted. The employee schema edge refuses it
+// or an unpaired surrogate — a NUL makes the driver throw (the 500 this law
+// removes) and an unpaired surrogate is silently rewritten to U+FFFD, i.e.
+// stored corruption. The employee schema edge refuses both classes
 // (BAD_REQUEST, field-named message) while a well-formed astral pair stays
 // accepted. Handler-level pins run the REAL oRPC procedures: input validation
-// fires before any db access, so the unit project stays db-free.
+// fires before any db access, so no row is ever written.
 import { createProcedureClient } from '@orpc/server';
 import { describe, expect, it } from 'vitest';
 
@@ -39,20 +40,32 @@ const create = adminClient(employeesRouter.create);
 const update = adminClient(employeesRouter.update);
 const saveTitle = adminClient(employeesRouter.titles.save);
 
-const createInput = (name: string) => ({
-  name,
-  email: 'nul-name@tandem.local',
+const createInput = (overrides: Record<string, unknown> = {}) => ({
+  name: 'Ada',
+  email: 'text-storability@tandem.local',
   kind: 'human' as const,
   title: 'Engineer',
   supervisorIds: [],
+  ...overrides,
 });
 
-const updateInput = (name: string) => ({
+const updateInput = (overrides: Record<string, unknown> = {}) => ({
   id: '01a14743-43f4-7053-a698-5b4ef36ed046',
-  name,
+  name: 'Ada',
   title: 'Engineer',
   supervisorIds: [],
+  ...overrides,
 });
+
+/** the refusal a real oRPC call raises: BAD_REQUEST carrying the zod issues */
+async function refusal(run: () => Promise<unknown>) {
+  try {
+    await run();
+  } catch (error) {
+    return error as { code?: string; data?: { issues?: { path?: (string | number)[]; message?: string }[] } };
+  }
+  throw new Error('the call resolved — an unstorable value was accepted');
+}
 
 describe('hasUnstorableText — the one predicate (SPEC TEXT-STORABILITY LAW)', () => {
   it('refuses NUL and unpaired surrogates', () => {
@@ -65,16 +78,28 @@ describe('hasUnstorableText — the one predicate (SPEC TEXT-STORABILITY LAW)', 
     expect(hasUnstorableText('\uDC00😀')).toBe(true);
   });
 
+  it('refuses both surrogate-range boundaries when they are unpaired', () => {
+    // 0xDBFF is the LAST high surrogate, 0xDFFF the LAST low surrogate — a pin
+    // on 0xD800/0xDC00 alone would survive an off-by-one in either range end
+    expect(hasUnstorableText('\uDBFF')).toBe(true);
+    expect(hasUnstorableText('\uDFFF')).toBe(true);
+    expect(hasUnstorableText('\uD800\uDBFF')).toBe(true);
+    expect(hasUnstorableText('\uDC00\uDFFF')).toBe(true);
+  });
+
   it('accepts ordinary text and well-formed surrogate pairs (astral characters)', () => {
     expect(hasUnstorableText('Ada Lovelace')).toBe(false);
     expect(hasUnstorableText(ASTRAL)).toBe(false);
     expect(hasUnstorableText('😀')).toBe(false);
     expect(hasUnstorableText('')).toBe(false);
+    // pairs at the extreme range ends are still valid pairs
+    expect(hasUnstorableText('\uDBFF\uDC00')).toBe(false);
+    expect(hasUnstorableText('\uD800\uDFFF')).toBe(false);
   });
 });
 
 describe('employee text schemas (#377)', () => {
-  it('accepts an astral name — a well-formed pair is storable', () => {
+  it('accepts an astral value — a well-formed pair is storable', () => {
     expect(storableText('name', 100).parse(ASTRAL)).toBe(ASTRAL);
     expect(storableOptionalText('instructions', 10_000).parse(ASTRAL)).toBe(ASTRAL);
   });
@@ -89,34 +114,72 @@ describe('employee text schemas (#377)', () => {
       );
     }
   });
-});
 
-describe('employees.create — unstorable name/title answers BAD_REQUEST, never a 500 (#377)', () => {
-  it('refuses a NUL in name before any user insert', async () => {
-    await expect(create(createInput(NUL))).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  it('keeps the pre-existing blank/cap contract (storableText demands 1..max)', () => {
+    expect(() => storableText('name', 3).parse('')).toThrow();
+    expect(() => storableText('name', 3).parse('abcd')).toThrow();
+    expect(storableText('name', 3).parse('abc')).toBe('abc');
   });
 
-  it('refuses a lone surrogate in name', async () => {
-    await expect(create(createInput(LONE_HIGH))).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-  });
-
-  it('refuses an unstorable title', async () => {
-    await expect(create({ ...createInput('Ada'), title: NUL })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  it('storableOptionalText adds ONLY the storable refine — it never imposes a minimum', () => {
+    expect(() => storableOptionalText('model', 3).parse('abcd')).toThrow();
+    expect(storableOptionalText('model', 3).parse('')).toBe('');
+    expect(storableOptionalText('model', 3).parse('abc')).toBe('abc');
   });
 });
 
-describe('employees.update — unstorable name answers BAD_REQUEST (#377)', () => {
-  it('refuses a NUL in name', async () => {
-    await expect(update(updateInput(NUL))).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-  });
+describe('employees.create — every text field is refused when unstorable (#377)', () => {
+  const cases = ['name', 'title', 'instructions', 'model', 'image'];
 
-  it('refuses a lone low surrogate in name', async () => {
-    await expect(update(updateInput(LONE_LOW))).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  for (const field of cases) {
+    it(`${field}: NUL and a lone surrogate answer BAD_REQUEST naming the field`, async () => {
+      for (const bad of [NUL, LONE_HIGH]) {
+        const value = field === 'image' ? `data:image/png;base64,AA${bad}BB` : bad;
+        const error = await refusal(() => create(createInput({ [field]: value })));
+        expect(error.code).toBe('BAD_REQUEST');
+        expect(error.data?.issues).toContainEqual(
+          expect.objectContaining({
+            path: [field],
+            message: expect.stringContaining(`${field} contains invalid characters`),
+          }),
+        );
+      }
+    });
+  }
+
+  it('still refuses a blank model (the min(1) contract is unchanged)', async () => {
+    const error = await refusal(() => create(createInput({ model: '' })));
+    expect(error.code).toBe('BAD_REQUEST');
+    expect(error.data?.issues).toContainEqual(expect.objectContaining({ path: ['model'] }));
   });
 });
 
-describe('employees.titles.save — unstorable catalog name answers BAD_REQUEST (#377)', () => {
-  it('refuses a NUL name', async () => {
-    await expect(saveTitle({ name: NUL })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+describe('employees.update — every text field is refused when unstorable (#377)', () => {
+  const cases = ['name', 'title', 'instructions', 'model', 'image'];
+
+  for (const field of cases) {
+    it(`${field}: NUL and a lone low surrogate answer BAD_REQUEST naming the field`, async () => {
+      for (const bad of [NUL, LONE_LOW]) {
+        const value = field === 'image' ? `data:image/png;base64,AA${bad}BB` : bad;
+        const error = await refusal(() => update(updateInput({ [field]: value })));
+        expect(error.code).toBe('BAD_REQUEST');
+        expect(error.data?.issues).toContainEqual(
+          expect.objectContaining({
+            path: [field],
+            message: expect.stringContaining(`${field} contains invalid characters`),
+          }),
+        );
+      }
+    });
+  }
+});
+
+describe('employees.titles.save — the catalog name is refused when unstorable (#377)', () => {
+  it('refuses a NUL name and names the `name` input, not the catalog', async () => {
+    const error = await refusal(() => saveTitle({ name: NUL }));
+    expect(error.code).toBe('BAD_REQUEST');
+    expect(error.data?.issues).toContainEqual(
+      expect.objectContaining({ path: ['name'], message: expect.stringContaining('name contains invalid characters') }),
+    );
   });
 });
