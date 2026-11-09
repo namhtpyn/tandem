@@ -25,6 +25,7 @@ import {
 import { requireUuid } from '../kernel/id-shape';
 import { ORPCError, adminProcedure, liveGenerator, protectedProcedure, publishChange } from '../kernel/kernel';
 import { assertAccessKeyName, derivedAccessKeyName } from './access-key-name';
+import { storableOptionalText, storableText } from './employee-text';
 
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/;
 
@@ -317,14 +318,14 @@ export const employeesRouter = os.router({
   create: adminProcedure
     .input(
       z.strictObject({
-        name: z.string().min(1).max(100),
+        name: storableText('name', 100),
         email: z.email(),
         kind: z.enum(['human', 'ai']),
         image: avatarImageSchema,
-        title: z.string().min(1).max(EMPLOYEE_TITLE_MAX),
+        title: storableText('title', EMPLOYEE_TITLE_MAX),
         supervisorIds: z.array(z.string().min(1)).max(20).default([]),
         environmentId: z.string().min(1).optional(),
-        instructions: z.string().max(10_000).optional(),
+        instructions: storableOptionalText('instructions', 10_000).optional(),
         executable: z
           .string()
           .min(1)
@@ -332,7 +333,7 @@ export const employeesRouter = os.router({
           .regex(ACP_EXECUTABLE_RE, 'ACP executable must be shell-safe command words, e.g. "hermes acp"')
           .optional(),
         providerId: z.string().min(1).nullable().optional(),
-        model: z.string().min(1).max(200).nullable().optional(),
+        model: storableOptionalText('model', 200).nullable().optional(),
         apiKeySecretId: z.string().min(1).nullable().optional(),
       }),
     )
@@ -404,12 +405,12 @@ export const employeesRouter = os.router({
     .input(
       z.strictObject({
         id: z.string().min(1),
-        name: z.string().min(1).max(100),
+        name: storableText('name', 100),
         email: z.email().optional(),
-        title: z.string().min(1).max(EMPLOYEE_TITLE_MAX),
+        title: storableText('title', EMPLOYEE_TITLE_MAX),
         supervisorIds: z.array(z.string().min(1)).max(20),
         environmentId: z.string().min(1).nullable().optional(),
-        instructions: z.string().max(10_000).nullable().optional(),
+        instructions: storableOptionalText('instructions', 10_000).nullable().optional(),
         executable: z
           .string()
           .min(1)
@@ -418,7 +419,7 @@ export const employeesRouter = os.router({
           .nullable()
           .optional(),
         providerId: z.string().min(1).nullable().optional(),
-        model: z.string().min(1).max(200).nullable().optional(),
+        model: storableOptionalText('model', 200).nullable().optional(),
         apiKeySecretId: z.string().min(1).nullable().optional(),
         /** avatar: data URL (resized client-side); null clears */
         image: avatarImageSchema,
@@ -523,7 +524,7 @@ export const employeesRouter = os.router({
       .input(
         z.strictObject({
           id: z.string().min(1).optional(),
-          name: z.string().min(1).max(EMPLOYEE_TITLE_MAX),
+          name: storableText('title', EMPLOYEE_TITLE_MAX),
         }),
       )
       .handler(async ({ input }) => {
