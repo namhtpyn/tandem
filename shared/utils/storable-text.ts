@@ -47,6 +47,48 @@ export function storableText(field: string, max?: number) {
   return storable(field, max === undefined ? base : base.max(max));
 }
 
+/** blank = nothing but whitespace / default-ignorable code points (ZWSP, ZWNJ,
+ *  ZWJ, word joiner, BOM, format chars) — a blank id trims into a NEW row at
+ *  the upsert-by-id writes and can never name one */
+const BLANK_ID = /^[\s\p{Default_Ignorable_Code_Point}\u2800]*$/u;
+
+function hasPadEdge(value: string): boolean {
+  const points = [...value];
+  if (points.length === 0) return false;
+  // LEADING: nothing precedes the first code point, so any pad char (including
+  // a grapheme-extending one) is padding
+  const first = points[0] as string;
+  if (/\s/u.test(first) || /[\p{Default_Ignorable_Code_Point}]/u.test(first)) return true;
+  // TRAILING: skip the grapheme-extend run (VS16 / combining mark / ZWJ) and
+  // pad-check the last BASE code point — 'x❤️' passes, 'backlog ␠️' refuses
+  let index = points.length - 1;
+  while (index > 0 && /[\p{Grapheme_Extend}\u200d]/u.test(points[index] as string)) index -= 1;
+  const last = points[index] as string;
+  return /\s/u.test(last) || /[\p{Default_Ignorable_Code_Point}]/u.test(last);
+}
+
+/** a text-typed id parameter (write target, store key): non-blank, unpadded,
+ *  storable. Never a new-row mint, never a silent rewrite. */
+export function storableId(field: string, max?: number) {
+  const base = max === undefined ? z.string() : z.string().max(max);
+  return storable(
+    field,
+    base
+      .refine((value) => !BLANK_ID.test(value), `${field} must not be blank`)
+      .refine((value) => !hasPadEdge(value), `${field} must not be padded with whitespace`),
+  );
+}
+
+/** a READ key / list filter: refuses unstorable text and a blank id, but a
+ *  padded value stays an ordinary miss (SPEC: a filter is not a lookup) */
+export function storableIdRef(field: string, max?: number) {
+  const base = max === undefined ? z.string() : z.string().max(max);
+  return storable(
+    field,
+    base.refine((value) => !BLANK_ID.test(value), `${field} must not be blank`),
+  );
+}
+
 /** storable text for optional/nullable fields — callers add `.nullable().optional()` */
 export function storableOptionalText(field: string, max: number) {
   return storable(field, z.string().max(max));

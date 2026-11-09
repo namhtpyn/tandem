@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 import { CHANGE_ACTION, CHANGE_RESOURCE, CATEGORY, ROLE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
+import { storableIdRef } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import { channelEvents, channelOutbox, channelThreads, tasks } from '../../db/schema';
@@ -48,6 +49,10 @@ export const channelConfigSchema = z.object({
   kind: z.string().min(1), // validated against the adapter REGISTRY at parse
   enabled: z.boolean(),
   homeserverUrl: z.string().url(),
+  // the runtime parser also reads STORED / hand-edited config, so it stays
+  // tolerant: the write edge (adminChannelConfigSchema below) is where the
+  // TEXT-STORABILITY refusal belongs — a refusal here would fail the integrity
+  // probe and 503 /health/ready on a config an older build legitimately wrote
   tokenSecretId: z.string().min(1),
   // user ids are uuid columns — a non-uuid binding would throw 22P02 on every
   // event and poison the queue, so the parse itself refuses it
@@ -63,7 +68,15 @@ export type ChannelConfig = z.infer<typeof channelConfigSchema>;
  * own shape so the two cannot drift. */
 export const adminChannelConfigSchema = z.strictObject({
   ...channelConfigSchema.shape,
-  bindings: z.array(z.strictObject(channelConfigSchema.shape.bindings.unwrap().element.shape)),
+  // the WRITE edge carries the text-id refusals (the runtime parser above must
+  // keep parsing configs an older build stored)
+  tokenSecretId: storableIdRef('tokenSecretId'),
+  bindings: z.array(
+    z.strictObject({
+      ...channelConfigSchema.shape.bindings.unwrap().element.shape,
+      platformUserId: storableIdRef('platformUserId'),
+    }),
+  ),
 });
 
 export type ChannelEntryDiagnostic = {
