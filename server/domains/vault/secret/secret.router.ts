@@ -7,10 +7,11 @@ const listVaultSecretsInput = z.object({
   page: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(100).default(20),
   folderId: z.string().min(1).nullish(),
-  q: z.string().trim().max(200).optional(),
+  q: storable('q', z.string().trim().max(200)).optional(),
 });
 
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { storable } from '#shared/utils/storable-text';
 
 import { adminProcedure, liveGenerator } from '../../kernel/kernel';
 import { listVaultSecrets, createSecret, updateSecret, removeSecret } from './secret.service';
@@ -24,9 +25,9 @@ export const secretRouter = {
   create: adminProcedure
     .input(
       z.strictObject({
-        name: z.string().min(1).max(100),
-        description: z.string().max(500).default(''),
-        value: z.string().min(1).max(64_000),
+        name: storable('name', z.string().min(1).max(100)),
+        description: storable('description', z.string().max(500).default('')),
+        value: storable('value', z.string().min(1).max(64_000)),
         folderId: z.string().min(1).nullable().default(null),
       }),
     )
@@ -37,9 +38,9 @@ export const secretRouter = {
     .input(
       z.strictObject({
         id: z.string().min(1),
-        name: z.string().min(1).max(100),
-        description: z.string().max(500).default(''),
-        value: z.string().max(64_000).optional(),
+        name: storable('name', z.string().min(1).max(100)),
+        description: storable('description', z.string().max(500).default('')),
+        value: storable('value', z.string().max(64_000)).optional(),
         folderId: z.string().min(1).nullable().default(null),
       }),
     )

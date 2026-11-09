@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { FLAG_NAME_RE, MAX_FLAGS } from '#shared/flags';
+import { storable } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import { vaultSecrets as vaultSecretsTable } from '../../db/schema';
@@ -29,7 +30,7 @@ export const settingsRouter = os.router({
     .input(
       z.strictObject({
         disablePasswordLogin: z.boolean().optional(),
-        companyName: z.string().min(1).max(60).optional(),
+        companyName: storable('companyName', z.string().min(1).max(60)).optional(),
         runTimeoutMs: z
           .number()
           .int()
@@ -37,7 +38,7 @@ export const settingsRouter = os.router({
           .max(6 * 60 * 60_000)
           .optional(),
         tasksPerAgent: z.number().int().min(1).max(32).optional(),
-        companyPrompt: z.string().max(8000).optional(),
+        companyPrompt: storable('companyPrompt', z.string().max(8000)).optional(),
         flags: z.record(z.string().regex(FLAG_NAME_RE), z.boolean()).optional(),
         internalLlm: z
           .strictObject({ providerId: z.string().min(1), model: z.string().min(1), keySecretId: z.string().min(1) })

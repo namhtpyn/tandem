@@ -6,6 +6,7 @@ import { z } from 'zod';
 
 import { ALL_ENDPOINTS, isAnthropicWire, atMostOneModelsEndpoint } from '#shared/api-styles';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { hasUnstorableText, storable, unstorableMessage } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import { modelProviders as modelProvidersTable } from '../../db/schema';
@@ -38,15 +39,23 @@ export const providersRouter = os.router({
     .input(
       z.strictObject({
         id: z.string().min(1).max(64).optional(),
-        label: z.string().min(1).max(64),
+        label: storable('label', z.string().min(1).max(64)),
         baseUrl: z.url(),
         endpoints: z
           .array(z.enum(ALL_ENDPOINTS))
           .min(1)
           .refine(atMostOneModelsEndpoint, { message: 'only one /v1/models endpoint per provider' }),
         apiStyles: z.array(z.string()).optional(), // legacy alias, ignored
-        extraHeaders: z.record(z.string().min(1), z.string().max(500)).optional(),
-        notes: z.string().max(500).optional(),
+        // record KEYS cannot carry a zod refinement (zod reports 'Invalid key in
+        // record' and drops it), so the key refusal rides a record-level refine
+        extraHeaders: z
+          .record(z.string().min(1), storable('extraHeaders value', z.string().max(500)))
+          .refine(
+            (headers) => Object.keys(headers).every((key) => !hasUnstorableText(key)),
+            unstorableMessage('extraHeaders key'),
+          )
+          .optional(),
+        notes: storable('notes', z.string().max(500)).optional(),
       }),
     )
     .handler(async ({ input }) => {

@@ -6,6 +6,7 @@ import { os } from '@orpc/server';
 import { z } from 'zod';
 
 import { isUuid } from '#shared/utils/is-uuid';
+import { storable } from '#shared/utils/storable-text';
 
 import { requireUuid } from '../kernel/id-shape';
 import { adminProcedure, ORPCError, protectedProcedure } from '../kernel/kernel';
@@ -22,7 +23,7 @@ import {
   registryUpdate,
 } from './mcp.service';
 
-const nameField = z.string().trim().min(1).max(200);
+const nameField = storable('name', z.string().trim().min(1).max(200));
 // url/command are transport-conditional (http needs url; stdio needs an
 // absolute command) — the required-field validation lives in the service
 const urlField = z
@@ -36,13 +37,13 @@ const urlField = z
       return false;
     }
   }, 'url must be an http/https URL');
-const commandField = z.string().trim().min(1);
+const commandField = storable('command', z.string().trim().min(1));
 const argsField = z.array(z.string());
 const credentialEnvVarField = z
   .string()
   .trim()
   .refine((v) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(v), 'credentialEnvVar must be a valid env var name');
-const notesField = z.string().trim().max(2000).default('');
+const notesField = storable('notes', z.string().trim().max(2000).default(''));
 const idField = z.string().min(1);
 const transportField = z.enum(['http', 'stdio']);
 
@@ -63,8 +64,8 @@ const oauthInputShape = {
   oauthAuthorizeUrl: urlField.nullish(),
   oauthTokenUrl: urlField.nullish(),
   oauthRevocationUrl: urlField.nullish(),
-  oauthScopes: z.string().trim().max(500).nullish(),
-  oauthClientId: z.string().trim().min(1).max(500).nullish(),
+  oauthScopes: storable('oauthScopes', z.string().trim().max(500).nullish()),
+  oauthClientId: storable('oauthClientId', z.string().trim().min(1).max(500).nullish()),
   oauthClientSecretId: idField.nullish(),
 };
 

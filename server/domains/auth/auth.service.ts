@@ -8,6 +8,7 @@ import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 //   BETTER_AUTH_SECRET  — session signing (required)
 //   BETTER_AUTH_URL     — canonical origin override
 import { betterAuth } from 'better-auth';
+import { APIError } from 'better-auth/api';
 import { verifyPassword } from 'better-auth/crypto';
 import { testUtils } from 'better-auth/plugins';
 import { genericOAuth } from 'better-auth/plugins/generic-oauth';
@@ -15,6 +16,7 @@ import { eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { ROLE, type Role } from '#shared/enums';
+import { hasUnstorableText, unstorableMessage } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import { account, user as userTable } from '../../db/schema';
@@ -102,6 +104,23 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}) {
               }
             }
             /* v8 ignore stop */
+          },
+        },
+        /**
+         * TEXT-STORABILITY LAW (#382): better-auth's own update-user path writes
+         * `name` / `image` straight into `user` text columns. The same refusal
+         * as every procedure edge — never an opaque driver 500, never a silent
+         * U+FFFD rewrite.
+         */
+        update: {
+          before: async (data) => {
+            const fields = data as { name?: unknown; image?: unknown };
+            for (const field of ['name', 'image'] as const) {
+              const value = fields[field];
+              if (typeof value === 'string' && hasUnstorableText(value)) {
+                throw new APIError('BAD_REQUEST', { message: unstorableMessage(field) });
+              }
+            }
           },
         },
       },
