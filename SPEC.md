@@ -757,15 +757,20 @@ Rules:
   verdict writes no caller-supplied id); `mcp.bindingsRemove` deletes the
   binding, so it is a write and answers `BAD_REQUEST`. Text-typed ids (task,
   project, status, registry, environment, vault ids) are outside this law —
-  they cannot raise 22P02, so a malformed value is an ordinary miss.
+  they cannot raise 22P02, so a malformed value is an ordinary miss. A NUL or
+  lone surrogate in a text id is NOT an ordinary miss, though: the driver
+  raises before the lookup can miss. Id parameters are outside the
+  TEXT-STORABILITY LAW and tracked in #386.
 - **TEXT-STORABILITY LAW (#377/#382):** user-supplied text written to a
   Postgres text column must be STORABLE — `NUL` (0x00) and unpaired surrogates
   are refused at the procedure's edge (`BAD_REQUEST`; the message names the
   field and the class: 'invalid characters (NUL or a lone surrogate)'), never
-  handed to the driver. The refusal rides ONE shared schema refinement
-  (`shared/utils/storable-text.ts`: `hasUnstorableText`, `storable`,
-  `storableText`, `storableOptionalText`) on every free-form field, and the
-  existing access-key name guard for key names. A NUL makes the driver throw
+  handed to the driver. The refusal rides the shared predicate and field-named
+  message (`shared/utils/storable-text.ts`: `hasUnstorableText`,
+  `unstorableMessage`, `storable`, `storableText`, `storableOptionalText`) on
+  every free-form field; the pre-existing access-key name guard (handler-level)
+  and better-auth's `update-user` database hook are the named non-schema edges
+  that reuse the same predicate. A NUL makes the driver throw
   (invalid byte sequence) and would surface through oRPC as an opaque 500 on
   input the schema had accepted; an unpaired surrogate is WORSE — the driver
   rewrites it to U+FFFD, so the stored value is silently corrupted. A
@@ -778,20 +783,27 @@ Rules:
   `requestChanges` / `reject` / `abandon`, and the proposal decision `note`);
   projects (name, description, prompt); task statuses (name); vault (secret
   name, description and the secret value whose last-four hint is stored raw;
-  folder name); environments (name); model providers (label, notes,
-  `extraHeaders` keys and values); MCP registry (name, notes, command,
+  folder name); environments (name); model providers (label, notes, `baseUrl`,
+  `extraHeaders` keys and values); MCP registry (name, notes, command, `url`,
+  `oauthAuthorizeUrl` / `oauthTokenUrl` / `oauthRevocationUrl`,
   `oauthScopes`, `oauthClientId`); settings free text (companyName,
   companyPrompt); and better-auth's own `update-user` path for `name` /
   `image`. Search/filter `q` values on the paged list procedures (tasks,
   employees, environments, vault secrets and folders) refuse it too — a NUL
   filter reaches the driver as an `ilike` parameter and 500s the list. The
-  format-guarded text columns (`email` under `z.email`, URLs, ssh host and
-  username, executable, port) refuse a NUL by their own shape and never reach
-  the driver. Values stored inside a JSON encoding (flags, channel configs, mcp
-  `args`, workspace AI assignments) are storable by construction — the JSON
-  escape writes `\u0000`, not a raw NUL — and are out of scope; provider
-  `extraHeaders` keys and values are the exception because they are applied
-  verbatim to outbound HTTP request headers.
+  format-guarded text columns (`email` under `z.email`, ssh host and username,
+  executable, port) refuse a NUL by their own shape and never reach the
+  driver; a URL's shape check does NOT (zod's `z.url()` and the MCP/`baseUrl`
+  refinements only prove the scheme — `new URL()` percent-encodes a NUL in the
+  PATH while the RAW input is what gets stored), so every URL column rides the
+  shared refinement. Values stored inside a JSON encoding in a TEXT column
+  (flags, channel configs, mcp `args`, workspace AI assignments) are storable
+  by construction — the JSON escape writes `\u0000`, not a raw NUL — and are
+  out of scope; provider `extraHeaders` keys and values are the exception
+  because they are applied verbatim to outbound HTTP request headers. `jsonb`
+  columns are NOT covered by that encoding argument: jsonb rejects the
+  `\u0000` escape itself, so inbound channel payloads keep their own
+  sanitization.
 - input validation: zod `strictObject` everywhere (unknown keys rejected)
 - wire format: POST `/rpc/<path>`, body `{ "json": <input> }`,
   `content-type: application/json`; responses `{ "json": <result> }`

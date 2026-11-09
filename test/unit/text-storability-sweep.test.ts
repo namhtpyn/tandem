@@ -10,6 +10,7 @@ import { createProcedureClient } from '@orpc/server';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ROLE } from '#shared/enums';
+import { hasUnstorableText } from '#shared/utils/storable-text';
 
 // humanProcedure resolves the credential origin through the db — the pins here
 // are about schema edges, and a unit test must not depend on a live database
@@ -23,6 +24,7 @@ import { providersRouter } from '../../server/domains/providers/providers.router
 import { settingsRouter } from '../../server/domains/settings/settings.router';
 import { statusesRouter } from '../../server/domains/statuses/statuses.router';
 import { tasksRouter } from '../../server/domains/tasks/tasks.router';
+import { lastFourHint } from '../../server/domains/vault/secret/secret-crypto.service';
 import { vaultRouter } from '../../server/domains/vault/vault.router';
 
 const NUL = 'A\u0000B';
@@ -48,15 +50,15 @@ function client(procedure: unknown) {
 }
 
 type InputSchema = {
-  safeParse: (value: unknown) => {
-    success: boolean;
-    error?: { issues?: { path?: (string | number)[]; message?: string }[] };
-  };
+  safeParse: (value: unknown) => { success: boolean };
 };
 
 /** the input schema the procedure is actually wired with */
 function schemaOf(procedure: unknown): InputSchema {
   const orpc = (procedure as Record<string, unknown>)['~orpc'] as { inputSchemas: InputSchema[] };
+  // one wired input schema per procedure: a second .input() would silently move
+  // the field under test out of index 0 and leave every schema pin green
+  if (orpc.inputSchemas.length !== 1) throw new Error(`expected one input schema, got ${orpc.inputSchemas.length}`);
   return orpc.inputSchemas[0] as InputSchema;
 }
 
@@ -189,10 +191,54 @@ const surfaces: Surface[] = [
   s('mcp.registryUpdate:oauthClientId', mcpRouter.registryUpdate, { id: 'x' }, 'oauthClientId', {
     cap: 500,
     clearable: true,
+    nullable: true,
+  }),
+  s('mcp.registryCreate:url', mcpRouter.registryCreate, { name: 'n' }, 'url', {
+    clearable: true,
+    nullable: true,
+    valueFor: urlWith,
+  }),
+  s('mcp.registryCreate:oauthAuthorizeUrl', mcpRouter.registryCreate, { name: 'n' }, 'oauthAuthorizeUrl', {
+    clearable: true,
+    nullable: true,
+    valueFor: urlWith,
+  }),
+  s('mcp.registryCreate:oauthTokenUrl', mcpRouter.registryCreate, { name: 'n' }, 'oauthTokenUrl', {
+    clearable: true,
+    nullable: true,
+    valueFor: urlWith,
+  }),
+  s('mcp.registryCreate:oauthRevocationUrl', mcpRouter.registryCreate, { name: 'n' }, 'oauthRevocationUrl', {
+    clearable: true,
+    nullable: true,
+    valueFor: urlWith,
+  }),
+  s('mcp.registryUpdate:url', mcpRouter.registryUpdate, { id: 'x' }, 'url', {
+    clearable: true,
+    nullable: true,
+    valueFor: urlWith,
+  }),
+  s('mcp.registryUpdate:oauthAuthorizeUrl', mcpRouter.registryUpdate, { id: 'x' }, 'oauthAuthorizeUrl', {
+    clearable: true,
+    nullable: true,
+    valueFor: urlWith,
+  }),
+  s('mcp.registryUpdate:oauthTokenUrl', mcpRouter.registryUpdate, { id: 'x' }, 'oauthTokenUrl', {
+    clearable: true,
+    nullable: true,
+    valueFor: urlWith,
+  }),
+  s('mcp.registryUpdate:oauthRevocationUrl', mcpRouter.registryUpdate, { id: 'x' }, 'oauthRevocationUrl', {
+    clearable: true,
+    nullable: true,
+    valueFor: urlWith,
   }),
 
   // ---- model providers ----
   s('providers.save:label', providersRouter.save, providerBase(), 'label', { cap: 64 }),
+  s('providers.save:baseUrl', providersRouter.save, { label: 'L', endpoints: ['OPENAI-COMPLETIONS'] }, 'baseUrl', {
+    valueFor: urlWith,
+  }),
   s('providers.save:notes', providersRouter.save, providerBase(), 'notes', { cap: 500, clearable: true }),
   s('providers.save:extraHeaders key', providersRouter.save, providerBase(), 'extraHeaders key', {
     inputKey: 'extraHeaders',
@@ -200,12 +246,16 @@ const surfaces: Surface[] = [
   }),
   s('providers.save:extraHeaders value', providersRouter.save, providerBase(), 'extraHeaders value', {
     inputKey: 'extraHeaders',
+    cap: 500,
     valueFor: (v) => ({ k: v }),
   }),
 
   // ---- environments ----
   s('environments.create:name', environmentsRouter.create, envBase(), 'name', { cap: 64 }),
-  s('environments.update:name', environmentsRouter.update, { id: 'x', ...envBase() }, 'name', { cap: 64 }),
+  s('environments.update:name', environmentsRouter.update, { id: 'x', ...envBase() }, 'name', {
+    cap: 64,
+    clearable: true,
+  }),
   s('environments.listPaged:q', environmentsRouter.listPaged, { q: 'a' }, 'q', { clearable: true }),
 
   // ---- settings free text ----
@@ -222,8 +272,13 @@ const surfaces: Surface[] = [
   s('employees.listPaged:q', employeesRouter.listPaged, { q: 'a' }, 'q', { clearable: true }),
 ];
 
-function providerBase(extra: Record<string, unknown> = {}) {
-  return { label: 'L', baseUrl: 'https://provider.test', endpoints: ['OPENAI-COMPLETIONS'], ...extra };
+function providerBase() {
+  return { label: 'L', baseUrl: 'https://provider.test', endpoints: ['OPENAI-COMPLETIONS'] };
+}
+
+/** a URL whose PATH carries the payload — the scheme check must still pass */
+function urlWith(value: string) {
+  return `http://provider.test/${value}`;
 }
 
 function envBase() {
@@ -296,4 +351,15 @@ describe('the wired schema keeps its own contract (#382: accept / clear / cap)',
       });
     }
   }
+});
+
+describe('vault last-four hint (#382 review): a legal astral secret never corrupts its own hint', () => {
+  it('slices by code points — the hint can never carry a lone surrogate', () => {
+    // 9 UTF-16 units: a raw slice(-4) starts on the low half of the pair
+    expect(lastFourHint('1234😀abc')).toBe('😀abc');
+    expect(hasUnstorableText(lastFourHint('1234😀abc'))).toBe(false);
+    // the pre-existing short-secret rule is unchanged
+    expect(lastFourHint('12345678')).toBe('');
+    expect(lastFourHint('123456789')).toBe('6789');
+  });
 });

@@ -33,12 +33,16 @@ test('update-user refuses NUL / lone surrogates and accepts a well-formed astral
   expect(badImage.status()).toBe(400);
   expect(JSON.stringify(await badImage.json())).toContain('image contains invalid characters');
 
-  const ok = await page.request.post('/auth/update-user', { data: { name: ASTRAL }, headers: { origin: ORIGIN } });
-  expect(ok.status()).toBe(200);
-
-  const restore = await page.request.post('/auth/update-user', {
-    data: { name: original },
-    headers: { origin: ORIGIN },
-  });
-  expect(restore.status()).toBe(200);
+  try {
+    const ok = await page.request.post('/auth/update-user', { data: { name: ASTRAL }, headers: { origin: ORIGIN } });
+    expect(ok.status()).toBe(200);
+  } finally {
+    // the signed-in admin is shared by every later spec — restore even when an
+    // assertion above failed (a retry would otherwise read the renamed value)
+    const restore = await page.request.post('/auth/update-user', {
+      data: { name: original },
+      headers: { origin: ORIGIN },
+    });
+    expect(restore.status()).toBe(200);
+  }
 });
