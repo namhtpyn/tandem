@@ -760,19 +760,23 @@ Rules:
   they cannot raise 22P02, so a malformed value is an ordinary miss.
 - **TEXT-STORABILITY LAW (#377):** user-supplied text written to a Postgres
   text column must be STORABLE — `NUL` (0x00) and unpaired surrogates are
-  refused at the procedure's schema edge (`BAD_REQUEST`; the message names the
-  field and the class: 'invalid characters (NUL or a lone surrogate)'), never
-  handed to the driver. A NUL makes the driver throw (invalid byte sequence)
-  and would surface through oRPC as an opaque 500 on input the schema had
-  accepted; an unpaired surrogate is WORSE — the driver rewrites it to U+FFFD,
-  so the stored value is silently corrupted. A well-formed surrogate pair (an
-  astral character) IS storable and stays accepted. The employee write surface
-  implements this law on every text field it stores (`employees.create` /
-  `employees.update` name, title, instructions, model and the avatar `image`
-  data URL) and on every text-typed id those procedures accept (`environmentId`
-  / `providerId` / `apiKeySecretId`, plus `employees.titles.save` and
-  `employees.titles.remove` `id`, and the catalog `name`); the remaining
-  free-text write surfaces are tracked in #382 and are NOT yet covered.
+  refused at the procedure's edge (`BAD_REQUEST`; the message names the field
+  and the class: 'invalid characters (NUL or a lone surrogate)'), never handed
+  to the driver. The refusal rides the shared schema refinement on every
+  free-form field, and the existing access-key name guard for key names. A NUL
+  makes the driver throw (invalid byte sequence) and would surface through oRPC
+  as an opaque 500 on input the schema had accepted; an unpaired surrogate is
+  WORSE — the driver rewrites it to U+FFFD, so the stored value is silently
+  corrupted. A well-formed surrogate pair (an astral character) IS storable and
+  stays accepted. The employee write surface implements this law on every
+  free-form text field it stores (`employees.create` / `employees.update` name,
+  title, instructions, model and the avatar `image` data URL) and on every
+  text-typed id those procedures accept (`environmentId` / `providerId` /
+  `apiKeySecretId`, plus `employees.titles.save` and `employees.titles.remove`
+  `id`, and the catalog `name`); the format-guarded text columns they also
+  write (`email` under `z.email`, `executable` under the ACP shape regex)
+  refuse a NUL by their own shape and never reach the driver. The remaining
+  free-text write surfaces are tracked in #382 and are NOT covered.
 - input validation: zod `strictObject` everywhere (unknown keys rejected)
 - wire format: POST `/rpc/<path>`, body `{ "json": <input> }`,
   `content-type: application/json`; responses `{ "json": <result> }`
