@@ -21,6 +21,8 @@ import {
 
 const h = vi.hoisted(() => ({
   taskStatus: '' as string,
+  taskFlips: [] as string[],
+  trackTaskStatusOnFlip: false,
   statuses: [] as Array<{ id: string; category: string }>,
   round: 2,
   taskUpdatedAt: new Date('2026-11-08T00:00:00Z'),
@@ -100,6 +102,10 @@ vi.mock('../../server/db/index', async () => {
               if (table === taskRuns) {
                 h.captureCond = cond;
                 h.runConds.push(cond);
+                if (h.runsRequireReviewCategory) {
+                  const cat = h.statuses.find((st) => st.id === h.taskStatus)?.category;
+                  if (cat !== CATEGORY.IN_REVIEW) return Promise.resolve([]);
+                }
                 return Promise.resolve(h.runningReviewRuns);
               }
               if (table === taskObligations) {
@@ -138,7 +144,13 @@ vi.mock('../../server/db/index', async () => {
                 set,
                 cond,
               });
-              if (table === tasks) return h.flipWins ? [{ id: 'task-1' }] : [];
+              if (table === tasks) {
+                if (h.flipWins && typeof set.status === 'string') {
+                  h.taskFlips.push(set.status);
+                  if (h.trackTaskStatusOnFlip) h.taskStatus = set.status;
+                }
+                return h.flipWins ? [{ id: 'task-1' }] : [];
+              }
               // the VERDICT CAS (.returning on a status write) is the only review
               // update that can miss; supersede/note writes always land
               const isVerdictCas =
@@ -245,6 +257,8 @@ function renderCond(cond: unknown): string {
 
 beforeEach(() => {
   h.taskStatus = STATUS.inReview;
+  h.taskFlips = [];
+  h.trackTaskStatusOnFlip = false;
   h.statuses = [
     { id: STATUS.todo, category: CATEGORY.READY },
     { id: STATUS.inReview, category: CATEGORY.IN_REVIEW },
@@ -735,8 +749,28 @@ describe('removal resume guards (#371)', () => {
       .find((q) => q.sql.includes('employee_id') && q.sql.includes('is null'));
     expect(orphan).toBeTruthy();
     expect(orphan!.sql).toContain('"employee_id" is null');
-    expect(orphan!.sql).toContain('"task_statuses"."category"');
+    expect(orphan!.sql).toContain('"task_statuses"."category" =');
+    expect(orphan!.params).toContain('in_review');
     expect(orphan!.params).toContain('task-9');
+  });
+
+  it('boot stops the orphan BEFORE the sole-void settle leaves the review category (#370 r4 order)', async () => {
+    h.leftoverSelect = [{ taskId: 'task-9' }];
+    h.runningReviewRuns = [{ id: 'run-zombie-9' }];
+    h.runsRequireReviewCategory = true; // the scan honors the category predicate
+    h.trackTaskStatusOnFlip = true; // the flip really moves the mocked task out of review
+    // sole-void round: the only row is the FK-nulled PENDING one -> settle flips the task
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
+    ];
+    await settleAllExtinguishedRounds();
+    // the stop scan only matches while the task is still in the review category, so a
+    // stop running AFTER the settle flip would find nothing here
+    expect(h.stoppedRuns).toEqual(['run-zombie-9']);
+    expect(h.taskFlips).toHaveLength(1);
+    expect(h.dispatches).toHaveLength(0);
   });
 
   it('the in-flight guard is task-scoped and RUNNING-only (#371 predicate pin)', async () => {

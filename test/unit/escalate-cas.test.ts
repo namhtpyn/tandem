@@ -178,7 +178,7 @@ describe('escalateReview verdict-row CAS (#283)', () => {
     expect(h.inserts).toHaveLength(1);
   });
 
-  it('an escalation stalled by a DELETED escalator resumes instead of parking (#370)', async () => {
+  it('an escalation stalled by a DELETED escalator never parks (#370)', async () => {
     h.edges = []; // no eligible up-chain target -> the stalled branch
     h.reviewerExists = false;
     h.taskReads = [
@@ -190,6 +190,8 @@ describe('escalateReview verdict-row CAS (#283)', () => {
     expect(outcome).toEqual({ outcome: 'parked' });
     // no park write (a park flips the task row); the resume path owns the round
     expect(h.updates.some((u) => u.table === 'tasks')).toBe(false);
+    // the resume arm itself (mint of the live sibling) is covered by the reviewer-removal
+    // resume tests; this pins the guard: a deleted escalator is never a park
   });
 
   it('an escalation stalled with a LIVE escalator still parks (#370 regression guard)', async () => {
