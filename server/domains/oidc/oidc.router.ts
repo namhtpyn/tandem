@@ -3,6 +3,7 @@ import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
+import { storableId } from '#shared/utils/storable-text';
 
 // oidc router — business logic lives in services/utils; this file only wires procedures
 import { adminProcedure, liveGenerator, publishChange, ORPCError } from '../kernel/kernel';
@@ -33,7 +34,7 @@ export const oidcRouter = os.router({
         providers: z
           .array(
             z.strictObject({
-              id: z.string().min(1).max(64).optional(),
+              id: storableId('id', 64).optional(),
               label: z.string().min(1).max(64),
               issuer: z.url(),
               clientId: z.string().min(1).max(200),

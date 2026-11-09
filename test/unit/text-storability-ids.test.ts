@@ -16,9 +16,11 @@ import { ROLE } from '#shared/enums';
 // about schema edges, and a unit test must not depend on a live database
 vi.mock('../../server/domains/kernel/session-origin', () => ({ isApiKeySession: async () => false }));
 
+import { appRouter } from '../../server/domains/app.router';
 import { channelsRouter } from '../../server/domains/channels/channels.router';
 import { environmentsRouter } from '../../server/domains/environments/environments.router';
 import { mcpRouter } from '../../server/domains/mcp/mcp.router';
+import { oidcRouter } from '../../server/domains/oidc/oidc.router';
 import { projectsRouter } from '../../server/domains/projects/projects.router';
 import { providersRouter } from '../../server/domains/providers/providers.router';
 import { settingsRouter } from '../../server/domains/settings/settings.router';
@@ -30,6 +32,8 @@ const NUL = 'A\u0000B';
 const LONE_HIGH = 'A\uD800B';
 const LONE_LOW = 'A\uDC00B';
 const ASTRAL = 'A😀B';
+/** a canonical uuid for the binding rows channel configs require */
+const USER_UUID = '0190f3f1-0000-7000-8000-000000000001';
 
 const adminSession = {
   sessionId: 'unit-session-row',
@@ -296,6 +300,24 @@ const surfaces: Surface[] = [
   s('channels.update:tokenSecretId', channelsRouter.update, { channels: [channelEntry()] }, 'tokenSecretId', {
     leaf: ['channels', 0, 'tokenSecretId'],
   }),
+  s(
+    'channels.update:platformUserId',
+    channelsRouter.update,
+    { channels: [{ ...channelEntry(), bindings: [{ platformUserId: 'u', userId: USER_UUID }] }] },
+    'platformUserId',
+    { leaf: ['channels', 0, 'bindings', 0, 'platformUserId'] },
+  ),
+
+  // ---- oidc provider registry (a store-key id that would mint a new provider) ----
+  s(
+    'oidc.replace:providers.id',
+    oidcRouter.replace,
+    {
+      providers: [{ id: 'p', label: 'L', issuer: 'https://issuer.test', clientId: 'c', clientSecret: 's' }],
+    },
+    'id',
+    { leaf: ['providers', 0, 'id'], cap: 64, clearable: true },
+  ),
 
   // ---- settings assignment references ----
   s(
@@ -348,6 +370,7 @@ const routers: Record<string, unknown> = {
   environments: environmentsRouter,
   channels: channelsRouter,
   settings: settingsRouter,
+  oidc: oidcRouter,
 };
 
 /** 'tasks.note:taskId' → tasksRouter.note, 'vault.secrets.create:folderId' → vaultRouter.secrets.create */
@@ -398,12 +421,128 @@ describe('the id surface table is unique and counted (#386)', () => {
     expect(new Set(surfaces.map((surface) => surface.surface)).size).toBe(surfaces.length);
   });
 
-  it('the table holds 92 rows — bump the count when you add one', () => {
+  it('the table holds 94 rows — bump the count when you add one', () => {
     // 46 tasks + 4 projects + 4 statuses + 4 providers + 7 vault + 5 environments
-    // + 15 mcp + 1 channels + 6 settings = 92
-    expect(surfaces).toHaveLength(92);
+    // + 15 mcp + 2 channels + 6 settings + 1 oidc = 94
+    expect(surfaces).toHaveLength(94);
   });
 });
+
+// ---- completeness: a surface MISSING from the table must red the suite ----
+// The count assertion above is a self-count — it cannot see a procedure the
+// table never named (the exact shape #386's oidc gap shipped in). This walk
+// enumerates the REAL app router's text-typed id leaves and requires each one
+// to be a table row or a named exemption.
+
+type ZodDef = {
+  type?: string;
+  shape?: Record<string, unknown>;
+  element?: unknown;
+  options?: unknown[];
+  innerType?: unknown;
+  out?: unknown;
+  checks?: { def?: { format?: string } }[];
+};
+
+function unwrapDef(schema: unknown): ZodDef | null {
+  let def = (schema as { _zod?: { def?: ZodDef } })?._zod?.def;
+  for (let guard = 0; guard < 10 && def; guard += 1) {
+    const type = def.type;
+    if (type === 'optional' || type === 'nullable' || type === 'default' || type === 'readonly') {
+      def = (def.innerType as { _zod?: { def?: ZodDef } })?._zod?.def;
+    } else if (type === 'pipe') {
+      def = (def.out as { _zod?: { def?: ZodDef } })?._zod?.def;
+    } else {
+      return def;
+    }
+  }
+  return def ?? null;
+}
+
+/** id-named leaves that are CREDENTIAL values, not row keys — already inside
+ *  the TEXT-STORABILITY LAW through `storable(...)`, and never a query param */
+const CREDENTIAL_ID_LEAVES: Record<string, string> = {
+  'mcp.registryCreate:oauthClientId': 'OAuth client id — a credential, stored encrypted, never queried',
+  'mcp.registryUpdate:oauthClientId': 'OAuth client id — a credential, stored encrypted, never queried',
+  'oidc.replace:clientId': 'OAuth client id — a credential, stored encrypted, never queried',
+};
+
+/** procedures whose id params answer through the handler shape-check (SPEC ID-SHAPE carve-out) */
+function exemptLeaf(procedure: string, leaf: string): string | null {
+  if (procedure.startsWith('employees.')) {
+    return 'employee procedures shape-check every id (requireUuid / canonicalUuid) before any query';
+  }
+  return CREDENTIAL_ID_LEAVES[`${procedure}:${leaf}`] ?? null;
+}
+
+type ProcedureEntry = { name: string; procedure: Record<string, unknown> };
+
+function collectProcedures(node: unknown, prefix: string, out: ProcedureEntry[]): void {
+  if (!node || typeof node !== 'object') return;
+  const orpc = (node as Record<string, unknown>)['~orpc'] as Record<string, unknown> | undefined;
+  if (orpc && !orpc.router) {
+    out.push({ name: prefix, procedure: node as Record<string, unknown> });
+    return;
+  }
+  for (const [key, child] of Object.entries(node)) {
+    collectProcedures(child, prefix ? `${prefix}.${key}` : key, out);
+  }
+}
+
+describe('the id table covers the app router (a missing surface reds the suite, #386)', () => {
+  it('every text-typed id leaf in the real router is a table row or a named exemption', () => {
+    const entries: ProcedureEntry[] = [];
+    collectProcedures(appRouter, '', entries);
+    expect(entries.length).toBeGreaterThan(90); // the walk itself must not silently find nothing
+
+    const covered = new Set(
+      surfaces.map((surface) => {
+        const [procedure, field = ''] = surface.surface.split(':');
+        return `${procedure}:${field.split('.').pop() ?? field}`;
+      }),
+    );
+
+    const missing: string[] = [];
+    for (const { name, procedure } of entries) {
+      const schemas = (procedure['~orpc'] as { inputSchemas?: unknown[] }).inputSchemas ?? [];
+      // walk each schema and keep the id-named leaf PATHS, so the label matches
+      const leaves: string[] = [];
+      for (const schema of schemas) collectIdLeafPaths(schema, [], leaves);
+      for (const leaf of leaves) {
+        if (covered.has(`${name}:${leaf}`)) continue;
+        if (exemptLeaf(name, leaf)) continue;
+        missing.push(`${name}:${leaf}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+});
+
+/** id-named text leaves as their leaf KEY, matching the table's label shape */
+function collectIdLeafPaths(schema: unknown, path: string[], out: string[]): void {
+  const def = unwrapDef(schema);
+  if (!def) return;
+  if (def.type === 'object' && def.shape) {
+    for (const [key, child] of Object.entries(def.shape)) collectIdLeafPaths(child, [...path, key], out);
+    return;
+  }
+  if (def.type === 'array' && def.element) {
+    collectIdLeafPaths(def.element, path, out);
+    return;
+  }
+  if (def.type === 'union' && def.options) {
+    for (const option of def.options) collectIdLeafPaths(option, path, out);
+    return;
+  }
+  if (def.type === 'string') {
+    // a format guard (uuid / email) already refuses a NUL before any query —
+    // that is the ID-SHAPE carve-out, not a text-id surface
+    const formatGuarded = (def.checks ?? []).some((check) => check.def?.format !== undefined);
+    if (formatGuarded) return;
+    const leaf = path[path.length - 1] ?? '';
+    if (leaf === 'id' || /Ids?$/.test(leaf)) out.push(leaf);
+  }
+}
 
 describe('the id surface table points at the procedure its label names (#386)', () => {
   for (const surface of surfaces) {
@@ -427,6 +566,12 @@ describe('the wired id schema keeps its own contract (#386: accept / blank / cle
       // the non-blank half of storableId: swapping it for a bare `storable(...)`
       // would let '' reach an upsert-by-id write and create a new row
       expect(schema().safeParse(payload(surface, '')).success).toBe(surface.blankAllowed === true);
+      // whitespace-only is the same create-a-row hazard: the upsert writes trim
+      // the id, so '   ' becomes '' and mints a NEW row instead of updating
+      if (!surface.blankAllowed) {
+        expect(schema().safeParse(payload(surface, '   ')).success).toBe(false);
+        expect(schema().safeParse(payload(surface, '\t')).success).toBe(false);
+      }
     });
 
     if (surface.cap !== undefined) {

@@ -47,9 +47,17 @@ export function storableText(field: string, max?: number) {
   return storable(field, max === undefined ? base : base.max(max));
 }
 
-/** a text-typed id parameter (read key, write target, store key or filter): non-blank and storable */
+/** a text-typed id parameter (read key, write target, store key or filter):
+ *  non-blank (whitespace-only included) and storable. A whitespace-only id
+ *  would trim to '' at the two upsert-by-id writes and silently create a NEW
+ *  row under a fresh id instead of updating the named one. */
 export function storableId(field: string, max?: number) {
-  return storableText(field, max);
+  const base = z.string().min(1);
+  const capped = max === undefined ? base : base.max(max);
+  return storable(
+    field,
+    capped.refine((value) => value.trim().length > 0, `${field} must not be blank`),
+  );
 }
 
 /** storable text for optional/nullable fields — callers add `.nullable().optional()` */

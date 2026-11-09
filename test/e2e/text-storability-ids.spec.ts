@@ -55,4 +55,11 @@ test('text-typed ids refuse unstorable bytes at the procedure edge, never a 500'
   await expectStorableRefusal(page, 'vault/secrets/list', {}, 'folderId', 'folderId');
   await expectStorableRefusal(page, 'mcp/registryUpdate', {}, 'id', 'id');
   await expectStorableRefusal(page, 'environments/remove', {}, 'id', 'id');
+  await expectStorableRefusal(
+    page,
+    'oidc/replace',
+    { providers: [{ label: 'L', issuer: 'https://issuer.test', clientId: 'c', clientSecret: 's' }] },
+    'id',
+    'id',
+  );
 });

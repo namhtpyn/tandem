@@ -52,7 +52,7 @@ export const channelConfigSchema = z.object({
   tokenSecretId: storableId('tokenSecretId'),
   // user ids are uuid columns — a non-uuid binding would throw 22P02 on every
   // event and poison the queue, so the parse itself refuses it
-  bindings: z.array(z.object({ platformUserId: z.string().min(1), userId: z.string().uuid() })).default([]),
+  bindings: z.array(z.object({ platformUserId: storableId('platformUserId'), userId: z.string().uuid() })).default([]),
   defaultAssigneeId: z.string().uuid().nullable().default(null),
 });
 

@@ -768,9 +768,12 @@ Rules:
   project (`id`, `parentId`), task-status (`id`, `nextIds[]`), model-provider
   (`id`, `providerId`, `keySecretId`), vault (`id`, `folderId`), environment
   (`id`, `secretId`), MCP registry / binding (`id`, `employeeId`, `serverId`,
-  `secretId`, `oauthClientSecretId`), channel config (`tokenSecretId`) and
-  settings assignment references
-  (`providerId`, `model`, `keySecretId`). The refusal must not be left to the
+  `secretId`, `oauthClientSecretId`), channel config (`tokenSecretId` and a
+  binding's `platformUserId`), the OIDC provider registry (`id` — a store key
+  whose corrupted value would mint a NEW provider) and settings assignment
+  references (`providerId`, `model`, `keySecretId`). An id-named leaf that is a
+  CREDENTIAL value (`oauthClientId`, an OIDC `clientId`) is not a row key and
+  stays inside the TEXT-STORABILITY text rule instead. The refusal must not be left to the
   comparison shape: an id compared in JS against a loaded set (`tasks.create`
   status; `statuses.save` nextIds — its set is the loaded ids PLUS the
   incoming id) or shape-checked before any query already answers `BAD_REQUEST`
@@ -825,8 +828,12 @@ Rules:
   PATH while the RAW input is what gets stored), so every URL column rides the
   shared refinement. Values stored inside a JSON encoding in a TEXT column
   (flags, channel configs, mcp `args`, workspace AI assignments) are storable
-  by construction — the JSON escape writes `\u0000`, not a raw NUL — and are
-  out of scope; provider `extraHeaders` keys and values are the exception
+  by construction — the JSON escape writes `\u0000`, not a raw NUL — so the
+  STORAGE half is out of scope; an id-named value inside one that is read back
+  and used as a query parameter or a store key (channel `tokenSecretId`, a
+  binding's `platformUserId`, assignment `providerId` / `keySecretId` — `model`
+  rides the same sweep for uniformity) is still refused at the edge by the ID
+  sweep above. provider `extraHeaders` keys and values are the exception
   because they are applied verbatim to outbound HTTP request headers. `jsonb`
   columns are NOT covered by that encoding argument: jsonb rejects the
   `\u0000` escape itself, so inbound channel payloads keep their own VALUE
