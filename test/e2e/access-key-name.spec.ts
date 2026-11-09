@@ -1,0 +1,120 @@
+import type { Page } from '@playwright/test';
+
+import { expect, test } from './helpers/cleanup';
+
+// SPEC "Roles & access" — ACCESS-KEY NAME CAP (#367): the credential plugin
+// caps key names at 32 chars and throws an APIError oRPC cannot map, so a
+// legal employee create with a name longer than 21 chars answered 500 (the
+// derived `"<name> access key"` busted the cap), and a caller-supplied name
+// over 32 did the same. Derived names fit the cap; caller names over it are
+// BAD_REQUEST. Pinned end-to-end on the real handler, not just the helper.
+type CreatedEmployee = { id: string; apiKey: string };
+type KeyRow = { id: string; name: string };
+
+async function post(page: Page, path: string, json: unknown) {
+  return page.request.post(`/rpc/${path}`, { data: { json } });
+}
+
+test('employee create with a 100-char name mints a key that fits the 32-char cap', async ({ page }) => {
+  const suffix = Date.now().toString(36);
+  // exactly 100 units — the schema's employee-name edge
+  const name = `${'Long Name '.repeat(10).slice(0, 100 - suffix.length)}${suffix}`;
+  expect(name.length).toBe(100);
+  const res = await post(page, 'employees/create', {
+    name,
+    email: `long-name-${suffix}@tandem.local`,
+    kind: 'human',
+    title: 'Tester',
+  });
+  expect(res.status()).toBe(200);
+  const created = (await res.json()).json as CreatedEmployee;
+  expect(created.apiKey).toBeTruthy();
+
+  // the stored key metadata carries the derived name — it must fit the plugin cap
+  const keysRes = await post(page, 'employees/listApiKeys', { employeeId: created.id });
+  expect(keysRes.status()).toBe(200);
+  const keys = (await keysRes.json()).json as KeyRow[];
+  const minted = keys.find((k) => k.name.endsWith(' access key'));
+  expect(minted, `derived key row missing — got ${JSON.stringify(keys.map((k) => k.name))}`).toBeTruthy();
+  // exact derived name: the employee-name prefix (21 units) + the fixed suffix
+  expect(minted!.name).toBe(`${name.slice(0, 21)} access key`);
+  expect(minted!.name.length).toBe(32);
+
+  // the ` key` branch (nameless createApiKey) truncates the SAME employee name at 28 units
+  const derivedMint = await post(page, 'employees/createApiKey', { employeeId: created.id });
+  expect(derivedMint.status()).toBe(200);
+  const derivedKey = (await derivedMint.json()).json as { id: string };
+  // a whitespace-only supplied name takes the SAME derived branch (not a plugin NAME_REQUIRED 500)
+  const blankMint = await post(page, 'employees/createApiKey', { employeeId: created.id, name: '   ' });
+  expect(blankMint.status()).toBe(200);
+  const blankKey = (await blankMint.json()).json as { id: string };
+  const afterRes = await post(page, 'employees/listApiKeys', { employeeId: created.id });
+  expect(afterRes.status()).toBe(200);
+  const rowsAfter = (await afterRes.json()).json as KeyRow[];
+  const derivedRow = rowsAfter.find((k) => k.id === derivedKey.id);
+  expect(derivedRow, 'nameless mint row missing from key list').toBeTruthy();
+  expect(derivedRow!.name).toBe(`${name.slice(0, 28)} key`);
+  expect(derivedRow!.name.length).toBe(32);
+  const blankRow = rowsAfter.find((k) => k.id === blankKey.id);
+  expect(blankRow?.name).toBe(`${name.slice(0, 28)} key`);
+});
+
+test('caller-supplied key names over 32 chars answer BAD_REQUEST on mint and rename', async ({ page }) => {
+  const suffix = Date.now().toString(36);
+  const createdRes = await post(page, 'employees/create', {
+    name: `Cap ${suffix}`,
+    email: `cap-${suffix}@tandem.local`,
+    kind: 'human',
+    title: 'Tester',
+  });
+  expect(createdRes.status()).toBe(200);
+  const employee = (await createdRes.json()).json as CreatedEmployee;
+
+  // mint: 33 chars -> 400 with the specced message, never a plugin 500
+  const tooLong = 'K'.repeat(33);
+  const mintRes = await post(page, 'employees/createApiKey', { employeeId: employee.id, name: tooLong });
+  expect(mintRes.status()).toBe(400);
+  expect(JSON.stringify(await mintRes.json())).toContain('name too long');
+
+  // createApiKey refuses unstorable text too (same guard as rename, not a silent rewrite)
+  const nulMint = await post(page, 'employees/createApiKey', { employeeId: employee.id, name: 'A\u0000B' });
+  expect(nulMint.status()).toBe(400);
+  expect(JSON.stringify(await nulMint.json())).toContain('invalid characters');
+
+  // the inclusive boundary: exactly 32 units mints THROUGH the plugin and stores verbatim
+  const atCapName = 'M'.repeat(32);
+  const atCapRes = await post(page, 'employees/createApiKey', { employeeId: employee.id, name: atCapName });
+  expect(atCapRes.status()).toBe(200);
+  const atCapKey = (await atCapRes.json()).json as { id: string };
+  const atCapList = await post(page, 'employees/listApiKeys', { employeeId: employee.id });
+  expect(atCapList.status()).toBe(200);
+  const atCapRow = ((await atCapList.json()).json as KeyRow[]).find((k) => k.id === atCapKey.id);
+  expect(atCapRow?.name).toBe(atCapName);
+
+  // a fitting name mints; a 32-unit rename succeeds and STORES the name
+  const okRes = await post(page, 'employees/createApiKey', { employeeId: employee.id, name: 'primary key' });
+  expect(okRes.status()).toBe(200);
+  const key = (await okRes.json()).json as KeyRow;
+  const atCap = 'R'.repeat(32);
+  const renameOk = await post(page, 'employees/updateApiKey', { keyId: key.id, name: atCap });
+  expect(renameOk.status()).toBe(200);
+  const afterRename = await post(page, 'employees/listApiKeys', { employeeId: employee.id });
+  expect(afterRename.status()).toBe(200);
+  const renamed = ((await afterRename.json()).json as KeyRow[]).find((k) => k.id === key.id);
+  expect(renamed?.name).toBe(atCap);
+
+  // renaming it over the cap answers the same 400
+  const renameRes = await post(page, 'employees/updateApiKey', { keyId: key.id, name: tooLong });
+  expect(renameRes.status()).toBe(400);
+  expect(JSON.stringify(await renameRes.json())).toContain('name too long');
+
+  // NUL cannot be stored — the guard answers 400, not a Postgres 500
+  const nulRes = await post(page, 'employees/updateApiKey', { keyId: key.id, name: 'A\u0000B' });
+  expect(nulRes.status()).toBe(400);
+  expect(JSON.stringify(await nulRes.json())).toContain('invalid characters');
+
+  // rename requires a non-blank name (whitespace-only is the blank path the handler owns)
+  const blankRes = await post(page, 'employees/updateApiKey', { keyId: key.id, name: '   ' });
+  expect(blankRes.status()).toBe(400);
+  expect(JSON.stringify(await blankRes.json())).toContain('name is required');
+});
