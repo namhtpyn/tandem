@@ -758,6 +758,17 @@ Rules:
   binding, so it is a write and answers `BAD_REQUEST`. Text-typed ids (task,
   project, status, registry, environment, vault ids) are outside this law —
   they cannot raise 22P02, so a malformed value is an ordinary miss.
+- **TEXT-STORABILITY LAW (#377):** user-supplied text written to a Postgres
+  text column must be STORABLE — `NUL` (0x00) and unpaired surrogates are
+  refused at the procedure's schema edge (`BAD_REQUEST`; the message names the
+  field and the class: 'invalid characters (NUL or a lone surrogate)'), never
+  handed to the driver. Postgres rejects both, so the driver error would
+  surface through oRPC as an opaque 500 on input the schema otherwise
+  accepted. A well-formed surrogate pair (an astral character) IS storable and
+  stays accepted. The employee write surface implements this law on every
+  free-text field it stores (`employees.create` / `employees.update` name,
+  title, instructions, model; `employees.titles.save` name); the remaining
+  free-text write surfaces are tracked in #382 and are NOT yet covered.
 - input validation: zod `strictObject` everywhere (unknown keys rejected)
 - wire format: POST `/rpc/<path>`, body `{ "json": <input> }`,
   `content-type: application/json`; responses `{ "json": <result> }`
