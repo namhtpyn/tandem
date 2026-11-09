@@ -50,21 +50,21 @@ export function storableText(field: string, max?: number) {
 /** blank = nothing but whitespace / default-ignorable code points (ZWSP, ZWNJ,
  *  ZWJ, word joiner, BOM, format chars) — a blank id trims into a NEW row at
  *  the upsert-by-id writes and can never name one */
-const BLANK_ID = /^[\s\p{Default_Ignorable_Code_Point}]*$/u;
-
-/** a padding code point at an id's edge: whitespace, or a default-ignorable
- *  that is NOT grapheme-extending (VS16 / ZWJ legally continue the preceding
- *  character, so `x❤️` is an exact id, not a padded one) */
-function padCodePoint(ch: string): boolean {
-  if (/\s/u.test(ch)) return true;
-  if (!/[\p{Default_Ignorable_Code_Point}]/u.test(ch)) return false;
-  return !/[\p{Grapheme_Extend}\u200d]/u.test(ch);
-}
+const BLANK_ID = /^[\s\p{Default_Ignorable_Code_Point}\u2800]*$/u;
 
 function hasPadEdge(value: string): boolean {
   const points = [...value];
   if (points.length === 0) return false;
-  return padCodePoint(points[0] as string) || padCodePoint(points[points.length - 1] as string);
+  // LEADING: nothing precedes the first code point, so any pad char (including
+  // a grapheme-extending one) is padding
+  const first = points[0] as string;
+  if (/\s/u.test(first) || /[\p{Default_Ignorable_Code_Point}]/u.test(first)) return true;
+  // TRAILING: skip the grapheme-extend run (VS16 / combining mark / ZWJ) and
+  // pad-check the last BASE code point — 'x❤️' passes, 'backlog ␠️' refuses
+  let index = points.length - 1;
+  while (index > 0 && /[\p{Grapheme_Extend}\u200d]/u.test(points[index] as string)) index -= 1;
+  const last = points[index] as string;
+  return /\s/u.test(last) || /[\p{Default_Ignorable_Code_Point}]/u.test(last);
 }
 
 /** a text-typed id parameter (write target, store key): non-blank, unpadded,

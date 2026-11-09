@@ -95,13 +95,11 @@ export const mcpRouter = os.router({
     .input(z.strictObject({ id: idField('id') }))
     .handler(({ input }) => registryRemove(input)),
 
-  bindingsList: adminProcedure
-    .input(z.strictObject({ employeeId: storable('employeeId', z.string()) }))
-    .handler(({ input }) =>
-      // a filter is not a lookup: blank / non-uuid values are the empty page
-      // (UUID-FILTER LAW), never a schema error, never a uuid-column query
-      isUuid(input.employeeId) ? bindingsList(input.employeeId) : { data: [] },
-    ),
+  bindingsList: adminProcedure.input(z.strictObject({ employeeId: z.string() })).handler(({ input }) =>
+    // a filter is not a lookup: blank / non-uuid values are the empty page
+    // (UUID-FILTER LAW), never a schema error, never a uuid-column query
+    isUuid(input.employeeId) ? bindingsList(input.employeeId) : { data: [] },
+  ),
 
   // per-server read for the registry page's binding manager (#274)
   bindingsListByServer: adminProcedure
@@ -133,7 +131,7 @@ export const mcpRouter = os.router({
     }),
 
   probe: adminProcedure
-    .input(z.strictObject({ employeeId: storable('employeeId', z.string()), serverId: idField('serverId') }))
+    .input(z.strictObject({ employeeId: z.string(), serverId: idField('serverId') }))
     .handler(({ input }) => {
       // probe is a read of one binding: blank / malformed employee ids are the same
       // miss a well-formed id with no binding behind it answers (blank is accepted at

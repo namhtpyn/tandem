@@ -499,7 +499,7 @@ export const tasksRouter = os.router({
         projectId: storableIdRef('projectId').optional(),
         // blank/non-uuid values are a miss, not an error (ASSIGNEE SCOPE LAW):
         // listTasksPaged short-circuits them to an empty page before the uuid query
-        assigneeId: storable('assigneeId', z.string()).optional(),
+        assigneeId: z.string().optional(),
         inboxOfMe: z.boolean().optional(),
         awaitingDecision: z.boolean().optional(),
       }),

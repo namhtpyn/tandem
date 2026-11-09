@@ -736,7 +736,7 @@ export const employeesRouter = os.router({
    *  compare — is the same NOT_FOUND miss, never a 500 and never a peek. */
   listApiKeys: protectedProcedure
     // blank is accepted at the schema edge and owned by the miss path (UUID-FILTER LAW)
-    .input(z.strictObject({ employeeId: storable('employeeId', z.string()) }))
+    .input(z.strictObject({ employeeId: z.string() }))
     .handler(async ({ input, context }): Promise<ApiKeyRow[]> => {
       const selfId = context.session.user.id;
       const isAdmin = context.session.user.role === ROLE.ADMIN;

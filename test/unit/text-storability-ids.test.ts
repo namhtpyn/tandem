@@ -187,10 +187,6 @@ const surfaces: Surface[] = [
   s('tasks.setStatus:status', tasksRouter.setStatus, { id: 'x', status: 's' }, 'status'),
   s('tasks.listPaged:statusId', tasksRouter.listPaged, { q: 'a' }, 'statusId', { clearable: true }),
   s('tasks.listPaged:projectId', tasksRouter.listPaged, { q: 'a' }, 'projectId', { clearable: true }),
-  s('tasks.listPaged:assigneeId', tasksRouter.listPaged, { q: 'a' }, 'assigneeId', {
-    clearable: true,
-    blankAllowed: true,
-  }),
   s('tasks.subtasks:taskId', tasksRouter.subtasks, { taskId: 'x' }, 'taskId'),
   s('tasks.assignments:taskId', tasksRouter.assignments, { taskId: 'x' }, 'taskId'),
   s('tasks.proposals:taskId', tasksRouter.proposals, { taskId: 'x' }, 'taskId'),
@@ -306,10 +302,6 @@ const surfaces: Surface[] = [
   }),
   s('mcp.bindingsRemove:employeeId', mcpRouter.bindingsRemove, { employeeId: 'e', serverId: 's' }, 'employeeId'),
   s('mcp.bindingsRemove:serverId', mcpRouter.bindingsRemove, { employeeId: 'e', serverId: 's' }, 'serverId'),
-  s('mcp.bindingsList:employeeId', mcpRouter.bindingsList, { employeeId: 'e' }, 'employeeId', { blankAllowed: true }),
-  s('mcp.probe:employeeId', mcpRouter.probe, { employeeId: 'e', serverId: 's' }, 'employeeId', {
-    blankAllowed: true,
-  }),
   s('mcp.probe:serverId', mcpRouter.probe, { employeeId: 'e', serverId: 's' }, 'serverId'),
   s('mcp.oauthConnect:employeeId', mcpRouter.oauthConnect, { employeeId: 'e', serverId: 's' }, 'employeeId'),
   s('mcp.oauthConnect:serverId', mcpRouter.oauthConnect, { employeeId: 'e', serverId: 's' }, 'serverId'),
@@ -422,7 +414,6 @@ const surfaces: Surface[] = [
   s('employees.revokeApiKey:employeeId', employeesRouter.revokeApiKey, { keyId: 'k' }, 'employeeId', {
     clearable: true,
   }),
-  s('employees.listApiKeys:employeeId', employeesRouter.listApiKeys, {}, 'employeeId', { blankAllowed: true }),
 ];
 
 const routers: Record<string, unknown> = {
@@ -490,10 +481,10 @@ describe('the id surface table is unique and counted (#386)', () => {
     expect(new Set(surfaces.map((surface) => surface.surface)).size).toBe(surfaces.length);
   });
 
-  it('the table holds 112 rows — bump the count when you add one', () => {
+  it('the table holds 108 rows — bump the count when you add one', () => {
     // 46 tasks + 4 projects + 4 statuses + 4 providers + 7 vault + 5 environments
-    // + 15 mcp + 2 channels + 6 settings + 1 oidc + 18 employees = 112
-    expect(surfaces).toHaveLength(112);
+    // + 13 mcp + 2 channels + 6 settings + 1 oidc + 17 employees = 108
+    expect(surfaces).toHaveLength(108);
   });
 });
 
@@ -619,7 +610,9 @@ function collectIdLeafPaths(schema: unknown, path: string[], out: Leaf[]): void 
   if (type === 'string') {
     // a format guard (uuid / email) already refuses a NUL before any query —
     // that is the ID-SHAPE carve-out, not a text-id surface
-    const formatGuarded = (raw.checks ?? []).some((check) => check.def?.format !== undefined);
+    const formatGuarded = (raw.checks ?? []).some(
+      (check) => check.def?.format === 'uuid' || check.def?.format === 'email',
+    );
     if (formatGuarded) return;
     const leaf = path[path.length - 1] ?? '';
     if (REFERENCE_LEAF.test(leaf)) out.push({ path: path.filter((p) => p !== '*').join('.'), schema });
@@ -638,6 +631,19 @@ const EXEMPT_ID_LEAVES: Record<string, string> = {
   'oidc.replace:providers.clientId': 'OAuth client id — a credential value guarded by storable(...), never a row key',
   'employees.create:model': 'a free-text model name guarded by storableText(...), not an id',
   'employees.update:model': 'a free-text model name guarded by storableText(...), not an id',
+};
+
+/**
+ * uuid-typed filters/lookups whose handler shape-checks BEFORE any query: a
+ * NUL or blank is the documented EMPTY PAGE / NOT_FOUND miss, never a 400
+ * (UUID-FILTER LAW / CREDENTIAL-METADATA SCOPE) — these stay plain strings and
+ * are exempt from the refusal sweep by name.
+ */
+const MISS_ID_LEAVES: Record<string, string> = {
+  'tasks.listPaged:assigneeId': 'UUID-FILTER LAW — blank/non-uuid is the empty page',
+  'mcp.bindingsList:employeeId': 'UUID-FILTER LAW — blank/non-uuid is the empty page',
+  'mcp.probe:employeeId': 'lookup miss — isUuid short-circuits to NOT_FOUND',
+  'employees.listApiKeys:employeeId': 'CREDENTIAL-METADATA SCOPE — non-uuid answers NOT_FOUND',
 };
 
 type ProcedureEntry = { name: string; procedure: Record<string, unknown> };
@@ -680,7 +686,7 @@ describe('the id table covers the app router (a missing surface reds the suite, 
 
     const covered = new Set(surfaces.map(coverageKey));
     const discovered = new Set(entries.flatMap((entry) => entry.leaves.map((leaf) => `${entry.name}:${leaf.path}`)));
-    const expected = new Set([...covered, ...Object.keys(EXEMPT_ID_LEAVES)]);
+    const expected = new Set([...covered, ...Object.keys(EXEMPT_ID_LEAVES), ...Object.keys(MISS_ID_LEAVES)]);
 
     // both directions: a leaf with no row (or exemption) reds, and a row whose
     // leaf the walk no longer sees reds (a lost walk branch cannot hide)
@@ -713,6 +719,21 @@ describe('the id table covers the app router (a missing surface reds the suite, 
     }
   });
 
+  it('a uuid-filter miss surface documents its own miss (NUL parses, the handler owns it)', () => {
+    const entries = routerIdLeaves();
+    for (const key of Object.keys(MISS_ID_LEAVES)) {
+      const [procedure, leafPath = ''] = key.split(':');
+      const entry = entries.find((candidate) => candidate.name === procedure);
+      const leaf = entry?.leaves.find((candidate) => candidate.path === leafPath);
+      expect(leaf, `${key} is a live leaf`).toBeTruthy();
+      // the refusal is deliberately NOT at the edge for these: the handler's
+      // shape check answers the miss (a 400 here would break the filter law)
+      expect((leaf?.schema as { safeParse: (value: unknown) => { success: boolean } }).safeParse(NUL).success).toBe(
+        true,
+      );
+    }
+  });
+
   it('every exemption carries the guard its reason claims (NUL is refused there)', () => {
     const entries = routerIdLeaves();
     for (const key of Object.keys(EXEMPT_ID_LEAVES)) {
@@ -720,8 +741,10 @@ describe('the id table covers the app router (a missing surface reds the suite, 
       const entry = entries.find((candidate) => candidate.name === procedure);
       const leaf = entry?.leaves.find((candidate) => candidate.path === leafPath);
       expect(leaf, `${key} is a live leaf`).toBeTruthy();
-      const parsed = (leaf?.schema as { safeParse: (value: unknown) => { success: boolean } }).safeParse(NUL);
-      expect(parsed.success, `${key} refuses NUL through its own guard`).toBe(false);
+      const leafSchema = leaf?.schema as { safeParse: (value: unknown) => { success: boolean } };
+      for (const bad of [NUL, LONE_HIGH, LONE_LOW]) {
+        expect(leafSchema.safeParse(bad).success, `${key} refuses ${JSON.stringify(bad)}`).toBe(false);
+      }
     }
   });
 });
@@ -740,6 +763,11 @@ describe('the walker handles every composite node type (#386 vacuity)', () => {
     ['pipe', z.object({ taskId: z.string() }).transform((value) => value), ['taskId']],
     ['preprocess', z.preprocess((value) => value, z.object({ taskId: z.string() })), ['taskId']],
     ['catchall', z.object({}).catchall(z.string()), []],
+    ['readonly', z.readonly(z.object({ taskId: z.string() })), ['taskId']],
+    ['nonoptional', z.object({ taskId: z.string() }).nonoptional(), ['taskId']],
+    ['url-format', z.object({ callbackId: z.string().url() }), ['callbackId']],
+    ['record-named', z.object({ ghostIds: z.record(z.string(), z.string()) }), ['ghostIds']],
+    ['tuple-named', z.object({ ghostIds: z.tuple([z.string(), z.string()]) }), ['ghostIds']],
   ];
 
   for (const [label, schema, expected] of cases) {
@@ -756,6 +784,42 @@ describe('the walker handles every composite node type (#386 vacuity)', () => {
     expect(leaves.map((leaf) => leaf.path)).toEqual(['ghostIds']);
   });
 });
+describe('channel config: the write edge guards, the stored-config parser stays tolerant (#386 r4)', () => {
+  const entry = (tokenSecretId: string, platformUserId: string) => ({
+    kind: 'matrix',
+    enabled: false,
+    homeserverUrl: 'https://matrix.example.org',
+    tokenSecretId,
+    bindings: [{ platformUserId, userId: USER_UUID }],
+    defaultAssigneeId: null,
+  });
+
+  it('the admin write schema refuses unstorable text ids', () => {
+    expect(adminChannelConfigSchema.safeParse(entry(NUL, 'u')).success).toBe(false);
+    expect(adminChannelConfigSchema.safeParse(entry('s', LONE_HIGH)).success).toBe(false);
+  });
+
+  it('the runtime parser still accepts a config an older build stored (JSON escapes the bytes)', () => {
+    // the stored row is legal UTF-8 text (`\ud800` escape); refusing it here
+    // would fail the integrity probe and 503 /health/ready
+    expect(channelConfigSchema.safeParse(entry(LONE_HIGH, NUL)).success).toBe(true);
+  });
+});
+
+describe('the thread cursor createdAt is inside the text law (#386 r5)', () => {
+  it('refuses NUL and a lone surrogate', () => {
+    const schema = schemaOf(tasksRouter.threadOlderPage);
+    for (const bad of [NUL, LONE_HIGH, LONE_LOW]) {
+      const parsed = schema.safeParse({ taskId: 't', before: { createdAt: bad, id: 'i' } });
+      expect(parsed.success, JSON.stringify(bad)).toBe(false);
+      const messages = ((parsed as { error?: { issues?: { message?: string }[] } }).error?.issues ?? [])
+        .map((issue) => issue.message ?? '')
+        .join(' | ');
+      expect(messages).toContain('createdAt contains invalid characters');
+    }
+  });
+});
+
 describe('the id surface table points at the procedure its label names (#386)', () => {
   for (const surface of surfaces) {
     it(`${surface.surface}: label and procedure agree`, () => {
@@ -803,9 +867,22 @@ describe('the wired id schema keeps its own contract (#386: accept / blank / cle
             `${surface.field} must not be padded with whitespace`,
           );
           // an invisible EDGE char is the same mint hazard as a space
-          expect(schema().safeParse(payload(surface, '\u200bbacklog')).success).toBe(false);
-          // ...but a grapheme-extending edge (VS16) is part of a legal id
+          for (const paddedValue of ['\u200bbacklog', 'backlog ', 'backlog\u200b', 'backlog \ufe0f']) {
+            expect(schema().safeParse(payload(surface, paddedValue)).success, paddedValue).toBe(false);
+          }
+          // ...but a grapheme-extending edge (VS16) is part of a legal id, and a
+          // leading combining char is padding (nothing precedes it to extend)
           expect(schema().safeParse(payload(surface, 'x\u2764\ufe0f')).success).toBe(true);
+          expect(schema().safeParse(payload(surface, '\u034fbacklog')).success).toBe(false);
+        } else {
+          // a read key keeps its BYTES: a schema that trims/lowercases rewrites
+          // the lookup value and silently misses the row it was given
+          const kept = schema().safeParse(payload(surface, ' a '));
+          expect(kept.success).toBe(true);
+          const expectedValue = (surface.valueFor ?? ((value: string) => value))(' a ');
+          expect(getAt((kept as { data: unknown }).data, surface.leaf ?? [surface.inputKey ?? surface.field])).toEqual(
+            expectedValue,
+          );
         }
       }
     });

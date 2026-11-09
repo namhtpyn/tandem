@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ROLE } from '#shared/enums';
 
-const h = vi.hoisted(() => ({ taskReads: [] as unknown[][] }));
+const h = vi.hoisted(() => ({ taskReads: [] as unknown[][], calls: [] as unknown[] }));
 
 vi.mock('../../server/db/index', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('../../server/db/index');
@@ -16,7 +16,12 @@ vi.mock('../../server/db/index', async () => {
     ...actual,
     db: {
       query: {
-        tasks: { findMany: async () => h.taskReads.shift() ?? [] },
+        tasks: {
+          findMany: async (args?: unknown) => {
+            h.calls.push(args);
+            return h.taskReads.shift() ?? [];
+          },
+        },
         taskStatuses: { findMany: async () => [] },
         taskRuns: { findFirst: async () => null },
       },
@@ -44,6 +49,7 @@ function dispatchClient() {
 describe('manual dispatch on an unknown task (#386)', () => {
   beforeEach(() => {
     h.taskReads.length = 0;
+    h.calls.length = 0;
   });
 
   it('answers NOT_FOUND, never a raw 500', async () => {

@@ -764,7 +764,7 @@ Rules:
   with the field-named `BAD_REQUEST` (`storableId` / `storableIdRef` in
   `shared/utils/storable-text.ts`) before any query builder sees them. (The
   REST file routes — attachment upload/download — read ids from the path and
-  are outside this sentence; they are covered by their own shape rules.) The sweep covers every task id (`id`, `taskId`, `parentId`,
+  are outside this law; their handlers own the shape check.) The sweep covers every task id (`id`, `taskId`, `parentId`,
   `projectId`, `assigneeId`, `ownerId`, `reviewers[]`, `proposalId`, `runId`,
   `toEmployeeId`, `before.id`, and the `status` / `statusId` references),
   project (`id`, `parentId`), task-status (`id`, `nextIds[]`), model-provider
