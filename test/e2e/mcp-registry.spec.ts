@@ -86,6 +86,46 @@ async function seedAiEmployee(
   return { employeeId: emp.json?.id as string, employeeName };
 }
 
+/** BORN-INELIGIBLE SEEDING (#297, #387): a task created WITH the AI assignee is
+ *  scanner-eligible at insert, so the 5s dispatch tick can claim it while the
+ *  drawer settles — the dispatch verb unmounts mid-click and Playwright waits
+ *  60s on a button that never returns. Create it unassigned, hold dispatch_after,
+ *  then attach the assignee through the RPC edge: the scan AND the note path
+ *  respect the hold; only the manual Dispatch-now verb ignores it, which is the
+ *  verb these specs drive (the manual-bypass contract itself is pinned in
+ *  task-drawer-dispatch.spec.ts, not here). (The hold's retry banner is inert
+ *  seed state, never an assertion surface.) */
+async function createTaskWithHeldScan(
+  page: import('@playwright/test').Page,
+  tasks: TasksPage,
+  title: string,
+  employeeId: string,
+): Promise<ReturnType<TasksPage['rowFor']>> {
+  await tasks.navigate('/tasks');
+  await tasks.openCreateModal();
+  await tasks.fillTaskForm({ title });
+  await tasks.saveTask();
+  const row = tasks.rowFor(title);
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  const href = await row.locator('a[href^="/tasks/"]').first().getAttribute('href');
+  expect(href, 'task row links to the task page').toBeTruthy();
+  // strip any list-scope query the row link carries (task-scope law), or the
+  // SQL key below silently misses and the hold never lands
+  const taskId = (href as string).split('?')[0]!.split('/').pop() as string;
+  expect(taskId, 'task id from the row link').toBeTruthy();
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    const held =
+      await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId} returning id`;
+    expect(held.length, 'dispatch_after hold landed on the created task').toBe(1);
+  } finally {
+    await sql.close();
+  }
+  const attach = await rpcPost(page, '/rpc/tasks/update', { id: taskId, assigneeId: employeeId });
+  expect(attach.status).toBe(200);
+  return row;
+}
+
 async function seedSecret(page: import('@playwright/test').Page, tag: string): Promise<string> {
   const res = await rpcPost(page, '/rpc/vault/secrets/create', {
     name: `MCP cred ${tag}`,
@@ -252,12 +292,10 @@ test.describe('mcp registry + bindings', () => {
     await bindServer(page, employeeId, serverId);
 
     const taskTitle = `MCPD ${tag}`;
-    await tasks.navigate('/tasks');
-    await tasks.openCreateModal();
-    await tasks.fillTaskForm({ title: taskTitle, assignee: employeeName });
-    await tasks.saveTask();
-    const row = tasks.rowFor(taskTitle);
-    await expect(row).toBeVisible({ timeout: 15_000 });
+    // born-ineligible seeding — the 5s auto-dispatch tick must not claim the
+    // task while the drawer's Dispatch-now verb is being clicked (#387 class)
+    const row = await createTaskWithHeldScan(page, tasks, taskTitle, employeeId);
+    await expect(row).toContainText(employeeName, { timeout: 10_000 });
 
     // dispatch #1 through the workflow drawer — the plan carries the binding
     const drawer = await tasks.openWorkflowDrawer(row);
@@ -477,31 +515,10 @@ test.describe('mcp registry + bindings', () => {
     await editor.getByRole('button', { name: 'Cancel' }).click();
     await expect(editor).toBeHidden({ timeout: 10_000 });
 
-    // fake-runner dispatch names the stdio server in the run output (parity).
-    // BORN-INELIGIBLE SEEDING (#297, #387): a task created WITH the AI assignee
-    // is scanner-eligible at insert, so the 5s dispatch tick can claim it while
-    // the drawer settles — the dispatch verb unmounts mid-click and Playwright
-    // waits 60s on a button that never returns. Create it unassigned, hold
-    // dispatch_after, then attach the assignee: the scan respects the hold,
-    // only the MANUAL dispatch verb ignores it (the behavior under test).
+    // fake-runner dispatch names the stdio server in the run output (parity);
+    // born-ineligible seeding keeps the 5s scan off the drawer's click (#387)
     const taskTitle = `MCPS ${tag}`;
-    await tasks.navigate('/tasks');
-    await tasks.openCreateModal();
-    await tasks.fillTaskForm({ title: taskTitle });
-    await tasks.saveTask();
-    const taskRow = tasks.rowFor(taskTitle);
-    await expect(taskRow).toBeVisible({ timeout: 15_000 });
-    const taskHref = await taskRow.locator('a[href^="/tasks/"]').first().getAttribute('href');
-    expect(taskHref, 'task row links to the task page').toBeTruthy();
-    const taskId = (taskHref as string).split('/').pop() as string;
-    const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
-    try {
-      await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId}`;
-    } finally {
-      await sql.close();
-    }
-    const attach = await rpcPost(page, '/rpc/tasks/update', { id: taskId, assigneeId: employeeId });
-    expect(attach.status).toBe(200);
+    const taskRow = await createTaskWithHeldScan(page, tasks, taskTitle, employeeId);
     await expect(taskRow).toContainText(employeeName, { timeout: 10_000 });
     const drawer = await tasks.openWorkflowDrawer(taskRow);
     const dispatch = drawer.getByTestId('drawer-verb-dispatch');
