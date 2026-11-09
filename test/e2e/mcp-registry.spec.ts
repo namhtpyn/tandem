@@ -100,19 +100,19 @@ async function holdDispatchScan(taskId: string): Promise<void> {
   }
 }
 
-/** read-back (fresh statement, real clock): the hold stands AND the assignee
- *  attach landed. Both are seed preconditions — if either silently no-ops the
- *  #387 scan-claim window returns, so fail loudly at the seed, not 60s later. */
-async function expectDispatchHold(taskId: string): Promise<void> {
+/** read-back (fresh statement, real clock): the hold stands AND the seeded
+ *  employee is the assignee. Both are seed preconditions — if either silently
+ *  no-ops the #387 scan-claim window returns, so fail loudly at the seed. */
+async function expectDispatchHold(taskId: string, employeeId: string): Promise<void> {
   const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
     const rows = await sql`
       select (dispatch_after - now()) > interval '10 minutes' as held,
-             assignee_id is not null as attached
+             assignee_id = ${employeeId} as attached
       from tasks where id = ${taskId}`;
     expect(rows.length, 'task row exists for the seed read-back').toBe(1);
     expect(rows[0]!.held, 'dispatch_after hold has a real future margin').toBe(true);
-    expect(rows[0]!.attached, 'assignee attach landed').toBe(true);
+    expect(rows[0]!.attached, 'seeded employee is the assignee').toBe(true);
   } finally {
     await sql.close();
   }
@@ -140,8 +140,9 @@ async function createTaskWithHeldScan(
   const row = tasks.rowFor(title);
   await expect(row).toBeVisible({ timeout: 15_000 });
   const link = row.locator('a[href^="/tasks/"]').first();
-  await expect(link).toHaveAttribute('href', /^\/tasks\//);
+  await expect(link).toHaveAttribute('href', /^\/tasks\/[0-9a-z-]+/i);
   const href = (await link.getAttribute('href')) as string;
+  expect(href, 'task row links to the task page').toBeTruthy();
   // strip any list-scope query the row link carries (task-scope law), or the
   // SQL key below silently misses and the hold never lands
   const taskId = (href as string).split('?')[0]!.split('/').pop() as string;
@@ -149,8 +150,11 @@ async function createTaskWithHeldScan(
   await holdDispatchScan(taskId);
   const attach = await rpcPost(page, '/rpc/tasks/update', { id: taskId, assigneeId: employeeId });
   expect(attach.status).toBe(200);
-  // the attach is what makes the task scanner-eligible — prove the hold survived it
-  await expectDispatchHold(taskId);
+  // re-hold after the attach (the write that makes the task eligible) instead of
+  // pinning "attach preserves the backoff": the read-back then proves the seed,
+  // not an unspecced product invariant — same pattern as the status flip below
+  await holdDispatchScan(taskId);
+  await expectDispatchHold(taskId, employeeId);
   return row;
 }
 
@@ -312,6 +316,9 @@ test.describe('mcp registry + bindings', () => {
   });
 
   test('fake-runner dispatch names bound servers; unbind revokes on the next dispatch', async ({ page }) => {
+    // two full runner cycles + six navigations: the 2-run count wait must fit
+    // inside the test budget (the per-test default is already 60s)
+    test.setTimeout(120_000);
     const tasks = new TasksPage(page);
     const tag = Date.now().toString(36).slice(-6);
     const { employeeId, employeeName } = await seedAiEmployee(page, tag);
