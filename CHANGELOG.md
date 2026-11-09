@@ -1,3 +1,16 @@
+## [2.78.9](https://github.com/namhtpyn/tandem/compare/v2.78.8...v2.78.9) (2026-11-09)
+
+
+### Bug Fixes
+
+* [#382](https://github.com/namhtpyn/tandem/issues/382) apply the storable-text guard to every raw text write and refuse unstorable search filters ([c7e09cb](https://github.com/namhtpyn/tandem/commit/c7e09cbfbcbb23d8d75d1084122a387de365e2db))
+* [#382](https://github.com/namhtpyn/tandem/issues/382) r1 review — guard the URL columns, make the vault last-four hint pair-aware, close the vacuity gaps ([7f6b2fb](https://github.com/namhtpyn/tandem/commit/7f6b2fbb1203f8fd88eed17198ebde3f8db1f509))
+* [#382](https://github.com/namhtpyn/tandem/issues/382) r2 review — guard better-auth user creation, align the last-four gate with its slice, pin the label wiring and the literal null clears ([040d9d7](https://github.com/namhtpyn/tandem/commit/040d9d7f119ec46c928007ad9154d917d7967cc7))
+* [#382](https://github.com/namhtpyn/tandem/issues/382) r3 review — pin the update null clears, the parsed-default axis, the vault hint write path; precise the [#386](https://github.com/namhtpyn/tandem/issues/386) carve-out ([988ad9b](https://github.com/namhtpyn/tandem/commit/988ad9b15f81aeb07efe911847523e9da0e87f08))
+* [#382](https://github.com/namhtpyn/tandem/issues/382) r4 review — pin the null-refusal direction, name the non-schema edges honestly, drop the over-bound assertions ([f440ec8](https://github.com/namhtpyn/tandem/commit/f440ec81a75c24b01e6866e45eea929dcb954d7e))
+* [#382](https://github.com/namhtpyn/tandem/issues/382) r5 review — split the shape-gate from the set-compare in the [#386](https://github.com/namhtpyn/tandem/issues/386) carve-out, pin the extraHeaders omission and the hook cancel path ([a913186](https://github.com/namhtpyn/tandem/commit/a913186e1c78571f7f728ac77024acea6354e705))
+* [#382](https://github.com/namhtpyn/tandem/issues/382) r6 review — pin required-field omission and the empty-string value form, qualify the nextIds self-edge ([10ea2c5](https://github.com/namhtpyn/tandem/commit/10ea2c5b6413cfead6a57f1f6552f641053c1244))
+
 ## [2.78.8](https://github.com/namhtpyn/tandem/compare/v2.78.7...v2.78.8) (2026-11-09)
 
 
