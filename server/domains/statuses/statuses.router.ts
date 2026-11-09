@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
-import { storable } from '#shared/utils/storable-text';
+import { storable, storableId } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import { projects as projectsTable, taskStatuses as taskStatusesTable } from '../../db/schema';
@@ -46,14 +46,14 @@ export const statusesRouter = os.router({
   save: adminProcedure
     .input(
       z.strictObject({
-        id: z.string().min(1).max(64).optional(),
+        id: storableId('id', 64).optional(),
         name: storable('name', z.string().min(1).max(64)),
         color: z.enum(['neutral', 'primary', 'success', 'warning', 'error', 'info']).default('neutral'),
         position: z.number().int().min(0).max(99),
         category: z
           .enum(['backlog', 'ready', 'working', 'paused', 'waiting_answer', 'in_review', 'done', 'cancelled'])
           .default('backlog'),
-        nextIds: z.array(z.string().min(1).max(64)).max(50).default([]),
+        nextIds: z.array(storableId('nextIds', 64)).max(50).default([]),
       }),
     )
     .handler(async ({ input }) => {
@@ -96,7 +96,7 @@ export const statusesRouter = os.router({
     }),
 
   /** delete a status: blocked while in use; prunes dangling transition edges (admin-only) */
-  remove: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+  remove: adminProcedure.input(z.strictObject({ id: storableId('id') })).handler(async ({ input }) => {
     // seeded workflow statuses are load-bearing (code + migrations address them by id)
     if ((Object.values(STATUS) as string[]).includes(input.id)) {
       throw new ORPCError('BAD_REQUEST', { message: 'built-in status' });
@@ -134,7 +134,7 @@ export const statusesRouter = os.router({
   /** auto-assign a task via Jev (typed choice over employee candidates).
    *  No-op when a Jev key isn't configured or Jev is unsure — the task
    *  stays unassigned for a human decision. */
-  assign: employeeProcedure.input(z.strictObject({ taskId: z.string().min(1) })).handler(async ({ input, context }) => {
+  assign: employeeProcedure.input(z.strictObject({ taskId: storableId('taskId') })).handler(async ({ input, context }) => {
     const tRows = await db.query.tasks.findMany({
       columns: { id: true, title: true, description: true, projectId: true },
       where: { id: { eq: input.taskId } },

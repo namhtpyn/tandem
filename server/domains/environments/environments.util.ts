@@ -2,7 +2,7 @@
 import { z } from 'zod';
 
 import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
-import { storable } from '#shared/utils/storable-text';
+import { storable, storableId } from '#shared/utils/storable-text';
 
 export const environmentInput = z.strictObject({
   name: storable('name', z.string().min(1).max(64)),
@@ -13,14 +13,14 @@ export const environmentInput = z.strictObject({
     .refine((p) => Number.parseInt(p, 10) <= 65535, 'port must be 1-65535')
     .default('22'),
   username: z.string().regex(/^[a-zA-Z0-9._][a-zA-Z0-9._-]{0,63}$/, 'ssh-safe username'),
-  secretId: z.string().min(1).nullable().default(null),
+  secretId: storableId('secretId').nullable().default(null),
   secretUsage: z.enum(SECRET_USAGE).default(SECRET_USAGE.SSH_KEY),
 });
 
 /** update variant: optional keys — an omitted field keeps its stored value
  *  instead of silently resetting (port/secret) */
 export const environmentUpdateInput = z.strictObject({
-  id: z.string().min(1),
+  id: storableId('id'),
   name: environmentInput.shape.name.optional(),
   host: environmentInput.shape.host.optional(),
   port: environmentInput.shape.port.removeDefault().optional(),

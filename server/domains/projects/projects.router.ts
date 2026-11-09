@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { PROJECT_STATUS, type ProjectStatus } from '#shared/enums';
 import type { ProjectRow } from '#shared/types';
-import { storable } from '#shared/utils/storable-text';
+import { storable, storableId } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import { projects as projectsTable } from '../../db/schema';
@@ -80,7 +80,7 @@ export const projectsRouter = os.router({
         name: storable('name', z.string().min(1).max(120)),
         description: storable('description', z.string().max(2000).default('')),
         prompt: storable('prompt', z.string().max(8000).default('')),
-        parentId: z.string().min(1).nullable().optional(),
+        parentId: storableId('parentId').nullable().optional(),
       }),
     )
     .handler(async ({ input }) => {
@@ -107,12 +107,12 @@ export const projectsRouter = os.router({
   update: employeeProcedure
     .input(
       z.strictObject({
-        id: z.string().min(1),
+        id: storableId('id'),
         name: storable('name', z.string().min(1).max(120)).optional(),
         description: storable('description', z.string().max(2000)).optional(),
         prompt: storable('prompt', z.string().max(8000)).optional(),
         status: z.enum(PROJECT_STATUS).optional(),
-        parentId: z.string().min(1).nullable().optional(),
+        parentId: storableId('parentId').nullable().optional(),
       }),
     )
     .handler(async ({ input }) => {
@@ -164,7 +164,7 @@ export const projectsRouter = os.router({
     }),
 
   /** delete — tasks orphan to no-project (set null); children orphan to root (set null); staff only */
-  remove: employeeProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+  remove: employeeProcedure.input(z.strictObject({ id: storableId('id') })).handler(async ({ input }) => {
     const deleted = await db
       .delete(projectsTable)
       .where(eq(projectsTable.id, input.id))

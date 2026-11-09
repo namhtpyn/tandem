@@ -47,6 +47,11 @@ export function storableText(field: string, max?: number) {
   return storable(field, max === undefined ? base : base.max(max));
 }
 
+/** a text-typed id parameter (read key, write target, store key or filter): non-blank and storable */
+export function storableId(field: string, max?: number) {
+  return storableText(field, max);
+}
+
 /** storable text for optional/nullable fields — callers add `.nullable().optional()` */
 export function storableOptionalText(field: string, max: number) {
   return storable(field, z.string().max(max));

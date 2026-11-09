@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import { ALL_ENDPOINTS, isAnthropicWire, atMostOneModelsEndpoint } from '#shared/api-styles';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
-import { hasUnstorableText, storable, unstorableMessage } from '#shared/utils/storable-text';
+import { hasUnstorableText, storable, storableId, unstorableMessage } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import { modelProviders as modelProvidersTable } from '../../db/schema';
@@ -38,7 +38,7 @@ export const providersRouter = os.router({
   save: adminProcedure
     .input(
       z.strictObject({
-        id: z.string().min(1).max(64).optional(),
+        id: storableId('id', 64).optional(),
         label: storable('label', z.string().min(1).max(64)),
         baseUrl: storable('baseUrl', z.url()),
         endpoints: z
@@ -104,8 +104,8 @@ export const providersRouter = os.router({
   models: adminProcedure
     .input(
       z.strictObject({
-        providerId: z.string().min(1),
-        keySecretId: z.string().min(1).optional(),
+        providerId: storableId('providerId'),
+        keySecretId: storableId('keySecretId').optional(),
       }),
     )
     .handler(async ({ input }): Promise<{ models: string[] }> => {
@@ -186,7 +186,7 @@ export const providersRouter = os.router({
     }),
 
   /** delete a provider (blocked while AI employees or workspace settings use it, admin-only) */
-  remove: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+  remove: adminProcedure.input(z.strictObject({ id: storableId('id') })).handler(async ({ input }) => {
     const { providerInUse } = await import('./model-providers.service');
     if (await providerInUse(input.id)) {
       throw new ORPCError('BAD_REQUEST', { message: 'provider is in use by AI employees' });

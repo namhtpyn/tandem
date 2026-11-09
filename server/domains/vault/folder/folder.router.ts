@@ -17,7 +17,7 @@ const listFolderOptionsInput = z.object({
 });
 
 import { CHANGE_RESOURCE } from '#shared/enums';
-import { storable } from '#shared/utils/storable-text';
+import { storable, storableId } from '#shared/utils/storable-text';
 
 import { adminProcedure, liveGenerator } from '../../kernel/kernel';
 import { listFolders, listFoldersPaged, listFolderOptions, saveFolder, removeFolder } from './folder.service';
@@ -36,12 +36,12 @@ export const folderRouter = os.router({
   save: adminProcedure
     .input(
       z.strictObject({
-        id: z.string().min(1).optional(),
+        id: storableId('id').optional(),
         name: storable('name', z.string().min(1).max(60)),
       }),
     )
     .handler(({ input }) => saveFolder(input)),
 
   /** deleting a folder never deletes secrets — they fall back to uncategorized (FK SET NULL) */
-  remove: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(({ input }) => removeFolder(input)),
+  remove: adminProcedure.input(z.strictObject({ id: storableId('id') })).handler(({ input }) => removeFolder(input)),
 });

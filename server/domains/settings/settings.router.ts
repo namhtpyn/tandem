@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { FLAG_NAME_RE, MAX_FLAGS } from '#shared/flags';
-import { storable } from '#shared/utils/storable-text';
+import { storable, storableId } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import { vaultSecrets as vaultSecretsTable } from '../../db/schema';
@@ -41,11 +41,11 @@ export const settingsRouter = os.router({
         companyPrompt: storable('companyPrompt', z.string().max(8000)).optional(),
         flags: z.record(z.string().regex(FLAG_NAME_RE), z.boolean()).optional(),
         internalLlm: z
-          .strictObject({ providerId: z.string().min(1), model: z.string().min(1), keySecretId: z.string().min(1) })
+          .strictObject({ providerId: storableId('providerId'), model: storableId('model'), keySecretId: storableId('keySecretId') })
           .nullable()
           .optional(),
         internalDecision: z
-          .strictObject({ providerId: z.string().min(1), model: z.string().min(1), keySecretId: z.string().min(1) })
+          .strictObject({ providerId: storableId('providerId'), model: storableId('model'), keySecretId: storableId('keySecretId') })
           .nullable()
           .optional(),
       }),

@@ -15,7 +15,7 @@ import {
 import type { TaskRow, TaskRowFull } from '#shared/types';
 import { isUuid } from '#shared/utils/is-uuid';
 import { nonNull } from '#shared/utils/non-null';
-import { storable } from '#shared/utils/storable-text';
+import { storable, storableId } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import {
@@ -393,13 +393,13 @@ const updateInput = z.preprocess(
     return raw;
   },
   z.strictObject({
-    id: z.string().min(1),
+    id: storableId('id'),
     title: storable('title', z.string().min(1).max(200)).optional(),
     description: storable('description', z.string().max(10_000).nullable().optional()),
-    projectId: z.string().min(1).nullable().optional(),
-    assigneeId: z.string().min(1).nullable().optional(),
-    ownerId: z.string().min(1).nullable().optional(),
-    reviewers: z.array(z.string().min(1)).max(10).nullable().optional(),
+    projectId: storableId('projectId').nullable().optional(),
+    assigneeId: storableId('assigneeId').nullable().optional(),
+    ownerId: storableId('ownerId').nullable().optional(),
+    reviewers: z.array(storableId('reviewers')).max(10).nullable().optional(),
   }),
 );
 
@@ -479,7 +479,7 @@ export const tasksRouter = os.router({
 
   /** BY-ID READ LAW (#220): single-task read — full row + description body,
    * NOT_FOUND on unknown id; single-task surfaces never subscribe to the snapshot */
-  get: protectedProcedure.input(z.strictObject({ taskId: z.string().min(1) })).handler(async ({ input }) => {
+  get: protectedProcedure.input(z.strictObject({ taskId: storableId('taskId') })).handler(async ({ input }) => {
     const row = await fetchTaskRowFull(input.taskId);
     if (!row) throw new ORPCError('NOT_FOUND', { message: 'task does not exist' });
     return row;
@@ -492,11 +492,11 @@ export const tasksRouter = os.router({
         page: z.number().int().min(1).default(1),
         pageSize: z.number().int().min(1).max(100).default(20),
         q: storable('q', z.string().trim()).optional(),
-        statusId: z.string().min(1).optional(),
-        projectId: z.string().min(1).optional(),
+        statusId: storableId('statusId').optional(),
+        projectId: storableId('projectId').optional(),
         // blank/non-uuid values are a miss, not an error (ASSIGNEE SCOPE LAW):
         // listTasksPaged short-circuits them to an empty page before the uuid query
-        assigneeId: z.string().optional(),
+        assigneeId: storable('assigneeId', z.string()).optional(),
         inboxOfMe: z.boolean().optional(),
         awaitingDecision: z.boolean().optional(),
       }),
@@ -514,12 +514,12 @@ export const tasksRouter = os.router({
       z.strictObject({
         title: storable('title', z.string().min(1).max(200)),
         description: storable('description', z.string().max(10_000)).optional(),
-        projectId: z.string().min(1).nullable().optional(),
-        assigneeId: z.string().min(1).nullable().optional(),
-        ownerId: z.string().min(1).nullable().optional(),
-        reviewers: z.array(z.string().min(1)).max(10).optional(),
-        status: z.string().min(1).max(64).optional(),
-        parentId: z.string().min(1).nullable().optional(),
+        projectId: storableId('projectId').nullable().optional(),
+        assigneeId: storableId('assigneeId').nullable().optional(),
+        ownerId: storableId('ownerId').nullable().optional(),
+        reviewers: z.array(storableId('reviewers')).max(10).optional(),
+        status: storableId('status', 64).optional(),
+        parentId: storableId('parentId').nullable().optional(),
       }),
     )
     .handler(async ({ input, context }) => {
@@ -617,7 +617,7 @@ export const tasksRouter = os.router({
 
   /** manual status move: graph-legal + category-allowed; done/in-review stay workflow-only */
   setStatus: employeeProcedure
-    .input(z.strictObject({ id: z.string().min(1), status: z.string().min(1) }))
+    .input(z.strictObject({ id: storableId('id'), status: storableId('status') }))
     .handler(async ({ input, context }) => {
       const rows = await db.query.tasks.findMany({
         columns: { status: true, parentTaskId: true },
@@ -680,7 +680,7 @@ export const tasksRouter = os.router({
   }),
 
   /** subtask children of a task (for the detail page subtasks section) */
-  subtasks: protectedProcedure.input(z.object({ taskId: z.string().min(1) })).handler(async ({ input }) => {
+  subtasks: protectedProcedure.input(z.object({ taskId: storableId('taskId') })).handler(async ({ input }) => {
     const rows = await db
       .select({
         id: tasksTable.id,
@@ -695,7 +695,7 @@ export const tasksRouter = os.router({
   }),
 
   /** assignment history for a task (append-only ledger) */
-  assignments: protectedProcedure.input(z.object({ taskId: z.string().min(1) })).handler(async ({ input }) => {
+  assignments: protectedProcedure.input(z.object({ taskId: storableId('taskId') })).handler(async ({ input }) => {
     const rows = await listAssignments(input.taskId);
     const users = await db.query.user.findMany({ columns: { id: true, name: true }, orderBy: { name: 'asc' } });
     const nameById = new Map(users.map((u) => [u.id, u.name]));
@@ -713,7 +713,7 @@ export const tasksRouter = os.router({
   }),
 
   /** proposals on a task (agent [SUBTASKS]/[REASSIGN] awaiting decision) */
-  proposals: protectedProcedure.input(z.object({ taskId: z.string().min(1) })).handler(async ({ input }) => {
+  proposals: protectedProcedure.input(z.object({ taskId: storableId('taskId') })).handler(async ({ input }) => {
     const rows = await db
       .select()
       .from(taskProposals)
@@ -733,7 +733,7 @@ export const tasksRouter = os.router({
 
   /** confirm an agent proposal (single writer executes: creates subtasks / reassigns) */
   confirmProposal: employeeProcedure
-    .input(z.object({ proposalId: z.string().min(1), note: storable('note', z.string().max(2000)).optional() }))
+    .input(z.object({ proposalId: storableId('proposalId'), note: storable('note', z.string().max(2000)).optional() }))
     .handler(async ({ input, context }) => {
       const me = await selfIdOf(context);
       // runWorkflow maps service errors (the RUN LOCK refusal among them) to
@@ -743,14 +743,14 @@ export const tasksRouter = os.router({
 
   /** reject an agent proposal (note rides the next brief to prevent re-propose loops) */
   rejectProposal: employeeProcedure
-    .input(z.object({ proposalId: z.string().min(1), note: storable('note', z.string().max(2000)).optional() }))
+    .input(z.object({ proposalId: storableId('proposalId'), note: storable('note', z.string().max(2000)).optional() }))
     .handler(async ({ input, context }) => {
       const me = await selfIdOf(context);
       return rejectProposal(input.proposalId, me, input.note ?? '');
     }),
 
   ask: employeeProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: storable('body', z.string().min(1).max(4_000)) }))
+    .input(z.strictObject({ taskId: storableId('taskId'), body: storable('body', z.string().min(1).max(4_000)) }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
@@ -759,7 +759,7 @@ export const tasksRouter = os.router({
 
   /** a plain conversation note: thread-only, no state change */
   note: employeeProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: storable('body', z.string().min(1).max(10_000)) }))
+    .input(z.strictObject({ taskId: storableId('taskId'), body: storable('body', z.string().min(1).max(10_000)) }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
@@ -773,8 +773,8 @@ export const tasksRouter = os.router({
   forward: employeeProcedure
     .input(
       z.strictObject({
-        taskId: z.string().min(1),
-        toEmployeeId: z.string().min(1),
+        taskId: storableId('taskId'),
+        toEmployeeId: storableId('toEmployeeId'),
         body: storable('body', z.string().max(4_000)).optional(),
       }),
     )
@@ -790,7 +790,7 @@ export const tasksRouter = os.router({
 
   /** anyone in the chain answers → assignee resumes */
   answer: employeeProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: storable('body', z.string().min(1).max(10_000)) }))
+    .input(z.strictObject({ taskId: storableId('taskId'), body: storable('body', z.string().min(1).max(10_000)) }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
@@ -799,7 +799,7 @@ export const tasksRouter = os.router({
 
   /** assignee submits the result for review (or done when no reviewers) */
   submit: employeeProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: storable('body', z.string().max(10_000)).optional() }))
+    .input(z.strictObject({ taskId: storableId('taskId'), body: storable('body', z.string().max(10_000)).optional() }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
@@ -808,7 +808,7 @@ export const tasksRouter = os.router({
 
   /** reviewer approves (unanimous → done) — HUMAN-only verdict */
   approve: humanProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: storable('body', z.string().max(4_000)).optional() }))
+    .input(z.strictObject({ taskId: storableId('taskId'), body: storable('body', z.string().max(4_000)).optional() }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
@@ -817,7 +817,7 @@ export const tasksRouter = os.router({
 
   /** reviewer requests changes → assignee back to work — HUMAN-only verdict */
   requestChanges: humanProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: storable('body', z.string().min(1).max(10_000)) }))
+    .input(z.strictObject({ taskId: storableId('taskId'), body: storable('body', z.string().min(1).max(10_000)) }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
@@ -826,7 +826,7 @@ export const tasksRouter = os.router({
 
   /** reviewer's reject vote — unanimous reject (round end) cancels the task — HUMAN-only verdict */
   reject: humanProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: storable('body', z.string().max(4_000)).optional() }))
+    .input(z.strictObject({ taskId: storableId('taskId'), body: storable('body', z.string().max(4_000)).optional() }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       /* v8 ignore next -- protectedProcedure already rejects sessionless callers */
@@ -836,13 +836,13 @@ export const tasksRouter = os.router({
 
   /** REVIEW LAW: per-reviewer verdict checklist for the task page */
   reviews: protectedProcedure
-    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .input(z.strictObject({ taskId: storableId('taskId') }))
     .handler(({ input }) => listReviews(input.taskId)),
 
   /** abandon = cancel: review rounds (reviewer/owner) and work states (owner or
    *  assignee, never over a live run — RUN LOCK) land the same terminal */
   abandon: employeeProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: storable('body', z.string().max(4_000)).optional() }))
+    .input(z.strictObject({ taskId: storableId('taskId'), body: storable('body', z.string().max(4_000)).optional() }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
@@ -851,11 +851,11 @@ export const tasksRouter = os.router({
 
   /** activity feed for one task (live) */
   activityList: protectedProcedure
-    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .input(z.strictObject({ taskId: storableId('taskId') }))
     .handler(({ input }) => activitySnapshot(input.taskId)),
 
   activity: protectedProcedure
-    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .input(z.strictObject({ taskId: storableId('taskId') }))
     .handler(({ input, context }) =>
       liveGenerator(
         [CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_RESOURCE.TASKS],
@@ -866,12 +866,12 @@ export const tasksRouter = os.router({
 
   /** runs for a task (live) — streaming output tail from agent dispatches */
   runsList: protectedProcedure
-    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .input(z.strictObject({ taskId: storableId('taskId') }))
     .handler(({ input }) => runsSnapshot(input.taskId)),
 
   /** on-demand full transcript (fold-open) — RUN-TRANSCRIPT LAW (#130 slice 2):
    * settled transcripts + every prompt never ride list snapshots */
-  runTranscript: protectedProcedure.input(z.strictObject({ runId: z.string().min(1) })).handler(async ({ input }) => {
+  runTranscript: protectedProcedure.input(z.strictObject({ runId: storableId('runId') })).handler(async ({ input }) => {
     const row = await fetchRunTranscript(input.runId);
     if (!row) throw new ORPCError('NOT_FOUND', { message: 'run does not exist' });
     return row;
@@ -879,7 +879,7 @@ export const tasksRouter = os.router({
 
   /** on-demand description body (task page brief + editor modal prefill) —
    * SNAPSHOT-SLIMMING LAW (#130 slice 3): never rides list payloads */
-  getDescription: protectedProcedure.input(z.strictObject({ taskId: z.string().min(1) })).handler(async ({ input }) => {
+  getDescription: protectedProcedure.input(z.strictObject({ taskId: storableId('taskId') })).handler(async ({ input }) => {
     const row = await fetchTaskDescription(input.taskId);
     if (!row) throw new ORPCError('NOT_FOUND', { message: 'task does not exist' });
     return row;
@@ -888,7 +888,7 @@ export const tasksRouter = os.router({
   /** the unified conversation thread (snapshot) — base messages with their run/activity extension;
    * bounded envelope {items, hasMore} (THREAD BOUNDING LAW #175) */
   threadList: protectedProcedure
-    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .input(z.strictObject({ taskId: storableId('taskId') }))
     .handler(({ input }) => listTaskThread(input.taskId)),
 
   /** on-demand previous thread page (older history) — THREAD BOUNDING LAW (#175):
@@ -896,14 +896,14 @@ export const tasksRouter = os.router({
   threadOlderPage: protectedProcedure
     .input(
       z.strictObject({
-        taskId: z.string().min(1),
-        before: z.strictObject({ createdAt: z.string().min(1), id: z.string().min(1) }),
+        taskId: storableId('taskId'),
+        before: z.strictObject({ createdAt: z.string().min(1), id: storableId('id') }),
       }),
     )
     .handler(({ input }) => threadOlderPage(input.taskId, input.before)),
 
   thread: protectedProcedure
-    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .input(z.strictObject({ taskId: storableId('taskId') }))
     .handler(({ input, context }) =>
       liveGenerator(
         [CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_RESOURCE.RUNS, CHANGE_RESOURCE.TASKS],
@@ -913,14 +913,14 @@ export const tasksRouter = os.router({
     ),
 
   runs: protectedProcedure
-    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .input(z.strictObject({ taskId: storableId('taskId') }))
     .handler(({ input, context }) =>
       liveGenerator([CHANGE_RESOURCE.RUNS, CHANGE_RESOURCE.TASKS], () => runsSnapshot(input.taskId), context),
     ),
 
   /** manually dispatch a task to its AI assignee (the dispatcher also fires automatically) */
   dispatch: employeeProcedure
-    .input(z.strictObject({ taskId: z.string().min(1) }))
+    .input(z.strictObject({ taskId: storableId('taskId') }))
     .handler(async ({ input, context }) => {
       const session = await (
         context as unknown as { getSession: () => Promise<{ user: { id: string } } | null> }
@@ -939,14 +939,14 @@ export const tasksRouter = os.router({
   /** STOP-RUN VERB (#229): settle the task's live run STOPPED — aborts the open
    * ACP turn over the runner's stream and releases the RUN LOCK; the task row is
    * untouched. Idempotent (a settled run returns ok). */
-  stop: employeeProcedure.input(z.strictObject({ taskId: z.string().min(1) })).handler(async ({ input, context }) => {
+  stop: employeeProcedure.input(z.strictObject({ taskId: storableId('taskId') })).handler(async ({ input, context }) => {
     const selfId = await selfIdOf(context);
     if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
     return await runWorkflow(() => stopRunForTask(input.taskId, selfId));
   }),
 
   /** delete a task — blocked while a run is in flight; parents re-gate after */
-  remove: employeeProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+  remove: employeeProcedure.input(z.strictObject({ id: storableId('id') })).handler(async ({ input }) => {
     const rows = await db.query.tasks.findMany({
       columns: { id: true, parentTaskId: true },
       where: { id: { eq: input.id } },

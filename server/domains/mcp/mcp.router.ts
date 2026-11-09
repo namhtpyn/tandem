@@ -6,7 +6,7 @@ import { os } from '@orpc/server';
 import { z } from 'zod';
 
 import { isUuid } from '#shared/utils/is-uuid';
-import { storable } from '#shared/utils/storable-text';
+import { storable, storableId } from '#shared/utils/storable-text';
 
 import { requireUuid } from '../kernel/id-shape';
 import { adminProcedure, ORPCError, protectedProcedure } from '../kernel/kernel';
@@ -47,7 +47,7 @@ const credentialEnvVarField = z
   .trim()
   .refine((v) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(v), 'credentialEnvVar must be a valid env var name');
 const notesField = storable('notes', z.string().trim().max(2000).default(''));
-const idField = z.string().min(1);
+const idField = (field: string) => storableId(field);
 const transportField = z.enum(['http', 'stdio']);
 
 // slice 3 stdio transport fields (transport-conditional validation of the
@@ -69,7 +69,7 @@ const oauthInputShape = {
   oauthRevocationUrl: urlField('oauthRevocationUrl').nullish(),
   oauthScopes: storable('oauthScopes', z.string().trim().max(500).nullish()),
   oauthClientId: storable('oauthClientId', z.string().trim().min(1).max(500).nullish()),
-  oauthClientSecretId: idField.nullish(),
+  oauthClientSecretId: idField('oauthClientSecretId').nullish(),
 };
 
 export const mcpRouter = os.router({
@@ -82,7 +82,7 @@ export const mcpRouter = os.router({
   registryUpdate: adminProcedure
     .input(
       z.strictObject({
-        id: idField,
+        id: idField('id'),
         name: nameField.optional(),
         notes: notesField.optional(),
         ...transportInputShape,
@@ -91,9 +91,9 @@ export const mcpRouter = os.router({
     )
     .handler(({ input }) => registryUpdate(input)),
 
-  registryRemove: adminProcedure.input(z.strictObject({ id: idField })).handler(({ input }) => registryRemove(input)),
+  registryRemove: adminProcedure.input(z.strictObject({ id: idField('id') })).handler(({ input }) => registryRemove(input)),
 
-  bindingsList: adminProcedure.input(z.strictObject({ employeeId: z.string() })).handler(({ input }) =>
+  bindingsList: adminProcedure.input(z.strictObject({ employeeId: storable('employeeId', z.string()) })).handler(({ input }) =>
     // a filter is not a lookup: blank / non-uuid values are the empty page
     // (UUID-FILTER LAW), never a schema error, never a uuid-column query
     isUuid(input.employeeId) ? bindingsList(input.employeeId) : { data: [] },
@@ -101,15 +101,15 @@ export const mcpRouter = os.router({
 
   // per-server read for the registry page's binding manager (#274)
   bindingsListByServer: adminProcedure
-    .input(z.strictObject({ serverId: idField }))
+    .input(z.strictObject({ serverId: idField('serverId') }))
     .handler(({ input }) => bindingsListByServer(input.serverId)),
 
   bindingsSet: adminProcedure
     .input(
       z.strictObject({
-        employeeId: idField,
-        serverId: idField,
-        secretId: z.union([idField, z.null()]).optional(),
+        employeeId: idField('employeeId'),
+        serverId: idField('serverId'),
+        secretId: z.union([idField('secretId'), z.null()]).optional(),
       }),
     )
     .handler(async ({ input }) => {
@@ -122,13 +122,13 @@ export const mcpRouter = os.router({
     }),
 
   bindingsRemove: adminProcedure
-    .input(z.strictObject({ employeeId: idField, serverId: idField }))
+    .input(z.strictObject({ employeeId: idField('employeeId'), serverId: idField('serverId') }))
     .handler(({ input }) => {
       requireUuid(input.employeeId, 'BAD_REQUEST', 'invalid employee id');
       return bindingsRemove(input);
     }),
 
-  probe: adminProcedure.input(z.strictObject({ employeeId: z.string(), serverId: idField })).handler(({ input }) => {
+  probe: adminProcedure.input(z.strictObject({ employeeId: storable('employeeId', z.string()), serverId: idField('serverId') })).handler(({ input }) => {
     // probe is a read of one binding: blank / malformed employee ids are the same
     // miss a well-formed id with no binding behind it answers (blank is accepted at
     // the schema edge and owned by this miss path)
@@ -141,7 +141,7 @@ export const mcpRouter = os.router({
   // forged top-level navigation (CSRF-intent binding). Lax drops cookies on
   // cross-site POSTs, so a forged link has no same-site mint to hit.
   oauthConnect: adminProcedure
-    .input(z.strictObject({ employeeId: idField, serverId: idField }))
+    .input(z.strictObject({ employeeId: idField('employeeId'), serverId: idField('serverId') }))
     .handler(async ({ input, context }) => {
       requireUuid(input.employeeId, 'BAD_REQUEST', 'invalid employee id');
       try {
