@@ -71,6 +71,13 @@ describe('vault secret writes store a code-point-safe last-four hint (#382)', ()
     expect(updated.at(-1)?.lastFour).toBe('😀abc');
   });
 
+  it('an empty-string value is a metadata-only edit (the documented keep-stored form)', async () => {
+    await updateSecret({ id: 'row-id', name: 'n3', description: '', value: '', folderId: null }, 'actor');
+    const row = updated.at(-1);
+    expect(row).toMatchObject({ name: 'n3' });
+    expect(Object.prototype.hasOwnProperty.call(row, 'ciphertext')).toBe(false);
+  });
+
   it('a metadata-only update leaves the stored hint alone', async () => {
     await updateSecret({ id: 'row-id', name: 'n2', description: '', folderId: null }, 'actor');
     const row = updated.at(-1);

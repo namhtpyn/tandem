@@ -274,6 +274,8 @@ const surfaces: Surface[] = [
   s('providers.save:extraHeaders value', providersRouter.save, providerBase(), 'extraHeaders value', {
     inputKey: 'extraHeaders',
     cap: 500,
+    // the containing record is optional: omitting it must stay legal
+    clearable: true,
     valueFor: (v) => ({ k: v }),
   }),
 
@@ -416,6 +418,17 @@ describe('the wired schema keeps its own contract (#382: accept / clear / cap)',
         const data = (parsed as { data: Record<string, unknown> }).data;
         if (surface.omittedDefault !== undefined) expect(data[key]).toBe(surface.omittedDefault);
         else expect(Object.prototype.hasOwnProperty.call(data, key)).toBe(false);
+      });
+    }
+
+    if (!surface.clearable) {
+      it(`${surface.surface}: omitting the field is refused (no required -> optional drift)`, () => {
+        // requiredness is part of the contract: a `.optional()` / `.min(0)`
+        // regression would let undefined reach a NOT NULL column and 500
+        const key = surface.inputKey ?? surface.field;
+        const omitted = { ...surface.base };
+        delete omitted[key];
+        expect(schema().safeParse(omitted).success).toBe(false);
       });
     }
 

@@ -760,10 +760,11 @@ Rules:
   they cannot raise 22P02, so a malformed value is an ordinary miss. An id
   parameter the covered list below does not name is outside the
   TEXT-STORABILITY LAW and tracked in #386, where two shapes matter. An id
-  compared in JS against a loaded set (`tasks.create` status, `statuses.save`
-  nextIds) or shape-checked before any query (`canonicalUuid`-checked
-  assignee / owner / reviewer / forward ids) already answers `BAD_REQUEST` for
-  unstorable bytes. An id that reaches a query parameter does
+  compared in JS against a loaded set (`tasks.create` status; `statuses.save`
+  nextIds — its set is the loaded ids PLUS the incoming id, so a nextIds entry
+  equal to an unstorable id is the upsert case below) or shape-checked before
+  any query (`canonicalUuid`-checked assignee / owner / reviewer / forward ids)
+  already answers `BAD_REQUEST` for unstorable bytes. An id that reaches a query parameter does
   not: a NUL raises at the driver before the lookup can miss, and a lone
   surrogate is rewritten to U+FFFD — a read then misses on a corrupted value,
   while the two upsert-by-id writes (`statuses.save`, `providers.save`) create
