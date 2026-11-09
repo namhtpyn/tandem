@@ -69,6 +69,16 @@ test('caller-supplied key names over 32 chars answer BAD_REQUEST on mint and ren
   expect(mintRes.status()).toBe(400);
   expect(JSON.stringify(await mintRes.json())).toContain('name too long');
 
+  // the inclusive boundary: exactly 32 units mints THROUGH the plugin and stores verbatim
+  const atCapName = 'M'.repeat(32);
+  const atCapRes = await post(page, 'employees/createApiKey', { employeeId: employee.id, name: atCapName });
+  expect(atCapRes.status()).toBe(200);
+  const atCapKey = (await atCapRes.json()).json as { id: string };
+  const atCapList = await post(page, 'employees/listApiKeys', { employeeId: employee.id });
+  expect(atCapList.status()).toBe(200);
+  const atCapRow = ((await atCapList.json()).json as KeyRow[]).find((k) => k.id === atCapKey.id);
+  expect(atCapRow?.name).toBe(atCapName);
+
   // a fitting name mints; a 32-unit rename succeeds and STORES the name
   const okRes = await post(page, 'employees/createApiKey', { employeeId: employee.id, name: 'primary key' });
   expect(okRes.status()).toBe(200);
@@ -90,4 +100,9 @@ test('caller-supplied key names over 32 chars answer BAD_REQUEST on mint and ren
   const nulRes = await post(page, 'employees/updateApiKey', { keyId: key.id, name: 'A\u0000B' });
   expect(nulRes.status()).toBe(400);
   expect(JSON.stringify(await nulRes.json())).toContain('invalid characters');
+
+  // rename requires a non-blank name (whitespace-only is the blank path the handler owns)
+  const blankRes = await post(page, 'employees/updateApiKey', { keyId: key.id, name: '   ' });
+  expect(blankRes.status()).toBe(400);
+  expect(JSON.stringify(await blankRes.json())).toContain('name is required');
 });

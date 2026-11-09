@@ -650,10 +650,11 @@ procedures write (`employees.create`'s initial key, `employees.createApiKey`,
 employee-name prefix on a code-point boundary (never the fixed suffix, never
 through a surrogate pair; NUL and lone surrogates dropped), so it always fits;
 a caller-supplied name is trimmed, refused (`BAD_REQUEST`) when it carries NUL
-or a lone surrogate, and measured against the cap — over it answers
-`BAD_REQUEST` (`name too long`), never an opaque 500. A blank supplied name
-mints the derived default at `employees.createApiKey`; rename requires a
-non-blank name.
+or a lone surrogate, and measured against the cap. A name over the cap answers
+`BAD_REQUEST` (`name too long` within the schema's 100-unit edge; a longer name
+is rejected by the edge itself) — never an opaque 500. A whitespace-only
+supplied name mints the derived default at `employees.createApiKey`; rename
+requires a non-blank name.
 **LIVE-STREAM RE-AUTH (#224):** a `live` stream outlives its open-time check, so
 every live generator re-asserts the procedure's own tier against a FRESH
 session (never the per-request latch) before emitting a snapshot — at most once

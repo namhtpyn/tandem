@@ -56,10 +56,10 @@ describe('derivedAccessKeyName — the minted default always fits the plugin cap
     }
   });
 
-  it('drops NUL and lone surrogates — a derived name is always storable, never an invalid UTF-8 insert', () => {
-    const name = derivedAccessKeyName(`AB\uD83DCD\u0000EF`, SUFFIX);
+  it('drops NUL and lone surrogates (either arm) — a derived name is always storable, never an invalid UTF-8 insert', () => {
+    const name = derivedAccessKeyName(`AB\uD83DCD\uDC00EF\u0000GH`, SUFFIX);
     expect(name.isWellFormed()).toBe(true);
-    expect(name).toBe(`ABCDEF${SUFFIX}`);
+    expect(name).toBe(`ABCDEFGH${SUFFIX}`);
   });
 
   it('the cap boundary on the suffix is inclusive — a 32-unit suffix is itself the name; only over-cap suffixes fail closed', () => {
@@ -114,11 +114,14 @@ describe('assertAccessKeyName — caller-supplied names over the cap are the spe
     expect(assertAccessKeyName(padded)).toBe('K'.repeat(30));
   });
 
-  it('refuses text Postgres cannot store — NUL and lone surrogates are BAD_REQUEST, never a 500', () => {
+  it('refuses text Postgres cannot store — NUL and lone surrogates (either arm) are BAD_REQUEST, never a 500', () => {
     expect(() => assertAccessKeyName('A\u0000B')).toThrowError(
       expect.objectContaining({ code: 'BAD_REQUEST', message: expect.stringContaining('invalid characters') }),
     );
     expect(() => assertAccessKeyName('A\uD800B')).toThrowError(
+      expect.objectContaining({ code: 'BAD_REQUEST', message: expect.stringContaining('invalid characters') }),
+    );
+    expect(() => assertAccessKeyName('A\uDC00B')).toThrowError(
       expect.objectContaining({ code: 'BAD_REQUEST', message: expect.stringContaining('invalid characters') }),
     );
     // a well-formed surrogate PAIR is a real character and stays accepted
