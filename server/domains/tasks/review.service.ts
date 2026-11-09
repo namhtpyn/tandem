@@ -485,7 +485,18 @@ async function stopOrphanRemovalRuns(taskId: string) {
     .select({ id: taskRuns.id })
     .from(taskRuns)
     .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
-    .where(and(eq(taskMessages.taskId, taskId), eq(taskRuns.status, RUN_STATUS.RUNNING), isNull(taskRuns.employeeId)))
+    .innerJoin(tasks, eq(tasks.id, taskMessages.taskId))
+    .innerJoin(taskStatuses, eq(taskStatuses.id, tasks.status))
+    .where(
+      and(
+        eq(taskMessages.taskId, taskId),
+        eq(taskRuns.status, RUN_STATUS.RUNNING),
+        isNull(taskRuns.employeeId),
+        // REVIEW turns only: a working-category run left by a deleted assignee keeps
+        // its normal bounce (stopping it would strand an assignee-less doing task)
+        eq(taskStatuses.category, CATEGORY.IN_REVIEW),
+      ),
+    )
     .limit(50);
   if (rows.length === 0) return;
   const { stopRunsForRemoval } = await import('./runner.service');
@@ -728,7 +739,7 @@ async function finishRemovedHolderReturn(taskId: string, backTo: string, name?: 
  *  category and a live row gate it; dispatchAiReviewTurns itself skips humans and an
  *  already-running reviewer and issues at most ONE dispatch per call. The caller
  *  fault-isolates it — the delete already committed. */
-async function resumeRemovalReviewQueue(taskId: string) {
+export async function resumeReviewQueueAfterRemoval(taskId: string) {
   const row = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
   if (!row) return;
   if ((await categoryOf(row.status)) !== CATEGORY.IN_REVIEW) return;
@@ -798,7 +809,7 @@ export async function settleReviewerRemovalRounds(plan: ReviewerRemovalPlan, nam
       log.warn(`reviewer removal: could not settle round for task ${taskId}:`, e instanceof Error ? e.message : e);
     }
     try {
-      await resumeRemovalReviewQueue(taskId);
+      await resumeReviewQueueAfterRemoval(taskId);
     } catch (e) {
       log.warn(
         `reviewer removal: could not resume the review queue for task ${taskId}:`,
@@ -980,7 +991,7 @@ export async function settleAllExtinguishedRounds(): Promise<string[]> {
     // (dispatchAiReviewTurns' task-wide in-flight guard); a settled task is gated out.
     try {
       await stopOrphanRemovalRuns(taskId);
-      await resumeRemovalReviewQueue(taskId);
+      await resumeReviewQueueAfterRemoval(taskId);
     } catch (e) {
       log.warn(`void review round resume failed for task ${taskId}:`, e instanceof Error ? e.message : e);
     }
@@ -1507,6 +1518,18 @@ export function parseEscalationNote(body: string): { targetName: string | null; 
   return { targetName: nonNull(m[1]).trim(), why: (nonNull(m[2]) || '').trim() || body.trim() };
 }
 
+/** ESCALATION STALL (#370): park the round on the owner — unless the escalator was
+ *  deleted mid-turn, in which case the removal owns the round and the resume arm runs
+ *  instead of parking a round the run no longer owns. */
+async function parkEscalationStall(taskId: string, reviewerId: string, why: string) {
+  const stillThere = await db.query.user.findFirst({ columns: { id: true }, where: { id: { eq: reviewerId } } });
+  if (!stillThere) {
+    await resumeReviewQueueAfterRemoval(taskId);
+    return;
+  }
+  await parkRound(taskId, `review escalation stalled — ${why || 'no eligible supervisor to escalate to'}`);
+}
+
 /** REVIEW REFERRAL (final spec 2026-10-29): the reviewer steps aside and their
  * supervisor takes the vote. Mutates the TASK's reviewer roster (escalator out,
  * replacement in — one source of truth), flips the row to `escalated` (audit,
@@ -1574,8 +1597,9 @@ export async function escalateReview(
   /* v8 ignore next -- a fresh chain always has a head when a supervisor edge exists */
   targetId = targetId ?? chain[0];
   if (!targetId) {
-    // no eligible up-chain target: the round parks on the owner with the why intact
-    await parkRound(taskId, `review escalation stalled — ${why || 'no eligible supervisor to escalate to'}`);
+    // no eligible up-chain target: the round parks on the owner with the why intact —
+    // unless the escalator was deleted mid-turn (#370): the removal owns that round.
+    await parkEscalationStall(taskId, reviewerId, why);
     return { outcome: 'parked' };
   }
 

@@ -1188,12 +1188,30 @@ async function reviewerExists(reviewerId: string): Promise<boolean> {
 }
 
 /** review-turn failure park (settle throw / FAILED turn) that SKIPS a reviewer the
- *  employee delete already removed (#370): the removal settle or the boot resume arm
- *  owns that round — a late/failed turn must never park it. A live reviewer parks
- *  REARMABLE exactly as specced (#199/#211). */
-async function parkReviewTurnFailure(taskId: string, reviewerId: string, why: string) {
-  if (!(await reviewerExists(reviewerId))) return;
-  await parkRound(taskId, why, { rearmable: true });
+ *  employee delete already removed (#370): the removal settle owns that round — a
+ *  late/failed turn instead resumes the queue (the departing reviewer's turn is done,
+ *  so the task-wide mint guard no longer suppresses the next reviewer). A live
+ *  reviewer parks exactly as specced (#199/#211), rearmable unless the caller says
+ *  otherwise. */
+async function parkReviewTurnFailure(
+  taskId: string,
+  reviewerId: string,
+  why: string,
+  opts: { rearmable?: boolean } = { rearmable: true },
+) {
+  if (!(await reviewerExists(reviewerId))) {
+    try {
+      const { resumeReviewQueueAfterRemoval } = await import('./review.service');
+      await resumeReviewQueueAfterRemoval(taskId);
+    } catch (e) {
+      consola.warn(
+        `deleted reviewer: could not resume the review queue for task ${taskId}:`,
+        e instanceof Error ? e.message : e,
+      );
+    }
+    return;
+  }
+  await parkRound(taskId, why, opts);
 }
 
 /** REVIEW LAW: a review turn's envelope writes the reviewer's verdict row
@@ -1218,7 +1236,21 @@ export async function settleReviewVerdict(
     // EMPLOYEE REMOVAL (#370): a reviewer deleted mid-turn has no row left to bind —
     // the removal voided it and OWNS the round. The late verdict is not an anomaly:
     // check the reviewer still exists before parking a round this run no longer owns.
-    if (!(await reviewerExists(reviewerId))) return;
+    // A deleted reviewer instead RESUMES the queue — this run is done, so the task-wide
+    // mint guard no longer suppresses the next reviewer (covers a mint that landed
+    // between the removal's capture and its delete).
+    if (!(await reviewerExists(reviewerId))) {
+      try {
+        const { resumeReviewQueueAfterRemoval } = await import('./review.service');
+        await resumeReviewQueueAfterRemoval(taskId);
+      } catch (e) {
+        consola.warn(
+          `deleted reviewer: could not resume the review queue for task ${taskId}:`,
+          e instanceof Error ? e.message : e,
+        );
+      }
+      return;
+    }
     const { parkRound } = await import('./review.service');
     await parkRound(taskId, 'review finished without a verdict — no round row for the reviewer (anomaly)');
     return;
@@ -1295,8 +1327,12 @@ export async function settleReviewVerdict(
       await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
       return;
     }
-    const { parkRound } = await import('./review.service');
-    await parkRound(taskId, 'review finished without a verdict after a re-dispatch — needs a human');
+    await parkReviewTurnFailure(
+      taskId,
+      reviewerId,
+      'review finished without a verdict after a re-dispatch — needs a human',
+      { rearmable: false },
+    );
   }
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }

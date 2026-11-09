@@ -118,6 +118,7 @@ import {
   executeRun,
   executingRunIds,
   stopRunForTask,
+  stopRunsForRemoval,
   stoppedRunMarkerIds,
 } from '../../server/domains/tasks/runner.service';
 import { mockDb, taskRuns } from './helpers/mock-db';
@@ -242,6 +243,29 @@ describe('stop-marker lifecycle across executeRun (#291 F9 + r3)', () => {
     h.casRows = []; // the turn settled first with its own verdict
     await expect(stopRunForTask('task-f9b', 'user-1')).resolves.toEqual({ ok: true, stopped: false });
     expect(stoppedRunMarkerIds()).not.toContain(RUN_ID); // the verb's own unwind (#229)
+  });
+
+  it('stopRunsForRemoval keeps the marker while an execution owns the run (#370)', async () => {
+    const RUN_ID = 'run-370a';
+    h.runRow = {
+      id: RUN_ID,
+      status: RUN_STATUS.RUNNING,
+      employeeId: 'ai-1',
+      messageId: 'm-1',
+      message: { taskId: 'task-370' },
+    };
+    h.gatePlanLoad = true;
+    const exec = executeRun(RUN_ID, 'http://localhost:3000', { attempt: 1, maxAttempts: 3 });
+    for (let i = 0; i < 200 && !executingRunIds().includes(RUN_ID); i++) await new Promise((r) => setTimeout(r, 5));
+    expect(executingRunIds()).toContain(RUN_ID);
+    h.casRows = [{ id: RUN_ID }];
+    await expect(stopRunsForRemoval([RUN_ID])).resolves.toBe(1);
+    // a live consumer still owns the marker — the execution's settle path must see it
+    expect(stoppedRunMarkerIds()).toContain(RUN_ID);
+    h.gatePlanLoad = false;
+    for (const r of h.gatePlanWaiters.splice(0)) r();
+    await expect(exec).rejects.toThrow();
+    expect(stoppedRunMarkerIds()).not.toContain(RUN_ID);
   });
 
   it('a MID-FLIGHT execution keeps its marker through the stop; the window throw cleans both (#291 r3)', async () => {

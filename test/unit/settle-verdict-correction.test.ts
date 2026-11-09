@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   escalated: 0,
   reviewerExists: true,
   reviewerLookup: null as { where?: { id?: { eq?: string } } } | null,
+  resumes: [] as string[],
 }));
 
 vi.mock('../../server/db/index', () => ({
@@ -69,6 +70,9 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     parkRound: async (_taskId: string, why: string) => {
       h.parks.push(why);
     },
+    resumeReviewQueueAfterRemoval: async (taskId: string) => {
+      h.resumes.push(taskId);
+    },
   };
 });
 
@@ -89,6 +93,7 @@ beforeEach(() => {
   h.escalated = 0;
   h.reviewerExists = true;
   h.reviewerLookup = null;
+  h.resumes = [];
 });
 
 describe('settleReviewVerdict verdict-less bound (#276)', () => {
@@ -191,5 +196,8 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
     expect(h.parks).toHaveLength(0);
     expect(h.dispatched).toHaveLength(0);
     expect(h.verdictAt).toHaveLength(0);
+    // the late settle RESUMES the queue (the departing turn is done; a mint that
+    // landed after the removal's capture must not strand the round)
+    expect(h.resumes).toEqual(['task-1']);
   });
 });

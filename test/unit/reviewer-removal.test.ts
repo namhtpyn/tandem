@@ -49,6 +49,7 @@ const h = vi.hoisted(() => ({
   runningReviewRuns: [] as Array<{ id: string }>,
   statusReadThrows: 0,
   captureCond: null as unknown,
+  runConds: [] as unknown[],
   joinConds: [] as Array<{ table: string; cond: unknown }>,
   stoppedRuns: [] as string[],
   holdDispatch: false,
@@ -98,6 +99,7 @@ vi.mock('../../server/db/index', async () => {
               }
               if (table === taskRuns) {
                 h.captureCond = cond;
+                h.runConds.push(cond);
                 return Promise.resolve(h.runningReviewRuns);
               }
               if (table === taskObligations) {
@@ -269,6 +271,7 @@ beforeEach(() => {
   h.runningReviewRuns = [];
   h.statusReadThrows = 0;
   h.captureCond = null;
+  h.runConds = [];
   h.joinConds = [];
   h.stoppedRuns = [];
   h.holdDispatch = false;
@@ -719,11 +722,51 @@ describe('removal resume guards (#371)', () => {
     expect(await settleAllExtinguishedRounds()).toEqual([]);
     expect(h.stoppedRuns).toEqual(['run-zombie-9']);
     expect(h.dispatches).toHaveLength(1);
+    // the orphan scan must be NULL-holder + RUNNING + review-category scoped — a
+    // looser WHERE would stop a deleted assignee��s WORK run (skipping its bounce)
+    const orphan = h.runConds
+      .map((cond) =>
+        mockDb()
+          .select()
+          .from(taskRuns)
+          .where(cond as never)
+          .toSQL(),
+      )
+      .find((q) => q.sql.includes('employee_id') && q.sql.includes('is null'));
+    expect(orphan).toBeTruthy();
+    expect(orphan!.sql).toContain('"employee_id" is null');
+    expect(orphan!.sql).toContain('"task_statuses"."category"');
+    expect(orphan!.params).toContain('task-9');
+  });
+
+  it('the in-flight guard is task-scoped and RUNNING-only (#371 predicate pin)', async () => {
+    h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }]];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    h.holdDispatch = true;
+    const pending = dispatchAiReviewTurns('task-9');
+    await vi.waitFor(() => {
+      if (!h.releaseDispatch) throw new Error('dispatch not reached yet');
+    });
+    const { sql, params } = mockDb()
+      .select({ id: taskRuns.id })
+      .from(taskRuns)
+      .innerJoin(dbTaskMessages, h.joinConds[0]!.cond as never)
+      .where(h.captureCond as never)
+      .toSQL();
+    expect(sql).toContain('"task_messages"."task_id"');
+    expect(params).toContain('task-9');
+    expect(params).toContain('RUNNING');
+    h.releaseDispatch!();
+    await pending;
   });
 
   it('concurrent mint triggers on one task never double-dispatch (per-task mint lock)', async () => {
     h.holdDispatch = true;
-    h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }]];
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      // without the lock the second trigger would read this row and dispatch too
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+    ];
     h.aiEmployees = [{ userId: 'ai-2' }];
     const first = dispatchAiReviewTurns('task-1');
     await vi.waitFor(() => {

@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
   failSubmit: false,
   // the reviewer row is gone (the removal owns the round — no park on any path)
   reviewerDeleted: false,
+  reviewerLookups: [] as Array<{ where?: { id?: { eq?: string } } }>,
   // how many publishes had fired when submitResult ran (0 = settle precedes the
   // lifecycle publishes — the r6 pin that binds ORDER, not just before-return)
   settlePublishCounts: [] as number[],
@@ -83,12 +84,13 @@ vi.mock('../../server/db/index', async () => {
                       { id: 'st-custom-working', category: 'working' },
                     ]
                   : [],
-            findFirst: async () =>
-              table === 'taskRuns'
-                ? { id: h.latestRunId }
-                : table === 'user' && !h.reviewerDeleted
-                  ? { id: 'agent-1' }
-                  : null,
+            findFirst: async (cfg?: { where?: { id?: { eq?: string } } }) => {
+              if (table === 'user') {
+                h.reviewerLookups.push(cfg ?? {});
+                return h.reviewerDeleted ? null : { id: 'agent-1' };
+              }
+              return table === 'taskRuns' ? { id: h.latestRunId } : null;
+            },
           }),
         },
       ),
@@ -574,6 +576,8 @@ describe('writer.finish settle arbitration (#286)', () => {
     });
     await drain();
     expect(h.parks).toHaveLength(0);
+    // the existence lookup names THIS reviewer — a wrong id silently disables the skip
+    expect(h.reviewerLookups.at(-1)?.where?.id?.eq).toBe('agent-1');
   });
 
   it('a DELETED reviewer’s settle throw never parks (#370)', async () => {
@@ -587,5 +591,7 @@ describe('writer.finish settle arbitration (#286)', () => {
     });
     await drain();
     expect(h.parks).toHaveLength(0);
+    // the existence lookup names THIS reviewer — a wrong id silently disables the skip
+    expect(h.reviewerLookups.at(-1)?.where?.id?.eq).toBe('agent-1');
   });
 });
