@@ -572,7 +572,7 @@ export const employeesRouter = os.router({
       }),
 
     /** removing a catalog entry leaves employees' free-text titles untouched */
-    remove: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+    remove: adminProcedure.input(z.strictObject({ id: storableText('id') })).handler(async ({ input }) => {
       const deleted = await db
         .delete(employeeTitlesTable)
         .where(eq(employeeTitlesTable.id, input.id))

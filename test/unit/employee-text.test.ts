@@ -39,6 +39,7 @@ function adminClient(procedure: unknown) {
 const create = adminClient(employeesRouter.create);
 const update = adminClient(employeesRouter.update);
 const saveTitle = adminClient(employeesRouter.titles.save);
+const removeTitle = adminClient(employeesRouter.titles.remove);
 
 const createInput = (overrides: Record<string, unknown> = {}) => ({
   name: 'Ada',
@@ -197,6 +198,14 @@ describe('employees.titles.save — the catalog name and text id are refused whe
       expect.objectContaining({ path: ['id'], message: expect.stringContaining('id contains invalid characters') }),
     );
   });
+
+  it('refuses a NUL in the remove id — the sibling write answers BAD_REQUEST, never the driver 500', async () => {
+    const error = await refusal(() => removeTitle({ id: NUL }));
+    expect(error.code).toBe('BAD_REQUEST');
+    expect(error.data?.issues).toContainEqual(
+      expect.objectContaining({ path: ['id'], message: expect.stringContaining('id contains invalid characters') }),
+    );
+  });
 });
 
 describe('procedure schemas — the pre-existing blankness contract (helper-swap pins)', () => {
@@ -217,11 +226,12 @@ describe('procedure schemas — the pre-existing blankness contract (helper-swap
     expect(inputSchema(employeesRouter.update).safeParse(updateInput({ instructions: '' })).success).toBe(true);
   });
 
-  it('refuses a blank name/title on create and update, and a blank catalog name', () => {
-    expect(inputSchema(employeesRouter.create).safeParse(createInput({ name: '' })).success).toBe(false);
-    expect(inputSchema(employeesRouter.create).safeParse(createInput({ title: '' })).success).toBe(false);
-    expect(inputSchema(employeesRouter.update).safeParse(updateInput({ name: '' })).success).toBe(false);
-    expect(inputSchema(employeesRouter.update).safeParse(updateInput({ title: '' })).success).toBe(false);
+  it('refuses a blank value on every non-blank field of every employee write', () => {
+    const nonBlankFields = ['name', 'title', 'model', 'environmentId', 'providerId', 'apiKeySecretId'];
+    for (const field of nonBlankFields) {
+      expect(inputSchema(employeesRouter.create).safeParse(createInput({ [field]: '' })).success).toBe(false);
+      expect(inputSchema(employeesRouter.update).safeParse(updateInput({ [field]: '' })).success).toBe(false);
+    }
     expect(inputSchema(employeesRouter.titles.save).safeParse({ name: '' }).success).toBe(false);
   });
 

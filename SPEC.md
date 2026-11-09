@@ -768,9 +768,10 @@ Rules:
   so the stored value is silently corrupted. A well-formed surrogate pair (an
   astral character) IS storable and stays accepted. The employee write surface
   implements this law on every text field it stores (`employees.create` /
-  `employees.update` name, title, instructions, model, the avatar `image` data
-  URL and the text-typed ids `environmentId` / `providerId` /
-  `apiKeySecretId`; `employees.titles.save` `id` and `name`); the remaining
+  `employees.update` name, title, instructions, model and the avatar `image`
+  data URL) and on every text-typed id those procedures accept (`environmentId`
+  / `providerId` / `apiKeySecretId`, plus `employees.titles.save` and
+  `employees.titles.remove` `id`, and the catalog `name`); the remaining
   free-text write surfaces are tracked in #382 and are NOT yet covered.
 - input validation: zod `strictObject` everywhere (unknown keys rejected)
 - wire format: POST `/rpc/<path>`, body `{ "json": <input> }`,
