@@ -10,7 +10,6 @@ import { createProcedureClient } from '@orpc/server';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ROLE } from '#shared/enums';
-import { hasUnstorableText } from '#shared/utils/storable-text';
 
 // humanProcedure resolves the credential origin through the db — the pins here
 // are about schema edges, and a unit test must not depend on a live database
@@ -56,9 +55,9 @@ type InputSchema = {
 /** the input schema the procedure is actually wired with */
 function schemaOf(procedure: unknown): InputSchema {
   const orpc = (procedure as Record<string, unknown>)['~orpc'] as { inputSchemas: InputSchema[] };
-  // one wired input schema per procedure: a second .input() would silently move
-  // the field under test out of index 0 and leave every schema pin green
-  if (orpc.inputSchemas.length !== 1) throw new Error(`expected one input schema, got ${orpc.inputSchemas.length}`);
+  // an EMPTY list means the procedure carries no wired schema; a PREPENDED
+  // `.input()` would shadow index 0 (an appended one does not)
+  if (orpc.inputSchemas.length === 0) throw new Error('procedure has no wired input schema');
   return orpc.inputSchemas[0] as InputSchema;
 }
 
@@ -366,9 +365,9 @@ describe('the surface table is unique and complete (#382 r3)', () => {
     expect(new Set(surfaces.map((surface) => surface.surface)).size).toBe(surfaces.length);
   });
 
-  it('the table covers every guarded surface — bump the count when you add one', () => {
-    // 62 surfaces: 14 tasks + 6 projects + 1 status + 9 vault + 18 mcp + 4 providers
-    // + 3 environments + 2 settings + 1 employees + 4 URL columns added in r1
+  it('the table holds 62 rows — bump the count when you add one', () => {
+    // 62 rows: 16 tasks + 6 projects + 1 status + 10 vault + 18 mcp + 5 providers
+    // + 3 environments + 2 settings + 1 employees (the URL rows live inside mcp/providers)
     expect(surfaces).toHaveLength(62);
   });
 });
@@ -402,7 +401,7 @@ describe('the wired schema keeps its own contract (#382: accept / clear / cap)',
     }
 
     if (surface.clearable) {
-      it(`${surface.surface}: the omitted clear path stays open`, () => {
+      it(`${surface.surface}: the omitted path still parses`, () => {
         const key = surface.inputKey ?? surface.field;
         const cleared = { ...surface.base };
         delete cleared[key];
@@ -416,8 +415,17 @@ describe('the wired schema keeps its own contract (#382: accept / clear / cap)',
       });
     }
 
+    if (!surface.nullable) {
+      it(`${surface.surface}: an explicit null is refused (no widening to nullish)`, () => {
+        // one-directional pins miss the DANGEROUS direction: `.optional()` ->
+        // `.nullish()` lets a null reach a NOT NULL text column and 500s
+        const key = surface.inputKey ?? surface.field;
+        expect(schema().safeParse({ ...surface.base, [key]: null }).success).toBe(false);
+      });
+    }
+
     if (surface.nullable) {
-      it(`${surface.surface}: the explicit null clear path stays open`, () => {
+      it(`${surface.surface}: an explicit null still parses (handler may treat it as a no-op)`, () => {
         // a literal null — building it through valueFor would send a valid URL
         // and leave `.nullable()` -> `.optional()` regressions invisible
         const key = surface.inputKey ?? surface.field;

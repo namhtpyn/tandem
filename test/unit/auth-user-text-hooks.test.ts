@@ -56,7 +56,14 @@ describe('better-auth user hooks refuse unstorable name/image (#382)', () => {
 
     it(`${path}: a well-formed astral value passes`, async () => {
       const hook = (await userHooks())[path];
-      await expect(hook({ name: ASTRAL, image: 'data:image/png;base64,AAAA' })).resolves.toBeUndefined();
+      // assert "did not refuse", not the return shape — a hook may legally
+      // return `{ data }` to hand normalized values back to better-auth
+      await expect(
+        hook({ name: ASTRAL, image: 'data:image/png;base64,AAAA' }).then(
+          () => 'ok',
+          () => 'refused',
+        ),
+      ).resolves.toBe('ok');
     });
   }
 });

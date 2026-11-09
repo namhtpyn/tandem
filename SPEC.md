@@ -760,9 +760,10 @@ Rules:
   they cannot raise 22P02, so a malformed value is an ordinary miss. An id
   parameter the covered list below does not name is outside the
   TEXT-STORABILITY LAW and tracked in #386, where two shapes matter. An id
-  decided in JS before any query (`tasks.create` status, `statuses.save`
-  nextIds, the canonicalUuid-checked reviewer / forward ids) already answers
-  `BAD_REQUEST` for unstorable bytes. An id that reaches a query parameter does
+  compared in JS against a loaded set and never bound as a query parameter
+  (`tasks.create` status, `statuses.save` nextIds, the canonicalUuid-checked
+  assignee / owner / reviewer / forward ids) already answers `BAD_REQUEST` for
+  unstorable bytes. An id that reaches a query parameter does
   not: a NUL raises at the driver before the lookup can miss, and a lone
   surrogate is rewritten to U+FFFD — a read then misses on a corrupted value,
   while the two upsert-by-id writes (`statuses.save`, `providers.save`) create
@@ -775,9 +776,13 @@ Rules:
   handed to the driver. The refusal rides the shared predicate and field-named
   message (`shared/utils/storable-text.ts`: `hasUnstorableText`,
   `unstorableMessage`, `storable`, `storableText`, `storableOptionalText`) on
-  every free-form field; the pre-existing access-key name guard (handler-level)
-  and better-auth's `user.create` / `update-user` database hooks are the named
-  non-schema edges that reuse the same predicate. A NUL makes the driver throw
+  every free-form field. Outside a schema edge, the pre-existing access-key name
+  guard (handler-level) and better-auth's `user.create` / `update-user`
+  database hooks reuse the same predicate, and the vault last-four hint is
+  derived with a code-point slice (never a UTF-16 cut). This law covers
+  USER-supplied text at procedure edges only: agent-supplied text (proposal
+  envelopes, run output, transcripts) is machine text and outside it. A NUL
+  makes the driver throw
   (invalid byte sequence) and would surface through oRPC as an opaque 500 on
   input the schema had accepted; an unpaired surrogate is WORSE — the driver
   rewrites it to U+FFFD, so the stored value is silently corrupted. A
