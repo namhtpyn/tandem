@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
-import { storable } from '#shared/utils/storable-text';
+import { storable, storableId, storableIdRef } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import {
@@ -113,7 +113,7 @@ export const environmentsRouter = os.router({
     return toRow(nonNull(updated[0]));
   }),
 
-  remove: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+  remove: adminProcedure.input(z.strictObject({ id: storableId('id') })).handler(async ({ input }) => {
     // ai_employees.environment_id is ON DELETE RESTRICT — pre-check so the caller
     // gets a clean 4xx naming the employee instead of a raw 23503 FK violation
     const linkedUsers = await db
@@ -138,7 +138,7 @@ export const environmentsRouter = os.router({
     return { ok: true };
   }),
 
-  probe: adminProcedure.input(z.strictObject({ id: z.string().min(1) })).handler(async ({ input }) => {
+  probe: adminProcedure.input(z.strictObject({ id: storableIdRef('id') })).handler(async ({ input }) => {
     const rows = await db.query.environments.findMany({
       columns: { host: true, port: true, username: true, secretId: true, secretUsage: true },
       where: { id: { eq: input.id } },
