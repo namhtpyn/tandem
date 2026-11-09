@@ -283,7 +283,9 @@ export async function stopRunForTask(taskId: string, actorId: string): Promise<{
  *  rest. */
 export async function stopRunsForRemoval(runIds: string[]): Promise<number> {
   let stopped = 0;
-  for (const runId of runIds) {
+  // dedupe: a capture that joins several pending review rows can name one run twice —
+  // the second CAS would MISS and unwind the marker a live execution still owns
+  for (const runId of new Set(runIds)) {
     stoppedRuns.add(runId);
     try {
       liveStops.get(runId)?.();

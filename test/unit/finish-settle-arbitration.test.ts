@@ -18,6 +18,8 @@ const h = vi.hoisted(() => ({
   tasksSets: [] as Array<Record<string, unknown>>,
   // make the mocked submitResult throw (drives settleDoneRun's FAILURE arm)
   failSubmit: false,
+  // the reviewer row is gone (the removal owns the round — no park on any path)
+  reviewerDeleted: false,
   // how many publishes had fired when submitResult ran (0 = settle precedes the
   // lifecycle publishes — the r6 pin that binds ORDER, not just before-return)
   settlePublishCounts: [] as number[],
@@ -82,7 +84,11 @@ vi.mock('../../server/db/index', async () => {
                     ]
                   : [],
             findFirst: async () =>
-              table === 'taskRuns' ? { id: h.latestRunId } : table === 'user' ? { id: 'agent-1' } : null,
+              table === 'taskRuns'
+                ? { id: h.latestRunId }
+                : table === 'user' && !h.reviewerDeleted
+                  ? { id: 'agent-1' }
+                  : null,
           }),
         },
       ),
@@ -200,6 +206,7 @@ beforeEach(() => {
   h.flipSets = [];
   h.tasksSets = [];
   h.failSubmit = false;
+  h.reviewerDeleted = false;
   h.settlePublishCounts = [];
   h.fixtureTaskStatus = null;
   h.fixtureFailStreak = 0;
@@ -555,5 +562,30 @@ describe('writer.finish settle arbitration (#286)', () => {
     expect(h.parks).toHaveLength(1);
     expect(h.parks[0]?.rearmable).toBe(true);
     expect(h.tasksWrites).toBe(0); // review plans bounce no-ops; only the reset would write
+  });
+
+  it('a DELETED reviewer’s FAILED turn never parks (#370)', async () => {
+    h.reviewerDeleted = true;
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    writer.onLine('agent output');
+    await writer.finish('task-1', RUN_STATUS.FAILED, 1, {
+      review: { resultBody: 'submitted review' },
+      ai: { userId: 'agent-1' },
+    });
+    await drain();
+    expect(h.parks).toHaveLength(0);
+  });
+
+  it('a DELETED reviewer’s settle throw never parks (#370)', async () => {
+    h.reviewerDeleted = true;
+    h.failSubmit = true;
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    writer.onLine('all work complete');
+    await writer.finish('task-1', RUN_STATUS.DONE, 0, {
+      review: { resultBody: 'submitted review' },
+      ai: { userId: 'agent-1' },
+    });
+    await drain();
+    expect(h.parks).toHaveLength(0);
   });
 });

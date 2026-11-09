@@ -10,7 +10,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CATEGORY, REVIEW_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
-import { mockDb, taskReviews as dbTaskReviews, taskRuns } from './helpers/mock-db';
+import {
+  mockDb,
+  taskMessages as dbTaskMessages,
+  taskReviews as dbTaskReviews,
+  taskRuns,
+  taskStatuses as dbTaskStatuses,
+  tasks as dbTasks,
+} from './helpers/mock-db';
 
 const h = vi.hoisted(() => ({
   taskStatus: '' as string,
@@ -42,6 +49,10 @@ const h = vi.hoisted(() => ({
   runningReviewRuns: [] as Array<{ id: string }>,
   statusReadThrows: 0,
   captureCond: null as unknown,
+  joinConds: [] as Array<{ table: string; cond: unknown }>,
+  stoppedRuns: [] as string[],
+  holdDispatch: false,
+  releaseDispatch: null as null | (() => void),
   published: 0,
   flipWins: true,
   casMiss: false,
@@ -71,6 +82,10 @@ vi.mock('../../server/db/index', async () => {
       select: (arg?: Record<string, unknown>) => ({
         from: (table: unknown) => {
           const node: Record<string, unknown> = {};
+          node.innerJoin = (joinTable: unknown, cond?: unknown) => {
+            if (table === taskRuns) h.joinConds.push({ table: 'join', cond });
+            return node;
+          };
           node.where = (cond: unknown) =>
             rowsThenable(() => {
               const keys = arg ? Object.keys(arg) : [];
@@ -96,7 +111,6 @@ vi.mock('../../server/db/index', async () => {
               if (keys.includes('taskId')) return Promise.resolve(h.leftoverSelect);
               return Promise.resolve(h.reviewReads.shift() ?? []);
             });
-          node.innerJoin = () => node;
           return node;
         },
       }),
@@ -190,6 +204,12 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
 vi.mock('../../server/domains/tasks/runner.service', () => ({
   dispatchTask: async (...args: unknown[]) => {
     h.dispatches.push(args[2] as Record<string, unknown>);
+    if (h.holdDispatch) await new Promise<void>((resolve) => (h.releaseDispatch = resolve));
+  },
+  stopRunsForRemoval: async (ids: string[]) => {
+    h.stoppedRuns.push(...ids);
+    h.runningReviewRuns = h.runningReviewRuns.filter((r) => !ids.includes(r.id));
+    return ids.length;
   },
 }));
 
@@ -200,6 +220,7 @@ vi.mock('../../server/domains/tasks/gating.service', () => ({
 }));
 
 import {
+  dispatchAiReviewTurns,
   openRoundLive,
   prepareReviewerRemoval,
   recordVerdict,
@@ -248,6 +269,10 @@ beforeEach(() => {
   h.runningReviewRuns = [];
   h.statusReadThrows = 0;
   h.captureCond = null;
+  h.joinConds = [];
+  h.stoppedRuns = [];
+  h.holdDispatch = false;
+  h.releaseDispatch = null;
   h.published = 0;
   h.flipWins = true;
   h.casMiss = false;
@@ -572,21 +597,34 @@ describe('removal resumes the sequential review queue (#371)', () => {
 });
 
 describe('removal run capture (#370)', () => {
-  it('captures the departing reviewer’s RUNNING runs and pins the SQL predicate', async () => {
+  it('captures the departing reviewer’s RUNNING review turns and pins the SQL predicate', async () => {
     h.runningReviewRuns = [{ id: 'run-1' }, { id: 'run-2' }];
     expect(await runningReviewRunIdsForEmployee('emp-1')).toEqual(['run-1', 'run-2']);
-    const q = mockDb()
-      .select()
+    // render the FULL capture query — WHERE + all four joins — through real drizzle
+    const { sql, params } = mockDb()
+      .select({ id: taskRuns.id })
       .from(taskRuns)
+      .innerJoin(dbTaskMessages, h.joinConds[0]!.cond as never)
+      .innerJoin(dbTasks, h.joinConds[1]!.cond as never)
+      .innerJoin(dbTaskStatuses, h.joinConds[2]!.cond as never)
+      .innerJoin(dbTaskReviews, h.joinConds[3]!.cond as never)
       .where(h.captureCond as never)
       .toSQL();
-    const rendered = `${q.sql} ${JSON.stringify(q.params)}`;
+    const rendered = `${sql} ${JSON.stringify(params)}`;
+    expect(h.joinConds).toHaveLength(4);
     // the employee id + RUNNING status ride the WHERE (a stray capture of every
     // employee's runs would stop unrelated in-flight turns)
     expect(rendered).toContain('"employee_id" =');
     expect(rendered).toContain('emp-1');
     expect(rendered).toContain('"status" =');
     expect(rendered).toContain('RUNNING');
+    // the review-vs-work discriminator: only an in_review-category task qualifies
+    expect(rendered).toContain('"task_statuses"."category" =');
+    expect(rendered).toContain('in_review');
+    // …and the run must carry a PENDING review row naming the same reviewer
+    expect(rendered).toContain('"task_reviews"."reviewer_id" =');
+    expect(rendered).toContain('"task_reviews"."status" =');
+    expect(rendered).toContain('PENDING');
   });
 });
 
@@ -615,6 +653,8 @@ describe('removal resume guards (#371)', () => {
     h.runningReviewRuns = [{ id: 'run-live' }];
     h.reviewReads = [
       [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      // if the in-flight guard were deleted, the dispatch row read would mint here
       [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
     ];
     h.aiEmployees = [{ userId: 'ai-2' }];
@@ -647,6 +687,53 @@ describe('removal resume guards (#371)', () => {
     h.aiEmployees = [{ userId: 'ai-2' }];
     await settleReviewerRemovalRounds({ ...liveOnly, taskIds: ['task-1', 'task-2'] });
     expect(h.dispatches).toHaveLength(2);
+  });
+
+  it('boot resume re-mints a live round left by a crashed removal (#371 crash backstop)', async () => {
+    h.leftoverSelect = [{ taskId: 'task-9' }];
+    h.reviewReads = [
+      [
+        { status: REVIEW_STATUS.PENDING, reviewerId: null },
+        { status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' },
+      ],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    expect(await settleAllExtinguishedRounds()).toEqual([]);
+    expect(h.dispatches).toHaveLength(1);
+  });
+
+  it('boot settles the FK-orphaned RUNNING row before it resumes (#371 delete→stop crash window)', async () => {
+    h.leftoverSelect = [{ taskId: 'task-9' }];
+    h.runningReviewRuns = [{ id: 'run-zombie-9' }];
+    h.reviewReads = [
+      [
+        { status: REVIEW_STATUS.PENDING, reviewerId: null },
+        { status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' },
+      ],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    expect(await settleAllExtinguishedRounds()).toEqual([]);
+    expect(h.stoppedRuns).toEqual(['run-zombie-9']);
+    expect(h.dispatches).toHaveLength(1);
+  });
+
+  it('concurrent mint triggers on one task never double-dispatch (per-task mint lock)', async () => {
+    h.holdDispatch = true;
+    h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }]];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    const first = dispatchAiReviewTurns('task-1');
+    await vi.waitFor(() => {
+      if (!h.releaseDispatch) throw new Error('dispatch not reached yet');
+    });
+    // the second trigger returns at the lock without reading or dispatching
+    await dispatchAiReviewTurns('task-1');
+    h.releaseDispatch!();
+    await first;
+    expect(h.dispatches).toHaveLength(1);
   });
 
   it('a resume read failure is fault-isolated: the next task still resumes', async () => {

@@ -205,3 +205,86 @@ test('reviewer deleted mid-turn: the zombie turn never parks; the next reviewer 
     await sql.close();
   }
 });
+
+// E2E (#370 r2): the removal must neutralize only REVIEW turns. Deleting an AI
+// ASSIGNEE whose work run is in flight must leave that work run to settle normally —
+// its bounce arm returns the (now assignee-less) doing task to todo. A blanket stop
+// would skip the bounce and strand the task in doing with no assignee and no run.
+test('removal leaves a departing assignee’s WORK run to its normal bounce (#370)', async ({ page }) => {
+  const tag = Date.now().toString(36).slice(-6);
+  const envRes = await post(page, 'environments/create', {
+    name: `E2E Work Env ${tag}`,
+    host: '127.0.0.1',
+    port: '22',
+    username: 'e2e',
+  });
+  expect(envRes.status()).toBe(200);
+  const envId = (await envRes.json()).json.id as string;
+  const empRes = await post(page, 'employees/create', {
+    name: `AI Worker ${tag}`,
+    email: `e2e-worker-${tag}@tandem.local`,
+    kind: 'ai',
+    title: 'Worker',
+    environmentId: envId,
+    executable: 'hermes acp',
+  });
+  expect(empRes.status()).toBe(200);
+  const worker = (await empRes.json()).json as { id: string };
+
+  const statusesRes = await post(page, 'statuses/list', null);
+  const statuses = ((await statusesRes.json()).json ?? []) as { id: string; category: string }[];
+  const todo = statuses.find((s) => s.category === 'ready');
+  expect(todo).toBeTruthy();
+
+  const created = await post(page, 'tasks/create', {
+    title: `Work run removal ${tag}`,
+    assigneeId: worker.id,
+  });
+  expect(created.status()).toBe(200);
+  const taskId = (await created.json()).json.id as string;
+  // manual dispatch starts the fake work turn deterministically (ready + AI assignee)
+  const dispatched = await post(page, 'tasks/dispatch', { taskId });
+  expect(dispatched.status()).toBe(200);
+
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    let runId = '';
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline && !runId) {
+      const rows = (await sql`
+        select r.id from task_runs r
+        join task_messages m on m.id = r.message_id
+        where m.task_id = ${taskId} and r.employee_id = ${worker.id} and r.status = 'RUNNING'
+        limit 1
+      `) as Array<{ id: string }>;
+      if (rows.length > 0) runId = rows[0]!.id;
+      else await page.waitForTimeout(100);
+    }
+    expect(runId).toBeTruthy();
+
+    expect((await post(page, 'employees/remove', { id: worker.id })).status()).toBe(200);
+
+    // the work run is NOT stopped by the removal — it finishes and its bounce returns
+    // the assignee-less task to todo
+    await expect
+      .poll(
+        async () => {
+          const rows = (await sql`select status from task_runs where id = ${runId}`) as Array<{ status: string }>;
+          return rows[0]?.status;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe('DONE');
+    await expect
+      .poll(
+        async () => {
+          const rows = (await sql`select status from tasks where id = ${taskId}`) as Array<{ status: string }>;
+          return rows[0]?.status;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(todo!.id);
+  } finally {
+    await sql.close();
+  }
+});

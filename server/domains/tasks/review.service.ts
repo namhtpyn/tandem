@@ -16,7 +16,7 @@ import { and, desc, eq, inArray, isNull, lt, ne, notInArray } from 'drizzle-orm'
 import { v7 as uuidv7 } from 'uuid';
 
 import { db, type DbExecutor } from '../../db/index';
-import { tasks, taskReviews, taskRuns, taskMessages, taskObligations } from '../../db/schema';
+import { tasks, taskReviews, taskRuns, taskMessages, taskObligations, taskStatuses } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import {
   spawnObligation,
@@ -443,15 +443,18 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
 }
 
 /** EMPLOYEE REMOVAL, run-capture half (#370): the departing employee's RUNNING REVIEW
- *  runs — a run row whose task carries a PENDING review row naming that reviewer. Only
- *  review turns are neutralized: a WORK run left to settle normally bounces its task
- *  exactly as before (the stop-settled no-side-effect rule would strand a working task
- *  whose assignee the delete just nulled). Read BEFORE the user delete; read-only. */
+ *  turns. A review turn is a live run on a task that is CURRENTLY in an in_review-
+ *  category status AND carries a PENDING review row naming that reviewer — the work-run
+ *  shape (working category) never matches, so a WORK run is left to settle normally and
+ *  its bounce arm still returns an assignee-less doing task to todo. Read BEFORE the
+ *  user delete; read-only. */
 export async function runningReviewRunIdsForEmployee(employeeId: string): Promise<string[]> {
   const rows = await db
     .select({ id: taskRuns.id })
     .from(taskRuns)
     .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+    .innerJoin(tasks, eq(tasks.id, taskMessages.taskId))
+    .innerJoin(taskStatuses, eq(taskStatuses.id, tasks.status))
     .innerJoin(
       taskReviews,
       and(
@@ -460,9 +463,33 @@ export async function runningReviewRunIdsForEmployee(employeeId: string): Promis
         eq(taskReviews.status, REVIEW_STATUS.PENDING),
       ),
     )
-    .where(and(eq(taskRuns.employeeId, employeeId), eq(taskRuns.status, RUN_STATUS.RUNNING)))
+    .where(
+      and(
+        eq(taskRuns.employeeId, employeeId),
+        eq(taskRuns.status, RUN_STATUS.RUNNING),
+        eq(taskStatuses.category, CATEGORY.IN_REVIEW),
+      ),
+    )
     .limit(50);
-  return rows.map((r) => r.id);
+  return [...new Set(rows.map((r) => r.id))];
+}
+
+/** BOOT BACKSTOP for the removal crash window (#370): a removal that died between the
+ *  user delete and its stop arm leaves the departing reviewer's run RUNNING with a NULL
+ *  employee_id — no live execution owns it, and the reaper would park the round after
+ *  the timeout. Settle exactly those rows STOPPED (same CAS/marker semantics as the
+ *  removal stop) so the resume arm can mint the next reviewer. Scoped to a task the
+ *  void-row scan already flagged; `employee_id IS NULL` is machine-only. */
+async function stopOrphanRemovalRuns(taskId: string) {
+  const rows = await db
+    .select({ id: taskRuns.id })
+    .from(taskRuns)
+    .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+    .where(and(eq(taskMessages.taskId, taskId), eq(taskRuns.status, RUN_STATUS.RUNNING), isNull(taskRuns.employeeId)))
+    .limit(50);
+  if (rows.length === 0) return;
+  const { stopRunsForRemoval } = await import('./runner.service');
+  await stopRunsForRemoval(rows.map((r) => r.id));
 }
 
 /** REVIEWER REMOVAL, prepare half (#365): a READ-ONLY capture taken BEFORE the
@@ -947,11 +974,12 @@ export async function settleAllExtinguishedRounds(): Promise<string[]> {
       log.warn(`void review round heal failed for task ${taskId}:`, e instanceof Error ? e.message : e);
     }
     // NEXT-TURN CRASH BACKSTOP (#371): a removal that died between the user delete and
-    // its resume arm leaves the current round's void row beside a live PENDING reviewer
-    // and NO turn in flight — the void scan above finds it, so re-mint here too. A
-    // live-voter round with a running turn is a no-op (dispatchAiReviewTurns' task-wide
-    // in-flight guard); a settled task is gated out by category.
+    // its resume arm leaves the departing reviewer's run RUNNING (employee_id NULL) or
+    // the current round's void row beside a live PENDING reviewer — settle the orphan
+    // row first, then re-mint. A live-voter round with a running turn is a no-op
+    // (dispatchAiReviewTurns' task-wide in-flight guard); a settled task is gated out.
     try {
+      await stopOrphanRemovalRuns(taskId);
       await resumeRemovalReviewQueue(taskId);
     } catch (e) {
       log.warn(`void review round resume failed for task ${taskId}:`, e instanceof Error ? e.message : e);
@@ -1005,6 +1033,13 @@ async function roundResultBody(taskId: string) {
   return rows[0]?.resultBody ?? '';
 }
 
+/** task ids whose review-mint decision is in flight in THIS process — the mint is a
+ *  read-then-dispatch; two concurrent triggers on one task (concurrent removals, a
+ *  removal racing a verdict settle) would both pass the reads and mint twice. The lock
+ *  makes the decision+dispatch one critical section; a skipped caller is safe because
+ *  the winner mints the next turn and the next verdict mints the one after. */
+const reviewMintInFlight = new Set<string>();
+
 /** fire the NEXT pending AI reviewer's turn — exactly one per call (sequential law:
  * one review turn in flight per task; the verdict's settle path lazy-mints the next).
  * Round order = row order. Human reviewers are skipped (the card is their UI).
@@ -1012,6 +1047,16 @@ async function roundResultBody(taskId: string) {
  * opts.verdictCorrection (#276): rides ONLY the verdict-less settle path's bounded
  * re-dispatch — the retry brief carries the CORRECTION block. */
 export async function dispatchAiReviewTurns(taskId: string, resultBody?: string, opts?: DispatchOpts) {
+  if (reviewMintInFlight.has(taskId)) return;
+  reviewMintInFlight.add(taskId);
+  try {
+    await dispatchAiReviewTurnsUnlocked(taskId, resultBody, opts);
+  } finally {
+    reviewMintInFlight.delete(taskId);
+  }
+}
+
+async function dispatchAiReviewTurnsUnlocked(taskId: string, resultBody?: string, opts?: DispatchOpts) {
   const round = await currentRound(taskId);
   if (round === 0) return;
   // SEQUENTIAL, TASK-WIDE (#371): ONE review turn in flight per task. A mint requested

@@ -118,3 +118,22 @@ describe('stopRunsForRemoval (#370)', () => {
     expect(stoppedRunMarkerIds()).toEqual([]);
   });
 });
+
+describe('removal stop hardening (#370 r2)', () => {
+  it('duplicate run ids are stopped once — a second CAS miss never unwinds the marker', async () => {
+    h.casRows = [{ id: 'run-1' }];
+    expect(await stopRunsForRemoval(['run-1', 'run-1'])).toBe(1);
+    expect(h.updates).toHaveLength(1); // deduped before the loop
+  });
+
+  it('appends the audit marker to the run output', async () => {
+    h.casRows = [{ id: 'run-1' }];
+    await stopRunsForRemoval(['run-1']);
+    const set = h.updates[0]!.set;
+    const rendered = mockDb()
+      .update(taskRuns)
+      .set({ output: set.output as never })
+      .toSQL();
+    expect(rendered.sql).toContain('employee removed');
+  });
+});
