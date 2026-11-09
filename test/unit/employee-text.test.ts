@@ -246,6 +246,18 @@ describe('procedure schemas — the pre-existing blankness contract (helper-swap
     expect(accepts(employeesRouter.create, createInput({ model: 'M'.repeat(201) }))).toBe(false);
     expect(accepts(employeesRouter.create, createInput({ instructions: 'I'.repeat(10_000) }))).toBe(true);
     expect(accepts(employeesRouter.create, createInput({ instructions: 'I'.repeat(10_001) }))).toBe(false);
+    // the same caps on the UPDATE edge — a patch must not accept what create refuses
+    expect(accepts(employeesRouter.update, updateInput({ name: 'N'.repeat(100) }))).toBe(true);
+    expect(accepts(employeesRouter.update, updateInput({ name: 'N'.repeat(101) }))).toBe(false);
+    expect(accepts(employeesRouter.update, updateInput({ title: 'T'.repeat(100) }))).toBe(true);
+    expect(accepts(employeesRouter.update, updateInput({ title: 'T'.repeat(101) }))).toBe(false);
+    expect(accepts(employeesRouter.update, updateInput({ model: 'M'.repeat(200) }))).toBe(true);
+    expect(accepts(employeesRouter.update, updateInput({ model: 'M'.repeat(201) }))).toBe(false);
+    expect(accepts(employeesRouter.update, updateInput({ instructions: 'I'.repeat(10_000) }))).toBe(true);
+    expect(accepts(employeesRouter.update, updateInput({ instructions: 'I'.repeat(10_001) }))).toBe(false);
+    // the catalog name shares the employee-title cap (a longer entry could never be applied)
+    expect(accepts(employeesRouter.titles.save, { name: 'T'.repeat(100) })).toBe(true);
+    expect(accepts(employeesRouter.titles.save, { name: 'T'.repeat(101) })).toBe(false);
     const PREFIX = 'data:image/png;base64,';
     expect(
       accepts(employeesRouter.create, createInput({ image: `${PREFIX}${'A'.repeat(300_000 - PREFIX.length)}` })),
@@ -255,11 +267,13 @@ describe('procedure schemas — the pre-existing blankness contract (helper-swap
     ).toBe(false);
   });
 
-  it('accepts an id-less title save (create) and a full-length supplied id (the uncapped guard branch)', () => {
+  it('accepts an id-less title save (create) and a long supplied id (the guard is uncapped)', () => {
     expect(inputSchema(employeesRouter.titles.save).safeParse({ name: 'Engineer' }).success).toBe(true);
-    expect(inputSchema(employeesRouter.titles.save).safeParse({ id: 'x'.repeat(64), name: 'Engineer' }).success).toBe(
+    // 1000 chars: any accidental cap would refuse a legal (text-typed) catalog id
+    expect(inputSchema(employeesRouter.titles.save).safeParse({ id: 'x'.repeat(1000), name: 'Engineer' }).success).toBe(
       true,
     );
+    expect(inputSchema(employeesRouter.titles.remove).safeParse({ id: 'x'.repeat(1000) }).success).toBe(true);
   });
 
   it('accepts null on every clearable field and the empty avatar (the clear paths stay open)', () => {
