@@ -1,3 +1,10 @@
+## [2.78.7](https://github.com/namhtpyn/tandem/compare/v2.78.6...v2.78.7) (2026-11-09)
+
+
+### Bug Fixes
+
+* [#370](https://github.com/namhtpyn/tandem/issues/370)/[#371](https://github.com/namhtpyn/tandem/issues/371) reviewer turn removal — a deleted reviewer’s in-flight turn never parks the round, and the sequential queue advances ([#379](https://github.com/namhtpyn/tandem/issues/379)) ([723e089](https://github.com/namhtpyn/tandem/commit/723e0899da19a039d1462b290c08dfdf0f9a2d6f))
+
 ## [2.78.6](https://github.com/namhtpyn/tandem/compare/v2.78.5...v2.78.6) (2026-11-09)
 
 
