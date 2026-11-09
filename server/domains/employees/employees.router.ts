@@ -328,7 +328,7 @@ export const employeesRouter = os.router({
         image: avatarImageSchema,
         title: storableText('title', EMPLOYEE_TITLE_MAX),
         supervisorIds: z.array(z.string().min(1)).max(20).default([]),
-        environmentId: z.string().min(1).optional(),
+        environmentId: storableText('environmentId').optional(),
         instructions: storableOptionalText('instructions', 10_000).optional(),
         executable: z
           .string()
@@ -336,9 +336,9 @@ export const employeesRouter = os.router({
           .max(120)
           .regex(ACP_EXECUTABLE_RE, 'ACP executable must be shell-safe command words, e.g. "hermes acp"')
           .optional(),
-        providerId: z.string().min(1).nullable().optional(),
+        providerId: storableText('providerId').nullable().optional(),
         model: storableText('model', 200).nullable().optional(),
-        apiKeySecretId: z.string().min(1).nullable().optional(),
+        apiKeySecretId: storableText('apiKeySecretId').nullable().optional(),
       }),
     )
     .handler(async ({ input }) => {
@@ -413,7 +413,7 @@ export const employeesRouter = os.router({
         email: z.email().optional(),
         title: storableText('title', EMPLOYEE_TITLE_MAX),
         supervisorIds: z.array(z.string().min(1)).max(20),
-        environmentId: z.string().min(1).nullable().optional(),
+        environmentId: storableText('environmentId').nullable().optional(),
         instructions: storableOptionalText('instructions', 10_000).nullable().optional(),
         executable: z
           .string()
@@ -422,9 +422,9 @@ export const employeesRouter = os.router({
           .regex(ACP_EXECUTABLE_RE, 'ACP executable must be shell-safe command words, e.g. "hermes acp"')
           .nullable()
           .optional(),
-        providerId: z.string().min(1).nullable().optional(),
+        providerId: storableText('providerId').nullable().optional(),
         model: storableText('model', 200).nullable().optional(),
-        apiKeySecretId: z.string().min(1).nullable().optional(),
+        apiKeySecretId: storableText('apiKeySecretId').nullable().optional(),
         /** avatar: data URL (resized client-side); null clears */
         image: avatarImageSchema,
       }),
@@ -527,7 +527,7 @@ export const employeesRouter = os.router({
     save: adminProcedure
       .input(
         z.strictObject({
-          id: z.string().min(1).optional(),
+          id: storableText('id').optional(),
           name: storableText('name', EMPLOYEE_TITLE_MAX),
         }),
       )

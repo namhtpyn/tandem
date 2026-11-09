@@ -13,13 +13,10 @@ import { hasUnstorableText } from '#shared/utils/storable-text';
 
 const unstorableMessage = (field: string) => `${field} contains invalid characters (NUL or a lone surrogate)`;
 
-/** non-blank, capped, storable text — the refused classes are unstorable, never silently rewritten */
-export function storableText(field: string, max: number) {
-  return z
-    .string()
-    .min(1)
-    .max(max)
-    .refine((v) => !hasUnstorableText(v), unstorableMessage(field));
+/** non-blank, storable text — an omitted `max` keeps an already-uncapped field uncapped (text-typed ids) */
+export function storableText(field: string, max?: number) {
+  const base = z.string().min(1);
+  return (max === undefined ? base : base.max(max)).refine((v) => !hasUnstorableText(v), unstorableMessage(field));
 }
 
 /** storable text for optional/nullable fields — callers add `.nullable().optional()` */

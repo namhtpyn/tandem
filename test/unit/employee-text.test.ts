@@ -95,6 +95,13 @@ describe('hasUnstorableText — the one predicate (SPEC TEXT-STORABILITY LAW)', 
     // pairs at the extreme range ends are still valid pairs
     expect(hasUnstorableText('\uDBFF\uDC00')).toBe(false);
     expect(hasUnstorableText('\uD800\uDFFF')).toBe(false);
+    // a high surrogate followed by a code point ABOVE the low range is still unpaired
+    expect(hasUnstorableText('\uD800\uE000')).toBe(true);
+    expect(hasUnstorableText('\uD800\uFFFF')).toBe(true);
+  });
+
+  it('accepts ordinary control characters — only NUL is unstorable', () => {
+    expect(hasUnstorableText('line1\nline2\ta\rb')).toBe(false);
   });
 });
 
@@ -129,7 +136,7 @@ describe('employee text schemas (#377)', () => {
 });
 
 describe('employees.create — every text field is refused when unstorable (#377)', () => {
-  const cases = ['name', 'title', 'instructions', 'model', 'image'];
+  const cases = ['name', 'title', 'instructions', 'model', 'image', 'environmentId', 'providerId', 'apiKeySecretId'];
 
   for (const field of cases) {
     it(`${field}: NUL and a lone surrogate answer BAD_REQUEST naming the field`, async () => {
@@ -155,7 +162,7 @@ describe('employees.create — every text field is refused when unstorable (#377
 });
 
 describe('employees.update — every text field is refused when unstorable (#377)', () => {
-  const cases = ['name', 'title', 'instructions', 'model', 'image'];
+  const cases = ['name', 'title', 'instructions', 'model', 'image', 'environmentId', 'providerId', 'apiKeySecretId'];
 
   for (const field of cases) {
     it(`${field}: NUL and a lone low surrogate answer BAD_REQUEST naming the field`, async () => {
@@ -174,12 +181,53 @@ describe('employees.update — every text field is refused when unstorable (#377
   }
 });
 
-describe('employees.titles.save — the catalog name is refused when unstorable (#377)', () => {
+describe('employees.titles.save — the catalog name and text id are refused when unstorable (#377)', () => {
   it('refuses a NUL name and names the `name` input, not the catalog', async () => {
     const error = await refusal(() => saveTitle({ name: NUL }));
     expect(error.code).toBe('BAD_REQUEST');
     expect(error.data?.issues).toContainEqual(
       expect.objectContaining({ path: ['name'], message: expect.stringContaining('name contains invalid characters') }),
     );
+  });
+
+  it('refuses a NUL in the text-typed catalog id', async () => {
+    const error = await refusal(() => saveTitle({ id: NUL, name: 'Engineer' }));
+    expect(error.code).toBe('BAD_REQUEST');
+    expect(error.data?.issues).toContainEqual(
+      expect.objectContaining({ path: ['id'], message: expect.stringContaining('id contains invalid characters') }),
+    );
+  });
+});
+
+describe('procedure schemas — the pre-existing blankness contract (helper-swap pins)', () => {
+  /** the compiled oRPC input schema — the exact object the edge validates with */
+  const inputSchema = (procedure: unknown) =>
+    (
+      procedure as {
+        '~orpc': {
+          inputSchemas: {
+            safeParse: (v: unknown) => { success: boolean };
+          }[];
+        };
+      }
+    )['~orpc'].inputSchemas[0];
+
+  it('accepts a blank instructions box on create and update (optional text has no minimum)', () => {
+    expect(inputSchema(employeesRouter.create).safeParse(createInput({ instructions: '' })).success).toBe(true);
+    expect(inputSchema(employeesRouter.update).safeParse(updateInput({ instructions: '' })).success).toBe(true);
+  });
+
+  it('refuses a blank name/title on create and update, and a blank catalog name', () => {
+    expect(inputSchema(employeesRouter.create).safeParse(createInput({ name: '' })).success).toBe(false);
+    expect(inputSchema(employeesRouter.create).safeParse(createInput({ title: '' })).success).toBe(false);
+    expect(inputSchema(employeesRouter.update).safeParse(updateInput({ name: '' })).success).toBe(false);
+    expect(inputSchema(employeesRouter.update).safeParse(updateInput({ title: '' })).success).toBe(false);
+    expect(inputSchema(employeesRouter.titles.save).safeParse({ name: '' }).success).toBe(false);
+  });
+
+  it('refuses a blank text-typed id', () => {
+    expect(inputSchema(employeesRouter.create).safeParse(createInput({ environmentId: '' })).success).toBe(false);
+    expect(inputSchema(employeesRouter.update).safeParse(updateInput({ providerId: '' })).success).toBe(false);
+    expect(inputSchema(employeesRouter.titles.save).safeParse({ id: '', name: 'Engineer' }).success).toBe(false);
   });
 });
