@@ -477,14 +477,32 @@ test.describe('mcp registry + bindings', () => {
     await editor.getByRole('button', { name: 'Cancel' }).click();
     await expect(editor).toBeHidden({ timeout: 10_000 });
 
-    // fake-runner dispatch names the stdio server in the run output (parity)
+    // fake-runner dispatch names the stdio server in the run output (parity).
+    // BORN-INELIGIBLE SEEDING (#297, #387): a task created WITH the AI assignee
+    // is scanner-eligible at insert, so the 5s dispatch tick can claim it while
+    // the drawer settles — the dispatch verb unmounts mid-click and Playwright
+    // waits 60s on a button that never returns. Create it unassigned, hold
+    // dispatch_after, then attach the assignee: the scan respects the hold,
+    // only the MANUAL dispatch verb ignores it (the behavior under test).
     const taskTitle = `MCPS ${tag}`;
     await tasks.navigate('/tasks');
     await tasks.openCreateModal();
-    await tasks.fillTaskForm({ title: taskTitle, assignee: employeeName });
+    await tasks.fillTaskForm({ title: taskTitle });
     await tasks.saveTask();
     const taskRow = tasks.rowFor(taskTitle);
     await expect(taskRow).toBeVisible({ timeout: 15_000 });
+    const taskHref = await taskRow.locator('a[href^="/tasks/"]').first().getAttribute('href');
+    expect(taskHref, 'task row links to the task page').toBeTruthy();
+    const taskId = (taskHref as string).split('/').pop() as string;
+    const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+    try {
+      await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId}`;
+    } finally {
+      await sql.close();
+    }
+    const attach = await rpcPost(page, '/rpc/tasks/update', { id: taskId, assigneeId: employeeId });
+    expect(attach.status).toBe(200);
+    await expect(taskRow).toContainText(employeeName, { timeout: 10_000 });
     const drawer = await tasks.openWorkflowDrawer(taskRow);
     const dispatch = drawer.getByTestId('drawer-verb-dispatch');
     await expect(dispatch).toBeVisible({ timeout: 20_000 });
