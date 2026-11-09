@@ -642,6 +642,11 @@ a malformed (non-uuid-shaped) id — gets `NOT_FOUND` (the id is a miss, never a
 500). ADMIN reads any employee's keys. The read never returns key material; a
 plaintext key appears in exactly one response class, the one-time mint
 (`employees.create`, `employees.createApiKey`), by design.
+**ACCESS-KEY NAME CAP:** the credential backend caps key names at 32 characters.
+Every minted name therefore fits that cap: a DERIVED default truncates the
+employee-name prefix, never the fixed suffix (` access key` / ` key`), and a
+caller-supplied name over 32 characters — mint (`employees.createApiKey`) or
+rename (`employees.updateApiKey`) — answers `BAD_REQUEST`, never an opaque 500.
 **LIVE-STREAM RE-AUTH (#224):** a `live` stream outlives its open-time check, so
 every live generator re-asserts the procedure's own tier against a FRESH
 session (never the per-request latch) before emitting a snapshot — at most once
