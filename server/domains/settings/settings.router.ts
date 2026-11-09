@@ -41,11 +41,19 @@ export const settingsRouter = os.router({
         companyPrompt: storable('companyPrompt', z.string().max(8000)).optional(),
         flags: z.record(z.string().regex(FLAG_NAME_RE), z.boolean()).optional(),
         internalLlm: z
-          .strictObject({ providerId: storableId('providerId'), model: storableId('model'), keySecretId: storableId('keySecretId') })
+          .strictObject({
+            providerId: storableId('providerId'),
+            model: storableId('model'),
+            keySecretId: storableId('keySecretId'),
+          })
           .nullable()
           .optional(),
         internalDecision: z
-          .strictObject({ providerId: storableId('providerId'), model: storableId('model'), keySecretId: storableId('keySecretId') })
+          .strictObject({
+            providerId: storableId('providerId'),
+            model: storableId('model'),
+            keySecretId: storableId('keySecretId'),
+          })
           .nullable()
           .optional(),
       }),

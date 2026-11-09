@@ -81,7 +81,13 @@ type Surface = {
   inputKey?: string;
 };
 
-const s = (surface: string, procedure: unknown, base: Record<string, unknown>, field: string, extra: Partial<Surface> = {}): Surface => ({
+const s = (
+  surface: string,
+  procedure: unknown,
+  base: Record<string, unknown>,
+  field: string,
+  extra: Partial<Surface> = {},
+): Surface => ({
   surface,
   procedure,
   run: client(procedure),
@@ -113,7 +119,10 @@ const surfaces: Surface[] = [
   s('tasks.create:projectId', tasksRouter.create, { title: 'T' }, 'projectId', { clearable: true, nullable: true }),
   s('tasks.create:assigneeId', tasksRouter.create, { title: 'T' }, 'assigneeId', { clearable: true, nullable: true }),
   s('tasks.create:ownerId', tasksRouter.create, { title: 'T' }, 'ownerId', { clearable: true, nullable: true }),
-  s('tasks.create:reviewers', tasksRouter.create, { title: 'T' }, 'reviewers', { clearable: true, valueFor: (v) => [v] }),
+  s('tasks.create:reviewers', tasksRouter.create, { title: 'T' }, 'reviewers', {
+    clearable: true,
+    valueFor: (v) => [v],
+  }),
   s('tasks.create:parentId', tasksRouter.create, { title: 'T' }, 'parentId', { clearable: true, nullable: true }),
   s('tasks.create:status', tasksRouter.create, { title: 'T' }, 'status', { clearable: true, cap: 64 }),
   s('tasks.setStatus:id', tasksRouter.setStatus, { id: 'x', status: 's' }, 'id'),
@@ -140,17 +149,28 @@ const surfaces: Surface[] = [
   s('tasks.getDescription:taskId', tasksRouter.getDescription, { taskId: 'x' }, 'taskId'),
   s('tasks.threadList:taskId', tasksRouter.threadList, { taskId: 'x' }, 'taskId'),
   s('tasks.thread:taskId', tasksRouter.thread, { taskId: 'x' }, 'taskId'),
-  s('tasks.threadOlderPage:taskId', tasksRouter.threadOlderPage, {
-    taskId: 'x',
-    before: { createdAt: 'c', id: 'i' },
-  }, 'taskId'),
-  s('tasks.threadOlderPage:before.id', tasksRouter.threadOlderPage, {
-    taskId: 'x',
-    before: { createdAt: 'c', id: 'i' },
-  }, 'id', {
-    inputKey: 'before',
-    valueFor: (v) => ({ createdAt: '2026-01-01T00:00:00.000Z', id: v }),
-  }),
+  s(
+    'tasks.threadOlderPage:taskId',
+    tasksRouter.threadOlderPage,
+    {
+      taskId: 'x',
+      before: { createdAt: 'c', id: 'i' },
+    },
+    'taskId',
+  ),
+  s(
+    'tasks.threadOlderPage:before.id',
+    tasksRouter.threadOlderPage,
+    {
+      taskId: 'x',
+      before: { createdAt: 'c', id: 'i' },
+    },
+    'id',
+    {
+      inputKey: 'before',
+      valueFor: (v) => ({ createdAt: '2026-01-01T00:00:00.000Z', id: v }),
+    },
+  ),
   s('tasks.runTranscript:runId', tasksRouter.runTranscript, { runId: 'r' }, 'runId'),
   s('tasks.confirmProposal:proposalId', tasksRouter.confirmProposal, { proposalId: 'p' }, 'proposalId'),
   s('tasks.rejectProposal:proposalId', tasksRouter.rejectProposal, { proposalId: 'p' }, 'proposalId'),
@@ -318,7 +338,9 @@ describe('every text-typed id refuses unstorable text (handler-level, #386)', ()
         );
         expect(error.code, `${surface.surface} (${JSON.stringify(bad)})`).toBe('BAD_REQUEST');
         const messages = (error.data?.issues ?? []).map((issue) => issue.message ?? '');
-        expect(messages.join(' | ')).toContain(`${surface.field} contains invalid characters (NUL or a lone surrogate)`);
+        expect(messages.join(' | ')).toContain(
+          `${surface.field} contains invalid characters (NUL or a lone surrogate)`,
+        );
       }
     });
   }

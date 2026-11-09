@@ -91,13 +91,17 @@ export const mcpRouter = os.router({
     )
     .handler(({ input }) => registryUpdate(input)),
 
-  registryRemove: adminProcedure.input(z.strictObject({ id: idField('id') })).handler(({ input }) => registryRemove(input)),
+  registryRemove: adminProcedure
+    .input(z.strictObject({ id: idField('id') }))
+    .handler(({ input }) => registryRemove(input)),
 
-  bindingsList: adminProcedure.input(z.strictObject({ employeeId: storable('employeeId', z.string()) })).handler(({ input }) =>
-    // a filter is not a lookup: blank / non-uuid values are the empty page
-    // (UUID-FILTER LAW), never a schema error, never a uuid-column query
-    isUuid(input.employeeId) ? bindingsList(input.employeeId) : { data: [] },
-  ),
+  bindingsList: adminProcedure
+    .input(z.strictObject({ employeeId: storable('employeeId', z.string()) }))
+    .handler(({ input }) =>
+      // a filter is not a lookup: blank / non-uuid values are the empty page
+      // (UUID-FILTER LAW), never a schema error, never a uuid-column query
+      isUuid(input.employeeId) ? bindingsList(input.employeeId) : { data: [] },
+    ),
 
   // per-server read for the registry page's binding manager (#274)
   bindingsListByServer: adminProcedure
@@ -128,13 +132,15 @@ export const mcpRouter = os.router({
       return bindingsRemove(input);
     }),
 
-  probe: adminProcedure.input(z.strictObject({ employeeId: storable('employeeId', z.string()), serverId: idField('serverId') })).handler(({ input }) => {
-    // probe is a read of one binding: blank / malformed employee ids are the same
-    // miss a well-formed id with no binding behind it answers (blank is accepted at
-    // the schema edge and owned by this miss path)
-    requireUuid(input.employeeId, 'NOT_FOUND', 'binding not found');
-    return probeMcpBinding(input);
-  }),
+  probe: adminProcedure
+    .input(z.strictObject({ employeeId: storable('employeeId', z.string()), serverId: idField('serverId') }))
+    .handler(({ input }) => {
+      // probe is a read of one binding: blank / malformed employee ids are the same
+      // miss a well-formed id with no binding behind it answers (blank is accepted at
+      // the schema edge and owned by this miss path)
+      requireUuid(input.employeeId, 'NOT_FOUND', 'binding not found');
+      return probeMcpBinding(input);
+    }),
 
   // #278: the connect mint rides an admin POST — the legacy state-changing
   // GET /api/mcp/oauth/connect rode a SameSite=Lax admin session on any

@@ -879,11 +879,13 @@ export const tasksRouter = os.router({
 
   /** on-demand description body (task page brief + editor modal prefill) —
    * SNAPSHOT-SLIMMING LAW (#130 slice 3): never rides list payloads */
-  getDescription: protectedProcedure.input(z.strictObject({ taskId: storableId('taskId') })).handler(async ({ input }) => {
-    const row = await fetchTaskDescription(input.taskId);
-    if (!row) throw new ORPCError('NOT_FOUND', { message: 'task does not exist' });
-    return row;
-  }),
+  getDescription: protectedProcedure
+    .input(z.strictObject({ taskId: storableId('taskId') }))
+    .handler(async ({ input }) => {
+      const row = await fetchTaskDescription(input.taskId);
+      if (!row) throw new ORPCError('NOT_FOUND', { message: 'task does not exist' });
+      return row;
+    }),
 
   /** the unified conversation thread (snapshot) — base messages with their run/activity extension;
    * bounded envelope {items, hasMore} (THREAD BOUNDING LAW #175) */
@@ -939,11 +941,13 @@ export const tasksRouter = os.router({
   /** STOP-RUN VERB (#229): settle the task's live run STOPPED — aborts the open
    * ACP turn over the runner's stream and releases the RUN LOCK; the task row is
    * untouched. Idempotent (a settled run returns ok). */
-  stop: employeeProcedure.input(z.strictObject({ taskId: storableId('taskId') })).handler(async ({ input, context }) => {
-    const selfId = await selfIdOf(context);
-    if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
-    return await runWorkflow(() => stopRunForTask(input.taskId, selfId));
-  }),
+  stop: employeeProcedure
+    .input(z.strictObject({ taskId: storableId('taskId') }))
+    .handler(async ({ input, context }) => {
+      const selfId = await selfIdOf(context);
+      if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
+      return await runWorkflow(() => stopRunForTask(input.taskId, selfId));
+    }),
 
   /** delete a task — blocked while a run is in flight; parents re-gate after */
   remove: employeeProcedure.input(z.strictObject({ id: storableId('id') })).handler(async ({ input }) => {
