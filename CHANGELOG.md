@@ -1,3 +1,13 @@
+## [2.78.8](https://github.com/namhtpyn/tandem/compare/v2.78.7...v2.78.8) (2026-11-09)
+
+
+### Bug Fixes
+
+* [#377](https://github.com/namhtpyn/tandem/issues/377) employee text is storable or refused — NUL and lone surrogates answer BAD_REQUEST, never the driver's 500 ([3daf738](https://github.com/namhtpyn/tandem/commit/3daf7383dc78c594e0779549f1387af8b4beaac5))
+* [#377](https://github.com/namhtpyn/tandem/issues/377) r1 review — restore model's min(1), guard the avatar data URL, field-truthful titles.save label, correct the driver-mechanism claim (NUL throws; lone surrogate is rewritten to U+FFFD), pin every wiring ([008eb9e](https://github.com/namhtpyn/tandem/commit/008eb9ea9bdbf5f2b66c98d5013e14d7140b0487))
+* [#377](https://github.com/namhtpyn/tandem/issues/377) r2 review — guard the text-typed employee ids (environment/provider/secret/title id), pin pair-continuation bounds, blankness contract and the instructions helper swap ([59da66c](https://github.com/namhtpyn/tandem/commit/59da66c1491fbf428cf9c69f001aad164426731a))
+* [#377](https://github.com/namhtpyn/tandem/issues/377) r3 review — guard the titles.remove text id, widen the blankness pins to every non-blank field ([eeee51c](https://github.com/namhtpyn/tandem/commit/eeee51cc164bab285554f0b6ead9706c2f1e8f9c))
+
 ## [2.78.7](https://github.com/namhtpyn/tandem/compare/v2.78.6...v2.78.7) (2026-11-09)
 
 
