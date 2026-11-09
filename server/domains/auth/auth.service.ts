@@ -8,6 +8,7 @@ import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 //   BETTER_AUTH_SECRET  — session signing (required)
 //   BETTER_AUTH_URL     — canonical origin override
 import { betterAuth } from 'better-auth';
+import { APIError } from 'better-auth/api';
 import { verifyPassword } from 'better-auth/crypto';
 import { testUtils } from 'better-auth/plugins';
 import { genericOAuth } from 'better-auth/plugins/generic-oauth';
@@ -15,6 +16,7 @@ import { eq } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { ROLE, type Role } from '#shared/enums';
+import { hasUnstorableText, unstorableMessage } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import { account, user as userTable } from '../../db/schema';
@@ -24,6 +26,20 @@ import { getSettings } from '../settings/settings.service';
 import { getOidcProviders, type OidcProvider } from './oidc.service';
 
 const env = sharedEnv;
+
+/** TEXT-STORABILITY LAW (#382): better-auth writes `user.name` / `user.image`
+ *  straight into Postgres text columns on BOTH its create (first-user sign-up,
+ *  first OIDC login) and update-user paths — the same field-named BAD_REQUEST as
+ *  every procedure edge, never an opaque driver 500 and never a silent U+FFFD. */
+function assertStorableUserText(data: unknown) {
+  const fields = data as { name?: unknown; image?: unknown };
+  for (const field of ['name', 'image'] as const) {
+    const value = fields[field];
+    if (typeof value === 'string' && hasUnstorableText(value)) {
+      throw new APIError('BAD_REQUEST', { message: unstorableMessage(field) });
+    }
+  }
+}
 
 export type AuthPolicy = {
   oidcEnabled: boolean;
@@ -89,6 +105,9 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}) {
     databaseHooks: {
       user: {
         create: {
+          before: async (data) => {
+            assertStorableUserText(data);
+          },
           after: async (u) => {
             // first user claims the instance -> admin role
             /* v8 ignore start -- defensive: better-auth always passes the created user */
@@ -102,6 +121,17 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}) {
               }
             }
             /* v8 ignore stop */
+          },
+        },
+        /**
+         * TEXT-STORABILITY LAW (#382): better-auth's own update-user path writes
+         * `name` / `image` straight into `user` text columns. The same refusal
+         * as every procedure edge — never an opaque driver 500, never a silent
+         * U+FFFD rewrite.
+         */
+        update: {
+          before: async (data) => {
+            assertStorableUserText(data);
           },
         },
       },

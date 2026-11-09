@@ -2,9 +2,10 @@
 import { z } from 'zod';
 
 import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
+import { storable } from '#shared/utils/storable-text';
 
 export const environmentInput = z.strictObject({
-  name: z.string().min(1).max(64),
+  name: storable('name', z.string().min(1).max(64)),
   host: z.string().regex(/^(?!-)[a-zA-Z0-9._-]{1,253}(?<!-)$/, 'ssh-safe host'),
   port: z
     .string()

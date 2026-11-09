@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
+import { storable } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import { projects as projectsTable, taskStatuses as taskStatusesTable } from '../../db/schema';
@@ -46,7 +47,7 @@ export const statusesRouter = os.router({
     .input(
       z.strictObject({
         id: z.string().min(1).max(64).optional(),
-        name: z.string().min(1).max(64),
+        name: storable('name', z.string().min(1).max(64)),
         color: z.enum(['neutral', 'primary', 'success', 'warning', 'error', 'info']).default('neutral'),
         position: z.number().int().min(0).max(99),
         category: z
