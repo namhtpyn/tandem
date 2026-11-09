@@ -86,32 +86,33 @@ async function seedAiEmployee(
   return { employeeId: emp.json?.id as string, employeeName };
 }
 
-/** write+prove the dispatch_after hold (15 min) on one task. A silent 0-row
- *  UPDATE would let the 5s scan claim the task mid-test (#387); `returning`
- *  proves a row matched AND carries a real future margin (a same-statement
- *  `> now()` alone is a tautology and a shortened ladder would slip through). */
+/** write the dispatch_after hold (15 min) on one task and prove the row matched.
+ *  A silent 0-row UPDATE would let the 5s scan claim the task mid-test (#387);
+ *  the future margin is proven by the separate read-back below. */
 async function holdDispatchScan(taskId: string): Promise<void> {
   const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
     const held =
-      await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId} returning (dispatch_after - now()) > interval '10 minutes' as held`;
+      await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId} returning id`;
     expect(held.length, 'dispatch_after hold landed on the task').toBe(1);
-    expect(held[0]!.held, 'dispatch_after hold has a real future margin').toBe(true);
   } finally {
     await sql.close();
   }
 }
 
-/** read-back that the hold still stands after an intervening write (the attach
- *  is the write that makes the task scanner-eligible). Fails loudly instead of
- *  silently re-opening the #387 race if that write ever resets the backoff. */
+/** read-back (fresh statement, real clock): the hold stands AND the assignee
+ *  attach landed. Both are seed preconditions — if either silently no-ops the
+ *  #387 scan-claim window returns, so fail loudly at the seed, not 60s later. */
 async function expectDispatchHold(taskId: string): Promise<void> {
   const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
-    const rows =
-      await sql`select (dispatch_after - now()) > interval '10 minutes' as held from tasks where id = ${taskId}`;
-    expect(rows.length, 'task row exists for the hold read-back').toBe(1);
-    expect(rows[0]!.held, 'dispatch_after hold survives the assignee attach').toBe(true);
+    const rows = await sql`
+      select (dispatch_after - now()) > interval '10 minutes' as held,
+             assignee_id is not null as attached
+      from tasks where id = ${taskId}`;
+    expect(rows.length, 'task row exists for the seed read-back').toBe(1);
+    expect(rows[0]!.held, 'dispatch_after hold has a real future margin').toBe(true);
+    expect(rows[0]!.attached, 'assignee attach landed').toBe(true);
   } finally {
     await sql.close();
   }
@@ -138,8 +139,9 @@ async function createTaskWithHeldScan(
   await tasks.saveTask();
   const row = tasks.rowFor(title);
   await expect(row).toBeVisible({ timeout: 15_000 });
-  const href = await row.locator('a[href^="/tasks/"]').first().getAttribute('href');
-  expect(href, 'task row links to the task page').toBeTruthy();
+  const link = row.locator('a[href^="/tasks/"]').first();
+  await expect(link).toHaveAttribute('href', /^\/tasks\//);
+  const href = (await link.getAttribute('href')) as string;
   // strip any list-scope query the row link carries (task-scope law), or the
   // SQL key below silently misses and the hold never lands
   const taskId = (href as string).split('?')[0]!.split('/').pop() as string;
@@ -367,6 +369,8 @@ test.describe('mcp registry + bindings', () => {
     await holdDispatchScan(taskId);
     const run2 = await rpcPost(page, '/rpc/tasks/dispatch', { taskId });
     expect(run2.status).toBe(200);
+    // a 200 can be a lost-claim no-op (runId null) — the run itself must exist
+    expect((run2.json as { runId?: string | null } | undefined)?.runId, 'dispatch #2 started a run').toBeTruthy();
 
     // dispatch #2's turn settles — back to the task page (the editor step left
     // us on /employees) — assert on the RAW OUTPUT surfaces: open every run's
