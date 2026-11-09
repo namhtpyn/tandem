@@ -88,28 +88,30 @@ async function seedAiEmployee(
 
 /** write+prove the dispatch_after hold (15 min) on one task. A silent 0-row
  *  UPDATE would let the 5s scan claim the task mid-test (#387); `returning`
- *  makes the hold observable — a row matched AND the value is in the future. */
+ *  proves a row matched AND carries a real future margin (a same-statement
+ *  `> now()` alone is a tautology and a shortened ladder would slip through). */
 async function holdDispatchScan(taskId: string): Promise<void> {
   const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
     const held =
-      await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId} returning dispatch_after > now() as held`;
+      await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId} returning (dispatch_after - now()) > interval '10 minutes' as held`;
     expect(held.length, 'dispatch_after hold landed on the task').toBe(1);
-    expect(held[0]!.held, 'dispatch_after hold is in the future').toBe(true);
+    expect(held[0]!.held, 'dispatch_after hold has a real future margin').toBe(true);
   } finally {
     await sql.close();
   }
 }
 
-/** read-back that the hold still stands after an intervening write: setStatus
- *  must preserve the backoff. If a future change makes a manual status move
- *  reset the ladder, this fails loudly instead of silently re-opening #387. */
+/** read-back that the hold still stands after an intervening write (the attach
+ *  is the write that makes the task scanner-eligible). Fails loudly instead of
+ *  silently re-opening the #387 race if that write ever resets the backoff. */
 async function expectDispatchHold(taskId: string): Promise<void> {
   const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
-    const rows = await sql`select (dispatch_after > now()) as held from tasks where id = ${taskId}`;
+    const rows =
+      await sql`select (dispatch_after - now()) > interval '10 minutes' as held from tasks where id = ${taskId}`;
     expect(rows.length, 'task row exists for the hold read-back').toBe(1);
-    expect(rows[0]!.held, 'dispatch_after hold survives the ready flip').toBe(true);
+    expect(rows[0]!.held, 'dispatch_after hold survives the assignee attach').toBe(true);
   } finally {
     await sql.close();
   }
@@ -145,6 +147,8 @@ async function createTaskWithHeldScan(
   await holdDispatchScan(taskId);
   const attach = await rpcPost(page, '/rpc/tasks/update', { id: taskId, assigneeId: employeeId });
   expect(attach.status).toBe(200);
+  // the attach is what makes the task scanner-eligible — prove the hold survived it
+  await expectDispatchHold(taskId);
   return row;
 }
 
@@ -352,14 +356,15 @@ test.describe('mcp registry + bindings', () => {
 
     // the RESULT settle left the task terminal — manual status is free (owner
     // law 2026-10-27), flip it back to the ready category and re-dispatch.
-    // Re-hold BEFORE the flip: the settle cleared dispatch_after and a terminal
-    // task is scan-ineligible, so the write has no window; after the flip the
-    // 5s tick must not race this manual dispatch (#387 class).
+    // Hold BEFORE the flip (a terminal task is scan-ineligible, so that write
+    // has no window) and re-hold AFTER it: if a status move ever resets the
+    // ladder, the seed restores the hold rather than pinning that unspecced
+    // invariant; the flip→re-hold gap is one RPC round-trip, far inside the 5s
+    // scan cadence (#387 class).
     await holdDispatchScan(taskId);
     const setStatus = await rpcPost(page, '/rpc/tasks/setStatus', { id: taskId, status: await readyStatusId() });
     expect(setStatus.status).toBe(200);
-    // the flip must not wipe the hold (a silent wipe would re-open #387)
-    await expectDispatchHold(taskId);
+    await holdDispatchScan(taskId);
     const run2 = await rpcPost(page, '/rpc/tasks/dispatch', { taskId });
     expect(run2.status).toBe(200);
 
