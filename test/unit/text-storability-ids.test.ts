@@ -18,6 +18,7 @@ vi.mock('../../server/domains/kernel/session-origin', () => ({ isApiKeySession: 
 
 import { appRouter } from '../../server/domains/app.router';
 import { channelsRouter } from '../../server/domains/channels/channels.router';
+import { employeesRouter } from '../../server/domains/employees/employees.router';
 import { environmentsRouter } from '../../server/domains/environments/environments.router';
 import { mcpRouter } from '../../server/domains/mcp/mcp.router';
 import { oidcRouter } from '../../server/domains/oidc/oidc.router';
@@ -128,6 +129,16 @@ function deleteAt<T>(base: T, path: Path): T {
   return out as unknown as T;
 }
 
+/** read the value at a leaf path (array indices included) from parsed data */
+function getAt<T>(value: T, path: Path): unknown {
+  let node: unknown = value;
+  for (const key of path) {
+    if (node === null || node === undefined) return undefined;
+    node = (node as Record<string | number, unknown>)[key as string | number];
+  }
+  return node;
+}
+
 const providerBase = () => ({ label: 'L', baseUrl: 'https://provider.test', endpoints: ['OPENAI-COMPLETIONS'] });
 const envBase = () => ({ name: 'n', host: 'host.test', port: '22', username: 'u' });
 const assignment = (field: 'providerId' | 'model' | 'keySecretId', value: string) => ({
@@ -143,6 +154,9 @@ const channelEntry = (tokenSecretId = 'secret-id') => ({
   bindings: [],
   defaultAssigneeId: null,
 });
+
+const employeeCreateBase = () => ({ name: 'N', email: 'n@example.test', kind: 'ai', title: 'T' });
+const employeeUpdateBase = () => ({ id: 'x', name: 'N', title: 'T', supervisorIds: [] });
 
 const surfaces: Surface[] = [
   // ---- tasks: reads, writes, thread verbs, filters, cursors ----
@@ -358,6 +372,53 @@ const surfaces: Surface[] = [
     'keySecretId',
     { leaf: ['internalDecision', 'keySecretId'] },
   ),
+
+  // ---- employees (text ids answer through storableId; `model` is free text) ----
+  s('employees.create:supervisorIds', employeesRouter.create, employeeCreateBase(), 'supervisorIds', {
+    valueFor: (v) => [v],
+    clearable: true,
+    omittedDefault: [],
+  }),
+  s('employees.create:environmentId', employeesRouter.create, employeeCreateBase(), 'environmentId', {
+    clearable: true,
+  }),
+  s('employees.create:providerId', employeesRouter.create, employeeCreateBase(), 'providerId', {
+    clearable: true,
+    nullable: true,
+  }),
+  s('employees.create:apiKeySecretId', employeesRouter.create, employeeCreateBase(), 'apiKeySecretId', {
+    clearable: true,
+    nullable: true,
+  }),
+  s('employees.update:id', employeesRouter.update, employeeUpdateBase(), 'id'),
+  s('employees.update:supervisorIds', employeesRouter.update, employeeUpdateBase(), 'supervisorIds', {
+    valueFor: (v) => [v],
+  }),
+  s('employees.update:environmentId', employeesRouter.update, employeeUpdateBase(), 'environmentId', {
+    clearable: true,
+    nullable: true,
+  }),
+  s('employees.update:providerId', employeesRouter.update, employeeUpdateBase(), 'providerId', {
+    clearable: true,
+    nullable: true,
+  }),
+  s('employees.update:apiKeySecretId', employeesRouter.update, employeeUpdateBase(), 'apiKeySecretId', {
+    clearable: true,
+    nullable: true,
+  }),
+  s('employees.titles.save:id', employeesRouter.titles.save, { name: 'N' }, 'id', { clearable: true }),
+  s('employees.titles.remove:id', employeesRouter.titles.remove, {}, 'id'),
+  s('employees.remove:id', employeesRouter.remove, {}, 'id'),
+  s('employees.createApiKey:employeeId', employeesRouter.createApiKey, {}, 'employeeId'),
+  s('employees.updateApiKey:keyId', employeesRouter.updateApiKey, { keyId: 'k', name: 'k' }, 'keyId'),
+  s('employees.updateApiKey:employeeId', employeesRouter.updateApiKey, { keyId: 'k', name: 'k' }, 'employeeId', {
+    clearable: true,
+  }),
+  s('employees.revokeApiKey:keyId', employeesRouter.revokeApiKey, { keyId: 'k' }, 'keyId'),
+  s('employees.revokeApiKey:employeeId', employeesRouter.revokeApiKey, { keyId: 'k' }, 'employeeId', {
+    clearable: true,
+  }),
+  s('employees.listApiKeys:employeeId', employeesRouter.listApiKeys, {}, 'employeeId', { blankAllowed: true }),
 ];
 
 const routers: Record<string, unknown> = {
@@ -371,6 +432,7 @@ const routers: Record<string, unknown> = {
   channels: channelsRouter,
   settings: settingsRouter,
   oidc: oidcRouter,
+  employees: employeesRouter,
 };
 
 /** 'tasks.note:taskId' → tasksRouter.note, 'vault.secrets.create:folderId' → vaultRouter.secrets.create */
@@ -407,10 +469,13 @@ describe('every text-typed id refuses unstorable text (handler-level, #386)', ()
       for (const bad of [NUL, LONE_HIGH, LONE_LOW]) {
         const error = await refusal(() => surface.run(payload(surface, bad)));
         expect(error.code, `${surface.surface} (${JSON.stringify(bad)})`).toBe('BAD_REQUEST');
-        const messages = (error.data?.issues ?? []).map((issue) => issue.message ?? '');
-        expect(messages.join(' | ')).toContain(
-          `${surface.field} contains invalid characters (NUL or a lone surrogate)`,
-        );
+        const wanted = `${surface.field} contains invalid characters (NUL or a lone surrogate)`;
+        const issue = (error.data?.issues ?? []).find((candidate) => (candidate.message ?? '').includes(wanted));
+        expect(issue, `${surface.surface} (${JSON.stringify(bad)}) answers the field-named message`).toBeTruthy();
+        // the refusal must name THE FIELD THIS ROW LABELS, not a sibling that
+        // happens to reject first (a copy-pasted row onto a same-shaped field)
+        const segments = (issue?.path ?? []).filter((part): part is string => typeof part === 'string');
+        expect(segments[segments.length - 1], `${surface.surface} issue path`).toBe(surface.field.split('.').pop());
       }
     });
   }
@@ -421,18 +486,18 @@ describe('the id surface table is unique and counted (#386)', () => {
     expect(new Set(surfaces.map((surface) => surface.surface)).size).toBe(surfaces.length);
   });
 
-  it('the table holds 94 rows — bump the count when you add one', () => {
+  it('the table holds 112 rows — bump the count when you add one', () => {
     // 46 tasks + 4 projects + 4 statuses + 4 providers + 7 vault + 5 environments
-    // + 15 mcp + 2 channels + 6 settings + 1 oidc = 94
-    expect(surfaces).toHaveLength(94);
+    // + 15 mcp + 2 channels + 6 settings + 1 oidc + 18 employees = 112
+    expect(surfaces).toHaveLength(112);
   });
 });
 
 // ---- completeness: a surface MISSING from the table must red the suite ----
 // The count assertion above is a self-count — it cannot see a procedure the
 // table never named (the exact shape #386's oidc gap shipped in). This walk
-// enumerates the REAL app router's text-typed id leaves and requires each one
-// to be a table row or a named exemption.
+// enumerates the REAL app router's text-typed leaves, keyed by their FULL PATH,
+// and requires each one to be a table row or a named exemption.
 
 type ZodDef = {
   type?: string;
@@ -442,6 +507,11 @@ type ZodDef = {
   innerType?: unknown;
   out?: unknown;
   checks?: { def?: { format?: string } }[];
+  valueType?: unknown;
+  items?: unknown[];
+  left?: unknown;
+  right?: unknown;
+  getter?: () => unknown;
 };
 
 function unwrapDef(schema: unknown): ZodDef | null {
@@ -459,21 +529,74 @@ function unwrapDef(schema: unknown): ZodDef | null {
   return def ?? null;
 }
 
-/** id-named leaves that are CREDENTIAL values, not row keys — already inside
- *  the TEXT-STORABILITY LAW through `storable(...)`, and never a query param */
-const CREDENTIAL_ID_LEAVES: Record<string, string> = {
-  'mcp.registryCreate:oauthClientId': 'OAuth client id — a credential, stored encrypted, never queried',
-  'mcp.registryUpdate:oauthClientId': 'OAuth client id — a credential, stored encrypted, never queried',
-  'oidc.replace:clientId': 'OAuth client id — a credential, stored encrypted, never queried',
-};
+/** id-shaped leaf names: the id class plus the reference names the SPEC sweeps */
+const REFERENCE_LEAF = /(^id$|Ids?$|^status$|^model$)/;
 
-/** procedures whose id params answer through the handler shape-check (SPEC ID-SHAPE carve-out) */
-function exemptLeaf(procedure: string, leaf: string): string | null {
-  if (procedure.startsWith('employees.')) {
-    return 'employee procedures shape-check every id (requireUuid / canonicalUuid) before any query';
+/** id-ish text leaves as FULL dotted paths (array indices dropped — they are
+ *  positions, not field identity; a record/tuple value keeps a '*' segment) */
+function collectIdLeafPaths(schema: unknown, path: string[], out: string[]): void {
+  const def = unwrapDef(schema);
+  if (!def) return;
+  const type = def.type;
+  if (type === 'object' && def.shape) {
+    for (const [key, child] of Object.entries(def.shape)) collectIdLeafPaths(child, [...path, key], out);
+    return;
   }
-  return CREDENTIAL_ID_LEAVES[`${procedure}:${leaf}`] ?? null;
+  if (type === 'array' && def.element) {
+    collectIdLeafPaths(def.element, path, out);
+    return;
+  }
+  if (type === 'union' && def.options) {
+    for (const option of def.options) collectIdLeafPaths(option, path, out);
+    return;
+  }
+  if (type === 'record' || type === 'tuple') {
+    // a map/tuple NAMED like a reference (ghostIds) is itself the reference;
+    // otherwise walk its values so a nested shape cannot hide one
+    const name = path[path.length - 1] ?? '';
+    if (REFERENCE_LEAF.test(name)) {
+      out.push(path.join('.'));
+      return;
+    }
+    if (type === 'record' && def.valueType) {
+      collectIdLeafPaths(def.valueType, [...path, '*'], out);
+      return;
+    }
+    for (const item of def.items ?? []) collectIdLeafPaths(item, [...path, '*'], out);
+    return;
+  }
+  if (type === 'intersection') {
+    collectIdLeafPaths(def.left, path, out);
+    collectIdLeafPaths(def.right, path, out);
+    return;
+  }
+  if (type === 'lazy' && def.getter) {
+    collectIdLeafPaths(def.getter(), path, out);
+    return;
+  }
+  if (type === 'string') {
+    // a format guard (uuid / email) already refuses a NUL before any query —
+    // that is the ID-SHAPE carve-out, not a text-id surface
+    const formatGuarded = (def.checks ?? []).some((check) => check.def?.format !== undefined);
+    if (formatGuarded) return;
+    const leaf = path[path.length - 1] ?? '';
+    if (REFERENCE_LEAF.test(leaf)) out.push(path.filter((segment) => segment !== '*').join('.'));
+    return;
+  }
+  // any other container that can hide a string leaf must be taught to this walk
+  if (def.shape || def.element || def.options || def.valueType || def.items) {
+    throw new Error(`text-id walk: unhandled composite '${String(type)}' at ${path.join('.')}`);
+  }
 }
+
+/** leaves that carry a REFERENCE but are not row keys — named with the reason */
+const EXEMPT_ID_LEAVES: Record<string, string> = {
+  'mcp.registryCreate:oauthClientId': 'OAuth client id — a credential value guarded by storable(...), never a row key',
+  'mcp.registryUpdate:oauthClientId': 'OAuth client id — a credential value guarded by storable(...), never a row key',
+  'oidc.replace:providers.clientId': 'OAuth client id — a credential value guarded by storable(...), never a row key',
+  'employees.create:model': 'a free-text model name guarded by storableText(...), not an id',
+  'employees.update:model': 'a free-text model name guarded by storableText(...), not an id',
+};
 
 type ProcedureEntry = { name: string; procedure: Record<string, unknown> };
 
@@ -489,60 +612,50 @@ function collectProcedures(node: unknown, prefix: string, out: ProcedureEntry[])
   }
 }
 
+/** the table's identity for a surface: procedure + the FULL field path it drives */
+function coverageKey(surface: Surface): string {
+  const [procedure] = surface.surface.split(':');
+  const path = (surface.leaf ?? [surface.field]).filter((part): part is string => typeof part === 'string');
+  return `${procedure}:${path.join('.')}`;
+}
+
+/** id-ish leaves the real app router declares, with the procedures that carry them */
+function routerIdLeaves(): { name: string; procedure: Record<string, unknown>; leaves: string[] }[] {
+  const entries: ProcedureEntry[] = [];
+  collectProcedures(appRouter, '', entries);
+  return entries.map(({ name, procedure }) => {
+    const schemas = (procedure['~orpc'] as { inputSchemas?: unknown[] }).inputSchemas ?? [];
+    const leaves: string[] = [];
+    for (const schema of schemas) collectIdLeafPaths(schema, [], leaves);
+    return { name, procedure, leaves };
+  });
+}
+
 describe('the id table covers the app router (a missing surface reds the suite, #386)', () => {
-  it('every text-typed id leaf in the real router is a table row or a named exemption', () => {
-    const entries: ProcedureEntry[] = [];
-    collectProcedures(appRouter, '', entries);
+  it('every text-typed reference leaf in the real router is a table row or a named exemption', () => {
+    const entries = routerIdLeaves();
     expect(entries.length).toBeGreaterThan(90); // the walk itself must not silently find nothing
 
-    const covered = new Set(
-      surfaces.map((surface) => {
-        const [procedure, field = ''] = surface.surface.split(':');
-        return `${procedure}:${field.split('.').pop() ?? field}`;
-      }),
-    );
-
+    const covered = new Set(surfaces.map(coverageKey));
     const missing: string[] = [];
-    for (const { name, procedure } of entries) {
-      const schemas = (procedure['~orpc'] as { inputSchemas?: unknown[] }).inputSchemas ?? [];
-      // walk each schema and keep the id-named leaf PATHS, so the label matches
-      const leaves: string[] = [];
-      for (const schema of schemas) collectIdLeafPaths(schema, [], leaves);
+    for (const { name, leaves } of entries) {
       for (const leaf of leaves) {
-        if (covered.has(`${name}:${leaf}`)) continue;
-        if (exemptLeaf(name, leaf)) continue;
-        missing.push(`${name}:${leaf}`);
+        const key = `${name}:${leaf}`;
+        if (covered.has(key) || EXEMPT_ID_LEAVES[key]) continue;
+        missing.push(key);
       }
     }
     expect(missing).toEqual([]);
   });
-});
 
-/** id-named text leaves as their leaf KEY, matching the table's label shape */
-function collectIdLeafPaths(schema: unknown, path: string[], out: string[]): void {
-  const def = unwrapDef(schema);
-  if (!def) return;
-  if (def.type === 'object' && def.shape) {
-    for (const [key, child] of Object.entries(def.shape)) collectIdLeafPaths(child, [...path, key], out);
-    return;
-  }
-  if (def.type === 'array' && def.element) {
-    collectIdLeafPaths(def.element, path, out);
-    return;
-  }
-  if (def.type === 'union' && def.options) {
-    for (const option of def.options) collectIdLeafPaths(option, path, out);
-    return;
-  }
-  if (def.type === 'string') {
-    // a format guard (uuid / email) already refuses a NUL before any query —
-    // that is the ID-SHAPE carve-out, not a text-id surface
-    const formatGuarded = (def.checks ?? []).some((check) => check.def?.format !== undefined);
-    if (formatGuarded) return;
-    const leaf = path[path.length - 1] ?? '';
-    if (leaf === 'id' || /Ids?$/.test(leaf)) out.push(leaf);
-  }
-}
+  it('the walk visits every top-level router (a whole domain cannot drop out)', () => {
+    const entries = routerIdLeaves();
+    const roots = new Set(entries.map((entry) => entry.name.split('.')[0]));
+    for (const root of Object.keys(appRouter)) {
+      expect(roots.has(root), `router '${root}' contributed no procedures to the walk`).toBe(true);
+    }
+  });
+});
 
 describe('the id surface table points at the procedure its label names (#386)', () => {
   for (const surface of surfaces) {
@@ -569,8 +682,24 @@ describe('the wired id schema keeps its own contract (#386: accept / blank / cle
       // whitespace-only is the same create-a-row hazard: the upsert writes trim
       // the id, so '   ' becomes '' and mints a NEW row instead of updating
       if (!surface.blankAllowed) {
-        expect(schema().safeParse(payload(surface, '   ')).success).toBe(false);
-        expect(schema().safeParse(payload(surface, '\t')).success).toBe(false);
+        for (const blank of ['   ', '\t', '\u200b']) {
+          const parsed = schema().safeParse(payload(surface, blank));
+          expect(parsed.success, `${surface.surface} blank ${JSON.stringify(blank)}`).toBe(false);
+          const messages = ((parsed as { error?: { issues?: { message?: string }[] } }).error?.issues ?? [])
+            .map((issue) => issue.message ?? '')
+            .join(' | ');
+          expect(messages, `${surface.surface} blank message`).toContain(`${surface.field} must not be blank`);
+        }
+        // a PADDED id misses its own row in a JS set compare — the store-key
+        // writes would mint a fresh id instead of updating the named row
+        const padded = schema().safeParse(payload(surface, ' a '));
+        expect(padded.success, `${surface.surface} padded id`).toBe(false);
+        const paddedMessages = ((padded as { error?: { issues?: { message?: string }[] } }).error?.issues ?? [])
+          .map((issue) => issue.message ?? '')
+          .join(' | ');
+        expect(paddedMessages, `${surface.surface} padded message`).toContain(
+          `${surface.field} must not be padded with whitespace`,
+        );
       }
     });
 
@@ -590,8 +719,8 @@ describe('the wired id schema keeps its own contract (#386: accept / blank / cle
         // success alone is not enough: an `.optional()` -> `.default(x)` swap
         // keeps the parse green while rewriting the stored value on every call
         const data = (parsed as { data: Record<string, unknown> }).data;
-        if (surface.omittedDefault !== undefined) expect(data[key]).toEqual(surface.omittedDefault);
-        else expect(Object.prototype.hasOwnProperty.call(data, key)).toBe(false);
+        if (surface.omittedDefault !== undefined) expect(getAt(data, path)).toEqual(surface.omittedDefault);
+        else expect(getAt(data, path)).toBeUndefined();
       });
     }
 
@@ -615,7 +744,7 @@ describe('the wired id schema keeps its own contract (#386: accept / blank / cle
         const path = surface.leaf ?? [key];
         const parsed = schema().safeParse(setAt(surface.base, path, null));
         expect(parsed.success).toBe(true);
-        expect((parsed as { data: Record<string, unknown> }).data[key]).toBeNull();
+        expect(getAt((parsed as unknown as { data: unknown }).data, path)).toBeNull();
       });
     }
   }

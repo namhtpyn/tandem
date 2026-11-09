@@ -899,7 +899,7 @@ export const tasksRouter = os.router({
     .input(
       z.strictObject({
         taskId: storableId('taskId'),
-        before: z.strictObject({ createdAt: z.string().min(1), id: storableId('id') }),
+        before: z.strictObject({ createdAt: storable('createdAt', z.string().min(1)), id: storableId('id') }),
       }),
     )
     .handler(({ input }) => threadOlderPage(input.taskId, input.before)),

@@ -47,16 +47,22 @@ export function storableText(field: string, max?: number) {
   return storable(field, max === undefined ? base : base.max(max));
 }
 
+/** characters that render as nothing — a whitespace-only id is the same
+ *  create-a-row hazard as '' at the two upsert-by-id writes (they trim) */
+const BLANK_ID = /^[\s\u200b\u180e\u2060\ufeff]*$/;
+
 /** a text-typed id parameter (read key, write target, store key or filter):
- *  non-blank (whitespace-only included) and storable. A whitespace-only id
- *  would trim to '' at the two upsert-by-id writes and silently create a NEW
- *  row under a fresh id instead of updating the named one. */
+ *  a non-blank, unpadded, storable string. Blank/invisible-only ids are refused
+ *  because the upsert-by-id writes trim them into a NEW row, and a padded id
+ *  misses its own row in a JS set compare (the store-key writes mint a fresh
+ *  id when the compare misses). */
 export function storableId(field: string, max?: number) {
-  const base = z.string().min(1);
-  const capped = max === undefined ? base : base.max(max);
+  const base = max === undefined ? z.string() : z.string().max(max);
   return storable(
     field,
-    capped.refine((value) => value.trim().length > 0, `${field} must not be blank`),
+    base
+      .refine((value) => !BLANK_ID.test(value), `${field} must not be blank`)
+      .refine((value) => value === value.trim(), `${field} must not be padded with whitespace`),
   );
 }
 

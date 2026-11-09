@@ -55,11 +55,13 @@ test('text-typed ids refuse unstorable bytes at the procedure edge, never a 500'
   await expectStorableRefusal(page, 'vault/secrets/list', {}, 'folderId', 'folderId');
   await expectStorableRefusal(page, 'mcp/registryUpdate', {}, 'id', 'id');
   await expectStorableRefusal(page, 'environments/remove', {}, 'id', 'id');
-  await expectStorableRefusal(
-    page,
-    'oidc/replace',
-    { providers: [{ label: 'L', issuer: 'https://issuer.test', clientId: 'c', clientSecret: 's' }] },
-    'id',
-    'id',
-  );
+  // the oidc id lives INSIDE each provider entry — a top-level `id` would be
+  // refused as an unknown key and never exercise the guard
+  for (const bad of [NUL, LONE]) {
+    const res = await post(page, 'oidc/replace', {
+      providers: [{ id: bad, label: 'L', issuer: 'https://issuer.test', clientId: 'c', clientSecret: 's' }],
+    });
+    expect(res.status(), 'oidc/replace providers[].id').toBe(400);
+    expect(JSON.stringify(await res.json())).toContain('id contains invalid characters (NUL or a lone surrogate)');
+  }
 });
