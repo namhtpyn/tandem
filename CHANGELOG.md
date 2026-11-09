@@ -1,3 +1,16 @@
+## [2.78.10](https://github.com/namhtpyn/tandem/compare/v2.78.9...v2.78.10) (2026-11-09)
+
+
+### Bug Fixes
+
+* [#386](https://github.com/namhtpyn/tandem/issues/386) r1 review — guard the channel tokenSecretId; pin nested leaves, blank ids and the shared registryUpdate field ([44eb43f](https://github.com/namhtpyn/tandem/commit/44eb43f25a2d9453bbcd6c4389b4270d65caf120))
+* [#386](https://github.com/namhtpyn/tandem/issues/386) r2 review — guard the oidc provider id and channel platformUserId, refuse whitespace-only ids, add the router-completeness pin ([a788281](https://github.com/namhtpyn/tandem/commit/a788281c0beaba6a7928281c7c0c8e64e5084154))
+* [#386](https://github.com/namhtpyn/tandem/issues/386) r3 review — pad/blank id refusal, employee id sweep, path-aware completeness pin ([8a66e6d](https://github.com/namhtpyn/tandem/commit/8a66e6d5f46dfe932276c66938668cdab34b7894))
+* [#386](https://github.com/namhtpyn/tandem/issues/386) r4 review — edge-only channel guard, ref-vs-store id split, hardened completeness harness ([baddaa7](https://github.com/namhtpyn/tandem/commit/baddaa74a9b4ac6b74cbff2f59e9d419c97eb845))
+* [#386](https://github.com/namhtpyn/tandem/issues/386) r5 review — dispatch miss answers NOT_FOUND, grapheme-safe pad rule, exact-set completeness pin ([4a419d5](https://github.com/namhtpyn/tandem/commit/4a419d556141bc498df45cbb558d2cd43e1d903c))
+* [#386](https://github.com/namhtpyn/tandem/issues/386) r6 review — pad-edge base check, uuid-filter misses stay misses, residual pins ([5e7d21b](https://github.com/namhtpyn/tandem/commit/5e7d21bb1ef758fa4edb0e4d1c6855a1e854f87f))
+* [#386](https://github.com/namhtpyn/tandem/issues/386) refuse unstorable text in every text-typed id parameter at the schema edge ([33fc94b](https://github.com/namhtpyn/tandem/commit/33fc94bc48d67be78203bb69d43929a5c483dbb6))
+
 ## [2.78.9](https://github.com/namhtpyn/tandem/compare/v2.78.8...v2.78.9) (2026-11-09)
 
 
