@@ -756,20 +756,30 @@ Rules:
   the same `NOT_FOUND` a well-formed id with no binding answers (the persisted
   verdict writes no caller-supplied id); `mcp.bindingsRemove` deletes the
   binding, so it is a write and answers `BAD_REQUEST`. Text-typed ids (task,
-  project, status, registry, environment, vault ids) are outside this law —
-  they cannot raise 22P02, so a malformed value is an ordinary miss. An id
-  parameter the covered list below does not name is outside the
-  TEXT-STORABILITY LAW and tracked in #386, where two shapes matter. An id
-  compared in JS against a loaded set (`tasks.create` status; `statuses.save`
-  nextIds — its set is the loaded ids PLUS the incoming id, so a nextIds entry
-  equal to an unstorable id is the upsert case below) or shape-checked before
-  any query (`canonicalUuid`-checked assignee / owner / reviewer / forward ids)
-  already answers `BAD_REQUEST` for unstorable bytes. An id that reaches a query parameter does
-  not: a NUL raises at the driver before the lookup can miss, and a lone
-  surrogate is rewritten to U+FFFD — a read then misses on a corrupted value,
-  while the two upsert-by-id writes (`statuses.save`, `providers.save`) create
-  a NEW row under the corrupted id. Text-typed ids the covered list DOES name —
-  the employee procedures — stay inside the law.
+  project, status, registry, environment, vault ids) are outside THIS law —
+  they cannot raise 22P02, so a malformed value is an ordinary miss. Every
+  text-typed id parameter is, however, inside the TEXT-STORABILITY LAW (#386):
+  on a READ, WRITE and LIST-FILTER surface alike, NUL and unpaired surrogates
+  are refused at the procedure's edge with the field-named `BAD_REQUEST`
+  (`storableId` in `shared/utils/storable-text.ts`) before any query builder
+  sees them. The sweep covers every task id (`id`, `taskId`, `parentId`,
+  `projectId`, `assigneeId`, `ownerId`, `reviewers[]`, `proposalId`, `runId`,
+  `toEmployeeId`, `before.id`, and the `status` / `statusId` references),
+  project (`id`, `parentId`), task-status (`id`, `nextIds[]`), model-provider
+  (`id`, `providerId`, `keySecretId`), vault (`id`, `folderId`), environment
+  (`id`, `secretId`), MCP registry / binding (`id`, `employeeId`, `serverId`,
+  `secretId`, `oauthClientSecretId`) and settings assignment references
+  (`providerId`, `model`, `keySecretId`). The refusal must not be left to the
+  comparison shape: an id compared in JS against a loaded set (`tasks.create`
+  status; `statuses.save` nextIds — its set is the loaded ids PLUS the
+  incoming id) or shape-checked before any query already answers `BAD_REQUEST`
+  for unstorable bytes, but an id that reaches a query parameter does not — a
+  NUL raises at the driver before the lookup can miss, a lone surrogate is
+  rewritten to U+FFFD and the read misses on a corrupted value, and the two
+  upsert-by-id writes (`statuses.save`, `providers.save`) would create a NEW
+  row under the corrupted id. Outside the storable class, a malformed non-uuid
+  value keeps each surface's own ID-SHAPE answer (the employee procedures stay
+  inside that law).
 - **TEXT-STORABILITY LAW (#377/#382):** user-supplied text written to a
   Postgres text column must be STORABLE — `NUL` (0x00) and unpaired surrogates
   are refused at the procedure's edge (`BAD_REQUEST`; the message names the
