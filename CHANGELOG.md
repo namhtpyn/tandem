@@ -1,3 +1,15 @@
+## [2.78.6](https://github.com/namhtpyn/tandem/compare/v2.78.5...v2.78.6) (2026-11-09)
+
+
+### Bug Fixes
+
+* [#367](https://github.com/namhtpyn/tandem/issues/367) — access-key names always fit the plugin cap; over-cap caller names are BAD_REQUEST ([6bd3390](https://github.com/namhtpyn/tandem/commit/6bd3390d4a700f44e4317664e90a686d10bf80ec))
+* [#367](https://github.com/namhtpyn/tandem/issues/367) r2 review — code-point truncation, UTF-16 cap measure, derived-branch pins ([eda35db](https://github.com/namhtpyn/tandem/commit/eda35dbf0f467655776345303a26fac791b19529))
+* [#367](https://github.com/namhtpyn/tandem/issues/367) r3 review — inclusive suffix boundary, UTF-16 wording, well-formed derived names, exact astral pins ([8decc82](https://github.com/namhtpyn/tandem/commit/8decc82bb5e1bf14f8706cce87916188845c2f9b))
+* [#367](https://github.com/namhtpyn/tandem/issues/367) r4 review — refuse unstorable names (NUL/lone surrogate), pin rename accept and stored name ([b813144](https://github.com/namhtpyn/tandem/commit/b81314484fe6c46de80cb4e3f8acddb6047dbcd8))
+* [#367](https://github.com/namhtpyn/tandem/issues/367) r5 review — pin lone-low surrogate, 32-unit mint, blank rename; scope the SPEC edge claims ([bcd5dc6](https://github.com/namhtpyn/tandem/commit/bcd5dc64f35e7fd6e1338460ebfd0e3a296a9287))
+* [#367](https://github.com/namhtpyn/tandem/issues/367) r6 review — drop the unit-boundary SPEC claim, pin whitespace-only mint and mint-side refusal ([15be01c](https://github.com/namhtpyn/tandem/commit/15be01c2f4f5615286726b0f8567cc536e7cfa72))
+
 ## [2.78.5](https://github.com/namhtpyn/tandem/compare/v2.78.4...v2.78.5) (2026-11-08)
 
 
