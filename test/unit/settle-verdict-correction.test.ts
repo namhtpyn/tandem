@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   verdictAt: [] as Array<Date | undefined>,
   escalated: 0,
   reviewerExists: true,
+  reviewerLookup: null as { where?: { id?: { eq?: string } } } | null,
 }));
 
 vi.mock('../../server/db/index', () => ({
@@ -22,7 +23,12 @@ vi.mock('../../server/db/index', () => ({
   db: {
     query: {
       taskRuns: { findMany: async () => h.runs },
-      user: { findFirst: async () => (h.reviewerExists ? { id: 'rev-1' } : null) },
+      user: {
+        findFirst: async (cfg?: { where?: { id?: { eq?: string } } }) => {
+          h.reviewerLookup = cfg ?? null;
+          return h.reviewerExists ? { id: 'rev-1' } : null;
+        },
+      },
     },
     update: () => ({ set: () => ({ where: () => Promise.resolve() }) }),
   },
@@ -82,6 +88,7 @@ beforeEach(() => {
   h.verdictAt = [];
   h.escalated = 0;
   h.reviewerExists = true;
+  h.reviewerLookup = null;
 });
 
 describe('settleReviewVerdict verdict-less bound (#276)', () => {
@@ -178,6 +185,9 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
     h.reviewerExists = false;
     h.runs = [run('self', self)];
     await settleReviewVerdict('task-1', 'rev-1', { kind: 'approved', text: 'late' } as never, self);
+    // the lookup names THIS reviewer (a missing/wrong predicate would suppress every
+    // anomaly park or never skip — DB-mock predicate law)
+    expect(h.reviewerLookup?.where?.id?.eq).toBe('rev-1');
     expect(h.parks).toHaveLength(0);
     expect(h.dispatched).toHaveLength(0);
     expect(h.verdictAt).toHaveLength(0);

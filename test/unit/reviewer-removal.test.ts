@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CATEGORY, REVIEW_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
-import { mockDb, taskReviews as dbTaskReviews } from './helpers/mock-db';
+import { mockDb, taskReviews as dbTaskReviews, taskRuns } from './helpers/mock-db';
 
 const h = vi.hoisted(() => ({
   taskStatus: '' as string,
@@ -39,13 +39,16 @@ const h = vi.hoisted(() => ({
   regated: [] as string[],
   dispatches: [] as Array<Record<string, unknown>>,
   aiEmployees: [] as Array<{ userId: string }>,
+  runningReviewRuns: [] as Array<{ id: string }>,
+  statusReadThrows: 0,
+  captureCond: null as unknown,
   published: 0,
   flipWins: true,
   casMiss: false,
 }));
 
 vi.mock('../../server/db/index', async () => {
-  const { tasks, taskReviews, taskObligations } = await import('../../server/db/schema');
+  const { tasks, taskReviews, taskObligations, taskRuns } = await import('../../server/db/schema');
   const rowsThenable = (rows: () => Promise<Array<Record<string, unknown>>>) => {
     const mk = () => ({
       then: (ok?: (v: Array<Record<string, unknown>>) => unknown, err?: (e: unknown) => unknown) =>
@@ -71,7 +74,17 @@ vi.mock('../../server/db/index', async () => {
           node.where = (cond: unknown) =>
             rowsThenable(() => {
               const keys = arg ? Object.keys(arg) : [];
-              if (table === tasks) return Promise.resolve([{ status: h.taskStatus, updatedAt: h.taskUpdatedAt }]);
+              if (table === tasks) {
+                if (h.statusReadThrows > 0) {
+                  h.statusReadThrows -= 1;
+                  throw new Error('db down');
+                }
+                return Promise.resolve([{ status: h.taskStatus, updatedAt: h.taskUpdatedAt }]);
+              }
+              if (table === taskRuns) {
+                h.captureCond = cond;
+                return Promise.resolve(h.runningReviewRuns);
+              }
               if (table === taskObligations) {
                 if (keys.includes('id') && keys.includes('taskId')) return Promise.resolve(h.answerObligationSelect);
                 if (keys.includes('taskId')) return Promise.resolve(h.answerLeftoverSelect);
@@ -190,6 +203,7 @@ import {
   openRoundLive,
   prepareReviewerRemoval,
   recordVerdict,
+  runningReviewRunIdsForEmployee,
   settleAllExtinguishedRounds,
   settleExtinguishedRound,
   settleReviewerRemovalRounds,
@@ -231,6 +245,9 @@ beforeEach(() => {
   h.regated = [];
   h.dispatches = [];
   h.aiEmployees = [];
+  h.runningReviewRuns = [];
+  h.statusReadThrows = 0;
+  h.captureCond = null;
   h.published = 0;
   h.flipWins = true;
   h.casMiss = false;
@@ -455,6 +472,7 @@ describe('employee removal halves (#365)', () => {
     h.reviewReads = [
       [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
       [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
     ];
     expect(await settleAllExtinguishedRounds()).toEqual(['task-1', 'task-2']);
   });
@@ -550,5 +568,97 @@ describe('removal resumes the sequential review queue (#371)', () => {
       answerObligations: [],
     });
     expect(h.dispatches).toHaveLength(0);
+  });
+});
+
+describe('removal run capture (#370)', () => {
+  it('captures the departing reviewer’s RUNNING runs and pins the SQL predicate', async () => {
+    h.runningReviewRuns = [{ id: 'run-1' }, { id: 'run-2' }];
+    expect(await runningReviewRunIdsForEmployee('emp-1')).toEqual(['run-1', 'run-2']);
+    const q = mockDb()
+      .select()
+      .from(taskRuns)
+      .where(h.captureCond as never)
+      .toSQL();
+    const rendered = `${q.sql} ${JSON.stringify(q.params)}`;
+    // the employee id + RUNNING status ride the WHERE (a stray capture of every
+    // employee's runs would stop unrelated in-flight turns)
+    expect(rendered).toContain('"employee_id" =');
+    expect(rendered).toContain('emp-1');
+    expect(rendered).toContain('"status" =');
+    expect(rendered).toContain('RUNNING');
+  });
+});
+
+describe('removal resume guards (#371)', () => {
+  const liveOnly = { taskIds: ['task-1'], reviewRowIds: [], obligationIds: [], answerObligations: [] };
+
+  it('a CUSTOM in-review-category status still resumes (category gate, never a seeded id)', async () => {
+    h.statuses = [
+      { id: 'st-custom-review', category: CATEGORY.IN_REVIEW },
+      { id: STATUS.done, category: CATEGORY.DONE },
+    ];
+    h.taskStatus = 'st-custom-review';
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    await settleReviewerRemovalRounds(liveOnly);
+    expect(h.dispatches).toHaveLength(1);
+  });
+
+  it('a live sibling turn suppresses the mint (task-wide sequential, #371 r1)', async () => {
+    // another reviewer's turn is still in flight — the removal must NOT dispatch
+    // an additional reviewer beside it
+    h.runningReviewRuns = [{ id: 'run-live' }];
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    await settleReviewerRemovalRounds(liveOnly);
+    expect(h.dispatches).toHaveLength(0);
+  });
+
+  it('a settled task mints nothing even with a live pending AI row', async () => {
+    h.taskStatus = STATUS.done;
+    h.statuses = [{ id: STATUS.done, category: CATEGORY.DONE }];
+    // if the category gate were deleted, openRoundLive + dispatch would see these
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    await settleReviewerRemovalRounds(liveOnly);
+    expect(h.dispatches).toHaveLength(0);
+  });
+
+  it('one dispatch per affected task (two eligible tasks -> two dispatches)', async () => {
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    await settleReviewerRemovalRounds({ ...liveOnly, taskIds: ['task-1', 'task-2'] });
+    expect(h.dispatches).toHaveLength(2);
+  });
+
+  it('a resume read failure is fault-isolated: the next task still resumes', async () => {
+    // task-1's settle read throws, then its resume status read throws; task-2 proceeds
+    h.statusReadThrows = 2;
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    await expect(settleReviewerRemovalRounds({ ...liveOnly, taskIds: ['task-1', 'task-2'] })).resolves.toEqual([]);
+    expect(h.dispatches).toHaveLength(1);
   });
 });

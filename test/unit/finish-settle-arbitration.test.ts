@@ -81,7 +81,8 @@ vi.mock('../../server/db/index', async () => {
                       { id: 'st-custom-working', category: 'working' },
                     ]
                   : [],
-            findFirst: async () => (table === 'taskRuns' ? { id: h.latestRunId } : null),
+            findFirst: async () =>
+              table === 'taskRuns' ? { id: h.latestRunId } : table === 'user' ? { id: 'agent-1' } : null,
           }),
         },
       ),

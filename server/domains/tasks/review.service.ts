@@ -442,6 +442,29 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
   return true;
 }
 
+/** EMPLOYEE REMOVAL, run-capture half (#370): the departing employee's RUNNING REVIEW
+ *  runs — a run row whose task carries a PENDING review row naming that reviewer. Only
+ *  review turns are neutralized: a WORK run left to settle normally bounces its task
+ *  exactly as before (the stop-settled no-side-effect rule would strand a working task
+ *  whose assignee the delete just nulled). Read BEFORE the user delete; read-only. */
+export async function runningReviewRunIdsForEmployee(employeeId: string): Promise<string[]> {
+  const rows = await db
+    .select({ id: taskRuns.id })
+    .from(taskRuns)
+    .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+    .innerJoin(
+      taskReviews,
+      and(
+        eq(taskReviews.taskId, taskMessages.taskId),
+        eq(taskReviews.reviewerId, taskRuns.employeeId),
+        eq(taskReviews.status, REVIEW_STATUS.PENDING),
+      ),
+    )
+    .where(and(eq(taskRuns.employeeId, employeeId), eq(taskRuns.status, RUN_STATUS.RUNNING)))
+    .limit(50);
+  return rows.map((r) => r.id);
+}
+
 /** REVIEWER REMOVAL, prepare half (#365): a READ-ONLY capture taken BEFORE the
  * employee's user row is deleted — the pending review rows they hold, their pending
  * APPROVAL obligations, and (ANSWER-ROLE REMOVAL, #369) their pending ANSWER
@@ -923,6 +946,16 @@ export async function settleAllExtinguishedRounds(): Promise<string[]> {
     } catch (e) {
       log.warn(`void review round heal failed for task ${taskId}:`, e instanceof Error ? e.message : e);
     }
+    // NEXT-TURN CRASH BACKSTOP (#371): a removal that died between the user delete and
+    // its resume arm leaves the current round's void row beside a live PENDING reviewer
+    // and NO turn in flight — the void scan above finds it, so re-mint here too. A
+    // live-voter round with a running turn is a no-op (dispatchAiReviewTurns' task-wide
+    // in-flight guard); a settled task is gated out by category.
+    try {
+      await resumeRemovalReviewQueue(taskId);
+    } catch (e) {
+      log.warn(`void review round resume failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
   }
   // ANSWER-ROLE REMOVAL (#369): the same crash-window heal for a waiting-answer
   // task whose only ANSWER obligation lost its holder (NULL employee_id is the
@@ -981,6 +1014,19 @@ async function roundResultBody(taskId: string) {
 export async function dispatchAiReviewTurns(taskId: string, resultBody?: string, opts?: DispatchOpts) {
   const round = await currentRound(taskId);
   if (round === 0) return;
+  // SEQUENTIAL, TASK-WIDE (#371): ONE review turn in flight per task. A mint requested
+  // while ANY run of the task is RUNNING is a no-op — without this, a removal that
+  // voids a third reviewer's row would skip the running reviewer and mint the NEXT
+  // pending AI reviewer beside it (two turns in flight, one round). The settling run
+  // is already DONE when its own settle path asks for the next turn (writer.finish's
+  // guarded row write lands before settleDoneRun), so the chain is unaffected.
+  const inFlight = await db
+    .select({ id: taskRuns.id })
+    .from(taskRuns)
+    .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+    .where(and(eq(taskMessages.taskId, taskId), eq(taskRuns.status, RUN_STATUS.RUNNING)))
+    .limit(1);
+  if (inFlight.length > 0) return;
   const rows = await db
     .select()
     .from(taskReviews)
@@ -999,22 +1045,6 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string,
     // drop the verdict-less one's retry entirely). Target row not pending anymore
     // (a human verdict landed mid-flight) -> nothing mints: the round moved on.
     if (opts?.verdictlessReviewerId && row.reviewerId !== opts.verdictlessReviewerId) continue;
-    // one LIVE review turn per reviewer: skip while theirs is still running
-    const running =
-      (
-        await db
-          .select({ id: taskRuns.id })
-          .from(taskRuns)
-          .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
-          .where(
-            and(
-              eq(taskMessages.taskId, taskId),
-              eq(taskRuns.employeeId, row.reviewerId),
-              eq(taskRuns.status, RUN_STATUS.RUNNING),
-            ),
-          )
-      ).length > 0;
-    if (running) continue;
     try {
       // target-scoped above: a correction dispatch can only ever reach the
       // verdict-less reviewer's own turn

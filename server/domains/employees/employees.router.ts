@@ -638,20 +638,22 @@ export const employeesRouter = os.router({
     // noted, every affected round left with no live reviewer settles by the normal
     // matrix, and every waiting-answer task left with no holder returns to its flow
     // instead of waiting on an answer that can never arrive.
-    const { prepareReviewerRemoval, settleReviewerRemovalRounds } = await import('../tasks/review.service');
+    const { prepareReviewerRemoval, settleReviewerRemovalRounds, runningReviewRunIdsForEmployee } =
+      await import('../tasks/review.service');
     const reviewRemoval = await prepareReviewerRemoval(input.id);
-    // EMPLOYEE REMOVAL (#370): an in-flight turn of the departing employee has no
-    // owner after the delete — capture its RUNNING runs read-only now and settle
-    // them STOPPED after the delete commits (the in-flight turn then skips every
-    // settle side effect: no park, no bounce, no message rewrite).
-    const { runningRunIdsForEmployee, stopRunsForRemoval } = await import('../tasks/runner.service');
-    const removalRunIds = await runningRunIdsForEmployee(input.id);
     // deleting the user cascades supervisors, ai extension, api keys
     // (existence already verified above — no race window worth a second check)
     // UNBIND = REVOKE (SPEC MCP): the cascade removes the employee's bindings
     // + token rows — revoke the provider grants best-effort BEFORE the delete
     const { revokeOauthTokensForEmployee } = await import('../mcp/mcp-oauth.service');
     await revokeOauthTokensForEmployee(input.id);
+    // EMPLOYEE REMOVAL (#370): an in-flight review turn of the departing employee has
+    // no owner after the delete — capture its RUNNING review runs read-only here (after
+    // the potentially slow OAuth revoke, immediately before the delete) and settle them
+    // STOPPED once the delete commits. Work runs are left to settle normally: their
+    // bounce arm is what returns an assignee-less working task to todo.
+    const removalRunIds = await runningReviewRunIdsForEmployee(input.id);
+    const { stopRunsForRemoval } = await import('../tasks/runner.service');
     await db.delete(userTable).where(eq(userTable.id, input.id));
     await stopRunsForRemoval(removalRunIds);
     await settleReviewerRemovalRounds(reviewRemoval, target.name);

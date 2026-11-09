@@ -1,14 +1,13 @@
 // EMPLOYEE REMOVAL runs (#370): removing an employee must neutralize their RUNNING
-// runs — a mid-flight review turn has no owner after the user delete, and its late
-// settle would park a round it no longer owns. Capture is READ-ONLY and RUNNING-only
-// (taken before the delete); the settle half is ONE guarded CAS per run
-// (RUNNING -> STOPPED, output marker appended, finishedAt stamped) taken after it.
-// A lost CAS means the turn settled first — its verdict owns the outcome — and the
-// stop-settled marker is unwound; nothing publishes when no row flipped.
+// REVIEW turns — a mid-flight review turn has no owner after the user delete, and its
+// late settle would park a round it no longer owns. The settle half (the capture lives
+// in review.service) is ONE guarded CAS per run (RUNNING -> STOPPED, output marker
+// appended, finishedAt stamped). A lost CAS means the turn settled first — its verdict
+// owns the outcome — and the stop-settled marker is unwound; nothing publishes when no
+// row flipped.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
-  candidates: [] as Array<Record<string, unknown>>,
   casRows: [] as Array<{ id: string }>,
   updates: [] as Array<{ table: string; set: Record<string, unknown>; where: unknown }>,
   published: [] as Array<[string, string]>,
@@ -20,16 +19,7 @@ vi.mock('../../server/db/index', async () => {
   return {
     asDb: (x: unknown) => x,
     db: {
-      query: {
-        taskRuns: {
-          // DB-MOCK PREDICATE LAW: honor the caller's status filter — only RUNNING
-          // rows are the departing employee's live runs
-          findMany: async (cfg?: { where?: { status?: { eq?: string } } }) => {
-            const want = cfg?.where?.status?.eq;
-            return want ? h.candidates.filter((r) => r.status === want) : h.candidates;
-          },
-        },
-      },
+      query: {},
       update: (table: unknown) => ({
         set: (set: Record<string, unknown>) => ({
           where: (where: unknown) => ({
@@ -61,11 +51,7 @@ vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
 
 import { RUN_STATUS } from '#shared/enums';
 
-import {
-  runningRunIdsForEmployee,
-  stoppedRunMarkerIds,
-  stopRunsForRemoval,
-} from '../../server/domains/tasks/runner.service';
+import { stoppedRunMarkerIds, stopRunsForRemoval } from '../../server/domains/tasks/runner.service';
 import { mockDb, taskRuns } from './helpers/mock-db';
 
 /** render a captured drizzle condition to SQL + params (DB-mock predicate law: pin the
@@ -80,29 +66,10 @@ function renderCond(cond: unknown): string {
 }
 
 beforeEach(() => {
-  h.candidates = [];
   h.casRows = [];
   h.updates = [];
   h.published = [];
   h.failFirst = false;
-});
-
-describe('runningRunIdsForEmployee (#370)', () => {
-  it('captures ONLY the employee’s RUNNING runs (read-only)', async () => {
-    h.candidates = [
-      { id: 'run-1', status: RUN_STATUS.RUNNING },
-      { id: 'run-2', status: RUN_STATUS.DONE },
-      { id: 'run-3', status: RUN_STATUS.RUNNING },
-    ];
-    expect(await runningRunIdsForEmployee('emp-1')).toEqual(['run-1', 'run-3']);
-    expect(h.updates).toHaveLength(0);
-    expect(h.published).toHaveLength(0);
-  });
-
-  it('no live runs -> empty list', async () => {
-    h.candidates = [{ id: 'run-1', status: RUN_STATUS.DONE }];
-    expect(await runningRunIdsForEmployee('emp-1')).toEqual([]);
-  });
 });
 
 describe('stopRunsForRemoval (#370)', () => {
@@ -119,6 +86,8 @@ describe('stopRunsForRemoval (#370)', () => {
     expect(sql).toContain('"id" =');
     expect(sql).toContain('"status" =');
     expect(sql).toContain('RUNNING');
+    // the CAS targets THIS run id (params carry it — never a presence-only pin)
+    expect(sql).toContain('run-1');
     expect(h.published).toEqual([
       ['RUNS', 'UPDATE'],
       ['TASKS', 'UPDATE'],
@@ -141,6 +110,7 @@ describe('stopRunsForRemoval (#370)', () => {
     h.casRows = [{ id: 'run-2' }];
     expect(await stopRunsForRemoval(['run-1', 'run-2'])).toBe(1);
     expect(h.updates).toHaveLength(1); // run-2's CAS landed; run-1 was skipped
+    expect(renderCond(h.updates[0]!.where)).toContain('run-2'); // …and targeted run-2, not run-1
     expect(h.published).toEqual([
       ['RUNS', 'UPDATE'],
       ['TASKS', 'UPDATE'],
