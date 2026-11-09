@@ -51,9 +51,21 @@ export function storableText(field: string, max?: number) {
  *  ZWJ, word joiner, BOM, format chars) — a blank id trims into a NEW row at
  *  the upsert-by-id writes and can never name one */
 const BLANK_ID = /^[\s\p{Default_Ignorable_Code_Point}]*$/u;
-/** a padded id (invisible/space at either edge) misses its own row in a JS set
- *  compare, so the store-key writes mint a fresh id; interior invisibles stay legal */
-const PAD_ID = /^[\s\p{Default_Ignorable_Code_Point}]|[\s\p{Default_Ignorable_Code_Point}]$/u;
+
+/** a padding code point at an id's edge: whitespace, or a default-ignorable
+ *  that is NOT grapheme-extending (VS16 / ZWJ legally continue the preceding
+ *  character, so `x❤️` is an exact id, not a padded one) */
+function padCodePoint(ch: string): boolean {
+  if (/\s/u.test(ch)) return true;
+  if (!/[\p{Default_Ignorable_Code_Point}]/u.test(ch)) return false;
+  return !/[\p{Grapheme_Extend}\u200d]/u.test(ch);
+}
+
+function hasPadEdge(value: string): boolean {
+  const points = [...value];
+  if (points.length === 0) return false;
+  return padCodePoint(points[0] as string) || padCodePoint(points[points.length - 1] as string);
+}
 
 /** a text-typed id parameter (write target, store key): non-blank, unpadded,
  *  storable. Never a new-row mint, never a silent rewrite. */
@@ -63,7 +75,7 @@ export function storableId(field: string, max?: number) {
     field,
     base
       .refine((value) => !BLANK_ID.test(value), `${field} must not be blank`)
-      .refine((value) => !PAD_ID.test(value), `${field} must not be padded with whitespace`),
+      .refine((value) => !hasPadEdge(value), `${field} must not be padded with whitespace`),
   );
 }
 

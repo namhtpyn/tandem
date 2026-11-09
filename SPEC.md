@@ -759,10 +759,12 @@ Rules:
   project, status, registry, environment, vault ids) are outside THIS law —
   they cannot raise 22P02, so a malformed value is an ordinary miss. Every
   text-typed id parameter is, however, inside the TEXT-STORABILITY LAW (#386):
-  on a READ, WRITE and LIST-FILTER surface alike, NUL and unpaired surrogates
-  are refused at the procedure's edge with the field-named `BAD_REQUEST`
-  (`storableId` in `shared/utils/storable-text.ts`) before any query builder
-  sees them. The sweep covers every task id (`id`, `taskId`, `parentId`,
+  on every oRPC procedure input a READ key, WRITE target, store key and
+  LIST-FILTER alike refuse NUL and unpaired surrogates at the procedure's edge
+  with the field-named `BAD_REQUEST` (`storableId` / `storableIdRef` in
+  `shared/utils/storable-text.ts`) before any query builder sees them. (The
+  REST file routes — attachment upload/download — read ids from the path and
+  are outside this sentence; they are covered by their own shape rules.) The sweep covers every task id (`id`, `taskId`, `parentId`,
   `projectId`, `assigneeId`, `ownerId`, `reviewers[]`, `proposalId`, `runId`,
   `toEmployeeId`, `before.id`, and the `status` / `statusId` references),
   project (`id`, `parentId`), task-status (`id`, `nextIds[]`), model-provider

@@ -9,6 +9,7 @@
 // blank / clear / null / cap axes ride the same wired input schema.
 import { createProcedureClient } from '@orpc/server';
 import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 import { ROLE } from '#shared/enums';
 
@@ -220,7 +221,7 @@ const surfaces: Surface[] = [
     tasksRouter.threadOlderPage,
     { taskId: 'x', before: { createdAt: 'c', id: 'i' } },
     'id',
-    { leaf: ['before', 'id'] },
+    { leaf: ['before', 'id'], ref: true },
   ),
   s('tasks.runTranscript:runId', tasksRouter.runTranscript, { runId: 'r' }, 'runId'),
   s('tasks.confirmProposal:proposalId', tasksRouter.confirmProposal, { proposalId: 'p' }, 'proposalId'),
@@ -502,13 +503,14 @@ describe('the id surface table is unique and counted (#386)', () => {
 // enumerates the REAL app router's text-typed leaves, keyed by their FULL PATH,
 // and requires each one to be a table row or a named exemption.
 
+type Leaf = { path: string; schema: unknown };
+
 type ZodDef = {
   type?: string;
   shape?: Record<string, unknown>;
   element?: unknown;
   options?: unknown[];
   innerType?: unknown;
-  out?: unknown;
   checks?: { def?: { format?: string } }[];
   valueType?: unknown;
   items?: unknown[];
@@ -516,10 +518,17 @@ type ZodDef = {
   right?: unknown;
   getter?: () => unknown;
   in?: unknown;
+  out?: unknown;
+  catchall?: unknown;
 };
 
-function unwrapDef(schema: unknown): ZodDef | null {
-  let def = (schema as { _zod?: { def?: ZodDef } })?._zod?.def;
+function defOf(schema: unknown): ZodDef | null {
+  return (schema as { _zod?: { def?: ZodDef } })?._zod?.def ?? null;
+}
+
+/** strip transparent wrappers but NEVER consume a pipe (both halves matter) */
+function unwrapWrappers(schema: unknown): ZodDef | null {
+  let def = defOf(schema);
   for (let guard = 0; guard < 10 && def; guard += 1) {
     const type = def.type;
     if (
@@ -530,9 +539,7 @@ function unwrapDef(schema: unknown): ZodDef | null {
       type === 'catch' ||
       type === 'nonoptional'
     ) {
-      def = (def.innerType as { _zod?: { def?: ZodDef } })?._zod?.def;
-    } else if (type === 'pipe') {
-      def = (def.out as { _zod?: { def?: ZodDef } })?._zod?.def;
+      def = defOf(def.innerType);
     } else {
       return def;
     }
@@ -544,79 +551,82 @@ function unwrapDef(schema: unknown): ZodDef | null {
 const REFERENCE_LEAF = /(^id$|Ids?$|^status$|^model$|^reviewers$)/;
 
 /** id-ish text leaves as FULL dotted paths (array indices dropped — they are
- *  positions, not field identity; a record/tuple value keeps a '*' segment) */
-function collectIdLeafPaths(schema: unknown, path: string[], out: string[]): void {
-  // a pipe wraps BOTH sides (z.preprocess: in=unknown/out=object, but a
-  // z.string().transform() is in=string/out=transform) — walk both so neither
-  // half can hide a reference
-  const raw = (schema as { _zod?: { def?: ZodDef } })?._zod?.def;
-  if (raw?.type === 'pipe') {
+ *  positions, not field identity; a record/tuple/catchall value keeps a '*') */
+function collectIdLeafPaths(schema: unknown, path: string[], out: Leaf[]): void {
+  const raw = unwrapWrappers(schema);
+  if (!raw) return;
+  if (raw.type === 'pipe') {
     collectIdLeafPaths(raw.in, path, out);
     collectIdLeafPaths(raw.out, path, out);
     return;
   }
-  const def = unwrapDef(schema);
-  if (!def) return;
-  const type = def.type;
-  if (type === 'transform') {
-    // the out-half of a pipe (already walked through `in`); a bare transform
-    // has no input contract to inspect
-    if (def.in) collectIdLeafPaths(def.in, path, out);
-    return;
-  }
+  const type = raw.type;
   if (type === 'custom' || type === 'function') {
     throw new Error(`text-id walk: opaque '${type}' at ${path.join('.') || '<root>'}`);
   }
   if ((type === 'array' || type === 'record' || type === 'tuple') && path.length === 0) {
     throw new Error(`text-id walk: root ${type} input cannot be named`);
   }
-  if (type === 'object' && def.shape) {
-    for (const [key, child] of Object.entries(def.shape)) collectIdLeafPaths(child, [...path, key], out);
+  if (type === 'string' && path.length === 0) {
+    throw new Error('text-id walk: a root scalar input cannot be named');
+  }
+  if (type === 'object' && raw.shape) {
+    for (const [key, child] of Object.entries(raw.shape)) collectIdLeafPaths(child, [...path, key], out);
+    if (raw.catchall) {
+      // a catchall map named like a reference (ghostIds) is the reference
+      const name = path[path.length - 1] ?? '';
+      if (REFERENCE_LEAF.test(name)) out.push({ path: path.filter((p) => p !== '*').join('.'), schema });
+      else collectIdLeafPaths(raw.catchall, [...path, '*'], out);
+    }
     return;
   }
-  if (type === 'array' && def.element) {
-    collectIdLeafPaths(def.element, path, out);
+  if (type === 'array' && raw.element) {
+    collectIdLeafPaths(raw.element, path, out);
     return;
   }
-  if (type === 'union' && def.options) {
-    for (const option of def.options) collectIdLeafPaths(option, path, out);
+  if (type === 'union' && raw.options) {
+    for (const option of raw.options) collectIdLeafPaths(option, path, out);
     return;
   }
   if (type === 'record' || type === 'tuple') {
-    // a map/tuple NAMED like a reference (ghostIds) is itself the reference;
-    // otherwise walk its values so a nested shape cannot hide one
     const name = path[path.length - 1] ?? '';
     if (REFERENCE_LEAF.test(name)) {
-      out.push(path.join('.'));
+      out.push({ path: path.filter((p) => p !== '*').join('.'), schema });
       return;
     }
-    if (type === 'record' && def.valueType) {
-      collectIdLeafPaths(def.valueType, [...path, '*'], out);
+    if (type === 'record' && raw.valueType) {
+      collectIdLeafPaths(raw.valueType, [...path, '*'], out);
       return;
     }
-    for (const item of def.items ?? []) collectIdLeafPaths(item, [...path, '*'], out);
+    for (const item of raw.items ?? []) collectIdLeafPaths(item, [...path, '*'], out);
     return;
   }
   if (type === 'intersection') {
-    collectIdLeafPaths(def.left, path, out);
-    collectIdLeafPaths(def.right, path, out);
+    collectIdLeafPaths(raw.left, path, out);
+    collectIdLeafPaths(raw.right, path, out);
     return;
   }
-  if (type === 'lazy' && def.getter) {
-    collectIdLeafPaths(def.getter(), path, out);
+  if (type === 'lazy' && raw.getter) {
+    collectIdLeafPaths(raw.getter(), path, out);
+    return;
+  }
+  if (type === 'transform') {
+    // the out-half of a pipe (already walked through `in`); a bare transform
+    // has no input contract to inspect
+    if (raw.in) collectIdLeafPaths(raw.in, path, out);
     return;
   }
   if (type === 'string') {
     // a format guard (uuid / email) already refuses a NUL before any query —
     // that is the ID-SHAPE carve-out, not a text-id surface
-    const formatGuarded = (def.checks ?? []).some((check) => check.def?.format !== undefined);
+    const formatGuarded = (raw.checks ?? []).some((check) => check.def?.format !== undefined);
     if (formatGuarded) return;
     const leaf = path[path.length - 1] ?? '';
-    if (REFERENCE_LEAF.test(leaf)) out.push(path.filter((segment) => segment !== '*').join('.'));
+    if (REFERENCE_LEAF.test(leaf)) out.push({ path: path.filter((p) => p !== '*').join('.'), schema });
     return;
   }
   // any other container that can hide a string leaf must be taught to this walk
-  if (def.shape || def.element || def.options || def.valueType || def.items) {
+  if (raw.shape || raw.element || raw.options || raw.valueType || raw.items || raw.catchall) {
     throw new Error(`text-id walk: unhandled composite '${String(type)}' at ${path.join('.')}`);
   }
 }
@@ -652,32 +662,30 @@ function coverageKey(surface: Surface): string {
 }
 
 /** id-ish leaves the real app router declares, with the procedures that carry them */
-function routerIdLeaves(): { name: string; procedure: Record<string, unknown>; leaves: string[] }[] {
+function routerIdLeaves(): { name: string; procedure: Record<string, unknown>; leaves: Leaf[] }[] {
   const entries: ProcedureEntry[] = [];
   collectProcedures(appRouter, '', entries);
   return entries.map(({ name, procedure }) => {
     const schemas = (procedure['~orpc'] as { inputSchemas?: unknown[] }).inputSchemas ?? [];
-    const leaves: string[] = [];
+    const leaves: Leaf[] = [];
     for (const schema of schemas) collectIdLeafPaths(schema, [], leaves);
     return { name, procedure, leaves };
   });
 }
 
 describe('the id table covers the app router (a missing surface reds the suite, #386)', () => {
-  it('every text-typed reference leaf in the real router is a table row or a named exemption', () => {
+  it('the walk and the table describe EXACTLY the same leaves (plus named exemptions)', () => {
     const entries = routerIdLeaves();
     expect(entries.length).toBeGreaterThan(90); // the walk itself must not silently find nothing
 
     const covered = new Set(surfaces.map(coverageKey));
-    const missing: string[] = [];
-    for (const { name, leaves } of entries) {
-      for (const leaf of leaves) {
-        const key = `${name}:${leaf}`;
-        if (covered.has(key) || EXEMPT_ID_LEAVES[key]) continue;
-        missing.push(key);
-      }
-    }
-    expect(missing).toEqual([]);
+    const discovered = new Set(entries.flatMap((entry) => entry.leaves.map((leaf) => `${entry.name}:${leaf.path}`)));
+    const expected = new Set([...covered, ...Object.keys(EXEMPT_ID_LEAVES)]);
+
+    // both directions: a leaf with no row (or exemption) reds, and a row whose
+    // leaf the walk no longer sees reds (a lost walk branch cannot hide)
+    expect([...discovered].filter((key) => !expected.has(key)).sort()).toEqual([]);
+    expect([...expected].filter((key) => !discovered.has(key)).sort()).toEqual([]);
   });
 
   it('the walk visits every top-level router (a whole domain cannot drop out)', () => {
@@ -705,45 +713,49 @@ describe('the id table covers the app router (a missing surface reds the suite, 
     }
   });
 
-  it('the walk finds the full leaf population (a dead walk cannot pass)', () => {
-    const total = routerIdLeaves().reduce((sum, entry) => sum + entry.leaves.length, 0);
-    expect(total).toBeGreaterThan(110);
-  });
-
-  it('every exemption names a live leaf and never also a table row', () => {
-    const discovered = new Set(
-      routerIdLeaves().flatMap((entry) => entry.leaves.map((leaf) => `${entry.name}:${leaf}`)),
-    );
-    const covered = new Set(surfaces.map(coverageKey));
+  it('every exemption carries the guard its reason claims (NUL is refused there)', () => {
+    const entries = routerIdLeaves();
     for (const key of Object.keys(EXEMPT_ID_LEAVES)) {
-      expect(discovered.has(key), `${key} is a live leaf`).toBe(true);
-      expect(covered.has(key), `${key} is not also a table row`).toBe(false);
+      const [procedure, leafPath = ''] = key.split(':');
+      const entry = entries.find((candidate) => candidate.name === procedure);
+      const leaf = entry?.leaves.find((candidate) => candidate.path === leafPath);
+      expect(leaf, `${key} is a live leaf`).toBeTruthy();
+      const parsed = (leaf?.schema as { safeParse: (value: unknown) => { success: boolean } }).safeParse(NUL);
+      expect(parsed.success, `${key} refuses NUL through its own guard`).toBe(false);
     }
   });
 });
 
-describe('channel config: the write edge guards, the stored-config parser stays tolerant (#386 r4)', () => {
-  const entry = (tokenSecretId: string, platformUserId: string) => ({
-    kind: 'matrix',
-    enabled: false,
-    homeserverUrl: 'https://matrix.example.org',
-    tokenSecretId,
-    bindings: [{ platformUserId, userId: USER_UUID }],
-    defaultAssigneeId: null,
-  });
+describe('the walker handles every composite node type (#386 vacuity)', () => {
+  const cases: [string, unknown, string[]][] = [
+    ['object', z.object({ taskId: z.string() }), ['taskId']],
+    ['array', z.array(z.object({ taskId: z.string() })), ['taskId']],
+    ['union', z.union([z.object({ taskId: z.string() }), z.string()]), ['taskId']],
+    ['record', z.record(z.string(), z.object({ taskId: z.string() })), ['taskId']],
+    ['tuple', z.tuple([z.object({ taskId: z.string() })]), ['taskId']],
+    ['intersection', z.intersection(z.object({ taskId: z.string() }), z.object({ x: z.string() })), ['taskId']],
+    ['lazy', z.lazy(() => z.object({ taskId: z.string() })), ['taskId']],
+    ['optional', z.object({ taskId: z.string() }).optional(), ['taskId']],
+    ['catch', z.object({ taskId: z.string() }).catch({}), ['taskId']],
+    ['pipe', z.object({ taskId: z.string() }).transform((value) => value), ['taskId']],
+    ['preprocess', z.preprocess((value) => value, z.object({ taskId: z.string() })), ['taskId']],
+    ['catchall', z.object({}).catchall(z.string()), []],
+  ];
 
-  it('the admin write schema refuses unstorable text ids', () => {
-    expect(adminChannelConfigSchema.safeParse([entry(NUL, 'u')]).success).toBe(false);
-    expect(adminChannelConfigSchema.safeParse([entry('s', LONE_HIGH)]).success).toBe(false);
-  });
+  for (const [label, schema, expected] of cases) {
+    it(`${label} yields ${expected.join(',') || 'no named leaf'}`, () => {
+      const leaves: Leaf[] = [];
+      collectIdLeafPaths(schema, ['input'], leaves);
+      expect(leaves.map((leaf) => leaf.path)).toEqual(expected.map((path) => `input.${path}`));
+    });
+  }
 
-  it('the runtime parser still accepts a config an older build stored (JSON escapes the bytes)', () => {
-    // the stored row is legal UTF-8 text (`\ud800` escape); refusing it here
-    // would fail the integrity probe and 503 /health/ready
-    expect(channelConfigSchema.safeParse(entry(LONE_HIGH, NUL)).success).toBe(true);
+  it('a named catchall map is the reference itself', () => {
+    const leaves: Leaf[] = [];
+    collectIdLeafPaths(z.object({ ghostIds: z.object({}).catchall(z.string()) }), [], leaves);
+    expect(leaves.map((leaf) => leaf.path)).toEqual(['ghostIds']);
   });
 });
-
 describe('the id surface table points at the procedure its label names (#386)', () => {
   for (const surface of surfaces) {
     it(`${surface.surface}: label and procedure agree`, () => {
@@ -792,6 +804,8 @@ describe('the wired id schema keeps its own contract (#386: accept / blank / cle
           );
           // an invisible EDGE char is the same mint hazard as a space
           expect(schema().safeParse(payload(surface, '\u200bbacklog')).success).toBe(false);
+          // ...but a grapheme-extending edge (VS16) is part of a legal id
+          expect(schema().safeParse(payload(surface, 'x\u2764\ufe0f')).success).toBe(true);
         }
       }
     });

@@ -423,7 +423,10 @@ async function requireDispatchable(taskId: string) {
     where: { id: { eq: taskId } },
     orderBy: { createdAt: 'asc' },
   });
-  const task = nonNull(rows[0]);
+  const task = rows[0];
+  // an unknown (or padded / malformed) id is an ordinary miss — never a raw
+  // nonNull throw (that surfaced as an opaque 500 on this verb)
+  if (!task) throw new ORPCError('NOT_FOUND', { message: 'task does not exist' });
   const statusRows = await db.query.taskStatuses.findMany({
     columns: { id: true },
     where: { category: { eq: 'ready' } },
@@ -913,7 +916,11 @@ export const tasksRouter = os.router({
     .input(
       z.strictObject({
         taskId: storableIdRef('taskId'),
-        before: z.strictObject({ createdAt: storable('createdAt', z.string().min(1)), id: storableId('id') }),
+        before: z.strictObject({
+          createdAt: storable('createdAt', z.string().min(1)),
+          // a cursor READ key: a padded value is an ordinary miss, never a 400
+          id: storableIdRef('id'),
+        }),
       }),
     )
     .handler(({ input }) => threadOlderPage(input.taskId, input.before)),
