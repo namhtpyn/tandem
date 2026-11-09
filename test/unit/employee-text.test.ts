@@ -233,6 +233,47 @@ describe('procedure schemas — the pre-existing blankness contract (helper-swap
       expect(inputSchema(employeesRouter.update).safeParse(updateInput({ [field]: '' })).success).toBe(false);
     }
     expect(inputSchema(employeesRouter.titles.save).safeParse({ name: '' }).success).toBe(false);
+    expect(inputSchema(employeesRouter.titles.remove).safeParse({ id: '' }).success).toBe(false);
+  });
+
+  it('keeps every call-site cap at its specced literal', () => {
+    const accepts = (procedure: unknown, input: unknown) => inputSchema(procedure).safeParse(input).success;
+    expect(accepts(employeesRouter.create, createInput({ name: 'N'.repeat(100) }))).toBe(true);
+    expect(accepts(employeesRouter.create, createInput({ name: 'N'.repeat(101) }))).toBe(false);
+    expect(accepts(employeesRouter.create, createInput({ title: 'T'.repeat(100) }))).toBe(true);
+    expect(accepts(employeesRouter.create, createInput({ title: 'T'.repeat(101) }))).toBe(false);
+    expect(accepts(employeesRouter.create, createInput({ model: 'M'.repeat(200) }))).toBe(true);
+    expect(accepts(employeesRouter.create, createInput({ model: 'M'.repeat(201) }))).toBe(false);
+    expect(accepts(employeesRouter.create, createInput({ instructions: 'I'.repeat(10_000) }))).toBe(true);
+    expect(accepts(employeesRouter.create, createInput({ instructions: 'I'.repeat(10_001) }))).toBe(false);
+    const PREFIX = 'data:image/png;base64,';
+    expect(
+      accepts(employeesRouter.create, createInput({ image: `${PREFIX}${'A'.repeat(300_000 - PREFIX.length)}` })),
+    ).toBe(true);
+    expect(
+      accepts(employeesRouter.create, createInput({ image: `${PREFIX}${'A'.repeat(300_001 - PREFIX.length)}` })),
+    ).toBe(false);
+  });
+
+  it('accepts an id-less title save (create) and a full-length supplied id (the uncapped guard branch)', () => {
+    expect(inputSchema(employeesRouter.titles.save).safeParse({ name: 'Engineer' }).success).toBe(true);
+    expect(inputSchema(employeesRouter.titles.save).safeParse({ id: 'x'.repeat(64), name: 'Engineer' }).success).toBe(
+      true,
+    );
+  });
+
+  it('accepts null on every clearable field and the empty avatar (the clear paths stay open)', () => {
+    const accepts = (procedure: unknown, input: unknown) => inputSchema(procedure).safeParse(input).success;
+    for (const field of ['providerId', 'model', 'apiKeySecretId', 'image']) {
+      expect(accepts(employeesRouter.create, createInput({ [field]: null }))).toBe(true);
+      expect(accepts(employeesRouter.update, updateInput({ [field]: null }))).toBe(true);
+    }
+    for (const field of ['environmentId', 'instructions']) {
+      expect(accepts(employeesRouter.update, updateInput({ [field]: null }))).toBe(true);
+    }
+    // '' clears the avatar (the documented clear form) and stays legal on optional text
+    expect(accepts(employeesRouter.create, createInput({ image: '' }))).toBe(true);
+    expect(accepts(employeesRouter.update, updateInput({ image: '' }))).toBe(true);
   });
 
   it('refuses a blank text-typed id', () => {
