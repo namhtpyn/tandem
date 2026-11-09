@@ -24,6 +24,7 @@ import {
 } from '../../db/schema';
 import { requireUuid } from '../kernel/id-shape';
 import { ORPCError, adminProcedure, liveGenerator, protectedProcedure, publishChange } from '../kernel/kernel';
+import { assertAccessKeyName, derivedAccessKeyName } from './access-key-name';
 
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/;
 
@@ -387,7 +388,7 @@ export const employeesRouter = os.router({
         });
       }
       // every new employee — AI or human — gets an initial access key (shown once)
-      apiKey = (await mintAccessKey(`${input.name.slice(0, 40)} access key`, userId)).key;
+      apiKey = (await mintAccessKey(derivedAccessKeyName(input.name, ' access key'), userId)).key;
       await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.CREATE);
       // a runtime-minted AI agent needs its per-agent worker NOW: workers sync on
       // boot + settings.update only, so a create without this resync left every
@@ -672,7 +673,10 @@ export const employeesRouter = os.router({
       });
       const emp = rows[0];
       if (!emp) throw new ORPCError('NOT_FOUND', { message: 'employee not found' });
-      const created = await mintAccessKey(input.name?.trim() || `${emp.name.slice(0, 40)} key`, emp.id);
+      const created = await mintAccessKey(
+        input.name?.trim() ? assertAccessKeyName(input.name) : derivedAccessKeyName(emp.name, ' key'),
+        emp.id,
+      );
       return { key: created.key, id: created.id };
     }),
 
@@ -689,7 +693,7 @@ export const employeesRouter = os.router({
     .handler(async ({ input }) => {
       requireUuid(input.keyId, 'BAD_REQUEST', 'invalid api key id');
       if (input.employeeId !== undefined) requireUuid(input.employeeId, 'BAD_REQUEST', 'invalid employee id');
-      const name = input.name.trim();
+      const name = assertAccessKeyName(input.name);
       if (!name) throw new ORPCError('BAD_REQUEST', { message: 'name is required' });
       const updated = await db
         .update(apikeyTable)
