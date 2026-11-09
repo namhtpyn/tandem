@@ -1,11 +1,12 @@
-// TEXT-STORABILITY LAW (#382, SPEC "API law"): every user-supplied text value
-// that lands raw in a Postgres text column refuses NUL and unpaired surrogates
-// at the procedure edge — BAD_REQUEST naming the field, never an opaque driver
-// 500 and never a silent U+FFFD rewrite. Handler-level pins below call the REAL
-// oRPC procedures (input validation fires before any db access). The schema
-// axes ride the same wired input schema (`~orpc.inputSchemas[0]`): a well-formed
-// astral pair stays accepted, the pre-existing cap literals stay exact, and
-// every clear path stays open.
+// TEXT-STORABILITY LAW (#382, SPEC "API law"): every free-form field in the
+// #382 covered list refuses NUL and unpaired surrogates at the procedure edge —
+// BAD_REQUEST naming the field, never an opaque driver 500 and never a silent
+// U+FFFD rewrite (query-bound text ids are the #386 carve-out, not covered
+// here). Handler-level pins below call the REAL oRPC procedures (input
+// validation fires before any db access). The schema axes ride the same wired
+// input schema (`~orpc.inputSchemas[0]`): a well-formed astral pair stays
+// accepted, the pre-existing cap literals stay exact, and every clear path
+// stays open.
 import { createProcedureClient } from '@orpc/server';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -55,9 +56,9 @@ type InputSchema = {
 /** the input schema the procedure is actually wired with */
 function schemaOf(procedure: unknown): InputSchema {
   const orpc = (procedure as Record<string, unknown>)['~orpc'] as { inputSchemas: InputSchema[] };
-  // an EMPTY list means the procedure carries no wired schema; a PREPENDED
-  // `.input()` would shadow index 0 (an appended one does not)
-  if (orpc.inputSchemas.length === 0) throw new Error('procedure has no wired input schema');
+  // exactly one wired input per procedure: a second `.input()` is a SECOND edge
+  // the schema pins do not exercise — fail loudly and extend this helper
+  if (orpc.inputSchemas.length !== 1) throw new Error(`expected one input schema, got ${orpc.inputSchemas.length}`);
   return orpc.inputSchemas[0] as InputSchema;
 }
 
@@ -265,6 +266,9 @@ const surfaces: Surface[] = [
   s('providers.save:notes', providersRouter.save, providerBase(), 'notes', { cap: 500, clearable: true }),
   s('providers.save:extraHeaders key', providersRouter.save, providerBase(), 'extraHeaders key', {
     inputKey: 'extraHeaders',
+    // omitted extraHeaders must STAY omitted: a `.default({})` here would wipe
+    // the stored router credentials on every save that does not resend them
+    clearable: true,
     valueFor: (v) => ({ [v]: 'v' }),
   }),
   s('providers.save:extraHeaders value', providersRouter.save, providerBase(), 'extraHeaders value', {
@@ -360,7 +364,7 @@ describe('every raw text write refuses unstorable text (handler-level, #382)', (
   }
 });
 
-describe('the surface table is unique and complete (#382 r3)', () => {
+describe('the surface table is unique and counted (#382)', () => {
   it('every label appears exactly once (a duplicated row is a silently dropped surface)', () => {
     expect(new Set(surfaces.map((surface) => surface.surface)).size).toBe(surfaces.length);
   });

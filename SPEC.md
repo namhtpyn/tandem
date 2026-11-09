@@ -760,8 +760,8 @@ Rules:
   they cannot raise 22P02, so a malformed value is an ordinary miss. An id
   parameter the covered list below does not name is outside the
   TEXT-STORABILITY LAW and tracked in #386, where two shapes matter. An id
-  compared in JS against a loaded set and never bound as a query parameter
-  (`tasks.create` status, `statuses.save` nextIds, the canonicalUuid-checked
+  compared in JS against a loaded set (`tasks.create` status, `statuses.save`
+  nextIds) or shape-checked before any query (`canonicalUuid`-checked
   assignee / owner / reviewer / forward ids) already answers `BAD_REQUEST` for
   unstorable bytes. An id that reaches a query parameter does
   not: a NUL raises at the driver before the lookup can miss, and a lone
@@ -780,8 +780,10 @@ Rules:
   guard (handler-level) and better-auth's `user.create` / `update-user`
   database hooks reuse the same predicate, and the vault last-four hint is
   derived with a code-point slice (never a UTF-16 cut). This law covers
-  USER-supplied text at procedure edges only: agent-supplied text (proposal
-  envelopes, run output, transcripts) is machine text and outside it. A NUL
+  USER-supplied text at write-surface edges (oRPC procedure schemas and
+  better-auth's own user create/update hooks) only: agent-supplied text
+  (proposal envelopes, run output, transcripts) is machine text and outside
+  it. A NUL
   makes the driver throw
   (invalid byte sequence) and would surface through oRPC as an opaque 500 on
   input the schema had accepted; an unpaired surrogate is WORSE — the driver

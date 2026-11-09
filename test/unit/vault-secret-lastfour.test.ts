@@ -73,6 +73,11 @@ describe('vault secret writes store a code-point-safe last-four hint (#382)', ()
 
   it('a metadata-only update leaves the stored hint alone', async () => {
     await updateSecret({ id: 'row-id', name: 'n2', description: '', folderId: null }, 'actor');
-    expect(updated.at(-1)?.lastFour).toBeUndefined();
+    const row = updated.at(-1);
+    // a dropped metadata-only write would also leave `lastFour` undefined —
+    // assert the row was actually written AND the hint key is absent
+    expect(row).toBeDefined();
+    expect(row).toMatchObject({ name: 'n2' });
+    expect(Object.prototype.hasOwnProperty.call(row, 'lastFour')).toBe(false);
   });
 });
