@@ -274,6 +274,63 @@ export async function stopRunForTask(taskId: string, actorId: string): Promise<{
   return { ok: true, stopped: true };
 }
 
+/** EMPLOYEE REMOVAL, capture half (#370): the RUNNING runs of the departing employee,
+ *  read BEFORE their user row is deleted (the run FK nulls employee_id, leaving the
+ *  rows unnameable). Read-only — a failed delete must change nothing. */
+export async function runningRunIdsForEmployee(employeeId: string): Promise<string[]> {
+  const rows = await db.query.taskRuns.findMany({
+    columns: { id: true },
+    where: { employeeId: { eq: employeeId }, status: { eq: RUN_STATUS.RUNNING } },
+    orderBy: { startedAt: 'asc', id: 'asc' },
+    limit: 50,
+  });
+  return rows.map((r) => r.id);
+}
+
+/** EMPLOYEE REMOVAL, settle half (#370): settle the captured runs STOPPED after the
+ *  user delete commits — the same arbiter as the stop verb. The in-memory marker is
+ *  what makes an in-flight turn skip EVERY settle side effect (a deleted reviewer's
+ *  late verdict must never park or bounce a round it no longer owns); the guarded CAS
+ *  keeps the turn's own settle when it won first (the winner owns the outcome). Each
+ *  run is fault-isolated: one wedged row must not stop the rest. */
+export async function stopRunsForRemoval(runIds: string[]): Promise<number> {
+  let stopped = 0;
+  for (const runId of runIds) {
+    stoppedRuns.add(runId);
+    try {
+      liveStops.get(runId)?.();
+      const settled = await db
+        .update(taskRuns)
+        .set({
+          status: RUN_STATUS.STOPPED,
+          exitCode: null,
+          output: sql`coalesce(${taskRuns.output}, '') || '\n[run] stopped: employee removed'`,
+          finishedAt: new Date(),
+        })
+        .where(and(eq(taskRuns.id, runId), eq(taskRuns.status, RUN_STATUS.RUNNING)))
+        .returning({ id: taskRuns.id });
+      if (settled.length === 0) {
+        // the turn settled first with its own verdict — unwind the marker
+        stoppedRuns.delete(runId);
+        continue;
+      }
+      stopped += 1;
+    } catch (e) {
+      if (!executingRuns.has(runId)) stoppedRuns.delete(runId);
+      consola.warn(`employee removal: could not stop run ${runId}:`, e instanceof Error ? e.message : e);
+      continue;
+    }
+    // no live execution can consume the marker — delete it at the verb (same
+    // lifecycle completion as the stop path, #291 r3)
+    if (!executingRuns.has(runId)) stoppedRuns.delete(runId);
+  }
+  if (stopped > 0) {
+    await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+  }
+  return stopped;
+}
+
 async function logRun(
   taskId: string,
   runId: string,
@@ -1151,6 +1208,14 @@ export async function settleReviewVerdict(
   const binding = await dispatchedReviewRoundRow(taskId, reviewerId, runStartedAt);
   const current = await currentRound(taskId);
   if (!binding) {
+    // EMPLOYEE REMOVAL (#370): a reviewer deleted mid-turn has no row left to bind —
+    // the removal voided it and OWNS the round. The late verdict is not an anomaly:
+    // check the reviewer still exists before parking a round this run no longer owns.
+    const reviewer = await db.query.user.findFirst({
+      columns: { id: true },
+      where: { id: { eq: reviewerId } },
+    });
+    if (!reviewer) return;
     const { parkRound } = await import('./review.service');
     await parkRound(taskId, 'review finished without a verdict — no round row for the reviewer (anomaly)');
     return;

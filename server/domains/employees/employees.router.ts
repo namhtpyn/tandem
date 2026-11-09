@@ -640,6 +640,12 @@ export const employeesRouter = os.router({
     // instead of waiting on an answer that can never arrive.
     const { prepareReviewerRemoval, settleReviewerRemovalRounds } = await import('../tasks/review.service');
     const reviewRemoval = await prepareReviewerRemoval(input.id);
+    // EMPLOYEE REMOVAL (#370): an in-flight turn of the departing employee has no
+    // owner after the delete — capture its RUNNING runs read-only now and settle
+    // them STOPPED after the delete commits (the in-flight turn then skips every
+    // settle side effect: no park, no bounce, no message rewrite).
+    const { runningRunIdsForEmployee, stopRunsForRemoval } = await import('../tasks/runner.service');
+    const removalRunIds = await runningRunIdsForEmployee(input.id);
     // deleting the user cascades supervisors, ai extension, api keys
     // (existence already verified above — no race window worth a second check)
     // UNBIND = REVOKE (SPEC MCP): the cascade removes the employee's bindings
@@ -647,6 +653,7 @@ export const employeesRouter = os.router({
     const { revokeOauthTokensForEmployee } = await import('../mcp/mcp-oauth.service');
     await revokeOauthTokensForEmployee(input.id);
     await db.delete(userTable).where(eq(userTable.id, input.id));
+    await stopRunsForRemoval(removalRunIds);
     await settleReviewerRemovalRounds(reviewRemoval, target.name);
     await publishChange(CHANGE_RESOURCE.EMPLOYEES, CHANGE_ACTION.DELETE);
     // the per-agent worker roster follows the AI roster — a removed agent's

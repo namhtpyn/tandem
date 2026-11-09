@@ -671,6 +671,21 @@ async function finishRemovedHolderReturn(taskId: string, backTo: string, name?: 
   }
 }
 
+/** NEXT TURN (#371): a removal voids/decides the departing reviewer's row — if the
+ *  task is still in an in_review-category status with a live PENDING reviewer, the
+ *  sequential queue has NOTHING in flight (the mint only advances on a verdict that
+ *  can never arrive from the removed reviewer). Re-mint the next AI turn. The task
+ *  category and a live row gate it; dispatchAiReviewTurns itself skips humans and an
+ *  already-running reviewer and issues at most ONE dispatch per call. The caller
+ *  fault-isolates it — the delete already committed. */
+async function resumeRemovalReviewQueue(taskId: string) {
+  const row = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  if (!row) return;
+  if ((await categoryOf(row.status)) !== CATEGORY.IN_REVIEW) return;
+  if (!(await openRoundLive(taskId))) return;
+  await dispatchAiReviewTurns(taskId);
+}
+
 /** REVIEWER REMOVAL, settle half (#365): runs AFTER the user delete. Mutates only
  *  what the delete made stale: cancels the captured approval obligations by id,
  *  notes the captured rows (still PENDING and now void — a verdict that landed in
@@ -731,6 +746,14 @@ export async function settleReviewerRemovalRounds(plan: ReviewerRemovalPlan, nam
       await cleanVoidReviewDebris(taskId);
     } catch (e) {
       log.warn(`reviewer removal: could not settle round for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+    try {
+      await resumeRemovalReviewQueue(taskId);
+    } catch (e) {
+      log.warn(
+        `reviewer removal: could not resume the review queue for task ${taskId}:`,
+        e instanceof Error ? e.message : e,
+      );
     }
   }
   // ANSWER-ROLE REMOVAL leftover (#369): the same crash-window sweep — an orphan

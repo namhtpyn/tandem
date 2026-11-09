@@ -37,6 +37,8 @@ const h = vi.hoisted(() => ({
   resolved: [] as string[],
   notes: [] as Array<{ body: string; payload: Record<string, unknown> }>,
   regated: [] as string[],
+  dispatches: [] as Array<Record<string, unknown>>,
+  aiEmployees: [] as Array<{ userId: string }>,
   published: 0,
   flipWins: true,
   casMiss: false,
@@ -49,7 +51,12 @@ vi.mock('../../server/db/index', async () => {
       then: (ok?: (v: Array<Record<string, unknown>>) => unknown, err?: (e: unknown) => unknown) =>
         rows().then(ok, err),
       catch: (err: (e: unknown) => unknown) => rows().catch(err),
-      orderBy: () => ({ limit: async () => rows() }),
+      orderBy: () => ({
+        limit: async () => rows(),
+        then: (ok?: (v: Array<Record<string, unknown>>) => unknown, err?: (e: unknown) => unknown) =>
+          rows().then(ok, err),
+        catch: (err: (e: unknown) => unknown) => rows().catch(err),
+      }),
       limit: async () => rows(),
       innerJoin: () => mk(),
     });
@@ -121,7 +128,7 @@ vi.mock('../../server/db/index', async () => {
       }),
       query: {
         taskStatuses: { findMany: async () => h.statuses },
-        aiEmployees: { findMany: async () => [] },
+        aiEmployees: { findMany: async () => h.aiEmployees },
         user: { findMany: async () => [] },
       },
     },
@@ -168,7 +175,9 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
 });
 
 vi.mock('../../server/domains/tasks/runner.service', () => ({
-  dispatchTask: async () => {},
+  dispatchTask: async (...args: unknown[]) => {
+    h.dispatches.push(args[2] as Record<string, unknown>);
+  },
 }));
 
 vi.mock('../../server/domains/tasks/gating.service', () => ({
@@ -220,6 +229,8 @@ beforeEach(() => {
   h.resolved = [];
   h.notes = [];
   h.regated = [];
+  h.dispatches = [];
+  h.aiEmployees = [];
   h.published = 0;
   h.flipWins = true;
   h.casMiss = false;
@@ -381,6 +392,7 @@ describe('employee removal halves (#365)', () => {
     h.reviewReads = [
       [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
       [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
     ];
     const settled = await settleReviewerRemovalRounds(
       {
@@ -482,5 +494,61 @@ describe('employee removal halves (#365)', () => {
     expect(h.updates.some((u) => u.table === 'taskReviews' && u.set.status === REVIEW_STATUS.SUPERSEDED)).toBe(true);
     expect(h.cancelled).toEqual(['task-1']); // pending approvals cancelled with the residue
     expect(h.updates.some((u) => u.table === 'tasks')).toBe(false); // never a second flip
+  });
+});
+
+describe('removal resumes the sequential review queue (#371)', () => {
+  it('a removal that leaves a live AI reviewer mints the next turn', async () => {
+    // settle half: the round has a live voter (ai-2), so the extinguished-round
+    // matrix no-ops — but nothing is in flight (the removed reviewer owned the
+    // sequential turn), so the removal itself must mint ai-2's turn.
+    h.leftoverSelect = [];
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }], // settleExtinguishedRound: live voter, no void row -> false
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }], // openRoundLive
+      [
+        // dispatchAiReviewTurns: the departing reviewer's void row, then the live AI
+        { status: REVIEW_STATUS.PENDING, reviewerId: null },
+        { status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' },
+      ],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    const settled = await settleReviewerRemovalRounds({
+      taskIds: ['task-1'],
+      reviewRowIds: ['row-void'],
+      obligationIds: [],
+      answerObligations: [],
+    });
+    expect(settled).toEqual([]);
+    expect(h.dispatches).toHaveLength(1);
+    expect(h.dispatches[0]).toMatchObject({ reviewBy: 'ai-2', verdictCorrection: false });
+  });
+
+  it('a human-only round mints nothing (no AI reviewer to run)', async () => {
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'human-1' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'human-1' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'human-1' }],
+    ];
+    h.aiEmployees = [];
+    await settleReviewerRemovalRounds({
+      taskIds: ['task-1'],
+      reviewRowIds: [],
+      obligationIds: [],
+      answerObligations: [],
+    });
+    expect(h.dispatches).toHaveLength(0);
+  });
+
+  it('a settled task mints nothing', async () => {
+    h.taskStatus = STATUS.done;
+    h.reviewReads = [];
+    await settleReviewerRemovalRounds({
+      taskIds: ['task-1'],
+      reviewRowIds: [],
+      obligationIds: [],
+      answerObligations: [],
+    });
+    expect(h.dispatches).toHaveLength(0);
   });
 });

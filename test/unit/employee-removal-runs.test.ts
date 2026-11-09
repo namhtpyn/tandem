@@ -1,0 +1,150 @@
+// EMPLOYEE REMOVAL runs (#370): removing an employee must neutralize their RUNNING
+// runs — a mid-flight review turn has no owner after the user delete, and its late
+// settle would park a round it no longer owns. Capture is READ-ONLY and RUNNING-only
+// (taken before the delete); the settle half is ONE guarded CAS per run
+// (RUNNING -> STOPPED, output marker appended, finishedAt stamped) taken after it.
+// A lost CAS means the turn settled first — its verdict owns the outcome — and the
+// stop-settled marker is unwound; nothing publishes when no row flipped.
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const h = vi.hoisted(() => ({
+  candidates: [] as Array<Record<string, unknown>>,
+  casRows: [] as Array<{ id: string }>,
+  updates: [] as Array<{ table: string; set: Record<string, unknown>; where: unknown }>,
+  published: [] as Array<[string, string]>,
+  failFirst: false,
+}));
+
+vi.mock('../../server/db/index', async () => {
+  const { taskRuns } = await import('../../server/db/schema');
+  return {
+    asDb: (x: unknown) => x,
+    db: {
+      query: {
+        taskRuns: {
+          // DB-MOCK PREDICATE LAW: honor the caller's status filter — only RUNNING
+          // rows are the departing employee's live runs
+          findMany: async (cfg?: { where?: { status?: { eq?: string } } }) => {
+            const want = cfg?.where?.status?.eq;
+            return want ? h.candidates.filter((r) => r.status === want) : h.candidates;
+          },
+        },
+      },
+      update: (table: unknown) => ({
+        set: (set: Record<string, unknown>) => ({
+          where: (where: unknown) => ({
+            returning: async () => {
+              if (table !== taskRuns) return [];
+              if (h.failFirst) {
+                h.failFirst = false;
+                throw new Error('db down');
+              }
+              h.updates.push({ table: 'taskRuns', set, where });
+              return h.casRows;
+            },
+          }),
+        }),
+      }),
+    },
+  };
+});
+
+vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../server/domains/kernel/kernel')>();
+  return {
+    ...mod,
+    publishChange: async (resource: string, action: string) => {
+      h.published.push([resource, action]);
+    },
+  };
+});
+
+import { RUN_STATUS } from '#shared/enums';
+
+import {
+  runningRunIdsForEmployee,
+  stoppedRunMarkerIds,
+  stopRunsForRemoval,
+} from '../../server/domains/tasks/runner.service';
+import { mockDb, taskRuns } from './helpers/mock-db';
+
+/** render a captured drizzle condition to SQL + params (DB-mock predicate law: pin the
+ * predicate by RENDERING it, never by a presence check) */
+function renderCond(cond: unknown): string {
+  const q = mockDb()
+    .select()
+    .from(taskRuns)
+    .where(cond as never)
+    .toSQL();
+  return `${q.sql} ${JSON.stringify(q.params)}`;
+}
+
+beforeEach(() => {
+  h.candidates = [];
+  h.casRows = [];
+  h.updates = [];
+  h.published = [];
+  h.failFirst = false;
+});
+
+describe('runningRunIdsForEmployee (#370)', () => {
+  it('captures ONLY the employee’s RUNNING runs (read-only)', async () => {
+    h.candidates = [
+      { id: 'run-1', status: RUN_STATUS.RUNNING },
+      { id: 'run-2', status: RUN_STATUS.DONE },
+      { id: 'run-3', status: RUN_STATUS.RUNNING },
+    ];
+    expect(await runningRunIdsForEmployee('emp-1')).toEqual(['run-1', 'run-3']);
+    expect(h.updates).toHaveLength(0);
+    expect(h.published).toHaveLength(0);
+  });
+
+  it('no live runs -> empty list', async () => {
+    h.candidates = [{ id: 'run-1', status: RUN_STATUS.DONE }];
+    expect(await runningRunIdsForEmployee('emp-1')).toEqual([]);
+  });
+});
+
+describe('stopRunsForRemoval (#370)', () => {
+  it('settles each captured run STOPPED with ONE guarded CAS + publishes once', async () => {
+    h.casRows = [{ id: 'run-1' }];
+    expect(await stopRunsForRemoval(['run-1'])).toBe(1);
+    expect(h.updates).toHaveLength(1);
+    const { set, where } = h.updates[0]!;
+    expect(set.status).toBe(RUN_STATUS.STOPPED);
+    expect(set.finishedAt).toBeInstanceOf(Date);
+    expect(set.exitCode).toBeNull();
+    expect(set.output).toBeDefined(); // SQL append of the removal marker
+    const sql = renderCond(where);
+    expect(sql).toContain('"id" =');
+    expect(sql).toContain('"status" =');
+    expect(sql).toContain('RUNNING');
+    expect(h.published).toEqual([
+      ['RUNS', 'UPDATE'],
+      ['TASKS', 'UPDATE'],
+    ]);
+    // no live execution can own the marker — it is cleared at the verb
+    expect(stoppedRunMarkerIds()).toEqual([]);
+  });
+
+  it('a lost CAS (the turn settled first) is a quiet no-op: no publish, marker unwound', async () => {
+    h.casRows = [];
+    expect(await stopRunsForRemoval(['run-1'])).toBe(0);
+    expect(h.updates).toHaveLength(1); // the CAS was attempted
+    expect(h.published).toHaveLength(0);
+    expect(stoppedRunMarkerIds()).toEqual([]);
+  });
+
+  it('one failing run never stops the rest', async () => {
+    // first statement throws, second succeeds — fault isolation is the contract
+    h.failFirst = true;
+    h.casRows = [{ id: 'run-2' }];
+    expect(await stopRunsForRemoval(['run-1', 'run-2'])).toBe(1);
+    expect(h.updates).toHaveLength(1); // run-2's CAS landed; run-1 was skipped
+    expect(h.published).toEqual([
+      ['RUNS', 'UPDATE'],
+      ['TASKS', 'UPDATE'],
+    ]);
+    expect(stoppedRunMarkerIds()).toEqual([]);
+  });
+});

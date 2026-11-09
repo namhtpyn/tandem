@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   parks: [] as string[],
   verdictAt: [] as Array<Date | undefined>,
   escalated: 0,
+  reviewerExists: true,
 }));
 
 vi.mock('../../server/db/index', () => ({
@@ -21,6 +22,7 @@ vi.mock('../../server/db/index', () => ({
   db: {
     query: {
       taskRuns: { findMany: async () => h.runs },
+      user: { findFirst: async () => (h.reviewerExists ? { id: 'rev-1' } : null) },
     },
     update: () => ({ set: () => ({ where: () => Promise.resolve() }) }),
   },
@@ -79,6 +81,7 @@ beforeEach(() => {
   h.parks = [];
   h.verdictAt = [];
   h.escalated = 0;
+  h.reviewerExists = true;
 });
 
 describe('settleReviewVerdict verdict-less bound (#276)', () => {
@@ -166,5 +169,17 @@ describe('settleReviewVerdict verdict-less bound (#276)', () => {
     expect(h.dispatched).toHaveLength(0);
     expect(h.parks).toHaveLength(1);
     expect(h.parks[0]).toContain('no round row for the reviewer');
+  });
+
+  it('a DELETED reviewer with no round row is not an anomaly — the removal owns the round (#370)', async () => {
+    // the employee delete nulled the pending row (and the FK); a late turn must
+    // never park a round it no longer owns
+    h.boundRow = null;
+    h.reviewerExists = false;
+    h.runs = [run('self', self)];
+    await settleReviewVerdict('task-1', 'rev-1', { kind: 'approved', text: 'late' } as never, self);
+    expect(h.parks).toHaveLength(0);
+    expect(h.dispatched).toHaveLength(0);
+    expect(h.verdictAt).toHaveLength(0);
   });
 });
