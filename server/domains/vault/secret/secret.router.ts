@@ -6,12 +6,12 @@ import { z } from 'zod';
 const listVaultSecretsInput = z.object({
   page: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(100).default(20),
-  folderId: storableId('folderId').nullish(),
+  folderId: storableIdRef('folderId').nullish(),
   q: storable('q', z.string().trim().max(200)).optional(),
 });
 
 import { CHANGE_RESOURCE } from '#shared/enums';
-import { storable, storableId } from '#shared/utils/storable-text';
+import { storable, storableId, storableIdRef } from '#shared/utils/storable-text';
 
 import { adminProcedure, liveGenerator } from '../../kernel/kernel';
 import { listVaultSecrets, createSecret, updateSecret, removeSecret } from './secret.service';
@@ -28,7 +28,7 @@ export const secretRouter = {
         name: storable('name', z.string().min(1).max(100)),
         description: storable('description', z.string().max(500).default('')),
         value: storable('value', z.string().min(1).max(64_000)),
-        folderId: storableId('folderId').nullable().default(null),
+        folderId: storableIdRef('folderId').nullable().default(null),
       }),
     )
     .handler(async ({ input, context }) => createSecret(input, context.session.user.id)),
@@ -41,7 +41,7 @@ export const secretRouter = {
         name: storable('name', z.string().min(1).max(100)),
         description: storable('description', z.string().max(500).default('')),
         value: storable('value', z.string().max(64_000)).optional(),
-        folderId: storableId('folderId').nullable().default(null),
+        folderId: storableIdRef('folderId').nullable().default(null),
       }),
     )
     .handler(async ({ input, context }) => updateSecret(input, context.session.user.id)),

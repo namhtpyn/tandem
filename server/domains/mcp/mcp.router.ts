@@ -6,7 +6,7 @@ import { os } from '@orpc/server';
 import { z } from 'zod';
 
 import { isUuid } from '#shared/utils/is-uuid';
-import { storable, storableId } from '#shared/utils/storable-text';
+import { storable, storableId, storableIdRef } from '#shared/utils/storable-text';
 
 import { requireUuid } from '../kernel/id-shape';
 import { adminProcedure, ORPCError, protectedProcedure } from '../kernel/kernel';
@@ -47,7 +47,7 @@ const credentialEnvVarField = z
   .trim()
   .refine((v) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(v), 'credentialEnvVar must be a valid env var name');
 const notesField = storable('notes', z.string().trim().max(2000).default(''));
-const idField = (field: string) => storableId(field);
+const idField = (field: string) => (field === 'id' ? storableId('id') : storableIdRef(field));
 const transportField = z.enum(['http', 'stdio']);
 
 // slice 3 stdio transport fields (transport-conditional validation of the

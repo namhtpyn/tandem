@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { PROJECT_STATUS, type ProjectStatus } from '#shared/enums';
 import type { ProjectRow } from '#shared/types';
-import { storable, storableId } from '#shared/utils/storable-text';
+import { storable, storableId, storableIdRef } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import { projects as projectsTable } from '../../db/schema';
@@ -80,7 +80,7 @@ export const projectsRouter = os.router({
         name: storable('name', z.string().min(1).max(120)),
         description: storable('description', z.string().max(2000).default('')),
         prompt: storable('prompt', z.string().max(8000).default('')),
-        parentId: storableId('parentId').nullable().optional(),
+        parentId: storableIdRef('parentId').nullable().optional(),
       }),
     )
     .handler(async ({ input }) => {
@@ -112,7 +112,7 @@ export const projectsRouter = os.router({
         description: storable('description', z.string().max(2000)).optional(),
         prompt: storable('prompt', z.string().max(8000)).optional(),
         status: z.enum(PROJECT_STATUS).optional(),
-        parentId: storableId('parentId').nullable().optional(),
+        parentId: storableIdRef('parentId').nullable().optional(),
       }),
     )
     .handler(async ({ input }) => {

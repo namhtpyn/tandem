@@ -14,6 +14,7 @@ import {
   hasUnstorableText,
   storable,
   storableId,
+  storableIdRef,
   storableOptionalText,
   storableText,
 } from '#shared/utils/storable-text';
@@ -332,8 +333,8 @@ export const employeesRouter = os.router({
         kind: z.enum(['human', 'ai']),
         image: avatarImageSchema,
         title: storableText('title', EMPLOYEE_TITLE_MAX),
-        supervisorIds: z.array(storableId('supervisorIds')).max(20).default([]),
-        environmentId: storableId('environmentId').optional(),
+        supervisorIds: z.array(storableIdRef('supervisorIds')).max(20).default([]),
+        environmentId: storableIdRef('environmentId').optional(),
         instructions: storableOptionalText('instructions', 10_000).optional(),
         executable: z
           .string()
@@ -341,9 +342,9 @@ export const employeesRouter = os.router({
           .max(120)
           .regex(ACP_EXECUTABLE_RE, 'ACP executable must be shell-safe command words, e.g. "hermes acp"')
           .optional(),
-        providerId: storableId('providerId').nullable().optional(),
+        providerId: storableIdRef('providerId').nullable().optional(),
         model: storableText('model', 200).nullable().optional(),
-        apiKeySecretId: storableId('apiKeySecretId').nullable().optional(),
+        apiKeySecretId: storableIdRef('apiKeySecretId').nullable().optional(),
       }),
     )
     .handler(async ({ input }) => {
@@ -417,8 +418,8 @@ export const employeesRouter = os.router({
         name: storableText('name', 100),
         email: z.email().optional(),
         title: storableText('title', EMPLOYEE_TITLE_MAX),
-        supervisorIds: z.array(storableId('supervisorIds')).max(20),
-        environmentId: storableId('environmentId').nullable().optional(),
+        supervisorIds: z.array(storableIdRef('supervisorIds')).max(20),
+        environmentId: storableIdRef('environmentId').nullable().optional(),
         instructions: storableOptionalText('instructions', 10_000).nullable().optional(),
         executable: z
           .string()
@@ -427,9 +428,9 @@ export const employeesRouter = os.router({
           .regex(ACP_EXECUTABLE_RE, 'ACP executable must be shell-safe command words, e.g. "hermes acp"')
           .nullable()
           .optional(),
-        providerId: storableId('providerId').nullable().optional(),
+        providerId: storableIdRef('providerId').nullable().optional(),
         model: storableText('model', 200).nullable().optional(),
-        apiKeySecretId: storableId('apiKeySecretId').nullable().optional(),
+        apiKeySecretId: storableIdRef('apiKeySecretId').nullable().optional(),
         /** avatar: data URL (resized client-side); null clears */
         image: avatarImageSchema,
       }),
@@ -679,7 +680,7 @@ export const employeesRouter = os.router({
   createApiKey: adminProcedure
     .input(
       z.strictObject({
-        employeeId: storableId('employeeId'),
+        employeeId: storableIdRef('employeeId'),
         name: z.string().min(1).max(100).optional(),
       }),
     )
@@ -703,9 +704,9 @@ export const employeesRouter = os.router({
   updateApiKey: adminProcedure
     .input(
       z.strictObject({
-        keyId: storableId('keyId'),
+        keyId: storableIdRef('keyId'),
         /** owner scope: a key that belongs to another employee reads as NOT_FOUND */
-        employeeId: storableId('employeeId').optional(),
+        employeeId: storableIdRef('employeeId').optional(),
         name: z.string().min(1).max(100),
       }),
     )
@@ -769,9 +770,9 @@ export const employeesRouter = os.router({
   revokeApiKey: adminProcedure
     .input(
       z.strictObject({
-        keyId: storableId('keyId'),
+        keyId: storableIdRef('keyId'),
         /** owner scope: a key that belongs to another employee reads as NOT_FOUND */
-        employeeId: storableId('employeeId').optional(),
+        employeeId: storableIdRef('employeeId').optional(),
       }),
     )
     .handler(async ({ input }) => {

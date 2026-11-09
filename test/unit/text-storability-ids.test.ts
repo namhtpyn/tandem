@@ -18,6 +18,7 @@ vi.mock('../../server/domains/kernel/session-origin', () => ({ isApiKeySession: 
 
 import { appRouter } from '../../server/domains/app.router';
 import { channelsRouter } from '../../server/domains/channels/channels.router';
+import { adminChannelConfigSchema, channelConfigSchema } from '../../server/domains/channels/channels.service';
 import { employeesRouter } from '../../server/domains/employees/employees.router';
 import { environmentsRouter } from '../../server/domains/environments/environments.router';
 import { mcpRouter } from '../../server/domains/mcp/mcp.router';
@@ -83,6 +84,8 @@ type Surface = {
   clearable?: boolean;
   /** true when the field also accepts an explicit null */
   nullable?: boolean;
+  /** true when this is a READ key (a padded value is an ordinary miss) */
+  ref?: boolean;
   /** the value an OMITTED field parses to when the schema carries a default */
   omittedDefault?: unknown;
   /** build the field value from the payload variant (defaults to the string itself) */
@@ -280,7 +283,7 @@ const surfaces: Surface[] = [
     nullable: true,
   }),
   s('environments.remove:id', environmentsRouter.remove, { id: 'x' }, 'id'),
-  s('environments.probe:id', environmentsRouter.probe, { id: 'x' }, 'id'),
+  s('environments.probe:id', environmentsRouter.probe, { id: 'x' }, 'id', { ref: true }),
 
   // ---- mcp registry + bindings ----
   s('mcp.registryCreate:oauthClientSecretId', mcpRouter.registryCreate, { name: 'n' }, 'oauthClientSecretId', {
@@ -512,13 +515,21 @@ type ZodDef = {
   left?: unknown;
   right?: unknown;
   getter?: () => unknown;
+  in?: unknown;
 };
 
 function unwrapDef(schema: unknown): ZodDef | null {
   let def = (schema as { _zod?: { def?: ZodDef } })?._zod?.def;
   for (let guard = 0; guard < 10 && def; guard += 1) {
     const type = def.type;
-    if (type === 'optional' || type === 'nullable' || type === 'default' || type === 'readonly') {
+    if (
+      type === 'optional' ||
+      type === 'nullable' ||
+      type === 'default' ||
+      type === 'readonly' ||
+      type === 'catch' ||
+      type === 'nonoptional'
+    ) {
       def = (def.innerType as { _zod?: { def?: ZodDef } })?._zod?.def;
     } else if (type === 'pipe') {
       def = (def.out as { _zod?: { def?: ZodDef } })?._zod?.def;
@@ -530,14 +541,35 @@ function unwrapDef(schema: unknown): ZodDef | null {
 }
 
 /** id-shaped leaf names: the id class plus the reference names the SPEC sweeps */
-const REFERENCE_LEAF = /(^id$|Ids?$|^status$|^model$)/;
+const REFERENCE_LEAF = /(^id$|Ids?$|^status$|^model$|^reviewers$)/;
 
 /** id-ish text leaves as FULL dotted paths (array indices dropped — they are
  *  positions, not field identity; a record/tuple value keeps a '*' segment) */
 function collectIdLeafPaths(schema: unknown, path: string[], out: string[]): void {
+  // a pipe wraps BOTH sides (z.preprocess: in=unknown/out=object, but a
+  // z.string().transform() is in=string/out=transform) — walk both so neither
+  // half can hide a reference
+  const raw = (schema as { _zod?: { def?: ZodDef } })?._zod?.def;
+  if (raw?.type === 'pipe') {
+    collectIdLeafPaths(raw.in, path, out);
+    collectIdLeafPaths(raw.out, path, out);
+    return;
+  }
   const def = unwrapDef(schema);
   if (!def) return;
   const type = def.type;
+  if (type === 'transform') {
+    // the out-half of a pipe (already walked through `in`); a bare transform
+    // has no input contract to inspect
+    if (def.in) collectIdLeafPaths(def.in, path, out);
+    return;
+  }
+  if (type === 'custom' || type === 'function') {
+    throw new Error(`text-id walk: opaque '${type}' at ${path.join('.') || '<root>'}`);
+  }
+  if ((type === 'array' || type === 'record' || type === 'tuple') && path.length === 0) {
+    throw new Error(`text-id walk: root ${type} input cannot be named`);
+  }
   if (type === 'object' && def.shape) {
     for (const [key, child] of Object.entries(def.shape)) collectIdLeafPaths(child, [...path, key], out);
     return;
@@ -655,6 +687,61 @@ describe('the id table covers the app router (a missing surface reds the suite, 
       expect(roots.has(root), `router '${root}' contributed no procedures to the walk`).toBe(true);
     }
   });
+
+  it('the table rows are names for the fields they actually drive', () => {
+    for (const surface of surfaces) {
+      const [, labelField = ''] = surface.surface.split(':');
+      expect(labelField.split('.').pop(), `${surface.surface} label names its field`).toBe(surface.field);
+    }
+    expect(new Set(surfaces.map(coverageKey)).size, 'two rows cover the same leaf').toBe(surfaces.length);
+  });
+
+  it('every table procedure is one the app router mounts', () => {
+    // os.router() wraps each procedure, so identity cannot be compared — the
+    // NAME is the mount surface: unmounting a router removes its names
+    const mounted = new Set(routerIdLeaves().map((entry) => entry.name));
+    for (const surface of surfaces) {
+      expect(mounted.has(surface.surface.split(':')[0]), `${surface.surface} is mounted`).toBe(true);
+    }
+  });
+
+  it('the walk finds the full leaf population (a dead walk cannot pass)', () => {
+    const total = routerIdLeaves().reduce((sum, entry) => sum + entry.leaves.length, 0);
+    expect(total).toBeGreaterThan(110);
+  });
+
+  it('every exemption names a live leaf and never also a table row', () => {
+    const discovered = new Set(
+      routerIdLeaves().flatMap((entry) => entry.leaves.map((leaf) => `${entry.name}:${leaf}`)),
+    );
+    const covered = new Set(surfaces.map(coverageKey));
+    for (const key of Object.keys(EXEMPT_ID_LEAVES)) {
+      expect(discovered.has(key), `${key} is a live leaf`).toBe(true);
+      expect(covered.has(key), `${key} is not also a table row`).toBe(false);
+    }
+  });
+});
+
+describe('channel config: the write edge guards, the stored-config parser stays tolerant (#386 r4)', () => {
+  const entry = (tokenSecretId: string, platformUserId: string) => ({
+    kind: 'matrix',
+    enabled: false,
+    homeserverUrl: 'https://matrix.example.org',
+    tokenSecretId,
+    bindings: [{ platformUserId, userId: USER_UUID }],
+    defaultAssigneeId: null,
+  });
+
+  it('the admin write schema refuses unstorable text ids', () => {
+    expect(adminChannelConfigSchema.safeParse([entry(NUL, 'u')]).success).toBe(false);
+    expect(adminChannelConfigSchema.safeParse([entry('s', LONE_HIGH)]).success).toBe(false);
+  });
+
+  it('the runtime parser still accepts a config an older build stored (JSON escapes the bytes)', () => {
+    // the stored row is legal UTF-8 text (`\ud800` escape); refusing it here
+    // would fail the integrity probe and 503 /health/ready
+    expect(channelConfigSchema.safeParse(entry(LONE_HIGH, NUL)).success).toBe(true);
+  });
 });
 
 describe('the id surface table points at the procedure its label names (#386)', () => {
@@ -690,16 +777,22 @@ describe('the wired id schema keeps its own contract (#386: accept / blank / cle
             .join(' | ');
           expect(messages, `${surface.surface} blank message`).toContain(`${surface.field} must not be blank`);
         }
-        // a PADDED id misses its own row in a JS set compare — the store-key
-        // writes would mint a fresh id instead of updating the named row
+        // a PADDED id misses its own row in a JS set compare — a store key
+        // (`id` / `nextIds`) would mint a fresh row instead of updating the
+        // named one, so those refuse; a READ key stays an ordinary miss
+        const padRefused = (surface.field === 'id' || surface.field === 'nextIds') && surface.ref !== true;
         const padded = schema().safeParse(payload(surface, ' a '));
-        expect(padded.success, `${surface.surface} padded id`).toBe(false);
-        const paddedMessages = ((padded as { error?: { issues?: { message?: string }[] } }).error?.issues ?? [])
-          .map((issue) => issue.message ?? '')
-          .join(' | ');
-        expect(paddedMessages, `${surface.surface} padded message`).toContain(
-          `${surface.field} must not be padded with whitespace`,
-        );
+        expect(padded.success, `${surface.surface} padded id (${padRefused ? 'refused' : 'a miss'})`).toBe(!padRefused);
+        if (padRefused) {
+          const paddedMessages = ((padded as { error?: { issues?: { message?: string }[] } }).error?.issues ?? [])
+            .map((issue) => issue.message ?? '')
+            .join(' | ');
+          expect(paddedMessages, `${surface.surface} padded message`).toContain(
+            `${surface.field} must not be padded with whitespace`,
+          );
+          // an invisible EDGE char is the same mint hazard as a space
+          expect(schema().safeParse(payload(surface, '\u200bbacklog')).success).toBe(false);
+        }
       }
     });
 

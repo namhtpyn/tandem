@@ -2,7 +2,7 @@
 import { z } from 'zod';
 
 import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
-import { storable, storableId } from '#shared/utils/storable-text';
+import { storable, storableId, storableIdRef } from '#shared/utils/storable-text';
 
 export const environmentInput = z.strictObject({
   name: storable('name', z.string().min(1).max(64)),
@@ -13,7 +13,7 @@ export const environmentInput = z.strictObject({
     .refine((p) => Number.parseInt(p, 10) <= 65535, 'port must be 1-65535')
     .default('22'),
   username: z.string().regex(/^[a-zA-Z0-9._][a-zA-Z0-9._-]{0,63}$/, 'ssh-safe username'),
-  secretId: storableId('secretId').nullable().default(null),
+  secretId: storableIdRef('secretId').nullable().default(null),
   secretUsage: z.enum(SECRET_USAGE).default(SECRET_USAGE.SSH_KEY),
 });
 

@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
-import { storable, storableId } from '#shared/utils/storable-text';
+import { storable, storableId, storableIdRef } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import {
@@ -138,7 +138,7 @@ export const environmentsRouter = os.router({
     return { ok: true };
   }),
 
-  probe: adminProcedure.input(z.strictObject({ id: storableId('id') })).handler(async ({ input }) => {
+  probe: adminProcedure.input(z.strictObject({ id: storableIdRef('id') })).handler(async ({ input }) => {
     const rows = await db.query.environments.findMany({
       columns: { host: true, port: true, username: true, secretId: true, secretUsage: true },
       where: { id: { eq: input.id } },

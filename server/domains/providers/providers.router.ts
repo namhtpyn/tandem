@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import { ALL_ENDPOINTS, isAnthropicWire, atMostOneModelsEndpoint } from '#shared/api-styles';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
-import { hasUnstorableText, storable, storableId, unstorableMessage } from '#shared/utils/storable-text';
+import { hasUnstorableText, storable, storableId, storableIdRef, unstorableMessage } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import { modelProviders as modelProvidersTable } from '../../db/schema';
@@ -104,8 +104,8 @@ export const providersRouter = os.router({
   models: adminProcedure
     .input(
       z.strictObject({
-        providerId: storableId('providerId'),
-        keySecretId: storableId('keySecretId').optional(),
+        providerId: storableIdRef('providerId'),
+        keySecretId: storableIdRef('keySecretId').optional(),
       }),
     )
     .handler(async ({ input }): Promise<{ models: string[] }> => {

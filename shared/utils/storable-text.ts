@@ -47,22 +47,33 @@ export function storableText(field: string, max?: number) {
   return storable(field, max === undefined ? base : base.max(max));
 }
 
-/** characters that render as nothing — a whitespace-only id is the same
- *  create-a-row hazard as '' at the two upsert-by-id writes (they trim) */
-const BLANK_ID = /^[\s\u200b\u180e\u2060\ufeff]*$/;
+/** blank = nothing but whitespace / default-ignorable code points (ZWSP, ZWNJ,
+ *  ZWJ, word joiner, BOM, format chars) — a blank id trims into a NEW row at
+ *  the upsert-by-id writes and can never name one */
+const BLANK_ID = /^[\s\p{Default_Ignorable_Code_Point}]*$/u;
+/** a padded id (invisible/space at either edge) misses its own row in a JS set
+ *  compare, so the store-key writes mint a fresh id; interior invisibles stay legal */
+const PAD_ID = /^[\s\p{Default_Ignorable_Code_Point}]|[\s\p{Default_Ignorable_Code_Point}]$/u;
 
-/** a text-typed id parameter (read key, write target, store key or filter):
- *  a non-blank, unpadded, storable string. Blank/invisible-only ids are refused
- *  because the upsert-by-id writes trim them into a NEW row, and a padded id
- *  misses its own row in a JS set compare (the store-key writes mint a fresh
- *  id when the compare misses). */
+/** a text-typed id parameter (write target, store key): non-blank, unpadded,
+ *  storable. Never a new-row mint, never a silent rewrite. */
 export function storableId(field: string, max?: number) {
   const base = max === undefined ? z.string() : z.string().max(max);
   return storable(
     field,
     base
       .refine((value) => !BLANK_ID.test(value), `${field} must not be blank`)
-      .refine((value) => value === value.trim(), `${field} must not be padded with whitespace`),
+      .refine((value) => !PAD_ID.test(value), `${field} must not be padded with whitespace`),
+  );
+}
+
+/** a READ key / list filter: refuses unstorable text and a blank id, but a
+ *  padded value stays an ordinary miss (SPEC: a filter is not a lookup) */
+export function storableIdRef(field: string, max?: number) {
+  const base = max === undefined ? z.string() : z.string().max(max);
+  return storable(
+    field,
+    base.refine((value) => !BLANK_ID.test(value), `${field} must not be blank`),
   );
 }
 

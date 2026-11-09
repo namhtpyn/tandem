@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
-import { storable, storableId } from '#shared/utils/storable-text';
+import { storable, storableId, storableIdRef } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import { projects as projectsTable, taskStatuses as taskStatusesTable } from '../../db/schema';
@@ -135,7 +135,7 @@ export const statusesRouter = os.router({
    *  No-op when a Jev key isn't configured or Jev is unsure — the task
    *  stays unassigned for a human decision. */
   assign: employeeProcedure
-    .input(z.strictObject({ taskId: storableId('taskId') }))
+    .input(z.strictObject({ taskId: storableIdRef('taskId') }))
     .handler(async ({ input, context }) => {
       const tRows = await db.query.tasks.findMany({
         columns: { id: true, title: true, description: true, projectId: true },
