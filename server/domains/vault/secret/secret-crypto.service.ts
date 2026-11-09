@@ -54,8 +54,14 @@ export function decryptSecret(envelope: string) {
   return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
 }
 
-/** Display hint: last 4 chars of the plaintext; secrets <=8 chars get NO hint —
- * a 4-char peek at a short secret reveals half of it or more. */
+/** Display hint: last 4 characters of the plaintext; secrets <=8 chars get NO
+ * hint — a 4-char peek at a short secret reveals half of it or more. Sliced by
+ * CODE POINTS: a UTF-16 `slice(-4)` can start on the low half of a surrogate
+ * pair and leave a lone surrogate that the driver silently rewrites to U+FFFD
+ * (TEXT-STORABILITY LAW — a legal astral secret must not corrupt its own hint). */
 export function lastFourHint(plaintext: string) {
-  return plaintext.length <= 8 ? '' : plaintext.slice(-4);
+  // gate and slice must count the SAME unit — a UTF-16 `.length` gate over a
+  // code-point slice lets a 5-character astral secret leak 4 of its 5 chars
+  const chars = [...plaintext];
+  return chars.length <= 8 ? '' : chars.slice(-4).join('');
 }

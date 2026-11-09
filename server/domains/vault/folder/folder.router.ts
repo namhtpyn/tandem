@@ -7,16 +7,17 @@ import { z } from 'zod';
 const listFoldersPagedInput = z.object({
   page: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(100).default(10),
-  q: z.string().trim().max(60).optional(),
+  q: storable('q', z.string().trim().max(60)).optional(),
 });
 
 const listFolderOptionsInput = z.object({
   page: z.number().int().min(1).optional(),
   pageSize: z.number().int().min(1).max(100).optional(),
-  q: z.string().trim().optional(),
+  q: storable('q', z.string().trim()).optional(),
 });
 
 import { CHANGE_RESOURCE } from '#shared/enums';
+import { storable } from '#shared/utils/storable-text';
 
 import { adminProcedure, liveGenerator } from '../../kernel/kernel';
 import { listFolders, listFoldersPaged, listFolderOptions, saveFolder, removeFolder } from './folder.service';
@@ -36,7 +37,7 @@ export const folderRouter = os.router({
     .input(
       z.strictObject({
         id: z.string().min(1).optional(),
-        name: z.string().min(1).max(60),
+        name: storable('name', z.string().min(1).max(60)),
       }),
     )
     .handler(({ input }) => saveFolder(input)),

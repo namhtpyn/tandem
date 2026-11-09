@@ -9,9 +9,8 @@ import { createProcedureClient } from '@orpc/server';
 import { describe, expect, it } from 'vitest';
 
 import { ROLE } from '#shared/enums';
-import { hasUnstorableText } from '#shared/utils/storable-text';
+import { hasUnstorableText, storableOptionalText, storableText } from '#shared/utils/storable-text';
 
-import { storableOptionalText, storableText } from '../../server/domains/employees/employee-text';
 import { employeesRouter } from '../../server/domains/employees/employees.router';
 
 const NUL = 'A\u0000B';

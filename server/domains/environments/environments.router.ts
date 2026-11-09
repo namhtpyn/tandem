@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { CHANGE_RESOURCE, CHANGE_ACTION } from '#shared/enums';
 import { SECRET_USAGE, type SecretUsage } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
+import { storable } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import {
@@ -31,7 +32,7 @@ export const environmentsRouter = os.router({
       z.object({
         page: z.number().int().min(1).default(1),
         pageSize: z.number().int().min(1).max(100).default(10),
-        q: z.string().trim().optional(),
+        q: storable('q', z.string().trim()).optional(),
       }),
     )
     .handler(({ input }) => listEnvironmentsPaged(input)),

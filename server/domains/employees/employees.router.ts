@@ -10,7 +10,7 @@ import type { ApiKeyRow, EmployeeRow } from '#shared/types';
 import { escapeIlike } from '#shared/utils/escape-ilike';
 import { isUuid } from '#shared/utils/is-uuid';
 import { nonNull } from '#shared/utils/non-null';
-import { hasUnstorableText } from '#shared/utils/storable-text';
+import { hasUnstorableText, storable, storableOptionalText, storableText } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import {
@@ -26,7 +26,6 @@ import {
 import { requireUuid } from '../kernel/id-shape';
 import { ORPCError, adminProcedure, liveGenerator, protectedProcedure, publishChange } from '../kernel/kernel';
 import { assertAccessKeyName, derivedAccessKeyName } from './access-key-name';
-import { storableOptionalText, storableText } from './employee-text';
 
 const ACP_EXECUTABLE_RE = /^[A-Za-z0-9_@/.-]+(?: [A-Za-z0-9_@/.-]+)*$/;
 
@@ -308,7 +307,7 @@ export const employeesRouter = os.router({
       z.object({
         page: z.number().int().min(1).default(1),
         pageSize: z.number().int().min(1).max(100).default(20),
-        q: z.string().trim().optional(),
+        q: storable('q', z.string().trim()).optional(),
       }),
     )
     .handler(({ input }) => listEmployeesPaged(input)),

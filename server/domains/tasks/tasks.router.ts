@@ -15,6 +15,7 @@ import {
 import type { TaskRow, TaskRowFull } from '#shared/types';
 import { isUuid } from '#shared/utils/is-uuid';
 import { nonNull } from '#shared/utils/non-null';
+import { storable } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import {
@@ -393,8 +394,8 @@ const updateInput = z.preprocess(
   },
   z.strictObject({
     id: z.string().min(1),
-    title: z.string().min(1).max(200).optional(),
-    description: z.string().max(10_000).nullable().optional(),
+    title: storable('title', z.string().min(1).max(200)).optional(),
+    description: storable('description', z.string().max(10_000).nullable().optional()),
     projectId: z.string().min(1).nullable().optional(),
     assigneeId: z.string().min(1).nullable().optional(),
     ownerId: z.string().min(1).nullable().optional(),
@@ -490,7 +491,7 @@ export const tasksRouter = os.router({
       z.object({
         page: z.number().int().min(1).default(1),
         pageSize: z.number().int().min(1).max(100).default(20),
-        q: z.string().trim().optional(),
+        q: storable('q', z.string().trim()).optional(),
         statusId: z.string().min(1).optional(),
         projectId: z.string().min(1).optional(),
         // blank/non-uuid values are a miss, not an error (ASSIGNEE SCOPE LAW):
@@ -511,8 +512,8 @@ export const tasksRouter = os.router({
   create: employeeProcedure
     .input(
       z.strictObject({
-        title: z.string().min(1).max(200),
-        description: z.string().max(10_000).optional(),
+        title: storable('title', z.string().min(1).max(200)),
+        description: storable('description', z.string().max(10_000)).optional(),
         projectId: z.string().min(1).nullable().optional(),
         assigneeId: z.string().min(1).nullable().optional(),
         ownerId: z.string().min(1).nullable().optional(),
@@ -732,7 +733,7 @@ export const tasksRouter = os.router({
 
   /** confirm an agent proposal (single writer executes: creates subtasks / reassigns) */
   confirmProposal: employeeProcedure
-    .input(z.object({ proposalId: z.string().min(1), note: z.string().max(2000).optional() }))
+    .input(z.object({ proposalId: z.string().min(1), note: storable('note', z.string().max(2000)).optional() }))
     .handler(async ({ input, context }) => {
       const me = await selfIdOf(context);
       // runWorkflow maps service errors (the RUN LOCK refusal among them) to
@@ -742,14 +743,14 @@ export const tasksRouter = os.router({
 
   /** reject an agent proposal (note rides the next brief to prevent re-propose loops) */
   rejectProposal: employeeProcedure
-    .input(z.object({ proposalId: z.string().min(1), note: z.string().max(2000).optional() }))
+    .input(z.object({ proposalId: z.string().min(1), note: storable('note', z.string().max(2000)).optional() }))
     .handler(async ({ input, context }) => {
       const me = await selfIdOf(context);
       return rejectProposal(input.proposalId, me, input.note ?? '');
     }),
 
   ask: employeeProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: z.string().min(1).max(4_000) }))
+    .input(z.strictObject({ taskId: z.string().min(1), body: storable('body', z.string().min(1).max(4_000)) }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
@@ -758,7 +759,7 @@ export const tasksRouter = os.router({
 
   /** a plain conversation note: thread-only, no state change */
   note: employeeProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: z.string().min(1).max(10_000) }))
+    .input(z.strictObject({ taskId: z.string().min(1), body: storable('body', z.string().min(1).max(10_000)) }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
@@ -774,7 +775,7 @@ export const tasksRouter = os.router({
       z.strictObject({
         taskId: z.string().min(1),
         toEmployeeId: z.string().min(1),
-        body: z.string().max(4_000).optional(),
+        body: storable('body', z.string().max(4_000)).optional(),
       }),
     )
     .handler(async ({ input, context }) => {
@@ -789,7 +790,7 @@ export const tasksRouter = os.router({
 
   /** anyone in the chain answers → assignee resumes */
   answer: employeeProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: z.string().min(1).max(10_000) }))
+    .input(z.strictObject({ taskId: z.string().min(1), body: storable('body', z.string().min(1).max(10_000)) }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
@@ -798,7 +799,7 @@ export const tasksRouter = os.router({
 
   /** assignee submits the result for review (or done when no reviewers) */
   submit: employeeProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: z.string().max(10_000).optional() }))
+    .input(z.strictObject({ taskId: z.string().min(1), body: storable('body', z.string().max(10_000)).optional() }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
@@ -807,7 +808,7 @@ export const tasksRouter = os.router({
 
   /** reviewer approves (unanimous → done) — HUMAN-only verdict */
   approve: humanProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: z.string().max(4_000).optional() }))
+    .input(z.strictObject({ taskId: z.string().min(1), body: storable('body', z.string().max(4_000)).optional() }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
@@ -816,7 +817,7 @@ export const tasksRouter = os.router({
 
   /** reviewer requests changes → assignee back to work — HUMAN-only verdict */
   requestChanges: humanProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: z.string().min(1).max(10_000) }))
+    .input(z.strictObject({ taskId: z.string().min(1), body: storable('body', z.string().min(1).max(10_000)) }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
@@ -825,7 +826,7 @@ export const tasksRouter = os.router({
 
   /** reviewer's reject vote — unanimous reject (round end) cancels the task — HUMAN-only verdict */
   reject: humanProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: z.string().max(4_000).optional() }))
+    .input(z.strictObject({ taskId: z.string().min(1), body: storable('body', z.string().max(4_000)).optional() }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       /* v8 ignore next -- protectedProcedure already rejects sessionless callers */
@@ -841,7 +842,7 @@ export const tasksRouter = os.router({
   /** abandon = cancel: review rounds (reviewer/owner) and work states (owner or
    *  assignee, never over a live run — RUN LOCK) land the same terminal */
   abandon: employeeProcedure
-    .input(z.strictObject({ taskId: z.string().min(1), body: z.string().max(4_000).optional() }))
+    .input(z.strictObject({ taskId: z.string().min(1), body: storable('body', z.string().max(4_000)).optional() }))
     .handler(async ({ input, context }) => {
       const selfId = await selfIdOf(context);
       if (!selfId) throw new ORPCError('UNAUTHORIZED', { message: 'no session' });
