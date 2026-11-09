@@ -6,7 +6,7 @@
 // while the two upsert-by-id writes would create a NEW row under the corrupted
 // id). Handler-level pins below call the REAL oRPC procedures; input validation
 // fires before any db access, so a refusal never needs a database. The accept /
-// clear / null / cap axes ride the same wired input schema.
+// blank / clear / null / cap axes ride the same wired input schema.
 import { createProcedureClient } from '@orpc/server';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -16,6 +16,7 @@ import { ROLE } from '#shared/enums';
 // about schema edges, and a unit test must not depend on a live database
 vi.mock('../../server/domains/kernel/session-origin', () => ({ isApiKeySession: async () => false }));
 
+import { channelsRouter } from '../../server/domains/channels/channels.router';
 import { environmentsRouter } from '../../server/domains/environments/environments.router';
 import { mcpRouter } from '../../server/domains/mcp/mcp.router';
 import { projectsRouter } from '../../server/domains/projects/projects.router';
@@ -58,6 +59,8 @@ function schemaOf(procedure: unknown): InputSchema {
   return orpc.inputSchemas[0] as InputSchema;
 }
 
+type Path = (string | number)[];
+
 type Surface = {
   /** procedure label used in the assertion output */
   surface: string;
@@ -65,8 +68,10 @@ type Surface = {
   run: (input: unknown) => Promise<unknown>;
   /** a minimal input that passes every OTHER rule (validation only — the handler never runs on refusal) */
   base: Record<string, unknown>;
-  /** the text field under test */
+  /** the text field under test (used for the message and as the default path) */
   field: string;
+  /** where the id sits when it is not a top-level field */
+  leaf?: Path;
   /** a pre-existing cap on the id value, when the field has one */
   cap?: number;
   /** true when the field is optional and its omitted path must stay open */
@@ -79,6 +84,8 @@ type Surface = {
   valueFor?: (value: string) => unknown;
   /** the input key carrying the value when it differs from the field label */
   inputKey?: string;
+  /** UUID-FILTER LAW surfaces deliberately accept a blank id (blank = empty page / miss) */
+  blankAllowed?: boolean;
 };
 
 const s = (
@@ -96,12 +103,41 @@ const s = (
   ...extra,
 });
 
+/** set a leaf, creating plain-object parents along the way */
+function setAt<T>(base: T, path: Path, value: unknown): T {
+  const out = structuredClone(base) as unknown as Record<string | number, unknown>;
+  let node = out;
+  for (const key of path.slice(0, -1)) {
+    const next = node[key];
+    node[key] = next === undefined ? {} : next;
+    node = node[key] as Record<string | number, unknown>;
+  }
+  node[path[path.length - 1] as string | number] = value;
+  return out as unknown as T;
+}
+
+function deleteAt<T>(base: T, path: Path): T {
+  const out = structuredClone(base) as unknown as Record<string | number, unknown>;
+  let node = out;
+  for (const key of path.slice(0, -1)) node = node[key] as Record<string | number, unknown>;
+  delete node[path[path.length - 1] as string | number];
+  return out as unknown as T;
+}
+
 const providerBase = () => ({ label: 'L', baseUrl: 'https://provider.test', endpoints: ['OPENAI-COMPLETIONS'] });
 const envBase = () => ({ name: 'n', host: 'host.test', port: '22', username: 'u' });
-const llmRef = (field: 'providerId' | 'model' | 'keySecretId') => (value: string) => ({
+const assignment = (field: 'providerId' | 'model' | 'keySecretId', value: string) => ({
   providerId: field === 'providerId' ? value : 'p',
   model: field === 'model' ? value : 'm',
   keySecretId: field === 'keySecretId' ? value : 'k',
+});
+const channelEntry = (tokenSecretId = 'secret-id') => ({
+  kind: 'matrix',
+  enabled: false,
+  homeserverUrl: 'https://matrix.example.org',
+  tokenSecretId,
+  bindings: [],
+  defaultAssigneeId: null,
 });
 
 const surfaces: Surface[] = [
@@ -129,7 +165,10 @@ const surfaces: Surface[] = [
   s('tasks.setStatus:status', tasksRouter.setStatus, { id: 'x', status: 's' }, 'status'),
   s('tasks.listPaged:statusId', tasksRouter.listPaged, { q: 'a' }, 'statusId', { clearable: true }),
   s('tasks.listPaged:projectId', tasksRouter.listPaged, { q: 'a' }, 'projectId', { clearable: true }),
-  s('tasks.listPaged:assigneeId', tasksRouter.listPaged, { q: 'a' }, 'assigneeId', { clearable: true }),
+  s('tasks.listPaged:assigneeId', tasksRouter.listPaged, { q: 'a' }, 'assigneeId', {
+    clearable: true,
+    blankAllowed: true,
+  }),
   s('tasks.subtasks:taskId', tasksRouter.subtasks, { taskId: 'x' }, 'taskId'),
   s('tasks.assignments:taskId', tasksRouter.assignments, { taskId: 'x' }, 'taskId'),
   s('tasks.proposals:taskId', tasksRouter.proposals, { taskId: 'x' }, 'taskId'),
@@ -152,24 +191,15 @@ const surfaces: Surface[] = [
   s(
     'tasks.threadOlderPage:taskId',
     tasksRouter.threadOlderPage,
-    {
-      taskId: 'x',
-      before: { createdAt: 'c', id: 'i' },
-    },
+    { taskId: 'x', before: { createdAt: 'c', id: 'i' } },
     'taskId',
   ),
   s(
     'tasks.threadOlderPage:before.id',
     tasksRouter.threadOlderPage,
-    {
-      taskId: 'x',
-      before: { createdAt: 'c', id: 'i' },
-    },
+    { taskId: 'x', before: { createdAt: 'c', id: 'i' } },
     'id',
-    {
-      inputKey: 'before',
-      valueFor: (v) => ({ createdAt: '2026-01-01T00:00:00.000Z', id: v }),
-    },
+    { leaf: ['before', 'id'] },
   ),
   s('tasks.runTranscript:runId', tasksRouter.runTranscript, { runId: 'r' }, 'runId'),
   s('tasks.confirmProposal:proposalId', tasksRouter.confirmProposal, { proposalId: 'p' }, 'proposalId'),
@@ -240,6 +270,10 @@ const surfaces: Surface[] = [
     nullable: true,
   }),
   s('mcp.registryUpdate:id', mcpRouter.registryUpdate, { id: 'x' }, 'id'),
+  s('mcp.registryUpdate:oauthClientSecretId', mcpRouter.registryUpdate, { id: 'x' }, 'oauthClientSecretId', {
+    clearable: true,
+    nullable: true,
+  }),
   s('mcp.registryRemove:id', mcpRouter.registryRemove, { id: 'x' }, 'id'),
   s('mcp.bindingsListByServer:serverId', mcpRouter.bindingsListByServer, { serverId: 's' }, 'serverId'),
   s('mcp.bindingsSet:employeeId', mcpRouter.bindingsSet, { employeeId: 'e', serverId: 's' }, 'employeeId'),
@@ -250,49 +284,58 @@ const surfaces: Surface[] = [
   }),
   s('mcp.bindingsRemove:employeeId', mcpRouter.bindingsRemove, { employeeId: 'e', serverId: 's' }, 'employeeId'),
   s('mcp.bindingsRemove:serverId', mcpRouter.bindingsRemove, { employeeId: 'e', serverId: 's' }, 'serverId'),
-  s('mcp.bindingsList:employeeId', mcpRouter.bindingsList, { employeeId: 'e' }, 'employeeId'),
-  s('mcp.probe:employeeId', mcpRouter.probe, { employeeId: 'e', serverId: 's' }, 'employeeId'),
+  s('mcp.bindingsList:employeeId', mcpRouter.bindingsList, { employeeId: 'e' }, 'employeeId', { blankAllowed: true }),
+  s('mcp.probe:employeeId', mcpRouter.probe, { employeeId: 'e', serverId: 's' }, 'employeeId', {
+    blankAllowed: true,
+  }),
   s('mcp.probe:serverId', mcpRouter.probe, { employeeId: 'e', serverId: 's' }, 'serverId'),
   s('mcp.oauthConnect:employeeId', mcpRouter.oauthConnect, { employeeId: 'e', serverId: 's' }, 'employeeId'),
   s('mcp.oauthConnect:serverId', mcpRouter.oauthConnect, { employeeId: 'e', serverId: 's' }, 'serverId'),
 
+  // ---- channels (config entries validated by the shared schema) ----
+  s('channels.update:tokenSecretId', channelsRouter.update, { channels: [channelEntry()] }, 'tokenSecretId', {
+    leaf: ['channels', 0, 'tokenSecretId'],
+  }),
+
   // ---- settings assignment references ----
-  s('settings.update:internalLlm.providerId', settingsRouter.update, {}, 'providerId', {
-    inputKey: 'internalLlm',
-    clearable: true,
-    nullable: true,
-    valueFor: llmRef('providerId'),
+  s(
+    'settings.update:internalLlm.providerId',
+    settingsRouter.update,
+    { internalLlm: assignment('providerId', 'p') },
+    'providerId',
+    { leaf: ['internalLlm', 'providerId'] },
+  ),
+  s('settings.update:internalLlm.model', settingsRouter.update, { internalLlm: assignment('model', 'm') }, 'model', {
+    leaf: ['internalLlm', 'model'],
   }),
-  s('settings.update:internalLlm.model', settingsRouter.update, {}, 'model', {
-    inputKey: 'internalLlm',
-    clearable: true,
-    nullable: true,
-    valueFor: llmRef('model'),
-  }),
-  s('settings.update:internalLlm.keySecretId', settingsRouter.update, {}, 'keySecretId', {
-    inputKey: 'internalLlm',
-    clearable: true,
-    nullable: true,
-    valueFor: llmRef('keySecretId'),
-  }),
-  s('settings.update:internalDecision.providerId', settingsRouter.update, {}, 'providerId', {
-    inputKey: 'internalDecision',
-    clearable: true,
-    nullable: true,
-    valueFor: llmRef('providerId'),
-  }),
-  s('settings.update:internalDecision.model', settingsRouter.update, {}, 'model', {
-    inputKey: 'internalDecision',
-    clearable: true,
-    nullable: true,
-    valueFor: llmRef('model'),
-  }),
-  s('settings.update:internalDecision.keySecretId', settingsRouter.update, {}, 'keySecretId', {
-    inputKey: 'internalDecision',
-    clearable: true,
-    nullable: true,
-    valueFor: llmRef('keySecretId'),
-  }),
+  s(
+    'settings.update:internalLlm.keySecretId',
+    settingsRouter.update,
+    { internalLlm: assignment('keySecretId', 'k') },
+    'keySecretId',
+    { leaf: ['internalLlm', 'keySecretId'] },
+  ),
+  s(
+    'settings.update:internalDecision.providerId',
+    settingsRouter.update,
+    { internalDecision: assignment('providerId', 'p') },
+    'providerId',
+    { leaf: ['internalDecision', 'providerId'] },
+  ),
+  s(
+    'settings.update:internalDecision.model',
+    settingsRouter.update,
+    { internalDecision: assignment('model', 'm') },
+    'model',
+    { leaf: ['internalDecision', 'model'] },
+  ),
+  s(
+    'settings.update:internalDecision.keySecretId',
+    settingsRouter.update,
+    { internalDecision: assignment('keySecretId', 'k') },
+    'keySecretId',
+    { leaf: ['internalDecision', 'keySecretId'] },
+  ),
 ];
 
 const routers: Record<string, unknown> = {
@@ -303,6 +346,7 @@ const routers: Record<string, unknown> = {
   mcp: mcpRouter,
   providers: providersRouter,
   environments: environmentsRouter,
+  channels: channelsRouter,
   settings: settingsRouter,
 };
 
@@ -313,6 +357,14 @@ function procedureForLabel(label: string): unknown {
   let node: unknown = routers[root];
   for (const part of rest) node = (node as Record<string, unknown>)[part];
   return node;
+}
+
+/** the input the surface's field carries for a given variant value */
+function payload(surface: Surface, value: unknown): Record<string, unknown> {
+  if (surface.leaf) return setAt(surface.base, surface.leaf, value);
+  const key = surface.inputKey ?? surface.field;
+  const mapped = (surface.valueFor ?? ((v: string) => v))(value as string);
+  return { ...surface.base, [key]: mapped };
 }
 
 type Refusal = { code?: string; data?: { issues?: { path?: (string | number)[]; message?: string }[] } };
@@ -330,12 +382,7 @@ describe('every text-typed id refuses unstorable text (handler-level, #386)', ()
   for (const surface of surfaces) {
     it(`${surface.surface}: NUL and a lone surrogate answer BAD_REQUEST naming the field`, async () => {
       for (const bad of [NUL, LONE_HIGH, LONE_LOW]) {
-        const error = await refusal(() =>
-          surface.run({
-            ...surface.base,
-            [surface.inputKey ?? surface.field]: (surface.valueFor ?? ((v: string) => v))(bad),
-          }),
-        );
+        const error = await refusal(() => surface.run(payload(surface, bad)));
         expect(error.code, `${surface.surface} (${JSON.stringify(bad)})`).toBe('BAD_REQUEST');
         const messages = (error.data?.issues ?? []).map((issue) => issue.message ?? '');
         expect(messages.join(' | ')).toContain(
@@ -351,10 +398,10 @@ describe('the id surface table is unique and counted (#386)', () => {
     expect(new Set(surfaces.map((surface) => surface.surface)).size).toBe(surfaces.length);
   });
 
-  it('the table holds 90 rows — bump the count when you add one', () => {
+  it('the table holds 92 rows — bump the count when you add one', () => {
     // 46 tasks + 4 projects + 4 statuses + 4 providers + 7 vault + 5 environments
-    // + 14 mcp + 6 settings = 90
-    expect(surfaces).toHaveLength(90);
+    // + 15 mcp + 1 channels + 6 settings = 92
+    expect(surfaces).toHaveLength(92);
   });
 });
 
@@ -368,30 +415,32 @@ describe('the id surface table points at the procedure its label names (#386)', 
   }
 });
 
-describe('the wired id schema keeps its own contract (#386: accept / clear / null / cap)', () => {
+describe('the wired id schema keeps its own contract (#386: accept / blank / clear / null / cap)', () => {
   for (const surface of surfaces) {
     const schema = () => schemaOf(surface.procedure);
 
     it(`${surface.surface}: a storable astral id stays accepted`, () => {
-      const value = (surface.valueFor ?? ((v: string) => v))(ASTRAL);
-      expect(schema().safeParse({ ...surface.base, [surface.inputKey ?? surface.field]: value }).success).toBe(true);
+      expect(schema().safeParse(payload(surface, ASTRAL)).success).toBe(true);
+    });
+
+    it(`${surface.surface}: a blank id is ${surface.blankAllowed ? 'accepted (filter law)' : 'refused (no min(1) drop)'}`, () => {
+      // the non-blank half of storableId: swapping it for a bare `storable(...)`
+      // would let '' reach an upsert-by-id write and create a new row
+      expect(schema().safeParse(payload(surface, '')).success).toBe(surface.blankAllowed === true);
     });
 
     if (surface.cap !== undefined) {
       it(`${surface.surface}: the ${surface.cap}-cap literal is exact`, () => {
-        const at = (surface.valueFor ?? ((v: string) => v))('a'.repeat(surface.cap as number));
-        const over = (surface.valueFor ?? ((v: string) => v))('a'.repeat((surface.cap as number) + 1));
-        expect(schema().safeParse({ ...surface.base, [surface.inputKey ?? surface.field]: at }).success).toBe(true);
-        expect(schema().safeParse({ ...surface.base, [surface.inputKey ?? surface.field]: over }).success).toBe(false);
+        expect(schema().safeParse(payload(surface, 'a'.repeat(surface.cap as number))).success).toBe(true);
+        expect(schema().safeParse(payload(surface, 'a'.repeat((surface.cap as number) + 1))).success).toBe(false);
       });
     }
 
     if (surface.clearable) {
       it(`${surface.surface}: the omitted path still parses`, () => {
         const key = surface.inputKey ?? surface.field;
-        const cleared = { ...surface.base };
-        delete cleared[key];
-        const parsed = schema().safeParse(cleared);
+        const path = surface.leaf ?? [key];
+        const parsed = schema().safeParse(deleteAt(surface.base, path));
         expect(parsed.success).toBe(true);
         // success alone is not enough: an `.optional()` -> `.default(x)` swap
         // keeps the parse green while rewriting the stored value on every call
@@ -403,24 +452,23 @@ describe('the wired id schema keeps its own contract (#386: accept / clear / nul
 
     if (!surface.clearable) {
       it(`${surface.surface}: omitting the field is refused (no required -> optional drift)`, () => {
-        const key = surface.inputKey ?? surface.field;
-        const omitted = { ...surface.base };
-        delete omitted[key];
-        expect(schema().safeParse(omitted).success).toBe(false);
+        const path = surface.leaf ?? [surface.inputKey ?? surface.field];
+        expect(schema().safeParse(deleteAt(surface.base, path)).success).toBe(false);
       });
     }
 
     if (!surface.nullable) {
       it(`${surface.surface}: an explicit null is refused (no widening to nullish)`, () => {
-        const key = surface.inputKey ?? surface.field;
-        expect(schema().safeParse({ ...surface.base, [key]: null }).success).toBe(false);
+        const path = surface.leaf ?? [surface.inputKey ?? surface.field];
+        expect(schema().safeParse(setAt(surface.base, path, null)).success).toBe(false);
       });
     }
 
     if (surface.nullable) {
       it(`${surface.surface}: an explicit null still parses`, () => {
         const key = surface.inputKey ?? surface.field;
-        const parsed = schema().safeParse({ ...surface.base, [key]: null });
+        const path = surface.leaf ?? [key];
+        const parsed = schema().safeParse(setAt(surface.base, path, null));
         expect(parsed.success).toBe(true);
         expect((parsed as { data: Record<string, unknown> }).data[key]).toBeNull();
       });

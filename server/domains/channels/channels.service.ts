@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 import { CHANGE_ACTION, CHANGE_RESOURCE, CATEGORY, ROLE } from '#shared/enums';
 import { nonNull } from '#shared/utils/non-null';
+import { storableId } from '#shared/utils/storable-text';
 
 import { db } from '../../db/index';
 import { channelEvents, channelOutbox, channelThreads, tasks } from '../../db/schema';
@@ -48,7 +49,7 @@ export const channelConfigSchema = z.object({
   kind: z.string().min(1), // validated against the adapter REGISTRY at parse
   enabled: z.boolean(),
   homeserverUrl: z.string().url(),
-  tokenSecretId: z.string().min(1),
+  tokenSecretId: storableId('tokenSecretId'),
   // user ids are uuid columns — a non-uuid binding would throw 22P02 on every
   // event and poison the queue, so the parse itself refuses it
   bindings: z.array(z.object({ platformUserId: z.string().min(1), userId: z.string().uuid() })).default([]),

@@ -768,7 +768,8 @@ Rules:
   project (`id`, `parentId`), task-status (`id`, `nextIds[]`), model-provider
   (`id`, `providerId`, `keySecretId`), vault (`id`, `folderId`), environment
   (`id`, `secretId`), MCP registry / binding (`id`, `employeeId`, `serverId`,
-  `secretId`, `oauthClientSecretId`) and settings assignment references
+  `secretId`, `oauthClientSecretId`), channel config (`tokenSecretId`) and
+  settings assignment references
   (`providerId`, `model`, `keySecretId`). The refusal must not be left to the
   comparison shape: an id compared in JS against a loaded set (`tasks.create`
   status; `statuses.save` nextIds — its set is the loaded ids PLUS the
