@@ -10,10 +10,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CATEGORY, REVIEW_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
-import { mockDb, taskReviews as dbTaskReviews } from './helpers/mock-db';
+import {
+  mockDb,
+  taskMessages as dbTaskMessages,
+  taskReviews as dbTaskReviews,
+  taskRuns,
+  taskStatuses as dbTaskStatuses,
+  tasks as dbTasks,
+} from './helpers/mock-db';
 
 const h = vi.hoisted(() => ({
   taskStatus: '' as string,
+  taskFlips: [] as string[],
+  trackTaskStatusOnFlip: false,
   statuses: [] as Array<{ id: string; category: string }>,
   round: 2,
   taskUpdatedAt: new Date('2026-11-08T00:00:00Z'),
@@ -37,19 +46,34 @@ const h = vi.hoisted(() => ({
   resolved: [] as string[],
   notes: [] as Array<{ body: string; payload: Record<string, unknown> }>,
   regated: [] as string[],
+  dispatches: [] as Array<Record<string, unknown>>,
+  aiEmployees: [] as Array<{ userId: string }>,
+  runningReviewRuns: [] as Array<{ id: string }>,
+  statusReadThrows: 0,
+  captureCond: null as unknown,
+  runConds: [] as unknown[],
+  joinConds: [] as Array<{ table: string; cond: unknown }>,
+  stoppedRuns: [] as string[],
+  holdDispatch: false,
+  releaseDispatch: null as null | (() => void),
   published: 0,
   flipWins: true,
   casMiss: false,
 }));
 
 vi.mock('../../server/db/index', async () => {
-  const { tasks, taskReviews, taskObligations } = await import('../../server/db/schema');
+  const { tasks, taskReviews, taskObligations, taskRuns } = await import('../../server/db/schema');
   const rowsThenable = (rows: () => Promise<Array<Record<string, unknown>>>) => {
     const mk = () => ({
       then: (ok?: (v: Array<Record<string, unknown>>) => unknown, err?: (e: unknown) => unknown) =>
         rows().then(ok, err),
       catch: (err: (e: unknown) => unknown) => rows().catch(err),
-      orderBy: () => ({ limit: async () => rows() }),
+      orderBy: () => ({
+        limit: async () => rows(),
+        then: (ok?: (v: Array<Record<string, unknown>>) => unknown, err?: (e: unknown) => unknown) =>
+          rows().then(ok, err),
+        catch: (err: (e: unknown) => unknown) => rows().catch(err),
+      }),
       limit: async () => rows(),
       innerJoin: () => mk(),
     });
@@ -61,10 +85,29 @@ vi.mock('../../server/db/index', async () => {
       select: (arg?: Record<string, unknown>) => ({
         from: (table: unknown) => {
           const node: Record<string, unknown> = {};
+          node.innerJoin = (joinTable: unknown, cond?: unknown) => {
+            if (table === taskRuns) h.joinConds.push({ table: 'join', cond });
+            return node;
+          };
           node.where = (cond: unknown) =>
             rowsThenable(() => {
               const keys = arg ? Object.keys(arg) : [];
-              if (table === tasks) return Promise.resolve([{ status: h.taskStatus, updatedAt: h.taskUpdatedAt }]);
+              if (table === tasks) {
+                if (h.statusReadThrows > 0) {
+                  h.statusReadThrows -= 1;
+                  throw new Error('db down');
+                }
+                return Promise.resolve([{ status: h.taskStatus, updatedAt: h.taskUpdatedAt }]);
+              }
+              if (table === taskRuns) {
+                h.captureCond = cond;
+                h.runConds.push(cond);
+                if (h.runsRequireReviewCategory) {
+                  const cat = h.statuses.find((st) => st.id === h.taskStatus)?.category;
+                  if (cat !== CATEGORY.IN_REVIEW) return Promise.resolve([]);
+                }
+                return Promise.resolve(h.runningReviewRuns);
+              }
               if (table === taskObligations) {
                 if (keys.includes('id') && keys.includes('taskId')) return Promise.resolve(h.answerObligationSelect);
                 if (keys.includes('taskId')) return Promise.resolve(h.answerLeftoverSelect);
@@ -76,7 +119,6 @@ vi.mock('../../server/db/index', async () => {
               if (keys.includes('taskId')) return Promise.resolve(h.leftoverSelect);
               return Promise.resolve(h.reviewReads.shift() ?? []);
             });
-          node.innerJoin = () => node;
           return node;
         },
       }),
@@ -102,7 +144,13 @@ vi.mock('../../server/db/index', async () => {
                 set,
                 cond,
               });
-              if (table === tasks) return h.flipWins ? [{ id: 'task-1' }] : [];
+              if (table === tasks) {
+                if (h.flipWins && typeof set.status === 'string') {
+                  h.taskFlips.push(set.status);
+                  if (h.trackTaskStatusOnFlip) h.taskStatus = set.status;
+                }
+                return h.flipWins ? [{ id: 'task-1' }] : [];
+              }
               // the VERDICT CAS (.returning on a status write) is the only review
               // update that can miss; supersede/note writes always land
               const isVerdictCas =
@@ -121,7 +169,7 @@ vi.mock('../../server/db/index', async () => {
       }),
       query: {
         taskStatuses: { findMany: async () => h.statuses },
-        aiEmployees: { findMany: async () => [] },
+        aiEmployees: { findMany: async () => h.aiEmployees },
         user: { findMany: async () => [] },
       },
     },
@@ -168,7 +216,15 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
 });
 
 vi.mock('../../server/domains/tasks/runner.service', () => ({
-  dispatchTask: async () => {},
+  dispatchTask: async (...args: unknown[]) => {
+    h.dispatches.push(args[2] as Record<string, unknown>);
+    if (h.holdDispatch) await new Promise<void>((resolve) => (h.releaseDispatch = resolve));
+  },
+  stopRunsForRemoval: async (ids: string[]) => {
+    h.stoppedRuns.push(...ids);
+    h.runningReviewRuns = h.runningReviewRuns.filter((r) => !ids.includes(r.id));
+    return ids.length;
+  },
 }));
 
 vi.mock('../../server/domains/tasks/gating.service', () => ({
@@ -178,9 +234,11 @@ vi.mock('../../server/domains/tasks/gating.service', () => ({
 }));
 
 import {
+  dispatchAiReviewTurns,
   openRoundLive,
   prepareReviewerRemoval,
   recordVerdict,
+  runningReviewRunIdsForEmployee,
   settleAllExtinguishedRounds,
   settleExtinguishedRound,
   settleReviewerRemovalRounds,
@@ -199,6 +257,8 @@ function renderCond(cond: unknown): string {
 
 beforeEach(() => {
   h.taskStatus = STATUS.inReview;
+  h.taskFlips = [];
+  h.trackTaskStatusOnFlip = false;
   h.statuses = [
     { id: STATUS.todo, category: CATEGORY.READY },
     { id: STATUS.inReview, category: CATEGORY.IN_REVIEW },
@@ -220,6 +280,16 @@ beforeEach(() => {
   h.resolved = [];
   h.notes = [];
   h.regated = [];
+  h.dispatches = [];
+  h.aiEmployees = [];
+  h.runningReviewRuns = [];
+  h.statusReadThrows = 0;
+  h.captureCond = null;
+  h.runConds = [];
+  h.joinConds = [];
+  h.stoppedRuns = [];
+  h.holdDispatch = false;
+  h.releaseDispatch = null;
   h.published = 0;
   h.flipWins = true;
   h.casMiss = false;
@@ -381,6 +451,7 @@ describe('employee removal halves (#365)', () => {
     h.reviewReads = [
       [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
       [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
     ];
     const settled = await settleReviewerRemovalRounds(
       {
@@ -443,6 +514,7 @@ describe('employee removal halves (#365)', () => {
     h.reviewReads = [
       [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
       [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
     ];
     expect(await settleAllExtinguishedRounds()).toEqual(['task-1', 'task-2']);
   });
@@ -482,5 +554,275 @@ describe('employee removal halves (#365)', () => {
     expect(h.updates.some((u) => u.table === 'taskReviews' && u.set.status === REVIEW_STATUS.SUPERSEDED)).toBe(true);
     expect(h.cancelled).toEqual(['task-1']); // pending approvals cancelled with the residue
     expect(h.updates.some((u) => u.table === 'tasks')).toBe(false); // never a second flip
+  });
+});
+
+describe('removal resumes the sequential review queue (#371)', () => {
+  it('a removal that leaves a live AI reviewer mints the next turn', async () => {
+    // settle half: the round has a live voter (ai-2), so the extinguished-round
+    // matrix no-ops — but nothing is in flight (the removed reviewer owned the
+    // sequential turn), so the removal itself must mint ai-2's turn.
+    h.leftoverSelect = [];
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }], // settleExtinguishedRound: live voter, no void row -> false
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }], // openRoundLive
+      [
+        // dispatchAiReviewTurns: the departing reviewer's void row, then the live AI
+        { status: REVIEW_STATUS.PENDING, reviewerId: null },
+        { status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' },
+      ],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    const settled = await settleReviewerRemovalRounds({
+      taskIds: ['task-1'],
+      reviewRowIds: ['row-void'],
+      obligationIds: [],
+      answerObligations: [],
+    });
+    expect(settled).toEqual([]);
+    expect(h.dispatches).toHaveLength(1);
+    expect(h.dispatches[0]).toMatchObject({ reviewBy: 'ai-2', verdictCorrection: false });
+  });
+
+  it('a human-only round mints nothing (no AI reviewer to run)', async () => {
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'human-1' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'human-1' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'human-1' }],
+    ];
+    h.aiEmployees = [];
+    await settleReviewerRemovalRounds({
+      taskIds: ['task-1'],
+      reviewRowIds: [],
+      obligationIds: [],
+      answerObligations: [],
+    });
+    expect(h.dispatches).toHaveLength(0);
+  });
+
+  it('a settled task mints nothing', async () => {
+    h.taskStatus = STATUS.done;
+    h.reviewReads = [];
+    await settleReviewerRemovalRounds({
+      taskIds: ['task-1'],
+      reviewRowIds: [],
+      obligationIds: [],
+      answerObligations: [],
+    });
+    expect(h.dispatches).toHaveLength(0);
+  });
+});
+
+describe('removal run capture (#370)', () => {
+  it('captures the departing reviewer’s RUNNING review turns and pins the SQL predicate', async () => {
+    h.runningReviewRuns = [{ id: 'run-1' }, { id: 'run-2' }];
+    expect(await runningReviewRunIdsForEmployee('emp-1')).toEqual(['run-1', 'run-2']);
+    // render the FULL capture query — WHERE + all four joins — through real drizzle
+    const { sql, params } = mockDb()
+      .select({ id: taskRuns.id })
+      .from(taskRuns)
+      .innerJoin(dbTaskMessages, h.joinConds[0]!.cond as never)
+      .innerJoin(dbTasks, h.joinConds[1]!.cond as never)
+      .innerJoin(dbTaskStatuses, h.joinConds[2]!.cond as never)
+      .innerJoin(dbTaskReviews, h.joinConds[3]!.cond as never)
+      .where(h.captureCond as never)
+      .toSQL();
+    const rendered = `${sql} ${JSON.stringify(params)}`;
+    expect(h.joinConds).toHaveLength(4);
+    // the employee id + RUNNING status ride the WHERE (a stray capture of every
+    // employee's runs would stop unrelated in-flight turns)
+    expect(rendered).toContain('"employee_id" =');
+    expect(rendered).toContain('emp-1');
+    expect(rendered).toContain('"status" =');
+    expect(rendered).toContain('RUNNING');
+    // the review-vs-work discriminator: only an in_review-category task qualifies
+    expect(rendered).toContain('"task_statuses"."category" =');
+    expect(rendered).toContain('in_review');
+    // …and the run must carry a PENDING review row naming the same reviewer
+    expect(rendered).toContain('"task_reviews"."reviewer_id" =');
+    expect(rendered).toContain('"task_reviews"."status" =');
+    expect(rendered).toContain('PENDING');
+  });
+});
+
+describe('removal resume guards (#371)', () => {
+  const liveOnly = { taskIds: ['task-1'], reviewRowIds: [], obligationIds: [], answerObligations: [] };
+
+  it('a CUSTOM in-review-category status still resumes (category gate, never a seeded id)', async () => {
+    h.statuses = [
+      { id: 'st-custom-review', category: CATEGORY.IN_REVIEW },
+      { id: STATUS.done, category: CATEGORY.DONE },
+    ];
+    h.taskStatus = 'st-custom-review';
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    await settleReviewerRemovalRounds(liveOnly);
+    expect(h.dispatches).toHaveLength(1);
+  });
+
+  it('a live sibling turn suppresses the mint (task-wide sequential, #371 r1)', async () => {
+    // another reviewer's turn is still in flight — the removal must NOT dispatch
+    // an additional reviewer beside it
+    h.runningReviewRuns = [{ id: 'run-live' }];
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      // if the in-flight guard were deleted, the dispatch row read would mint here
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    await settleReviewerRemovalRounds(liveOnly);
+    expect(h.dispatches).toHaveLength(0);
+  });
+
+  it('a settled task mints nothing even with a live pending AI row', async () => {
+    h.taskStatus = STATUS.done;
+    h.statuses = [{ id: STATUS.done, category: CATEGORY.DONE }];
+    // if the category gate were deleted, openRoundLive + dispatch would see these
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    await settleReviewerRemovalRounds(liveOnly);
+    expect(h.dispatches).toHaveLength(0);
+  });
+
+  it('one dispatch per affected task (two eligible tasks -> two dispatches)', async () => {
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    await settleReviewerRemovalRounds({ ...liveOnly, taskIds: ['task-1', 'task-2'] });
+    expect(h.dispatches).toHaveLength(2);
+  });
+
+  it('boot resume re-mints a live round left by a crashed removal (#371 crash backstop)', async () => {
+    h.leftoverSelect = [{ taskId: 'task-9' }];
+    h.reviewReads = [
+      [
+        { status: REVIEW_STATUS.PENDING, reviewerId: null },
+        { status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' },
+      ],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    expect(await settleAllExtinguishedRounds()).toEqual([]);
+    expect(h.dispatches).toHaveLength(1);
+  });
+
+  it('boot settles the FK-orphaned RUNNING row before it resumes (#371 delete→stop crash window)', async () => {
+    h.leftoverSelect = [{ taskId: 'task-9' }];
+    h.runningReviewRuns = [{ id: 'run-zombie-9' }];
+    h.reviewReads = [
+      [
+        { status: REVIEW_STATUS.PENDING, reviewerId: null },
+        { status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' },
+      ],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    expect(await settleAllExtinguishedRounds()).toEqual([]);
+    expect(h.stoppedRuns).toEqual(['run-zombie-9']);
+    expect(h.dispatches).toHaveLength(1);
+    // the orphan scan must be NULL-holder + RUNNING + review-category scoped — a
+    // looser WHERE would stop a deleted assignee��s WORK run (skipping its bounce)
+    const orphan = h.runConds
+      .map((cond) =>
+        mockDb()
+          .select()
+          .from(taskRuns)
+          .where(cond as never)
+          .toSQL(),
+      )
+      .find((q) => q.sql.includes('employee_id') && q.sql.includes('is null'));
+    expect(orphan).toBeTruthy();
+    expect(orphan!.sql).toContain('"employee_id" is null');
+    expect(orphan!.sql).toContain('"task_statuses"."category" =');
+    expect(orphan!.params).toContain('in_review');
+    expect(orphan!.params).toContain('task-9');
+  });
+
+  it('boot stops the orphan BEFORE the sole-void settle leaves the review category (#370 r4 order)', async () => {
+    h.leftoverSelect = [{ taskId: 'task-9' }];
+    h.runningReviewRuns = [{ id: 'run-zombie-9' }];
+    h.runsRequireReviewCategory = true; // the scan honors the category predicate
+    h.trackTaskStatusOnFlip = true; // the flip really moves the mocked task out of review
+    // sole-void round: the only row is the FK-nulled PENDING one -> settle flips the task
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: null }],
+    ];
+    await settleAllExtinguishedRounds();
+    // the stop scan only matches while the task is still in the review category, so a
+    // stop running AFTER the settle flip would find nothing here
+    expect(h.stoppedRuns).toEqual(['run-zombie-9']);
+    expect(h.taskFlips).toHaveLength(1);
+    expect(h.dispatches).toHaveLength(0);
+  });
+
+  it('the in-flight guard is task-scoped and RUNNING-only (#371 predicate pin)', async () => {
+    h.reviewReads = [[{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }]];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    h.holdDispatch = true;
+    const pending = dispatchAiReviewTurns('task-9');
+    await vi.waitFor(() => {
+      if (!h.releaseDispatch) throw new Error('dispatch not reached yet');
+    });
+    const { sql, params } = mockDb()
+      .select({ id: taskRuns.id })
+      .from(taskRuns)
+      .innerJoin(dbTaskMessages, h.joinConds[0]!.cond as never)
+      .where(h.captureCond as never)
+      .toSQL();
+    expect(sql).toContain('"task_messages"."task_id"');
+    expect(params).toContain('task-9');
+    expect(params).toContain('RUNNING');
+    h.releaseDispatch!();
+    await pending;
+  });
+
+  it('concurrent mint triggers on one task never double-dispatch (per-task mint lock)', async () => {
+    h.holdDispatch = true;
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      // without the lock the second trigger would read this row and dispatch too
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    const first = dispatchAiReviewTurns('task-1');
+    await vi.waitFor(() => {
+      if (!h.releaseDispatch) throw new Error('dispatch not reached yet');
+    });
+    // the second trigger returns at the lock without reading or dispatching
+    await dispatchAiReviewTurns('task-1');
+    h.releaseDispatch!();
+    await first;
+    expect(h.dispatches).toHaveLength(1);
+  });
+
+  it('a resume read failure is fault-isolated: the next task still resumes', async () => {
+    // task-1's settle read throws, then its resume status read throws; task-2 proceeds
+    h.statusReadThrows = 2;
+    h.reviewReads = [
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+      [{ status: REVIEW_STATUS.PENDING, reviewerId: 'ai-2' }],
+    ];
+    h.aiEmployees = [{ userId: 'ai-2' }];
+    await expect(settleReviewerRemovalRounds({ ...liveOnly, taskIds: ['task-1', 'task-2'] })).resolves.toEqual([]);
+    expect(h.dispatches).toHaveLength(1);
   });
 });

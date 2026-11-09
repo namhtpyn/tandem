@@ -18,6 +18,9 @@ const h = vi.hoisted(() => ({
   tasksSets: [] as Array<Record<string, unknown>>,
   // make the mocked submitResult throw (drives settleDoneRun's FAILURE arm)
   failSubmit: false,
+  // the reviewer row is gone (the removal owns the round — no park on any path)
+  reviewerDeleted: false,
+  reviewerLookups: [] as Array<{ where?: { id?: { eq?: string } } }>,
   // how many publishes had fired when submitResult ran (0 = settle precedes the
   // lifecycle publishes — the r6 pin that binds ORDER, not just before-return)
   settlePublishCounts: [] as number[],
@@ -40,6 +43,7 @@ const h = vi.hoisted(() => ({
   bodyWrites: [] as Array<[string, string, boolean]>,
   attachments: 0,
   parks: [] as Array<{ why: string; rearmable: boolean }>,
+  resumes: [] as string[],
   published: [] as Array<[string, string]>,
   envelopeSettles: 0,
 }));
@@ -81,7 +85,13 @@ vi.mock('../../server/db/index', async () => {
                       { id: 'st-custom-working', category: 'working' },
                     ]
                   : [],
-            findFirst: async () => (table === 'taskRuns' ? { id: h.latestRunId } : null),
+            findFirst: async (cfg?: { where?: { id?: { eq?: string } } }) => {
+              if (table === 'user') {
+                h.reviewerLookups.push(cfg ?? {});
+                return h.reviewerDeleted ? null : { id: 'agent-1' };
+              }
+              return table === 'taskRuns' ? { id: h.latestRunId } : null;
+            },
           }),
         },
       ),
@@ -137,6 +147,9 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
       h.parkResolvedFlags.push(h.finishResolved);
       h.parks.push({ why, rearmable: opts?.rearmable === true });
       return true;
+    },
+    resumeReviewQueueAfterRemoval: async (taskId: string) => {
+      h.resumes.push(taskId);
     },
   };
 });
@@ -199,6 +212,7 @@ beforeEach(() => {
   h.flipSets = [];
   h.tasksSets = [];
   h.failSubmit = false;
+  h.reviewerDeleted = false;
   h.settlePublishCounts = [];
   h.fixtureTaskStatus = null;
   h.fixtureFailStreak = 0;
@@ -211,6 +225,7 @@ beforeEach(() => {
   h.bodyWrites = [];
   h.attachments = 0;
   h.parks = [];
+  h.resumes = [];
   h.published = [];
   h.envelopeSettles = 0;
   setEnv({ TANDEM_RUN_FLUSH_MS: undefined, TANDEM_RUN_PUBLISH_MS: undefined });
@@ -554,5 +569,36 @@ describe('writer.finish settle arbitration (#286)', () => {
     expect(h.parks).toHaveLength(1);
     expect(h.parks[0]?.rearmable).toBe(true);
     expect(h.tasksWrites).toBe(0); // review plans bounce no-ops; only the reset would write
+  });
+
+  it('a DELETED reviewer’s FAILED turn never parks (#370)', async () => {
+    h.reviewerDeleted = true;
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    writer.onLine('agent output');
+    await writer.finish('task-1', RUN_STATUS.FAILED, 1, {
+      review: { resultBody: 'submitted review' },
+      ai: { userId: 'agent-1' },
+    });
+    await drain();
+    expect(h.parks).toHaveLength(0);
+    expect(h.resumes).toEqual(['task-1']);
+    // the existence lookup names THIS reviewer — a wrong id silently disables the skip
+    expect(h.reviewerLookups.at(-1)?.where?.id?.eq).toBe('agent-1');
+  });
+
+  it('a DELETED reviewer’s settle throw never parks (#370)', async () => {
+    h.reviewerDeleted = true;
+    h.failSubmit = true;
+    const writer = createRunWriter('run-1', '', 'msg-1');
+    writer.onLine('all work complete');
+    await writer.finish('task-1', RUN_STATUS.DONE, 0, {
+      review: { resultBody: 'submitted review' },
+      ai: { userId: 'agent-1' },
+    });
+    await drain();
+    expect(h.parks).toHaveLength(0);
+    expect(h.resumes).toEqual(['task-1']);
+    // the existence lookup names THIS reviewer — a wrong id silently disables the skip
+    expect(h.reviewerLookups.at(-1)?.where?.id?.eq).toBe('agent-1');
   });
 });

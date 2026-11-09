@@ -274,6 +274,53 @@ export async function stopRunForTask(taskId: string, actorId: string): Promise<{
   return { ok: true, stopped: true };
 }
 
+/** EMPLOYEE REMOVAL, settle half (#370): settle the captured RUNNING REVIEW runs
+ *  STOPPED after the user delete commits — the same arbiter as the stop verb. The
+ *  in-memory marker is what makes an in-flight turn skip EVERY settle side effect (a
+ *  deleted reviewer's late verdict must never park or bounce a round it no longer
+ *  owns); the guarded CAS keeps the turn's own settle when it won first (the winner
+ *  owns the outcome). Each run is fault-isolated: one wedged row must not stop the
+ *  rest. */
+export async function stopRunsForRemoval(runIds: string[]): Promise<number> {
+  let stopped = 0;
+  // dedupe: a capture that joins several pending review rows can name one run twice —
+  // the second CAS would MISS and unwind the marker a live execution still owns
+  for (const runId of new Set(runIds)) {
+    stoppedRuns.add(runId);
+    try {
+      liveStops.get(runId)?.();
+      const settled = await db
+        .update(taskRuns)
+        .set({
+          status: RUN_STATUS.STOPPED,
+          exitCode: null,
+          output: sql`coalesce(${taskRuns.output}, '') || '\n[run] stopped: employee removed'`,
+          finishedAt: new Date(),
+        })
+        .where(and(eq(taskRuns.id, runId), eq(taskRuns.status, RUN_STATUS.RUNNING)))
+        .returning({ id: taskRuns.id });
+      if (settled.length === 0) {
+        // the turn settled first with its own verdict — unwind the marker
+        stoppedRuns.delete(runId);
+        continue;
+      }
+      stopped += 1;
+    } catch (e) {
+      if (!executingRuns.has(runId)) stoppedRuns.delete(runId);
+      consola.warn(`employee removal: could not stop run ${runId}:`, e instanceof Error ? e.message : e);
+      continue;
+    }
+    // no live execution can consume the marker — delete it at the verb (same
+    // lifecycle completion as the stop path, #291 r3)
+    if (!executingRuns.has(runId)) stoppedRuns.delete(runId);
+  }
+  if (stopped > 0) {
+    await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+  }
+  return stopped;
+}
+
 async function logRun(
   taskId: string,
   runId: string,
@@ -1132,6 +1179,41 @@ export async function dispatchTask(
   return { runId };
 }
 
+/** a user row still names this reviewer — the discriminator between a reviewer the
+ *  employee delete removed (the removal owns their round; a late/failed turn is a
+ *  quiet no-op, #370) and a live reviewer (every anomaly path parks as specced). */
+async function reviewerExists(reviewerId: string): Promise<boolean> {
+  const row = await db.query.user.findFirst({ columns: { id: true }, where: { id: { eq: reviewerId } } });
+  return Boolean(row);
+}
+
+/** review-turn failure park (settle throw / FAILED turn) that SKIPS a reviewer the
+ *  employee delete already removed (#370): the removal settle owns that round — a
+ *  late/failed turn instead resumes the queue (the departing reviewer's turn is done,
+ *  so the task-wide mint guard no longer suppresses the next reviewer). A live
+ *  reviewer parks exactly as specced (#199/#211), rearmable unless the caller says
+ *  otherwise. */
+async function parkReviewTurnFailure(
+  taskId: string,
+  reviewerId: string,
+  why: string,
+  opts: { rearmable?: boolean } = { rearmable: true },
+) {
+  if (!(await reviewerExists(reviewerId))) {
+    try {
+      const { resumeReviewQueueAfterRemoval } = await import('./review.service');
+      await resumeReviewQueueAfterRemoval(taskId);
+    } catch (e) {
+      consola.warn(
+        `deleted reviewer: could not resume the review queue for task ${taskId}:`,
+        e instanceof Error ? e.message : e,
+      );
+    }
+    return;
+  }
+  await parkRound(taskId, why, opts);
+}
+
 /** REVIEW LAW: a review turn's envelope writes the reviewer's verdict row
  * ([RESULT] approve / [BLOCKED] change request); a verdict-less review NEVER
  * silently approves — it re-dispatches once per round with the CORRECTION block,
@@ -1151,6 +1233,24 @@ export async function settleReviewVerdict(
   const binding = await dispatchedReviewRoundRow(taskId, reviewerId, runStartedAt);
   const current = await currentRound(taskId);
   if (!binding) {
+    // EMPLOYEE REMOVAL (#370): a reviewer deleted mid-turn has no row left to bind —
+    // the removal voided it and OWNS the round. The late verdict is not an anomaly:
+    // check the reviewer still exists before parking a round this run no longer owns.
+    // A deleted reviewer instead RESUMES the queue — this run is done, so the task-wide
+    // mint guard no longer suppresses the next reviewer (covers a mint that landed
+    // between the removal's capture and its delete).
+    if (!(await reviewerExists(reviewerId))) {
+      try {
+        const { resumeReviewQueueAfterRemoval } = await import('./review.service');
+        await resumeReviewQueueAfterRemoval(taskId);
+      } catch (e) {
+        consola.warn(
+          `deleted reviewer: could not resume the review queue for task ${taskId}:`,
+          e instanceof Error ? e.message : e,
+        );
+      }
+      return;
+    }
     const { parkRound } = await import('./review.service');
     await parkRound(taskId, 'review finished without a verdict — no round row for the reviewer (anomaly)');
     return;
@@ -1227,8 +1327,12 @@ export async function settleReviewVerdict(
       await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
       return;
     }
-    const { parkRound } = await import('./review.service');
-    await parkRound(taskId, 'review finished without a verdict after a re-dispatch — needs a human');
+    await parkReviewTurnFailure(
+      taskId,
+      reviewerId,
+      'review finished without a verdict after a re-dispatch — needs a human',
+      { rearmable: false },
+    );
   }
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
@@ -1292,7 +1396,8 @@ async function settleDoneRun(
       // a lost review verdict is a settle failure: park on the owner (SPEC #199) —
       // the work ladder's bounce no-ops on an in-review task and the round would wedge.
       // REARMABLE (#211): a settle throw is infra-class — the re-arm ladder re-fires it.
-      await parkRound(taskId, `review verdict settle failed — ${msg}`, { rearmable: true });
+      // DELETED REVIEWER (#370): a late settle throw of a removed reviewer never parks.
+      await parkReviewTurnFailure(taskId, plan.ai.userId, `review verdict settle failed — ${msg}`);
     } else {
       await bounceTaskAfterRun(taskId, runId, buffer);
     }
@@ -1409,7 +1514,8 @@ export function createRunWriter(runId: string, initial: string, messageId: strin
       // in-review task, wedging the round (PENDING row, nothing re-fires it). parkRound
       // flips in-review -> BLOCKED; owner unblock re-dispatches the parked reviewer.
       // REARMABLE (#211): a failed review turn is infra-class — the ladder re-fires it.
-      await parkRound(taskId, `review turn failed — run settled ${status}`, { rearmable: true });
+      // DELETED REVIEWER (#370): a failed turn of a removed reviewer never parks.
+      await parkReviewTurnFailure(taskId, plan.ai.userId, `review turn failed — run settled ${status}`);
     } else {
       await bounceTaskAfterRun(taskId, runId, buffer);
     }

@@ -16,7 +16,7 @@ import { and, desc, eq, inArray, isNull, lt, ne, notInArray } from 'drizzle-orm'
 import { v7 as uuidv7 } from 'uuid';
 
 import { db, type DbExecutor } from '../../db/index';
-import { tasks, taskReviews, taskRuns, taskMessages, taskObligations } from '../../db/schema';
+import { tasks, taskReviews, taskRuns, taskMessages, taskObligations, taskStatuses } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import {
   spawnObligation,
@@ -442,6 +442,67 @@ export async function settleExtinguishedRound(taskId: string): Promise<boolean> 
   return true;
 }
 
+/** EMPLOYEE REMOVAL, run-capture half (#370): the departing employee's RUNNING REVIEW
+ *  turns. A review turn is a live run on a task that is CURRENTLY in an in_review-
+ *  category status AND carries a PENDING review row naming that reviewer — the work-run
+ *  shape (working category) never matches, so a WORK run is left to settle normally and
+ *  its bounce arm still returns an assignee-less doing task to todo. Read BEFORE the
+ *  user delete; read-only. */
+export async function runningReviewRunIdsForEmployee(employeeId: string): Promise<string[]> {
+  const rows = await db
+    .select({ id: taskRuns.id })
+    .from(taskRuns)
+    .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+    .innerJoin(tasks, eq(tasks.id, taskMessages.taskId))
+    .innerJoin(taskStatuses, eq(taskStatuses.id, tasks.status))
+    .innerJoin(
+      taskReviews,
+      and(
+        eq(taskReviews.taskId, taskMessages.taskId),
+        eq(taskReviews.reviewerId, taskRuns.employeeId),
+        eq(taskReviews.status, REVIEW_STATUS.PENDING),
+      ),
+    )
+    .where(
+      and(
+        eq(taskRuns.employeeId, employeeId),
+        eq(taskRuns.status, RUN_STATUS.RUNNING),
+        eq(taskStatuses.category, CATEGORY.IN_REVIEW),
+      ),
+    )
+    .limit(50);
+  return [...new Set(rows.map((r) => r.id))];
+}
+
+/** BOOT BACKSTOP for the removal crash window (#370): a removal that died between the
+ *  user delete and its stop arm leaves the departing reviewer's run RUNNING with a NULL
+ *  employee_id — no live execution owns it, and the reaper would park the round after
+ *  the timeout. Settle exactly those rows STOPPED (same CAS/marker semantics as the
+ *  removal stop) so the resume arm can mint the next reviewer. Scoped to a task the
+ *  void-row scan already flagged; `employee_id IS NULL` is machine-only. */
+async function stopOrphanRemovalRuns(taskId: string) {
+  const rows = await db
+    .select({ id: taskRuns.id })
+    .from(taskRuns)
+    .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+    .innerJoin(tasks, eq(tasks.id, taskMessages.taskId))
+    .innerJoin(taskStatuses, eq(taskStatuses.id, tasks.status))
+    .where(
+      and(
+        eq(taskMessages.taskId, taskId),
+        eq(taskRuns.status, RUN_STATUS.RUNNING),
+        isNull(taskRuns.employeeId),
+        // REVIEW turns only: a working-category run left by a deleted assignee keeps
+        // its normal bounce (stopping it would strand an assignee-less doing task)
+        eq(taskStatuses.category, CATEGORY.IN_REVIEW),
+      ),
+    )
+    .limit(50);
+  if (rows.length === 0) return;
+  const { stopRunsForRemoval } = await import('./runner.service');
+  await stopRunsForRemoval(rows.map((r) => r.id));
+}
+
 /** REVIEWER REMOVAL, prepare half (#365): a READ-ONLY capture taken BEFORE the
  * employee's user row is deleted — the pending review rows they hold, their pending
  * APPROVAL obligations, and (ANSWER-ROLE REMOVAL, #369) their pending ANSWER
@@ -671,6 +732,21 @@ async function finishRemovedHolderReturn(taskId: string, backTo: string, name?: 
   }
 }
 
+/** NEXT TURN (#371): a removal voids/decides the departing reviewer's row — if the
+ *  task is still in an in_review-category status with a live PENDING reviewer, the
+ *  sequential queue has NOTHING in flight (the mint only advances on a verdict that
+ *  can never arrive from the removed reviewer). Re-mint the next AI turn. The task
+ *  category and a live row gate it; dispatchAiReviewTurns itself skips humans and an
+ *  already-running reviewer and issues at most ONE dispatch per call. The caller
+ *  fault-isolates it — the delete already committed. */
+export async function resumeReviewQueueAfterRemoval(taskId: string) {
+  const row = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  if (!row) return;
+  if ((await categoryOf(row.status)) !== CATEGORY.IN_REVIEW) return;
+  if (!(await openRoundLive(taskId))) return;
+  await dispatchAiReviewTurns(taskId);
+}
+
 /** REVIEWER REMOVAL, settle half (#365): runs AFTER the user delete. Mutates only
  *  what the delete made stale: cancels the captured approval obligations by id,
  *  notes the captured rows (still PENDING and now void — a verdict that landed in
@@ -731,6 +807,14 @@ export async function settleReviewerRemovalRounds(plan: ReviewerRemovalPlan, nam
       await cleanVoidReviewDebris(taskId);
     } catch (e) {
       log.warn(`reviewer removal: could not settle round for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+    try {
+      await resumeReviewQueueAfterRemoval(taskId);
+    } catch (e) {
+      log.warn(
+        `reviewer removal: could not resume the review queue for task ${taskId}:`,
+        e instanceof Error ? e.message : e,
+      );
     }
   }
   // ANSWER-ROLE REMOVAL leftover (#369): the same crash-window sweep — an orphan
@@ -894,11 +978,29 @@ export async function settleAllExtinguishedRounds(): Promise<string[]> {
   }
   const settledTaskIds: string[] = [];
   for (const taskId of taskIds) {
+    // NEXT-TURN CRASH BACKSTOP (#371), STOP FIRST: a removal that died between the
+    // user delete and its stop arm leaves the departing reviewer's run RUNNING with the
+    // FK-nulled employee_id. Settle it BEFORE the round matrix — once a sole-void round
+    // settles, the task leaves the in_review category and the review-scoped orphan scan
+    // could never match it again. Order mirrors the removal RPC (stop, then settle).
+    try {
+      await stopOrphanRemovalRuns(taskId);
+    } catch (e) {
+      log.warn(`void review round orphan stop failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
     try {
       if (await settleExtinguishedRound(taskId)) settledTaskIds.push(taskId);
       await cleanVoidReviewDebris(taskId);
     } catch (e) {
       log.warn(`void review round heal failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+    // …then re-mint a round still holding a live PENDING reviewer (a live-voter round
+    // with a running turn is a no-op via dispatchAiReviewTurns' task-wide guard; a
+    // settled task is gated out by category).
+    try {
+      await resumeReviewQueueAfterRemoval(taskId);
+    } catch (e) {
+      log.warn(`void review round resume failed for task ${taskId}:`, e instanceof Error ? e.message : e);
     }
   }
   // ANSWER-ROLE REMOVAL (#369): the same crash-window heal for a waiting-answer
@@ -949,6 +1051,13 @@ async function roundResultBody(taskId: string) {
   return rows[0]?.resultBody ?? '';
 }
 
+/** task ids whose review-mint decision is in flight in THIS process — the mint is a
+ *  read-then-dispatch; two concurrent triggers on one task (concurrent removals, a
+ *  removal racing a verdict settle) would both pass the reads and mint twice. The lock
+ *  makes the decision+dispatch one critical section; a skipped caller is safe because
+ *  the winner mints the next turn and the next verdict mints the one after. */
+const reviewMintInFlight = new Set<string>();
+
 /** fire the NEXT pending AI reviewer's turn — exactly one per call (sequential law:
  * one review turn in flight per task; the verdict's settle path lazy-mints the next).
  * Round order = row order. Human reviewers are skipped (the card is their UI).
@@ -956,8 +1065,31 @@ async function roundResultBody(taskId: string) {
  * opts.verdictCorrection (#276): rides ONLY the verdict-less settle path's bounded
  * re-dispatch — the retry brief carries the CORRECTION block. */
 export async function dispatchAiReviewTurns(taskId: string, resultBody?: string, opts?: DispatchOpts) {
+  if (reviewMintInFlight.has(taskId)) return;
+  reviewMintInFlight.add(taskId);
+  try {
+    await dispatchAiReviewTurnsUnlocked(taskId, resultBody, opts);
+  } finally {
+    reviewMintInFlight.delete(taskId);
+  }
+}
+
+async function dispatchAiReviewTurnsUnlocked(taskId: string, resultBody?: string, opts?: DispatchOpts) {
   const round = await currentRound(taskId);
   if (round === 0) return;
+  // SEQUENTIAL, TASK-WIDE (#371): ONE review turn in flight per task. A mint requested
+  // while ANY run of the task is RUNNING is a no-op — without this, a removal that
+  // voids a third reviewer's row would skip the running reviewer and mint the NEXT
+  // pending AI reviewer beside it (two turns in flight, one round). The settling run
+  // is already DONE when its own settle path asks for the next turn (writer.finish's
+  // guarded row write lands before settleDoneRun), so the chain is unaffected.
+  const inFlight = await db
+    .select({ id: taskRuns.id })
+    .from(taskRuns)
+    .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+    .where(and(eq(taskMessages.taskId, taskId), eq(taskRuns.status, RUN_STATUS.RUNNING)))
+    .limit(1);
+  if (inFlight.length > 0) return;
   const rows = await db
     .select()
     .from(taskReviews)
@@ -976,22 +1108,6 @@ export async function dispatchAiReviewTurns(taskId: string, resultBody?: string,
     // drop the verdict-less one's retry entirely). Target row not pending anymore
     // (a human verdict landed mid-flight) -> nothing mints: the round moved on.
     if (opts?.verdictlessReviewerId && row.reviewerId !== opts.verdictlessReviewerId) continue;
-    // one LIVE review turn per reviewer: skip while theirs is still running
-    const running =
-      (
-        await db
-          .select({ id: taskRuns.id })
-          .from(taskRuns)
-          .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
-          .where(
-            and(
-              eq(taskMessages.taskId, taskId),
-              eq(taskRuns.employeeId, row.reviewerId),
-              eq(taskRuns.status, RUN_STATUS.RUNNING),
-            ),
-          )
-      ).length > 0;
-    if (running) continue;
     try {
       // target-scoped above: a correction dispatch can only ever reach the
       // verdict-less reviewer's own turn
@@ -1409,6 +1525,18 @@ export function parseEscalationNote(body: string): { targetName: string | null; 
   return { targetName: nonNull(m[1]).trim(), why: (nonNull(m[2]) || '').trim() || body.trim() };
 }
 
+/** ESCALATION STALL (#370): park the round on the owner — unless the escalator was
+ *  deleted mid-turn, in which case the removal owns the round and the resume arm runs
+ *  instead of parking a round the run no longer owns. */
+async function parkEscalationStall(taskId: string, reviewerId: string, why: string) {
+  const stillThere = await db.query.user.findFirst({ columns: { id: true }, where: { id: { eq: reviewerId } } });
+  if (!stillThere) {
+    await resumeReviewQueueAfterRemoval(taskId);
+    return;
+  }
+  await parkRound(taskId, `review escalation stalled — ${why || 'no eligible supervisor to escalate to'}`);
+}
+
 /** REVIEW REFERRAL (final spec 2026-10-29): the reviewer steps aside and their
  * supervisor takes the vote. Mutates the TASK's reviewer roster (escalator out,
  * replacement in — one source of truth), flips the row to `escalated` (audit,
@@ -1476,8 +1604,9 @@ export async function escalateReview(
   /* v8 ignore next -- a fresh chain always has a head when a supervisor edge exists */
   targetId = targetId ?? chain[0];
   if (!targetId) {
-    // no eligible up-chain target: the round parks on the owner with the why intact
-    await parkRound(taskId, `review escalation stalled — ${why || 'no eligible supervisor to escalate to'}`);
+    // no eligible up-chain target: the round parks on the owner with the why intact —
+    // unless the escalator was deleted mid-turn (#370): the removal owns that round.
+    await parkEscalationStall(taskId, reviewerId, why);
     return { outcome: 'parked' };
   }
 

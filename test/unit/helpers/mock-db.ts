@@ -13,6 +13,7 @@ import {
   taskObligations,
   taskReviews,
   taskRuns,
+  taskStatuses,
   tasks,
 } from '#server/db/schema';
 
@@ -23,4 +24,4 @@ export function mockDb() {
   return db;
 }
 
-export { environments, relations, session, taskMessages, taskObligations, taskReviews, taskRuns, tasks };
+export { environments, relations, session, taskMessages, taskObligations, taskReviews, taskRuns, taskStatuses, tasks };
