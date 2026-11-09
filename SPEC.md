@@ -757,10 +757,12 @@ Rules:
   verdict writes no caller-supplied id); `mcp.bindingsRemove` deletes the
   binding, so it is a write and answers `BAD_REQUEST`. Text-typed ids (task,
   project, status, registry, environment, vault ids) are outside this law —
-  they cannot raise 22P02, so a malformed value is an ordinary miss. A NUL or
-  lone surrogate in a text id is NOT an ordinary miss, though: the driver
-  raises before the lookup can miss. Id parameters are outside the
-  TEXT-STORABILITY LAW and tracked in #386.
+  they cannot raise 22P02, so a malformed value is an ordinary miss. An id
+  parameter the covered list below does not name is outside the
+  TEXT-STORABILITY LAW and tracked in #386: a NUL in it raises at the driver
+  before the lookup can miss, while a lone surrogate is rewritten to U+FFFD,
+  so that lookup is an ordinary miss on a corrupted value. (Text-typed ids the
+  covered list DOES name — the employee procedures — stay inside the law.)
 - **TEXT-STORABILITY LAW (#377/#382):** user-supplied text written to a
   Postgres text column must be STORABLE — `NUL` (0x00) and unpaired surrogates
   are refused at the procedure's edge (`BAD_REQUEST`; the message names the
@@ -787,7 +789,8 @@ Rules:
   `extraHeaders` keys and values); MCP registry (name, notes, command, `url`,
   `oauthAuthorizeUrl` / `oauthTokenUrl` / `oauthRevocationUrl`,
   `oauthScopes`, `oauthClientId`); settings free text (companyName,
-  companyPrompt); and better-auth's own `update-user` path for `name` /
+  companyPrompt); and better-auth's own user create/update paths (`user.create`
+  — first-user sign-up and first OIDC login — and `update-user`) for `name` /
   `image`. Search/filter `q` values on the paged list procedures (tasks,
   employees, environments, vault secrets and folders) refuse it too — a NUL
   filter reaches the driver as an `ilike` parameter and 500s the list. The

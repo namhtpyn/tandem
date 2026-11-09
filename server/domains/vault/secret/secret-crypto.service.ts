@@ -60,5 +60,8 @@ export function decryptSecret(envelope: string) {
  * pair and leave a lone surrogate that the driver silently rewrites to U+FFFD
  * (TEXT-STORABILITY LAW — a legal astral secret must not corrupt its own hint). */
 export function lastFourHint(plaintext: string) {
-  return plaintext.length <= 8 ? '' : [...plaintext].slice(-4).join('');
+  // gate and slice must count the SAME unit — a UTF-16 `.length` gate over a
+  // code-point slice lets a 5-character astral secret leak 4 of its 5 chars
+  const chars = [...plaintext];
+  return chars.length <= 8 ? '' : chars.slice(-4).join('');
 }

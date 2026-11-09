@@ -276,6 +276,27 @@ function providerBase() {
   return { label: 'L', baseUrl: 'https://provider.test', endpoints: ['OPENAI-COMPLETIONS'] };
 }
 
+const routers: Record<string, unknown> = {
+  tasks: tasksRouter,
+  projects: projectsRouter,
+  statuses: statusesRouter,
+  vault: vaultRouter,
+  mcp: mcpRouter,
+  providers: providersRouter,
+  environments: environmentsRouter,
+  settings: settingsRouter,
+  employees: employeesRouter,
+};
+
+/** 'tasks.note:body' → tasksRouter.note, 'vault.secrets.create:name' → vaultRouter.secrets.create */
+function procedureForLabel(label: string): unknown {
+  const [path] = label.split(':');
+  const [root, ...rest] = path.split('.');
+  let node: unknown = routers[root];
+  for (const part of rest) node = (node as Record<string, unknown>)[part];
+  return node;
+}
+
 /** a URL whose PATH carries the payload — the scheme check must still pass */
 function urlWith(value: string) {
   return `http://provider.test/${value}`;
@@ -316,6 +337,16 @@ describe('every raw text write refuses unstorable text (handler-level, #382)', (
   }
 });
 
+describe('the surface table points at the procedure its label names (#382 r2)', () => {
+  for (const surface of surfaces) {
+    it(`${surface.surface}: label and procedure agree`, () => {
+      // a copy-paste slip onto a same-shaped sibling (note -> answer) would
+      // otherwise leave the swapped-out procedure unpinned while staying green
+      expect(procedureForLabel(surface.surface)).toBe(surface.procedure);
+    });
+  }
+});
+
 describe('the wired schema keeps its own contract (#382: accept / clear / cap)', () => {
   for (const surface of surfaces) {
     const schema = () => schemaOf(surface.procedure);
@@ -344,10 +375,9 @@ describe('the wired schema keeps its own contract (#382: accept / clear / cap)',
 
     if (surface.nullable) {
       it(`${surface.surface}: the explicit null clear path stays open`, () => {
-        const nullValue = surface.valueFor ? surface.valueFor('') : null;
-        expect(schema().safeParse({ ...surface.base, [surface.inputKey ?? surface.field]: nullValue }).success).toBe(
-          true,
-        );
+        // a literal null — building it through valueFor would send a valid URL
+        // and leave `.nullable()` -> `.optional()` regressions invisible
+        expect(schema().safeParse({ ...surface.base, [surface.inputKey ?? surface.field]: null }).success).toBe(true);
       });
     }
   }
@@ -355,10 +385,12 @@ describe('the wired schema keeps its own contract (#382: accept / clear / cap)',
 
 describe('vault last-four hint (#382 review): a legal astral secret never corrupts its own hint', () => {
   it('slices by code points — the hint can never carry a lone surrogate', () => {
-    // 9 UTF-16 units: a raw slice(-4) starts on the low half of the pair
-    expect(lastFourHint('1234😀abc')).toBe('😀abc');
-    expect(hasUnstorableText(lastFourHint('1234😀abc'))).toBe(false);
-    // the pre-existing short-secret rule is unchanged
+    // 9 characters: a raw UTF-16 slice(-4) would start on the low half of the pair
+    expect(lastFourHint('12345😀abc')).toBe('😀abc');
+    expect(hasUnstorableText(lastFourHint('12345😀abc'))).toBe(false);
+    // the short-secret rule counts CHARACTERS, not UTF-16 units — five astral
+    // characters must get no hint even though they are ten code units
+    expect(lastFourHint('😀😀😀😀a')).toBe('');
     expect(lastFourHint('12345678')).toBe('');
     expect(lastFourHint('123456789')).toBe('6789');
   });

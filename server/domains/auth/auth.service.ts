@@ -27,6 +27,20 @@ import { getOidcProviders, type OidcProvider } from './oidc.service';
 
 const env = sharedEnv;
 
+/** TEXT-STORABILITY LAW (#382): better-auth writes `user.name` / `user.image`
+ *  straight into Postgres text columns on BOTH its create (first-user sign-up,
+ *  first OIDC login) and update-user paths — the same field-named BAD_REQUEST as
+ *  every procedure edge, never an opaque driver 500 and never a silent U+FFFD. */
+function assertStorableUserText(data: unknown) {
+  const fields = data as { name?: unknown; image?: unknown };
+  for (const field of ['name', 'image'] as const) {
+    const value = fields[field];
+    if (typeof value === 'string' && hasUnstorableText(value)) {
+      throw new APIError('BAD_REQUEST', { message: unstorableMessage(field) });
+    }
+  }
+}
+
 export type AuthPolicy = {
   oidcEnabled: boolean;
   passwordEnabled: boolean;
@@ -91,6 +105,9 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}) {
     databaseHooks: {
       user: {
         create: {
+          before: async (data) => {
+            assertStorableUserText(data);
+          },
           after: async (u) => {
             // first user claims the instance -> admin role
             /* v8 ignore start -- defensive: better-auth always passes the created user */
@@ -114,13 +131,7 @@ async function buildAuth(options: { includeTestUtils?: boolean } = {}) {
          */
         update: {
           before: async (data) => {
-            const fields = data as { name?: unknown; image?: unknown };
-            for (const field of ['name', 'image'] as const) {
-              const value = fields[field];
-              if (typeof value === 'string' && hasUnstorableText(value)) {
-                throw new APIError('BAD_REQUEST', { message: unstorableMessage(field) });
-              }
-            }
+            assertStorableUserText(data);
           },
         },
       },

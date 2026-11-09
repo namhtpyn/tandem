@@ -36,6 +36,10 @@ test('update-user refuses NUL / lone surrogates and accepts a well-formed astral
   try {
     const ok = await page.request.post('/auth/update-user', { data: { name: ASTRAL }, headers: { origin: ORIGIN } });
     expect(ok.status()).toBe(200);
+    // the law is about what LANDS in the column: a hook that aborts the write
+    // but answers 200 would keep the status pin green
+    const after = await page.request.post('/rpc/auth/session', { data: { json: {} } });
+    expect(((await after.json()).json as { user: { name: string } }).user.name).toBe(ASTRAL);
   } finally {
     // the signed-in admin is shared by every later spec — restore even when an
     // assertion above failed (a retry would otherwise read the renamed value)
