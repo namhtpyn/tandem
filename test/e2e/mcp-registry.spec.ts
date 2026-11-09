@@ -87,14 +87,29 @@ async function seedAiEmployee(
 }
 
 /** write+prove the dispatch_after hold (15 min) on one task. A silent 0-row
- *  UPDATE would let the 5s scan claim the task mid-test (#387); `returning id`
- *  makes the hold observable instead of trusting the SQL key. */
+ *  UPDATE would let the 5s scan claim the task mid-test (#387); `returning`
+ *  makes the hold observable — a row matched AND the value is in the future. */
 async function holdDispatchScan(taskId: string): Promise<void> {
   const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
   try {
     const held =
-      await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId} returning id`;
+      await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId} returning dispatch_after > now() as held`;
     expect(held.length, 'dispatch_after hold landed on the task').toBe(1);
+    expect(held[0]!.held, 'dispatch_after hold is in the future').toBe(true);
+  } finally {
+    await sql.close();
+  }
+}
+
+/** read-back that the hold still stands after an intervening write: setStatus
+ *  must preserve the backoff. If a future change makes a manual status move
+ *  reset the ladder, this fails loudly instead of silently re-opening #387. */
+async function expectDispatchHold(taskId: string): Promise<void> {
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    const rows = await sql`select (dispatch_after > now()) as held from tasks where id = ${taskId}`;
+    expect(rows.length, 'task row exists for the hold read-back').toBe(1);
+    expect(rows[0]!.held, 'dispatch_after hold survives the ready flip').toBe(true);
   } finally {
     await sql.close();
   }
@@ -343,6 +358,8 @@ test.describe('mcp registry + bindings', () => {
     await holdDispatchScan(taskId);
     const setStatus = await rpcPost(page, '/rpc/tasks/setStatus', { id: taskId, status: await readyStatusId() });
     expect(setStatus.status).toBe(200);
+    // the flip must not wipe the hold (a silent wipe would re-open #387)
+    await expectDispatchHold(taskId);
     const run2 = await rpcPost(page, '/rpc/tasks/dispatch', { taskId });
     expect(run2.status).toBe(200);
 
