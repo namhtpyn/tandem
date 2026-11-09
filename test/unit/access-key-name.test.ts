@@ -44,17 +44,30 @@ describe('derivedAccessKeyName — the minted default always fits the plugin cap
     expect(name.isWellFormed()).toBe(true);
     expect(name).toBe(`${'A'.repeat(20)}${SUFFIX}`);
     expect(name.length).toBeLessThanOrEqual(ACCESS_KEY_NAME_MAX);
-    // every room boundary around an astral char stays well-formed and within the cap
+    // ...and a code point that FITS before the boundary survives whole (not dropped)
+    expect(derivedAccessKeyName(`${'A'.repeat(19)}🚀${'B'.repeat(10)}`, SUFFIX)).toBe(`${'A'.repeat(19)}🚀${SUFFIX}`);
+    // every room boundary around an astral char stays well-formed, within the cap, and keeps every fitting prefix char
     for (let ascii = 0; ascii <= 21; ascii += 1) {
       const derived = derivedAccessKeyName(`${'A'.repeat(ascii)}🚀${'B'.repeat(10)}`, SUFFIX);
       expect(derived.isWellFormed()).toBe(true);
       expect(derived.length).toBeLessThanOrEqual(ACCESS_KEY_NAME_MAX);
       expect(derived.endsWith(SUFFIX)).toBe(true);
+      expect(derived.startsWith('A'.repeat(ascii))).toBe(true);
     }
   });
 
-  it('fails closed on a suffix that leaves no room for the base', () => {
-    expect(() => derivedAccessKeyName('x', 'y'.repeat(ACCESS_KEY_NAME_MAX))).toThrowError(/leaves no room/);
+  it('drops lone surrogates — a derived name is always well-formed, never an invalid UTF-8 insert', () => {
+    const name = derivedAccessKeyName(`AB\uD83DCD`, SUFFIX);
+    expect(name.isWellFormed()).toBe(true);
+    expect(name).toBe(`ABCD${SUFFIX}`);
+  });
+
+  it('the cap boundary on the suffix is inclusive — a 32-unit suffix is itself the name; only over-cap suffixes fail closed', () => {
+    expect(derivedAccessKeyName('x', 'y'.repeat(31))).toBe(`x${'y'.repeat(31)}`);
+    expect(derivedAccessKeyName('x', 'y'.repeat(ACCESS_KEY_NAME_MAX))).toBe('y'.repeat(ACCESS_KEY_NAME_MAX));
+    expect(() => derivedAccessKeyName('x', 'y'.repeat(ACCESS_KEY_NAME_MAX + 1))).toThrowError(
+      /longer than the name cap/,
+    );
   });
 });
 
@@ -70,8 +83,21 @@ describe('assertAccessKeyName — caller-supplied names over the cap are the spe
 
   it('rejects one char over the cap with BAD_REQUEST / name too long — never a plugin 500', () => {
     expect(() => assertAccessKeyName('K'.repeat(ACCESS_KEY_NAME_MAX + 1))).toThrowError(
-      expect.objectContaining({ code: 'BAD_REQUEST', message: expect.stringContaining('name too long') }),
+      expect.objectContaining({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('name too long'),
+      }),
     );
+  });
+
+  it('states the measure in its message — 32 characters means UTF-16 code units', () => {
+    let message = '';
+    try {
+      assertAccessKeyName('😀'.repeat(20));
+    } catch (e) {
+      message = (e as { message?: string }).message ?? '';
+    }
+    expect(message).toContain('UTF-16');
   });
 
   it('measures the backend’s `name.length` — 32 astral chars are 64 units and are rejected', () => {

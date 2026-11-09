@@ -17,7 +17,9 @@ async function post(page: Page, path: string, json: unknown) {
 
 test('employee create with a 100-char name mints a key that fits the 32-char cap', async ({ page }) => {
   const suffix = Date.now().toString(36);
-  const name = `${'Long Name '.repeat(9)}${suffix}`.slice(0, 100); // 100 chars
+  // exactly 100 units — the schema's employee-name edge
+  const name = `${'Long Name '.repeat(10).slice(0, 100 - suffix.length)}${suffix}`;
+  expect(name.length).toBe(100);
   const res = await post(page, 'employees/create', {
     name,
     email: `long-name-${suffix}@tandem.local`,

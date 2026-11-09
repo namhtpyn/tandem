@@ -14,14 +14,17 @@ export const ACCESS_KEY_NAME_MAX = 32;
 
 /** `<base><suffix>` capped to ACCESS_KEY_NAME_MAX — the suffix is fixed, the base truncates */
 export function derivedAccessKeyName(base: string, suffix: string): string {
-  if (suffix.length >= ACCESS_KEY_NAME_MAX) {
-    // fail closed: a suffix that eats the whole cap would mint an over-cap name (the very 500 this module prevents)
-    throw new Error(`access-key suffix leaves no room for the base name: "${suffix}"`);
+  if (suffix.length > ACCESS_KEY_NAME_MAX) {
+    // fail closed: a suffix over the whole cap would mint an over-cap name (the very 500 this module prevents)
+    throw new Error(`access-key suffix is longer than the name cap: "${suffix}"`);
   }
   const room = ACCESS_KEY_NAME_MAX - suffix.length;
   let prefix = '';
   for (const char of base) {
-    // array iteration is by code point; an astral char is 2 UTF-16 units and never split
+    // array iteration is by code point; an astral char is 2 UTF-16 units and never split.
+    // a lone surrogate is not a character — drop it rather than store an ill-formed name
+    const code = char.charCodeAt(0);
+    if (char.length === 1 && code >= 0xd800 && code <= 0xdfff) continue;
     if (prefix.length + char.length > room) break;
     prefix += char;
   }
@@ -33,7 +36,7 @@ export function assertAccessKeyName(name: string): string {
   const trimmed = name.trim();
   if (trimmed.length > ACCESS_KEY_NAME_MAX) {
     throw new ORPCError('BAD_REQUEST', {
-      message: `name too long — access-key names are capped at ${ACCESS_KEY_NAME_MAX} characters`,
+      message: `name too long — access-key names are capped at ${ACCESS_KEY_NAME_MAX} characters (UTF-16 code units)`,
     });
   }
   return trimmed;
