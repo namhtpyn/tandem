@@ -44,12 +44,19 @@ test('employee create with a 100-char name mints a key that fits the 32-char cap
   const derivedMint = await post(page, 'employees/createApiKey', { employeeId: created.id });
   expect(derivedMint.status()).toBe(200);
   const derivedKey = (await derivedMint.json()).json as { id: string };
+  // a whitespace-only supplied name takes the SAME derived branch (not a plugin NAME_REQUIRED 500)
+  const blankMint = await post(page, 'employees/createApiKey', { employeeId: created.id, name: '   ' });
+  expect(blankMint.status()).toBe(200);
+  const blankKey = (await blankMint.json()).json as { id: string };
   const afterRes = await post(page, 'employees/listApiKeys', { employeeId: created.id });
   expect(afterRes.status()).toBe(200);
-  const derivedRow = ((await afterRes.json()).json as KeyRow[]).find((k) => k.id === derivedKey.id);
+  const rowsAfter = (await afterRes.json()).json as KeyRow[];
+  const derivedRow = rowsAfter.find((k) => k.id === derivedKey.id);
   expect(derivedRow, 'nameless mint row missing from key list').toBeTruthy();
   expect(derivedRow!.name).toBe(`${name.slice(0, 28)} key`);
   expect(derivedRow!.name.length).toBe(32);
+  const blankRow = rowsAfter.find((k) => k.id === blankKey.id);
+  expect(blankRow?.name).toBe(`${name.slice(0, 28)} key`);
 });
 
 test('caller-supplied key names over 32 chars answer BAD_REQUEST on mint and rename', async ({ page }) => {
@@ -68,6 +75,11 @@ test('caller-supplied key names over 32 chars answer BAD_REQUEST on mint and ren
   const mintRes = await post(page, 'employees/createApiKey', { employeeId: employee.id, name: tooLong });
   expect(mintRes.status()).toBe(400);
   expect(JSON.stringify(await mintRes.json())).toContain('name too long');
+
+  // createApiKey refuses unstorable text too (same guard as rename, not a silent rewrite)
+  const nulMint = await post(page, 'employees/createApiKey', { employeeId: employee.id, name: 'A\u0000B' });
+  expect(nulMint.status()).toBe(400);
+  expect(JSON.stringify(await nulMint.json())).toContain('invalid characters');
 
   // the inclusive boundary: exactly 32 units mints THROUGH the plugin and stores verbatim
   const atCapName = 'M'.repeat(32);
