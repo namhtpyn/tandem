@@ -759,10 +759,15 @@ Rules:
   project, status, registry, environment, vault ids) are outside this law —
   they cannot raise 22P02, so a malformed value is an ordinary miss. An id
   parameter the covered list below does not name is outside the
-  TEXT-STORABILITY LAW and tracked in #386: a NUL in it raises at the driver
-  before the lookup can miss, while a lone surrogate is rewritten to U+FFFD,
-  so that lookup is an ordinary miss on a corrupted value. (Text-typed ids the
-  covered list DOES name — the employee procedures — stay inside the law.)
+  TEXT-STORABILITY LAW and tracked in #386, where two shapes matter. An id
+  decided in JS before any query (`tasks.create` status, `statuses.save`
+  nextIds, the canonicalUuid-checked reviewer / forward ids) already answers
+  `BAD_REQUEST` for unstorable bytes. An id that reaches a query parameter does
+  not: a NUL raises at the driver before the lookup can miss, and a lone
+  surrogate is rewritten to U+FFFD — a read then misses on a corrupted value,
+  while the two upsert-by-id writes (`statuses.save`, `providers.save`) create
+  a NEW row under the corrupted id. Text-typed ids the covered list DOES name —
+  the employee procedures — stay inside the law.
 - **TEXT-STORABILITY LAW (#377/#382):** user-supplied text written to a
   Postgres text column must be STORABLE — `NUL` (0x00) and unpaired surrogates
   are refused at the procedure's edge (`BAD_REQUEST`; the message names the
@@ -771,8 +776,8 @@ Rules:
   message (`shared/utils/storable-text.ts`: `hasUnstorableText`,
   `unstorableMessage`, `storable`, `storableText`, `storableOptionalText`) on
   every free-form field; the pre-existing access-key name guard (handler-level)
-  and better-auth's `update-user` database hook are the named non-schema edges
-  that reuse the same predicate. A NUL makes the driver throw
+  and better-auth's `user.create` / `update-user` database hooks are the named
+  non-schema edges that reuse the same predicate. A NUL makes the driver throw
   (invalid byte sequence) and would surface through oRPC as an opaque 500 on
   input the schema had accepted; an unpaired surrogate is WORSE — the driver
   rewrites it to U+FFFD, so the stored value is silently corrupted. A
@@ -805,8 +810,8 @@ Rules:
   out of scope; provider `extraHeaders` keys and values are the exception
   because they are applied verbatim to outbound HTTP request headers. `jsonb`
   columns are NOT covered by that encoding argument: jsonb rejects the
-  `\u0000` escape itself, so inbound channel payloads keep their own
-  sanitization.
+  `\u0000` escape itself, so inbound channel payloads keep their own VALUE
+  sanitization (object keys are not walked today — tracked separately).
 - input validation: zod `strictObject` everywhere (unknown keys rejected)
 - wire format: POST `/rpc/<path>`, body `{ "json": <input> }`,
   `content-type: application/json`; responses `{ "json": <result> }`

@@ -77,6 +77,8 @@ type Surface = {
   clearable?: boolean;
   /** true when the field also accepts an explicit null */
   nullable?: boolean;
+  /** the value an OMITTED field parses to when the schema carries a .default() */
+  omittedDefault?: string;
   /** build the field value from the payload variant (defaults to the string itself) */
   valueFor?: (value: string) => unknown;
   /** the input key carrying the value when it differs from the field label (record sub-fields) */
@@ -132,8 +134,16 @@ const surfaces: Surface[] = [
 
   // ---- projects ----
   s('projects.create:name', projectsRouter.create, { name: 'P' }, 'name', { cap: 120 }),
-  s('projects.create:description', projectsRouter.create, { name: 'P' }, 'description', { cap: 2000, clearable: true }),
-  s('projects.create:prompt', projectsRouter.create, { name: 'P' }, 'prompt', { cap: 8000, clearable: true }),
+  s('projects.create:description', projectsRouter.create, { name: 'P' }, 'description', {
+    cap: 2000,
+    clearable: true,
+    omittedDefault: '',
+  }),
+  s('projects.create:prompt', projectsRouter.create, { name: 'P' }, 'prompt', {
+    cap: 8000,
+    clearable: true,
+    omittedDefault: '',
+  }),
   s('projects.update:name', projectsRouter.update, { id: 'x' }, 'name', { cap: 120, clearable: true }),
   s('projects.update:description', projectsRouter.update, { id: 'x' }, 'description', { cap: 2000, clearable: true }),
   s('projects.update:prompt', projectsRouter.update, { id: 'x' }, 'prompt', { cap: 8000, clearable: true }),
@@ -146,12 +156,16 @@ const surfaces: Surface[] = [
   s('vault.secrets.create:description', vaultRouter.secrets.create, { name: 'n', value: 'v' }, 'description', {
     cap: 500,
     clearable: true,
+    omittedDefault: '',
   }),
   s('vault.secrets.create:value', vaultRouter.secrets.create, { name: 'n', value: 'v' }, 'value', { cap: 64_000 }),
   s('vault.secrets.update:name', vaultRouter.secrets.update, { id: 'x', name: 'n' }, 'name', { cap: 100 }),
   s('vault.secrets.update:description', vaultRouter.secrets.update, { id: 'x', name: 'n' }, 'description', {
     cap: 500,
     clearable: true,
+    // pre-existing contract: an omitted description CES parses to '' (documented,
+    // not changed here — this PR is about storability, not partial-update semantics)
+    omittedDefault: '',
   }),
   s('vault.secrets.update:value', vaultRouter.secrets.update, { id: 'x', name: 'n' }, 'value', {
     cap: 64_000,
@@ -164,7 +178,11 @@ const surfaces: Surface[] = [
 
   // ---- mcp registry ----
   s('mcp.registryCreate:name', mcpRouter.registryCreate, { name: 'n' }, 'name', { cap: 200 }),
-  s('mcp.registryCreate:notes', mcpRouter.registryCreate, { name: 'n' }, 'notes', { cap: 2000, clearable: true }),
+  s('mcp.registryCreate:notes', mcpRouter.registryCreate, { name: 'n' }, 'notes', {
+    cap: 2000,
+    clearable: true,
+    omittedDefault: '',
+  }),
   s('mcp.registryCreate:command', mcpRouter.registryCreate, { name: 'n', command: 'run' }, 'command', {
     clearable: true,
     nullable: true,
@@ -180,13 +198,19 @@ const surfaces: Surface[] = [
     nullable: true,
   }),
   s('mcp.registryUpdate:name', mcpRouter.registryUpdate, { id: 'x' }, 'name', { cap: 200, clearable: true }),
-  s('mcp.registryUpdate:notes', mcpRouter.registryUpdate, { id: 'x' }, 'notes', { cap: 2000, clearable: true }),
+  s('mcp.registryUpdate:notes', mcpRouter.registryUpdate, { id: 'x' }, 'notes', {
+    cap: 2000,
+    clearable: true,
+    omittedDefault: '',
+  }),
   s('mcp.registryUpdate:command', mcpRouter.registryUpdate, { id: 'x', command: 'run' }, 'command', {
     clearable: true,
+    nullable: true,
   }),
   s('mcp.registryUpdate:oauthScopes', mcpRouter.registryUpdate, { id: 'x' }, 'oauthScopes', {
     cap: 500,
     clearable: true,
+    nullable: true,
   }),
   s('mcp.registryUpdate:oauthClientId', mcpRouter.registryUpdate, { id: 'x' }, 'oauthClientId', {
     cap: 500,
@@ -337,6 +361,18 @@ describe('every raw text write refuses unstorable text (handler-level, #382)', (
   }
 });
 
+describe('the surface table is unique and complete (#382 r3)', () => {
+  it('every label appears exactly once (a duplicated row is a silently dropped surface)', () => {
+    expect(new Set(surfaces.map((surface) => surface.surface)).size).toBe(surfaces.length);
+  });
+
+  it('the table covers every guarded surface — bump the count when you add one', () => {
+    // 62 surfaces: 14 tasks + 6 projects + 1 status + 9 vault + 18 mcp + 4 providers
+    // + 3 environments + 2 settings + 1 employees + 4 URL columns added in r1
+    expect(surfaces).toHaveLength(62);
+  });
+});
+
 describe('the surface table points at the procedure its label names (#382 r2)', () => {
   for (const surface of surfaces) {
     it(`${surface.surface}: label and procedure agree`, () => {
@@ -367,9 +403,16 @@ describe('the wired schema keeps its own contract (#382: accept / clear / cap)',
 
     if (surface.clearable) {
       it(`${surface.surface}: the omitted clear path stays open`, () => {
+        const key = surface.inputKey ?? surface.field;
         const cleared = { ...surface.base };
-        delete cleared[surface.inputKey ?? surface.field];
-        expect(schema().safeParse(cleared).success).toBe(true);
+        delete cleared[key];
+        const parsed = schema().safeParse(cleared);
+        expect(parsed.success).toBe(true);
+        // success alone is not enough: a `.optional()` -> `.default(x)` swap keeps
+        // the parse green while rewriting the stored value on every partial update
+        const data = (parsed as { data: Record<string, unknown> }).data;
+        if (surface.omittedDefault !== undefined) expect(data[key]).toBe(surface.omittedDefault);
+        else expect(Object.prototype.hasOwnProperty.call(data, key)).toBe(false);
       });
     }
 
@@ -377,7 +420,10 @@ describe('the wired schema keeps its own contract (#382: accept / clear / cap)',
       it(`${surface.surface}: the explicit null clear path stays open`, () => {
         // a literal null — building it through valueFor would send a valid URL
         // and leave `.nullable()` -> `.optional()` regressions invisible
-        expect(schema().safeParse({ ...surface.base, [surface.inputKey ?? surface.field]: null }).success).toBe(true);
+        const key = surface.inputKey ?? surface.field;
+        const parsed = schema().safeParse({ ...surface.base, [key]: null });
+        expect(parsed.success).toBe(true);
+        expect((parsed as { data: Record<string, unknown> }).data[key]).toBeNull();
       });
     }
   }
@@ -387,7 +433,6 @@ describe('vault last-four hint (#382 review): a legal astral secret never corrup
   it('slices by code points — the hint can never carry a lone surrogate', () => {
     // 9 characters: a raw UTF-16 slice(-4) would start on the low half of the pair
     expect(lastFourHint('12345😀abc')).toBe('😀abc');
-    expect(hasUnstorableText(lastFourHint('12345😀abc'))).toBe(false);
     // the short-secret rule counts CHARACTERS, not UTF-16 units — five astral
     // characters must get no hint even though they are ten code units
     expect(lastFourHint('😀😀😀😀a')).toBe('');
