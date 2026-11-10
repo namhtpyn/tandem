@@ -37,6 +37,8 @@ const h = vi.hoisted(() => ({
   txSeq: 0,
   claimWhere: null as unknown,
   userRows: [{ id: 'agent-1' }] as Array<{ id: string }>,
+  briefThrows: false,
+  txEnters: 0,
 }));
 
 vi.mock('../../server/db/index', async () => {
@@ -126,6 +128,7 @@ vi.mock('../../server/db/index', async () => {
       ...surface(0),
       transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
         h.txSeq += 1;
+        h.txEnters += 1;
         return await fn(surface(h.txSeq));
       },
     },
@@ -136,7 +139,10 @@ vi.mock('../../server/db/index', async () => {
 // only that the frozen brief reaches the run row inside the claim transaction
 vi.mock('../../server/domains/tasks/brief.service', () => ({
   buildBrief: () => 'FROZEN BRIEF',
-  loadBriefData: async () => ({}),
+  loadBriefData: async () => {
+    if (h.briefThrows) throw new Error('brief read failed');
+    return {};
+  },
   activityKindOf: () => null,
 }));
 
@@ -167,6 +173,8 @@ beforeEach(() => {
   h.txSeq = 0;
   h.claimWhere = null;
   h.userRows = [{ id: 'agent-1' }];
+  h.briefThrows = false;
+  h.txEnters = 0;
 });
 
 describe('claimTaskForDispatch (the race arbiter, #162)', () => {
@@ -249,6 +257,17 @@ describe('createRun claim-run atomicity (#406)', () => {
     await expect(createRun('task-1')).resolves.toBeNull();
     // the key-share lock, then only the losing claim attempt
     expect(h.writes.map((w) => `${w.op}:${w.table}`)).toEqual(['lock:user', 'update:tasks']);
+  });
+
+  it('a read failure before the transaction writes NOTHING and opens no transaction', async () => {
+    // every read (plan, brief, verdicts-so-far) lands BEFORE the transaction: a
+    // failure there must not have flipped anything, inserted anything, or even
+    // opened a transaction — a read moved inside the tx would be invisible to the
+    // write-log pins, so the transaction counter is the arbiter
+    h.briefThrows = true;
+    await expect(createRun('task-1')).rejects.toThrow('brief read failed');
+    expect(h.txEnters).toBe(0);
+    expect(h.writes).toHaveLength(0);
   });
 
   it('a vanished employee row is a LOST attempt, never a raw FK error', async () => {
