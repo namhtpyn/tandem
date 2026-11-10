@@ -1350,6 +1350,22 @@ export async function dispatchAiReviewTurns(
   }
 }
 
+/** which PENDING row this mint may dispatch: a LIVE AI reviewer, the caller's explicit
+ *  target when it names one (#397 r2), and — for the verdict-less correction — only that
+ *  reviewer's own row (#276 r5; row-order ties would otherwise hand the retry to a
+ *  different first-turn reviewer). */
+function reviewRowMintable(
+  row: { reviewerId: string | null },
+  aiIds: Set<string>,
+  target: string | null,
+  verdictlessReviewerId: string | undefined,
+): boolean {
+  if (!row.reviewerId || !aiIds.has(row.reviewerId)) return false; // human: the card is enough
+  if (target && row.reviewerId !== target) return false;
+  if (verdictlessReviewerId && row.reviewerId !== verdictlessReviewerId) return false;
+  return true;
+}
+
 /** the post-mint note — FAULT-ISOLATED (#397 r5): the turn IS the outcome by the time it
  *  runs, so a note failure is logged and never converted into a failed mint (the mint's
  *  caller would otherwise under-count and the mint's own catch would park a round that
@@ -1401,17 +1417,9 @@ async function dispatchAiReviewTurnsUnlocked(
   // to fall through to the plain mint; targeting must not suppress it — #397 r6)
   const target = opts?.targetReviewerId && aiIds.has(opts.targetReviewerId) ? opts.targetReviewerId : null;
   for (const row of rows) {
-    if (!row.reviewerId || !aiIds.has(row.reviewerId)) continue; // human reviewer: the card is enough
-    // TARGETED mint (#397 r2): the caller decided on THIS reviewer's row — never hand the
-    // turn to the round's first pending AI reviewer instead (that reviewer may already
-    // have had its turn; the sweep's whole premise is the row it validated).
-    if (target && row.reviewerId !== target) continue;
-    // VERDICT-LESS CORRECTION (#276, blind-review r5): a correction re-dispatch is
-    // TARGET-scoped — only the verdict-less reviewer's own row is retried (row order
-    // ties would otherwise hand the retry to a different first-turn reviewer and
-    // drop the verdict-less one's retry entirely). Target row not pending anymore
-    // (a human verdict landed mid-flight) -> nothing mints: the round moved on.
-    if (opts?.verdictlessReviewerId && row.reviewerId !== opts.verdictlessReviewerId) continue;
+    // the `!row.reviewerId` half ALSO narrows the type for everything below (reviewBy, the
+    // note, the park body) — the helper alone cannot narrow the caller's view
+    if (!row.reviewerId || !reviewRowMintable(row, aiIds, target, opts?.verdictlessReviewerId)) continue;
     try {
       // target-scoped above: a correction dispatch can only ever reach the
       // verdict-less reviewer's own turn
