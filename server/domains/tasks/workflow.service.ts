@@ -37,6 +37,7 @@ import {
 import {
   openRoundLive,
   dispatchAiReviewTurns,
+  parkRound,
   openReviewRound,
   recordVerdict,
   currentRound,
@@ -429,17 +430,34 @@ export async function submitResult(taskId: string, authorId: string, body: strin
     // ever strip a CONCURRENT round's legitimate park recovery state — the re-arm scan
     // and the park-origin restore both depend on those columns.
     if (!opened.flipped) throw new Error('task state changed during submit — a settle owns the outcome');
-    await noteSkipped();
-    await refreshParentGating(taskId);
+    // best-effort BETWEEN the commit and the dispatch (#394 r6): a throw here must not
+    // skip the reviewer turn — the round is already the outcome, and a live round with a
+    // PENDING row and no run in flight has no automatic recovery. Each step is isolated
+    // and logged; the dispatch below always runs.
+    try {
+      await noteSkipped();
+    } catch (e) {
+      log.warn(`submit: skip note failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
+    try {
+      await refreshParentGating(taskId);
+    } catch (e) {
+      log.warn(`submit: parent re-gate failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
     // the reviewer turn is dispatched only AFTER the round committed and the parents
     // re-gated (#394): a park raised here must stick — dispatching before the gating
     // write let its restore arm immediately unblock the fresh park, burning two rungs of
     // the rearm ladder per failed outage. Fault-isolated: the round is already the
-    // outcome, so a dispatch failure never turns a landed submit into an error.
+    // outcome, so a dispatch failure never turns a landed submit into an error. A throw
+    // that did NOT come from the per-row mint attempt (a setup read, or the park itself)
+    // parks here so the round is never left live with no run and no marker (#397 covers
+    // the process-crash flavour of that window).
     try {
       await dispatchAiReviewTurns(taskId, body);
     } catch (e) {
-      log.warn(`round opened but the reviewer turn failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+      const reason = e instanceof Error ? e.message : String(e);
+      log.warn(`round opened but the reviewer turn failed for task ${taskId}: ${reason}`);
+      await parkRound(taskId, `review turn dispatch failed — ${reason}`, { rearmable: true }).catch(() => {});
     }
     // #365: a reviewer deleted inside the round-open window leaves a void row on the
     // round this submit just flipped in-review — settle it now (the settle is a no-op

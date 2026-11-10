@@ -15,6 +15,8 @@ const h = vi.hoisted(() => ({
   flipArgs: null as { status: string; updatedAt: Date } | null,
   order: [] as string[],
   dispatchThrows: false,
+  gatingThrows: false,
+  parks: [] as string[],
   updates: [] as Array<{ table: string; set: Record<string, unknown>; pred: boolean }>,
   notes: [] as Array<{ kind: unknown; payload: Record<string, unknown> }>,
   published: 0,
@@ -104,6 +106,7 @@ vi.mock('../../server/domains/tasks/gating.service', async (importOriginal) => {
     ...mod,
     refreshParentGating: async () => {
       h.order.push('gating');
+      if (h.gatingThrows) throw new Error('gating write failed');
     },
     hasOpenChildren: async () => false,
   };
@@ -120,6 +123,10 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     dispatchAiReviewTurns: async () => {
       h.order.push('dispatch');
       if (h.dispatchThrows) throw new Error('redis down');
+    },
+    parkRound: async (_t: string, why: string) => {
+      h.parks.push(why);
+      return true;
     },
     // #394: the round open carries the in-review flip in its OWN transaction, so the
     // mock reports whether that flip won (`cancelWins` = the competing abandon/settle
@@ -157,6 +164,8 @@ beforeEach(() => {
   h.flipArgs = null;
   h.order = [];
   h.dispatchThrows = false;
+  h.gatingThrows = false;
+  h.parks = [];
   h.updates = [];
   h.notes = [];
   h.published = 0;
@@ -246,6 +255,29 @@ describe('submit/answer terminal arbitration (#292 r1 mirror of #287)', () => {
     h.dispatchThrows = true;
     await expect(submitResult('task-1', 'worker-1', 'the work is done')).resolves.toEqual({ status: STATUS.inReview });
     expect(h.order).toEqual(['gating', 'dispatch']);
+    // a throw that did not come from the per-row mint still parks the round, so it is
+    // never left live with a PENDING row, no run and no marker
+    expect(h.parks).toHaveLength(1);
+    expect(h.parks[0]).toContain('review turn dispatch failed');
+  });
+
+  it('a throwing parent re-gate between the commit and the turn never skips the dispatch (#394 r6)', async () => {
+    h.taskRows = [
+      {
+        status: 'st-doing',
+        assigneeId: 'worker-1',
+        ownerId: 'owner-1',
+        createdBy: 'owner-1',
+        questionChain: [],
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+        reviewers: [REV],
+      },
+    ];
+    h.statuses = [{ id: 'st-doing', category: CATEGORY.WORKING }];
+    h.gatingThrows = true;
+    await expect(submitResult('task-1', 'worker-1', 'the work is done')).resolves.toEqual({ status: STATUS.inReview });
+    expect(h.order).toEqual(['gating', 'dispatch']);
+    expect(h.parks).toEqual([]);
   });
 
   it('a submit with no reviewers flips DONE through the same guarded write', async () => {
