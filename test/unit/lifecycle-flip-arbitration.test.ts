@@ -32,6 +32,10 @@ const h = vi.hoisted(() => ({
   // retry that reuses the stale read is provably wrong (its CAS params stay stale)
   bumpOnLoss: false,
   reassignOnLoss: false,
+  reownerOnLoss: false,
+  statusOnLoss: null as string | null,
+  steerStates: ['stopped'] as string[],
+  steerCalls: 0,
   freshAt: new Date('2026-11-10T09:00:05.000Z'),
   txSeq: 0,
   // transaction ids observed by the obligation writes (TX-IDENTITY PIN LAW: a boolean
@@ -40,6 +44,7 @@ const h = vi.hoisted(() => ({
   // key-share locks taken inside a transaction (lock-order pin) + the tx the
   // question ACTIVITY row rode (it must be the park's own tx)
   locks: [] as string[],
+  lockedIds: [] as string[],
   noteTxIds: [] as Array<number | null>,
   seq: [] as string[],
   dispatches: [] as string[],
@@ -67,6 +72,8 @@ vi.mock('../../server/db/index', async () => {
               ...h.taskRows[0],
               updatedAt: h.freshAt,
               ...(h.reassignOnLoss ? { assigneeId: 'worker-2' } : {}),
+              ...(h.reownerOnLoss ? { ownerId: 'owner-2' } : {}),
+              ...(h.statusOnLoss ? { status: h.statusOnLoss } : {}),
             };
           }
           return table === tasks && !lose ? [{ id: 'task-1' }] : [];
@@ -95,10 +102,13 @@ vi.mock('../../server/db/index', async () => {
           select: () => ({
             from: () => ({
               where: (cond: unknown) => ({
-                for: async () => {
+                for: async (mode: string) => {
                   const { params } = new PgDialect().sqlToQuery(cond as SQL);
-                  h.locks.push(String(params[0]));
-                  return [{ id: String(params[0]) }];
+                  h.locks.push(String(mode));
+                  h.seq.push(`lock:${mode}`);
+                  // every FK-referenced user row is locked in ONE statement
+                  h.lockedIds = params.map((id) => String(id)).sort();
+                  return params.map((id) => ({ id: String(id) }));
                 },
               }),
             }),
@@ -197,7 +207,10 @@ vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {
 
 vi.mock('../../server/domains/tasks/runner.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/runner.service')>();
-  return { ...mod, steerRun: async () => 'stopped' };
+  return {
+    ...mod,
+    steerRun: async () => h.steerStates[Math.min(h.steerCalls++, h.steerStates.length - 1)] ?? 'stopped',
+  };
 });
 
 vi.mock('../../server/domains/tasks/dispatcher.service', async (importOriginal) => {
@@ -243,9 +256,14 @@ beforeEach(() => {
   h.loseFlips = 0;
   h.bumpOnLoss = false;
   h.reassignOnLoss = false;
+  h.reownerOnLoss = false;
+  h.statusOnLoss = null;
+  h.steerStates = ['stopped'];
+  h.steerCalls = 0;
   h.txSeq = 0;
   h.obTxIds = [];
   h.locks = [];
+  h.lockedIds = [];
   h.noteTxIds = [];
   h.seq = [];
   h.dispatches = [];
@@ -259,7 +277,8 @@ describe('askQuestion parks before touching obligations (#400)', () => {
     seedWorkingAiTask();
     const res = await askQuestion('task-1', 'worker-1', 'which scope?');
     expect(res).toEqual({ holderId: 'owner-1' });
-    expect(h.seq).toEqual(['flip', 'cancel', 'spawn', 'note']);
+    // the lock is taken BEFORE the flip, in KEY SHARE mode
+    expect(h.seq).toEqual(['lock:key share', 'flip', 'cancel', 'spawn', 'note']);
     // the obligation ROLE is load-bearing: APPROVAL here would cancel a live review
     // round's approvals and park the owner with the wrong decision surface
     expect(h.cancelled).toEqual(['ANSWER']);
@@ -270,8 +289,12 @@ describe('askQuestion parks before touching obligations (#400)', () => {
     const ids = [h.flips[0]?.txId, ...h.obTxIds, ...h.noteTxIds];
     expect(new Set(ids).size).toBe(1);
     expect(ids[0]).toBeGreaterThan(0);
-    // LOCK ORDER: the holder's user row is key-shared before the tasks flip
-    expect(h.locks).toEqual(['owner-1']);
+    // LOCK ORDER: both FK-referenced user rows (holder + author) are key-shared in ONE
+    // statement before the tasks flip — never a user lock after the task row
+    expect(h.locks).toEqual(['key share']);
+    expect(h.seq[0]).toBe('lock:key share');
+    // BOTH FK-referenced rows — the holder (obligation) and the author (question row)
+    expect(h.lockedIds).toEqual(['owner-1', 'worker-1']);
   });
 
   it('a lost ask flip cancels and spawns NOTHING and refuses', async () => {
@@ -279,7 +302,7 @@ describe('askQuestion parks before touching obligations (#400)', () => {
     h.applied = false;
     await expect(askQuestion('task-1', 'worker-1', 'late question')).rejects.toThrow(/state changed during ask/);
     // retry-once: two attempts, both lost — then the refusal
-    expect(h.seq).toEqual(['flip', 'flip']);
+    expect(h.seq).toEqual(['lock:key share', 'flip', 'lock:key share', 'flip']);
     expect(h.flips).toHaveLength(2);
     expect(h.cancelled).toHaveLength(0);
     expect(h.spawned).toHaveLength(0);
@@ -302,7 +325,7 @@ describe('askQuestion parks before touching obligations (#400)', () => {
     expect(winTx).toBeGreaterThan(0);
     expect(h.obTxIds).toEqual([winTx, winTx]);
     expect(h.spawned).toEqual(['ANSWER:owner-1']);
-    expect(h.seq).toEqual(['flip', 'flip', 'cancel', 'spawn', 'note']);
+    expect(h.seq).toEqual(['lock:key share', 'flip', 'lock:key share', 'flip', 'cancel', 'spawn', 'note']);
   });
 
   it('a reassignment in the retry window still parks the question (authority decided on the first read)', async () => {
@@ -314,6 +337,29 @@ describe('askQuestion parks before touching obligations (#400)', () => {
     expect(res).toEqual({ holderId: 'owner-1' });
     expect(h.spawned).toEqual(['ANSWER:owner-1']);
     expect(h.notes).toHaveLength(1);
+  });
+
+  it('an owner change inside the retry window parks the question on the CURRENT owner', async () => {
+    seedWorkingAiTask();
+    h.loseFlips = 1;
+    h.bumpOnLoss = true;
+    h.reownerOnLoss = true;
+    const res = await askQuestion('task-1', 'worker-1', 'who signs off?');
+    expect(res).toEqual({ holderId: 'owner-2' });
+    expect(h.flips[1]?.set.questionChain).toEqual(['owner-2']);
+    expect(h.spawned).toEqual(['ANSWER:owner-2']);
+  });
+
+  it('a same-category status move is re-read too — the retry CASes the FRESH status id', async () => {
+    seedWorkingAiTask();
+    h.statuses.push({ id: 'st-working-2', category: CATEGORY.WORKING });
+    h.loseFlips = 1;
+    h.bumpOnLoss = true;
+    h.statusOnLoss = 'st-working-2';
+    await askQuestion('task-1', 'worker-1', 'which scope?');
+    const win = new PgDialect().sqlToQuery(h.flips[1]?.cond as SQL);
+    expect(win.params[1]).toBe('st-working-2');
+    expect(win.params[2]).toBe(h.freshAt.toISOString());
   });
 
   it('the ask flip pins id + the read status + the read updatedAt (operator + value)', () => {
@@ -341,6 +387,17 @@ describe('addNote dispatch flip arbitrates on the read row (#400)', () => {
     expect(res).toEqual({ steered: false, dispatched: true });
     expect(h.seq).toEqual(['note', 'flip', 'dispatch']);
     expect(h.flips[0]?.set.status).toBe(STATUS.todo);
+  });
+
+  it('a lost note flip caused by a dispatch claim STEERS the live run — never flips a run-locked row', async () => {
+    seedWorkingAiTask();
+    h.loseFlips = 1; // attempt 0 loses to the dispatcher's claim
+    h.steerStates = ['stopped', 'steered'];
+    const res = await addNote('task-1', 'human-1', 'go');
+    expect(res).toEqual({ steered: true });
+    // only the losing attempt flipped; the retry re-ran the steer gate instead
+    expect(h.flips).toHaveLength(1);
+    expect(h.dispatches).toHaveLength(0);
   });
 
   it('a lost note flip dispatches nothing — the note stays thread-only', async () => {

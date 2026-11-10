@@ -117,8 +117,6 @@ async function statusCategoryOf(statusId: string): Promise<string | null> {
 export async function askQuestion(taskId: string, authorId: string, body: string) {
   const first = await getTask(taskId);
   if (!first.assigneeId) throw new Error('task has no assignee');
-  const holder = first.ownerId ?? first.createdBy;
-  if (!holder) throw new Error('task has no owner to answer');
   // identity gate: decided from the FIRST read — the run that just settled was
   // authorised then, so a concurrent reassignment must never turn its question into a
   // refused (bounced) settle. The retry re-reads only the lifecycle state + CAS stamp.
@@ -150,6 +148,10 @@ export async function askQuestion(taskId: string, authorId: string, body: string
   // writes nothing.
   for (let attempt = 0; attempt < 2; attempt++) {
     const task = attempt === 0 ? first : await getTask(taskId);
+    // the park TARGET follows the current row: an owner change inside the retry
+    // window parks the question on the owner who owns it now (SPEC: park on ITS owner)
+    const holder = task.ownerId ?? task.createdBy;
+    if (!holder) throw new Error('task has no owner to answer');
     // REVIEW LAW: the assignee asks from a working status; a REVIEWER may ask from
     // in-review (the round stays open — answering flips back to in-review, the review
     // continues). CATEGORY-GATE LAW (#336): both gates read the status CATEGORY, so a
@@ -166,12 +168,17 @@ export async function askQuestion(taskId: string, authorId: string, body: string
     // surface points at a question that is not in the thread.
     const won = await db.transaction(async (tx) => {
       const d = asDb(tx);
-      // LOCK ORDER (#400 r2): key-share the holder's user row BEFORE the tasks row.
-      // The obligation insert needs KEY SHARE on that user row anyway, and the
-      // employee-delete path holds the user row while its ON DELETE SET NULL action
-      // reaches tasks — taking both in this order prevents a 40P01 inversion.
-      const locked = await d.select({ id: user.id }).from(user).where(eq(user.id, holder)).for('key share');
-      if (locked.length === 0) throw new Error('the owner to answer no longer exists');
+      // LOCK ORDER (#400 r2/r3): key-share EVERY user row this transaction later
+      // FK-references — the holder (ANSWER obligation) AND the author (question row) —
+      // in ONE statement BEFORE the tasks row. The employee-delete path holds a user
+      // row while its ON DELETE SET NULL action reaches tasks, so any user lock taken
+      // AFTER the task row inverts the order and deadlocks (40P01).
+      const locked = await d
+        .select({ id: user.id })
+        .from(user)
+        .where(inArray(user.id, [...new Set([holder, authorId])]))
+        .for('key share');
+      if (!locked.some((r) => r.id === holder)) throw new Error('the owner to answer no longer exists');
       const parked = await d
         .update(tasks)
         .set({
@@ -368,6 +375,14 @@ export async function addNote(
   // unrecoverable for a backlog/paused task, which nothing re-dispatches. Re-read and
   // re-decide ONCE on the fresh row; a second loss stays thread-only.
   for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) {
+      // RUN LOCK (#400 r3): the lost CAS may have been a DISPATCH CLAIM (todo->doing
+      // with a live run) — re-flipping that row to todo would break the lock and let a
+      // second run through. Re-run the composer's steer gate on the fresh state: a live
+      // run takes the note as a steer, never a status flip.
+      const again = await steerRun(taskId, body);
+      if (again === 'steered' || again === 'refused') return { steered: again === 'steered' };
+    }
     const current = attempt === 0 ? task : await getTask(taskId);
     const rows = await db.query.taskStatuses.findMany({
       columns: { id: true, category: true },
