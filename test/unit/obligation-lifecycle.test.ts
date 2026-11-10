@@ -4,6 +4,7 @@
 // setStatus skipped custom terminal statuses entirely, and teardownOpenRound's
 // round===0 early-return left a question-flow task's ANSWER obligation PENDING
 // forever (phantom inbox/badge/awaiting-decision rows with no detector).
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CATEGORY, OBLIGATION_ROLE, REVIEW_STATUS } from '#shared/enums';
@@ -14,6 +15,7 @@ const h = vi.hoisted(() => ({
   roundRows: [] as Array<{ round: number }>,
   reviewRows: [] as Array<{ id: string; status: string }>,
   updates: [] as Array<{ vals: Record<string, unknown> }>,
+  updateSql: [] as string[],
   cancelAllCalls: [] as Array<[string, string]>,
 }));
 
@@ -37,7 +39,11 @@ vi.mock('../../server/db/index', () => ({
     update: () => ({
       set: (vals: Record<string, unknown>) => {
         h.updates.push({ vals });
-        return { where: async () => {} };
+        return {
+          // the WHERE is rendered so a pin can prove WHICH teardown ran (#397 r3): the
+          // task-wide one has no round predicate, the max-round one does
+          where: async (cond: unknown) => void h.updateSql.push(new PgDialect().sqlToQuery(cond as never).sql),
+        };
       },
     }),
   },
@@ -83,15 +89,24 @@ beforeEach(() => {
 });
 
 describe('teardownOnManualMove (obligation lifecycle #205)', () => {
-  it('waiting-answer → seeded done, round 0: ANSWER obligation cancelled, no crash on empty round', async () => {
+  // TERMINAL SETTLE (#397 r4): a done/cancelled task clears BOTH roles' obligations
+  // unconditionally — a leftover PENDING approval (a crashed/aborted settle leaves one
+  // with no row) must not outlive the settle, even on a task that never had a round.
+  it('waiting-answer → seeded done, round 0: ANSWER + APPROVAL cancelled, no crash on empty round', async () => {
     await teardownOnManualMove('t1', STATUS.waitingAnswer, STATUS.done);
-    expect(h.cancelAllCalls).toEqual([['t1', OBLIGATION_ROLE.ANSWER]]);
-    expect(h.updates).toHaveLength(0);
+    expect(h.cancelAllCalls.sort()).toEqual([
+      ['t1', OBLIGATION_ROLE.ANSWER],
+      ['t1', OBLIGATION_ROLE.APPROVAL],
+    ]);
+    expect(h.updates).toHaveLength(0); // no pending row -> nothing to supersede
   });
 
-  it('waiting-answer → CUSTOM done-category status: settled, ANSWER obligation cancelled', async () => {
+  it('waiting-answer → CUSTOM done-category status: settled, both obligations cancelled', async () => {
     await teardownOnManualMove('t1', 'custom-wait', 'custom-done');
-    expect(h.cancelAllCalls).toEqual([['t1', OBLIGATION_ROLE.ANSWER]]);
+    expect(h.cancelAllCalls.sort()).toEqual([
+      ['t1', OBLIGATION_ROLE.ANSWER],
+      ['t1', OBLIGATION_ROLE.APPROVAL],
+    ]);
     expect(h.updates).toHaveLength(0);
   });
 
@@ -101,6 +116,12 @@ describe('teardownOnManualMove (obligation lifecycle #205)', () => {
     await teardownOnManualMove('t1', STATUS.inReview, 'custom-done');
     expect(h.updates).toHaveLength(1);
     expect(h.updates[0].vals.status).toBe(REVIEW_STATUS.SUPERSEDED);
+    // TASK-WIDE (#397 r3): a terminal settle supersedes EVERY pending row — the predicate
+    // must not be scoped to one round (an older round can still be open), so swapping in
+    // teardownOpenRound turns this red
+    const sql = h.updateSql.join(' ').toLowerCase();
+    expect(sql).toContain('"status" =');
+    expect(sql).not.toContain('"round" =');
     expect(h.cancelAllCalls.sort()).toEqual([
       ['t1', OBLIGATION_ROLE.ANSWER],
       ['t1', OBLIGATION_ROLE.APPROVAL],

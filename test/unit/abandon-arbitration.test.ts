@@ -4,7 +4,7 @@
 // (0-row miss) and never overwrites a settled task.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { CATEGORY } from '#shared/enums';
+import { CATEGORY, OBLIGATION_ROLE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 const h = vi.hoisted(() => ({
@@ -22,6 +22,11 @@ const h = vi.hoisted(() => ({
   published: 0,
   cancelled: [] as string[],
   spawns: [] as Array<{ employeeId: string; role: string }>,
+  // #397 r1: the tx-membership sentinel — every teardown/obligation write records
+  // whether it received the EXECUTOR the transaction handed out (vs. the pool db)
+  txSentinel: null as unknown,
+  inTx: [] as boolean[],
+  teardownPublish: [] as Array<boolean | undefined>,
 }));
 
 /** canonical uuid — the round-open existence read shape-checks before binding (#361) */
@@ -29,55 +34,62 @@ const REV = '00000000-0000-7000-8000-00000000a001';
 
 vi.mock('../../server/db/index', async () => {
   const { tasks } = await import('../../server/db/schema');
-  return {
-    asDb: (x: unknown) => x,
-    db: {
-      select: () => ({
-        from: () => {
-          const self: Record<string, unknown> = {};
-          self.where = () => ({ then: (onF?: (v: unknown) => unknown) => Promise.resolve([]).then(onF) });
-          self.innerJoin = () => self;
-          self.orderBy = () => self;
-          self.limit = async () => [];
-          return self;
-        },
-      }),
-      update: (table: unknown) => ({
-        set: (set: Record<string, unknown>) => ({
-          where: (cond: unknown) => {
-            const applied = () => {
-              h.updates.push({ table: table === tasks ? 'tasks' : 'other', set, pred: cond != null });
-              return h.cancelWins ? [{ id: 'task-1' }] : [];
-            };
-            return {
-              then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => Promise.resolve(applied()).then(onF),
-              catch: (onR: (e: unknown) => unknown) => Promise.resolve(applied()).catch(onR),
-              returning: async () => applied(),
-            };
-          },
-        }),
-      }),
-      insert: () => ({
-        values: () => {
-          const p = () => Promise.resolve([{ id: 'row-1' }]);
+  const db = {
+    select: () => ({
+      from: () => {
+        const self: Record<string, unknown> = {};
+        self.where = () => ({ then: (onF?: (v: unknown) => unknown) => Promise.resolve([]).then(onF) });
+        self.innerJoin = () => self;
+        self.orderBy = () => self;
+        self.limit = async () => [];
+        return self;
+      },
+    }),
+    update: (table: unknown) => ({
+      set: (set: Record<string, unknown>) => ({
+        where: (cond: unknown) => {
+          const applied = () => {
+            h.updates.push({ table: table === tasks ? 'tasks' : 'other', set, pred: cond != null });
+            // ORDER PIN (#397): the cancel CAS must be the transaction's FIRST write —
+            // record it so a teardown-before-CAS regression is visible
+            if (table === tasks) h.order.push('cancel-cas');
+            return h.cancelWins ? [{ id: 'task-1' }] : [];
+          };
           return {
-            then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => p().then(onF),
-            catch: (onR: (e: unknown) => unknown) => p().catch(onR),
-            returning: async () => [{ id: 'row-1' }],
+            then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => Promise.resolve(applied()).then(onF),
+            catch: (onR: (e: unknown) => unknown) => Promise.resolve(applied()).catch(onR),
+            returning: async () => applied(),
           };
         },
       }),
-      query: {
-        tasks: {
-          findMany: async () => h.taskRows,
-        },
-        taskStatuses: { findMany: async () => h.statuses },
-        // REVIEWER EXISTENCE (#361): submit re-checks the roster against the
-        // user table before opening a round — the fixture reviewer is live
-        user: { findMany: async () => [{ id: REV }] },
+    }),
+    insert: () => ({
+      values: () => {
+        const p = () => Promise.resolve([{ id: 'row-1' }]);
+        return {
+          then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => p().then(onF),
+          catch: (onR: (e: unknown) => unknown) => p().catch(onR),
+          returning: async () => [{ id: 'row-1' }],
+        };
       },
+    }),
+    query: {
+      tasks: {
+        findMany: async () => h.taskRows,
+      },
+      taskStatuses: { findMany: async () => h.statuses },
+      // REVIEWER EXISTENCE (#361): submit re-checks the roster against the
+      // user table before opening a round — the fixture reviewer is live
+      user: { findMany: async () => [{ id: REV }] },
     },
   };
+  // #397 r2: the tx executor is a DISTINCT object (drizzle's tx is not the pool db); a
+  // proxy keeps every method working while the identity check stays meaningful — passing
+  // the pool db instead of the tx now FAILS the membership pin
+  const tx = Object.create(db) as typeof db;
+  db.transaction = async (fn: (tx: unknown) => Promise<unknown>) => fn(tx);
+  h.txSentinel = tx;
+  return { asDb: (x: unknown) => x, db };
 });
 
 vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
@@ -89,8 +101,14 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
   const mod = await importOriginal<typeof import('../../server/domains/tasks/obligations.service')>();
   return {
     ...mod,
-    cancelObligations: async (_t: unknown, role: unknown) => void h.cancelled.push(String(role)),
-    cancelAllObligations: async () => {},
+    cancelObligations: async (_t: unknown, role: unknown, ex?: unknown) => {
+      h.cancelled.push(String(role));
+      h.inTx.push(ex === h.txSentinel);
+    },
+    cancelAllObligations: async (_t: unknown, role: unknown, ex?: unknown) => {
+      h.cancelled.push('ALL:' + String(role));
+      h.inTx.push(ex === h.txSentinel);
+    },
     spawnObligation: async (_t: unknown, employeeId: string, role: string) => {
       h.spawns.push({ employeeId, role: String(role) });
       return 'obl-1';
@@ -138,8 +156,13 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     },
     recordVerdict: async () => ({ outcome: 'superseded' }),
     currentRound: async () => 1,
-    teardownOpenRound: async (_t: unknown, settledTo: string) => {
+    // #397 r2: the abandon tears down EVERY pending round (a manual move out of review
+    // leaves older rounds open, and the work branch can cancel a round-carrying task)
+    teardownAllPendingRounds: async (_t: unknown, settledTo: string, ex?: unknown, opts?: { publish?: boolean }) => {
+      h.order.push('teardown');
       h.teardowns.push(settledTo);
+      h.inTx.push(ex === h.txSentinel);
+      h.teardownPublish.push(opts?.publish);
     },
   };
 });
@@ -170,6 +193,8 @@ beforeEach(() => {
   h.notes = [];
   h.published = 0;
   h.cancelled = [];
+  h.inTx = [];
+  h.teardownPublish = [];
 });
 
 describe('abandonTask terminal arbitration (#287)', () => {
@@ -187,6 +212,58 @@ describe('abandonTask terminal arbitration (#287)', () => {
     // only the losing write was attempted — no retry, no second flip
     expect(h.updates).toHaveLength(1);
     expect(h.updates[0]?.pred).toBe(true);
+  });
+
+  // ABANDON ORDERING (#397): the cancel CAS is the transaction's FIRST write and the
+  // round teardown rides the SAME transaction — the old order tore the round down (rows
+  // superseded, obligations cancelled) BEFORE the CAS, so an abandon that then lost to a
+  // concurrent settle/submit had already destroyed the winner's round.
+  it('a lost abandon tears NOTHING down — the winner round and its obligations survive (#397)', async () => {
+    h.cancelWins = false;
+    await expect(abandonTask('task-1', 'owner-1', 'cancel it')).rejects.toThrow(/task state changed during cancel/);
+    // vacuity: teardown-before-CAS would record a teardown + both obligation cancels here
+    expect(h.teardowns).toEqual([]);
+    expect(h.cancelled).toEqual([]);
+    expect(h.order).toEqual(['cancel-cas']);
+    expect(h.teardownPublish).toEqual([]);
+  });
+
+  // #397 r2: the work branch can cancel a task that still carries a live round (a manual
+  // move out of review leaves the round open — the review branch is not the only one that
+  // can hold pending rows). A cancelled task must never keep a pending row or obligation.
+  it('a work-branch cancel tears an open round down and cancels BOTH roles (#397 r2)', async () => {
+    h.taskRows = [
+      {
+        status: STATUS.todo,
+        assigneeId: 'worker-1',
+        ownerId: 'owner-1',
+        createdBy: 'owner-1',
+        questionChain: [],
+        reviewers: [],
+      },
+    ];
+    h.statuses = [{ id: STATUS.todo, category: CATEGORY.READY }];
+    await abandonTask('task-1', 'owner-1', 'cancel it');
+    expect(h.teardowns).toEqual(['cancelled']);
+    expect(h.cancelled).toEqual([OBLIGATION_ROLE.ANSWER, 'ALL:' + OBLIGATION_ROLE.APPROVAL]);
+    expect(h.inTx).toEqual([true, true, true]);
+    expect(h.teardownPublish).toEqual([false]);
+  });
+
+  it('a won abandon CASes first, then tears the round down inside the same transaction (#397)', async () => {
+    await abandonTask('task-1', 'owner-1', 'cancel it');
+    // the CAS is recorded before the teardown, and both roles' obligations cancel; the
+    // parent re-gate still runs last (after the outcome committed)
+    expect(h.order).toEqual(['cancel-cas', 'teardown', 'gating']);
+    expect(h.cancelled).toEqual([OBLIGATION_ROLE.ANSWER, 'ALL:' + OBLIGATION_ROLE.APPROVAL]);
+    expect(h.teardowns).toEqual(['cancelled']);
+    // TX MEMBERSHIP (#397 r2): every teardown/obligation write got the tx EXECUTOR —
+    // passing the pool db instead of the transaction turns this red
+    expect(h.inTx).toEqual([true, true, true]);
+    // NO PUBLISH INSIDE THE TX (#397 r1): the teardown is told to defer its change
+    // events (they ride the post-commit abandon note), so a redis publish can never gate
+    // the held tasks row lock and a rollback can never announce erased rows
+    expect(h.teardownPublish).toEqual([false]);
   });
 });
 

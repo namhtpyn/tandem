@@ -22,7 +22,7 @@ import { STATUS } from '#shared/status';
 //      supervisors left) — and can't revisit anyone already in the chain
 import { nonNull } from '#shared/utils/non-null';
 
-import { db } from '../../db/index';
+import { asDb, db } from '../../db/index';
 import { tasks, employeeSupervisors, taskReviews, taskRuns, taskMessages } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { refreshParentGating, hasOpenChildren } from './gating.service';
@@ -31,6 +31,7 @@ import {
   spawnObligationTracked,
   resolveObligation,
   cancelObligations,
+  cancelAllObligations,
   cancelObligationById,
   answerHolder,
 } from './obligations.service';
@@ -41,7 +42,6 @@ import {
   openReviewRound,
   recordVerdict,
   currentRound,
-  teardownOpenRound,
   teardownAllPendingRounds,
   settleExtinguishedRound,
   liveReviewers,
@@ -513,13 +513,9 @@ export async function abandonTask(taskId: string, authorId: string, body: string
   // branch on the status CATEGORY — a custom in-review status abandons exactly
   // like the seeded one instead of falling into the work branch and refusing.
   const abandonCategory = await statusCategoryOf(task.status);
-  if (abandonCategory === CATEGORY.IN_REVIEW) {
+  const fromReview = abandonCategory === CATEGORY.IN_REVIEW;
+  if (fromReview) {
     if (!isReviewer && !isOwner) throw new Error('only a reviewer or the owner can abandon');
-    await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL);
-    await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
-    // teardown first (pending rows -> superseded, obligations cancel) — the task
-    // status carries the real outcome (cancelled)
-    await teardownOpenRound(taskId, 'cancelled');
   } else {
     if (
       abandonCategory !== CATEGORY.READY &&
@@ -537,20 +533,39 @@ export async function abandonTask(taskId: string, authorId: string, body: string
       .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
       .where(and(eq(taskMessages.taskId, taskId), eq(taskRuns.status, RUN_STATUS.RUNNING)));
     if (running.length > 0) throw new Error('cancel the running run first');
-    // a paused task can still hold a pending answer obligation — cancel it
-    await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
   }
+  // TERMINAL ARBITRATION (#287) + ABANDON ORDERING (#397): the cancel write is the
+  // arbitration AND the transaction's FIRST write — a concurrent verdict settle (-> done)
+  // or submit flip (-> in-review) that won the task between the read and this write owns
+  // the outcome, and the loser writes NOTHING: no obligation cancel, no round teardown,
+  // no note. The teardown rides the SAME transaction, so it can neither outlive a lost
+  // CAS (the old order superseded the winner's round and cancelled its obligations before
+  // refusing) nor leave a cancelled task carrying a pending row when a write fails.
+  // A won cancel makes the LIFECYCLE writers lose by construction: a submit needs a
+  // working category and the verdict flip refuses terminal-category statuses. It does NOT
+  // cover the unguarded note/ask status flips (pre-existing; tracked in #400) — those can
+  // still move a task after any terminal write.
+  const teardown = await db.transaction(async (tx) => {
+    const d = asDb(tx);
+    const cancelled = await d
+      .update(tasks)
+      .set({ status: CANCELLED_STATUS, updatedAt: new Date() })
+      .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
+      .returning({ id: tasks.id });
+    if (cancelled.length === 0) return { won: false as const };
+    // TERMINAL TEARDOWN (#361 r6 / #397 r2): a cancelled task never keeps a pending review
+    // row or a pending obligation — EVERY round tears down, not just the MAX one (a manual
+    // move out of review legally leaves an older round open, and the work branch can cancel
+    // a task that still carries a live round), and BOTH roles cancel on every branch.
+    // Change events are deferred to the post-commit note (#397 r1): a redis publish must
+    // never gate the held tasks row lock, and a rollback must never announce erased rows.
+    await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER, tx);
+    await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL, tx);
+    await teardownAllPendingRounds(taskId, 'cancelled', tx, { publish: false });
+    return { won: true as const };
+  });
+  if (!teardown.won) throw new Error('task state changed during cancel — a settle owns the outcome');
   // abandoned == cancelled (one terminal, no fake distinction)
-  // TERMINAL ARBITRATION (#287): the cancel write arbitrates on the status this call
-  // read — a concurrent verdict settle (-> done) or submit flip (-> in-review) that
-  // won the task between the read and this write owns the outcome; a 0-row miss
-  // refuses the abandon instead of overwriting a settled task.
-  const cancelled = await db
-    .update(tasks)
-    .set({ status: CANCELLED_STATUS, updatedAt: new Date() })
-    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
-    .returning({ id: tasks.id });
-  if (cancelled.length === 0) throw new Error('task state changed during cancel — a settle owns the outcome');
   await logActivity(taskId, ACTIVITY_KIND.VERDICT, authorId, body || 'cancelled', { abandon: true });
   await refreshParentGating(taskId);
   return { ok: true };

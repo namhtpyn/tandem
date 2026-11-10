@@ -80,9 +80,11 @@ export async function resolveObligation(
     );
 }
 
-/** cancel every pending obligation of a role on a task (review re-round, answer reset) */
-export async function cancelObligations(taskId: string, role: ObligationRole) {
-  await db
+/** cancel every pending obligation of a role on a task (review re-round, answer reset).
+ *  `ex` (2026-11-10, #397): the caller can fold the cancel into its own transaction —
+ *  an abandon arbitration must not cancel a winner's obligation on a lost CAS. */
+export async function cancelObligations(taskId: string, role: ObligationRole, ex: DbExecutor = db) {
+  await asDb(ex)
     .update(taskObligations)
     .set({ status: OBLIGATION_STATUS.CANCELLED, resolvedAt: new Date() })
     .where(
@@ -113,9 +115,10 @@ export async function deleteObligationById(obligationId: string) {
 }
 
 /** cancel EVERY obligation of a role on a task — including ones already resolved this
- * round (REVIEW LAW: a change_requested/rejected round must not read as approvals) */
-export async function cancelAllObligations(taskId: string, role: ObligationRole) {
-  await db
+ *  round (REVIEW LAW: a change_requested/rejected round must not read as approvals).
+ *  `ex` (#397): tx-capable, same reason as cancelObligations. */
+export async function cancelAllObligations(taskId: string, role: ObligationRole, ex: DbExecutor = db) {
+  await asDb(ex)
     .update(taskObligations)
     .set({ status: OBLIGATION_STATUS.CANCELLED, resolvedAt: new Date() })
     .where(and(eq(taskObligations.taskId, taskId), eq(taskObligations.role, role)));
