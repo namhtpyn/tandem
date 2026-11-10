@@ -1,3 +1,15 @@
+## [2.78.16](https://github.com/namhtpyn/tandem/compare/v2.78.15...v2.78.16) (2026-11-10)
+
+
+### Bug Fixes
+
+* [#406](https://github.com/namhtpyn/tandem/issues/406) dispatch claim and its RUNNING run row commit in one transaction ([100b771](https://github.com/namhtpyn/tandem/commit/100b7713fef29445f174b3136fe8aecc2120efe0))
+* [#406](https://github.com/namhtpyn/tandem/issues/406) r2 — key-share the employee row before the claim (lock order), require the claim's tx + assignee, narrow the SPEC invariant ([47210f5](https://github.com/namhtpyn/tandem/commit/47210f57cbc3931f019c127634397db40af853b2)), closes [#400](https://github.com/namhtpyn/tandem/issues/400)
+* [#406](https://github.com/namhtpyn/tandem/issues/406) r3 — scope the SPEC lock-order clause to a claiming dispatch ([84802f5](https://github.com/namhtpyn/tandem/commit/84802f51d292a24f530d950da8f11b3b297cfb40))
+* [#406](https://github.com/namhtpyn/tandem/issues/406) r5 — the note reports what fired on a null dispatch, pin the lock mode ([29f6bc0](https://github.com/namhtpyn/tandem/commit/29f6bc0f9d2c42b93393f3a7b1116c2d8888ca2a))
+* [#406](https://github.com/namhtpyn/tandem/issues/406) r6 — defer an unplannable task so one bad read cannot stall the scan; pin the claim-free review branch ([07734db](https://github.com/namhtpyn/tandem/commit/07734db43fd3024462380e754fe05df85025174a))
+* [#406](https://github.com/namhtpyn/tandem/issues/406) r7 — the plan-retry deferral only pushes later (never shortens a backoff) and never fires for review turns ([d6c2ed8](https://github.com/namhtpyn/tandem/commit/d6c2ed87005d9f5b77768a1cc1afe3315fee56d9))
+
 ## [2.78.15](https://github.com/namhtpyn/tandem/compare/v2.78.14...v2.78.15) (2026-11-10)
 
 
