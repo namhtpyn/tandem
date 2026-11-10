@@ -1341,6 +1341,22 @@ export async function dispatchAiReviewTurns(
   }
 }
 
+/** the post-mint note — FAULT-ISOLATED (#397 r5): the turn IS the outcome by the time it
+ *  runs, so a note failure is logged and never converted into a failed mint (the mint's
+ *  caller would otherwise under-count and the mint's own catch would park a round that
+ *  already has a live turn). */
+async function noteReviewTurnDispatched(taskId: string, reviewerId: string, round: number) {
+  try {
+    await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review turn dispatched to reviewer ${reviewerId}`, {
+      reviewTurn: true,
+      reviewerId,
+      round,
+    });
+  } catch (e) {
+    log.warn(`review turn dispatched but its note failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+  }
+}
+
 async function dispatchAiReviewTurnsUnlocked(
   taskId: string,
   resultBody?: string,
@@ -1391,18 +1407,7 @@ async function dispatchAiReviewTurnsUnlocked(
         resultBody: body,
         verdictCorrection: opts?.verdictCorrection === true,
       });
-      // POST-MINT NOTE (#397 r5): the turn is already the outcome — a note failure is
-      // logged, never converted into a failed mint (the sweep would under-count and the
-      // catch below would park a round that has a live turn).
-      try {
-        await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review turn dispatched to reviewer ${row.reviewerId}`, {
-          reviewTurn: true,
-          reviewerId: row.reviewerId,
-          round,
-        });
-      } catch (e) {
-        log.warn(`review turn dispatched but its note failed for task ${taskId}:`, e instanceof Error ? e.message : e);
-      }
+      await noteReviewTurnDispatched(taskId, row.reviewerId, round);
       return true; // SEQUENTIAL: one turn in flight — the next fires from this verdict's settle
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
