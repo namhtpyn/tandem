@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   statuses: [] as Array<{ id: string; category: string }>,
   users: [] as Array<{ id: string }>,
   rounds: [] as Array<{ taskId: string; reviewers: string[]; body: string }>,
+  roundDrops: [] as string[],
   roundLive: false,
   roundError: false,
   casWins: true,
@@ -114,7 +115,7 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     openReviewRound: async (taskId: string, reviewers: string[], body: string) => {
       if (h.roundError) throw new Error('insert_fk_miss');
       h.rounds.push({ taskId, reviewers, body });
-      return 1;
+      return { round: 1, opened: reviewers.length - h.roundDrops.length, dropped: h.roundDrops };
     },
     recordVerdict: async () => ({ outcome: 'superseded' }),
     currentRound: async () => 1,
@@ -168,6 +169,7 @@ beforeEach(() => {
   h.statuses = [{ id: 'st-doing', category: CATEGORY.WORKING }];
   h.users = [{ id: LIVE }, { id: LIVE2 }];
   h.rounds = [];
+  h.roundDrops = [];
   h.roundLive = false;
   h.roundError = false;
   h.casWins = true;
@@ -312,5 +314,41 @@ describe('submit drops reviewers that no longer name a user (#361)', () => {
     const res = await submitResult('task-1', 'worker-1', 'done');
     expect(res).toEqual({ status: STATUS.inReview });
     expect(h.rounds[0]?.reviewers).toEqual([LIVE]);
+  });
+
+  it('a partial drop inside the round-open transaction (#364) still opens the round and counts the skip', async () => {
+    h.taskRows = [doingTask([LIVE, LIVE2])];
+    h.roundDrops = [LIVE2];
+    const res = await submitResult('task-1', 'worker-1', 'done');
+    expect(res).toEqual({ status: STATUS.inReview });
+    expect(h.settled).toEqual(['task-1']);
+    expect(threadBodies().join('\n')).toContain('1 reviewer(s) skipped — not in the company');
+  });
+
+  it('two in-round drops plus a pre-check ghost add up in ONE note, never collapse to a flag', async () => {
+    h.taskRows = [doingTask([LIVE, LIVE2, GHOST])];
+    h.roundDrops = [LIVE, LIVE2];
+    const res = await submitResult('task-1', 'worker-1', 'done');
+    expect(res).toEqual({ status: STATUS.done });
+    expect(threadBodies().join('\n')).toContain('3 reviewer(s) skipped — not in the company');
+  });
+
+  it('a pre-check ghost and one in-round drop stay ADDITIVE while the round still opens', async () => {
+    h.taskRows = [doingTask([LIVE, LIVE2, GHOST])];
+    h.roundDrops = [LIVE2];
+    const res = await submitResult('task-1', 'worker-1', 'done');
+    expect(res).toEqual({ status: STATUS.inReview });
+    expect(threadBodies().join('\n')).toContain('2 reviewer(s) skipped — not in the company');
+  });
+
+  it('every survivor deleted inside the round-open transaction (#364) completes exactly like zero survivors', async () => {
+    h.taskRows = [doingTask([LIVE])];
+    h.roundDrops = [LIVE];
+    const res = await submitResult('task-1', 'worker-1', 'done');
+    expect(res).toEqual({ status: STATUS.done });
+    // never flipped in-review over a round that minted nothing
+    expect(h.settled).toEqual([]);
+    expect(h.allClosed).toEqual(['no live reviewers']);
+    expect(threadBodies().join('\n')).toContain('1 reviewer(s) skipped — not in the company');
   });
 });
