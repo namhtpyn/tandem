@@ -26,6 +26,7 @@ const h = vi.hoisted(() => ({
   // whether it received the EXECUTOR the transaction handed out (vs. the pool db)
   txSentinel: null as unknown,
   inTx: [] as boolean[],
+  teardownPublish: [] as Array<boolean | undefined>,
 }));
 
 /** canonical uuid — the round-open existence read shape-checks before binding (#361) */
@@ -150,10 +151,11 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     },
     recordVerdict: async () => ({ outcome: 'superseded' }),
     currentRound: async () => 1,
-    teardownOpenRound: async (_t: unknown, settledTo: string, ex?: unknown) => {
+    teardownOpenRound: async (_t: unknown, settledTo: string, ex?: unknown, opts?: { publish?: boolean }) => {
       h.order.push('teardown');
       h.teardowns.push(settledTo);
       h.inTx.push(ex === h.txSentinel);
+      h.teardownPublish.push(opts?.publish);
     },
   };
 });
@@ -185,6 +187,7 @@ beforeEach(() => {
   h.published = 0;
   h.cancelled = [];
   h.inTx = [];
+  h.teardownPublish = [];
 });
 
 describe('abandonTask terminal arbitration (#287)', () => {
@@ -227,10 +230,10 @@ describe('abandonTask terminal arbitration (#287)', () => {
     // TX MEMBERSHIP (#397 r1): every teardown/obligation write got the tx EXECUTOR —
     // dropping the `tx` argument (pool db instead of the transaction) turns this red
     expect(h.inTx).toEqual([true, true, true]);
-    // NO PUBLISH INSIDE THE TX (#397 r1): only the post-commit abandon note emits
-    // change events (2); a publish from the teardown's note would gate the row lock and
-    // announce rows a rollback can erase
-    expect(h.published).toBe(2);
+    // NO PUBLISH INSIDE THE TX (#397 r1): the teardown is told to defer its change
+    // events (they ride the post-commit abandon note), so a redis publish can never gate
+    // the held tasks row lock and a rollback can never announce erased rows
+    expect(h.teardownPublish).toEqual([false]);
   });
 });
 

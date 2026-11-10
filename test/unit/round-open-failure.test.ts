@@ -179,7 +179,9 @@ describe('round-open dispatch failure (#282)', () => {
     h.reviewReads = [[{ round: 1 }], [{ id: 'r1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }]];
     h.taskReads = [[{ status: STATUS.inReview }]];
     h.parkWins = true;
-    await expect(dispatchAiReviewTurns('task-1', 'the result')).resolves.toBeUndefined();
+    // #397: the mint reports whether it FIRED — a failed mint reports false and still
+    // never throws at a caller that did nothing wrong
+    await expect(dispatchAiReviewTurns('task-1', 'the result')).resolves.toBe(false);
     const park = h.updates.find((u) => u.table === 'tasks');
     expect(park?.pred).toBe(true);
     expect(park?.set.status).toBe(STATUS.blocked);
@@ -189,7 +191,9 @@ describe('round-open dispatch failure (#282)', () => {
     h.reviewReads = [[{ round: 1 }], [{ id: 'r1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }]];
     h.taskReads = [[{ status: STATUS.todo }], [{ status: STATUS.todo }]];
     h.statuses = [{ id: STATUS.todo, category: CATEGORY.READY }];
-    await expect(dispatchAiReviewTurns('task-1', 'the result')).resolves.toBeUndefined();
+    // #397: the mint reports whether it FIRED — a failed mint reports false and still
+    // never throws at a caller that did nothing wrong
+    await expect(dispatchAiReviewTurns('task-1', 'the result')).resolves.toBe(false);
     expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(0);
   });
 });

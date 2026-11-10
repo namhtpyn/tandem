@@ -16,7 +16,7 @@ import { join } from 'node:path';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { REVIEW_STATUS, RUN_STATUS } from '#shared/enums';
+import { ACTIVITY_KIND, REVIEW_STATUS, RUN_STATUS } from '#shared/enums';
 
 const h = vi.hoisted(() => ({
   scan: [] as Array<{ taskId: string; round: number; reviewerId: string; createdAt: Date }>,
@@ -29,6 +29,7 @@ const h = vi.hoisted(() => ({
   resultBody: 'the submitted result',
   dispatched: [] as Array<{ taskId: string; opts?: { reviewBy?: string } }>,
   aiIds: [] as string[],
+  published: 0,
 }));
 
 const REV = '00000000-0000-7000-8000-00000000a001';
@@ -93,7 +94,7 @@ vi.mock('../../server/db/index', async () => {
 
 vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/kernel/kernel')>();
-  return { ...mod, publishChange: async () => {} };
+  return { ...mod, publishChange: async () => void h.published++ };
 });
 
 vi.mock('../../server/domains/tasks/runner.service', async (importOriginal) => {
@@ -110,6 +111,7 @@ vi.mock('../../server/domains/tasks/runner.service', async (importOriginal) => {
 import { startDispatcher } from '../../server/domains/tasks/dispatcher.service';
 import {
   STALLED_REVIEW_GRACE_MS,
+  logActivity,
   stalledReviewRefire,
   stalledReviewScan,
   sweepStalledReviewTurns,
@@ -128,6 +130,7 @@ beforeEach(() => {
   h.resultBody = 'the submitted result';
   h.dispatched = [];
   h.aiIds = [REV];
+  h.published = 0;
 });
 
 describe('stalledReviewRefire (#397 pure decision)', () => {
@@ -264,6 +267,16 @@ describe('sweepStalledReviewTurns (#397 behaviour)', () => {
     await expect(sweepStalledReviewTurns()).resolves.toBe(0);
     expect(h.dispatched).toEqual([]);
     expect(STALLED_REVIEW_GRACE_MS).toBe(60_000);
+  });
+});
+
+describe('logActivity publish deferral (#397 r1)', () => {
+  it('publish:false writes the note but emits NO change event (the tx-safe path)', async () => {
+    await logActivity(TASK, ACTIVITY_KIND.STATUS, null, 'round closed', {}, undefined, { publish: false });
+    expect(h.published).toBe(0);
+    // the default path still publishes both resources (2) — the guard is not a mute
+    await logActivity(TASK, ACTIVITY_KIND.STATUS, null, 'round closed', {});
+    expect(h.published).toBe(2);
   });
 });
 
