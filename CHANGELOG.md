@@ -1,3 +1,13 @@
+## [2.78.12](https://github.com/namhtpyn/tandem/compare/v2.78.11...v2.78.12) (2026-11-10)
+
+
+### Bug Fixes
+
+* [#394](https://github.com/namhtpyn/tandem/issues/394) r4 — fault-isolate the post-commit reviewer turn + pin the landing status ([7b7dddb](https://github.com/namhtpyn/tandem/commit/7b7dddba0c68c47ea9abb6131e60ab1d58d2d817)), closes [#397](https://github.com/namhtpyn/tandem/issues/397)
+* [#394](https://github.com/namhtpyn/tandem/issues/394) r5 — dispatch the reviewer turn after the parent gating write ([1afa713](https://github.com/namhtpyn/tandem/commit/1afa71362df7d7b9b48cdacbb4944d80ba75a6c5)), closes [#364](https://github.com/namhtpyn/tandem/issues/364)
+* [#394](https://github.com/namhtpyn/tandem/issues/394) r6 — nothing between the commit and the reviewer turn may skip it ([5ef52c5](https://github.com/namhtpyn/tandem/commit/5ef52c57962928618eee9185b383553702893f23))
+* [#394](https://github.com/namhtpyn/tandem/issues/394) the in-review flip and the review round commit in one transaction ([d1d6d7f](https://github.com/namhtpyn/tandem/commit/d1d6d7f90ed54a0195c9807d848a76b3f37a6c02))
+
 ## [2.78.11](https://github.com/namhtpyn/tandem/compare/v2.78.10...v2.78.11) (2026-11-10)
 
 
