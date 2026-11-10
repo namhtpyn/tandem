@@ -26,6 +26,7 @@ type Write = {
   tx: number;
   values?: Record<string, unknown>;
   set?: Record<string, unknown>;
+  mode?: string;
 };
 
 const h = vi.hoisted(() => ({
@@ -88,8 +89,8 @@ vi.mock('../../server/db/index', async () => {
       from: (table: unknown) => ({
         where: () => ({
           // the lock-order key share (#400/#406) — only the user table is selected
-          for: async () => {
-            h.writes.push({ op: 'lock', table: table === user ? 'user' : 'other', tx });
+          for: async (mode?: string) => {
+            h.writes.push({ op: 'lock', table: table === user ? 'user' : 'other', tx, mode });
             return table === user ? h.userRows : [];
           },
         }),
@@ -223,6 +224,9 @@ describe('createRun claim-run atomicity (#406)', () => {
       'insert:taskMessages',
       'insert:taskRuns',
     ]);
+    // the MODE is the load-bearing half: FOR UPDATE would conflict with every
+    // concurrent FK check's KEY SHARE and re-open the lock cycle (#400/#406)
+    expect(h.writes[0].mode).toBe('key share');
     // TRANSACTION IDENTITY: one distinct, NONZERO tx id across all three writes — a
     // hoisted claim transaction (or the old no-transaction shape, tx 0) goes red
     const ids = new Set(h.writes.map((w) => w.tx));
