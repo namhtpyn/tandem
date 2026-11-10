@@ -1,5 +1,5 @@
 import { consola } from 'consola';
-import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 
 import { PROPOSAL_KIND } from '#shared/enums';
 import type { RoutingProposal } from '#shared/run-verdict';
@@ -18,7 +18,7 @@ import type { RoutingProposal } from '#shared/run-verdict';
 import { nonNull } from '#shared/utils/non-null';
 
 import { asDb, db, type DbExecutor } from '../../db/index';
-import { environments, tasks, taskRuns, taskAttachments, taskMessages } from '../../db/schema';
+import { environments, tasks, taskRuns, taskAttachments, taskMessages, user } from '../../db/schema';
 import { env } from '../kernel/env';
 import { publishChange } from '../kernel/kernel';
 import { redisQueue } from '../kernel/queue';
@@ -978,14 +978,20 @@ export type DispatchOpts = {
  * flip's RETURNING arbitrates every concurrent claimant (scan tick × direct paths ×
  * manual dispatch) so exactly one wins. 0 rows = lost the race = stale duplicate:
  * the caller aborts PRE-INSERT (no run row, no dispatch note, no thread turn, no
- * per-agent job, no cap consumption — a stale dispatch call must quietly no-op). */
-export async function claimTaskForDispatch(taskId: string): Promise<boolean> {
-  const ready = await db.query.taskStatuses.findMany({
+ * per-agent job, no cap consumption — a stale dispatch call must quietly no-op).
+ * CLAIM-RUN ATOMICITY (#406): the claim runs INSIDE the caller's transaction, together
+ * with the run's message + RUNNING row, and pins the assignee the plan was built for
+ * (a reassignment in the plan→claim window loses the claim instead of dispatching the
+ * stale assignee). The executor and the assignee are REQUIRED — a bare autocommit flip
+ * would reproduce the claim-without-run window this law closes. */
+export async function claimTaskForDispatch(taskId: string, ex: DbExecutor, assigneeId: string): Promise<boolean> {
+  const d = asDb(ex);
+  const ready = await d.query.taskStatuses.findMany({
     columns: { id: true },
     where: { category: { eq: 'ready' } },
   });
   if (ready.length === 0) return false;
-  const claimed = await db
+  const claimed = await d
     .update(tasks)
     .set({ status: STATUS.doing, updatedAt: new Date() })
     .where(
@@ -995,87 +1001,129 @@ export async function claimTaskForDispatch(taskId: string): Promise<boolean> {
           tasks.status,
           ready.map((s) => s.id),
         ),
+        // the claim authorises THIS plan: a concurrent reassignment must not dispatch
+        // the assignee the plan was read for (#406)
+        eq(tasks.assigneeId, assigneeId),
       ),
     )
     .returning({ id: tasks.id });
   return claimed.length > 0;
 }
 
+/** PLAN-RETRY LAW (#406): a work dispatch's plan/brief read failure flips NOTHING
+ * (there is no claim state to heal), but it must not leave the task at the head of the
+ * scan — the scan takes ONE candidate per tick (oldest first), so a single unplannable
+ * task (e.g. an environment secret that no longer decrypts) would occupy every tick
+ * and stall EVERY agent. Defer its next attempt instead; the error still surfaces to
+ * the caller. The write only ever PUSHES the task later (a longer failure-ladder
+ * backoff is preserved) and a review turn defers nothing — it has no scan attempt. */
+const PLAN_RETRY_MS = 60_000;
+
+async function deferUnplannable(taskId: string) {
+  const until = new Date(Date.now() + PLAN_RETRY_MS);
+  await db
+    .update(tasks)
+    .set({ dispatchAfter: until, updatedAt: new Date() })
+    .where(and(eq(tasks.id, taskId), or(isNull(tasks.dispatchAfter), lt(tasks.dispatchAfter, until))));
+}
+
+/** the run's plan + frozen brief — every read createRun needs, all BEFORE its write
+ * transaction. Review turns run ON the task but must not claim it: flipping
+ * in-review → doing here would make the human verdict verbs (approve/request-changes)
+ * throw on the status gate — only the ASSIGNEE's dispatch owns the doing transition. */
+async function loadPlanAndBrief(taskId: string, opts?: DispatchOpts) {
+  try {
+    const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & {
+      review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'];
+    } = opts?.reviewBy // eslint-disable-line @typescript-eslint/consistent-type-definitions -- union widening
+      ? await loadReviewPlan(taskId, opts.reviewBy, opts.resultBody ?? '', opts?.verdictCorrection === true)
+      : await loadDispatchPlan(taskId);
+
+    // freeze the brief NOW (the drift fix): every attempt of this run replays exactly
+    // this prompt — no rebuild at retry time. Review turns compose through the SAME
+    // buildBrief in review mode (org, company, task-under-review, relay, submitted
+    // result, collected evidence, verdict contract — one composer, no parallel system).
+    const briefData = await loadBriefData(taskId, plan.ai.userId);
+    let reviewCtx: { resultBody: string; verdictsSoFar: string[]; correction?: boolean } | undefined;
+    if (plan.review) {
+      const { verdictsSoFarFor } = await import('./review.service');
+      reviewCtx = {
+        resultBody: plan.review.resultBody,
+        verdictsSoFar: await verdictsSoFarFor(taskId),
+        correction: opts?.verdictCorrection === true,
+      };
+    }
+    const brief = buildBrief({
+      ...briefData,
+      outDir: `~/.tandem/${taskId}/attachments/out/`,
+      review: reviewCtx,
+    });
+    return { plan, brief };
+  } catch (e) {
+    // never mask the cause: the deferral is best-effort, the original error wins.
+    // A review turn has no scan attempt to defer — its failure belongs to the round.
+    if (!opts?.reviewBy) await deferUnplannable(taskId).catch(() => {});
+    throw e;
+  }
+}
+
 /** create the run row for a dispatch intent: claim the task (conditional flip — the
- * race arbiter), load the plan, write the dispatch note, create the run's thread
- * turn, freeze the brief on the row. Transport-neutral — the caller enqueues
- * {runId} (or executes inline in tests). Returns null when the claim was lost —
- * the loser is a stale duplicate and must not insert anything (CLAIM LAW #162). */
+ * race arbiter), write the dispatch note, create the run's thread turn, freeze the
+ * brief on the row. Transport-neutral — the caller enqueues {runId} (or executes
+ * inline in tests). Returns null when the claim was lost — the loser is a stale
+ * duplicate and must not insert anything (CLAIM LAW #162).
+ *
+ * CLAIM-RUN ATOMICITY (#406): every READ (plan, brief, verdict history) lands BEFORE
+ * the write transaction, so a read failure flips NOTHING (PLAN-RETRY LAW defers the
+ * task instead of leaving it at the scan's head); the claim, the run's thread message
+ * and the RUNNING run row then commit in ONE transaction. A task in a working status
+ * therefore always has its live run row committed with it — the composer's liveness
+ * gate (steer / running-run reads), the per-agent cap and the liveness sweep can
+ * never observe a claim without a run. */
 export async function createRun(
   taskId: string,
   opts?: DispatchOpts,
 ): Promise<{ runId: string; employeeId: string } | null> {
-  // the claim lands BEFORE the plan load: a failure after a won flip leaves a doing
-  // task with no run row, which the LIVENESS SWEEP recovers — never a zombie
-  // RUNNING row. Review turns run ON the task but must not claim it: flipping
-  // in-review → doing here would make the human verdict verbs
-  // (approve/request-changes) throw on the status gate — only the ASSIGNEE's
-  // dispatch owns the doing transition.
-  if (!opts?.reviewBy && !(await claimTaskForDispatch(taskId))) return null;
+  // every read happens before the write transaction (PLAN-RETRY LAW below)
+  const { plan, brief } = await loadPlanAndBrief(taskId, opts);
 
-  const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & {
-    review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'];
-  } = opts?.reviewBy // eslint-disable-line @typescript-eslint/consistent-type-definitions -- union widening
-    ? await loadReviewPlan(taskId, opts.reviewBy, opts.resultBody ?? '', opts?.verdictCorrection === true)
-    : await loadDispatchPlan(taskId);
-
-  // claim: dispatch note is written BEFORE the run row exists so its createdAt
-  // sits BEFORE the run's startedAt — the timeline shows "dispatched" above the
-  // result card, not after it
   const runId = uuidv7();
-  await logRun(
-    taskId,
-    runId,
-    `dispatched to ${plan.agentName} on ${plan.envName}`,
-    { dispatched: true },
-    {
-      publishActivity: false,
-    },
-  );
-  // the run's thread turn: message first (blank body — settle parses the result
-  // into it), the run row links the task through it
-  const messageId = await createRunMessage({ taskId, authorId: plan.ai.userId });
-  await db.insert(taskRuns).values({
-    id: runId,
-    messageId,
-    employeeId: plan.ai.userId,
-    environmentId: plan.env.id,
-    status: RUN_STATUS.RUNNING,
-    output: '',
-    attempts: 1,
+  const won = await db.transaction(async (tx) => {
+    if (!opts?.reviewBy) {
+      const d = asDb(tx);
+      // LOCK ORDER (#400/#406): key-share the employee row this transaction later
+      // FK-references (task_messages.author_id, task_runs.employee_id) in ONE
+      // statement BEFORE the tasks row — the employee-delete path holds a user row
+      // while its ON DELETE SET NULL action reaches tasks, so any user lock taken
+      // AFTER the task row inverts the order and deadlocks (40P01).
+      const locked = await d.select({ id: user.id }).from(user).where(eq(user.id, plan.ai.userId)).for('key share');
+      // a vanished employee row is a LOST attempt, never a raw FK error (#400)
+      if (locked.length === 0) return false;
+      if (!(await claimTaskForDispatch(taskId, tx, nonNull(plan.task.assigneeId)))) return false;
+    }
+    // the run's thread turn: message first (blank body — settle parses the result
+    // into it), the run row links the task through it. Same transaction as the
+    // claim, so a claimed task can never be seen without its live run.
+    const messageId = await createRunMessage({ taskId, authorId: plan.ai.userId }, tx);
+    await tx.insert(taskRuns).values({
+      id: runId,
+      messageId,
+      employeeId: plan.ai.userId,
+      environmentId: plan.env.id,
+      status: RUN_STATUS.RUNNING,
+      output: '',
+      attempts: 1,
+      prompt: brief,
+    });
+    return true;
   });
+  if (!won) return null;
   // only now is the thread turn complete — publish the activity ping here so a
   // listener rebuilding off it sees the run bubble, not a message-less gap
+  await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
-  // the doing flip happened at the CLAIM (claimTaskForDispatch above — #162);
-  // review turns never claimed the task (see the claim block)
+  // the doing flip happened inside the claim transaction (see above — #406)
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
-
-  // freeze the brief NOW (the drift fix): every attempt of this run replays exactly
-  // this prompt — no rebuild at retry time. Review turns compose through the SAME
-  // buildBrief in review mode (org, company, task-under-review, relay, submitted
-  // result, collected evidence, verdict contract — one composer, no parallel system).
-  const briefData = await loadBriefData(taskId, plan.ai.userId);
-  let reviewCtx: { resultBody: string; verdictsSoFar: string[]; correction?: boolean } | undefined;
-  if (plan.review) {
-    const { verdictsSoFarFor } = await import('./review.service');
-    reviewCtx = {
-      resultBody: plan.review.resultBody,
-      verdictsSoFar: await verdictsSoFarFor(taskId),
-      correction: opts?.verdictCorrection === true,
-    };
-  }
-  const brief = buildBrief({
-    ...briefData,
-    outDir: `~/.tandem/${taskId}/attachments/out/`,
-    review: reviewCtx,
-  });
-  await db.update(taskRuns).set({ prompt: brief }).where(eq(taskRuns.id, runId));
 
   return { runId, employeeId: plan.ai.userId };
 }

@@ -469,8 +469,11 @@ export async function dispatchIfEligible(taskId: string, tandemUrl: string): Pro
   if (row.assigneeId && atCap(await liveRunCountFor(row.assigneeId), await tasksPerAgentCap())) return false;
   // returns after enqueue — the per-agent worker executes the run (composer law:
   // submitting dispatches the run; the RPC never rides the turn)
-  await dispatchTask(taskId, tandemUrl);
-  return true;
+  const { runId } = await dispatchTask(taskId, tandemUrl);
+  // a null run is a stale duplicate (the scan won the claim, the plan's assignee left
+  // the row, or the employee vanished) — the note must report thread-only, never
+  // 'agent dispatched' (#406; the pre-#406 lost-claim case had the same lie)
+  return runId !== null;
 }
 
 /** the retry-delay ladder for run-level transport retries: same steps as the
