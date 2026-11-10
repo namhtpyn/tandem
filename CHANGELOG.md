@@ -1,3 +1,10 @@
+## [2.78.13](https://github.com/namhtpyn/tandem/compare/v2.78.12...v2.78.13) (2026-11-10)
+
+
+### Bug Fixes
+
+* [#397](https://github.com/namhtpyn/tandem/issues/397) review-round lifecycle — abandon before teardown, stalled-review sweep, targeted review mints ([febacc6](https://github.com/namhtpyn/tandem/commit/febacc6887e68cb34b2d0582ab3195f5b1ecc227)), closes [#399](https://github.com/namhtpyn/tandem/issues/399)
+
 ## [2.78.12](https://github.com/namhtpyn/tandem/compare/v2.78.11...v2.78.12) (2026-11-10)
 
 
