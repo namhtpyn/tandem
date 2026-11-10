@@ -541,8 +541,10 @@ export async function abandonTask(taskId: string, authorId: string, body: string
   // no note. The teardown rides the SAME transaction, so it can neither outlive a lost
   // CAS (the old order superseded the winner's round and cancelled its obligations before
   // refusing) nor leave a cancelled task carrying a pending row when a write fails.
-  // A won cancel makes every later writer lose by construction: a submit needs a working
-  // category, and the verdict flip refuses terminal-category statuses.
+  // A won cancel makes the LIFECYCLE writers lose by construction: a submit needs a
+  // working category and the verdict flip refuses terminal-category statuses. It does NOT
+  // cover the unguarded note/ask status flips (pre-existing; tracked in #400) — those can
+  // still move a task after any terminal write.
   const teardown = await db.transaction(async (tx) => {
     const d = asDb(tx);
     const cancelled = await d

@@ -70,7 +70,8 @@ vi.mock('../../server/db/index', async () => {
       },
     },
     // #397: abandon arbitrates its cancel + round teardown in ONE transaction
-    transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(db),
+    // #397 r3: hand out a DISTINCT executor object (drizzle's tx is not the pool db)
+    transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(Object.create(db) as typeof db),
   };
   return { asDb: (x: unknown) => x, db };
 });

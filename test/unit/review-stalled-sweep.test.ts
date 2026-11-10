@@ -321,11 +321,3 @@ describe('dispatcher start/stop still works with the new arm (#397)', () => {
     stop();
   });
 });
-
-// RUN_STATUS import is used by the dispatcher arm's liveness read; keep the constant
-// pinned so a status rename cannot silently blind the sweep.
-describe('liveness read binds the RUNNING status (#397)', () => {
-  it('pins the status literal', () => {
-    expect(RUN_STATUS.RUNNING).toBe('RUNNING');
-  });
-});

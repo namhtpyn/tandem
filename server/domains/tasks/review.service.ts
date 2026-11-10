@@ -1176,8 +1176,10 @@ async function sweepStalledReviewTurnsInner(): Promise<number> {
           candidate.reviewerId,
           candidate.createdAt,
         );
-        // last read before the mint: the task must still be in review (the scan read is
-        // a snapshot; a manual move or park in this window must not gain a new turn)
+        // last read before the mint: the task should still be in review. This NARROWS the
+        // scan→mint window (a manual move or park in between must not gain a new turn); it
+        // cannot close it — review turns take no DB claim, so a move landing inside the
+        // mint's own reads still slips through (the terminal gates refuse the verdict).
         probe.inReview = (await taskCategory(candidate.taskId)) === CATEGORY.IN_REVIEW;
       }
       if (!stalledReviewRefire({ ...candidate, reviewerId: candidate.reviewerId }, probe)) continue;
@@ -1907,7 +1909,10 @@ export async function escalateReview(
   );
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   if (await selfHealEscalationIfSettled(taskId, task.reviewers)) return { outcome: 'superseded' };
-  await dispatchAiReviewTurns(taskId);
+  // TARGETED (#397 r3): the replacement's row is the newest — a plain mint would hand the
+  // turn to the round's first pending AI reviewer (the escalator's own row is ESCALATED,
+  // but any other pending reviewer would win the order tie).
+  await dispatchAiReviewTurns(taskId, undefined, { targetReviewerId: targetId });
   return { outcome: 'escalated' };
 }
 
@@ -1994,7 +1999,10 @@ export async function teardownOnManualMove(taskId: string, fromStatus: string, t
   const to = byId.get(toStatus);
   if (to === CATEGORY.DONE || to === CATEGORY.CANCELLED) {
     if (from !== to) {
-      await teardownOpenRound(taskId, toStatus);
+      // TASK-WIDE (#397 r3): an older round can still hold PENDING rows (a manual move
+      // out of review leaves them, and a resubmit opens a newer round), and the settle is
+      // terminal — SPEC's manual-settle clause says ALL pending rows supersede.
+      await teardownAllPendingRounds(taskId, toStatus);
       // question-flow tasks (round 0) skip teardownOpenRound; any stale ANSWER
       // obligation dies with the settle regardless of review state
       await cancelAllObligations(taskId, OBLIGATION_ROLE.ANSWER);
@@ -2019,12 +2027,11 @@ export async function teardownOpenRound(
   opts: { publish?: boolean } = {},
 ) {
   const d = asDb(ex);
-  // the task's MAX round is the LIVE round at its call sites, and no KNOWN path mints a
-  // round above the live one (#394 made the round rows commit only with a WON flip), so
-  // the manual settle, the escalation self-heal (gated on a done/cancelled task) and the
-  // abandon (#397 — only after its own cancel CAS won, in the same transaction) all tear
-  // down the MAX round. `teardownAllPendingRounds` remains the task-wide variant for a
-  // settle that cannot trust the MAX round (a superseded round can hide an older live one).
+  // the task's MAX round is what the remaining call sites want: the round-open rollback
+  // (nothing but the JUST-minted round can exist there) and the escalation self-heal
+  // (gated on a done/cancelled task). Settles that must not trust the MAX round — the
+  // abandon, the manual move to a terminal status, the zero-survivor completion — use
+  // `teardownAllPendingRounds`: an older round can hide a live PENDING row.
   const round = await currentRound(taskId, ex);
   if (round === 0) return;
   const rows = await d
