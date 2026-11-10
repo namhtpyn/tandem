@@ -24,6 +24,8 @@ const h = vi.hoisted(() => ({
   flips: [] as Array<{ set: Record<string, unknown>; cond: unknown; txId: number | null }>,
   // the guarded-write arbiter: only a non-empty RETURNING means the flip won
   applied: true,
+  // lose this many flip attempts (then win) — pins the retry-once path
+  loseFlips: 0,
   txSeq: 0,
   // transaction ids observed by the obligation writes (TX-IDENTITY PIN LAW: a boolean
   // 'inside a transaction' flag cannot tell the caller's tx from a second one)
@@ -47,7 +49,9 @@ vi.mock('../../server/db/index', async () => {
         const applied = () => {
           h.flips.push({ set, cond, txId });
           h.seq.push('flip');
-          return table === tasks && h.applied ? [{ id: 'task-1' }] : [];
+          const lose = !h.applied || h.loseFlips > 0;
+          if (h.loseFlips > 0) h.loseFlips--;
+          return table === tasks && !lose ? [{ id: 'task-1' }] : [];
         };
         return {
           returning: async () => applied(),
@@ -111,11 +115,11 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
     spawnObligationTracked: async (
       _t: unknown,
       holder: string,
-      _role: unknown,
+      role: unknown,
       _at?: unknown,
       ex?: { __tx?: number },
     ) => {
-      h.spawned.push(String(holder));
+      h.spawned.push(`${String(role)}:${holder}`);
       h.seq.push('spawn');
       h.obTxIds.push(ex?.__tx ?? null);
       return { id: 'ob-1', created: true };
@@ -208,6 +212,7 @@ beforeEach(() => {
   h.statuses.length = 0;
   h.flips = [];
   h.applied = true;
+  h.loseFlips = 0;
   h.txSeq = 0;
   h.obTxIds = [];
   h.seq = [];
@@ -223,6 +228,10 @@ describe('askQuestion parks before touching obligations (#400)', () => {
     const res = await askQuestion('task-1', 'worker-1', 'which scope?');
     expect(res).toEqual({ holderId: 'owner-1' });
     expect(h.seq).toEqual(['flip', 'cancel', 'spawn', 'note']);
+    // the obligation ROLE is load-bearing: APPROVAL here would cancel a live review
+    // round's approvals and park the owner with the wrong decision surface
+    expect(h.cancelled).toEqual(['ANSWER']);
+    expect(h.spawned).toEqual(['ANSWER:owner-1']);
     expect(h.flips[0]?.set.status).toBe(STATUS.waitingAnswer);
     expect(h.flips[0]?.set.questionChain).toEqual(['owner-1']);
     // TX-IDENTITY: the flip and BOTH obligation writes rode ONE transaction
@@ -235,11 +244,27 @@ describe('askQuestion parks before touching obligations (#400)', () => {
     seedWorkingAiTask();
     h.applied = false;
     await expect(askQuestion('task-1', 'worker-1', 'late question')).rejects.toThrow(/state changed during ask/);
-    expect(h.seq).toEqual(['flip']);
+    // retry-once: two attempts, both lost — then the refusal
+    expect(h.seq).toEqual(['flip', 'flip']);
+    expect(h.flips).toHaveLength(2);
     expect(h.cancelled).toHaveLength(0);
     expect(h.spawned).toHaveLength(0);
     expect(h.notes).toHaveLength(0);
     expect(h.obTxIds).toHaveLength(0);
+  });
+
+  it('a benign concurrent write (one lost flip) re-reads and re-arbitrates instead of failing the settle', async () => {
+    seedWorkingAiTask();
+    h.loseFlips = 1;
+    const res = await askQuestion('task-1', 'worker-1', 'which scope?');
+    expect(res).toEqual({ holderId: 'owner-1' });
+    expect(h.flips).toHaveLength(2);
+    // the losing attempt wrote nothing; the winning attempt's obligations rode ITS tx
+    const winTx = h.flips[1]?.txId;
+    expect(winTx).toBeGreaterThan(0);
+    expect(h.obTxIds).toEqual([winTx, winTx]);
+    expect(h.spawned).toEqual(['ANSWER:owner-1']);
+    expect(h.seq).toEqual(['flip', 'flip', 'cancel', 'spawn', 'note']);
   });
 
   it('the ask flip pins id + the read status + the read updatedAt (operator + value)', () => {
@@ -251,10 +276,9 @@ describe('askQuestion parks before touching obligations (#400)', () => {
       },
       () => {
         const { sql, params } = renderFlip();
-        expect(sql).toContain('"tasks"."id" =');
-        expect(sql).toMatch(/"tasks"\."status" = /);
-        expect(sql).toMatch(/"tasks"\."updated_at" = /);
-        expect(sql).not.toMatch(/\bnot in\b/);
+        // exact render: an `or(` swap makes the id conjunct alone match (the pre-#400
+        // unguarded write) and every substring assertion would stay green
+        expect(sql).toBe('(("tasks"."id" = $1) and ("tasks"."status" = $2) and ("tasks"."updated_at" = $3))');
         expect(params).toEqual(['task-1', 'st-working', h.readAt.toISOString()]);
       },
     );
@@ -285,10 +309,7 @@ describe('addNote dispatch flip arbitrates on the read row (#400)', () => {
     h.applied = false;
     await addNote('task-1', 'human-1', 'race');
     const { sql, params } = renderFlip();
-    expect(sql).toContain('"tasks"."id" =');
-    expect(sql).toMatch(/"tasks"\."status" = /);
-    expect(sql).toMatch(/"tasks"\."updated_at" = /);
-    expect(sql).not.toMatch(/\bnot in\b/);
+    expect(sql).toBe('(("tasks"."id" = $1) and ("tasks"."status" = $2) and ("tasks"."updated_at" = $3))');
     expect(params).toEqual(['task-1', 'st-working', h.readAt.toISOString()]);
   });
 });

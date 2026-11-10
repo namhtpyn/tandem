@@ -115,63 +115,75 @@ async function statusCategoryOf(statusId: string): Promise<string | null> {
 
 /** assignee asks; holder starts as the owner. status → waiting-answer */
 export async function askQuestion(taskId: string, authorId: string, body: string) {
-  const task = await getTask(taskId);
-  if (!task.assigneeId) throw new Error('task has no assignee');
-  const holder = task.ownerId ?? task.createdBy;
-  if (!holder) throw new Error('task has no owner to answer');
-  // REVIEW LAW: the assignee asks from a working status; a REVIEWER may ask from
-  // in-review (the round stays open — answering flips back to in-review, the review
-  // continues). CATEGORY-GATE LAW (#336): both gates read the status CATEGORY, so a
-  // custom working/in-review status asks exactly like its seeded sibling.
-  const askCategory = await statusCategoryOf(task.status);
-  if (askCategory !== CATEGORY.WORKING && askCategory !== CATEGORY.IN_REVIEW)
-    throw new Error('only a task in progress or review can ask');
-  // identity gate: only the assignee, the owner, or a reviewer with a PENDING verdict
-  // this round (an AI review turn asks instead of approving — REVIEW LAW) may stall
-  // the task; nobody else can park someone else's work
-  let isParty = task.assigneeId === authorId || task.ownerId === authorId || task.createdBy === authorId;
-  if (!isParty) {
-    const round = await currentRound(taskId);
-    isParty =
-      round > 0 &&
-      (
-        await db
-          .select({ id: taskReviews.id })
-          .from(taskReviews)
-          .where(
-            and(
-              eq(taskReviews.taskId, taskId),
-              eq(taskReviews.round, round),
-              eq(taskReviews.reviewerId, authorId),
-              eq(taskReviews.status, REVIEW_STATUS.PENDING),
-            ),
-          )
-      ).length > 0;
+  // RETRY-ONCE (#400): a benign concurrent write (title/description save,
+  // reassignment, a same-category status move) bumps tasks.updatedAt without
+  // touching the lifecycle. The park CAS must not turn that into a failed agent
+  // settle, so a lost flip re-reads and re-arbitrates ONCE on the fresh stamp. A
+  // terminal write still wins: the second loss refuses with the error surfaced and
+  // writes nothing.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const task = await getTask(taskId);
+    if (!task.assigneeId) throw new Error('task has no assignee');
+    const holder = task.ownerId ?? task.createdBy;
+    if (!holder) throw new Error('task has no owner to answer');
+    // REVIEW LAW: the assignee asks from a working status; a REVIEWER may ask from
+    // in-review (the round stays open — answering flips back to in-review, the review
+    // continues). CATEGORY-GATE LAW (#336): both gates read the status CATEGORY, so a
+    // custom working/in-review status asks exactly like its seeded sibling.
+    const askCategory = await statusCategoryOf(task.status);
+    if (askCategory !== CATEGORY.WORKING && askCategory !== CATEGORY.IN_REVIEW)
+      throw new Error('only a task in progress or review can ask');
+    // identity gate: only the assignee, the owner, or a reviewer with a PENDING verdict
+    // this round (an AI review turn asks instead of approving — REVIEW LAW) may stall
+    // the task; nobody else can park someone else's work
+    let isParty = task.assigneeId === authorId || task.ownerId === authorId || task.createdBy === authorId;
+    if (!isParty) {
+      const round = await currentRound(taskId);
+      isParty =
+        round > 0 &&
+        (
+          await db
+            .select({ id: taskReviews.id })
+            .from(taskReviews)
+            .where(
+              and(
+                eq(taskReviews.taskId, taskId),
+                eq(taskReviews.round, round),
+                eq(taskReviews.reviewerId, authorId),
+                eq(taskReviews.status, REVIEW_STATUS.PENDING),
+              ),
+            )
+        ).length > 0;
+    }
+    if (!isParty) throw new Error('only the assignee, the owner or a pending reviewer can ask');
+    // TERMINAL ARBITRATION + ATOMIC ARBITRATION (#400): the waiting-answer park is the
+    // transaction's FIRST write and arbitrates on the status AND updatedAt stamp this
+    // attempt read — a won abandon/settle keeps its outcome and the late question
+    // refuses, writing NOTHING (no obligation cancel, no spawn, no note). The park
+    // AUTHORISES the ANSWER obligation, so flip + cancel + spawn commit in ONE
+    // transaction: a crash between them can never leave a waiting-answer task carrying
+    // no pending obligation.
+    const won = await db.transaction(async (tx) => {
+      const d = asDb(tx);
+      const parked = await d
+        .update(tasks)
+        .set({
+          status: WAITING_ANSWER_STATUS,
+          questionChain: [holder],
+          updatedAt: new Date(),
+        })
+        .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
+        .returning({ id: tasks.id });
+      if (parked.length === 0) return false;
+      await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER, tx);
+      await spawnObligationTracked(taskId, holder, OBLIGATION_ROLE.ANSWER, undefined, tx);
+      return true;
+    });
+    if (!won) continue;
+    await logActivity(taskId, ACTIVITY_KIND.QUESTION, authorId, body, { holderId: holder });
+    return { holderId: holder };
   }
-  if (!isParty) throw new Error('only the assignee, the owner or a pending reviewer can ask');
-  // TERMINAL ARBITRATION + ATOMIC ARBITRATION (#400): the waiting-answer park is the
-  // transaction's FIRST write and arbitrates on the status AND updatedAt stamp this
-  // call read — a won abandon/settle keeps its outcome and the late question refuses,
-  // writing NOTHING (no obligation cancel, no spawn, no note). The park AUTHORISES the
-  // ANSWER obligation, so flip + cancel + spawn commit in ONE transaction: a crash
-  // between them can never leave a waiting-answer task carrying no pending obligation.
-  await db.transaction(async (tx) => {
-    const d = asDb(tx);
-    const parked = await d
-      .update(tasks)
-      .set({
-        status: WAITING_ANSWER_STATUS,
-        questionChain: [holder],
-        updatedAt: new Date(),
-      })
-      .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
-      .returning({ id: tasks.id });
-    if (parked.length === 0) throw new Error('task state changed during ask — a settle owns the outcome');
-    await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER, tx);
-    await spawnObligationTracked(taskId, holder, OBLIGATION_ROLE.ANSWER, undefined, tx);
-  });
-  await logActivity(taskId, ACTIVITY_KIND.QUESTION, authorId, body, { holderId: holder });
-  return { holderId: holder };
+  throw new Error('task state changed during ask — a settle owns the outcome');
 }
 
 /** current holder forwards to someone new; they become holder. Top of the org must answer. */
