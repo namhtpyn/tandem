@@ -409,36 +409,26 @@ export async function submitResult(taskId: string, authorId: string, body: strin
   // thread row; the activity row stays for the review brief + audit
   await logActivity(taskId, ACTIVITY_KIND.VERDICT, authorId, body, { submitted: true, reviewers }, { thread: false });
   if (reviewers.length > 0) {
-    // open the round BEFORE flipping the status: a failed round-open must leave the
-    // task doing (error surfaced to the caller), never parked in-review with no
-    // round rows to settle it out
-    const opened = await openReviewRound(taskId, reviewers, body);
+    // ROUND + FLIP IN ONE TRANSACTION (#394): the round's rows and obligations commit
+    // only together with the in-review flip, so a submit that loses the terminal
+    // arbitration mints NOTHING — no rows to withdraw, no obligation to cancel, no round
+    // number to re-point, and no reviewer turn in flight for a round that never opened.
+    const opened = await openReviewRound(taskId, reviewers, body, {
+      status: task.status,
+      updatedAt: task.updatedAt,
+    });
     droppedInRound = opened.dropped.length;
     // every reviewer vanished inside the round-open transaction (#364): nothing was
-    // minted, so there is no round to settle — complete exactly like zero survivors.
+    // minted and no flip landed — complete exactly like zero survivors.
     if (opened.opened === 0) return await completeWithoutReviewers();
-    // TERMINAL ARBITRATION mirror (#287, #292 r1): the flip arbitrates on the status
-    // this call read — a won abandon/settle between the gate read and this flip owns
-    // the outcome; the just-opened round tears down and the submit refuses (never a
-    // cancelled task resurrected in-review carrying a live round nothing can fire).
-    const flipped = await db
-      .update(tasks)
-      .set({ status: IN_REVIEW_STATUS, updatedAt: new Date() })
-      // the updatedAt stamp closes the ABA hole (#292 r2): a doing->todo->claim->doing
-      // cycle re-matching the read status must not flip in-review over a live run —
-      // ANY concurrent task write wins and the stale flip refuses
-      .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
-      .returning({ id: tasks.id });
-    if (flipped.length === 0) {
-      // the round THIS call opened, never the task's max round — a concurrent winner's
-      // newer round must survive a duplicate submit's lost flip (#361 r5)
-      await teardownOpenRound(taskId, 'submit lost the race', opened.round);
-      // NO park-disarm here (#292 r3): the loser's own parkRound can never land on a
-      // working-category task (the r1 rethrow owns that window), so a disarm would
-      // only ever strip a CONCURRENT round's legitimate park recovery state — the
-      // re-arm scan and the park-origin restore both depend on those columns.
-      throw new Error('task state changed during submit — a settle owns the outcome');
-    }
+    // TERMINAL ARBITRATION mirror (#287, #292 r1): a won abandon/settle between the gate
+    // read and the flip owns the outcome; this call refuses with the error surfaced and
+    // wrote nothing at all.
+    // NO park-disarm here (#292 r3): the loser's own parkRound can never land on a
+    // working-category task (the r1 rethrow owns that window), so a disarm would only
+    // ever strip a CONCURRENT round's legitimate park recovery state — the re-arm scan
+    // and the park-origin restore both depend on those columns.
+    if (!opened.flipped) throw new Error('task state changed during submit — a settle owns the outcome');
     await noteSkipped();
     await refreshParentGating(taskId);
     // #365: a reviewer deleted inside the round-open window leaves a void row on the

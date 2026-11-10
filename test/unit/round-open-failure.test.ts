@@ -188,27 +188,22 @@ describe('round-open dispatch failure (#282)', () => {
     expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(0);
   });
 
-  it('openReviewRound: a failed dispatch supersedes the just-minted rows, cancels their obligations, and fails the submit', async () => {
-    // [openReviewRound's currentRound, dispatch currentRound, dispatch rows, teardown currentRound, teardown rows]
+  it('openReviewRound: the round + flip are one transaction, so a failed dispatch can no longer mint rows', async () => {
+    // the compensating supersede/cancel path is GONE (#394): the flip and the rows commit
+    // together, so a post-commit dispatch failure leaves a LIVE round that parks
+    // rearmable (the dispatch-level cases above) rather than aborting the submit with
+    // half-minted rows to tear down.
+    h.dispatchError = null;
+    h.parkWins = true; // the task-side guarded write wins = the flip landed
     h.reviewReads = [
       [{ round: 1 }],
       [{ round: 2 }],
       [{ id: 'r2', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }],
-      [{ round: 2 }],
-      [{ id: 'r2', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }],
     ];
-    h.taskReads = [[{ status: STATUS.doing }], [{ status: STATUS.doing }]];
-    await expect(openReviewRound('task-1', ['rev-1'], 'the result')).rejects.toThrow(/before the round opened/);
-    // the round row + obligation minted, then superseded/cancelled on the failure path
-    expect(h.inserts).toHaveLength(1);
-    expect(h.inserts[0]?.values).toMatchObject({ round: 2, status: REVIEW_STATUS.PENDING });
-    const supersede = h.updates.find((u) => u.table === 'taskReviews');
-    expect(supersede?.set.status).toBe(REVIEW_STATUS.SUPERSEDED);
-    // rollback scope (#361 r4/r5): only THIS call's created obligation cancels (by id) —
-    // a task-wide approval wipe would tear down a concurrent round's obligations
-    expect(h.cancelledFor).toEqual(['obl-rev-1-APPROVAL']);
+    h.taskReads = [[{ status: STATUS.inReview }]];
+    await openReviewRound('task-1', ['rev-1'], 'the result', { status: STATUS.doing, updatedAt: new Date(0) });
+    expect(h.inserts.filter((i) => i.table === 'taskReviews')).toHaveLength(1);
+    expect(h.cancelledFor).toEqual([]);
     expect(h.cancelledAll).toEqual([]);
-    // never flipped: no BLOCKED park, no in-review submit flip
-    expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(0);
   });
 });

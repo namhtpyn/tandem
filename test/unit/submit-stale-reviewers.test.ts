@@ -115,7 +115,7 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     openReviewRound: async (taskId: string, reviewers: string[], body: string) => {
       if (h.roundError) throw new Error('insert_fk_miss');
       h.rounds.push({ taskId, reviewers, body });
-      return { round: 1, opened: reviewers.length - h.roundDrops.length, dropped: h.roundDrops };
+      return { flipped: true, round: 1, opened: reviewers.length - h.roundDrops.length, dropped: h.roundDrops };
     },
     recordVerdict: async () => ({ outcome: 'superseded' }),
     currentRound: async () => 1,
