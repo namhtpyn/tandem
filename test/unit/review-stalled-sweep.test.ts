@@ -26,6 +26,8 @@ const h = vi.hoisted(() => ({
   /** queued answers for the per-candidate reviewer-run read (one per probe) */
   startedAtQueue: [] as Array<Date | null>,
   reviewRows: [] as Array<Record<string, unknown>>,
+  taskStatus: 'st-in-review',
+  statusRows: [{ id: 'st-in-review', category: 'in_review' }] as Array<{ id: string; category: string }>,
   resultBody: 'the submitted result',
   dispatched: [] as Array<{ taskId: string; opts?: { reviewBy?: string } }>,
   aiIds: [] as string[],
@@ -53,6 +55,7 @@ vi.mock('../../server/db/index', async () => {
     }
     if (keys.includes('id')) return h.liveRun ? [{ id: 'run-live' }] : [];
     if (keys.includes('round')) return [{ round: h.round }];
+    if (keys.includes('status')) return [{ status: h.taskStatus }];
     return [];
   };
   const builder = (projection?: Record<string, unknown>) => {
@@ -85,7 +88,7 @@ vi.mock('../../server/db/index', async () => {
     transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(db),
     query: {
       aiEmployees: { findMany: async () => h.aiIds.map((userId) => ({ userId })) },
-      taskStatuses: { findMany: async () => [] },
+      taskStatuses: { findMany: async () => h.statusRows },
       tasks: { findFirst: async () => null },
     },
   };
@@ -127,6 +130,8 @@ beforeEach(() => {
   h.reviewRows = [
     { id: 'row-1', taskId: TASK, reviewerId: REV, round: 1, status: REVIEW_STATUS.PENDING, createdAt: ROW_MINTED },
   ];
+  h.taskStatus = 'st-in-review';
+  h.statusRows = [{ id: 'st-in-review', category: 'in_review' }];
   h.resultBody = 'the submitted result';
   h.dispatched = [];
   h.aiIds = [REV];
@@ -137,15 +142,27 @@ describe('stalledReviewRefire (#397 pure decision)', () => {
   const candidate = { taskId: TASK, round: 2, reviewerId: REV, createdAt: ROW_MINTED };
 
   it('fires the crash shape: current round, no live run, reviewer never dispatched', () => {
-    expect(stalledReviewRefire(candidate, { round: 2, liveRun: false, reviewerRunSince: null })).toBe(true);
+    expect(stalledReviewRefire(candidate, { round: 2, liveRun: false, reviewerRunSince: null, inReview: true })).toBe(
+      true,
+    );
+  });
+
+  it('never re-fires a task that left in-review (manual move / park while scanning)', () => {
+    expect(stalledReviewRefire(candidate, { round: 2, liveRun: false, reviewerRunSince: null, inReview: false })).toBe(
+      false,
+    );
   });
 
   it('never re-fires a superseded round', () => {
-    expect(stalledReviewRefire(candidate, { round: 3, liveRun: false, reviewerRunSince: null })).toBe(false);
+    expect(stalledReviewRefire(candidate, { round: 3, liveRun: false, reviewerRunSince: null, inReview: true })).toBe(
+      false,
+    );
   });
 
   it('never re-fires over a live turn (the run row owns the round)', () => {
-    expect(stalledReviewRefire(candidate, { round: 2, liveRun: true, reviewerRunSince: null })).toBe(false);
+    expect(stalledReviewRefire(candidate, { round: 2, liveRun: true, reviewerRunSince: null, inReview: true })).toBe(
+      false,
+    );
   });
 
   it('never re-fires a reviewer that already had a turn this round (the correction/park law owns it)', () => {
@@ -154,6 +171,7 @@ describe('stalledReviewRefire (#397 pure decision)', () => {
         round: 2,
         liveRun: false,
         reviewerRunSince: new Date(ROW_MINTED.getTime() + 1),
+        inReview: true,
       }),
     ).toBe(false);
   });
@@ -248,10 +266,26 @@ describe('sweepStalledReviewTurns (#397 behaviour)', () => {
       { taskId: TASK, round: 1, reviewerId: REV_B, createdAt: new Date(ROW_MINTED.getTime() + 1) },
     ];
     h.startedAtQueue = [new Date(ROW_MINTED.getTime() + 5_000), null];
+    // the mint must target the validated row (REV_B) — a plain mint hands the turn to the
+    // round's FIRST pending AI row (REV, already dispatched) and leaves REV_B stalled
+    h.reviewRows = [
+      { id: 'row-a', taskId: TASK, reviewerId: REV, round: 1, status: REVIEW_STATUS.PENDING, createdAt: ROW_MINTED },
+      { id: 'row-b', taskId: TASK, reviewerId: REV_B, round: 1, status: REVIEW_STATUS.PENDING, createdAt: ROW_MINTED },
+    ];
+    h.aiIds = [REV, REV_B];
     const refired = await sweepStalledReviewTurns();
     expect(refired).toBe(1);
     expect(h.dispatched).toHaveLength(1);
     expect(h.dispatched[0]?.taskId).toBe(TASK);
+    expect(h.dispatched[0]?.opts?.reviewBy).toBe(REV_B);
+  });
+
+  it('suppresses the re-fire when the task left in-review between the scan and the mint', async () => {
+    h.taskStatus = 'st-todo';
+    h.statusRows = [{ id: 'st-todo', category: 'ready' }];
+    const refired = await sweepStalledReviewTurns();
+    expect(refired).toBe(0);
+    expect(h.dispatched).toEqual([]);
   });
 
   it('suppresses the re-fire when the candidate belongs to a superseded round', async () => {

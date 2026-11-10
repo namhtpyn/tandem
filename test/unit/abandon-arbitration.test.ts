@@ -73,9 +73,6 @@ vi.mock('../../server/db/index', async () => {
         };
       },
     }),
-    // #397: the abandon arbitrates its cancel AND its teardown in ONE transaction; the
-    // sentinel lets a test prove the teardown got the tx EXECUTOR (not the pool db)
-    transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(db),
     query: {
       tasks: {
         findMany: async () => h.taskRows,
@@ -86,7 +83,12 @@ vi.mock('../../server/db/index', async () => {
       user: { findMany: async () => [{ id: REV }] },
     },
   };
-  h.txSentinel = db;
+  // #397 r2: the tx executor is a DISTINCT object (drizzle's tx is not the pool db); a
+  // proxy keeps every method working while the identity check stays meaningful — passing
+  // the pool db instead of the tx now FAILS the membership pin
+  const tx = Object.create(db) as typeof db;
+  db.transaction = async (fn: (tx: unknown) => Promise<unknown>) => fn(tx);
+  h.txSentinel = tx;
   return { asDb: (x: unknown) => x, db };
 });
 
@@ -103,7 +105,10 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
       h.cancelled.push(String(role));
       h.inTx.push(ex === h.txSentinel);
     },
-    cancelAllObligations: async () => {},
+    cancelAllObligations: async (_t: unknown, role: unknown, ex?: unknown) => {
+      h.cancelled.push('ALL:' + String(role));
+      h.inTx.push(ex === h.txSentinel);
+    },
     spawnObligation: async (_t: unknown, employeeId: string, role: string) => {
       h.spawns.push({ employeeId, role: String(role) });
       return 'obl-1';
@@ -151,7 +156,9 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     },
     recordVerdict: async () => ({ outcome: 'superseded' }),
     currentRound: async () => 1,
-    teardownOpenRound: async (_t: unknown, settledTo: string, ex?: unknown, opts?: { publish?: boolean }) => {
+    // #397 r2: the abandon tears down EVERY pending round (a manual move out of review
+    // leaves older rounds open, and the work branch can cancel a round-carrying task)
+    teardownAllPendingRounds: async (_t: unknown, settledTo: string, ex?: unknown, opts?: { publish?: boolean }) => {
       h.order.push('teardown');
       h.teardowns.push(settledTo);
       h.inTx.push(ex === h.txSentinel);
@@ -218,6 +225,29 @@ describe('abandonTask terminal arbitration (#287)', () => {
     expect(h.teardowns).toEqual([]);
     expect(h.cancelled).toEqual([]);
     expect(h.order).toEqual(['cancel-cas']);
+    expect(h.teardownPublish).toEqual([]);
+  });
+
+  // #397 r2: the work branch can cancel a task that still carries a live round (a manual
+  // move out of review leaves the round open — the review branch is not the only one that
+  // can hold pending rows). A cancelled task must never keep a pending row or obligation.
+  it('a work-branch cancel tears an open round down and cancels BOTH roles (#397 r2)', async () => {
+    h.taskRows = [
+      {
+        status: STATUS.todo,
+        assigneeId: 'worker-1',
+        ownerId: 'owner-1',
+        createdBy: 'owner-1',
+        questionChain: [],
+        reviewers: [],
+      },
+    ];
+    h.statuses = [{ id: STATUS.todo, category: CATEGORY.READY }];
+    await abandonTask('task-1', 'owner-1', 'cancel it');
+    expect(h.teardowns).toEqual(['cancelled']);
+    expect(h.cancelled).toEqual([OBLIGATION_ROLE.ANSWER, 'ALL:' + OBLIGATION_ROLE.APPROVAL]);
+    expect(h.inTx).toEqual([true, true, true]);
+    expect(h.teardownPublish).toEqual([false]);
   });
 
   it('a won abandon CASes first, then tears the round down inside the same transaction (#397)', async () => {
@@ -225,10 +255,10 @@ describe('abandonTask terminal arbitration (#287)', () => {
     // the CAS is recorded before the teardown, and both roles' obligations cancel; the
     // parent re-gate still runs last (after the outcome committed)
     expect(h.order).toEqual(['cancel-cas', 'teardown', 'gating']);
-    expect(h.cancelled).toEqual([OBLIGATION_ROLE.APPROVAL, OBLIGATION_ROLE.ANSWER]);
+    expect(h.cancelled).toEqual([OBLIGATION_ROLE.ANSWER, 'ALL:' + OBLIGATION_ROLE.APPROVAL]);
     expect(h.teardowns).toEqual(['cancelled']);
-    // TX MEMBERSHIP (#397 r1): every teardown/obligation write got the tx EXECUTOR —
-    // dropping the `tx` argument (pool db instead of the transaction) turns this red
+    // TX MEMBERSHIP (#397 r2): every teardown/obligation write got the tx EXECUTOR —
+    // passing the pool db instead of the transaction turns this red
     expect(h.inTx).toEqual([true, true, true]);
     // NO PUBLISH INSIDE THE TX (#397 r1): the teardown is told to defer its change
     // events (they ride the post-commit abandon note), so a redis publish can never gate

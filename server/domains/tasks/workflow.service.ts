@@ -31,6 +31,7 @@ import {
   spawnObligationTracked,
   resolveObligation,
   cancelObligations,
+  cancelAllObligations,
   cancelObligationById,
   answerHolder,
 } from './obligations.service';
@@ -41,7 +42,6 @@ import {
   openReviewRound,
   recordVerdict,
   currentRound,
-  teardownOpenRound,
   teardownAllPendingRounds,
   settleExtinguishedRound,
   liveReviewers,
@@ -551,17 +551,15 @@ export async function abandonTask(taskId: string, authorId: string, body: string
       .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
       .returning({ id: tasks.id });
     if (cancelled.length === 0) return { won: false as const };
-    if (fromReview) {
-      await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL, tx);
-      await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER, tx);
-      // pending rows -> superseded, obligations cancel, the round-closed note commits
-      // with the outcome; its change events are DEFERRED to the post-commit note below
-      // (a redis publish must never gate the tasks row lock, #397 r1)
-      await teardownOpenRound(taskId, 'cancelled', tx, { publish: false });
-      return { won: true as const };
-    }
-    // a paused task can still hold a pending answer obligation — cancel it
+    // TERMINAL TEARDOWN (#361 r6 / #397 r2): a cancelled task never keeps a pending review
+    // row or a pending obligation — EVERY round tears down, not just the MAX one (a manual
+    // move out of review legally leaves an older round open, and the work branch can cancel
+    // a task that still carries a live round), and BOTH roles cancel on every branch.
+    // Change events are deferred to the post-commit note (#397 r1): a redis publish must
+    // never gate the held tasks row lock, and a rollback must never announce erased rows.
     await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER, tx);
+    await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL, tx);
+    await teardownAllPendingRounds(taskId, 'cancelled', tx, { publish: false });
     return { won: true as const };
   });
   if (!teardown.won) throw new Error('task state changed during cancel — a settle owns the outcome');

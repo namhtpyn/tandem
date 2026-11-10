@@ -967,6 +967,10 @@ export type DispatchOpts = {
   resultBody?: string;
   verdictCorrection?: boolean;
   verdictlessReviewerId?: string;
+  /** TARGET a specific reviewer's pending row (the stalled-review sweep decided on THAT
+   *  row; the plain mint would otherwise dispatch the round's first pending AI reviewer,
+   *  which may be the one that already had a turn — #397 r2). */
+  targetReviewerId?: string;
 };
 
 /** DISPATCH CLAIM LAW (#162, SPEC): the dispatch claim is ONE conditional flip of

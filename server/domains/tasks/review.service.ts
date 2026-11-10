@@ -306,21 +306,35 @@ export async function openReviewRound(
  *  duplicate submit) can hide an older round that is still live, and a done task must
  *  never keep a pending row or approval obligation (#361 r6). Task-wide cancel is
  *  correct here — the task is settling to done. */
-export async function teardownAllPendingRounds(taskId: string, settledTo: string) {
-  const pending = await db
+export async function teardownAllPendingRounds(
+  taskId: string,
+  settledTo: string,
+  ex: DbExecutor = db,
+  opts: { publish?: boolean } = {},
+) {
+  const d = asDb(ex);
+  const pending = await d
     .select({ round: taskReviews.round })
     .from(taskReviews)
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
   if (pending.length === 0) return;
-  await db
+  await d
     .update(taskReviews)
     .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
-  await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
-  await logActivity(taskId, ACTIVITY_KIND.STATUS, null, 'review rounds closed — task settled', {
-    roundClosed: true,
-    settledTo,
-  });
+  await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL, ex);
+  await logActivity(
+    taskId,
+    ACTIVITY_KIND.STATUS,
+    null,
+    'review rounds closed — task settled',
+    {
+      roundClosed: true,
+      settledTo,
+    },
+    ex,
+    { publish: opts.publish },
+  );
 }
 
 /** is the current round still LIVE (pending reviewers)? Rounds never close early —
@@ -1085,12 +1099,23 @@ export function stalledReviewScan(ex: DbExecutor, cutoff: Date) {
 /** pure decision for one candidate: is this the crash-window shape? */
 export function stalledReviewRefire(
   candidate: StalledReviewCandidate,
-  probe: { round: number; liveRun: boolean; reviewerRunSince: Date | null },
+  probe: { round: number; liveRun: boolean; reviewerRunSince: Date | null; inReview: boolean },
 ): boolean {
+  if (!probe.inReview) return false; // the task left in-review (manual move/park/settle)
   if (probe.round !== candidate.round) return false; // a superseded round never re-fires
   if (probe.liveRun) return false; // a live turn owns the round
   if (probe.reviewerRunSince !== null) return false; // already dispatched this round
   return true;
+}
+
+/** the task's CURRENT category — the decision-time re-check that the task still belongs
+ *  to in-review. Review turns never claim the task, so nothing else would refuse a turn
+ *  minted for a task a manual move (or a park) took out of review while the scan ran
+ *  (#397 r2). */
+async function taskCategory(taskId: string): Promise<string | null> {
+  const row = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
+  if (!row) return null;
+  return await categoryOf(row.status);
 }
 
 /** is a run live on the task? (review turns never claim the task, so the run row is the
@@ -1143,13 +1168,17 @@ async function sweepStalledReviewTurnsInner(): Promise<number> {
         round: await currentRound(candidate.taskId),
         liveRun: await taskHasLiveRun(candidate.taskId),
         reviewerRunSince: null as Date | null,
+        inReview: false,
       };
-      if (!probe.liveRun) {
+      if (probe.round === candidate.round && !probe.liveRun) {
         probe.reviewerRunSince = await reviewerRunAtOrAfter(
           candidate.taskId,
           candidate.reviewerId,
           candidate.createdAt,
         );
+        // last read before the mint: the task must still be in review (the scan read is
+        // a snapshot; a manual move or park in this window must not gain a new turn)
+        probe.inReview = (await taskCategory(candidate.taskId)) === CATEGORY.IN_REVIEW;
       }
       if (!stalledReviewRefire({ ...candidate, reviewerId: candidate.reviewerId }, probe)) continue;
       attempted.add(candidate.taskId);
@@ -1157,7 +1186,12 @@ async function sweepStalledReviewTurnsInner(): Promise<number> {
       // AI turn and parks a mint failure on the re-arm ladder — the sweep adds no
       // second dispatch path. The count/log report the mint's OWN outcome, never the
       // sweep's intent (its guards can no-op the call).
-      const fired = await dispatchAiReviewTurns(candidate.taskId);
+      // TARGETED (#397 r2): dispatch the row this sweep validated — a plain mint hands the
+      // turn to the round's FIRST pending AI reviewer, which may be the one that already
+      // had its turn (leaving the stalled row untouched).
+      const fired = await dispatchAiReviewTurns(candidate.taskId, undefined, {
+        targetReviewerId: candidate.reviewerId,
+      });
       if (fired) {
         refired += 1;
         log.info(`stalled-review sweep: re-fired round ${candidate.round} on task ${candidate.taskId}`);
@@ -1325,6 +1359,10 @@ async function dispatchAiReviewTurnsUnlocked(
   const body = resultBody ?? (await roundResultBody(taskId));
   for (const row of rows) {
     if (!row.reviewerId || !aiIds.has(row.reviewerId)) continue; // human reviewer: the card is enough
+    // TARGETED mint (#397 r2): the caller decided on THIS reviewer's row — never hand the
+    // turn to the round's first pending AI reviewer instead (that reviewer may already
+    // have had its turn; the sweep's whole premise is the row it validated).
+    if (opts?.targetReviewerId && row.reviewerId !== opts.targetReviewerId) continue;
     // VERDICT-LESS CORRECTION (#276, blind-review r5): a correction re-dispatch is
     // TARGET-scoped — only the verdict-less reviewer's own row is retried (row order
     // ties would otherwise hand the retry to a different first-turn reviewer and

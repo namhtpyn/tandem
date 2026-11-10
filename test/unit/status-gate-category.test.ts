@@ -88,7 +88,9 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
     spawnObligation: async (_t: unknown, holder: string) => void h.spawned.push(String(holder)),
     resolveObligation: async () => {},
     answerHolder: async () => null,
-    cancelAllObligations: async () => {},
+    // #397 r2: the abandon cancels ALL approvals (task-wide terminal teardown), so the
+    // role must land in the same trail the assertion reads
+    cancelAllObligations: async (_t: unknown, role: unknown) => void h.cancelled.push(String(role)),
   };
 });
 
@@ -118,6 +120,8 @@ vi.mock('../../server/domains/tasks/review.service', () => ({
   parkRound: async () => true,
   teardownOnManualMove: async () => {},
   teardownOpenRound: async (_t: string, to: string) => void h.teardowns.push(to),
+  // #397 r2: the abandon settles through the TASK-WIDE teardown (every pending round)
+  teardownAllPendingRounds: async (_t: string, to: string) => void h.teardowns.push(to),
   verdictsSoFarFor: async () => [],
 }));
 
