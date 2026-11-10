@@ -47,6 +47,7 @@ const h = vi.hoisted(() => ({
   lockedIds: [] as string[],
   lockedTables: [] as string[],
   missingHolder: false,
+  missingAuthor: false,
   noteTxIds: [] as Array<number | null>,
   seq: [] as string[],
   dispatches: [] as string[],
@@ -111,7 +112,7 @@ vi.mock('../../server/db/index', async () => {
                   h.seq.push(`lock:${mode}`);
                   // every FK-referenced user row is locked in ONE statement
                   h.lockedIds = params.map((id) => String(id)).sort();
-                  const ids = h.missingHolder ? params.slice(1) : params;
+                  const ids = h.missingHolder ? params.slice(1) : h.missingAuthor ? params.slice(0, 1) : params;
                   return ids.map((id) => ({ id: String(id) }));
                 },
               }),
@@ -270,6 +271,7 @@ beforeEach(() => {
   h.lockedIds = [];
   h.lockedTables = [];
   h.missingHolder = false;
+  h.missingAuthor = false;
   h.noteTxIds = [];
   h.seq = [];
   h.dispatches = [];
@@ -382,6 +384,14 @@ describe('askQuestion parks before touching obligations (#400)', () => {
     expect(h.notes).toHaveLength(0);
   });
 
+  it('a vanished AUTHOR is a lost attempt too — never a raw FK error from the question row', async () => {
+    seedWorkingAiTask();
+    h.missingAuthor = true;
+    await expect(askQuestion('task-1', 'worker-1', 'who signs off?')).rejects.toThrow(/state changed during ask/);
+    expect(h.flips).toHaveLength(0);
+    expect(h.notes).toHaveLength(0);
+  });
+
   it('the ask flip pins id + the read status + the read updatedAt (operator + value)', () => {
     seedWorkingAiTask();
     h.applied = false;
@@ -441,6 +451,31 @@ describe('addNote dispatch flip arbitrates on the read row (#400)', () => {
     h.bumpOnLoss = true;
     h.statusOnLoss = 'st-doing';
     h.steerStates = ['stopped', 'steered']; // the claim's RUNNING row is now visible
+    const res = await addNote('task-1', 'human-1', 'go');
+    expect(res).toEqual({ steered: true });
+    expect(h.flips).toHaveLength(1);
+    expect(h.dispatches).toHaveLength(0);
+  });
+
+  it('a manual status move in the retry window is never overwritten (winner owns the row)', async () => {
+    seedWorkingAiTask();
+    h.statuses.push({ id: 'st-paused', category: CATEGORY.PAUSED });
+    h.loseFlips = 1;
+    h.bumpOnLoss = true;
+    h.statusOnLoss = 'st-paused';
+    const res = await addNote('task-1', 'human-1', 'go');
+    expect(res).toEqual({ steered: false });
+    expect(h.flips).toHaveLength(1);
+    expect(h.dispatches).toHaveLength(0);
+  });
+
+  it('a retry that finds an EXCLUDED category still steers a live run first', async () => {
+    seedWorkingAiTask();
+    h.statuses.push({ id: 'st-review', category: CATEGORY.IN_REVIEW });
+    h.loseFlips = 1;
+    h.bumpOnLoss = true;
+    h.statusOnLoss = 'st-review'; // a submit opened the review round
+    h.steerStates = ['stopped', 'steered']; // ...and its reviewer turn is live
     const res = await addNote('task-1', 'human-1', 'go');
     expect(res).toEqual({ steered: true });
     expect(h.flips).toHaveLength(1);

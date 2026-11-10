@@ -178,9 +178,11 @@ export async function askQuestion(taskId: string, authorId: string, body: string
         .from(user)
         .where(inArray(user.id, [...new Set([holder, authorId])]))
         .for('key share');
-      // the holder's row vanished (employee deleted mid-settle): a LOST attempt, not a
-      // hard failure — the retry re-reads and parks on the owner the fresh row carries
-      if (!locked.some((r) => r.id === holder)) return false;
+      // a vanished USER row (employee deleted mid-settle) is a LOST attempt, not a hard
+      // failure: the holder can be re-read (the retry parks on the owner the fresh row
+      // carries) and a vanished author deterministically falls through to the surfaced
+      // refusal — never a raw FK error from the question row's author_id insert.
+      if (locked.length !== new Set([holder, authorId]).size) return false;
       const parked = await d
         .update(tasks)
         .set({
@@ -376,9 +378,20 @@ export async function addNote(
   // updatedAt and would silently swallow a send the composer promised to dispatch —
   // unrecoverable for a backlog/paused task, which nothing re-dispatches. Re-read and
   // re-decide ONCE on the fresh row; a second loss stays thread-only.
-  let firstCat: string | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
     const current = attempt === 0 ? task : await getTask(taskId);
+    if (attempt > 0) {
+      // RUN LOCK + winner-owns-the-outcome (#400 r3-r6): re-run the composer's steer
+      // gate FIRST — a live run (review turn included) takes the note as a steer,
+      // whatever the row's category. Then only a PURE stamp bump may retry: ANY status
+      // change in the window (a dispatch claim, a manual move, a settle's flip) owns the
+      // row, and a claim commits ready -> working before its RUNNING row exists — the
+      // steer gate cannot see it, so re-flipping it would break the lock and admit a
+      // second run. The retry stays thread-only instead.
+      const again = await steerRun(taskId, body);
+      if (again === 'steered' || again === 'refused') return { steered: again === 'steered' };
+      if (current.status !== task.status) return { steered: false as const };
+    }
     const rows = await db.query.taskStatuses.findMany({
       columns: { id: true, category: true },
       where: { id: { eq: current.status } },
@@ -387,17 +400,6 @@ export async function addNote(
     // else the membership rule applies — thread-only, never a dispatch guess
     const statusCat = rows.find((r) => r.id === current.status)?.category;
     if (!statusCat || excluded.includes(statusCat)) return { steered: false as const };
-    if (attempt === 0) firstCat = statusCat;
-    if (attempt > 0) {
-      // RUN LOCK (#400 r3/r5): re-run the composer's steer gate FIRST — a live run takes
-      // the note as a steer, whatever the row's category history. Only a row a DISPATCH
-      // CLAIM took out of the ready category with no visible run yet falls back to
-      // thread-only: the claim commits ready -> working before its RUNNING row exists,
-      // and re-flipping that row to to-do would break the lock and admit a second run.
-      const again = await steerRun(taskId, body);
-      if (again === 'steered' || again === 'refused') return { steered: again === 'steered' };
-      if (firstCat !== CATEGORY.WORKING && statusCat === CATEGORY.WORKING) return { steered: false as const };
-    }
     if (!current.assigneeId) return { steered: false as const };
     const ai = await db.query.aiEmployees.findFirst({
       columns: { userId: true },
