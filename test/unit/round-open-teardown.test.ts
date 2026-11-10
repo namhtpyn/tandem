@@ -24,7 +24,6 @@ const h = vi.hoisted(() => ({
   lockStrengths: [] as string[],
   lockConds: [] as unknown[],
   lockInTx: [] as boolean[],
-  inTx: false,
   insertInTx: [] as boolean[],
   notes: [] as Array<{ body: string }>,
   failOnNote: false,
@@ -115,16 +114,10 @@ vi.mock('../../server/db/index', async () => {
     asDb: (x: unknown) => x,
     db: {
       ...mockDb,
-      transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
-        h.inTx = true;
-        try {
-          // a DISTINCT tx surface: an insert that forgot to pass `tx` lands on the
-          // pool mock (no __tx) and the in-transaction pin goes red
-          return await fn({ ...mockDb, __tx: true });
-        } finally {
-          h.inTx = false;
-        }
-      },
+      transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
+        // a DISTINCT tx surface: an insert/lock that forgot to pass `tx` lands on the
+        // pool mock (no __tx) and the in-transaction pins go red
+        fn({ ...mockDb, __tx: true }),
     },
   };
 });
@@ -164,7 +157,6 @@ beforeEach(() => {
   h.lockStrengths = [];
   h.lockConds = [];
   h.lockInTx = [];
-  h.inTx = false;
   h.insertInTx = [];
   h.notes = [];
   h.failOnNote = false;
@@ -241,8 +233,9 @@ describe('openReviewRound reviewer-existence transaction (#364)', () => {
     // user.id — a mis-columned predicate drops every reviewer and silently completes
     // every reviewed submit with no round at all
     const lockSql = new PgDialect().sqlToQuery(h.lockConds[0] as never);
-    expect(lockSql.sql).toContain('"user"."id"');
-    expect(lockSql.sql).toContain('in');
+    expect(lockSql.sql).toContain('"user"."id" in (');
+    // `in` alone is satisfied by `not in` — pin the operator, not the substring
+    expect(lockSql.sql).not.toMatch(/\bnot in\b/);
     expect(lockSql.params).toEqual([A, B]);
     // the lock read itself must ride the transaction — hoisting it onto the pool would
     // release the lock at statement end and silently reopen the #364 window
