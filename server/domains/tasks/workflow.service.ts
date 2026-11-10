@@ -178,7 +178,9 @@ export async function askQuestion(taskId: string, authorId: string, body: string
         .from(user)
         .where(inArray(user.id, [...new Set([holder, authorId])]))
         .for('key share');
-      if (!locked.some((r) => r.id === holder)) throw new Error('the owner to answer no longer exists');
+      // the holder's row vanished (employee deleted mid-settle): a LOST attempt, not a
+      // hard failure — the retry re-reads and parks on the owner the fresh row carries
+      if (!locked.some((r) => r.id === holder)) return false;
       const parked = await d
         .update(tasks)
         .set({
@@ -387,14 +389,14 @@ export async function addNote(
     if (!statusCat || excluded.includes(statusCat)) return { steered: false as const };
     if (attempt === 0) firstCat = statusCat;
     if (attempt > 0) {
-      // RUN LOCK (#400 r3/r4): a lost CAS can be a DISPATCH CLAIM. The claim commits
-      // ready -> working BEFORE its RUNNING run row exists, so the steer gate cannot
-      // see it yet — a row a claim took out of the ready category is never re-flipped
-      // to to-do (that would break the lock and admit a second run). A live run that
-      // IS visible still takes the note as a steer.
-      if (firstCat !== CATEGORY.WORKING && statusCat === CATEGORY.WORKING) return { steered: false as const };
+      // RUN LOCK (#400 r3/r5): re-run the composer's steer gate FIRST — a live run takes
+      // the note as a steer, whatever the row's category history. Only a row a DISPATCH
+      // CLAIM took out of the ready category with no visible run yet falls back to
+      // thread-only: the claim commits ready -> working before its RUNNING row exists,
+      // and re-flipping that row to to-do would break the lock and admit a second run.
       const again = await steerRun(taskId, body);
       if (again === 'steered' || again === 'refused') return { steered: again === 'steered' };
+      if (firstCat !== CATEGORY.WORKING && statusCat === CATEGORY.WORKING) return { steered: false as const };
     }
     if (!current.assigneeId) return { steered: false as const };
     const ai = await db.query.aiEmployees.findFirst({

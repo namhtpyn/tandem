@@ -45,6 +45,8 @@ const h = vi.hoisted(() => ({
   // question ACTIVITY row rode (it must be the park's own tx)
   locks: [] as string[],
   lockedIds: [] as string[],
+  lockedTables: [] as string[],
+  missingHolder: false,
   noteTxIds: [] as Array<number | null>,
   seq: [] as string[],
   dispatches: [] as string[],
@@ -55,7 +57,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('../../server/db/index', async () => {
-  const { tasks } = await import('../../server/db/schema');
+  const { tasks, user } = await import('../../server/db/schema');
   // one update-builder factory for the pool and for each transaction: the applied()
   // result IS the arbiter (a lost guarded flip returns zero rows) and the captured
   // txId is what the TX-IDENTITY pin reads.
@@ -100,15 +102,17 @@ vi.mock('../../server/db/index', async () => {
           update: (table: unknown) => makeUpdate(table, txId),
           // the ask park key-shares the holder's user row before the tasks row
           select: () => ({
-            from: () => ({
+            from: (table: unknown) => ({
               where: (cond: unknown) => ({
                 for: async (mode: string) => {
                   const { params } = new PgDialect().sqlToQuery(cond as SQL);
                   h.locks.push(String(mode));
+                  h.lockedTables.push(table === user ? 'user' : 'other');
                   h.seq.push(`lock:${mode}`);
                   // every FK-referenced user row is locked in ONE statement
                   h.lockedIds = params.map((id) => String(id)).sort();
-                  return params.map((id) => ({ id: String(id) }));
+                  const ids = h.missingHolder ? params.slice(1) : params;
+                  return ids.map((id) => ({ id: String(id) }));
                 },
               }),
             }),
@@ -264,6 +268,8 @@ beforeEach(() => {
   h.obTxIds = [];
   h.locks = [];
   h.lockedIds = [];
+  h.lockedTables = [];
+  h.missingHolder = false;
   h.noteTxIds = [];
   h.seq = [];
   h.dispatches = [];
@@ -293,8 +299,10 @@ describe('askQuestion parks before touching obligations (#400)', () => {
     // statement before the tasks flip — never a user lock after the task row
     expect(h.locks).toEqual(['key share']);
     expect(h.seq[0]).toBe('lock:key share');
-    // BOTH FK-referenced rows — the holder (obligation) and the author (question row)
+    // BOTH FK-referenced rows — the holder (obligation) and the author (question row) —
+    // and the USER table, not some other table carrying a matching predicate
     expect(h.lockedIds).toEqual(['owner-1', 'worker-1']);
+    expect(h.lockedTables).toEqual(['user']);
   });
 
   it('a lost ask flip cancels and spawns NOTHING and refuses', async () => {
@@ -362,6 +370,18 @@ describe('askQuestion parks before touching obligations (#400)', () => {
     expect(win.params[2]).toBe(h.freshAt.toISOString());
   });
 
+  it('a holder deleted mid-settle is a LOST attempt — the retry re-reads, never a hard failure', async () => {
+    seedWorkingAiTask();
+    h.missingHolder = true; // the key-share returns only the author row
+    await expect(askQuestion('task-1', 'worker-1', 'who signs off?')).rejects.toThrow(/state changed during ask/);
+    // both attempts were made (the lock refuses before any write) and nothing landed
+    expect(h.locks).toEqual(['key share', 'key share']);
+    expect(h.flips).toHaveLength(0);
+    expect(h.cancelled).toHaveLength(0);
+    expect(h.spawned).toHaveLength(0);
+    expect(h.notes).toHaveLength(0);
+  });
+
   it('the ask flip pins id + the read status + the read updatedAt (operator + value)', () => {
     seedWorkingAiTask();
     h.applied = false;
@@ -404,6 +424,25 @@ describe('addNote dispatch flip arbitrates on the read row (#400)', () => {
     h.steerStates = ['stopped', 'stopped'];
     const res = await addNote('task-1', 'human-1', 'go');
     expect(res).toEqual({ steered: false });
+    // the retry DID consult the composer's steer gate before giving up
+    expect(h.steerCalls).toBe(2);
+    expect(h.flips).toHaveLength(1);
+    expect(h.dispatches).toHaveLength(0);
+  });
+
+  it('a claimed row whose run is already visible takes the note as a STEER', async () => {
+    seedWorkingAiTask();
+    h.taskRows[0] = { ...h.taskRows[0], status: 'st-todo' };
+    h.statuses = [
+      { id: 'st-todo', category: CATEGORY.READY },
+      { id: 'st-doing', category: CATEGORY.WORKING },
+    ];
+    h.loseFlips = 1;
+    h.bumpOnLoss = true;
+    h.statusOnLoss = 'st-doing';
+    h.steerStates = ['stopped', 'steered']; // the claim's RUNNING row is now visible
+    const res = await addNote('task-1', 'human-1', 'go');
+    expect(res).toEqual({ steered: true });
     expect(h.flips).toHaveLength(1);
     expect(h.dispatches).toHaveLength(0);
   });
