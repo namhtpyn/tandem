@@ -15,8 +15,8 @@ import { consola } from 'consola';
 import { and, desc, eq, inArray, isNull, lt, ne, notInArray } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
-import { db, type DbExecutor } from '../../db/index';
-import { tasks, taskReviews, taskRuns, taskMessages, taskObligations, taskStatuses } from '../../db/schema';
+import { asDb, db, type DbExecutor } from '../../db/index';
+import { tasks, taskReviews, taskRuns, taskMessages, taskObligations, taskStatuses, user } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import {
   spawnObligation,
@@ -178,8 +178,29 @@ export async function dispatchedReviewRound(taskId: string, reviewerId: string, 
 }
 
 /** open a fresh review round: one pending row per reviewer + inbox obligations.
- * Called by submitResult. The task parks in-review; AI reviewers get review turns. */
-export async function openReviewRound(taskId: string, reviewers: string[], resultBody: string) {
+ * Called by submitResult. The task parks in-review; AI reviewers get review turns.
+ *
+ * REVIEWER-EXISTENCE TRANSACTION (#364): the caller's existence pre-check and these
+ * inserts used to be separate statements, so an employee deleted BETWEEN them still
+ * hit task_reviews.reviewer_id / task_obligations.employee_id with 23503 and failed
+ * that submit. The survivor user rows are now locked FOR KEY SHARE in the SAME
+ * transaction that inserts the round: a concurrent DELETE either committed before the
+ * lock (the row is absent — the reviewer drops out of the round exactly like the
+ * pre-check path) or blocks until this round commits, after which its FK nulls
+ * reviewer_id and the row is a #365 non-vote. The ROUND OPEN can no longer raise
+ * 23503 on the REVIEWER FK. A delete landing after the commit is that non-vote; one
+ * racing the review turn's own dispatch mint (task_messages.author_id /
+ * task_runs.employee_id) still fails that one submit — the task stays working and the
+ * retry re-reads the roster, so it is retryable, never a wedge. (The task row itself is
+ * a separate FK: a task deleted under the round open refuses that submit and the task
+ * is gone — pre-existing, unchanged here.)
+ * `opened: 0` (every reviewer vanished inside the window) is the caller's
+ * zero-survivor outcome — nothing was minted, so nothing is left to settle. */
+export async function openReviewRound(
+  taskId: string,
+  reviewers: string[],
+  resultBody: string,
+): Promise<{ round: number; opened: number; dropped: string[] }> {
   const uniqueReviewers = dedupeReviewers(reviewers);
   const round = (await currentRound(taskId)) + 1;
   const now = new Date();
@@ -191,33 +212,50 @@ export async function openReviewRound(taskId: string, reviewers: string[], resul
   // index would then SUPERSEDE THE WINNER's freshly opened round, leaving an
   // in-review task with no pending row that nothing can settle. Supersede exactly the
   // row ids this call inserted and cancel exactly their reviewers' obligations.
+  // The tx rollback already removed a failed insert set; the compensating write below
+  // is what covers a failure AFTER the commit (logActivity / dispatch mint).
   const minted: Array<{ rowId: string; obligationId: string | null }> = [];
+  let survivors: string[] = [];
   try {
-    for (const reviewerId of uniqueReviewers) {
-      const rowId = uuidv7();
-      await db.insert(taskReviews).values({
-        id: rowId,
-        taskId,
-        reviewerId,
-        round,
-        status: REVIEW_STATUS.PENDING,
-        resultBody,
-        createdAt: now,
-      });
-      // record the row BEFORE spawning: an obligation-insert failure must still roll
-      // this row back (#361 r6)
-      minted.push({ rowId, obligationId: null });
-      // only a row THIS call created may be cancelled on rollback — spawnObligation is
-      // idempotent per (task, employee, role) with no round column, so an older live
-      // round's pending obligation would otherwise be cancelled by mistake (#361 r5)
-      const obligation = await spawnObligationTracked(taskId, reviewerId, OBLIGATION_ROLE.APPROVAL, now);
-      if (obligation.created) minted[minted.length - 1] = { rowId, obligationId: obligation.id };
+    survivors = await db.transaction(async (tx) => {
+      const d = asDb(tx);
+      const locked =
+        uniqueReviewers.length > 0
+          ? await d.select({ id: user.id }).from(user).where(inArray(user.id, uniqueReviewers)).for('key share')
+          : [];
+      const live = new Set(locked.map((r) => r.id));
+      const opened = uniqueReviewers.filter((reviewerId) => live.has(reviewerId));
+      for (const reviewerId of opened) {
+        const rowId = uuidv7();
+        await d.insert(taskReviews).values({
+          id: rowId,
+          taskId,
+          reviewerId,
+          round,
+          status: REVIEW_STATUS.PENDING,
+          resultBody,
+          createdAt: now,
+        });
+        // record the row BEFORE spawning: an obligation-insert failure must still roll
+        // this row back (#361 r6)
+        minted.push({ rowId, obligationId: null });
+        // only a row THIS call created may be cancelled on rollback — spawnObligation is
+        // idempotent per (task, employee, role) with no round column, so an older live
+        // round's pending obligation would otherwise be cancelled by mistake (#361 r5)
+        const obligation = await spawnObligationTracked(taskId, reviewerId, OBLIGATION_ROLE.APPROVAL, now, tx);
+        if (obligation.created) minted[minted.length - 1] = { rowId, obligationId: obligation.id };
+      }
+      return opened;
+    });
+    if (survivors.length === 0) {
+      const live = new Set(survivors);
+      return { round, opened: 0, dropped: uniqueReviewers.filter((reviewerId) => !live.has(reviewerId)) };
     }
     await logActivity(
       taskId,
       ACTIVITY_KIND.STATUS,
       null,
-      `review round ${round} opened — waiting on ${uniqueReviewers.length} reviewer(s)`,
+      `review round ${round} opened — waiting on ${survivors.length} reviewer(s)`,
       { reviewRound: round },
     );
     await dispatchAiReviewTurns(taskId, resultBody);
@@ -238,7 +276,8 @@ export async function openReviewRound(taskId: string, reviewers: string[], resul
     }
     throw e;
   }
-  return round;
+  const live = new Set(survivors);
+  return { round, opened: survivors.length, dropped: uniqueReviewers.filter((reviewerId) => !live.has(reviewerId)) };
 }
 
 /** close EVERY round that still shows a pending row — the zero-survivor completion

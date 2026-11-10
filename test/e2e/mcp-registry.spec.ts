@@ -86,6 +86,78 @@ async function seedAiEmployee(
   return { employeeId: emp.json?.id as string, employeeName };
 }
 
+/** write the dispatch_after hold (15 min) on one task and prove the row matched.
+ *  A silent 0-row UPDATE would let the 5s scan claim the task mid-test (#387);
+ *  the future margin is proven by the separate read-back below. */
+async function holdDispatchScan(taskId: string): Promise<void> {
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    const held =
+      await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId} returning id`;
+    expect(held.length, 'dispatch_after hold landed on the task').toBe(1);
+  } finally {
+    await sql.close();
+  }
+}
+
+/** read-back (fresh statement, real clock): the hold stands AND the seeded
+ *  employee is the assignee. Both are seed preconditions — if either silently
+ *  no-ops the #387 scan-claim window returns, so fail loudly at the seed. */
+async function expectDispatchHold(taskId: string, employeeId: string): Promise<void> {
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    const rows = await sql`
+      select (dispatch_after - now()) > interval '10 minutes' as held,
+             assignee_id = ${employeeId} as attached
+      from tasks where id = ${taskId}`;
+    expect(rows.length, 'task row exists for the seed read-back').toBe(1);
+    expect(rows[0]!.held, 'dispatch_after hold has a real future margin').toBe(true);
+    expect(rows[0]!.attached, 'seeded employee is the assignee').toBe(true);
+  } finally {
+    await sql.close();
+  }
+}
+
+/** BORN-INELIGIBLE SEEDING (#297, #387): a task created WITH the AI assignee is
+ *  scanner-eligible at insert, so the 5s dispatch tick can claim it while the
+ *  drawer settles — the dispatch verb unmounts mid-click and Playwright waits
+ *  60s on a button that never returns. Create it unassigned, hold dispatch_after,
+ *  then attach the assignee through the RPC edge: the scan AND the note path
+ *  respect the hold; only the manual Dispatch-now verb ignores it, which is the
+ *  verb these specs drive (the manual-bypass contract itself is pinned in
+ *  task-drawer-dispatch.spec.ts, not here). (The hold's retry banner is inert
+ *  seed state, never an assertion surface.) */
+async function createTaskWithHeldScan(
+  page: import('@playwright/test').Page,
+  tasks: TasksPage,
+  title: string,
+  employeeId: string,
+): Promise<ReturnType<TasksPage['rowFor']>> {
+  await tasks.navigate('/tasks');
+  await tasks.openCreateModal();
+  await tasks.fillTaskForm({ title });
+  await tasks.saveTask();
+  const row = tasks.rowFor(title);
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  const link = row.locator('a[href^="/tasks/"]').first();
+  await expect(link).toHaveAttribute('href', /^\/tasks\/[0-9a-z-]+/i);
+  const href = (await link.getAttribute('href')) as string;
+  expect(href, 'task row links to the task page').toBeTruthy();
+  // strip any list-scope query the row link carries (task-scope law), or the
+  // SQL key below silently misses and the hold never lands
+  const taskId = (href as string).split('?')[0]!.split('/').pop() as string;
+  expect(taskId, 'task id from the row link').toBeTruthy();
+  await holdDispatchScan(taskId);
+  const attach = await rpcPost(page, '/rpc/tasks/update', { id: taskId, assigneeId: employeeId });
+  expect(attach.status).toBe(200);
+  // re-hold after the attach (the write that makes the task eligible) instead of
+  // pinning "attach preserves the backoff": the read-back then proves the seed,
+  // not an unspecced product invariant — same pattern as the status flip below
+  await holdDispatchScan(taskId);
+  await expectDispatchHold(taskId, employeeId);
+  return row;
+}
+
 async function seedSecret(page: import('@playwright/test').Page, tag: string): Promise<string> {
   const res = await rpcPost(page, '/rpc/vault/secrets/create', {
     name: `MCP cred ${tag}`,
@@ -244,6 +316,9 @@ test.describe('mcp registry + bindings', () => {
   });
 
   test('fake-runner dispatch names bound servers; unbind revokes on the next dispatch', async ({ page }) => {
+    // two full runner cycles + six navigations: the 2-run count wait must fit
+    // inside the test budget (the per-test default is already 60s)
+    test.setTimeout(120_000);
     const tasks = new TasksPage(page);
     const tag = Date.now().toString(36).slice(-6);
     const { employeeId, employeeName } = await seedAiEmployee(page, tag);
@@ -252,12 +327,10 @@ test.describe('mcp registry + bindings', () => {
     await bindServer(page, employeeId, serverId);
 
     const taskTitle = `MCPD ${tag}`;
-    await tasks.navigate('/tasks');
-    await tasks.openCreateModal();
-    await tasks.fillTaskForm({ title: taskTitle, assignee: employeeName });
-    await tasks.saveTask();
-    const row = tasks.rowFor(taskTitle);
-    await expect(row).toBeVisible({ timeout: 15_000 });
+    // born-ineligible seeding — the 5s auto-dispatch tick must not claim the
+    // task while the drawer's Dispatch-now verb is being clicked (#387 class)
+    const row = await createTaskWithHeldScan(page, tasks, taskTitle, employeeId);
+    await expect(row).toContainText(employeeName, { timeout: 10_000 });
 
     // dispatch #1 through the workflow drawer — the plan carries the binding
     const drawer = await tasks.openWorkflowDrawer(row);
@@ -276,7 +349,7 @@ test.describe('mcp registry + bindings', () => {
     await expect(link).toBeVisible({ timeout: 15_000 });
     await link.click();
     await expect(page).toHaveURL(/\/tasks\/[a-z0-9-]+/i, { timeout: 10_000 });
-    const taskId = page.url().split('/').pop() as string;
+    const taskId = page.url().split('?')[0]!.split('/').pop() as string;
     await expect(page.getByText('Completed').first()).toBeVisible({ timeout: 15_000 });
     const folds = page.getByText(/Full output from/);
     await expect(folds.first()).toBeVisible({ timeout: 15_000 });
@@ -291,11 +364,20 @@ test.describe('mcp registry + bindings', () => {
     await tasks.dismissOverlay('New employee');
 
     // the RESULT settle left the task terminal — manual status is free (owner
-    // law 2026-10-27), flip it back to the ready category and re-dispatch
+    // law 2026-10-27), flip it back to the ready category and re-dispatch.
+    // Hold BEFORE the flip (a terminal task is scan-ineligible, so that write
+    // has no window) and re-hold AFTER it: if a status move ever resets the
+    // ladder, the seed restores the hold rather than pinning that unspecced
+    // invariant; the flip→re-hold gap is one RPC round-trip, far inside the 5s
+    // scan cadence (#387 class).
+    await holdDispatchScan(taskId);
     const setStatus = await rpcPost(page, '/rpc/tasks/setStatus', { id: taskId, status: await readyStatusId() });
     expect(setStatus.status).toBe(200);
+    await holdDispatchScan(taskId);
     const run2 = await rpcPost(page, '/rpc/tasks/dispatch', { taskId });
     expect(run2.status).toBe(200);
+    // a 200 can be a lost-claim no-op (runId null) — the run itself must exist
+    expect((run2.json as { runId?: string | null } | undefined)?.runId, 'dispatch #2 started a run').toBeTruthy();
 
     // dispatch #2's turn settles — back to the task page (the editor step left
     // us on /employees) — assert on the RAW OUTPUT surfaces: open every run's
@@ -477,14 +559,11 @@ test.describe('mcp registry + bindings', () => {
     await editor.getByRole('button', { name: 'Cancel' }).click();
     await expect(editor).toBeHidden({ timeout: 10_000 });
 
-    // fake-runner dispatch names the stdio server in the run output (parity)
+    // fake-runner dispatch names the stdio server in the run output (parity);
+    // born-ineligible seeding keeps the 5s scan off the drawer's click (#387)
     const taskTitle = `MCPS ${tag}`;
-    await tasks.navigate('/tasks');
-    await tasks.openCreateModal();
-    await tasks.fillTaskForm({ title: taskTitle, assignee: employeeName });
-    await tasks.saveTask();
-    const taskRow = tasks.rowFor(taskTitle);
-    await expect(taskRow).toBeVisible({ timeout: 15_000 });
+    const taskRow = await createTaskWithHeldScan(page, tasks, taskTitle, employeeId);
+    await expect(taskRow).toContainText(employeeName, { timeout: 10_000 });
     const drawer = await tasks.openWorkflowDrawer(taskRow);
     const dispatch = drawer.getByTestId('drawer-verb-dispatch');
     await expect(dispatch).toBeVisible({ timeout: 20_000 });

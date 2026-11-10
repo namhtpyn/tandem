@@ -3,6 +3,7 @@
 // to park and must RETHROW, so openReviewRound fails the submit with the task left
 // working and the just-minted rows superseded (obligations cancelled) — never a
 // live round with no run in flight and no re-fire.
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CATEGORY, REVIEW_STATUS } from '#shared/enums';
@@ -24,7 +25,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('../../server/db/index', async () => {
-  const { tasks, taskReviews, taskRuns } = await import('../../server/db/schema');
+  const { tasks, taskReviews, taskRuns, user } = await import('../../server/db/schema');
   const nameOf = (x: unknown) =>
     x === tasks ? 'tasks' : x === taskReviews ? 'taskReviews' : x === taskRuns ? 'taskRuns' : 'other';
   const queueFor = (table: unknown) => (table === tasks ? h.taskReads : table === taskReviews ? h.reviewReads : []);
@@ -35,60 +36,70 @@ vi.mock('../../server/db/index', async () => {
       catch: (onR: (e: unknown) => unknown) => p().catch(onR),
     };
   };
-  return {
-    asDb: (x: unknown) => x,
-    db: {
-      select: () => ({
-        from: (table: unknown) => {
-          // self-chaining thenable builder: where/orderBy/limit return the builder,
-          // awaiting it pops the table's FIFO (verdict-cas pattern, join-capable)
-          const rows = () => queueFor(table).shift() ?? [];
-          const p = () => Promise.resolve(rows());
-          const self: Record<string, unknown> = {
-            where: () => self,
-            innerJoin: () => self,
-            orderBy: () => self,
-            limit: () => self,
-            then: (onF?: (v: Array<Record<string, unknown>>) => unknown, onR?: (e: unknown) => unknown) =>
-              p().then(onF, onR),
-            catch: (onR: (e: unknown) => unknown) => p().catch(onR),
+  const mockDb = {
+    select: () => ({
+      from: (table: unknown) => {
+        // #364 reviewer lock: the reviewers this mock roster still holds (all of them —
+        // the deletion pin lives in round-open-teardown.test.ts)
+        if (table === user) {
+          return {
+            where: (cond: unknown) => ({
+              for: async () => (new PgDialect().sqlToQuery(cond as never).params as string[]).map((id) => ({ id })),
+            }),
           };
-          return self;
+        }
+        // self-chaining thenable builder: where/orderBy/limit return the builder,
+        // awaiting it pops the table's FIFO (verdict-cas pattern, join-capable)
+        const rows = () => queueFor(table).shift() ?? [];
+        const p = () => Promise.resolve(rows());
+        const self: Record<string, unknown> = {
+          where: () => self,
+          innerJoin: () => self,
+          orderBy: () => self,
+          limit: () => self,
+          then: (onF?: (v: Array<Record<string, unknown>>) => unknown, onR?: (e: unknown) => unknown) =>
+            p().then(onF, onR),
+          catch: (onR: (e: unknown) => unknown) => p().catch(onR),
+        };
+        return self;
+      },
+    }),
+    update: (table: unknown) => ({
+      set: (set: Record<string, unknown>) => ({
+        where: (cond: unknown) => {
+          const applied = () => {
+            h.updates.push({ table: nameOf(table), set, pred: cond != null });
+            return h.parkWins ? [{ id: 'x-1' }] : [];
+          };
+          return {
+            ...thenable(applied),
+            returning: async () => applied(),
+          };
         },
       }),
-      update: (table: unknown) => ({
-        set: (set: Record<string, unknown>) => ({
-          where: (cond: unknown) => {
-            const applied = () => {
-              h.updates.push({ table: nameOf(table), set, pred: cond != null });
-              return h.parkWins ? [{ id: 'x-1' }] : [];
-            };
-            return {
-              ...thenable(applied),
-              returning: async () => applied(),
-            };
-          },
-        }),
-      }),
-      insert: (table: unknown) => ({
-        values: async (v: Record<string, unknown>) => {
-          h.inserts.push({ table: nameOf(table), values: v });
-        },
-      }),
-      query: {
-        aiEmployees: { findMany: async () => h.aiEmployees },
-        user: { findMany: async () => [] },
-        employeeSupervisors: { findMany: async () => [] },
-        taskStatuses: {
-          // honor the caller's predicate (DB-mock predicate law): a mis-wired where
-          // must FAIL the test, never be masked by an unfiltered mock
-          findMany: async (args?: { where?: { id?: { eq?: string } } }) => {
-            const id = args?.where?.id?.eq;
-            return id ? h.statuses.filter((s) => s.id === id) : h.statuses;
-          },
+    }),
+    insert: (table: unknown) => ({
+      values: async (v: Record<string, unknown>) => {
+        h.inserts.push({ table: nameOf(table), values: v });
+      },
+    }),
+    query: {
+      aiEmployees: { findMany: async () => h.aiEmployees },
+      user: { findMany: async () => [] },
+      employeeSupervisors: { findMany: async () => [] },
+      taskStatuses: {
+        // honor the caller's predicate (DB-mock predicate law): a mis-wired where
+        // must FAIL the test, never be masked by an unfiltered mock
+        findMany: async (args?: { where?: { id?: { eq?: string } } }) => {
+          const id = args?.where?.id?.eq;
+          return id ? h.statuses.filter((s) => s.id === id) : h.statuses;
         },
       },
     },
+  };
+  return {
+    asDb: (x: unknown) => x,
+    db: { ...mockDb, transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(mockDb) },
   };
 });
 

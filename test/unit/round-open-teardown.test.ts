@@ -17,65 +17,126 @@ const h = vi.hoisted(() => ({
   supersedeSets: [] as Array<Record<string, unknown>>,
   insertedObligations: [] as string[],
   failOnInsert: 0,
-  failOnObligation: 0,
-  obligationSpawns: 0,
   existingObligationId: null as string | null,
+  // #364: the reviewer-existence transaction — which ids the FOR KEY SHARE lock still
+  // sees, the lock strength it was asked for, and whether each insert ran inside the tx
+  deletedUsers: [] as string[],
+  lockStrengths: [] as string[],
+  lockConds: [] as unknown[],
+  lockTxIds: [] as number[],
+  insertTxIds: [] as number[],
+  txSeq: 0,
+  notes: [] as Array<{ body: string }>,
+  failOnNote: false,
 }));
 
 vi.mock('../../server/db/index', async () => {
-  const { taskReviews, taskObligations } = await import('../../server/db/schema');
+  const { taskReviews, taskObligations, user } = await import('../../server/db/schema');
   const thenable = (rows: () => unknown[]) => ({
     then: (onF?: (v: unknown) => unknown) => Promise.resolve(rows()).then(onF),
     catch: (onR?: (e: unknown) => unknown) => Promise.resolve(rows()).catch(onR),
   });
-  return {
-    asDb: (x: unknown) => x,
-    db: {
-      select: () => ({
-        from: () => ({
-          // spawnObligation: await …where(); currentRound: …where().orderBy().limit(1)
-          where: () =>
-            Object.assign(
-              thenable(() => (h.existingObligationId ? [{ id: h.existingObligationId }] : [])),
-              {
-                orderBy: () => ({ limit: async () => [{ round: 1 }] }),
-              },
-            ),
-        }),
-      }),
-      insert: (table: unknown) => ({
+  // self-chaining builder: spawnObligation awaits …where(); currentRound …orderBy().limit(1);
+  // the dispatch live-run read …innerJoin().where().limit(1). Rows are table-shaped so a
+  // stray arm can never be mistaken for a live run.
+  const builderFor = (table: unknown): Record<string, unknown> => {
+    const rows = () => {
+      if (table === taskObligations) return h.existingObligationId ? [{ id: h.existingObligationId }] : [];
+      if (table === taskReviews) return [{ round: 1 }];
+      return [];
+    };
+    const b: Record<string, unknown> = {
+      innerJoin: () => b,
+      where: () => b,
+      orderBy: () => b,
+      limit: () => b,
+      ...thenable(rows),
+    };
+    return b;
+  };
+  const mockDb = {
+    // every relational read answers empty: this file pins the round-open write path,
+    // and an empty roster/live-run read is the "nothing in flight" shape
+    query: new Proxy({} as Record<string, { findMany: () => Promise<unknown[]> }>, {
+      get: () => ({ findMany: async () => [] }),
+    }),
+    select: function (this: { __tx?: number }) {
+      // transaction IDENTITY, not a boolean: a lock taken in a DIFFERENT transaction
+      // still carries a flag, but never the same id as the inserts
+      const txId = this.__tx ?? 0;
+      return {
+        from: (table: unknown) => {
+          if (table === user) {
+            // the round-open reviewer lock (#364): honor the caller's id predicate
+            // (DB-mock predicate law) and answer only the rows a delete has not taken
+            return {
+              where: (cond: unknown) => ({
+                for: async (strength: string) => {
+                  h.lockStrengths.push(strength);
+                  h.lockConds.push(cond);
+                  h.lockTxIds.push(txId);
+                  const ids = (new PgDialect().sqlToQuery(cond as never).params as string[]).map(String);
+                  return ids.filter((id) => !h.deletedUsers.includes(id)).map((id) => ({ id }));
+                },
+              }),
+            };
+          }
+          return builderFor(table);
+        },
+      };
+    },
+    insert: function (this: { __tx?: number }, table: unknown) {
+      const txId = this.__tx ?? 0;
+      return {
         values: async (vals: Record<string, unknown>) => {
+          h.insertTxIds.push(txId);
           if (table === taskReviews) {
             if (h.failOnInsert > 0 && h.rowInserts.length + 1 === h.failOnInsert) throw new Error('insert_fk_miss');
             h.rowInserts.push(String(vals.reviewerId));
           }
           if (table === taskObligations) {
-            h.obligationSpawns += 1;
-            if (h.failOnObligation > 0 && h.obligationSpawns === h.failOnObligation)
-              throw new Error('obligation_insert_failed');
             h.insertedObligations.push(String(vals.id));
           }
           return { returning: async () => [{ id: `msg-${h.rowInserts.length}` }] };
         },
+      };
+    },
+    update: (table: unknown) => ({
+      set: (vals: Record<string, unknown>) => ({
+        where: async (cond: unknown) => {
+          if (table === taskReviews) {
+            h.supersedeSets.push(vals);
+            h.supersedeConds.push(cond);
+          }
+          if (table === taskObligations) h.obligationConds.push(cond);
+        },
       }),
-      update: (table: unknown) => ({
-        set: (vals: Record<string, unknown>) => ({
-          where: async (cond: unknown) => {
-            if (table === taskReviews) {
-              h.supersedeSets.push(vals);
-              h.supersedeConds.push(cond);
-            }
-            if (table === taskObligations) h.obligationConds.push(cond);
-          },
-        }),
-      }),
+    }),
+  };
+  return {
+    asDb: (x: unknown) => x,
+    db: {
+      ...mockDb,
+      transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
+        // a DISTINCT tx surface carrying an IDENTITY: an insert or lock that forgot to
+        // pass `tx` lands on the pool mock (id 0), and a split into a second tx gets a
+        // different id — both turn the in-transaction pin red
+        fn({ ...mockDb, __tx: ++h.txSeq }),
     },
   };
 });
 
 vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/thread.service')>();
-  return { ...mod, insertActivityMessage: async () => {} };
+  return {
+    ...mod,
+    insertActivityMessage: async (args: { body: string }) => {
+      // post-commit failure seam: the round rows are already committed here, so this is
+      // the path where the compensating supersede/cancel still has real rows to undo
+      if (h.failOnNote) throw new Error('note_failed');
+      h.notes.push(args);
+    },
+  };
 });
 
 vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
@@ -95,9 +156,15 @@ beforeEach(() => {
   h.supersedeSets = [];
   h.insertedObligations = [];
   h.failOnInsert = 0;
-  h.failOnObligation = 0;
-  h.obligationSpawns = 0;
   h.existingObligationId = null;
+  h.deletedUsers = [];
+  h.lockStrengths = [];
+  h.lockConds = [];
+  h.lockTxIds = [];
+  h.insertTxIds = [];
+  h.txSeq = 0;
+  h.notes = [];
+  h.failOnNote = false;
 });
 
 describe('canonicalStoredUuid (#361)', () => {
@@ -116,18 +183,21 @@ describe('canonicalStoredUuid (#361)', () => {
 });
 
 describe('openReviewRound rollback scope (#361 r3/r4/r5)', () => {
-  it('a mid-loop failure supersedes only its own row ids and cancels only its own obligation id', async () => {
-    h.failOnInsert = 2;
-    await expect(openReviewRound('task-1', [A, B], 'result')).rejects.toThrow('insert_fk_miss');
-    expect(h.rowInserts).toEqual([A]);
+  // An INSERT failure now rolls the whole round transaction back, so there is nothing
+  // left to compensate (the tx owns it). These cases pin the POST-COMMIT failure path —
+  // the only one where the compensating write still has real rows to supersede.
+  it('a post-commit failure supersedes only its own row ids and cancels only its own obligation ids', async () => {
+    h.failOnNote = true;
+    await expect(openReviewRound('task-1', [A, B], 'result')).rejects.toThrow('note_failed');
+    expect(h.rowInserts).toEqual([A, B]);
     expect(h.supersedeSets).toHaveLength(1);
     expect(h.supersedeSets[0]).toMatchObject({ status: REVIEW_STATUS.SUPERSEDED });
     const supersedeSql = new PgDialect().sqlToQuery(h.supersedeConds[0] as never).sql;
     expect(supersedeSql).toContain('"task_reviews"."id" in');
     expect(supersedeSql).not.toContain('"round"');
-    // the cancelled obligation is exactly the row THIS call created (same id)
-    expect(h.insertedObligations).toHaveLength(1);
-    expect(h.obligationConds).toHaveLength(1);
+    // the cancelled obligations are exactly the rows THIS call created (same ids)
+    expect(h.insertedObligations).toHaveLength(2);
+    expect(h.obligationConds).toHaveLength(2);
     const cancelSql = new PgDialect().sqlToQuery(h.obligationConds[0] as never);
     expect(cancelSql.sql).toContain('"task_obligations"."id" =');
     expect(cancelSql.sql).toContain('"status" =');
@@ -136,23 +206,11 @@ describe('openReviewRound rollback scope (#361 r3/r4/r5)', () => {
 
   it('supersedes EVERY row this call minted before the failure — by id, in one list', async () => {
     const C = 'cccccccc-cccc-7ccc-8ccc-cccccccccccc';
-    h.failOnInsert = 3;
-    await expect(openReviewRound('task-1', [A, B, C], 'result')).rejects.toThrow('insert_fk_miss');
-    expect(h.rowInserts).toEqual([A, B]);
+    h.failOnNote = true;
+    await expect(openReviewRound('task-1', [A, B, C], 'result')).rejects.toThrow('note_failed');
+    expect(h.rowInserts).toEqual([A, B, C]);
     const sql = new PgDialect().sqlToQuery(h.supersedeConds[0] as never);
-    expect(sql.params).toHaveLength(2);
-  });
-
-  it('an OBLIGATION-insert failure after the row insert still rolls that row back', async () => {
-    h.failOnObligation = 2;
-    await expect(openReviewRound('task-1', [A, B], 'result')).rejects.toThrow('obligation_insert_failed');
-    // both rows were minted (the second has no obligation) — both must supersede
-    expect(h.rowInserts).toEqual([A, B]);
-    const sql = new PgDialect().sqlToQuery(h.supersedeConds[0] as never);
-    expect(sql.params).toHaveLength(2);
-    // only the first obligation exists, and it is cancelled
-    expect(h.insertedObligations).toHaveLength(1);
-    expect(h.obligationConds).toHaveLength(1);
+    expect(sql.params).toHaveLength(3);
   });
 
   it('a first-insert failure (duplicate-submit collision) mints nothing and tears down nothing', async () => {
@@ -165,9 +223,57 @@ describe('openReviewRound rollback scope (#361 r3/r4/r5)', () => {
 
   it('never cancels an obligation it did not create (an older live round owns it)', async () => {
     h.existingObligationId = 'obl-old-round';
-    h.failOnInsert = 2;
-    await expect(openReviewRound('task-1', [A, B], 'result')).rejects.toThrow('insert_fk_miss');
+    h.failOnNote = true;
+    await expect(openReviewRound('task-1', [A, B], 'result')).rejects.toThrow('note_failed');
     expect(h.insertedObligations).toEqual([]);
     expect(h.obligationConds).toEqual([]);
+  });
+});
+
+describe('openReviewRound reviewer-existence transaction (#364)', () => {
+  it('locks the reviewer rows FOR KEY SHARE and inserts the round inside that same transaction', async () => {
+    await openReviewRound('task-1', [A, B], 'result');
+    expect(h.lockStrengths).toEqual(['key share']);
+    // predicate pin (column + operator + VALUE, not presence): the lock must name
+    // user.id — a mis-columned predicate drops every reviewer and silently completes
+    // every reviewed submit with no round at all
+    const lockSql = new PgDialect().sqlToQuery(h.lockConds[0] as never);
+    expect(lockSql.sql).toContain('"user"."id" in (');
+    // `in` alone is satisfied by `not in` — pin the operator, not the substring
+    expect(lockSql.sql).not.toMatch(/\bnot in\b/);
+    expect(lockSql.params).toEqual([A, B]);
+    // the lock read itself must ride the transaction, and it must be the SAME one as
+    // every insert — identity, not a boolean: a pre-lock in its own transaction would
+    // release the lock at its commit and silently reopen the #364 window
+    const txIds = [...h.lockTxIds, ...h.insertTxIds];
+    expect(txIds).toHaveLength(5);
+    expect(new Set(txIds).size).toBe(1);
+    expect(txIds[0]).toBeGreaterThan(0);
+    expect(h.rowInserts).toEqual([A, B]);
+    expect(h.notes).toHaveLength(1);
+  });
+
+  it('a reviewer deleted inside the pre-check→lock window drops out — the survivors still open the round', async () => {
+    h.deletedUsers = [B];
+    const opened = await openReviewRound('task-1', [A, B], 'result');
+    expect(opened).toMatchObject({ opened: 1, dropped: [B] });
+    expect(h.rowInserts).toEqual([A]);
+    // a drop is not a failure: nothing to supersede, no obligation cancelled
+    expect(h.supersedeSets).toEqual([]);
+    expect(h.obligationConds).toEqual([]);
+    // the round note counts the rows that actually opened, never the pre-check roster
+    expect(h.notes).toHaveLength(1);
+    expect(h.notes[0]?.body).toContain('waiting on 1 reviewer(s)');
+  });
+
+  it('every reviewer gone inside the window mints nothing and reports opened: 0 (the caller completes)', async () => {
+    h.deletedUsers = [A, B];
+    const opened = await openReviewRound('task-1', [A, B], 'result');
+    expect(opened).toEqual({ round: 2, opened: 0, dropped: [A, B] });
+    expect(h.rowInserts).toEqual([]);
+    expect(h.insertedObligations).toEqual([]);
+    expect(h.supersedeSets).toEqual([]);
+    // nothing opened, so no round note may claim a round is waiting on reviewers
+    expect(h.notes).toEqual([]);
   });
 });

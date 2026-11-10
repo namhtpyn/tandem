@@ -107,7 +107,10 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     openRoundLive: async () => false,
     settleExtinguishedRound: async () => false,
     dispatchAiReviewTurns: async () => {},
-    openReviewRound: async () => 1,
+    // the round THIS submit opened is 2 while the task's max round is 1 — so a
+    // regression to `currentRound(taskId)` (the #361 r5 class: tearing down a
+    // concurrent winner's newer round) cannot pass this assertion
+    openReviewRound: async () => ({ round: 2, opened: 1, dropped: [] }),
     recordVerdict: async () => ({ outcome: 'superseded' }),
     currentRound: async () => 1,
     teardownOpenRound: async (_t: unknown, settledTo: string, round?: number) => {
@@ -195,7 +198,7 @@ describe('submit/answer terminal arbitration (#292 r1 mirror of #287)', () => {
       /task state changed during submit/,
     );
     // scoped to the round THIS submit opened (#361 r5) — never the task's max round
-    expect(h.teardowns).toContain('submit lost the race:1');
+    expect(h.teardowns).toContain('submit lost the race:2');
     // the losing flip was the only tasks write (no park-disarm: it could only ever
     // strip a concurrent round's legitimate park recovery state, #292 r3)
     expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(1);

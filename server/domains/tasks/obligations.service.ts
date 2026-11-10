@@ -25,14 +25,19 @@ export async function spawnObligation(taskId: string, employeeId: string, role: 
 /** spawn, but tell the caller whether THIS call created the row — a round-open
  *  rollback may only cancel a row it created, never one an older live round owns
  *  (spawnObligation is idempotent per task+employee+role and obligations carry no
- *  round column, so the distinction is only knowable here — #361 r5) */
+ *  round column, so the distinction is only knowable here — #361 r5).
+ *  `ex` (#364): the read+insert join the caller's transaction — the round-open locks
+ *  the reviewer user rows FOR KEY SHARE in that same tx, so an employee delete can
+ *  never land between this obligation's read and its insert. */
 export async function spawnObligationTracked(
   taskId: string,
   employeeId: string,
   role: ObligationRole,
   at?: Date,
+  ex: DbExecutor = db,
 ): Promise<{ id: string; created: boolean }> {
-  const existing = await db
+  const d = asDb(ex);
+  const existing = await d
     .select({ id: taskObligations.id })
     .from(taskObligations)
     .where(
@@ -45,7 +50,7 @@ export async function spawnObligationTracked(
     );
   if (existing.length > 0) return { id: nonNull(existing[0]).id, created: false };
   const rowId = id();
-  await db
+  await d
     .insert(taskObligations)
     .values(
       at
