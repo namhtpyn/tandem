@@ -372,17 +372,37 @@ export async function submitResult(taskId: string, authorId: string, body: strin
   const reviewers = await liveReviewers(roster);
   // skipped = distinct stored entries that no longer name a company user (deleted
   // employees, legacy non-uuid junk); case variants of ONE id are the same
-  // reviewer, not a skip (UUID-CASE LAW). The note is written only AFTER the submit
-  // succeeds (#361 r4) — a failed round-open must not leave a thread note claiming
-  // reviewers were skipped when nothing changed.
+  // reviewer, not a skip (UUID-CASE LAW). A reviewer the round-open transaction drops
+  // (deleted inside the pre-check→lock window, #364) counts as skipped too. The note is
+  // written only AFTER the submit succeeds (#361 r4) — a failed round-open must not
+  // leave a thread note claiming reviewers were skipped when nothing changed.
   const distinctRoster = new Set(roster.map((id) => canonicalStoredUuid(id) ?? id.trim().toLowerCase())).size;
-  const skipped = distinctRoster - reviewers.length;
+  let droppedInRound = 0;
   const noteSkipped = async () => {
+    const skipped = distinctRoster - reviewers.length + droppedInRound;
     if (skipped > 0) {
       await logActivity(taskId, ACTIVITY_KIND.NOTE, null, `${skipped} reviewer(s) skipped — not in the company`, {
         skippedReviewers: skipped,
       });
     }
+  };
+  // ZERO SURVIVORS (#361 r4/r6): no round may outlive the completion — a working task
+  // can still carry one (a manual move out of review never tears it down), and a
+  // superseded MAX round can hide an older live round. Runs AFTER the won CAS so a lost
+  // submit never tears down a round the winner still owns; closes EVERY pending round.
+  // The same arm completes a submit whose reviewers ALL vanished inside the round-open
+  // transaction (#364): nothing was minted, so there is no round to settle.
+  const completeWithoutReviewers = async () => {
+    const done = await db
+      .update(tasks)
+      .set({ status: DONE_STATUS, updatedAt: new Date() })
+      .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
+      .returning({ id: tasks.id });
+    if (done.length === 0) throw new Error('task state changed during submit — a settle owns the outcome');
+    await teardownAllPendingRounds(taskId, 'no live reviewers');
+    await noteSkipped();
+    await refreshParentGating(taskId);
+    return { status: DONE_STATUS };
   };
   // thread law (owner ruling 2026-10-29): the result lives on the run's OWN message
   // (updateRunMessageBody) — the submission must not post a second agent-authored
@@ -392,7 +412,11 @@ export async function submitResult(taskId: string, authorId: string, body: strin
     // open the round BEFORE flipping the status: a failed round-open must leave the
     // task doing (error surfaced to the caller), never parked in-review with no
     // round rows to settle it out
-    const openedRound = await openReviewRound(taskId, reviewers, body);
+    const opened = await openReviewRound(taskId, reviewers, body);
+    droppedInRound = opened.dropped.length;
+    // every reviewer vanished inside the round-open transaction (#364): nothing was
+    // minted, so there is no round to settle — complete exactly like zero survivors.
+    if (opened.opened === 0) return await completeWithoutReviewers();
     // TERMINAL ARBITRATION mirror (#287, #292 r1): the flip arbitrates on the status
     // this call read — a won abandon/settle between the gate read and this flip owns
     // the outcome; the just-opened round tears down and the submit refuses (never a
@@ -408,7 +432,7 @@ export async function submitResult(taskId: string, authorId: string, body: strin
     if (flipped.length === 0) {
       // the round THIS call opened, never the task's max round — a concurrent winner's
       // newer round must survive a duplicate submit's lost flip (#361 r5)
-      await teardownOpenRound(taskId, 'submit lost the race', openedRound);
+      await teardownOpenRound(taskId, 'submit lost the race', opened.round);
       // NO park-disarm here (#292 r3): the loser's own parkRound can never land on a
       // working-category task (the r1 rethrow owns that window), so a disarm would
       // only ever strip a CONCURRENT round's legitimate park recovery state — the
@@ -429,20 +453,7 @@ export async function submitResult(taskId: string, authorId: string, body: strin
     }
     return { status: IN_REVIEW_STATUS };
   }
-  const done = await db
-    .update(tasks)
-    .set({ status: DONE_STATUS, updatedAt: new Date() })
-    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
-    .returning({ id: tasks.id });
-  if (done.length === 0) throw new Error('task state changed during submit — a settle owns the outcome');
-  // ZERO SURVIVORS (#361 r4/r6): no round may outlive the completion — a working task
-  // can still carry one (a manual move out of review never tears it down), and a
-  // superseded MAX round can hide an older live round. Runs AFTER the won CAS so a lost
-  // submit never tears down a round the winner still owns; closes EVERY pending round.
-  await teardownAllPendingRounds(taskId, 'no live reviewers');
-  await noteSkipped();
-  await refreshParentGating(taskId);
-  return { status: DONE_STATUS };
+  return await completeWithoutReviewers();
 }
 
 /** reviewer approves — writes the task_reviews row via recordVerdict */
