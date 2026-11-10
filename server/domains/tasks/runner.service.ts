@@ -978,83 +978,64 @@ export type DispatchOpts = {
  * flip's RETURNING arbitrates every concurrent claimant (scan tick × direct paths ×
  * manual dispatch) so exactly one wins. 0 rows = lost the race = stale duplicate:
  * the caller aborts PRE-INSERT (no run row, no dispatch note, no thread turn, no
- * per-agent job, no cap consumption — a stale dispatch call must quietly no-op). */
-export async function claimTaskForDispatch(taskId: string): Promise<boolean> {
-  const ready = await db.query.taskStatuses.findMany({
+ * per-agent job, no cap consumption — a stale dispatch call must quietly no-op).
+ * CLAIM-RUN ATOMICITY (#406): the claim runs INSIDE the caller's transaction, together
+ * with the run's message + RUNNING row, and pins the assignee the plan was built for
+ * (a reassignment in the plan→claim window loses the claim instead of dispatching the
+ * stale assignee). */
+export async function claimTaskForDispatch(
+  taskId: string,
+  ex: DbExecutor = db,
+  assigneeId?: string | null,
+): Promise<boolean> {
+  const d = asDb(ex);
+  const ready = await d.query.taskStatuses.findMany({
     columns: { id: true },
     where: { category: { eq: 'ready' } },
   });
   if (ready.length === 0) return false;
-  const claimed = await db
+  const conds = [
+    eq(tasks.id, taskId),
+    inArray(
+      tasks.status,
+      ready.map((s) => s.id),
+    ),
+  ];
+  // the claim authorises THIS plan: a concurrent reassignment must not dispatch the
+  // assignee the plan was read for (#406)
+  if (assigneeId) conds.push(eq(tasks.assigneeId, assigneeId));
+  const claimed = await d
     .update(tasks)
     .set({ status: STATUS.doing, updatedAt: new Date() })
-    .where(
-      and(
-        eq(tasks.id, taskId),
-        inArray(
-          tasks.status,
-          ready.map((s) => s.id),
-        ),
-      ),
-    )
+    .where(and(...conds))
     .returning({ id: tasks.id });
   return claimed.length > 0;
 }
 
 /** create the run row for a dispatch intent: claim the task (conditional flip — the
- * race arbiter), load the plan, write the dispatch note, create the run's thread
- * turn, freeze the brief on the row. Transport-neutral — the caller enqueues
- * {runId} (or executes inline in tests). Returns null when the claim was lost —
- * the loser is a stale duplicate and must not insert anything (CLAIM LAW #162). */
+ * race arbiter), write the dispatch note, create the run's thread turn, freeze the
+ * brief on the row. Transport-neutral — the caller enqueues {runId} (or executes
+ * inline in tests). Returns null when the claim was lost — the loser is a stale
+ * duplicate and must not insert anything (CLAIM LAW #162).
+ *
+ * CLAIM-RUN ATOMICITY (#406): every READ (plan, brief, verdict history) lands BEFORE
+ * the write transaction, so a read failure writes nothing; the claim, the run's
+ * thread message and the RUNNING run row then commit in ONE transaction. A task in a
+ * working status therefore always has its live run row committed with it — the
+ * composer's liveness gate (steer / running-run reads), the per-agent cap and the
+ * liveness sweep can never observe a claim without a run. */
 export async function createRun(
   taskId: string,
   opts?: DispatchOpts,
 ): Promise<{ runId: string; employeeId: string } | null> {
-  // the claim lands BEFORE the plan load: a failure after a won flip leaves a doing
-  // task with no run row, which the LIVENESS SWEEP recovers — never a zombie
-  // RUNNING row. Review turns run ON the task but must not claim it: flipping
-  // in-review → doing here would make the human verdict verbs
-  // (approve/request-changes) throw on the status gate — only the ASSIGNEE's
-  // dispatch owns the doing transition.
-  if (!opts?.reviewBy && !(await claimTaskForDispatch(taskId))) return null;
-
+  // Review turns run ON the task but must not claim it: flipping in-review → doing
+  // here would make the human verdict verbs (approve/request-changes) throw on the
+  // status gate — only the ASSIGNEE's dispatch owns the doing transition.
   const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & {
     review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'];
   } = opts?.reviewBy // eslint-disable-line @typescript-eslint/consistent-type-definitions -- union widening
     ? await loadReviewPlan(taskId, opts.reviewBy, opts.resultBody ?? '', opts?.verdictCorrection === true)
     : await loadDispatchPlan(taskId);
-
-  // claim: dispatch note is written BEFORE the run row exists so its createdAt
-  // sits BEFORE the run's startedAt — the timeline shows "dispatched" above the
-  // result card, not after it
-  const runId = uuidv7();
-  await logRun(
-    taskId,
-    runId,
-    `dispatched to ${plan.agentName} on ${plan.envName}`,
-    { dispatched: true },
-    {
-      publishActivity: false,
-    },
-  );
-  // the run's thread turn: message first (blank body — settle parses the result
-  // into it), the run row links the task through it
-  const messageId = await createRunMessage({ taskId, authorId: plan.ai.userId });
-  await db.insert(taskRuns).values({
-    id: runId,
-    messageId,
-    employeeId: plan.ai.userId,
-    environmentId: plan.env.id,
-    status: RUN_STATUS.RUNNING,
-    output: '',
-    attempts: 1,
-  });
-  // only now is the thread turn complete — publish the activity ping here so a
-  // listener rebuilding off it sees the run bubble, not a message-less gap
-  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
-  // the doing flip happened at the CLAIM (claimTaskForDispatch above — #162);
-  // review turns never claimed the task (see the claim block)
-  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 
   // freeze the brief NOW (the drift fix): every attempt of this run replays exactly
   // this prompt — no rebuild at retry time. Review turns compose through the SAME
@@ -1075,7 +1056,33 @@ export async function createRun(
     outDir: `~/.tandem/${taskId}/attachments/out/`,
     review: reviewCtx,
   });
-  await db.update(taskRuns).set({ prompt: brief }).where(eq(taskRuns.id, runId));
+
+  const runId = uuidv7();
+  const won = await db.transaction(async (tx) => {
+    if (!opts?.reviewBy && !(await claimTaskForDispatch(taskId, tx, plan.task.assigneeId))) return false;
+    // the run's thread turn: message first (blank body — settle parses the result
+    // into it), the run row links the task through it. Same transaction as the
+    // claim, so a claimed task can never be seen without its live run.
+    const messageId = await createRunMessage({ taskId, authorId: plan.ai.userId }, tx);
+    await tx.insert(taskRuns).values({
+      id: runId,
+      messageId,
+      employeeId: plan.ai.userId,
+      environmentId: plan.env.id,
+      status: RUN_STATUS.RUNNING,
+      output: '',
+      attempts: 1,
+      prompt: brief,
+    });
+    return true;
+  });
+  if (!won) return null;
+  // only now is the thread turn complete — publish the activity ping here so a
+  // listener rebuilding off it sees the run bubble, not a message-less gap
+  await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
+  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+  // the doing flip happened inside the claim transaction (see above — #406)
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 
   return { runId, employeeId: plan.ai.userId };
 }
