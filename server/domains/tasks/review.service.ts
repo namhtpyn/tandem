@@ -100,10 +100,9 @@ export async function logActivity(
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
 
-/** current (max) round for a task; 0 when never reviewed. `ex` keeps a caller's
- *  transaction (#397: the abandon teardown reads the round it is tearing down). */
-export async function currentRound(taskId: string, ex: DbExecutor = db) {
-  const rows = await asDb(ex)
+/** current (max) round for a task; 0 when never reviewed */
+export async function currentRound(taskId: string) {
+  const rows = await db
     .select({ round: taskReviews.round })
     .from(taskReviews)
     .where(eq(taskReviews.taskId, taskId))
@@ -1059,6 +1058,16 @@ async function cleanVoidReviewDebris(taskId: string) {
  *  Bounded + best-effort like every other tick arm; at most one dispatch per task per
  *  tick (the sequential law owns the rest). */
 export const STALLED_REVIEW_GRACE_MS = 60_000;
+/** warn throttle (module law: a persistent fault warns once per window, never per 5s
+ *  tick) — exposed for tests like the reaper/scan warn state */
+export const stalledSweepWarnState = { lastAt: 0 };
+const STALLED_SWEEP_WARN_INTERVAL_MS = 5 * 60_000;
+function warnStalledSweep(msg: string, e: unknown) {
+  const now = Date.now();
+  if (now - stalledSweepWarnState.lastAt < STALLED_SWEEP_WARN_INTERVAL_MS) return;
+  stalledSweepWarnState.lastAt = now;
+  log.warn(msg, e instanceof Error ? e.message : e);
+}
 const STALLED_REVIEW_SCAN_LIMIT = 20;
 
 export type StalledReviewCandidate = { taskId: string; round: number; reviewerId: string; createdAt: Date };
@@ -1158,7 +1167,7 @@ export async function sweepStalledReviewTurns(): Promise<number> {
   try {
     return await sweepStalledReviewTurnsInner();
   } catch (e) {
-    log.warn('stalled-review sweep failed:', e instanceof Error ? e.message : e);
+    warnStalledSweep('stalled-review sweep failed:', e);
     return 0;
   }
 }
@@ -1211,7 +1220,7 @@ async function sweepStalledReviewTurnsInner(): Promise<number> {
         log.info(`stalled-review sweep: re-fired round ${candidate.round} on task ${candidate.taskId}`);
       }
     } catch (e) {
-      log.warn(`stalled-review sweep: could not re-fire task ${candidate.taskId}:`, e instanceof Error ? e.message : e);
+      warnStalledSweep(`stalled-review sweep: could not re-fire task ${candidate.taskId}:`, e);
     }
   }
   return refired;
@@ -1387,12 +1396,16 @@ async function dispatchAiReviewTurnsUnlocked(
   const aiRows = await db.query.aiEmployees.findMany({ columns: { userId: true }, orderBy: { userId: 'asc' } });
   const aiIds = new Set(aiRows.map((r) => r.userId));
   const body = resultBody ?? (await roundResultBody(taskId));
+  // a HUMAN target means "no AI targeting": the replacement's card is the human's job, and
+  // the round's next pending AI reviewer must still get its turn (escalate to a human used
+  // to fall through to the plain mint; targeting must not suppress it — #397 r6)
+  const target = opts?.targetReviewerId && aiIds.has(opts.targetReviewerId) ? opts.targetReviewerId : null;
   for (const row of rows) {
     if (!row.reviewerId || !aiIds.has(row.reviewerId)) continue; // human reviewer: the card is enough
     // TARGETED mint (#397 r2): the caller decided on THIS reviewer's row — never hand the
     // turn to the round's first pending AI reviewer instead (that reviewer may already
     // have had its turn; the sweep's whole premise is the row it validated).
-    if (opts?.targetReviewerId && row.reviewerId !== opts.targetReviewerId) continue;
+    if (target && row.reviewerId !== target) continue;
     // VERDICT-LESS CORRECTION (#276, blind-review r5): a correction re-dispatch is
     // TARGET-scoped — only the verdict-less reviewer's own row is retried (row order
     // ties would otherwise hand the retry to a different first-turn reviewer and
@@ -2041,24 +2054,18 @@ export async function teardownOnManualMove(taskId: string, fromStatus: string, t
 /** MANUAL SETTLE teardown: the owner moved the task to a terminal status — the
  * round dies with it. PENDING rows become `superseded` (audit, non-vote), approval
  * obligations cancel, and the note lands on the thread. Decided/escalated rows stay
- * untouched as history. `ex`/`opts` (#397): tx-capable and publish-deferrable for a
- * caller that must fold the writes into its own transaction; the remaining production
- * caller (the escalation self-heal) passes neither, and the abandon / manual settle /
- * zero-survivor paths use `teardownAllPendingRounds` instead. */
-export async function teardownOpenRound(
-  taskId: string,
-  settledTo: string,
-  ex: DbExecutor = db,
-  opts: { publish?: boolean } = {},
-) {
-  const d = asDb(ex);
+ * untouched as history. The abandon / manual settle / zero-survivor paths use the
+ * tx-capable `teardownAllPendingRounds` instead — this MAX-round helper serves the
+ * escalation self-heal only. */
+export async function teardownOpenRound(taskId: string, settledTo: string) {
+  const d = db;
   // the task's MAX round is what the one remaining production caller wants: the
-  // escalation self-heal, gated on a done/cancelled task (the round-open rollback cancels
-  // its own obligations by id inside its own transaction and never calls this). Settles
+  // escalation self-heal, gated on a done/cancelled task (the round-open failure path
+  // never calls this — its rows/obligations roll back with its own transaction). Settles
   // that must not trust the MAX round — the abandon, the manual move to a terminal status,
   // the zero-survivor completion — use `teardownAllPendingRounds`: an older round can hide
   // a live PENDING row.
-  const round = await currentRound(taskId, ex);
+  const round = await currentRound(taskId);
   if (round === 0) return;
   const rows = await d
     .select()
@@ -2076,21 +2083,13 @@ export async function teardownOpenRound(
           eq(taskReviews.status, REVIEW_STATUS.PENDING),
         ),
       );
-    await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL, ex);
+    await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL);
   }
-  await logActivity(
-    taskId,
-    ACTIVITY_KIND.STATUS,
-    null,
-    'review round closed — task settled',
-    {
-      roundClosed: true,
-      round,
-      settledTo,
-    },
-    ex,
-    { publish: opts.publish },
-  );
+  await logActivity(taskId, ACTIVITY_KIND.STATUS, null, 'review round closed — task settled', {
+    roundClosed: true,
+    round,
+    settledTo,
+  });
 }
 
 /** the current round's decided verdicts, rendered for the next reviewer's brief —

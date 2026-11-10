@@ -118,6 +118,7 @@ vi.mock('../../server/domains/tasks/runner.service', async (importOriginal) => {
 import { startDispatcher } from '../../server/domains/tasks/dispatcher.service';
 import {
   STALLED_REVIEW_GRACE_MS,
+  dispatchAiReviewTurns,
   logActivity,
   stalledReviewRefire,
   stalledReviewScan,
@@ -244,6 +245,14 @@ describe('sweepStalledReviewTurns (#397 behaviour)', () => {
     expect(refired).toBe(1);
     expect(h.dispatched).toHaveLength(1);
     expect(h.dispatched[0]?.taskId).toBe(TASK);
+    expect(h.dispatched[0]?.opts?.reviewBy).toBe(REV);
+  });
+
+  it('a HUMAN target never suppresses the round’s next AI reviewer (#397 r6)', async () => {
+    // escalateReview targets the replacement: when the replacement is a human (card, no
+    // turn) the target filter must not swallow the pending AI reviewer's turn
+    await dispatchAiReviewTurns(TASK, undefined, { targetReviewerId: 'human-supervisor' });
+    expect(h.dispatched).toHaveLength(1);
     expect(h.dispatched[0]?.opts?.reviewBy).toBe(REV);
   });
 
