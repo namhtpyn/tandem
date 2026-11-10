@@ -1,3 +1,16 @@
+## [2.78.14](https://github.com/namhtpyn/tandem/compare/v2.78.13...v2.78.14) (2026-11-10)
+
+
+### Bug Fixes
+
+* [#400](https://github.com/namhtpyn/tandem/issues/400) note/ask lifecycle flips arbitrate on the status+updatedAt they read ([29aca53](https://github.com/namhtpyn/tandem/commit/29aca5388833acaeeca6288788520f80b0e35631))
+* [#400](https://github.com/namhtpyn/tandem/issues/400) r1 — retry-once on a benign ask collision; pin the SQL connective + obligation role ([de30aa9](https://github.com/namhtpyn/tandem/commit/de30aa9ee814db5ae39fec07ba84f7d8a83d98a6))
+* [#400](https://github.com/namhtpyn/tandem/issues/400) r2 — ask authority from the pre-race read, question row in the park tx, note retry-once, user→tasks lock order ([26daf88](https://github.com/namhtpyn/tandem/commit/26daf885655b2e973f077999e1134d6e591a5ab5))
+* [#400](https://github.com/namhtpyn/tandem/issues/400) r3 — key-share every FK-referenced user row before the task row, park on the current owner, steer-gate the note retry ([6cfdc0e](https://github.com/namhtpyn/tandem/commit/6cfdc0ef8e5177dbfaccfe201b1085ad35fc5316))
+* [#400](https://github.com/namhtpyn/tandem/issues/400) r4 — never re-flip a row a dispatch claim took out of the ready category (claim-window gap filed [#406](https://github.com/namhtpyn/tandem/issues/406)) ([81b61f6](https://github.com/namhtpyn/tandem/commit/81b61f68af1ee37e7ebf6b236fae65f282950e11))
+* [#400](https://github.com/namhtpyn/tandem/issues/400) r5 — steer gate before the claim guard, vanished holder is a lost attempt, pin the locked table ([d90271b](https://github.com/namhtpyn/tandem/commit/d90271b8073ab5b786c8ccf8ee7ffdfc55001972))
+* [#400](https://github.com/namhtpyn/tandem/issues/400) r6 — retry only a pure stamp bump (any status change owns the row), steer gate before every retry return, vanished user row is a lost attempt ([354aa63](https://github.com/namhtpyn/tandem/commit/354aa63bf91c9e9b6325fbcc46ec8a17dceabe8b))
+
 ## [2.78.13](https://github.com/namhtpyn/tandem/compare/v2.78.12...v2.78.13) (2026-11-10)
 
 
