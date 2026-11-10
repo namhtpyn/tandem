@@ -23,11 +23,10 @@ import { STATUS } from '#shared/status';
 import { nonNull } from '#shared/utils/non-null';
 
 import { asDb, db } from '../../db/index';
-import { tasks, employeeSupervisors, taskReviews, taskRuns, taskMessages } from '../../db/schema';
+import { tasks, user, employeeSupervisors, taskReviews, taskRuns, taskMessages } from '../../db/schema';
 import { publishChange } from '../kernel/kernel';
 import { refreshParentGating, hasOpenChildren } from './gating.service';
 import {
-  spawnObligation,
   spawnObligationTracked,
   resolveObligation,
   cancelObligations,
@@ -47,7 +46,7 @@ import {
   liveReviewers,
   canonicalStoredUuid,
 } from './review.service';
-import { normalizeActivityPayload } from './thread.service';
+import { normalizeActivityPayload, insertActivityMessage } from './thread.service';
 
 export const WAITING_ANSWER_STATUS = STATUS.waitingAnswer;
 export const IN_REVIEW_STATUS = STATUS.inReview;
@@ -116,21 +115,12 @@ async function statusCategoryOf(statusId: string): Promise<string | null> {
 
 /** assignee asks; holder starts as the owner. status → waiting-answer */
 export async function askQuestion(taskId: string, authorId: string, body: string) {
-  const task = await getTask(taskId);
-  if (!task.assigneeId) throw new Error('task has no assignee');
-  const holder = task.ownerId ?? task.createdBy;
-  if (!holder) throw new Error('task has no owner to answer');
-  // REVIEW LAW: the assignee asks from a working status; a REVIEWER may ask from
-  // in-review (the round stays open — answering flips back to in-review, the review
-  // continues). CATEGORY-GATE LAW (#336): both gates read the status CATEGORY, so a
-  // custom working/in-review status asks exactly like its seeded sibling.
-  const askCategory = await statusCategoryOf(task.status);
-  if (askCategory !== CATEGORY.WORKING && askCategory !== CATEGORY.IN_REVIEW)
-    throw new Error('only a task in progress or review can ask');
-  // identity gate: only the assignee, the owner, or a reviewer with a PENDING verdict
-  // this round (an AI review turn asks instead of approving — REVIEW LAW) may stall
-  // the task; nobody else can park someone else's work
-  let isParty = task.assigneeId === authorId || task.ownerId === authorId || task.createdBy === authorId;
+  const first = await getTask(taskId);
+  if (!first.assigneeId) throw new Error('task has no assignee');
+  // identity gate: decided from the FIRST read — the run that just settled was
+  // authorised then, so a concurrent reassignment must never turn its question into a
+  // refused (bounced) settle. The retry re-reads only the lifecycle state + CAS stamp.
+  let isParty = first.assigneeId === authorId || first.ownerId === authorId || first.createdBy === authorId;
   if (!isParty) {
     const round = await currentRound(taskId);
     isParty =
@@ -150,18 +140,74 @@ export async function askQuestion(taskId: string, authorId: string, body: string
       ).length > 0;
   }
   if (!isParty) throw new Error('only the assignee, the owner or a pending reviewer can ask');
-  await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
-  await spawnObligation(taskId, holder, OBLIGATION_ROLE.ANSWER);
-  await db
-    .update(tasks)
-    .set({
-      status: WAITING_ANSWER_STATUS,
-      questionChain: [holder],
-      updatedAt: new Date(),
-    })
-    .where(eq(tasks.id, taskId));
-  await logActivity(taskId, ACTIVITY_KIND.QUESTION, authorId, body, { holderId: holder });
-  return { holderId: holder };
+  // RETRY-ONCE (#400): a benign concurrent write (title/description save,
+  // reassignment, a same-category status move) bumps updatedAt without touching the
+  // lifecycle; the park CAS must not turn that into a failed agent settle, so a lost
+  // flip re-reads the lifecycle state and re-arbitrates ONCE on the fresh stamp. A
+  // terminal write still wins: the second loss refuses with the error surfaced and
+  // writes nothing.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const task = attempt === 0 ? first : await getTask(taskId);
+    // the park TARGET follows the current row: an owner change inside the retry
+    // window parks the question on the owner who owns it now (SPEC: park on ITS owner)
+    const holder = task.ownerId ?? task.createdBy;
+    if (!holder) throw new Error('task has no owner to answer');
+    // REVIEW LAW: the assignee asks from a working status; a REVIEWER may ask from
+    // in-review (the round stays open — answering flips back to in-review, the review
+    // continues). CATEGORY-GATE LAW (#336): both gates read the status CATEGORY, so a
+    // custom working/in-review status asks exactly like its seeded sibling.
+    const askCategory = await statusCategoryOf(task.status);
+    if (askCategory !== CATEGORY.WORKING && askCategory !== CATEGORY.IN_REVIEW)
+      throw new Error('only a task in progress or review can ask');
+    // TERMINAL ARBITRATION + ATOMIC ARBITRATION (#400): the waiting-answer park is the
+    // transaction's FIRST WRITE and arbitrates on the status AND updatedAt stamp this
+    // attempt read — a won abandon/settle keeps its outcome and the late question
+    // refuses, writing NOTHING (no obligation cancel, no spawn, no note). The park
+    // AUTHORISES the ANSWER obligation AND the question row, so all of it commits in
+    // ONE transaction: a crash can never leave a waiting-answer task whose decision
+    // surface points at a question that is not in the thread.
+    const won = await db.transaction(async (tx) => {
+      const d = asDb(tx);
+      // LOCK ORDER (#400 r2/r3): key-share EVERY user row this transaction later
+      // FK-references — the holder (ANSWER obligation) AND the author (question row) —
+      // in ONE statement BEFORE the tasks row. The employee-delete path holds a user
+      // row while its ON DELETE SET NULL action reaches tasks, so any user lock taken
+      // AFTER the task row inverts the order and deadlocks (40P01).
+      const locked = await d
+        .select({ id: user.id })
+        .from(user)
+        .where(inArray(user.id, [...new Set([holder, authorId])]))
+        .for('key share');
+      // a vanished USER row (employee deleted mid-settle) is a LOST attempt, not a hard
+      // failure: the holder can be re-read (the retry parks on the owner the fresh row
+      // carries) and a vanished author deterministically falls through to the surfaced
+      // refusal — never a raw FK error from the question row's author_id insert.
+      if (locked.length !== new Set([holder, authorId]).size) return false;
+      const parked = await d
+        .update(tasks)
+        .set({
+          status: WAITING_ANSWER_STATUS,
+          questionChain: [holder],
+          updatedAt: new Date(),
+        })
+        .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
+        .returning({ id: tasks.id });
+      if (parked.length === 0) return false;
+      await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER, tx);
+      await spawnObligationTracked(taskId, holder, OBLIGATION_ROLE.ANSWER, undefined, tx);
+      await insertActivityMessage(
+        { taskId, authorId, body, payload: { kind: ACTIVITY_KIND.QUESTION, holderId: holder } },
+        tx,
+      );
+      return true;
+    });
+    if (!won) continue;
+    // change events ride the COMMIT, never the held row lock (#397 r1)
+    await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+    await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
+    return { holderId: holder };
+  }
+  throw new Error('task state changed during ask — a settle owns the outcome');
 }
 
 /** current holder forwards to someone new; they become holder. Top of the org must answer. */
@@ -320,10 +366,6 @@ export async function addNote(
   // COMPOSER LAW: the send dispatches every non-terminal, non-in-review task with
   // an AI assignee — the exclusion keys off the status CATEGORY (custom done/
   // cancelled/in-review statuses included), never the seeded ids (#265).
-  const statusRows = await db.query.taskStatuses.findMany({
-    columns: { id: true, category: true },
-    where: { id: { eq: task.status } },
-  });
   // waiting_answer is RESERVED for the question flow (#288/#314): while waiting,
   // the send IS the answer verb — the composer routes it there and the hint says
   // "Adds the note to the thread". A DIRECT tasks.note call must never flip the
@@ -331,23 +373,57 @@ export async function addNote(
   // question and orphan the live ANSWER obligation + questionChain (noteWillDispatch
   // excludes the category too — client/server parity).
   const excluded = [CATEGORY.DONE, CATEGORY.CANCELLED, CATEGORY.IN_REVIEW, CATEGORY.WAITING_ANSWER] as string[];
-  // an unresolved status id (dangling legacy row) is dead input like everywhere
-  // else the membership rule applies — thread-only, never a dispatch guess
-  const statusCat = statusRows.find((r) => r.id === task.status)?.category;
-  if (!statusCat || excluded.includes(statusCat)) return { steered: false as const };
-  if (!task.assigneeId) return { steered: false as const };
-  const ai = await db.query.aiEmployees.findFirst({
-    columns: { userId: true },
-    where: { userId: { eq: task.assigneeId } },
-  });
-  if (!ai) return { steered: false as const };
-  await db.update(tasks).set({ status: STATUS.todo, updatedAt: new Date() }).where(eq(tasks.id, taskId));
-  const { dispatchIfEligible } = await import('./dispatcher.service');
-  const { env } = await import('#server/domains/kernel/env');
-  // the skip arms (stale state, pending backoff, agent at cap) must not claim
-  // 'agent dispatched' — the success copy reports what actually fired (r5)
-  const dispatched = await dispatchIfEligible(taskId, env.TANDEM_PUBLIC_URL ?? 'http://localhost:3000');
-  return dispatched ? { steered: false as const, dispatched: true as const } : { steered: false as const };
+  // RETRY-ONCE (#400): the dispatch flip arbitrates on the row this call read, so a
+  // benign concurrent write (title save, reassignment, same-category move) bumps
+  // updatedAt and would silently swallow a send the composer promised to dispatch —
+  // unrecoverable for a backlog/paused task, which nothing re-dispatches. Re-read and
+  // re-decide ONCE on the fresh row; a second loss stays thread-only.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const current = attempt === 0 ? task : await getTask(taskId);
+    if (attempt > 0) {
+      // RUN LOCK + winner-owns-the-outcome (#400 r3-r6): re-run the composer's steer
+      // gate FIRST — a live run (review turn included) takes the note as a steer,
+      // whatever the row's category. Then only a PURE stamp bump may retry: ANY status
+      // change in the window (a dispatch claim, a manual move, a settle's flip) owns the
+      // row, and a claim commits ready -> working before its RUNNING row exists — the
+      // steer gate cannot see it, so re-flipping it would break the lock and admit a
+      // second run. The retry stays thread-only instead.
+      const again = await steerRun(taskId, body);
+      if (again === 'steered' || again === 'refused') return { steered: again === 'steered' };
+      if (current.status !== task.status) return { steered: false as const };
+    }
+    const rows = await db.query.taskStatuses.findMany({
+      columns: { id: true, category: true },
+      where: { id: { eq: current.status } },
+    });
+    // an unresolved status id (dangling legacy row) is dead input like everywhere
+    // else the membership rule applies — thread-only, never a dispatch guess
+    const statusCat = rows.find((r) => r.id === current.status)?.category;
+    if (!statusCat || excluded.includes(statusCat)) return { steered: false as const };
+    if (!current.assigneeId) return { steered: false as const };
+    const ai = await db.query.aiEmployees.findFirst({
+      columns: { userId: true },
+      where: { userId: { eq: current.assigneeId } },
+    });
+    if (!ai) return { steered: false as const };
+    // TERMINAL ARBITRATION (#400): the flip arbitrates on the status AND updatedAt
+    // stamp this attempt read — a note in flight across a terminal write must never
+    // resurrect the settled task. A lost flip dispatches nothing; the note itself
+    // already landed as a thread item above (thread-only, never a state write).
+    const flipped = await db
+      .update(tasks)
+      .set({ status: STATUS.todo, updatedAt: new Date() })
+      .where(and(eq(tasks.id, taskId), eq(tasks.status, current.status), eq(tasks.updatedAt, current.updatedAt)))
+      .returning({ id: tasks.id });
+    if (flipped.length === 0) continue;
+    const { dispatchIfEligible } = await import('./dispatcher.service');
+    const { env } = await import('#server/domains/kernel/env');
+    // the skip arms (stale state, pending backoff, agent at cap) must not claim
+    // 'agent dispatched' — the success copy reports what actually fired (r5)
+    const dispatched = await dispatchIfEligible(taskId, env.TANDEM_PUBLIC_URL ?? 'http://localhost:3000');
+    return dispatched ? { steered: false as const, dispatched: true as const } : { steered: false as const };
+  }
+  return { steered: false as const };
 }
 
 export async function submitResult(taskId: string, authorId: string, body: string) {
@@ -542,9 +618,9 @@ export async function abandonTask(taskId: string, authorId: string, body: string
   // CAS (the old order superseded the winner's round and cancelled its obligations before
   // refusing) nor leave a cancelled task carrying a pending row when a write fails.
   // A won cancel makes the LIFECYCLE writers lose by construction: a submit needs a
-  // working category and the verdict flip refuses terminal-category statuses. It does NOT
-  // cover the unguarded note/ask status flips (pre-existing; tracked in #400) — those can
-  // still move a task after any terminal write.
+  // working category and the verdict flip refuses terminal-category statuses. The
+  // note/ask status flips arbitrate too since #400 — no lifecycle writer can move a
+  // task after a terminal write won it.
   const teardown = await db.transaction(async (tx) => {
     const d = asDb(tx);
     const cancelled = await d
