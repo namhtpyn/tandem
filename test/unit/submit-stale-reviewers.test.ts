@@ -316,6 +316,15 @@ describe('submit drops reviewers that no longer name a user (#361)', () => {
     expect(h.rounds[0]?.reviewers).toEqual([LIVE]);
   });
 
+  it('a partial drop inside the round-open transaction (#364) still opens the round and counts the skip', async () => {
+    h.taskRows = [doingTask([LIVE, LIVE2])];
+    h.roundDrops = [LIVE2];
+    const res = await submitResult('task-1', 'worker-1', 'done');
+    expect(res).toEqual({ status: STATUS.inReview });
+    expect(h.settled).toEqual(['task-1']);
+    expect(threadBodies().join('\n')).toContain('1 reviewer(s) skipped — not in the company');
+  });
+
   it('every survivor deleted inside the round-open transaction (#364) completes exactly like zero survivors', async () => {
     h.taskRows = [doingTask([LIVE])];
     h.roundDrops = [LIVE];
