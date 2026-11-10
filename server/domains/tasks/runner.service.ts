@@ -1,5 +1,5 @@
 import { consola } from 'consola';
-import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 
 import { PROPOSAL_KIND } from '#shared/enums';
 import type { RoutingProposal } from '#shared/run-verdict';
@@ -1010,18 +1010,21 @@ export async function claimTaskForDispatch(taskId: string, ex: DbExecutor, assig
   return claimed.length > 0;
 }
 
-/** PLAN-RETRY LAW (#406): a plan/brief read failure flips NOTHING (there is no claim
- * state to heal), but it must not leave the task at the head of the scan — the scan
- * takes ONE candidate per tick (oldest first), so a single unplannable task (e.g. an
- * environment secret that no longer decrypts) would occupy every tick and stall
- * EVERY agent. Defer its next attempt instead; the error still surfaces to the caller. */
+/** PLAN-RETRY LAW (#406): a work dispatch's plan/brief read failure flips NOTHING
+ * (there is no claim state to heal), but it must not leave the task at the head of the
+ * scan — the scan takes ONE candidate per tick (oldest first), so a single unplannable
+ * task (e.g. an environment secret that no longer decrypts) would occupy every tick
+ * and stall EVERY agent. Defer its next attempt instead; the error still surfaces to
+ * the caller. The write only ever PUSHES the task later (a longer failure-ladder
+ * backoff is preserved) and a review turn defers nothing — it has no scan attempt. */
 const PLAN_RETRY_MS = 60_000;
 
 async function deferUnplannable(taskId: string) {
+  const until = new Date(Date.now() + PLAN_RETRY_MS);
   await db
     .update(tasks)
-    .set({ dispatchAfter: new Date(Date.now() + PLAN_RETRY_MS), updatedAt: new Date() })
-    .where(eq(tasks.id, taskId));
+    .set({ dispatchAfter: until, updatedAt: new Date() })
+    .where(and(eq(tasks.id, taskId), or(isNull(tasks.dispatchAfter), lt(tasks.dispatchAfter, until))));
 }
 
 /** the run's plan + frozen brief — every read createRun needs, all BEFORE its write
@@ -1057,8 +1060,9 @@ async function loadPlanAndBrief(taskId: string, opts?: DispatchOpts) {
     });
     return { plan, brief };
   } catch (e) {
-    // never mask the cause: the deferral is best-effort, the original error wins
-    await deferUnplannable(taskId).catch(() => {});
+    // never mask the cause: the deferral is best-effort, the original error wins.
+    // A review turn has no scan attempt to defer — its failure belongs to the round.
+    if (!opts?.reviewBy) await deferUnplannable(taskId).catch(() => {});
     throw e;
   }
 }

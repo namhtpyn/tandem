@@ -282,12 +282,32 @@ describe('createRun claim-run atomicity (#406)', () => {
     // write-log pins, so the transaction counter is the arbiter. PLAN-RETRY LAW: the
     // task is deferred (dispatch_after) so it cannot sit at the scan's head forever.
     h.briefThrows = true;
+    const before = Date.now();
     await expect(createRun('task-1')).rejects.toThrow('brief read failed');
     expect(h.txEnters).toBe(0);
     expect(h.writes).toHaveLength(1);
     expect(h.writes[0]).toMatchObject({ op: 'update', table: 'tasks' });
     expect(h.writes[0].set?.status).toBeUndefined();
-    expect(h.writes[0].set?.dispatchAfter).toBeInstanceOf(Date);
+    // the value matters: a no-op deferral (a past date) would re-pick the same task
+    // every tick — the exact stall the law prevents
+    expect((h.writes[0].set?.dispatchAfter as Date).getTime()).toBeGreaterThanOrEqual(before + 60_000);
+    // and it may only PUSH the task later — a longer failure-ladder backoff survives
+    const { sql } = mockDb()
+      .update(tasks)
+      .set({ status: STATUS.doing })
+      .where(h.claimWhere as SQL)
+      .toSQL();
+    expect(sql).toContain('"tasks"."dispatch_after" is null');
+    expect(sql).toContain('"tasks"."dispatch_after" <');
+  });
+
+  it('a review turn defers nothing — it has no scan attempt to defer', async () => {
+    h.briefThrows = true;
+    await expect(createRun('task-1', { reviewBy: 'rev-1', resultBody: 'submitted' })).rejects.toThrow(
+      'brief read failed',
+    );
+    expect(h.txEnters).toBe(0);
+    expect(h.writes).toHaveLength(0);
   });
 
   it('a review turn takes NO claim — the task row is never flipped', async () => {
