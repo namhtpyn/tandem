@@ -13,7 +13,7 @@ import { CATEGORY, REVIEW_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 const h = vi.hoisted(() => ({
-  task: { id: 'task-1', status: '' },
+  task: { id: 'task-1', status: '', parkFromStatus: null as string | null, preBlockStatus: null as string | null },
   statuses: [] as Array<{ id: string; category: string }>,
   roundRows: [] as Array<Record<string, unknown>>,
   matrixRows: [] as Array<Record<string, unknown>>,
@@ -79,15 +79,25 @@ vi.mock('../../server/db/index', async () => {
                 escapeParam: (i: number) => `$${i + 1}`,
               }) ?? { sql: '', params: [] };
               h.flips.push({ ...rendered, set });
-              // ENFORCE the rendered predicate: an `in (...)` status list must contain
-              // the row's current status; a `not in (...)` list must exclude it.
-              const inList = /"tasks"\."status" in \(/.test(rendered.sql);
-              const notInList = /"tasks"\."status" not in \(/.test(rendered.sql);
-              const allowed = inList
-                ? rendered.params.includes(h.task.status)
-                : notInList
-                  ? !rendered.params.includes(h.task.status)
-                  : true;
+              // ENFORCE the rendered predicate: the in-review `in (...)` arm must
+              // contain the row's CURRENT status, or the machine-blocked arm must
+              // match (status = blocked AND a recorded park/pre-block origin). A
+              // predicate without either arm allows everything (the un-gated shape).
+              const paramsOf = (placeholders: string) =>
+                (placeholders.match(/\$(\d+)/g) ?? []).map((t) => rendered.params[Number(t.slice(1)) - 1]);
+              const inArm = /"tasks"\."status" in \(([^)]*)\)/.exec(rendered.sql);
+              const statusEq = /"tasks"\."status" = \$(\d+)/.exec(rendered.sql);
+              const machineArm =
+                /"tasks"\."park_from_status" is not null/.test(rendered.sql) &&
+                /"tasks"\."pre_block_status" is not null/.test(rendered.sql);
+              const inReviewAllows = inArm ? paramsOf(inArm[1]!).includes(h.task.status) : false;
+              const machineAllows =
+                Boolean(statusEq) &&
+                machineArm &&
+                rendered.params[Number(statusEq![1]) - 1] === h.task.status &&
+                Boolean(h.task.parkFromStatus || h.task.preBlockStatus);
+              const gated = Boolean(inArm) || machineArm;
+              const allowed = gated ? inReviewAllows || machineAllows : true;
               if (!allowed) return [];
               if (typeof set.status === 'string') h.task.status = set.status;
               return [{ id: h.task.id }];
@@ -149,13 +159,15 @@ vi.mock('../../server/domains/tasks/runner.service', async (importOriginal) => {
 import { dispatchAiReviewTurns, recordVerdict } from '../../server/domains/tasks/review.service';
 
 beforeEach(() => {
-  h.task = { id: 'task-1', status: STATUS.inReview };
+  h.task = { id: 'task-1', status: STATUS.inReview, parkFromStatus: null, preBlockStatus: null };
   h.statuses = [
     { id: STATUS.todo, category: CATEGORY.READY },
     { id: STATUS.inReview, category: CATEGORY.IN_REVIEW },
     { id: 'st-review-custom', category: CATEGORY.IN_REVIEW },
     { id: STATUS.done, category: CATEGORY.DONE },
     { id: STATUS.cancelled, category: CATEGORY.CANCELLED },
+    { id: STATUS.blocked, category: CATEGORY.PAUSED },
+    { id: STATUS.waitingAnswer, category: CATEGORY.WAITING_ANSWER },
   ];
   h.roundRows = [{ id: 'row-1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }];
   h.matrixRows = [{ round: 1, status: REVIEW_STATUS.APPROVED, reviewerId: 'rev-1' }];
@@ -205,12 +217,51 @@ describe('off-review settle refusal (#401)', () => {
     expect(h.task.status).toBe(STATUS.done);
   });
 
+  it('still settles a MACHINE-blocked task (gating auto-block: pre_block_status records the in-review home)', async () => {
+    // a subtask created under an in-review parent auto-blocks it mid-round (#208); the
+    // closing verdict must still settle — the block is not an owner move
+    h.task = { ...h.task, status: STATUS.blocked, preBlockStatus: STATUS.inReview };
+    const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
+    expect(outcome).toEqual({ outcome: 'done' });
+    expect(h.task.status).toBe(STATUS.done);
+  });
+
+  it('still settles a MACHINE-blocked task (a review park: park_from_status records the origin)', async () => {
+    h.task = { ...h.task, status: STATUS.blocked, parkFromStatus: STATUS.inReview };
+    const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
+    expect(outcome).toEqual({ outcome: 'done' });
+    expect(h.task.status).toBe(STATUS.done);
+  });
+
+  it('refuses a MANUALLY blocked task (no machine origin): the owner move stands', async () => {
+    h.task = { ...h.task, status: STATUS.blocked };
+    const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
+    expect(outcome).toEqual({ outcome: 'superseded' });
+    expect(h.task.status).toBe(STATUS.blocked);
+  });
+
+  it('a non-closing verdict on a waiting_answer task leaves the next reviewer unminted (the answer re-fires it)', async () => {
+    h.task = { ...h.task, status: STATUS.waitingAnswer };
+    h.matrixRows = [
+      { round: 1, status: REVIEW_STATUS.APPROVED, reviewerId: 'rev-1' },
+      { round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-2' },
+    ];
+    h.aiEmployees = [{ userId: 'rev-1' }, { userId: 'rev-2' }];
+    h.pendingRows = [{ id: 'row-2', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-2' }];
+    const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
+    expect(outcome).toEqual({ outcome: 'waiting' });
+    expect(h.dispatched).toHaveLength(0); // the mint gate: not in review, no turn
+  });
+
   it('the flip predicate is an in-review ALLOW-list: both in-review statuses, no other status, no deny-list', async () => {
     await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');
     const flip = h.flips[0];
     expect(flip?.sql).toContain('"tasks"."status" in (');
     expect(flip?.sql).not.toMatch(/\bnot in\b/);
-    expect(flip?.params).toEqual(['task-1', STATUS.inReview, 'st-review-custom']);
+    expect(flip?.params).toEqual(['task-1', STATUS.inReview, 'st-review-custom', STATUS.blocked]);
+    // the machine-blocked carve-out is part of the predicate, not an afterthought
+    expect(flip?.sql).toContain('"tasks"."park_from_status" is not null');
+    expect(flip?.sql).toContain('"tasks"."pre_block_status" is not null');
   });
 });
 
@@ -227,6 +278,20 @@ describe('review-turn mint gate (#401)', () => {
     await expect(dispatchAiReviewTurns('task-1')).resolves.toBe(true);
     expect(h.dispatched).toHaveLength(1);
     expect(h.dispatched[0]?.reviewBy).toBe('rev-1');
+  });
+
+  it('mints nothing for a parked task (blocked/paused) — the park owns the round', async () => {
+    h.task = { ...h.task, status: STATUS.blocked, parkFromStatus: STATUS.inReview };
+    h.pendingRows = [{ id: 'row-1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }];
+    await expect(dispatchAiReviewTurns('task-1')).resolves.toBe(false);
+    expect(h.dispatched).toHaveLength(0);
+  });
+
+  it('mints nothing while the task waits on an answer', async () => {
+    h.task = { ...h.task, status: STATUS.waitingAnswer };
+    h.pendingRows = [{ id: 'row-1', round: 1, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }];
+    await expect(dispatchAiReviewTurns('task-1')).resolves.toBe(false);
+    expect(h.dispatched).toHaveLength(0);
   });
 
   it('a CUSTOM in-review-category status mints (category, never the seeded id)', async () => {
