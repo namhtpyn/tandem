@@ -21,7 +21,7 @@ import { RUN_STATUS } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 type Write = {
-  op: 'insert' | 'update';
+  op: 'insert' | 'update' | 'lock';
   table: string;
   tx: number;
   values?: Record<string, unknown>;
@@ -36,10 +36,11 @@ const h = vi.hoisted(() => ({
   writes: [] as Write[],
   txSeq: 0,
   claimWhere: null as unknown,
+  userRows: [{ id: 'agent-1' }] as Array<{ id: string }>,
 }));
 
 vi.mock('../../server/db/index', async () => {
-  const { tasks, taskRuns, taskMessages } = await import('../../server/db/schema');
+  const { tasks, taskRuns, taskMessages, user } = await import('../../server/db/schema');
   const tableName = (t: unknown) =>
     t === tasks ? 'tasks' : t === taskRuns ? 'taskRuns' : t === taskMessages ? 'taskMessages' : 'other';
   // one surface per executor: the base db stamps tx 0, every transaction a fresh
@@ -81,6 +82,17 @@ vi.mock('../../server/db/index', async () => {
       },
       user: { findMany: async () => [{ id: 'agent-1', name: 'Agent', title: null }] },
     },
+    select: () => ({
+      from: (table: unknown) => ({
+        where: () => ({
+          // the lock-order key share (#400/#406) — only the user table is selected
+          for: async () => {
+            h.writes.push({ op: 'lock', table: table === user ? 'user' : 'other', tx });
+            return table === user ? h.userRows : [];
+          },
+        }),
+      }),
+    }),
     insert: (table: unknown) => ({
       values: (values: Record<string, unknown>) => {
         h.writes.push({ op: 'insert', table: tableName(table), tx, values });
@@ -133,6 +145,7 @@ vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
   return { ...mod, publishChange: async () => {} };
 });
 
+import { db } from '../../server/db/index';
 import { claimTaskForDispatch, createRun, executeRun } from '../../server/domains/tasks/runner.service';
 import { mockDb, tasks } from './helpers/mock-db';
 
@@ -153,11 +166,12 @@ beforeEach(() => {
   h.writes = [];
   h.txSeq = 0;
   h.claimWhere = null;
+  h.userRows = [{ id: 'agent-1' }];
 });
 
 describe('claimTaskForDispatch (the race arbiter, #162)', () => {
   it('a won flip returns true and writes the doing status', async () => {
-    await expect(claimTaskForDispatch('task-1')).resolves.toBe(true);
+    await expect(claimTaskForDispatch('task-1', db, 'agent-1')).resolves.toBe(true);
     expect(h.writes).toHaveLength(1);
     expect(h.writes[0].table).toBe('tasks');
     expect(h.writes[0].set?.status).toBe(STATUS.doing);
@@ -165,13 +179,13 @@ describe('claimTaskForDispatch (the race arbiter, #162)', () => {
 
   it('a lost flip (0 rows returned) returns false — the loser claim', async () => {
     h.claimRows = [];
-    await expect(claimTaskForDispatch('task-1')).resolves.toBe(false);
+    await expect(claimTaskForDispatch('task-1', db, 'agent-1')).resolves.toBe(false);
     expect(h.writes).toHaveLength(1); // the attempt itself, nothing else
   });
 
   it('no ready-category statuses at all: nothing to win, no write', async () => {
     h.readyStatuses = [];
-    await expect(claimTaskForDispatch('task-1')).resolves.toBe(false);
+    await expect(claimTaskForDispatch('task-1', db, 'agent-1')).resolves.toBe(false);
     expect(h.writes).toHaveLength(0);
   });
 
@@ -192,8 +206,11 @@ describe('createRun claim-run atomicity (#406)', () => {
   it('claim + thread message + RUNNING run row commit in ONE transaction', async () => {
     const out = await createRun('task-1');
     expect(out).toEqual({ runId: expect.any(String), employeeId: 'agent-1' });
-    // claim (update tasks) then message then run row — the claim is the FIRST write
+    // employee key-share FIRST (lock order), then the claim, then message, then run
+    // row — a claim held across the FK-checking inserts would invert the
+    // employee-delete lock order (#400) and deadlock (40P01)
     expect(h.writes.map((w) => `${w.op}:${w.table}`)).toEqual([
+      'lock:user',
       'update:tasks',
       'insert:taskMessages',
       'insert:taskRuns',
@@ -230,8 +247,14 @@ describe('createRun claim-run atomicity (#406)', () => {
   it('a lost claim inserts NOTHING — no message, no run row', async () => {
     h.claimRows = [];
     await expect(createRun('task-1')).resolves.toBeNull();
-    expect(h.writes).toHaveLength(1); // only the losing claim attempt
-    expect(h.writes[0]).toMatchObject({ op: 'update', table: 'tasks' });
+    // the key-share lock, then only the losing claim attempt
+    expect(h.writes.map((w) => `${w.op}:${w.table}`)).toEqual(['lock:user', 'update:tasks']);
+  });
+
+  it('a vanished employee row is a LOST attempt, never a raw FK error', async () => {
+    h.userRows = [];
+    await expect(createRun('task-1')).resolves.toBeNull();
+    expect(h.writes.map((w) => `${w.op}:${w.table}`)).toEqual(['lock:user']);
   });
 });
 

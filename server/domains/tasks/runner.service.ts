@@ -18,7 +18,7 @@ import type { RoutingProposal } from '#shared/run-verdict';
 import { nonNull } from '#shared/utils/non-null';
 
 import { asDb, db, type DbExecutor } from '../../db/index';
-import { environments, tasks, taskRuns, taskAttachments, taskMessages } from '../../db/schema';
+import { environments, tasks, taskRuns, taskAttachments, taskMessages, user } from '../../db/schema';
 import { env } from '../kernel/env';
 import { publishChange } from '../kernel/kernel';
 import { redisQueue } from '../kernel/queue';
@@ -982,32 +982,30 @@ export type DispatchOpts = {
  * CLAIM-RUN ATOMICITY (#406): the claim runs INSIDE the caller's transaction, together
  * with the run's message + RUNNING row, and pins the assignee the plan was built for
  * (a reassignment in the plan→claim window loses the claim instead of dispatching the
- * stale assignee). */
-export async function claimTaskForDispatch(
-  taskId: string,
-  ex: DbExecutor = db,
-  assigneeId?: string | null,
-): Promise<boolean> {
+ * stale assignee). The executor and the assignee are REQUIRED — a bare autocommit flip
+ * would reproduce the claim-without-run window this law closes. */
+export async function claimTaskForDispatch(taskId: string, ex: DbExecutor, assigneeId: string): Promise<boolean> {
   const d = asDb(ex);
   const ready = await d.query.taskStatuses.findMany({
     columns: { id: true },
     where: { category: { eq: 'ready' } },
   });
   if (ready.length === 0) return false;
-  const conds = [
-    eq(tasks.id, taskId),
-    inArray(
-      tasks.status,
-      ready.map((s) => s.id),
-    ),
-  ];
-  // the claim authorises THIS plan: a concurrent reassignment must not dispatch the
-  // assignee the plan was read for (#406)
-  if (assigneeId) conds.push(eq(tasks.assigneeId, assigneeId));
   const claimed = await d
     .update(tasks)
     .set({ status: STATUS.doing, updatedAt: new Date() })
-    .where(and(...conds))
+    .where(
+      and(
+        eq(tasks.id, taskId),
+        inArray(
+          tasks.status,
+          ready.map((s) => s.id),
+        ),
+        // the claim authorises THIS plan: a concurrent reassignment must not dispatch
+        // the assignee the plan was read for (#406)
+        eq(tasks.assigneeId, assigneeId),
+      ),
+    )
     .returning({ id: tasks.id });
   return claimed.length > 0;
 }
@@ -1059,7 +1057,18 @@ export async function createRun(
 
   const runId = uuidv7();
   const won = await db.transaction(async (tx) => {
-    if (!opts?.reviewBy && !(await claimTaskForDispatch(taskId, tx, plan.task.assigneeId))) return false;
+    if (!opts?.reviewBy) {
+      const d = asDb(tx);
+      // LOCK ORDER (#400/#406): key-share the employee row this transaction later
+      // FK-references (task_messages.author_id, task_runs.employee_id) in ONE
+      // statement BEFORE the tasks row — the employee-delete path holds a user row
+      // while its ON DELETE SET NULL action reaches tasks, so any user lock taken
+      // AFTER the task row inverts the order and deadlocks (40P01).
+      const locked = await d.select({ id: user.id }).from(user).where(eq(user.id, plan.ai.userId)).for('key share');
+      // a vanished employee row is a LOST attempt, never a raw FK error (#400)
+      if (locked.length === 0) return false;
+      if (!(await claimTaskForDispatch(taskId, tx, nonNull(plan.task.assigneeId)))) return false;
+    }
     // the run's thread turn: message first (blank body — settle parses the result
     // into it), the run row links the task through it. Same transaction as the
     // claim, so a claimed task can never be seen without its live run.

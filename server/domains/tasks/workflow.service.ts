@@ -385,9 +385,9 @@ export async function addNote(
       // gate FIRST — a live run (review turn included) takes the note as a steer,
       // whatever the row's category. Then only a PURE stamp bump may retry: ANY status
       // change in the window (a dispatch claim, a manual move, a settle's flip) owns the
-      // row, and a claim commits ready -> working before its RUNNING row exists — the
-      // steer gate cannot see it, so re-flipping it would break the lock and admit a
-      // second run. The retry stays thread-only instead.
+      // row, and a claim commits ready -> working together with its RUNNING row
+      // (#406) — re-flipping it would break the lock and admit a second run. The
+      // retry stays thread-only instead.
       const again = await steerRun(taskId, body);
       if (again === 'steered' || again === 'refused') return { steered: again === 'steered' };
       if (current.status !== task.status) return { steered: false as const };
