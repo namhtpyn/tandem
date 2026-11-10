@@ -12,6 +12,11 @@ const h = vi.hoisted(() => ({
   cancelWins: true,
   statuses: [] as Array<{ id: string; category: string }>,
   teardowns: [] as string[],
+  flipArgs: null as { status: string; updatedAt: Date } | null,
+  order: [] as string[],
+  dispatchThrows: false,
+  gatingThrows: false,
+  parks: [] as string[],
   updates: [] as Array<{ table: string; set: Record<string, unknown>; pred: boolean }>,
   notes: [] as Array<{ kind: unknown; payload: Record<string, unknown> }>,
   published: 0,
@@ -97,7 +102,14 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
 
 vi.mock('../../server/domains/tasks/gating.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/gating.service')>();
-  return { ...mod, refreshParentGating: async () => {}, hasOpenChildren: async () => false };
+  return {
+    ...mod,
+    refreshParentGating: async () => {
+      h.order.push('gating');
+      if (h.gatingThrows) throw new Error('gating write failed');
+    },
+    hasOpenChildren: async () => false,
+  };
 });
 
 vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
@@ -106,15 +118,28 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     ...mod,
     openRoundLive: async () => false,
     settleExtinguishedRound: async () => false,
-    dispatchAiReviewTurns: async () => {},
-    // the round THIS submit opened is 2 while the task's max round is 1 — so a
-    // regression to `currentRound(taskId)` (the #361 r5 class: tearing down a
-    // concurrent winner's newer round) cannot pass this assertion
-    openReviewRound: async () => ({ round: 2, opened: 1, dropped: [] }),
+    // #394: the caller dispatches AFTER the gating write and never lets a dispatch
+    // failure fail a landed submit
+    dispatchAiReviewTurns: async () => {
+      h.order.push('dispatch');
+      if (h.dispatchThrows) throw new Error('redis down');
+    },
+    parkRound: async (_t: string, why: string) => {
+      h.parks.push(why);
+      return true;
+    },
+    // #394: the round open carries the in-review flip in its OWN transaction, so the
+    // mock reports whether that flip won (`cancelWins` = the competing abandon/settle
+    // missed, i.e. this submit's flip landed). A lost flip mints NOTHING — there is no
+    // teardown for the caller to run, which the lost-flip case asserts.
+    openReviewRound: async (_t: string, _r: string[], _b: string, flip: { status: string; updatedAt: Date }) => {
+      h.flipArgs = flip;
+      return { flipped: h.cancelWins, round: 2, opened: 1, dropped: [] };
+    },
     recordVerdict: async () => ({ outcome: 'superseded' }),
     currentRound: async () => 1,
-    teardownOpenRound: async (_t: unknown, settledTo: string, round?: number) => {
-      h.teardowns.push(round === undefined ? settledTo : `${settledTo}:${round}`);
+    teardownOpenRound: async (_t: unknown, settledTo: string) => {
+      h.teardowns.push(settledTo);
     },
   };
 });
@@ -136,6 +161,11 @@ beforeEach(() => {
   h.statuses = [{ id: STATUS.inReview, category: CATEGORY.IN_REVIEW }];
   h.spawns = [];
   h.teardowns = [];
+  h.flipArgs = null;
+  h.order = [];
+  h.dispatchThrows = false;
+  h.gatingThrows = false;
+  h.parks = [];
   h.updates = [];
   h.notes = [];
   h.published = 0;
@@ -169,19 +199,21 @@ describe('submit/answer terminal arbitration (#292 r1 mirror of #287)', () => {
         ownerId: 'owner-1',
         createdBy: 'owner-1',
         questionChain: [],
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
         reviewers: [REV],
       },
     ];
     h.statuses = [{ id: 'st-doing', category: CATEGORY.WORKING }];
     const res = await submitResult('task-1', 'worker-1', 'the work is done');
     expect(res).toEqual({ status: STATUS.inReview });
-    const flip = h.updates.find((u) => u.table === 'tasks');
-    expect(flip?.pred).toBe(true);
-    expect(flip?.set.status).toBe(STATUS.inReview);
+    // #394: the flip rides the round-open transaction and arbitrates on the status AND
+    // the updatedAt stamp this submit read
+    expect(h.flipArgs).toEqual({ status: 'st-doing', updatedAt: h.taskRows[0]?.updatedAt });
+    expect(h.order).toEqual(['gating', 'dispatch']);
     expect(h.teardowns).toHaveLength(0);
   });
 
-  it('an abandon that won between the gate read and the flip owns the outcome — the submit refuses and tears its just-opened round down', async () => {
+  it('an abandon that won between the gate read and the flip owns the outcome — the submit refuses having written nothing', async () => {
     h.taskRows = [
       {
         status: 'st-doing',
@@ -197,11 +229,55 @@ describe('submit/answer terminal arbitration (#292 r1 mirror of #287)', () => {
     await expect(submitResult('task-1', 'worker-1', 'the work is done')).rejects.toThrow(
       /task state changed during submit/,
     );
-    // scoped to the round THIS submit opened (#361 r5) — never the task's max round
-    expect(h.teardowns).toContain('submit lost the race:2');
-    // the losing flip was the only tasks write (no park-disarm: it could only ever
-    // strip a concurrent round's legitimate park recovery state, #292 r3)
-    expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(1);
+    // #394: a lost submit writes NOTHING (the flip and the round rows are one
+    // transaction), so there is no half-minted round to tear down — no teardown may run
+    // and no reviewer turn may be dispatched
+    expect(h.teardowns).toEqual([]);
+    expect(h.order).toEqual([]);
+    // nothing else wrote the task (no park-disarm: it could only ever strip a
+    // concurrent round's legitimate park recovery state, #292 r3)
+    expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(0);
+  });
+
+  it('a dispatch that throws after the commit never fails the landed submit (#394/#282)', async () => {
+    h.taskRows = [
+      {
+        status: 'st-doing',
+        assigneeId: 'worker-1',
+        ownerId: 'owner-1',
+        createdBy: 'owner-1',
+        questionChain: [],
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+        reviewers: [REV],
+      },
+    ];
+    h.statuses = [{ id: 'st-doing', category: CATEGORY.WORKING }];
+    h.dispatchThrows = true;
+    await expect(submitResult('task-1', 'worker-1', 'the work is done')).resolves.toEqual({ status: STATUS.inReview });
+    expect(h.order).toEqual(['gating', 'dispatch']);
+    // a throw that did not come from the per-row mint still parks the round, so it is
+    // never left live with a PENDING row, no run and no marker
+    expect(h.parks).toHaveLength(1);
+    expect(h.parks[0]).toContain('review turn dispatch failed');
+  });
+
+  it('a throwing parent re-gate between the commit and the turn never skips the dispatch (#394 r6)', async () => {
+    h.taskRows = [
+      {
+        status: 'st-doing',
+        assigneeId: 'worker-1',
+        ownerId: 'owner-1',
+        createdBy: 'owner-1',
+        questionChain: [],
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+        reviewers: [REV],
+      },
+    ];
+    h.statuses = [{ id: 'st-doing', category: CATEGORY.WORKING }];
+    h.gatingThrows = true;
+    await expect(submitResult('task-1', 'worker-1', 'the work is done')).resolves.toEqual({ status: STATUS.inReview });
+    expect(h.order).toEqual(['gating', 'dispatch']);
+    expect(h.parks).toEqual([]);
   });
 
   it('a submit with no reviewers flips DONE through the same guarded write', async () => {

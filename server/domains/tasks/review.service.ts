@@ -119,6 +119,10 @@ export function canonicalStoredUuid(value: string): string | null {
   return `${l.slice(0, 8)}-${l.slice(8, 12)}-${l.slice(12, 16)}-${l.slice(16, 20)}-${l.slice(20)}`;
 }
 
+/** what an open round reports back: whether its in-review flip committed (a lost flip
+ *  mints NOTHING), the round it minted, and the survivors/dropped reviewers */
+export type OpenedRound = { flipped: boolean; round: number; opened: number; dropped: string[] };
+
 /** the reviewers that still name an existing user — tasks.reviewers is a text[]
  * with NO FK, so a deleted employee's id can sit on the task and would hit
  * task_reviews.reviewer_id's FK (23503) at round open, wedging the submit with a
@@ -190,8 +194,8 @@ export async function dispatchedReviewRound(taskId: string, reviewerId: string, 
  * reviewer_id and the row is a #365 non-vote. The ROUND OPEN can no longer raise
  * 23503 on the REVIEWER FK. A delete landing after the commit is that non-vote; one
  * racing the review turn's own dispatch mint (task_messages.author_id /
- * task_runs.employee_id) still fails that one submit — the task stays working and the
- * retry re-reads the roster, so it is retryable, never a wedge. (The task row itself is
+ * task_runs.employee_id) still fails that one turn — the round is already committed and
+ * parks rearmable, never a wedge. (The task row itself is
  * a separate FK: a task deleted under the round open refuses that submit and the task
  * is gone — pre-existing, unchanged here.)
  * `opened: 0` (every reviewer vanished inside the window) is the caller's
@@ -200,84 +204,87 @@ export async function openReviewRound(
   taskId: string,
   reviewers: string[],
   resultBody: string,
-): Promise<{ round: number; opened: number; dropped: string[] }> {
+  flip: { status: string; updatedAt: Date },
+): Promise<OpenedRound> {
   const uniqueReviewers = dedupeReviewers(reviewers);
-  const round = (await currentRound(taskId)) + 1;
   const now = new Date();
-  // ROUND-OPEN FAILURE (#282): a failed round-open leaves the task working with the
-  // error surfaced — the rows THIS CALL minted supersede and their approval
-  // obligations cancel, so no round is left behind for a settle to wedge on.
-  // ROLLBACK SCOPE (#361 r4): never `teardownOpenRound` here — it resolves the task's
-  // MAX round, and a duplicate submit that lost the (task, round, reviewer) unique
-  // index would then SUPERSEDE THE WINNER's freshly opened round, leaving an
-  // in-review task with no pending row that nothing can settle. Supersede exactly the
-  // row ids this call inserted and cancel exactly their reviewers' obligations.
-  // The tx rollback already removed a failed insert set; the compensating write below
-  // is what covers a failure AFTER the commit (logActivity / dispatch mint).
-  const minted: Array<{ rowId: string; obligationId: string | null }> = [];
-  let survivors: string[] = [];
-  try {
-    survivors = await db.transaction(async (tx) => {
-      const d = asDb(tx);
-      const locked =
-        uniqueReviewers.length > 0
-          ? await d.select({ id: user.id }).from(user).where(inArray(user.id, uniqueReviewers)).for('key share')
-          : [];
-      const live = new Set(locked.map((r) => r.id));
-      const opened = uniqueReviewers.filter((reviewerId) => live.has(reviewerId));
-      for (const reviewerId of opened) {
-        const rowId = uuidv7();
-        await d.insert(taskReviews).values({
-          id: rowId,
-          taskId,
-          reviewerId,
-          round,
-          status: REVIEW_STATUS.PENDING,
-          resultBody,
-          createdAt: now,
-        });
-        // record the row BEFORE spawning: an obligation-insert failure must still roll
-        // this row back (#361 r6)
-        minted.push({ rowId, obligationId: null });
-        // only a row THIS call created may be cancelled on rollback — spawnObligation is
-        // idempotent per (task, employee, role) with no round column, so an older live
-        // round's pending obligation would otherwise be cancelled by mistake (#361 r5)
-        const obligation = await spawnObligationTracked(taskId, reviewerId, OBLIGATION_ROLE.APPROVAL, now, tx);
-        if (obligation.created) minted[minted.length - 1] = { rowId, obligationId: obligation.id };
-      }
-      return opened;
-    });
-    if (survivors.length === 0) {
-      const live = new Set(survivors);
-      return { round, opened: 0, dropped: uniqueReviewers.filter((reviewerId) => !live.has(reviewerId)) };
+  // ROUND + FLIP ARE ONE TRANSACTION (#394): the in-review flip is the tx's FIRST write,
+  // so a submit that LOSES the terminal arbitration writes NOTHING — no review rows, no
+  // obligations, no round number. Only a won flip allocates a round, so two concurrent
+  // submits cannot both mint rows (the loser's CAS misses on the very status+updatedAt it
+  // read): no teardown can ever touch a concurrent winner's round, no round pointer can
+  // advance past a round that never opened, and a losing submit can never leave a review
+  // turn in flight against rows it does not own. The reviewer-existence KEY SHARE lock
+  // rides the same tx (#364). Post-commit side effects (the round note, the reviewer
+  // turn) are fault-isolated: the flip + rows are already the outcome, so a landed submit
+  // must never be turned into a caller-visible error.
+  const result = await db.transaction(async (tx) => {
+    const d = asDb(tx);
+    const locked =
+      uniqueReviewers.length > 0
+        ? await d.select({ id: user.id }).from(user).where(inArray(user.id, uniqueReviewers)).for('key share')
+        : [];
+    const live = new Set(locked.map((r) => r.id));
+    const opened = uniqueReviewers.filter((reviewerId) => live.has(reviewerId));
+    const dropped = uniqueReviewers.filter((reviewerId) => !live.has(reviewerId));
+    // every reviewer vanished inside the lock window: no round, no flip — the caller
+    // completes the task exactly as if none were set (#364)
+    if (opened.length === 0) return { flipped: false, round: 0, opened: 0, dropped };
+    const roundRows = await d
+      .select({ round: taskReviews.round })
+      .from(taskReviews)
+      .where(eq(taskReviews.taskId, taskId))
+      .orderBy(desc(taskReviews.round))
+      .limit(1);
+    const round = (roundRows[0]?.round ?? 0) + 1;
+    // TERMINAL ARBITRATION (#292 r1/r2): the flip arbitrates on the status AND the
+    // updatedAt stamp this submit read. 0 rows = a concurrent abandon/settle/submit owns
+    // the outcome; this call returns flipped:false having written nothing.
+    const flipped = await d
+      .update(tasks)
+      .set({ status: IN_REVIEW_STATUS, updatedAt: now })
+      .where(and(eq(tasks.id, taskId), eq(tasks.status, flip.status), eq(tasks.updatedAt, flip.updatedAt)))
+      .returning({ id: tasks.id });
+    if (flipped.length === 0) return { flipped: false, round, opened: opened.length, dropped };
+    for (const reviewerId of opened) {
+      await d.insert(taskReviews).values({
+        id: uuidv7(),
+        taskId,
+        reviewerId,
+        round,
+        status: REVIEW_STATUS.PENDING,
+        resultBody,
+        createdAt: now,
+      });
+      // only a row THIS call created may be cancelled on rollback — spawnObligation is
+      // idempotent per (task, employee, role) with no round column, so an older live
+      // round's pending obligation would otherwise be cancelled by mistake (#361 r5);
+      // the tx rollback owns every failure before this commit
+      await spawnObligationTracked(taskId, reviewerId, OBLIGATION_ROLE.APPROVAL, now, tx);
     }
+    return { flipped: true, round, opened: opened.length, dropped };
+  });
+  if (!result.flipped) return result;
+  try {
     await logActivity(
       taskId,
       ACTIVITY_KIND.STATUS,
       null,
-      `review round ${round} opened — waiting on ${survivors.length} reviewer(s)`,
-      { reviewRound: round },
+      `review round ${result.round} opened — waiting on ${result.opened} reviewer(s)`,
+      { reviewRound: result.round },
     );
-    await dispatchAiReviewTurns(taskId, resultBody);
   } catch (e) {
-    if (minted.length > 0) {
-      await db
-        .update(taskReviews)
-        .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
-        .where(
-          inArray(
-            taskReviews.id,
-            minted.map((m) => m.rowId),
-          ),
-        );
-      for (const { obligationId } of minted) {
-        if (obligationId) await cancelObligationById(obligationId);
-      }
-    }
-    throw e;
+    log.warn(
+      `round ${result.round} opened but the note failed for task ${taskId}:`,
+      e instanceof Error ? e.message : e,
+    );
   }
-  const live = new Set(survivors);
-  return { round, opened: survivors.length, dropped: uniqueReviewers.filter((reviewerId) => !live.has(reviewerId)) };
+  // the reviewer turn is the CALLER's post-flip step, not part of the open: the submit
+  // still has to re-gate the task's parents, and a park raised here would be undone by
+  // the parent-gating restore in that same window (a fresh rearmable park reads as a
+  // blocked round with no open children). Dispatch therefore runs after the gating write,
+  // for a WON flip only.
+  return result;
 }
 
 /** close EVERY round that still shows a pending row — the zero-survivor completion
@@ -1786,10 +1793,14 @@ export async function teardownOnManualMove(taskId: string, fromStatus: string, t
  * round dies with it. PENDING rows become `superseded` (audit, non-vote), approval
  * obligations cancel, and the note lands on the thread. Decided/escalated rows stay
  * untouched as history. */
-export async function teardownOpenRound(taskId: string, settledTo: string, openedRound?: number) {
-  // openedRound pins the round THIS caller opened — resolving the task's MAX round
-  // would let a duplicate submit tear down a concurrent winner's newer round (#361 r5)
-  const round = openedRound ?? (await currentRound(taskId));
+export async function teardownOpenRound(taskId: string, settledTo: string) {
+  // the task's MAX round is the LIVE round at all three call sites, and a round only
+  // ever reaches the ledger through a WON submit flip (#394 — the flip and the round
+  // rows commit in one transaction), so no dead round can sit above the live one: the
+  // manual settle tears down AFTER its status write, the escalation self-heal is gated
+  // on a done/cancelled task, and abandon runs before its own CAS (pre-existing order,
+  // tracked with the crash-window gap in the #394 follow-up audit).
+  const round = await currentRound(taskId);
   if (round === 0) return;
   const rows = await db
     .select()

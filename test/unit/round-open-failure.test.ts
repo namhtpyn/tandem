@@ -1,8 +1,9 @@
-// ROUND-OPEN FAILURE (#282): the park only lands from in-review — a dispatch mint
-// failure inside the submit's round-open window (task still working) finds nothing
-// to park and must RETHROW, so openReviewRound fails the submit with the task left
-// working and the just-minted rows superseded (obligations cancelled) — never a
-// live round with no run in flight and no re-fire.
+// ROUND-OPEN EXCEPTION (#282, re-homed by #394): the round open and the in-review flip
+// are one transaction, so a failed open writes nothing and the submit fails on a task
+// that never left its working status. The reviewer turn is dispatched only AFTER that
+// commit: a dispatch failure parks the round rearmable on an in-review task, and a park
+// that misses (the owner moved the task out of review) is swallowed — a landed submit is
+// never reported as failed.
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,6 +14,7 @@ const h = vi.hoisted(() => ({
   taskReads: [] as Array<Record<string, unknown>[]>,
   reviewReads: [] as Array<Record<string, unknown>[]>,
   parkWins: false,
+  flipWins: true,
   updates: [] as Array<{ table: string; set: Record<string, unknown>; pred: boolean }>,
   inserts: [] as Array<{ table: string; values: Record<string, unknown> }>,
   spawned: [] as string[],
@@ -69,7 +71,9 @@ vi.mock('../../server/db/index', async () => {
         where: (cond: unknown) => {
           const applied = () => {
             h.updates.push({ table: nameOf(table), set, pred: cond != null });
-            return h.parkWins ? [{ id: 'x-1' }] : [];
+            // the FLIP (sets in-review) and the PARK (sets blocked) arbitrate separately
+            const wins = nameOf(table) === 'tasks' && set.status === STATUS.blocked ? h.parkWins : h.flipWins;
+            return wins ? [{ id: 'x-1' }] : [];
           };
           return {
             ...thenable(applied),
@@ -140,13 +144,14 @@ vi.mock('../../server/domains/tasks/runner.service', () => ({
   },
 }));
 
-import { dispatchAiReviewTurns, openReviewRound } from '../../server/domains/tasks/review.service';
+import { dispatchAiReviewTurns } from '../../server/domains/tasks/review.service';
 
 beforeEach(() => {
   h.taskReads.length = 0;
   h.reviewReads.length = 0;
   h.dispatchError = new Error('redis down');
   h.parkWins = false;
+  h.flipWins = true;
   h.updates = [];
   h.inserts = [];
   h.spawned = [];
@@ -185,30 +190,6 @@ describe('round-open dispatch failure (#282)', () => {
     h.taskReads = [[{ status: STATUS.todo }], [{ status: STATUS.todo }]];
     h.statuses = [{ id: STATUS.todo, category: CATEGORY.READY }];
     await expect(dispatchAiReviewTurns('task-1', 'the result')).resolves.toBeUndefined();
-    expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(0);
-  });
-
-  it('openReviewRound: a failed dispatch supersedes the just-minted rows, cancels their obligations, and fails the submit', async () => {
-    // [openReviewRound's currentRound, dispatch currentRound, dispatch rows, teardown currentRound, teardown rows]
-    h.reviewReads = [
-      [{ round: 1 }],
-      [{ round: 2 }],
-      [{ id: 'r2', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }],
-      [{ round: 2 }],
-      [{ id: 'r2', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }],
-    ];
-    h.taskReads = [[{ status: STATUS.doing }], [{ status: STATUS.doing }]];
-    await expect(openReviewRound('task-1', ['rev-1'], 'the result')).rejects.toThrow(/before the round opened/);
-    // the round row + obligation minted, then superseded/cancelled on the failure path
-    expect(h.inserts).toHaveLength(1);
-    expect(h.inserts[0]?.values).toMatchObject({ round: 2, status: REVIEW_STATUS.PENDING });
-    const supersede = h.updates.find((u) => u.table === 'taskReviews');
-    expect(supersede?.set.status).toBe(REVIEW_STATUS.SUPERSEDED);
-    // rollback scope (#361 r4/r5): only THIS call's created obligation cancels (by id) —
-    // a task-wide approval wipe would tear down a concurrent round's obligations
-    expect(h.cancelledFor).toEqual(['obl-rev-1-APPROVAL']);
-    expect(h.cancelledAll).toEqual([]);
-    // never flipped: no BLOCKED park, no in-review submit flip
     expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(0);
   });
 });
