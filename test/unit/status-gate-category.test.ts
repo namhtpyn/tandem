@@ -35,6 +35,9 @@ vi.mock('../../server/db/index', async () => {
             then: (onF?: (v: Array<Record<string, unknown>>) => unknown) =>
               Promise.resolve(table === tasks ? h.taskRows : ([] as Array<Record<string, unknown>>)).then(onF),
           }),
+          // #400: askQuestion key-shares EVERY FK-referenced user row (holder + author)
+          // before the tasks flip — return one row per requested id
+          for: async (_lock: string) => (table === tasks ? h.taskRows : [{ id: 'owner-1' }, { id: 'worker-1' }]),
         }),
       }),
     }),
@@ -87,6 +90,11 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
     ...mod,
     cancelObligations: async (_t: unknown, role: unknown) => void h.cancelled.push(String(role)),
     spawnObligation: async (_t: unknown, holder: string) => void h.spawned.push(String(holder)),
+    // #400: ask parks + spawns its ANSWER obligation through the tracked variant
+    spawnObligationTracked: async (_t: unknown, holder: string) => {
+      h.spawned.push(String(holder));
+      return { id: 'ob-1', created: true };
+    },
     resolveObligation: async () => {},
     answerHolder: async () => null,
     // #397 r2: the abandon cancels ALL approvals (task-wide terminal teardown), so the
