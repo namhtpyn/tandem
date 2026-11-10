@@ -24,55 +24,56 @@ const h = vi.hoisted(() => ({
 
 vi.mock('../../server/db/index', async () => {
   const { tasks } = await import('../../server/db/schema');
-  return {
-    asDb: (x: unknown) => x,
-    db: {
-      select: () => ({
-        // the only table-select consumer on these paths is recordProposals' task read
-        from: (table: unknown) => ({
-          where: () => ({
+  const db = {
+    select: () => ({
+      // the only table-select consumer on these paths is recordProposals' task read
+      from: (table: unknown) => ({
+        where: () => ({
+          then: (onF?: (v: Array<Record<string, unknown>>) => unknown) =>
+            Promise.resolve(table === tasks ? h.taskRows : ([] as Array<Record<string, unknown>>)).then(onF),
+          orderBy: () => ({
             then: (onF?: (v: Array<Record<string, unknown>>) => unknown) =>
               Promise.resolve(table === tasks ? h.taskRows : ([] as Array<Record<string, unknown>>)).then(onF),
-            orderBy: () => ({
-              then: (onF?: (v: Array<Record<string, unknown>>) => unknown) =>
-                Promise.resolve(table === tasks ? h.taskRows : ([] as Array<Record<string, unknown>>)).then(onF),
-            }),
           }),
         }),
       }),
-      update: (table: unknown) => ({
-        set: (set: Record<string, unknown>) => ({
-          where: (_cond: unknown) => {
-            const applied = () => {
-              h.flips.push({ set });
-              return table === tasks ? [{ id: 'task-1' }] : [];
-            };
-            return {
-              returning: async () => applied(),
-              then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => Promise.resolve(applied()).then(onF),
-              catch: (onR: (e: unknown) => unknown) => Promise.resolve(applied()).catch(onR),
-            };
-          },
-        }),
-      }),
-      insert: () => ({
-        values: async (v: Record<string, unknown>) => {
-          h.inserts.push(v);
+    }),
+    update: (table: unknown) => ({
+      set: (set: Record<string, unknown>) => ({
+        where: (_cond: unknown) => {
+          const applied = () => {
+            h.flips.push({ set });
+            return table === tasks ? [{ id: 'task-1' }] : [];
+          };
+          return {
+            returning: async () => applied(),
+            then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => Promise.resolve(applied()).then(onF),
+            catch: (onR: (e: unknown) => unknown) => Promise.resolve(applied()).catch(onR),
+          };
         },
       }),
-      query: {
-        tasks: { findMany: async () => h.taskRows },
-        taskStatuses: {
-          // honor the caller's predicate (DB-mock predicate law): a mis-wired where
-          // must FAIL the test, never be masked by an unfiltered mock
-          findMany: async (args?: { where?: { id?: { eq?: string } } }) => {
-            const id = args?.where?.id?.eq;
-            return id ? h.statuses.filter((s) => s.id === id) : h.statuses;
-          },
+    }),
+    insert: () => ({
+      values: async (v: Record<string, unknown>) => {
+        h.inserts.push(v);
+      },
+    }),
+    query: {
+      tasks: { findMany: async () => h.taskRows },
+      taskStatuses: {
+        // honor the caller's predicate (DB-mock predicate law): a mis-wired where
+        // must FAIL the test, never be masked by an unfiltered mock
+        findMany: async (args?: { where?: { id?: { eq?: string } } }) => {
+          const id = args?.where?.id?.eq;
+          return id ? h.statuses.filter((s) => s.id === id) : h.statuses;
         },
       },
     },
+    // #397: abandon arbitrates its cancel + round teardown in ONE transaction
+    // #397 r3: hand out a DISTINCT executor object (drizzle's tx is not the pool db)
+    transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(Object.create(db) as typeof db),
   };
+  return { asDb: (x: unknown) => x, db };
 });
 
 vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
@@ -88,7 +89,9 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
     spawnObligation: async (_t: unknown, holder: string) => void h.spawned.push(String(holder)),
     resolveObligation: async () => {},
     answerHolder: async () => null,
-    cancelAllObligations: async () => {},
+    // #397 r2: the abandon cancels ALL approvals (task-wide terminal teardown), so the
+    // role must land in the same trail the assertion reads
+    cancelAllObligations: async (_t: unknown, role: unknown) => void h.cancelled.push(String(role)),
   };
 });
 
@@ -118,6 +121,8 @@ vi.mock('../../server/domains/tasks/review.service', () => ({
   parkRound: async () => true,
   teardownOnManualMove: async () => {},
   teardownOpenRound: async (_t: string, to: string) => void h.teardowns.push(to),
+  // #397 r2: the abandon settles through the TASK-WIDE teardown (every pending round)
+  teardownAllPendingRounds: async (_t: string, to: string) => void h.teardowns.push(to),
   verdictsSoFarFor: async () => [],
 }));
 
