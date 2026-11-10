@@ -20,9 +20,11 @@ import { REVIEW_STATUS, RUN_STATUS } from '#shared/enums';
 
 const h = vi.hoisted(() => ({
   scan: [] as Array<{ taskId: string; round: number; reviewerId: string; createdAt: Date }>,
+  scanThrows: false,
   round: 1,
   liveRun: false,
-  reviewerRun: null as Date | null,
+  /** queued answers for the per-candidate reviewer-run read (one per probe) */
+  startedAtQueue: [] as Array<Date | null>,
   reviewRows: [] as Array<Record<string, unknown>>,
   resultBody: 'the submitted result',
   dispatched: [] as Array<{ taskId: string; opts?: { reviewBy?: string } }>,
@@ -39,24 +41,35 @@ vi.mock('../../server/db/index', async () => {
   const resolve = (projection: Record<string, unknown> | undefined, fullRow: boolean) => {
     if (fullRow) return h.reviewRows;
     const keys = projection ? Object.keys(projection) : [];
-    if (keys.includes('reviewerId')) return h.scan;
+    if (keys.includes('reviewerId')) {
+      if (h.scanThrows) return new Error('scan exploded');
+      return h.scan;
+    }
     if (keys.includes('resultBody')) return [{ resultBody: h.resultBody }];
-    if (keys.includes('startedAt')) return h.reviewerRun ? [{ startedAt: h.reviewerRun }] : [];
+    if (keys.includes('startedAt')) {
+      const next = h.startedAtQueue.shift() ?? null;
+      return next ? [{ startedAt: next }] : [];
+    }
     if (keys.includes('id')) return h.liveRun ? [{ id: 'run-live' }] : [];
     if (keys.includes('round')) return [{ round: h.round }];
     return [];
   };
   const builder = (projection?: Record<string, unknown>) => {
     const rows = resolve(projection, projection === undefined);
+    const settle = (onF?: (v: unknown) => unknown, onR?: (e: unknown) => unknown) =>
+      rows instanceof Error ? Promise.reject(rows).then(onF, onR) : Promise.resolve(rows).then(onF, onR);
     const self: Record<string, unknown> = {};
     const chain = () => self;
     self.from = chain;
     self.innerJoin = chain;
     self.where = chain;
     self.orderBy = chain;
-    self.limit = async () => rows;
-    self.then = (onF?: (v: unknown) => unknown, onR?: (e: unknown) => unknown) => Promise.resolve(rows).then(onF, onR);
-    self.catch = (onR: (e: unknown) => unknown) => Promise.resolve(rows).catch(onR);
+    self.limit = async () => {
+      if (rows instanceof Error) throw rows;
+      return rows;
+    };
+    self.then = settle;
+    self.catch = (onR: (e: unknown) => unknown) => settle(undefined, onR);
     return self;
   };
   const db = {
@@ -105,9 +118,10 @@ import { mockDb } from './helpers/mock-db';
 
 beforeEach(() => {
   h.scan = [{ taskId: TASK, round: 1, reviewerId: REV, createdAt: ROW_MINTED }];
+  h.scanThrows = false;
   h.round = 1;
   h.liveRun = false;
-  h.reviewerRun = null;
+  h.startedAtQueue = [];
   h.reviewRows = [
     { id: 'row-1', taskId: TASK, reviewerId: REV, round: 1, status: REVIEW_STATUS.PENDING, createdAt: ROW_MINTED },
   ];
@@ -163,6 +177,20 @@ describe('stalledReviewScan shape (#397)', () => {
     expect(params).toContain(cutoff.toISOString());
   });
 
+  it('pushes the CURRENT-round + run discriminators into SQL (#397 r1 starvation fix)', () => {
+    const { sql, params } = stalledReviewScan(mockDb(), cutoff).toSQL();
+    const flat = sql.replace(/\s+/g, ' ').toLowerCase();
+    // current round: a superseded round's PENDING row (legal after a manual move out of
+    // review) must not shadow the live round's row or burn a LIMIT slot
+    expect(flat).toContain('"task_reviews"."round" = (select max(r2.round) from task_reviews r2');
+    // no live turn on the task, and the reviewer never dispatched in this round
+    expect(flat.match(/not exists \(select 1 from task_runs tr/g)?.length).toBe(2);
+    expect(flat).toContain('tr.status =');
+    expect(flat).toContain('tr.employee_id = "task_reviews"."reviewer_id"');
+    expect(flat).toContain('tr.started_at >= "task_reviews"."created_at"');
+    expect(params).toContain(RUN_STATUS.RUNNING);
+  });
+
   it('is LIMIT-bounded and oldest-first (a wedged round can never starve the scan)', () => {
     const { sql } = stalledReviewScan(mockDb(), cutoff).toSQL();
     const flat = sql.replace(/\s+/g, ' ').toLowerCase();
@@ -201,10 +229,26 @@ describe('sweepStalledReviewTurns (#397 behaviour)', () => {
   });
 
   it('suppresses the re-fire when the reviewer already had a turn in this round', async () => {
-    h.reviewerRun = new Date(ROW_MINTED.getTime() + 5_000);
+    h.startedAtQueue = [new Date(ROW_MINTED.getTime() + 5_000)];
     const refired = await sweepStalledReviewTurns();
     expect(refired).toBe(0);
     expect(h.dispatched).toEqual([]);
+  });
+
+  it('does not let an exempt row starve the same task’s genuinely stalled row (#397 r1)', async () => {
+    // two PENDING AI rows on ONE task, oldest first: A already had a turn this round
+    // (exempt), B never did (the crash-window row). The pre-fix sweep claimed the TASK
+    // on its first candidate, so B was never examined on any tick.
+    const REV_B = '00000000-0000-7000-8000-00000000a002';
+    h.scan = [
+      { taskId: TASK, round: 1, reviewerId: REV, createdAt: ROW_MINTED },
+      { taskId: TASK, round: 1, reviewerId: REV_B, createdAt: new Date(ROW_MINTED.getTime() + 1) },
+    ];
+    h.startedAtQueue = [new Date(ROW_MINTED.getTime() + 5_000), null];
+    const refired = await sweepStalledReviewTurns();
+    expect(refired).toBe(1);
+    expect(h.dispatched).toHaveLength(1);
+    expect(h.dispatched[0]?.taskId).toBe(TASK);
   });
 
   it('suppresses the re-fire when the candidate belongs to a superseded round', async () => {
@@ -216,8 +260,9 @@ describe('sweepStalledReviewTurns (#397 behaviour)', () => {
   });
 
   it('never throws — a failing scan only costs a tick', async () => {
-    h.scan = [];
+    h.scanThrows = true; // the SCAN itself rejects (not an empty result)
     await expect(sweepStalledReviewTurns()).resolves.toBe(0);
+    expect(h.dispatched).toEqual([]);
     expect(STALLED_REVIEW_GRACE_MS).toBe(60_000);
   });
 });

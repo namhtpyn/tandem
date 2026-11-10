@@ -555,8 +555,9 @@ export async function abandonTask(taskId: string, authorId: string, body: string
       await cancelObligations(taskId, OBLIGATION_ROLE.APPROVAL, tx);
       await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER, tx);
       // pending rows -> superseded, obligations cancel, the round-closed note commits
-      // with the outcome (teardownOpenRound is tx-capable, #397)
-      await teardownOpenRound(taskId, 'cancelled', tx);
+      // with the outcome; its change events are DEFERRED to the post-commit note below
+      // (a redis publish must never gate the tasks row lock, #397 r1)
+      await teardownOpenRound(taskId, 'cancelled', tx, { publish: false });
       return { won: true as const };
     }
     // a paused task can still hold a pending answer obligation — cancel it

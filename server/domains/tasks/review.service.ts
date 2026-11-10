@@ -12,7 +12,7 @@
 // Parks (round cannot progress without a human) flip the task to BLOCKED; owner
 // resolution unblocks and the round resumes. Manual done/cancel supersedes the round.
 import { consola } from 'consola';
-import { and, desc, eq, gte, inArray, isNull, lt, ne, notInArray } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lt, ne, notInArray, sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { asDb, db, type DbExecutor } from '../../db/index';
@@ -85,13 +85,17 @@ export async function logActivity(
   body: string,
   meta: Record<string, unknown>,
   ex: DbExecutor = db,
-  opts: { thread?: boolean } = {},
+  opts: { thread?: boolean; publish?: boolean } = {},
 ) {
   // the thread IS the activity store (task_activity retired 2026-10-30); the
   // conversation row carries the same item (payload keeps the kind).
   // AI verdicts SKIP the thread copy (owner ruling 2026-10-29): the reviewer's run
   // bubble already carries the verdict — one response per turn.
   if (opts.thread !== false) await insertActivityMessage({ taskId, authorId, body, payload: { kind, ...meta } }, ex);
+  // publish:false (#397) — a note written INSIDE a caller's transaction defers its
+  // change events to the post-commit note: an event must never announce a row a
+  // rollback erases, and a redis publish must never gate a held row lock.
+  if (opts.publish === false) return;
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
@@ -1040,8 +1044,12 @@ const STALLED_REVIEW_SCAN_LIMIT = 20;
 export type StalledReviewCandidate = { taskId: string; round: number; reviewerId: string; createdAt: Date };
 
 /** the sweep's bounded read: PENDING rows of a live AI reviewer on an in-review task,
- *  older than the grace cutoff, oldest first. The round/run discriminators are decided
- *  per row (stalledReviewRefire) because they need a second read. */
+ *  older than the grace cutoff, oldest first. The row/run discriminators ALSO ride the
+ *  SQL (CURRENT round, no live run, reviewer never dispatched this round) so the bounded
+ *  LIMIT applies to true candidates only — a permanent exempt row can never occupy the
+ *  window and starve a genuinely stalled round (blind-review r1, both lenses). The
+ *  per-row probe (stalledReviewRefire) stays as the decision-time re-check: the
+ *  scan→dispatch window is not atomic. */
 export function stalledReviewScan(ex: DbExecutor, cutoff: Date) {
   return asDb(ex)
     .select({
@@ -1059,6 +1067,15 @@ export function stalledReviewScan(ex: DbExecutor, cutoff: Date) {
         eq(taskStatuses.category, CATEGORY.IN_REVIEW),
         eq(taskReviews.status, REVIEW_STATUS.PENDING),
         lt(taskReviews.createdAt, cutoff),
+        // CURRENT round only: a manual move out of review legally leaves PENDING rows
+        // behind, and a task re-entering in_review brings them along — a superseded
+        // round's row must never shadow (or burn a slot before) the live round's row
+        sql`${taskReviews.round} = (select max(r2.round) from task_reviews r2 where r2.task_id = ${taskReviews.taskId})`,
+        // no live turn on the task
+        sql`not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = ${tasks.id} and tr.status = ${RUN_STATUS.RUNNING})`,
+        // the reviewer was never dispatched in this round — a reviewer that already had
+        // a turn belongs to the verdict-less-correction / park machinery
+        sql`not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = ${tasks.id} and tr.employee_id = ${taskReviews.reviewerId} and tr.started_at >= ${taskReviews.createdAt})`,
       ),
     )
     .orderBy(taskReviews.createdAt)
@@ -1114,11 +1131,13 @@ export async function sweepStalledReviewTurns(): Promise<number> {
 
 async function sweepStalledReviewTurnsInner(): Promise<number> {
   const candidates = await stalledReviewScan(db, new Date(Date.now() - STALLED_REVIEW_GRACE_MS));
-  const seen = new Set<string>();
+  // DEDUPE AFTER THE DECISION (#397 r1): a task is claimed by an ATTEMPTED re-fire, not
+  // by its first-ordered candidate — claiming it up front let one exempt row (a stale
+  // round, a live turn) permanently shadow the task's genuinely stalled row.
+  const attempted = new Set<string>();
   let refired = 0;
   for (const candidate of candidates) {
-    if (!candidate.reviewerId || seen.has(candidate.taskId)) continue;
-    seen.add(candidate.taskId);
+    if (!candidate.reviewerId || attempted.has(candidate.taskId)) continue;
     try {
       const probe = {
         round: await currentRound(candidate.taskId),
@@ -1133,13 +1152,16 @@ async function sweepStalledReviewTurnsInner(): Promise<number> {
         );
       }
       if (!stalledReviewRefire({ ...candidate, reviewerId: candidate.reviewerId }, probe)) continue;
+      attempted.add(candidate.taskId);
       // the ordinary sequential mint: it re-checks the live-run guard, dispatches ONE
       // AI turn and parks a mint failure on the re-arm ladder — the sweep adds no
-      // second dispatch path and writes no outcome note of its own (the mint's own
-      // note reports what actually happened).
-      await dispatchAiReviewTurns(candidate.taskId);
-      refired += 1;
-      log.info(`stalled-review sweep: re-fired round ${candidate.round} on task ${candidate.taskId}`);
+      // second dispatch path. The count/log report the mint's OWN outcome, never the
+      // sweep's intent (its guards can no-op the call).
+      const fired = await dispatchAiReviewTurns(candidate.taskId);
+      if (fired) {
+        refired += 1;
+        log.info(`stalled-review sweep: re-fired round ${candidate.round} on task ${candidate.taskId}`);
+      }
     } catch (e) {
       log.warn(`stalled-review sweep: could not re-fire task ${candidate.taskId}:`, e instanceof Error ? e.message : e);
     }
@@ -1254,20 +1276,30 @@ const reviewMintInFlight = new Set<string>();
  * Round order = row order. Human reviewers are skipped (the card is their UI).
  * Sessions are per (task, reviewer) — never the assignee's session.
  * opts.verdictCorrection (#276): rides ONLY the verdict-less settle path's bounded
- * re-dispatch — the retry brief carries the CORRECTION block. */
-export async function dispatchAiReviewTurns(taskId: string, resultBody?: string, opts?: DispatchOpts) {
-  if (reviewMintInFlight.has(taskId)) return;
+ * re-dispatch — the retry brief carries the CORRECTION block.
+ * Returns whether a turn was actually minted (the sweep's count needs the OUTCOME, not
+ * the call — every guard below can legitimately no-op it). */
+export async function dispatchAiReviewTurns(
+  taskId: string,
+  resultBody?: string,
+  opts?: DispatchOpts,
+): Promise<boolean> {
+  if (reviewMintInFlight.has(taskId)) return false;
   reviewMintInFlight.add(taskId);
   try {
-    await dispatchAiReviewTurnsUnlocked(taskId, resultBody, opts);
+    return await dispatchAiReviewTurnsUnlocked(taskId, resultBody, opts);
   } finally {
     reviewMintInFlight.delete(taskId);
   }
 }
 
-async function dispatchAiReviewTurnsUnlocked(taskId: string, resultBody?: string, opts?: DispatchOpts) {
+async function dispatchAiReviewTurnsUnlocked(
+  taskId: string,
+  resultBody?: string,
+  opts?: DispatchOpts,
+): Promise<boolean> {
   const round = await currentRound(taskId);
-  if (round === 0) return;
+  if (round === 0) return false;
   // SEQUENTIAL, TASK-WIDE (#371): ONE review turn in flight per task. A mint requested
   // while ANY run of the task is RUNNING is a no-op — without this, a removal that
   // voids a third reviewer's row would skip the running reviewer and mint the NEXT
@@ -1280,7 +1312,7 @@ async function dispatchAiReviewTurnsUnlocked(taskId: string, resultBody?: string
     .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
     .where(and(eq(taskMessages.taskId, taskId), eq(taskRuns.status, RUN_STATUS.RUNNING)))
     .limit(1);
-  if (inFlight.length > 0) return;
+  if (inFlight.length > 0) return false;
   const rows = await db
     .select()
     .from(taskReviews)
@@ -1312,6 +1344,7 @@ async function dispatchAiReviewTurnsUnlocked(taskId: string, resultBody?: string
         reviewerId: row.reviewerId,
         round,
       });
+      return true; // SEQUENTIAL: one turn in flight — the next fires from this verdict's settle
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
       await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review turn failed to dispatch: ${reason}`, {
@@ -1337,8 +1370,9 @@ async function dispatchAiReviewTurnsUnlocked(taskId: string, resultBody?: string
           throw new Error(`review turn dispatch failed before the round opened — ${reason}`);
       }
     }
-    return; // SEQUENTIAL: one turn in flight — the next fires from this verdict's settle
+    return false; // this row's mint failed (parked or round-open rethrow skipped it)
   }
+  return false; // no PENDING AI reviewer row to mint
 }
 
 /** verdict audit line; AI verdicts skip the thread copy — the run bubble carries
@@ -1940,14 +1974,19 @@ export async function teardownOnManualMove(taskId: string, fromStatus: string, t
  * untouched as history. `ex` (#397): the caller may fold the teardown into its own
  * transaction — abandon arbitrates its cancel AND this teardown in ONE transaction, so
  * a lost abandon tears down nothing. */
-export async function teardownOpenRound(taskId: string, settledTo: string, ex: DbExecutor = db) {
+export async function teardownOpenRound(
+  taskId: string,
+  settledTo: string,
+  ex: DbExecutor = db,
+  opts: { publish?: boolean } = {},
+) {
   const d = asDb(ex);
-  // the task's MAX round is the LIVE round at its call sites, and a round only ever
-  // reaches the ledger through a WON submit flip (#394 — the flip and the round rows
-  // commit in one transaction), so no dead round can sit above the live one: the
-  // manual settle tears down AFTER its status write, the escalation self-heal is gated
-  // on a done/cancelled task, and abandon (#397) now tears down only after its own
-  // cancel CAS won — inside the same transaction.
+  // the task's MAX round is the LIVE round at its call sites, and no KNOWN path mints a
+  // round above the live one (#394 made the round rows commit only with a WON flip), so
+  // the manual settle, the escalation self-heal (gated on a done/cancelled task) and the
+  // abandon (#397 — only after its own cancel CAS won, in the same transaction) all tear
+  // down the MAX round. `teardownAllPendingRounds` remains the task-wide variant for a
+  // settle that cannot trust the MAX round (a superseded round can hide an older live one).
   const round = await currentRound(taskId, ex);
   if (round === 0) return;
   const rows = await d
@@ -1979,6 +2018,7 @@ export async function teardownOpenRound(taskId: string, settledTo: string, ex: D
       settledTo,
     },
     ex,
+    { publish: opts.publish },
   );
 }
 

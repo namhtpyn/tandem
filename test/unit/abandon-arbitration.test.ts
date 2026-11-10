@@ -22,6 +22,10 @@ const h = vi.hoisted(() => ({
   published: 0,
   cancelled: [] as string[],
   spawns: [] as Array<{ employeeId: string; role: string }>,
+  // #397 r1: the tx-membership sentinel — every teardown/obligation write records
+  // whether it received the EXECUTOR the transaction handed out (vs. the pool db)
+  txSentinel: null as unknown,
+  inTx: [] as boolean[],
 }));
 
 /** canonical uuid — the round-open existence read shape-checks before binding (#361) */
@@ -68,7 +72,8 @@ vi.mock('../../server/db/index', async () => {
         };
       },
     }),
-    // #397: the abandon arbitrates its cancel AND its teardown in ONE transaction
+    // #397: the abandon arbitrates its cancel AND its teardown in ONE transaction; the
+    // sentinel lets a test prove the teardown got the tx EXECUTOR (not the pool db)
     transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(db),
     query: {
       tasks: {
@@ -80,6 +85,7 @@ vi.mock('../../server/db/index', async () => {
       user: { findMany: async () => [{ id: REV }] },
     },
   };
+  h.txSentinel = db;
   return { asDb: (x: unknown) => x, db };
 });
 
@@ -92,7 +98,10 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
   const mod = await importOriginal<typeof import('../../server/domains/tasks/obligations.service')>();
   return {
     ...mod,
-    cancelObligations: async (_t: unknown, role: unknown) => void h.cancelled.push(String(role)),
+    cancelObligations: async (_t: unknown, role: unknown, ex?: unknown) => {
+      h.cancelled.push(String(role));
+      h.inTx.push(ex === h.txSentinel);
+    },
     cancelAllObligations: async () => {},
     spawnObligation: async (_t: unknown, employeeId: string, role: string) => {
       h.spawns.push({ employeeId, role: String(role) });
@@ -141,9 +150,10 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     },
     recordVerdict: async () => ({ outcome: 'superseded' }),
     currentRound: async () => 1,
-    teardownOpenRound: async (_t: unknown, settledTo: string) => {
+    teardownOpenRound: async (_t: unknown, settledTo: string, ex?: unknown) => {
       h.order.push('teardown');
       h.teardowns.push(settledTo);
+      h.inTx.push(ex === h.txSentinel);
     },
   };
 });
@@ -174,6 +184,7 @@ beforeEach(() => {
   h.notes = [];
   h.published = 0;
   h.cancelled = [];
+  h.inTx = [];
 });
 
 describe('abandonTask terminal arbitration (#287)', () => {
@@ -213,6 +224,13 @@ describe('abandonTask terminal arbitration (#287)', () => {
     expect(h.order).toEqual(['cancel-cas', 'teardown', 'gating']);
     expect(h.cancelled).toEqual([OBLIGATION_ROLE.APPROVAL, OBLIGATION_ROLE.ANSWER]);
     expect(h.teardowns).toEqual(['cancelled']);
+    // TX MEMBERSHIP (#397 r1): every teardown/obligation write got the tx EXECUTOR —
+    // dropping the `tx` argument (pool db instead of the transaction) turns this red
+    expect(h.inTx).toEqual([true, true, true]);
+    // NO PUBLISH INSIDE THE TX (#397 r1): only the post-commit abandon note emits
+    // change events (2); a publish from the teardown's note would gate the row lock and
+    // announce rows a rollback can erase
+    expect(h.published).toBe(2);
   });
 });
 
