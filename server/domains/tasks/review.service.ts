@@ -187,11 +187,13 @@ export async function dispatchedReviewRound(taskId: string, reviewerId: string, 
  * transaction that inserts the round: a concurrent DELETE either committed before the
  * lock (the row is absent — the reviewer drops out of the round exactly like the
  * pre-check path) or blocks until this round commits, after which its FK nulls
- * reviewer_id and the row is a #365 non-vote. The ROUND OPEN itself can no longer
- * raise 23503. A delete landing after the commit is that non-vote; one racing the
- * review turn's own dispatch mint (task_messages.author_id / task_runs.employee_id)
- * still fails that one submit — the task stays working and the retry re-reads the
- * roster, so it is retryable, never a wedge.
+ * reviewer_id and the row is a #365 non-vote. The ROUND OPEN can no longer raise
+ * 23503 on the REVIEWER FK. A delete landing after the commit is that non-vote; one
+ * racing the review turn's own dispatch mint (task_messages.author_id /
+ * task_runs.employee_id) still fails that one submit — the task stays working and the
+ * retry re-reads the roster, so it is retryable, never a wedge. (The task row itself is
+ * a separate FK: a task deleted under the round open refuses that submit and the task
+ * is gone — pre-existing, unchanged here.)
  * `opened: 0` (every reviewer vanished inside the window) is the caller's
  * zero-survivor outcome — nothing was minted, so nothing is left to settle. */
 export async function openReviewRound(

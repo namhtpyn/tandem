@@ -17,13 +17,12 @@ const h = vi.hoisted(() => ({
   supersedeSets: [] as Array<Record<string, unknown>>,
   insertedObligations: [] as string[],
   failOnInsert: 0,
-  failOnObligation: 0,
-  obligationSpawns: 0,
   existingObligationId: null as string | null,
   // #364: the reviewer-existence transaction — which ids the FOR KEY SHARE lock still
   // sees, the lock strength it was asked for, and whether each insert ran inside the tx
   deletedUsers: [] as string[],
   lockStrengths: [] as string[],
+  lockConds: [] as unknown[],
   lockInTx: [] as boolean[],
   inTx: false,
   insertInTx: [] as boolean[],
@@ -72,6 +71,7 @@ vi.mock('../../server/db/index', async () => {
               where: (cond: unknown) => ({
                 for: async (strength: string) => {
                   h.lockStrengths.push(strength);
+                  h.lockConds.push(cond);
                   h.lockInTx.push(inTx);
                   const ids = (new PgDialect().sqlToQuery(cond as never).params as string[]).map(String);
                   return ids.filter((id) => !h.deletedUsers.includes(id)).map((id) => ({ id }));
@@ -93,9 +93,6 @@ vi.mock('../../server/db/index', async () => {
             h.rowInserts.push(String(vals.reviewerId));
           }
           if (table === taskObligations) {
-            h.obligationSpawns += 1;
-            if (h.failOnObligation > 0 && h.obligationSpawns === h.failOnObligation)
-              throw new Error('obligation_insert_failed');
             h.insertedObligations.push(String(vals.id));
           }
           return { returning: async () => [{ id: `msg-${h.rowInserts.length}` }] };
@@ -162,11 +159,10 @@ beforeEach(() => {
   h.supersedeSets = [];
   h.insertedObligations = [];
   h.failOnInsert = 0;
-  h.failOnObligation = 0;
-  h.obligationSpawns = 0;
   h.existingObligationId = null;
   h.deletedUsers = [];
   h.lockStrengths = [];
+  h.lockConds = [];
   h.lockInTx = [];
   h.inTx = false;
   h.insertInTx = [];
@@ -241,6 +237,13 @@ describe('openReviewRound reviewer-existence transaction (#364)', () => {
   it('locks the reviewer rows FOR KEY SHARE and inserts the round inside that same transaction', async () => {
     await openReviewRound('task-1', [A, B], 'result');
     expect(h.lockStrengths).toEqual(['key share']);
+    // predicate pin (column + operator + VALUE, not presence): the lock must name
+    // user.id — a mis-columned predicate drops every reviewer and silently completes
+    // every reviewed submit with no round at all
+    const lockSql = new PgDialect().sqlToQuery(h.lockConds[0] as never);
+    expect(lockSql.sql).toContain('"user"."id"');
+    expect(lockSql.sql).toContain('in');
+    expect(lockSql.params).toEqual([A, B]);
     // the lock read itself must ride the transaction — hoisting it onto the pool would
     // release the lock at statement end and silently reopen the #364 window
     expect(h.lockInTx).toEqual([true]);
@@ -258,6 +261,9 @@ describe('openReviewRound reviewer-existence transaction (#364)', () => {
     // a drop is not a failure: nothing to supersede, no obligation cancelled
     expect(h.supersedeSets).toEqual([]);
     expect(h.obligationConds).toEqual([]);
+    // the round note counts the rows that actually opened, never the pre-check roster
+    expect(h.notes).toHaveLength(1);
+    expect(h.notes[0]?.body).toContain('waiting on 1 reviewer(s)');
   });
 
   it('every reviewer gone inside the window mints nothing and reports opened: 0 (the caller completes)', async () => {
