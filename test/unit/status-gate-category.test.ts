@@ -87,6 +87,11 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
     ...mod,
     cancelObligations: async (_t: unknown, role: unknown) => void h.cancelled.push(String(role)),
     spawnObligation: async (_t: unknown, holder: string) => void h.spawned.push(String(holder)),
+    // #400: ask parks + spawns its ANSWER obligation through the tracked variant
+    spawnObligationTracked: async (_t: unknown, holder: string) => {
+      h.spawned.push(String(holder));
+      return { id: 'ob-1', created: true };
+    },
     resolveObligation: async () => {},
     answerHolder: async () => null,
     // #397 r2: the abandon cancels ALL approvals (task-wide terminal teardown), so the

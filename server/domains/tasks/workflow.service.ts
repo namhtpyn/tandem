@@ -27,7 +27,6 @@ import { tasks, employeeSupervisors, taskReviews, taskRuns, taskMessages } from 
 import { publishChange } from '../kernel/kernel';
 import { refreshParentGating, hasOpenChildren } from './gating.service';
 import {
-  spawnObligation,
   spawnObligationTracked,
   resolveObligation,
   cancelObligations,
@@ -150,16 +149,27 @@ export async function askQuestion(taskId: string, authorId: string, body: string
       ).length > 0;
   }
   if (!isParty) throw new Error('only the assignee, the owner or a pending reviewer can ask');
-  await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER);
-  await spawnObligation(taskId, holder, OBLIGATION_ROLE.ANSWER);
-  await db
-    .update(tasks)
-    .set({
-      status: WAITING_ANSWER_STATUS,
-      questionChain: [holder],
-      updatedAt: new Date(),
-    })
-    .where(eq(tasks.id, taskId));
+  // TERMINAL ARBITRATION + ATOMIC ARBITRATION (#400): the waiting-answer park is the
+  // transaction's FIRST write and arbitrates on the status AND updatedAt stamp this
+  // call read — a won abandon/settle keeps its outcome and the late question refuses,
+  // writing NOTHING (no obligation cancel, no spawn, no note). The park AUTHORISES the
+  // ANSWER obligation, so flip + cancel + spawn commit in ONE transaction: a crash
+  // between them can never leave a waiting-answer task carrying no pending obligation.
+  await db.transaction(async (tx) => {
+    const d = asDb(tx);
+    const parked = await d
+      .update(tasks)
+      .set({
+        status: WAITING_ANSWER_STATUS,
+        questionChain: [holder],
+        updatedAt: new Date(),
+      })
+      .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
+      .returning({ id: tasks.id });
+    if (parked.length === 0) throw new Error('task state changed during ask — a settle owns the outcome');
+    await cancelObligations(taskId, OBLIGATION_ROLE.ANSWER, tx);
+    await spawnObligationTracked(taskId, holder, OBLIGATION_ROLE.ANSWER, undefined, tx);
+  });
   await logActivity(taskId, ACTIVITY_KIND.QUESTION, authorId, body, { holderId: holder });
   return { holderId: holder };
 }
@@ -341,7 +351,16 @@ export async function addNote(
     where: { userId: { eq: task.assigneeId } },
   });
   if (!ai) return { steered: false as const };
-  await db.update(tasks).set({ status: STATUS.todo, updatedAt: new Date() }).where(eq(tasks.id, taskId));
+  // TERMINAL ARBITRATION (#400): the dispatch flip arbitrates on the status AND
+  // updatedAt stamp this call read — a note in flight across a terminal write must
+  // never resurrect the settled task. A lost flip dispatches nothing; the note
+  // itself already landed as a thread item above (thread-only, never a state write).
+  const flipped = await db
+    .update(tasks)
+    .set({ status: STATUS.todo, updatedAt: new Date() })
+    .where(and(eq(tasks.id, taskId), eq(tasks.status, task.status), eq(tasks.updatedAt, task.updatedAt)))
+    .returning({ id: tasks.id });
+  if (flipped.length === 0) return { steered: false as const };
   const { dispatchIfEligible } = await import('./dispatcher.service');
   const { env } = await import('#server/domains/kernel/env');
   // the skip arms (stale state, pending backoff, agent at cap) must not claim
@@ -542,9 +561,9 @@ export async function abandonTask(taskId: string, authorId: string, body: string
   // CAS (the old order superseded the winner's round and cancelled its obligations before
   // refusing) nor leave a cancelled task carrying a pending row when a write fails.
   // A won cancel makes the LIFECYCLE writers lose by construction: a submit needs a
-  // working category and the verdict flip refuses terminal-category statuses. It does NOT
-  // cover the unguarded note/ask status flips (pre-existing; tracked in #400) — those can
-  // still move a task after any terminal write.
+  // working category and the verdict flip refuses terminal-category statuses. The
+  // note/ask status flips arbitrate too since #400 — no lifecycle writer can move a
+  // task after a terminal write won it.
   const teardown = await db.transaction(async (tx) => {
     const d = asDb(tx);
     const cancelled = await d
