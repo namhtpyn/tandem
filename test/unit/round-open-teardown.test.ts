@@ -23,8 +23,9 @@ const h = vi.hoisted(() => ({
   deletedUsers: [] as string[],
   lockStrengths: [] as string[],
   lockConds: [] as unknown[],
-  lockInTx: [] as boolean[],
-  insertInTx: [] as boolean[],
+  lockTxIds: [] as number[],
+  insertTxIds: [] as number[],
+  txSeq: 0,
   notes: [] as Array<{ body: string }>,
   failOnNote: false,
 }));
@@ -59,8 +60,10 @@ vi.mock('../../server/db/index', async () => {
     query: new Proxy({} as Record<string, { findMany: () => Promise<unknown[]> }>, {
       get: () => ({ findMany: async () => [] }),
     }),
-    select: function (this: { __tx?: boolean }) {
-      const inTx = Boolean(this.__tx);
+    select: function (this: { __tx?: number }) {
+      // transaction IDENTITY, not a boolean: a lock taken in a DIFFERENT transaction
+      // still carries a flag, but never the same id as the inserts
+      const txId = this.__tx ?? 0;
       return {
         from: (table: unknown) => {
           if (table === user) {
@@ -71,7 +74,7 @@ vi.mock('../../server/db/index', async () => {
                 for: async (strength: string) => {
                   h.lockStrengths.push(strength);
                   h.lockConds.push(cond);
-                  h.lockInTx.push(inTx);
+                  h.lockTxIds.push(txId);
                   const ids = (new PgDialect().sqlToQuery(cond as never).params as string[]).map(String);
                   return ids.filter((id) => !h.deletedUsers.includes(id)).map((id) => ({ id }));
                 },
@@ -82,11 +85,11 @@ vi.mock('../../server/db/index', async () => {
         },
       };
     },
-    insert: function (this: { __tx?: boolean }, table: unknown) {
-      const inTx = Boolean(this.__tx);
+    insert: function (this: { __tx?: number }, table: unknown) {
+      const txId = this.__tx ?? 0;
       return {
         values: async (vals: Record<string, unknown>) => {
-          h.insertInTx.push(inTx);
+          h.insertTxIds.push(txId);
           if (table === taskReviews) {
             if (h.failOnInsert > 0 && h.rowInserts.length + 1 === h.failOnInsert) throw new Error('insert_fk_miss');
             h.rowInserts.push(String(vals.reviewerId));
@@ -115,9 +118,10 @@ vi.mock('../../server/db/index', async () => {
     db: {
       ...mockDb,
       transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
-        // a DISTINCT tx surface: an insert/lock that forgot to pass `tx` lands on the
-        // pool mock (no __tx) and the in-transaction pins go red
-        fn({ ...mockDb, __tx: true }),
+        // a DISTINCT tx surface carrying an IDENTITY: an insert or lock that forgot to
+        // pass `tx` lands on the pool mock (id 0), and a split into a second tx gets a
+        // different id — both turn the in-transaction pin red
+        fn({ ...mockDb, __tx: ++h.txSeq }),
     },
   };
 });
@@ -156,8 +160,9 @@ beforeEach(() => {
   h.deletedUsers = [];
   h.lockStrengths = [];
   h.lockConds = [];
-  h.lockInTx = [];
-  h.insertInTx = [];
+  h.lockTxIds = [];
+  h.insertTxIds = [];
+  h.txSeq = 0;
   h.notes = [];
   h.failOnNote = false;
 });
@@ -237,12 +242,14 @@ describe('openReviewRound reviewer-existence transaction (#364)', () => {
     // `in` alone is satisfied by `not in` — pin the operator, not the substring
     expect(lockSql.sql).not.toMatch(/\bnot in\b/);
     expect(lockSql.params).toEqual([A, B]);
-    // the lock read itself must ride the transaction — hoisting it onto the pool would
-    // release the lock at statement end and silently reopen the #364 window
-    expect(h.lockInTx).toEqual([true]);
+    // the lock read itself must ride the transaction, and it must be the SAME one as
+    // every insert — identity, not a boolean: a pre-lock in its own transaction would
+    // release the lock at its commit and silently reopen the #364 window
+    const txIds = [...h.lockTxIds, ...h.insertTxIds];
+    expect(txIds).toHaveLength(5);
+    expect(new Set(txIds).size).toBe(1);
+    expect(txIds[0]).toBeGreaterThan(0);
     expect(h.rowInserts).toEqual([A, B]);
-    // every round/obligation insert ran inside the transaction the lock belongs to
-    expect(h.insertInTx).toEqual([true, true, true, true]);
     expect(h.notes).toHaveLength(1);
   });
 
