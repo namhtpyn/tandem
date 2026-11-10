@@ -374,15 +374,8 @@ export async function addNote(
   // updatedAt and would silently swallow a send the composer promised to dispatch —
   // unrecoverable for a backlog/paused task, which nothing re-dispatches. Re-read and
   // re-decide ONCE on the fresh row; a second loss stays thread-only.
+  let firstCat: string | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
-    if (attempt > 0) {
-      // RUN LOCK (#400 r3): the lost CAS may have been a DISPATCH CLAIM (todo->doing
-      // with a live run) — re-flipping that row to todo would break the lock and let a
-      // second run through. Re-run the composer's steer gate on the fresh state: a live
-      // run takes the note as a steer, never a status flip.
-      const again = await steerRun(taskId, body);
-      if (again === 'steered' || again === 'refused') return { steered: again === 'steered' };
-    }
     const current = attempt === 0 ? task : await getTask(taskId);
     const rows = await db.query.taskStatuses.findMany({
       columns: { id: true, category: true },
@@ -392,6 +385,17 @@ export async function addNote(
     // else the membership rule applies — thread-only, never a dispatch guess
     const statusCat = rows.find((r) => r.id === current.status)?.category;
     if (!statusCat || excluded.includes(statusCat)) return { steered: false as const };
+    if (attempt === 0) firstCat = statusCat;
+    if (attempt > 0) {
+      // RUN LOCK (#400 r3/r4): a lost CAS can be a DISPATCH CLAIM. The claim commits
+      // ready -> working BEFORE its RUNNING run row exists, so the steer gate cannot
+      // see it yet — a row a claim took out of the ready category is never re-flipped
+      // to to-do (that would break the lock and admit a second run). A live run that
+      // IS visible still takes the note as a steer.
+      if (firstCat !== CATEGORY.WORKING && statusCat === CATEGORY.WORKING) return { steered: false as const };
+      const again = await steerRun(taskId, body);
+      if (again === 'steered' || again === 'refused') return { steered: again === 'steered' };
+    }
     if (!current.assigneeId) return { steered: false as const };
     const ai = await db.query.aiEmployees.findFirst({
       columns: { userId: true },

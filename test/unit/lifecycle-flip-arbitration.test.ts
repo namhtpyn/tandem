@@ -389,13 +389,31 @@ describe('addNote dispatch flip arbitrates on the read row (#400)', () => {
     expect(h.flips[0]?.set.status).toBe(STATUS.todo);
   });
 
-  it('a lost note flip caused by a dispatch claim STEERS the live run — never flips a run-locked row', async () => {
+  it('a lost note flip caused by a DISPATCH CLAIM never re-flips the claimed row', async () => {
+    // the claim commits ready -> working BEFORE its RUNNING run row exists, so the
+    // steer gate still reports 'stopped' — the retry must not flip it back to to-do
     seedWorkingAiTask();
-    h.loseFlips = 1; // attempt 0 loses to the dispatcher's claim
+    h.taskRows[0] = { ...h.taskRows[0], status: 'st-todo' };
+    h.statuses = [
+      { id: 'st-todo', category: CATEGORY.READY },
+      { id: 'st-doing', category: CATEGORY.WORKING },
+    ];
+    h.loseFlips = 1;
+    h.bumpOnLoss = true;
+    h.statusOnLoss = 'st-doing'; // the dispatcher's claim
+    h.steerStates = ['stopped', 'stopped'];
+    const res = await addNote('task-1', 'human-1', 'go');
+    expect(res).toEqual({ steered: false });
+    expect(h.flips).toHaveLength(1);
+    expect(h.dispatches).toHaveLength(0);
+  });
+
+  it('a lost note flip that finds a LIVE run steers it instead of flipping', async () => {
+    seedWorkingAiTask();
+    h.loseFlips = 1;
     h.steerStates = ['stopped', 'steered'];
     const res = await addNote('task-1', 'human-1', 'go');
     expect(res).toEqual({ steered: true });
-    // only the losing attempt flipped; the retry re-ran the steer gate instead
     expect(h.flips).toHaveLength(1);
     expect(h.dispatches).toHaveLength(0);
   });
