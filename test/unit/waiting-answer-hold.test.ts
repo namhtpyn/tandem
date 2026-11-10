@@ -259,8 +259,9 @@ describe('waiting-answer verdict hold (#288)', () => {
 
   it('IN-WINDOW RESCUE: an answer flipping the task to todo inside the hold window is repaired — guarded ready->in_review flip + re-fire', async () => {
     // reads: gate=waiting, hold=waiting (park wins), post-revert re-read=todo
-    // (the answer's flip landed between the hold's read and the revert)
-    h.taskRows = [{ status: WAIT_STATUS }, { status: WAIT_STATUS }, { status: 'st-todo' }, { status: 'st-todo' }];
+    // (the answer's flip landed between the hold's read and the revert), then the
+    // restore flip lands -> the mint's in-review gate read (#401) sees in_review
+    h.taskRows = [{ status: WAIT_STATUS }, { status: WAIT_STATUS }, { status: 'st-todo' }, { status: 'st-review' }];
     h.pendingRows = [{ id: 'row-1', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }];
     h.aiEmployees = [{ userId: 'rev-1' }];
     const outcome = await recordVerdict('task-1', 'rev-1', REVIEW_STATUS.APPROVED, '', 'human');

@@ -12,7 +12,7 @@
 // Parks (round cannot progress without a human) flip the task to BLOCKED; owner
 // resolution unblocks and the round resumes. Manual done/cancel supersedes the round.
 import { consola } from 'consola';
-import { and, desc, eq, gte, inArray, isNull, lt, ne, notInArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { asDb, db, type DbExecutor } from '../../db/index';
@@ -1196,11 +1196,11 @@ async function sweepStalledReviewTurnsInner(): Promise<number> {
         );
         // last read before the mint: the task should still be in review. This NARROWS the
         // scan→mint window; it cannot close it — review turns take no DB claim, so a move
-        // landing inside the mint's own reads still mints a turn. The verdict's gates
-        // refuse a DONE/CANCELLED settle, but a NON-terminal move (todo/blocked) can be
-        // overridden by a machine settle — pre-existing for every mint caller, tracked in
-        // #401. This sweep neither introduces nor widens that window (it is the same
-        // caller contract the submit/removal/unblock re-fires use).
+        // landing inside the mint's own reads still mints a turn. The settle is what
+        // enforces the owner's move: the end-of-round flip refuses ANY status outside the
+        // in-review category (#401), so the verdict lands as audit history and the owner's
+        // status stands. (The mint's own category gate in dispatchAiReviewTurns refuses the
+        // common case before the dispatch; this probe keeps the sweep's own decision honest.)
         probe.inReview = (await taskCategory(candidate.taskId)) === CATEGORY.IN_REVIEW;
       }
       if (!stalledReviewRefire({ ...candidate, reviewerId: candidate.reviewerId }, probe)) continue;
@@ -1389,6 +1389,16 @@ async function dispatchAiReviewTurnsUnlocked(
 ): Promise<boolean> {
   const round = await currentRound(taskId);
   if (round === 0) return false;
+  // IN-REVIEW MINT GATE (#401): a review turn is owed only while the task still sits in
+  // an in-review-category status. Review turns take no dispatch claim, so nothing else
+  // refuses a turn minted for a task a manual move (or a park) took out of review while
+  // the caller's reads ran. Every mint caller dispatches AFTER an in-review landing —
+  // the submit's post-commit round-open dispatch, the verdict's lazy mint, a correction
+  // re-dispatch, an unblock resume, a park restore, a removal re-fire, the stalled
+  // sweep — so this read never refuses a legitimate turn; it narrows the read→insert
+  // window only, and the end-of-round flip's write-time gate (flipTask) stays the
+  // arbiter for a move landing inside it.
+  if ((await taskCategory(taskId)) !== CATEGORY.IN_REVIEW) return false;
   // SEQUENTIAL, TASK-WIDE (#371): ONE review turn in flight per task. A mint requested
   // while ANY run of the task is RUNNING is a no-op — without this, a removal that
   // voids a third reviewer's row would skip the running reviewer and mint the NEXT
@@ -1474,37 +1484,26 @@ async function logVerdict(
   });
 }
 
-/** terminal-category status ids, resolved fresh so the flip predicate is evaluated
- * in SQL at WRITE time — never a stale read and never seeded ids only (#260). */
-async function terminalStatusIds(): Promise<string[]> {
+/** in-review-category status ids, resolved fresh so the flip predicate is evaluated
+ *  in SQL at WRITE time — never a stale read and never seeded ids only (#260). */
+async function inReviewStatusIds(): Promise<string[]> {
   const statuses = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
-  return statuses.filter((s) => s.category === CATEGORY.DONE || s.category === CATEGORY.CANCELLED).map((s) => s.id);
+  return statuses.filter((s) => s.category === CATEGORY.IN_REVIEW).map((s) => s.id);
 }
 
-/** waiting_answer-category status ids, resolved fresh (#288): the settle flip
- * refuses them — waiting_answer owns the flow, a question can never be stomped. */
-async function waitingAnswerStatusIds(): Promise<string[]> {
-  const statuses = await db.query.taskStatuses.findMany({ columns: { id: true, category: true } });
-  return statuses.filter((s) => s.category === CATEGORY.WAITING_ANSWER).map((s) => s.id);
-}
-
-/** END-OF-ROUND FLIP CAS (#260): the settle flip is a conditional write refusing
- * done/cancelled-category statuses — a manual settle that lands between this
- * verdict's row write and the flip wins the race, keeps the owner's status and
- * makes the verdict a recorded-but-superseded audit row (returns false).
- * #288: the gate ALSO refuses waiting_answer-category statuses — a verdict
- * settling over an open question would orphan the ANSWER obligation and kill the
- * question thread; the refused flip re-checks and parks (hold arm below). */
+/** END-OF-ROUND FLIP CAS (#260, #401): the settle flip is a conditional write that
+ * REQUIRES the task to still sit in an in-review-category status. A manual move that
+ * lands between this verdict's row write and the flip wins the race and keeps the
+ * owner's status — terminal, waiting_answer AND a plain re-queue/block alike (#401:
+ * the pre-fix deny-list let an all-approved settle flip a manually-requeued todo task
+ * to done, overriding the owner's move) — and the verdict becomes a recorded-but-
+ * superseded audit row (returns false). #288: the refused waiting_answer flip is
+ * re-checked by the hold arm below, which parks instead of superseding. */
 async function flipTask(taskId: string, status: string): Promise<boolean> {
   const flipped = await db
     .update(tasks)
     .set({ status, updatedAt: new Date() })
-    .where(
-      and(
-        eq(tasks.id, taskId),
-        notInArray(tasks.status, [...(await terminalStatusIds()), ...(await waitingAnswerStatusIds())]),
-      ),
-    )
+    .where(and(eq(tasks.id, taskId), inArray(tasks.status, await inReviewStatusIds())))
     .returning({ id: tasks.id });
   return flipped.length > 0;
 }

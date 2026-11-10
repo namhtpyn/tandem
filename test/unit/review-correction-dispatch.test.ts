@@ -30,9 +30,11 @@ type Chain = {
   then: <T>(onfulfilled?: (value: unknown[]) => T) => Promise<T>;
 };
 
-const mkChain = (cols: unknown): Chain => {
+const mkChain = (cols: unknown, isTaskRow = false): Chain => {
   const resolve = (): unknown[] => {
     const c = (cols ?? {}) as Record<string, unknown>;
+    // the IN-REVIEW MINT GATE's task-status read (#401)
+    if (isTaskRow && 'status' in c) return [{ status: 'st-review' }];
     if ('round' in c) return [{ round: 1 }];
     if ('resultBody' in c) return [{ resultBody: 'submitted work' }];
     if ('id' in c) return [];
@@ -48,15 +50,21 @@ const mkChain = (cols: unknown): Chain => {
   return ch;
 };
 
-vi.mock('../../server/db/index', () => ({
-  asDb: (x: unknown) => x,
-  db: {
-    select: (cols?: unknown) => ({ from: (_table: unknown) => mkChain(cols) }),
-    query: {
-      aiEmployees: { findMany: async () => [{ userId: 'rev-1' }] },
+vi.mock('../../server/db/index', async () => {
+  const { tasks } = await import('../../server/db/schema');
+  return {
+    asDb: (x: unknown) => x,
+    db: {
+      select: (cols?: unknown) => ({ from: (table: unknown) => mkChain(cols, table === tasks) }),
+      query: {
+        aiEmployees: { findMany: async () => [{ userId: 'rev-1' }] },
+        // the IN-REVIEW MINT GATE (#401) resolves the task's status category before
+        // any dispatch; every case here mints on an in-review task
+        taskStatuses: { findMany: async () => [{ id: 'st-review', category: 'in_review' }] },
+      },
     },
-  },
-}));
+  };
+});
 
 vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/kernel/kernel')>();

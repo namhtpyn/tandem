@@ -414,6 +414,11 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
 
   it('a live review round lands back IN-REVIEW and re-fires the AI reviewer', async () => {
     h.taskStatus = STATUS.waitingAnswer;
+    // [1] the return arm's read, [2] the mint's in-review gate read (#401) after the flip
+    h.taskReads = [
+      { status: STATUS.waitingAnswer, updatedAt: h.taskUpdatedAt },
+      { status: STATUS.inReview, updatedAt: h.taskUpdatedAt },
+    ];
     h.round = 2;
     h.aiEmployees = [{ userId: 'rev-1' }];
     h.roundPending = [{ id: 'row-1' }];
@@ -435,8 +440,13 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
     h.taskStatus = STATUS.waitingAnswer;
     h.round = 2;
     h.aiEmployees = [];
-    // the return arm reads waiting-answer, the settle then reads the flipped in-review row
-    h.taskReads = [{ status: STATUS.waitingAnswer, updatedAt: h.taskUpdatedAt }];
+    // [1] the return arm reads waiting-answer, [2] the mint's in-review gate read (#401)
+    // and [3] the settle read the flipped in-review row
+    h.taskReads = [
+      { status: STATUS.waitingAnswer, updatedAt: h.taskUpdatedAt },
+      { status: STATUS.inReview, updatedAt: h.taskUpdatedAt },
+      { status: STATUS.inReview, updatedAt: h.taskUpdatedAt },
+    ];
     h.roundPending = [{ id: 'row-2' }]; // the void row keeps the round alive
     h.reviewReads = [
       [], // dispatchAiReviewTurns: no AI rows to mint
@@ -445,8 +455,6 @@ describe('ANSWER-ROLE REMOVAL settle (#369)', () => {
         { status: REVIEW_STATUS.PENDING, reviewerId: null }, // deleted reviewer's void row
       ], // settle matrix read
     ];
-    // after the return flip the task IS in-review for the settle's read
-    h.taskReads.push({ status: STATUS.inReview, updatedAt: h.taskUpdatedAt });
     const healed = await returnRemovedAnswerHolderTask('task-1', 'Departed Person');
     expect(healed).toBe(true);
     const statuses = h.updates.filter((u) => u.table === 'tasks').map((u) => u.set.status);
