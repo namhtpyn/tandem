@@ -144,7 +144,7 @@ vi.mock('../../server/domains/tasks/runner.service', () => ({
   },
 }));
 
-import { dispatchAiReviewTurns, openReviewRound } from '../../server/domains/tasks/review.service';
+import { dispatchAiReviewTurns } from '../../server/domains/tasks/review.service';
 
 beforeEach(() => {
   h.taskReads.length = 0;
@@ -191,56 +191,5 @@ describe('round-open dispatch failure (#282)', () => {
     h.statuses = [{ id: STATUS.todo, category: CATEGORY.READY }];
     await expect(dispatchAiReviewTurns('task-1', 'the result')).resolves.toBeUndefined();
     expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(0);
-  });
-
-  it('openReviewRound: a post-commit dispatch failure lands the submit and parks the round (#394/#282)', async () => {
-    // the flip + rows commit; the reviewer turn then fails and the park LANDS (the task
-    // is already in-review) — the submit must resolve, not 500 a round that shipped
-    h.dispatchError = new Error('redis down');
-    h.flipWins = true;
-    h.parkWins = true;
-    h.reviewReads = [
-      [{ round: 1 }],
-      [{ round: 2 }],
-      [{ id: 'r2', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }],
-    ];
-    h.taskReads = [[{ status: STATUS.inReview }]];
-    const opened = await openReviewRound('task-1', ['rev-1'], 'the result', {
-      status: STATUS.doing,
-      updatedAt: new Date(0),
-    });
-    expect(opened.flipped).toBe(true);
-    expect(h.inserts.filter((i) => i.table === 'taskReviews')).toHaveLength(1);
-    expect(h.updates.find((u) => u.table === 'tasks' && u.set.status === STATUS.blocked)?.pred).toBe(true);
-    // nothing is torn down: there is no compensating supersede/cancel path any more
-    expect(h.updates.filter((u) => u.table === 'taskReviews')).toEqual([]);
-    expect(h.cancelledFor).toEqual([]);
-    expect(h.cancelledAll).toEqual([]);
-  });
-
-  it('openReviewRound: a dispatch failure whose park MISSES still never fails the landed submit', async () => {
-    // the owner moved the task out of review inside the commit→dispatch window: the
-    // park has nothing to land on, so dispatchAiReviewTurns rethrows — openReviewRound
-    // must swallow it (the round already committed; the error would misreport the submit)
-    h.dispatchError = new Error('redis down');
-    h.flipWins = true;
-    h.parkWins = false;
-    h.reviewReads = [
-      [{ round: 1 }],
-      [{ round: 2 }],
-      [{ id: 'r2', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }],
-    ];
-    // the owner moved the task to a WORKING status inside the window: the park cannot
-    // land and dispatchAiReviewTurns takes its working-category rethrow
-    h.taskReads = [[{ status: STATUS.inReview }], [{ status: STATUS.doing }], [{ status: STATUS.doing }]];
-    h.statuses = [
-      { id: STATUS.doing, category: CATEGORY.WORKING },
-      { id: STATUS.inReview, category: CATEGORY.IN_REVIEW },
-    ];
-    await expect(
-      openReviewRound('task-1', ['rev-1'], 'the result', { status: STATUS.doing, updatedAt: new Date(0) }),
-    ).resolves.toMatchObject({ flipped: true });
-    expect(h.inserts.filter((i) => i.table === 'taskReviews')).toHaveLength(1);
-    expect(h.cancelledFor).toEqual([]);
   });
 });

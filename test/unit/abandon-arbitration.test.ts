@@ -13,6 +13,8 @@ const h = vi.hoisted(() => ({
   statuses: [] as Array<{ id: string; category: string }>,
   teardowns: [] as string[],
   flipArgs: null as { status: string; updatedAt: Date } | null,
+  order: [] as string[],
+  dispatchThrows: false,
   updates: [] as Array<{ table: string; set: Record<string, unknown>; pred: boolean }>,
   notes: [] as Array<{ kind: unknown; payload: Record<string, unknown> }>,
   published: 0,
@@ -98,7 +100,13 @@ vi.mock('../../server/domains/tasks/obligations.service', async (importOriginal)
 
 vi.mock('../../server/domains/tasks/gating.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/gating.service')>();
-  return { ...mod, refreshParentGating: async () => {}, hasOpenChildren: async () => false };
+  return {
+    ...mod,
+    refreshParentGating: async () => {
+      h.order.push('gating');
+    },
+    hasOpenChildren: async () => false,
+  };
 });
 
 vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
@@ -107,7 +115,12 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     ...mod,
     openRoundLive: async () => false,
     settleExtinguishedRound: async () => false,
-    dispatchAiReviewTurns: async () => {},
+    // #394: the caller dispatches AFTER the gating write and never lets a dispatch
+    // failure fail a landed submit
+    dispatchAiReviewTurns: async () => {
+      h.order.push('dispatch');
+      if (h.dispatchThrows) throw new Error('redis down');
+    },
     // #394: the round open carries the in-review flip in its OWN transaction, so the
     // mock reports whether that flip won (`cancelWins` = the competing abandon/settle
     // missed, i.e. this submit's flip landed). A lost flip mints NOTHING — there is no
@@ -142,6 +155,8 @@ beforeEach(() => {
   h.spawns = [];
   h.teardowns = [];
   h.flipArgs = null;
+  h.order = [];
+  h.dispatchThrows = false;
   h.updates = [];
   h.notes = [];
   h.published = 0;
@@ -185,6 +200,7 @@ describe('submit/answer terminal arbitration (#292 r1 mirror of #287)', () => {
     // #394: the flip rides the round-open transaction and arbitrates on the status AND
     // the updatedAt stamp this submit read
     expect(h.flipArgs).toEqual({ status: 'st-doing', updatedAt: h.taskRows[0]?.updatedAt });
+    expect(h.order).toEqual(['gating', 'dispatch']);
     expect(h.teardowns).toHaveLength(0);
   });
 
@@ -206,10 +222,30 @@ describe('submit/answer terminal arbitration (#292 r1 mirror of #287)', () => {
     );
     // #394: a lost submit writes NOTHING (the flip and the round rows are one
     // transaction), so there is no half-minted round to tear down — no teardown may run
+    // and no reviewer turn may be dispatched
     expect(h.teardowns).toEqual([]);
+    expect(h.order).toEqual([]);
     // nothing else wrote the task (no park-disarm: it could only ever strip a
     // concurrent round's legitimate park recovery state, #292 r3)
     expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(0);
+  });
+
+  it('a dispatch that throws after the commit never fails the landed submit (#394/#282)', async () => {
+    h.taskRows = [
+      {
+        status: 'st-doing',
+        assigneeId: 'worker-1',
+        ownerId: 'owner-1',
+        createdBy: 'owner-1',
+        questionChain: [],
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+        reviewers: [REV],
+      },
+    ];
+    h.statuses = [{ id: 'st-doing', category: CATEGORY.WORKING }];
+    h.dispatchThrows = true;
+    await expect(submitResult('task-1', 'worker-1', 'the work is done')).resolves.toEqual({ status: STATUS.inReview });
+    expect(h.order).toEqual(['gating', 'dispatch']);
   });
 
   it('a submit with no reviewers flips DONE through the same guarded write', async () => {

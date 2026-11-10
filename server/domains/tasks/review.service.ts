@@ -279,20 +279,11 @@ export async function openReviewRound(
       e instanceof Error ? e.message : e,
     );
   }
-  // the reviewer turn runs only for a WON flip. It is fault-isolated like the note: the
-  // round is already committed, so a dispatch failure must never be reported to the
-  // caller as a failed submit. dispatchAiReviewTurns parks the round rearmable when the
-  // task is still in-review; if the owner moved the task out of review inside this
-  // window the park has nothing to land on and the round is the owner's stale round —
-  // a manual move out of review is a legal action and the next submit opens max+1.
-  try {
-    await dispatchAiReviewTurns(taskId, resultBody);
-  } catch (e) {
-    log.warn(
-      `round ${result.round} opened but the reviewer turn failed for task ${taskId}:`,
-      e instanceof Error ? e.message : e,
-    );
-  }
+  // the reviewer turn is the CALLER's post-flip step, not part of the open: the submit
+  // still has to re-gate the task's parents, and a park raised here would be undone by
+  // the parent-gating restore in that same window (a fresh rearmable park reads as a
+  // blocked round with no open children). Dispatch therefore runs after the gating write,
+  // for a WON flip only.
   return result;
 }
 

@@ -431,6 +431,16 @@ export async function submitResult(taskId: string, authorId: string, body: strin
     if (!opened.flipped) throw new Error('task state changed during submit — a settle owns the outcome');
     await noteSkipped();
     await refreshParentGating(taskId);
+    // the reviewer turn is dispatched only AFTER the round committed and the parents
+    // re-gated (#394): a park raised here must stick — dispatching before the gating
+    // write let its restore arm immediately unblock the fresh park, burning two rungs of
+    // the rearm ladder per failed outage. Fault-isolated: the round is already the
+    // outcome, so a dispatch failure never turns a landed submit into an error.
+    try {
+      await dispatchAiReviewTurns(taskId, body);
+    } catch (e) {
+      log.warn(`round opened but the reviewer turn failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+    }
     // #365: a reviewer deleted inside the round-open window leaves a void row on the
     // round this submit just flipped in-review — settle it now (the settle is a no-op
     // while a live voter exists, so a normal submit pays only a few reads). The submit

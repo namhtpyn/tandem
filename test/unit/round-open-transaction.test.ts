@@ -287,16 +287,16 @@ describe('round open + in-review flip are one transaction (#394)', () => {
     expect(h.dispatched).toEqual([]);
   });
 
-  it('a WON flip dispatches the reviewer turn and notes the round only after the commit', async () => {
+  it('a WON flip notes the round after the commit and leaves the reviewer turn to the caller', async () => {
     h.aiIds = [A];
     const opened = await openReviewRound(T, [A], 'the result', FLIP);
     expect(opened.flipped).toBe(true);
-    expect(h.dispatched).toEqual([{ reviewerId: A, body: 'the result' }]);
+    // the turn is the caller's post-flip step: the submit still has to re-gate parents,
+    // and a park raised here would be undone by that gating restore (#394 r4)
+    expect(h.dispatched).toEqual([]);
     expect(h.notes.some((n) => n.body.includes('review round 2 opened'))).toBe(true);
-    // post-commit ordering: the flip precedes its rows, and the reviewer turn is
-    // dispatched only AFTER the round note (i.e. after the commit, never before it)
+    // ordering: the flip precedes its rows, and the note lands after the commit
     expect(h.events.slice(0, 3)).toEqual(['flip', 'review-row', 'obligation']);
-    expect(h.events.indexOf('dispatch')).toBeGreaterThan(h.events.indexOf('note'));
     expect(h.events.indexOf('note')).toBeGreaterThan(h.events.indexOf('obligation'));
   });
 });
