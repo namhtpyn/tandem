@@ -1,3 +1,12 @@
+## [2.78.11](https://github.com/namhtpyn/tandem/compare/v2.78.10...v2.78.11) (2026-11-10)
+
+
+### Bug Fixes
+
+* [#364](https://github.com/namhtpyn/tandem/issues/364) r1 review — scope the SPEC claim to the round-open window, pin the lock read's tx membership, cover the partial drop ([28fb216](https://github.com/namhtpyn/tandem/commit/28fb216d6a9a99a1f402c78e2722a8cd3ae87068))
+* [#364](https://github.com/namhtpyn/tandem/issues/364) r2 review — scope the FK claim to the reviewer FK, pin the lock predicate's column/operator/value, pin the round note count, drop dead mock state ([965aa80](https://github.com/namhtpyn/tandem/commit/965aa80cbe0da516e1c116b51b475f4deb527562))
+* [#364](https://github.com/namhtpyn/tandem/issues/364) reviewer-existence transaction — the round open locks the survivor user rows FOR KEY SHARE so a delete can never 23503 the submit ([a4f58ca](https://github.com/namhtpyn/tandem/commit/a4f58cacc60e727e9229be0ceefb7824202e52f4))
+
 ## [2.78.10](https://github.com/namhtpyn/tandem/compare/v2.78.9...v2.78.10) (2026-11-09)
 
 
