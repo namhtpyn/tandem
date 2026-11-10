@@ -325,6 +325,22 @@ describe('submit drops reviewers that no longer name a user (#361)', () => {
     expect(threadBodies().join('\n')).toContain('1 reviewer(s) skipped — not in the company');
   });
 
+  it('two in-round drops plus a pre-check ghost add up in ONE note, never collapse to a flag', async () => {
+    h.taskRows = [doingTask([LIVE, LIVE2, GHOST])];
+    h.roundDrops = [LIVE, LIVE2];
+    const res = await submitResult('task-1', 'worker-1', 'done');
+    expect(res).toEqual({ status: STATUS.done });
+    expect(threadBodies().join('\n')).toContain('3 reviewer(s) skipped — not in the company');
+  });
+
+  it('a pre-check ghost and one in-round drop stay ADDITIVE while the round still opens', async () => {
+    h.taskRows = [doingTask([LIVE, LIVE2, GHOST])];
+    h.roundDrops = [LIVE2];
+    const res = await submitResult('task-1', 'worker-1', 'done');
+    expect(res).toEqual({ status: STATUS.inReview });
+    expect(threadBodies().join('\n')).toContain('2 reviewer(s) skipped — not in the company');
+  });
+
   it('every survivor deleted inside the round-open transaction (#364) completes exactly like zero survivors', async () => {
     h.taskRows = [doingTask([LIVE])];
     h.roundDrops = [LIVE];
