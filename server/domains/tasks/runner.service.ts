@@ -1010,6 +1010,59 @@ export async function claimTaskForDispatch(taskId: string, ex: DbExecutor, assig
   return claimed.length > 0;
 }
 
+/** PLAN-RETRY LAW (#406): a plan/brief read failure flips NOTHING (there is no claim
+ * state to heal), but it must not leave the task at the head of the scan — the scan
+ * takes ONE candidate per tick (oldest first), so a single unplannable task (e.g. an
+ * environment secret that no longer decrypts) would occupy every tick and stall
+ * EVERY agent. Defer its next attempt instead; the error still surfaces to the caller. */
+const PLAN_RETRY_MS = 60_000;
+
+async function deferUnplannable(taskId: string) {
+  await db
+    .update(tasks)
+    .set({ dispatchAfter: new Date(Date.now() + PLAN_RETRY_MS), updatedAt: new Date() })
+    .where(eq(tasks.id, taskId));
+}
+
+/** the run's plan + frozen brief — every read createRun needs, all BEFORE its write
+ * transaction. Review turns run ON the task but must not claim it: flipping
+ * in-review → doing here would make the human verdict verbs (approve/request-changes)
+ * throw on the status gate — only the ASSIGNEE's dispatch owns the doing transition. */
+async function loadPlanAndBrief(taskId: string, opts?: DispatchOpts) {
+  try {
+    const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & {
+      review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'];
+    } = opts?.reviewBy // eslint-disable-line @typescript-eslint/consistent-type-definitions -- union widening
+      ? await loadReviewPlan(taskId, opts.reviewBy, opts.resultBody ?? '', opts?.verdictCorrection === true)
+      : await loadDispatchPlan(taskId);
+
+    // freeze the brief NOW (the drift fix): every attempt of this run replays exactly
+    // this prompt — no rebuild at retry time. Review turns compose through the SAME
+    // buildBrief in review mode (org, company, task-under-review, relay, submitted
+    // result, collected evidence, verdict contract — one composer, no parallel system).
+    const briefData = await loadBriefData(taskId, plan.ai.userId);
+    let reviewCtx: { resultBody: string; verdictsSoFar: string[]; correction?: boolean } | undefined;
+    if (plan.review) {
+      const { verdictsSoFarFor } = await import('./review.service');
+      reviewCtx = {
+        resultBody: plan.review.resultBody,
+        verdictsSoFar: await verdictsSoFarFor(taskId),
+        correction: opts?.verdictCorrection === true,
+      };
+    }
+    const brief = buildBrief({
+      ...briefData,
+      outDir: `~/.tandem/${taskId}/attachments/out/`,
+      review: reviewCtx,
+    });
+    return { plan, brief };
+  } catch (e) {
+    // never mask the cause: the deferral is best-effort, the original error wins
+    await deferUnplannable(taskId).catch(() => {});
+    throw e;
+  }
+}
+
 /** create the run row for a dispatch intent: claim the task (conditional flip — the
  * race arbiter), write the dispatch note, create the run's thread turn, freeze the
  * brief on the row. Transport-neutral — the caller enqueues {runId} (or executes
@@ -1017,43 +1070,18 @@ export async function claimTaskForDispatch(taskId: string, ex: DbExecutor, assig
  * duplicate and must not insert anything (CLAIM LAW #162).
  *
  * CLAIM-RUN ATOMICITY (#406): every READ (plan, brief, verdict history) lands BEFORE
- * the write transaction, so a read failure writes nothing; the claim, the run's
- * thread message and the RUNNING run row then commit in ONE transaction. A task in a
- * working status therefore always has its live run row committed with it — the
- * composer's liveness gate (steer / running-run reads), the per-agent cap and the
- * liveness sweep can never observe a claim without a run. */
+ * the write transaction, so a read failure flips NOTHING (PLAN-RETRY LAW defers the
+ * task instead of leaving it at the scan's head); the claim, the run's thread message
+ * and the RUNNING run row then commit in ONE transaction. A task in a working status
+ * therefore always has its live run row committed with it — the composer's liveness
+ * gate (steer / running-run reads), the per-agent cap and the liveness sweep can
+ * never observe a claim without a run. */
 export async function createRun(
   taskId: string,
   opts?: DispatchOpts,
 ): Promise<{ runId: string; employeeId: string } | null> {
-  // Review turns run ON the task but must not claim it: flipping in-review → doing
-  // here would make the human verdict verbs (approve/request-changes) throw on the
-  // status gate — only the ASSIGNEE's dispatch owns the doing transition.
-  const plan: Awaited<ReturnType<typeof loadDispatchPlan>> & {
-    review?: Awaited<ReturnType<typeof loadReviewPlan>>['review'];
-  } = opts?.reviewBy // eslint-disable-line @typescript-eslint/consistent-type-definitions -- union widening
-    ? await loadReviewPlan(taskId, opts.reviewBy, opts.resultBody ?? '', opts?.verdictCorrection === true)
-    : await loadDispatchPlan(taskId);
-
-  // freeze the brief NOW (the drift fix): every attempt of this run replays exactly
-  // this prompt — no rebuild at retry time. Review turns compose through the SAME
-  // buildBrief in review mode (org, company, task-under-review, relay, submitted
-  // result, collected evidence, verdict contract — one composer, no parallel system).
-  const briefData = await loadBriefData(taskId, plan.ai.userId);
-  let reviewCtx: { resultBody: string; verdictsSoFar: string[]; correction?: boolean } | undefined;
-  if (plan.review) {
-    const { verdictsSoFarFor } = await import('./review.service');
-    reviewCtx = {
-      resultBody: plan.review.resultBody,
-      verdictsSoFar: await verdictsSoFarFor(taskId),
-      correction: opts?.verdictCorrection === true,
-    };
-  }
-  const brief = buildBrief({
-    ...briefData,
-    outDir: `~/.tandem/${taskId}/attachments/out/`,
-    review: reviewCtx,
-  });
+  // every read happens before the write transaction (PLAN-RETRY LAW below)
+  const { plan, brief } = await loadPlanAndBrief(taskId, opts);
 
   const runId = uuidv7();
   const won = await db.transaction(async (tx) => {

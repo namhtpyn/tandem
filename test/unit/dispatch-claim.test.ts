@@ -86,15 +86,22 @@ vi.mock('../../server/db/index', async () => {
       user: { findMany: async () => [{ id: 'agent-1', name: 'Agent', title: null }] },
     },
     select: () => ({
-      from: (table: unknown) => ({
-        where: () => ({
+      from: (table: unknown) => {
+        const chain = {
+          innerJoin: () => chain,
+          where: () => chain,
+          orderBy: () => chain,
+          limit: async () => [],
           // the lock-order key share (#400/#406) — only the user table is selected
           for: async (mode?: string) => {
             h.writes.push({ op: 'lock', table: table === user ? 'user' : 'other', tx, mode });
             return table === user ? h.userRows : [];
           },
-        }),
-      }),
+          then: <R>(onFulfilled?: (v: unknown[]) => R) =>
+            Promise.resolve([] as unknown[]).then(() => onFulfilled?.([])),
+        };
+        return chain;
+      },
     }),
     insert: (table: unknown) => ({
       values: (values: Record<string, unknown>) => {
@@ -146,6 +153,11 @@ vi.mock('../../server/domains/tasks/brief.service', () => ({
   },
   activityKindOf: () => null,
 }));
+
+vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../server/domains/tasks/review.service')>();
+  return { ...mod, verdictsSoFarFor: async () => [] };
+});
 
 vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/kernel/kernel')>();
@@ -263,15 +275,27 @@ describe('createRun claim-run atomicity (#406)', () => {
     expect(h.writes.map((w) => `${w.op}:${w.table}`)).toEqual(['lock:user', 'update:tasks']);
   });
 
-  it('a read failure before the transaction writes NOTHING and opens no transaction', async () => {
+  it('a read failure flips nothing, opens no transaction, and defers the task', async () => {
     // every read (plan, brief, verdicts-so-far) lands BEFORE the transaction: a
-    // failure there must not have flipped anything, inserted anything, or even
+    // failure there must not have flipped the status, inserted anything, or even
     // opened a transaction — a read moved inside the tx would be invisible to the
-    // write-log pins, so the transaction counter is the arbiter
+    // write-log pins, so the transaction counter is the arbiter. PLAN-RETRY LAW: the
+    // task is deferred (dispatch_after) so it cannot sit at the scan's head forever.
     h.briefThrows = true;
     await expect(createRun('task-1')).rejects.toThrow('brief read failed');
     expect(h.txEnters).toBe(0);
-    expect(h.writes).toHaveLength(0);
+    expect(h.writes).toHaveLength(1);
+    expect(h.writes[0]).toMatchObject({ op: 'update', table: 'tasks' });
+    expect(h.writes[0].set?.status).toBeUndefined();
+    expect(h.writes[0].set?.dispatchAfter).toBeInstanceOf(Date);
+  });
+
+  it('a review turn takes NO claim — the task row is never flipped', async () => {
+    const out = await createRun('task-1', { reviewBy: 'rev-1', resultBody: 'submitted' });
+    expect(out).toEqual({ runId: expect.any(String), employeeId: 'agent-1' });
+    // no key-share lock, no claim update: flipping in-review → doing would 400 the
+    // human verdict verbs, so the review branch must stay claim-free
+    expect(h.writes.map((w) => `${w.op}:${w.table}`)).toEqual(['insert:taskMessages', 'insert:taskRuns']);
   });
 
   it('a vanished employee row is a LOST attempt, never a raw FK error', async () => {
