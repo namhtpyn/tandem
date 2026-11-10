@@ -24,55 +24,55 @@ const h = vi.hoisted(() => ({
 
 vi.mock('../../server/db/index', async () => {
   const { tasks } = await import('../../server/db/schema');
-  return {
-    asDb: (x: unknown) => x,
-    db: {
-      select: () => ({
-        // the only table-select consumer on these paths is recordProposals' task read
-        from: (table: unknown) => ({
-          where: () => ({
+  const db = {
+    select: () => ({
+      // the only table-select consumer on these paths is recordProposals' task read
+      from: (table: unknown) => ({
+        where: () => ({
+          then: (onF?: (v: Array<Record<string, unknown>>) => unknown) =>
+            Promise.resolve(table === tasks ? h.taskRows : ([] as Array<Record<string, unknown>>)).then(onF),
+          orderBy: () => ({
             then: (onF?: (v: Array<Record<string, unknown>>) => unknown) =>
               Promise.resolve(table === tasks ? h.taskRows : ([] as Array<Record<string, unknown>>)).then(onF),
-            orderBy: () => ({
-              then: (onF?: (v: Array<Record<string, unknown>>) => unknown) =>
-                Promise.resolve(table === tasks ? h.taskRows : ([] as Array<Record<string, unknown>>)).then(onF),
-            }),
           }),
         }),
       }),
-      update: (table: unknown) => ({
-        set: (set: Record<string, unknown>) => ({
-          where: (_cond: unknown) => {
-            const applied = () => {
-              h.flips.push({ set });
-              return table === tasks ? [{ id: 'task-1' }] : [];
-            };
-            return {
-              returning: async () => applied(),
-              then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => Promise.resolve(applied()).then(onF),
-              catch: (onR: (e: unknown) => unknown) => Promise.resolve(applied()).catch(onR),
-            };
-          },
-        }),
-      }),
-      insert: () => ({
-        values: async (v: Record<string, unknown>) => {
-          h.inserts.push(v);
+    }),
+    update: (table: unknown) => ({
+      set: (set: Record<string, unknown>) => ({
+        where: (_cond: unknown) => {
+          const applied = () => {
+            h.flips.push({ set });
+            return table === tasks ? [{ id: 'task-1' }] : [];
+          };
+          return {
+            returning: async () => applied(),
+            then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => Promise.resolve(applied()).then(onF),
+            catch: (onR: (e: unknown) => unknown) => Promise.resolve(applied()).catch(onR),
+          };
         },
       }),
-      query: {
-        tasks: { findMany: async () => h.taskRows },
-        taskStatuses: {
-          // honor the caller's predicate (DB-mock predicate law): a mis-wired where
-          // must FAIL the test, never be masked by an unfiltered mock
-          findMany: async (args?: { where?: { id?: { eq?: string } } }) => {
-            const id = args?.where?.id?.eq;
-            return id ? h.statuses.filter((s) => s.id === id) : h.statuses;
-          },
+    }),
+    insert: () => ({
+      values: async (v: Record<string, unknown>) => {
+        h.inserts.push(v);
+      },
+    }),
+    query: {
+      tasks: { findMany: async () => h.taskRows },
+      taskStatuses: {
+        // honor the caller's predicate (DB-mock predicate law): a mis-wired where
+        // must FAIL the test, never be masked by an unfiltered mock
+        findMany: async (args?: { where?: { id?: { eq?: string } } }) => {
+          const id = args?.where?.id?.eq;
+          return id ? h.statuses.filter((s) => s.id === id) : h.statuses;
         },
       },
     },
+    // #397: abandon arbitrates its cancel + round teardown in ONE transaction
+    transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(db),
   };
+  return { asDb: (x: unknown) => x, db };
 });
 
 vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {

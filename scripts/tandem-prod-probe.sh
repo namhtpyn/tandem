@@ -243,7 +243,7 @@ if [ -n "$V" ] && [ "$(printf '%s\n%s\n' "$RETFLOOR" "$V" | sort -V | tail -1)" 
   fi
 fi
 
-# 5f. strand shapes — watchdog coverage for two shipped bug classes that no other
+# 5f. strand shapes — watchdog coverage for the shipped bug classes that no other
 # check covers (watchlist "candidate probe" entries, probed 2026-11-06):
 #   (a) DEAD-ROUND WEDGE (#292 class): an in_review-category task with NO PENDING
 #       review row whose newest verdict landed AFTER the task's last write — the
@@ -265,17 +265,26 @@ fi
 #       it (ask/forward always name a holder), so it needs no manual-freedom
 #       discriminator. The removal/boot heal returns the task; a surviving count
 #       means the heal itself is broken.
+#   (d) STALLED REVIEW TURN (#397 class): an in_review-category task holding a PENDING
+#       AI reviewer row in its CURRENT round with NO RUNNING run on the task and no run
+#       opened for that reviewer since the row was minted, older than 5 min — the crash
+#       window between the round-open transaction and the reviewer turn (#394 moved the
+#       dispatch after the commit). The tick sweep re-fires it within seconds, so a
+#       surviving shape means the sweep itself is broken. No legal write path produces
+#       it: a human verdict moves the row off PENDING, a live turn has its run row, and a
+#       reviewer that already had a turn is excluded by the run-since-row predicate.
 # Two-pass confirm then id-set dedupe, mirroring ghostset: both shapes are illegal
 # states, not slow ones, so 10 min apart is already persistence. Separate psql pass
 # (probe law #4) + to_regclass guard for pre-review images (column-absent law).
 # SCHEMA-SYMMETRY (probe law #5): task_statuses.category, task_reviews.task_id/
 # status/decided_at/created_at, task_obligations.task_id/role/status/resolved_at/
-# created_at, tasks.status/updated_at — all verified against the live schema.
+# created_at, task_runs.status/employee_id/started_at, task_messages.task_id,
+# ai_employees.user_id, tasks.status/updated_at — all verified against the live schema.
 STRCOL=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"select (to_regclass('task_reviews') is not null and to_regclass('task_obligations') is not null)::int\"" 2>/dev/null) || STRCOL="guard-error"
 if [ "$STRCOL" = "guard-error" ]; then
   anom+=("strand_guard: column probe failed — detector blind")
 elif [ "$STRCOL" = "1" ]; then
-  STRSQL="select 'wedge', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING') and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id) > t.updated_at union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at union all select 'orphanans', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_obligations o on o.task_id = t.id where s.category = 'waiting_answer' and o.role = 'ANSWER' and o.status = 'PENDING' and o.employee_id is null and not exists (select 1 from task_obligations o2 where o2.task_id = t.id and o2.role = 'ANSWER' and o2.status = 'PENDING' and o2.employee_id is not null)) x), 'none')"
+  STRSQL="select 'wedge', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'in_review' and not exists (select 1 from task_reviews r where r.task_id = t.id and r.status = 'PENDING') and (select max(coalesce(r.decided_at, r.created_at)) from task_reviews r where r.task_id = t.id) > t.updated_at union all select 'strand', coalesce(string_agg(t.id::text, ',' order by t.id), 'none') from tasks t join task_statuses s on s.id = t.status where s.category = 'waiting_answer' and not exists (select 1 from task_obligations o where o.task_id = t.id and o.role = 'ANSWER' and o.status = 'PENDING') and (select max(coalesce(o.resolved_at, o.created_at)) from task_obligations o where o.task_id = t.id and o.role = 'ANSWER') > t.updated_at union all select 'orphanans', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_obligations o on o.task_id = t.id where s.category = 'waiting_answer' and o.role = 'ANSWER' and o.status = 'PENDING' and o.employee_id is null and not exists (select 1 from task_obligations o2 where o2.task_id = t.id and o2.role = 'ANSWER' and o2.status = 'PENDING' and o2.employee_id is not null)) x), 'none') union all select 'stallrv', coalesce((select string_agg(x.id::text, ',' order by x.id) from (select distinct t.id from tasks t join task_statuses s on s.id = t.status join task_reviews r on r.task_id = t.id and r.status = 'PENDING' and r.reviewer_id is not null join ai_employees a on a.user_id = r.reviewer_id where s.category = 'in_review' and r.round = (select max(r2.round) from task_reviews r2 where r2.task_id = t.id) and r.created_at < now() - interval '5 minutes' and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.status = 'RUNNING') and not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = t.id and tr.employee_id = r.reviewer_id and tr.started_at >= r.created_at)) x), 'none')"
   STRERR=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$STRSQL\"" 2>&1 >/dev/null | grep -m1 ERROR)
   STROUT=$("${CT[@]}" "docker exec -i work-ultranomic-net-tandem-db-1 psql -U tandem -d tandem -t -A -c \"$STRSQL\"" 2>/dev/null) || STROUT="db-unreachable"
   if [ "$STROUT" = "db-unreachable" ]; then
@@ -314,6 +323,17 @@ elif [ "$STRCOL" = "1" ]; then
       rm -f "$PROBE_STATE/orphanans.alerted"
     fi
     printf '%s\n' "${ORPHANANS:-none}" > "$PROBE_STATE/orphanans.prev"
+    # (d) stalled review turn: previous-pass presence confirm + id-set dedupe (#397)
+    STALLRV=$(echo "$STROUT" | awk -F'|' '/^stallrv/{print $2}')
+    if [ -n "${STALLRV:-}" ] && [ "$STALLRV" != "none" ] && [ "$(cat "$PROBE_STATE/stallrv.prev" 2>/dev/null || echo none)" != "none" ]; then
+      if [ "$(cat "$PROBE_STATE/stallrv.alerted" 2>/dev/null || echo none)" != "$STALLRV" ]; then
+        anom+=("stalled_review: in_review with a PENDING AI reviewer and no turn in flight [$STALLRV] — stalled-review sweep not re-firing, #397 class")
+        echo "$STALLRV" > "$PROBE_STATE/stallrv.alerted"
+      fi
+    else
+      rm -f "$PROBE_STATE/stallrv.alerted"
+    fi
+    printf '%s\n' "${STALLRV:-none}" > "$PROBE_STATE/stallrv.prev"
   fi
 fi
 

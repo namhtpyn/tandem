@@ -4,7 +4,7 @@
 // (0-row miss) and never overwrites a settled task.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { CATEGORY } from '#shared/enums';
+import { CATEGORY, OBLIGATION_ROLE } from '#shared/enums';
 import { STATUS } from '#shared/status';
 
 const h = vi.hoisted(() => ({
@@ -29,55 +29,58 @@ const REV = '00000000-0000-7000-8000-00000000a001';
 
 vi.mock('../../server/db/index', async () => {
   const { tasks } = await import('../../server/db/schema');
-  return {
-    asDb: (x: unknown) => x,
-    db: {
-      select: () => ({
-        from: () => {
-          const self: Record<string, unknown> = {};
-          self.where = () => ({ then: (onF?: (v: unknown) => unknown) => Promise.resolve([]).then(onF) });
-          self.innerJoin = () => self;
-          self.orderBy = () => self;
-          self.limit = async () => [];
-          return self;
-        },
-      }),
-      update: (table: unknown) => ({
-        set: (set: Record<string, unknown>) => ({
-          where: (cond: unknown) => {
-            const applied = () => {
-              h.updates.push({ table: table === tasks ? 'tasks' : 'other', set, pred: cond != null });
-              return h.cancelWins ? [{ id: 'task-1' }] : [];
-            };
-            return {
-              then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => Promise.resolve(applied()).then(onF),
-              catch: (onR: (e: unknown) => unknown) => Promise.resolve(applied()).catch(onR),
-              returning: async () => applied(),
-            };
-          },
-        }),
-      }),
-      insert: () => ({
-        values: () => {
-          const p = () => Promise.resolve([{ id: 'row-1' }]);
+  const db = {
+    select: () => ({
+      from: () => {
+        const self: Record<string, unknown> = {};
+        self.where = () => ({ then: (onF?: (v: unknown) => unknown) => Promise.resolve([]).then(onF) });
+        self.innerJoin = () => self;
+        self.orderBy = () => self;
+        self.limit = async () => [];
+        return self;
+      },
+    }),
+    update: (table: unknown) => ({
+      set: (set: Record<string, unknown>) => ({
+        where: (cond: unknown) => {
+          const applied = () => {
+            h.updates.push({ table: table === tasks ? 'tasks' : 'other', set, pred: cond != null });
+            // ORDER PIN (#397): the cancel CAS must be the transaction's FIRST write —
+            // record it so a teardown-before-CAS regression is visible
+            if (table === tasks) h.order.push('cancel-cas');
+            return h.cancelWins ? [{ id: 'task-1' }] : [];
+          };
           return {
-            then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => p().then(onF),
-            catch: (onR: (e: unknown) => unknown) => p().catch(onR),
-            returning: async () => [{ id: 'row-1' }],
+            then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => Promise.resolve(applied()).then(onF),
+            catch: (onR: (e: unknown) => unknown) => Promise.resolve(applied()).catch(onR),
+            returning: async () => applied(),
           };
         },
       }),
-      query: {
-        tasks: {
-          findMany: async () => h.taskRows,
-        },
-        taskStatuses: { findMany: async () => h.statuses },
-        // REVIEWER EXISTENCE (#361): submit re-checks the roster against the
-        // user table before opening a round — the fixture reviewer is live
-        user: { findMany: async () => [{ id: REV }] },
+    }),
+    insert: () => ({
+      values: () => {
+        const p = () => Promise.resolve([{ id: 'row-1' }]);
+        return {
+          then: (onF?: (v: Array<Record<string, unknown>>) => unknown) => p().then(onF),
+          catch: (onR: (e: unknown) => unknown) => p().catch(onR),
+          returning: async () => [{ id: 'row-1' }],
+        };
       },
+    }),
+    // #397: the abandon arbitrates its cancel AND its teardown in ONE transaction
+    transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(db),
+    query: {
+      tasks: {
+        findMany: async () => h.taskRows,
+      },
+      taskStatuses: { findMany: async () => h.statuses },
+      // REVIEWER EXISTENCE (#361): submit re-checks the roster against the
+      // user table before opening a round — the fixture reviewer is live
+      user: { findMany: async () => [{ id: REV }] },
     },
   };
+  return { asDb: (x: unknown) => x, db };
 });
 
 vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
@@ -139,6 +142,7 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
     recordVerdict: async () => ({ outcome: 'superseded' }),
     currentRound: async () => 1,
     teardownOpenRound: async (_t: unknown, settledTo: string) => {
+      h.order.push('teardown');
       h.teardowns.push(settledTo);
     },
   };
@@ -187,6 +191,28 @@ describe('abandonTask terminal arbitration (#287)', () => {
     // only the losing write was attempted — no retry, no second flip
     expect(h.updates).toHaveLength(1);
     expect(h.updates[0]?.pred).toBe(true);
+  });
+
+  // ABANDON ORDERING (#397): the cancel CAS is the transaction's FIRST write and the
+  // round teardown rides the SAME transaction — the old order tore the round down (rows
+  // superseded, obligations cancelled) BEFORE the CAS, so an abandon that then lost to a
+  // concurrent settle/submit had already destroyed the winner's round.
+  it('a lost abandon tears NOTHING down — the winner round and its obligations survive (#397)', async () => {
+    h.cancelWins = false;
+    await expect(abandonTask('task-1', 'owner-1', 'cancel it')).rejects.toThrow(/task state changed during cancel/);
+    // vacuity: teardown-before-CAS would record a teardown + both obligation cancels here
+    expect(h.teardowns).toEqual([]);
+    expect(h.cancelled).toEqual([]);
+    expect(h.order).toEqual(['cancel-cas']);
+  });
+
+  it('a won abandon CASes first, then tears the round down inside the same transaction (#397)', async () => {
+    await abandonTask('task-1', 'owner-1', 'cancel it');
+    // the CAS is recorded before the teardown, and both roles' obligations cancel; the
+    // parent re-gate still runs last (after the outcome committed)
+    expect(h.order).toEqual(['cancel-cas', 'teardown', 'gating']);
+    expect(h.cancelled).toEqual([OBLIGATION_ROLE.APPROVAL, OBLIGATION_ROLE.ANSWER]);
+    expect(h.teardowns).toEqual(['cancelled']);
   });
 });
 

@@ -647,6 +647,20 @@ export async function touchDispatcherRedisOk() {
   }
 }
 
+/** STALLED-REVIEW SWEEP wiring (#397): a committed round whose reviewer turn never
+ *  dispatched (crash window between the round-open transaction and the turn) is
+ *  re-fired from the tick. Dynamic import keeps review.service out of the dispatcher's
+ *  static graph (runner <-> review <-> dispatcher cycle); never rejects, like every
+ *  other tick arm. */
+async function sweepStalledReviewsTick() {
+  try {
+    const { sweepStalledReviewTurns } = await import('./review.service');
+    await sweepStalledReviewTurns();
+  } catch (e) {
+    log.warn('stalled-review tick failed:', e instanceof Error ? e.message : e);
+  }
+}
+
 /** start the interval; returns a stop function */
 export function startDispatcher(tandemUrl: string, intervalMs = 5000): () => void {
   const timer = setInterval(() => {
@@ -654,6 +668,7 @@ export function startDispatcher(tandemUrl: string, intervalMs = 5000): () => voi
     void reapStaleRuns(); // never rejects: its own catch turns errors into 0 reaped
     void sweepIdleWorking(); // never rejects: its own catch turns errors into 0 bounced
     void rearmParkedRounds(); // never rejects: its own catch turns errors into 0 rearmed
+    void sweepStalledReviewsTick(); // never rejects: its own catch turns errors into 0 re-fired (#397)
     void touchDispatcherHeartbeat(); // best-effort watchdog stamp (its own catch)
     void touchDispatcherRedisOk(); // best-effort watchdog stamp (#238, its own catch)
     void runRetentionLeg(); // daily retention leg (#266) — never rejects (its own catch)
