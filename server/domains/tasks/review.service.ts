@@ -279,8 +279,20 @@ export async function openReviewRound(
       e instanceof Error ? e.message : e,
     );
   }
-  // the reviewer turn runs only for a WON flip; a mint failure parks the round rearmable
-  await dispatchAiReviewTurns(taskId, resultBody);
+  // the reviewer turn runs only for a WON flip. It is fault-isolated like the note: the
+  // round is already committed, so a dispatch failure must never be reported to the
+  // caller as a failed submit. dispatchAiReviewTurns parks the round rearmable when the
+  // task is still in-review; if the owner moved the task out of review inside this
+  // window the park has nothing to land on and the round is the owner's stale round —
+  // a manual move out of review is a legal action and the next submit opens max+1.
+  try {
+    await dispatchAiReviewTurns(taskId, resultBody);
+  } catch (e) {
+    log.warn(
+      `round ${result.round} opened but the reviewer turn failed for task ${taskId}:`,
+      e instanceof Error ? e.message : e,
+    );
+  }
   return result;
 }
 
@@ -1791,10 +1803,12 @@ export async function teardownOnManualMove(taskId: string, fromStatus: string, t
  * obligations cancel, and the note lands on the thread. Decided/escalated rows stay
  * untouched as history. */
 export async function teardownOpenRound(taskId: string, settledTo: string) {
-  // the task's MAX round is the LIVE round at every call site: manual settle, abandon
-  // and the escalation self-heal all run after their arbitration was won, and a round
-  // only ever reaches the ledger through a WON submit flip (#394 — the flip and the
-  // round rows commit in one transaction), so no dead round can sit above the live one.
+  // the task's MAX round is the LIVE round at all three call sites, and a round only
+  // ever reaches the ledger through a WON submit flip (#394 — the flip and the round
+  // rows commit in one transaction), so no dead round can sit above the live one: the
+  // manual settle tears down AFTER its status write, the escalation self-heal is gated
+  // on a done/cancelled task, and abandon runs before its own CAS (pre-existing order,
+  // tracked with the crash-window gap in the #394 follow-up audit).
   const round = await currentRound(taskId);
   if (round === 0) return;
   const rows = await db

@@ -19,6 +19,7 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { REVIEW_STATUS } from '#shared/enums';
+import { STATUS } from '#shared/status';
 
 type ReviewRow = {
   id: string;
@@ -43,6 +44,8 @@ const h = vi.hoisted(() => ({
   insertTxIds: [] as number[],
   flipTxIds: [] as number[],
   flipConds: [] as unknown[],
+  flipSets: [] as Array<Record<string, unknown>>,
+  events: [] as string[],
   notes: [] as Array<{ body: string }>,
   dispatched: [] as Array<{ reviewerId: string; body: string }>,
   aiIds: [] as string[],
@@ -132,9 +135,11 @@ vi.mock('../../server/db/index', async () => {
         // the tasks flip — the transaction's first write
         h.flipTxIds.push(txId);
         return {
-          set: () => ({
+          set: (payload: Record<string, unknown>) => ({
             where: (cond: unknown) => {
               h.flipConds.push(cond);
+              h.flipSets.push(payload);
+              h.events.push('flip');
               return { returning: async () => (h.flipWins ? [{ id: 'task-1' }] : []) };
             },
           }),
@@ -152,6 +157,7 @@ vi.mock('../../server/db/index', async () => {
         values: async (vals: Record<string, unknown>) => {
           h.insertTxIds.push(txId);
           if (table === taskReviews) {
+            h.events.push('review-row');
             h.rows.push({
               id: String(vals.id),
               taskId: String(vals.taskId),
@@ -163,10 +169,12 @@ vi.mock('../../server/db/index', async () => {
             });
             h.seq += 1;
           }
-          if (table === taskObligations)
+          if (table === taskObligations) {
+            h.events.push('obligation');
             h.obligations.push(
               vals as unknown as { id: string; taskId: string; employeeId: string; role: string; status: string },
             );
+          }
           return { returning: async () => [{ id: `row-${h.seq}` }] };
         },
       };
@@ -186,6 +194,7 @@ vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {
   return {
     ...mod,
     insertActivityMessage: async (args: { body: string }) => {
+      h.events.push('note');
       h.notes.push(args);
     },
   };
@@ -196,6 +205,7 @@ vi.mock('../../server/domains/tasks/runner.service', async (importOriginal) => {
   return {
     ...mod,
     dispatchTask: async (_taskId: string, _url: string, opts: { reviewBy: string; resultBody: string }) => {
+      h.events.push('dispatch');
       h.dispatched.push({ reviewerId: opts.reviewBy, body: opts.resultBody });
       return { runId: 'run-1' };
     },
@@ -222,6 +232,8 @@ beforeEach(() => {
   h.insertTxIds = [];
   h.flipTxIds = [];
   h.flipConds = [];
+  h.flipSets = [];
+  h.events = [];
   h.notes = [];
   h.dispatched = [];
   h.aiIds = [];
@@ -254,6 +266,9 @@ describe('round open + in-review flip are one transaction (#394)', () => {
     expect(flipSql.sql).toContain('"tasks"."updated_at" =');
     expect(flipSql.params.slice(0, 2)).toEqual([T, FLIP.status]);
     expect(new Date(flipSql.params[2] as string).getTime()).toBe(FLIP.updatedAt.getTime());
+    // the flip LANDS the task in-review (a wrong target status would strand the round:
+    // the verdicts gate on the in-review category and no teardown closes a working move)
+    expect(h.flipSets[0]).toMatchObject({ status: STATUS.inReview });
     // TX-IDENTITY: the flip AND every row insert ride the SAME non-zero transaction
     const txIds = [...h.flipTxIds, ...h.insertTxIds];
     expect(h.rows).toHaveLength(2);
@@ -278,6 +293,11 @@ describe('round open + in-review flip are one transaction (#394)', () => {
     expect(opened.flipped).toBe(true);
     expect(h.dispatched).toEqual([{ reviewerId: A, body: 'the result' }]);
     expect(h.notes.some((n) => n.body.includes('review round 2 opened'))).toBe(true);
+    // post-commit ordering: the flip precedes its rows, and the reviewer turn is
+    // dispatched only AFTER the round note (i.e. after the commit, never before it)
+    expect(h.events.slice(0, 3)).toEqual(['flip', 'review-row', 'obligation']);
+    expect(h.events.indexOf('dispatch')).toBeGreaterThan(h.events.indexOf('note'));
+    expect(h.events.indexOf('note')).toBeGreaterThan(h.events.indexOf('obligation'));
   });
 });
 

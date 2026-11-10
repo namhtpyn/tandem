@@ -1,8 +1,9 @@
-// ROUND-OPEN FAILURE (#282): the park only lands from in-review — a dispatch mint
-// failure inside the submit's round-open window (task still working) finds nothing
-// to park and must RETHROW, so openReviewRound fails the submit with the task left
-// working and the just-minted rows superseded (obligations cancelled) — never a
-// live round with no run in flight and no re-fire.
+// ROUND-OPEN EXCEPTION (#282, re-homed by #394): the round open and the in-review flip
+// are one transaction, so a failed open writes nothing and the submit fails on a task
+// that never left its working status. The reviewer turn is dispatched only AFTER that
+// commit: a dispatch failure parks the round rearmable on an in-review task, and a park
+// that misses (the owner moved the task out of review) is swallowed — a landed submit is
+// never reported as failed.
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,6 +14,7 @@ const h = vi.hoisted(() => ({
   taskReads: [] as Array<Record<string, unknown>[]>,
   reviewReads: [] as Array<Record<string, unknown>[]>,
   parkWins: false,
+  flipWins: true,
   updates: [] as Array<{ table: string; set: Record<string, unknown>; pred: boolean }>,
   inserts: [] as Array<{ table: string; values: Record<string, unknown> }>,
   spawned: [] as string[],
@@ -69,7 +71,9 @@ vi.mock('../../server/db/index', async () => {
         where: (cond: unknown) => {
           const applied = () => {
             h.updates.push({ table: nameOf(table), set, pred: cond != null });
-            return h.parkWins ? [{ id: 'x-1' }] : [];
+            // the FLIP (sets in-review) and the PARK (sets blocked) arbitrate separately
+            const wins = nameOf(table) === 'tasks' && set.status === STATUS.blocked ? h.parkWins : h.flipWins;
+            return wins ? [{ id: 'x-1' }] : [];
           };
           return {
             ...thenable(applied),
@@ -147,6 +151,7 @@ beforeEach(() => {
   h.reviewReads.length = 0;
   h.dispatchError = new Error('redis down');
   h.parkWins = false;
+  h.flipWins = true;
   h.updates = [];
   h.inserts = [];
   h.spawned = [];
@@ -188,22 +193,54 @@ describe('round-open dispatch failure (#282)', () => {
     expect(h.updates.filter((u) => u.table === 'tasks')).toHaveLength(0);
   });
 
-  it('openReviewRound: the round + flip are one transaction, so a failed dispatch can no longer mint rows', async () => {
-    // the compensating supersede/cancel path is GONE (#394): the flip and the rows commit
-    // together, so a post-commit dispatch failure leaves a LIVE round that parks
-    // rearmable (the dispatch-level cases above) rather than aborting the submit with
-    // half-minted rows to tear down.
-    h.dispatchError = null;
-    h.parkWins = true; // the task-side guarded write wins = the flip landed
+  it('openReviewRound: a post-commit dispatch failure lands the submit and parks the round (#394/#282)', async () => {
+    // the flip + rows commit; the reviewer turn then fails and the park LANDS (the task
+    // is already in-review) — the submit must resolve, not 500 a round that shipped
+    h.dispatchError = new Error('redis down');
+    h.flipWins = true;
+    h.parkWins = true;
     h.reviewReads = [
       [{ round: 1 }],
       [{ round: 2 }],
       [{ id: 'r2', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }],
     ];
     h.taskReads = [[{ status: STATUS.inReview }]];
-    await openReviewRound('task-1', ['rev-1'], 'the result', { status: STATUS.doing, updatedAt: new Date(0) });
+    const opened = await openReviewRound('task-1', ['rev-1'], 'the result', {
+      status: STATUS.doing,
+      updatedAt: new Date(0),
+    });
+    expect(opened.flipped).toBe(true);
     expect(h.inserts.filter((i) => i.table === 'taskReviews')).toHaveLength(1);
+    expect(h.updates.find((u) => u.table === 'tasks' && u.set.status === STATUS.blocked)?.pred).toBe(true);
+    // nothing is torn down: there is no compensating supersede/cancel path any more
+    expect(h.updates.filter((u) => u.table === 'taskReviews')).toEqual([]);
     expect(h.cancelledFor).toEqual([]);
     expect(h.cancelledAll).toEqual([]);
+  });
+
+  it('openReviewRound: a dispatch failure whose park MISSES still never fails the landed submit', async () => {
+    // the owner moved the task out of review inside the commit→dispatch window: the
+    // park has nothing to land on, so dispatchAiReviewTurns rethrows — openReviewRound
+    // must swallow it (the round already committed; the error would misreport the submit)
+    h.dispatchError = new Error('redis down');
+    h.flipWins = true;
+    h.parkWins = false;
+    h.reviewReads = [
+      [{ round: 1 }],
+      [{ round: 2 }],
+      [{ id: 'r2', round: 2, status: REVIEW_STATUS.PENDING, reviewerId: 'rev-1' }],
+    ];
+    // the owner moved the task to a WORKING status inside the window: the park cannot
+    // land and dispatchAiReviewTurns takes its working-category rethrow
+    h.taskReads = [[{ status: STATUS.inReview }], [{ status: STATUS.doing }], [{ status: STATUS.doing }]];
+    h.statuses = [
+      { id: STATUS.doing, category: CATEGORY.WORKING },
+      { id: STATUS.inReview, category: CATEGORY.IN_REVIEW },
+    ];
+    await expect(
+      openReviewRound('task-1', ['rev-1'], 'the result', { status: STATUS.doing, updatedAt: new Date(0) }),
+    ).resolves.toMatchObject({ flipped: true });
+    expect(h.inserts.filter((i) => i.table === 'taskReviews')).toHaveLength(1);
+    expect(h.cancelledFor).toEqual([]);
   });
 });

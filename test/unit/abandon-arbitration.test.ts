@@ -188,7 +188,7 @@ describe('submit/answer terminal arbitration (#292 r1 mirror of #287)', () => {
     expect(h.teardowns).toHaveLength(0);
   });
 
-  it('an abandon that won between the gate read and the flip owns the outcome — the submit refuses and tears its just-opened round down', async () => {
+  it('an abandon that won between the gate read and the flip owns the outcome — the submit refuses having written nothing', async () => {
     h.taskRows = [
       {
         status: 'st-doing',
