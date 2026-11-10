@@ -649,9 +649,9 @@ export async function touchDispatcherRedisOk() {
 
 /** STALLED-REVIEW SWEEP wiring (#397): a committed round whose reviewer turn never
  *  dispatched (crash window between the round-open transaction and the turn) is
- *  re-fired from the tick. Dynamic import keeps review.service out of the dispatcher's
- *  static graph (runner <-> review <-> dispatcher cycle); never rejects, like every
- *  other tick arm. */
+ *  re-fired from the tick. The import stays dynamic so the tick pays nothing on the
+ *  happy path (review.service is already reachable statically via gating.service);
+ *  never rejects, like every other tick arm. */
 async function sweepStalledReviewsTick() {
   try {
     const { sweepStalledReviewTurns } = await import('./review.service');

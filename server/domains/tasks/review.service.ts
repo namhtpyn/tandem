@@ -317,7 +317,13 @@ export async function teardownAllPendingRounds(
     .select({ round: taskReviews.round })
     .from(taskReviews)
     .where(and(eq(taskReviews.taskId, taskId), eq(taskReviews.status, REVIEW_STATUS.PENDING)));
-  if (pending.length === 0) return;
+  if (pending.length === 0) {
+    // no pending row: nothing to supersede and nothing to note — but a terminal settle
+    // must STILL clear a leftover approval obligation (a crashed/aborted settle can leave
+    // one behind with no row), so the cancel runs unconditionally (#397 r4)
+    await cancelAllObligations(taskId, OBLIGATION_ROLE.APPROVAL, ex);
+    return;
+  }
   await d
     .update(taskReviews)
     .set({ status: REVIEW_STATUS.SUPERSEDED, decidedAt: new Date() })
@@ -1177,9 +1183,12 @@ async function sweepStalledReviewTurnsInner(): Promise<number> {
           candidate.createdAt,
         );
         // last read before the mint: the task should still be in review. This NARROWS the
-        // scan→mint window (a manual move or park in between must not gain a new turn); it
-        // cannot close it — review turns take no DB claim, so a move landing inside the
-        // mint's own reads still slips through (the terminal gates refuse the verdict).
+        // scan→mint window; it cannot close it — review turns take no DB claim, so a move
+        // landing inside the mint's own reads still mints a turn. The verdict's gates
+        // refuse a DONE/CANCELLED settle, but a NON-terminal move (todo/blocked) can be
+        // overridden by a machine settle — pre-existing for every mint caller, tracked in
+        // #401. This sweep neither introduces nor widens that window (it is the same
+        // caller contract the submit/removal/unblock re-fires use).
         probe.inReview = (await taskCategory(candidate.taskId)) === CATEGORY.IN_REVIEW;
       }
       if (!stalledReviewRefire({ ...candidate, reviewerId: candidate.reviewerId }, probe)) continue;
@@ -2017,9 +2026,10 @@ export async function teardownOnManualMove(taskId: string, fromStatus: string, t
 /** MANUAL SETTLE teardown: the owner moved the task to a terminal status — the
  * round dies with it. PENDING rows become `superseded` (audit, non-vote), approval
  * obligations cancel, and the note lands on the thread. Decided/escalated rows stay
- * untouched as history. `ex` (#397): the caller may fold the teardown into its own
- * transaction — abandon arbitrates its cancel AND this teardown in ONE transaction, so
- * a lost abandon tears down nothing. */
+ * untouched as history. `ex`/`opts` (#397): tx-capable and publish-deferrable for a
+ * caller that must fold the writes into its own transaction; the remaining production
+ * caller (the escalation self-heal) passes neither, and the abandon / manual settle /
+ * zero-survivor paths use `teardownAllPendingRounds` instead. */
 export async function teardownOpenRound(
   taskId: string,
   settledTo: string,

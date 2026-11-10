@@ -89,15 +89,24 @@ beforeEach(() => {
 });
 
 describe('teardownOnManualMove (obligation lifecycle #205)', () => {
-  it('waiting-answer → seeded done, round 0: ANSWER obligation cancelled, no crash on empty round', async () => {
+  // TERMINAL SETTLE (#397 r4): a done/cancelled task clears BOTH roles' obligations
+  // unconditionally — a leftover PENDING approval (a crashed/aborted settle leaves one
+  // with no row) must not outlive the settle, even on a task that never had a round.
+  it('waiting-answer → seeded done, round 0: ANSWER + APPROVAL cancelled, no crash on empty round', async () => {
     await teardownOnManualMove('t1', STATUS.waitingAnswer, STATUS.done);
-    expect(h.cancelAllCalls).toEqual([['t1', OBLIGATION_ROLE.ANSWER]]);
-    expect(h.updates).toHaveLength(0);
+    expect(h.cancelAllCalls.sort()).toEqual([
+      ['t1', OBLIGATION_ROLE.ANSWER],
+      ['t1', OBLIGATION_ROLE.APPROVAL],
+    ]);
+    expect(h.updates).toHaveLength(0); // no pending row -> nothing to supersede
   });
 
-  it('waiting-answer → CUSTOM done-category status: settled, ANSWER obligation cancelled', async () => {
+  it('waiting-answer → CUSTOM done-category status: settled, both obligations cancelled', async () => {
     await teardownOnManualMove('t1', 'custom-wait', 'custom-done');
-    expect(h.cancelAllCalls).toEqual([['t1', OBLIGATION_ROLE.ANSWER]]);
+    expect(h.cancelAllCalls.sort()).toEqual([
+      ['t1', OBLIGATION_ROLE.ANSWER],
+      ['t1', OBLIGATION_ROLE.APPROVAL],
+    ]);
     expect(h.updates).toHaveLength(0);
   });
 

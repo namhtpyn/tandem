@@ -323,17 +323,25 @@ elif [ "$STRCOL" = "1" ]; then
       rm -f "$PROBE_STATE/orphanans.alerted"
     fi
     printf '%s\n' "${ORPHANANS:-none}" > "$PROBE_STATE/orphanans.prev"
-    # (d) stalled review turn: previous-pass presence confirm + id-set dedupe (#397)
-    STALLRV=$(echo "$STROUT" | awk -F'|' '/^stallrv/{print $2}')
-    if [ -n "${STALLRV:-}" ] && [ "$STALLRV" != "none" ] && [ "$(cat "$PROBE_STATE/stallrv.prev" 2>/dev/null || echo none)" != "none" ]; then
-      if [ "$(cat "$PROBE_STATE/stallrv.alerted" 2>/dev/null || echo none)" != "$STALLRV" ]; then
-        anom+=("stalled_review: in_review with a PENDING AI reviewer and no turn in flight [$STALLRV] — stalled-review sweep not re-firing, #397 class")
-        echo "$STALLRV" > "$PROBE_STATE/stallrv.alerted"
+    # (d) stalled review turn: previous-pass presence confirm + id-set dedupe (#397).
+    # VERSION FLOOR: the sweep ships in 2.78.13 — on an older image the crash-window shape
+    # is real and the sweep does not exist yet, so the arm stays silent (it would
+    # misattribute cause) and leaves no state behind.
+    STALLFLOOR=2.78.13
+    STALL_ARM=0
+    if [ -n "$V" ] && [ "$(printf '%s\n%s\n' "$STALLFLOOR" "$V" | sort -V | tail -1)" = "$V" ]; then STALL_ARM=1; fi
+    if [ "$STALL_ARM" = "1" ]; then
+      STALLRV=$(echo "$STROUT" | awk -F'|' '/^stallrv/{print $2}')
+      if [ -n "${STALLRV:-}" ] && [ "$STALLRV" != "none" ] && [ "$(cat "$PROBE_STATE/stallrv.prev" 2>/dev/null || echo none)" != "none" ]; then
+        if [ "$(cat "$PROBE_STATE/stallrv.alerted" 2>/dev/null || echo none)" != "$STALLRV" ]; then
+          anom+=("stalled_review: in_review with a PENDING AI reviewer and no turn in flight [$STALLRV] — stalled-review sweep not re-firing, #397 class")
+          echo "$STALLRV" > "$PROBE_STATE/stallrv.alerted"
+        fi
+      else
+        rm -f "$PROBE_STATE/stallrv.alerted"
       fi
-    else
-      rm -f "$PROBE_STATE/stallrv.alerted"
+      printf '%s\n' "${STALLRV:-none}" > "$PROBE_STATE/stallrv.prev"
     fi
-    printf '%s\n' "${STALLRV:-none}" > "$PROBE_STATE/stallrv.prev"
   fi
 fi
 
