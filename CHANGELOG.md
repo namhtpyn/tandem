@@ -1,3 +1,10 @@
+## [2.78.15](https://github.com/namhtpyn/tandem/compare/v2.78.14...v2.78.15) (2026-11-10)
+
+
+### Bug Fixes
+
+* [#400](https://github.com/namhtpyn/tandem/issues/400) retrain — release notes push was rejected, republish 2.78.14 as a fresh tag ([136e784](https://github.com/namhtpyn/tandem/commit/136e784e54125b775e0f95d4e321d70460682589))
+
 ## [2.78.14](https://github.com/namhtpyn/tandem/compare/v2.78.13...v2.78.14) (2026-11-10)
 
 
