@@ -77,22 +77,25 @@ vi.mock('../../server/db/index', async () => {
         return builderFor(table);
       },
     }),
-    insert: (table: unknown) => ({
-      values: async (vals: Record<string, unknown>) => {
-        h.insertInTx.push(h.inTx);
-        if (table === taskReviews) {
-          if (h.failOnInsert > 0 && h.rowInserts.length + 1 === h.failOnInsert) throw new Error('insert_fk_miss');
-          h.rowInserts.push(String(vals.reviewerId));
-        }
-        if (table === taskObligations) {
-          h.obligationSpawns += 1;
-          if (h.failOnObligation > 0 && h.obligationSpawns === h.failOnObligation)
-            throw new Error('obligation_insert_failed');
-          h.insertedObligations.push(String(vals.id));
-        }
-        return { returning: async () => [{ id: `msg-${h.rowInserts.length}` }] };
-      },
-    }),
+    insert: function (this: { __tx?: boolean }, table: unknown) {
+      const inTx = Boolean(this.__tx);
+      return {
+        values: async (vals: Record<string, unknown>) => {
+          h.insertInTx.push(inTx);
+          if (table === taskReviews) {
+            if (h.failOnInsert > 0 && h.rowInserts.length + 1 === h.failOnInsert) throw new Error('insert_fk_miss');
+            h.rowInserts.push(String(vals.reviewerId));
+          }
+          if (table === taskObligations) {
+            h.obligationSpawns += 1;
+            if (h.failOnObligation > 0 && h.obligationSpawns === h.failOnObligation)
+              throw new Error('obligation_insert_failed');
+            h.insertedObligations.push(String(vals.id));
+          }
+          return { returning: async () => [{ id: `msg-${h.rowInserts.length}` }] };
+        },
+      };
+    },
     update: (table: unknown) => ({
       set: (vals: Record<string, unknown>) => ({
         where: async (cond: unknown) => {
@@ -112,7 +115,9 @@ vi.mock('../../server/db/index', async () => {
       transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
         h.inTx = true;
         try {
-          return await fn(mockDb);
+          // a DISTINCT tx surface: an insert that forgot to pass `tx` lands on the
+          // pool mock (no __tx) and the in-transaction pin goes red
+          return await fn({ ...mockDb, __tx: true });
         } finally {
           h.inTx = false;
         }
