@@ -32,6 +32,7 @@ const h = vi.hoisted(() => ({
   dispatched: [] as Array<{ taskId: string; opts?: { reviewBy?: string } }>,
   aiIds: [] as string[],
   published: 0,
+  insertThrows: false,
 }));
 
 const REV = '00000000-0000-7000-8000-00000000a001';
@@ -80,10 +81,13 @@ vi.mock('../../server/db/index', async () => {
     select: (projection?: Record<string, unknown>) => builder(projection),
     update: () => ({ set: () => ({ where: () => ({ returning: async () => [], then: async () => [] }) }) }),
     insert: () => ({
-      values: () => ({
-        returning: async () => [{ id: 'msg-1' }],
-        then: (f?: (v: unknown) => unknown) => Promise.resolve([{ id: 'msg-1' }]).then(f),
-      }),
+      values: () => {
+        if (h.insertThrows) throw new Error('thread insert failed');
+        return {
+          returning: async () => [{ id: 'msg-1' }],
+          then: (f?: (v: unknown) => unknown) => Promise.resolve([{ id: 'msg-1' }]).then(f),
+        };
+      },
     }),
     transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(db),
     query: {
@@ -136,6 +140,7 @@ beforeEach(() => {
   h.dispatched = [];
   h.aiIds = [REV];
   h.published = 0;
+  h.insertThrows = false;
 });
 
 describe('stalledReviewRefire (#397 pure decision)', () => {
@@ -240,6 +245,13 @@ describe('sweepStalledReviewTurns (#397 behaviour)', () => {
     expect(h.dispatched).toHaveLength(1);
     expect(h.dispatched[0]?.taskId).toBe(TASK);
     expect(h.dispatched[0]?.opts?.reviewBy).toBe(REV);
+  });
+
+  it('a post-mint note failure never turns a minted turn into a failed mint (#397 r5)', async () => {
+    h.insertThrows = true; // the thread note throws AFTER the run was created
+    const refired = await sweepStalledReviewTurns();
+    expect(refired).toBe(1); // the turn exists — the sweep reports the outcome, not the note
+    expect(h.dispatched).toHaveLength(1);
   });
 
   it('suppresses the re-fire while a run is live on the task', async () => {

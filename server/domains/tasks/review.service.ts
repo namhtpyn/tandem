@@ -1094,7 +1094,10 @@ export function stalledReviewScan(ex: DbExecutor, cutoff: Date) {
         // no live turn on the task
         sql`not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = ${tasks.id} and tr.status = ${RUN_STATUS.RUNNING})`,
         // the reviewer was never dispatched in this round — a reviewer that already had
-        // a turn belongs to the verdict-less-correction / park machinery
+        // a turn is owned by the verdict-less-correction / park machinery. RESIDUAL: a run
+        // that wrote DONE but whose settle was lost to a hard crash (nothing re-runs the
+        // settle; the reaper scans RUNNING only) matches this predicate and stays stuck —
+        // a pre-existing settle-loss window, tracked in #402, not created by this sweep.
         sql`not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = ${tasks.id} and tr.employee_id = ${taskReviews.reviewerId} and tr.started_at >= ${taskReviews.createdAt})`,
       ),
     )
@@ -1388,11 +1391,18 @@ async function dispatchAiReviewTurnsUnlocked(
         resultBody: body,
         verdictCorrection: opts?.verdictCorrection === true,
       });
-      await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review turn dispatched to reviewer ${row.reviewerId}`, {
-        reviewTurn: true,
-        reviewerId: row.reviewerId,
-        round,
-      });
+      // POST-MINT NOTE (#397 r5): the turn is already the outcome — a note failure is
+      // logged, never converted into a failed mint (the sweep would under-count and the
+      // catch below would park a round that has a live turn).
+      try {
+        await logActivity(taskId, ACTIVITY_KIND.STATUS, null, `review turn dispatched to reviewer ${row.reviewerId}`, {
+          reviewTurn: true,
+          reviewerId: row.reviewerId,
+          round,
+        });
+      } catch (e) {
+        log.warn(`review turn dispatched but its note failed for task ${taskId}:`, e instanceof Error ? e.message : e);
+      }
       return true; // SEQUENTIAL: one turn in flight — the next fires from this verdict's settle
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
@@ -2037,11 +2047,12 @@ export async function teardownOpenRound(
   opts: { publish?: boolean } = {},
 ) {
   const d = asDb(ex);
-  // the task's MAX round is what the remaining call sites want: the round-open rollback
-  // (nothing but the JUST-minted round can exist there) and the escalation self-heal
-  // (gated on a done/cancelled task). Settles that must not trust the MAX round — the
-  // abandon, the manual move to a terminal status, the zero-survivor completion — use
-  // `teardownAllPendingRounds`: an older round can hide a live PENDING row.
+  // the task's MAX round is what the one remaining production caller wants: the
+  // escalation self-heal, gated on a done/cancelled task (the round-open rollback cancels
+  // its own obligations by id inside its own transaction and never calls this). Settles
+  // that must not trust the MAX round — the abandon, the manual move to a terminal status,
+  // the zero-survivor completion — use `teardownAllPendingRounds`: an older round can hide
+  // a live PENDING row.
   const round = await currentRound(taskId, ex);
   if (round === 0) return;
   const rows = await d
