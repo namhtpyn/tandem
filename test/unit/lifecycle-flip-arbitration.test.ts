@@ -8,10 +8,12 @@ import type { SQL } from 'drizzle-orm';
 // obligation and refuses. The ask flip also runs BEFORE its obligation writes
 // (OBLIGATION-CANCEL-AFTER-FLIP, #314 r1) — a lost flip touches zero rows.
 //
-// Vacuity: each lost-flip pin fails with the guard removed (the mock applies the
-// flip only on a non-empty returning result, so an unguarded write still flips);
-// the ordering pin fails if the obligation cancel moves back above the flip; the
-// predicate pin renders the where and asserts column + operator + value.
+// Vacuity: the mock arbitrates on a non-empty RETURNING result, so the lost-flip
+// tests pin the CONTROL FLOW (a loss writes/dispatches nothing); the GUARD itself is
+// pinned by the exact rendered-SQL assertions (column + operator + value — an `or(`
+// swap or an id-only where fails them). The ordering pin fails if the obligation
+// cancel moves back above the flip; the retry pins model a real row bump so a
+// stale-read retry fails them.
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -26,10 +28,19 @@ const h = vi.hoisted(() => ({
   applied: true,
   // lose this many flip attempts (then win) — pins the retry-once path
   loseFlips: 0,
+  // model the CONCURRENT WRITE, not just a flag: a lost attempt bumps the row so a
+  // retry that reuses the stale read is provably wrong (its CAS params stay stale)
+  bumpOnLoss: false,
+  reassignOnLoss: false,
+  freshAt: new Date('2026-11-10T09:00:05.000Z'),
   txSeq: 0,
   // transaction ids observed by the obligation writes (TX-IDENTITY PIN LAW: a boolean
   // 'inside a transaction' flag cannot tell the caller's tx from a second one)
   obTxIds: [] as Array<number | null>,
+  // key-share locks taken inside a transaction (lock-order pin) + the tx the
+  // question ACTIVITY row rode (it must be the park's own tx)
+  locks: [] as string[],
+  noteTxIds: [] as Array<number | null>,
   seq: [] as string[],
   dispatches: [] as string[],
   cancelled: [] as string[],
@@ -51,6 +62,13 @@ vi.mock('../../server/db/index', async () => {
           h.seq.push('flip');
           const lose = !h.applied || h.loseFlips > 0;
           if (h.loseFlips > 0) h.loseFlips--;
+          if (lose && h.bumpOnLoss) {
+            h.taskRows[0] = {
+              ...h.taskRows[0],
+              updatedAt: h.freshAt,
+              ...(h.reassignOnLoss ? { assigneeId: 'worker-2' } : {}),
+            };
+          }
           return table === tasks && !lose ? [{ id: 'task-1' }] : [];
         };
         return {
@@ -73,9 +91,18 @@ vi.mock('../../server/db/index', async () => {
         return fn({
           __tx: txId,
           update: (table: unknown) => makeUpdate(table, txId),
-          select: () => {
-            throw new Error('the note/ask paths must not use the select builder');
-          },
+          // the ask park key-shares the holder's user row before the tasks row
+          select: () => ({
+            from: () => ({
+              where: (cond: unknown) => ({
+                for: async () => {
+                  const { params } = new PgDialect().sqlToQuery(cond as SQL);
+                  h.locks.push(String(params[0]));
+                  return [{ id: String(params[0]) }];
+                },
+              }),
+            }),
+          }),
           insert: () => ({ values: async () => {} }),
         });
       },
@@ -160,9 +187,10 @@ vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/tasks/thread.service')>();
   return {
     ...mod,
-    insertActivityMessage: async (...args: unknown[]) => {
-      h.notes.push(args);
+    insertActivityMessage: async (input: unknown, ex?: { __tx?: number }) => {
+      h.notes.push(input);
       h.seq.push('note');
+      h.noteTxIds.push(ex?.__tx ?? null);
     },
   };
 });
@@ -213,8 +241,12 @@ beforeEach(() => {
   h.flips = [];
   h.applied = true;
   h.loseFlips = 0;
+  h.bumpOnLoss = false;
+  h.reassignOnLoss = false;
   h.txSeq = 0;
   h.obTxIds = [];
+  h.locks = [];
+  h.noteTxIds = [];
   h.seq = [];
   h.dispatches = [];
   h.cancelled = [];
@@ -234,10 +266,12 @@ describe('askQuestion parks before touching obligations (#400)', () => {
     expect(h.spawned).toEqual(['ANSWER:owner-1']);
     expect(h.flips[0]?.set.status).toBe(STATUS.waitingAnswer);
     expect(h.flips[0]?.set.questionChain).toEqual(['owner-1']);
-    // TX-IDENTITY: the flip and BOTH obligation writes rode ONE transaction
-    const ids = [h.flips[0]?.txId, ...h.obTxIds];
+    // TX-IDENTITY: the flip, BOTH obligation writes AND the question row rode ONE tx
+    const ids = [h.flips[0]?.txId, ...h.obTxIds, ...h.noteTxIds];
     expect(new Set(ids).size).toBe(1);
     expect(ids[0]).toBeGreaterThan(0);
+    // LOCK ORDER: the holder's user row is key-shared before the tasks flip
+    expect(h.locks).toEqual(['owner-1']);
   });
 
   it('a lost ask flip cancels and spawns NOTHING and refuses', async () => {
@@ -253,18 +287,33 @@ describe('askQuestion parks before touching obligations (#400)', () => {
     expect(h.obTxIds).toHaveLength(0);
   });
 
-  it('a benign concurrent write (one lost flip) re-reads and re-arbitrates instead of failing the settle', async () => {
+  it('a benign concurrent write (one lost flip) re-reads and re-arbitrates on the FRESH stamp', async () => {
     seedWorkingAiTask();
     h.loseFlips = 1;
+    h.bumpOnLoss = true; // the row really changed — a stale-read retry would miss again
     const res = await askQuestion('task-1', 'worker-1', 'which scope?');
     expect(res).toEqual({ holderId: 'owner-1' });
     expect(h.flips).toHaveLength(2);
+    // the winning CAS arbitrates on the RE-READ stamp, not the attempt-0 one
+    const win = new PgDialect().sqlToQuery(h.flips[1]?.cond as SQL);
+    expect(win.params[2]).toBe(h.freshAt.toISOString());
     // the losing attempt wrote nothing; the winning attempt's obligations rode ITS tx
     const winTx = h.flips[1]?.txId;
     expect(winTx).toBeGreaterThan(0);
     expect(h.obTxIds).toEqual([winTx, winTx]);
     expect(h.spawned).toEqual(['ANSWER:owner-1']);
     expect(h.seq).toEqual(['flip', 'flip', 'cancel', 'spawn', 'note']);
+  });
+
+  it('a reassignment in the retry window still parks the question (authority decided on the first read)', async () => {
+    seedWorkingAiTask();
+    h.loseFlips = 1;
+    h.bumpOnLoss = true;
+    h.reassignOnLoss = true; // the run's assignee is no longer the task's assignee
+    const res = await askQuestion('task-1', 'worker-1', 'which scope?');
+    expect(res).toEqual({ holderId: 'owner-1' });
+    expect(h.spawned).toEqual(['ANSWER:owner-1']);
+    expect(h.notes).toHaveLength(1);
   });
 
   it('the ask flip pins id + the read status + the read updatedAt (operator + value)', () => {
@@ -300,8 +349,21 @@ describe('addNote dispatch flip arbitrates on the read row (#400)', () => {
     const res = await addNote('task-1', 'human-1', 'a note racing a settle');
     expect(res).toEqual({ steered: false });
     expect(h.dispatches).toHaveLength(0);
-    expect(h.seq).toEqual(['note', 'flip']);
+    // retry-once: two attempts, both lost
+    expect(h.seq).toEqual(['note', 'flip', 'flip']);
     expect(h.notes).toHaveLength(1);
+  });
+
+  it('a benign concurrent write retries the dispatch flip once on the fresh stamp', async () => {
+    seedWorkingAiTask();
+    h.loseFlips = 1;
+    h.bumpOnLoss = true;
+    const res = await addNote('task-1', 'human-1', 'send');
+    expect(res).toEqual({ steered: false, dispatched: true });
+    expect(h.flips).toHaveLength(2);
+    const win = new PgDialect().sqlToQuery(h.flips[1]?.cond as SQL);
+    expect(win.params[2]).toBe(h.freshAt.toISOString());
+    expect(h.dispatches).toEqual(['task-1']);
   });
 
   it('the note flip pins id + the read status + the read updatedAt (operator + value)', async () => {

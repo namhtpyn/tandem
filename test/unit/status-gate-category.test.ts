@@ -35,6 +35,8 @@ vi.mock('../../server/db/index', async () => {
             then: (onF?: (v: Array<Record<string, unknown>>) => unknown) =>
               Promise.resolve(table === tasks ? h.taskRows : ([] as Array<Record<string, unknown>>)).then(onF),
           }),
+          // #400: askQuestion key-shares the holder's user row before the tasks flip
+          for: async (_lock: string) => (table === tasks ? h.taskRows : [{ id: 'owner-1' }]),
         }),
       }),
     }),
