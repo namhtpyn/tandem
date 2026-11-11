@@ -252,6 +252,7 @@ describe('dispatchAiReviewTurns carried correction across the mint lock (#380)',
     ).toBe(false);
     release();
     await plain;
+    expect(h.dispatchCalls[0]?.verdictCorrection).toBe(false); // nothing parked: the winner's turn is plain
     await dispatchAiReviewTurns('task-noround', 'submitted work');
     expect(h.dispatchCalls).toHaveLength(2);
     expect(h.dispatchCalls[1]?.verdictCorrection).toBe(false);
