@@ -657,7 +657,13 @@ export async function touchDispatcherRedisOk() {
  *  never rejects, like every other tick arm. */
 async function sweepStalledReviewsTick() {
   try {
-    const { sweepStalledReviewTurns } = await import('./review.service');
+    const { sweepStalledReviewTurns, sweepLostReviewSettles } = await import('./review.service');
+    // SETTLE-REPLAY SWEEP (#402) RUNS FIRST: a crashed settle must be replayed before the
+    // #397 sweep mints the NEXT reviewer's turn — the round is sequential, and a mint
+    // here would mask the replay (that turn's verdict opens a later run for the crashed
+    // reviewer). The #397 scan also excludes the lost-settle shape, so the order is
+    // belt-and-braces. Same never-reject contract (each sweep owns its try/catch).
+    await sweepLostReviewSettles();
     await sweepStalledReviewTurns();
   } catch (e) {
     log.warn('stalled-review tick failed:', e instanceof Error ? e.message : e);
