@@ -9,6 +9,10 @@ const h = vi.hoisted(() => ({
   rows: [] as Array<Record<string, unknown>>,
   runMarks: [] as Array<Record<string, unknown>>,
   aiIds: [] as string[],
+  round: 1,
+  aiReads: 0,
+  gate: null as Promise<void> | null,
+  failNextDispatch: false,
 }));
 
 vi.mock('../../server/domains/tasks/runner.service', async (importOriginal) => {
@@ -17,6 +21,10 @@ vi.mock('../../server/domains/tasks/runner.service', async (importOriginal) => {
     ...mod,
     dispatchTask: async (_taskId: string, _url: string, opts?: Record<string, unknown>) => {
       h.dispatchCalls.push(opts ?? {});
+      if (h.failNextDispatch) {
+        h.failNextDispatch = false;
+        throw new Error('dispatch exploded');
+      }
       return { runId: 'run-1' };
     },
   };
@@ -38,7 +46,7 @@ const mkChain = (cols: unknown, isTaskRow = false): Chain => {
     const c = (cols ?? {}) as Record<string, unknown>;
     // the IN-REVIEW MINT GATE's task-status read (#401)
     if (isTaskRow && 'status' in c) return [{ status: 'st-review' }];
-    if ('round' in c) return [{ round: 1 }];
+    if ('round' in c) return [{ round: h.round }];
     if ('resultBody' in c) return [{ resultBody: 'submitted work' }];
     if ('id' in c) return [];
     // the mint's settle-owned ordering read (#402 r5): reviewer → newest run mark
@@ -63,7 +71,15 @@ vi.mock('../../server/db/index', async () => {
     db: {
       select: (cols?: unknown) => ({ from: (table: unknown) => mkChain(cols, table === tasks) }),
       query: {
-        aiEmployees: { findMany: async () => (h.aiIds.length ? h.aiIds : ['rev-1']).map((userId) => ({ userId })) },
+        aiEmployees: {
+          findMany: async () => {
+            h.aiReads += 1;
+            // test seam: suspend an in-flight mint INSIDE its critical section so a
+            // racing caller provably loses the per-task lock
+            if (h.gate) await h.gate;
+            return (h.aiIds.length ? h.aiIds : ['rev-1']).map((userId: string) => ({ userId }));
+          },
+        },
         // the IN-REVIEW MINT GATE (#401) resolves the task's status category before
         // any dispatch; every case here mints on an in-review task
         taskStatuses: { findMany: async () => [{ id: 'st-review', category: 'in_review' }] },
@@ -89,6 +105,10 @@ beforeEach(() => {
   h.rows = [];
   h.runMarks = [];
   h.aiIds = [];
+  h.round = 1;
+  h.aiReads = 0;
+  h.gate = null;
+  h.failNextDispatch = false;
 });
 
 describe('dispatchAiReviewTurns verdictCorrection threading (#276)', () => {
@@ -117,6 +137,115 @@ describe('dispatchAiReviewTurns verdictCorrection threading (#276)', () => {
     await dispatchAiReviewTurns('task-1', 'submitted work');
     expect(h.dispatchCalls).toHaveLength(1);
     expect(h.dispatchCalls[0]?.verdictCorrection).toBe(false);
+  });
+});
+
+describe('dispatchAiReviewTurns carried correction across the mint lock (#380)', () => {
+  const minted = new Date('2026-11-11T00:00:00Z');
+  const row = (reviewerId: string, createdAt: Date) => ({ reviewerId, round: 1, status: 'PENDING', createdAt });
+  const gateMint = () => {
+    let release!: () => void;
+    h.gate = new Promise<void>((resolve) => (release = resolve));
+    return release;
+  };
+
+  it('a correction queued behind an in-flight plain mint is CARRIED by it — one turn, corrected', async () => {
+    // The #380 window: a plain mint holds the per-task lock, a verdict-less settle's
+    // correction caller loses it. Without the carry that plain turn burns the ONE bounded
+    // retry (#276) and the round parks with no corrected brief ever sent.
+    h.rows = [row('rev-1', minted)];
+    h.aiIds = ['rev-1'];
+    const release = gateMint();
+    const plain = dispatchAiReviewTurns('task-carry', 'submitted work');
+    await vi.waitFor(() => expect(h.aiReads).toBe(1)); // the plain mint is inside its critical section
+    const lost = await dispatchAiReviewTurns('task-carry', undefined, {
+      verdictCorrection: true,
+      verdictlessReviewerId: 'rev-1',
+    });
+    expect(lost).toBe(false); // the loser never dispatches
+    expect(h.dispatchCalls).toHaveLength(0);
+    release();
+    expect(await plain).toBe(true);
+    expect(h.dispatchCalls).toHaveLength(1); // exactly one turn
+    expect(h.dispatchCalls[0]).toMatchObject({ reviewBy: 'rev-1', verdictCorrection: true });
+  });
+
+  it('never rides another reviewer — it waits for its own row and is consumed exactly once', async () => {
+    h.rows = [row('rev-A', minted), row('rev-B', new Date(minted.getTime() + 1000))];
+    h.aiIds = ['rev-A', 'rev-B'];
+    const release = gateMint();
+    const plain = dispatchAiReviewTurns('task-other', 'submitted work');
+    await vi.waitFor(() => expect(h.aiReads).toBe(1));
+    await dispatchAiReviewTurns('task-other', undefined, {
+      verdictCorrection: true,
+      verdictlessReviewerId: 'rev-B',
+    });
+    release();
+    await plain;
+    expect(h.dispatchCalls).toHaveLength(1);
+    // rev-A's turn is a plain first turn: the correction is bound to rev-B's row
+    expect(h.dispatchCalls[0]).toMatchObject({ reviewBy: 'rev-A', verdictCorrection: false });
+    // rev-B's own next mint carries it…
+    h.rows = [row('rev-B', new Date(minted.getTime() + 1000))];
+    await dispatchAiReviewTurns('task-other', 'submitted work');
+    expect(h.dispatchCalls).toHaveLength(2);
+    expect(h.dispatchCalls[1]).toMatchObject({ reviewBy: 'rev-B', verdictCorrection: true });
+    // …and only once: the parked intent is consumed by the dispatch that carried it
+    await dispatchAiReviewTurns('task-other', 'submitted work');
+    expect(h.dispatchCalls).toHaveLength(3);
+    expect(h.dispatchCalls[2]?.verdictCorrection).toBe(false);
+  });
+
+  it('is dropped when the round moves on — never a new round first-turn brief', async () => {
+    h.rows = [row('rev-B', minted)];
+    h.aiIds = ['rev-B'];
+    const release = gateMint();
+    const plain = dispatchAiReviewTurns('task-round', 'submitted work');
+    await vi.waitFor(() => expect(h.aiReads).toBe(1));
+    await dispatchAiReviewTurns('task-round', undefined, {
+      verdictCorrection: true,
+      verdictlessReviewerId: 'rev-B',
+    });
+    release();
+    await plain; // rev-B is settle-owned-and-alone here: this mint carries the correction
+    expect(h.dispatchCalls[0]?.verdictCorrection).toBe(true);
+    // a fresh round with a pending rev-B row: its turn is a FIRST turn, no correction block
+    h.round = 2;
+    await dispatchAiReviewTurns('task-round', 'submitted work');
+    expect(h.dispatchCalls[1]?.verdictCorrection).toBe(false);
+  });
+
+  it('a plain caller that loses the lock parks no intent', async () => {
+    h.rows = [row('rev-1', minted)];
+    h.aiIds = ['rev-1'];
+    const release = gateMint();
+    const first = dispatchAiReviewTurns('task-plain', 'submitted work');
+    await vi.waitFor(() => expect(h.aiReads).toBe(1));
+    expect(await dispatchAiReviewTurns('task-plain', 'submitted work')).toBe(false);
+    release();
+    await first;
+    await dispatchAiReviewTurns('task-plain', 'submitted work');
+    expect(h.dispatchCalls).toHaveLength(2);
+    expect(h.dispatchCalls.every((c: Record<string, unknown>) => c.verdictCorrection === false)).toBe(true);
+  });
+
+  it('a failed mint leaves the intent parked for the re-fire (consumed only after dispatch)', async () => {
+    h.rows = [row('rev-1', minted)];
+    h.aiIds = ['rev-1'];
+    const release = gateMint();
+    const plain = dispatchAiReviewTurns('task-fail', 'submitted work');
+    await vi.waitFor(() => expect(h.aiReads).toBe(1));
+    await dispatchAiReviewTurns('task-fail', undefined, {
+      verdictCorrection: true,
+      verdictlessReviewerId: 'rev-1',
+    });
+    h.failNextDispatch = true;
+    release();
+    await expect(plain).rejects.toBeTruthy(); // the mint's park path has no db in this harness
+    // the retry was never burned: the restore's re-mint still carries the correction
+    await dispatchAiReviewTurns('task-fail', 'submitted work');
+    expect(h.dispatchCalls).toHaveLength(2);
+    expect(h.dispatchCalls[1]).toMatchObject({ reviewBy: 'rev-1', verdictCorrection: true });
   });
 });
 

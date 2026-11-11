@@ -1589,6 +1589,47 @@ async function roundResultBody(taskId: string) {
  *  the winner mints the next turn and the next verdict mints the one after. */
 const reviewMintInFlight = new Set<string>();
 
+/** a verdict-less CORRECTION intent parked while another mint for the same task holds
+ *  the lock (#380). The in-flight mint CARRIES it when it is about to dispatch the SAME
+ *  reviewer's pending row in the round the intent was bound to — without the carry, that
+ *  plain turn burns the one bounded retry (#276) and the round parks decision-class with
+ *  no corrected brief ever sent. An unconsumed intent stays parked for that reviewer's
+ *  next mint in its round (the stalled-review sweep, the next verdict's lazy mint) and is
+ *  dropped as soon as the round moves on: a CORRECTION block may never ride a different
+ *  reviewer's turn or a new round's first-turn brief. */
+type ReviewMintIntent = { reviewerId: string; round: number };
+const reviewMintIntents = new Map<string, ReviewMintIntent>();
+
+/** queue the correction this caller would have dispatched had it won the lock (#380).
+ *  Plain callers queue nothing: the winner IS a plain mint, and a winner that no-ops is
+ *  re-fired by the next trigger (the sweep or the next verdict's lazy mint). */
+async function parkReviewMintIntent(taskId: string, opts?: DispatchOpts) {
+  if (opts?.verdictCorrection !== true || !opts.verdictlessReviewerId) return;
+  const round = await currentRound(taskId);
+  if (round === 0) return;
+  reviewMintIntents.set(taskId, { reviewerId: opts.verdictlessReviewerId, round });
+}
+
+/** does a parked correction belong to THIS dispatch? A round mismatch means the intent
+ *  outlived its round (the block must never ride a new round's first-turn brief) and is
+ *  dropped; a reviewer mismatch leaves it parked for its own reviewer's next mint. */
+function reviewMintIntentFor(taskId: string, round: number, reviewerId: string): boolean {
+  const intent = reviewMintIntents.get(taskId);
+  if (!intent) return false;
+  if (intent.round !== round) {
+    reviewMintIntents.delete(taskId);
+    return false;
+  }
+  return intent.reviewerId === reviewerId;
+}
+
+/** consumed only AFTER the dispatch landed: a mint that throws parks instead, and the
+ *  parked intent must still apply when the park restore re-fires the turn. */
+function consumeReviewMintIntent(taskId: string, round: number, reviewerId: string) {
+  const intent = reviewMintIntents.get(taskId);
+  if (intent && intent.round === round && intent.reviewerId === reviewerId) reviewMintIntents.delete(taskId);
+}
+
 /** fire the NEXT pending AI reviewer's turn — exactly one per call (sequential law:
  * one review turn in flight per task; the verdict's settle path lazy-mints the next).
  * Round order = row order. Human reviewers are skipped (the card is their UI).
@@ -1602,7 +1643,11 @@ export async function dispatchAiReviewTurns(
   resultBody?: string,
   opts?: DispatchOpts,
 ): Promise<boolean> {
-  if (reviewMintInFlight.has(taskId)) return false;
+  if (reviewMintInFlight.has(taskId)) {
+    // a locked-out CORRECTION parks its intent for the in-flight mint to carry (#380)
+    await parkReviewMintIntent(taskId, opts);
+    return false;
+  }
   reviewMintInFlight.add(taskId);
   try {
     return await dispatchAiReviewTurnsUnlocked(taskId, resultBody, opts);
@@ -1724,14 +1769,20 @@ async function dispatchAiReviewTurnsUnlocked(
     // the `!row.reviewerId` half ALSO narrows the type for everything below (reviewBy, the
     // note, the park body) — the helper alone cannot narrow the caller's view
     if (!row.reviewerId || !reviewRowMintable(row, aiIds, target, opts?.verdictlessReviewerId)) continue;
+    // CARRIED CORRECTION (#380): a verdict-less retry that lost the mint lock to THIS mint
+    // is dispatched by it. Read synchronously right before the dispatch (the next await),
+    // so no intent can land between this read and the call that carries it; consumed only
+    // after the dispatch lands (a throwing mint parks and the restore re-fires the retry).
+    const carriedCorrection = reviewMintIntentFor(taskId, round, row.reviewerId);
     try {
       // target-scoped above: a correction dispatch can only ever reach the
       // verdict-less reviewer's own turn
       await dispatchTask(taskId, 'http://tandem.internal', {
         reviewBy: row.reviewerId,
         resultBody: body,
-        verdictCorrection: opts?.verdictCorrection === true,
+        verdictCorrection: opts?.verdictCorrection === true || carriedCorrection,
       });
+      if (carriedCorrection) consumeReviewMintIntent(taskId, round, row.reviewerId);
       await noteReviewTurnDispatched(taskId, row.reviewerId, round);
       return true; // SEQUENTIAL: one turn in flight — the next fires from this verdict's settle
     } catch (e) {
