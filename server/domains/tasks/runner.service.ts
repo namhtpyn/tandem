@@ -558,7 +558,7 @@ import {
   sha256Hex,
 } from './attachments.util';
 /** everything the dispatched agent needs, decrypted; returns null pieces when unconfigured */
-import { buildBrief, loadBriefData } from './brief.service';
+import { buildBrief, loadBriefData, REVIEW_CORRECTION_MARKER } from './brief.service';
 import { promptImageSplit } from './prompt-images.util';
 import { recordProposals } from './proposals.service';
 import { resultImageTokens, type ResultFile } from './result-attachments.util';
@@ -977,6 +977,11 @@ export type DispatchOpts = {
    *  ANOTHER reviewer's verdict sets this; the recovery callers (owner unblock-resume,
    *  removal/heal re-fires) keep the fallback so a parked round can never strand. */
   skipSettled?: boolean;
+  /** the round the caller's settle was DISPATCHED for (#380): a verdict-less correction
+   *  that loses the mint lock parks its intent against THIS round, never against whatever
+   *  `currentRound` would read later (a new round's first-turn brief must not carry the
+   *  block, and the park must land synchronously with the lock check). */
+  round?: number;
 };
 
 /** DISPATCH CLAIM LAW (#162, SPEC): the dispatch claim is ONE conditional flip of
@@ -1359,8 +1364,14 @@ export async function settleReviewVerdict(
     // reviewer's COMPLETED turns in that round — a reaped/failed turn is not a
     // verdict-less attempt and never consumes the corrected retry.
     const reviewRuns = await db.query.taskRuns.findMany({
-      columns: { id: true, startedAt: true, status: true },
-      where: { employeeId: { eq: reviewerId }, message: { taskId: { eq: taskId } } },
+      columns: { id: true, startedAt: true, status: true, prompt: true },
+      // BOUNDED to the round (#380): the marker check below only needs this round's turns —
+      // an unbounded read would load every brief the reviewer ever had on the task
+      where: {
+        employeeId: { eq: reviewerId },
+        message: { taskId: { eq: taskId } },
+        startedAt: { gte: binding.createdAt },
+      },
     });
     // COMPLETED turns this round BEFORE this one: the settling run is already DONE
     // and must not count itself — the corrected retry is consumed only by a prior
@@ -1381,10 +1392,27 @@ export async function settleReviewVerdict(
       await dispatchAiReviewTurns(taskId, undefined, {
         verdictCorrection: true,
         verdictlessReviewerId: reviewerId,
+        // the SETTLE's round (#380): the intent must bind to the round this run was
+        // dispatched for, not to whatever the round pointer reads when the mint runs
+        round: binding.round,
       });
       await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
       return;
     }
+    const { dropReviewMintIntent } = await import('./review.service');
+    // SPENT only if the block was DELIVERED (#380): the SETTLING turn IS the correction turn
+    // in the #276 shape (one plain turn, then the retry), so the check covers every DONE turn
+    // of the round INCLUDING this one — and matches the marker as a LINE, never a substring
+    // (the brief embeds the result body and other verdicts verbatim, so an echoed mention
+    // must not read as a delivery). A plain turn's blockless settle leaves the intent parked:
+    // its restore is the only remaining chance to send the CORRECTION block at all.
+    const delivered = reviewRuns.some(
+      (r) =>
+        r.status === RUN_STATUS.DONE &&
+        r.startedAt !== null &&
+        r.prompt?.split('\n').some((line) => line.startsWith(REVIEW_CORRECTION_MARKER)) === true,
+    );
+    if (delivered) dropReviewMintIntent(taskId, reviewerId);
     await parkReviewTurnFailure(
       taskId,
       reviewerId,

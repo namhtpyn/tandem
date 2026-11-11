@@ -15,7 +15,7 @@ import { expect, test as cleanupTest } from './helpers/cleanup';
 import { E2E_DATABASE_URL } from './helpers/env';
 import { waitForHydration } from './pages/base.page.ts';
 import { McpPage } from './pages/mcp.page.ts';
-import { TasksPage } from './pages/tasks.page.ts';
+import { TasksPage, createTaskWithHeldScan, holdDispatchScan } from './pages/tasks.page.ts';
 
 const test = cleanupTest.extend<{ mcpSweep: void }>({
   // auto fixture, teardown-ordered BEFORE the shared dbCleanup sweep (fixtures
@@ -84,78 +84,6 @@ async function seedAiEmployee(
   });
   expect(emp.status).toBe(200);
   return { employeeId: emp.json?.id as string, employeeName };
-}
-
-/** write the dispatch_after hold (15 min) on one task and prove the row matched.
- *  A silent 0-row UPDATE would let the 5s scan claim the task mid-test (#387);
- *  the future margin is proven by the separate read-back below. */
-async function holdDispatchScan(taskId: string): Promise<void> {
-  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
-  try {
-    const held =
-      await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId} returning id`;
-    expect(held.length, 'dispatch_after hold landed on the task').toBe(1);
-  } finally {
-    await sql.close();
-  }
-}
-
-/** read-back (fresh statement, real clock): the hold stands AND the seeded
- *  employee is the assignee. Both are seed preconditions — if either silently
- *  no-ops the #387 scan-claim window returns, so fail loudly at the seed. */
-async function expectDispatchHold(taskId: string, employeeId: string): Promise<void> {
-  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
-  try {
-    const rows = await sql`
-      select (dispatch_after - now()) > interval '10 minutes' as held,
-             assignee_id = ${employeeId} as attached
-      from tasks where id = ${taskId}`;
-    expect(rows.length, 'task row exists for the seed read-back').toBe(1);
-    expect(rows[0]!.held, 'dispatch_after hold has a real future margin').toBe(true);
-    expect(rows[0]!.attached, 'seeded employee is the assignee').toBe(true);
-  } finally {
-    await sql.close();
-  }
-}
-
-/** BORN-INELIGIBLE SEEDING (#297, #387): a task created WITH the AI assignee is
- *  scanner-eligible at insert, so the 5s dispatch tick can claim it while the
- *  drawer settles — the dispatch verb unmounts mid-click and Playwright waits
- *  60s on a button that never returns. Create it unassigned, hold dispatch_after,
- *  then attach the assignee through the RPC edge: the scan AND the note path
- *  respect the hold; only the manual Dispatch-now verb ignores it, which is the
- *  verb these specs drive (the manual-bypass contract itself is pinned in
- *  task-drawer-dispatch.spec.ts, not here). (The hold's retry banner is inert
- *  seed state, never an assertion surface.) */
-async function createTaskWithHeldScan(
-  page: import('@playwright/test').Page,
-  tasks: TasksPage,
-  title: string,
-  employeeId: string,
-): Promise<ReturnType<TasksPage['rowFor']>> {
-  await tasks.navigate('/tasks');
-  await tasks.openCreateModal();
-  await tasks.fillTaskForm({ title });
-  await tasks.saveTask();
-  const row = tasks.rowFor(title);
-  await expect(row).toBeVisible({ timeout: 15_000 });
-  const link = row.locator('a[href^="/tasks/"]').first();
-  await expect(link).toHaveAttribute('href', /^\/tasks\/[0-9a-z-]+/i);
-  const href = (await link.getAttribute('href')) as string;
-  expect(href, 'task row links to the task page').toBeTruthy();
-  // strip any list-scope query the row link carries (task-scope law), or the
-  // SQL key below silently misses and the hold never lands
-  const taskId = (href as string).split('?')[0]!.split('/').pop() as string;
-  expect(taskId, 'task id from the row link').toBeTruthy();
-  await holdDispatchScan(taskId);
-  const attach = await rpcPost(page, '/rpc/tasks/update', { id: taskId, assigneeId: employeeId });
-  expect(attach.status).toBe(200);
-  // re-hold after the attach (the write that makes the task eligible) instead of
-  // pinning "attach preserves the backoff": the read-back then proves the seed,
-  // not an unspecced product invariant — same pattern as the status flip below
-  await holdDispatchScan(taskId);
-  await expectDispatchHold(taskId, employeeId);
-  return row;
 }
 
 async function seedSecret(page: import('@playwright/test').Page, tag: string): Promise<string> {

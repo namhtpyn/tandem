@@ -9,16 +9,7 @@ import { SQL } from 'bun';
 
 import { expect, test } from './helpers/cleanup';
 import { E2E_DATABASE_URL } from './helpers/env';
-import { TasksPage } from './pages/tasks.page.ts';
-
-/** hold the dispatcher scan off the fresh ready AI task (born-ineligible law:
- * the 5s tick would claim it mid-test); the MANUAL dispatch verb ignores the
- * hold, which is what this spec fires */
-async function holdScan(taskId: string) {
-  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
-  await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId}`;
-  await sql.close();
-}
+import { TasksPage, attachAssigneeHeld, rowTaskId } from './pages/tasks.page.ts';
 
 async function seedAiEmployee(page: import('@playwright/test').Page, tag: string): Promise<{ id: string }> {
   const env = await page.request.post('/rpc/environments/create', {
@@ -43,15 +34,6 @@ async function seedAiEmployee(page: import('@playwright/test').Page, tag: string
   const id = ((await emp.json()) as { json?: { id?: string } }).json?.id;
   expect(id, 'employee create returns the user id').toBeTruthy();
   return { id: id as string };
-}
-
-/** attach the AI assignee AFTER the dispatch_after hold is set (born-ineligible
- * law): the task is unassigned at insert, so the scan can never claim it */
-async function attachAssignee(page: import('@playwright/test').Page, taskId: string, employeeId: string) {
-  const res = await page.request.post('/rpc/tasks/update', {
-    data: { json: { id: taskId, assigneeId: employeeId } },
-  });
-  expect(res.status()).toBe(200);
 }
 
 /** seed the channel↔task mapping BEFORE dispatch: the relay reads mappings on
@@ -82,16 +64,10 @@ test('a settled DONE run on a channel-mapped task lands its reply in channel_out
   await tasks.saveTask();
   const row = tasks.rowFor(taskTitle);
   await expect(row).toBeVisible({ timeout: 15_000 });
-  const taskId = await row
-    .locator('a[href^="/tasks/"]')
-    .first()
-    .getAttribute('href')
-    .then((href) => (href ?? '').split('/').pop() as string);
-  expect(taskId).toBeTruthy();
+  const taskId = await rowTaskId(row);
 
   // born ineligible: hold the scan, attach the AI assignee, seed the mapping
-  await holdScan(taskId);
-  await attachAssignee(page, taskId, bot.id);
+  await attachAssigneeHeld(page, taskId, bot.id);
   await seedChannelMapping(taskId, tag);
 
   // manual dispatch → fake runner settles DONE → the settle hook relays

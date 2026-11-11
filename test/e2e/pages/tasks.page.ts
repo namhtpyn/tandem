@@ -1,6 +1,173 @@
-import { expect, type Locator } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
+import { SQL } from 'bun';
 
+import { E2E_DATABASE_URL } from '../helpers/env.ts';
 import { BasePage } from './base.page.ts';
+
+/** hold the dispatcher scan off a fresh ready AI task: the 5s tick would claim
+ *  it mid-test (create → page/drawer → manual dispatch crosses the scan) and the
+ *  run settles before the spec's own click. The MANUAL verb ignores
+ *  dispatch_after — only the scan (and the note path) respect it. A silent
+ *  0-row UPDATE would let the scan in, so the update proves its own match (#387). */
+export async function holdDispatchScan(taskId: string): Promise<void> {
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    const held =
+      await sql`update tasks set dispatch_after = now() + interval '15 minutes' where id = ${taskId} returning id`;
+    expect(held.length, 'dispatch_after hold landed on the task').toBe(1);
+  } finally {
+    await sql.close();
+  }
+}
+
+/** the seed's read state (fresh statement, real clock): the hold stands, the
+ *  employee is the assignee, and that assignee is an AI employee — the scanner's
+ *  eligibility is the ai_employees row, and a human user id attaches just as
+ *  happily (200) while leaving the task permanently ineligible. */
+async function dispatchHoldState(
+  taskId: string,
+  employeeId: string,
+): Promise<{ held: boolean; attached: boolean; aiEmployee: boolean; ready: boolean; liveRun: boolean } | null> {
+  const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    const rows = await sql`
+      select (t.dispatch_after - now()) > interval '10 minutes' as held,
+             t.assignee_id = ${employeeId} as attached,
+             exists (select 1 from ai_employees where user_id = ${employeeId}) as ai_employee,
+             st.category = 'ready' as ready,
+             exists (
+               select 1 from task_runs r
+               join task_messages m on m.id = r.message_id
+               where m.task_id = t.id and r.status = 'RUNNING'
+             ) as live_run
+      from tasks t
+      join task_statuses st on st.id = t.status
+      where t.id = ${taskId}`;
+    if (rows.length === 0) return null;
+    return {
+      held: rows[0]!.held === true,
+      attached: rows[0]!.attached === true,
+      aiEmployee: rows[0]!.ai_employee === true,
+      ready: rows[0]!.ready === true,
+      liveRun: rows[0]!.live_run === true,
+    };
+  } finally {
+    await sql.close();
+  }
+}
+
+/** read-back: every seed precondition holds — a silent no-op here re-opens the
+ *  5s-scan claim window (hold), leaves the verb unmountable (assignee kind), or
+ *  means the scan ALREADY claimed the task in the seed's own window (status left
+ *  ready-category / a RUNNING run exists), which nothing else in the spec would
+ *  attribute to the seed */
+export async function expectDispatchHold(taskId: string, employeeId: string): Promise<void> {
+  const state = await dispatchHoldState(taskId, employeeId);
+  expect(state, 'task row exists for the seed read-back').not.toBeNull();
+  expect(state!.held, 'dispatch_after hold has a real future margin').toBe(true);
+  expect(state!.attached, 'seeded employee is the assignee').toBe(true);
+  expect(state!.aiEmployee, 'seeded assignee is an AI employee (scanner-eligible kind)').toBe(true);
+  expect(state!.ready, 'task is still in a ready-category status (the scan has not claimed it)').toBe(true);
+  expect(state!.liveRun, 'no live run exists for the task (the scan has not claimed it)').toBe(false);
+}
+
+/** the task id a list row / title link points at; asserts the link SHAPE first
+ *  (one `/tasks/<id>` segment, optional query) so a route regression fails at the
+ *  parse site instead of as a 0-row seed, then strips the list-scope query the
+ *  link may carry (a leftover `?scope=` silently misses every SQL key below) */
+export async function rowTaskIdFromLink(link: Locator): Promise<string> {
+  // read AND assert inside the same retry: a row re-rendering in the create refetch
+  // wave must not fail the seed as a shape error, and the value parsed must be the
+  // value asserted (a separate re-resolution could hand back a different href)
+  const taskLink = /^\/tasks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\?.*)?$/i;
+  let href = '';
+  await expect(async () => {
+    href = (await link.getAttribute('href')) ?? '';
+    expect(href, 'row links to the task page').toMatch(taskLink);
+  }).toPass({ timeout: 10_000 });
+  const taskId = href.split('?')[0]!.split('/').pop() as string;
+  expect(taskId, 'task id from the row link').toBeTruthy();
+  return taskId;
+}
+
+export async function rowTaskId(row: Locator): Promise<string> {
+  return rowTaskIdFromLink(row.locator('a[href^="/tasks/"]').first());
+}
+
+/** attach an assignee through the RPC edge (no hold handling — a caller that
+ *  needs the born-ineligible seed wants `attachAssigneeHeld`) */
+export async function attachAssignee(page: Page, taskId: string, employeeId: string): Promise<void> {
+  const res = await page.request.post('/rpc/tasks/update', { data: { json: { id: taskId, assigneeId: employeeId } } });
+  expect(res.status(), 'assignee attach accepted').toBe(200);
+}
+
+/** BORN-INELIGIBLE SEED (#297, #387, #391): hold the scan, attach the AI
+ *  assignee through the RPC edge, then re-hold immediately. The attach is the
+ *  write that makes a ready task scanner-eligible, so a hold has to be live across
+ *  it. The re-hold is unconditional and as tight as the RPC round-trip allows —
+ *  its own cost is one statement on a fresh connection (single-digit ms). The
+ *  read-back then asserts the END state (hold margin, assignee, AI kind, still
+ *  ready-category, no live run), which catches a claim that COMMITTED before the
+ *  read. A claim committing between that read and the spec's own click is not
+ *  detectable here — it is the window every spec has; in this codebase the attach
+ *  does not touch dispatch_after, so the first hold already spans it, and the
+ *  re-hold exists so the seed never DEPENDS on that unspecced detail. */
+export async function attachAssigneeHeld(page: Page, taskId: string, employeeId: string): Promise<void> {
+  await holdDispatchScan(taskId);
+  await attachAssignee(page, taskId, employeeId);
+  await holdDispatchScan(taskId);
+  await expectDispatchHold(taskId, employeeId);
+}
+
+/** BORN-INELIGIBLE SEEDING (#297, #387, #391): a task created WITH the AI assignee
+ *  is scanner-eligible at insert, so the 5s dispatch tick can claim it while the
+ *  page/drawer settles — the dispatch verb unmounts mid-click and Playwright waits
+ *  60s on a button that never returns. Create it unassigned, hold dispatch_after,
+ *  then attach the assignee through the RPC edge: the scan AND the note path
+ *  respect the hold; only the manual Dispatch-now verb ignores it, which is the
+ *  verb these specs drive. Returns the created list row. */
+export async function createTaskWithHeldScan(
+  page: Page,
+  tasks: TasksPage,
+  title: string,
+  employeeId: string,
+): Promise<Locator> {
+  await tasks.navigate('/tasks');
+  await tasks.openCreateModal();
+  await tasks.fillTaskForm({ title });
+  await tasks.saveTask();
+  const row = tasks.rowFor(title);
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  const taskId = await rowTaskId(row);
+  await attachAssigneeHeld(page, taskId, employeeId);
+  return row;
+}
+
+/** the committed EVENT of a round open: the task_reviews rows of THAT round,
+ *  never a transient status badge (the server can move a task through `in review`
+ *  and out again before the client's first post-verb refetch — #375, #416).
+ *  `round` is REQUIRED: counting any row for the task would pass on a round an
+ *  earlier call site already opened, pinning nothing at this call. */
+export async function expectRoundOpened(taskId: string, opts: { round: number; timeout?: number }): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const sql = new SQL(E2E_DATABASE_URL, { max: 1 });
+        try {
+          const rows =
+            await sql`select count(*)::int as n from task_reviews where task_id = ${taskId} and round = ${opts.round}`;
+          return Number(rows[0]?.n ?? 0);
+        } finally {
+          await sql.close();
+        }
+      },
+      {
+        timeout: opts.timeout ?? 15_000,
+        message: `round ${opts.round} opened for the task (task_reviews row)`,
+      },
+    )
+    .toBeGreaterThan(0);
+}
 
 // Tasks surface: the create/edit modal and the workflow drawer used by the
 // tasks spec (small task-* specs keep inline locators on purpose).

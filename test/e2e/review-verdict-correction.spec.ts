@@ -9,7 +9,7 @@ import { SQL } from 'bun';
 
 import { expect, test } from './helpers/cleanup';
 import { E2E_DATABASE_URL } from './helpers/env';
-import { TasksPage } from './pages/tasks.page.ts';
+import { TasksPage, expectRoundOpened } from './pages/tasks.page.ts';
 
 const CORRECTION_MARKER = 'CORRECTION (verdict-less re-dispatch)';
 
@@ -63,7 +63,13 @@ test('verdict-less re-dispatch carries the correction block and settles on the c
   const verbs = page.locator('aside').getByTestId('task-workflow-actions');
   await expect(verbs.getByTestId('task-verb-submit')).toBeVisible({ timeout: 10_000 });
   await verbs.getByTestId('task-verb-submit').click();
-  await expect(page.getByTestId('task-status-badge')).toHaveText('In review', { timeout: 15_000 });
+  // the round OPEN is the committed event (#416): a status badge assert here races
+  // the reviewer's turn — the server can move the task through `in review` and out
+  // again before the client's first post-verb refetch, so the badge may never render
+  // it. The task_reviews row is written by the won in-review flip, exactly once.
+  const taskId = page.url().match(/\/tasks\/([0-9a-z-]+)/i)?.[1] ?? '';
+  expect(taskId, 'task id from the page URL').toBeTruthy();
+  await expectRoundOpened(taskId, { round: 1 });
 
   // turn 1 verdict-less -> corrected re-dispatch -> conforming approved envelope
   // -> round settles (no park anywhere in between)
