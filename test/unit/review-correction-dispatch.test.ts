@@ -197,8 +197,8 @@ describe('dispatchAiReviewTurns carried correction across the mint lock (#380)',
   });
 
   it('is dropped when the round moves on — never a new round first-turn brief', async () => {
-    h.rows = [row('rev-B', minted)];
-    h.aiIds = ['rev-B'];
+    h.rows = [row('rev-A', minted), row('rev-B', new Date(minted.getTime() + 1000))];
+    h.aiIds = ['rev-A', 'rev-B'];
     const release = gateMint();
     const plain = dispatchAiReviewTurns('task-round', 'submitted work');
     await vi.waitFor(() => expect(h.aiReads).toBe(1));
@@ -207,12 +207,13 @@ describe('dispatchAiReviewTurns carried correction across the mint lock (#380)',
       verdictlessReviewerId: 'rev-B',
     });
     release();
-    await plain; // rev-B is settle-owned-and-alone here: this mint carries the correction
-    expect(h.dispatchCalls[0]?.verdictCorrection).toBe(true);
-    // a fresh round with a pending rev-B row: its turn is a FIRST turn, no correction block
+    await plain; // rev-A's plain turn lands; rev-B's correction stays parked
+    expect(h.dispatchCalls[0]).toMatchObject({ reviewBy: 'rev-A', verdictCorrection: false });
+    // the round moves on before rev-B is ever minted: its new-round turn is a FIRST turn
     h.round = 2;
+    h.rows = [row('rev-B', new Date(minted.getTime() + 1000))];
     await dispatchAiReviewTurns('task-round', 'submitted work');
-    expect(h.dispatchCalls[1]?.verdictCorrection).toBe(false);
+    expect(h.dispatchCalls[1]).toMatchObject({ reviewBy: 'rev-B', verdictCorrection: false });
   });
 
   it('a plain caller that loses the lock parks no intent', async () => {

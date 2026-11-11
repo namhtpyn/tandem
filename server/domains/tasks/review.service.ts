@@ -1630,6 +1630,20 @@ function consumeReviewMintIntent(taskId: string, round: number, reviewerId: stri
   if (intent && intent.round === round && intent.reviewerId === reviewerId) reviewMintIntents.delete(taskId);
 }
 
+/** the dispatch's correction flag: the caller's own #276 retry, or the parked intent this
+ *  mint carries (#380) — never a first-turn brief (a parked intent is reviewer+round
+ *  scoped, so a plain mint can only carry it for its own reviewer) */
+function correctionFlag(opts: DispatchOpts | undefined, carried: boolean): boolean {
+  return opts?.verdictCorrection === true || carried;
+}
+
+/** a LANDED dispatch satisfies the correction it carried (or the caller's own correction,
+ *  when a parked intent names the same reviewer): consumed only after the dispatch — a
+ *  mint that throws parks instead, and the restore's re-fire must still carry the retry */
+function settleReviewMintIntent(taskId: string, round: number, reviewerId: string, correction: boolean) {
+  if (correction) consumeReviewMintIntent(taskId, round, reviewerId);
+}
+
 /** fire the NEXT pending AI reviewer's turn — exactly one per call (sequential law:
  * one review turn in flight per task; the verdict's settle path lazy-mints the next).
  * Round order = row order. Human reviewers are skipped (the card is their UI).
@@ -1774,15 +1788,16 @@ async function dispatchAiReviewTurnsUnlocked(
     // so no intent can land between this read and the call that carries it; consumed only
     // after the dispatch lands (a throwing mint parks and the restore re-fires the retry).
     const carriedCorrection = reviewMintIntentFor(taskId, round, row.reviewerId);
+    const correction = correctionFlag(opts, carriedCorrection);
     try {
       // target-scoped above: a correction dispatch can only ever reach the
       // verdict-less reviewer's own turn
       await dispatchTask(taskId, 'http://tandem.internal', {
         reviewBy: row.reviewerId,
         resultBody: body,
-        verdictCorrection: opts?.verdictCorrection === true || carriedCorrection,
+        verdictCorrection: correction,
       });
-      if (carriedCorrection) consumeReviewMintIntent(taskId, round, row.reviewerId);
+      settleReviewMintIntent(taskId, round, row.reviewerId, correction);
       await noteReviewTurnDispatched(taskId, row.reviewerId, round);
       return true; // SEQUENTIAL: one turn in flight — the next fires from this verdict's settle
     } catch (e) {
