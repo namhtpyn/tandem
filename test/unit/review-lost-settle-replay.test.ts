@@ -179,7 +179,22 @@ describe('replayLostSettle (#402)', () => {
     await replayLostSettle(RUN);
     expect(h.publishes).toContain('RUNS:UPDATE');
     expect(h.publishes).toContain('TASK_ACTIVITY:CREATE');
+    // #264 r2: the settle's tail publish is skipped on its early-return arms — the
+    // replay owns the TASKS re-emit so no viewer latches the runLocked bit
+    expect(h.publishes).toContain('TASKS:UPDATE');
     expect(h.relays).toEqual([RUN]);
+  });
+
+  it('re-emits TASKS even when the settle early-returns on a stale round (#402 r3)', async () => {
+    // a replay bound to an older round no-ops inside settleReviewVerdict, whose tail
+    // publish is skipped on that arm — the replay owns the TASKS re-emit so no viewer
+    // latches the runLocked bit of a run that is not live
+    h.runRows = [runRow()];
+    h.boundRow = { round: 1, createdAt: new Date('2026-11-11T00:00:00Z') };
+    h.round = 2;
+    await expect(replayLostSettle(RUN)).resolves.toBe('settled');
+    expect(h.verdicts).toEqual([]); // the stale round was never touched
+    expect(h.publishes).toContain('TASKS:UPDATE');
   });
 
   it('a business refusal is a quiet no-op in replay mode — never a park (#402 r1)', async () => {

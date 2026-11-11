@@ -1431,6 +1431,10 @@ export async function replayLostSettle(runId: string): Promise<'settled' | 'back
   // task relays its reply exactly once (best-effort, persist-first, never fails the heal)
   await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
   await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+  // #264 r2: the TASKS resource must re-emit too — the settle's own tail publish is
+  // skipped on its early-return arms (a stale round), and a viewer holding the crashed
+  // run's dispatch snapshot would keep the runLocked bit with no live run
+  await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
   try {
     const { relaySettledRun } = await import('../channels/channels.service');
     await relaySettledRun(run.taskId, runId, run.messageId);

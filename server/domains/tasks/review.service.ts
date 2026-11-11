@@ -1456,7 +1456,10 @@ async function sweepLostReviewSettlesInner(): Promise<number> {
       // the attempt count is NEVER cleared: a 'settled' that left the shape standing
       // (the settle's mint no-oped) burns the bound and parks, instead of replaying
       // every tick forever
-      if (outcome === 'backoff') continue; // the settle itself failed: next tick retries (bounded)
+      // the settle itself threw: its failure arm already parked the round on the
+      // REARM ladder (an infra failure keeps its own diagnosis), so this tick ends here
+      // — 'backoff' is terminal for the scan; the arm only sees a park that lost its race
+      if (outcome === 'backoff') continue;
       if (outcome === 'skipped') continue; // the winner owns the outcome — quiet no-op
       healed += 1;
       log.info(`lost-settle sweep: replayed the lost settle of run ${candidate.runId} on task ${candidate.taskId}`);
