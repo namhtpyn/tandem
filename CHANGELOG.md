@@ -1,3 +1,28 @@
+## [2.78.19](https://github.com/namhtpyn/tandem/compare/v2.78.18...v2.78.19) (2026-11-11)
+
+
+### Bug Fixes
+
+* [#375](https://github.com/namhtpyn/tandem/issues/375) r2 — seed the review turn fresh and backdate it only after the round opens; anchor the round-open delta; name the reaper as the parker ([6b560d5](https://github.com/namhtpyn/tandem/commit/6b560d572f2ed4da75d9af448ef44f94616a0c12))
+* [#375](https://github.com/namhtpyn/tandem/issues/375) r3 — barrier the backdate on the submit response; fail loudly on a settled seed run; guard the run-insert rows ([8150271](https://github.com/namhtpyn/tandem/commit/8150271a262fbc9e774c10ee94fc031188df23c1))
+* [#375](https://github.com/namhtpyn/tandem/issues/375) r4 — fail on a refused submit, pin the suppressed mint, and prove the ladder's due gate (no eager re-arm) with the first rung ([7227193](https://github.com/namhtpyn/tandem/commit/7227193300e55b8b9dbd865b14f12f0bd5d8ba97))
+* [#375](https://github.com/namhtpyn/tandem/issues/375) r5 — bind the re-fire and the ladder mint to their own tick (sweep cannot stand in), fix the header bound and the barrier comment, raise the stacked test budgets ([1dc0392](https://github.com/namhtpyn/tandem/commit/1dc0392de0b795549027b3ff9f28e73f26b114c9))
+* [#375](https://github.com/namhtpyn/tandem/issues/375) r6 — loosen the re-fire count to >=2 (baseline already pinned) and pin the sweep-exclusion premise (round age < grace - poll) ([131d73a](https://github.com/namhtpyn/tandem/commit/131d73abaee627369b3fcd83a28ebde54d8c0386))
+* [#375](https://github.com/namhtpyn/tandem/issues/375) r7 — measure the sweep-exclusion age at the poll start (cap round: r6's single finding applied as both lenses prescribed) ([d3422a9](https://github.com/namhtpyn/tandem/commit/d3422a98fe87599618ea0b3c7232572bb6cf9b6b))
+* [#380](https://github.com/namhtpyn/tandem/issues/380) carry a verdict-less review correction through the in-flight mint ([219bc62](https://github.com/namhtpyn/tandem/commit/219bc6291767d8d410912f11b620ae3742a99e84))
+* [#380](https://github.com/namhtpyn/tandem/issues/380) r1 — keep the round guard pinned and split the carry flag out of the mint's complexity ([b07e652](https://github.com/namhtpyn/tandem/commit/b07e6524516126dc403a65821eafee33634233ae))
+* [#380](https://github.com/namhtpyn/tandem/issues/380) r10 — drop the retry only when the block was delivered; pin round>1 carry ([cddcc69](https://github.com/namhtpyn/tandem/commit/cddcc6924269d052d0aeda91493bfd11e7623b24))
+* [#380](https://github.com/namhtpyn/tandem/issues/380) r11 — delivered = a marker LINE on any DONE turn of the round (settling turn included), bounded read ([7c31f61](https://github.com/namhtpyn/tandem/commit/7c31f61d52d91ee251a28365f04738847a6fe3ef))
+* [#380](https://github.com/namhtpyn/tandem/issues/380) r2 — fault-isolate the intent park and pin it ([8d6d91b](https://github.com/namhtpyn/tandem/commit/8d6d91b52b64e1cb38393e6df354e0789b3672eb))
+* [#380](https://github.com/namhtpyn/tandem/issues/380) r3 — bind the parked intent to the settle's round synchronously, key it per reviewer, park on the correction's own mint failure ([f85c91c](https://github.com/namhtpyn/tandem/commit/f85c91cce5dcfb2f6bcbd992a8b129883db9878c))
+* [#380](https://github.com/namhtpyn/tandem/issues/380) r3 — pin the winner's plain turn when no settle round is supplied ([823f3c2](https://github.com/namhtpyn/tandem/commit/823f3c27805692c0b41c05692bbd9b56f76d0bf8))
+* [#380](https://github.com/namhtpyn/tandem/issues/380) r4 — SPEC clause matches the synchronous settle-round park ([a17faa9](https://github.com/namhtpyn/tandem/commit/a17faa9f458e6b5030f62fa0732cac8f5cdf3b62))
+* [#380](https://github.com/namhtpyn/tandem/issues/380) r5 — stale-settle gate, drop the spent intent, round-scoped map keyed by reviewer ([cd19be0](https://github.com/namhtpyn/tandem/commit/cd19be07e77f0b97396300ae3925f2de0641f020))
+* [#380](https://github.com/namhtpyn/tandem/issues/380) r6 — pin the spent-retry intent drop ([f9bd663](https://github.com/namhtpyn/tandem/commit/f9bd663d2abcabad41bfe9bff389a55f0a2970d2))
+* [#380](https://github.com/namhtpyn/tandem/issues/380) r7 — park the retry at every throw site, require the settle round, pin the carry gate ([90b3402](https://github.com/namhtpyn/tandem/commit/90b3402a55f221f149d618257acf5bf8da2b82f2))
+* [#380](https://github.com/namhtpyn/tandem/issues/380) r8 — retrigger CI after a stuck run finalization (tree unchanged) ([ed0837e](https://github.com/namhtpyn/tandem/commit/ed0837e98cb86732b9ca4bffaf3242e45da151a4))
+* [#380](https://github.com/namhtpyn/tandem/issues/380) r9 — park the retry before every await (guards and reads alike), prune clause reattributed ([f4859a7](https://github.com/namhtpyn/tandem/commit/f4859a7d9d84615b7679fc8b37559fd759abd695))
+
 ## [2.78.18](https://github.com/namhtpyn/tandem/compare/v2.78.17...v2.78.18) (2026-11-11)
 
 
