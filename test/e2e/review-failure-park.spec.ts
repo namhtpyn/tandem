@@ -191,6 +191,19 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
   // The re-fired turn settles verdict-less (default review script emits no envelope);
   // the per-round bound (#276) then re-dispatches ONCE with the CORRECTION block and
   // the corrected script settles the round — one park cycle, never a wedge.
+  // the unblock poll below only proves the UNBLOCK mint while the #397 sweep is not yet
+  // eligible: its grace clock is the round row's createdAt (submit time), so pin the
+  // remaining age — a future slow phase must fail HERE, not green on a sweep mint
+  const ageSql = new SQL(E2E_DATABASE_URL, { max: 1 });
+  try {
+    const rows = await ageSql`
+      select extract(epoch from now() - created_at)::int as age
+      from task_reviews where task_id = ${injectedTaskId} order by created_at desc limit 1
+    `;
+    expect(Number(rows[0]!.age)).toBeLessThan(45);
+  } finally {
+    await ageSql.close();
+  }
   await tasks.navigate('/tasks');
   await page.locator('tbody').getByLabel(`Status for ${taskTitle}`).click();
   await page.getByRole('option', { name: 'In review' }).click();
@@ -211,7 +224,9 @@ test('reaped review turn parks the round; owner unblock re-fires the reviewer (#
         },
         { timeout: 15_000, intervals: [500, 1000, 2000] },
       )
-      .toBe(2);
+      // >= not ==: the baseline is already pinned to exactly one run by the barrier
+      // above, and an exact count can be MISSED when the review turn outlives the poll
+      .toBeGreaterThanOrEqual(2);
   } finally {
     await runsSql.close();
   }
