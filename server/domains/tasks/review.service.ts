@@ -1717,7 +1717,9 @@ async function dispatchAiReviewTurnsUnlocked(
   const newestRun = roundStart ? await newestRunsByReviewer(taskId, roundStart) : new Map<string, RunMark>();
   const settleOwned = (reviewerId: string | null) =>
     reviewerId !== null && newestRun.get(reviewerId)?.status === RUN_STATUS.DONE;
-  const mintOrder = [...rows].sort((a, b) => Number(settleOwned(a.reviewerId)) - Number(settleOwned(b.reviewerId)));
+  const mintOrder = [...rows]
+    .filter((row) => opts?.skipSettled !== true || !settleOwned(row.reviewerId))
+    .sort((a, b) => Number(settleOwned(a.reviewerId)) - Number(settleOwned(b.reviewerId)));
   for (const row of mintOrder) {
     // the `!row.reviewerId` half ALSO narrows the type for everything below (reviewBy, the
     // note, the park body) — the helper alone cannot narrow the caller's view
@@ -2037,7 +2039,10 @@ async function settleRound(
       },
       source,
     );
-    await dispatchAiReviewTurns(taskId);
+    // LAZY MINT (#402 r6): skip a reviewer whose turn already reached DONE — a mint here
+    // would open a later run and mask the settle-replay arm for a crashed settle. The
+    // recovery callers keep the fallback, so no round strands.
+    await dispatchAiReviewTurns(taskId, undefined, { skipSettled: true });
     await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
     return { outcome: 'waiting' };
   }

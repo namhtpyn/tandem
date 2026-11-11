@@ -222,6 +222,12 @@ describe('stalledReviewScan shape (#397)', () => {
     // the round has no healer at all
     expect(flat).toContain('a4.user_id = r4.reviewer_id');
     expect(flat).toContain('r4.reviewer_id <> "tasks"."assignee_id"');
+    // the guard's shape predicates are LOAD-BEARING (deleting any of them suppresses a
+    // round the replay refuses): the DONE status, the row→run order, and the newest-run
+    // clause each ride the SQL
+    expect(flat).toContain('tr4.status =');
+    expect(flat).toContain('tr4.started_at >= r4.created_at');
+    expect(flat).toContain('(tr5.started_at, tr5.id) > (tr4.started_at, tr4.id)');
     expect(flat).toContain('tr.status =');
     expect(flat).toContain('tr.employee_id = "task_reviews"."reviewer_id"');
     expect(flat).toContain('tr.started_at >= "task_reviews"."created_at"');

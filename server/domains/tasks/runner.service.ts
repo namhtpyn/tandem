@@ -971,6 +971,12 @@ export type DispatchOpts = {
    *  row; the plain mint would otherwise dispatch the round's first pending AI reviewer,
    *  which may be the one that already had a turn — #397 r2). */
   targetReviewerId?: string;
+  /** SKIP a reviewer whose newest run this round already reached DONE (#402 r6): the
+   *  settle owns them — a settled turn either resolved the row or minted the next one,
+   *  and a LOST settle is replayed by the settle-replay arm. Only the lazy mint fired by
+   *  ANOTHER reviewer's verdict sets this; the recovery callers (owner unblock-resume,
+   *  removal/heal re-fires) keep the fallback so a parked round can never strand. */
+  skipSettled?: boolean;
 };
 
 /** DISPATCH CLAIM LAW (#162, SPEC): the dispatch claim is ONE conditional flip of

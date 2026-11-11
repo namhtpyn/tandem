@@ -135,9 +135,20 @@ describe('dispatchAiReviewTurns settle-owned ordering (#402 r5)', () => {
     expect(h.dispatchCalls[0]?.reviewBy).toBe('rev-B');
   });
 
-  it('falls back to the completed-turn reviewer when it is the only pending AI row', async () => {
-    // the ordering must never strand a round whose only remaining reviewer already had a
-    // turn (a parked verdict-less correction resumed by the owner, a removal re-queue)
+  it('the LAZY mint skips a settle-owned reviewer — no masking run (#402 r6)', async () => {
+    // after another reviewer's verdict the settle owns A (its turn is DONE, its settle was
+    // lost): minting A here would open a later run and hide the replay. The lazy mint
+    // passes skipSettled, so nothing mints and the replay gets its window.
+    h.rows = [row('rev-A', minted)];
+    h.runMarks = [{ employeeId: 'rev-A', status: 'DONE', startedAt: new Date(minted.getTime() + 500) }];
+    h.aiIds = ['rev-A'];
+    await dispatchAiReviewTurns('task-1', 'submitted work', { skipSettled: true });
+    expect(h.dispatchCalls).toHaveLength(0);
+  });
+
+  it('a RECOVERY caller keeps the fallback — a parked round never strands', async () => {
+    // owner unblock-resume / removal re-fire mint without skipSettled: a reviewer whose
+    // own turn is DONE (a parked verdict-less correction) must still get its turn
     h.rows = [row('rev-A', minted)];
     h.runMarks = [{ employeeId: 'rev-A', status: 'DONE', startedAt: new Date(minted.getTime() + 500) }];
     h.aiIds = ['rev-A'];
