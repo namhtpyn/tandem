@@ -278,6 +278,10 @@ describe('off-review settle refusal (#401)', () => {
     // VALUE (an id in the in-review list), not merely its presence
     expect(flip?.sql).toContain('"tasks"."park_from_status" in (');
     expect(flip?.sql).toContain('"tasks"."pre_block_status" in (');
+    // the two origins are alternatives (a park carries park_from_status only, a gating
+    // auto-block carries pre_block_status only) — pin the CONNECTOR, not just the arms:
+    // an `and` here would refuse the park arm and strand the decided round it saves
+    expect(flip?.sql).toMatch(/"tasks"\."park_from_status" in \([^)]*\)\)? or \(?"tasks"\."pre_block_status" in \(/);
   });
 });
 
