@@ -657,8 +657,11 @@ export async function touchDispatcherRedisOk() {
  *  never rejects, like every other tick arm. */
 async function sweepStalledReviewsTick() {
   try {
-    const { sweepStalledReviewTurns } = await import('./review.service');
+    const { sweepStalledReviewTurns, sweepLostReviewSettles } = await import('./review.service');
     await sweepStalledReviewTurns();
+    // SETTLE-REPLAY SWEEP (#402): the sibling shape — a review turn DONE whose settle
+    // was lost to a crash. Same tick, same never-reject contract (its own try/catch).
+    await sweepLostReviewSettles();
   } catch (e) {
     log.warn('stalled-review tick failed:', e instanceof Error ? e.message : e);
   }

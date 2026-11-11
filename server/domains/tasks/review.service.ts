@@ -38,7 +38,7 @@ import {
   hasPendingAnswerHolder,
   cancelOrphanAnswerObligations,
 } from './obligations.service';
-import { dispatchTask, type DispatchOpts } from './runner.service';
+import { dispatchTask, replayLostSettle, type DispatchOpts } from './runner.service';
 import { insertActivityMessage } from './thread.service';
 
 export type ReviewVerdict = Exclude<ReviewStatus, typeof REVIEW_STATUS.PENDING>;
@@ -1186,6 +1186,24 @@ async function reviewerRunAtOrAfter(taskId: string, reviewerId: string, at: Date
   return rows[0]?.startedAt ?? null;
 }
 
+/** the reviewer's newest run this round — id + status, for the settle-replay decision
+ *  (#402): the lost settle is only the shape while that run IS the DONE row the scan
+ *  picked (a later run means the settle landed and minted it) */
+async function reviewerNewestRun(
+  taskId: string,
+  reviewerId: string,
+  at: Date,
+): Promise<{ id: string; status: string } | null> {
+  const rows = await db
+    .select({ id: taskRuns.id, status: taskRuns.status })
+    .from(taskRuns)
+    .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+    .where(and(eq(taskMessages.taskId, taskId), eq(taskRuns.employeeId, reviewerId), gte(taskRuns.startedAt, at)))
+    .orderBy(desc(taskRuns.startedAt), desc(taskRuns.id))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 /** tick arm: re-fire rounds left with a pending AI reviewer and no turn in flight.
  *  Never rejects (a failed tick means try again next tick). Returns the count. */
 export async function sweepStalledReviewTurns(): Promise<number> {
@@ -1251,6 +1269,178 @@ async function sweepStalledReviewTurnsInner(): Promise<number> {
     }
   }
   return refired;
+}
+
+/** SETTLE-REPLAY SWEEP (#402): a review turn whose run row reached DONE but whose
+ *  settle never landed — a hard crash or deploy kill between finish()'s guarded
+ *  RUNNING→DONE write and its settleDoneRun call — leaves DONE run + PENDING row +
+ *  no later run + no park. Nothing recovered that shape: reapStaleRuns scans RUNNING
+ *  only, the queue retry re-enters finish() and returns at the 0-row guard, the
+ *  verdict-less correction lives in the settle that never ran, the boot heal keys on
+ *  FK-voided rows, and the #397 sweep above deliberately excludes a reviewer that
+ *  already had a turn. For a WORK run the liveness sweep bounces the idle task; the
+ *  exposure is review-only.
+ *
+ *  The run row carries the settle's own inputs (its stored output, start stamp and
+ *  employee), so the arm REPLAYS the settle instead of burning a fresh turn: the
+ *  reviewer's real verdict lands. The replay binds through every existing settle
+ *  guard, so a concurrent winner makes it a quiet no-op.
+ *
+ *  Discriminators (no legal write path produces the shape):
+ *  - the task sits in an in_review-category status (a manual move out of review
+ *    legally leaves PENDING rows behind — those are not lost settles);
+ *  - the row is the CURRENT round's PENDING AI reviewer row;
+ *  - no RUNNING run on the task (a live turn owns the round);
+ *  - the reviewer's NEWEST run in this round is that DONE run and finished more than
+ *    SETTLE_REPLAY_GRACE_MS ago (a settle lands within milliseconds; a landed settle
+ *    either resolves the row or mints the next turn — so a later run, or a resolved
+ *    row, never matches);
+ *  - the run is bounded: SETTLE_REPLAY_MAX_ATTEMPTS replays in-process, then the round
+ *    parks REARMABLE on the owner with a settle-loss note (never an infinite retry).
+ *  Bounded + best-effort like every other tick arm; at most one action per task per
+ *  tick. */
+export const SETTLE_REPLAY_GRACE_MS = 60_000;
+export const SETTLE_REPLAY_MAX_ATTEMPTS = 2;
+/** warn throttle (module law: a persistent fault warns once per window, never per 5s
+ *  tick) */
+export const lostSettleWarnState = { lastAt: 0 };
+const LOST_SETTLE_WARN_INTERVAL_MS = 5 * 60_000;
+function warnLostSettle(msg: string, e: unknown) {
+  const now = Date.now();
+  if (now - lostSettleWarnState.lastAt < LOST_SETTLE_WARN_INTERVAL_MS) return;
+  lostSettleWarnState.lastAt = now;
+  log.warn(msg, e instanceof Error ? e.message : e);
+}
+
+export type LostSettleCandidate = {
+  taskId: string;
+  round: number;
+  reviewerId: string;
+  createdAt: Date;
+  runId: string;
+  finishedAt: Date | null;
+};
+
+/** the sweep's bounded read: the shape's SQL discriminators ride the query so the
+ *  LIMIT applies to true candidates only. One row per (task, reviewer) — the
+ *  no-later-run clause keeps exactly the reviewer's newest DONE run. */
+export function lostSettleScan(ex: DbExecutor, cutoff: Date) {
+  return asDb(ex)
+    .select({
+      taskId: taskReviews.taskId,
+      round: taskReviews.round,
+      reviewerId: taskReviews.reviewerId,
+      createdAt: taskReviews.createdAt,
+      runId: taskRuns.id,
+      finishedAt: taskRuns.finishedAt,
+    })
+    .from(taskReviews)
+    .innerJoin(tasks, eq(tasks.id, taskReviews.taskId))
+    .innerJoin(taskStatuses, eq(taskStatuses.id, tasks.status))
+    .innerJoin(aiEmployees, eq(aiEmployees.userId, taskReviews.reviewerId))
+    .innerJoin(taskMessages, eq(taskMessages.taskId, tasks.id))
+    .innerJoin(taskRuns, and(eq(taskRuns.messageId, taskMessages.id), eq(taskRuns.employeeId, taskReviews.reviewerId)))
+    .where(
+      and(
+        eq(taskStatuses.category, CATEGORY.IN_REVIEW),
+        eq(taskReviews.status, REVIEW_STATUS.PENDING),
+        eq(taskRuns.status, RUN_STATUS.DONE),
+        lt(taskRuns.finishedAt, cutoff),
+        gte(taskRuns.startedAt, taskReviews.createdAt),
+        // CURRENT round only (mirrors the #397 scan: a manual move out of review leaves
+        // PENDING rows behind and a re-entry brings them along)
+        sql`${taskReviews.round} = (select max(r2.round) from task_reviews r2 where r2.task_id = ${taskReviews.taskId})`,
+        // no live turn on the task
+        sql`not exists (select 1 from task_runs tr join task_messages tm on tm.id = tr.message_id where tm.task_id = ${tasks.id} and tr.status = ${RUN_STATUS.RUNNING})`,
+        // the DONE run is the reviewer's NEWEST in this round: a later run means the
+        // settle landed (verdict-less correction minted the retry) and owns the round
+        sql`not exists (select 1 from task_runs tr2 join task_messages tm2 on tm2.id = tr2.message_id where tm2.task_id = ${tasks.id} and tr2.employee_id = ${taskReviews.reviewerId} and (tr2.started_at, tr2.id) > (${taskRuns.startedAt}, ${taskRuns.id}))`,
+      ),
+    )
+    .orderBy(taskReviews.createdAt)
+    .limit(STALLED_REVIEW_SCAN_LIMIT);
+}
+
+/** pure decision for one candidate: replay the lost settle, or park the round once the
+ *  run's replay attempts are exhausted. `null` = not the shape (a concurrent write
+ *  moved the round on). */
+export function lostSettleAction(
+  candidate: Pick<LostSettleCandidate, 'round'>,
+  probe: { round: number; liveRun: boolean; inReview: boolean; runStatus: string; runIsNewest: boolean },
+  attempts: number,
+): 'replay' | 'park' | null {
+  if (!probe.inReview) return null; // the task left in-review (manual move/park/settle)
+  if (probe.round !== candidate.round) return null; // a superseded round is never replayed
+  if (probe.liveRun) return null; // a live turn owns the round
+  if (probe.runStatus !== RUN_STATUS.DONE || !probe.runIsNewest) return null; // settled or superseded
+  return attempts >= SETTLE_REPLAY_MAX_ATTEMPTS ? 'park' : 'replay';
+}
+
+/** per-run replay attempts (in-process: a restart grants one fresh attempt, the only
+ *  bound that survives a crash loop without a schema change) — normally empty, since
+ *  a replay settles the run or parks it */
+const lostSettleAttempts = new Map<string, number>();
+/** exposed for tests: the attempt map is module state and must reset between cases */
+export const lostSettleAttemptState = lostSettleAttempts;
+
+/** tick arm: replay review turns left DONE with their settle lost. Never rejects (a
+ *  failed tick means try again next tick). Returns the healed count. */
+export async function sweepLostReviewSettles(): Promise<number> {
+  try {
+    return await sweepLostReviewSettlesInner();
+  } catch (e) {
+    warnLostSettle('lost-settle sweep failed:', e);
+    return 0;
+  }
+}
+
+async function sweepLostReviewSettlesInner(): Promise<number> {
+  const candidates = await lostSettleScan(db, new Date(Date.now() - SETTLE_REPLAY_GRACE_MS));
+  const attempted = new Set<string>();
+  let healed = 0;
+  for (const candidate of candidates) {
+    if (!candidate.reviewerId || attempted.has(candidate.taskId)) continue;
+    try {
+      const probe = { round: 0, liveRun: false, inReview: false, runStatus: '', runIsNewest: false };
+      probe.round = await currentRound(candidate.taskId);
+      if (probe.round === candidate.round) {
+        probe.liveRun = await taskHasLiveRun(candidate.taskId);
+        if (!probe.liveRun) {
+          // decision-time re-check of the run shape: the scan→replay window is not atomic
+          const newest = await reviewerNewestRun(candidate.taskId, candidate.reviewerId, candidate.createdAt);
+          probe.runStatus = newest?.status ?? '';
+          probe.runIsNewest = newest?.id === candidate.runId;
+          if (probe.runIsNewest) probe.inReview = (await taskCategory(candidate.taskId)) === CATEGORY.IN_REVIEW;
+        }
+      }
+      const attempts = lostSettleAttempts.get(candidate.runId) ?? 0;
+      const action = lostSettleAction(candidate, probe, attempts);
+      if (!action) continue;
+      attempted.add(candidate.taskId);
+      lostSettleAttempts.set(candidate.runId, attempts + 1);
+      if (lostSettleAttempts.size > 500) lostSettleAttempts.clear(); // bounded map, wedges only
+      if (action === 'park') {
+        const parked = await parkRound(
+          candidate.taskId,
+          'review turn finished but its settle was lost — the round needs a human',
+          { rearmable: true },
+        );
+        if (parked) {
+          healed += 1;
+          log.info(`lost-settle sweep: parked task ${candidate.taskId} after ${attempts} replay attempts`);
+        }
+        continue;
+      }
+      const outcome = await replayLostSettle(candidate.runId);
+      if (outcome === 'backoff') continue; // the settle itself failed: next tick retries (bounded)
+      lostSettleAttempts.delete(candidate.runId);
+      healed += 1;
+      log.info(`lost-settle sweep: replayed the lost settle of run ${candidate.runId} on task ${candidate.taskId}`);
+    } catch (e) {
+      warnLostSettle(`lost-settle sweep: could not replay task ${candidate.taskId}:`, e);
+    }
+  }
+  return healed;
 }
 
 /** BOOT HEAL (#365): settle every in-review round left with a void pending row and

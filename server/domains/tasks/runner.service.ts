@@ -1389,6 +1389,41 @@ export async function settleReviewVerdict(
   await publishChange(CHANGE_RESOURCE.TASKS, CHANGE_ACTION.UPDATE);
 }
 
+/** SETTLE-REPLAY (#402): replay a review turn's lost settle from the run row itself.
+ *  finish() writes DONE and then settles; a crash in between leaves a DONE run whose
+ *  verdict never landed (PENDING row, no later run — a silent wedge no other arm
+ *  scans). The run's stored output IS the settle input, so replaying records the
+ *  reviewer's real verdict instead of burning a fresh turn. Every settle guard still
+ *  binds (round by run start, row CAS, terminal gate): a concurrent winner makes the
+ *  replay a quiet no-op. Caller owns the shape check (the tick's lost-settle sweep) —
+ *  this function only replays the row it is given. */
+export async function replayLostSettle(runId: string): Promise<'settled' | 'backoff' | 'skipped'> {
+  const rows = await db
+    .select({
+      status: taskRuns.status,
+      output: taskRuns.output,
+      employeeId: taskRuns.employeeId,
+      startedAt: taskRuns.startedAt,
+      messageId: taskRuns.messageId,
+      taskId: taskMessages.taskId,
+    })
+    .from(taskRuns)
+    .innerJoin(taskMessages, eq(taskMessages.id, taskRuns.messageId))
+    .where(eq(taskRuns.id, runId))
+    .limit(1);
+  const run = rows[0];
+  if (!run || run.status !== RUN_STATUS.DONE || !run.employeeId) return 'skipped';
+  // the thread bubble becomes the parsed result exactly as finish() would have left it
+  await updateRunMessageBody(run.messageId, run.output, true);
+  return settleDoneRun(
+    run.taskId,
+    runId,
+    { review: { resultBody: '' }, ai: { userId: run.employeeId } },
+    run.output,
+    run.startedAt,
+  );
+}
+
 /** settle a DONE run: parse the envelope, route proposals, submit the result (or
  * park the task on a question / a verdict-less review). Returns 'backoff' when the
  * settle itself failed (the task ladder stays armed). */
