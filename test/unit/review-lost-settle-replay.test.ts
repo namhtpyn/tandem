@@ -193,6 +193,17 @@ describe('replayLostSettle (#402)', () => {
     expect(h.relays).toEqual([]);
   });
 
+  it('an INFRA throw is not a refusal — the ladder and the error log stay (#402 r2)', async () => {
+    // only a business refusal is a quiet no-op; a statement timeout must keep the retry
+    // ladder and park with the real diagnosis, never masquerade as 'a concurrent winner'
+    h.runRows = [runRow()];
+    h.verdictThrows = 'canceling statement due to statement timeout';
+    await expect(replayLostSettle(RUN)).resolves.toBe('backoff');
+    expect(h.parks).toHaveLength(1);
+    expect(h.parks[0]).toContain('settle failed');
+    expect(h.relays).toEqual([]);
+  });
+
   it('a verdict-less stored output replays into the bounded correction machinery', async () => {
     h.runRows = [runRow({ output: 'I had a look but produced no envelope' })];
     await expect(replayLostSettle(RUN)).resolves.toBe('settled');

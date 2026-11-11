@@ -1389,6 +1389,14 @@ const lostSettleInFlight = new Set<string>();
 /** exposed for tests: the attempt map is module state and must reset between cases */
 export const lostSettleAttemptState = lostSettleAttempts;
 
+/** bounded map: evict the OLDEST entry only — a blanket clear() would wipe live
+ *  counters, including a wedge sitting at the bound that is due to park (#402 r2) */
+function pruneLostSettleAttempts(keep: string) {
+  if (lostSettleAttempts.size <= 500) return;
+  const oldest = lostSettleAttempts.keys().next().value;
+  if (oldest !== undefined && oldest !== keep) lostSettleAttempts.delete(oldest);
+}
+
 /** tick arm: replay review turns left DONE with their settle lost. Never rejects (a
  *  failed tick means try again next tick). Returns the healed count. */
 export async function sweepLostReviewSettles(): Promise<number> {
@@ -1425,7 +1433,7 @@ async function sweepLostReviewSettlesInner(): Promise<number> {
       if (!action) continue;
       attempted.add(candidate.taskId);
       lostSettleAttempts.set(candidate.runId, attempts + 1);
-      if (lostSettleAttempts.size > 500) lostSettleAttempts.clear(); // bounded map, wedges only
+      pruneLostSettleAttempts(candidate.runId);
       if (action === 'park') {
         const parked = await parkRound(
           candidate.taskId,

@@ -1444,6 +1444,29 @@ export async function replayLostSettle(runId: string): Promise<'settled' | 'back
   return outcome;
 }
 
+/** SETTLE REFUSALS (#402 r2): the business refusals a settle hits when the world
+ *  already moved — a concurrent winner, a manual move, a closed round. Only these are
+ *  the replay's quiet no-op; every other throw is an infra failure that must keep the
+ *  retry ladder and surface in the logs. */
+const SETTLE_REFUSALS = [
+  'task already settled',
+  'task has no open review round',
+  'not a reviewer in the current round',
+  'not a pending reviewer in the current round',
+  'verdict already recorded',
+  'task is not in review',
+  'task not found',
+];
+/** the replay's quiet no-op: a business refusal while replaying (#402) */
+function replayRefusal(replay: boolean | undefined, e: unknown): boolean {
+  return replay === true && isSettleRefusal(e);
+}
+
+export function isSettleRefusal(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return SETTLE_REFUSALS.some((refusal) => msg.includes(refusal));
+}
+
 /** SETTLE FAILURE ARMS: a review turn parks (the work ladder's bounce no-ops on an
  *  in-review task and the round would wedge, SPEC #199 — REARMABLE #211 since a settle
  *  throw is infra-class; a removed reviewer never parks, #370); a work run rides the
@@ -1522,10 +1545,9 @@ async function settleDoneRun(
   } catch (e) {
     // REPLAY (#402): a replay runs OUTSIDE finish()'s RUNNING→DONE arbitration, so the
     // loser of a concurrent settle (two replicas, or an overlapping tick) surfaces here
-    // as a business refusal ('verdict already recorded', 'not a pending reviewer',
-    // 'task already settled'). The winner owns the outcome: the replay must report a
-    // quiet no-op, never park a round the winner just healed.
-    if (opts.replay) return 'skipped';
+    // as a BUSINESS refusal — the winner owns the outcome and the replay reports a quiet
+    // no-op. An infra throw is not a refusal: it keeps the ladder and the error log.
+    if (replayRefusal(opts.replay, e)) return 'skipped';
     await settleFailureArm(taskId, runId, plan, buffer, e);
     return 'backoff';
   }
