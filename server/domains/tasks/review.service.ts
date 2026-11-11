@@ -1222,9 +1222,9 @@ async function sweepStalledReviewTurnsInner(): Promise<number> {
         // last read before the mint: the task should still be in review. This NARROWS the
         // scan→mint window; it cannot close it — review turns take no DB claim, so a move
         // landing inside the mint's own reads still mints a turn. The settle is what
-        // enforces the owner's move: the end-of-round flip refuses any status outside the
-        // in-review category unless a machine block recorded the round's in-review home
-        // (#401), so the verdict lands as audit history and the owner's status stands.
+        // enforces the owner's move: the end-of-round flip refuses an owner-moved status
+        // outside the in-review category (a machine block's recorded origin excepted, #401),
+        // so the verdict lands as audit history and the owner's status stands.
         // (The mint's own gate in dispatchAiReviewTurns refuses the common case before the
         // dispatch; this probe keeps the sweep's own decision honest.)
         probe.inReview = (await taskCategory(candidate.taskId)) === CATEGORY.IN_REVIEW;
