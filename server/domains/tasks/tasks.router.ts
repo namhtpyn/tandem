@@ -646,7 +646,14 @@ export const tasksRouter = os.router({
         // a fresh owner context restarts the machine ledger at zero.
         .set({
           status: input.status,
+          // MACHINE-BLOCK MEMORY (#401): the owner's move is the verdict of record, so it
+          // clears BOTH machine origins — park_from_status (a review park) and
+          // pre_block_status (a gating auto-block). A surviving origin let a later manual
+          // block look machine-recorded and let a closing verdict flip a task the owner had
+          // parked by hand; clearing it also keeps a fresh auto-block's restore target
+          // honest (gating records the CURRENT status, never a stale origin).
           parkFromStatus: null,
+          preBlockStatus: null,
           parkRearmAttempts: 0,
           parkRearmAfter: null,
           updatedAt: new Date(),
