@@ -12,7 +12,7 @@
 // Parks (round cannot progress without a human) flip the task to BLOCKED; owner
 // resolution unblocks and the round resumes. Manual done/cancel supersedes the round.
 import { consola } from 'consola';
-import { and, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 
 import { asDb, db, type DbExecutor } from '../../db/index';
@@ -1071,9 +1071,30 @@ function warnStalledSweep(msg: string, e: unknown) {
 }
 const STALLED_REVIEW_SCAN_LIMIT = 20;
 
+/** The review flow's own task shapes at scan time (#419): an in_review-category status,
+ *  or a PAUSED-category GATING auto-block whose recorded origin resolves to an
+ *  in-review-category id — the same ownership the mint gate (reviewTurnAllowed) grants,
+ *  because a child-derived block does not stop the round (SPEC, REVIEW-TURN MINT GATE).
+ *  A PARK is the round's own stop (park_from_status set; its restore re-fires) and a
+ *  manual move out of review clears both origins, so neither can look machine-blocked
+ *  here. The origin must RESOLVE to an in-review id: a stale/bare origin is not a
+ *  machine block (#401). SQL-side so both bounded scans apply to true candidates only. */
+function reviewFlowOwnsTaskSql() {
+  return or(
+    eq(taskStatuses.category, CATEGORY.IN_REVIEW),
+    and(
+      eq(taskStatuses.category, CATEGORY.PAUSED),
+      isNull(tasks.parkFromStatus),
+      isNotNull(tasks.preBlockStatus),
+      sql`exists (select 1 from task_statuses o where o.id = ${tasks.preBlockStatus} and o.category = ${CATEGORY.IN_REVIEW})`,
+    ),
+  );
+}
+
 export type StalledReviewCandidate = { taskId: string; round: number; reviewerId: string; createdAt: Date };
 
-/** the sweep's bounded read: PENDING rows of a live AI reviewer on an in-review task,
+/** the sweep's bounded read: PENDING rows of a live AI reviewer on a task the REVIEW
+ *  FLOW STILL OWNS (in review, or a gating auto-block from an in-review origin — #419),
  *  older than the grace cutoff, oldest first. The row/run discriminators ALSO ride the
  *  SQL (CURRENT round, no live run, reviewer never dispatched this round) so the bounded
  *  LIMIT applies to true candidates only — a permanent exempt row can never occupy the
@@ -1094,7 +1115,10 @@ export function stalledReviewScan(ex: DbExecutor, cutoff: Date) {
     .innerJoin(aiEmployees, eq(aiEmployees.userId, taskReviews.reviewerId))
     .where(
       and(
-        eq(taskStatuses.category, CATEGORY.IN_REVIEW),
+        // OWNERSHIP (#419): a round committed in review stays the review flow's while a
+        // GATING auto-block stands — a lost mint there strands exactly like the crash
+        // window this sweep heals, and the restore re-fires only a PARKED round
+        reviewFlowOwnsTaskSql(),
         eq(taskReviews.status, REVIEW_STATUS.PENDING),
         lt(taskReviews.createdAt, cutoff),
         // CURRENT round only: a manual move out of review legally leaves PENDING rows
@@ -1122,37 +1146,27 @@ export function stalledReviewScan(ex: DbExecutor, cutoff: Date) {
     .limit(STALLED_REVIEW_SCAN_LIMIT);
 }
 
-/** pure decision for one candidate: is this the crash-window shape? */
+/** pure decision for one candidate: is this the crash-window shape? `turnAllowed` is
+ *  the mint gate's own ownership read (in review, or a gating auto-block from an
+ *  in-review origin, #419) — never a park and never an owner move. */
 export function stalledReviewRefire(
   candidate: StalledReviewCandidate,
-  probe: { round: number; liveRun: boolean; reviewerRunSince: Date | null; inReview: boolean },
+  probe: { round: number; liveRun: boolean; reviewerRunSince: Date | null; turnAllowed: boolean },
 ): boolean {
-  if (!probe.inReview) return false; // the task left in-review (manual move/park/settle)
+  if (!probe.turnAllowed) return false; // the review flow no longer owns the task (park/move/settle)
   if (probe.round !== candidate.round) return false; // a superseded round never re-fires
   if (probe.liveRun) return false; // a live turn owns the round
   if (probe.reviewerRunSince !== null) return false; // already dispatched this round
   return true;
 }
 
-/** the task's CURRENT category — the decision-time re-check that the task still belongs
- *  to in-review. Review turns never claim the task, so nothing else would refuse a turn
- *  minted for a task a manual move (or a park) took out of review while the scan ran
- *  (#397 r2). */
-async function taskCategory(taskId: string): Promise<string | null> {
-  const row = (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)))[0];
-  if (!row) return null;
-  return await categoryOf(row.status);
-}
-
 /** does the REVIEW FLOW still own a turn on this task? (#401) In review, or in a
  *  GATING auto-block (a PAUSED-category block whose pre-block origin resolves to an
  *  in-review id): a child-derived block does not stop the round, and its turn is the
- *  ONLY retry a verdict-less correction gets — the stalled sweep never even scans a
- *  blocked row and excludes any reviewer that already had a turn this round, and the
- *  gating restore re-mints only a PARKED round, so a refused mint would leave the
- *  PENDING row with no run and no re-fire. A PARK is the round's OWN stop: no job, no
- *  turn until the owner resumes (the park restore re-fires it). An owner move out of
- *  review owns the task outright. */
+ *  ONLY retry a verdict-less correction gets — a refused mint would leave the PENDING
+ *  row with no run and no re-fire (both recovery sweeps accept this shape, #419). A
+ *  PARK is the round's OWN stop: no job, no turn until the owner resumes (the park
+ *  restore re-fires it). An owner move out of review owns the task outright. */
 async function reviewTurnAllowed(taskId: string): Promise<boolean> {
   const row = (
     await db
@@ -1236,7 +1250,7 @@ async function sweepStalledReviewTurnsInner(): Promise<number> {
         round: await currentRound(candidate.taskId),
         liveRun: await taskHasLiveRun(candidate.taskId),
         reviewerRunSince: null as Date | null,
-        inReview: false,
+        turnAllowed: false,
       };
       if (probe.round === candidate.round && !probe.liveRun) {
         probe.reviewerRunSince = await reviewerRunAtOrAfter(
@@ -1244,16 +1258,19 @@ async function sweepStalledReviewTurnsInner(): Promise<number> {
           candidate.reviewerId,
           candidate.createdAt,
         );
-        // last read before the mint: the task should still be in review. This NARROWS the
-        // scan→mint window; it cannot close it — review turns take no DB claim, so a move
-        // landing inside the mint's own reads still mints a turn. The settle is what
-        // enforces the owner's move: the end-of-round flip refuses an owner-moved status
-        // outside the in-review category (a machine block's recorded origin excepted, #401),
-        // so a re-queued task keeps the owner's status and the verdict stays a superseded
-        // audit row (a waiting_answer landing parks instead — the hold clause).
-        // (The mint's own gate in dispatchAiReviewTurns refuses the common case before the
-        // dispatch; this probe keeps the sweep's own decision honest.)
-        probe.inReview = (await taskCategory(candidate.taskId)) === CATEGORY.IN_REVIEW;
+        // last read before the mint: the review flow should still own the task. This
+        // NARROWS the scan→mint window; it cannot close it — review turns take no DB
+        // claim, so a move landing inside the mint's own reads still mints a turn. The
+        // settle is what enforces the owner's move: the end-of-round flip refuses an
+        // owner-moved status outside the in-review category (a machine block's recorded
+        // origin excepted, #401), so a re-queued task keeps the owner's status and the
+        // verdict stays a superseded audit row (a waiting_answer landing parks instead —
+        // the hold clause). The read is the MINT GATE's own ownership check (#419): a
+        // child-derived auto-block from an in-review origin still owns the round (the
+        // sweep is its only lost-mint recovery); a park or an owner move does not.
+        // (The mint's own gate in dispatchAiReviewTurns refuses the common case before
+        // the dispatch; this probe keeps the sweep's own decision honest.)
+        probe.turnAllowed = await reviewTurnAllowed(candidate.taskId);
       }
       if (!stalledReviewRefire({ ...candidate, reviewerId: candidate.reviewerId }, probe)) continue;
       attempted.add(candidate.taskId);
@@ -1294,8 +1311,9 @@ async function sweepStalledReviewTurnsInner(): Promise<number> {
  *  guard, so a concurrent winner makes it a quiet no-op.
  *
  *  Discriminators (no legal write path produces the shape):
- *  - the task sits in an in_review-category status (a manual move out of review
- *    legally leaves PENDING rows behind — those are not lost settles);
+ *  - the task still belongs to the review flow: an in_review-category status, or a
+ *    PAUSED-category GATING auto-block from an in-review origin (#419 — the round is
+ *    not stopped by a child-derived block; a park or an owner move ends it);
  *  - the row is the CURRENT round's PENDING AI reviewer row;
  *  - no RUNNING run on the task (a live turn owns the round);
  *  - the reviewer's NEWEST run in this round is that DONE run and finished more than
@@ -1349,7 +1367,10 @@ export function lostSettleScan(ex: DbExecutor, cutoff: Date) {
     .innerJoin(taskRuns, and(eq(taskRuns.messageId, taskMessages.id), eq(taskRuns.employeeId, taskReviews.reviewerId)))
     .where(
       and(
-        eq(taskStatuses.category, CATEGORY.IN_REVIEW),
+        // OWNERSHIP (#419): the same shape the stalled sweep accepts — in review, or a
+        // child-derived GATING auto-block from an in-review origin (a park / owner move
+        // ends the round and is never a lost settle)
+        reviewFlowOwnsTaskSql(),
         eq(taskReviews.status, REVIEW_STATUS.PENDING),
         eq(taskRuns.status, RUN_STATUS.DONE),
         lt(taskRuns.finishedAt, cutoff),
@@ -1379,10 +1400,10 @@ export function lostSettleScan(ex: DbExecutor, cutoff: Date) {
  *  moved the round on). */
 export function lostSettleAction(
   candidate: Pick<LostSettleCandidate, 'round'>,
-  probe: { round: number; liveRun: boolean; inReview: boolean; runStatus: string; runIsNewest: boolean },
+  probe: { round: number; liveRun: boolean; turnAllowed: boolean; runStatus: string; runIsNewest: boolean },
   attempts: number,
 ): 'replay' | 'park' | null {
-  if (!probe.inReview) return null; // the task left in-review (manual move/park/settle)
+  if (!probe.turnAllowed) return null; // the review flow no longer owns the task (park/move/settle)
   if (probe.round !== candidate.round) return null; // a superseded round is never replayed
   if (probe.liveRun) return null; // a live turn owns the round
   if (probe.runStatus !== RUN_STATUS.DONE || !probe.runIsNewest) return null; // settled or superseded
@@ -1432,7 +1453,7 @@ async function sweepLostReviewSettlesInner(): Promise<number> {
   for (const candidate of candidates) {
     if (!candidate.reviewerId || attempted.has(candidate.taskId)) continue;
     try {
-      const probe = { round: 0, liveRun: false, inReview: false, runStatus: '', runIsNewest: false };
+      const probe = { round: 0, liveRun: false, turnAllowed: false, runStatus: '', runIsNewest: false };
       probe.round = await currentRound(candidate.taskId);
       if (probe.round === candidate.round) {
         probe.liveRun = await taskHasLiveRun(candidate.taskId);
@@ -1441,7 +1462,7 @@ async function sweepLostReviewSettlesInner(): Promise<number> {
           const newest = await reviewerNewestRun(candidate.taskId, candidate.reviewerId, candidate.createdAt);
           probe.runStatus = newest?.status ?? '';
           probe.runIsNewest = newest?.id === candidate.runId;
-          if (probe.runIsNewest) probe.inReview = (await taskCategory(candidate.taskId)) === CATEGORY.IN_REVIEW;
+          if (probe.runIsNewest) probe.turnAllowed = await reviewTurnAllowed(candidate.taskId);
         }
       }
       if (lostSettleInFlight.has(candidate.runId)) continue;

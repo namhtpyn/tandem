@@ -7,11 +7,14 @@
 //  1. the pure decision — every near-miss shape must NOT replay (task left review,
 //     superseded round, live run, run not DONE, a later run) and the crash shape must;
 //  2. the bound: the second replay attempt is the last — the third decision parks;
-//  3. the scan's SQL carries the shape's discriminators (current round, in_review
-//     category, PENDING AI row, no live run, the reviewer's NEWEST run is the DONE one);
+//  3. the scan's SQL carries the shape's discriminators (current round, review-flow
+//     ownership — in review or a child-derived gating auto-block from an in-review
+//     origin, #419 — PENDING AI row, no live run, the reviewer's NEWEST run is DONE);
 //  4. the wiring: a crash-shaped candidate replays exactly one run and reports the heal;
 //     a live run / a task out of review suppresses it; a scan failure resolves 0.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { REVIEW_STATUS } from '#shared/enums';
 
 const h = vi.hoisted(() => ({
   scan: [] as Array<Record<string, unknown>>,
@@ -20,6 +23,8 @@ const h = vi.hoisted(() => ({
   liveRun: false,
   newest: null as { id: string; status: string } | null,
   taskStatus: 'st-in-review',
+  parkFromStatus: null as string | null,
+  preBlockStatus: null as string | null,
   statusRows: [{ id: 'st-in-review', category: 'in_review' }] as Array<{ id: string; category: string }>,
   replayed: [] as string[],
   replayOutcome: 'settled' as 'settled' | 'backoff' | 'skipped',
@@ -40,6 +45,9 @@ vi.mock('../../server/db/index', () => {
     }
     if (keys.includes('round')) return [{ round: h.round }];
     if (keys.includes('rearmAttempts')) return [{ status: h.taskStatus, ownerId: null, rearmAttempts: 0 }];
+    // the mint gate's ownership read (reviewTurnAllowed): status + machine origins
+    if (keys.includes('preBlockStatus'))
+      return [{ status: h.taskStatus, parkFromStatus: h.parkFromStatus, preBlockStatus: h.preBlockStatus }];
     if (keys.includes('status')) return [{ status: h.taskStatus }];
     return [];
   };
@@ -124,7 +132,7 @@ const candidate = {
   finishedAt: FINISHED,
 };
 
-const shape = { round: 2, liveRun: false, inReview: true, runStatus: 'DONE', runIsNewest: true };
+const shape = { round: 2, liveRun: false, turnAllowed: true, runStatus: 'DONE', runIsNewest: true };
 
 beforeEach(() => {
   lostSettleAttemptState.clear(); // module state: attempts are per-run and per-process
@@ -134,6 +142,8 @@ beforeEach(() => {
   h.liveRun = false;
   h.newest = { id: RUN, status: 'DONE' };
   h.taskStatus = 'st-in-review';
+  h.parkFromStatus = null;
+  h.preBlockStatus = null;
   h.replayed = [];
   h.replayOutcome = 'settled';
   h.taskUpdates = [];
@@ -144,8 +154,8 @@ describe('lostSettleAction (#402 pure decision)', () => {
     expect(lostSettleAction(candidate, shape, 0)).toBe('replay');
   });
 
-  it('never replays a task that left in-review (manual move / park while scanning)', () => {
-    expect(lostSettleAction(candidate, { ...shape, inReview: false }, 0)).toBeNull();
+  it('never replays a task the review flow no longer owns (manual move / park while scanning)', () => {
+    expect(lostSettleAction(candidate, { ...shape, turnAllowed: false }, 0)).toBeNull();
   });
 
   it('never replays a superseded round', () => {
@@ -177,15 +187,21 @@ describe('lostSettleScan (#402 SQL discriminators)', () => {
     const client = new SQL('postgresql://probe:probe@127.0.0.1:1/probe');
     const query = lostSettleScan(drizzle(client) as never, new Date('2026-11-11T01:00:00Z')).toSQL();
     const text = query.sql.toLowerCase();
-    // placeholders carry the enum values: category = $1 (in_review), row status = $2
-    // (PENDING), run status = $3 (DONE), finished_at < $4 (grace cutoff), live-run
-    // probe = $5 (RUNNING)
-    expect(text).toContain('task_statuses"."category" = $1');
-    expect(text).toContain('task_reviews"."status" = $2');
-    expect(text).toContain('task_runs"."status" = $3');
-    expect(text).toContain('task_runs"."finished_at" < $4');
+    // placeholders carry the enum values; the ownership disjunction prepends
+    // (in_review, paused, in_review-origin) — #419
+    expect(text).toContain('task_statuses"."category" =');
+    expect(text).toContain('"tasks"."park_from_status" is null');
+    expect(text).toContain('"tasks"."pre_block_status" is not null');
+    expect(text).toContain('exists (select 1 from task_statuses o where o.id = "tasks"."pre_block_status"');
+    expect(text).toContain('task_reviews"."status" =');
+    expect(text).toContain('task_runs"."status" =');
+    expect(text).toContain('task_runs"."finished_at" <');
     expect(text).toContain('task_runs"."started_at" >= "task_reviews"."created_at"');
-    expect(query.params.slice(0, 5)).toEqual(['in_review', 'PENDING', 'DONE', expect.any(String), 'RUNNING']);
+    expect(query.params).toContain('in_review');
+    expect(query.params).toContain('paused');
+    expect(query.params).toContain(REVIEW_STATUS.PENDING);
+    expect(query.params).toContain('DONE');
+    expect(query.params).toContain('RUNNING');
     expect(text).toContain('ai_employees');
     expect(text).toContain('max(r2.round)');
     // the NEWEST-run clause: the later-run subquery compares the (started_at, id) tuple
@@ -207,6 +223,30 @@ describe('sweepLostReviewSettles (#402 wiring)', () => {
 
   it('suppresses the replay while a run is live on the task', async () => {
     h.liveRun = true;
+    const healed = await sweepLostReviewSettles();
+    expect(healed).toBe(0);
+    expect(h.replayed).toEqual([]);
+  });
+
+  it('replays a lost settle in a child-derived GATING auto-block (#419)', async () => {
+    h.taskStatus = 'st-blocked';
+    h.preBlockStatus = 'st-in-review';
+    h.statusRows = [
+      { id: 'st-blocked', category: 'paused' },
+      { id: 'st-in-review', category: 'in_review' },
+    ];
+    const healed = await sweepLostReviewSettles();
+    expect(healed).toBe(1);
+    expect(h.replayed).toEqual([RUN]);
+  });
+
+  it('never replays a PARKED round (its restore re-fires the turn, #419)', async () => {
+    h.taskStatus = 'st-blocked';
+    h.parkFromStatus = 'st-in-review';
+    h.statusRows = [
+      { id: 'st-blocked', category: 'paused' },
+      { id: 'st-in-review', category: 'in_review' },
+    ];
     const healed = await sweepLostReviewSettles();
     expect(healed).toBe(0);
     expect(h.replayed).toEqual([]);
