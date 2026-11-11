@@ -44,10 +44,18 @@ vi.mock('../../server/db/index', () => {
       return h.newest ? [h.newest] : [];
     }
     if (keys.includes('round')) return [{ round: h.round }];
-    if (keys.includes('rearmAttempts')) return [{ status: h.taskStatus, ownerId: null, rearmAttempts: 0 }];
-    // the mint gate's ownership read (reviewTurnAllowed): status + machine origins
+    // the mint gate's ownership read (reviewTurnAllowed) and parkRound's row read:
+    // status + machine origins + the ladder ledger (columns are NULL, never undefined)
     if (keys.includes('preBlockStatus'))
-      return [{ status: h.taskStatus, parkFromStatus: h.parkFromStatus, preBlockStatus: h.preBlockStatus }];
+      return [
+        {
+          status: h.taskStatus,
+          ownerId: 'u1',
+          rearmAttempts: 0,
+          parkFromStatus: h.parkFromStatus,
+          preBlockStatus: h.preBlockStatus,
+        },
+      ];
     if (keys.includes('status')) return [{ status: h.taskStatus }];
     return [];
   };
@@ -265,6 +273,26 @@ describe('sweepLostReviewSettles (#402 wiring)', () => {
     const healed = await sweepLostReviewSettles();
     expect(healed).toBe(0);
     expect(h.replayed).toEqual([]);
+  });
+
+  it('parks a derived-block round with the BLOCK origin as its home (#419)', async () => {
+    // the fix that makes the replay arm's terminal action reachable: parkRound accepts a
+    // gating auto-block and persists the round's in-review home (pre_block_status), not
+    // the blocked id — a park recording BLOCKED would restore into the paused category
+    h.taskStatus = 'st-blocked';
+    h.preBlockStatus = 'st-in-review';
+    h.statusRows = [
+      { id: 'st-blocked', category: 'paused' },
+      { id: 'st-in-review', category: 'in_review' },
+    ];
+    h.replayOutcome = 'backoff';
+    expect(await sweepLostReviewSettles()).toBe(0);
+    expect(await sweepLostReviewSettles()).toBe(0);
+    expect(await sweepLostReviewSettles()).toBe(1); // the third tick parks (attempts exhausted)
+    const park = h.taskUpdates.at(-1);
+    expect(park?.parkFromStatus).toBe('st-in-review');
+    expect(park?.parkRearmAttempts).toBe(1);
+    expect(park?.parkRearmAfter).toBeInstanceOf(Date);
   });
 
   it('keeps the attempt when the settle itself backs off, then parks on the third tick', async () => {

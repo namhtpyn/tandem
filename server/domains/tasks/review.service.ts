@@ -1146,14 +1146,15 @@ export function stalledReviewScan(ex: DbExecutor, cutoff: Date) {
     .limit(STALLED_REVIEW_SCAN_LIMIT);
 }
 
-/** pure decision for one candidate: is this the crash-window shape? `turnAllowed` is
- *  the mint gate's own ownership read (in review, or a gating auto-block from an
- *  in-review origin, #419) — never a park and never an owner move. */
+/** pure decision for one candidate: is this the crash-window shape? Ownership (a park,
+ *  an owner move, a settle) is the MINT GATE's read, not the sweep's: the mint re-checks
+ *  reviewTurnAllowed before it dispatches, so a stale candidate here costs one refused
+ *  mint and never a turn (#419). The sweep owns the three discriminators the mint does
+ *  not: the current round, a live turn, and a reviewer already dispatched this round. */
 export function stalledReviewRefire(
   candidate: StalledReviewCandidate,
-  probe: { round: number; liveRun: boolean; reviewerRunSince: Date | null; turnAllowed: boolean },
+  probe: { round: number; liveRun: boolean; reviewerRunSince: Date | null },
 ): boolean {
-  if (!probe.turnAllowed) return false; // the review flow no longer owns the task (park/move/settle)
   if (probe.round !== candidate.round) return false; // a superseded round never re-fires
   if (probe.liveRun) return false; // a live turn owns the round
   if (probe.reviewerRunSince !== null) return false; // already dispatched this round
@@ -1250,7 +1251,6 @@ async function sweepStalledReviewTurnsInner(): Promise<number> {
         round: await currentRound(candidate.taskId),
         liveRun: await taskHasLiveRun(candidate.taskId),
         reviewerRunSince: null as Date | null,
-        turnAllowed: false,
       };
       if (probe.round === candidate.round && !probe.liveRun) {
         probe.reviewerRunSince = await reviewerRunAtOrAfter(
@@ -1258,19 +1258,6 @@ async function sweepStalledReviewTurnsInner(): Promise<number> {
           candidate.reviewerId,
           candidate.createdAt,
         );
-        // last read before the mint: the review flow should still own the task. This
-        // NARROWS the scan→mint window; it cannot close it — review turns take no DB
-        // claim, so a move landing inside the mint's own reads still mints a turn. The
-        // settle is what enforces the owner's move: the end-of-round flip refuses an
-        // owner-moved status outside the in-review category (a machine block's recorded
-        // origin excepted, #401), so a re-queued task keeps the owner's status and the
-        // verdict stays a superseded audit row (a waiting_answer landing parks instead —
-        // the hold clause). The read is the MINT GATE's own ownership check (#419): a
-        // child-derived auto-block from an in-review origin still owns the round (the
-        // sweep is its only lost-mint recovery); a park or an owner move does not.
-        // (The mint's own gate in dispatchAiReviewTurns refuses the common case before
-        // the dispatch; this probe keeps the sweep's own decision honest.)
-        probe.turnAllowed = await reviewTurnAllowed(candidate.taskId);
       }
       if (!stalledReviewRefire({ ...candidate, reviewerId: candidate.reviewerId }, probe)) continue;
       attempted.add(candidate.taskId);
@@ -2417,18 +2404,43 @@ export const PARK_REARM_LADDER_MS = [5 * 60_000, 30 * 60_000, 2 * 60 * 60_000, 6
 export async function parkRound(taskId: string, why: string, opts: { rearmable?: boolean } = {}): Promise<boolean> {
   const task = (
     await db
-      .select({ status: tasks.status, ownerId: tasks.ownerId, rearmAttempts: tasks.parkRearmAttempts })
+      .select({
+        status: tasks.status,
+        ownerId: tasks.ownerId,
+        rearmAttempts: tasks.parkRearmAttempts,
+        parkFromStatus: tasks.parkFromStatus,
+        preBlockStatus: tasks.preBlockStatus,
+      })
       .from(tasks)
       .where(eq(tasks.id, taskId))
   )[0];
   if (!task) throw new Error('task not found');
-  // park only from in-review (#199): a manual settle that won the race owns the
-  // outcome — parking over a terminal/owner-moved status would resurrect a dead round.
-  // CATEGORY-GATE LAW (#336): the gate reads the in-review CATEGORY (a custom
-  // in-review status parks too — the seeded-id gate silently missed and wedged the
-  // round), and the guarded write pins the status id it READ so any concurrent move
-  // still wins.
-  if ((await categoryOf(task.status)) !== CATEGORY.IN_REVIEW) return false;
+  // park only while the REVIEW FLOW owns the task (#199): a manual settle that won the
+  // race owns the outcome — parking over a terminal/owner-moved status would resurrect a
+  // dead round. CATEGORY-GATE LAW (#336): the gate reads CATEGORIES (a custom in-review
+  // status parks too — the seeded-id gate silently missed and wedged the round), and the
+  // guarded write pins the status id it READ so any concurrent move still wins.
+  // GATING AUTO-BLOCK (#419): a PAUSED block whose recorded origin RESOLVES to an
+  // in-review id is the same round (the #401 mint-gate shape) — its failure arms (a
+  // failed/timed-out turn, a lost settle, a failed mint) must be able to park, or the
+  // round strands with nothing watching. The persisted origin is the ROUND's home: the
+  // block's pre_block_status, never the BLOCKED id itself (a park that recorded BLOCKED
+  // would restore the task into the paused category). A park already standing
+  // (park_from_status set) and an owner move are refused.
+  const taskCategory = await categoryOf(task.status);
+  let parkOrigin: string;
+  if (taskCategory === CATEGORY.IN_REVIEW) {
+    parkOrigin = task.status;
+  } else if (
+    taskCategory === CATEGORY.PAUSED &&
+    task.parkFromStatus === null &&
+    task.preBlockStatus !== null &&
+    (await categoryOf(task.preBlockStatus)) === CATEGORY.IN_REVIEW
+  ) {
+    parkOrigin = task.preBlockStatus;
+  } else {
+    return false;
+  }
   const rearmable = opts.rearmable === true;
   // attempts = parks burned in the current cycle; ladder[attempts-1] schedules the
   // next re-fire; past the ladder the round parks FINAL (after = null) and the
@@ -2440,11 +2452,11 @@ export async function parkRound(taskId: string, why: string, opts: { rearmable?:
       : null;
   const parkedRows = await db
     .update(tasks)
-    // park-origin memory (#202): the BLOCKED flip carries the status it flipped from —
+    // park-origin memory (#202): the BLOCKED flip carries the round's in-review home —
     // the parent-gating unblock restores this, never a stale pre_block_status
     .set({
       status: BLOCKED_STATUS,
-      parkFromStatus: task.status,
+      parkFromStatus: parkOrigin,
       updatedAt: new Date(),
       parkRearmAttempts: attempts,
       parkRearmAfter: rearmAfter,

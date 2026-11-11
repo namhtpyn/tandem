@@ -61,9 +61,18 @@ vi.mock('../../server/db/index', async () => {
     }
     if (keys.includes('id')) return h.liveRun ? [{ id: 'run-live' }] : [];
     if (keys.includes('round')) return [{ round: h.round }];
-    // the mint gate's ownership read (reviewTurnAllowed): status + machine origins
+    // the mint gate's ownership read (reviewTurnAllowed) and parkRound's row read:
+    // status + machine origins + the ladder ledger
     if (keys.includes('preBlockStatus'))
-      return [{ status: h.taskStatus, parkFromStatus: h.parkFromStatus, preBlockStatus: h.preBlockStatus }];
+      return [
+        {
+          status: h.taskStatus,
+          ownerId: 'u1',
+          rearmAttempts: 0,
+          parkFromStatus: h.parkFromStatus,
+          preBlockStatus: h.preBlockStatus,
+        },
+      ];
     if (keys.includes('status')) return [{ status: h.taskStatus }];
     return [];
   };
@@ -158,27 +167,15 @@ describe('stalledReviewRefire (#397 pure decision)', () => {
   const candidate = { taskId: TASK, round: 2, reviewerId: REV, createdAt: ROW_MINTED };
 
   it('fires the crash shape: current round, no live run, reviewer never dispatched', () => {
-    expect(
-      stalledReviewRefire(candidate, { round: 2, liveRun: false, reviewerRunSince: null, turnAllowed: true }),
-    ).toBe(true);
-  });
-
-  it('never re-fires a task the review flow no longer owns (manual move / park while scanning)', () => {
-    expect(
-      stalledReviewRefire(candidate, { round: 2, liveRun: false, reviewerRunSince: null, turnAllowed: false }),
-    ).toBe(false);
+    expect(stalledReviewRefire(candidate, { round: 2, liveRun: false, reviewerRunSince: null })).toBe(true);
   });
 
   it('never re-fires a superseded round', () => {
-    expect(
-      stalledReviewRefire(candidate, { round: 3, liveRun: false, reviewerRunSince: null, turnAllowed: true }),
-    ).toBe(false);
+    expect(stalledReviewRefire(candidate, { round: 3, liveRun: false, reviewerRunSince: null })).toBe(false);
   });
 
   it('never re-fires over a live turn (the run row owns the round)', () => {
-    expect(stalledReviewRefire(candidate, { round: 2, liveRun: true, reviewerRunSince: null, turnAllowed: true })).toBe(
-      false,
-    );
+    expect(stalledReviewRefire(candidate, { round: 2, liveRun: true, reviewerRunSince: null })).toBe(false);
   });
 
   it('never re-fires a reviewer that already had a turn this round (the correction/park law owns it)', () => {
@@ -187,7 +184,6 @@ describe('stalledReviewRefire (#397 pure decision)', () => {
         round: 2,
         liveRun: false,
         reviewerRunSince: new Date(ROW_MINTED.getTime() + 1),
-        turnAllowed: true,
       }),
     ).toBe(false);
   });

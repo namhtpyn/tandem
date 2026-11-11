@@ -33,6 +33,8 @@ vi.mock('../../server/db/index', async () => {
               { id: STATUS.done, category: 'done' },
               { id: STATUS.cancelled, category: 'cancelled' },
               { id: 'st-custom-review', category: 'in_review' },
+              { id: STATUS.blocked, category: 'paused' },
+              { id: 'st-working', category: 'working' },
             ];
             const id = args?.where?.id?.eq;
             return id ? rows.filter((r) => r.id === id) : rows;
@@ -113,6 +115,50 @@ describe('parkRound in-review guard (#199)', () => {
     await parkRound('task-1', 'verdict-less review — re-dispatch exhausted');
     expect(h.activities[0]?.payload.fromStatus).toBe(STATUS.inReview);
     expect(h.activities[0]?.payload.reviewParked).toBe(true);
+  });
+
+  it('a GATING auto-block from an in-review origin parks with the BLOCK origin (#419)', async () => {
+    // the task already sits in a child-derived block: its failure arms must be able to
+    // park, and the persisted origin must be the round's home (pre_block_status), never
+    // the blocked id — a BLOCKED origin would restore the task into the paused category
+    h.taskRows = [
+      {
+        status: STATUS.blocked,
+        ownerId: 'u1',
+        rearmAttempts: 0,
+        parkFromStatus: null,
+        preBlockStatus: STATUS.inReview,
+      },
+    ];
+    const parked = await parkRound('task-1', 'review turn failed — run settled FAILED', { rearmable: true });
+    expect(parked).toBe(true);
+    expect(h.updates).toHaveLength(1);
+    expect(h.updates[0]?.set.status).toBe(STATUS.blocked);
+    expect(h.updates[0]?.set.parkFromStatus).toBe(STATUS.inReview);
+    expect(h.updates[0]?.set.parkRearmAttempts).toBe(1);
+    expect(h.updates[0]?.hasPredicate).toBe(true);
+  });
+
+  it('a GATING auto-block from a NON-review origin never parks (#419)', async () => {
+    h.taskRows = [
+      { status: STATUS.blocked, ownerId: 'u1', rearmAttempts: 0, parkFromStatus: null, preBlockStatus: 'st-working' },
+    ];
+    expect(await parkRound('task-1', 'review turn timed out — reaped after 45 min')).toBe(false);
+    expect(h.updates).toHaveLength(0);
+  });
+
+  it('a PARK already standing (park_from_status set) is never re-parked (#199/#419)', async () => {
+    h.taskRows = [
+      {
+        status: STATUS.blocked,
+        ownerId: 'u1',
+        rearmAttempts: 1,
+        parkFromStatus: STATUS.inReview,
+        preBlockStatus: null,
+      },
+    ];
+    expect(await parkRound('task-1', 'review turn timed out — reaped after 45 min')).toBe(false);
+    expect(h.updates).toHaveLength(0);
   });
 
   it('a custom IN-REVIEW-category status parks too (#336) — park origin + predicate pin the status read', async () => {
