@@ -236,6 +236,16 @@ describe('sweepLostReviewSettles (#402 wiring)', () => {
     expect(park?.parkRearmAfter).toBeInstanceOf(Date);
   });
 
+  it('burns the bound on a skipped replay — never replays the same run every tick forever', async () => {
+    h.replayOutcome = 'skipped';
+    expect(await sweepLostReviewSettles()).toBe(0);
+    expect(await sweepLostReviewSettles()).toBe(0);
+    expect(h.replayed).toEqual([RUN, RUN]);
+    // attempts exhausted -> the round parks instead of replaying until the heat death
+    expect(await sweepLostReviewSettles()).toBe(1);
+    expect(h.replayed).toEqual([RUN, RUN]);
+  });
+
   it('never rejects: a failing scan resolves 0', async () => {
     h.scanThrows = true;
     await expect(sweepLostReviewSettles()).resolves.toBe(0);

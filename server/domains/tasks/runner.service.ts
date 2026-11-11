@@ -1413,15 +1413,60 @@ export async function replayLostSettle(runId: string): Promise<'settled' | 'back
     .limit(1);
   const run = rows[0];
   if (!run || run.status !== RUN_STATUS.DONE || !run.employeeId) return 'skipped';
-  // the thread bubble becomes the parsed result exactly as finish() would have left it
+  // the thread bubble becomes the parsed result exactly as finish() would have left it.
+  // A review turn collects no attachments (finish() passes [] for review plans), so the
+  // rewrite cannot drop collected files.
   await updateRunMessageBody(run.messageId, run.output, true);
-  return settleDoneRun(
+  const outcome = await settleDoneRun(
     run.taskId,
     runId,
     { review: { resultBody: '' }, ai: { userId: run.employeeId } },
     run.output,
     run.startedAt,
+    { replay: true },
   );
+  if (outcome !== 'settled') return outcome;
+  // the post-settle fan-out finish() publishes: a viewer holding the pre-settle snapshot
+  // must see the run's status pill and the thread's verdict bubble, and a channel-mapped
+  // task relays its reply exactly once (best-effort, persist-first, never fails the heal)
+  await publishChange(CHANGE_RESOURCE.RUNS, CHANGE_ACTION.UPDATE);
+  await publishChange(CHANGE_RESOURCE.TASK_ACTIVITY, CHANGE_ACTION.CREATE);
+  try {
+    const { relaySettledRun } = await import('../channels/channels.service');
+    await relaySettledRun(run.taskId, runId, run.messageId);
+  } catch (e) {
+    consola.warn(
+      `[settle] channel relay failed for replayed run ${runId} (best-effort — a failure BEFORE the outbox row loses this turn's relay; a failure AFTER it is re-driven by the boot sweep): ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
+  return outcome;
+}
+
+/** SETTLE FAILURE ARMS: a review turn parks (the work ladder's bounce no-ops on an
+ *  in-review task and the round would wedge, SPEC #199 — REARMABLE #211 since a settle
+ *  throw is infra-class; a removed reviewer never parks, #370); a work run rides the
+ *  bounce ladder. Extracted from settleDoneRun so the replay arm (#402) can pre-empt it
+ *  without growing that function's branch count. */
+async function settleFailureArm(
+  taskId: string,
+  runId: string,
+  plan: { review?: { resultBody: string }; ai: { userId: string } },
+  buffer: string,
+  e: unknown,
+) {
+  // a submit/verdict failure is REAL: log it and take the retry/backoff path —
+  // swallowing it then resetting failStreak wedged the task with no retry
+  /* v8 ignore start */ // needs a mid-flight workflow mutation so submit throws; the reaper/backoff arms cover the ladder
+  const msg = e instanceof Error ? e.message : String(e);
+  consola.error(`[settle] task ${taskId} run ${runId} settle failed: ${msg}`);
+  if (plan.review) {
+    await parkReviewTurnFailure(taskId, plan.ai.userId, `review verdict settle failed — ${msg}`);
+  } else {
+    await bounceTaskAfterRun(taskId, runId, buffer);
+  }
+  /* v8 ignore stop */
 }
 
 /** settle a DONE run: parse the envelope, route proposals, submit the result (or
@@ -1433,7 +1478,8 @@ async function settleDoneRun(
   plan: { review?: { resultBody: string }; ai: { userId: string } },
   buffer: string,
   runStartedAt: Date,
-): Promise<'settled' | 'backoff'> {
+  opts: { replay?: boolean } = {},
+): Promise<'settled' | 'backoff' | 'skipped'> {
   const { parseRunEnvelope, parseReviewEnvelope } = await import('#shared/run-verdict');
   // the ACP 400-char force-flush splits ONE long JSON verdict into adjacent buffer
   // lines; rejoin the last 3 lines with NO separator (the newline was a flush
@@ -1474,20 +1520,13 @@ async function settleDoneRun(
       await submitResult(taskId, plan.ai.userId, resultBody);
     }
   } catch (e) {
-    // a submit/verdict failure is REAL: log it and take the retry/backoff path —
-    // swallowing it here then resetting failStreak wedged the task with no retry
-    /* v8 ignore start */ // needs a mid-flight workflow mutation so submit throws; the reaper/backoff arms cover the ladder
-    const msg = e instanceof Error ? e.message : String(e);
-    consola.error(`[settle] task ${taskId} run ${runId} settle failed: ${msg}`);
-    if (plan.review) {
-      // a lost review verdict is a settle failure: park on the owner (SPEC #199) —
-      // the work ladder's bounce no-ops on an in-review task and the round would wedge.
-      // REARMABLE (#211): a settle throw is infra-class — the re-arm ladder re-fires it.
-      // DELETED REVIEWER (#370): a late settle throw of a removed reviewer never parks.
-      await parkReviewTurnFailure(taskId, plan.ai.userId, `review verdict settle failed — ${msg}`);
-    } else {
-      await bounceTaskAfterRun(taskId, runId, buffer);
-    }
+    // REPLAY (#402): a replay runs OUTSIDE finish()'s RUNNING→DONE arbitration, so the
+    // loser of a concurrent settle (two replicas, or an overlapping tick) surfaces here
+    // as a business refusal ('verdict already recorded', 'not a pending reviewer',
+    // 'task already settled'). The winner owns the outcome: the replay must report a
+    // quiet no-op, never park a round the winner just healed.
+    if (opts.replay) return 'skipped';
+    await settleFailureArm(taskId, runId, plan, buffer, e);
     return 'backoff';
   }
   // streak reset only AFTER a successful settle — a failed settle must keep the ladder

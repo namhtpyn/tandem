@@ -1377,9 +1377,15 @@ export function lostSettleAction(
 }
 
 /** per-run replay attempts (in-process: a restart grants one fresh attempt, the only
- *  bound that survives a crash loop without a schema change) — normally empty, since
- *  a replay settles the run or parks it */
+ *  bound that survives a crash loop without a schema change). An entry is kept for the
+ *  process lifetime: a replay that reports 'settled' but leaves the shape standing (the
+ *  settle's own mint no-ops) must burn the bound too, never replay every tick. */
 const lostSettleAttempts = new Map<string, number>();
+/** single-flight per run: the tick fires with `void` every 5s, so a pass slower than the
+ *  interval overlaps the next one — two replays of the same run would race each other
+ *  (the loser's refusal is a no-op, but the double work is pointless and the second
+ *  settle's publish storm is real) */
+const lostSettleInFlight = new Set<string>();
 /** exposed for tests: the attempt map is module state and must reset between cases */
 export const lostSettleAttemptState = lostSettleAttempts;
 
@@ -1413,6 +1419,7 @@ async function sweepLostReviewSettlesInner(): Promise<number> {
           if (probe.runIsNewest) probe.inReview = (await taskCategory(candidate.taskId)) === CATEGORY.IN_REVIEW;
         }
       }
+      if (lostSettleInFlight.has(candidate.runId)) continue;
       const attempts = lostSettleAttempts.get(candidate.runId) ?? 0;
       const action = lostSettleAction(candidate, probe, attempts);
       if (!action) continue;
@@ -1431,9 +1438,18 @@ async function sweepLostReviewSettlesInner(): Promise<number> {
         }
         continue;
       }
-      const outcome = await replayLostSettle(candidate.runId);
+      lostSettleInFlight.add(candidate.runId);
+      let outcome: 'settled' | 'backoff' | 'skipped';
+      try {
+        outcome = await replayLostSettle(candidate.runId);
+      } finally {
+        lostSettleInFlight.delete(candidate.runId);
+      }
+      // the attempt count is NEVER cleared: a 'settled' that left the shape standing
+      // (the settle's mint no-oped) burns the bound and parks, instead of replaying
+      // every tick forever
       if (outcome === 'backoff') continue; // the settle itself failed: next tick retries (bounded)
-      lostSettleAttempts.delete(candidate.runId);
+      if (outcome === 'skipped') continue; // the winner owns the outcome — quiet no-op
       healed += 1;
       log.info(`lost-settle sweep: replayed the lost settle of run ${candidate.runId} on task ${candidate.taskId}`);
     } catch (e) {

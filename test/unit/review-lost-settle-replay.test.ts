@@ -20,6 +20,9 @@ const h = vi.hoisted(() => ({
   verdicts: [] as Array<{ reviewerId: string; verdict: unknown; at?: Date }>,
   dispatched: [] as Array<Record<string, unknown>>,
   parks: [] as string[],
+  publishes: [] as string[],
+  relays: [] as string[],
+  verdictThrows: null as string | null,
   round: 1,
   boundRow: { round: 1, createdAt: new Date('2026-11-11T00:00:00Z') } as { round: number; createdAt: Date } | null,
   runs: [] as Array<{ id: string; startedAt: Date | null; status?: string }>,
@@ -46,7 +49,22 @@ vi.mock('../../server/db/index', () => ({
 
 vi.mock('../../server/domains/kernel/kernel', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../server/domains/kernel/kernel')>();
-  return { ...mod, publishChange: async () => {} };
+  return {
+    ...mod,
+    publishChange: async (resource: string, action: string) => {
+      h.publishes.push(`${resource}:${action}`);
+    },
+  };
+});
+
+vi.mock('../../server/domains/channels/channels.service', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../server/domains/channels/channels.service')>();
+  return {
+    ...mod,
+    relaySettledRun: async (_taskId: string, runId: string) => {
+      h.relays.push(runId);
+    },
+  };
 });
 
 vi.mock('../../server/domains/tasks/thread.service', async (importOriginal) => {
@@ -74,6 +92,7 @@ vi.mock('../../server/domains/tasks/review.service', async (importOriginal) => {
       _src: string,
       at?: Date,
     ) => {
+      if (h.verdictThrows) throw new Error(h.verdictThrows);
       h.verdicts.push({ reviewerId, verdict, at });
       return 'waiting' as const;
     },
@@ -114,6 +133,9 @@ beforeEach(() => {
   h.verdicts = [];
   h.dispatched = [];
   h.parks = [];
+  h.publishes = [];
+  h.relays = [];
+  h.verdictThrows = null;
   h.round = 1;
   h.boundRow = { round: 1, createdAt: new Date('2026-11-11T00:00:00Z') };
   h.runs = [];
@@ -150,6 +172,25 @@ describe('replayLostSettle (#402)', () => {
     expect(h.verdicts[0]?.reviewerId).toBe(REV);
     expect(h.verdicts[0]?.at?.getTime()).toBe(STARTED.getTime());
     expect(h.verdicts[0]?.verdict).toBe('APPROVED');
+  });
+
+  it('re-publishes the run/thread fan-out and relays the healed reply once', async () => {
+    h.runRows = [runRow()];
+    await replayLostSettle(RUN);
+    expect(h.publishes).toContain('RUNS:UPDATE');
+    expect(h.publishes).toContain('TASK_ACTIVITY:CREATE');
+    expect(h.relays).toEqual([RUN]);
+  });
+
+  it('a business refusal is a quiet no-op in replay mode — never a park (#402 r1)', async () => {
+    // the loser of a concurrent settle (another replica / an overlapping tick) hits
+    // 'verdict already recorded' — the winner owns the round, so the replay must not
+    // park what the winner just healed
+    h.runRows = [runRow()];
+    h.verdictThrows = 'verdict already recorded for this round';
+    await expect(replayLostSettle(RUN)).resolves.toBe('skipped');
+    expect(h.parks).toEqual([]);
+    expect(h.relays).toEqual([]);
   });
 
   it('a verdict-less stored output replays into the bounded correction machinery', async () => {
